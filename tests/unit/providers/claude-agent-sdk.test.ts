@@ -941,6 +941,86 @@ describe("ClaudeAgentSdkProvider", () => {
     });
   });
 
+  describe("an approval the CLI is waiting on", () => {
+    const question = {
+      questions: [{ question: "Ticket?", header: "Ticket", multiSelect: false, options: [{ label: "None", description: "" }, { label: "SAL-1", description: "" }] }],
+    };
+
+    /**
+     * A CLI that asks once its turn's last message is out and then sends nothing until it hears
+     * back: the order that left questions unseen until the user cancelled.
+     */
+    function askingCli(toolUse: { name: string; input: unknown }, ask: (options: any) => Promise<unknown>) {
+      const verdicts: unknown[] = [];
+      mockQueryFn.mockImplementation(({ prompt, options }: any) => {
+        const input = prompt[Symbol.asyncIterator]();
+        return {
+          close: mock(() => {}),
+          async *[Symbol.asyncIterator]() {
+            if ((await input.next()).done) return;
+            yield { type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_ask", ...toolUse }] } };
+            await Bun.sleep(10);
+            verdicts.push(await ask(options));
+            yield { type: "result", subtype: "success" };
+          },
+        };
+      });
+      return verdicts;
+    }
+
+    /** The turn's first approval request, or null if none comes within a second. */
+    async function firstApproval(stream: AsyncIterator<ChatEvent>): Promise<any> {
+      const deadline = Bun.sleep(1000).then(() => null);
+      for (;;) {
+        const step = await Promise.race([stream.next(), deadline]);
+        if (!step || step.done) return null;
+        if (step.value.type === "approval_request") return step.value;
+      }
+    }
+
+    async function rest(stream: AsyncIterator<ChatEvent>): Promise<ChatEvent[]> {
+      const events: ChatEvent[] = [];
+      for (let step = await stream.next(); !step.done; step = await stream.next()) events.push(step.value);
+      return events;
+    }
+
+    /** Lets a turn that never surfaced its approval finish, so a failure does not hang the file. */
+    function releaseApprovals() {
+      for (const id of [...((provider as any).pendingApprovals as Map<string, unknown>).keys()]) provider.resolveApproval(id, false);
+    }
+
+    it("hands out an AskUserQuestion at once, and the answer reaches the CLI", async () => {
+      const verdicts = askingCli({ name: "AskUserQuestion", input: question }, (options) => options.canUseTool("AskUserQuestion", question));
+      const session = await provider.createSession({});
+      const stream = provider.sendMessage(session.id, "commit it")[Symbol.asyncIterator]();
+      try {
+        const asked = await firstApproval(stream);
+        expect(asked).toMatchObject({ type: "approval_request", tool: "AskUserQuestion", input: question });
+        provider.resolveApproval(asked.requestId, true, { "Ticket?": "None" });
+        expect((await rest(stream)).some((e) => e.type === "done")).toBe(true);
+        expect(verdicts).toEqual([{ behavior: "allow", updatedInput: { ...question, answers: { "Ticket?": "None" } } }]);
+      } finally {
+        releaseApprovals();
+      }
+    });
+
+    it("hands out a tool approval from the permission hook at once", async () => {
+      const bash = { command: "git commit -m x" };
+      const verdicts = askingCli({ name: "Bash", input: bash }, (options) => permissionHook(options)({ tool_name: "Bash", tool_input: bash }));
+      const session = await provider.createSession({});
+      const stream = provider.sendMessage(session.id, "commit it", { permissionMode: "default" })[Symbol.asyncIterator]();
+      try {
+        const asked = await firstApproval(stream);
+        expect(asked).toMatchObject({ type: "approval_request", tool: "Bash", input: bash });
+        provider.resolveApproval(asked.requestId, true);
+        expect((await rest(stream)).some((e) => e.type === "done")).toBe(true);
+        expect(verdicts).toEqual([preToolUseDecision("allow")]);
+      } finally {
+        releaseApprovals();
+      }
+    });
+  });
+
   describe("buildQueryEnv priority (api_key / base_url from settings)", () => {
     const savedEnv: Record<string, string | undefined> = {};
 
@@ -1328,7 +1408,7 @@ describe("ClaudeAgentSdkProvider", () => {
 
     /**
      * Every CLI `query` starts: each reads one message, starts `during` and reports a status
-     * while it runs (the provider hands out queued approvals as messages arrive), then answers.
+     * while it runs, then answers.
      */
     function cliFactory(during?: (options: any) => Promise<void>) {
       const clis: Array<{ options: any; pushed: any[]; close: ReturnType<typeof mock> }> = [];

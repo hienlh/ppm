@@ -79,6 +79,16 @@ settingSources: [],
 
 ---
 
+### An approval the CLI asks for must wake the turn's loop
+
+**Problem**: An AskUserQuestion often never showed (7 of the 10 in the session trace from 2026-10-16 to 2026-10-22). The chat sat on "thinking" until the user cancelled, and only then did the question card appear, for a turn that was already over. In one session the trace has the `tool_use` at 08:31:08 and its `approval_request` at 08:48:09, one line after `turn_aborted`. Tool approvals outside bypass mode go through the same queue and could hang the same way.
+
+**Root cause**: `canUseTool` and the PreToolUse hook queue their `approval_request`, and the loop over the SDK's messages handed the queue out only when the next message arrived. The CLI asks through a control request and then sends nothing until it is answered. If its last message for the turn was processed before the callback ran, there was no next message, so neither side ever moved. `approvalNotify` had been declared for exactly this and never assigned. It looked intermittent because whether the trailing message landed before or after the callback was a race.
+
+**Fix**: `ApprovalQueue.alongside()` (`src/providers/claude-approval-queue.ts`) wakes the loop with `APPROVAL_WAKE` whenever something is queued while the SDK is silent. It keeps the one outstanding `next()` across wakes, and it does not await `return()` when left with that `next()` still out, because an async generator's `return()` waits behind it.
+
+---
+
 ## WebSocket Chat Architecture
 
 ### Event flow: SDK → Provider → WS → Frontend

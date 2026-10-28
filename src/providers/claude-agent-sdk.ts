@@ -19,6 +19,7 @@ import { captureBaseline } from "../services/session-file-baselines/session-file
 import { observeFile } from "../services/session-file-baselines/session-file-history.ts";
 import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../services/session-file-baselines/shell-change-tracker.ts";
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
+import { APPROVAL_WAKE, ApprovalQueue } from "./claude-approval-queue.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
@@ -1177,12 +1178,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const dbToolsMcp = opts?.designSession ? undefined : opts?.dbToolsMcp;
     const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool });
 
-    /**
-     * Approval events to yield from the generator.
-     * PreToolUse hook pushes events here; the main loop yields them.
-     */
-    const approvalEvents: ChatEvent[] = [];
-    let approvalNotify: (() => void) | undefined;
+    /** Approval requests from canUseTool and the PreToolUse hook, handed out by the main loop. */
+    const approvals = new ApprovalQueue<ChatEvent>();
 
     /**
      * Helper: send approval request to FE and wait for response.
@@ -1193,8 +1190,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const promise = new Promise<{ approved: boolean; data?: unknown }>((resolve) => {
         this.pendingApprovals.set(requestId, { resolve, sessionId });
       });
-      approvalEvents.push({ type: "approval_request", requestId, tool: toolName, input });
-      approvalNotify?.();
+      approvals.push({ type: "approval_request", requestId, tool: toolName, input });
       return promise;
     };
 
@@ -1610,7 +1606,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       assistantContent = "";
       pendingToolCount = 0;
       let sdkEventCount = 0;
-      for await (const msg of eventSource) {
+      for await (const msg of approvals.alongside(eventSource)) {
+        // An approval goes out now: the CLI sends nothing more until it is answered.
+        if (msg === APPROVAL_WAKE) {
+          yield* approvals.drain();
+          continue;
+        }
         sdkEventCount++;
         hadAnyEvents = true;
         if (sdkEventCount === 1) {
@@ -1640,9 +1641,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         const parentId = (msg as any).parent_tool_use_id as string | undefined;
 
         // Yield any queued approval events
-        while (approvalEvents.length > 0) {
-          yield approvalEvents.shift()!;
-        }
+        yield* approvals.drain();
 
         // Log system events for debugging SDK lifecycle: the subtype only, never the message.
         // thinking_tokens and status=requesting arrive at token rate, so not even at DEBUG.
@@ -2430,9 +2429,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
 
       // Yield remaining approval events
-      while (approvalEvents.length > 0) {
-        yield approvalEvents.shift()!;
-      }
+      yield* approvals.drain();
 
       if (!hadAnyEvents) {
         yield { type: "error", message: "Claude did not respond. Check that 'claude' CLI works in your terminal." };
