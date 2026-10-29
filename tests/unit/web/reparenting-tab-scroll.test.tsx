@@ -21,10 +21,29 @@ function Transcript() {
   return <div data-testid="scroller" style={{ overflowY: "auto" }} />;
 }
 
+/** Keyed by session, as a chat's transcript is replaced behind its loading screen. */
+function SessionTranscript({ metadata }: { metadata?: Record<string, unknown> }) {
+  return <div key={String(metadata?.session)} data-testid="scroller" style={{ overflowY: "auto" }} />;
+}
+
 const userScroll = (el: HTMLElement, top: number) => {
   el.scrollTop = top;
   el.dispatchEvent(new Event("scroll"));
 };
+
+const tick = () => new Promise((r) => setTimeout(r, 5));
+
+/** Whether `ref`'s target is gone after a few full collections. */
+async function collected(ref: WeakRef<object>): Promise<boolean> {
+  for (let i = 0; i < 20; i++) {
+    Bun.gc(true);
+    // Collect and read in separate tasks: `deref()` keeps its target alive until its task ends.
+    await tick();
+    if (!ref.deref()) return true;
+    await tick();
+  }
+  return false;
+}
 
 describe("a tab moved between panel slots", () => {
   it("comes back at the reader's position after its old panel left the page first", async () => {
@@ -101,6 +120,35 @@ describe("a tab moved between panel slots", () => {
       await view.unmount();
       registerPanelSlot("panel-b", null);
       hidden.remove();
+    }
+  });
+
+  it("does not keep a scroller React removed alive, even when nothing scrolls after it", async () => {
+    // The record held its elements, and so the whole tree each was removed with: every session
+    // switch left the previous transcript's DOM behind, because stick-to-bottom has scrolled any
+    // transcript taller than the view by then. Pruning when another scroller turns up is not
+    // enough — a next session that fits the view never scrolls.
+    const hidden = document.body.appendChild(document.createElement("div"));
+    const slot = document.body.appendChild(document.createElement("div"));
+    registerPanelSlot("panel-c", slot);
+    const tab = (session: number) => (
+      <ReparentingTab tabId="chat-3" panelId="panel-c" component={SessionTranscript} metadata={{ session }} isActive hiddenContainer={hidden} />
+    );
+    const view = await mount(tab(1));
+    try {
+      // In a function of its own, so no variable here holds the old scroller.
+      const old = (() => {
+        const el = slot.querySelector<HTMLElement>("[data-testid=scroller]")!;
+        userScroll(el, 120);
+        return new WeakRef(el);
+      })();
+      await view.rerender(tab(2));
+      expect(await collected(old)).toBe(true);
+    } finally {
+      await view.unmount();
+      registerPanelSlot("panel-c", null);
+      hidden.remove();
+      slot.remove();
     }
   });
 });

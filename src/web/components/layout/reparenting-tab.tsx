@@ -58,17 +58,24 @@ export function ReparentingTab({
   // the page before the move below runs — too late to read them then. A chat came back at its
   // top, and its history loader took that for the reader scrolling up and fetched another page
   // on every switch back.
-  const scrolledRef = useRef(new Map<Element, { top: number; left: number }>());
+  // Held weakly: a scroller React removed would keep its whole tree alive, and a chat replaces
+  // its transcript's on every session switch.
+  const scrolledRef = useRef(new WeakMap<Element, { top: number; left: number }>());
+  /** The keys of `scrolledRef`, which a WeakMap cannot list. */
+  const scrollersRef = useRef(new Set<WeakRef<Element>>());
   /** Moved while hidden, when there was no layout to put the offsets back into. */
   const restorePendingRef = useRef(false);
   const restoreScroll = () => {
-    for (const [el, { top, left }] of scrolledRef.current) {
-      if (!wrapper.contains(el)) {
-        scrolledRef.current.delete(el);
+    for (const ref of scrollersRef.current) {
+      const el = ref.deref();
+      const at = el && scrolledRef.current.get(el);
+      if (!el || !at || !wrapper.contains(el)) {
+        scrollersRef.current.delete(ref);
+        if (el) scrolledRef.current.delete(el);
         continue;
       }
-      el.scrollTop = top;
-      el.scrollLeft = left;
+      el.scrollTop = at.top;
+      el.scrollLeft = at.left;
     }
   };
 
@@ -85,13 +92,17 @@ export function ReparentingTab({
       usePanelStore.getState().setFocusedPanel(pid);
     };
     const scrolled = scrolledRef.current;
+    const scrollers = scrollersRef.current;
     const onScroll = (e: Event) => {
       // Parked out of sight a scroller has no size, and whatever moves it there is not the reader.
       if (wrapper.parentElement === hiddenContainer) return;
       const el = e.target as Element;
       if (el.nodeType !== Node.ELEMENT_NODE) return;
+      if (!scrolled.has(el)) {
+        for (const ref of scrollers) if (!ref.deref()) scrollers.delete(ref);
+        scrollers.add(new WeakRef(el));
+      }
       scrolled.set(el, { top: el.scrollTop, left: el.scrollLeft });
-      if (scrolled.size > 32) for (const known of scrolled.keys()) if (!wrapper.contains(known)) scrolled.delete(known);
     };
     wrapper.addEventListener("pointerdown", onMouseDown, true);
     wrapper.addEventListener("focusin", onMouseDown, true);
