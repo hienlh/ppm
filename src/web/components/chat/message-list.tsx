@@ -492,17 +492,32 @@ export function MessageList({
     const el = scrollEl;
     const sentinel = topSentinelRef.current;
     if (!el || !sentinel || !hasMore || compactLoadError) return;
+    // A transcript parked out of sight (its panel unmounted on a project switch) has no height,
+    // so its top always reads as in range; loading then grew the chat by a page on every switch
+    // back. What the observer says there is set aside and asked again once there is a height:
+    // it reports changes only, so a short transcript whose top stayed in range heard nothing.
+    let parked = false;
     const io = new IntersectionObserver(
-      // A transcript parked out of sight (its panel unmounted on a project switch) has no
-      // height, so its top always reads as in range; loading then grew the chat by a page on
-      // every switch back.
-      (entries) => { if (entries.some((e) => e.isIntersecting) && el.clientHeight > 0) loadMore(); },
+      (entries) => {
+        parked = el.clientHeight === 0;
+        if (!parked && entries.some((e) => e.isIntersecting)) loadMore();
+      },
       // Start the fetch while the top is still a screenful away, so the next
       // segment is usually there before the user reaches the end of this one.
       { root: el, rootMargin: "400px 0px 0px 0px" },
     );
     io.observe(sentinel);
-    return () => io.disconnect();
+    const ro = new ResizeObserver(() => {
+      if (!parked || el.clientHeight === 0) return;
+      parked = false;
+      io.unobserve(sentinel);
+      io.observe(sentinel);
+    });
+    ro.observe(el);
+    return () => {
+      io.disconnect();
+      ro.disconnect();
+    };
   }, [scrollEl, hasMore, compactLoadError, loadMore]);
 
   if (messagesLoading && (!keepStaleWhileLoading || messages.length === 0)) {
