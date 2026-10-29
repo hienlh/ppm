@@ -21,6 +21,18 @@ describe("relative times", () => {
     expect(formatRelativeDate(new Date(Date.now() - 5 * 60_000).toISOString())).toBe("5m ago");
   });
 
+  it("show the full date on hover the way toLocaleString does", async () => {
+    // Seconds included: a formatter that drops a field still prints a plausible date.
+    const at = new Date(2026, 9, 29, 14, 5, 9).toISOString();
+    const view = await mount(<MessageActionBar timestamp={at} content="a" />);
+    // A label left mounted would keep the shared timer running into the next test.
+    try {
+      expect(view.container.querySelector("time")!.title).toBe(new Date(at).toLocaleString());
+    } finally {
+      await view.unmount();
+    }
+  });
+
   it("move on by themselves, on one timer that stops with the last label", async () => {
     const realSet = globalThis.setInterval;
     const realClear = globalThis.clearInterval;
