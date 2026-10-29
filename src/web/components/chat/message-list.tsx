@@ -493,7 +493,10 @@ export function MessageList({
     const sentinel = topSentinelRef.current;
     if (!el || !sentinel || !hasMore || compactLoadError) return;
     const io = new IntersectionObserver(
-      (entries) => { if (entries.some((e) => e.isIntersecting)) loadMore(); },
+      // A transcript parked out of sight (its panel unmounted on a project switch) has no
+      // height, so its top always reads as in range; loading then grew the chat by a page on
+      // every switch back.
+      (entries) => { if (entries.some((e) => e.isIntersecting) && el.clientHeight > 0) loadMore(); },
       // Start the fetch while the top is still a screenful away, so the next
       // segment is usually there before the user reaches the end of this one.
       { root: el, rootMargin: "400px 0px 0px 0px" },
