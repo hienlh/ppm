@@ -1,4 +1,4 @@
-import type { ReplyReference } from "../../../shared/chat-reply";
+import { decodeReply, type ReplyReference } from "../../../shared/chat-reply";
 import { createReplyReference, resolveReplyMessage } from "./message-reply-reference";
 import { useEffect, useRef, useState, useMemo, useCallback, useLayoutEffect, memo } from "react";
 import { userMessageOrdinals } from "@/lib/message-ordinals";
@@ -205,8 +205,12 @@ export function MessageList({
   // Mirror the lib's scroll-element ref into state so effects/nav re-run when the
   // scroll container mounts late (it appears only after the loading screen).
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+  // Read by the callbacks every bubble holds: one built on the state above changes when
+  // the container mounts, which drew the whole transcript twice on every open.
+  const scrollElRef = useRef<HTMLDivElement | null>(null);
   const setScrollRef = useCallback((el: HTMLDivElement | null) => {
     scrollRef(el);
+    scrollElRef.current = el;
     setScrollEl(el);
   }, [scrollRef]);
 
@@ -238,10 +242,11 @@ export function MessageList({
   // cleanup clears the pending flash, so a second jump can't leave a stale highlight.
   const flashCleanupRef = useRef<(() => void) | null>(null);
   const handleJumpToEdit = useCallback((editRef: string) => {
-    if (!scrollEl) return;
+    const el = scrollElRef.current;
+    if (!el) return;
     flashCleanupRef.current?.();
-    flashCleanupRef.current = jumpToEdit(scrollEl, editRef);
-  }, [scrollEl]);
+    flashCleanupRef.current = jumpToEdit(el, editRef);
+  }, []);
   useEffect(() => () => flashCleanupRef.current?.(), []);
 
   // The Review tab names the turn that wrote each block from what this chat shows.
@@ -338,26 +343,31 @@ export function MessageList({
     const reply = createReplyReference(message, sessionId, providerId);
     if (reply) onReply?.(reply);
   }, [sessionId, providerId, onReply]);
-  const replyAvailable = useCallback((reply: ReplyReference) => !!resolveReplyMessage(filtered, reply, sessionId, providerId), [filtered, sessionId, providerId]);
   const replyFlashCleanup = useRef<(() => void) | null>(null);
   useEffect(() => () => replyFlashCleanup.current?.(), []);
   /** Scroll to the message at `index` of `filtered` and flash it; false when it is not drawn. */
   const showMessageAt = useCallback((index: number) => {
-    const target = scrollEl?.querySelector<HTMLElement>(`[data-msg-index="${index}"]`);
-    if (!scrollEl || !target) return false;
+    const el = scrollElRef.current;
+    const target = el?.querySelector<HTMLElement>(`[data-msg-index="${index}"]`);
+    if (!el || !target) return false;
     stopScroll();
     replyFlashCleanup.current?.();
-    scrollEl.scrollTo({ top: scrollEl.scrollTop + target.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top - 24, behavior: "smooth" });
+    el.scrollTo({ top: el.scrollTop + target.getBoundingClientRect().top - el.getBoundingClientRect().top - 24, behavior: "smooth" });
     target.classList.add("bg-primary/10", "ring-1", "ring-primary/40");
     const clear = () => target.classList.remove("bg-primary/10", "ring-1", "ring-primary/40");
     const timer = setTimeout(clear, 1400);
     replyFlashCleanup.current = () => { clearTimeout(timer); clear(); };
     return true;
-  }, [scrollEl, stopScroll]);
+  }, [stopScroll]);
+  // Every bubble holds this callback and `filtered` is new on every streamed flush, so
+  // depending on it re-rendered the whole transcript ten times a second. Only a click reads it.
+  const filteredRef = useRef(filtered);
+  useLayoutEffect(() => { filteredRef.current = filtered; }, [filtered]);
   const handleJumpToReply = useCallback((reply: ReplyReference) => {
-    const message = resolveReplyMessage(filtered, reply, sessionId, providerId);
-    if (message) showMessageAt(filtered.indexOf(message));
-  }, [filtered, sessionId, providerId, showMessageAt]);
+    const list = filteredRef.current;
+    const message = resolveReplyMessage(list, reply, sessionId, providerId);
+    if (message) showMessageAt(list.indexOf(message));
+  }, [sessionId, providerId, showMessageAt]);
 
   // "Show in chat" from the Review tab: the call's card, or the prompt that asked for it when
   // the card is not drawn (a sub-agent's call). Waits for the tab to be shown and its history to
@@ -576,6 +586,10 @@ export function MessageList({
               }
               turnCopyText = parts.join("\n\n");
             }
+            // A boolean rather than a lookup the bubble calls while rendering: it has to change
+            // when older history brings the quoted message in, and not on every streamed flush.
+            const replyTo = msg.role === "user" ? decodeReply(msg.content).replyTo : null;
+            const replyAvailable = replyTo ? !!resolveReplyMessage(filtered, replyTo, sessionId, providerId) : undefined;
             return (
               <div
                 key={msg.id}
@@ -589,11 +603,10 @@ export function MessageList({
                 <RenderErrorBoundary fallbackContent={msg.content}>
                   <MessageBubble
                     message={msg}
-                    onReply={onReply && sessionId && providerId
-                      ? msg.role === "assistant"
-                        ? turnReplyMessage ? () => handleReply(turnReplyMessage!) : undefined
-                        : handleReply
+                    onReply={onReply && sessionId && providerId && (msg.role !== "assistant" || turnReplyMessage)
+                      ? handleReply
                       : undefined}
+                    replyTarget={turnReplyMessage}
                     onJumpToReply={handleJumpToReply}
                     replyAvailable={replyAvailable}
                     isStreaming={isStreaming && msg.id.startsWith("streaming-")}
@@ -651,10 +664,13 @@ function assistantMessageText(msg: ChatMessage): string {
     : msg.content;
 }
 
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLastAssistantInTurn, turnCopyText, turnChanges, turn, onJumpToEdit, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled, bashPartialOutput, onReply, onJumpToReply, replyAvailable }: {
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLastAssistantInTurn, turnCopyText, turnChanges, turn, onJumpToEdit, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled, bashPartialOutput, onReply, replyTarget, onJumpToReply, replyAvailable }: {
   onReply?: (message: ChatMessage) => void;
+  /** Assistant only: the message of this turn that Reply quotes, which may be an earlier one. */
+  replyTarget?: ChatMessage;
   onJumpToReply?: (reply: ReplyReference) => void;
-  replyAvailable?: (reply: ReplyReference) => boolean;
+  /** Whether the message this one quotes is in the list; undefined when it quotes none. */
+  replyAvailable?: boolean;
   message: ChatMessage; isStreaming: boolean; isLastAssistantInTurn?: boolean; turnCopyText?: string; projectName?: string;
   /** Files this turn changed — drives the action-bar change pill. */
   turnChanges?: TurnFileChange[];
@@ -734,7 +750,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
       {/* Action bar: only on the last assistant message of the turn, after streaming ends */}
       {!isStreaming && isLastAssistantInTurn && (
         <TurnChangeRollup
-          onReply={onReply ? () => onReply(message) : undefined}
+          onReply={onReply && replyTarget ? () => onReply(replyTarget) : undefined}
           timestamp={message.timestamp}
           content={turnCopyText ?? assistantMessageText(message)}
           changes={turnChanges}

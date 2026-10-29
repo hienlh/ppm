@@ -276,6 +276,8 @@ export function installDom(url = "http://localhost/"): void {
 
 export interface Mounted {
   container: HTMLElement;
+  /** Render a new element into the same root, as a parent passing new props would. */
+  rerender: (element: React.ReactNode) => Promise<void>;
   unmount: () => Promise<void>;
 }
 
@@ -295,6 +297,7 @@ export async function mount(element: React.ReactNode): Promise<Mounted> {
   await act(async () => { root.render(element); });
   return {
     container,
+    rerender: async (next) => { await act(async () => { root.render(next); }); },
     unmount: async () => {
       await act(async () => { root.unmount(); });
       container.remove();

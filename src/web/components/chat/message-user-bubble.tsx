@@ -37,7 +37,7 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
   onEdit?: () => void;
   onReply?: () => void;
   onJumpToReply?: (reply: ReplyReference) => void;
-  replyAvailable?: (reply: ReplyReference) => boolean;
+  replyAvailable?: boolean;
   isEditing?: boolean;
   sessionId?: string;
   providerId?: string;
@@ -80,7 +80,7 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
         : "max-w-[80%] bg-accent-wash border-accent-wash-border text-text",
       isEditing && "ring-2 ring-primary/60 border-primary/40",
     )}>
-      {replyTo && <ReplyCard reply={replyTo} onJump={replyAvailable?.(replyTo) ? () => onJumpToReply?.(replyTo) : undefined} unavailable={!replyAvailable?.(replyTo)} />}
+      {replyTo && <ReplyCard reply={replyTo} onJump={replyAvailable ? () => onJumpToReply?.(replyTo) : undefined} unavailable={!replyAvailable} />}
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
 
