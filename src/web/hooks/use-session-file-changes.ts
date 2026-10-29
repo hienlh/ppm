@@ -35,6 +35,10 @@ import {
 import type { ChatMessage } from "../../types/chat";
 import { SESSION_FILE_CHANGES_PUSH, type SessionFileChange, type SessionFileChangesPushEvent } from "../../shared/session-file-changes";
 
+// One array for "not asked yet", which is most chats: a fresh `[]` per render reached every
+// turn's action bar through the context and redrew them all on each render of the chat.
+const NO_FILES: SessionFileChange[] = [];
+
 export function useSessionFileChanges({ projectName, sessionId, messages, isStreaming }: {
   projectName: string;
   sessionId: string | null;
@@ -173,5 +177,5 @@ export function useSessionFileChanges({ projectName, sessionId, messages, isStre
 
   // A list fetched for the previous session is never shown under this one.
   const unloadedCount = Math.max(paths.length, count.key === key ? count.n : 0);
-  return { files: loaded ? state.files : [], paths, unloadedCount, loaded, loading: loadingKey === key && key !== "", refresh, setReviewed };
+  return { files: loaded ? state.files : NO_FILES, paths, unloadedCount, loaded, loading: loadingKey === key && key !== "", refresh, setReviewed };
 }
