@@ -15,29 +15,35 @@ export function useTabOverflow(scrollRef: RefObject<HTMLDivElement | null>): Tab
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
-  const updateScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    setCanScrollLeft(el.scrollLeft > 1);
-    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
-  }, [scrollRef]);
-
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    updateScroll();
-    el.addEventListener("scroll", updateScroll, { passive: true });
-    const ro = new ResizeObserver(updateScroll);
+    // Measured once a frame, whatever asked. The mutation observer fires straight after a
+    // commit, where reading a width lays out the whole page — on a project switch that is
+    // every transcript just put back on screen, and once per commit rather than once.
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      setCanScrollLeft(el.scrollLeft > 1);
+      setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    schedule();
+    el.addEventListener("scroll", schedule, { passive: true });
+    const ro = new ResizeObserver(schedule);
     ro.observe(el);
     // Also observe children changes (tabs added/removed)
-    const mo = new MutationObserver(updateScroll);
+    const mo = new MutationObserver(schedule);
     mo.observe(el, { childList: true, subtree: true });
     return () => {
-      el.removeEventListener("scroll", updateScroll);
+      cancelAnimationFrame(frame);
+      el.removeEventListener("scroll", schedule);
       ro.disconnect();
       mo.disconnect();
     };
-  }, [scrollRef, updateScroll]);
+  }, [scrollRef]);
 
   const scrollLeft = useCallback(() => {
     scrollRef.current?.scrollBy({ left: -150, behavior: "smooth" });
@@ -64,6 +70,13 @@ export function getHiddenUnreadDirection(
   notifications: Map<string, { count: number; type: string }>,
 ): { left: string | null; right: string | null } {
   if (!scrollEl) return { left: null, right: null };
+  // Called while the tab bar renders, where any geometry read is a forced layout: none at all
+  // unless some chat tab here has something unread.
+  const unread = tabs.some((tab) => {
+    const sessionId = tab.type === "chat" ? tab.metadata?.sessionId as string | undefined : undefined;
+    return !!sessionId && (notifications.get(sessionId)?.count ?? 0) > 0;
+  });
+  if (!unread) return { left: null, right: null };
   const viewLeft = scrollEl.scrollLeft;
   const viewRight = viewLeft + scrollEl.clientWidth;
   let leftType: string | null = null;

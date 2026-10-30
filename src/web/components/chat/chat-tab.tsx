@@ -26,9 +26,8 @@ import { AgentSessionProvider, normalizeProviderId } from "./agent-session-conte
 import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
 import { SessionChangesBar } from "./session-changes-bar";
 import { CONTINUE_AFTER_STOP, TurnStopBar } from "./turn-stop-bar";
-import { SessionChangesContext, type SessionChangesValue } from "./session-changes-context";
+import { SessionChangesContext, useSessionChangesValue } from "./session-changes-context";
 import { useSessionFileChanges } from "@/hooks/use-session-file-changes";
-import { openSessionReview } from "@/lib/session-file-changes-client";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
 import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
@@ -482,16 +481,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   }, [isConnected, reconnect, refetchMessages]);
 
   const sessionChanges = useSessionFileChanges({ projectName, sessionId, messages, isStreaming });
-  const openReview = useCallback((path?: string) => {
-    if (!sessionId) return;
-    openSessionReview({ projectName, sessionId, title: sessionTitle || undefined, providerId, paths: sessionChanges.paths, selectPath: path });
-  }, [projectName, sessionId, sessionTitle, providerId, sessionChanges.paths]);
   // Each turn's change tray answers the same list the bar shows.
-  const sessionChangesValue = useMemo((): SessionChangesValue | null => (
-    projectName && sessionId
-      ? { projectName, sessionId, files: sessionChanges.files, refresh: sessionChanges.refresh, openReview }
-      : null
-  ), [projectName, sessionId, sessionChanges.files, sessionChanges.refresh, openReview]);
+  const { value: sessionChangesValue, openReview } = useSessionChangesValue({
+    projectName, sessionId, title: sessionTitle || undefined, providerId, changes: sessionChanges,
+  });
 
   // `model`/`effort`/`thinking` are what change when a pick does; the picks sent are read
   // through `turnSettings`, which leaves out whatever the user has not chosen.

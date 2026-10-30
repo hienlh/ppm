@@ -3,14 +3,31 @@ import { Copy, Check } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { formatRelativeDate } from "@/lib/format-date";
 import { copyToClipboard } from "@/lib/clipboard";
+import { useRelativeTimeTick } from "@/hooks/use-relative-time-tick";
+
+// The fields `toLocaleString()` prints, in one formatter: a long chat draws hundreds of these.
+let fullDateFormat: Intl.DateTimeFormat | undefined;
 
 /** Full timestamp for the relative-time tooltip. */
 function fullDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleString();
+    fullDateFormat ??= new Intl.DateTimeFormat(undefined, {
+      year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric",
+    });
+    return fullDateFormat.format(new Date(iso));
   } catch {
     return "";
   }
+}
+
+/** The relative time, kept current on its own so the message around it is never redrawn for it. */
+function RelativeTime({ timestamp }: { timestamp: string }) {
+  useRelativeTimeTick();
+  return (
+    <time title={fullDate(timestamp)} className="pr-1 tabular-nums">
+      {formatRelativeDate(timestamp)}
+    </time>
+  );
 }
 
 /**
@@ -84,9 +101,7 @@ export function MessageActionBar({
         className,
       )}
     >
-      <time title={fullDate(timestamp)} className="pr-1 tabular-nums">
-        {formatRelativeDate(timestamp)}
-      </time>
+      <RelativeTime timestamp={timestamp} />
       <CopyButton content={content} />
       {children}
     </div>

@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Long chats no longer slow down while the AI is answering**: since 0.23.13 every streamed update, ten a second, redrew the whole conversation and parsed all of its Markdown again, so the longer the chat the slower PPM got. Only the message being written is redrawn now, and opening a chat draws each message once instead of twice.
+- **Switching projects no longer loads more of every chat's history each time**: a chat came back scrolled to its top after its project was switched away, which read as the reader scrolling up and fetched another page of older messages on every switch back — so each switch made the next one slower. Chats now come back where you left them.
+- **Switching tabs and projects and typing a `/` command are quicker in long chats**: the row of actions under each answer no longer redraws whenever anything in the chat changes, the tab bar no longer forces the whole page to be laid out each time its tabs change, and the message navigator no longer measures the conversation while it is closed. Times like "5m ago" now update by themselves.
+
 ## [0.23.22] - 2026-10-30
 
 ### Added

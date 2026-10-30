@@ -30,6 +30,22 @@ describe("MessageList reply wiring", () => {
       expect(view.container.textContent).not.toContain("Original message unavailable");
     } finally { await view.unmount(); }
   });
+  it("finds a quoted message that older history brings in later", async () => {
+    // The bubble decides "unavailable" while it renders, so the answer has to reach it again
+    // when the list changes under it, not just on the render that first asked.
+    // Not first in the list, so nothing else about this bubble changes when history arrives.
+    const between: ChatMessage = { id: "a0", role: "assistant", content: "unrelated", timestamp };
+    const quoting: ChatMessage = { id: "u2", role: "user", content: encodeReply("follow-up", reply), timestamp };
+    const list = (messages: ChatMessage[]) => <MessageList messages={messages} sessionId="s1" providerId="codex" pendingApproval={null} onApprovalResponse={() => {}} isStreaming={false} />;
+    const view = await mount(list([between, quoting]));
+    try {
+      expect(view.container.textContent).toContain("Original message unavailable");
+      await view.rerender(list([source, between, quoting]));
+      expect(view.container.textContent).not.toContain("Original message unavailable");
+      await click([...view.container.querySelectorAll("button")].find((button) => button.textContent === "Reply to you") ?? null);
+      expect(view.container.querySelector('[data-msg-index="0"]')?.className).toContain("ring-primary/40");
+    } finally { await view.unmount(); }
+  });
   it("replies to an earlier text segment when the last assistant segment is tool-only", async () => {
     const selected: ReplyReference[] = [];
     const messages: ChatMessage[] = [

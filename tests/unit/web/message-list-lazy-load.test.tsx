@@ -22,7 +22,7 @@ afterAll(uninstallDom);
  */
 interface FakeIo {
   fire: (intersecting: boolean) => void;
-  options: { rootMargin?: string };
+  options: { rootMargin?: string; root?: Element };
   observed: unknown[];
   disconnected: boolean;
 }
@@ -92,9 +92,12 @@ const render = async (over: Record<string, unknown> = {}) => {
   return view.container;
 };
 
-const fire = async () => {
+/** The top came into range, on a transcript `height` tall: happy-dom lays nothing out. */
+const fire = async (height = 600) => {
   const { act } = await import("react");
-  await act(async () => { live()[0]!.fire(true); });
+  const io = live()[0]!;
+  Object.defineProperty(io.options.root!, "clientHeight", { configurable: true, value: height });
+  await act(async () => { io.fire(true); });
 };
 
 describe("the top sentinel", () => {
@@ -163,6 +166,17 @@ describe("the top sentinel", () => {
     await render({ onExpandCompact: async (id: string, p: string) => { asked.push([id, p]); } });
     await fire();
     expect(asked).toEqual([["m0", JSONL]]);
+  });
+
+  it("fetches nothing while the transcript has no height, parked out of sight", async () => {
+    // A project switch unmounts the panel and parks the tab at 0×0, where the top always
+    // reads as in range: every switch back used to load another page of history.
+    const asked: string[] = [];
+    await render({ onExpandCompact: async (id: string) => { asked.push(id); } });
+    await fire(0);
+    expect(asked).toEqual([]);
+    await fire();
+    expect(asked).toEqual(["m0"]);
   });
 
   it("does not start a second fetch while the first is still running", async () => {
