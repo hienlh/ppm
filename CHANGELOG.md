@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.24] - 2026-10-31
+
+### Fixed
+
+- **A chat could send one of your earlier messages again by itself, and act on it.** When a Claude process died, PPM restarted it and re-sent a message to get going again — but it had already thrown away the record of what the chat was doing, so it reached back to the message that *opened* the chat, sometimes hours old, and handed it to Claude as if you had just typed it. On 30 October two chats in different projects replayed their opening instruction within a second of each other after the same crash. A replayed instruction runs for real, so one that published, deployed or changed a database would have done it a second time. A restart now resumes a turn that was interrupted, re-sends your message only when nothing of it had reached Claude yet, and sends nothing at all when the chat was simply idle.
+
 ## [0.23.23] - 2026-10-30
 
 ### Fixed
