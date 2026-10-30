@@ -227,6 +227,14 @@ interface StreamingSession {
   lastUserContent: string;
   /** Latest user message images — updated on follow-ups for accurate retry */
   lastUserImages?: Array<{ data: string; mediaType: string }>;
+  /**
+   * A user message has been pushed whose turn has not finished.
+   *
+   * A crash retry may only re-send a prompt while this is true. Without it the retry re-sent
+   * whatever content it could find into a session that was simply idle, and an instruction the
+   * user gave hours earlier ran a second time as a real turn.
+   */
+  awaitingReply?: boolean;
   /** The sign-in this subprocess was started with — see `SubprocessCredential`. */
   credential: SubprocessCredential;
 }
@@ -838,6 +846,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // Track latest message for retry paths (fixes stale firstMsg bug)
     ss.lastUserContent = modelInput;
     ss.lastUserImages = opts?.images;
+    ss.awaitingReply = true;
     log.debug(`pushMessage: session=${sessionId} priority=${opts?.priority ?? 'next'}`);
   }
 
@@ -1472,6 +1481,24 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const MAX_CRASH_RETRIES = 1;
       let crashRetryCount = 0;
 
+      /**
+       * What the crashed subprocess was doing, read off its session entry before that entry is
+       * deleted. Undefined until a crash. `awaiting` false means no turn was in flight, and a
+       * retry must then push nothing at all: the session is only being rebuilt so the next real
+       * message has somewhere to go.
+       */
+      let crashed: { content: string; images?: Array<{ data: string; mediaType: string }>; awaiting: boolean } | undefined;
+
+      // Once the turn has produced output (top-level assistant text/tool_use), the user
+      // message + any tool_results are persisted to JSONL. Mid-turn retries must resume and
+      // continue — NOT re-push the original message, which restarts the turn and re-displays
+      // an already-answered AskUserQuestion.
+      //
+      // Declared outside `crashRetryLoop` on purpose: inside it, a crash re-entered the loop
+      // body and cleared the very flag that keeps the retry from re-sending the prompt. It is
+      // reset at the end of each turn instead.
+      let turnProgressed = false;
+
       crashRetryLoop: for (;;) {
       try {
       // Streaming input: create message channel and persistent query.
@@ -1485,11 +1512,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         session_id: sessionId,
       };
 
-      // Once the turn has produced output (top-level assistant text/tool_use), the user
-      // message + any tool_results are persisted to JSONL. Mid-turn retries must resume and
-      // continue — NOT re-push the original message, which restarts the turn and re-displays
-      // an already-answered AskUserQuestion. Persists across retryLoop iterations.
-      let turnProgressed = false;
 
       // Build a retry message for token-refresh / transient-error retries.
       // Pre-turn (nothing persisted yet): re-push the LATEST user content so the SDK has a
@@ -1500,8 +1522,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Also returns the raw content/images for re-populating the new streaming session.
       const buildRetryMsg = () => {
         const ss = this.streamingSessions.get(sessionId);
-        const content = ss?.lastUserContent ?? modelInput;
-        const images = ss?.lastUserImages;
+        // `crashed` is the only source once the entry is gone: `?? modelInput` would otherwise
+        // reach past every follow-up to the message that opened the stream, hours earlier.
+        const content = ss?.lastUserContent ?? crashed?.content ?? modelInput;
+        const images = ss?.lastUserImages ?? crashed?.images;
         const retryContent = turnProgressed ? "Continue from where you left off." : content;
         return {
           msg: {
@@ -1522,9 +1546,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         : undefined;
       const channel = spare ? undefined : createMessageChannel();
       const initialCtrl = spare?.controller ?? channel!.controller;
-      // On crash retry, use buildRetryMsg to get the latest user message (not the stale firstMsg)
+      // On crash retry, use buildRetryMsg to get the latest user message (not the stale firstMsg).
+      // A crash with no turn in flight pushes NOTHING: the subprocess is replaced so the next real
+      // message has somewhere to go, and re-sending a finished instruction runs it a second time.
       const initRetry = crashRetryCount > 0 ? buildRetryMsg() : null;
-      initialCtrl.push(initRetry?.msg ?? firstMsg);
+      const resendOnCrash = crashRetryCount > 0 && crashed?.awaiting === true;
+      if (crashRetryCount === 0) initialCtrl.push(firstMsg);
+      else if (resendOnCrash && initRetry) initialCtrl.push(initRetry.msg);
+      else log.info(`session=${sessionId} crash retry rebuilt the subprocess with no turn to resume — nothing re-sent`);
       const initContent = initRetry?.lastUserContent ?? modelInput;
       const initImages = initRetry?.lastUserImages ?? opts?.images;
 
@@ -1539,7 +1568,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // The query's one start line: a warm CLI and the MCP servers belong to it.
       log.info(`query: session=${sessionId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`
         + ` cli=${spare ? `warm ageMs=${spare.ageMs}` : "cold"}${crashRetryCount > 0 ? ` crashRetry=${crashRetryCount}` : ""} mcp=${Object.keys(mcpServers).join(",") || "none"}`);
-      this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl, lastUserContent: initContent, lastUserImages: initImages, credential: queryCredential });
+      this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl, lastUserContent: initContent, lastUserImages: initImages, awaitingReply: crashRetryCount === 0 || resendOnCrash, credential: queryCredential });
       this.activeQueries.set(sessionId, initialQuery);
       let eventSource: AsyncIterable<any> = initialQuery;
       log.debug(`session=${sessionId} query() created, waiting for first SDK event...`);
@@ -2404,6 +2433,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             }
           }
 
+          // The turn is over: a crash from here on has nothing to resume, and must not re-send
+          // this instruction. `turnProgressed` goes with it, so the next turn starts clean.
+          const finished = this.streamingSessions.get(sessionId);
+          if (finished) finished.awaitingReply = false;
+          turnProgressed = false;
+
           // Streaming input: yield done for this turn, then continue for next turn
           yieldedDone = true;
           yield {
@@ -2451,10 +2486,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const crashMsg = (crashErr as Error).message ?? String(crashErr);
       const stderrInfo = stderrBuffer.trim() ? ` stderr: ${stderrBuffer.trim().slice(-500)}` : "";
 
-      // Clean up crashed subprocess before retry or error
+      // Clean up crashed subprocess before retry or error. Read what the turn was doing FIRST:
+      // the retry below needs it, and deleting the entry is what used to send it back to the
+      // message that opened the stream.
       this.activeQueries.delete(sessionId);
       const ss = this.streamingSessions.get(sessionId);
-      if (ss) { ss.controller.done(); ss.query.close(); this.streamingSessions.delete(sessionId); }
+      if (ss) {
+        crashed = { content: ss.lastUserContent, images: ss.lastUserImages, awaiting: ss.awaitingReply === true };
+        ss.controller.done(); ss.query.close(); this.streamingSessions.delete(sessionId);
+      } else {
+        crashed = { content: modelInput, images: opts?.images, awaiting: false };
+      }
       log.debug(`session=${sessionId} streaming session ended`);
 
       // Each case below logs itself: a cancel or a closed socket is not a failure.
