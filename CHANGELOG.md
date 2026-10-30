@@ -2,6 +2,12 @@
 
 ## [0.23.22] - 2026-10-30
 
+### Added
+
+- **`ppm.log` now answers "why is PPM using so much RAM" by itself, with nothing to turn on.** A summary every 30 minutes names this process, its children by program, the biggest child branches with the chat session each one serves, the busiest routes and the open sessions, terminals and LSP servers; a warning goes out the first time memory crosses each threshold, and a line marks every Claude or Codex subprocess starting and exiting. Route names are logged with ids, paths and tokens replaced.
+
+- **`PPM_MEM_DIAG=1` records more:** private bytes, handles and every child process with the chat it belongs to, the edge forwarder writes its own `mem-diag-edge.log`, and `scripts/mem-diag-report.ts` lines memory growth up against what was spawned and what was served.
+
 ### Fixed
 
 - **The server leaked about a transcript's size of memory every time a chat tab opened, until the machine ran out.** Reading a file through Bun's file stream never gave the memory back, so a day of tabs reconnecting took the server to 25 GB and every new Claude session died at start. Transcripts, chat images, the app's own files, downloads and imported files are now read and sent in a way that returns it.
