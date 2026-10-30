@@ -63,6 +63,49 @@ describe("async question card", () => {
     finally { await view.unmount(); input.remove(); }
   });
 
+  it("leaves focus in another card when it re-renders", async () => {
+    // Two chats side by side, each waiting on its own question: the second card re-renders for
+    // reasons of its own (its chat updates, a pane gains focus) while the user types in the first.
+    const { act } = await import("react");
+    let rerenderSecond = () => {};
+    function TwoCards() {
+      const [tick, setTick] = useState(0);
+      rerenderSecond = () => setTick((value) => value + 1);
+      return <>
+        <QuestionCard questions={questions} onSubmit={() => {}} onSkip={() => {}} />
+        <div data-tick={tick}><QuestionCard questions={questions} onSubmit={() => {}} onSkip={() => {}} /></div>
+      </>;
+    }
+    const view = await mount(<TwoCards />);
+    try {
+      const [firstInput] = Array.from(view.container.querySelectorAll("input"));
+      firstInput!.focus();
+      await act(async () => { rerenderSecond(); });
+      expect(document.activeElement).toBe(firstInput);
+    } finally { await view.unmount(); }
+  });
+
+  it("does not focus itself again after the user moves elsewhere", async () => {
+    // Focusing scrolls the card into view, and the chat re-renders as soon as the user scrolls up
+    // (it tracks whether the list is at the bottom). Re-focusing then pinned the list to the card.
+    const { act } = await import("react");
+    let rerender = () => {};
+    function Card() {
+      const [tick, setTick] = useState(0);
+      rerender = () => setTick((value) => value + 1);
+      return <div data-tick={tick}><QuestionCard questions={questions} onSubmit={() => {}} onSkip={() => {}} /></div>;
+    }
+    const composer = document.createElement("textarea");
+    document.body.appendChild(composer);
+    const view = await mount(<Card />);
+    try {
+      expect(view.container.contains(document.activeElement)).toBe(true);
+      composer.focus();
+      await act(async () => { rerender(); });
+      expect(document.activeElement).toBe(composer);
+    } finally { await view.unmount(); composer.remove(); }
+  });
+
   it("does not offer a submit action without a connected sender", async () => {
     const view = await mount(<AsyncQuestionCard itemId="ask-1" questions={questions} />);
     try {

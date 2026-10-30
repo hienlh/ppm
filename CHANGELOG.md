@@ -6,6 +6,19 @@
 
 - **A Claude chat's "Chat completed" notification quoted the previous turn's answer.** Claude keeps one stream for every turn of a session, and the answer a notification quotes was reset only when that stream started or a tool ran. So a follow-up's notification began with the last turn's text — after a long answer it held nothing else — and a turn that wrote nothing quoted the previous answer as its own. Each turn now quotes only what it wrote.
 
+## [0.23.21] - 2026-10-26
+
+### Fixed
+
+- **A pending AI question no longer takes focus back**: two chats waiting on questions side by side can each be answered, and the chat above a question can be scrolled up to read.
+
+## [0.23.20] - 2026-10-26
+
+### Fixed
+
+- **On Windows the server no longer freezes for up to a minute and gets restarted**: PPM started from autostart now runs at normal memory and disk priority.
+- **Stall logs now say what the server was waiting on**, so the cause of a freeze is on record after a restart.
+
 ## [0.23.19] - 2026-10-26
 
 ### Fixed
