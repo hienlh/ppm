@@ -243,6 +243,14 @@ export function getTaskXmlPath(): string {
  *
  * ExecutionTimeLimit must be PT0S (unlimited): schtasks would have defaulted to
  * PT72H and killed the supervisor after three days of uptime.
+ *
+ * Priority must be 5 (normal), not the Task Scheduler's default 7. Priority 7 starts the
+ * process below normal on CPU *and* at memory priority 2 and I/O priority Low, and every
+ * child inherits that. Windows then trims the server's pages first and reads them back
+ * at the lowest I/O priority, so the event loop sat in a page-in for 20-60s at a time on
+ * an idle machine — long enough for the supervisor's health check to kill the server.
+ * `process-priority.ts` also raises a running process, which covers tasks registered
+ * before this changed.
  */
 export function generateTaskXml(vbsPath: string, userId = getCurrentWindowsUserId()): string {
   const user = escapeXml(userId);
@@ -282,7 +290,7 @@ export function generateTaskXml(vbsPath: string, userId = getCurrentWindowsUserI
     <RunOnlyIfIdle>false</RunOnlyIfIdle>
     <WakeToRun>false</WakeToRun>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>7</Priority>
+    <Priority>5</Priority>
   </Settings>
   <Actions Context="Author">
     <Exec>

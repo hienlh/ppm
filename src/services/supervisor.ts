@@ -41,6 +41,9 @@ import {
 } from "./edge-target-resolver.ts";
 import { EDGE_PRIOR_DEATHS_ENV } from "./edge-forwarder.ts";
 import { PLIST_LABEL } from "./autostart-generator.ts";
+import { logPriorityRaise } from "./process-priority.ts";
+import { readThreadSnapshot, describeThreadSnapshot, type ThreadSnapshot } from "./process-thread-snapshot.ts";
+import { readMachineCpuTimes, machineBusyFraction, type MachineCpuTimes } from "./machine-cpu.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 const MAX_RESTARTS = 10;
@@ -1193,6 +1196,41 @@ async function runDbBackupTick(reason: "hourly" | "start"): Promise<void> {
 }
 
 // ─── Health checks ─────────────────────────────────────────────────────
+
+/**
+ * The server and the machine as of the last probe, so a failed probe can report rates
+ * over the 30s before it rather than totals since boot.
+ */
+let serverBaseline: { pid: number; thread: ThreadSnapshot | null; machine: MachineCpuTimes | null } | null = null;
+
+async function recordServerBaseline(pid: number | undefined): Promise<void> {
+  if (!pid) return;
+  serverBaseline = { pid, thread: await readThreadSnapshot(pid), machine: readMachineCpuTimes() };
+}
+
+/**
+ * What the server is doing while it does not answer: its main thread's wait, the
+ * page faults that went to disk and its CPU since the last probe, and how busy the
+ * machine was. A failed probe used to say only "timeout", which left a 60s stall with
+ * no cause on record once the server was restarted.
+ */
+async function describeUnresponsiveServer(pid: number | undefined): Promise<string> {
+  if (!pid) return "";
+  try {
+    const thread = await readThreadSnapshot(pid);
+    const machine = readMachineCpuTimes();
+    const before = serverBaseline?.pid === pid ? serverBaseline : null;
+    const parts: string[] = [];
+    if (thread) parts.push(describeThreadSnapshot(thread, before?.thread));
+    const busy = machineBusyFraction(before?.machine ?? null, machine);
+    if (busy !== null) parts.push(`machine cpu ${Math.round(busy * 100)}%`);
+    serverBaseline = { pid, thread, machine };
+    return parts.filter(Boolean).join(", ");
+  } catch {
+    return "";
+  }
+}
+
 function startServerHealthCheck() {
   healthTimer = setInterval(async () => {
     if (shuttingDown || getState() === "stopped") return;
@@ -1232,14 +1270,16 @@ function startServerHealthCheck() {
       const res = await fetch(`http://127.0.0.1:${checkPort}/api/health`, {
         signal: AbortSignal.timeout(5000),
       });
-      if (res.ok) { healthFailCount = 0; return; }
+      if (res.ok) { healthFailCount = 0; await recordServerBaseline(serverChild?.pid); return; }
       lastProbe = `HTTP ${res.status}`;
     } catch (e) {
       const err = e as { name?: string; code?: string; message?: string } | null;
       lastProbe = err?.name === "TimeoutError" ? "timeout after 5s" : err?.code ?? err?.message ?? String(e);
     }
     healthFailCount++;
-    log("DEBUG", `Server health probe on port ${checkPort} failed (${healthFailCount}/${SERVER_HEALTH_FAIL_THRESHOLD}): ${lastProbe}`);
+    // Read while the server is still not answering: the main thread's wait is the cause.
+    const waitingOn = await describeUnresponsiveServer(serverChild?.pid);
+    log("WARN", `Server health probe on port ${checkPort} failed (${healthFailCount}/${SERVER_HEALTH_FAIL_THRESHOLD}): ${lastProbe}${waitingOn ? ` — ${waitingOn}` : ""}`);
     if (healthFailCount >= SERVER_HEALTH_FAIL_THRESHOLD && serverChild) {
       log("ERROR", `Server unresponsive for ${healthFailCount}×${SERVER_HEALTH_INTERVAL_MS / 1000}s (last probe: ${lastProbe}) — killing PID ${serverChild.pid}`);
       const pid = serverChild.pid;
@@ -2020,6 +2060,8 @@ export async function runSupervisor(opts: {
   const logFd = openSync(logFile(), "a");
   startLogRotation();
   log("INFO", `Supervisor started (PID: ${process.pid}, port: ${opts.port}, share: ${opts.share})`);
+  // Before any child is spawned: every child inherits these, the server included.
+  await logPriorityRaise("supervisor", (m) => log("WARN", m));
 
   // ── Systemd self-heal: if the unit file is stale (e.g. still has
   // Restart=on-failure), we were likely spawned by the old Bun.spawn()

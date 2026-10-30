@@ -44,6 +44,21 @@ describe("telling our own stall from someone else's", () => {
     expect(classifyLag(5000, 40)).toBe("starved");
   });
 
+  it("calls a gap off the CPU with free cores blocked, not starved", () => {
+    // 23s late, 0.5s of CPU, machine 13% busy: nobody took the CPU from us — the
+    // main thread was waiting, on 26/10/2026 for pages read back from disk. Calling
+    // that starvation pointed at the one explanation that was wrong.
+    expect(classifyLag(23_000, 480, 0.13)).toBe("blocked");
+    expect(classifyLag(23_000, 480, 0.95)).toBe("starved");
+    // Without a machine reading it stays what it always was.
+    expect(classifyLag(23_000, 480, null)).toBe("starved");
+  });
+
+  it("does not let the machine reading change a verdict about our own work", () => {
+    expect(classifyLag(5000, 4800, 0.05)).toBe("self");
+    expect(classifyLag(1000, 450, 0.05)).toBe("mixed");
+  });
+
   it("does not force a verdict on a gap that was half and half", () => {
     expect(classifyLag(1000, 450)).toBe("mixed");
   });
@@ -81,6 +96,13 @@ describe("turning one tick into a sample", () => {
   it("carries the resident set, so a stall that is really GC pressure shows it", () => {
     const s = sampleFromTick({ ...base, elapsedMs: TICK_MS + 400, rssBytes: 1536 * 1048576 });
     expect(s!.rssMb).toBe(1536);
+  });
+
+  it("carries the machine's CPU across the gap, and uses it for the verdict", () => {
+    const s = sampleFromTick({ ...base, elapsedMs: TICK_MS + 20_000, cpuMicros: 300_000, machineBusy: 0.127 });
+    expect(s!.machineCpuPct).toBe(13);
+    expect(s!.cause).toBe("blocked");
+    expect(sampleFromTick({ ...base, elapsedMs: TICK_MS + 400 })!.machineCpuPct).toBeUndefined();
   });
 });
 
@@ -148,6 +170,18 @@ describe("leaving a trace in ppm.log", () => {
         "[event-loop] Event loop stalled 18900ms (cause=starved, cpu=40ms, rss=512MB)",
         `[event-loop] Event loop stalled 3000ms (cause=starved, cpu=40ms, rss=512MB) (+1 more of ${LOG_STALL_MS}ms+ since the last one logged)`,
       ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("puts the machine's CPU in the line when it was measured", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      logLongStall({ at: 9_000_000, lagMs: 23_670, cpuMs: 484, rssMb: 1126, machineCpuPct: 13, cause: "blocked" });
+      expect(String(warn.mock.calls[0]?.[0])).toBe(
+        "[event-loop] Event loop stalled 23670ms (cause=blocked, cpu=484ms, machineCpu=13%, rss=1126MB)",
+      );
     } finally {
       warn.mockRestore();
     }

@@ -373,3 +373,33 @@ append-mode descriptor it hands the server. `tests/unit/cli/windows-launch-log-r
 fails if either call site points the redirect back at `ppm.log`. `ppm.err.log` is still
 overwritten on each start. It only duplicates the supervisor's own lines plus a crash trace from
 the last run.
+
+## A Task Scheduler task at priority 7 demotes memory and I/O, not just CPU (2026-10-26)
+
+PPM's autostart task was registered with the scheduler's default `<Priority>7</Priority>`. That
+starts the supervisor below normal on CPU **and** at memory priority 2 (normal is 5) and I/O
+priority Low (normal is Normal), and every child inherits all three: the server, every
+`claude`/`codex` process, every terminal. Windows takes pages from a low-memory-priority process
+first and reads them back at that process's I/O priority, so the server's event loop sat in
+page-in waits for 20-60s at a time, several times an hour, until the supervisor's health check
+killed it (three restarts in 40 minutes on 26/10).
+
+It was invisible to every log PPM kept. The lag monitor called each one `cause=starved` because
+the process had used little CPU, and "starved" means the CPU went to someone else — but the
+machine was at 13%. An outside watcher reading the main thread once a second found it in
+`PageIn` for 23s on an idle NVMe disk. Three things changed:
+
+- The task is registered at priority 5, and the supervisor and server raise themselves to normal
+  at start (`process-priority.ts`), which covers tasks registered before. Only raising: a
+  priority set higher on purpose is left alone. A demoted start is logged as a `WARN`.
+- The lag monitor measures the machine's CPU across a stall and says `cause=blocked` when there
+  were free cores — the thread was waiting on a page-in, a disk read, a lock or a synchronous
+  child, not starved.
+- A failed health probe logs, from the supervisor, what the server's main thread is waiting on
+  (`process-thread-snapshot.ts`: one `NtQuerySystemInformation` call on Windows, `/proc` on
+  Linux), its hard page faults and CPU since the last probe, and the machine's CPU. That line is
+  written while the server is still stalled, which is the only moment the cause can be read.
+
+To check a running PPM: `GetProcessInformation(ProcessMemoryPriority)` and
+`NtQueryInformationProcess(ProcessIoPriority = 33)` on its pid; Task Manager shows only the CPU
+class.

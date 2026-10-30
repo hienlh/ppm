@@ -877,6 +877,14 @@ if (process.argv.includes("__serve__")) {
   }
 
   await setupLogFile();
+  // Before any child is spawned (they inherit it). The supervisor raises its own first,
+  // so this only fires for a server started some other way.
+  {
+    const { logPriorityRaise } = await import("../services/process-priority.ts");
+    const { createLogger } = await import("../services/logger.ts");
+    const priorityLog = createLogger("priority");
+    await logPriorityRaise("server", (m) => priorityLog.warn(m));
+  }
   configService.load();
   await followLogLevelConfig();
   (await import("../services/memory-diagnostics.ts")).startMemoryDiagnostics();

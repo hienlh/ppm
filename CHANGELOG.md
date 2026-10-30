@@ -8,6 +8,19 @@
 
 - **Brave was listed as Chrome among the devices that get push.** Brave's user agent is Chrome's, so "This device" and the saved device both said "Chrome on macOS", and a Mac with push on in both browsers showed two identical rows. The name now says Brave. A device turned on before this keeps its old name until push is turned off and on again in it.
 
+## [0.23.21] - 2026-10-26
+
+### Fixed
+
+- **A pending AI question no longer takes focus back**: two chats waiting on questions side by side can each be answered, and the chat above a question can be scrolled up to read.
+
+## [0.23.20] - 2026-10-26
+
+### Fixed
+
+- **On Windows the server no longer freezes for up to a minute and gets restarted**: PPM started from autostart now runs at normal memory and disk priority.
+- **Stall logs now say what the server was waiting on**, so the cause of a freeze is on record after a restart.
+
 ## [0.23.19] - 2026-10-26
 
 ### Fixed
