@@ -323,6 +323,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/settings/ai/providers/status`
 - `POST   /api/settings/ai/providers/:id/probe`
 - `GET    /api/settings/ai/providers/:id/models`
+- `GET    /api/settings/ai/providers/:id/effort-status`
 - `GET    /api/settings/keybindings`
 - `PUT    /api/settings/keybindings`
 - `GET    /api/settings/telegram`
@@ -490,4 +491,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.23.22 -->
+<!-- Generated from src/server/routes/ for PPM v0.23.23 -->
