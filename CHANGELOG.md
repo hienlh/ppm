@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **Push could not be turned on in Brave, and the pane said only "Registration failed - push service error".** Brave delivers push through Google's service and keeps it off until "Use Google services for push messaging" is turned on in brave://settings/privacy; the pane now says so, and to restart Brave and turn push on again. In other browsers that cannot reach their push service, the pane names the service (Google's for Chrome, Mozilla's for Firefox, Apple's for Safari) and what may be blocking it, and gives up after a minute: Chrome never answers on a network that blocks Google's service, which left the switch stuck for good. Firefox with `dom.push.enabled` off in about:config is told to turn it on. The message stays under the switch instead of in a toast that was gone in four seconds, and while the browser registers the pane says it is waiting, which just after the browser starts takes about half a minute.
+
+- **Brave was listed as Chrome among the devices that get push.** Brave's user agent is Chrome's, so "This device" and the saved device both said "Chrome on macOS", and a Mac with push on in both browsers showed two identical rows. The name now says Brave. A device turned on before this keeps its old name until push is turned off and on again in it.
+
 - **A Claude chat's "Chat completed" notification quoted the previous turn's answer.** Claude keeps one stream for every turn of a session, and the answer a notification quotes was reset only when that stream started or a tool ran. So a follow-up's notification began with the last turn's text — after a long answer it held nothing else — and a turn that wrote nothing quoted the previous answer as its own. Each turn now quotes only what it wrote.
 
 ## [0.23.21] - 2026-10-26
