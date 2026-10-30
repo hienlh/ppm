@@ -314,6 +314,22 @@ settingsRoutes.get("/ai/providers/:id/models", async (c) => {
   }
 });
 
+/**
+ * GET /settings/ai/providers/:id/effort-status — what overrides the default effort outside PPM for
+ * every project: the user settings and the environment PPM runs in. A project's own settings can
+ * add more, which the chat's picker reports. `status` is null for a provider nothing overrides.
+ */
+settingsRoutes.get("/ai/providers/:id/effort-status", (c) => {
+  const id = c.req.param("id");
+  const provider = providerRegistry.get(id);
+  if (!provider) return c.json(err(`Provider "${id}" not found`), 404);
+  try {
+    return c.json(ok({ status: provider.estimateEffortStatus?.(undefined, c.req.query("model") || undefined) ?? null }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 // ── Keybindings ──────────────────────────────────────────────────────
 
 const KEYBINDINGS_KEY = "keybindings";

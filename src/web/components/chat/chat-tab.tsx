@@ -9,6 +9,7 @@ import { splitAttachmentMarkers } from "@/lib/attachment-marker-split";
 import type { ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useChat } from "@/hooks/use-chat";
 import { useChatPrewarm } from "@/hooks/use-chat-prewarm";
+import { useEffortStatus } from "@/hooks/use-effort-status";
 import { useUsage } from "@/hooks/use-usage";
 import { useDesignSessionRedirect } from "@/hooks/use-design-session-redirect";
 import { useTabStore } from "@/stores/tab-store";
@@ -457,6 +458,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     setModel,
     effort,
     setEffort,
+    effortStatus: sessionEffortStatus,
     thinking,
     setThinking,
     turnSettings,
@@ -479,6 +481,14 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     if (!isConnected) reconnect();
     refetchMessages();
   }, [isConnected, reconnect, refetchMessages]);
+
+  const effortStatus = useEffortStatus({
+    projectName,
+    // Not while the provider is still a guess: the answer would be about another provider.
+    providerId: preparation.pending ? undefined : preparation.providerId ?? providerId,
+    model,
+    sessionStatus: sessionEffortStatus,
+  });
 
   const sessionChanges = useSessionFileChanges({ projectName, sessionId, messages, isStreaming });
   // Each turn's change tray answers the same list the bar shows.
@@ -1485,6 +1495,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             model={model}
             onModelChange={!preparation?.pending && !firstSendPending ? setModel : undefined}
             effort={effort}
+            effortStatus={effortStatus}
             onEffortChange={setEffort}
             thinking={thinking}
             onThinkingChange={setThinking}

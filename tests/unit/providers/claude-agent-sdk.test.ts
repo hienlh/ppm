@@ -373,6 +373,16 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(opts.settingSources).toEqual(["user", "project"]);
     });
 
+    it("starts the MCP control query on the same settings files as a chat", () => {
+      mockQueryFn.mockReturnValue(createMockQueryIterator([]));
+      const control = provider.openMcpControlQuery("/tmp/my-project");
+      try {
+        expect(mockQueryFn.mock.calls[0]![0].options.settingSources).toEqual(["user", "project"]);
+      } finally {
+        control.close();
+      }
+    });
+
     it("includes Agent, Skill, TodoWrite, ToolSearch in allowedTools", async () => {
       mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
       const session = await provider.createSession({});
@@ -900,6 +910,52 @@ describe("ClaudeAgentSdkProvider", () => {
     });
   });
 
+  describe("readEffortStatus", () => {
+    /** A CLI whose settings put the effort at Max whatever `--effort` it was started with. */
+    function cliAtMax() {
+      return Object.assign(createMockQueryIterator([
+        { type: "system", subtype: "init", session_id: "sdk-1" },
+        { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } },
+        { type: "result", subtype: "success" },
+      ]), {
+        getSettings: async () => ({
+          sources: [{ source: "userSettings", settings: { env: { CLAUDE_CODE_EFFORT_LEVEL: "max" } } }],
+          applied: { model: "claude-opus-5-5", effort: "max" },
+        }),
+        initializationResult: async () => ({
+          models: [{ value: "default", resolvedModel: "claude-opus-5-5", supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] }],
+        }),
+      });
+    }
+
+    it("asks the running CLI, and sets its answer beside the effort the CLI was started with", async () => {
+      mockQueryFn.mockReturnValue(cliAtMax());
+      const session = await provider.createSession({});
+      let status: unknown;
+      for await (const event of provider.sendMessage(session.id, "hi", { effort: "high" })) {
+        if (event.type === "system" && (event as any).subtype === "init") status = await provider.readEffortStatus(session.id);
+      }
+      expect(mockQueryFn.mock.calls[0]![0].options.effort).toBe("high");
+      expect(status).toMatchObject({
+        env: { value: "max", source: "userSettings" },
+        observed: { requested: "high", applied: "max", model: "claude-opus-5-5" },
+        supported: ["low", "medium", "high", "xhigh", "max"],
+      });
+    });
+
+    it("answers null with no subprocess to ask, or one that cannot say", async () => {
+      expect(await provider.readEffortStatus("no-such-session")).toBeNull();
+      const silent = Object.assign(cliAtMax(), { getSettings: async () => { throw new Error("unknown control request"); } });
+      mockQueryFn.mockReturnValue(silent);
+      const session = await provider.createSession({});
+      let status: unknown = "not asked";
+      for await (const event of provider.sendMessage(session.id, "hi")) {
+        if (event.type === "system" && (event as any).subtype === "init") status = await provider.readEffortStatus(session.id);
+      }
+      expect(status).toBeNull();
+    });
+  });
+
   describe("approval timeout", () => {
     it("auto-denies AskUserQuestion after timeout", async () => {
       let canUseToolFn: any;
@@ -938,6 +994,86 @@ describe("ClaudeAgentSdkProvider", () => {
       // But since our mock doesn't call canUseTool, just verify the stream completes
       const done = events.find((e) => e.type === "done");
       expect(done).toBeTruthy();
+    });
+  });
+
+  describe("an approval the CLI is waiting on", () => {
+    const question = {
+      questions: [{ question: "Ticket?", header: "Ticket", multiSelect: false, options: [{ label: "None", description: "" }, { label: "SAL-1", description: "" }] }],
+    };
+
+    /**
+     * A CLI that asks once its turn's last message is out and then sends nothing until it hears
+     * back: the order that left questions unseen until the user cancelled.
+     */
+    function askingCli(toolUse: { name: string; input: unknown }, ask: (options: any) => Promise<unknown>) {
+      const verdicts: unknown[] = [];
+      mockQueryFn.mockImplementation(({ prompt, options }: any) => {
+        const input = prompt[Symbol.asyncIterator]();
+        return {
+          close: mock(() => {}),
+          async *[Symbol.asyncIterator]() {
+            if ((await input.next()).done) return;
+            yield { type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_ask", ...toolUse }] } };
+            await Bun.sleep(10);
+            verdicts.push(await ask(options));
+            yield { type: "result", subtype: "success" };
+          },
+        };
+      });
+      return verdicts;
+    }
+
+    /** The turn's first approval request, or null if none comes within a second. */
+    async function firstApproval(stream: AsyncIterator<ChatEvent>): Promise<any> {
+      const deadline = Bun.sleep(1000).then(() => null);
+      for (;;) {
+        const step = await Promise.race([stream.next(), deadline]);
+        if (!step || step.done) return null;
+        if (step.value.type === "approval_request") return step.value;
+      }
+    }
+
+    async function rest(stream: AsyncIterator<ChatEvent>): Promise<ChatEvent[]> {
+      const events: ChatEvent[] = [];
+      for (let step = await stream.next(); !step.done; step = await stream.next()) events.push(step.value);
+      return events;
+    }
+
+    /** Lets a turn that never surfaced its approval finish, so a failure does not hang the file. */
+    function releaseApprovals() {
+      for (const id of [...((provider as any).pendingApprovals as Map<string, unknown>).keys()]) provider.resolveApproval(id, false);
+    }
+
+    it("hands out an AskUserQuestion at once, and the answer reaches the CLI", async () => {
+      const verdicts = askingCli({ name: "AskUserQuestion", input: question }, (options) => options.canUseTool("AskUserQuestion", question));
+      const session = await provider.createSession({});
+      const stream = provider.sendMessage(session.id, "commit it")[Symbol.asyncIterator]();
+      try {
+        const asked = await firstApproval(stream);
+        expect(asked).toMatchObject({ type: "approval_request", tool: "AskUserQuestion", input: question });
+        provider.resolveApproval(asked.requestId, true, { "Ticket?": "None" });
+        expect((await rest(stream)).some((e) => e.type === "done")).toBe(true);
+        expect(verdicts).toEqual([{ behavior: "allow", updatedInput: { ...question, answers: { "Ticket?": "None" } } }]);
+      } finally {
+        releaseApprovals();
+      }
+    });
+
+    it("hands out a tool approval from the permission hook at once", async () => {
+      const bash = { command: "git commit -m x" };
+      const verdicts = askingCli({ name: "Bash", input: bash }, (options) => permissionHook(options)({ tool_name: "Bash", tool_input: bash }));
+      const session = await provider.createSession({});
+      const stream = provider.sendMessage(session.id, "commit it", { permissionMode: "default" })[Symbol.asyncIterator]();
+      try {
+        const asked = await firstApproval(stream);
+        expect(asked).toMatchObject({ type: "approval_request", tool: "Bash", input: bash });
+        provider.resolveApproval(asked.requestId, true);
+        expect((await rest(stream)).some((e) => e.type === "done")).toBe(true);
+        expect(verdicts).toEqual([preToolUseDecision("allow")]);
+      } finally {
+        releaseApprovals();
+      }
     });
   });
 
@@ -1328,7 +1464,7 @@ describe("ClaudeAgentSdkProvider", () => {
 
     /**
      * Every CLI `query` starts: each reads one message, starts `during` and reports a status
-     * while it runs (the provider hands out queued approvals as messages arrive), then answers.
+     * while it runs, then answers.
      */
     function cliFactory(during?: (options: any) => Promise<void>) {
       const clis: Array<{ options: any; pushed: any[]; close: ReturnType<typeof mock> }> = [];

@@ -106,6 +106,14 @@ export interface AIProvider {
   getUsage?(sessionId?: string, pickedAccountId?: string): Promise<UsageInfo>;
   /** True when a live streaming subprocess exists for this session */
   hasStreamingSession?(sessionId: string): boolean;
+  /**
+   * The effort the session's live subprocess sends and what overrides the pick there; null
+   * when none is running or it cannot say. Only providers whose effort can be overridden
+   * outside PPM implement it.
+   */
+  readEffortStatus?(sessionId: string): Promise<import("../shared/effort-status").EffortStatus | null>;
+  /** The same overrides, worked out from settings files for a session nothing has started yet. */
+  estimateEffortStatus?(projectPath: string | undefined, model?: string): import("../shared/effort-status").EffortStatus;
   /** Prompt-cache lifetime for this session, in ms — how long holding its subprocess pays. */
   promptCacheTtlMs?(sessionId: string): number;
 }

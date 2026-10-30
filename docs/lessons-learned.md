@@ -57,13 +57,13 @@ env: {
 
 ### Project-local Claude settings restrict tools
 
-**Problem**: Projects may have `.claude/settings.local.json` with restrictive `permissions.allow` lists (e.g., only `Bash(python:*)`, `Bash(ls:*)`). Even with `permissionMode: "bypassPermissions"`, the SDK CLI still reads these and restricts available tools.
+**Problem**: A project's `.claude/settings.local.json` changes what a chat may do once the CLI loads it. Measured in PR #60's review: a `deny: ["Bash"]` there hid Bash from the model even with `permissionMode: "bypassPermissions"`, and an `env` with `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY` ran the chat on that key instead of the PPM account. A restrictive `permissions.allow` list, the case first written up here, restricts nothing under bypass: with `allow: ["Read"]`, Bash still ran.
 
-**Fix**: Override with explicit empty settings and no setting sources:
+**Fix**: Leave the local file out of the sources a chat loads, `CLAUDE_SETTING_SOURCES` in `claude-agent-sdk-query-options.ts`:
 ```ts
-settings: { permissions: { allow: [], deny: [] } },
-settingSources: [],
+settingSources: ["user", "project"],
 ```
+The empty `settings: { permissions: { allow: [], deny: [] } }` PPM also passes cancels neither of those, so the source list is the guard — for the local file only. The project's own `.claude/settings.json`, which `project` loads, can deny tools and set `env` the same way (measured in the same review).
 
 ---
 
@@ -76,6 +76,16 @@ settingSources: [],
 **Fix**: Pass `executable: "node"` in SDK query options. Forces SDK to spawn `node cli.js` instead of `bun cli.js`. Node is always in PATH on Windows.
 
 **File**: `src/providers/claude-agent-sdk.ts` — `queryOptions` in `sendMessage()`
+
+---
+
+### An approval the CLI asks for must wake the turn's loop
+
+**Problem**: An AskUserQuestion often never showed (7 of the 10 in the session trace from 2026-10-16 to 2026-10-22). The chat sat on "thinking" until the user cancelled, and only then did the question card appear, for a turn that was already over. In one session the trace has the `tool_use` at 08:31:08 and its `approval_request` at 08:48:09, one line after `turn_aborted`. Tool approvals outside bypass mode go through the same queue and could hang the same way.
+
+**Root cause**: `canUseTool` and the PreToolUse hook queue their `approval_request`, and the loop over the SDK's messages handed the queue out only when the next message arrived. The CLI asks through a control request and then sends nothing until it is answered. If its last message for the turn was processed before the callback ran, there was no next message, so neither side ever moved. `approvalNotify` had been declared for exactly this and never assigned. It looked intermittent because whether the trailing message landed before or after the callback was a race.
+
+**Fix**: `ApprovalQueue.alongside()` (`src/providers/claude-approval-queue.ts`) wakes the loop with `APPROVAL_WAKE` whenever something is queued while the SDK is silent. It keeps the one outstanding `next()` across wakes, and it does not await `return()` when left with that `next()` still out, because an async generator's `return()` waits behind it.
 
 ---
 

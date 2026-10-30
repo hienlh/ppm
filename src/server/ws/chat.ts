@@ -24,6 +24,8 @@ import { isAsyncAgentLaunchAck, isTerminalAgentStatus } from "../../shared/backg
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
 import { needsAuthServerNames } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
 import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
+import { refreshEffortStatus, sessionEffortStatus } from "./chat-effort-status.ts";
+import type { EffortStatus } from "../../shared/effort-status.ts";
 import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
@@ -114,6 +116,11 @@ function resolveSessionEffort(sessionId: string): string | undefined {
   return getSessionEffort(sessionId) ?? sessionProviderConfig(sessionId)?.effort;
 }
 
+/** What overrides the effort shown in session_state, if anything does. */
+function resolveEffortStatus(sessionId: string, entry: SessionEntry): EffortStatus | null {
+  return sessionEffortStatus(providerRegistry.get(entry.providerId), entry, resolveSessionModel(sessionId));
+}
+
 /** Whether thinking is effectively ON: per-session override wins, else provider config, else SDK default. */
 function resolveSessionThinkingEnabled(sessionId: string): boolean {
   return isThinkingEnabled(
@@ -196,6 +203,8 @@ interface SessionEntry {
   compactStatus?: "compacting" | null;
   /** MCP servers the subprocess reported as `needs-auth` at init — drives the chat's sign-in bar */
   mcpNeedsAuth?: string[];
+  /** What the subprocess said at the last turn's start about the effort it sends — see chat-effort-status.ts */
+  effortStatus?: EffortStatus;
   /** toolUseIds of Bash/Agent calls launched with run_in_background — their spy outlives the tool_result */
   backgroundToolUseIds?: Set<string>;
   /** Nested-agent children buffered into turnEvents this turn (see MAX_NESTED_TURN_EVENTS) */
@@ -957,9 +966,20 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       // System events → transition connecting → thinking, forward compact events
       if (evType === "system") {
         const sub = (ev as any).subtype;
-        if (sub === "init" && Array.isArray(ev.mcpServers)) {
-          entry.mcpNeedsAuth = needsAuthServerNames(ev.mcpServers);
-          broadcast(sessionId, mcpStatusEvent(entry.mcpNeedsAuth));
+        if (sub === "init") {
+          if (Array.isArray(ev.mcpServers)) {
+            entry.mcpNeedsAuth = needsAuthServerNames(ev.mcpServers);
+            broadcast(sessionId, mcpStatusEvent(entry.mcpNeedsAuth));
+          }
+          // Not awaited: the turn goes on while the CLI answers.
+          void refreshEffortStatus({
+            sessionId,
+            session: entry,
+            provider: providerRegistry.get(entry.providerId),
+            isCurrent: () => activeSessions.get(sessionId) === entry,
+            broadcast: (event) => broadcast(sessionId, event),
+            log: (line) => logSessionEvent(sessionId, "INFO", line),
+          });
         } else if (sub === "compacting") {
           entry.compactStatus = "compacting";
           log.debug(`session=${sessionId} compact_status=compacting (persisted on entry)`);
@@ -1388,6 +1408,7 @@ export const chatWebSocket = {
         mcpNeedsAuth: existing.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
+        effortStatus: resolveEffortStatus(sessionId, existing),
         thinking: resolveSessionThinkingEnabled(sessionId),
         promptCache: promptCacheSnapshot(sessionId, existing),
         turnStop: existing.phase === "idle" ? lastTurnStop(sessionId) : null,
@@ -1557,6 +1578,7 @@ export const chatWebSocket = {
         mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
+        effortStatus: resolveEffortStatus(sessionId, entry),
         thinking: resolveSessionThinkingEnabled(sessionId),
         promptCache: promptCacheSnapshot(sessionId, entry),
         turnStop: entry.phase === "idle" ? lastTurnStop(sessionId) : null,
@@ -1779,6 +1801,8 @@ export const chatWebSocket = {
       }
       entry.model = parsed.model;
       setSessionModel(sessionId, parsed.model);
+      // Its levels and limits were the old model's; the settings files stand in until the next turn asks.
+      entry.effortStatus = undefined;
       const provider = providerRegistry.get(providerId);
       const hasLiveStream = provider?.hasStreamingSession?.(sessionId) ?? false;
       // Only abort when idle between turns — never interrupt an active turn.
@@ -1798,6 +1822,7 @@ export const chatWebSocket = {
         mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
+        effortStatus: resolveEffortStatus(sessionId, entry),
         thinking: resolveSessionThinkingEnabled(sessionId),
       }));
     } else if (parsed.type === "set_effort") {
@@ -1825,6 +1850,7 @@ export const chatWebSocket = {
         mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
+        effortStatus: resolveEffortStatus(sessionId, entry),
         thinking: resolveSessionThinkingEnabled(sessionId),
       }));
     } else if (parsed.type === "set_thinking") {
@@ -1846,6 +1872,7 @@ export const chatWebSocket = {
         mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
         effort: resolveSessionEffort(sessionId),
+        effortStatus: resolveEffortStatus(sessionId, entry),
         thinking: resolveSessionThinkingEnabled(sessionId),
       }));
     } else if (parsed.type === "cancel") {

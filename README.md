@@ -308,7 +308,7 @@ For architecture details, API reference, and contribution guidelines, see the [d
 
 - **SDK .env poisoning**: Projects with `ANTHROPIC_API_KEY` in `.env` can break SDK tool execution. PPM neutralizes these vars automatically.
 - **Claude CLI discovery**: PPM looks for the `claude` CLI on PATH, in the usual install locations, and in the `cli/` folder shipped beside the binary. If none is found, point at it with `PPM_CLAUDE_CLI=/path/to/claude`.
-- **Project Claude settings**: a project's `.claude/settings.local.json` can restrict tools even under bypass permissions; PPM overrides it with empty settings so chat tools keep working.
+- **Project Claude settings**: a project's `.claude/settings.local.json` can restrict tools even under bypass permissions; PPM leaves that file out of its chats so chat tools keep working.
 
 ---
 
