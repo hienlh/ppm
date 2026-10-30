@@ -8,6 +8,8 @@
 
 - **Brave was listed as Chrome among the devices that get push.** Brave's user agent is Chrome's, so "This device" and the saved device both said "Chrome on macOS", and a Mac with push on in both browsers showed two identical rows. The name now says Brave. A device turned on before this keeps its old name until push is turned off and on again in it.
 
+- **A Claude chat's "Chat completed" notification quoted the previous turn's answer.** Claude keeps one stream for every turn of a session, and the answer a notification quotes was reset only when that stream started or a tool ran. So a follow-up's notification began with the last turn's text — after a long answer it held nothing else — and a turn that wrote nothing quoted the previous answer as its own. Each turn now quotes only what it wrote.
+
 ## [0.23.21] - 2026-10-26
 
 ### Fixed

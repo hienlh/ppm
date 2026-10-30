@@ -1196,6 +1196,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         const stopped = turnStop ? describeTurnStop(turnStop) : null;
 
         const finalText = entry.finalText;
+        // The consumer outlives the turn (Claude pushes a follow-up into the same stream), so
+        // the next turn's answer must not start with this one's.
+        entry.finalText = undefined;
         import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
