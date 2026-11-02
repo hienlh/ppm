@@ -23,12 +23,11 @@ export function openCommandPalette(initialQuery?: string) {
  * Shift+Shift (double tap) is always hardcoded (non-customizable).
  * Everything else uses `matchesEvent()` from the keybindings store.
  */
-export function useGlobalKeybindings(enabled = true) {
+export function useGlobalKeybindings() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteInitialQuery, setPaletteInitialQuery] = useState("");
 
   useEffect(() => {
-    if (!enabled) return;
     let lastShiftUp = 0;
     let shiftAlone = false; // true if Shift was pressed without any other key
     const { matchesEvent } = useKeybindingsStore.getState();
@@ -340,7 +339,7 @@ export function useGlobalKeybindings(enabled = true) {
       window.removeEventListener("compositionend", onCompositionEnd);
       window.removeEventListener("open-command-palette", handleOpenPalette);
     };
-  }, [enabled]);
+  }, []);
 
   const closePalette = useCallback(() => { setPaletteOpen(false); setPaletteInitialQuery(""); }, []);
 
