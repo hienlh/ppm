@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { connect } from "node:net";
 import {
   createShareHostHandler, isShareHostPath, MAX_FORWARDED_BODY_BYTES,
 } from "../../../../src/services/share-host/share-host-gateway.ts";
+import { startShareHostServer } from "../../../../src/services/share-host/share-host-worker.ts";
 
 interface Seen { url: string; init: RequestInit & { decompress?: boolean } }
 
@@ -175,5 +177,40 @@ describe("share host handler", () => {
     const g = gateway(() => { throw Object.assign(new Error("timed out"), { name: "TimeoutError" }); });
     expect((await g.handle(req("/s/abc123"))).status).toBe(504);
     expect(g.seen).toHaveLength(1);
+  });
+});
+
+describe("the worker's own server", () => {
+  it("refuses a chunked body once it passes the cap, without waiting for the rest of it", async () => {
+    // A chunked upload has no Content-Length to refuse up front. This one never ends, so a server
+    // that holds the whole body before measuring it never answers at all.
+    const server = startShareHostServer(0);
+    try {
+      const statusLine = await new Promise<string>((resolve, reject) => {
+        const sock = connect(server.port!, "127.0.0.1");
+        let reply = "";
+        const timer = setTimeout(() => { sock.destroy(); reject(new Error("no answer while the body was still coming")); }, 3000);
+        sock.on("error", () => {});
+        sock.on("data", (data) => {
+          reply += data.toString("latin1");
+          if (!reply.includes("\r\n")) return;
+          clearTimeout(timer);
+          sock.destroy();
+          resolve(reply.split("\r\n")[0]!);
+        });
+        sock.on("connect", () => {
+          sock.write("POST /s/abc123/comments HTTP/1.1\r\nHost: share.example.com\r\nTransfer-Encoding: chunked\r\n\r\n");
+          const chunk = Buffer.alloc(16 * 1024, 120);
+          for (let sent = 0; sent <= MAX_FORWARDED_BODY_BYTES; sent += chunk.length) {
+            sock.write(`${chunk.length.toString(16)}\r\n`);
+            sock.write(chunk);
+            sock.write("\r\n");
+          }
+        });
+      });
+      expect(statusLine).toStartWith("HTTP/1.1 413");
+    } finally {
+      server.stop(true);
+    }
   });
 });

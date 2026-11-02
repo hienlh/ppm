@@ -83,6 +83,36 @@ const tooLargePage = () => page(413, "Too large", "That request is larger than a
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * The request body, or null once it is past `limit`. Read chunk by chunk because a chunked upload
+ * has no Content-Length to refuse up front, and Bun.serve's `maxRequestBodySize` does not stop
+ * one: on Bun 1.3.11 and 1.3.13 a 32 MB chunked body reached the handler whole with it set to 64 KB.
+ */
+async function readBodyUpTo(req: Request, limit: number): Promise<Uint8Array | null> {
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  if (req.body) {
+    const reader = req.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  }
+  const body = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return body;
+}
+
 /** True for the error a refused or reset connection raises, as opposed to a timeout. */
 function isConnectFailure(error: unknown): boolean {
   const code = (error as { code?: unknown })?.code;
@@ -105,12 +135,13 @@ export function createShareHostHandler(deps: ShareHostGatewayDeps): (req: Reques
       if (!DROPPED_REQUEST_HEADERS.has(name.toLowerCase())) headers.set(name, value);
     });
 
-    let body: ArrayBuffer | undefined;
+    let body: Uint8Array | undefined;
     if (req.method !== "GET" && req.method !== "HEAD") {
       const declared = Number(req.headers.get("content-length") ?? "0");
       if (declared > MAX_FORWARDED_BODY_BYTES) return tooLargePage();
-      body = await req.arrayBuffer();
-      if (body.byteLength > MAX_FORWARDED_BODY_BYTES) return tooLargePage();
+      const read = await readBodyUpTo(req, MAX_FORWARDED_BODY_BYTES);
+      if (read === null) return tooLargePage();
+      body = read;
     }
 
     const deadline = Date.now() + connectWindowMs;
