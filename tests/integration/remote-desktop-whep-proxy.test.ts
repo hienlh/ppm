@@ -17,9 +17,16 @@ const ANSWER_SDP = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nm=video 9 UDP/TLS/
 let upstream: ReturnType<typeof Bun.serve>;
 let upstreamHits = 0;
 let app: Hono;
+/** Put back in `afterAll`: one `bun test` process shares a config, and leaving auth on here
+ *  answered every later file's request with a 401. */
+let previousAuth: ReturnType<typeof configService.get<"auth">>;
 
 beforeAll(async () => {
-  await configService.load();
+  // No `configService.load()` here: `tests/test-setup.ts` has already loaded, and it turns auth
+  // off by mutating the in-memory config without persisting it. Loading again restores the
+  // database's own `auth.enabled` for every later file in this process — which answered 33 tests
+  // across `accounts-api`, `chat-history-cache` and `upgrade-service` with a 401.
+  previousAuth = structuredClone(configService.get("auth"));
   await configService.set("auth", { ...configService.get("auth"), enabled: true } as any);
   // Stands in for MediaMTX: answers SDP the way the relay's WHEP endpoint does.
   upstream = Bun.serve({
@@ -37,7 +44,10 @@ beforeAll(async () => {
   app.route("/api/remote-desktop", remoteDesktopRoutes);
 });
 
-afterAll(() => upstream?.stop(true));
+afterAll(async () => {
+  upstream?.stop(true);
+  if (previousAuth) await configService.set("auth", previousAuth as any);
+});
 beforeEach(() => { clearWhepTickets(); upstreamHits = 0; });
 
 const offer = (body = "v=0\r\n") =>
