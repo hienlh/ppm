@@ -1156,6 +1156,37 @@ change tools that are on (`dbChangeHint`): with `db_execute` off it points at `o
 with both off it says changes are not possible. `ai-tab-tools-e2e.mjs` and `ai-db-tools-e2e.mjs`
 (which also drives the pane, desktop and phone) cover it.
 
+## Processes a chat leaves running
+
+Settings → AI Provider → **Stop leftover processes after** (`ai.leftover_processes_idle_minutes`,
+0 = off, the default) stops the servers, emulators and daemons a chat's commands started and
+walked away from — `npm run dev &`, `nohup`, a double-forking daemon — once the chat has been idle
+that long, and everything the chat started when it is deleted. It needs Linux with a systemd user
+manager; anywhere else, and while it is 0, nothing is routed or stopped.
+
+While it is on, each Claude CLI is spawned with `CLAUDE_CODE_SHELL_PREFIX` pointing at a script
+that runs every Bash call and stdio MCP server in a `ppmcmd-*.scope` of its own under the chat's
+slice, `app-ppmchat-<instance>-<session>.slice`, so whatever a command leaves behind is still found
+in cgroupfs however it detached. A sweep every minute stops what an idle chat left; idle is turn
+activity through any door (`leftoverSessionActivity` in `src/server/ws/chat.ts`), never whether a
+browser has the chat open, and a process that descends from a live CLI — a command still running,
+an MCP server in use — is never swept. The prefix costs about 6 ms a call (300 calls on one host:
+6.8 ms against 0.9 ms for the same `bash -c true`). PPM probes `systemd-run --user --scope` again
+every minute, and while that fails, commands run untracked rather than failing with systemd's
+error, until it works again.
+
+**A unit that must outlive the chat names its own slice.** With the setting on, a
+`systemd-run --user` an agent runs goes through a shim that files the unit under the chat's slice,
+so a deploy guard waiting for PPM to go idle, or a long benchmark started to survive the chat, is
+stopped with the chat's leftovers, and nothing says why. Any `--slice` keeps the shim out of it:
+
+```bash
+systemd-run --user --slice=app.slice --unit=deploy-guard -- ./wait-then-restart.sh
+```
+
+`ppm.log` names every stop (`[chat-procs]`). Code and gotchas: `src/services/chat-session-processes/`
+and its `CLAUDE.md`.
+
 ## AI database tools
 
 The AI works on the databases the user saved in PPM without ever holding their credentials.
