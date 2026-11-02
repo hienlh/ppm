@@ -8,6 +8,7 @@ import {
   blockedBy, isAlive, liveScript, ownership, reconcileLeftovers, retryBlocked, startScript,
 } from "../../../../src/services/schedule-script/instance-guard.ts";
 import { getRuntime, recordSpawn } from "../../../../src/services/schedule-script/script-runtime-db.ts";
+import { spawnLeftover } from "../../../helpers/schedule-script-leftover.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "ppm-guard-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -16,8 +17,8 @@ const strays: Array<ReturnType<typeof Bun.spawn>> = [];
 afterAll(() => { for (const p of strays) p.kill("SIGKILL"); });
 
 /** A long-lived process standing in for a child a previous server left behind. */
-function stray(token?: string): ReturnType<typeof Bun.spawn> {
-  const p = Bun.spawn(["sleep", "30"], { env: { ...process.env, ...(token && { PPM_SCHEDULE_RUN: token }) } });
+async function stray(token?: string): Promise<ReturnType<typeof Bun.spawn>> {
+  const p = await spawnLeftover(token);
   strays.push(p);
   return p;
 }
@@ -55,7 +56,7 @@ describe("one child per schedule", () => {
 
   it("at boot, a recorded child that is provably ours is killed before anything starts", async () => {
     const id = newSchedule();
-    const left = stray("tok-ours");
+    const left = await stray("tok-ours");
     recordSpawn(id, left.pid, "tok-ours");
     expect(ownership(left.pid, "tok-ours")).toBe("ours");
     await reconcileLeftovers({ killMs: 3_000, unknownMs: 3_000 });
@@ -66,7 +67,7 @@ describe("one child per schedule", () => {
 
   it("a recorded pid that now belongs to some other process is forgotten, not killed", async () => {
     const id = newSchedule();
-    const unrelated = stray();
+    const unrelated = await stray();
     recordSpawn(id, unrelated.pid, "tok-old");
     expect(ownership(unrelated.pid, "tok-old")).toBe("not-ours");
     await reconcileLeftovers({ killMs: 3_000, unknownMs: 3_000 });
@@ -77,7 +78,7 @@ describe("one child per schedule", () => {
 
   it("a child that cannot be proved ours and does not go away blocks its schedule, until it is gone", async () => {
     const id = newSchedule();
-    const unknown = stray();
+    const unknown = await stray();
     recordSpawn(id, unknown.pid, "tok-?");
     await reconcileLeftovers({ killMs: 200, unknownMs: 200 }, () => "unknown");
     expect(blockedBy(id)).toBe(unknown.pid);
@@ -93,7 +94,7 @@ describe("one child per schedule", () => {
 
   it("a recorded child that has already exited is simply cleared", async () => {
     const id = newSchedule();
-    const gone = stray("tok-gone");
+    const gone = await stray("tok-gone");
     gone.kill("SIGKILL");
     await gone.exited;
     recordSpawn(id, gone.pid, "tok-gone");

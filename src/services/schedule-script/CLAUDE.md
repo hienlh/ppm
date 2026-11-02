@@ -40,6 +40,12 @@ it; `instance-guard.ts` makes sure there is never a second one.
   (the token in `/proc/<pid>/environ`, or `ps -E` on macOS) before killing it; a process of
   someone else's at that pid is forgotten, and one it cannot judge blocks its schedule instead
   of risking a second instance.
+- **`Bun.spawn` returns while the child is still inside `execve`**, and until the kernel has
+  laid out its new stack `/proc/<pid>/environ` reads empty, so `ownership()` calls a child
+  spawned a moment ago `not-ours` (in the Docker suite: 0 bytes 4 reads in 5, the whole
+  environment 50 ms later). A real leftover was started by the previous server; a test that
+  spawns its own stand-in must wait for the environment first (`spawnLeftover()` in
+  `tests/helpers/schedule-script-leftover.ts`).
 - **`ctx.ai.chat` goes through the chat WebSocket handler, not `chatService.sendMessage`**
   (`chat-loopback.ts`): only the handler sets the session's phase, which is how a turn is busy,
   shows live, and rotates accounts like any chat. The loopback socket carries

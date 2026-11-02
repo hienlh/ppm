@@ -14,6 +14,7 @@ import { LogRing, logRing, RunLog } from "../../../../src/services/schedule-scri
 import type { ScriptExit } from "../../../../src/services/schedule-script/script-process.ts";
 import { recordSpawn } from "../../../../src/services/schedule-script/script-runtime-db.ts";
 import type { Schedule } from "../../../../src/types/scheduler.ts";
+import { spawnLeftover } from "../../../helpers/schedule-script-leftover.ts";
 
 let projectDir = "";
 let previousProjects: ReturnType<typeof configService.get<"projects">> = [];
@@ -283,7 +284,7 @@ describe("AlwaysOnSupervisor (real processes)", () => {
   it("kills the previous server's leftover before the new process starts", async () => {
     const id = make();
     const token = crypto.randomUUID();
-    const stray = Bun.spawn(["sleep", "30"], { env: { ...process.env, PPM_SCHEDULE_RUN: token } });
+    const stray = await spawnLeftover(token);
     recordSpawn(id, stray.pid, token);
     const sup = track(new AlwaysOnSupervisor());
     await sup.prepare();
