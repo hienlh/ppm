@@ -80,8 +80,9 @@ function setWatch(ws: GlobalWsSocket, projectName: string): void {
   if (!project) return;
 
   void startWatching(projectName, project.path);
-  // A client opened this project: have its file list ready before the palette asks for it.
-  if (!isMinimalMode()) warmIndex(project.path);
+  // A client opened this project: have its file list ready before the palette or the chat's
+  // @-picker asks for it. Minimal mode too, which keeps the composer.
+  warmIndex(project.path);
   watchedProject.set(ws, projectName);
 }
 
@@ -111,8 +112,11 @@ onSessionFileChanges(({ projectPath, sessionId, files, gone }) => {
   if (projectName) broadcastGlobalEvent({ type: SESSION_FILE_CHANGES_PUSH, projectName, sessionId, files, gone });
 });
 
-// The Logs window and the rail button's badge refetch the issues when this arrives.
-onIssuesChanged(() => broadcastGlobalEvent({ type: LOGS_ISSUES_CHANGED }));
+// The Logs window and the rail button's badge refetch the issues when this arrives. Not in
+// minimal mode, where `/api/logs` is refused and the Logs window is gone.
+onIssuesChanged(() => {
+  if (!isMinimalMode()) broadcastGlobalEvent({ type: LOGS_ISSUES_CHANGED });
+});
 
 onDesignEvent((type, { projectPath, slug, requestId, screenshot }) => {
   const projectName = projectNameForPath(projectPath);
@@ -144,7 +148,8 @@ export const globalWebSocket = {
     if (msg.type === "agent-activity:unsubscribe") return handleAgentActivityUnsubscribe(ws, msg as AgentActivityUnsubscribeMsg);
     if (msg.type === "ping") return handleAgentTranscriptPing(ws);
     // A Logs view that is open and following: new records are pushed while it is subscribed.
-    if (msg.type === LOGS_SUBSCRIBE) return subscribeLogs(ws, () => tokenStillValid(ws));
+    // Minimal mode refuses `/api/logs`, and so this half of it too, even for a stale full-mode tab.
+    if (msg.type === LOGS_SUBSCRIBE) return isMinimalMode() ? undefined : subscribeLogs(ws, () => tokenStillValid(ws));
     if (msg.type === LOGS_UNSUBSCRIBE) return unsubscribeLogs(ws);
   },
 
