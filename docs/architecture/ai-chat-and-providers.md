@@ -1158,13 +1158,17 @@ with both off it says changes are not possible. `ai-tab-tools-e2e.mjs` and `ai-d
 
 ## Processes a chat leaves running
 
-Settings → AI Provider → **Stop leftover processes after** (`ai.leftover_processes_idle_minutes`,
-0 = off, the default) stops the servers, emulators and daemons a chat's commands started and
-walked away from — `npm run dev &`, `nohup`, a double-forking daemon — once the chat has been idle
-that long, and everything the chat started when it is deleted. It needs Linux with a systemd user
-manager; anywhere else, and while it is 0, nothing is routed or stopped.
+Settings → AI Provider → **Stop leftover processes after** (`ai.leftover_processes_idle_minutes`)
+stops the servers, emulators and daemons a chat's commands started and walked away from —
+`npm run dev &`, `nohup`, a double-forking daemon — once the chat has been idle that long, and
+everything the chat started when it is deleted. It needs Linux with a systemd user manager;
+anywhere else nothing is routed or stopped. At 0, the default, commands are routed all the same
+but nothing is stopped: `ppm.log` names what 30 idle minutes would have stopped, each unit once,
+so a limit can be judged before it is set. At any setting, a restart or shutdown of PPM stops the
+chats' commands, as stopping PPM's service always did; units an agent made with `systemd-run`
+survive it.
 
-While it is on, each Claude CLI is spawned with `CLAUDE_CODE_SHELL_PREFIX` pointing at a script
+Each Claude CLI is spawned with `CLAUDE_CODE_SHELL_PREFIX` pointing at a script
 that runs every Bash call and stdio MCP server in a `ppmcmd-*.scope` of its own under the chat's
 slice, `app-ppmchat-<instance>-<session>.slice`, so whatever a command leaves behind is still found
 in cgroupfs however it detached. A sweep every minute stops what an idle chat left; idle is turn
@@ -1175,16 +1179,16 @@ an MCP server in use — is never swept. The prefix costs about 6 ms a call (300
 every minute, and while that fails, commands run untracked rather than failing with systemd's
 error, until it works again.
 
-**A unit that must outlive the chat names its own slice.** With the setting on, a
-`systemd-run --user` an agent runs goes through a shim that files the unit under the chat's slice,
-so a deploy guard waiting for PPM to go idle, or a long benchmark started to survive the chat, is
-stopped with the chat's leftovers, and nothing says why. Any `--slice` keeps the shim out of it:
+**A unit that must outlive the chat names its own slice.** A `systemd-run --user` an agent runs
+goes through a shim that files the unit under the chat's slice, so once a limit is set, a deploy
+guard waiting for PPM to go idle, or a long benchmark started to survive the chat, is stopped with
+the chat's leftovers, and nothing says why. Any `--slice` keeps the shim out of it:
 
 ```bash
 systemd-run --user --slice=app.slice --unit=deploy-guard -- ./wait-then-restart.sh
 ```
 
-`ppm.log` names every stop (`[chat-procs]`). Code and gotchas: `src/services/chat-session-processes/`
+`ppm.log` names every stop, and at 0 every stop a limit would have made (`[chat-procs]`). Code and gotchas: `src/services/chat-session-processes/`
 and its `CLAUDE.md`.
 
 ## AI database tools

@@ -3,13 +3,13 @@
  * sweeps stop what they should and nothing else. Skipped where `systemd-run --user --scope` does
  * not work (macOS, Windows, a CI runner with no user manager).
  */
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getPpmDir } from "../../src/services/ppm-dir.ts";
 import {
-  chatSessionCliEnv, initChatSessionProcesses, recheckRouting, registerLeftoverSweeper, stopChatSessionProcesses,
-  stopCommandScopesSync, sweepLeftovers, type SweepDeps,
+  chatSessionCliEnv, initChatSessionProcesses, recheckRouting, registerLeftoverSweeper, resetChatSessionProcessesForTest,
+  stopChatSessionProcesses, stopCommandScopesSync, sweepLeftovers, type SweepDeps,
 } from "../../src/services/chat-session-processes/session-processes.service.ts";
 import { instanceSliceName, instanceTag, sessionSliceName } from "../../src/services/chat-session-processes/session-slice.ts";
 
@@ -46,7 +46,7 @@ describe.skipIf(!userScopesWork())("chat session processes under systemd", () =>
 
   afterAll(() => {
     // Routing off for whatever runs next in this process, then nothing of ours left behind.
-    idleMinutes = 0;
+    resetChatSessionProcessesForTest();
     unregister();
     for (const p of held) p.kill("SIGKILL");
     Bun.spawnSync(["systemctl", "--user", "stop", instanceSliceName(instance), ...otherSlices]);
@@ -223,6 +223,58 @@ describe.skipIf(!userScopesWork())("chat session processes under systemd", () =>
       await until(() => !running(orphan));
       rmdirSync(gone);
     }
+  });
+
+  /** Runs `body` with no limit set, handing it the log lines so far that name what would have been stopped. */
+  async function withNoLimit(body: (named: () => string[]) => Promise<void>): Promise<void> {
+    idleMinutes = 0;
+    const info = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await body(() => info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes(" would have stopped ")));
+    } finally {
+      info.mockRestore();
+      idleMinutes = 30;
+    }
+  }
+
+  it("with no limit set, routes all the same, and an idle sweep names what it would stop, once, stopping nothing", async () => {
+    await withNoLimit(async (named) => {
+      const sessionId = crypto.randomUUID();
+      const leftover = leave(sessionId);
+      expect(cgroupOf(leftover)).toContain(`/${sessionSliceName(instance, sessionId)}/`);
+
+      const t0 = Date.now();
+      sweepLeftovers(deps, "idle", t0);
+      sweepLeftovers(deps, "idle", t0 + 29 * MIN);
+      const mine = () => named().filter((l) => l.includes(`session=${sessionId} `));
+      expect(mine()).toEqual([]);
+
+      sweepLeftovers(deps, "idle", t0 + 30 * MIN);
+      sweepLeftovers(deps, "idle", t0 + 31 * MIN);
+      await Bun.sleep(300);
+      expect(running(leftover)).toBe(true);
+      expect(mine()).toEqual([
+        `[chat-procs] session=${sessionId} would have stopped what it left running after 30 idle minutes, had a limit been set: command (sleep)`,
+      ]);
+      expect(stopped.some((s) => s.sessionId === sessionId)).toBe(false);
+    });
+  });
+
+  it("with no limit set, deleting a session names everything it was running and stops none of it", async () => {
+    await withNoLimit(async (named) => {
+      const sessionId = crypto.randomUUID();
+      const leftover = leave(sessionId);
+      const unit = agentUnit(sessionId);
+      stopChatSessionProcesses(sessionId);
+      await Bun.sleep(300);
+      expect(running(leftover)).toBe(true);
+      expect(unitActive(unit)).toBe(true);
+      const mine = named().filter((l) => l.includes(`session=${sessionId} `));
+      expect(mine).toHaveLength(1);
+      expect(mine[0]).toContain("would have stopped everything it was running, as it was deleted");
+      expect(mine[0]).toContain(unit);
+      expect(stopped.some((s) => s.sessionId === sessionId)).toBe(false);
+    });
   });
 
   it("deleting a session stops everything it started, running or not", async () => {

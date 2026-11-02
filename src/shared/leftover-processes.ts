@@ -4,8 +4,10 @@
  * server, which stops them, and Settings, which edits the number.
  */
 
-/** Unset means this: off, so nothing is routed or stopped until a limit is set. */
+/** Unset means this: nothing is stopped until a limit is set, only logged. */
 export const DEFAULT_LEFTOVER_IDLE_MINUTES = 0;
+/** With no limit set, the server log names what this limit would have stopped. */
+export const LOG_ONLY_IDLE_MINUTES = 30;
 /** A day: anything longer is "never", which is 0. */
 export const MAX_LEFTOVER_IDLE_MINUTES = 1440;
 

@@ -63,7 +63,7 @@ async function typeAndLeave(text: string): Promise<void> {
 const shown = () => (document.getElementById("ai-leftover-idle") as HTMLInputElement).value;
 
 describe("Stop leftover processes after", () => {
-  it("shows the default, off, when nothing is set, and offers 0 to 1440", async () => {
+  it("shows the default, 0, when nothing is set, and offers 0 to 1440", async () => {
     const field = await mountWith({});
     expect([field.min, field.max, field.value]).toEqual(["0", "1440", "0"]);
   });

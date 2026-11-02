@@ -9,9 +9,14 @@
  * session's leftovers once the session has been idle `leftover_processes_idle_minutes`; deleting
  * the session stops all of it at once. A process descending from a live CLI is a command or MCP
  * server running right now and is never stopped by a sweep.
+ *
+ * At 0, the default, commands are routed all the same, but the sweep and a deletion only log what
+ * they would have stopped. What PPM's own restart and shutdown stop is still stopped: those are
+ * the commands that died with PPM's cgroup before they had scopes of their own.
  */
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { LOG_ONLY_IDLE_MINUTES } from "../../shared/leftover-processes.ts";
 import { createLogger } from "../logger.ts";
 import { getPpmDir } from "../ppm-dir.ts";
 import { advanceClock, describeUnits, idlePastLimit, isCommandScope, unitsToStop, type SessionClock, type UnitSnapshot } from "./leftover-decisions.ts";
@@ -57,6 +62,8 @@ const hot = ((globalThis as any)[HOT_KEY] ??= { stop: null, deps: null, startupD
   startupDone: boolean;
 };
 const clocks = new Map<string, SessionClock>();
+/** With no limit set: the units each session's log has named already, so each is named once. */
+const reported = new Map<string, Set<string>>();
 
 async function run(cmd: string[], timeoutMs = PROBE_TIMEOUT_MS): Promise<{ code: number | null; out: string; err: string }> {
   try {
@@ -114,7 +121,10 @@ export async function initChatSessionProcesses(opts: { dbPath: string; idleMinut
     ownCgroup,
     idleMinutes: opts.idleMinutes,
   };
-  log.info(`chat commands run under ${instanceSliceName(instance)}; what a chat leaves running is stopped after ${opts.idleMinutes()} idle minutes (0 = never)`);
+  const limit = opts.idleMinutes();
+  log.info(`chat commands run under ${instanceSliceName(instance)}; what a chat leaves running is ${limit > 0
+    ? `stopped after ${limit} idle minutes`
+    : `never stopped, only logged after ${LOG_ONLY_IDLE_MINUTES} idle minutes (no limit set)`}`);
   if (hot.deps) startupSweep(hot.deps);
   return true;
 }
@@ -125,13 +135,12 @@ export function chatSessionProcessesTracked(): boolean {
 }
 
 /**
- * The environment a chat's Claude CLI is spawned with. Routing applies only while the setting is
- * on; a CLI keeps the environment it started with, so turning it off reaches running CLIs as they
- * are replaced.
+ * The environment a chat's Claude CLI is spawned with. Routed whatever the limit, 0 included, so
+ * that with no limit set the log can still name what one would stop.
  */
 export function chatSessionCliEnv(sessionId: string | undefined, env: Record<string, string | undefined>): Record<string, string | undefined> {
   const t = tracking;
-  const slice = t && !t.failing && sessionId && t.idleMinutes() > 0 ? sessionSliceName(t.instance, sessionId) : null;
+  const slice = t && !t.failing && sessionId ? sessionSliceName(t.instance, sessionId) : null;
   const out = withSessionSlice(env, slice, t?.shell ?? null);
   if (t && slice && !out[SLICE_ENV]) {
     noteUntracked(t.shell.prefix.includes(" -")
@@ -179,10 +188,9 @@ export async function recheckRouting(systemdRun?: string): Promise<boolean> {
   return ok;
 }
 
-/** Every minute: nothing while no chat can be routed, else the probe, then the sweep if it passed. */
+/** Every minute: the probe, then the sweep if it passed. */
 async function tick(deps: SweepDeps): Promise<void> {
-  const t = tracking;
-  if (!t || (t.idleMinutes() <= 0 && !sessionSlices(t).size)) return;
+  if (!tracking) return;
   if (await recheckRouting()) sweepLeftovers(deps, "idle");
 }
 
@@ -295,15 +303,28 @@ function stopUnits(t: Tracking, names: string[]): void {
   });
 }
 
+/** No limit is set: names what would have been stopped, each unit once while it lasts, and stops nothing. */
+function logWouldStop(sessionId: string, what: string, units: UnitSnapshot[]): void {
+  const named = reported.get(sessionId);
+  const fresh = units.filter((u) => !named?.has(u.name));
+  reported.set(sessionId, new Set(units.map((u) => u.name)));
+  if (fresh.length) log.info(`session=${sessionId} would have stopped ${what}, had a limit been set: ${describeUnits(fresh)}`);
+}
+
 function sweepSession(t: Tracking, deps: SweepDeps, sessionId: string, slice: string, why: "idle" | "startup", now: number): void {
+  const limit = t.idleMinutes();
   if (why === "idle") {
     const { busy, lastActiveAt } = deps.activity(sessionId);
     const clock = advanceClock(clocks.get(sessionId), now, busy, lastActiveAt);
     clocks.set(sessionId, clock);
-    if (!idlePastLimit(clock, now, busy, t.idleMinutes() * 60_000)) return;
+    if (!idlePastLimit(clock, now, busy, (limit > 0 ? limit : LOG_ONLY_IDLE_MINUTES) * 60_000)) return;
   }
   const stop = unitsToStop(snapshotUnits(t, slice), why);
   if (!stop.length) return;
+  if (why === "idle" && limit <= 0) {
+    logWouldStop(sessionId, `what it left running after ${LOG_ONLY_IDLE_MINUTES} idle minutes`, stop);
+    return;
+  }
   const summary = why === "idle"
     ? `stopped what it left running after ${t.idleMinutes()} idle minutes: ${describeUnits(stop)}`
     : `stopped what its commands left running before PPM restarted: ${describeUnits(stop)}`;
@@ -316,9 +337,9 @@ function sweepSession(t: Tracking, deps: SweepDeps, sessionId: string, slice: st
 export function sweepLeftovers(deps: SweepDeps, why: "idle" | "startup", now = Date.now()): void {
   const t = tracking;
   if (!t) return;
-  if (why === "idle" && t.idleMinutes() <= 0) return;
   const slices = sessionSlices(t);
   for (const id of clocks.keys()) if (!slices.has(id)) clocks.delete(id);
+  for (const id of reported.keys()) if (!slices.has(id)) reported.delete(id);
   for (const [sessionId, slice] of slices) {
     try {
       sweepSession(t, deps, sessionId, slice, why, now);
@@ -347,7 +368,7 @@ export function registerLeftoverSweeper(deps: SweepDeps): () => void {
   return hot.stop;
 }
 
-/** The chat was deleted: everything it started goes, running or not. */
+/** The chat was deleted: everything it started goes, running or not — once a limit is set. */
 export function stopChatSessionProcesses(sessionId: string): void {
   const t = tracking;
   if (!t) return;
@@ -355,6 +376,10 @@ export function stopChatSessionProcesses(sessionId: string): void {
   const slice = sessionSliceName(t.instance, sessionId);
   if (!slice || !sessionSlices(t).has(sessionId)) return;
   const units = snapshotUnits(t, slice);
+  if (t.idleMinutes() <= 0) {
+    logWouldStop(sessionId, "everything it was running, as it was deleted", units);
+    return;
+  }
   if (units.length) {
     const summary = `stopped everything it was running, as it was deleted: ${describeUnits(units)}`;
     log.info(`session=${sessionId} ${summary}`);
@@ -381,4 +406,11 @@ export function stopCommandScopesSync(): void {
     Bun.spawnSync([t.systemctl, "--user", "stop", "--no-block", ...units], { stdout: "ignore", stderr: "ignore" }).exitCode;
   // One scope gone since the listing makes the whole stop enqueue nothing, as in `stopUnits`.
   if (names.length && stop(names) !== 0) for (const name of names) stop([name]);
+}
+
+/** Routing off again, for whatever a test process runs next. */
+export function resetChatSessionProcessesForTest(): void {
+  tracking = null;
+  clocks.clear();
+  reported.clear();
 }

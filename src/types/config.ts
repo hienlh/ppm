@@ -161,7 +161,8 @@ export interface AIConfig {
   ppm_tools?: PpmToolSwitches;
   /**
    * Idle minutes after which PPM stops what a chat left running — servers, emulators and daemons
-   * its commands started. Unset or 0 never stops them and routes nothing. Linux with systemd only
+   * its commands started. Unset or 0 never stops them, and the server log names what 30 idle
+   * minutes would have stopped. Linux with systemd only
    * (`src/services/chat-session-processes/`).
    */
   leftover_processes_idle_minutes?: number;

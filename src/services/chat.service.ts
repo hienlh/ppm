@@ -195,6 +195,7 @@ class ChatService {
     this.turnEnds.delete(sessionId);
     // The provider ends the chat's turn and closes its CLI first. Only then is everything the
     // chat's commands started stopped, running or not: the one stop that does not wait for idle.
+    // With no limit set it is only logged, as the idle sweep's stops are.
     try {
       await provider.deleteSession(sessionId);
     } finally {

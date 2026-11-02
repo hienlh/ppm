@@ -497,11 +497,13 @@ If the CLI cannot be found, set `PPM_CLAUDE_CLI=/path/to/claude`. If the project
 `ANTHROPIC_API_KEY`, see the SDK note above.
 
 ### A server or unit an AI chat started stopped by itself
-With **Settings → AI Provider → Stop leftover processes after** set (it is 0, off, by default), PPM
-stops what a chat's commands left running once the chat has been idle that long, and everything
-the chat started when it is deleted; `ppm.log` names each stop (`[chat-procs]`). Raise the limit or
-set it back to 0, or give a unit that must outlive the chat a slice of its own:
-`systemd-run --user --slice=app.slice …`. See `docs/architecture/ai-chat-and-providers.md` →
+With **Settings → AI Provider → Stop leftover processes after** set above 0, PPM stops what a
+chat's commands left running once the chat has been idle that long, and everything the chat
+started when it is deleted; `ppm.log` names each stop (`[chat-procs]`). Raise the limit or set it
+back to 0 (the default: nothing is stopped, only logged), or give a unit that must outlive the
+chat a slice of its own: `systemd-run --user --slice=app.slice …`. A restart of PPM also stops
+what chats' commands left running, at any setting, as stopping PPM's service always did; a unit
+started with `systemd-run --user` survives it. See `docs/architecture/ai-chat-and-providers.md` →
 Processes a chat leaves running.
 
 ### Terminal not working
