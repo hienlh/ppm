@@ -248,8 +248,12 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
           aria-describedby="ai-leftover-idle-description"
           className={compact ? "h-7 text-[11px]" : undefined}
           onBlur={(e) => {
+            // min/max bound only the spinner: a typed number is brought into range here, and a
+            // cleared field shows the saved value again rather than looking saved.
             const val = parseInt(e.target.value);
-            if (!isNaN(val)) handleSettingsSave({ leftover_processes_idle_minutes: val });
+            const minutes = isNaN(val) ? null : Math.min(Number(e.target.max), Math.max(Number(e.target.min), val));
+            e.target.value = String(minutes ?? leftoverIdleMinutes(settings));
+            if (minutes !== null) handleSettingsSave({ leftover_processes_idle_minutes: minutes });
           }}
         />
         <p id="ai-leftover-idle-description" className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>

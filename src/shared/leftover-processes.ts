@@ -4,8 +4,8 @@
  * server, which stops them, and Settings, which edits the number.
  */
 
-/** Unset means this. */
-export const DEFAULT_LEFTOVER_IDLE_MINUTES = 30;
+/** Unset means this: off, so nothing is routed or stopped until a limit is set. */
+export const DEFAULT_LEFTOVER_IDLE_MINUTES = 0;
 /** A day: anything longer is "never", which is 0. */
 export const MAX_LEFTOVER_IDLE_MINUTES = 1440;
 

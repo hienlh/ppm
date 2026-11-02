@@ -27,7 +27,7 @@ describe("sanitizeConfig — multi-provider", () => {
     }
   });
 
-  it("drops an unusable leftover-process idle limit so the 30-minute default applies, and keeps a usable one", () => {
+  it("drops an unusable leftover-process idle limit so the default applies, and keeps a usable one", () => {
     for (const value of [-5, 1441, 2.5, "30", null]) {
       const config = makeConfig();
       (config.ai as unknown as Record<string, unknown>).leftover_processes_idle_minutes = value;

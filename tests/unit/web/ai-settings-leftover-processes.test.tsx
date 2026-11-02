@@ -49,25 +49,48 @@ async function mountWith(ai: Record<string, unknown>): Promise<HTMLInputElement>
   return field;
 }
 
+/** Types `text` over the field and leaves it, as a user does. */
+async function typeAndLeave(text: string): Promise<void> {
+  await act(async () => {
+    const field = document.getElementById("ai-leftover-idle") as HTMLInputElement;
+    field.focus();
+    field.value = text;
+    field.blur();
+  });
+  await settle();
+}
+
+const shown = () => (document.getElementById("ai-leftover-idle") as HTMLInputElement).value;
+
 describe("Stop leftover processes after", () => {
-  it("shows the 30-minute default when nothing is set, and offers 0 to 1440", async () => {
+  it("shows the default, off, when nothing is set, and offers 0 to 1440", async () => {
     const field = await mountWith({});
-    expect([field.min, field.max, field.value]).toEqual(["0", "1440", "30"]);
+    expect([field.min, field.max, field.value]).toEqual(["0", "1440", "0"]);
   });
 
-  it("shows 0 as 0, not as the default", async () => {
-    expect((await mountWith({ leftover_processes_idle_minutes: 0 })).value).toBe("0");
+  it("shows what is set", async () => {
+    expect((await mountWith({ leftover_processes_idle_minutes: 45 })).value).toBe("45");
   });
 
   it("saves the minutes typed when the field loses focus", async () => {
-    const field = await mountWith({});
-    await act(async () => {
-      field.focus();
-      field.value = "45";
-      field.blur();
-    });
-    await settle();
+    await mountWith({});
+    await typeAndLeave("45");
     expect(saved).toEqual([{ leftover_processes_idle_minutes: 45 }]);
-    expect((document.getElementById("ai-leftover-idle") as HTMLInputElement).value).toBe("45");
+    expect(shown()).toBe("45");
+  });
+
+  // min and max bound the spinner arrows only, never a typed value.
+  it.each([["2000", 1440], ["-5", 0]])("brings a typed %s into range before saving it", async (typed, kept) => {
+    await mountWith({ leftover_processes_idle_minutes: 30 });
+    await typeAndLeave(typed);
+    expect(saved).toEqual([{ leftover_processes_idle_minutes: kept }]);
+    expect(shown()).toBe(String(kept));
+  });
+
+  it("saves nothing for a cleared field, and shows the saved value again", async () => {
+    await mountWith({ leftover_processes_idle_minutes: 30 });
+    await typeAndLeave("");
+    expect(saved).toEqual([]);
+    expect(shown()).toBe("30");
   });
 });
