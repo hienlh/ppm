@@ -59,7 +59,10 @@ function readAddresses(): { value: ShareTunnelAddress; hosts: string[] } {
   const status = readStatus();
   const ppm = readPpmTunnelAddress(status);
   const shareHost = readShareHostLive(resolveShareHostConfig(getConfigValue("share_host")), status);
-  const hosts = [hostOf(ppm.url), hostOf(shareHost.url)].filter((h): h is string => h !== null);
+  // A temporary address stays published while its worker restarts, and is what its reviewers
+  // come back through: they keep their own rate-limit keys rather than all sharing "local".
+  const published = shareHost.enabled ? originOf(status.shareHostUrl) : null;
+  const hosts = [...new Set([hostOf(ppm.url), hostOf(shareHost.url), hostOf(published)])].filter((h): h is string => h !== null);
   if (!shareHost.enabled) return { value: ppm, hosts };
   // Down because nothing will ever act on the switch: say that rather than "reconnecting".
   const problem = shareHost.connected ? null : shareHostApplyProblem(status);

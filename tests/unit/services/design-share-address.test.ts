@@ -118,6 +118,18 @@ describe("design share address", () => {
       expect(getForwardedShareHosts().sort()).toEqual(["calm-lake-3.trycloudflare.com", "ppm.example.com"]);
     });
 
+    it("keeps believing the review address's reviewers while its worker restarts", async () => {
+      configService.set("share_host", { enabled: true, mode: "quick" });
+      // The worker died and is starting again; its temporary address is still published.
+      writeStatus({ ...PPM_UP, shareHostPid: null, shareHostTunnelPid: process.pid, shareHostUrl: "https://calm-lake-3.trycloudflare.com" });
+      expect(getShareTunnelAddress().url).toBeNull();
+      expect(getForwardedShareHosts().sort()).toEqual(["calm-lake-3.trycloudflare.com", "ppm.example.com"]);
+      // Switched off, it is nobody's address any more.
+      resetShareAddressCache();
+      configService.set("share_host", { enabled: false, mode: "quick" });
+      expect(getForwardedShareHosts()).toEqual(["ppm.example.com"]);
+    });
+
     it("keeps a domain while it reconnects, saying it is not connected", async () => {
       configService.set("share_host", NAMED_SHARE);
       writeStatus({ ...PPM_UP, shareHostPid: process.pid, shareHostTunnelPid: await deadPid(), shareHostUrl: "https://share.example.com" });
