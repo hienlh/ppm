@@ -16,14 +16,14 @@ import { recordSpawn } from "../../../../src/services/schedule-script/script-run
 import type { Schedule } from "../../../../src/types/scheduler.ts";
 
 let projectDir = "";
-let previousProjects: unknown;
+let previousProjects: ReturnType<typeof configService.get<"projects">> = [];
 beforeAll(() => {
   projectDir = mkdtempSync(join(tmpdir(), "ppm-always-on-"));
-  previousProjects = configService.get("projects");
+  previousProjects = configService.get("projects") ?? [];
   configService.set("projects", [{ name: "demo", path: projectDir }]);
 });
 afterAll(() => {
-  configService.set("projects", previousProjects as never);
+  configService.set("projects", previousProjects);
   rmSync(projectDir, { recursive: true, force: true });
 });
 

@@ -13,16 +13,16 @@ import { runScriptTick } from "../../../../src/services/schedule-script/tick-run
 import type { ScheduleInputDecl } from "../../../../src/types/scheduler.ts";
 
 let projectDir = "";
-let previousProjects: unknown;
+let previousProjects: ReturnType<typeof configService.get<"projects">> = [];
 const made: number[] = [];
 
 beforeAll(() => {
   projectDir = mkdtempSync(join(tmpdir(), "ppm-tick-"));
-  previousProjects = configService.get("projects");
+  previousProjects = configService.get("projects") ?? [];
   configService.set("projects", [{ name: "demo", path: projectDir }]);
 });
 afterAll(() => {
-  configService.set("projects", previousProjects as never);
+  configService.set("projects", previousProjects);
   rmSync(projectDir, { recursive: true, force: true });
 });
 afterEach(() => {

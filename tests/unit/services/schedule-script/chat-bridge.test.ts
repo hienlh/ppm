@@ -20,7 +20,7 @@ import type { Schedule } from "../../../../src/types/scheduler.ts";
 
 const restores: Array<() => void> = [];
 let projectDir = "";
-let previousProjects: unknown;
+let previousProjects: ReturnType<typeof configService.get<"projects">> = [];
 let schedule: Schedule;
 /** Sessions whose turn wrote a transcript; a turn that fails before writing leaves none. */
 const wrote = new Set<string>();
@@ -30,11 +30,11 @@ let lastTurnIn = "";
 
 beforeAll(() => {
   projectDir = mkdtempSync(join(tmpdir(), "ppm-bridge-"));
-  previousProjects = configService.get("projects");
+  previousProjects = configService.get("projects") ?? [];
   configService.set("projects", [{ name: "demo", path: projectDir }]);
 });
 afterAll(() => {
-  configService.set("projects", previousProjects as never);
+  configService.set("projects", previousProjects);
   rmSync(projectDir, { recursive: true, force: true });
 });
 beforeEach(() => {

@@ -39,7 +39,7 @@ const template = {
 
 let dir = "";
 let server: ReturnType<typeof Bun.serve>;
-let saved: { port: unknown; projects: unknown };
+let saved: { port: number; projects: ReturnType<typeof configService.get<"projects">> };
 const output: string[] = [];
 
 beforeAll(() => {
@@ -50,14 +50,14 @@ beforeAll(() => {
   writeFileSync(join(dir, "gh.txt"), `${GH_TOKEN}\n`);
   const app = new Hono().route("/api/schedules", schedulesRoutes);
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: app.fetch });
-  saved = { port: configService.get("port"), projects: configService.get("projects") };
+  saved = { port: configService.get("port"), projects: configService.get("projects") ?? [] };
   configService.set("port", server.port as never);
   configService.set("projects", [{ name: "demo", path: dir }]);
 });
 afterAll(() => {
   server.stop(true);
-  configService.set("port", saved.port as never);
-  configService.set("projects", saved.projects as never);
+  configService.set("port", saved.port);
+  configService.set("projects", saved.projects);
   rmSync(dir, { recursive: true, force: true });
 });
 /** Runs `ppm schedule …args`; a fail() is an "exit 1" error instead of the end of the test run. */
