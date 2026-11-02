@@ -177,6 +177,8 @@ export async function restartServer(options: { force?: boolean }) {
   // terminal (and its process group) to receive SIGHUP.
   const params = JSON.stringify({
     serverPid, port, host, serverScript,
+    // The mode belongs to the running PPM: a restart keeps it, as the supervisor's does.
+    minimal: status.minimalMode === true,
     // The server's own loopback port, distinct from `port` (the PUBLIC port,
     // owned by the edge forwarder). The worker must only ever reclaim this one:
     // force-killing whatever listens on the public port would kill the edge,
@@ -252,6 +254,7 @@ async function main() {
   const serverArgs = isCompiled
     ? ["__serve__", "0", "127.0.0.1"]
     : ["run", P.serverScript, "__serve__", "0", "127.0.0.1"];
+  if (P.minimal) serverArgs.push("--minimal");
 
   if (process.platform === "win32") {
     const bunExe = process.execPath.replace(/\\\\/g, "\\\\\\\\");

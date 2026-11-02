@@ -490,8 +490,8 @@ export async function startServer(options: {
             if (!!status.minimalMode !== !!options.minimal) {
               console.error(`  PPM is already running in ${status.minimalMode ? "minimal" : "full"} mode.`);
               console.error(`  To change mode, run: ppm down && ppm start${options.minimal ? " --minimal" : ""}`);
-              process.exitCode = 1;
-              return;
+              // Exit, like "already running" below: what the start set up so far keeps the process alive.
+              process.exit(1);
             }
 
             // Supervisor is alive — handle based on state
