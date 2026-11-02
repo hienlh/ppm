@@ -125,7 +125,7 @@ export function createDesignPreviewRoutes(now: () => number = Date.now) {
     try {
       const asset = await resolveScopedAsset(cap, encoded);
       if (!(await stat(asset.abs)).isFile()) return c.json(err("File not found"), 404);
-      // A scheme-less host source follows the document's actual scheme through tunnels.
+      // The browser's Host, which tunnels keep; the policy adds both schemes to it.
       const source = `${browserFacingHost(c.req.header("host"), c.req.url)}${PREFIX}/${token}/`;
       const headers: Record<string, string> = {
         ...BASE_HEADERS,
