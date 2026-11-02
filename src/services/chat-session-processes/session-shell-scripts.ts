@@ -15,20 +15,25 @@
  *
  * Both call the real `systemd-run` by its absolute path: the shim is first on PATH, and the
  * prefix must not go through it.
+ *
+ * While the `untracked` file exists the prefix runs every command as the CLI would have, outside
+ * any scope: PPM found `systemd-run` failing (its user manager restarted, its bus stopped
+ * answering) and has not seen it work again, and a command must not fail for that.
  */
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { COMMAND_SCOPE_PREFIX, SLICE_ENV, type SessionShell } from "./session-slice.ts";
 
 const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-export function prefixScript(systemdRun: string): string {
+export function prefixScript(systemdRun: string, untracked: string): string {
   return `#!/bin/sh
 # Written by PPM: runs one command of an AI chat inside that chat's systemd slice, so PPM can
 # stop whatever the command leaves running. $1 is the whole command line the Claude CLI built.
 shell=\${CLAUDE_CODE_SHELL:-\${SHELL:-/bin/bash}}
 case "$shell" in */zsh|*/bash) ;; *) shell=/bin/bash ;; esac
 [ -n "$${SLICE_ENV}" ] || exec "$shell" -c "$1"
+[ ! -e ${quote(untracked)} ] || exec "$shell" -c "$1"
 read -r id < /proc/sys/kernel/random/uuid
 exec ${quote(systemdRun)} --user --scope --quiet --collect --slice="$${SLICE_ENV}" --unit="${COMMAND_SCOPE_PREFIX}$id" --description="PPM chat command" -- "$shell" -c "$1"
 `;
@@ -53,11 +58,21 @@ exec ${quote(systemdRun)} "$@"
 `;
 }
 
+/**
+ * Replaced in one step, never rewritten in place: dev and prod share this directory, and a
+ * command of one may start the script while the other is writing it.
+ */
 function writeIfChanged(path: string, content: string): void {
   let current: string | null = null;
   try { current = readFileSync(path, "utf8"); } catch {}
-  if (current !== content) writeFileSync(path, content);
-  chmodSync(path, 0o755);
+  if (current === content) {
+    chmodSync(path, 0o755);
+    return;
+  }
+  const temp = `${path}.${process.pid}.tmp`;
+  writeFileSync(temp, content);
+  chmodSync(temp, 0o755);
+  renameSync(temp, path);
 }
 
 /** Writes both scripts under `dir` (rewritten only when PPM changed them) and says where they are. */
@@ -65,7 +80,8 @@ export function installSessionShell(dir: string, systemdRun: string): SessionShe
   const pathDir = join(dir, "path");
   mkdirSync(pathDir, { recursive: true });
   const prefix = join(dir, "run");
-  writeIfChanged(prefix, prefixScript(systemdRun));
+  const untracked = join(dir, "untracked");
+  writeIfChanged(prefix, prefixScript(systemdRun, untracked));
   writeIfChanged(join(pathDir, "systemd-run"), shimScript(systemdRun));
-  return { prefix, pathDir };
+  return { prefix, pathDir, untracked };
 }

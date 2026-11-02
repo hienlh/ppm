@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installSessionShell } from "../../../../src/services/chat-session-processes/session-shell-scripts.ts";
@@ -76,6 +76,20 @@ describe.skipIf(process.platform !== "linux")("chat session shell scripts", () =
       expect(calls()).toEqual([]);
     });
 
+    it("runs the command untracked while PPM finds systemd-run failing, and in a scope again after", () => {
+      writeFileSync(shell.untracked, "");
+      try {
+        const res = run([shell.prefix, "echo still-runs; exit 5"], { PPM_CHAT_SLICE: SLICE, SHELL: "/bin/bash" });
+        expect(res.out).toBe("still-runs\n");
+        expect(res.code).toBe(5);
+        expect(calls()).toEqual([]);
+      } finally {
+        rmSync(shell.untracked, { force: true });
+      }
+      run([shell.prefix, "true"], { PPM_CHAT_SLICE: SLICE, SHELL: "/bin/bash" });
+      expect(calls()).toHaveLength(1);
+    });
+
     it("uses the shell the CLI was told to, and bash for one it cannot drive", () => {
       const bash = join(dir, "my-shells", "bash");
       mkdirSync(join(dir, "my-shells"), { recursive: true });
@@ -125,9 +139,14 @@ describe.skipIf(process.platform !== "linux")("chat session shell scripts", () =
 
   it("puts back a script that was changed, and leaves a current one alone", () => {
     writeFileSync(shell.prefix, "#!/bin/sh\nexit 99\n");
+    const changed = statSync(shell.prefix).ino;
     const again = installSessionShell(join(dir, "chat-session-shell"), fake);
     expect(again).toEqual(shell);
     expect(readFileSync(shell.prefix, "utf8")).toContain("PPM chat command");
+    // Replaced by a rename, not rewritten in place: dev and prod share the directory, and a
+    // command starting meanwhile must read the old script or the new one, never half of one.
+    expect(statSync(shell.prefix).ino).not.toBe(changed);
+    expect(readdirSync(join(dir, "chat-session-shell")).filter((f) => f.endsWith(".tmp"))).toEqual([]);
     const before = statSync(shell.prefix).mtimeMs;
     installSessionShell(join(dir, "chat-session-shell"), fake);
     expect(statSync(shell.prefix).mtimeMs).toBe(before);

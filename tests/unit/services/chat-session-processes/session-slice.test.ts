@@ -4,7 +4,7 @@ import {
 } from "../../../../src/services/chat-session-processes/session-slice.ts";
 
 const SESSION = "9788398e-17b7-4ad6-93c0-6356ed3f409e";
-const SHELL = { prefix: "/home/u/.ppm/bin/chat-session-shell/run", pathDir: "/home/u/.ppm/bin/chat-session-shell/path" };
+const SHELL = { prefix: "/home/u/.ppm/bin/chat-session-shell/run", pathDir: "/home/u/.ppm/bin/chat-session-shell/path", untracked: "/home/u/.ppm/bin/chat-session-shell/untracked" };
 
 describe("session slice names", () => {
   it("names an instance after its database, so dev and prod sharing ~/.ppm stay apart", () => {
@@ -71,7 +71,7 @@ describe("withSessionSlice", () => {
     expect(untracked.CLAUDE_CODE_SHELL_PREFIX).toBeUndefined();
     expect(untracked.PATH).toBe("/usr/bin:/bin");
 
-    const scratch = { prefix: "/tmp/scratch/bin/chat-session-shell/run", pathDir: "/tmp/scratch/bin/chat-session-shell/path" };
+    const scratch = { prefix: "/tmp/scratch/bin/chat-session-shell/run", pathDir: "/tmp/scratch/bin/chat-session-shell/path", untracked: "/tmp/scratch/bin/chat-session-shell/untracked" };
     const tracked = withSessionSlice(inherited, "app-ppmchat-own-y.slice", scratch);
     expect(tracked[SLICE_ENV]).toBe("app-ppmchat-own-y.slice");
     expect(tracked.CLAUDE_CODE_SHELL_PREFIX).toBe(scratch.prefix);
@@ -86,7 +86,7 @@ describe("withSessionSlice", () => {
   });
 
   it("does not route through a prefix path the CLI would split at ' -'", () => {
-    const env = withSessionSlice(base, "app-ppmchat-a-b.slice", { prefix: "/home/u/my -dir/run", pathDir: "/home/u/my -dir/path" });
+    const env = withSessionSlice(base, "app-ppmchat-a-b.slice", { prefix: "/home/u/my -dir/run", pathDir: "/home/u/my -dir/path", untracked: "/home/u/my -dir/untracked" });
     expect(env.CLAUDE_CODE_SHELL_PREFIX).toBeUndefined();
     expect(env[SLICE_ENV]).toBeUndefined();
   });

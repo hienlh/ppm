@@ -10,14 +10,14 @@
  * the session stops all of it at once. A process descending from a live CLI is a command or MCP
  * server running right now and is never stopped by a sweep.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../logger.ts";
 import { getPpmDir } from "../ppm-dir.ts";
 import { advanceClock, describeUnits, idlePastLimit, isCommandScope, unitsToStop, type SessionClock, type UnitSnapshot } from "./leftover-decisions.ts";
 import { installSessionShell } from "./session-shell-scripts.ts";
 import {
-  instanceSliceName, instanceTag, SESSION_SHELL_DIR, sessionIdOfSlice, sessionSliceName, withSessionSlice, type SessionShell,
+  instanceSliceName, instanceTag, SESSION_SHELL_DIR, SLICE_ENV, sessionIdOfSlice, sessionSliceName, withSessionSlice, type SessionShell,
 } from "./session-slice.ts";
 
 const log = createLogger("chat-procs");
@@ -29,7 +29,10 @@ const PROBE_TIMEOUT_MS = 5_000;
 interface Tracking {
   instance: string;
   shell: SessionShell;
+  systemdRun: string;
   systemctl: string;
+  /** The last probe failed: new CLIs are spawned without routing and the prefix runs commands untracked. */
+  failing: boolean;
   /** cgroupfs directory of this PPM's slice; every session slice of it is a directory inside. */
   instanceDir: string;
   /** The cgroup PPM's own processes, its CLIs included, run in. */
@@ -97,10 +100,15 @@ export async function initChatSessionProcesses(opts: { dbPath: string; idleMinut
     return false;
   }
   const instance = instanceTag(opts.dbPath);
+  const shell = installSessionShell(join(getPpmDir(), "bin", SESSION_SHELL_DIR), systemdRun);
+  // Left by a server that saw systemd-run failing; it works now.
+  rmSync(shell.untracked, { force: true });
   tracking = {
     instance,
-    shell: installSessionShell(join(getPpmDir(), "bin", SESSION_SHELL_DIR), systemdRun),
+    shell,
+    systemdRun,
     systemctl,
+    failing: false,
     // A '-' is a level: app-ppmchat-<instance>.slice sits in app-ppmchat.slice, in app.slice.
     instanceDir: join(CGROUP_ROOT + appSlice, "app-ppmchat.slice", instanceSliceName(instance)),
     ownCgroup,
@@ -123,8 +131,59 @@ export function chatSessionProcessesTracked(): boolean {
  */
 export function chatSessionCliEnv(sessionId: string | undefined, env: Record<string, string | undefined>): Record<string, string | undefined> {
   const t = tracking;
-  const slice = t && sessionId && t.idleMinutes() > 0 ? sessionSliceName(t.instance, sessionId) : null;
-  return withSessionSlice(env, slice, t?.shell ?? null);
+  const slice = t && !t.failing && sessionId && t.idleMinutes() > 0 ? sessionSliceName(t.instance, sessionId) : null;
+  const out = withSessionSlice(env, slice, t?.shell ?? null);
+  if (t && slice && !out[SLICE_ENV]) {
+    noteUntracked(t.shell.prefix.includes(" -")
+      ? `the path of PPM's directory contains " -", which the CLI cannot take in a shell prefix (${t.shell.prefix})`
+      : "CLAUDE_CODE_SHELL_PREFIX is set in PPM's environment, and a prefix of the user's own wins");
+  }
+  return out;
+}
+
+const toldUntracked = new Set<string>();
+
+/** Once per reason: Settings shows a limit, so the log has to say why nothing is stopped. */
+function noteUntracked(why: string): void {
+  if (toldUntracked.has(why)) return;
+  toldUntracked.add(why);
+  log.info(`chat commands are not tracked, so nothing they leave running is stopped: ${why}`);
+}
+
+/**
+ * Probes `systemd-run --user --scope` again. The startup probe proves it worked once; if the user
+ * manager restarts or its bus stops answering, every Bash call and MCP server start would fail
+ * with systemd's error, indistinguishable from the command's own. So while the probe fails the
+ * `untracked` file is there and the prefix runs each command as the CLI would have, new CLIs are
+ * spawned without routing, and nothing is swept; once it works again, all three come back. A
+ * command started between the failure and this probe, at most a minute, still fails.
+ * `systemdRun` is for tests.
+ */
+export async function recheckRouting(systemdRun?: string): Promise<boolean> {
+  const t = tracking;
+  if (!t) return false;
+  const probe = await run([systemdRun ?? t.systemdRun, "--user", "--scope", "--quiet", "--collect", "--", "true"]);
+  const ok = probe.code === 0;
+  // The file is shared with the other PPM on this ~/.ppm, so it follows every probe, not only a change.
+  try {
+    if (ok) rmSync(t.shell.untracked, { force: true });
+    else writeFileSync(t.shell.untracked, "");
+  } catch (e) {
+    log.warn(`could not ${ok ? "remove" : "write"} ${t.shell.untracked}: ${(e as Error).message}`);
+  }
+  if (ok === t.failing) {
+    if (ok) log.info("chat commands are tracked again: systemd-run --user --scope works");
+    else log.warn(`chat commands run untracked until systemd-run --user --scope works again: it failed (${probe.err.trim().slice(0, 200) || probe.code})`);
+  }
+  t.failing = !ok;
+  return ok;
+}
+
+/** Every minute: nothing while no chat can be routed, else the probe, then the sweep if it passed. */
+async function tick(deps: SweepDeps): Promise<void> {
+  const t = tracking;
+  if (!t || (t.idleMinutes() <= 0 && !sessionSlices(t).size)) return;
+  if (await recheckRouting()) sweepLeftovers(deps, "idle");
 }
 
 // ── Snapshot ────────────────────────────────────────────────────────────
@@ -280,7 +339,9 @@ export function registerLeftoverSweeper(deps: SweepDeps): () => void {
   hot.stop?.();
   hot.deps = deps;
   if (tracking) startupSweep(deps);
-  const timer = setInterval(() => sweepLeftovers(deps, "idle"), SWEEP_INTERVAL_MS);
+  const timer = setInterval(() => {
+    tick(deps).catch((e) => log.warn(`leftover sweep failed: ${(e as Error).message}`));
+  }, SWEEP_INTERVAL_MS);
   (timer as { unref?: () => void }).unref?.();
   hot.stop = () => clearInterval(timer);
   return hot.stop;

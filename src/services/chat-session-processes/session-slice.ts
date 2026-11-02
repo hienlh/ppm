@@ -54,6 +54,8 @@ export interface SessionShell {
   prefix: string;
   /** Directory put first on the CLI's PATH, holding the `systemd-run` shim. */
   pathDir: string;
+  /** File that, while it exists, has the prefix run every command untracked: `systemd-run` is failing. */
+  untracked: string;
 }
 
 const isOurs = (path: string) => path.includes(`/${SESSION_SHELL_DIR}/`);

@@ -8,8 +8,8 @@ import { mkdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getPpmDir } from "../../src/services/ppm-dir.ts";
 import {
-  chatSessionCliEnv, initChatSessionProcesses, registerLeftoverSweeper, stopChatSessionProcesses, stopCommandScopesSync,
-  sweepLeftovers, type SweepDeps,
+  chatSessionCliEnv, initChatSessionProcesses, recheckRouting, registerLeftoverSweeper, stopChatSessionProcesses,
+  stopCommandScopesSync, sweepLeftovers, type SweepDeps,
 } from "../../src/services/chat-session-processes/session-processes.service.ts";
 import { instanceSliceName, instanceTag, sessionSliceName } from "../../src/services/chat-session-processes/session-slice.ts";
 
@@ -104,6 +104,24 @@ describe.skipIf(!userScopesWork())("chat session processes under systemd", () =>
     runAsCli(sessionId, `systemd-run --user --quiet --slice=app.slice --unit=${kept} -- sleep 300`);
     otherSlices.push(kept);
     expect(Bun.spawnSync(["systemctl", "--user", "show", "-p", "Slice", "--value", kept]).stdout.toString().trim()).toBe("app.slice");
+  });
+
+  it("runs commands untracked while systemd-run fails, and in the session's slice again once it works", async () => {
+    const sessionId = crypto.randomUUID();
+    const slice = sessionSliceName(instance, sessionId)!;
+    // A CLI spawned before the failure keeps its routed environment.
+    const spawnedEarlier = envOf(sessionId);
+    const cgroupOfCommand = () =>
+      Bun.spawnSync([spawnedEarlier.CLAUDE_CODE_SHELL_PREFIX!, "cat /proc/self/cgroup"], { env: spawnedEarlier }).stdout.toString();
+    try {
+      expect(await recheckRouting("/bin/false")).toBe(false);
+      expect(cgroupOfCommand()).not.toContain(`/${slice}/`);
+      expect(chatSessionCliEnv(sessionId, process.env).PPM_CHAT_SLICE).toBeUndefined();
+    } finally {
+      expect(await recheckRouting()).toBe(true);
+    }
+    expect(cgroupOfCommand()).toContain(`/${slice}/`);
+    expect(chatSessionCliEnv(sessionId, process.env).PPM_CHAT_SLICE).toBe(slice);
   });
 
   it("an idle sweep stops what the session left running, never a command still running", async () => {
