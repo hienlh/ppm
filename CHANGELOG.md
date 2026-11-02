@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Max Turns goes up to 1000, or can be switched off.** Settings → AI Provider accepted 1 to 500 steps per message, so a long task stopped every 500 steps, about every hour and a half, and waited for someone to say continue. 0 now means no limit, and up to 1000 steps are accepted. At 0 or above 500, Settings warns that every step is a paid model call, so a task left running unattended can cost a lot.
+
 ### Fixed
 
 - **A long chat made the PPM server read the chat's whole transcript back on every tool call.** To catch a tool result the stream might not carry, PPM looks it up in the transcript once the tools have run, and it took the rest of the very response that asked for the tool as that sign: so on every tool call it read the transcript before the tool had even started, and passed each result on twice. On a 7-day chat with a 1.47 GB transcript that was a full read about every 8 seconds; the server's memory swung between 4.9 and 12.8 GB and requests to PPM timed out while it read. It now waits for Claude's next response, and reads the transcript only when the stream never carried the result. Over three tool calls on a 401 MB transcript, the server's peak memory went from 1,466 MB to 203 MB.
