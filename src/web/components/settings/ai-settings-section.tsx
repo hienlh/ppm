@@ -404,8 +404,12 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
                 defaultValue={config?.max_turns ?? 100}
                 className={compact ? "h-7 text-[11px]" : undefined}
                 onBlur={(e) => {
+                  // min/max bound only the spinner: a typed number is brought into range here, and a
+                  // cleared field shows the saved value again rather than looking saved.
                   const val = parseInt(e.target.value);
-                  if (!isNaN(val)) handleSave("max_turns", val);
+                  const turns = isNaN(val) ? null : Math.min(Number(e.target.max), Math.max(Number(e.target.min), val));
+                  e.target.value = String(turns ?? config?.max_turns ?? 100);
+                  if (turns !== null) handleSave("max_turns", turns);
                 }}
               />
               {(config?.max_turns === 0 || (config?.max_turns ?? 0) > 500) && (
