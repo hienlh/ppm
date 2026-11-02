@@ -48,6 +48,21 @@ export function useGlobalKeybindings(enabled = true) {
       return true;
     }
 
+    /** Mod+1..9: the project at that place in the list. Returns true when the event was consumed. */
+    function dispatchSwitchProject(e: KeyboardEvent, m: (ev: KeyboardEvent, id: string) => boolean) {
+      for (let i = 1; i <= 9; i++) {
+        if (!m(e, `switch-project-${i}`)) continue;
+        e.preventDefault();
+        const target = useProjectStore.getState().projects[i - 1];
+        if (target) {
+          useProjectStore.getState().setActiveProject(target);
+          useTabStore.getState().switchProject(target.name);
+        }
+        return true;
+      }
+      return false;
+    }
+
     function handler(e: KeyboardEvent) {
       if (useSettingsStore.getState().minimalMode) {
         if (e.type !== "keydown" || composing || e.isComposing) return;
@@ -87,6 +102,8 @@ export function useGlobalKeybindings(enabled = true) {
           const index = chats.findIndex((tab) => tab.id === state.activeTabId);
           const next = (index + (match(e, "next-tab") ? 1 : -1) + chats.length) % chats.length;
           state.setActiveTab(chats[next]!.id);
+        } else {
+          dispatchSwitchProject(e, match);
         }
         return;
       }
@@ -280,19 +297,7 @@ export function useGlobalKeybindings(enabled = true) {
         return;
       }
 
-      // Switch project 1-9
-      for (let i = 1; i <= 9; i++) {
-        if (match(e, `switch-project-${i}`)) {
-          e.preventDefault();
-          const projects = useProjectStore.getState().projects;
-          const target = projects[i - 1];
-          if (target) {
-            useProjectStore.getState().setActiveProject(target);
-            useTabStore.getState().switchProject(target.name);
-          }
-          return;
-        }
-      }
+      if (dispatchSwitchProject(e, match)) return;
 
       // Extension-contributed keybindings (with user override support)
       const extKbs = useExtensionStore.getState().contributions?.keybindings;

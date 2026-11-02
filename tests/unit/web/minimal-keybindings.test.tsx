@@ -11,6 +11,10 @@ afterAll(uninstallDom);
 installGlobal("fetch", async () => new Response(JSON.stringify({ ok: true, data: null })));
 const { useGlobalKeybindings } = await import("../../../src/web/hooks/use-global-keybindings");
 const { useSettingsStore } = await import("../../../src/web/stores/settings-store");
+const { useProjectStore } = await import("../../../src/web/stores/project-store");
+const { KEY_ACTIONS, parseCombo } = await import("../../../src/web/stores/keybindings-store");
+const { isMinimalKeyAction } = await import("../../../src/web/lib/minimal-mode");
+const { KeyboardShortcutsSection } = await import("../../../src/web/components/settings/keyboard-shortcuts-section");
 afterEach(() => useSettingsStore.setState({ minimalMode: false }));
 
 function Probe() {
@@ -44,6 +48,51 @@ test("inside a text field minimal mode leaves paste and typing alone", async () 
     window.removeEventListener("toggle-voice-input", onVoice);
     field.remove();
     await view.unmount();
+  }
+});
+
+test("minimal mode answers exactly the shortcuts Settings lists for it", async () => {
+  useSettingsStore.setState({ minimalMode: true });
+  const view = await mount(<Probe />);
+  try {
+    for (const action of KEY_ACTIONS) {
+      if (!action.defaultKey) continue;
+      const c = parseCombo(action.defaultKey);
+      const claimed = press(document.body, { key: c.key, ctrlKey: c.ctrl, metaKey: c.meta, altKey: c.alt, shiftKey: c.shift });
+      expect({ id: action.id, claimed }).toEqual({ id: action.id, claimed: isMinimalKeyAction(action.id) });
+    }
+  } finally {
+    await view.unmount();
+  }
+});
+
+test("minimal mode switches projects with Mod+1..9", async () => {
+  const projects = [{ name: "one", path: "/p/one" }, { name: "two", path: "/p/two" }];
+  useSettingsStore.setState({ minimalMode: true });
+  useProjectStore.setState({ projects: projects as never, activeProject: projects[0] as never });
+  const view = await mount(<Probe />);
+  try {
+    expect(press(document.body, { key: "2", ctrlKey: true })).toBe(true);
+    expect(useProjectStore.getState().activeProject?.name).toBe("two");
+  } finally {
+    await view.unmount();
+  }
+});
+
+test("Settings lists every shortcut in full mode and only the answered ones in minimal mode", async () => {
+  const listed = async () => {
+    const view = await mount(<KeyboardShortcutsSection />);
+    const labels = [...document.querySelectorAll("span.text-xs.text-foreground")].map((el) => el.textContent ?? "");
+    await view.unmount();
+    return labels.sort();
+  };
+  expect(await listed()).toEqual(KEY_ACTIONS.map((a) => a.label).sort());
+  useSettingsStore.setState({ minimalMode: true });
+  const minimal = await listed();
+  expect(minimal).toEqual(KEY_ACTIONS.filter((a) => isMinimalKeyAction(a.id)).map((a) => a.label).sort());
+  expect(minimal).toContain("Switch to Project 1");
+  for (const hidden of ["Command Palette", "Toggle Terminal Panel", "Open Terminal Tab", "Git Status (sidebar)", "Problems", "Compare Files..."]) {
+    expect(minimal).not.toContain(hidden);
   }
 });
 
