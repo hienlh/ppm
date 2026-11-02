@@ -35,7 +35,8 @@ export interface SpawnScriptOptions {
   /** Put in the child's environment, so a restarted PPM can tell its own leftover child apart. */
   token: string;
   onCall: (method: string, params: unknown) => Promise<unknown>;
-  onLine: (line: string) => void;
+  /** `cut`: the line was too long and this is only its start (see `readLines`). */
+  onLine: (line: string, cut: boolean) => void;
   /** Kill the child when no heartbeat came for this long. Off when unset. */
   heartbeatTimeoutMs?: number;
 }

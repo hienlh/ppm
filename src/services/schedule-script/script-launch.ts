@@ -69,7 +69,7 @@ export const launchScript: Launch = (schedule, opts = {}) => {
         if (typeof spent === "number") cost += spent;
         return result;
       },
-      onLine: (line) => log.push(line),
+      onLine: (line, cut) => log.push(line, cut),
       heartbeatTimeoutMs: opts.heartbeatTimeoutMs,
     });
   } catch (e) {

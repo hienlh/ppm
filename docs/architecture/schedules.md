@@ -46,7 +46,7 @@ scheduler (tick fire / always-on supervisor)
 |---|---|
 | `inputs` | The schedule's input values (frozen); a secret input arrives decrypted. |
 | `state` / `save()` | One JSON value per schedule, at most 2 MB. A tick's state is kept when it ends, failed or not; always-on keeps it only through `save()`. |
-| `log(...)` / `console.*` | Lines into the schedule's log: secrets masked first, cut at 4096 chars, a 1000-line ring for the UI plus the run row. |
+| `log(...)` / `console.*` | Lines into the schedule's log: secrets masked first, cut at 4096 chars, a 1000-line ring for the UI plus the run row. A line that still has no newline after 64 K chars is passed on cut there and the rest of it dropped, so a script printing without one cannot fill the server's memory. |
 | `notify({ title, body, sessionId? })` | PPM's notification fan-out (push, Telegram, ntfy). |
 | `ai.ask(prompt, { model, effort, system, jsonSchema, timeoutMs })` | One stateless model call on PPM's accounts: no tools, no `CLAUDE.md`, no session left behind. Default model `haiku`, 2 min. Answers `{ ok, text, json?, error?, timedOut?, costUsd }` instead of throwing. |
 | `ai.chat(key, prompt, { title, sessionId, timeoutMs, wait })` | A turn in a real PPM chat, one chat per `key` (or the given `sessionId`), shown live like any chat. Answers `{ ok, text, sessionId, busy?, error? }`; `busy` when someone else is mid-turn there. |

@@ -28,6 +28,12 @@ it; `instance-guard.ts` makes sure there is never a second one.
   systemd PPM was stopping.
 - **Secrets are masked before a line is cut**, never after — a cut first can leave half a
   secret showing that the masker no longer recognises.
+- **A line is held in the server until its newline arrives**, so `readLines` passes on the
+  first 64 K chars of a longer one, cut, and drops the rest up to its newline: one
+  `process.stdout.write` without a newline used to grow the server by its whole size. That cut
+  happens before masking can see the line, so the line goes on flagged `cut` and the masker also
+  hides an end that starts a secret. It shows when the line is mostly secrets: masked, it can
+  shrink under the 4096 shown.
 - **Recorded pids outlive reboots.** `reconcileLeftovers` therefore proves a leftover is ours
   (the token in `/proc/<pid>/environ`, or `ps -E` on macOS) before killing it; a process of
   someone else's at that pid is forgotten, and one it cannot judge blocks its schedule instead

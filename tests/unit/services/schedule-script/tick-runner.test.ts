@@ -85,6 +85,17 @@ describe("runScriptTick", () => {
     expect(getSchedule(s.id)!.state_json).toBe('{"done":["NX-1"]}');
   });
 
+  it("cuts a line printed without end, and masks the secret the cut went through", async () => {
+    // 624 whole tokens fit in the 65,536 characters kept, then 16 characters of the next one.
+    const token = `xoxp-${"0123456789".repeat(10)}`;
+    const s = schedule(`export default async (ctx) => {
+      await new Promise((done) => process.stdout.write(ctx.inputs.token.repeat(700), done));
+    }`, { secrets: { token } });
+    await runScriptTick(s);
+    const [run] = listScheduleRuns(s.id);
+    expect(run).toMatchObject({ status: "done", output_truncated: `${"••••".repeat(625)} … [line cut]\n` });
+  });
+
   it("stops a tick that runs past its timeout", async () => {
     const s = schedule("export default async (ctx) => { console.log('waiting'); await ctx.sleep(60_000); }", { timeout_ms: 1500 });
     const started = Date.now();
