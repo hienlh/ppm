@@ -193,8 +193,13 @@ class ChatService {
     dbToolsMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
     this.turnEnds.delete(sessionId);
-    stopChatSessionProcesses(sessionId);
-    return provider.deleteSession(sessionId);
+    // The provider ends the chat's turn and closes its CLI first. Only then is everything the
+    // chat's commands started stopped, running or not: the one stop that does not wait for idle.
+    try {
+      await provider.deleteSession(sessionId);
+    } finally {
+      stopChatSessionProcesses(sessionId);
+    }
   }
 
   /**
