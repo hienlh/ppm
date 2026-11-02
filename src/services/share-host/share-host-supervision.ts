@@ -8,9 +8,13 @@
  * after the worker restarts. Calls are serialised.
  *
  * In `shared` mode PPM's tunnel is used by exactly one connector at a time: PPM's own while its
- * public link is on (it then routes the share hostname too, `ingressForPpmConnector`), the share
+ * public link is on (it then routes the share hostname too, `routesForPpmConnector`), the share
  * host's while that link is off (routing the share hostname only). Two connectors on one tunnel
  * with different routes would have Cloudflare spread each hostname's requests over both.
+ *
+ * Once a review hostname has been set up, PPM's named connector routes by hostname and answers
+ * any other with a 404, never with `--url`: that would serve PPM on every hostname pointing at
+ * the tunnel, and the review hostname keeps pointing there while it is off, down or moved.
  *
  * What the server reads goes to status.json: `shareHostPid`/`shareHostPort` (the worker),
  * `shareHostMode`, `shareHostUrl` + `shareHostTunnelPid` (once a connector carrying the share
@@ -58,6 +62,34 @@ export interface ReconcileOptions {
   ppmRestarting?: boolean;
 }
 
+/** What PPM's own connector routes, decided as it spawns. */
+export interface PpmConnectorRoutes {
+  /** PPM's hostname (and `share`) by ingress rules, a 404 for any other, instead of `--url`. */
+  byHostname: boolean;
+  /** The review hostname's route, while PPM's connector carries it (`shared-ppm`, worker up). */
+  share: IngressRule | null;
+}
+
+/** `--url`: every hostname on the tunnel reaches PPM. */
+export const PLAIN_PPM_ROUTES: PpmConnectorRoutes = { byHostname: false, share: null };
+
+/**
+ * What PPM's connector must route, with the worker on `port` (null while it has none). Only a
+ * named connector has hostnames to route; a temporary address is a tunnel nothing else points at.
+ */
+export function ppmConnectorRoutes(
+  share: ResolvedShareHostConfig, ppm: ResolvedTunnelConfig | null, port: number | null,
+): PpmConnectorRoutes {
+  if (ppm?.mode !== "named") return PLAIN_PPM_ROUTES;
+  // Its link is on whenever it runs.
+  const next = planShareHost(share, ppm, true);
+  const rule = next.kind === "shared-ppm" && port !== null ? { hostname: next.hostname, port } : null;
+  return { byHostname: share.domainSetUp || rule !== null, share: rule };
+}
+
+const sameRoutes = (a: PpmConnectorRoutes, b: PpmConnectorRoutes) =>
+  a.byHostname === b.byHostname && a.share?.hostname === b.share?.hostname && a.share?.port === b.share?.port;
+
 let hooks: ShareHostSupervisorHooks | null = null;
 let config: ResolvedShareHostConfig = resolveShareHostConfig(null);
 let plan: ShareHostPlan = { kind: "off" };
@@ -65,9 +97,10 @@ let worker: Subprocess | null = null;
 let workerPort: number | null = null;
 let workerStartedAt = 0;
 let workerDeaths = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let stopping = false;
-/** The share route PPM's connector was last started with, or null when it carries none. */
-let ppmIngress: IngressRule | null = null;
+/** What PPM's connector was last started with; null when this supervisor has not started one. */
+let ppmRoutes: PpmConnectorRoutes | null = null;
 const connector = new ShareConnector({ gate: (fn) => (hooks ? hooks.gate(fn) : Promise.resolve(fn())) });
 let chain: Promise<void> = Promise.resolve();
 
@@ -125,15 +158,24 @@ async function waitForPort(proc: Subprocess): Promise<number | null> {
   return null;
 }
 
+/** Start the worker again after a backoff that grows while it keeps failing young. */
+function retryWorkerLater(why: string): void {
+  workerDeaths = Date.now() - workerStartedAt > 5 * 60_000 ? 1 : workerDeaths + 1;
+  const delay = Math.min(30_000, 500 * 2 ** Math.min(workerDeaths - 1, 6));
+  log.warn(`${why} — starting it again in ${delay} ms`);
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    void reconcileShareHost();
+  }, delay);
+}
+
 function onWorkerExit(proc: Subprocess, code: number | null): void {
   if (worker !== proc) return; // stopped or replaced on purpose
   worker = null;
   if (stopping || plan.kind === "off" || plan.kind === "unavailable") return;
-  workerDeaths = Date.now() - workerStartedAt > 5 * 60_000 ? 1 : workerDeaths + 1;
-  const delay = Math.min(30_000, 500 * 2 ** Math.min(workerDeaths - 1, 6));
-  log.warn(`Share host worker exited (code ${code}) — starting it again in ${delay} ms`);
   publish({ shareHostPid: null });
-  setTimeout(() => void reconcileShareHost(), delay);
+  retryWorkerLater(`Share host worker exited (code ${code})`);
 }
 
 /** The worker's port, starting the worker when it does not run. Keeps its last port when it can. */
@@ -142,15 +184,22 @@ async function ensureWorker(): Promise<number | null> {
   if (!hooks) return null;
   try { unlinkSync(SHARE_HOST_PORT_FILE()); } catch {}
   const logFd = hooks.logFd;
-  const proc = await hooks.gate(() => Bun.spawn({
-    cmd: workerCmd(workerPort ?? 0),
-    stdio: ["ignore", logFd, logFd],
-    // Told that its stderr is ppm.log, which it cannot work out on Windows (see logger.ts).
-    env: { ...withoutNotifySocket(process.env), [STDIO_IS_LOG_ENV]: "1" },
-    windowsHide: true,
-  }));
-  worker = proc;
   workerStartedAt = Date.now();
+  let proc: Subprocess;
+  try {
+    proc = await hooks.gate(() => Bun.spawn({
+      cmd: workerCmd(workerPort ?? 0),
+      stdio: ["ignore", logFd, logFd],
+      // Told that its stderr is ppm.log, which it cannot work out on Windows (see logger.ts).
+      env: { ...withoutNotifySocket(process.env), [STDIO_IS_LOG_ENV]: "1" },
+      windowsHide: true,
+    }));
+  } catch (error) {
+    // Bun.spawn throws instead of starting a process that fails, so no exit will retry it.
+    retryWorkerLater(`Share host worker could not be started: ${error}`);
+    return null;
+  }
+  worker = proc;
   void proc.exited.then((code) => onWorkerExit(proc, code));
   publish({ shareHostPid: proc.pid });
   const port = await waitForPort(proc);
@@ -175,9 +224,6 @@ function stopWorker(): void {
   }
 }
 
-const sameRule = (a: IngressRule | null, b: IngressRule | null) =>
-  a?.hostname === b?.hostname && a?.port === b?.port;
-
 /** Run `next` on the share host's own connector unless exactly that already runs. */
 function runOwnConnector(next: ConnectorPlan): void {
   const now = connector.plan;
@@ -192,12 +238,18 @@ function runOwnConnector(next: ConnectorPlan): void {
   });
 }
 
+/** Restart PPM's connector when what it routes is not what it must route now. */
+function syncPpmConnector(ppm: { config: ResolvedTunnelConfig | null; linkOn: boolean }, opts: ReconcileOptions): void {
+  if (!ppm.linkOn || opts.ppmRestarting) return;
+  if (sameRoutes(ppmRoutes ?? PLAIN_PPM_ROUTES, ppmConnectorRoutes(config, ppm.config, workerPort))) return;
+  hooks?.restartPpmConnector();
+}
+
 async function reconcileNow(opts: ReconcileOptions): Promise<void> {
   if (!hooks || stopping) return;
   const ppm = hooks.ppmTunnel();
   const next = planShareHost(config, ppm.config, ppm.linkOn);
   plan = next;
-  const ppmCarriesShare = ppm.linkOn && ppmIngress !== null;
 
   if (next.kind === "off" || next.kind === "unavailable") {
     connector.stop();
@@ -207,16 +259,17 @@ async function reconcileNow(opts: ReconcileOptions): Promise<void> {
       shareHostUrl: null, shareHostTunnelPid: null,
       shareHostWarning: next.kind === "unavailable" ? next.reason : null,
     });
-    // PPM's connector still routes the share hostname to a worker that is gone.
-    if (ppmCarriesShare && !opts.ppmRestarting) hooks.restartPpmConnector();
+    // PPM's connector may still route the share hostname to a worker that is gone.
+    syncPpmConnector(ppm, opts);
     return;
   }
 
   publish({ shareHostMode: config.mode });
   const port = await ensureWorker();
   if (port === null) {
-    // The exit handler tries again; say why links do not open meanwhile.
+    // Tried again after a backoff; say why links do not open meanwhile.
     publish({ shareHostUrl: null, shareHostTunnelPid: null, shareHostWarning: "The review address could not start; retrying." });
+    syncPpmConnector(ppm, opts);
     return;
   }
 
@@ -235,15 +288,14 @@ async function reconcileNow(opts: ReconcileOptions): Promise<void> {
       break;
     case "shared-ppm":
       connector.stop();
-      if (!sameRule(ppmIngress, { hostname: next.hostname, port })) {
+      if (!sameRoutes(ppmRoutes ?? PLAIN_PPM_ROUTES, ppmConnectorRoutes(config, ppm.config, port))) {
         // Down until PPM's connector is up again with the route (`notePpmConnectorReady`).
         publish({ shareHostUrl: null, shareHostTunnelPid: null, shareHostWarning: null });
-        if (!opts.ppmRestarting) hooks.restartPpmConnector();
       }
-      return;
+      break;
   }
-  // PPM's connector no longer has to carry the share hostname: the share host runs its own.
-  if (ppmCarriesShare && !opts.ppmRestarting) hooks.restartPpmConnector();
+  // PPM's connector picks the share hostname's route up, or drops it now that the share host runs its own.
+  syncPpmConnector(ppm, opts);
 }
 
 /** Bring what runs in line with the settings and PPM's tunnel. Serialised; never rejects. */
@@ -279,41 +331,43 @@ export function reloadShareHost(): Promise<void> {
 /** Supervisor shutdown: the worker and its connector go with it. */
 export function stopShareHost(): void {
   stopping = true;
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
   connector.stop();
   stopWorker();
 }
 
 /**
- * Whether PPM's connector would have to carry the share hostname under these settings. The
- * supervisor asks before adopting a connector left by the previous one, which was started with
- * the previous worker's port.
+ * Whether PPM's connector routes by hostname under these settings. The supervisor asks before
+ * adopting a connector left by the previous one: such a connector is replaced instead, because
+ * another process chose its routes (an older build's `--url`, or the previous worker's port).
  */
-export function shareHostNeedsPpmConnector(ppm: ResolvedTunnelConfig | null, ppmLinkOn: boolean): boolean {
+export function ppmConnectorRoutesByHostname(ppm: ResolvedTunnelConfig | null): boolean {
   let share: ResolvedShareHostConfig;
   try {
     share = readShareHostConfigFresh();
   } catch {
     return false;
   }
-  return planShareHost(share, ppm, ppmLinkOn).kind === "shared-ppm";
+  return ppmConnectorRoutes(share, ppm, null).byHostname;
 }
 
 /**
- * The share route PPM's connector must add as it spawns, or null. Called only while PPM's link
- * is on (that is the only time its connector runs), and remembered, so a later reconcile can
- * tell whether the running connector still matches.
+ * What PPM's connector must route as it spawns. Called only while PPM's link is on (that is the
+ * only time its connector runs), and remembered, so a later reconcile can tell whether the
+ * running connector still matches.
  */
-export function ingressForPpmConnector(ppm: ResolvedTunnelConfig | null): IngressRule | null {
-  const next = planShareHost(config, ppm, true);
-  ppmIngress = next.kind === "shared-ppm" && workerPort !== null ? { hostname: next.hostname, port: workerPort } : null;
-  return ppmIngress;
+export function routesForPpmConnector(ppm: ResolvedTunnelConfig | null): PpmConnectorRoutes {
+  ppmRoutes = ppmConnectorRoutes(config, ppm, workerPort);
+  return ppmRoutes;
 }
 
 /** PPM's connector is up: if it carries the share hostname, the share host is reachable too. */
 export function notePpmConnectorReady(pid: number, mode: TunnelMode): void {
   if (plan.kind !== "shared-ppm") return;
-  if (mode === "named" && ppmIngress) {
-    publish({ shareHostUrl: `https://${ppmIngress.hostname}`, shareHostTunnelPid: pid, shareHostWarning: null });
+  const share = ppmRoutes?.share;
+  if (mode === "named" && share) {
+    publish({ shareHostUrl: `https://${share.hostname}`, shareHostTunnelPid: pid, shareHostWarning: null });
   } else {
     publish({ shareHostUrl: null, shareHostTunnelPid: null, shareHostWarning: SHARED_PPM_TEMPORARY_WARNING });
   }

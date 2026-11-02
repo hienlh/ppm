@@ -54,7 +54,7 @@ describe("resolveShareHostConfig", () => {
   it("takes a named row only with its whole identity", () => {
     expect(resolveShareHostConfig(NAMED_ROW)).toEqual({
       enabled: true, mode: "named", hostname: "share.example.com", tunnelName: "ppm-share-box", token: TOKEN,
-      zoneID: "a".repeat(32), accountID: "b".repeat(32),
+      zoneID: "a".repeat(32), accountID: "b".repeat(32), domainSetUp: true,
     });
     for (const missing of ["hostname", "token", "zoneID", "accountID"]) {
       const row: Record<string, unknown> = { ...NAMED_ROW };
@@ -67,6 +67,15 @@ describe("resolveShareHostConfig", () => {
     const shared = resolveShareHostConfig({ ...NAMED_ROW, mode: "shared" });
     expect(shared).toMatchObject({ mode: "shared", hostname: "share.example.com", token: null, tunnelName: null });
     expect(resolveShareHostConfig({ enabled: true, mode: "shared" }).mode).toBe("quick");
+  });
+
+  it("remembers a hostname was set up after the switch goes off or the address goes back to temporary", () => {
+    // Its DNS record is still there in both cases, which is what PPM's connector has to know.
+    const shared = { ...NAMED_ROW, mode: "shared" };
+    expect(resolveShareHostConfig({ ...shared, enabled: false })).toMatchObject({ enabled: false, domainSetUp: true });
+    expect(resolveShareHostConfig({ ...shared, mode: "quick" })).toMatchObject({ mode: "quick", hostname: null, domainSetUp: true });
+    expect(resolveShareHostConfig({ enabled: true }).domainSetUp).toBe(false);
+    expect(resolveShareHostConfig(null).domainSetUp).toBe(false);
   });
 });
 

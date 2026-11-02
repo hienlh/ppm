@@ -29,10 +29,10 @@ import { waitForCloudflareReachable } from "./named-tunnel/network-ready.ts";
 import { decideNamedProbeAction, publicHostnameIsOurs } from "./named-tunnel/named-tunnel-probe-state.ts";
 import { isCloudflaredPid } from "./tunnel-registry.service.ts";
 import { getQuickTunnelArgs } from "./cloudflared.service.ts";
-import { ppmIngressRunArgs, type IngressRule } from "./share-host/share-host-args.ts";
+import { ppmIngressRunArgs } from "./share-host/share-host-args.ts";
 import {
-  initShareHost, reloadShareHost, reconcileShareHost, stopShareHost, shareHostNeedsPpmConnector,
-  ingressForPpmConnector, notePpmConnectorReady,
+  initShareHost, reloadShareHost, reconcileShareHost, stopShareHost, ppmConnectorRoutesByHostname,
+  routesForPpmConnector, notePpmConnectorReady, PLAIN_PPM_ROUTES, type PpmConnectorRoutes,
 } from "./share-host/share-host-supervision.ts";
 import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts";
 import { sdNotify, withoutNotifySocket } from "./sd-notify.ts";
@@ -877,23 +877,24 @@ export interface TunnelAttempt {
  * falling back to quick — or quick-only when no named config exists. Quick's
  * argv/regex are identical whichever position it takes.
  *
- * `shareRoute` is the share host's hostname when it rides on PPM's own tunnel
- * (`share_host.mode = "shared"`): the named connector then routes that hostname
- * to the share host worker and PPM's own to `port`, by ingress rules instead of
- * `--url`. The quick fallback serves PPM only.
+ * `routes` comes from the share host (`routesForPpmConnector`). Once a review
+ * hostname has been set up, the named connector routes PPM's hostname to `port`
+ * (and, while it carries the review address, that hostname to the share host
+ * worker) by ingress rules ending in a 404, instead of `--url`, which would
+ * serve PPM on the review hostname too. The quick fallback serves PPM only.
  *
  * Exported so a unit test can assert argv parity with `getQuickTunnelArgs`
  * against `spawnTunnel`'s actual call site, without spawning a real process.
  */
 export function buildTunnelAttempts(
-  config: ResolvedTunnelConfig, port: number, shareRoute: IngressRule | null = null,
+  config: ResolvedTunnelConfig, port: number, routes: PpmConnectorRoutes = PLAIN_PPM_ROUTES,
 ): TunnelAttempt[] {
   const plan = chooseTunnelSpawn(config, port);
   if (plan.mode === "quick") {
     return [{ mode: "quick", args: plan.args, regex: TUNNEL_URL_REGEX, urlFrom: "regex" }];
   }
-  const namedArgs = shareRoute && config.token && config.hostname
-    ? ppmIngressRunArgs(config.token, [shareRoute, { hostname: config.hostname, port }])
+  const namedArgs = routes.byHostname && config.token && config.hostname
+    ? ppmIngressRunArgs(config.token, [...(routes.share ? [routes.share] : []), { hostname: config.hostname, port }])
     : plan.args;
   return [
     { mode: "named", args: namedArgs, regex: NAMED_TUNNEL_READY_REGEX, urlFrom: "hostname" },
@@ -954,7 +955,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
     return;
   }
 
-  const attempts = buildTunnelAttempts(namedTunnelMode, port, ingressForPpmConnector(namedTunnelMode));
+  const attempts = buildTunnelAttempts(namedTunnelMode, port, routesForPpmConnector(namedTunnelMode));
   // Only the named path pays for this: its failure costs the user their fixed
   // address, while a quick tunnel just retries with a new URL. Spawning a
   // connector before the machine's network is back is the difference between
@@ -2457,11 +2458,11 @@ export async function runSupervisor(opts: {
     namedProbeRestartAttempted = false;
     startTunnelProbe();
     // Try adopting tunnel kept alive from previous upgrade; spawn new if dead.
-    // Not when it also carries the share host: it routes that hostname to the
-    // previous supervisor's worker, which is gone, and its port with it.
-    const carriesShareHost = shareHostNeedsPpmConnector(namedTunnelMode, tunnelSharingEnabled);
-    if (carriesShareHost) log("INFO", "Tunnel carries the share host — starting a fresh one with the new worker's route");
-    tunnelAdopted = !carriesShareHost && adoptTunnel();
+    // Not when it routes by hostname for the review address: the previous
+    // supervisor chose those routes, the previous worker's port among them.
+    const routesByHostname = ppmConnectorRoutesByHostname(namedTunnelMode);
+    if (routesByHostname) log("INFO", "Tunnel routes the review address too — starting a fresh one with this supervisor's routes");
+    tunnelAdopted = !routesByHostname && adoptTunnel();
     if (tunnelAdopted) {
       log("INFO", "Tunnel adopted from previous instance — public URL preserved");
     } else {

@@ -34,6 +34,12 @@ export interface ResolvedShareHostConfig {
   token: string | null;
   zoneID: string | null;
   accountID: string | null;
+  /**
+   * A hostname on the user's domain was set up for the review address, whatever the mode and the
+   * switch say now. Its DNS record outlives both (switching off, or back to a temporary address,
+   * deletes nothing), and one set up in `shared` mode still points at PPM's tunnel.
+   */
+  domainSetUp: boolean;
 }
 
 const nonEmpty = (v: unknown): v is string => typeof v === "string" && v.length > 0;
@@ -51,19 +57,20 @@ export function resolveShareHostConfig(raw: unknown): ResolvedShareHostConfig {
     obj = raw as Record<string, unknown>;
   }
   const enabled = obj?.enabled === true;
+  const domainSetUp = nonEmpty(obj?.hostname);
   const quick: ResolvedShareHostConfig = {
-    enabled, mode: "quick", hostname: null, tunnelName: null, token: null, zoneID: null, accountID: null,
+    enabled, mode: "quick", hostname: null, tunnelName: null, token: null, zoneID: null, accountID: null, domainSetUp,
   };
   if (!obj) return quick;
   const ids = { zoneID: nonEmpty(obj.zoneID) ? obj.zoneID : null, accountID: nonEmpty(obj.accountID) ? obj.accountID : null };
   if (obj.mode === "named" && nonEmpty(obj.hostname) && nonEmpty(obj.token) && ids.zoneID && ids.accountID) {
     return {
       enabled, mode: "named", hostname: obj.hostname, tunnelName: nonEmpty(obj.tunnelName) ? obj.tunnelName : null,
-      token: obj.token, ...ids,
+      token: obj.token, ...ids, domainSetUp,
     };
   }
   if (obj.mode === "shared" && nonEmpty(obj.hostname)) {
-    return { enabled, mode: "shared", hostname: obj.hostname, tunnelName: null, token: null, ...ids };
+    return { enabled, mode: "shared", hostname: obj.hostname, tunnelName: null, token: null, ...ids, domainSetUp };
   }
   return quick;
 }
