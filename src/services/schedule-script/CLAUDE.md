@@ -9,7 +9,9 @@ it; `instance-guard.ts` makes sure there is never a second one.
 - **Bun's IPC `disconnect` does not fire in the child when the parent is SIGKILLed** — measured
   with `Bun.spawn({ ipc })`, the child kept running as an orphan. The parent's death is seen
   through stdin instead: the server holds the child's stdin open and never writes to it, and the
-  harness's `for await (Bun.stdin.stream())` ends the moment the server dies, however it dies.
+  harness's `for await (process.stdin)` ends the moment the server dies, however it dies. It used
+  to be `Bun.stdin.stream()`, which ended just as well, but `Bun.stdin` is a `BunFile`, and a
+  BunFile's `.stream()` is banned in `src` (`file-chunks.test.ts`).
 - **A script that blocks its event loop never reads that EOF**, so a Worker in the child checks
   every 250 ms that the server is still its parent and SIGKILLs the child when it is not. It
   reads the parent from `/proc/self/stat`: inside a Worker, Bun's `process.ppid` is read once

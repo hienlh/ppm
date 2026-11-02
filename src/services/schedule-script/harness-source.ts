@@ -41,7 +41,7 @@ function parentGone() {
   setTimeout(() => process.exit(0), STOP_GRACE_MS);
 }
 (async () => {
-  try { for await (const _ of Bun.stdin.stream()) {} } catch {}
+  try { for await (const _ of process.stdin) {} } catch {}
   parentGone();
 })();
 
