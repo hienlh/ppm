@@ -48,7 +48,7 @@ async function fetchFromSdk(projectPath: string): Promise<SlashItem[]> {
   // Loaded lazily: the CLI (`ppm skills`) uses this module's sync path only and
   // must not pull in the provider's config/database dependencies.
   const [{ query }, provider] = await Promise.all([
-    import("@anthropic-ai/claude-agent-sdk"),
+    import("../../providers/claude-cli-process-group.ts"),
     import("../../providers/claude-agent-sdk.ts"),
   ]);
 
