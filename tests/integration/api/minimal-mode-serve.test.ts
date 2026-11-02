@@ -54,6 +54,12 @@ describe("minimal mode on the real server", () => {
     expect((await res.json()).error).toContain("minimal mode");
   });
 
+  test("design review links (/s, mounted ahead of CORS and auth) are refused too", async () => {
+    const res = await fetch(`${base}/s/some-share-code`);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toContain("minimal mode");
+  });
+
   test("a disabled socket is refused before authentication, a chat socket is not", async () => {
     const terminal = await fetch(`${base}/ws/project/demo/terminal/1`);
     expect(terminal.status).toBe(403);
