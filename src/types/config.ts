@@ -67,6 +67,7 @@ export interface PpmConfig {
   query_audit: QueryAuditConfig;
   session_trace: SessionTraceConfig;
   tunnel: TunnelConfig;
+  share_host: ShareHostConfig;
   android?: AndroidConfig;
   /** Lowest level written to ppm.log. `PPM_LOG_LEVEL` overrides it; see `services/logger.ts`. */
   log_level?: LogLevel;
@@ -94,6 +95,25 @@ export interface TunnelConfig {
   accountID?: string;
   /** User answered "no domain" — popup must never nag again. */
   dismissed?: boolean;
+}
+
+/**
+ * The share host: a public address for design review links that reaches the review pages and
+ * nothing else of PPM (`src/services/share-host/`). `token` (named mode only) is secret, like
+ * `tunnel.namedTunnelToken`. The fields are kept when `mode` changes, so going back is one click.
+ */
+export interface ShareHostConfig {
+  /** Off until turned on: nothing is published for review links without it. */
+  enabled: boolean;
+  /** `quick`: its own temporary address; `named`: its own tunnel on a domain; `shared`: a hostname on PPM's tunnel. */
+  mode: "quick" | "named" | "shared";
+  hostname?: string;
+  /** The share host's own tunnel (`named`), kept after switching mode: this installation created it. */
+  tunnelName?: string;
+  /** Run token of that tunnel. Secret, like `namedTunnelToken`. */
+  token?: string;
+  zoneID?: string;
+  accountID?: string;
 }
 
 export interface QueryAuditConfig {
@@ -240,6 +260,10 @@ export const DEFAULT_CONFIG: PpmConfig = {
   },
   tunnel: {
     enabled: true,
+    mode: "quick",
+  },
+  share_host: {
+    enabled: false,
     mode: "quick",
   },
   log_level: DEFAULT_LOG_LEVEL,
@@ -417,6 +441,14 @@ export function sanitizeConfig(config: PpmConfig): boolean {
     // Written before the master switch existed, when the tunnel was
     // unconditional — so an absent flag must read as on, never off.
     config.tunnel.enabled = true;
+    dirty = true;
+  }
+
+  // Same rule as `tunnel`: repair only a malformed row; incomplete identities are the resolver's call.
+  const shareHost = config.share_host as ShareHostConfig | null | undefined;
+  if (typeof shareHost !== "object" || shareHost === null || typeof shareHost.enabled !== "boolean" ||
+      (shareHost.mode !== "quick" && shareHost.mode !== "named" && shareHost.mode !== "shared")) {
+    config.share_host = structuredClone(DEFAULT_CONFIG.share_host);
     dirty = true;
   }
 

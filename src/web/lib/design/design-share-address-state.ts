@@ -17,9 +17,16 @@ export const QUICK_ADDRESS_WARNING =
 /** What the tunnel switch answered (`POST /api/tunnel/enabled`). */
 export type TunnelReload = "sent" | "busy" | "no-supervisor";
 
+/**
+ * `review`: the review-only address (Remote Access → Review links), which reaches the review
+ * pages and nothing else of PPM; `public`: PPM's own public link.
+ */
+export type ShareStartTarget = "review" | "public";
+
 export interface ShareStartAttempt {
   /** Epoch ms the owner pressed Start. */
   at: number;
+  target: ShareStartTarget;
   /** Null until the switch answered. */
   reload: TunnelReload | null;
   /** The switch itself failed. */
@@ -30,12 +37,15 @@ export type ShareAddressView =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "signin-off" }
-  | { kind: "named"; url: string; warning: string | null }
-  | { kind: "quick"; url: string; warning: string | null }
-  | { kind: "starting" }
-  | { kind: "failed"; message: string }
+  /** `reviewOnly`: the address is the review-only one, so PPM itself is not public. */
+  | { kind: "named"; url: string; warning: string | null; reviewOnly: boolean }
+  | { kind: "quick"; url: string; warning: string | null; reviewOnly: boolean }
+  | { kind: "starting"; target: ShareStartTarget }
+  | { kind: "failed"; message: string; target: ShareStartTarget }
   /** No public address; `enabled` = the switch is on but nothing is serving (a dark tunnel). */
-  | { kind: "none"; enabled: boolean; warning: string | null };
+  | { kind: "none"; enabled: boolean; warning: string | null }
+  /** The review-only address is switched on but has no address right now. */
+  | { kind: "review-down"; warning: string | null };
 
 export interface ShareAddressInputs {
   address: DesignShareAddress | null;
@@ -47,22 +57,25 @@ export interface ShareAddressInputs {
 export function shareAddressView({ address, loadError, start, now }: ShareAddressInputs): ShareAddressView {
   if (!address) return loadError ? { kind: "error", message: loadError } : { kind: "loading" };
   if (!address.authEnabled) return { kind: "signin-off" };
+  const reviewOnly = address.via === "share-host";
   if (address.url && address.kind !== "none") {
-    return address.kind === "named"
-      ? { kind: "named", url: address.url, warning: address.warning }
-      : { kind: "quick", url: address.url, warning: address.warning };
+    return { kind: address.kind === "named" ? "named" : "quick", url: address.url, warning: address.warning, reviewOnly };
   }
   if (start) {
-    if (start.error) return { kind: "failed", message: start.error };
+    const { target } = start;
+    if (start.error) return { kind: "failed", message: start.error, target };
     if (start.reload === "no-supervisor") {
       return {
         kind: "failed",
+        target,
         message: "PPM is running without its supervisor, so nothing can start the tunnel now. It starts the next time PPM is started normally.",
       };
     }
-    if (now - start.at <= SHARE_START_TIMEOUT_MS) return { kind: "starting" };
-    return { kind: "failed", message: address.warning ?? "The temporary address did not come up within a minute." };
+    if (now - start.at <= SHARE_START_TIMEOUT_MS) return { kind: "starting", target };
+    const late = target === "review" ? "The review-only address" : "The temporary address";
+    return { kind: "failed", target, message: address.warning ?? `${late} did not come up within a minute.` };
   }
+  if (reviewOnly) return { kind: "review-down", warning: address.warning };
   return { kind: "none", enabled: address.enabled, warning: address.warning };
 }
 

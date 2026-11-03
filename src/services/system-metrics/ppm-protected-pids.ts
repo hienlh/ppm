@@ -1,7 +1,7 @@
 /**
  * Which pids the kill guard must never end: the PPM server, its supervisor (or
- * plain parent), the edge forwarder, the app share tunnel and every per-port
- * preview tunnel PPM spawned.
+ * plain parent), the edge forwarder, the app share tunnel, the share host's
+ * worker and connector, and every per-port preview tunnel PPM spawned.
  *
  * `status.json` is unvalidated disk state — `supervisorPid` is only cleared by
  * a fresh supervisor start, `bun dev:server` has no supervisor at all, and dev
@@ -56,11 +56,15 @@ export function resolveProtectedPids(input: ProtectedPidsInput): ProtectedPids {
 
   const pids = new Set<number>(roots);
 
-  const edge = pidOf(status.edgePid);
-  if (edge !== null && isPpmImage(edge)) pids.add(edge);
+  for (const key of ["edgePid", "shareHostPid"]) {
+    const pid = pidOf(status[key]);
+    if (pid !== null && isPpmImage(pid)) pids.add(pid);
+  }
 
-  const tunnel = pidOf(status.tunnelPid);
-  if (tunnel !== null && cloudflared(tunnel)) pids.add(tunnel);
+  for (const key of ["tunnelPid", "shareHostTunnelPid"]) {
+    const pid = pidOf(status[key]);
+    if (pid !== null && cloudflared(pid)) pids.add(pid);
+  }
   for (const pid of input.portTunnelPids) {
     if (pid > 0 && cloudflared(pid)) pids.add(pid);
   }

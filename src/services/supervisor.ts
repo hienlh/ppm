@@ -29,6 +29,11 @@ import { waitForCloudflareReachable } from "./named-tunnel/network-ready.ts";
 import { decideNamedProbeAction, publicHostnameIsOurs } from "./named-tunnel/named-tunnel-probe-state.ts";
 import { isCloudflaredPid } from "./tunnel-registry.service.ts";
 import { getQuickTunnelArgs } from "./cloudflared.service.ts";
+import { ppmIngressRunArgs } from "./share-host/share-host-args.ts";
+import {
+  initShareHost, reloadShareHost, reconcileShareHost, stopShareHost, ppmConnectorRoutesByHostname,
+  routesForPpmConnector, notePpmConnectorReady, PLAIN_PPM_ROUTES, type PpmConnectorRoutes,
+} from "./share-host/share-host-supervision.ts";
 import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts";
 import { sdNotify, withoutNotifySocket } from "./sd-notify.ts";
 import {
@@ -872,16 +877,27 @@ export interface TunnelAttempt {
  * falling back to quick — or quick-only when no named config exists. Quick's
  * argv/regex are identical whichever position it takes.
  *
+ * `routes` comes from the share host (`routesForPpmConnector`). Once a review
+ * hostname has been set up, the named connector routes PPM's hostname to `port`
+ * (and, while it carries the review address, that hostname to the share host
+ * worker) by ingress rules ending in a 404, instead of `--url`, which would
+ * serve PPM on the review hostname too. The quick fallback serves PPM only.
+ *
  * Exported so a unit test can assert argv parity with `getQuickTunnelArgs`
  * against `spawnTunnel`'s actual call site, without spawning a real process.
  */
-export function buildTunnelAttempts(config: ResolvedTunnelConfig, port: number): TunnelAttempt[] {
+export function buildTunnelAttempts(
+  config: ResolvedTunnelConfig, port: number, routes: PpmConnectorRoutes = PLAIN_PPM_ROUTES,
+): TunnelAttempt[] {
   const plan = chooseTunnelSpawn(config, port);
   if (plan.mode === "quick") {
     return [{ mode: "quick", args: plan.args, regex: TUNNEL_URL_REGEX, urlFrom: "regex" }];
   }
+  const namedArgs = routes.byHostname && config.token && config.hostname
+    ? ppmIngressRunArgs(config.token, [...(routes.share ? [routes.share] : []), { hostname: config.hostname, port }])
+    : plan.args;
   return [
-    { mode: "named", args: plan.args, regex: NAMED_TUNNEL_READY_REGEX, urlFrom: "hostname" },
+    { mode: "named", args: namedArgs, regex: NAMED_TUNNEL_READY_REGEX, urlFrom: "hostname" },
     { mode: "quick", args: getQuickTunnelArgs(port), regex: TUNNEL_URL_REGEX, urlFrom: "regex" },
   ];
 }
@@ -939,7 +955,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
     return;
   }
 
-  const attempts = buildTunnelAttempts(namedTunnelMode, port);
+  const attempts = buildTunnelAttempts(namedTunnelMode, port, routesForPpmConnector(namedTunnelMode));
   // Only the named path pays for this: its failure costs the user their fixed
   // address, while a quick tunnel just retries with a new URL. Spawning a
   // connector before the machine's network is back is the difference between
@@ -1042,6 +1058,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
       ...tunnelWarningPatchForSpawnSuccess(successfulMode, downgraded),
     });
     log("INFO", `Tunnel ready: ${resolvedUrl} (PID: ${winPid}, detached${downgraded ? ", downgraded from named" : ""})`);
+    notePpmConnectorReady(winPid, successfulMode);
     await syncUrlToCloud(resolvedUrl);
     return;
   }
@@ -1135,6 +1152,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
     ...tunnelWarningPatchForSpawnSuccess(successfulMode, downgraded),
   });
   log("INFO", `Tunnel ready: ${resolvedUrl} (PID: ${child.pid}${downgraded ? ", downgraded from named" : ""})`);
+  notePpmConnectorReady(child.pid, successfulMode);
 
   // One-time sync of tunnel URL to cloud (WS handles periodic heartbeat)
   await syncUrlToCloud(resolvedUrl);
@@ -2019,6 +2037,7 @@ export function shutdown() {
     log("INFO", `Killing tunnel child (PID: ${tunnelChild.pid})`);
     try { tunnelChild.kill("SIGKILL"); } catch {}
   }
+  stopShareHost();
   if (adoptedTunnelPid) {
     log("INFO", `Killing adopted tunnel (PID: ${adoptedTunnelPid})`);
     try { process.kill(adoptedTunnelPid, "SIGKILL"); } catch {}
@@ -2128,7 +2147,7 @@ export async function runSupervisor(opts: {
     // Unconditional (not upgrade-gated): every boot of this code understands
     // "retunnel" — its ABSENCE is how phase 3's UI detects a pre-upgrade
     // supervisor that predates the retunnel command entirely.
-    capabilities: ["retunnel"],
+    capabilities: ["retunnel", "reshare"],
     serverPort: null, // republished by the server on every spawn
   });
   // Diagnostic: a cold start (isUpgrade=false) always nulls the tunnel and forces
@@ -2182,6 +2201,11 @@ export async function runSupervisor(opts: {
         }
         return;
       }
+      if (cmd.action === "reshare") {
+        log("INFO", "SIGUSR2: reshare command received");
+        void reloadShareHost();
+        return;
+      }
       if (cmd.action === "retunnel") {
         log("INFO", "SIGUSR2: retunnel command received");
         namedTunnelMode = await readTunnelConfigFresh();
@@ -2205,6 +2229,9 @@ export async function runSupervisor(opts: {
           log("INFO", "Tunnel switched off — tearing down the running tunnel");
           stopTunnelForDisable();
         }
+        // In `shared` mode the share host rides on this tunnel: hand it over to (or take it
+        // back from) PPM's connector, which the branch above has just restarted or stopped.
+        void reconcileShareHost({ ppmRestarting: tunnelSharingEnabled });
         // Deliberate fall-through (no return): a bare `ppm restart` sends a
         // bare SIGUSR2 with no command file of its own, and a `retunnel` that
         // happens to still be unclaimed at that instant must not silently
@@ -2365,7 +2392,12 @@ export async function runSupervisor(opts: {
             log("INFO", "Tunnel switched off — tearing down the running tunnel");
             stopTunnelForDisable();
           }
+          void reconcileShareHost({ ppmRestarting: tunnelSharingEnabled });
         });
+      }
+      else if (cmd.action === "reshare") {
+        log("INFO", "Windows command: reshare");
+        void reloadShareHost();
       }
       else if (cmd.action === "upgrade") {
         log("INFO", "Windows command: upgrade, starting self-replace");
@@ -2425,8 +2457,12 @@ export async function runSupervisor(opts: {
     // start with an inherited restart-once budget "spent".
     namedProbeRestartAttempted = false;
     startTunnelProbe();
-    // Try adopting tunnel kept alive from previous upgrade; spawn new if dead
-    tunnelAdopted = adoptTunnel();
+    // Try adopting tunnel kept alive from previous upgrade; spawn new if dead.
+    // Not when it routes by hostname for the review address: the previous
+    // supervisor chose those routes, the previous worker's port among them.
+    const routesByHostname = ppmConnectorRoutesByHostname(namedTunnelMode);
+    if (routesByHostname) log("INFO", "Tunnel routes the review address too — starting a fresh one with this supervisor's routes");
+    tunnelAdopted = !routesByHostname && adoptTunnel();
     if (tunnelAdopted) {
       log("INFO", "Tunnel adopted from previous instance — public URL preserved");
     } else {
@@ -2487,6 +2523,18 @@ export async function runSupervisor(opts: {
     updateStatus({ shareUrl: null, tunnelPid: null, tunnelPort: null });
     tunnelAdopted = false;
   }
+
+  // The share host before PPM's tunnel: in `shared` mode PPM's connector routes the
+  // share hostname to the worker, so the worker's port has to be known when it spawns.
+  // After the orphan sweep above, which would otherwise take the share connector too.
+  await initShareHost({
+    logFd,
+    ppmTunnel: () => ({ config: namedTunnelMode, linkOn: tunnelSharingEnabled }),
+    restartPpmConnector: () => {
+      if (tunnelSharingEnabled) restartTunnel(_opts.port);
+    },
+    gate: withProbeSpawnGate,
+  }, prevStatus.shareHostPid, { ppmRestarting: true });
 
   // Spawn server + (fresh) tunnel in parallel
   const promises: Promise<void>[] = [spawnServer(serverArgs, logFd)];

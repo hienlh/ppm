@@ -7,16 +7,16 @@ import {
 
 const req = new Request("http://localhost/s/x");
 const server = (address: string) => ({ requestIP: () => ({ address, family: "IPv4", port: 1 }) });
-const realTunnelUrl = clientKeyDeps.tunnelUrl;
+const realPublicHosts = clientKeyDeps.publicHosts;
 
 describe("share client key", () => {
   afterEach(() => {
-    clientKeyDeps.tunnelUrl = realTunnelUrl;
+    clientKeyDeps.publicHosts = realPublicHosts;
     resetShareRateLimits();
   });
 
   it("trusts CF-Connecting-IP only from loopback with the tunnel's own Host", () => {
-    clientKeyDeps.tunnelUrl = () => "https://review.example.com";
+    clientKeyDeps.publicHosts = () => ["review.example.com"];
     const base = { req, env: server("127.0.0.1"), host: "Review.Example.com", cfConnectingIp: "203.0.113.9" };
     expect(shareClientKey(base)).toBe("cf:203.0.113.9");
     expect(shareClientKey({ ...base, env: server("::1") })).toBe("cf:203.0.113.9");
@@ -24,13 +24,13 @@ describe("share client key", () => {
   });
 
   it("ignores the header under a spoofed Host, from a LAN peer, or when it is not an address", () => {
-    clientKeyDeps.tunnelUrl = () => "https://review.example.com";
+    clientKeyDeps.publicHosts = () => ["review.example.com"];
     const base = { req, env: server("127.0.0.1"), host: "review.example.com", cfConnectingIp: "203.0.113.9" };
     expect(shareClientKey({ ...base, host: "evil.example.com" })).toBe("local");
     expect(shareClientKey({ ...base, host: undefined })).toBe("local");
     expect(shareClientKey({ ...base, cfConnectingIp: "not-an-ip" })).toBe("local");
     expect(shareClientKey({ ...base, env: server("192.168.1.20") })).toBe("ip:192.168.1.20");
-    clientKeyDeps.tunnelUrl = () => null;
+    clientKeyDeps.publicHosts = () => [];
     expect(shareClientKey(base)).toBe("local");
   });
 

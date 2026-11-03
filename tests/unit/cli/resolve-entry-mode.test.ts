@@ -11,6 +11,9 @@ describe("resolveEntryMode — binary daemon sentinel routing", () => {
   it("routes __edge__ to the edge forwarder", () => {
     expect(resolveEntryMode(["/opt/ppm/bin/ppm", "__edge__", "3214", "0.0.0.0"])).toBe("edge");
   });
+  it("routes __share_host__ to the share host worker", () => {
+    expect(resolveEntryMode(["/opt/ppm/bin/ppm", "__share_host__", "0"])).toBe("share-host");
+  });
   it("treats normal CLI commands as cli", () => {
     expect(resolveEntryMode(["ppm", "start"])).toBe("cli");
     expect(resolveEntryMode(["ppm", "upgrade", "--check"])).toBe("cli");

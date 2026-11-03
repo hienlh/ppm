@@ -1,22 +1,25 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Loader2 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { shareBlockedReason } from "@/lib/design/design-share-address-state";
+import { useShareHostStatus } from "@/components/settings/remote-access/use-share-host-status";
 import { SHARE_LIMITS } from "../../../../shared/design-share-types";
 import { DesignResponsiveDialog } from "../dialogs/design-responsive-dialog";
 import { useDesignTab } from "../design-tab-context";
 import { ShareAddressBlock } from "./share-address-block";
+import { ReviewAddressCard } from "./review-address-card";
 import { NewShareLinkFields, useNewShareLinkForm } from "./new-share-link-form";
 import { SharedLinksList } from "./shared-links-list";
 import { useShareAddress } from "./use-share-address";
 import { useShareLinks } from "./use-share-links";
 
 /**
- * Share for review: where links open, a new link (label, expiry, version), and the design's
- * existing links with their actions. A dialog on desktop, a bottom sheet on a phone, with
- * Create in the footer. While PPM sign-in is off nothing can be created and existing links
- * read as paused, because the server opens none of them.
+ * Share for review: where links open, the review-only address's switch and domain, a new link
+ * (label, expiry, version), and the design's existing links with their actions. A dialog on
+ * desktop, a bottom sheet on a phone, with Create in the footer. While PPM sign-in is off
+ * nothing can be created and existing links read as paused, because the server opens none of
+ * them.
  */
 
 export interface DesignShareFeature {
@@ -32,6 +35,18 @@ export function useDesignShare(): DesignShareFeature {
 export function DesignShareDialog({ feature }: { feature: DesignShareFeature }) {
   const { projectName, slug } = useDesignTab();
   const address = useShareAddress(feature.open);
+  const shareHost = useShareHostStatus(feature.open);
+  // The card polls the review address while it comes up; where links open follows each change.
+  const reviewKey = shareHost.status
+    ? `${shareHost.status.enabled}|${shareHost.status.mode}|${shareHost.status.connected}|${shareHost.status.url}`
+    : null;
+  const lastReviewKey = useRef<string | null>(null);
+  const refreshAddress = address.refresh;
+  useEffect(() => {
+    if (reviewKey === null) return;
+    if (lastReviewKey.current !== null && lastReviewKey.current !== reviewKey) void refreshAddress();
+    lastReviewKey.current = reviewKey;
+  }, [reviewKey, refreshAddress]);
   const links = useShareLinks(projectName, slug, feature.open);
   const form = useNewShareLinkForm(links);
   const blocked = shareBlockedReason(address.address, links.links?.length ?? 0, SHARE_LIMITS.maxLinksPerDesign);
@@ -66,7 +81,10 @@ export function DesignShareDialog({ feature }: { feature: DesignShareFeature }) 
       </>}
     >
       <div className="flex flex-col gap-4" data-testid="share-dialog">
-        <ShareAddressBlock view={address.view} onStart={() => void address.startTemporary()} onRetryLoad={() => void address.refresh()} />
+        <ShareAddressBlock view={address.view} onStart={(target) => void address.start(target)} onRetryLoad={() => void address.refresh()} />
+        {!signinOff && (
+          <ReviewAddressCard shareHost={shareHost} onTurnOn={() => address.start("review")} onChanged={() => void address.refresh()} />
+        )}
         {!signinOff && (
           <section className="flex flex-col gap-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-text-subtle">New link</h3>
