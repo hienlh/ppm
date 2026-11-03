@@ -248,6 +248,26 @@ describe("PUT /settings/ai", () => {
     expect(configService.load().ai.ppm_tools).toEqual({ db_execute: false, open_file: true });
   });
 
+  it("stores how long a chat may sit idle before its leftover processes are stopped, 0 to 1440 minutes", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    expect(configService.get("ai").leftover_processes_idle_minutes).toBeUndefined();
+    for (const minutes of [0, 45, 1440]) {
+      const res = await put({ leftover_processes_idle_minutes: minutes });
+      expect(res.status).toBe(200);
+      expect((await res.json()).data.leftover_processes_idle_minutes).toBe(minutes);
+      expect(configService.load().ai.leftover_processes_idle_minutes).toBe(minutes);
+    }
+    expect((await put({ share_provider_context: false })).status).toBe(200);
+    expect(configService.load().ai.leftover_processes_idle_minutes).toBe(1440);
+    for (const value of [-1, 1441, 2.5, "30", null]) {
+      expect((await put({ leftover_processes_idle_minutes: value })).status).toBe(400);
+      expect(configService.load().ai.leftover_processes_idle_minutes).toBe(1440);
+    }
+  });
+
   it("updates provider config and returns merged result", async () => {
     const app = createApp();
     const res = await app.request("/settings/ai", {

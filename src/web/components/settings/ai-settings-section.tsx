@@ -21,6 +21,7 @@ import { effortNotice, noticeText, shownEffort } from "@/components/chat/model-t
 import { modelDisplayName } from "@/lib/model-display-name";
 import type { EffortStatus } from "../../../shared/effort-status";
 import type { ModelOption } from "../../../types/chat";
+import { LOG_ONLY_IDLE_MINUTES, leftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../../shared/leftover-processes";
 import type { ProviderProbeStatus } from "../../../providers/provider-probe";
 
 const EFFORT_OPTIONS = [
@@ -231,6 +232,35 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
           disabled={saving}
           onCheckedChange={(checked) => handleSettingsSave({ share_provider_context: checked })}
         />
+      </div>
+
+      <div className={fieldGap}>
+        <Label htmlFor="ai-leftover-idle" className={compact ? labelSize : undefined}>
+          Stop leftover processes after (idle minutes, 0 = log only)
+        </Label>
+        <Input
+          key={`leftover-${revision}`}
+          id="ai-leftover-idle"
+          type="number"
+          min={0}
+          max={MAX_LEFTOVER_IDLE_MINUTES}
+          defaultValue={leftoverIdleMinutes(settings)}
+          aria-describedby="ai-leftover-idle-description"
+          className={compact ? "h-7 text-[11px]" : undefined}
+          onBlur={(e) => {
+            // min/max bound only the spinner: a typed number is brought into range here, and a
+            // cleared field shows the saved value again rather than looking saved.
+            const val = parseInt(e.target.value);
+            const minutes = isNaN(val) ? null : Math.min(Number(e.target.max), Math.max(Number(e.target.min), val));
+            e.target.value = String(minutes ?? leftoverIdleMinutes(settings));
+            if (minutes !== null) handleSettingsSave({ leftover_processes_idle_minutes: minutes });
+          }}
+        />
+        <p id="ai-leftover-idle-description" className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+          Servers, emulators and other processes a chat&apos;s commands started and left running are stopped once
+          the chat has been idle this long, and at once when the chat is deleted. At 0 nothing is stopped: the
+          server log names what {LOG_ONLY_IDLE_MINUTES} idle minutes would have stopped. Linux with systemd only.
+        </p>
       </div>
 
       {/* Provider tabs */}
