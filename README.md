@@ -149,6 +149,9 @@ ppm schedule add
 ppm schedule list
 ppm schedule run-now <id>
 ppm schedule runs <id>
+ppm schedule add --name watch --project <name> --script watch.js --mode always-on   # JavaScript instead of a prompt
+ppm schedule export <id> -o watch.ppm-schedule.json   # shareable: no secrets, state or history
+ppm schedule import templates/schedules/url-watch.ppm-schedule.json --project <name> --set url=https://… --trust
 
 # Extensions & skills
 ppm ext list

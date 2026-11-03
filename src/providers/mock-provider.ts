@@ -180,6 +180,18 @@ export class MockProvider implements AIProvider {
   async getMessages(sessionId: string): Promise<ChatMessage[]> {
     return this.messageHistory.get(sessionId) ?? [];
   }
+
+  /** The shape of `ClaudeAgentSdkProvider.completeOnce`, free: a script schedule's `ctx.ai.ask` in tests. */
+  async completeOnce(input: { prompt: string; jsonSchema?: Record<string, unknown> }): Promise<{ text: string; json?: unknown; costUsd: number; inputTokens: number; outputTokens: number }> {
+    await sleep(10);
+    return {
+      text: `Mock answer: ${input.prompt.slice(0, 80)}`,
+      ...(input.jsonSchema && { json: {} }),
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    };
+  }
 }
 
 function sleep(ms: number): Promise<void> {

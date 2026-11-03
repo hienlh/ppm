@@ -6,6 +6,7 @@
  * and dropping a client from every hub it touches at once.
  */
 import { configService } from "../config.service.ts";
+import { agentTranscriptTimers } from "./agent-transcript-hub-clock.ts";
 import type { OwnedSession } from "./session-ownership.ts";
 import type { AgentTranscriptWsLike } from "./agent-transcript-ws-like.ts";
 import {
@@ -134,8 +135,12 @@ export function dropClientEverywhere(ws: AgentTranscriptWsLike): void {
   }
 }
 
-/** Test-only: forget every hub and client mapping between cases. */
+/** Test-only: forget every hub and client mapping between cases, and stop the hubs' timers. */
 export function _resetAgentTranscriptHubForTest(): void {
+  for (const hub of sessionHubs.values()) {
+    if (hub.tickHandle !== null) agentTranscriptTimers.clearInterval(hub.tickHandle);
+    if (hub.activityHandle !== null) agentTranscriptTimers.clearInterval(hub.activityHandle);
+  }
   sessionHubs.clear();
   clientTranscriptSubs.clear();
   clientActivitySubs.clear();

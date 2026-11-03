@@ -3,39 +3,11 @@ import { chatService } from "./chat.service.ts";
 import { setScheduleSessionId } from "./scheduler-db.service.ts";
 import type { Schedule, RunResult } from "../types/scheduler.ts";
 import { createLogger } from "./logger.ts";
+import { BoundedBuffer } from "./bounded-buffer.ts";
 
 const log = createLogger("scheduler");
 
-const HEAD_CAP = 16 * 1024;
-const TAIL_CAP = 16 * 1024;
 const CONTEXT_ROTATION_THRESHOLD = 80; // % — same as ppmbot coordinator rotation
-
-/** Head+tail bounded buffer — keeps first/last 16KB, drops the middle. */
-class BoundedBuffer {
-  private head = "";
-  private tail = "";
-  private droppedBytes = 0;
-
-  append(chunk: string): void {
-    if (this.head.length < HEAD_CAP) {
-      const room = HEAD_CAP - this.head.length;
-      this.head += chunk.slice(0, room);
-      chunk = chunk.slice(room);
-    }
-    if (!chunk) return;
-    this.tail += chunk;
-    if (this.tail.length > TAIL_CAP) {
-      this.droppedBytes += this.tail.length - TAIL_CAP;
-      this.tail = this.tail.slice(-TAIL_CAP);
-    }
-  }
-
-  toString(): string {
-    if (!this.tail) return this.head;
-    const marker = this.droppedBytes > 0 ? `\n... [truncated ${this.droppedBytes} bytes] ...\n` : "";
-    return this.head + marker + this.tail;
-  }
-}
 
 /** Resume the schedule's persistent session, or create one and persist its id. */
 export async function ensureScheduleSession(schedule: Schedule): Promise<string> {
