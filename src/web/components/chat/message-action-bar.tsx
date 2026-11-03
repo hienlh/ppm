@@ -33,6 +33,8 @@ function RelativeTime({ timestamp }: { timestamp: string }) {
 /**
  * Ghost-pill action button (icon + label) for the message action bar.
  * 44px min touch target on mobile; tighter on desktop. Always visible.
+ * `iconOnlyBelowMd` keeps the label for screen readers only on a phone, where one more labelled
+ * button wraps the row onto a second line under every message.
  */
 export function ActionButton({
   icon,
@@ -40,12 +42,14 @@ export function ActionButton({
   title,
   onClick,
   touchTarget,
+  iconOnlyBelowMd,
 }: {
   icon: ReactNode;
   label: string;
   title: string;
   onClick: () => void;
   touchTarget?: boolean;
+  iconOnlyBelowMd?: boolean;
 }) {
   return (
     <button
@@ -56,7 +60,7 @@ export function ActionButton({
       className={cn("inline-flex items-center justify-center gap-1 rounded-md px-1.5 py-1 text-text-subtle hover:text-text-primary hover:bg-surface transition-colors", touchTarget && "min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0")}
     >
       {icon}
-      <span>{label}</span>
+      <span className={cn(iconOnlyBelowMd && "sr-only md:not-sr-only")}>{label}</span>
     </button>
   );
 }

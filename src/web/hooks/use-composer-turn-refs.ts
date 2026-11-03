@@ -55,6 +55,27 @@ export function turnChipsBlockReason(chips: readonly ComposerTurnChip[]): string
   return null;
 }
 
+/**
+ * Which of `items` the composer has room for after `chips`: one chip per turn (a turn already
+ * shown, or named twice, is simply dropped) and at most {@link MAX_TURN_REFS} in all. The rest
+ * are handed back so nothing the user pasted or wrote disappears.
+ */
+export function splitByRoom<T extends Pick<TurnLinkTarget, "providerId" | "sessionId" | "turnId">>(
+  chips: readonly ComposerTurnChip[],
+  items: readonly T[],
+): { fit: T[]; overflow: T[] } {
+  const present = new Set(chips.flatMap((c) => (c.status === "ready" ? [c.key, turnKey(c.ref)] : [c.key])));
+  const fresh = items.filter((item) => {
+    const key = turnKey(item);
+    if (present.has(key)) return false;
+    present.add(key);
+    return true;
+  });
+  const room = Math.max(0, MAX_TURN_REFS - chips.length);
+  if (fresh.length > room) toast.error(`A message can reference at most ${MAX_TURN_REFS} turns`, { description: "The rest stay in the text as links." });
+  return { fit: fresh.slice(0, room), overflow: fresh.slice(room) };
+}
+
 /** The chip a link resolves to: ready, or an error that can only be removed. */
 async function resolveChip(link: ParsedTurnLink): Promise<ComposerTurnChip> {
   const key = turnKey(link);
@@ -96,14 +117,15 @@ export function useComposerTurnRefs({ owner, draftRefs, initialRefs }: {
     setChangeSignal((n) => n + 1);
   }, [owner]);
 
-  /** Add a chip per new link, at most {@link MAX_TURN_REFS} in all; each is resolved at once. */
-  const addLinks = useCallback((links: readonly ParsedTurnLink[]) => {
-    const present = new Set(chipsRef.current.flatMap((c) => (c.status === "ready" ? [c.key, turnKey(c.ref)] : [c.key])));
-    const fresh = links.filter((l) => !present.has(turnKey(l)));
-    const room = Math.max(0, MAX_TURN_REFS - chipsRef.current.length);
-    if (fresh.length > room) toast.error(`A message can reference at most ${MAX_TURN_REFS} turns`);
-    const added = fresh.slice(0, room).map((link) => ({ link, nonce: ++nextNonce }));
-    if (!added.length) return;
+  /**
+   * Add a chip per new link, at most {@link MAX_TURN_REFS} in all; each is resolved at once.
+   * Returns the links there was no room for, so the paste can keep them as text: a link
+   * already shown as a chip is not one of them.
+   */
+  const addLinks = useCallback((links: readonly ParsedTurnLink[]): ParsedTurnLink[] => {
+    const { fit, overflow } = splitByRoom(chipsRef.current, links);
+    const added = fit.map((link) => ({ link, nonce: ++nextNonce }));
+    if (!added.length) return overflow;
     edit((prev) => [...prev, ...added.map(({ link, nonce }): ComposerTurnChip => ({ key: turnKey(link), status: "loading", target: link, nonce }))]);
     for (const { link, nonce } of added) {
       void resolveChip(link).then((chip) => {
@@ -115,6 +137,7 @@ export function useComposerTurnRefs({ owner, draftRefs, initialRefs }: {
         setChangeSignal((n) => n + 1);
       });
     }
+    return overflow;
   }, [edit]);
 
   const remove = useCallback((key: string) => edit((prev) => prev.filter((c) => c.key !== key)), [edit]);
@@ -130,11 +153,25 @@ export function useComposerTurnRefs({ owner, draftRefs, initialRefs }: {
     setSelection({ owner: forOwner, chips: list });
   }, [owner]);
 
+  /**
+   * Add a stored message's chips (an unsent message given back) to the ones the composer holds
+   * now, rather than replacing chips pasted since. Returns the references there was no room for.
+   */
+  const merge = useCallback((next: readonly TurnReference[] | null | undefined): TurnReference[] => {
+    const { fit, overflow } = splitByRoom(chipsRef.current, next ?? []);
+    if (!fit.length) return overflow;
+    const list = [...chipsRef.current, ...fit.map(readyChip)];
+    chipsRef.current = list;
+    refsRef.current = list.flatMap((c) => (c.status === "ready" ? [c.ref] : []));
+    setSelection({ owner, chips: list });
+    return overflow;
+  }, [owner]);
+
   /** Carry the chips as they stand — loading ones too — to the id the conversation moved to. */
   const moveTo = useCallback((nextOwner: string) => {
     const current = chipsRef.current;
     setSelection({ owner: nextOwner, chips: current });
   }, []);
 
-  return { chips, refs, refsRef, changeSignal, blockedReason: turnChipsBlockReason(chips), addLinks, remove, replace, moveTo };
+  return { chips, refs, refsRef, changeSignal, blockedReason: turnChipsBlockReason(chips), addLinks, remove, replace, merge, moveTo };
 }

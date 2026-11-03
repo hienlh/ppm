@@ -6,6 +6,7 @@ import { api, projectUrl } from "@/lib/api-client";
 import type { ReplyReference } from "../../../shared/chat-reply";
 import type { TurnReference } from "../../../shared/chat-turn-ref";
 import { decodeMessageBlocks, encodeMessageBlocks } from "../../../shared/chat-message-blocks";
+import { buildTurnLink } from "@/lib/turn-link";
 import { useComposerTurnRefs } from "@/hooks/use-composer-turn-refs";
 import { useChatJumpStore } from "@/stores/chat-jump-store";
 import { selectInlineImages } from "@/lib/image-resize-limits";
@@ -295,6 +296,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   });
   const turnRefsRef = turnChips.refsRef;
   const replaceTurnChips = turnChips.replace;
+  const mergeTurnChips = turnChips.merge;
   /** Everything the draft keeps besides the text, as it stands now. */
   const draftBlocks = useCallback(() => ({ replyTo: replyToRef.current, turnRefs: turnRefsRef.current }), [turnRefsRef]);
   const composerDraftRef = useRef<{ owner: string; text: string; observed?: boolean; attachments?: DraftAttachment[] }>({ owner: replyOwner, text: "" });
@@ -676,15 +678,18 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     firstSendContent.current = null;
     setFirstSendPreview(null);
     setFirstSendPending(false);
-    // Its reply and turn chips go back as a reply card and chips, never as text.
+    // Its reply and turn chips go back as a reply card and chips, never as text. The chips join
+    // any pasted since, as the text joins what was typed since; one over the limit goes back as
+    // its link, in the text.
     const decoded = decodeMessageBlocks(content);
     replyToRef.current = decoded.replyTo;
     setReplySelection({ owner: replyOwner, reply: decoded.replyTo });
-    replaceTurnChips(decoded.turnRefs);
-    saveDraft(decoded.content, undefined, { replyTo: decoded.replyTo, turnRefs: decoded.turnRefs });
-    setRestore({ text: decoded.content, nonce: Date.now() });
+    const overflow = mergeTurnChips(decoded.turnRefs);
+    const text = [decoded.content, ...overflow.map((ref) => buildTurnLink(window.location.origin, ref))].filter(Boolean).join("\n");
+    saveDraft(text, undefined, { replyTo: decoded.replyTo, turnRefs: turnRefsRef.current });
+    setRestore({ text, nonce: Date.now() });
     toast.error("Message not sent", { description: `${reason} Your text is back in the input.` });
-  }, [replyOwner, saveDraft, replaceTurnChips]);
+  }, [replyOwner, saveDraft, mergeTurnChips, turnRefsRef]);
 
   rejectedSendRef.current = (event) => {
     const current = composerDraftRef.current;
@@ -1500,6 +1505,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             replyChangeSignal={replyChangeSignal + turnChips.changeSignal}
             turnChips={turnChips.chips}
             onTurnLinksPasted={turnChips.addLinks}
+            onRecallTurnRefs={replaceTurnChips}
             onRemoveTurnChip={turnChips.remove}
             turnChipsBlockedReason={turnChips.blockedReason}
             disabled={firstSendPending}

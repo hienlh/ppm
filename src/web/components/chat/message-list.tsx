@@ -106,8 +106,14 @@ interface MessageListProps {
   historyPredecessorId?: string | null;
 }
 
-/** How long a "Show in chat" request waits for its place to be drawn: the tab opening, its history loading. */
+/**
+ * How long a "Show in chat" request waits for its place to be drawn, counted from when this
+ * chat is on screen with its history loaded: a tab opened in another project, over a slow
+ * tunnel, can take longer than this just to get there.
+ */
 const CHAT_JUMP_GIVE_UP_MS = 8_000;
+/** The longest a request waits in all, for a tab that never shows or never finishes loading. */
+const CHAT_JUMP_MAX_WAIT_MS = 60_000;
 
 /**
  * Placeholder for a compaction segment being fetched.
@@ -376,9 +382,19 @@ export function MessageList({
   // Matched through renames: a turn link copied before a Codex session adopted its thread id
   // still names this tab.
   const jumpRequest = useChatJumpStore((s) => (requestIsFor(s.request, sessionId, s.aliases) ? s.request : null));
+  // When this chat was first on screen with its history in, for the request being served.
+  const jumpReadySince = useRef<{ request: object; at: number } | null>(null);
   useEffect(() => {
     if (!jumpRequest || !scrollEl) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const giveUp = () => {
+      const now = Date.now();
+      if (scrollEl.clientHeight > 0 && !messagesLoading && jumpReadySince.current?.request !== jumpRequest) {
+        jumpReadySince.current = { request: jumpRequest, at: now };
+      }
+      const ready = jumpReadySince.current?.request === jumpRequest ? jumpReadySince.current.at : null;
+      return (ready !== null && now - ready > CHAT_JUMP_GIVE_UP_MS) || now - jumpRequest.at > CHAT_JUMP_MAX_WAIT_MS;
+    };
     const attempt = () => {
       const call = jumpRequest.toolUseId && `${jumpRequest.toolUseId}-0`;
       // A turn is shown at its first message; only a turn already loaded can be found here.
@@ -393,12 +409,12 @@ export function MessageList({
         }
         if (index >= 0 && showMessageAt(index)) return useChatJumpStore.getState().done(jumpRequest);
       }
-      if (Date.now() - jumpRequest.at > CHAT_JUMP_GIVE_UP_MS) return useChatJumpStore.getState().done(jumpRequest);
+      if (giveUp()) return useChatJumpStore.getState().done(jumpRequest);
       timer = setTimeout(attempt, 150);
     };
     attempt();
     return () => clearTimeout(timer);
-  }, [jumpRequest, scrollEl, filtered, stopScroll, handleJumpToEdit, showMessageAt]);
+  }, [jumpRequest, scrollEl, filtered, messagesLoading, stopScroll, handleJumpToEdit, showMessageAt]);
 
   // Stable fork handler — avoids new closure per message (preserves MessageBubble memo)
   const handleFork = useCallback((msgContent: string, msgId: string | undefined) => {

@@ -23,6 +23,18 @@ const LONG_PRESS_MS = 400;
 const MOVE_TOLERANCE_PX = 10;
 /** Every chip is this tall, loaded or not, so nothing around it moves. */
 const CHIP_BOX = "h-[44px] md:h-7 max-w-[18rem] rounded-md border text-xs";
+/**
+ * A composer chip is also this wide in every state: a skeleton that resolves into a chip of
+ * another width would shift the row (and the input under it) each time a turn loads.
+ */
+const COMPOSER_CHIP_WIDTH = "w-[18rem] max-w-full";
+
+/**
+ * React events bubble along the component tree, not the DOM: a click on the preview sheet's
+ * backdrop (portalled to the body) still reaches the composer's click-to-focus handler and pops
+ * the phone keyboard. Nothing inside a chip is meant for its ancestors.
+ */
+const keepClickInside = (e: { stopPropagation(): void }) => e.stopPropagation();
 
 /** One chip; `onRemove` gives it a remove button (the composer only). */
 export function TurnRefChip({ chip, currentProject, toolsOff, onRemove }: {
@@ -44,7 +56,7 @@ export function TurnRefChip({ chip, currentProject, toolsOff, onRemove }: {
   );
   if (chip.status === "loading") {
     return (
-      <span data-turn-chip="loading" aria-label="Loading turn" className={cn(CHIP_BOX, "inline-flex w-48 items-center gap-2 border-border/60 bg-surface/60 pl-2")}>
+      <span data-turn-chip="loading" aria-label="Loading turn" className={cn(CHIP_BOX, COMPOSER_CHIP_WIDTH, "inline-flex items-center gap-2 border-border/60 bg-surface/60 pl-2")}>
         <span className="size-4 shrink-0 animate-pulse rounded bg-text-subtle/20" />
         <span className="h-2.5 flex-1 animate-pulse rounded bg-text-subtle/20" />
         {remove}
@@ -53,22 +65,23 @@ export function TurnRefChip({ chip, currentProject, toolsOff, onRemove }: {
   }
   if (chip.status === "error") {
     return (
-      <span data-turn-chip="error" title={chip.reason} className={cn(CHIP_BOX, "inline-flex items-center gap-1.5 border-error/40 bg-error/10 pl-2 text-error")}>
+      <span data-turn-chip="error" title={chip.reason} className={cn(CHIP_BOX, COMPOSER_CHIP_WIDTH, "inline-flex items-center gap-1.5 border-error/40 bg-error/10 pl-2 text-error")}>
         <TriangleAlert className="size-3.5 shrink-0" />
-        <span className="truncate">{chip.reason}</span>
+        <span className="min-w-0 flex-1 truncate">{chip.reason}</span>
         {remove}
       </span>
     );
   }
-  return <TurnRefChipView refData={chip.ref} currentProject={currentProject} toolsOff={toolsOff} trailing={remove} />;
+  return <TurnRefChipView refData={chip.ref} currentProject={currentProject} toolsOff={toolsOff} trailing={remove} className={COMPOSER_CHIP_WIDTH} />;
 }
 
 /** The ready chip: what both the composer and the sent bubble show. */
-export function TurnRefChipView({ refData, currentProject, toolsOff, trailing }: {
+export function TurnRefChipView({ refData, currentProject, toolsOff, trailing, className }: {
   refData: TurnReference;
   currentProject?: string;
   toolsOff?: boolean;
   trailing?: ReactNode;
+  className?: string;
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,7 +109,7 @@ export function TurnRefChipView({ refData, currentProject, toolsOff, trailing }:
   };
 
   return (
-    <span data-turn-chip="ready" className={cn(CHIP_BOX, "inline-flex items-center border-primary/30 bg-primary/10 text-text-primary")}>
+    <span data-turn-chip="ready" onClick={keepClickInside} className={cn(CHIP_BOX, "inline-flex items-center border-primary/30 bg-primary/10 text-text-primary", className)}>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
@@ -114,7 +127,7 @@ export function TurnRefChipView({ refData, currentProject, toolsOff, trailing }:
             // The browser took the gesture for a scroll: no further touch event will come.
             onTouchCancel={disarm}
             onContextMenu={(e) => { if (timer.current || pressed.current) e.preventDefault(); }}
-            className="flex h-full min-w-0 select-none items-center gap-1.5 px-2 text-left"
+            className="flex h-full min-w-0 flex-1 select-none items-center gap-1.5 px-2 text-left"
           >
             <ProviderBadge providerId={refData.providerId} />
             <span className="min-w-0 truncate font-medium">{refData.title}</span>

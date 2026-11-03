@@ -55,6 +55,14 @@ describe("turn links", () => {
     }
   });
 
+  it("leaves a link it is told not to take in the text, exactly where it was", () => {
+    const a = `http://h/project/ppm/chat/claude/${SID}?turn=${TID}`;
+    const b = `http://h/project/ppm/chat/codex/${SID}?turn=${TID}`;
+    const { links, rest } = parseTurnLinks(`${a}, then ${b}.`, isProject, (link) => link.providerId === "claude");
+    expect(links.map((l) => l.providerId)).toEqual(["claude"]);
+    expect(rest).toBe(`, then ${b}.`);
+  });
+
   it("re-encodes every segment of the request it makes for a link", () => {
     const path = turnMetaPath({ projectName: "a/b", providerId: "claude", sessionId: SID, turnId: `u:${TID}` });
     expect(path).toBe(`/api/project/a%2Fb/chat/sessions/${SID}/turns/u%3A${TID}?providerId=claude`);

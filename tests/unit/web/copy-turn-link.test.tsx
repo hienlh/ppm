@@ -1,12 +1,14 @@
 /**
  * Copy turn link names the turn in a fixed order — the message's own id, then the binding
  * `turn_started` made for the id it was sent under, then the session's index by record uuid —
- * and never the newest turn: a message whose turn has not started waits, with a spinner.
+ * and never the newest turn: a message whose turn has not started waits, with a spinner, and the
+ * clipboard is written only inside a click (the one after the link turns ready), never later.
  * Also the chat side of it: `turn_started` binds, `message_accepted` replaces the bubble's text,
  * and a jump to a turn finds the tab through a session rename and from a `?turn=` link.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { act } from "react";
+import { toast } from "sonner";
 import { installDom, uninstallDom, mount, click, type Mounted } from "../../helpers/react-dom";
 
 installDom();
@@ -59,7 +61,7 @@ describe("Copy turn link", () => {
     expect(get).not.toHaveBeenCalled();
   });
 
-  it("waits with a spinner for the turn its own send opens, ignoring any other binding", async () => {
+  it("waits with a spinner for the turn its own send opens, then copies only on the next click", async () => {
     view = await mountButton({ clientId: "mine" });
     await click(button());
     // Another message's turn starting says nothing about this one.
@@ -67,7 +69,13 @@ describe("Copy turn link", () => {
     expect(copied).toEqual([]);
     expect(button().querySelector(".animate-spin")).not.toBeNull();
     await act(async () => { useTurnBindingStore.getState().bind("mine", TURN); await Bun.sleep(300); });
+    // The id arriving is not a click: the clipboard stays as the user left it.
+    expect(copied).toEqual([]);
+    expect(button().getAttribute("aria-label")).toBe("Link ready");
+    await click(button());
+    await act(async () => { await Bun.sleep(5); });
     expect(copied).toEqual([expected]);
+    expect(button().textContent).toContain("Copied");
   });
 
   it("asks the session's index by record uuid when nothing else names the turn", async () => {
@@ -75,7 +83,65 @@ describe("Copy turn link", () => {
     await click(button());
     await act(async () => { await Bun.sleep(20); });
     expect(String(get.mock.calls[0]![0])).toContain(`/chat/sessions/${SID}/turns?providerId=claude&resolve=record-uuid`);
+    expect(copied).toEqual([]);
+    await click(button());
+    await act(async () => { await Bun.sleep(5); });
     expect(copied).toEqual([expected]);
+  });
+
+  it("stops waiting on a second click, and never copies or speaks up afterwards", async () => {
+    const shown = [spyOn(toast, "error").mockImplementation(() => 0), spyOn(toast, "success").mockImplementation(() => 0)];
+    try {
+      view = await mountButton({ clientId: "mine" });
+      await click(button());
+      await click(button());
+      expect(button().querySelector(".animate-spin")).toBeNull();
+      expect(button().getAttribute("aria-label")).toBe("Copy turn link");
+      await act(async () => { useTurnBindingStore.getState().bind("mine", TURN); await Bun.sleep(300); });
+      expect(button().getAttribute("aria-label")).toBe("Copy turn link");
+      expect(copied).toEqual([]);
+      for (const spy of shown) expect(spy).not.toHaveBeenCalled();
+    } finally { for (const spy of shown) spy.mockRestore(); }
+  });
+
+  it("stops waiting when the bubble goes away: no clipboard write, no toast", async () => {
+    const shown = [spyOn(toast, "error").mockImplementation(() => 0), spyOn(toast, "success").mockImplementation(() => 0)];
+    try {
+      view = await mountButton({ clientId: "mine" });
+      await click(button());
+      await view.unmount(); view = null;
+      await act(async () => { useTurnBindingStore.getState().bind("mine", TURN); await Bun.sleep(300); });
+      expect(copied).toEqual([]);
+      for (const spy of shown) expect(spy).not.toHaveBeenCalled();
+    } finally { for (const spy of shown) spy.mockRestore(); }
+  });
+
+  it("picks up the id a history reload stamps on the re-rendered bubble", async () => {
+    const render = (message: { turnId?: string; clientId?: string }) =>
+      <CopyTurnLinkButton message={message} projectName="my proj" sessionId={SID} providerId="claude" />;
+    view = await mount(render({ clientId: "mine" }));
+    await click(button());
+    // The history reload replaces the message object; the waiting button reads the new one.
+    await view.rerender(render({ clientId: "mine", turnId: TURN }));
+    await act(async () => { await Bun.sleep(300); });
+    expect(button().getAttribute("aria-label")).toBe("Link ready");
+    await click(button());
+    await act(async () => { await Bun.sleep(5); });
+    expect(copied).toEqual([expected]);
+    // Re-rendered again with the same id: copies at once, inside the click.
+    await act(async () => { await Bun.sleep(1600); });
+    await view.rerender(render({ clientId: "mine", turnId: TURN }));
+    await click(button());
+    await act(async () => { await Bun.sleep(5); });
+    expect(copied).toEqual([expected, expected]);
+  });
+
+  it("keeps its label for screen readers only below md, so the action row does not wrap on a phone", async () => {
+    view = await mountButton({ turnId: TURN });
+    const label = [...button().querySelectorAll("span")].find((span) => span.textContent === "Copy turn link")!;
+    expect(label.className).toContain("sr-only");
+    expect(label.className).toContain("md:not-sr-only");
+    expect(button().className).toContain("min-h-[44px]");
   });
 });
 
@@ -98,7 +164,7 @@ describe("the chat's side of turn ids", () => {
     expect(chat.messages.at(-1)!.clientId).toBe(clientMessageId);
     await emit({ type: "turn_started", turnId: TURN, clientMessageId });
     expect(useTurnBindingStore.getState().bindings[clientMessageId]).toBe(TURN);
-    expect(chat.currentTurnId).toBe(TURN);
+    expect(chat.currentTurnIdRef.current).toBe(TURN);
     await emit({ type: "message_accepted", clientMessageId, content: "hi (as stored)" });
     expect(chat.messages.at(-1)!.content).toBe("hi (as stored)");
   });

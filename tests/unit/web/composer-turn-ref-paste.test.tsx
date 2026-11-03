@@ -6,6 +6,7 @@
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { act } from "react";
+import { toast } from "sonner";
 import { installDom, uninstallDom, installGlobal, mount, click, type Mounted } from "../../helpers/react-dom";
 import { encodeMessageBlocks } from "../../../src/shared/chat-message-blocks";
 import type { TurnReference } from "../../../src/shared/chat-turn-ref";
@@ -91,6 +92,10 @@ async function paste(text: string): Promise<boolean> {
   await settle();
   return event.defaultPrevented;
 }
+async function key(name: string) {
+  await act(async () => { input().dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true })); });
+  await settle();
+}
 const sent = () => send.mock.calls.map(([value]) => JSON.parse(String(value))).filter((value) => value.type === "message");
 const composerChips = (status = "ready") => view!.container.querySelectorAll(`[data-composer-turn-refs] [data-turn-chip="${status}"]`);
 
@@ -110,6 +115,34 @@ describe("pasting turn links into the composer", () => {
     const stored = encodeMessageBlocks("compare these", { turnRefs: [refOf(1), refOf(2)] });
     await frame({ type: "message_accepted", clientMessageId: sent()[0].clientMessageId, content: stored });
     expect(view!.container.querySelectorAll('[data-turn-refs] [data-turn-chip="ready"]')).toHaveLength(2);
+  });
+
+  it("types the rest of a paste in through the browser's editing, so undo and the change handling still apply", async () => {
+    const doc = document as unknown as { execCommand?: (command: string, ui: boolean, text: string) => boolean };
+    const before = Object.getOwnPropertyDescriptor(doc, "execCommand");
+    const calls: string[][] = [];
+    // What a browser does for insertText: replace the selection, then fire `input`.
+    doc.execCommand = (command, _ui, text) => {
+      calls.push([command, text]);
+      const ta = document.activeElement as HTMLTextAreaElement;
+      const next = ta.value.slice(0, ta.selectionStart) + text + ta.value.slice(ta.selectionEnd);
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!.call(ta, next);
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    };
+    try {
+      await render(); await type("look:");
+      input().focus();
+      expect(await paste(`${link(1)} done`)).toBe(true);
+      expect(calls).toEqual([["insertText", " done"]]);
+      expect(input().value).toBe("look: done");
+      // The composer heard it as an edit: Enter sends the text with the chip.
+      await key("Enter");
+      expect(sent()[0]).toMatchObject({ content: "look: done", turnRefs: [refOf(1)] });
+    } finally {
+      if (before) Object.defineProperty(doc, "execCommand", before);
+      else delete doc.execCommand;
+    }
   });
 
   it("holds the send while a chip loads, says why, and sends once it has", async () => {
@@ -136,12 +169,54 @@ describe("pasting turn links into the composer", () => {
     expect(sent()[0].turnRefs).toBeUndefined();
   });
 
-  it("keeps one chip per turn and at most ten", async () => {
+  it("keeps one chip per turn and at most ten, leaving the links over the limit in the text", async () => {
+    const shown = spyOn(toast, "error").mockImplementation(() => 0);
+    try {
+      await render();
+      expect(await paste(Array.from({ length: 12 }, (_, i) => link(i + 1)).join(" "))).toBe(true);
+      expect(composerChips()).toHaveLength(10);
+      // Nothing pasted is lost: the two that did not fit are still there, as the links they were.
+      expect(input().value.trim()).toBe(`${link(11)} ${link(12)}`);
+      expect(shown).toHaveBeenCalledTimes(1);
+      // A turn already shown is dropped from the paste; there is a chip for it.
+      await type("");
+      expect(await paste(link(1))).toBe(true);
+      expect(composerChips()).toHaveLength(10);
+      expect(input().value).toBe("");
+      // With no room at all the browser pastes the link as it is.
+      expect(await paste(link(13))).toBe(false);
+    } finally { shown.mockRestore(); }
+  });
+
+  it("adds what fits to the chips already there and keeps the rest of a paste as text", async () => {
+    const shown = spyOn(toast, "error").mockImplementation(() => 0);
+    try {
+      await render();
+      await paste(Array.from({ length: 9 }, (_, i) => link(i + 1)).join("\n"));
+      expect(composerChips()).toHaveLength(9);
+      await paste(`see ${link(20)} and ${link(21)} or ${link(22)}`);
+      expect(composerChips()).toHaveLength(10);
+      expect(input().value).toBe(`see  and ${link(21)} or ${link(22)}`);
+    } finally { shown.mockRestore(); }
+  });
+
+  it("puts a recalled message's chips back with its text, and takes them away again", async () => {
+    transcript.push({ id: "u1", role: "user", content: encodeMessageBlocks("old ask", { turnRefs: [refOf(8)] }), timestamp });
     await render();
-    await paste(Array.from({ length: 11 }, (_, i) => link(i + 1)).join(" "));
-    expect(composerChips()).toHaveLength(10);
-    await paste(link(1));
-    expect(composerChips()).toHaveLength(10);
+    await key("ArrowUp");
+    expect(input().value).toBe("old ask");
+    expect(composerChips()).toHaveLength(1);
+    await key("ArrowDown");
+    expect(input().value).toBe("");
+    expect(composerChips()).toHaveLength(0);
+  });
+
+  it("does not let recall replace chips the user has pasted", async () => {
+    transcript.push({ id: "u1", role: "user", content: "old ask", timestamp });
+    await render(); await paste(link(5));
+    await key("ArrowUp");
+    expect(input().value).toBe("");
+    expect(composerChips()).toHaveLength(1);
   });
 
   it("leaves a link to a project this PPM does not have, and plain text, to the browser", async () => {
@@ -168,6 +243,35 @@ describe("turn chips across drafts, rejections, edits and forks", () => {
     expect(input().value).toBe("go");
     expect(composerChips()).toHaveLength(1);
     expect(input().value).not.toContain("ppm-turnrefs");
+  });
+
+  it("adds a rejected message's chips to ones pasted since, through the toast's Restore", async () => {
+    const shown = spyOn(toast, "error").mockImplementation(() => 0);
+    try {
+      await render(); await paste(link(7)); await type("go", true);
+      await paste(link(11)); await paste(link(7));
+      await frame({ type: "message_rejected", clientMessageId: sent()[0].clientMessageId, content: "go", turnRefs: null, message: "Invalid turn reference" });
+      const restore = shown.mock.calls.map(([, options]) => (options as { action?: { label: string; onClick(): void } } | undefined)?.action).find((a) => a?.label === "Restore")!;
+      await act(async () => { restore.onClick(); });
+      await settle();
+      // Chips 11 and 7 were there; the rejected message's 7 is one of them, so nothing doubles.
+      expect([...composerChips()].map((chip) => chip.textContent?.match(/Turn (\d+)/)?.[1])).toEqual(["11", "7"]);
+      expect(input().value).toBe("go");
+    } finally { shown.mockRestore(); }
+  });
+
+  it("gives a restored chip with no room left back as its link, in the text", async () => {
+    const shown = spyOn(toast, "error").mockImplementation(() => 0);
+    try {
+      await render(); await paste(link(7)); await type("go", true);
+      await paste(Array.from({ length: 10 }, (_, i) => link(i + 20)).join(" "));
+      await frame({ type: "message_rejected", clientMessageId: sent()[0].clientMessageId, content: "go", turnRefs: null, message: "Invalid turn reference" });
+      const restore = shown.mock.calls.map(([, options]) => (options as { action?: { label: string; onClick(): void } } | undefined)?.action).find((a) => a?.label === "Restore")!;
+      await act(async () => { restore.onClick(); });
+      await settle();
+      expect(composerChips()).toHaveLength(10);
+      expect(input().value).toBe(`go\n${window.location.origin}/project/other/chat/claude/${SID}?turn=${tid(7)}`);
+    } finally { shown.mockRestore(); }
   });
 
   it("restores the body and chips of an edited message, and sends them with the edit", async () => {

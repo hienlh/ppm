@@ -171,8 +171,11 @@ interface UseChatReturn {
   killBackgroundShell: (shellId: string) => void;
   findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
   sendMessage: (content: string, opts?: SendMessageOptions) => void;
-  /** The id of the turn the server last said started on this socket (`turn_started`). */
-  currentTurnId: string | null;
+  /**
+   * The id of the turn the server last said started on this socket (`turn_started`). Read it
+   * when needed; it changes without a re-render.
+   */
+  currentTurnIdRef: { readonly current: string | null };
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
@@ -255,7 +258,8 @@ export function useChat(
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
   const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
-  const [currentTurnId, setCurrentTurnId] = useState<string | null>(null);
+  // A ref, not state: nothing draws it, and every `turn_started` would redraw the whole chat tab.
+  const currentTurnIdRef = useRef<string | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -1012,7 +1016,7 @@ export function useChat(
     if ((data as any).type === "turn_started") {
       const { turnId, clientMessageId } = data as unknown as { turnId?: unknown; clientMessageId?: unknown };
       if (typeof turnId === "string") {
-        setCurrentTurnId(turnId);
+        currentTurnIdRef.current = turnId;
         if (typeof clientMessageId === "string") useTurnBindingStore.getState().bind(clientMessageId, turnId);
       }
       return;
@@ -1348,7 +1352,7 @@ export function useChat(
     // Another session's subprocess saw another MCP state; its session_state brings its own.
     setMcpNeedsAuth([]);
     setTurnStop(null);
-    setCurrentTurnId(null);
+    currentTurnIdRef.current = null;
     setEffortStatus(undefined);
     // Clear ephemeral pre-compact expansions on session change
     setExpansions(new Map());
@@ -1903,7 +1907,7 @@ export function useChat(
     killBackgroundShell,
     findBackgroundShellByOutput,
     sendMessage,
-    currentTurnId,
+    currentTurnIdRef,
     respondToApproval,
     cancelStreaming,
     reconnect,

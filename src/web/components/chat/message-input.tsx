@@ -27,7 +27,10 @@ import { ReplyCard } from "./reply-card";
 import type { ReplyReference } from "../../../shared/chat-reply";
 import { ComposerTurnRefRow } from "./composer-turn-ref-row";
 import type { ComposerTurnChip } from "@/hooks/use-composer-turn-refs";
-import { parseTurnLinks, type ParsedTurnLink } from "@/lib/turn-link";
+import type { ParsedTurnLink } from "@/lib/turn-link";
+import type { TurnReference } from "../../../shared/chat-turn-ref";
+import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
+import { insertLikeTyping, pasteWithoutTurnLinks } from "./composer-turn-link-paste";
 import { PromptCacheChip } from "./prompt-cache-chip";
 import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
 import type { EffortStatus } from "../../../shared/effort-status";
@@ -90,8 +93,13 @@ interface MessageInputProps {
   replyChangeSignal?: number;
   /** Turn chips from pasted turn links, shown above the input. */
   turnChips?: readonly ComposerTurnChip[];
-  /** Turn links found in pasted text, which has been inserted without them. */
-  onTurnLinksPasted?: (links: ParsedTurnLink[]) => void;
+  /**
+   * Turn links found in pasted text; returns the ones there was no room for, which the paste
+   * keeps as text. The links taken are inserted as chips only.
+   */
+  onTurnLinksPasted?: (links: ParsedTurnLink[]) => readonly ParsedTurnLink[];
+  /** History recall put a past message in the input: these are its chips (null for none). */
+  onRecallTurnRefs?: (refs: TurnReference[] | null) => void;
   onRemoveTurnChip?: (key: string) => void;
   /** Why the send waits on the turn chips (one still loading, one gone); null when it does not. */
   turnChipsBlockedReason?: string | null;
@@ -176,6 +184,7 @@ export const MessageInput = memo(function MessageInput({
   replyChangeSignal,
   turnChips,
   onTurnLinksPasted,
+  onRecallTurnRefs,
   onRemoveTurnChip,
   turnChipsBlockedReason,
   draftReady = true,
@@ -277,6 +286,8 @@ export const MessageInput = memo(function MessageInput({
       setAgentTag(agent);
       writeTextareas(text);
       if (replyTo) onCancelReply?.();
+      // Its turn references come back as chips, before the draft save below reads them.
+      onRecallTurnRefs?.(step.text ? decodeMessageBlocks(step.text).turnRefs : null);
       onContentChange?.(text, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
       const ta = getVisibleTextarea();
       if (!ta) return true;
@@ -288,7 +299,7 @@ export const MessageInput = memo(function MessageInput({
       }
       return true;
     },
-    [getUserHistory, writeTextareas, getVisibleTextarea, replyTo, onCancelReply, onContentChange, attachments],
+    [getUserHistory, writeTextareas, getVisibleTextarea, replyTo, onCancelReply, onRecallTurnRefs, onContentChange, attachments],
   );
 
   // Voice input. Two engines behind the same button: the browser's own
@@ -857,7 +868,8 @@ export const MessageInput = memo(function MessageInput({
       // Bare arrows only — Alt+Arrow is the global chat-transcript jump.
       if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
         const browsing = historyIdxRef.current >= 0;
-        if (!browsing && (e.key === "ArrowDown" || valueRef.current !== "" || agentTag)) return;
+        // Turn chips make the input not empty: recall would replace them with the past message's.
+        if (!browsing && (e.key === "ArrowDown" || valueRef.current !== "" || agentTag || turnChips?.length)) return;
         if (recallHistory(e.key === "ArrowUp" ? 1 : -1)) e.preventDefault();
         return;
       }
@@ -870,7 +882,7 @@ export const MessageInput = memo(function MessageInput({
         onModeChange?.(next);
       }
     },
-    [handleSend, permissionMode, onModeChange, recallHistory, agentTag],
+    [handleSend, permissionMode, onModeChange, recallHistory, agentTag, turnChips],
   );
 
   const updatePickerState = useCallback(
@@ -919,6 +931,17 @@ export const MessageInput = memo(function MessageInput({
     [onSlashStateChange, onFileStateChange, loadSlashItems, projectName],
   );
 
+  /** JS auto-resize fallback — only when CSS field-sizing: content is unsupported. */
+  const scheduleResize = useCallback((el: HTMLTextAreaElement) => {
+    if (!needsJsResize.current) return;
+    if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
+    resizeRafRef.current = requestAnimationFrame(() => {
+      resizeRafRef.current = 0;
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, el === mobileTextareaRef.current ? 80 : 160) + "px";
+    });
+  }, []);
+
   /** Unified onChange for both textareas — updates ref, syncs other textarea, triggers picker */
   const handleTextareaChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -936,17 +959,9 @@ export const MessageInput = memo(function MessageInput({
       updatePickerState(text, el.selectionStart);
       // Notify parent for draft auto-save (debounced in hook)
       onContentChange?.(text, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
-      // JS auto-resize fallback — only when CSS field-sizing: content is unsupported
-      if (needsJsResize.current) {
-        if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
-        resizeRafRef.current = requestAnimationFrame(() => {
-          resizeRafRef.current = 0;
-          el.style.height = "auto";
-          el.style.height = Math.min(el.scrollHeight, el === mobileTextareaRef.current ? 80 : 160) + "px";
-        });
-      }
+      scheduleResize(el);
     },
-    [updatePickerState, onContentChange, attachments],
+    [updatePickerState, onContentChange, attachments, scheduleResize],
   );
 
   /** Handle paste — intercept images from clipboard */
@@ -967,25 +982,25 @@ export const MessageInput = memo(function MessageInput({
         processFiles(files);
         return;
       }
-      // Turn links become chips; everything else in the paste goes in exactly as it was. A
-      // paste that is only links (and the whitespace around them) inserts nothing.
+      // Turn links become chips; everything else in the paste goes in exactly as it was.
       const text = onTurnLinksPasted ? e.clipboardData.getData("text/plain") : "";
-      if (!text || !text.includes("/project/")) return;
+      if (!onTurnLinksPasted || !text || !text.includes("/project/")) return;
       const projects = new Set(useProjectStore.getState().projects.map((p) => p.name));
-      const { links, rest } = parseTurnLinks(text, (name) => projects.has(name));
-      if (!links.length) return;
+      const insert = pasteWithoutTurnLinks(text, (name) => projects.has(name), onTurnLinksPasted);
+      if (insert === null) return;
       e.preventDefault();
       const ta = e.currentTarget;
-      const insert = rest.trim() ? rest : "";
+      // Typed in by the browser, its `input` event runs handleTextareaChange as a keystroke does.
+      if (insertLikeTyping(ta, insert)) return;
       const start = ta.selectionStart ?? ta.value.length;
       const next = ta.value.slice(0, start) + insert + ta.value.slice(ta.selectionEnd ?? start);
       writeTextareas(next);
       ta.selectionStart = ta.selectionEnd = start + insert.length;
       historyIdxRef.current = -1;
-      if (insert) onContentChange?.(next, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
-      onTurnLinksPasted?.(links);
+      onContentChange?.(next, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
+      scheduleResize(ta);
     },
-    [processFiles, onTurnLinksPasted, writeTextareas, onContentChange, attachments],
+    [processFiles, onTurnLinksPasted, writeTextareas, onContentChange, attachments, scheduleResize],
   );
 
   /** Handle drop directly on textarea */

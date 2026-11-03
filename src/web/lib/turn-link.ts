@@ -83,16 +83,21 @@ function parseOne(raw: string, isProject: (name: string) => boolean): ParsedTurn
 /**
  * Every turn link in `text`, in order and without repeats, and the text with those links taken
  * out. Anything that is not a valid turn link — another kind of chat link, a link to a project
- * this PPM does not have — is left exactly where it was.
+ * this PPM does not have — is left exactly where it was, and so is a valid one `take` declines
+ * (a link the composer has no room left to show as a chip).
  */
-export function parseTurnLinks(text: string, isProject: (name: string) => boolean): { links: ParsedTurnLink[]; rest: string } {
+export function parseTurnLinks(
+  text: string,
+  isProject: (name: string) => boolean,
+  take: (link: ParsedTurnLink) => boolean = () => true,
+): { links: ParsedTurnLink[]; rest: string } {
   const links: ParsedTurnLink[] = [];
   const seen = new Set<string>();
   let rest = "";
   let last = 0;
   for (const match of text.matchAll(CANDIDATE)) {
     const link = parseOne(match[0], isProject);
-    if (!link) continue;
+    if (!link || !take(link)) continue;
     const start = match.index!;
     rest += text.slice(last, start);
     last = start + link.text.length;

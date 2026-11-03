@@ -67,6 +67,8 @@ describe("turn chips", () => {
       </div>,
     );
     expect(view.container.querySelector('[data-turn-chip="loading"]')?.className).toContain("h-[44px]");
+    // One width for every composer state, so a chip resolving does not shift the row.
+    for (const status of ["loading", "error"]) expect(view.container.querySelector(`[data-turn-chip="${status}"]`)?.className).toContain("w-[18rem]");
     expect(view.container.querySelector('[data-turn-chip="error"]')?.textContent).toContain("No longer available");
     for (const button of view.container.querySelectorAll('[aria-label="Remove turn reference"]')) await click(button);
     expect(removed).toEqual(["a", "b"]);
@@ -83,6 +85,8 @@ describe("turn chips", () => {
     view = await mount(<ComposerTurnRefRow chips={[{ key: "k", status: "ready", target: ref, ref }]} currentProject="ppm" onRemove={() => {}} />);
     await act(async () => { await Bun.sleep(10); });
     expect(view.container.querySelector('[aria-label^="The AI can\'t read this turn"]')).toBeNull();
+    // The resolved composer chip keeps the width its skeleton had.
+    expect(view.container.querySelector('[data-turn-chip="ready"]')?.className).toContain("w-[18rem]");
   });
 
   it("opens the session on a tap and asks it to show the turn", async () => {
@@ -100,6 +104,20 @@ describe("turn chips", () => {
   });
 });
 
+describe("opening a turn of another project", () => {
+  it("asks for no jump when this PPM has no such project", async () => {
+    const { openTurnRef } = await import("../../../src/web/lib/open-turn-ref");
+    const { toast } = await import("sonner");
+    const shown = spyOn(toast, "error").mockImplementation(() => 0);
+    useProjectStore.setState({ projects: [{ name: "ppm", path: "/p" }] as never, activeProject: { name: "ppm", path: "/p" } as never });
+    try {
+      await openTurnRef(ref);
+      expect(useChatJumpStore.getState().request).toBeNull();
+      expect(shown).toHaveBeenCalledTimes(1);
+    } finally { shown.mockRestore(); }
+  });
+});
+
 describe("the long press on a chip", () => {
   const press = (el: Element, type: string) => act(async () => { el.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true })); });
   const sheetOpen = () => [...document.body.querySelectorAll("button")].some((b) => b.textContent?.includes("Open session"));
@@ -111,6 +129,21 @@ describe("the long press on a chip", () => {
     await act(async () => { await Bun.sleep(450); });
     expect(sheetOpen()).toBe(true);
     expect(document.body.textContent).toContain("ship <script>x</script>");
+  });
+
+  it("keeps the sheet's backdrop tap from reaching the composer around the chip", async () => {
+    // React bubbles a portalled click to the chip's ancestors; the composer's would focus its
+    // textarea and pop the phone keyboard as the sheet closes.
+    const outer: string[] = [];
+    view = await mount(<div onClick={() => outer.push("composer")}><TurnRefChipView refData={ref} /></div>);
+    const button = view.container.querySelector('[data-turn-chip="ready"] button')!;
+    await press(button, "touchstart");
+    await act(async () => { await Bun.sleep(450); });
+    expect(sheetOpen()).toBe(true);
+    const backdrop = [...document.body.querySelectorAll<HTMLElement>("div.fixed.inset-0")].at(-1)!;
+    await click(backdrop);
+    expect(sheetOpen()).toBe(false);
+    expect(outer).toEqual([]);
   });
 
   it("is disarmed when the browser cancels the touch for a scroll", async () => {
