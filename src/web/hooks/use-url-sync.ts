@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
-import { useTabStore, type TabType } from "@/stores/tab-store";
+import { useTabStore, type Tab, type TabType } from "@/stores/tab-store";
+import { deriveTabId } from "@/stores/panel-utils";
+import { tabSessionId } from "@/lib/tab-session-id";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { openSettings } from "@/components/settings/open-settings";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
@@ -130,6 +132,26 @@ export function tabIdFromUrl(tabType: TabType, tabIdentifier: string | null): st
   return `${tabType}:${tabIdentifier}`;
 }
 
+/**
+ * The tab id a URL is built from. A chat tab keeps the id of the session it was opened with
+ * when its session is switched in place, so its URL names the session it shows now — otherwise
+ * a reload, or a link copied from the address bar, opens the conversation it used to hold.
+ */
+export function urlTabId(tab: Tab): string {
+  return tab.type === "chat" && tabSessionId(tab) ? deriveTabId("chat", tab.metadata) : tab.id;
+}
+
+/**
+ * The tab a URL names, if the focused panel has it open. A chat URL naming a session is left to
+ * `openTab`, which matches on the session each tab holds now, in every panel: the id derived
+ * from the URL can belong to a tab whose session was switched in place to another one.
+ */
+function openTabForUrl(tabType: TabType, tabIdentifier: string | null): Tab | undefined {
+  if (tabType === "chat" && buildMetadataFromUrl(tabType, tabIdentifier, "")?.sessionId) return undefined;
+  const expectedId = tabIdFromUrl(tabType, tabIdentifier);
+  return useTabStore.getState().tabs.find((t) => t.id === expectedId);
+}
+
 // ---------------------------------------------------------------------------
 // Auto-open tab from URL
 // ---------------------------------------------------------------------------
@@ -228,11 +250,10 @@ export function autoOpenFromUrl(
     return;
   }
 
-  const { tabs, setActiveTab, openTab } = useTabStore.getState();
-  const expectedId = tabIdFromUrl(tabType, tabIdentifier);
+  const { setActiveTab, openTab } = useTabStore.getState();
 
   // Check if tab already exists
-  const existing = tabs.find((t) => t.id === expectedId);
+  const existing = openTabForUrl(tabType, tabIdentifier);
   if (existing) {
     setActiveTab(existing.id);
     return;
@@ -261,7 +282,10 @@ export function autoOpenFromUrl(
  * - On popstate (back/forward) → restore/create tab from URL
  */
 export function useUrlSync() {
-  const activeTabId = useTabStore((s) => s.activeTabId);
+  const activeUrlTabId = useTabStore((s) => {
+    const tab = s.tabs.find((t) => t.id === s.activeTabId);
+    return tab ? urlTabId(tab) : s.activeTabId;
+  });
   const currentProject = useTabStore((s) => s.currentProject);
   const isPopState = useRef(false);
 
@@ -272,11 +296,11 @@ export function useUrlSync() {
       return;
     }
 
-    const newUrl = buildUrl(currentProject, activeTabId);
+    const newUrl = buildUrl(currentProject, activeUrlTabId);
     if (window.location.pathname !== newUrl) {
       window.history.pushState(null, "", newUrl);
     }
-  }, [activeTabId, currentProject]);
+  }, [activeUrlTabId, currentProject]);
 
   // Listen for back/forward navigation
   useEffect(() => {
@@ -285,12 +309,10 @@ export function useUrlSync() {
       if (!tabType) return;
 
       isPopState.current = true;
-      const { tabs, setActiveTab } = useTabStore.getState();
-      const expectedId = tabIdFromUrl(tabType, tabIdentifier);
-      const existing = tabs.find((t) => t.id === expectedId);
+      const existing = openTabForUrl(tabType, tabIdentifier);
 
       if (existing) {
-        setActiveTab(existing.id);
+        useTabStore.getState().setActiveTab(existing.id);
       } else {
         // Auto-open tab on back/forward if it was closed
         const project = useTabStore.getState().currentProject;
