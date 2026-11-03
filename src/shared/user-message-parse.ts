@@ -1,4 +1,4 @@
-import { decodeReply, type ReplyReference } from "../../../shared/chat-reply";
+import { decodeReply, type ReplyReference } from "./chat-reply";
 /**
  * Parsing for stored user-message content.
  *

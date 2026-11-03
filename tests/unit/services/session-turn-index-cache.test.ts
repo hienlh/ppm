@@ -84,6 +84,33 @@ describe("TurnIndexCache", () => {
     expect(scans).toHaveLength(1);
   });
 
+  test("a caller that saw more of the file than a running scan gets a scan that read it", async () => {
+    // This scan reads first and only then waits, so it finishes on the file as it was.
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    const cache = new TurnIndexCache<string[]>({
+      newState: () => [],
+      async scan(path, state, fromByte) {
+        let offset = fromByte;
+        for await (const line of readTranscriptLines(path, fromByte)) { state.push(line.text); offset = line.end; }
+        if (fromByte === 0) await gate;
+        return offset;
+      },
+      sizeOf: (s) => s.length,
+    });
+    const path = file("join-older.jsonl", "prompt one\n");
+    const first = cache.get(path);
+    await new Promise((r) => setTimeout(r, 20));
+    appendFileSync(path, "prompt two\n");
+    const second = cache.get(path); // stats the longer file, then finds the first scan running
+    await new Promise((r) => setTimeout(r, 20));
+    open();
+    expect((await first).state).toEqual(["prompt one"]);
+    const entry = await second;
+    expect(entry.state).toEqual(["prompt one", "prompt two"]);
+    expect(entry.size).toBe(22);
+  });
+
   test("the least recently used scan is dropped past the entry cap", async () => {
     const { cache, scans } = lineCache({ maxEntries: 2 });
     const [a, b, c] = ["lru-a", "lru-b", "lru-c"].map((n) => file(`${n}.jsonl`, `${n}\n`));

@@ -198,8 +198,12 @@ interface LiveSession {
   interruptRequested?: boolean;
   /** Follow-ups waiting for the current turn, in the order they will be sent. */
   pendingTurns: QueuedTurn[];
-  /** The browser's id for the message the turn being started was sent for (`turn_started`). */
-  startingClientMessageId?: string;
+  /**
+   * The turn `startTurn` asked codex for and codex has not named yet: the browser's id for the
+   * message it was sent for, and the transcript message it pushed (none for a replay). Taken by
+   * the first `turn/started` after it, so a turn codex starts on its own binds nothing.
+   */
+  startingTurn?: { clientMessageId?: string; transcriptId?: string };
   /** The turn already announced with `turn_started`, so a second naming of it says nothing. */
   announcedTurnId?: string | null;
   /** A usage-limit rotation is underway: the old app-server is being torn down and
@@ -520,7 +524,7 @@ export class CodexAppServerProvider implements AIProvider {
       return;
     }
     live.turnInFlight = true;
-    live.startingClientMessageId = opts?.clientMessageId;
+    live.startingTurn = undefined;
     live.announcedTurnId = null;
     // `/compact` → trigger codex's real compaction (thread/compact/start), not a text turn.
     // Completion is surfaced on the `thread/compacted` notification (handleNotification).
@@ -534,7 +538,9 @@ export class CodexAppServerProvider implements AIProvider {
       });
       return;
     }
-    if (!replay) live.transcript.push({ id: nextRolloutId(live), role: "user", content: message, timestamp: new Date().toISOString() });
+    const transcriptId = replay ? undefined : nextRolloutId(live);
+    if (transcriptId) live.transcript.push({ id: transcriptId, role: "user", content: message, timestamp: new Date().toISOString() });
+    live.startingTurn = { clientMessageId: opts?.clientMessageId, transcriptId };
     live.lastTurnInput = { message, opts };
     live.currentAssistant = "";
     live.currentEvents = [];
@@ -619,10 +625,23 @@ export class CodexAppServerProvider implements AIProvider {
    */
   private announceTurn(live: LiveSession, turnId: string): void {
     if (live.announcedTurnId === turnId || live.compactRequested) return;
+    // Taken once: a later `turn/started` — codex starting a turn PPM did not ask for — must not
+    // bind that turn to this message too.
+    const starting = live.startingTurn;
+    live.startingTurn = undefined;
+    if (!starting) return;
     live.announcedTurnId = turnId;
-    // The message `startTurn` pushed before codex had named the turn.
-    for (const m of live.transcript) if (m.role === "user" && !m.turnId) m.turnId = turnId;
-    const clientMessageId = live.startingClientMessageId;
+    // Only the message `startTurn` pushed. An older one still untagged belongs to a turn whose
+    // `turn/start` failed before codex named it, not to this one.
+    if (starting.transcriptId) {
+      for (let i = live.transcript.length - 1; i >= 0; i--) {
+        const m = live.transcript[i]!;
+        if (m.id !== starting.transcriptId) continue;
+        if (!m.turnId) m.turnId = turnId;
+        break;
+      }
+    }
+    const { clientMessageId } = starting;
     live.channel.push({ type: "turn_started", turnId, ...(clientMessageId ? { clientMessageId } : {}) });
   }
 
@@ -683,6 +702,8 @@ export class CodexAppServerProvider implements AIProvider {
   /** Running turn is over: send the next follow-up, if one is waiting. */
   private endTurn(live: LiveSession): void {
     live.turnInFlight = false;
+    // A turn that ends unnamed (its `turn/start` failed) leaves nothing a later turn may take.
+    live.startingTurn = undefined;
     live.activeTurnId = null;
     live.interruptRequested = false;
     live.discardingTurn = false;

@@ -78,6 +78,15 @@ export interface SessionTurnScan {
   view: TurnView;
   /** Where the scan stopped; a newest turn's range ends here. */
   indexedTo: number;
+  /** The transcript as the scan saw it, so a reader can tell whether it has changed since. */
+  file: { size: number; mtimeMs: number; fingerprint: string };
+}
+
+function scanOf<S>(session: ResolvedSession, entry: ScanEntry<S>, view: TurnView): SessionTurnScan {
+  return {
+    session, view, indexedTo: entry.offset,
+    file: { size: entry.size, mtimeMs: entry.mtimeMs, fingerprint: entry.fingerprint },
+  };
 }
 
 /** The session's turns as its transcript is now. */
@@ -86,10 +95,10 @@ export async function scanSessionTurns(ref: SessionRef): Promise<SessionTurnScan
   try {
     if (session.providerId === "claude") {
       const entry: ScanEntry<ClaudeScanState> = await claudeCache.get(session.path);
-      return { session, view: claudeTurnView(entry.state), indexedTo: entry.offset };
+      return scanOf(session, entry, claudeTurnView(entry.state));
     }
     const entry: ScanEntry<CodexScanState> = await codexCache.get(session.path);
-    return { session, view: codexTurnView(entry.state), indexedTo: entry.offset };
+    return scanOf(session, entry, codexTurnView(entry.state));
   } catch (e) {
     if ((e as NodeJS.ErrnoException)?.code === "ENOENT") throw new SessionTurnError("session_missing", "Transcript not found");
     throw e;

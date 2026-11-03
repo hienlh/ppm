@@ -16,7 +16,7 @@ import {
 import { cn, basename } from "@/lib/utils";
 import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
-import { parseUserMessage, type SystemTag } from "./user-message-parse";
+import { parseUserMessage, type SystemTag } from "../../../shared/user-message-parse";
 import type { VersionGroup } from "../../../types/api";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";

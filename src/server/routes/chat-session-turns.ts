@@ -29,10 +29,14 @@ function refOf(c: Context<Env>): SessionRef {
   return { providerId: c.req.query("providerId") ?? "claude", sessionId: c.req.param("id") ?? "", projectPath: c.get("projectPath") };
 }
 
+/**
+ * A `SessionTurnError` carries a message written for the browser. Anything else — an fs error
+ * naming the transcript's full path, say — is logged here and answered with a fixed message.
+ */
 function fail(c: Context<Env>, e: unknown): Response {
   if (e instanceof SessionTurnError) return c.json({ ...err(e.message), code: e.code }, STATUS[e.code]);
   log.error(`turns route failed:`, e);
-  return c.json(err((e as Error).message), 500);
+  return c.json(err("Could not read the session's turns"), 500);
 }
 
 /**

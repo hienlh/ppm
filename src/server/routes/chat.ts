@@ -17,7 +17,7 @@ import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts
 import { chatPrepareRoutes } from "./chat-prepare.ts";
 import { chatFileChangesRoutes } from "./chat-file-changes.ts";
 import { chatSessionTurnsRoutes } from "./chat-session-turns.ts";
-import { stampSessionTurns } from "../../services/session-turns/stamp-message-turns.ts";
+import { applyTurnStamps, loadTurnLookup, stampSessionTurns } from "../../services/session-turns/stamp-message-turns.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
 import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
@@ -430,10 +430,25 @@ function historyStamp(providerId: string, id: string): string | null {
  * hour, measured), which is what took the server to 23 GB committed. Shared only while in
  * flight: a request after it settles parses afresh, so a finished turn is never served stale.
  */
-const historyInFlight = new Map<string, Promise<ChatMessage[]>>();
+const historyInFlight = new Map<string, Promise<ParsedHistory>>();
 
-function loadFullHistory(providerId: string, id: string, projectPath: string): Promise<ChatMessage[]> {
-  const key = `${providerId}\0${id}`;
+/**
+ * A parsed history, and whether it is fit to cache: `false` when the turn index failed to read,
+ * which leaves the messages unstamped — caching that would keep them unstamped until the
+ * transcript next changes, for an idle session until the server restarts.
+ */
+interface ParsedHistory {
+  messages: ChatMessage[];
+  complete: boolean;
+}
+
+/** Keyed by project too: the turn stamps come from the project's own view of the session. */
+function historyKey(providerId: string, id: string, projectPath: string): string {
+  return `${providerId}\0${id}\0${projectPath}`;
+}
+
+function loadFullHistory(providerId: string, id: string, projectPath: string): Promise<ParsedHistory> {
+  const key = historyKey(providerId, id, projectPath);
   const running = historyInFlight.get(key);
   if (running) return running;
   const parse = parseFullHistory(providerId, id, projectPath).finally(() => historyInFlight.delete(key));
@@ -443,11 +458,16 @@ function loadFullHistory(providerId: string, id: string, projectPath: string): P
 
 /**
  * The history as the provider returns it, each message stamped with its turn (`turnId`,
- * `turnN`) from the session's turn index, which reads only this project's transcript.
+ * `turnN`) from the session's turn index, which reads only this project's transcript. The two
+ * reads run side by side: a cold index scan of a large transcript costs about as long as the
+ * parse, and nothing about either depends on the other.
  */
-async function parseFullHistory(providerId: string, id: string, projectPath: string): Promise<ChatMessage[]> {
-  const messages = await chatService.getMessages(providerId, id);
-  await stampSessionTurns({ providerId, sessionId: id, projectPath }, messages);
+async function parseFullHistory(providerId: string, id: string, projectPath: string): Promise<ParsedHistory> {
+  const [messages, turns] = await Promise.all([
+    chatService.getMessages(providerId, id),
+    loadTurnLookup({ providerId, sessionId: id, projectPath }),
+  ]);
+  applyTurnStamps(providerId, messages, turns);
   // Forking re-timestamps the copied prefix (both the Claude SDK and codex
   // stamp the fork moment), so a version's inherited history would render as
   // "just now" and shift when switching versions. Overlay the branch root's
@@ -462,7 +482,7 @@ async function parseFullHistory(providerId: string, id: string, projectPath: str
       m.timestamp = r.timestamp;
     }
   }
-  return messages;
+  return { messages, complete: !turns.failed || messages.length === 0 };
 }
 
 chatRoutes.get("/sessions/:id/messages", async (c) => {
@@ -474,7 +494,7 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
     const id = resolveMigratedSession(requestedId);
     const providerId = c.req.query("providerId") ?? "claude";
     const query = parseHistoryPageQuery((name) => c.req.query(name));
-    const cacheKey = `${providerId}\0${id}`;
+    const cacheKey = historyKey(providerId, id, c.get("projectPath"));
     const stamp = historyStamp(providerId, id);
     let all = cachedHistory(cacheKey, stamp, query.before !== undefined);
     if (!all) {
@@ -482,8 +502,9 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
       // stamp saw, so only the request that started it stores it — otherwise the end of a
       // turn could be cached away under a stamp that says it is there, for good.
       const joined = historyInFlight.has(cacheKey);
-      all = await loadFullHistory(providerId, id, c.get("projectPath"));
-      if (!joined && (stamp !== null || query.limit !== undefined || query.from !== undefined)) rememberHistory(cacheKey, stamp, all);
+      const parsed = await loadFullHistory(providerId, id, c.get("projectPath"));
+      all = parsed.messages;
+      if (!joined && parsed.complete && (stamp !== null || query.limit !== undefined || query.from !== undefined)) rememberHistory(cacheKey, stamp, all);
     }
     const page = pageHistory(all, query);
     // versionMap ships with the history so the `‹ n/m ›` switcher needs no

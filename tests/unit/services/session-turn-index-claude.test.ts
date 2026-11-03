@@ -7,7 +7,7 @@ import { _setClaudeProjectsRoot } from "../../../src/services/agent-transcript/c
 import { newClaudeScanState, scanClaudeTranscript, claudeTurnView } from "../../../src/services/session-turns/turn-index-claude.ts";
 import { listSessionTurns, resolveTurnOf, uuidTurnMap } from "../../../src/services/session-turns/session-turn-index.service.ts";
 import { readSessionTurnMessages } from "../../../src/services/session-turns/session-turn-reader.ts";
-import { stampClaudeMessages } from "../../../src/services/session-turns/stamp-message-turns.ts";
+import { loadTurnLookup, stampClaudeMessages } from "../../../src/services/session-turns/stamp-message-turns.ts";
 import { SessionTurnError } from "../../../src/services/session-turns/session-turn-types.ts";
 import { setSessionMigratedTo } from "../../../src/services/db.service.ts";
 import type { ChatMessage } from "../../../src/types/chat.ts";
@@ -169,6 +169,51 @@ describe("stampClaudeMessages", () => {
     const messages = [msg("before-any-turn"), msg(ids.u1), msg("unknown"), msg(ids.u2), msg()];
     stampClaudeMessages(messages, lookup);
     expect(messages.map((m) => m.turnN ?? null)).toEqual([null, 1, 1, 2, 2]);
+  });
+
+  test("a prompt the index has not seen yet, and what follows it, are left unstamped", () => {
+    // The history read the new prompt; the index was scanned before it was written.
+    const lookup = (uuid: string) => (uuid === ids.u1 ? { turnId: P1, n: 1 } : undefined);
+    const messages: ChatMessage[] = [
+      { id: "1", role: "user", content: "first ask", timestamp: "", sdkUuid: ids.u1 },
+      { id: "2", role: "assistant", content: "on it", timestamp: "", sdkUuid: "a-unknown" },
+      { id: "3", role: "user", content: "a new question", timestamp: "", sdkUuid: "u-unknown" },
+      { id: "4", role: "assistant", content: "its answer", timestamp: "", sdkUuid: "b-unknown" },
+    ];
+    stampClaudeMessages(messages, lookup);
+    expect(messages.map((m) => m.turnId ?? null)).toEqual([P1, P1, null, null]);
+  });
+});
+
+describe("loadTurnLookup", () => {
+  test("a session this project does not own is a standing answer; an unreadable transcript is a failure", async () => {
+    const owned = randomUUID();
+    sessionFile(owned);
+    expect((await loadTurnLookup({ providerId: "claude", sessionId: owned, projectPath })).lookup?.(ids.a2)).toEqual({ turnId: P2, n: 2 });
+
+    const elsewhere = await loadTurnLookup({ providerId: "claude", sessionId: owned, projectPath: join(root, "other") });
+    expect(elsewhere).toEqual({ failed: false });
+
+    // A transcript path that exists but cannot be read as a file.
+    const broken = randomUUID();
+    mkdirSync(join(slugDir, `${broken}.jsonl`));
+    expect(await loadTurnLookup({ providerId: "claude", sessionId: broken, projectPath })).toEqual({ failed: true });
+  });
+});
+
+describe("message count", () => {
+  test("one reply written as several block records counts once, a tool result not at all", async () => {
+    const reply = (uuid: string, text: string) => claude.assistant(text, uuid).replace(/"id":"msg_[^"]+"/, '"id":"msg_shared01"');
+    const state = newClaudeScanState();
+    const file = sessionFile(randomUUID(), lines(
+      claude.prompt("ask", P1),
+      reply(randomUUID(), "thinking"),
+      reply(randomUUID(), "text"),
+      claude.toolResult(P1),
+      claude.assistant("a second reply"),
+    ));
+    await scanClaudeTranscript(file, state, 0);
+    expect(state.turns[0]!.messageCount).toBe(3);
   });
 });
 

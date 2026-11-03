@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   buildCommentsPrompt, neutralizeFences, promptLabel, REVIEWER_UNTRUSTED_HEADER, UNTRUSTED_HEADER, type PromptComment,
 } from "../../../src/web/lib/design/design-comments-prompt.ts";
-import { extractSystemTags, parseUserMessage } from "../../../src/web/components/chat/user-message-parse.ts";
+import { extractSystemTags, parseUserMessage } from "../../../src/shared/user-message-parse.ts";
 
 const comment = (over: Partial<PromptComment> = {}): PromptComment => ({
   file: "index.html",

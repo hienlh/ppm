@@ -6,12 +6,14 @@
  * prompt — a manual `/compact` — is not a turn of its own to the person reading: it belongs to
  * the turn before it. Copies a compaction writes back into the thread
  * (`compacted.replacement_history`) are never read here at all, so they never count.
+ *
+ * Every string kept is a `detachedCopy`, for the reason given in `turn-index-claude.ts`.
  */
 import { CodexTurnTracker } from "../../providers/codex-app-server/codex-turn-tracker.ts";
 import { mapRolloutItem } from "../../providers/codex-app-server/codex-rollout-items.ts";
 import { promptFirstLine, promptTextOf } from "../../shared/user-prompt-kind.ts";
 import type { ByteRange, IndexedTurn, TurnStamp, TurnView } from "./session-turn-types.ts";
-import { readTranscriptLines, SliceClock } from "./turn-line-reader.ts";
+import { detachedCopy, readTranscriptLines, SliceClock } from "./turn-line-reader.ts";
 
 interface CodexTurnInfo {
   raw: string;
@@ -50,14 +52,15 @@ function enter(state: CodexScanState, raw: string, start: number, at: string): C
       const previous = state.info.get(state.openRaw);
       if (previous && previous.endByte === undefined) previous.endByte = start;
     }
-    info = { raw, startByte: start, startedAt: at, prompt: null, messageCount: 0, closed: false, compacted: false };
+    info = { raw, startByte: start, startedAt: detachedCopy(at), prompt: null, messageCount: 0, closed: false, compacted: false };
     state.info.set(raw, info);
     state.openRaw = raw;
   }
   return info;
 }
 
-function userText(payload: Record<string, unknown>): string | null {
+/** The text of a user message record's payload, or null when the record is not one. */
+export function userText(payload: Record<string, unknown>): string | null {
   if (payload.type === "user_message") return typeof payload.message === "string" ? payload.message : null;
   if (payload.type !== "item_completed") return null;
   const item = payload.item as { type?: unknown } | undefined;
@@ -67,7 +70,7 @@ function userText(payload: Record<string, unknown>): string | null {
 }
 
 /** An answer, exactly as the history parser counts one (`CodexTurnTracker.item`). */
-function isAnswer(payload: Record<string, unknown>): boolean {
+export function isAnswer(payload: Record<string, unknown>): boolean {
   if (payload.type === "agent_message") return typeof payload.message === "string";
   const item = payload.item as { type?: unknown } | undefined;
   return payload.type === "item_completed" && item?.type === "AgentMessage" && mapRolloutItem(item).kind === "assistant";
@@ -82,8 +85,9 @@ function scanRecord(state: CodexScanState, rec: Record<string, unknown>, start: 
   if (rec.type !== "event_msg") return;
   const p = (rec.payload ?? {}) as Record<string, unknown>;
   if (p.type === "task_started" && typeof p.turn_id === "string") {
-    state.tracker.taskStarted(p.turn_id);
-    enter(state, p.turn_id, start, at);
+    const raw = detachedCopy(p.turn_id);
+    state.tracker.taskStarted(raw);
+    enter(state, raw, start, at);
   } else if ((p.type === "task_complete" || p.type === "turn_aborted")) {
     const raw = state.tracker.currentId;
     if (raw && (typeof p.turn_id !== "string" || p.turn_id === raw)) {
@@ -103,8 +107,8 @@ function scanRecord(state: CodexScanState, rec: Record<string, unknown>, start: 
       info.messageCount++;
       const prompt = info.prompt === null ? promptTextOf(text) : null;
       if (prompt !== null) {
-        info.prompt = promptFirstLine(prompt);
-        info.startedAt = at || info.startedAt;
+        info.prompt = detachedCopy(promptFirstLine(prompt));
+        if (at) info.startedAt = detachedCopy(at);
       }
     } else if (isAnswer(p)) {
       enter(state, state.tracker.item(lineNo), start, at).messageCount++;
@@ -159,17 +163,28 @@ export function codexTurnView(state: CodexScanState): TurnView {
     owner.closed = info.closed;
     stamps.set(raw, { turnId: owner.turnId, n: turns.length });
   }
+  let starts: Map<number, CodexTurnInfo> | undefined;
   return {
     turns,
     stampOf: (raw) => stamps.get(raw),
     keys: () => stamps.keys(),
     isRolledBack: (turnId) => state.rolledBack.has(turnId),
+    // A range ends where the next turn the scan entered starts (rolled back or not), or at a
+    // rollback record: those are the only two places `enter` and the rollback branch close one.
+    boundaryAt(offset) {
+      starts ??= new Map([...state.info.values()].map((info) => [info.startByte, info]));
+      const info = starts.get(offset);
+      return info ? { anchor: info.raw, prompt: info.prompt } : "rollback";
+    },
   };
 }
 
-/** What the scan state costs to keep, roughly, for the cache's byte budget. */
+/**
+ * What the scan state costs to keep, for the cache's byte budget. Measured in Bun 1.3: a turn's
+ * record, its id, its time and its map entry ~450 bytes, plus its label.
+ */
 export function codexStateBytes(state: CodexScanState): number {
   let bytes = 0;
-  for (const info of state.info.values()) bytes += (info.prompt?.length ?? 0) * 2 + 200;
+  for (const info of state.info.values()) bytes += 450 + (info.prompt?.length ?? 0) * 2;
   return bytes;
 }

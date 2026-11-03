@@ -24,7 +24,7 @@ async function rolloutFiles(dir: string): Promise<string[]> {
 }
 
 export async function parseRolloutJsonlAsync(
-  text: string,
+  text: string | readonly string[],
   loadSubagent?: (id: string) => Promise<SubagentTranscript | null>,
   opts?: RolloutParseOptions,
 ): Promise<ChatMessage[]> {

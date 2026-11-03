@@ -127,8 +127,12 @@ export interface RolloutParseOptions {
  * Every message is tagged with the codex turn it belongs to (`turnId`, the native `turn_id`),
  * by `CodexTurnTracker` — the rules the turn index scans with — so the stamper can map it to
  * the turn a person sees. A `thread_rolled_back` drops whole turns, a steered message included.
+ *
+ * `source` is the rollout text, or its complete lines already split (a reader that read a byte
+ * range line by line hands those over rather than joining them into one large string).
  */
-export function* rolloutMessageSteps(text: string, opts?: RolloutParseOptions): Generator<string | null, ChatMessage[], SubagentTranscript | null> {
+export function* rolloutMessageSteps(source: string | readonly string[], opts?: RolloutParseOptions): Generator<string | null, ChatMessage[], SubagentTranscript | null> {
+  const lines = typeof source === "string" ? completeLines(source) : source.filter((l) => l.trim() !== "");
   const preCompactIndex = opts?.preCompactIndex;
   const messages: ChatMessage[] = [];
   const tracker = new CodexTurnTracker();
@@ -147,7 +151,9 @@ export function* rolloutMessageSteps(text: string, opts?: RolloutParseOptions): 
   // which would land in the transcript. When the item events are present they
   // are the better source: already assembled, already named the way the live
   // stream names them.
-  const hasItemEvents = text.includes('"item_completed"');
+  const hasItemEvents = typeof source === "string"
+    ? source.includes('"item_completed"')
+    : lines.some((l) => l.includes('"item_completed"'));
 
   /** The codex turn an answer goes in. */
   const itemTurn = () => tracker.item(lineNo);
@@ -169,7 +175,7 @@ export function* rolloutMessageSteps(text: string, opts?: RolloutParseOptions): 
   };
 
   let batch = 0;
-  for (const line of completeLines(text)) {
+  for (const line of lines) {
     lineNo++;
     if (++batch % 32 === 0) yield null;
     const rec = parseLine(line);

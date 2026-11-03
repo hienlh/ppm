@@ -42,7 +42,11 @@ export interface IndexedTurn {
   startedAt: string;
   /** First line of the prompt, at most 200 characters. */
   prompt: string;
-  /** Conversation records in the turn: prompts, steered messages and assistant replies. */
+  /**
+   * Messages the chat shows for the turn: its prompt, other user messages (steered, notified),
+   * and one per assistant reply — a Claude reply's thinking, text and tool calls are separate
+   * records under one message id and count once. Tool results are not counted.
+   */
   messageCount: number;
   /** Where the turn's first line starts. */
   startByte: number;
@@ -53,6 +57,13 @@ export interface IndexedTurn {
   /** The turn's range holds a compaction, which a reader shows as one marker. */
   compacted?: boolean;
 }
+
+/**
+ * What the index saw begin at a byte offset, so a reader can check it is still there: a turn's
+ * first line (its anchor, and for a Codex turn its prompt label), or a Codex rollback record,
+ * which ends the range of the turn before it.
+ */
+export type TurnBoundary = { anchor: string; prompt: string | null } | "rollback";
 
 /** A byte range of a transcript; `to` absent means "to where the index has read". */
 export interface ByteRange {
@@ -73,6 +84,8 @@ export interface TurnView {
   keys(): Iterable<string>;
   /** The turn was in the thread once and a rollback removed it. */
   isRolledBack(turnId: string): boolean;
+  /** What begins at `offset`, when it is a turn start or range end the index recorded. */
+  boundaryAt(offset: number): TurnBoundary | undefined;
 }
 
 /** A turn as the index answers for it. */

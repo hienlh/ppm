@@ -10,10 +10,13 @@
  * Assistant records are the bulk of a transcript and are never parsed here: their uuid sits at
  * the end of the line right after `"type":"assistant"`, past the message and anything a tool
  * input could quote. User records are parsed, since the prompt decision needs their content.
+ *
+ * Every string kept is a `detachedCopy`: a slice of a line, or a value parsed out of one, would
+ * otherwise keep the whole line in memory for as long as the cache keeps the scan.
  */
 import { isRealPromptRecord, promptFirstLine, promptTextOf } from "../../shared/user-prompt-kind.ts";
 import { TURN_ID_RE, type IndexedTurn, type TurnStamp, type TurnView } from "./session-turn-types.ts";
-import { readTranscriptLines, SliceClock } from "./turn-line-reader.ts";
+import { detachedCopy, readTranscriptLines, SliceClock } from "./turn-line-reader.ts";
 
 export interface ClaudeScanState {
   kind: "claude";
@@ -21,14 +24,23 @@ export interface ClaudeScanState {
   /** Record uuid → index into `turns`. */
   turnOfUuid: Map<string, number>;
   usedIds: Set<string>;
+  /**
+   * API message id of the newest assistant reply counted in the current turn. The CLI writes one
+   * record per content block — thinking, text, each tool call — all under the reply's one id, and
+   * the chat shows them as one message.
+   */
+  lastReplyId: string | null;
 }
 
 export function newClaudeScanState(): ClaudeScanState {
-  return { kind: "claude", turns: [], turnOfUuid: new Map(), usedIds: new Set() };
+  return { kind: "claude", turns: [], turnOfUuid: new Map(), usedIds: new Set(), lastReplyId: null };
 }
 
 const ASSISTANT_TAIL = '"type":"assistant","uuid":"';
 const UUID_RE = /^[0-9a-f-]{36}$/i;
+/** `message.id` of an assistant record: written before the content, so the head holds it. */
+const REPLY_ID_RE = /"message":\{[^{}]*?"id":"(msg_[A-Za-z0-9_-]{1,80})"/;
+const REPLY_ID_HEAD = 1024;
 
 /** The uuid of an assistant record, read from the line's tail without parsing it. */
 function assistantUuid(text: string): string | null {
@@ -46,35 +58,53 @@ function contentText(message: unknown): string {
   return content.map((b) => (b && typeof b === "object" && (b as { type?: unknown }).type === "text" ? String((b as { text?: unknown }).text ?? "") : "")).join("");
 }
 
+/** The one-line label of a prompt record, as the index stores it on the turn. */
+export function claudePromptLabel(rec: Record<string, unknown>): string {
+  return promptFirstLine(promptTextOf(contentText(rec.message)) ?? "");
+}
+
 function openTurn(state: ClaudeScanState, rec: Record<string, unknown>, uuid: string, start: number): void {
   const promptId = typeof rec.promptId === "string" ? rec.promptId : "";
   const own = promptId && TURN_ID_RE.test(promptId) && !promptId.startsWith("u:") && !state.usedIds.has(promptId);
-  const turnId = own ? promptId : `u:${uuid}`;
+  const anchor = detachedCopy(own ? promptId : uuid);
+  const turnId = own ? anchor : `u:${anchor}`;
   state.usedIds.add(turnId);
   const previous = state.turns[state.turns.length - 1];
   if (previous) previous.endByte = start;
   state.turns.push({
     turnId,
-    anchor: own ? promptId : uuid,
-    startedAt: typeof rec.timestamp === "string" ? rec.timestamp : "",
-    prompt: promptFirstLine(promptTextOf(contentText(rec.message)) ?? ""),
+    anchor,
+    startedAt: typeof rec.timestamp === "string" ? detachedCopy(rec.timestamp) : "",
+    prompt: detachedCopy(claudePromptLabel(rec)),
     messageCount: 1,
     startByte: start,
   });
-  state.turnOfUuid.set(uuid, state.turns.length - 1);
+  state.lastReplyId = null;
+  state.turnOfUuid.set(detachedCopy(uuid), state.turns.length - 1);
 }
 
+/** Put a record in the newest turn; `counts` when the chat shows it as a message of its own. */
 function attach(state: ClaudeScanState, uuid: string, counts: boolean): void {
   const current = state.turns.length - 1;
   if (current < 0) return;
-  state.turnOfUuid.set(uuid, current);
+  state.turnOfUuid.set(detachedCopy(uuid), current);
   if (counts) state.turns[current]!.messageCount++;
 }
 
-function scanUserRecord(state: ClaudeScanState, rec: Record<string, unknown>, start: number): void {
+/** An assistant record: one message per reply, however many block records the reply took. */
+function attachReply(state: ClaudeScanState, uuid: string, replyId: string | null): void {
+  const sameReply = replyId !== null && replyId === state.lastReplyId;
+  if (replyId !== null && !sameReply && state.turns.length) state.lastReplyId = detachedCopy(replyId);
+  attach(state, uuid, !sameReply);
+}
+
+function scanRecord(state: ClaudeScanState, rec: Record<string, unknown>, start: number): void {
   const uuid = typeof rec.uuid === "string" ? rec.uuid : "";
   if (!uuid) return;
-  if (rec.type === "assistant") return attach(state, uuid, true);
+  if (rec.type === "assistant") {
+    const id = (rec.message as { id?: unknown } | undefined)?.id;
+    return attachReply(state, uuid, typeof id === "string" ? id : null);
+  }
   if (rec.type !== "user") return;
   if (isRealPromptRecord(rec)) return openTurn(state, rec, uuid, start);
   if (rec.isCompactSummary === true) {
@@ -99,15 +129,15 @@ export async function scanClaudeTranscript(filePath: string, state: ClaudeScanSt
     const text = line.text;
     // `"type":"user"` precedes the message in a user record, so it shows in the head. A head
     // match on anything else is caught after parsing, which is what the type is read from.
-    const userHint = text.slice(0, 512).includes('"type":"user"');
-    if (!userHint) {
+    const head = text.slice(0, REPLY_ID_HEAD);
+    if (!head.slice(0, 512).includes('"type":"user"')) {
       const uuid = assistantUuid(text);
-      if (uuid) { attach(state, uuid, true); continue; }
+      if (uuid) { attachReply(state, uuid, REPLY_ID_RE.exec(head)?.[1] ?? null); continue; }
       if (!text.includes('"type":"user"') && !text.includes('"type":"assistant"')) continue;
     }
     let rec: unknown;
     try { rec = JSON.parse(text); } catch { continue; }
-    if (rec && typeof rec === "object") scanUserRecord(state, rec as Record<string, unknown>, line.start);
+    if (rec && typeof rec === "object") scanRecord(state, rec as Record<string, unknown>, line.start);
   }
   return offset;
 }
@@ -123,12 +153,30 @@ export function claudeTurnView(state: ClaudeScanState): TurnView {
     },
     keys: () => state.turnOfUuid.keys(),
     isRolledBack: () => false,
+    boundaryAt(offset: number) {
+      const turn = state.turns[firstTurnAtOrAfter(state.turns, offset)];
+      return turn && turn.startByte === offset ? { anchor: turn.anchor, prompt: turn.prompt } : undefined;
+    },
   };
 }
 
-/** What the scan state costs to keep, roughly, for the cache's byte budget. */
+/** Index of the first turn starting at or after `offset` (turns are in file order). */
+function firstTurnAtOrAfter(turns: IndexedTurn[], offset: number): number {
+  let lo = 0, hi = turns.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (turns[mid]!.startByte < offset) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * What the scan state costs to keep, for the cache's byte budget. Measured in Bun 1.3: a turn
+ * with its three short strings ~400 bytes plus its label, a uuid map entry ~150 bytes.
+ */
 export function claudeStateBytes(state: ClaudeScanState): number {
-  let prompts = 0;
-  for (const turn of state.turns) prompts += turn.prompt.length * 2 + 160;
-  return prompts + state.turnOfUuid.size * 96;
+  let bytes = 0;
+  for (const turn of state.turns) bytes += 400 + turn.prompt.length * 2;
+  return bytes + state.turnOfUuid.size * 150;
 }

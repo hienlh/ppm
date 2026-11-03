@@ -76,6 +76,36 @@ describe("codex turn_started", () => {
     p.cleanupAll();
   });
 
+  it("a turn codex starts on its own binds no message, not even the one before it", async () => {
+    const p: any = new CodexAppServerProvider();
+    const { live, started } = makeLive(p, "b5");
+    p.startTurn(live, "first", { clientMessageId: "c1" });
+    await tick();
+    completeTurn(p, live);
+    await tick();
+    p.handleNotification(live, { method: "turn/started", params: { turn: { id: "turn-codex" } } });
+    expect(started()).toEqual([{ type: "turn_started", turnId: "turn-1", clientMessageId: "c1" }]);
+    expect(live.transcript.map((m: any) => [m.content, m.turnId])).toEqual([["first", "turn-1"]]);
+    p.cleanupAll();
+  });
+
+  it("a message whose turn/start failed is not tagged with the next turn", async () => {
+    const p: any = new CodexAppServerProvider();
+    const { live, started } = makeLive(p, "b6");
+    let starts = 0;
+    live.client.request = (method: string) => {
+      if (method !== "turn/start") return Promise.resolve({});
+      return ++starts === 1 ? Promise.reject(new Error("boom")) : Promise.resolve({ turn: { id: "turn-2", status: "inProgress" } });
+    };
+    p.startTurn(live, "lost", { clientMessageId: "c1" });
+    await tick();
+    p.startTurn(live, "kept", { clientMessageId: "c2" });
+    await tick();
+    expect(started()).toEqual([{ type: "turn_started", turnId: "turn-2", clientMessageId: "c2" }]);
+    expect(live.transcript.map((m: any) => [m.content, m.turnId ?? null])).toEqual([["lost", null], ["kept", "turn-2"]]);
+    p.cleanupAll();
+  });
+
   it("a compaction is not announced: it is no turn anyone sees", async () => {
     const p: any = new CodexAppServerProvider();
     const { live, started } = makeLive(p, "b4");

@@ -54,6 +54,11 @@ export async function fingerprintAt(path: string, offset: number): Promise<strin
   }
 }
 
+/** Whether a scan started from a stat taken no earlier than (`size`, `mtimeMs`). */
+function coversStat(entry: ScanEntry<unknown>, size: number, mtimeMs: number): boolean {
+  return entry.size >= size && entry.mtimeMs >= mtimeMs;
+}
+
 export class TurnIndexCache<S> {
   private readonly entries = new Map<string, ScanEntry<S>>();
   private readonly inFlight = new Map<string, Promise<ScanEntry<S>>>();
@@ -66,17 +71,33 @@ export class TurnIndexCache<S> {
     this.maxBytes = opts.maxBytes ?? 48 * 1024 * 1024;
   }
 
-  /** The scan of `path` as the file is now. Throws when the file cannot be read. */
+  /**
+   * The scan of `path` as the file is now — at least as far as the file reached when this was
+   * called. Throws when the file cannot be read.
+   *
+   * A scan already running may have stat'ed the file before something this caller has since seen
+   * was appended (a history request reads the new prompt, then asks for the index): joining it
+   * would hand back an index that does not know that prompt. So a joined scan that started on
+   * an older file is followed by one of this caller's own.
+   */
   async get(path: string): Promise<ScanEntry<S>> {
     const { size, mtimeMs } = await stat(path);
-    const entry = this.entries.get(path);
-    if (entry && entry.size === size && entry.mtimeMs === mtimeMs) {
-      this.touch(entry);
-      return entry;
+    for (let joins = 0; ; joins++) {
+      const entry = this.entries.get(path);
+      if (entry && entry.size === size && entry.mtimeMs === mtimeMs) {
+        this.touch(entry);
+        return entry;
+      }
+      const running = this.inFlight.get(path);
+      if (!running) break;
+      const shared = await running;
+      // A file that keeps changing could keep a caller joining forever. Never scan alongside a
+      // running scan instead: a resumed scan mutates the previous one's state, and two at once
+      // would corrupt it. After a few rounds the newest shared scan is the answer.
+      if (coversStat(shared, size, mtimeMs) || joins >= 2) return shared;
     }
-    const running = this.inFlight.get(path);
-    if (running) return running;
-    const build = this.refresh(path, entry, size, mtimeMs).finally(() => this.inFlight.delete(path));
+    // Nothing awaited since the in-flight check, so no other scan can have started meanwhile.
+    const build = this.refresh(path, this.entries.get(path), size, mtimeMs).finally(() => this.inFlight.delete(path));
     this.inFlight.set(path, build);
     return build;
   }

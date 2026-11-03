@@ -46,6 +46,23 @@ export async function* readTranscriptLines(filePath: string, fromByte = 0, toByt
 }
 
 /**
+ * A copy of `s` that shares no storage with the string it was cut from.
+ *
+ * Everything a scan keeps comes out of a transcript line: a uuid sliced off its tail, a value
+ * `JSON.parse` returned, a prompt's first line. In Bun (JSC) each of those can be a view into the
+ * line — or into the whole read chunk the line was decoded from — so keeping a 36-character uuid
+ * kept tens of kilobytes alive, and the cache's byte budget counted a fraction of what it held
+ * (measured: 21 MB resident for an estimate of 40 KB). A round trip through a Buffer allocates the
+ * characters afresh; latin1 keeps the usual all-ASCII value at one byte a character.
+ */
+export function detachedCopy(s: string): string {
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) > 0xff) return Buffer.from(s, "utf16le").toString("utf16le");
+  }
+  return Buffer.from(s, "latin1").toString("latin1");
+}
+
+/**
  * Hands the event loop back between slices of a long walk: every 256 lines, or sooner when a
  * slice has run 8 ms (one multi-megabyte record can cost that alone). `setTimeout(0)` rather
  * than `setImmediate`, which starved HTTP when the file index walk used it.

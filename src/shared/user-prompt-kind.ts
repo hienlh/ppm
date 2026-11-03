@@ -12,7 +12,7 @@
  * The content rules reuse `parseUserMessage` — the decomposition the chat bubble renders — so a
  * message counts as a prompt exactly when the bubble would show the person something they typed.
  */
-import { parseUserMessage, toComposerDraft } from "../web/components/chat/user-message-parse.ts";
+import { parseUserMessage, toComposerDraft } from "./user-message-parse.ts";
 import { stripSharedContext } from "./provider-context.ts";
 
 /**
