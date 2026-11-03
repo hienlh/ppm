@@ -110,6 +110,13 @@ describe("GET /chat/sessions/:id/messages — turn stamps", () => {
     expect(bad.status).toBe(400);
     const missing = await app.request(`/api/project/${PROJECT}/chat/sessions/${randomUUID()}/turns?providerId=claude`);
     expect(missing.status).toBe(404);
+
+    // The jump to a turn reads its window through the same mount.
+    const win = await app.request(`/api/project/${PROJECT}/chat/sessions/${id}/turn-window?providerId=claude&turn=${P(2)}`);
+    expect(win.status).toBe(200);
+    const block = ((await win.json()) as any).data;
+    expect(block.turns.map((t: any) => t.n)).toEqual([1, 2, 3]);
+    expect(block.latestTurnId).toBe(P(3));
   });
 
   it("Codex: every message carries its turn, steered message and rollback included", async () => {

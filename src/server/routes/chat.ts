@@ -17,6 +17,7 @@ import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts
 import { chatPrepareRoutes } from "./chat-prepare.ts";
 import { chatFileChangesRoutes } from "./chat-file-changes.ts";
 import { chatSessionTurnsRoutes } from "./chat-session-turns.ts";
+import { chatTurnWindowRoutes } from "./chat-turn-window.ts";
 import { applyTurnStamps, loadTurnLookup, stampSessionTurns } from "../../services/session-turns/stamp-message-turns.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
 import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
@@ -54,6 +55,7 @@ export const chatRoutes = new Hono<Env>();
 chatRoutes.route("/prepare", chatPrepareRoutes);
 chatRoutes.route("/", chatFileChangesRoutes);
 chatRoutes.route("/", chatSessionTurnsRoutes);
+chatRoutes.route("/", chatTurnWindowRoutes);
 
 /** GET /chat/slash-items — list available slash commands and skills for the project */
 chatRoutes.get("/slash-items", async (c) => {

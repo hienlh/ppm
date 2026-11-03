@@ -3,9 +3,11 @@
  * with the ids of the calls each one made. A block of the Review tab names the calls that wrote
  * it (`SessionBlockSummary.calls`); this is what turns those into "Turn 3 · 14:02".
  *
- * Turns are numbered from the session's last compaction on, the way the conversation reads after
- * it. A turn from before that boundary is "earlier" (`n` 0), not given a number that would move
- * each time the chat loads an older segment back in.
+ * A turn's number is the server's (`ChatMessage.turnN`, counted from the session's first prompt,
+ * compactions included), so the chat, the Review tab and a turn link all say the same number, and
+ * loading an older segment back in moves none of them. A prompt the server has not numbered yet —
+ * one sent in this tab, before the history is fetched again — takes the number after the turn
+ * before it.
  *
  * Pure, and cached per message object like `aggregate-turn-file-changes.ts`: the chat replaces a
  * message whenever anything in it changes, so while it streams only the newest one is walked.
@@ -14,8 +16,10 @@ import type { ChatEvent, ChatMessage } from "../../types/chat";
 import { isRealPromptMessage, promptTextOf } from "../../shared/user-prompt-kind";
 
 export interface SessionTurn {
-  /** 1-based from the session's last compaction on; 0 for a turn from before it. */
+  /** 1-based from the session's first prompt. */
   n: number;
+  /** The server's id for the turn, once it has one. */
+  turnId?: string;
   /** The user message that asked for it. */
   messageId: string;
   /** When it was asked (ISO). */
@@ -64,25 +68,20 @@ function promptOf(msg: ChatMessage): string | null {
 }
 
 export function sessionTurns(messages: readonly ChatMessage[]): SessionTurn[] {
-  let boundary = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.compaction) {
-      boundary = i;
-      break;
-    }
-  }
   const turns: SessionTurn[] = [];
-  let n = 0;
   let turn: SessionTurn | null = null;
-  messages.forEach((msg, i) => {
+  for (const msg of messages) {
     const prompt = promptOf(msg);
-    if (prompt !== null) {
-      turn = { n: i > boundary ? ++n : 0, messageId: msg.id, at: msg.timestamp, prompt, calls: [] };
+    // A message steered into a running Codex turn reads as a prompt but is part of that turn.
+    if (prompt !== null && !(turn && msg.turnId && msg.turnId === turn.turnId)) {
+      const previous: SessionTurn | null = turn;
+      const n: number = msg.turnN ?? (previous ? previous.n + 1 : 1);
+      turn = { n, ...(msg.turnId ? { turnId: msg.turnId } : {}), messageId: msg.id, at: msg.timestamp, prompt, calls: [] };
       turns.push(turn);
     } else if (turn && msg.role === "assistant") {
       turn.calls.push(...callsOf(msg));
     }
-  });
+  }
   return turns;
 }
 
@@ -103,9 +102,9 @@ export function turnsOf(calls: readonly string[] | undefined, byCall: ReadonlyMa
   return out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
-/** "Turn 3", or "Earlier turn" for one from before the last compaction. */
+/** "Turn 3". */
 export function turnLabel(turn: Pick<SessionTurn, "n">): string {
-  return turn.n > 0 ? `Turn ${turn.n}` : "Earlier turn";
+  return `Turn ${turn.n}`;
 }
 
 /** "14:02" for today, "Oct 1, 14:02" before it. */
