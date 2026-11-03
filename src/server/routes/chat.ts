@@ -16,6 +16,8 @@ import { listSlashItemsForProvider } from "../../services/slash-items-for-provid
 import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts";
 import { chatPrepareRoutes } from "./chat-prepare.ts";
 import { chatFileChangesRoutes } from "./chat-file-changes.ts";
+import { chatSessionTurnsRoutes } from "./chat-session-turns.ts";
+import { stampSessionTurns } from "../../services/session-turns/stamp-message-turns.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
 import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
@@ -56,6 +58,7 @@ export const chatRoutes = new Hono<Env>();
 
 chatRoutes.route("/prepare", chatPrepareRoutes);
 chatRoutes.route("/", chatFileChangesRoutes);
+chatRoutes.route("/", chatSessionTurnsRoutes);
 
 /** GET /chat/slash-items — list available slash commands and skills for the project */
 chatRoutes.get("/slash-items", async (c) => {
@@ -429,17 +432,22 @@ function historyStamp(providerId: string, id: string): string | null {
  */
 const historyInFlight = new Map<string, Promise<ChatMessage[]>>();
 
-function loadFullHistory(providerId: string, id: string): Promise<ChatMessage[]> {
+function loadFullHistory(providerId: string, id: string, projectPath: string): Promise<ChatMessage[]> {
   const key = `${providerId}\0${id}`;
   const running = historyInFlight.get(key);
   if (running) return running;
-  const parse = parseFullHistory(providerId, id).finally(() => historyInFlight.delete(key));
+  const parse = parseFullHistory(providerId, id, projectPath).finally(() => historyInFlight.delete(key));
   historyInFlight.set(key, parse);
   return parse;
 }
 
-async function parseFullHistory(providerId: string, id: string): Promise<ChatMessage[]> {
+/**
+ * The history as the provider returns it, each message stamped with its turn (`turnId`,
+ * `turnN`) from the session's turn index, which reads only this project's transcript.
+ */
+async function parseFullHistory(providerId: string, id: string, projectPath: string): Promise<ChatMessage[]> {
   const messages = await chatService.getMessages(providerId, id);
+  await stampSessionTurns({ providerId, sessionId: id, projectPath }, messages);
   // Forking re-timestamps the copied prefix (both the Claude SDK and codex
   // stamp the fork moment), so a version's inherited history would render as
   // "just now" and shift when switching versions. Overlay the branch root's
@@ -474,7 +482,7 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
       // stamp saw, so only the request that started it stores it — otherwise the end of a
       // turn could be cached away under a stamp that says it is there, for good.
       const joined = historyInFlight.has(cacheKey);
-      all = await loadFullHistory(providerId, id);
+      all = await loadFullHistory(providerId, id, c.get("projectPath"));
       if (!joined && (stamp !== null || query.limit !== undefined || query.from !== undefined)) rememberHistory(cacheKey, stamp, all);
     }
     const page = pageHistory(all, query);
@@ -1204,6 +1212,9 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
     const { isCodexRolloutPath, getCodexPreCompactMessages } = await import("../../providers/codex-app-server/codex-history.ts");
     if (isCodexRolloutPath(jsonlPath)) {
       const messages = getCodexPreCompactMessages(jsonlPath, c.get("projectPath"), beforeUuid);
+      // Turns are numbered from the session's start, so an older segment's carry their real numbers.
+      const threadId = basename(jsonlPath).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i)?.[1];
+      if (threadId) await stampSessionTurns({ providerId: "codex", sessionId: threadId, projectPath: c.get("projectPath") }, messages);
       return c.json(ok(messages));
     }
     // No bound on the file. `parseCompactSegment` scans it as bytes, streamed, from
@@ -1214,6 +1225,7 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
     // One compaction segment per request: the client walks further back by
     // expanding the summary that arrives at the head of each one.
     const messages = await parseCompactSegment(validated, beforeUuid);
+    await stampSessionTurns({ providerId: "claude", sessionId: basename(validated, ".jsonl"), projectPath: c.get("projectPath") }, messages);
     return c.json(ok(messages));
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

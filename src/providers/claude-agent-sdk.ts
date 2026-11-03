@@ -19,6 +19,8 @@ import { captureBaseline } from "../services/session-file-baselines/session-file
 import { observeFile } from "../services/session-file-baselines/session-file-history.ts";
 import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../services/session-file-baselines/shell-change-tracker.ts";
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
+import { PromptTurnBinder } from "./claude-prompt-turn-binder.ts";
+import { CONTINUE_NUDGE } from "../shared/user-prompt-kind.ts";
 import { APPROVAL_WAKE, ApprovalQueue } from "./claude-approval-queue.ts";
 import { EFFORT_ENV_VAR, effortStatusFromCli, estimateEffortStatus, userSettingsFile, type EffortSettingsQuery } from "./claude-effort-status.ts";
 import type { EffortStatus } from "../shared/effort-status.ts";
@@ -227,6 +229,8 @@ interface StreamingSession {
   lastUserContent: string;
   /** Latest user message images — updated on follow-ups for accurate retry */
   lastUserImages?: Array<{ data: string; mediaType: string }>;
+  /** The browser's id for the latest user message, so a re-sent prompt is still bound to it. */
+  lastClientMessageId?: string;
   /**
    * A user message has been pushed whose turn has not finished.
    *
@@ -303,6 +307,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   private rateLimitStatus = new Map<string, string>();
   /** CLIs started for chats that do not exist yet — see `prewarm`. */
   private readonly warmSpares = new WarmSpares<Query>();
+  /** Which browser message each prompt the CLI submits was pushed for (`turn_started`). */
+  private readonly turnBinder = new PromptTurnBinder();
   /** Hosts with less RAM keep no warm CLI: each one holds ~500 MB while it waits. */
   private minWarmSpareHostMemory = 8 * 1024 ** 3;
 
@@ -744,6 +750,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   async deleteSession(sessionId: string): Promise<void> {
     this.closeStreamingSession(sessionId);
+    this.turnBinder.forget(sessionId);
     this.activeSessions.delete(sessionId);
     this.messageCount.delete(sessionId);
     // Resolve and clean up all pending approvals for this session
@@ -843,9 +850,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       session_id: sessionId,
       priority: opts?.priority ?? 'next',
     });
+    this.turnBinder.register(sessionId, modelInput, opts?.clientMessageId);
     // Track latest message for retry paths (fixes stale firstMsg bug)
     ss.lastUserContent = modelInput;
     ss.lastUserImages = opts?.images;
+    ss.lastClientMessageId = opts?.clientMessageId;
     ss.awaitingReply = true;
     log.debug(`pushMessage: session=${sessionId} priority=${opts?.priority ?? 'next'}`);
   }
@@ -1093,7 +1102,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           ...((access || dbAccess) && { mcpServers: { ...options.mcpServers, ...tabToolsMcpServers(access), ...dbToolsMcpServers(dbAccess) } }),
           sessionId,
           stderr: callbacks.stderr,
-          hooks: buildToolHooks({ isBypass, preToolUse: callbacks.preToolUse, fileWrite: callbacks.fileWrite, shellCommand: callbacks.shellCommand }),
+          hooks: buildToolHooks({ isBypass, preToolUse: callbacks.preToolUse, fileWrite: callbacks.fileWrite, shellCommand: callbacks.shellCommand, userPromptSubmit: callbacks.userPromptSubmit }),
           canUseTool: callbacks.canUseTool,
         } as any,
       });
@@ -1148,9 +1157,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         session_id: sessionId,
         priority: opts?.priority ?? 'next',
       });
+      this.turnBinder.register(sessionId, modelInput, opts?.clientMessageId);
       // Track latest message for retry paths (fixes stale firstMsg bug)
       existingStream.lastUserContent = modelInput;
       existingStream.lastUserImages = opts?.images;
+      existingStream.lastClientMessageId = opts?.clientMessageId;
       log.debug(`sendMessage follow-up: session=${sessionId} pushed to generator`);
       return; // Events flow through first-message's consumer loop
     }
@@ -1318,7 +1329,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       return {};
     };
 
-    const queryHooks = buildToolHooks({ isBypass, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook });
+    /**
+     * The CLI is starting a turn for a prompt: name it to the browser that sent the prompt. Its
+     * `prompt_id` is the `promptId` the transcript records on that prompt, i.e. the turn id.
+     */
+    const userPromptSubmitHook = async (hookInput: any) => {
+      const bound = this.turnBinder.bind(sessionId, hookInput?.prompt_id, hookInput?.prompt);
+      if (bound) approvals.push({ type: "turn_started", ...bound });
+      return {};
+    };
+
+    const queryHooks = buildToolHooks({ isBypass, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, userPromptSubmit: userPromptSubmitHook });
 
     let assistantContent = "";
     let resultSubtype: string | undefined;
@@ -1528,7 +1549,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         // reach past every follow-up to the message that opened the stream, hours earlier.
         const content = ss?.lastUserContent ?? crashed?.content ?? modelInput;
         const images = ss?.lastUserImages ?? crashed?.images;
-        const retryContent = turnProgressed ? "Continue from where you left off." : content;
+        const retryContent = turnProgressed ? CONTINUE_NUDGE : content;
+        // The prompt sent again opens the turn the browser is waiting on; the nudge opens none.
+        if (!turnProgressed) this.turnBinder.register(sessionId, content, ss?.lastClientMessageId ?? opts?.clientMessageId);
         return {
           msg: {
             type: 'user' as const,
@@ -1544,7 +1567,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // A new session's first attempt takes over the CLI `prewarm` started for it, if that
       // is exactly the process it would have spawned; otherwise it spawns one as always.
       const spare = crashRetryCount === 0 && isFirstMessage && !shouldFork
-        ? this.warmSpares.adopt(sessionId, spawnFingerprint(withSessionTokenMasked(queryOptions)), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, stderr: stderrCallback })
+        ? this.warmSpares.adopt(sessionId, spawnFingerprint(withSessionTokenMasked(queryOptions)), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, userPromptSubmit: userPromptSubmitHook, stderr: stderrCallback })
         : undefined;
       const channel = spare ? undefined : createMessageChannel();
       const initialCtrl = spare?.controller ?? channel!.controller;
@@ -1553,7 +1576,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // message has somewhere to go, and re-sending a finished instruction runs it a second time.
       const initRetry = crashRetryCount > 0 ? buildRetryMsg() : null;
       const resendOnCrash = crashRetryCount > 0 && crashed?.awaiting === true;
-      if (crashRetryCount === 0) initialCtrl.push(firstMsg);
+      if (crashRetryCount === 0) {
+        this.turnBinder.register(sessionId, modelInput, opts?.clientMessageId);
+        initialCtrl.push(firstMsg);
+      }
       else if (resendOnCrash && initRetry) initialCtrl.push(initRetry.msg);
       else log.info(`session=${sessionId} crash retry rebuilt the subprocess with no turn to resume — nothing re-sent`);
       const initContent = initRetry?.lastUserContent ?? modelInput;

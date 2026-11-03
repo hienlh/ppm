@@ -11,7 +11,7 @@
  * message whenever anything in it changes, so while it streams only the newest one is walked.
  */
 import type { ChatEvent, ChatMessage } from "../../types/chat";
-import { parseUserMessage, toComposerDraft } from "../components/chat/user-message-parse";
+import { isRealPromptMessage, promptTextOf } from "../../shared/user-prompt-kind";
 
 export interface SessionTurn {
   /** 1-based from the session's last compaction on; 0 for a turn from before it. */
@@ -52,19 +52,13 @@ function callsOf(msg: ChatMessage): string[] {
 
 const promptCache = new WeakMap<ChatMessage, string | null>();
 
-/** What the user typed, or null for a user message that is not a prompt (a tool result, injected context). */
+/**
+ * What the user typed, or null for a user message that is not a prompt (a tool result, injected
+ * context). The decision is the server turn index's own (`shared/user-prompt-kind.ts`).
+ */
 function promptOf(msg: ChatMessage): string | null {
   if (promptCache.has(msg)) return promptCache.get(msg)!;
-  let prompt: string | null = null;
-  if (msg.role === "user" && !msg.compaction && msg.content.trim()) {
-    const parsed = parseUserMessage(msg.content);
-    if (parsed.text || parsed.command || parsed.files.length || parsed.terminalBlocks.length) {
-      prompt =
-        toComposerDraft(msg.content).text ||
-        parsed.terminalBlocks.join("\n\n") ||
-        `${parsed.files.length} attached file${parsed.files.length === 1 ? "" : "s"}`;
-    }
-  }
+  const prompt = isRealPromptMessage(msg) ? promptTextOf(msg.content) : null;
   promptCache.set(msg, prompt);
   return prompt;
 }

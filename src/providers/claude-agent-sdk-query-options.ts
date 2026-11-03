@@ -231,8 +231,11 @@ function thenCapture(preToolUse: ToolHook, shellCommand: ToolHook, fileWrite: To
  * would only add a round trip to every tool call, so there both run as hooks of their own.
  * Elsewhere the permission hook runs them itself once it has allowed the call: a denied call
  * records nothing, and an edit made while the approval prompt was open is not put on the call.
+ *
+ * `userPromptSubmit` names each turn the CLI starts to the browser message that asked for it
+ * (`claude-prompt-turn-binder.ts`); it decides nothing either.
  */
-export function buildToolHooks(p: { isBypass: boolean; preToolUse: ToolHook; fileWrite: ToolHook; shellCommand: ToolHook }) {
+export function buildToolHooks(p: { isBypass: boolean; preToolUse: ToolHook; fileWrite: ToolHook; shellCommand: ToolHook; userPromptSubmit?: ToolHook }) {
   const shell = { matcher: SHELL_TOOLS_MATCHER, hooks: [p.shellCommand] };
   const fileWrite = { matcher: FILE_WRITE_TOOLS_MATCHER, hooks: [p.fileWrite] };
   return {
@@ -241,6 +244,7 @@ export function buildToolHooks(p: { isBypass: boolean; preToolUse: ToolHook; fil
       : [{ matcher: ".*", hooks: [thenCapture(p.preToolUse, p.shellCommand, p.fileWrite)] }],
     PostToolUse: [shell, fileWrite],
     PostToolUseFailure: [shell, fileWrite],
+    ...(p.userPromptSubmit ? { UserPromptSubmit: [{ hooks: [p.userPromptSubmit] }] } : {}),
   };
 }
 

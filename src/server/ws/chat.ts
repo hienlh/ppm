@@ -37,6 +37,7 @@ import { describeTurnStop, type TurnStop } from "../../shared/turn-stop.ts";
 import { createLogger } from "../../services/logger.ts";
 import { dropStaleIdle, registerTokenRotation, type TokenRotationDeps } from "./chat-token-rotation.ts";
 import { registerLeftoverSweeper } from "../../services/chat-session-processes/session-processes.service.ts";
+import { setTurnRunningProbe } from "../../services/session-turns/session-turn-index.service.ts";
 import type { SubprocessCredential } from "../../providers/claude-agent-sdk.ts";
 
 const log = createLogger("chat");
@@ -230,6 +231,11 @@ interface SessionEntry {
    * the idle gap before a follow-up as waiting on the provider.
    */
   turnRequestedAt?: { at: number; cold: boolean };
+  /**
+   * The latest turns a sent message opened, newest last (`turn_started`). Kept past the turn, in
+   * every greeting, so a device that joins later can still tell which turn its message became.
+   */
+  turnBindings?: TurnBinding[];
   /** Pending release of the subprocess once its prompt cache lapses */
   cacheReleaseTimer?: ReturnType<typeof setTimeout>;
   /** The socket whose message opened the latest turn: where the AI's tab tools open a tab. */
@@ -895,12 +901,33 @@ function startCleanupTimer(sessionId: string): void {
   }, CLEANUP_TIMEOUT_MS);
 }
 
+/** Which turn a sent message opened (`turn_started`). */
+interface TurnBinding {
+  turnId: string;
+  clientMessageId?: string;
+}
+
+/** How many `turn_started` bindings a session keeps for late joiners. */
+const MAX_TURN_BINDINGS = 50;
+
+function rememberTurnBinding(entry: SessionEntry, ev: { turnId?: unknown; clientMessageId?: unknown }): void {
+  if (typeof ev.turnId !== "string") return;
+  const binding: TurnBinding = { turnId: ev.turnId, ...(typeof ev.clientMessageId === "string" ? { clientMessageId: ev.clientMessageId } : {}) };
+  const list = (entry.turnBindings ??= []);
+  list.push(binding);
+  if (list.length > MAX_TURN_BINDINGS) list.splice(0, list.length - MAX_TURN_BINDINGS);
+}
+
+/** A turn is in flight through any door: a running provider run, or a socket that is not idle. */
+setTurnRunningProbe((sessionId) => chatService.turnActivity(sessionId).running
+  || (activeSessions.get(sessionId)?.phase ?? "idle") !== "idle");
+
 /**
  * Persistent event consumer — runs for the entire session lifetime.
  * First message creates the query; follow-ups push into the provider's
  * message channel. Events from ALL turns flow through this single loop.
  */
-async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[]): Promise<void> {
+async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[], clientMessageId?: string): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     log.error(`session=${sessionId} startSessionConsumer: no entry — aborting`);
@@ -965,7 +992,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), origin: "ws" })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), ...(clientMessageId && { clientMessageId }), origin: "ws" })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -1061,7 +1088,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
 
       // First content event — stop heartbeat, transition phase
       // status_update is PPM's pre-flight account selection — not actual SDK content
-      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update";
+      // `turn_started` arrives before the model has said anything: the turn has an id, not content.
+      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update" || evType === "turn_started";
       if (!firstEventReceived && !isMetadataEvent) {
         firstEventReceived = true;
         const requested = entry.turnRequestedAt;
@@ -1260,6 +1288,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         }).catch(() => {});
       } else if (evType === "approval_request") {
         holdApprovalRequest(sessionId, entry, ev);
+      } else if (evType === "turn_started") {
+        rememberTurnBinding(entry, ev);
       } else if (evType === "session_migrated") {
         // CLI providers discover real session ID from CLI output — migrate WS tracking
         const newId = ev.newSessionId as string;
@@ -1433,6 +1463,7 @@ export const chatWebSocket = {
         thinking: resolveSessionThinkingEnabled(sessionId),
         promptCache: promptCacheSnapshot(sessionId, existing),
         turnStop: existing.phase === "idle" ? lastTurnStop(sessionId) : null,
+        turnBindings: existing.turnBindings ?? [],
       }));
 
       // If actively streaming, send buffered turn events for reconnect sync
@@ -1603,6 +1634,7 @@ export const chatWebSocket = {
         thinking: resolveSessionThinkingEnabled(sessionId),
         promptCache: promptCacheSnapshot(sessionId, entry),
         turnStop: entry.phase === "idle" ? lastTurnStop(sessionId) : null,
+        turnBindings: entry.turnBindings ?? [],
       }));
       if (entry.phase !== "idle") {
         sendTurnEvents(sessionId, ws);
@@ -1743,6 +1775,9 @@ export const chatWebSocket = {
         logSessionEvent(sessionId, "INFO", `Pending approval ${pendingReqId} auto-skipped (user sent a message)`);
       }
 
+      // The browser's own id for this message, handed back on the `turn_started` it opens.
+      const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128
+        ? parsed.clientMessageId : undefined;
       // Store user message for reconnect replay (turn_events includes only assistant events)
       entry.currentUserMessage = parsed.content;
       entry.lastSender = ws;
@@ -1783,7 +1818,7 @@ export const chatWebSocket = {
         const msgImagePaths = parsed.type === "message" ? parsed.imagePaths : undefined;
         entry.streamPromise = new Promise<void>((resolve) => {
           setTimeout(() => {
-            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages, msgModel, msgImagePaths).then(resolve, resolve);
+            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages, msgModel, msgImagePaths, clientMessageId).then(resolve, resolve);
           }, 0);
         });
       } else {
@@ -1797,6 +1832,7 @@ export const chatWebSocket = {
               priority: parsed.priority ?? 'next',
               images: parsed.images,
               imagePaths: parsed.imagePaths,
+              ...(clientMessageId ? { clientMessageId } : {}),
               ...(entry.model ? { model: entry.model } : {}),
               ...(effort ? { effort } : {}),
               ...(thinkingBudget != null ? { thinkingBudget } : {}),
