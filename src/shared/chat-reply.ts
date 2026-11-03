@@ -35,11 +35,15 @@ export function encodeReply(content: string, reply?: ReplyReference | null): str
   const valid = validateReply(reply);
   if (!valid) throw new Error("Invalid reply reference");
   const json = JSON.stringify(valid).replace(/[<>&]/g, (c) => ({ "<": "\\u003c", ">": "\\u003e", "&": "\\u0026" })[c]!);
-  return `${decodeReply(content).content}${START}${json}${END}`;
+  return `${splitReply(content).content}${START}${json}${END}`;
 }
 
-/** Malformed, non-trailing and unknown-version blocks remain visible text. */
-export function decodeReply(content: string): { content: string; replyTo: ReplyReference | null } {
+/**
+ * Splits a trailing reply block off `content`. Malformed, non-trailing and unknown-version blocks
+ * remain visible text. Readers of a stored message use `decodeMessageBlocks`, which also knows the
+ * turn-references block that sits before this one.
+ */
+function splitReply(content: string): { content: string; replyTo: ReplyReference | null } {
   if (!content.endsWith(END)) return { content, replyTo: null };
   const start = content.lastIndexOf(START);
   if (start < 0) return { content, replyTo: null };
@@ -49,3 +53,5 @@ export function decodeReply(content: string): { content: string; replyTo: ReplyR
   } catch { /* preserve malformed text */ }
   return { content, replyTo: null };
 }
+
+export { splitReply as decodeReply };

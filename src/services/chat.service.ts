@@ -3,6 +3,8 @@ import { configService } from "./config.service.ts";
 import { createHash } from "node:crypto";
 import { buildSharedProviderContext } from "./provider-shared-context.ts";
 import { stripSharedContext, withSharedContext } from "../shared/provider-context.ts";
+import { neutralizeBlockMarkers } from "../shared/chat-message-blocks.ts";
+import { deleteTurnGrants } from "./session-turns/turn-grant-ledger.ts";
 import type {
   Session,
   SessionConfig,
@@ -39,6 +41,15 @@ const designLog = createLogger("design");
 
 /** What a caller passes to send: the provider's options plus which door the run came through. */
 export type ChatSendOpts = SendMessageOpts & { origin?: TraceOrigin };
+
+/**
+ * The message as a provider may receive it. Only the chat socket encodes PPM's message blocks
+ * (reply, turn references), from fields it validated itself; text arriving through any other door
+ * — a schedule, a Jira ticket, a group-chat peer, PPMBot — has every block marker broken, so none
+ * of it can pose as a block the chat decodes.
+ */
+const fromOrigin = (message: string, origin: TraceOrigin | undefined): string =>
+  origin === "ws" ? message : neutralizeBlockMarkers(message);
 
 /**
  * What the "turn start" / "turn end" log lines need about one run, which can span many turns.
@@ -190,6 +201,7 @@ class ChatService {
     designMcpTokens.revoke(sessionId);
     tabToolsMcpTokens.revoke(sessionId);
     tabOpenBroker.forget(sessionId);
+    deleteTurnGrants(sessionId);
     dbToolsMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
     this.turnEnds.delete(sessionId);
@@ -215,6 +227,7 @@ class ChatService {
     opts?: ChatSendOpts,
   ): AsyncIterable<ChatEvent> {
     const { origin, ...sendOpts } = opts ?? {};
+    message = fromOrigin(message, origin);
     const run = new TraceRun({ sessionId, providerId, origin, message, opts: sendOpts });
     // A run already streaming this session takes the message as a follow-up — the provider
     // pushes it into that stream — and that run's events are the ones that end the turn.
@@ -427,6 +440,7 @@ class ChatService {
     };
     if (!streaming.pushMessage) return;
     const { origin, ...sendOpts } = opts ?? {};
+    message = fromOrigin(message, origin);
     const prepared = await this.prepareSendOptions(providerId, sessionId, message, sendOpts);
     // Written before the push, so the input precedes every event it causes in the trace.
     traceFollowUp(sessionId, providerId, message, {

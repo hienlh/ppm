@@ -14,7 +14,8 @@ import type { BackgroundAgentStatus } from "../../shared/background-agent-status
 import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import type { TurnStop } from "../../shared/turn-stop";
 import type { EffortStatus } from "../../shared/effort-status";
-import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
+import type { ReplyReference } from "../../shared/chat-reply";
+import { decodeMessageBlocks, encodeMessageBlocks } from "../../shared/chat-message-blocks";
 import { prefixTokens } from "../../shared/turn-usage";
 import { dbExecuteApprovalInput } from "../../shared/db-ai-tools";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
@@ -970,8 +971,8 @@ export function useChat(
           streamingEventsRef.current = [...pending!.streamingEvents, ...streamingEventsRef.current];
           if (streamingContentRef.current || streamingEventsRef.current.length) syncMessages();
         }
-        const decoded = decodeReply(pending!.encoded);
-        rejectionObserverRef.current?.({ ...decoded, message: rejected.message });
+        const decoded = decodeMessageBlocks(pending!.encoded);
+        rejectionObserverRef.current?.({ content: decoded.content, replyTo: decoded.replyTo, message: rejected.message });
       }
       if (!rejectionObserverRef.current) toast.error(rejected.message || "Message could not be sent");
       return;
@@ -1443,11 +1444,19 @@ export function useChat(
   }), []);
 
   const sendMessage = useCallback(
-    (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => {
+    (typed: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => {
       // An attachment-only message is legitimate now that images travel with it: the
       // caller may have nothing to say beyond the picture.
-      if (!content.trim() && !opts?.images?.length) return;
-      const encodedContent = encodeReply(content, opts?.replyTo);
+      if (!typed.trim() && !opts?.images?.length) return;
+      // An edited or restored message can arrive with its reply block already encoded. The server
+      // breaks every block marker in the text it is sent, so the reply goes as the field it
+      // validates instead. Only a reply is lifted: turn references are granted solely from the
+      // composer's own chips, never from text that merely looks like a block.
+      const blocks = decodeMessageBlocks(typed);
+      const lifted = blocks.replyTo && !blocks.turnRefs;
+      const content = lifted ? blocks.content : typed;
+      opts = lifted ? { ...opts, replyTo: opts?.replyTo ?? blocks.replyTo ?? undefined } : opts;
+      const encodedContent = encodeMessageBlocks(content, { replyTo: opts?.replyTo });
       historyActivityRef.current++;
       // Whatever ended the last turn, this message moves the session past it.
       setTurnStop(null);

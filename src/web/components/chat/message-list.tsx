@@ -1,4 +1,5 @@
-import { decodeReply, type ReplyReference } from "../../../shared/chat-reply";
+import type { ReplyReference } from "../../../shared/chat-reply";
+import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
 import { createReplyReference, resolveReplyMessage } from "./message-reply-reference";
 import { useEffect, useRef, useState, useMemo, useCallback, useLayoutEffect, memo } from "react";
 import { userMessageOrdinals } from "@/lib/message-ordinals";
@@ -606,7 +607,7 @@ export function MessageList({
             }
             // A boolean rather than a lookup the bubble calls while rendering: it has to change
             // when older history brings the quoted message in, and not on every streamed flush.
-            const replyTo = msg.role === "user" ? decodeReply(msg.content).replyTo : null;
+            const replyTo = msg.role === "user" ? decodeMessageBlocks(msg.content).replyTo : null;
             const replyAvailable = replyTo ? !!resolveReplyMessage(filtered, replyTo, sessionId, providerId) : undefined;
             return (
               <div

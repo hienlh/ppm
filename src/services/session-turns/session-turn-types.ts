@@ -9,7 +9,7 @@
  */
 
 /** A turn id as either provider writes it. Checked on every id that arrives from outside. */
-export const TURN_ID_RE = /^(u:)?[A-Za-z0-9-]{8,64}$/;
+export { TURN_ID_RE } from "../../shared/session-turn-ids.ts";
 
 export type TurnProviderId = "claude" | "codex";
 

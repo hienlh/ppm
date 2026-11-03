@@ -1,4 +1,7 @@
-import { encodeReply, validateReply } from "../../shared/chat-reply.ts";
+import { validateReply } from "../../shared/chat-reply.ts";
+import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
+import { validateTurnRefs } from "../../shared/chat-turn-ref.ts";
+import { recordTurnGrants } from "../../services/session-turns/turn-grant-ledger.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
@@ -1585,6 +1588,19 @@ export const chatWebSocket = {
       parsed.replyTo = reply;
     }
 
+    // Turn references are checked here, where the browser's own fields arrive; only what passes
+    // is encoded into the message and granted to this session's AI (see recordTurnGrants below).
+    if (parsed.type === "message" && parsed.turnRefs != null) {
+      const projectNames = new Set(configService.get("projects").map((p) => p.name));
+      const refs = validateTurnRefs(parsed.turnRefs, (name) => projectNames.has(name));
+      if (!refs) {
+        const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128 ? parsed.clientMessageId : undefined;
+        ws.send(JSON.stringify({ type: "message_rejected", clientMessageId, content: parsed.content, replyTo: parsed.replyTo ?? null, turnRefs: null, message: "Invalid turn reference" }));
+        return;
+      }
+      parsed.turnRefs = refs;
+    }
+
     let entry = activeSessions.get(sessionId);
 
     // Auto-create entry if missing — handles: message before open (Bun race), or session cleaned up
@@ -1717,7 +1733,11 @@ export const chatWebSocket = {
       // run. Rewritten before the echo for the same reason as the alias above:
       // other devices and the stored transcript must show what actually ran.
       await rewriteProviderSkillSigil(parsed, providerId, sessionId);
-      parsed.content = encodeReply(parsed.content, parsed.replyTo);
+      // A person sent these references from an authenticated browser: the one moment this
+      // session's AI is granted their turns in other projects. Never derived from message text.
+      if (parsed.turnRefs?.length) recordTurnGrants(sessionId, parsed.turnRefs);
+      // The typed text has its block markers broken, so the only blocks that decode are these.
+      parsed.content = encodeMessageBlocks(parsed.content, { turnRefs: parsed.turnRefs, replyTo: parsed.replyTo });
 
       // Echo the user message to OTHER connected clients (second device/tab).
       // The sender renders it optimistically; without this echo a live-connected

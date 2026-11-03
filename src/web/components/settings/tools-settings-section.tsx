@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-settings";
 import { DB_TOOLS } from "../../../shared/db-ai-tools";
 import { ppmToolOn, TERMINAL_TOOLS, type PpmTool } from "../../../shared/ppm-tools";
+import { SESSION_HISTORY_TOOLS } from "../../../shared/session-history-tools";
 import { SectionHeader, SwitchRow } from "./settings-rows";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -32,6 +33,18 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Type commands",
     note: "Opens a terminal with a command typed in, for one that needs your password or your eyes. Nothing runs until you press Enter.",
   },
+  search_sessions: {
+    label: "Search chats",
+    note: "Searches the titles and the prompts and answers of this project's chats, never what tools printed, and says which turn each match is in.",
+  },
+  list_session_turns: {
+    label: "List turns",
+    note: "Lists the turns of one of this project's chats: number, time and the first line of each prompt.",
+  },
+  read_session_turns: {
+    label: "Read turns",
+    note: "Reads chosen turns of this project's chats: prompts, answers and one line per tool call. In another project, only the turns whose links you sent it.",
+  },
   db_query: {
     label: "Read databases",
     note: "Runs read-only SQL. It cannot change anything.",
@@ -49,6 +62,11 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [
   { title: "Tabs", intro: "On the device you are chatting from.", tools: ["open_file", "open_preview", "open_url"] },
   { title: "Terminal", intro: "PPM's own terminals, on the machine PPM runs on.", tools: TERMINAL_TOOLS },
+  {
+    title: "Session history",
+    intro: "Earlier chats of the chat's own project, read-only. Another project is reachable only through turn links you sent.",
+    tools: SESSION_HISTORY_TOOLS,
+  },
   {
     title: "Database",
     intro: "On the connections with “Available to the AI chat” on. The AI never sees their passwords.",

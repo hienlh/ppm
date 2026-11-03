@@ -17,6 +17,7 @@ import { resolve } from "node:path";
 import { providerRegistry } from "../providers/registry.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { traceStream } from "./session-trace/trace-recorder.ts";
+import { neutralizeBlockMarkers } from "../shared/chat-message-blocks.ts";
 import type { AIProvider, ChatEvent } from "../types/chat.ts";
 import { createLogger } from "./logger.ts";
 
@@ -203,7 +204,8 @@ export async function startAgentTurn(providerId: string, req: TurnRequest): Prom
 
   // No provider-level system-prompt field survives the flattening, so the
   // instructions lead the turn instead.
-  const message = req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt;
+  // Not through ChatService, so the PPM block markers an API caller could plant are broken here.
+  const message = neutralizeBlockMarkers(req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt);
 
   // Held until cleanup, which every caller runs on every path — including a streaming
   // response whose body outlives this function.

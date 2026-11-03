@@ -26,7 +26,10 @@ function otherTools(seen: Array<{ tool: string; binding: unknown; args: unknown 
     seen.push({ tool, binding, args });
     return { content: [{ type: "text", text: `${tool} answered` }] };
   };
-  return { terminal: { read: reply("read_terminal"), run: reply("run_in_terminal") }, openUrl: reply("open_url") };
+  return {
+    terminal: { read: reply("read_terminal"), run: reply("run_in_terminal") }, openUrl: reply("open_url"),
+    sessionHistory: { call: async (binding: unknown, name: string, args: unknown) => reply(name)(binding, args) },
+  };
 }
 
 function setup(opts: { outcome?: TabOpenOutcome; target?: TabTargetOutcome; enabled?: boolean } = {}) {
@@ -78,6 +81,7 @@ describe("tab tools MCP endpoint", () => {
     const tools = list.result.tools as Array<{ name: string; inputSchema: { required?: string[] }; description: string }>;
     expect(tools.map((t) => [t.name, t.inputSchema.required])).toEqual([
       ["open_file", ["path"]], ["open_preview", ["path"]], ["open_url", ["url"]], ["read_terminal", undefined], ["run_in_terminal", ["command"]],
+      ["search_sessions", ["query"]], ["list_session_turns", ["session_id"]], ["read_session_turns", ["session_id"]],
     ]);
     expect(tools[1]!.description).toContain("cdn.jsdelivr.net");
     expect(tools[4]!.description).toContain("Nothing runs until the user presses Enter");
@@ -202,6 +206,21 @@ describe("tab tools MCP endpoint", () => {
       { tool: "run_in_terminal", binding, args: {} },
     ]);
     expect(targets).toEqual([]);
+  });
+
+  it("hands the session-history tools the session's binding, and refuses one turned off", async () => {
+    const { call, others, targets, setEnabled } = setup();
+    expect((await call("search_sessions", { query: "deploy" })).content[0].text).toBe("search_sessions answered");
+    await call("read_session_turns", { session_id: "abcdefgh-1", turn_ids: ["t"] });
+    const binding = { sessionId: "s1", projectPath: "/proj", projectName: "demo" };
+    expect(others).toEqual([
+      { tool: "search_sessions", binding, args: { query: "deploy" } },
+      { tool: "read_session_turns", binding, args: { session_id: "abcdefgh-1", turn_ids: ["t"] } },
+    ]);
+    expect(targets).toEqual([]);
+    setEnabled((tool) => tool !== "list_session_turns");
+    expect((await call("list_session_turns", { session_id: "abcdefgh-1" })).content[0].text).toContain("turned off list_session_turns");
+    expect(others).toHaveLength(2);
   });
 
   it("lists only the tools the user has on, and refuses one turned off since the chat listed it", async () => {

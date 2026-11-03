@@ -46,6 +46,8 @@ it("keeps encoded edits intact and renders a remote echo with its snapshot", asy
   const encoded = encodeReply("edited", reply);
   await act(async () => chat.sendMessage(encoded));
   expect(chat.messages.at(-1)!.content).toBe(encoded);
+  // The server breaks block markers in the text it is sent, so the reply travels as its own field.
+  expect(JSON.parse(send.mock.calls.at(-1)![0] as string)).toMatchObject({ type: "message", content: "edited", replyTo: reply });
   await emit({ type: "user_message", content: encodeReply("other device", reply) });
   expect(decodeReply(chat.messages.at(-1)!.content)).toEqual({ content: "other device", replyTo: reply });
 });

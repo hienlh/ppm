@@ -6,10 +6,14 @@ import { DB_TOOLS } from "./db-ai-tools.ts";
 import {
   OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL,
 } from "./tab-open-protocol.ts";
+import { SESSION_HISTORY_TOOLS } from "./session-history-tools.ts";
 
 export const TERMINAL_TOOLS = [READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL] as const;
-/** What `/api/tab-tools-mcp` serves: the tools that show or read something on the user's side. */
-export const TAB_TOOLS = [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, ...TERMINAL_TOOLS] as const;
+/**
+ * What `/api/tab-tools-mcp` serves: the tools that show or read something on the user's side, and
+ * the session-history tools that read the project's other chats.
+ */
+export const TAB_TOOLS = [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, ...TERMINAL_TOOLS, ...SESSION_HISTORY_TOOLS] as const;
 export const PPM_TOOLS = [...TAB_TOOLS, ...DB_TOOLS] as const;
 /** The two the single switch before these (`tab_tools`) turned on and off. */
 const LEGACY_TAB_TOOLS: readonly string[] = [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL];

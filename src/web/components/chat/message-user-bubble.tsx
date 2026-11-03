@@ -6,7 +6,8 @@
  * which are *not* things the user typed and must not read as if they were, and
  * absolute file paths worth turning into something clickable.
  */
-import { decodeReply, type ReplyReference } from "../../../shared/chat-reply";
+import type { ReplyReference } from "../../../shared/chat-reply";
+import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
 import { ReplyCard } from "./reply-card";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -175,7 +176,7 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
     </div>
       {/* Action bar below the bubble — timestamp, copy, edit/fork (real user messages only) */}
       {!isSystemContext && (
-        <MessageActionBar timestamp={timestamp} content={decodeReply(content).content}>
+        <MessageActionBar timestamp={timestamp} content={decodeMessageBlocks(content).content}>
           {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} touchTarget />}
           {onEdit && (
             <ActionButton

@@ -21,7 +21,9 @@ import { codexSessionsDirs as realCodexSessionsDirs } from "../../providers/code
 import { findRolloutByThreadId, isCodexRolloutPath } from "../../providers/codex-app-server/codex-history.ts";
 import { claudeProjectsRoot } from "./claude-projects-root.ts";
 
-export const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
+
+export { SESSION_ID_RE };
 
 export type OwnershipErrorCode =
   | "invalid_session_id"

@@ -15,6 +15,7 @@ describe("tab tools provider options", () => {
     expect(CLAUDE_TAB_TOOLS).toEqual([
       "mcp__ppm-tabs__open_file", "mcp__ppm-tabs__open_preview", "mcp__ppm-tabs__open_url",
       "mcp__ppm-tabs__read_terminal", "mcp__ppm-tabs__run_in_terminal",
+      "mcp__ppm-tabs__search_sessions", "mcp__ppm-tabs__list_session_turns", "mcp__ppm-tabs__read_session_turns",
     ]);
   });
 
@@ -34,7 +35,7 @@ describe("tab tools provider options", () => {
   it("gives Codex a dotted mcp_servers override beside the design one, with the token only in the environment", () => {
     const params = buildThreadParams({ cwd: "/p", permission, tabToolsMcp: access, designMcp: { url: "http://d", token: "d" } });
     expect(params.config!["mcp_servers.ppm_tabs"]).toEqual({
-      url: access.url, bearer_token_env_var: "PPM_TAB_TOOLS_MCP_TOKEN", enabled_tools: ["open_file", "open_preview", "open_url", "read_terminal", "run_in_terminal"],
+      url: access.url, bearer_token_env_var: "PPM_TAB_TOOLS_MCP_TOKEN", enabled_tools: ["open_file", "open_preview", "open_url", "read_terminal", "run_in_terminal", "search_sessions", "list_session_turns", "read_session_turns"],
       default_tools_approval_mode: "approve", startup_timeout_sec: 10, tool_timeout_sec: 60,
     });
     expect(Object.keys(params.config!)).toEqual(["features.default_mode_request_user_input", "mcp_servers.ppm_design", "mcp_servers.ppm_tabs"]);

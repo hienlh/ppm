@@ -1,4 +1,4 @@
-import { decodeReply } from "../shared/chat-reply.ts";
+import { decodeMessageBlocks } from "../shared/chat-message-blocks.ts";
 import type { StripMode } from "../services/transcript-images.ts";
 import {
   type Query,
@@ -671,7 +671,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const sessions: SessionInfo[] = sdkSessions.map((s) => ({
         id: s.sessionId,
         providerId: this.id,
-        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? (decodeReply(stripSharedContext(s.firstPrompt ?? "")).content || "Chat"),
+        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? (decodeMessageBlocks(stripSharedContext(s.firstPrompt ?? "")).content || "Chat"),
         createdAt: new Date(s.lastModified).toISOString(),
         updatedAt: new Date(s.lastModified).toISOString(),
       }));
@@ -726,7 +726,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         return {
           id: info.sessionId,
           providerId: this.id,
-          title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? (decodeReply(stripSharedContext(info.firstPrompt ?? "")).content || "Chat"),
+          title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? (decodeMessageBlocks(stripSharedContext(info.firstPrompt ?? "")).content || "Chat"),
           createdAt: new Date(info.lastModified).toISOString(),
           updatedAt: new Date(info.lastModified).toISOString(),
         };
@@ -1173,7 +1173,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const meta = this.activeSessions.get(sessionId)!;
 
     if (meta.title === "New Chat") {
-      const body = decodeReply(message).content;
+      const body = decodeMessageBlocks(message).content;
       meta.title = body.slice(0, 50) + (body.length > 50 ? "..." : "");
     }
 

@@ -37,13 +37,8 @@ import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-hi
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
-import {
-  search as chatSearchQuery,
-  startBackfill as chatSearchStartBackfill,
-  getIndexStatus as chatSearchGetIndexStatus,
-  getKnownSessionCount as chatSearchKnownCount,
-} from "../../services/chat-search.service.ts";
-import { compareSessionsByActivity, type ChatMessage, type ChatSearchResult, type ChatSearchResponse } from "../../types/chat.ts";
+import { searchProjectChats } from "../../services/session-turns/session-search.ts";
+import { compareSessionsByActivity, type ChatMessage } from "../../types/chat.ts";
 import { pageHistory, parseHistoryPageQuery } from "./chat-history-page.ts";
 import { ok, err } from "../../types/api.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
@@ -248,87 +243,9 @@ chatRoutes.get("/sessions", async (c) => {
 /** GET /chat/search — unified title + full-text content search for a project */
 chatRoutes.get("/search", async (c) => {
   try {
-    const projectPath = c.get("projectPath");
     const rawQuery = c.req.query("q")?.trim() || "";
     const limit = Math.min(parseInt(c.req.query("limit") ?? "30", 10) || 30, 100);
-
-    // An empty query has nothing to match, so it must not pay to enumerate: a
-    // dir-scoped `listSessions` pages the SDK until exhausted, and all this
-    // answer carries is the indexing chip's two numbers, which the index knows
-    // by itself.
-    if (!rawQuery) {
-      const indexing = { total: chatSearchKnownCount(projectPath), ...chatSearchGetIndexStatus(projectPath) };
-      return c.json(ok({ results: [], indexing } satisfies ChatSearchResponse));
-    }
-
-    // Enumerate sessions once (also drives title matches + metadata for content hits).
-    const sessions = await chatService.listSessions(undefined, projectPath);
-    const indexing = { total: sessions.length, ...chatSearchGetIndexStatus(projectPath) };
-
-    // Lazy self-refresh; UI shows an indexing indicator while this runs. The
-    // sessions are handed over rather than enumerated again: a dir-scoped list
-    // with no limit pages the SDK until exhausted, and this route was paying
-    // for that twice on every search.
-    chatSearchStartBackfill(projectPath, sessions);
-
-    const pinnedIds = getPinnedSessionIds();
-    const tagMap = getSessionTags(sessions.map((s) => s.id));
-    const byId = new Map(sessions.map((s) => [s.id, s]));
-
-    const results: ChatSearchResult[] = [];
-    const seen = new Set<string>();
-
-    // Title matches first — a title hit is a stronger relevance signal than a
-    // body hit, so collect these ahead of content to guarantee they survive the
-    // limit (a flood of content hits must never starve out a title match).
-    const q = rawQuery.toLowerCase();
-    for (const s of sessions) {
-      if (results.length >= limit) break;
-      if (!(s.title || "").toLowerCase().includes(q)) continue;
-      seen.add(s.id);
-      results.push({
-        sessionId: s.id,
-        providerId: s.providerId,
-        title: s.title ?? null,
-        snippet: s.title ?? "",
-        messageId: "",
-        matchedIn: "title",
-        ts: s.updatedAt || s.createdAt || "",
-        pinned: pinnedIds.has(s.id),
-        tag: tagMap[s.id] ?? null,
-      });
-    }
-
-    // Content matches (best bm25 rank) for sessions not already surfaced by title.
-    for (const hit of chatSearchQuery(projectPath, rawQuery, limit * 3)) {
-      if (results.length >= limit) break;
-      if (seen.has(hit.sessionId)) continue;
-      seen.add(hit.sessionId);
-      const s = byId.get(hit.sessionId);
-      results.push({
-        sessionId: hit.sessionId,
-        providerId: s?.providerId,
-        title: s?.title ?? null,
-        snippet: hit.snippet,
-        messageId: hit.messageId,
-        matchedIn: "content",
-        ts: s?.updatedAt || s?.createdAt || hit.ts || "",
-        pinned: pinnedIds.has(hit.sessionId),
-        tag: tagMap[hit.sessionId] ?? null,
-      });
-    }
-
-    const designSlugs = getSessionDesignSlugs(results.map((r) => r.sessionId));
-    for (const r of results) r.designSlug = designSlugs[r.sessionId] ?? null;
-
-    // Pinned first, then title matches above content, then most-recent within group.
-    results.sort((a, b) => {
-      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-      if (a.matchedIn !== b.matchedIn) return a.matchedIn === "title" ? -1 : 1;
-      return new Date(b.ts).getTime() - new Date(a.ts).getTime();
-    });
-
-    return c.json(ok({ results, indexing } satisfies ChatSearchResponse));
+    return c.json(ok(await searchProjectChats(c.get("projectPath"), rawQuery, limit)));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

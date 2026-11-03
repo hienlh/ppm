@@ -3,7 +3,8 @@ import { AsyncQuestionContext } from "./async-question-card";
 import { Loader2, Upload, X } from "@/lib/icons";
 import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
-import { decodeReply, encodeReply, type ReplyReference } from "../../../shared/chat-reply";
+import type { ReplyReference } from "../../../shared/chat-reply";
+import { decodeMessageBlocks, encodeMessageBlocks } from "../../../shared/chat-message-blocks";
 import { selectInlineImages } from "@/lib/image-resize-limits";
 import { splitAttachmentMarkers } from "@/lib/attachment-marker-split";
 import type { ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
@@ -266,7 +267,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   // (`forkDraft`) and the quote becomes a reply in this conversation, which the fork copied the
   // quoted message into.
   const [replySelection, setReplySelection] = useState<{ owner: string; reply: ReplyReference | null } | null>(() => {
-    const forkedReply = decodeReply((metadata?.pendingMessage as string | undefined) ?? "").replyTo;
+    const forkedReply = decodeMessageBlocks((metadata?.pendingMessage as string | undefined) ?? "").replyTo;
     return forkedReply && sessionId ? { owner: replyOwner, reply: { ...forkedReply, sessionId } } : null;
   });
   const heldReply = replySelection?.owner === replyOwner ? replySelection.reply : draft?.replyTo ?? null;
@@ -590,7 +591,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   // Pending fork message — show in input for user to edit, not auto-send
   const [forkDraft, setForkDraft] = useState<string | undefined>(() => {
     const pending = metadata?.pendingMessage as string | undefined;
-    return pending === undefined ? undefined : decodeReply(pending).content;
+    return pending === undefined ? undefined : decodeMessageBlocks(pending).content;
   });
 
   // "Build in new chat" hands a design screenshot over as a data URL on the tab's own
@@ -654,7 +655,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     firstSendContent.current = null;
     setFirstSendPreview(null);
     setFirstSendPending(false);
-    const decoded = decodeReply(content);
+    const decoded = decodeMessageBlocks(content);
     replyToRef.current = decoded.replyTo;
     setReplySelection({ owner: replyOwner, reply: decoded.replyTo });
     saveDraft(decoded.content, undefined, decoded.replyTo);
@@ -664,7 +665,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   rejectedSendRef.current = (event) => {
     const current = composerDraftRef.current;
-    const unsent = encodeReply(event.content, event.replyTo);
+    const unsent = encodeMessageBlocks(event.content, { replyTo: event.replyTo });
     if ((current.owner !== replyOwner || (!current.text.trim() && !current.attachments?.length && !draft?.content.trim())) && !replyToRef.current) {
       restoreUnsentMessage(unsent, event.message);
     } else {
@@ -696,7 +697,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     }
     pendingSendRef.current = null;
     clearDraft(pending.draftId);
-    restoreUnsentMessage(encodeReply(pending.content, pending.replyTo), reason);
+    restoreUnsentMessage(encodeMessageBlocks(pending.content, { replyTo: pending.replyTo }), reason);
   }, [restoreUnsentMessage, clearDraft]);
 
   /**
@@ -818,7 +819,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         { messageId },
       );
       // Titled by its body: the message as stored ends in its quote when it was a reply.
-      const body = decodeReply(userMessage).content;
+      const body = decodeMessageBlocks(userMessage).content;
       useSessionListStore.getState().upsertSession(projectRefForName(projectName), {
         id: forked.id, providerId, title: body.slice(0, 50), createdAt: new Date().toISOString(),
         // A fork keeps its design, so a design tab's history list still shows it.
@@ -853,7 +854,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   /** Edit a user message: prefill input + arm same-tab fork on next send */
   const handleEdit = useCallback((userMessage: string, messageId?: string, ownMsgId?: string) => {
-    const decoded = decodeReply(userMessage);
+    const decoded = decodeMessageBlocks(userMessage);
     // The edited message is in this conversation, and so is what it quotes — including a
     // message copied in when this conversation was forked, whose quote names the one it came from.
     const reply = decoded.replyTo && sessionId ? { ...decoded.replyTo, sessionId } : decoded.replyTo;
@@ -891,7 +892,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) },
         );
         useSessionListStore.getState().upsertSession(projectRefForName(projectName), {
-          id: forked.id, providerId, title: decodeReply(fullContent).content.slice(0, 50), createdAt: new Date().toISOString(),
+          id: forked.id, providerId, title: decodeMessageBlocks(fullContent).content.slice(0, 50), createdAt: new Date().toISOString(),
           ...(designSlug && { designSlug }),
         });
         // The tree gained a sibling. Swapping sessionId below refetches
@@ -919,7 +920,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             : msg,
         });
         // The edited text was cleared from the composer on Enter — put it back.
-        restoreUnsentMessage(encodeReply(fullContent, reply), msg);
+        restoreUnsentMessage(encodeMessageBlocks(fullContent, { replyTo: reply }), msg);
       }
     },
     [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend, moveDraft, designSlug, restoreUnsentMessage],
@@ -1001,7 +1002,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       if (!sessionId) {
         if (firstSendLocked.current) return;
         firstSendLocked.current = true;
-        firstSendContent.current = encodeReply(fullContent, selectedReply);
+        firstSendContent.current = encodeMessageBlocks(fullContent, { replyTo: selectedReply });
         const attempt = ++firstSendAttempt.current;
         setFirstSendPending(true);
         setFirstSendPreview({ content: fullContent, timestamp: new Date().toISOString() });
@@ -1067,7 +1068,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           const msg = (e as Error)?.name === "TimeoutError"
             ? "The server did not answer in time."
             : `Could not start the chat: ${(e as Error)?.message || "unknown error"}.`;
-          restoreUnsentMessage(encodeReply(fullContent, selectedReply), msg);
+          restoreUnsentMessage(encodeMessageBlocks(fullContent, { replyTo: selectedReply }), msg);
           return;
         }
       }
