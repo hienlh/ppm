@@ -73,6 +73,19 @@ describe("turn rendering", () => {
     expect(out).toContain("turn 9 (aaaaaaaa-0000-4000-8000-000000000009)");
   });
 
+  it("measures the cap after breaking fences, so a turn of backticks cannot double the answer", () => {
+    // Every answer holds 7,900 backticks; broken, each run grows to 15,799 characters.
+    const ticks = (n: number) => ({ turn: turn({ n, turnId: `bbbbbbbb-0000-4000-8000-00000000000${n}` }), messages: [
+      user("q"), ...Array.from({ length: 8 }, () => assistant("`".repeat(7_900), undefined)),
+    ] });
+    for (const turns of [[ticks(1)], [ticks(1), ticks(2), ticks(3)]]) {
+      const out = renderTurns(session, turns);
+      expect(out.length).toBeLessThanOrEqual(MAX_TOOL_OUTPUT_CHARS);
+      expect(out.match(/^```/gm)?.length).toBe(2); // the cut never leaves a run that closes the fence
+      expect(out).toContain("turn 1 cut");
+    }
+  });
+
   it("summarises a call by its most telling argument", () => {
     expect(shortToolArg({ command: ["bash", "-lc", "ls -la"] })).toBe("bash -lc ls -la");
     expect(shortToolArg({ server: "x", tool: "y", arguments: { url: "https://a.b" } })).toBe("https://a.b");

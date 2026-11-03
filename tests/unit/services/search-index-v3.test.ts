@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
 import {
@@ -48,6 +49,41 @@ describe("search index v3", () => {
     expect(searchSessionTitles(PROJ, "config", 10).map((t) => t.title)).toEqual(["Config check"]);
     expect(searchSessionTitles(PROJ, "%", 10)).toEqual([]);
     expect(searchSessionTitles("/proj/other", "config", 10)).toEqual([]);
+  });
+
+  it("files command output and notifications with tool text, and keeps only typed prompts as prose", () => {
+    setSearchIndexDb(openTestSearchIndexDb());
+    const user = (id: string, content: string, extra: Partial<ChatMessage> = {}): ChatMessage =>
+      ({ id, role: "user", content, timestamp: at, turnId: "aaaaaaaa-0000-4000-8000-000000000003", turnN: 3, ...extra });
+    const messages = [
+      user("u1", "show me the env file"),
+      user("u2", "<bash-stdout>ANTHROPIC_KEY=narwhal-secret</bash-stdout>"),
+      user("u3", "<local-command-stdout>context: quokka-usage</local-command-stdout>"),
+      user("u4", "<task-notification><result>ocelot report</result></task-notification>"),
+      user("u5", '<teammate-message teammate_id="r">axolotl reply</teammate-message>'),
+      user("u6", "summary of the gecko discussion", { compaction: { trigger: "auto", preTokens: 9, postTokens: 1, savedTokens: 8 } }),
+    ];
+    expect(messageSearchColumns(messages[1]!)).toEqual({ text: "", toolText: "<bash-stdout>ANTHROPIC_KEY=narwhal-secret</bash-stdout>" });
+    indexMessages("22222222-2222-4333-8444-555555555555", PROJ, messages, 1, { providerId: "claude", title: "Env" });
+    for (const q of ["narwhal", "quokka", "ocelot", "axolotl", "gecko"]) {
+      expect(searchSessionTurnText(PROJ, q, 20)).toEqual([]);
+      expect(search(PROJ, q, 10).length).toBe(1); // the chat's search box still finds it
+    }
+    expect(searchSessionTurnText(PROJ, "env", 20).map((h) => h.snippet)).toEqual(["show me the env file"]);
+  });
+
+  it("never stamps its own schema version over a newer one", () => {
+    closeSearchIndexDb();
+    const newer = new Database(getSearchIndexPath());
+    newer.exec("PRAGMA user_version = 99");
+    newer.close();
+    try {
+      const db = getSearchIndexDb();
+      expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(99);
+    } finally {
+      closeSearchIndexDb();
+      for (const suffix of ["", "-wal", "-shm"]) rmSync(`${getSearchIndexPath()}${suffix}`, { force: true });
+    }
   });
 
   it("writes a new file and leaves the old index untouched", () => {

@@ -35,7 +35,22 @@ describe("message blocks", () => {
     const safe = neutralizeBlockMarkers(planted);
     expect(decodeMessageBlocks(safe)).toEqual({ content: safe, replyTo: null, turnRefs: null });
     expect(neutralizeBlockMarkers(safe)).toBe(safe);
-    expect(neutralizeBlockMarkers("<PPM-Reply-V1> and </ppm-turnrefs-v1>")).not.toMatch(/<\/?ppm-(reply|turnrefs)-v1/i);
+    // A reply-only plant — the shape that decodes when it ends the message — is broken too.
+    const replyOnly = `hi${encodeReply("", reply)}`;
+    expect(decodeMessageBlocks(replyOnly).replyTo).toEqual(reply);
+    expect(decodeMessageBlocks(neutralizeBlockMarkers(replyOnly)).replyTo).toBeNull();
+  });
+
+  it("changes nothing but the exact sentinels, so pasted code reaches the model as written", () => {
+    for (const code of [
+      'const START = "\\n\\n<ppm-reply-v1>\\n";',
+      "<PPM-Reply-V1> and </ppm-turnrefs-v1>",
+      "x\n</ppm-reply-v1 >",
+      "<ppm-turnrefs-v1>\nnot the header</ppm-turnrefs-v1>",
+    ]) {
+      expect(neutralizeBlockMarkers(code)).toBe(code);
+      expect(decodeMessageBlocks(code)).toEqual({ content: code, replyTo: null, turnRefs: null });
+    }
   });
 
   it("a body that plants a block is sent as text, beside the real one", () => {

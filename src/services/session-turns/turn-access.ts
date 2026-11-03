@@ -11,7 +11,7 @@
  */
 import { resolve } from "node:path";
 import { configService } from "../config.service.ts";
-import { getSessionProvider } from "../db.service.ts";
+import { getSessionProvider, resolveMigratedSession } from "../db.service.ts";
 import { SESSION_ID_RE, TURN_ID_RE } from "../../shared/session-turn-ids.ts";
 import { resolveSessionTranscript, type SessionRef } from "./session-turn-index.service.ts";
 import { SessionTurnError, type SessionTurnErrorCode, type TurnProviderId } from "./session-turn-types.ts";
@@ -88,8 +88,11 @@ export function resolveTurnAccess(caller: TurnCaller, sessionId: string, project
       return { ok: true, target: resolveOwnSession(caller, sessionId), turnIds: selection.turnIds ?? [], denied: [] };
     } catch (e) {
       if (!(e instanceof SessionTurnError)) throw e;
-      // A session of another project the person linked to: the AI need not name the project.
-      if (project || e.code !== "session_missing" || !turnGrantsFor(caller.sessionId).some((g) => g.sessionId === sessionId)) {
+      // A session of another project the person linked to: the AI need not name the project. Ids
+      // are compared after any migration, as `findTurnGrant` compares them.
+      const target = resolveMigratedSession(sessionId);
+      if (project || e.code !== "session_missing"
+        || !turnGrantsFor(caller.sessionId).some((g) => resolveMigratedSession(g.sessionId) === target)) {
         return fail(e.code, e.message);
       }
     }

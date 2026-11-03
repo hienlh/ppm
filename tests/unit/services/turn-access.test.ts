@@ -7,6 +7,7 @@ import { configService } from "../../../src/services/config.service.ts";
 import { _setClaudeProjectsRoot } from "../../../src/services/agent-transcript/claude-projects-root.ts";
 import { resolveTurnAccess, type TurnCaller } from "../../../src/services/session-turns/turn-access.ts";
 import { recordTurnGrants } from "../../../src/services/session-turns/turn-grant-ledger.ts";
+import { setSessionMigratedTo } from "../../../src/services/db.service.ts";
 import type { TurnReference } from "../../../src/shared/chat-turn-ref.ts";
 import { claude, lines } from "./session-turn-fixtures.ts";
 
@@ -74,6 +75,18 @@ describe("turn access", () => {
     expect(resolveTurnAccess(c, otherSession, undefined, { range: { from: 1, to: 1 } })).toMatchObject({ ok: false, code: "not_permitted" });
     // Another chat holds no grant.
     expect(resolveTurnAccess(caller(), otherSession, OTHER.name, { turnIds: [P(1)] })).toMatchObject({ ok: false, code: "not_permitted" });
+  });
+
+  it("finds a linked session without a project name under the id it was migrated to", () => {
+    const c = caller();
+    const draft = `draft-${randomUUID()}`;
+    // The link was sent while the target still had its draft id; it has since been renamed.
+    recordTurnGrants(c.sessionId, [ref(P(1), { sessionId: draft })]);
+    setSessionMigratedTo(draft, otherSession);
+    expect(resolveTurnAccess(c, otherSession, undefined, { turnIds: [P(1)] })).toMatchObject({
+      ok: true, turnIds: [P(1)], target: { crossProject: true, projectName: OTHER.name },
+    });
+    expect(resolveTurnAccess(c, otherSession, undefined, { turnIds: [P(2)] })).toMatchObject({ ok: false, code: "not_permitted" });
   });
 
   it("pins the grant's project: the same ids in a different project are not reachable through it", () => {

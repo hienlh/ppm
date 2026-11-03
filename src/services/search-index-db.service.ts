@@ -88,6 +88,8 @@ function runMigrations(database: Database): void {
 
       CREATE INDEX IF NOT EXISTS idx_session_meta_project ON session_meta(project_path);
     `);
+    // Stamped only once the schema exists, and never over a newer version: a build rolled back
+    // onto a file a later build migrated must not mark it as its own.
+    database.exec(`PRAGMA user_version = ${SEARCH_INDEX_SCHEMA_VERSION}`);
   }
-  database.exec(`PRAGMA user_version = ${SEARCH_INDEX_SCHEMA_VERSION}`);
 }

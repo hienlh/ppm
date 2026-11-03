@@ -137,14 +137,19 @@ export function fenced(body: string): string {
 /**
  * Turns as one answer, held to {@link MAX_TOOL_OUTPUT_CHARS}: a turn that does not fit is cut, and
  * the turns after it are named rather than shown, so the AI can read them on their own.
+ *
+ * Each turn is measured after its fences are broken, because breaking a run of n backticks adds
+ * n − 1 characters: measured before, a turn of backticks would reach the AI at twice the cap. A
+ * prefix of escaped text holds no fence-forming run, and `fenced` leaves escaped text unchanged.
  */
 export function renderTurns(session: RenderedSession, turns: Array<{ turn: SessionTurnSummary; messages: ChatMessage[] }>): string {
-  const budget = MAX_TOOL_OUTPUT_CHARS - SESSION_DATA_HEADER.length - 400;
+  // Room for the fence and for the line naming up to nine unshown turns by their (≤ 67-char) ids.
+  const budget = MAX_TOOL_OUTPUT_CHARS - SESSION_DATA_HEADER.length - 1_000;
   const parts: string[] = [];
   let used = 0;
   let cutAt = -1;
   for (let i = 0; i < turns.length; i++) {
-    const text = renderTurn(session, turns[i]!.turn, turns[i]!.messages);
+    const text = neutralizeFences(renderTurn(session, turns[i]!.turn, turns[i]!.messages));
     const room = budget - used;
     if (text.length + 2 <= room) {
       parts.push(text);

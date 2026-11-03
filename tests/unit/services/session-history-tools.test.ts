@@ -80,4 +80,19 @@ describe("session history tools", () => {
     if (a.ok) a.release();
     expect(inFlight.acquire("k").ok).toBe(true);
   });
+
+  it("forgets callers whose calls have left the minute, but not one still running", () => {
+    let now = 0;
+    const limiter = createCallLimiter({ now: () => now });
+    for (let i = 0; i < 50; i++) {
+      const slot = limiter.acquire(`chat-${i}`);
+      if (slot.ok) slot.release();
+    }
+    const busy = limiter.acquire("busy");
+    expect(limiter.trackedKeys()).toBe(51);
+    now = 61_000;
+    expect(limiter.acquire("late").ok).toBe(true);
+    expect(limiter.trackedKeys()).toBe(2); // "busy" (still running) and "late"
+    if (busy.ok) busy.release();
+  });
 });

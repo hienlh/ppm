@@ -64,11 +64,12 @@ export function toFtsQuery(raw: string): string {
  * 2: `MESSAGE_TEXT_CAP`. Sessions indexed at 1 may hold multi-megabyte rows.
  * 3: Exclude reply snapshots and their transport metadata.
  * 4: `search-index-v3.db`: prose and tool text in separate columns, turn ids, titles.
+ * 5: A user record is prose only when it is a prompt; command output and notifications are tool text.
  *
  * A bump makes *every* session stale at once, which is what `RECONCILE_BUDGET`
  * below is for — the whole corpus must not be re-read inside one search.
  */
-export const INDEXER_VERSION = 4;
+export const INDEXER_VERSION = 5;
 
 /** Index a concrete set of normalized messages (core, provider-agnostic). */
 export function indexMessages(

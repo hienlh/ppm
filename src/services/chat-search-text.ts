@@ -8,6 +8,7 @@
  * a snippet. The chat's search box still matches both.
  */
 import { decodeMessageBlocks } from "../shared/chat-message-blocks.ts";
+import { isRealPromptMessage, promptTextOf } from "../shared/user-prompt-kind.ts";
 import type { ChatEvent, ChatMessage } from "../types/chat.ts";
 
 /** Per-event cap on indexed tool output. A single `Read`/`grep` result can be
@@ -87,13 +88,29 @@ function collectToolText(events: ChatEvent[] | undefined, out: string[], budget:
   return budget;
 }
 
-/** The message's prose: its body without PPM's blocks, else its top-level reply events. */
-function proseOf(msg: ChatMessage): string[] {
+/**
+ * The message's prose, and any part of its body that is not prose.
+ *
+ * A user record is prose only when it is a prompt the person sent, and then only as they typed it
+ * (`promptTextOf`, the text the turn list and `read_session_turns` show). Every other user record —
+ * a CLI `!cmd` or `/context` printout, a task-notification result, a teammate message, a
+ * compaction summary — is output, so it goes with the tool text: the chat's search box still
+ * finds it, the AI's search never quotes it. So does whatever a prompt carried besides the typed
+ * text (attachments, shared context). An assistant's prose is its body without PPM's blocks, else
+ * its top-level reply events.
+ */
+function proseOf(msg: ChatMessage): { prose: string[]; rest: string } {
   const body = msg.content ? decodeMessageBlocks(msg.content).content : "";
-  if (body.trim()) return [body];
-  return (msg.events ?? [])
+  if (msg.role === "user") {
+    const prompt = isRealPromptMessage(msg) ? promptTextOf(msg.content) : null;
+    if (prompt === null) return { prose: [], rest: body };
+    return { prose: [prompt], rest: body.trim() === prompt.trim() ? "" : body };
+  }
+  if (body.trim()) return { prose: [body], rest: "" };
+  const replies = (msg.events ?? [])
     .filter((ev): ev is Extract<ChatEvent, { type: "text" }> => ev.type === "text" && !ev.parentToolUseId)
     .map((ev) => ev.content);
+  return { prose: replies, rest: "" };
 }
 
 const joinCapped = (parts: string[]): string =>
@@ -108,11 +125,12 @@ const joinCapped = (parts: string[]): string =>
  * must still be findable from the chat's search box.
  */
 export function messageSearchColumns(msg: ChatMessage): MessageSearchColumns {
+  const { prose: parts, rest } = proseOf(msg);
   const prose: string[] = [];
   let budget = MESSAGE_TEXT_CAP;
-  for (const part of proseOf(msg)) budget = take(part, prose, budget);
+  for (const part of parts) budget = take(part, prose, budget);
   const tools: string[] = [];
-  collectToolText(msg.events, tools, MESSAGE_TEXT_CAP, false);
+  collectToolText(msg.events, tools, take(rest, tools, MESSAGE_TEXT_CAP), false);
   return { text: joinCapped(prose), toolText: joinCapped(tools) };
 }
 

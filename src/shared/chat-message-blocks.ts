@@ -1,5 +1,7 @@
-import { decodeReply, encodeReply, type ReplyReference } from "./chat-reply";
-import { decodeTurnRefs, encodeTurnRefs, type TurnReference } from "./chat-turn-ref";
+import { decodeReply, encodeReply, REPLY_BLOCK_END, REPLY_BLOCK_START, type ReplyReference } from "./chat-reply";
+import {
+  decodeTurnRefs, encodeTurnRefs, TURN_REFS_BLOCK_END, TURN_REFS_BLOCK_START, type TurnReference,
+} from "./chat-turn-ref";
 
 /**
  * The structured blocks PPM appends to a user message, in their fixed order: the text the person
@@ -19,14 +21,25 @@ export interface MessageBlocks {
 }
 
 const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
-const BLOCK_MARKER = /<(\/?)(ppm-(?:reply|turnrefs)-v1)/gi;
 
 /**
- * Breaks every opening or closing marker of a PPM message block in `text` with a zero-width space
- * after `<` (or `</`), so no block can form from it. Idempotent; the text still reads the same.
+ * The only strings a decoder accepts as a block's start or end, each with the form it is broken
+ * into: a zero-width space after the `<`. Every block must end with its exact end sentinel and
+ * contain its exact start sentinel, so breaking these and nothing else is enough.
+ */
+const SENTINELS: ReadonlyArray<readonly [string, string]> = [
+  REPLY_BLOCK_START, REPLY_BLOCK_END, TURN_REFS_BLOCK_START, TURN_REFS_BLOCK_END,
+].map((s) => [s, s.replace("<", `<${ZERO_WIDTH_SPACE}`)] as const);
+
+/**
+ * Breaks every exact start and end sentinel of a PPM message block in `text`, so no block can form
+ * from it. Anything else — a lone `<ppm-reply-v1>` tag in pasted code, another case, another
+ * spacing — is left exactly as written, since no decoder reads it as a block. Idempotent.
  */
 export function neutralizeBlockMarkers(text: string): string {
-  return text.replace(BLOCK_MARKER, (_m, slash: string, name: string) => `<${slash}${ZERO_WIDTH_SPACE}${name}`);
+  let out = text;
+  for (const [sentinel, broken] of SENTINELS) if (out.includes(sentinel)) out = out.split(sentinel).join(broken);
+  return out;
 }
 
 /** The body and every block of a stored user message; a block that does not decode stays text. */

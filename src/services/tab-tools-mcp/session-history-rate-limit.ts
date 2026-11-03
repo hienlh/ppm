@@ -13,6 +13,8 @@ export type LimitOutcome = { ok: true; release: () => void } | { ok: false; mess
 export interface CallLimiter {
   /** A slot for one call of `key` (the caller's canonical session id), or why there is none. */
   acquire(key: string): LimitOutcome;
+  /** How many callers the limiter still remembers; for tests and diagnostics. */
+  trackedKeys(): number;
 }
 
 export function createCallLimiter(opts: { perMinute?: number; inFlight?: number; now?: () => number } = {}): CallLimiter {
@@ -21,10 +23,27 @@ export function createCallLimiter(opts: { perMinute?: number; inFlight?: number;
   const now = opts.now ?? Date.now;
   const recent = new Map<string, number[]>();
   const running = new Map<string, number>();
+  let lastSweep = Number.NEGATIVE_INFINITY;
+
+  /**
+   * Forgets every caller whose last call left the window and that has none running, at most once a
+   * window. A release can only forget its own caller while that caller's calls are still in the
+   * window, so without this every chat that ever called would stay in the map for good.
+   */
+  const sweep = (t: number) => {
+    if (t - lastSweep < WINDOW_MS) return;
+    lastSweep = t;
+    for (const [key, calls] of recent) {
+      const newest = calls[calls.length - 1];
+      if (!running.has(key) && (newest === undefined || t - newest >= WINDOW_MS)) recent.delete(key);
+    }
+  };
 
   return {
+    trackedKeys: () => recent.size,
     acquire(key) {
       const t = now();
+      sweep(t);
       const calls = (recent.get(key) ?? []).filter((at) => t - at < WINDOW_MS);
       if ((running.get(key) ?? 0) >= maxInFlight) {
         return { ok: false, message: `At most ${maxInFlight} session-history calls may run at once; wait for one to finish.` };
