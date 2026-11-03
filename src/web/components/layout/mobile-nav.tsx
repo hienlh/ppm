@@ -1,3 +1,5 @@
+import { isMinimalTab } from "@/lib/minimal-mode";
+import { useSettingsStore } from "@/stores/settings-store";
 import { useState, useCallback, useMemo } from "react";
 import {
   Terminal, Menu, X, Layers, Plus,
@@ -37,6 +39,7 @@ import { tabSessionId } from "@/lib/tab-session-id";
 interface MobileNavProps { onMenuPress: () => void; onProjectsPress: () => void; }
 
 export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
   const panels = usePanelStore((s) => s.panels);
   const grid = usePanelStore((s) => s.grid);
@@ -60,13 +63,14 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
         for (const t of p.tabs) {
           // Skip cross-project tabs (race condition in openTab during project switch)
           if (t.projectId && currentProject && t.projectId !== currentProject) continue;
+          if (minimalMode && !isMinimalTab(t.type)) continue;
           allTabs.push(t);
           map[t.id] = pid;
         }
       }
     }
     return { tabs: allTabs, tabPanelMap: map };
-  }, [panels, grid, currentProject]);
+  }, [panels, grid, currentProject, minimalMode]);
 
   // Recency rank for the tab-switcher "Recent" sort: 0 = most recent. Ranked by the
   // per-tab `lastActiveAt` stamp (set on every activation) so the order is a GLOBAL
@@ -108,7 +112,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   // Context menu actions — use the tab's actual panel (not always focused)
   const menuTab = menuTabId ? tabs.find((t) => t.id === menuTabId) : null;
   const menuTabPanelId = menuTabId ? tabPanelMap[menuTabId] ?? focusedPanelId : focusedPanelId;
-  const menuTabPanelTabs = panels[menuTabPanelId]?.tabs ?? [];
+  const menuTabPanelTabs = (panels[menuTabPanelId]?.tabs ?? []).filter((tab) => !minimalMode || isMinimalTab(tab.type));
   const menuTabIdx = menuTabId ? menuTabPanelTabs.findIndex((t) => t.id === menuTabId) : -1;
 
   // Chat-session context for the long-press menu (Mark as unread / Set Tag)
@@ -143,14 +147,14 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   function closeOthers(tabId: string) {
     const pid = tabPanelMap[tabId] ?? focusedPanelId;
     const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
-    void closeTabsAsked(pTabs.filter((t) => t.id !== tabId && t.closable).map((t) => t.id), pid);
+    void closeTabsAsked(pTabs.filter((t) => t.id !== tabId && t.closable && (!minimalMode || isMinimalTab(t.type))).map((t) => t.id), pid);
     setMenuTabId(null);
   }
   function closeRight(tabId: string) {
     const pid = tabPanelMap[tabId] ?? focusedPanelId;
     const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
     const idx = pTabs.findIndex((t) => t.id === tabId);
-    void closeTabsAsked(pTabs.slice(idx + 1).filter((t) => t.closable).map((t) => t.id), pid);
+    void closeTabsAsked(pTabs.slice(idx + 1).filter((t) => t.closable && (!minimalMode || isMinimalTab(t.type))).map((t) => t.id), pid);
     setMenuTabId(null);
   }
 
@@ -248,6 +252,14 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
     ? resolveProjectColor(activeProject.color, activeIdx >= 0 ? activeIdx : 0)
     : "#4f86c6";
 
+  const openNewTab = () => {
+    if (!minimalMode) { openCommandPalette(); return; }
+    usePanelStore.getState().openTab({
+      type: "chat", title: "AI Chat", projectId: activeProject?.name ?? null,
+      metadata: activeProject ? { projectName: activeProject.name } : undefined, closable: true,
+    });
+  };
+
   const ActiveTabIcon = activeTab ? getTabIcon(activeTab) : null;
 
   return (
@@ -279,6 +291,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
 
           <div className="w-px self-stretch bg-border shrink-0" />
 
+          {!minimalMode && <>
           {/* Terminal / panel button — green dot = running dock sessions; active tint when dock open */}
           <button
             onClick={() => usePanelStore.getState().toggleDock()}
@@ -301,9 +314,10 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
 
           <div className="w-px self-stretch bg-border shrink-0" />
 
-          {/* New tab — opens the command palette */}
+          </>}
+          {/* New tab — opens the command palette, or a chat in minimal mode */}
           <button
-            onClick={() => openCommandPalette()}
+            onClick={openNewTab}
             title="New tab"
             aria-label="New tab"
             className="flex items-center justify-center size-12 shrink-0 text-text-secondary"
@@ -327,7 +341,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
           </button>
         ) : (
           <button
-            onClick={() => openCommandPalette()}
+            onClick={openNewTab}
             className="flex-1 flex items-center gap-1.5 h-12 px-3 text-text-secondary text-xs"
           >
             <Plus className="size-4" /> New Tab
@@ -339,7 +353,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
       <MobileTabSwitcherSheet
         open={tabSheetOpen}
         onClose={() => setTabSheetOpen(false)}
-        onOpenPalette={() => openCommandPalette()}
+        onOpenPalette={openNewTab}
         tabs={tabs}
         tabPanelMap={tabPanelMap}
         panelOrder={grid.flat()}
@@ -489,7 +503,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
       {/* Mobile dock sheet — only rendered on mobile viewports.
           Desktop panel-layout.tsx gates DockPanel on isDesktop, so exactly ONE
           __dock__ slot is ever registered at a time (no double-mount). */}
-      {isMobile && (
+      {!minimalMode && isMobile && (
         <BottomSheet
           open={dock.visible}
           onClose={() => usePanelStore.getState().setDockVisible(false)}

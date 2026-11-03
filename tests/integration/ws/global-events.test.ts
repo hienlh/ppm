@@ -8,7 +8,7 @@
  * docx/pdf preview reload, file-tree invalidation and cross-device unread sync.
  * These tests assert the bus works with zero chat sessions in existence.
  */
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, spyOn } from "bun:test";
 import "../../test-setup.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -17,7 +17,7 @@ import { join, resolve } from "node:path";
 import { _setClaudeProjectsRoot } from "../../../src/services/agent-transcript/claude-projects-root.ts";
 import { _resetAgentTranscriptHubForTest } from "../../../src/services/agent-transcript/agent-transcript-hub.ts";
 
-const PORT = 19881; // unique — avoid clashing with other WS suites
+const PORT = 0; // Let the OS choose an unused test port.
 let server: ReturnType<typeof Bun.serve>;
 let projectDir: string;
 const PROJECT = "global-events-test";
@@ -61,7 +61,7 @@ function connect(): Promise<{
   close: () => void;
 }> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://localhost:${PORT}/ws/global`);
+    const ws = new WebSocket(`ws://localhost:${server.port}/ws/global`);
     const messages: any[] = [];
     ws.onmessage = (ev) => {
       try { messages.push(JSON.parse(ev.data as string)); } catch { /* ignore */ }
@@ -127,6 +127,58 @@ describe("global event bus", () => {
     expect(typeof evt.path).toBe("string");
 
     close();
+  });
+
+  it("serves the Logs feature's socket half in full mode: the live tail and the issues push", async () => {
+    const { logSubscriberCount } = await import("../../../src/services/logs/log-live.ts");
+    const { undismissAll } = await import("../../../src/services/logs/log-issues.ts");
+    const { ws, waitForType, close } = await connect();
+    try {
+      await waitForType("global_ready");
+      ws.send(JSON.stringify({ type: "logs:subscribe" }));
+      for (let i = 0; i < 50 && logSubscriberCount() === 0; i++) await new Promise((r) => setTimeout(r, 20));
+      expect(logSubscriberCount()).toBe(1);
+      undismissAll();
+      await waitForType("logs:issues-changed");
+    } finally {
+      close();
+    }
+  });
+
+  it("in minimal mode watches and warms the project's files, but serves nothing of Logs", async () => {
+    const { fileIndexRunner } = await import("../../../src/services/file-index/file-index-runner.ts");
+    const { invalidateIndexCache } = await import("../../../src/services/file-list-index.service.ts");
+    const { logSubscriberCount } = await import("../../../src/services/logs/log-live.ts");
+    const { undismissAll } = await import("../../../src/services/logs/log-issues.ts");
+    const walked: string[] = [];
+    const walk = spyOn(fileIndexRunner, "run").mockImplementation(async (rootPath: string) => {
+      walked.push(rootPath);
+      throw new Error("no walk in this test");
+    });
+    let socket: Awaited<ReturnType<typeof connect>> | undefined;
+    try {
+      process.argv.push("--minimal");
+      invalidateIndexCache(projectDir);
+      socket = await connect();
+      await socket.waitForType("global_ready");
+      for (let i = 0; i < 50 && logSubscriberCount() > 0; i++) await new Promise((r) => setTimeout(r, 20));
+      socket.ws.send(JSON.stringify({ type: "logs:subscribe" }));
+      socket.ws.send(JSON.stringify({ type: "watch", projectName: PROJECT }));
+      undismissAll();
+      await new Promise((r) => setTimeout(r, 300));
+      expect(walked).toEqual([projectDir]);
+      expect(logSubscriberCount()).toBe(0);
+      expect(socket.messages.map((m) => m.type)).not.toContain("logs:issues-changed");
+      writeFileSync(resolve(projectDir, "minimal-editor.txt"), "changed outside editor");
+      const evt = await socket.waitForType("file:changed");
+      expect(evt.projectName).toBe(PROJECT);
+    } finally {
+      socket?.close();
+      walk.mockRestore();
+      invalidateIndexCache(projectDir);
+      const at = process.argv.lastIndexOf("--minimal");
+      if (at >= 0) process.argv.splice(at, 1);
+    }
   });
 
   it("relays the rows of a file the agent just changed, for a session whose list is kept", async () => {

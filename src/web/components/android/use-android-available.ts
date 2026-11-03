@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 /**
  * Whether the Android entry should surface at all.
  *
@@ -15,15 +16,17 @@ import { api } from "@/lib/api-client";
 interface Capabilities { enabled: boolean; authRequired: boolean }
 
 export function useAndroidAvailable(): { available: boolean; authRequired: boolean } {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const [caps, setCaps] = useState<Capabilities | null>(null);
 
   useEffect(() => {
+    if (minimalMode) return;
     let cancelled = false;
     void api.get<Capabilities>("/api/android/capabilities")
       .then((c) => { if (!cancelled) setCaps(c); })
       .catch(() => { /* an older server has no such route; the entry stays hidden */ });
     return () => { cancelled = true; };
-  }, []);
+  }, [minimalMode]);
 
-  return { available: !!caps?.enabled, authRequired: !!caps?.authRequired };
+  return { available: !minimalMode && !!caps?.enabled, authRequired: !!caps?.authRequired };
 }

@@ -36,6 +36,26 @@ describe("chatService design resolution", () => {
     setDesignInstructions("");
   });
 
+  it("resumes design history as plain chat in minimal mode without workspace MCP tools", async () => {
+    providerRegistry.register(stubProvider("stub-minimal"));
+    setSessionDesignSlug("minimal-design", "smoke");
+    const argv = process.argv;
+    process.argv = [...argv, "--minimal"];
+    try {
+      const opts = await chatService.prepareSendOptions("stub-minimal", "minimal-design", "hello", {
+        model: "m", designSession: true, designInstructions: "canvas",
+        designMcp: { url: "http://example.test", token: "x" },
+        tabToolsMcp: { url: "http://example.test", token: "x" },
+        dbToolsMcp: { url: "http://example.test", token: "x" },
+      });
+      expect(opts.model).toBe("m");
+      for (const key of ["designSession", "designInstructions", "designMcp", "tabToolsMcp", "dbToolsMcp"]) {
+        expect(opts).not.toHaveProperty(key);
+      }
+      expect(getSessionDesignSlug("minimal-design")).toBe("smoke");
+    } finally { process.argv = argv; }
+  });
+
   it("gives a design session its instructions and leaves the mode to the provider default", async () => {
     providerRegistry.register(stubProvider("stub-design"));
     setSessionDesignSlug("d1", "smoke");
