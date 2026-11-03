@@ -6,6 +6,8 @@ import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { isValidDesignSlug } from "../../services/design/design-slug";
 import { designTabMetadata } from "@/lib/design/design-tab-metadata";
 import { dbObjectTabTitle, dbTabMetadataFromId, targetOf } from "@/lib/db-tabs";
+import { canonicalSessionId, useChatJumpStore } from "@/stores/chat-jump-store";
+import { TURN_ID_RE } from "../../shared/session-turn-ids";
 
 // ---------------------------------------------------------------------------
 // URL state types
@@ -16,6 +18,8 @@ export interface UrlState {
   tabType: TabType | null;
   tabIdentifier: string | null;
   openChat: string | null;
+  /** A chat URL's `?turn=`: the turn a turn link points at, when it is a turn id at all. */
+  turnId?: string | null;
 }
 
 const VALID_TAB_TYPES: TabType[] = [
@@ -65,8 +69,24 @@ export function parseUrlState(location: Pick<Location, "pathname" | "search"> = 
   }
 
   const tabType = VALID_TAB_TYPES.includes(rawType as TabType) ? (rawType as TabType) : null;
+  const turn = tabType === "chat" ? params.get("turn") : null;
+  const turnId = turn && TURN_ID_RE.test(turn) ? turn : null;
 
-  return { projectName, tabType, tabIdentifier: rawIdentifier, openChat };
+  return { projectName, tabType, tabIdentifier: rawIdentifier, openChat, ...(turnId ? { turnId } : {}) };
+}
+
+/**
+ * A turn link opened directly: once its chat tab is open, ask it to show the turn, and take
+ * `?turn=` off the address so a reload of the page does not jump again.
+ */
+export function requestTurnJumpFromUrl(state: UrlState, projectName: string): void {
+  if (state.tabType !== "chat" || !state.turnId || !state.tabIdentifier) return;
+  const sessionId = buildMetadataFromUrl("chat", state.tabIdentifier, projectName)?.sessionId;
+  if (typeof sessionId !== "string") return;
+  useChatJumpStore.getState().jump({ sessionId: canonicalSessionId(sessionId), turnId: state.turnId });
+  const url = new URL(window.location.href);
+  url.searchParams.delete("turn");
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 
 // ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ import { ToolCard } from "./tool-cards";
 import { jumpToEdit, resolveAnchor } from "./jump-to-edit";
 import { sessionTurns, type SessionTurn } from "@/lib/session-turns";
 import { useSessionTurnsStore } from "@/stores/session-turns-store";
-import { useChatJumpStore } from "@/stores/chat-jump-store";
+import { requestIsFor, useChatJumpStore } from "@/stores/chat-jump-store";
 import {
   aggregateTurnFileChanges,
   collectTurnMessages,
@@ -373,13 +373,17 @@ export function MessageList({
   // "Show in chat" from the Review tab: the call's card, or the prompt that asked for it when
   // the card is not drawn (a sub-agent's call). Waits for the tab to be shown and its history to
   // load, since the request is made just before the tab opens.
-  const jumpRequest = useChatJumpStore((s) => (sessionId && s.request?.sessionId === sessionId ? s.request : null));
+  // Matched through renames: a turn link copied before a Codex session adopted its thread id
+  // still names this tab.
+  const jumpRequest = useChatJumpStore((s) => (requestIsFor(s.request, sessionId, s.aliases) ? s.request : null));
   useEffect(() => {
     if (!jumpRequest || !scrollEl) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const attempt = () => {
       const call = jumpRequest.toolUseId && `${jumpRequest.toolUseId}-0`;
-      const index = jumpRequest.messageId ? filtered.findIndex((m) => m.id === jumpRequest.messageId) : -1;
+      // A turn is shown at its first message; only a turn already loaded can be found here.
+      const index = jumpRequest.messageId ? filtered.findIndex((m) => m.id === jumpRequest.messageId)
+        : jumpRequest.turnId ? filtered.findIndex((m) => m.turnId === jumpRequest.turnId) : -1;
       // A hidden tab has no layout to scroll in.
       if (scrollEl.clientHeight > 0) {
         if (call && resolveAnchor(scrollEl, call)) {
@@ -613,6 +617,7 @@ export function MessageList({
               <div
                 key={msg.id}
                 data-msg-index={globalIdx}
+                data-turn-start={msg.turnId && prevMsg?.turnId !== msg.turnId ? msg.turnId : undefined}
                 className="px-4 pt-4 select-none"
               >
                 {/* Above the summary rather than beside it: the rule is what marks
@@ -715,6 +720,8 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
       <UserBubble
         content={message.content}
         messageId={message.id}
+        // A copy a compaction wrote back is in no turn; there is nothing to link to.
+        turn={message.synthetic ? undefined : message}
         timestamp={message.timestamp}
         projectName={projectName}
         onReply={onReply && createReplyReference(message, sessionId ?? "", providerId ?? "") ? () => onReply(message) : undefined}

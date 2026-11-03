@@ -15,7 +15,10 @@ import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import type { TurnStop } from "../../shared/turn-stop";
 import type { EffortStatus } from "../../shared/effort-status";
 import type { ReplyReference } from "../../shared/chat-reply";
+import type { TurnReference } from "../../shared/chat-turn-ref";
 import { decodeMessageBlocks, encodeMessageBlocks } from "../../shared/chat-message-blocks";
+import { bindAll, useTurnBindingStore } from "@/stores/turn-binding-store";
+import { randomId } from "@/lib/utils";
 import { prefixTokens } from "../../shared/turn-usage";
 import { dbExecuteApprovalInput } from "../../shared/db-ai-tools";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
@@ -71,7 +74,18 @@ export interface TurnSettings {
 }
 
 export interface UseChatOptions {
-  onMessageRejected?: (rejected: { content: string; replyTo: ReplyReference | null; message: string }) => void;
+  onMessageRejected?: (rejected: { content: string; replyTo: ReplyReference | null; turnRefs: TurnReference[] | null; message: string }) => void;
+}
+
+/** What `sendMessage` takes besides the text. */
+export interface SendMessageOptions {
+  permissionMode?: string;
+  priority?: 'now' | 'next' | 'later';
+  images?: Array<{ data: string; mediaType: string }>;
+  imagePaths?: string[];
+  replyTo?: ReplyReference;
+  /** The composer's turn chips; sent as their own field, which the server validates and grants. */
+  turnRefs?: TurnReference[];
 }
 
 interface UseChatReturn {
@@ -156,7 +170,9 @@ interface UseChatReturn {
   backgroundShells: BackgroundShell[];
   killBackgroundShell: (shellId: string) => void;
   findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
-  sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => void;
+  sendMessage: (content: string, opts?: SendMessageOptions) => void;
+  /** The id of the turn the server last said started on this socket (`turn_started`). */
+  currentTurnId: string | null;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
@@ -194,7 +210,7 @@ export function useChat(
 ): UseChatReturn {
   const rejectionObserverRef = useRef(options?.onMessageRejected);
   rejectionObserverRef.current = options?.onMessageRejected;
-  const pendingSendsRef = useRef<Array<{ id: string; content: string; encoded: string; replyTo?: ReplyReference; wasIdle: boolean; streamingContent: string; streamingEvents: ChatEvent[]; finalizedId?: string; originalAssistantId?: string; sentAt: number }>>([]);
+  const pendingSendsRef = useRef<Array<{ id: string; content: string; encoded: string; replyTo?: ReplyReference; turnRefs?: TurnReference[]; wasIdle: boolean; streamingContent: string; streamingEvents: ChatEvent[]; finalizedId?: string; originalAssistantId?: string; sentAt: number }>>([]);
   const sendOrdinalRef = useRef(0);
   const attemptObserverRef = useRef(onAttempt);
   attemptObserverRef.current = onAttempt;
@@ -239,6 +255,7 @@ export function useChat(
   /** MCP servers this session's subprocess reported as needing a sign-in. */
   const [mcpNeedsAuth, setMcpNeedsAuth] = useState<string[]>([]);
   const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
+  const [currentTurnId, setCurrentTurnId] = useState<string | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -972,9 +989,32 @@ export function useChat(
           if (streamingContentRef.current || streamingEventsRef.current.length) syncMessages();
         }
         const decoded = decodeMessageBlocks(pending!.encoded);
-        rejectionObserverRef.current?.({ content: decoded.content, replyTo: decoded.replyTo, message: rejected.message });
+        rejectionObserverRef.current?.({ content: decoded.content, replyTo: decoded.replyTo, turnRefs: decoded.turnRefs, message: rejected.message });
       }
       if (!rejectionObserverRef.current) toast.error(rejected.message || "Message could not be sent");
+      return;
+    }
+
+    // The server took a message this socket sent: adopt its text for the bubble drawn at send.
+    // Every later dedupe (a replay's user message, a history reload) compares by content.
+    if (data.type === "message_accepted") {
+      const { clientMessageId, content } = data;
+      pendingSendsRef.current = pendingSendsRef.current.filter((pending) => pending.id !== clientMessageId);
+      if (typeof content === "string") {
+        setMessages((prev) => prev.some((m) => m.id === clientMessageId && m.content !== content)
+          ? prev.map((m) => (m.id === clientMessageId ? { ...m, content } : m))
+          : prev);
+      }
+      return;
+    }
+
+    // A message this browser sent (or another device of this session) opened or joined a turn.
+    if ((data as any).type === "turn_started") {
+      const { turnId, clientMessageId } = data as unknown as { turnId?: unknown; clientMessageId?: unknown };
+      if (typeof turnId === "string") {
+        setCurrentTurnId(turnId);
+        if (typeof clientMessageId === "string") useTurnBindingStore.getState().bind(clientMessageId, turnId);
+      }
       return;
     }
 
@@ -989,11 +1029,13 @@ export function useChat(
         // Dedupe: a concurrent turn_events replay or REST refetch may already
         // have appended this same turn's user message.
         if (last?.role === "user" && last.content === content) return prev;
+        const clientId = (data as any).clientMessageId;
         return [...prev, {
           id: `user-remote-${Date.now()}`,
           role: "user" as const,
           content,
           timestamp: (data as any).timestamp ?? new Date().toISOString(),
+          ...(typeof clientId === "string" ? { clientId } : {}),
         }];
       });
       return;
@@ -1093,6 +1135,8 @@ export function useChat(
       if (wasIdle && p !== "idle") turnFinalizedRef.current = false;
       setPhase(p);
       phaseRef.current = p;
+      // Turns opened before this socket joined: what a Copy turn link on those messages needs.
+      bindAll(state.turnBindings);
       if (state.sessionTitle) setSessionTitle(state.sessionTitle);
       if (state.model) {
         if (pendingModelRef.current && state.model !== pendingModelRef.current) {
@@ -1304,6 +1348,7 @@ export function useChat(
     // Another session's subprocess saw another MCP state; its session_state brings its own.
     setMcpNeedsAuth([]);
     setTurnStop(null);
+    setCurrentTurnId(null);
     setEffortStatus(undefined);
     // Clear ephemeral pre-compact expansions on session change
     setExpansions(new Map());
@@ -1444,19 +1489,18 @@ export function useChat(
   }), []);
 
   const sendMessage = useCallback(
-    (typed: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => {
+    (typed: string, opts?: SendMessageOptions) => {
       // An attachment-only message is legitimate now that images travel with it: the
       // caller may have nothing to say beyond the picture.
       if (!typed.trim() && !opts?.images?.length) return;
-      // An edited or restored message can arrive with its reply block already encoded. The server
-      // breaks every block marker in the text it is sent, so the reply goes as the field it
-      // validates instead. Only a reply is lifted: turn references are granted solely from the
-      // composer's own chips, never from text that merely looks like a block.
-      const blocks = decodeMessageBlocks(typed);
-      const lifted = blocks.replyTo && !blocks.turnRefs;
-      const content = lifted ? blocks.content : typed;
-      opts = lifted ? { ...opts, replyTo: opts?.replyTo ?? blocks.replyTo ?? undefined } : opts;
-      const encodedContent = encodeMessageBlocks(content, { replyTo: opts?.replyTo });
+      // `typed` is the text alone. A reply and turn references travel only as their own fields,
+      // which the server validates: every edit, restore and re-send path decodes a stored message
+      // and passes its blocks that way. A block that is merely part of the text — pasted from
+      // elsewhere — stays text, here and on the server, which breaks its markers.
+      const content = typed;
+      const turnRefs = opts?.turnRefs?.length ? opts.turnRefs : undefined;
+      // The bubble drawn now; the server's `message_accepted` replaces it with the stored text.
+      const encodedContent = encodeMessageBlocks(content, { replyTo: opts?.replyTo, turnRefs });
       historyActivityRef.current++;
       // Whatever ended the last turn, this message moves the session past it.
       setTurnStop(null);
@@ -1485,10 +1529,12 @@ export function useChat(
         });
       }
 
-      const optimisticId = `user-${Date.now()}-${++sendOrdinalRef.current}`;
+      // Random as well as ordered: `turn_started` hands this id back, and a binding keyed by it
+      // must never match a message another tab sent in the same millisecond.
+      const optimisticId = `user-${Date.now()}-${++sendOrdinalRef.current}-${randomId()}`;
       pendingSendsRef.current = pendingSendsRef.current.filter((pending) => Date.now() - pending.sentAt < 60_000);
-      if (opts?.replyTo) pendingSendsRef.current.push({
-        id: optimisticId, content, encoded: encodedContent, replyTo: opts.replyTo, sentAt: Date.now(),
+      if (opts?.replyTo || turnRefs) pendingSendsRef.current.push({
+        id: optimisticId, content, encoded: encodedContent, replyTo: opts?.replyTo, turnRefs, sentAt: Date.now(),
         wasIdle: !isFollowUp, streamingContent: streamingContentRef.current,
         streamingEvents: [...streamingEventsRef.current],
         finalizedId: isFollowUp ? finalizedId : undefined,
@@ -1502,6 +1548,7 @@ export function useChat(
         ...prev,
         {
           id: optimisticId,
+          clientId: optimisticId,
           role: "user" as const,
           content: encodedContent,
           timestamp: new Date().toISOString(),
@@ -1531,6 +1578,7 @@ export function useChat(
         images: opts?.images,
         imagePaths: opts?.imagePaths,
         replyTo: opts?.replyTo,
+        ...(turnRefs ? { turnRefs } : {}),
         ...turnSettings(),
       }));
     },
@@ -1855,6 +1903,7 @@ export function useChat(
     killBackgroundShell,
     findBackgroundShellByOutput,
     sendMessage,
+    currentTurnId,
     respondToApproval,
     cancelStreaming,
     reconnect,

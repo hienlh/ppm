@@ -87,7 +87,12 @@ export type ChatWsServerMessage =
   | { type: "turn_stop"; stop: import("../shared/turn-stop").TurnStop }
   | { type: "turn_events"; events: unknown[]; streamSeq?: number; truncated?: boolean }
   | { type: "message_rejected"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; turnRefs?: TurnReference[] | null; message: string }
-  | { type: "user_message"; content: string; imageCount?: number; timestamp?: string }
+  /**
+   * A message this socket sent was taken: `content` is the text as stored and as the provider
+   * gets it (blocks encoded, markers in the typed text broken). Sent to the sender only.
+   */
+  | { type: "message_accepted"; clientMessageId: string; content: string }
+  | { type: "user_message"; content: string; clientMessageId?: string; imageCount?: number; timestamp?: string }
   /** An AI tab tool asks this device to open a tab. */
   | TabOpenRequest
   | { type: "title_updated"; title: string }

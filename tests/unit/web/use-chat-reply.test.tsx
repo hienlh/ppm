@@ -42,11 +42,16 @@ it("sends raw body and reply separately while preserving the snapshot in the opt
   expect(decodeReply(chat.messages.at(-1)!.content)).toEqual({ content: "do it", replyTo: reply });
   expect(JSON.parse(send.mock.calls.at(-1)![0] as string)).toMatchObject({ type: "message", content: "do it", replyTo: reply, priority: "later", imagePaths: ["new.png"] });
 });
-it("keeps encoded edits intact and renders a remote echo with its snapshot", async () => {
-  const encoded = encodeReply("edited", reply);
-  await act(async () => chat.sendMessage(encoded));
-  expect(chat.messages.at(-1)!.content).toBe(encoded);
-  // The server breaks block markers in the text it is sent, so the reply travels as its own field.
+it("keeps a reply block that is only part of the typed text as text, and renders a remote echo with its snapshot", async () => {
+  // Pasted from elsewhere: a reply exists only when the caller passes one as the field.
+  const pasted = encodeReply("look at this", reply);
+  await act(async () => chat.sendMessage(pasted));
+  const sent = JSON.parse(send.mock.calls.at(-1)![0] as string);
+  expect(sent).toMatchObject({ type: "message", content: pasted });
+  expect(sent.replyTo).toBeUndefined();
+  expect(decodeReply(chat.messages.at(-1)!.content).replyTo).toBeNull();
+  // An edit passes its decoded blocks explicitly, and they travel as fields.
+  await act(async () => chat.sendMessage("edited", { replyTo: reply }));
   expect(JSON.parse(send.mock.calls.at(-1)![0] as string)).toMatchObject({ type: "message", content: "edited", replyTo: reply });
   await emit({ type: "user_message", content: encodeReply("other device", reply) });
   expect(decodeReply(chat.messages.at(-1)!.content)).toEqual({ content: "other device", replyTo: reply });
@@ -56,7 +61,7 @@ it("removes a rejected optimistic message and returns body and quote for draft r
   await emit({ type: "message_rejected", content: "/clear", replyTo: reply, message: "Cancel reply first" });
   expect(chat.messages).toHaveLength(0);
   expect(chat.phase).toBe("idle");
-  expect(rejected).toEqual([{ content: "/clear", replyTo: reply, message: "Cancel reply first" }]);
+  expect(rejected).toEqual([{ content: "/clear", replyTo: reply, turnRefs: null, message: "Cancel reply first" }]);
 });
 it("keeps an active turn running when its follow-up is rejected", async () => {
   await emit({ type: "phase_changed", phase: "thinking" });

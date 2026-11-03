@@ -9,6 +9,9 @@
 import type { ReplyReference } from "../../../shared/chat-reply";
 import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
 import { ReplyCard } from "./reply-card";
+import { TurnRefChipRow } from "./turn-ref-chip";
+import { CopyTurnLinkButton } from "./copy-turn-link-button";
+import type { ChatMessage } from "../../../types/chat";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileText,
@@ -29,9 +32,11 @@ import { AuthImageThumbnail, isImagePath } from "./message-media";
 const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details", "local-command-caveat"]);
 
 /** User message bubble — full width, collapsible, with system tag badges */
-export function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: {
+export function UserBubble({ content, messageId, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: {
   content: string;
   messageId?: string;
+  /** What names this message's turn, for Copy turn link; without it there is no such action. */
+  turn?: Pick<ChatMessage, "turnId" | "clientId" | "sdkUuid">;
   timestamp: string;
   projectName?: string;
   onFork?: () => void;
@@ -46,7 +51,7 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
   onNavigateVersion?: (sessionId: string) => void;
   versionNavDisabled?: boolean;
 }) {
-  const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo } = useMemo(
+  const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo, turnRefs } = useMemo(
     () => parseUserMessage(content),
     [content],
   );
@@ -82,6 +87,8 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
       isEditing && "ring-2 ring-primary/60 border-primary/40",
     )}>
       {replyTo && <ReplyCard reply={replyTo} onJump={replyAvailable ? () => onJumpToReply?.(replyTo) : undefined} unavailable={!replyAvailable} />}
+      {/* Drawn from the message's own block: no request, and the same size on every render. */}
+      {turnRefs && <TurnRefChipRow refs={turnRefs} currentProject={projectName} />}
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
 
@@ -177,6 +184,9 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
       {/* Action bar below the bubble — timestamp, copy, edit/fork (real user messages only) */}
       {!isSystemContext && (
         <MessageActionBar timestamp={timestamp} content={decodeMessageBlocks(content).content}>
+          {turn && projectName && sessionId && (providerId === "claude" || providerId === "codex") && (
+            <CopyTurnLinkButton message={turn} projectName={projectName} sessionId={sessionId} providerId={providerId} />
+          )}
           {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} touchTarget />}
           {onEdit && (
             <ActionButton

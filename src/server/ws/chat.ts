@@ -1590,6 +1590,8 @@ export const chatWebSocket = {
 
     // Turn references are checked here, where the browser's own fields arrive; only what passes
     // is encoded into the message and granted to this session's AI (see recordTurnGrants below).
+    // An empty list is a composer with no chips, not a malformed reference.
+    if (parsed.type === "message" && Array.isArray(parsed.turnRefs) && parsed.turnRefs.length === 0) parsed.turnRefs = null;
     if (parsed.type === "message" && parsed.turnRefs != null) {
       const projectNames = new Set(configService.get("projects").map((p) => p.name));
       const refs = validateTurnRefs(parsed.turnRefs, (name) => projectNames.has(name));
@@ -1597,6 +1599,17 @@ export const chatWebSocket = {
         const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128 ? parsed.clientMessageId : undefined;
         ws.send(JSON.stringify({ type: "message_rejected", clientMessageId, content: parsed.content, replyTo: parsed.replyTo ?? null, turnRefs: null, message: "Invalid turn reference" }));
         return;
+      }
+      // A built-in command never reaches the AI, so references sent with it would be granted
+      // for nothing; handed back like a reply is, so the composer can show them again.
+      const slash = typeof parsed.content === "string" ? parsed.content.trimStart().match(/^\/(\S+)/) : null;
+      if (slash) {
+        const { isPpmHandled } = await import("../../services/slash-discovery/index.ts");
+        if (isPpmHandled(slash[1]!)) {
+          const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128 ? parsed.clientMessageId : undefined;
+          ws.send(JSON.stringify({ type: "message_rejected", clientMessageId, content: parsed.content, replyTo: parsed.replyTo ?? null, turnRefs: refs, message: "Remove turn references before running a built-in command" }));
+          return;
+        }
       }
       parsed.turnRefs = refs;
     }
@@ -1738,6 +1751,11 @@ export const chatWebSocket = {
       if (parsed.turnRefs?.length) recordTurnGrants(sessionId, parsed.turnRefs);
       // The typed text has its block markers broken, so the only blocks that decode are these.
       parsed.content = encodeMessageBlocks(parsed.content, { turnRefs: parsed.turnRefs, replyTo: parsed.replyTo });
+      // The sender drew its own copy of this message before sending. Hand it the text as it now
+      // stands, so the copy matches the transcript, the echo and a replay byte for byte.
+      if (typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128) {
+        ws.send(JSON.stringify({ type: "message_accepted", clientMessageId: parsed.clientMessageId, content: parsed.content }));
+      }
 
       // Echo the user message to OTHER connected clients (second device/tab).
       // The sender renders it optimistically; without this echo a live-connected
@@ -1746,6 +1764,8 @@ export const chatWebSocket = {
         const echo = JSON.stringify({
           type: "user_message",
           content: parsed.content,
+          // Lets the other device tie this message to the `turn_started` it opens, too.
+          ...(typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128 ? { clientMessageId: parsed.clientMessageId } : {}),
           imageCount: parsed.images?.length ?? 0,
           timestamp: new Date().toISOString(),
         });

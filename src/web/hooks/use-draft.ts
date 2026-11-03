@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api, projectUrl } from "@/lib/api-client";
 import type { ReplyReference } from "../../shared/chat-reply";
+import type { TurnReference } from "../../shared/chat-turn-ref";
 import { decodeMessageBlocks, encodeMessageBlocks } from "../../shared/chat-message-blocks";
 import { getPrepare } from "@/lib/new-chat-prepare-client";
 
@@ -13,6 +14,14 @@ interface DraftState {
   content: string;
   attachments: DraftAttachment[];
   replyTo: ReplyReference | null;
+  /** The composer's resolved turn chips, kept as the message's own block in the stored text. */
+  turnRefs: TurnReference[] | null;
+}
+
+/** What a draft keeps besides its text: the same blocks the message will carry. */
+export interface DraftBlocks {
+  replyTo?: ReplyReference | null;
+  turnRefs?: readonly TurnReference[] | null;
 }
 
 /**
@@ -111,8 +120,8 @@ export function useDraft(projectName: string, sessionId: string | null, tabId?: 
 
   // Debounced save (1s)
   const save = useCallback(
-    (content: string, attachments?: DraftAttachment[], replyTo?: ReplyReference | null) => {
-      const storedContent = encodeMessageBlocks(content, { replyTo: replyTo });
+    (content: string, attachments?: DraftAttachment[], blocks?: DraftBlocks) => {
+      const storedContent = encodeMessageBlocks(content, { replyTo: blocks?.replyTo, turnRefs: blocks?.turnRefs?.length ? blocks.turnRefs : null });
       ++editRevision.current;
       recoveryRef.current.draft = null;
       if (!projectName) return;

@@ -369,6 +369,11 @@ export interface ChatMessage {
   /** That turn's number, counted from the start of the session — compacted segments included. */
   turnN?: number;
   /**
+   * Browser only: the id the sending browser gave a live user message (`clientMessageId`), which
+   * `turn_started` hands back with the turn it opened. Never in history.
+   */
+  clientId?: string;
+  /**
    * A copy of earlier history a Codex compaction wrote back into the thread, not something
    * anyone said at that point. Never a turn, never numbered.
    */
