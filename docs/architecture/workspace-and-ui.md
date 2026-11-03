@@ -112,6 +112,59 @@ A syncing indicator (`session-list-sync-indicator.tsx`, `role="status"`,
 `text-text-dim`) sits in the sidebar's header row and inline after "Recent chats" on the
 welcome panel — no tap target, outside the thumb zone.
 
+## Turn links, chips and the history window
+
+The browser half of [session turn references](ai-chat-and-providers.md#session-turn-references).
+
+**Copy turn link** sits in every user bubble's action bar (`copy-turn-link-button.tsx`). The id
+comes from `message.turnId` (every history path stamps it), else the `turn_started` binding for
+the message's `clientMessageId` (`turn-binding-store.ts`), else `/turns?resolve=<uuid>`; never
+from "the newest turn", which for a queued message is someone else's. A message with no id yet
+shows "Getting link…" (a second click cancels), then "Link ready", and the clipboard is written
+only inside the next click, because a write outside a gesture is refused on plain HTTP. The link
+is the chat's URL plus `?turn=<turnId>`; opening it directly jumps to the turn and drops `?turn=`.
+
+**Chips.** A paste into a composer turns every turn link of a project this PPM has into a chip
+(`use-composer-turn-refs.ts`, `parseTurnLinks`); the origin is ignored, every segment is checked,
+at most 10, duplicates dropped, the rest of the paste inserted as typed. A chip shows a same-size
+skeleton while its turn loads, "No longer available" when it is gone (the send waits on both), the
+provider icon, the session title, "Turn N", and the project's name when it is another project.
+With `read_session_turns` off in Settings → Tools it warns and still sends. A sent bubble draws its
+chips from the message block, with no request; they come back as chips on a draft reload, a
+rejected send, an edit, a fork and an arrow-key recall. A mouse gets a tooltip (prompt line and
+time); a phone gets a 400 ms long press opening a preview sheet, disarmed on `touchcancel`.
+
+**The jump.** A chip calls `openTurnRef`: switch project if needed, open or focus the session's
+tab, and post a request to `chat-jump-store.ts` (which follows Codex renames). `use-chat-turn-jump.ts`
+takes it up once the chat is on screen with its history in. A turn already drawn in the live list
+is pinned there; one that is not loaded opens the **history window** around it.
+
+**History window** (`chat-history-window.tsx`, `use-history-window.ts`, `history-window-model.ts`):
+a container of its own laid over the live list, fed by `/turn-window`, holding at most 30 turns and
+loading 3 at a time at either end as the reader nears it. A separate container, rather than pages
+spliced into the live list, because the live list is bottom-anchored and streams: loading 300 turns
+of history into it to reach one old turn would be the whole transcript, and inserting above a list
+that follows the bottom moves what is being read. The live list stays mounted underneath — hidden
+with `visibility`, `inert` and `aria-hidden`, never `display: none`, so its height, its follow state
+and the TabPool's reshow guard see nothing change — and keeps streaming. A page goes in without
+moving the row being read: the first visible row is measured during render, before commit, and put
+back in a layout effect (`scroll-row-anchor.ts`). The window merges back into the live list once
+the live list holds its last turn whole, and **Back to latest** (`back-to-latest-pill.tsx`, in the
+thumb zone above the composer, with a dot when the live chat moved on) leaves it at once. Rows in
+the window offer Copy and Copy turn link only: a Codex message id is its position in the view that
+parsed it, so Reply, Edit and Fork, which send an id back, stay in the live list.
+
+**The landing pin** (`use-scroll-anchor-pin.ts`): a jump puts the turn 16 px below the top and holds
+it there while images decode, code highlights or cards arrive above it — the chat's scrollers set
+`overflow-anchor: none`, so nothing else would. A ResizeObserver on the content re-measures after
+every layout change, before paint. The pin lets go only on the reader's own input (wheel, touch, a
+scroll key, a press on the scrollbar, or a scroll position it did not write); a hidden tab and the
+offsets `reparenting-tab.tsx` restores when a tab moves panel are ignored for a frame.
+
+`tests/e2e/session-turn-refs-e2e.mjs` measures the landing (16 ± 2 px for 3 s while images arrive
+late), the offset change per window load, a panel split while pinned, and the phone's long press,
+`touchcancel` and pill.
+
 ## File Service & Filtering (Lazy-Load Tree, Palette Index)
 
 **Component:** FileFilterService + API endpoints `/files/list`, `/files/index`, settings endpoints

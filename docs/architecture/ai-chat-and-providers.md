@@ -682,6 +682,68 @@ bundle alongside a recording mock provider on an isolated `PPM_HOME` and port. S
 `PPM_PLAYWRIGHT_MODULE` to an installed Playwright `index.mjs` when it is not a local
 dependency, and optionally `PPM_PLAYWRIGHT_EXECUTABLE` to a Chromium executable.
 
+## Session turn references
+
+One chat can point at, and its AI can read, single turns of other Claude and Codex sessions: the
+person by pasting a turn link (a chip), the AI through three tools. The UI half (chips, the jump,
+the history window) is in [Workspace & UI](workspace-and-ui.md#turn-links-chips-and-the-history-window).
+
+**A turn and its id.** A turn starts at a real prompt and runs to the next one. "Real" is one
+predicate shared by the server index and the browser (`src/shared/user-prompt-kind.ts`): tool
+results, task notifications, `isMeta` continues, compaction summaries, PPM's own retry nudge,
+interrupt markers and local command output never open a turn. The id is provider-native: Claude's
+prompt record `promptId`, or `u:<uuid>` when the record has none; Codex's `turn_id` from
+`task_started`. Numbering (`turnN`) counts from the session's first prompt, across compactions;
+rolled-back Codex turns are left out (`thread_rolled_back.num_turns` counts turns, a steered message
+is part of the turn it joined — `codex-turn-tracker.ts`, shared with the history parser). Every
+history route stamps `turnId` and `turnN` on each message (`stamp-message-turns.ts`), so the chat,
+the Review tab and a chip all say the same number. A live send learns its turn from `turn_started
+{ turnId, clientMessageId }` — Claude from the `UserPromptSubmit` hook's `prompt_id`, Codex from
+`turn/started` — and `session_state.turnBindings` repeats the last 50 to a socket that joins late.
+
+**The turn index** (`src/services/session-turns/`): `session-turn-index.service.ts` resolves a
+session only through `assertSessionInProject` (never `resolveSessionDir`), follows a Codex rename
+(`resolveMigratedSession`), and scans the transcript incrementally (`turn-index-claude.ts`,
+`turn-index-codex.ts`), yielding every 256 lines or 8 ms. `turn-index-cache.ts` keeps scans under an
+LRU (200 entries, 48 MB, detached string copies), shares an in-flight scan and checks a 4 KB
+fingerprint before resuming one. `session-turn-reader.ts` reads chosen turns by byte range (at most
+20 per call, 64 MB each) and answers `stale` when the bytes at a range's ends are no longer that
+turn's. Routes, under a project's `/chat/sessions/:id`: `/turns` (list, `?resolve=<uuid>`),
+`/turns/:turnId` (one turn, with `sessionTitle`; 404 `not_found`, 410 `rolled_back`), and
+`/turn-window` (`chat-turn-window.ts`, the history window's pages).
+
+**The AI's tools** live on the `ppm-tabs` server beside the tab tools, each with its own switch
+under Session history in Settings → Tools (all on by default): `search_sessions` (this project's
+chats, matching only what was written as prose — `search-index-v3.db` keeps tool output in a
+column of its own, `tool_text`, that the AI's search never reads), `list_session_turns` (newest
+first, `offset` goes back) and `read_session_turns` (by `turn_ids`, or `from_turn`/`to_turn`).
+A read renders the prompt, the assistant's text and one `→ Tool arg · ok|error` line per call —
+never raw tool output or thinking — fenced as data (`turn-render.ts`, 60k characters). Calls are
+limited to 20 a minute and 2 in flight per chat (`session-history-rate-limit.ts`).
+
+**Grants: another project is readable only for the exact turns the person sent.** The chat socket
+records each validated `turnRefs` of a browser send in a server-side ledger
+(`turn-grant-ledger.ts`: `<ppm dir>/session-turn-grants/<session>.json`, mode 0600, at most 500,
+looked up under every id the session was known by). Nothing else writes it: a block found in a
+transcript — a compaction summary quoting one, a Jira or schedule message, group chat — grants
+nothing, and every non-browser origin has its block markers broken (`neutralizeBlockMarkers`).
+`turn-access.ts` pins a cross-project read to the ledger's project and refuses a range there.
+
+**The block.** A sent chip travels as `turnRefs` beside the text; the server validates it (at most
+10, `SESSION_ID_RE`/`TURN_ID_RE`, a project PPM has) and encodes it after the body as
+`<ppm-turnrefs-v1>` (`src/shared/chat-turn-ref.ts`), before any reply block
+(`chat-message-blocks.ts`). The header lines name only which turn of which session; title and
+prompt sit escaped in the JSON, so nothing in them can close the block. The bubble draws its chips
+from the block, so a sent chip costs no request.
+
+**Threat model.** The project scope and the ledger guard PPM's tools only. An agent running in
+bypass mode can still read `~/.claude` and `~/.codex` with its own shell; that is accepted, not
+prevented.
+
+`tests/e2e/session-turn-refs-e2e.mjs` covers the whole flow in Chromium against real-shaped
+transcripts (fixture server `tests/e2e/fixtures/session-turn-refs-server.ts`, scripted providers
+that subclass the real ones, generators in `tests/e2e/fixtures/session-turn-refs-transcripts/`).
+
 ## Session changes and review
 
 The bar above the composer (`src/web/components/chat/session-changes-bar.tsx`) lists every
@@ -1139,14 +1201,14 @@ covers the preview's CDN loads and its self-check on their own. Both need intern
 ## PPM's tool switches
 
 Settings → Tools (`tools-settings-section.tsx`) turns each of PPM's own AI tools on or off —
-`open_file`, `open_preview`, `open_url`, `read_terminal`, `run_in_terminal`, `db_query`,
-`open_query`, `db_execute`, in the groups Tabs, Terminal and Database — for Claude and Codex
-alike. Claude's and Codex's built-in tools and MCP servers are not there. The switches are
+`open_file`, `open_preview`, `open_url`, `read_terminal`, `run_in_terminal`, `search_sessions`,
+`list_session_turns`, `read_session_turns`, `db_query`, `open_query`, `db_execute`, in the groups
+Tabs, Terminal, Session history and Database — for Claude and Codex alike. Claude's and Codex's built-in tools and MCP servers are not there. The switches are
 `ai.ppm_tools` (`PUT /api/settings/ai` merges one tool at a time and refuses any other name), and
 `src/shared/ppm-tools.ts` answers for the server and the pane alike: a tool never switched takes
 its default — `open_file` and `open_preview` follow the single switch that came before
 (`ai.tab_tools`, off unless set), every other tool is on. So the `ppm-tabs` server is attached to
-every chat unless all five of its tools are off.
+every chat unless all eight of its tools are off.
 
 A tool server is attached to a chat while one of its tools is on, and `createMcpHttpHandler`'s
 `unavailable` leaves an off tool out of `tools/list` and answers a call to it — from a chat
