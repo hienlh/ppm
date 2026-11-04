@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { accountService, OAuthLinkExpiredError } from "../../services/account.service.ts";
+import { accountService, OAuthLinkExpiredError, canRunInference, isMissingScopeResponse } from "../../services/account.service.ts";
 import { accountSelector } from "../../services/account-selector.service.ts";
 import { pickClaudeAccount } from "../../services/account-pick.service.ts";
 import { updateAccount, getSnapshotHistory } from "../../services/db.service.ts";
@@ -328,6 +328,10 @@ accountsRoutes.post("/test-raw-token", async (c) => {
     if (res.status === 200) return c.json(ok({ status: "valid", code: 200 }));
     if (res.status === 429) return c.json(ok({ status: "valid_rate_limited", code: 429 }));
     const body = await res.text().catch(() => "");
+    // A `claude setup-token` token cannot read its profile but runs chats.
+    if (isMissingScopeResponse(res.status, body) && await canRunInference(token)) {
+      return c.json(ok({ status: "valid_inference_only", code: res.status }));
+    }
     return c.json(ok({ status: "invalid", code: res.status, error: body.slice(0, 300) }));
   } catch (e) {
     return c.json(ok({ status: "error", error: (e as Error).message }));
@@ -363,7 +367,10 @@ accountsRoutes.post("/:id/test-token", async (c) => {
       result.accessToken = { status: "valid_rate_limited", code: 429 };
     } else {
       const body = await res.text().catch(() => "");
-      result.accessToken = { status: "invalid", code: res.status, error: body.slice(0, 300) };
+      // A `claude setup-token` token cannot read its profile but runs chats.
+      result.accessToken = isMissingScopeResponse(res.status, body) && await canRunInference(account.accessToken)
+        ? { status: "valid_inference_only", code: res.status }
+        : { status: "invalid", code: res.status, error: body.slice(0, 300) };
     }
   } catch (e) {
     result.accessToken = { status: "error", error: (e as Error).message };
