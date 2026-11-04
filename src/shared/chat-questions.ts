@@ -2,7 +2,10 @@ export interface ChatQuestion {
   id?: string;
   question: string;
   header?: string;
-  options: { label: string; description?: string }[];
+  /** `preview`: optional text (a plan, a mockup, a snippet) Claude attaches to an option. Claude
+   *  Code shows it beside the list, and Claude writes "see the panel next to the options" — so a
+   *  card that drops it leaves the user answering a question about content they never saw. */
+  options: { label: string; description?: string; preview?: string }[];
   multiSelect?: boolean;
 }
 

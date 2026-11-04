@@ -1,10 +1,12 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import type { ChatQuestion } from "../../../shared/chat-questions";
+import { QuestionOptionPreview, hasOptionPreviews, previewOptionIndex } from "./question-option-preview";
 
 /* ── Types ── */
 export interface QuestionOption {
   label: string;
   description?: string;
+  preview?: string;
 }
 
 export type Question = ChatQuestion;
@@ -158,6 +160,7 @@ export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: 
   const currentQ = questions[form.activeTab];
   const totalOptions = currentQ ? currentQ.options.length + 1 : 0;
   const hasMultiple = questions.length > 1;
+  const hasPreview = !!currentQ && hasOptionPreviews(currentQ.options);
 
   const handleSubmit = useCallback(() => {
     if (!form.allAnswered) return;
@@ -251,8 +254,11 @@ export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: 
           <div className="text-sm text-text-primary select-text">{currentQ.question}</div>
           {currentQ.multiSelect && <div className="text-[11px] text-text-secondary">Select multiple</div>}
 
-          {/* Options */}
-          <div className="flex flex-col gap-1.5">
+          {/* Options, with the preview pane beside them on a wide card and below them on a narrow one.
+              Sized on the card's own width, not the viewport: a chat in a split pane is narrow on a desktop. */}
+          <div className={hasPreview ? "@container" : undefined}>
+          <div className={hasPreview ? "flex flex-col gap-2 @2xl:flex-row @2xl:items-start" : undefined}>
+          <div className={`flex flex-col gap-1.5 ${hasPreview ? "@2xl:w-2/5 @2xl:shrink-0" : ""}`}>
             {currentQ.options.map((opt, oi) => {
               const isSelected = (form.answers[form.activeTab] || []).includes(opt.label);
               const isFocused = kb.focusedOption === oi;
@@ -299,6 +305,15 @@ export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: 
                 onFocus={() => kb.setFocusedOption(totalOptions - 1)}
               />
             </div>
+          </div>
+          {hasPreview && (
+            <div className="@2xl:flex-1 @2xl:min-w-0">
+              <QuestionOptionPreview
+                option={currentQ.options[previewOptionIndex(currentQ.options, kb.focusedOption, form.answers[form.activeTab] ?? [])]}
+              />
+            </div>
+          )}
+          </div>
           </div>
         </div>
       )}

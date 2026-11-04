@@ -1,0 +1,3 @@
+@import "../../../../src/web/styles/globals.css";
+/* The fixture's own Vite root is outside src/web, so Tailwind has to be told where the classes are. */
+@source "../../../../src/web/components/chat";
