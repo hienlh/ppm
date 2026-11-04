@@ -2,8 +2,13 @@
  * Loads the three things the accounts pane needs — usages, account records, and which
  * account is active — and tracks which accounts' numbers just changed.
  *
- * `Promise.allSettled`, not `all`: one endpoint failing (usage often does, it depends on an
- * upstream API) must not blank the whole pane. Each result is applied on its own.
+ * Each result is applied the moment it lands, on its own: one endpoint failing (usage often
+ * does, it depends on an upstream API) must not blank the whole pane, and one that is slow must
+ * not hold back the two that answered.
+ *
+ * The last answer is kept for the next mount. The chat's usage panel is mounted afresh on every
+ * open, so without it the panel opened on "Loading..." every time — and stayed there for as long
+ * as the server took, which while the server was stalled meant most of a minute.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -28,6 +33,17 @@ export interface AccountsData {
   togglingId: string | null;
 }
 
+/** What the last load answered, shown straight away by the next component to mount. */
+const lastLoaded: { usages: AccountUsageEntry[] | null; accounts: AccountInfo[]; activeAccountId: string | null } = {
+  usages: null, accounts: [], activeAccountId: null,
+};
+
+/**
+ * How long a load shows itself as loading. A request still out after this is not abandoned —
+ * it lands when it lands — but the panel stops claiming to load and shows what it has.
+ */
+const LOAD_WAIT_MS = 10_000;
+
 /** Utilisation across all four buckets, as a comparable string. */
 function utilisationKey(entry: AccountUsageEntry): string {
   const u = entry.usage;
@@ -38,14 +54,14 @@ function utilisationKey(entry: AccountUsageEntry): string {
 }
 
 export function useAccountsData(enabled = true): AccountsData {
-  const [usages, setUsages] = useState<AccountUsageEntry[]>([]);
-  const [accounts, setAccounts] = useState<AccountInfo[]>([]);
-  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
-  const [initialLoading, setInitialLoading] = useState(true);
+  const [usages, setUsages] = useState<AccountUsageEntry[]>(() => lastLoaded.usages ?? []);
+  const [accounts, setAccounts] = useState<AccountInfo[]>(() => lastLoaded.accounts);
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(() => lastLoaded.activeAccountId);
+  const [initialLoading, setInitialLoading] = useState(() => lastLoaded.usages === null);
   const [refreshing, setRefreshing] = useState(false);
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
   const [togglingId, setTogglingId] = useState<string | null>(null);
-  const prevUsages = useRef<AccountUsageEntry[]>([]);
+  const prevUsages = useRef<AccountUsageEntry[]>(lastLoaded.usages ?? []);
   const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const reload = useCallback(async () => {
@@ -53,12 +69,7 @@ export function useAccountsData(enabled = true): AccountsData {
     if (isRefresh) setRefreshing(true);
     else setInitialLoading(true);
 
-    const [u, a, active] = await Promise.allSettled([
-      getAllAccountUsages(), getAccounts(), getActiveAccount(),
-    ]);
-
-    if (u.status === "fulfilled") {
-      const next = u.value;
+    const applyUsages = (next: AccountUsageEntry[]) => {
       if (isRefresh) {
         const before = new Map(prevUsages.current.map((e) => [e.accountId, utilisationKey(e)]));
         const changed = new Set(
@@ -71,10 +82,21 @@ export function useAccountsData(enabled = true): AccountsData {
         }
       }
       prevUsages.current = next;
+      lastLoaded.usages = next;
       setUsages(next);
-    }
-    if (a.status === "fulfilled") setAccounts(a.value);
-    if (active.status === "fulfilled") setActiveAccountId(active.value?.id ?? null);
+    };
+
+    const landed = Promise.all([
+      getAllAccountUsages().then(applyUsages),
+      getAccounts().then((a) => { lastLoaded.accounts = a; setAccounts(a); }),
+      getActiveAccount().then((active) => {
+        lastLoaded.activeAccountId = active?.id ?? null;
+        setActiveAccountId(lastLoaded.activeAccountId);
+      }),
+    ].map((p) => p.catch(() => {})));
+    let waited: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([landed, new Promise<void>((done) => { waited = setTimeout(done, LOAD_WAIT_MS); })]);
+    clearTimeout(waited);
 
     setInitialLoading(false);
     setRefreshing(false);

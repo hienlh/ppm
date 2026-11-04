@@ -303,28 +303,28 @@ describe("getCodexPreCompactMessages", () => {
 });
 
 describe("listCodexRollouts (fail-closed cwd filter)", () => {
-  it("returns ONLY rollouts whose session_meta cwd matches the requested dir", () => {
-    const sessions = listCodexRollouts(FIXTURES, PPM_CWD, "codex");
+  it("returns ONLY rollouts whose session_meta cwd matches the requested dir", async () => {
+    const sessions = await listCodexRollouts(FIXTURES, PPM_CWD, "codex");
     const ids = sessions.map((s) => s.id);
     expect(ids).toContain("019eded7-3947-7990-a06e-bf9a29c25f26"); // ppm-cwd fixture
     expect(ids).not.toContain("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"); // D:\ fixture excluded
   });
 
-  it("excludes rollouts from a different cwd", () => {
-    const sessions = listCodexRollouts(FIXTURES, "D:\\other\\project", "codex");
+  it("excludes rollouts from a different cwd", async () => {
+    const sessions = await listCodexRollouts(FIXTURES, "D:\\other\\project", "codex");
     expect(sessions.length).toBe(1);
     expect(sessions[0]!.id).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
   });
 
-  it("returns nothing for an unrelated cwd (fail-closed)", () => {
-    expect(listCodexRollouts(FIXTURES, "/nonexistent/path", "codex")).toEqual([]);
+  it("returns nothing for an unrelated cwd (fail-closed)", async () => {
+    expect(await listCodexRollouts(FIXTURES, "/nonexistent/path", "codex")).toEqual([]);
   });
 
   if (process.platform === "win32") {
-    it("matches cwd case-insensitively on win32", () => {
+    it("matches cwd case-insensitively on win32", async () => {
       // Assert membership, not a count: every rollout sharing this cwd matches,
       // and a fixture added later must not make the case check look broken.
-      const ids = listCodexRollouts(FIXTURES, PPM_CWD.toLowerCase(), "codex").map((s) => s.id);
+      const ids = (await listCodexRollouts(FIXTURES, PPM_CWD.toLowerCase(), "codex")).map((s) => s.id);
       expect(ids).toContain("019eded7-3947-7990-a06e-bf9a29c25f26");
       expect(ids).not.toContain("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
     });
@@ -359,14 +359,14 @@ describe("subagent threads (spawned agents are steps, not sessions)", () => {
   const PARENT_ID = "11111111-1111-4111-8111-111111111111";
   const CHILD_ID = "22222222-2222-4222-8222-222222222222";
 
-  it("excludes a spawned subagent's rollout from the session list", () => {
-    const ids = listCodexRollouts(FIXTURES, PPM_CWD, "codex").map((s) => s.id);
+  it("excludes a spawned subagent's rollout from the session list", async () => {
+    const ids = (await listCodexRollouts(FIXTURES, PPM_CWD, "codex")).map((s) => s.id);
     expect(ids).toContain(PARENT_ID);
     expect(ids).not.toContain(CHILD_ID); // same cwd, but it is one step of the parent
   });
 
-  it("titles a session with its opening prompt instead of a fixed label", () => {
-    const parent = listCodexRollouts(FIXTURES, PPM_CWD, "codex").find((s) => s.id === PARENT_ID);
+  it("titles a session with its opening prompt instead of a fixed label", async () => {
+    const parent = (await listCodexRollouts(FIXTURES, PPM_CWD, "codex")).find((s) => s.id === PARENT_ID);
     expect(parent?.title).toBe("don dep lai codex login service giup minh"); // whitespace collapsed
   });
 
@@ -428,26 +428,26 @@ describe("rollout headers are read from the head of the file, not the whole file
     expect(findRolloutByThreadId(dir, id, PPM_CWD)).toContain("rollout-a.jsonl");
   });
 
-  it("finds a title that only appears megabytes into the transcript", () => {
+  it("finds a title that only appears megabytes into the transcript", async () => {
     const id = "22222222-2222-4333-8444-555555555555";
     write(`rollout-b-${id}.jsonl`, [meta(id), ...filler(600),
       { type: "event_msg", payload: { type: "user_message", message: "Late opening prompt" } }]);
-    expect(listCodexRollouts(dir, PPM_CWD, "codex")[0]?.title).toBe("Late opening prompt");
+    expect((await listCodexRollouts(dir, PPM_CWD, "codex"))[0]?.title).toBe("Late opening prompt");
   });
 
-  it("still ignores an unterminated last line", () => {
+  it("still ignores an unterminated last line", async () => {
     const id = "33333333-2222-4333-8444-555555555555";
     write(`rollout-c-${id}.jsonl`, [meta(id)],
       JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: "half written" } }));
-    expect(listCodexRollouts(dir, PPM_CWD, "codex")[0]?.title).toBe("Codex session");
+    expect((await listCodexRollouts(dir, PPM_CWD, "codex"))[0]?.title).toBe("Codex session");
   });
 
-  it("does not let a multi-byte character split across a slice corrupt the header", () => {
+  it("does not let a multi-byte character split across a slice corrupt the header", async () => {
     const id = "44444444-2222-4333-8444-555555555555";
     // Pads session_meta so a 3-byte character straddles the first slice boundary.
     write(`rollout-d-${id}.jsonl`, [meta(id, { base_instructions: "a".repeat(32_700) + "ệ".repeat(40) }),
       { type: "event_msg", payload: { type: "user_message", message: "Sửa lỗi đăng nhập" } }]);
-    const [session] = listCodexRollouts(dir, PPM_CWD, "codex");
+    const [session] = await listCodexRollouts(dir, PPM_CWD, "codex");
     expect(session?.id).toBe(id);
     expect(session?.title).toBe("Sửa lỗi đăng nhập");
   });

@@ -7,7 +7,8 @@ import { getPpmDir } from "../../services/ppm-dir.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import { parseApplyPatch, changeToToolUse } from "./codex-patch.ts";
 import { mapRolloutItem } from "./codex-rollout-items.ts";
-import { completeLines, parseLine, readRolloutHeader, type RolloutHeader } from "./codex-rollout-header.ts";
+import { completeLines, parseLine, rolloutHeaderReads, type RolloutHeader } from "./codex-rollout-header.ts";
+import { indexedRollouts, indexedRolloutTitle } from "./codex-rollout-index.ts";
 import {
   finalAssistantText, subagentToolResult, subagentToolUse, transcriptToEvents,
   type SubagentTranscript,
@@ -231,44 +232,29 @@ export function* rolloutMessageSteps(text: string, preCompactIndex?: number): Ge
   return messages;
 }
 
-/** First read of a rollout's head: `session_meta` carries the base instructions, measured at 22–27 KB. */
-const HEADER_FIRST_READ_BYTES = 32 * 1024;
-
 /**
  * Read a rollout file's header (session_meta, plus its title when asked) from as little of
- * the file as answers it.
+ * the file as answers it — see `rolloutHeaderReads` for the slices it takes.
  *
  * Reading whole files here is what froze the server: identifying one rollout among thousands
  * read every transcript in full (1.8 GB, over a second of synchronous I/O) whenever no file
- * name matched. The head is read in growing slices instead, and a slice's unterminated last
- * line — possibly a split multi-byte character — is dropped by `completeLines`, so a partial
- * read never parses a partial record.
+ * name matched. This is the synchronous reader, for a single lookup; listing goes through the
+ * asynchronous index in `codex-rollout-index.ts`.
  */
 export function readSessionMeta(
   file: string,
-  opts?: { withTitle?: boolean; titleIf?: (header: RolloutHeader) => boolean },
+  opts?: { withTitle?: boolean },
 ): RolloutHeader | null {
   let fd: number | undefined;
   try {
     fd = openSync(file, "r");
-    const size = fstatSync(fd).size;
-    let buffer = Buffer.alloc(Math.min(size, HEADER_FIRST_READ_BYTES));
-    let filled = 0;
-    while (true) {
-      const read = readSync(fd, buffer, filled, buffer.length - filled, filled);
-      filled += read;
-      // A file that shrank under us reads short; stop rather than wait for bytes that are gone.
-      const eof = filled >= size || read === 0;
-      const header = readRolloutHeader(buffer.toString("utf-8", 0, filled), opts);
-      // A header the caller is about to discard needs no title: most rollouts in a shared
-      // tree belong to other projects, and a title can sit megabytes in, or nowhere at all.
-      const wanted = header && (!opts?.titleIf || opts.titleIf(header));
-      const complete = header && (!opts?.withTitle || !wanted || header.title || header.parentThreadId);
-      if (complete || eof) return header;
-      const grown = Buffer.alloc(Math.min(size, buffer.length * 4));
-      buffer.copy(grown, 0, 0, filled);
-      buffer = grown;
+    const plan = rolloutHeaderReads(fstatSync(fd).size, opts);
+    let step = plan.next();
+    while (!step.done) {
+      const { buffer, offset, length, position } = step.value;
+      step = plan.next(readSync(fd, buffer, offset, length, position));
     }
+    return step.value;
   } catch { /* unreadable file → excluded (fail-closed) */ }
   finally { if (fd !== undefined) closeSync(fd); }
   return null;
@@ -304,44 +290,43 @@ function threadIdFromName(file: string): string | null {
  * task never appears in its own transcript. Its work shows in the parent, on the
  * Agent card for that spawn.
  */
-export function listCodexRollouts(
+export async function listCodexRollouts(
   sessionsDir: string,
   requestedCwd: string,
   providerId: string,
   opts?: { limit?: number; offset?: number },
-): SessionInfo[] {
+): Promise<SessionInfo[]> {
   const target = normPath(requestedCwd);
-  const files = findRolloutFiles(sessionsDir);
-  const sessions: SessionInfo[] = [];
+  const matched: Array<{ file: string; session: SessionInfo }> = [];
 
-  for (const file of files) {
-    const meta = readSessionMeta(file, {
-      withTitle: true,
-      titleIf: (h) => !!h.cwd && !h.parentThreadId && normPath(h.cwd) === target,
-    });
-    if (!meta?.cwd) continue;            // fail-closed: no cwd → exclude
-    if (normPath(meta.cwd) !== target) continue;
-    if (meta.parentThreadId) continue;   // one step of another session, not a session
+  for (const { file, header, mtimeMs } of await indexedRollouts(sessionsDir)) {
+    if (!header?.cwd) continue;          // fail-closed: no cwd → exclude
+    if (normPath(header.cwd) !== target) continue;
+    if (header.parentThreadId) continue; // one step of another session, not a session
 
-    const id = meta.id ?? threadIdFromName(file);
+    const id = header.id ?? threadIdFromName(file);
     if (!id) continue;
 
-    let updatedAt = meta.timestamp;
-    try { updatedAt = statSync(file).mtime.toISOString(); } catch { /* keep meta ts */ }
-
-    sessions.push({
-      id,
-      providerId,
-      title: meta.title ?? "Codex session",
-      createdAt: meta.timestamp ?? new Date().toISOString(),
-      updatedAt,
+    matched.push({
+      file,
+      session: {
+        id,
+        providerId,
+        title: "Codex session",
+        createdAt: header.timestamp ?? new Date().toISOString(),
+        updatedAt: new Date(mtimeMs).toISOString(),
+      },
     });
   }
 
-  sessions.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+  matched.sort((a, b) => (b.session.updatedAt ?? "").localeCompare(a.session.updatedAt ?? ""));
   const offset = opts?.offset ?? 0;
-  const limit = opts?.limit ?? sessions.length;
-  return sessions.slice(offset, offset + limit);
+  const page = matched.slice(offset, offset + (opts?.limit ?? matched.length));
+  // Titles only for the page: one can sit megabytes into a transcript.
+  await Promise.all(page.map(async (m) => {
+    m.session.title = (await indexedRolloutTitle(m.file)) ?? m.session.title;
+  }));
+  return page.map((m) => m.session);
 }
 
 /**

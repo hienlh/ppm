@@ -401,7 +401,7 @@ export class CodexAppServerProvider implements AIProvider {
     const seen = new Set<string>();
     const sessions: SessionInfo[] = [];
     for (const sessionsDir of codexSessionsDirs()) {
-      for (const s of listCodexRollouts(sessionsDir, dir, this.id, opts)) {
+      for (const s of await listCodexRollouts(sessionsDir, dir, this.id, opts)) {
         if (seen.has(s.id)) continue;
         seen.add(s.id);
         sessions.push(s);
