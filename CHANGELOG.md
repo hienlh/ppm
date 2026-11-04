@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.29] - 2026-11-04
+
+### Fixed
+
+- **Links inside an HTML file preview work.** A link that opens a new tab or goes to another site used to do nothing; a PPM address now opens as a PPM tab (a chat link opens the chat) and any other site in a browser tab, and pages can ask with `{ ppm: "open-tab", url }` and get `open-tab-ack` back.
+
 ## [0.23.28] - 2026-11-04
 
 ### Fixed
