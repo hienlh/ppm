@@ -104,7 +104,7 @@ export function deleteAccount(id: string): Promise<void> {
   return api.del(`/api/accounts/${id}`);
 }
 
-export function patchAccount(id: string, updates: { status: string }): Promise<AccountInfo | null> {
+export function patchAccount(id: string, updates: { status?: string; label?: string }): Promise<AccountInfo | null> {
   return api.patch<AccountInfo | null>(`/api/accounts/${id}`, updates);
 }
 

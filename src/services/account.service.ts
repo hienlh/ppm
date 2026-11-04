@@ -88,6 +88,9 @@ export class OAuthLinkExpiredError extends Error {
   }
 }
 
+/** Longest name an account may be given. */
+export const ACCOUNT_LABEL_MAX = 80;
+
 /**
  * Whether Anthropic refused a request because the token lacks a scope, not because it is bad.
  *
@@ -606,6 +609,20 @@ class AccountService {
 
   setDisabled(id: string): void {
     updateAccount(id, { status: "disabled" });
+  }
+
+  /**
+   * The name the user gave this account. Signing in again keeps it unless a new name is typed
+   * in that dialog, so a renamed account stays renamed. Throws on an empty name, because a
+   * card with no label falls back to a slice of its id, which names nothing a person chose.
+   */
+  setLabel(id: string, label: string): Account {
+    const name = label.trim();
+    if (!name) throw new Error("Name cannot be empty");
+    if (name.length > ACCOUNT_LABEL_MAX) throw new Error(`Name is too long (at most ${ACCOUNT_LABEL_MAX} characters)`);
+    if (!getAccountById(id)) throw new Error("Account not found");
+    updateAccount(id, { label: name });
+    return this.toAccount(getAccountById(id)!);
   }
 
   setEnabled(id: string): void {

@@ -404,12 +404,20 @@ accountsRoutes.delete("/:id", (c) => {
   return c.json(ok({ deleted: true }));
 });
 
-/** PATCH /api/accounts/:id — { status: "active" | "disabled" } */
+/** PATCH /api/accounts/:id — { label?: string, status?: "active" | "disabled" } */
 accountsRoutes.patch("/:id", async (c) => {
   const { id } = c.req.param();
-  const body = await c.req.json<{ status?: string }>();
+  const body = await c.req.json<{ status?: string; label?: unknown }>();
+  if (body.label === undefined && body.status === undefined) return c.json(err("label or status required"), 400);
   try {
-    if (body.status === "disabled") {
+    if (body.label !== undefined) {
+      if (typeof body.label !== "string") return c.json(err("label must be a string"), 400);
+      accountService.setLabel(id, body.label);
+      log.info(`account ${id} renamed`);
+    }
+    if (body.status === undefined) {
+      // A rename alone: nothing below applies.
+    } else if (body.status === "disabled") {
       accountService.setDisabled(id);
       // The id is in the path but the new status only in the body, which the access log never reads.
       log.info(`account ${id} disabled`);
