@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.30] - 2026-11-05
+
+### Fixed
+
+- **An AI question now shows the preview Claude attached to its options.** A plan or mockup Claude put "in the panel next to the options" was dropped, leaving only the bare question; it now sits beside the options (below them on a phone, scrolling inside), follows the option you move to, and stays readable on the answered card.
+
 ## [0.23.29] - 2026-11-04
 
 ### Fixed
