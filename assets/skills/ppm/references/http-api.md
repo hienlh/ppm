@@ -385,6 +385,15 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `DELETE /api/settings/themes/:id`
 - `PATCH  /api/settings/themes/:id`
 
+## /api/share-host
+
+- `GET    /api/share-host/status`
+- `GET    /api/share-host/auth`
+- `GET    /api/share-host/zone`
+- `POST   /api/share-host/enabled`
+- `POST   /api/share-host/quick`
+- `POST   /api/share-host/setup`
+
 ## /api/speech
 
 - `GET    /api/speech/status`
@@ -491,4 +500,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.23.24 -->
+<!-- Generated from src/server/routes/ for PPM v0.23.25 -->

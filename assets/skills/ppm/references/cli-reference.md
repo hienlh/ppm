@@ -24,6 +24,7 @@ Register PPM to start automatically on boot
 - `-p, --port <port>` — Override port
 - `-s, --share` — (deprecated) Tunnel is now always enabled
 - `--profile <name>` — DB profile name
+- `--minimal` — Start with chat, files, editor and settings
 
 ### `ppm autostart disable`
 
@@ -741,22 +742,24 @@ Restore the PPM config database from a snapshot
 
 ## `ppm schedule`
 
-Scheduled Claude agents (cron)
+Scheduled Claude agents (cron) and script schedules
 
 **Usage:** `ppm schedule [options] [command]`
 
 ### `ppm schedule add`
 
-Add a scheduled agent. Cron uses local timezone. Do not embed secrets in --prompt.
+Add a scheduled agent (--prompt) or a script schedule (--script). Cron uses local timezone. Do not embed secrets in --prompt.
 
 **Options:**
 - `--name <name>` — Schedule name
-- `--cron <expr>` — Cron expression (local timezone, e.g. "0 7 * * *")
+- `--cron <expr>` — Cron expression (local timezone, e.g. "0 7 * * *"; a script may add seconds first)
 - `--project <nameOrPath>` — Project name or path
 - `--prompt <text>` — Prompt sent to the agent each run
+- `--script <file>` — JavaScript module run each tick, or kept running (needs a running PPM server)
+- `--mode <mode>` — Script mode: tick (on the cron) or always-on (default: `"tick"`)
 - `--permission-mode <mode>` — Permission mode (default: `"bypassPermissions"`)
-- `--max-turns <n>` — Max turns per run
-- `--timeout <ms>` — Timeout per run in ms (default: `"1800000"`)
+- `--max-turns <n>` — Max turns per run (prompt only)
+- `--timeout <ms>` — Timeout per run in ms (default 1800000 for a prompt, 300000 for a script tick)
 - `--disabled` — Create disabled
 
 ### `ppm schedule list`
@@ -802,6 +805,39 @@ Show recent runs for a schedule
 
 **Usage:** `ppm schedule runs [options] <id>`
 
+### `ppm schedule export`
+
+Write a schedule as a shareable template — never its secrets, state or history
+
+**Options:**
+- `-o, --output <file>` — Write to this file instead of standard output
+
+**Usage:** `ppm schedule export [options] <id>`
+
+### `ppm schedule import`
+
+Create a schedule from a template, turned off. Read its code before you trust it.
+
+**Options:**
+- `--project <name>` — Project it runs in
+- `--set <key=value>` — Value of an input (repeatable) (default: `[]`)
+- `--secret <key=value|key=@file>` — Value of a secret input; @file reads it from a file (repeatable) (default: `[]`)
+- `--trust` — I have read this code and trust it to run on this machine
+
+**Usage:** `ppm schedule import [options] <file>`
+
+### `ppm schedule state`
+
+Print a script schedule's state, secrets masked
+
+**Usage:** `ppm schedule state [options] <id>`
+
+### `ppm schedule set-state`
+
+Replace a script schedule's state with a JSON file; the schedule must be off
+
+**Usage:** `ppm schedule set-state [options] <id> <file>`
+
 ## `ppm skills`
 
 Manage and inspect discovered skills & commands
@@ -844,6 +880,7 @@ Show detailed info for a specific skill
 Start the PPM server (background by default)
 
 **Options:**
+- `--minimal` — Minimal workspace: chat, files, editor and settings
 - `-p, --port <port>` — Port to listen on
 - `-s, --share` — (deprecated) Tunnel is now always enabled
 - `--profile <name>` — DB profile name (e.g. 'dev' → ppm.dev.db)
