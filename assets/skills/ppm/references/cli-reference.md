@@ -843,7 +843,7 @@ Replace a script schedule's state with a JSON file; the schedule must be off
 Manage and inspect discovered skills & commands
 
 **Options:**
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0.23.28"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release"`)
 
 **Usage:** `ppm skills [options] [command]`
 
@@ -853,7 +853,7 @@ List all discovered skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0.23.28"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release"`)
 
 ### `ppm skills search`
 
@@ -861,7 +861,7 @@ Fuzzy search skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0.23.28"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release"`)
 
 **Usage:** `ppm skills search [options] <query>`
 
@@ -871,7 +871,7 @@ Show detailed info for a specific skill
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release-0.23.28"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release"`)
 
 **Usage:** `ppm skills info [options] <name>`
 
