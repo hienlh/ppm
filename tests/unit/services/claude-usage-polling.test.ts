@@ -140,6 +140,80 @@ describe("fetch + parse API response", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A `claude setup-token` token: no usage endpoint, figures read from a message's headers
+// ---------------------------------------------------------------------------
+describe("token without the user:profile scope", () => {
+  // Anthropic's real answer to a setup-token on the usage endpoint.
+  const SCOPE_DENIED = JSON.stringify({
+    type: "error",
+    error: { type: "permission_error", message: "OAuth token does not meet scope requirement user:profile" },
+  });
+  const reset5h = Math.floor(Date.now() / 1000) + 3600;
+  const reset7d = Math.floor(Date.now() / 1000) + 6 * 86_400;
+
+  function mockScopeDenied(message: { status: number; headers: Record<string, string> }) {
+    fetchCalls = [];
+    const bodies: unknown[] = [];
+    globalThis.fetch = mock((url: string | URL | Request, init?: RequestInit) => {
+      const authHeader = (init?.headers as Record<string, string>)?.["Authorization"] ?? "";
+      fetchCalls.push({ url: String(url), token: authHeader.replace("Bearer ", "") });
+      if (String(url) === API_USAGE_URL) return Promise.resolve(new Response(SCOPE_DENIED, { status: 403 }));
+      bodies.push(JSON.parse(String(init?.body)));
+      return Promise.resolve(new Response("{}", { status: message.status, headers: message.headers }));
+    }) as any;
+    return bodies;
+  }
+
+  it("reads the 5-hour and weekly figures from a one-token message to the cheapest model", async () => {
+    const id = addOAuthAccount("setup", OAUTH_TOKEN_1);
+    const bodies = mockScopeDenied({
+      status: 200,
+      headers: {
+        "anthropic-ratelimit-unified-5h-utilization": "0.09",
+        "anthropic-ratelimit-unified-5h-reset": String(reset5h),
+        "anthropic-ratelimit-unified-7d-utilization": "0.16",
+        "anthropic-ratelimit-unified-7d-reset": String(reset7d),
+      },
+    });
+
+    await refreshUsageNow();
+
+    expect(fetchCalls.map((c) => c.url)).toEqual([API_USAGE_URL, "https://api.anthropic.com/v1/messages"]);
+    expect(bodies).toEqual([{ model: "claude-haiku-4-5", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }]);
+    const usage = getUsageForAccount(id);
+    expect(usage.session?.utilization).toBeCloseTo(0.09, 2);
+    expect(usage.weekly?.utilization).toBeCloseTo(0.16, 2);
+    expect(new Date(usage.session!.resetsAt).getTime()).toBe(reset5h * 1000);
+    expect(usage.weekly?.windowHours).toBe(168);
+  });
+
+  it("still records the figures when the message itself is refused at the limit", async () => {
+    const id = addOAuthAccount("setup-full", OAUTH_TOKEN_1);
+    mockScopeDenied({
+      status: 429,
+      headers: {
+        "retry-after": "120",
+        "anthropic-ratelimit-unified-5h-utilization": "1.0",
+        "anthropic-ratelimit-unified-5h-reset": String(reset5h),
+      },
+    });
+
+    await refreshUsageNow();
+
+    expect(getUsageForAccount(id).session?.utilization).toBeCloseTo(1, 2);
+  });
+
+  it("does not send a message for a 403 that is not about scope", async () => {
+    addOAuthAccount("forbidden", OAUTH_TOKEN_1);
+    mockUsageError(403);
+
+    await refreshUsageNow();
+
+    expect(fetchCalls.map((c) => c.url)).toEqual([API_USAGE_URL]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 429 handling & cooldown
 // ---------------------------------------------------------------------------
 describe("429 handling", () => {
