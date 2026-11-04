@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Codex turns rejected before starting now clear the streaming state. Text being streamed is labeled “Responding” instead of “Thinking”, and split UTF-8 characters survive the subprocess stream intact.
+
+- Codex image-view calls show previews live and in session history; native local-image attachments are retained when history is loaded.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed

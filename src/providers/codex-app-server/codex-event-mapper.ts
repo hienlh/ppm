@@ -3,6 +3,7 @@ import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import { codexAsyncQuestionEvent } from "./codex-user-input.ts";
 import { changeToToolUse, fileUpdateChanges } from "./codex-patch.ts";
+import { plainCodexPath } from "./codex-rollout-items.ts";
 import { parseSubagentActivity, subagentToolResult, subagentToolUse } from "./codex-subagent-thread.ts";
 
 /** ThreadItem variants that are NOT tool calls (text/metadata). Everything else
@@ -89,6 +90,10 @@ export function itemToToolUse(item: Item): ChatEvent {
   let tool = type;
   let input: unknown = {};
   switch (type) {
+    case "imageView":
+      tool = "Read";
+      input = { file_path: plainCodexPath(item.path) };
+      break;
     case "commandExecution": {
       // Map to PPM's canonical shell tools so the chat UI renders the command
       // (not a raw `commandExecution` JSON blob). Sniff PowerShell vs Bash from
@@ -181,6 +186,8 @@ export function itemToToolResult(item: Item): ChatEvent {
   } else if (type === "dynamicToolCall") {
     output = redactTruncate(item.contentItems ?? "");
     isError = item.success === false;
+  } else if (type === "imageView") {
+    output = plainCodexPath(item.path) ?? "";
   } else if (type === "imageGeneration") {
     // Same reason as the tool_use side: never let the base64 `result` through.
     // Falling to the generic branch below would emit 8 KB of truncated base64

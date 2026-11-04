@@ -26,6 +26,16 @@ from the composer. Nested agent questions are read-only in the parent transcript
 
 ## Codex child stream lifecycle
 
+Rejected `turn/start` requests emit an error and a terminal `done` event before
+releasing queued turns: no `turn/completed` notification follows a turn that
+never started. The JSON-RPC reader preserves UTF-8 characters across pipe chunks.
+
+Codex `imageView` / rollout `ImageView` items map to `Read` cards with decoded
+`file_path` values, using the existing authenticated image preview. Native
+`local_image` user attachments survive history loading as attachment markers;
+their absolute paths use the guarded filesystem endpoint, while PPM uploads
+retain the upload-by-name endpoint for session portability.
+
 App-server notifications with an explicit non-root thread ID are nested agent
 events. They cannot end the root turn, change its active turn ID, rotate its
 account, overwrite root usage, or flush its transcript. Child content stays under

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { basename } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { resolveBunPath } from "../../services/autostart-generator.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import type { JsonRpcResponse, ServerRequest, JsonRpcNotification } from "./codex-protocol.ts";
@@ -73,6 +74,7 @@ function validId(id: unknown): id is number | string {
 export class CodexJsonRpcClient {
   private proc: ChildProcess | null = null;
   private buf = "";
+  private stdoutDecoder = new StringDecoder("utf8");
   private nextId = 1;
   private pending = new Map<number | string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private notifHandler: NotificationHandler = () => {};
@@ -138,7 +140,8 @@ export class CodexJsonRpcClient {
   }
 
   private onStdout(chunk: Buffer): void {
-    this.buf += chunk.toString();
+    // Pipe chunks can split a multi-byte character in a text/thinking delta.
+    this.buf += this.stdoutDecoder.write(chunk);
     let nl: number;
     while ((nl = this.buf.indexOf("\n")) !== -1) {
       const line = this.buf.slice(0, nl).trim();
