@@ -87,6 +87,11 @@ export const CORE_CHILD_VALIDATORS = {
     const href = str(m.href, 2048);
     return href === null ? null : { type: "navigate-blocked" as const, href };
   },
+  /** An HTML file preview asking for a link the person clicked to be opened outside the frame. */
+  "open-link": (m: Raw) => {
+    const href = str(m.href, 2048);
+    return href === null ? null : { type: "open-link" as const, href };
+  },
   /** Posted by the expired-token page, which stands in for the design when its token is dead. */
   expired: () => ({ type: "expired" as const }),
 } satisfies Record<string, Validator<{ type: string }>>;

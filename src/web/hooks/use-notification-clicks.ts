@@ -1,8 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useProjectStore } from "@/stores/project-store";
-import { useTabStore } from "@/stores/tab-store";
-import { hydrateWorkspaceFromServer } from "@/stores/panel-utils";
-import { autoOpenFromUrl, parseUrlState } from "@/hooks/use-url-sync";
+import { ppmUrlState, showProjectTab } from "@/lib/open-ppm-tab";
 import { OPEN_FROM_NOTIFICATION, type OpenFromNotificationMessage } from "../../shared/web-push-payload";
 
 /**
@@ -11,28 +8,13 @@ import { OPEN_FROM_NOTIFICATION, type OpenFromNotificationMessage } from "../../
  * the tab its URL names, as that URL would at boot.
  */
 async function openNotifiedSession(projectName: string, sessionId: string, providerId: string, url: string): Promise<void> {
-  const target = useProjectStore.getState().projects.find((p) => p.name === projectName);
-  if (!target) return;
-  // Without a local copy of the layout, switching would create an empty one and overwrite the saved tabs.
-  if (!localStorage.getItem(`ppm-panels-${target.name}`)) await hydrateWorkspaceFromServer(target.name);
-  useProjectStore.getState().setActiveProject(target);
-  useTabStore.getState().switchProject(target.name);
   // `provider/session` as in a chat URL; without the provider the tab would open as Claude.
   if (sessionId) {
-    autoOpenFromUrl("chat", providerId ? `${providerId}/${sessionId}` : sessionId, target.name);
+    await showProjectTab(projectName, "chat", providerId ? `${providerId}/${sessionId}` : sessionId);
     return;
   }
-  const state = notifiedTab(url);
-  if (state?.tabType && state.projectName === target.name) autoOpenFromUrl(state.tabType, state.tabIdentifier, target.name);
-}
-
-function notifiedTab(url: string): ReturnType<typeof parseUrlState> | null {
-  try {
-    const parsed = new URL(url, window.location.href);
-    return parsed.origin === window.location.origin ? parseUrlState(parsed) : null;
-  } catch {
-    return null;
-  }
+  const state = ppmUrlState(url);
+  await showProjectTab(projectName, state?.projectName === projectName ? state.tabType : null, state?.tabIdentifier ?? null);
 }
 
 /**
