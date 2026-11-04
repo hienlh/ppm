@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.28] - 2026-11-04
+
+### Fixed
+
+- **PPM no longer freezes for up to a minute and a half at a time.** Listing a project's chats read the start of every Codex transcript on disk (thousands of files, across every project) on each request, and the whole server waited for the disk, many times a day; it now remembers what it read, rereads only changed files, and never makes other requests wait.
+- **The usage panel opens straight away.** It shows the numbers it last loaded while fresh ones arrive, instead of "Loading..." on every open, and no longer waits for its slowest request.
+
 ## [0.23.27] - 2026-11-04
 
 ### Changed
