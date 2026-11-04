@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.25] - 2026-11-04
 
 ### Added
 
@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- **A one-year token from `claude setup-token` can be added as a Claude account.** It was refused as an invalid token because it cannot read its profile; PPM now checks that it can run a chat instead. Its usage stays empty, since Anthropic does not let that token read usage.
 - **A long chat made the PPM server read the chat's whole transcript back on every tool call.** To catch a tool result the stream might not carry, PPM looks it up in the transcript once the tools have run, and it took the rest of the very response that asked for the tool as that sign: so on every tool call it read the transcript before the tool had even started, and passed each result on twice. On a 7-day chat with a 1.47 GB transcript that was a full read about every 8 seconds; the server's memory swung between 4.9 and 12.8 GB and requests to PPM timed out while it read. It now waits for Claude's next response, and reads the transcript only when the stream never carried the result. Over three tool calls on a 401 MB transcript, the server's peak memory went from 1,466 MB to 203 MB.
 - **MCP servers a chat had started could outlive it until the machine ran out of memory, and PPM was stopped with every session in it.** Claude starts a chat's MCP servers (Playwright, Slack, …) and stops them when it ends, but some kept running after it, with their browsers. On a machine that chats all day they added up: about 30 by the evening, swap full, and the system's out-of-memory killer stopped PPM, taking every chat, terminal and server started from it. Each Claude process now runs in a process group of its own, and when it exits, whatever it left behind is told to stop and is killed 20 seconds later if it has not. Commands Claude ran in its shell are in groups of their own and keep running, as before. The log names what was left behind and how Claude ended. Not on Windows, which has no process groups.
 - **In Safari, and in every browser on iPhone and iPad, a design canvas and an HTML preview showed the page without its own files.** The page's stylesheets, images and scripts were all refused, so it came out unstyled and the canvas check listed each file as blocked by the Content Security Policy, followed by collapsed elements and page overflow. Newer WebKit builds load those but still refused the page's own requests for its files, which the PowerPoint export reads images with and the canvas check's screenshot needs. The policy now names the page's address with its scheme, which WebKit matches too.
