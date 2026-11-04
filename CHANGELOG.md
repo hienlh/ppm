@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.26] - 2026-11-04
+
+### Added
+
+- **Accounts added from `claude setup-token` show their 5-hour and weekly usage.** That token cannot read the usage page, so PPM reads the figures from a one-token message to Haiku every 5 minutes, which spends a tiny amount of the account's limit.
+
 ## [0.23.25] - 2026-11-04
 
 ### Added
