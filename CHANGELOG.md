@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.27] - 2026-11-04
+
+### Changed
+
+- **Release notes open in a window you can read.** The version chip's popover now has **Read all release notes**, which opens the last 30 releases in a resizable window on a desktop and a near-full-screen sheet on a phone, with the installed version marked.
+
 ## [0.23.26] - 2026-11-04
 
 ### Added
