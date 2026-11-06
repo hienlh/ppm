@@ -28,6 +28,7 @@ import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
 import { ChatReconnectBanner } from "./chat-reconnect-banner";
 import { RunningAgentsBar } from "./running-agents-bar";
+import { LinkedSessionsBar } from "./linked-sessions-bar";
 import { AgentSessionProvider, normalizeProviderId } from "./agent-session-context";
 import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
 import { SessionChangesBar } from "./session-changes-bar";
@@ -1402,6 +1403,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         teamName={primaryTeam}
         teamMembers={teamMembers}
       />
+
+      {/* Sessions this one created, was created by, or exchanged messages with */}
+      <LinkedSessionsBar projectName={projectName} sessionId={sessionId} messages={messages} />
 
       {/* Why the last turn ended, when an error ended it */}
       <TurnStopBar

@@ -2,6 +2,7 @@ import { api } from "./api-client";
 import { clearChatPreparationCache } from "./chat-preparation-cache";
 import { writeChatPreparationSettings } from "./chat-preference-local-cache";
 import type { PpmToolSwitches } from "../../shared/ppm-tools";
+import type { SessionCollabSettings } from "../../shared/session-collab-settings";
 
 export interface OAuthProfileData {
   account?: {
@@ -224,6 +225,8 @@ export interface AISettings {
   share_provider_context?: boolean;
   tab_tools?: boolean;
   ppm_tools?: PpmToolSwitches;
+  /** Always complete in a server answer; a PUT may send any part of it. */
+  session_collab?: Partial<SessionCollabSettings>;
   leftover_processes_idle_minutes?: number;
   providers: Record<string, AIProviderSettings>;
 }

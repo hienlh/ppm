@@ -21,12 +21,20 @@ import { bindAll, useTurnBindingStore } from "@/stores/turn-binding-store";
 import { randomId } from "@/lib/utils";
 import { prefixTokens } from "../../shared/turn-usage";
 import { dbExecuteApprovalInput } from "../../shared/db-ai-tools";
+import { sessionCollabApprovalInput, type SessionCollabApprovalInput } from "../../shared/session-collab";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
 import { useSessionListStore } from "@/stores/session-list-store";
 import { projectRefForName } from "@/stores/session-list-sync-triggers";
 import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary";
 import { replayActiveTurn } from "@/lib/replay-active-turn";
+
+/** The toast a session-collaboration card raises while its chat is not on screen. */
+function collabApprovalToast(input: SessionCollabApprovalInput): string {
+  if (input.kind === "create") return `AI wants to create "${input.title}"`;
+  if (input.kind === "pair_limit") return `Message limit reached with "${input.targetTitle}"`;
+  return `AI wants to message "${input.targetTitle}"`;
+}
 
 /** Slim every Agent/Task card a provider stamped `transcriptAvailable` on, walking
  *  in from the REST history response before it ever reaches React state. */
@@ -696,8 +704,10 @@ export function useChat(
 
       case "approval_request": {
         const dbApproval = dbExecuteApprovalInput(ev.tool, ev.input);
-        // A database change already has its db_execute card in the turn; its approval is only the prompt.
-        if (!dbApproval) upsertStreamingEvent((e) => e.type === "approval_request" && (e as any).requestId === ev.requestId);
+        const collabApproval = sessionCollabApprovalInput(ev.tool, ev.input);
+        // A database change already has its db_execute card in the turn, and a session-tool card its
+        // own: their approval is only the prompt.
+        if (!dbApproval && !collabApproval) upsertStreamingEvent((e) => e.type === "approval_request" && (e as any).requestId === ev.requestId);
         // During turn_events replay, session_state already set the correct
         // pendingApproval — skip re-setting it for historical (already-answered) events
         if (isReplayingRef.current) break;
@@ -714,7 +724,10 @@ export function useChat(
           const sid = sessionIdRef.current;
           const isQuestion = ev.tool === "AskUserQuestion";
           approvalToastRef.current = toast[isQuestion ? "info" : "warning"](
-            isQuestion ? "AI has a question" : dbApproval ? `AI wants to change ${dbApproval.connectionName}` : `${ev.tool} needs permission`,
+            isQuestion ? "AI has a question"
+              : dbApproval ? `AI wants to change ${dbApproval.connectionName}`
+              : collabApproval ? collabApprovalToast(collabApproval)
+              : `${ev.tool} needs permission`,
             {
               description: projectNameRef.current || `Session ${sid.slice(0, 8)}`,
               duration: Infinity,

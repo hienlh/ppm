@@ -6,6 +6,8 @@ import { ShieldAlert } from "@/lib/icons";
 import { dbExecuteApprovalInput } from "../../../shared/db-ai-tools";
 import { QuestionCard, type Question } from "./question-card";
 import { DbExecuteApprovalCard } from "./db-execute-approval-card";
+import { sessionCollabApprovalInput } from "../../../shared/session-collab";
+import { CollabApprovalCard } from "./collab-approval-card";
 
 interface Approval {
   requestId: string;
@@ -19,7 +21,10 @@ type Respond = (requestId: string, approved: boolean, data?: unknown) => void;
 export function PendingApprovalCard({ approval, onRespond }: { approval: Approval; onRespond: Respond }) {
   if (approval.tool === "AskUserQuestion") return <AskUserQuestionCard approval={approval} onRespond={onRespond} />;
   const db = dbExecuteApprovalInput(approval.tool, approval.input);
-  return db ? <DbExecuteApprovalCard requestId={approval.requestId} input={db} /> : <ApprovalCard approval={approval} onRespond={onRespond} />;
+  if (db) return <DbExecuteApprovalCard requestId={approval.requestId} input={db} />;
+  const collab = sessionCollabApprovalInput(approval.tool, approval.input);
+  if (collab) return <CollabApprovalCard requestId={approval.requestId} input={collab} />;
+  return <ApprovalCard approval={approval} onRespond={onRespond} />;
 }
 
 export function ApprovalCard({ approval, onRespond }: { approval: Approval; onRespond: Respond }) {

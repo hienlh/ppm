@@ -20,7 +20,8 @@ import {
 import { cn, basename } from "@/lib/utils";
 import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
-import { parseUserMessage, type SystemTag } from "../../../shared/user-message-parse";
+import { parseUserMessage, type ParsedUserMessage, type SystemTag } from "../../../shared/user-message-parse";
+import { FromSessionBubble } from "./from-session-bubble";
 import type { VersionGroup } from "../../../types/api";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -31,8 +32,7 @@ import { AuthImageThumbnail, isImagePath } from "./message-media";
 /** Detect if tags contain system-injected content (not real user input) */
 const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details", "local-command-caveat"]);
 
-/** User message bubble — full width, collapsible, with system tag badges */
-export function UserBubble({ content, messageId, prompt = true, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: {
+type UserBubbleProps = {
   content: string;
   messageId?: string;
   /** False for a user message that is not a prompt the person sent: its turn chips are not drawn. */
@@ -52,11 +52,37 @@ export function UserBubble({ content, messageId, prompt = true, turn, timestamp,
   versionGroup?: VersionGroup;
   onNavigateVersion?: (sessionId: string) => void;
   versionNavDisabled?: boolean;
+};
+
+/**
+ * A user message: the person's own bubble, or — when another session's AI sent it — the
+ * from-session bubble, which is drawn apart and offers no Edit, Fork or Reply.
+ */
+export function UserBubble(props: UserBubbleProps) {
+  const parsed = useMemo(() => parseUserMessage(props.content), [props.content]);
+  if (parsed.fromSession) {
+    return (
+      <FromSessionBubble
+        from={parsed.fromSession}
+        text={parsed.text}
+        plainContent={decodeMessageBlocks(props.content).content}
+        turnRefs={parsed.turnRefs}
+        turn={props.turn}
+        timestamp={props.timestamp}
+        projectName={props.projectName}
+        sessionId={props.sessionId}
+        providerId={props.providerId}
+      />
+    );
+  }
+  return <OwnUserBubble {...props} parsed={parsed} />;
+}
+
+/** User message bubble — full width, collapsible, with system tag badges */
+function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: UserBubbleProps & {
+  parsed: ParsedUserMessage;
 }) {
-  const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo, turnRefs } = useMemo(
-    () => parseUserMessage(content),
-    [content],
-  );
+  const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo, turnRefs } = parsed;
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
 

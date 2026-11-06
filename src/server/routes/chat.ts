@@ -20,6 +20,7 @@ import { chatSessionTurnsRoutes } from "./chat-session-turns.ts";
 import { chatTurnWindowRoutes } from "./chat-turn-window.ts";
 import { applyTurnStamps, loadTurnLookup, stampSessionTurns } from "../../services/session-turns/stamp-message-turns.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
+import { sessionSpawnLinks } from "../../services/session-collab/session-list-links.ts";
 import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { refreshUsageNow } from "../../services/claude-usage.service.ts";
@@ -220,8 +221,13 @@ chatRoutes.get("/sessions", async (c) => {
     const deduped = merged.filter((s) => { if (seen.has(s.id)) return false; seen.add(s.id); return true; });
     const tagMap = getSessionTags(deduped.map((s) => s.id));
     const designSlugs = getSessionDesignSlugs(deduped.map((s) => s.id));
+    const spawnLinks = sessionSpawnLinks(deduped.map((s) => s.id));
+    // A creator with no title of PPM's own is still named when it is on this page.
+    const pageTitles = new Map(deduped.map((s) => [s.id, s.title]));
     const enriched = deduped.map((s) => ({
       ...s, pinned: pinnedIds.has(s.id), tag: tagMap[s.id] ?? null, designSlug: designSlugs[s.id] ?? null,
+      spawnedBy: spawnLinks[s.id]?.spawnedBy ?? null,
+      parentTitle: spawnLinks[s.id] ? spawnLinks[s.id]!.parentTitle ?? pageTitles.get(spawnLinks[s.id]!.spawnedBy) ?? null : null,
     }));
 
     // Collapse edit-message branch trees: each tree shows a single row (its

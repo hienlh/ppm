@@ -180,6 +180,10 @@ export interface SessionInfo {
   tag?: { id: number; name: string; color: string } | null;
   /** Design this session belongs to; null/absent for an ordinary chat. */
   designSlug?: string | null;
+  /** The session whose AI created this one; null/absent when a person started it. */
+  spawnedBy?: string | null;
+  /** That session's title, when PPM has one for it. */
+  parentTitle?: string | null;
 }
 
 /**

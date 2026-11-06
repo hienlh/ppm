@@ -8,7 +8,10 @@ import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-sett
 import { DB_TOOLS } from "../../../shared/db-ai-tools";
 import { ppmToolOn, TERMINAL_TOOLS, type PpmTool } from "../../../shared/ppm-tools";
 import { SESSION_HISTORY_TOOLS } from "../../../shared/session-history-tools";
+import { SESSION_COLLAB_TOOLS } from "../../../shared/session-collab";
+import type { SessionCollabSettings } from "../../../shared/session-collab-settings";
 import { SectionHeader, SwitchRow } from "./settings-rows";
+import { SessionCollabSettingsControls } from "./session-collab-settings-controls";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -57,6 +60,18 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Change databases",
     note: "Runs a change only after you approve it with PPM's password, once, in one transaction.",
   },
+  create_session: {
+    label: "Create sessions",
+    note: "Opens a new session of this project to hand work to. It shows in your session list, and you can open, chat into or stop it.",
+  },
+  send_to_session: {
+    label: "Message sessions",
+    note: "Sends a message to another session of this project, and can wait for its reply. Only an explicit message reaches another session.",
+  },
+  session_status: {
+    label: "Check sessions",
+    note: "Reads what the linked sessions are doing: running or idle, waiting on you, and the opening of their last answer.",
+  },
 };
 
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [
@@ -71,6 +86,11 @@ const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }>
     title: "Database",
     intro: "On the connections with “Available to the AI chat” on. The AI never sees their passwords.",
     tools: DB_TOOLS,
+  },
+  {
+    title: "Session collaboration",
+    intro: "Sessions of one project opening and messaging each other. Every session an AI creates is an ordinary one you can see, open and stop.",
+    tools: SESSION_COLLAB_TOOLS,
   },
 ];
 
@@ -96,6 +116,16 @@ export function ToolsSettingsSection() {
     setSettings((current) => (current ? { ...current, ppm_tools: { ...current.ppm_tools, [tool]: on } } : current));
     try {
       setSettings(await updateAISettings({ ppm_tools: { [tool]: on } }));
+    } catch (e) {
+      toast.error("Could not save", { description: errorText(e) });
+      await load();
+    }
+  }, [load]);
+
+  const changeCollab = useCallback(async (patch: Partial<SessionCollabSettings>) => {
+    setSettings((current) => (current ? { ...current, session_collab: { ...current.session_collab, ...patch } } : current));
+    try {
+      setSettings(await updateAISettings({ session_collab: patch }));
     } catch (e) {
       toast.error("Could not save", { description: errorText(e) });
       await load();
@@ -131,6 +161,9 @@ export function ToolsSettingsSection() {
               />
             ))}
           </div>
+          {group.tools === SESSION_COLLAB_TOOLS && (
+            <SessionCollabSettingsControls stored={settings.session_collab} onChange={(patch) => void changeCollab(patch)} />
+          )}
         </section>
       ))}
     </div>
