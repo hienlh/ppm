@@ -60,6 +60,7 @@ const PdfPreview = lazy(() => import("./pdf-preview").then((m) => ({ default: m.
 const VideoPreview = lazy(() => import("./video-preview").then((m) => ({ default: m.VideoPreview })));
 const AudioPreview = lazy(() => import("./audio-preview").then((m) => ({ default: m.AudioPreview })));
 const DocxPreview = lazy(() => import("./docx-preview").then((m) => ({ default: m.DocxPreview })));
+const XlsxPreview = lazy(() => import("./xlsx-preview").then((m) => ({ default: m.XlsxPreview })));
 
 function getFileExt(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() ?? "";
@@ -152,6 +153,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const isImage = IMAGE_EXTS.has(ext);
   const isPdf = ext === "pdf";
   const isDocx = ext === "docx";
+  const isXlsx = ext === "xlsx" || ext === "xlsm";
   const isVideo = VIDEO_EXTS.has(ext);
   const isAudio = AUDIO_EXTS.has(ext);
   const isSqlite = SQLITE_EXTS.has(ext);
@@ -370,13 +372,13 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   useEffect(() => {
     if (!projectName || !filePath || !tabId || activeTabId !== tabId || loading || error || !mounted ||
       loadedFile !== `${projectName}:${filePath}` || inlineContent != null || isUntitled || isSqlite || encoding === "base64" ||
-      htmlPreviewVisible || isImage || isPdf || isDocx || isVideo || isAudio || (isMarkdown && mdMode === "preview") || (isCsv && csvMode === "table")) return;
+      htmlPreviewVisible || isImage || isPdf || isDocx || isXlsx || isVideo || isAudio || (isMarkdown && mdMode === "preview") || (isCsv && csvMode === "table")) return;
     const node = mounted.editor.getDomNode();
     const visible = !!node?.isConnected && !!node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
     if (visible) emitOnboardingEvidence({ type: "file-ready", projectName, tabId, visible,
       isRunDocument: /^(readme(?:\..*)?|package\.json)$/i.test(basename(filePath)) });
   }, [onboardingRefresh, projectName, filePath, tabId, activeTabId, loading, error, mounted, loadedFile, inlineContent, isUntitled,
-    isSqlite, encoding, isImage, isPdf, isDocx, isVideo, isAudio, isMarkdown, mdMode, isCsv, csvMode, htmlPreviewVisible]);
+    isSqlite, encoding, isImage, isPdf, isDocx, isXlsx, isVideo, isAudio, isMarkdown, mdMode, isCsv, csvMode, htmlPreviewVisible]);
 
   // Load file content
   useEffect(() => {
@@ -390,7 +392,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     }
     if (!filePath) return;
     if (!isExternalFile && !projectName) return;
-    if (isImage || isPdf || isDocx || isVideo || isAudio) { setLoading(false); return; }
+    if (isImage || isPdf || isDocx || isXlsx || isVideo || isAudio) { setLoading(false); return; }
 
     setLoading(true);
     setError(null);
@@ -418,7 +420,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       });
 
     return () => { cancelled = true; if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [filePath, projectName, isImage, isPdf, isDocx, isExternalFile, isUntitled]);
+  }, [filePath, projectName, isImage, isPdf, isDocx, isXlsx, isExternalFile, isUntitled]);
 
   // Manual reload: re-fetch content from disk (fallback when fs watch misses a change)
   const [refreshing, setRefreshing] = useState(false);
@@ -787,6 +789,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   if (isImage) return <Suspense fallback={<LoadingSpinner />}><ImagePreview filePath={filePath!} projectName={projectName!} /></Suspense>;
   if (isPdf) return <Suspense fallback={<LoadingSpinner />}><PdfPreview filePath={filePath!} projectName={projectName!} /></Suspense>;
   if (isDocx) return <Suspense fallback={<LoadingSpinner />}><DocxPreview filePath={filePath!} projectName={projectName} /></Suspense>;
+  if (isXlsx) return <Suspense fallback={<LoadingSpinner />}><XlsxPreview filePath={filePath!} projectName={projectName} /></Suspense>;
   if (isVideo) return <Suspense fallback={<LoadingSpinner />}><VideoPreview filePath={filePath!} projectName={projectName!} /></Suspense>;
   if (isAudio) return <Suspense fallback={<LoadingSpinner />}><AudioPreview filePath={filePath!} projectName={projectName!} /></Suspense>;
 

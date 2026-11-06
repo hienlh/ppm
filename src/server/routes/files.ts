@@ -1,6 +1,6 @@
 import { searchProjectContent, ProjectSearchError } from "../../services/project-content-search.service";
 import { Hono } from "hono";
-import { resolve, isAbsolute } from "node:path";
+import { resolve, isAbsolute, sep } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { fileService, SecurityError, NotFoundError, ValidationError } from "../../services/file.service.ts";
 import { readSystemFileSync } from "../../services/fs-browse.service.ts";
@@ -11,6 +11,8 @@ import { errorStatus } from "../helpers/error-status.ts";
 import { rangeFileResponse } from "../helpers/range-file-response.ts";
 import { handleMediaProbe, handleMediaTranscode, handleMediaTranscodeStop } from "../helpers/media-route-handlers.ts";
 import mammoth from "mammoth";
+import { XlsxReadError } from "../../services/xlsx/xlsx-reader.ts";
+import { readXlsxPreview } from "../helpers/xlsx-preview.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
@@ -217,6 +219,26 @@ fileRoutes.get("/docx-html", async (c) => {
     const result = await mammoth.convertToHtml({ buffer: Buffer.from(arrayBuf) });
     return c.json(ok({ html: result.value, warnings: result.messages }));
   } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/**
+ * GET /files/xlsx-sheet?path=...&sheet=N — one sheet of a project workbook, for the read-only
+ * preview. The path is held to the project with a separator, as `assertWithinProject` does:
+ * a bare prefix check lets `../<project>-x/` through.
+ */
+fileRoutes.get("/xlsx-sheet", async (c) => {
+  try {
+    const projectPath = resolve(c.get("projectPath"));
+    const filePath = c.req.query("path");
+    if (!filePath) return c.json(err("Missing query parameter: path"), 400);
+    const absPath = resolve(projectPath, filePath);
+    if (!absPath.startsWith(projectPath + sep)) return c.json(err("Access denied"), 403);
+    if (!existsSync(absPath)) return c.json(err("File not found"), 404);
+    return c.json(ok(await readXlsxPreview(absPath, c.req.query("sheet"))));
+  } catch (e) {
+    if (e instanceof XlsxReadError) return c.json(err(e.message), e.status);
     return c.json(err((e as Error).message), errorStatus(e));
   }
 });

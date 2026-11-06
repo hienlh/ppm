@@ -48,7 +48,7 @@ export const TEXT_FILENAMES = new Set([
 
 /** Which viewer an editor tab will render for this file. */
 export type ViewerKind =
-  | "image" | "video" | "audio" | "pdf" | "docx"
+  | "image" | "video" | "audio" | "pdf" | "docx" | "xlsx"
   | "sqlite" | "markdown" | "csv" | "text";
 
 /** Lower-cased extension without the dot; empty string when there is none. */
@@ -70,6 +70,7 @@ export function viewerKindOf(name: string): ViewerKind | null {
   if (AUDIO_EXTS.has(ext)) return "audio";
   if (ext === "pdf") return "pdf";
   if (ext === "docx") return "docx";
+  if (ext === "xlsx" || ext === "xlsm") return "xlsx";
   if (SQLITE_EXTS.has(ext)) return "sqlite";
   if (MARKDOWN_EXTS.has(ext)) return "markdown";
   if (ext === "csv") return "csv";

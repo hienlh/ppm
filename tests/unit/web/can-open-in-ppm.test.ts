@@ -26,6 +26,7 @@ const VIEWER_BRANCHES: { kind: ViewerKind; extensions: string[] }[] = [
   { kind: "markdown", extensions: [...MARKDOWN_EXTS] },
   { kind: "pdf", extensions: ["pdf"] },
   { kind: "docx", extensions: ["docx"] },
+  { kind: "xlsx", extensions: ["xlsx", "xlsm"] },
   { kind: "csv", extensions: ["csv"] },
 ];
 

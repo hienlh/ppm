@@ -11,10 +11,13 @@ import {
   resolvePath,
 } from "../../services/fs-path-guard.service.ts";
 import {
+  assertReadPermitted,
   readSystemFile,
   realPathOrSelf,
   writeSystemFile,
 } from "../../services/fs-ops/fs-ops-read-write.service.ts";
+import { XlsxReadError } from "../../services/xlsx/xlsx-reader.ts";
+import { readXlsxPreview } from "../helpers/xlsx-preview.ts";
 import { makeDir } from "../../services/fs-ops/fs-ops-mutate.service.ts";
 import { runGitInit } from "../../services/fs-ops/fs-git-init.service.ts";
 import { attachmentDisposition } from "../../services/fs-ops/fs-content-disposition.ts";
@@ -193,6 +196,21 @@ fsBrowseRoutes.get("/docx-html", async (c) => {
     const result = await mammoth.convertToHtml({ buffer: Buffer.from(arrayBuf) });
     return c.json(ok({ html: result.value, warnings: result.messages }));
   } catch (e) {
+    const { body, status } = fail(e);
+    return c.json(body, status);
+  }
+});
+
+/** GET /api/fs/xlsx-sheet?path=/some/file.xlsx&sheet=N — one sheet of a workbook outside any project */
+fsBrowseRoutes.get("/xlsx-sheet", async (c) => {
+  try {
+    const filePath = c.req.query("path");
+    if (!filePath) return c.json(err("path is required"), 400);
+    const resolved = resolvePath(filePath);
+    assertReadPermitted(resolved, await realPathOrSelf(resolved));
+    return c.json(ok(await readXlsxPreview(resolved, c.req.query("sheet"))));
+  } catch (e) {
+    if (e instanceof XlsxReadError) return c.json(err(e.message), e.status);
     const { body, status } = fail(e);
     return c.json(body, status);
   }
