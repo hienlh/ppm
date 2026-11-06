@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Project file routes no longer reach a folder next to the project whose name starts the same.** For a project at `/home/u/app`, a path like `../app-secrets/…` passed the check, so viewing a file (raw, probe, transcode, Word preview) could read from `app-secrets`, and an upload could create folders and write files there; such paths are now refused.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed

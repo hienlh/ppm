@@ -8,6 +8,7 @@ import { ok, err } from "../../types/api.ts";
 import type { FileIndexTooLarge } from "../../types/project.ts";
 import { REMOTE_FILE_SEARCH_LIMIT } from "../../shared/file-index-limits.ts";
 import { errorStatus } from "../helpers/error-status.ts";
+import { isInsideProject } from "../helpers/project-path.ts";
 import { rangeFileResponse } from "../helpers/range-file-response.ts";
 import { handleMediaProbe, handleMediaTranscode, handleMediaTranscodeStop } from "../helpers/media-route-handlers.ts";
 import mammoth from "mammoth";
@@ -148,7 +149,7 @@ fileRoutes.get("/raw", (c) => {
 
     // Resolve safely (reuse service's security check)
     const absPath = resolve(projectPath, filePath);
-    if (!absPath.startsWith(projectPath)) {
+    if (!isInsideProject(projectPath, absPath)) {
       return c.json(err("Access denied"), 403);
     }
     if (!existsSync(absPath)) return c.json(err("File not found"), 404);
@@ -174,7 +175,7 @@ function resolveProjectFile(c: { get(k: "projectPath"): string; req: { query(k: 
   const filePath = c.req.query("path");
   if (!filePath) return Response.json(err("Missing query parameter: path"), { status: 400 });
   const absPath = resolve(projectPath, filePath);
-  if (!absPath.startsWith(projectPath)) return Response.json(err("Access denied"), { status: 403 });
+  if (!isInsideProject(projectPath, absPath)) return Response.json(err("Access denied"), { status: 403 });
   if (!existsSync(absPath)) return Response.json(err("File not found"), { status: 404 });
   return absPath;
 }
@@ -210,7 +211,7 @@ fileRoutes.get("/docx-html", async (c) => {
     if (!filePath) return c.json(err("Missing query parameter: path"), 400);
 
     const absPath = resolve(projectPath, filePath);
-    if (!absPath.startsWith(projectPath)) return c.json(err("Access denied"), 403);
+    if (!isInsideProject(projectPath, absPath)) return c.json(err("Access denied"), 403);
     if (!existsSync(absPath)) return c.json(err("File not found"), 404);
 
     const arrayBuf = await Bun.file(absPath).arrayBuffer();
@@ -279,7 +280,7 @@ fileRoutes.post("/upload", async (c) => {
     if (files.length > MAX_UPLOAD_FILES) return c.json(err(`Max ${MAX_UPLOAD_FILES} files per upload`), 400);
 
     const absTargetDir = resolve(projectPath, targetDir);
-    if (!absTargetDir.startsWith(projectPath)) return c.json(err("Access denied"), 403);
+    if (!isInsideProject(projectPath, absTargetDir)) return c.json(err("Access denied"), 403);
     if (!existsSync(absTargetDir)) mkdirSync(absTargetDir, { recursive: true });
 
     const uploaded: { name: string; path: string; size: number }[] = [];
@@ -290,7 +291,7 @@ fileRoutes.post("/upload", async (c) => {
       }
       const safeName = file.name.replace(/[/\\]/g, "_");
       const absPath = resolve(absTargetDir, safeName);
-      if (!absPath.startsWith(projectPath)) return c.json(err("Access denied"), 403);
+      if (!isInsideProject(projectPath, absPath)) return c.json(err("Access denied"), 403);
       await Bun.write(absPath, file);
       uploaded.push({ name: safeName, path: absPath.slice(projectPath.length + 1).split("\\").join("/"), size: file.size });
     }
