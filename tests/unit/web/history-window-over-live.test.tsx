@@ -106,6 +106,21 @@ describe("the history window over the live chat", () => {
     expect(liveScroller().textContent).toContain("Tool Approval Required");
   });
 
+  it("pins a waiting card to the foot of the live list on a phone, and leaves the list alone otherwise", async () => {
+    view = await mount(list(turns(5, 6)));
+    const trailing = () => view!.container.querySelector<HTMLElement>("[data-chat-trailing]");
+    expect(trailing()).toBeNull();
+    expect(liveScroller().className).not.toContain("max-md:flex");
+    await view.rerender(list(turns(5, 6), allow));
+    // The content fills the scroller and the trailing block is pushed to its foot, card last.
+    expect(liveScroller().className).toContain("max-md:flex-col");
+    expect(liveScroller().firstElementChild!.className).toContain("max-md:grow");
+    expect(trailing()!.className).toContain("max-md:mt-auto");
+    expect(trailing()!.querySelector("[data-live-approval]")!.className).toContain("max-md:order-last");
+    // Rows stay in one block, so stretching never makes them flex items.
+    expect(liveScroller().firstElementChild!.children.length).toBe(2);
+  });
+
   it("shows an open question from the running turn above the composer", async () => {
     const asking: ChatMessage = { id: "a6q", role: "assistant", content: "", timestamp: at, events: [
       { type: "tool_use", tool: "RequestUserInput", toolUseId: "item-1", input: { questions: [{ question: "Which branch?", options: [{ label: "main" }] }] } },

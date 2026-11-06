@@ -53,7 +53,14 @@ export const useSessionCollabStore = create<SessionCollabState>((set) => ({
   announced: {},
   pendingApprovals: {},
   sessionCreated: (event) => set((state) => ({
-    announced: { ...state.announced, [event.sessionId]: { title: event.title, providerId: event.providerId, projectName: event.projectName } },
+    announced: {
+      ...state.announced,
+      // The creator is announced too when the event names it, so a bar or badge that never loaded it has its name.
+      ...(event.spawnedBy && event.parentTitle && event.parentProviderId
+        ? { [event.spawnedBy]: { title: event.parentTitle, providerId: event.parentProviderId, projectName: event.projectName } }
+        : {}),
+      [event.sessionId]: { title: event.title, providerId: event.providerId, projectName: event.projectName },
+    },
     // The parent sees the new session as its child, and the child its parent.
     links: event.spawnedBy ? addLink(state.links, event.spawnedBy, event.sessionId, "child") : state.links,
   })),

@@ -60,6 +60,15 @@ describe("CollabApprovalCard", () => {
     expect(view.container.textContent).toContain("run the release");
   });
 
+  it("stacks its answers bottom-up on a phone (main answer nearest the thumb), a row on desktop, 44 px tall", async () => {
+    view = await mount(<CollabApprovalCard requestId="r7" input={create} />);
+    const actions = view.container.querySelector<HTMLElement>("[data-collab-approval-actions]")!;
+    expect(actions.className.split(" ")).toEqual(expect.arrayContaining(["flex-col-reverse", "md:flex-row"]));
+    // The actions close the card, so a card pinned to the foot of the list puts them lowest.
+    expect(actions.nextElementSibling).toBeNull();
+    for (const b of actions.querySelectorAll("button")) expect(b.className).toContain("h-11");
+  });
+
   it("answers over HTTP with the chosen answer", async () => {
     view = await mount(<CollabApprovalCard requestId="r/1" input={create} />);
     await click([...view.container.querySelectorAll("button")].find((b) => b.textContent === "Allow for this session")!);

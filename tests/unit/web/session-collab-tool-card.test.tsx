@@ -5,7 +5,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { installDom, uninstallDom, mount, click, type Mounted } from "../../helpers/react-dom";
 import {
-  sessionCollabToolCall, sessionCollabToolResult, waitEndedText,
+  sessionCollabCardState, sessionCollabToolCall, sessionCollabToolResult, stoppedCallText, waitEndedText,
 } from "../../../src/web/lib/session-collab-tool-call";
 import type { SessionStatus } from "../../../src/shared/session-collab";
 
@@ -60,6 +60,19 @@ describe("sessionCollabToolResult", () => {
   });
 });
 
+describe("sessionCollabCardState", () => {
+  const send = { tool: "send_to_session" as const, sessionId: target, message: "m", wait: true };
+  const status = { tool: "session_status" as const, sessionIds: [] };
+  it("waits, answers, fails, or was stopped", () => {
+    expect(sessionCollabCardState(send, { done: false, isError: false, hasOutput: false })).toBe("waiting");
+    expect(sessionCollabCardState(status, { done: false, isError: false, hasOutput: false })).toBe("running");
+    expect(sessionCollabCardState(send, { done: true, isError: false, hasOutput: true })).toBe("answered");
+    expect(sessionCollabCardState(send, { done: true, isError: true, hasOutput: true })).toBe("error");
+    expect(sessionCollabCardState(send, { done: true, isError: false, hasOutput: false })).toBe("stopped");
+    expect(sessionCollabCardState(status, { done: true, isError: false, hasOutput: false })).toBe("stopped");
+  });
+});
+
 describe("SessionCollabToolCard", () => {
   const send = { tool: "send_to_session" as const, sessionId: target, message: "please review", wait: true };
 
@@ -80,6 +93,28 @@ describe("SessionCollabToolCard", () => {
     const output = JSON.stringify({ delivered: "inserted", status, reply: { replied: false, reason: "timeout" } });
     view = await mount(<SessionCollabToolCard call={send} output={output} isError={false} done projectName="ppm" />);
     expect(view.container.querySelector('[data-collab-no-reply="timeout"]')?.textContent).toBe(waitEndedText("timeout"));
+  });
+
+  it("says the wait was cancelled, not done, when the turn ended with no result (Stop)", async () => {
+    view = await mount(<SessionCollabToolCard call={send} isError={false} done projectName="ppm" />);
+    const line = view.container.querySelector('[data-collab-no-reply="cancelled"]');
+    expect(line?.textContent).toBe(stoppedCallText(send));
+    expect(view.container.textContent).toContain("wait cancelled");
+    expect(view.container.querySelector("[data-collab-waiting]")).toBeNull();
+    expect(view.container.querySelector(".text-success")).toBeNull();
+  });
+
+  it("never shows success for a call without wait that got no result", async () => {
+    const create = { tool: "create_session" as const, title: "Helper", task: "t", wait: false };
+    view = await mount(<SessionCollabToolCard call={create} isError={false} done projectName="ppm" />);
+    expect(view.container.querySelector("[data-collab-no-result]")?.textContent).toBe(stoppedCallText(create));
+    expect(view.container.querySelector("[data-collab-no-reply]")).toBeNull();
+    expect(view.container.querySelector(".text-success")).toBeNull();
+  });
+
+  it("the router passes a stopped turn's completion through as stopped", async () => {
+    view = await mount(<ToolCard completed tool={{ type: "tool_use", tool: "mcp__ppm-sessions__send_to_session", input: { session_id: target, message: "m", wait: true }, toolUseId: "t2" }} projectName="ppm" />);
+    expect(view.container.querySelector('[data-collab-no-reply="cancelled"]')).not.toBeNull();
   });
 
   it("shows the tool's error", async () => {

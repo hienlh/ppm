@@ -189,7 +189,10 @@ or fork. `UserBubble` parses once and routes a message with `fromSession` here; 
 providers' tool names). They show which session was created or messaged with an Open session
 button, "waiting for reply…" while a wait runs, the reply (two lines, expandable, with "Open the
 turn that replied") or why none came, and `session_status`'s list, each row tappable. A result
-that is not the server's JSON is shown as raw text.
+that is not the server's JSON is shown as raw text. A call whose turn ended with no result is
+*stopped*, never a green check: Stop aborts the turn and the CLI never streams the tool's answer
+(the server's `cancelled` outcome included), so a wait reads "Wait cancelled" and any other call
+"The turn ended before this tool answered" (`sessionCollabCardState`).
 
 **The linked-sessions bar** (`linked-sessions-bar.tsx`, under the running-agents bar). Chips with a
 "session" badge, provider, title and a live status — running, idle, needs you, new message — for
@@ -204,7 +207,9 @@ and asks first (a dialog on desktop, a bottom sheet on a phone).
 **The list badge** (`spawned-session-badge.tsx`, in the sidebar's history, the drawer and the chat
 history bar). A mouse gets "Created by <parent>" on hover and opens the parent on click; a touch
 screen opens a sheet with that line and an Open button in the thumb zone. The hit area reaches
-44 px on touch.
+44 px on touch. `session:created` carries the creator's title and provider (`parentTitle`,
+`parentProviderId`), so a child created while the list is open names a creator the list never
+loaded (an older session, past the first page) without a reload.
 
 **The card** (`collab-approval-card.tsx`), in the approval slot and over the history window: an AI
 asking to create a session (title, provider/model, depth and the whole task), two sessions at their
@@ -212,7 +217,11 @@ message limit (*Allow N more*), or a message to a session with more rights (both
 whole message, and a note that *Allow for this session* lasts until PPM restarts). The task or
 message is shown whole, line breaks kept, in a scrolling box with its length, because a preview
 cut short could hide what is being approved. Answers go over HTTP; the card leaves when
-`approval_resolved` reaches every device.
+`approval_resolved` reaches every device. On a phone any card in the live list's approval slot
+(this one, `db_execute`'s, a plain Allow/Deny) is pinned to the foot of the transcript, below
+"thinking…", however short the chat: `message-list.tsx` stretches the scrolled content to the
+scroller's height and pushes the trailing block down, only while a card waits. The collab card
+stacks its answers bottom-up there, the main answer nearest the thumb and Deny furthest.
 
 **Settings → Tools → Session collaboration** holds the three switches, "Ask before creating
 sessions" and the four limits, each number clamped to the server's range before it is saved

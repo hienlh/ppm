@@ -129,6 +129,30 @@ export function waitEndedText(reason: "turn_ended_without_reply" | "timeout" | "
   return "The wait was cancelled.";
 }
 
+/**
+ * Where a card stands. `stopped` is a call the turn finished without an answer to: Stop aborts the
+ * turn, and an aborted CLI never streams the MCP answer (the server's `cancelled` outcome included),
+ * so a finished turn with no result is a call that was cut short — never a success.
+ */
+export type SessionCollabCardState = "running" | "waiting" | "answered" | "error" | "stopped";
+
+export function sessionCollabCardState(
+  call: SessionCollabToolCall,
+  { done, isError, hasOutput }: { done: boolean; isError: boolean; hasOutput: boolean },
+): SessionCollabCardState {
+  if (isError) return "error";
+  if (hasOutput) return "answered";
+  if (done) return "stopped";
+  return call.tool !== SESSION_STATUS_TOOL && call.wait ? "waiting" : "running";
+}
+
+/** What a stopped card says: a wait that was cut short, or a call that never answered. */
+export function stoppedCallText(call: SessionCollabToolCall): string {
+  return call.tool !== SESSION_STATUS_TOOL && call.wait
+    ? "Wait cancelled: the turn was stopped before a reply came."
+    : "The turn ended before this tool answered.";
+}
+
 /** A session's phase and what it waits on, in words. */
 export function sessionStatusText(status: Pick<SessionStatus, "phase" | "waitingFor">): string {
   if (status.waitingFor === "approval") return "Needs approval";

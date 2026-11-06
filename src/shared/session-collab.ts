@@ -231,6 +231,12 @@ export interface SessionCreatedEvent {
   projectName: string;
   title: string;
   spawnedBy: string | null;
+  /**
+   * The creator's title and provider, as the server knows them: a session list that never loaded
+   * the creator (an older session, past its first page) can still say who created this one.
+   */
+  parentTitle?: string | null;
+  parentProviderId?: string | null;
   depth: number;
   /** ISO time. */
   createdAt: string;

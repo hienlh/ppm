@@ -30,6 +30,8 @@ describe("create_session", () => {
     expect(w.deliveries[0]!.fromSession).toMatchObject({ sessionId: PARENT, title: "Parent", projectName: "app" });
     expect(w.starting.has("child-session-1")).toBe(true);
     expect(w.announced).toContain("created:child-session-1");
+    // A list that never loaded the parent still names it on the child's badge.
+    expect(w.createdEvents[0]).toMatchObject({ spawnedBy: PARENT, parentTitle: "Parent", parentProviderId: "claude" });
   });
 
   it("does not ask again after Allow for this session, nor when the user switched asking off", async () => {

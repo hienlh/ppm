@@ -64,7 +64,8 @@ export function CollabApprovalCard({ requestId, input }: { requestId: string; in
         <span>{heading(input)}</span>
       </div>
       <CollabApprovalBody input={input} />
-      <div className="flex flex-col gap-2 md:flex-row">
+      {/* Stacked bottom-up on a phone: the main answer nearest the thumb, Deny furthest from it. */}
+      <div className="flex flex-col-reverse gap-2 md:flex-row" data-collab-approval-actions="">
         {sessionCollabAnswersFor(input.kind).map((choice) => (
           <button
             key={choice}

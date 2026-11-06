@@ -24,6 +24,7 @@ import { ChatWelcome } from "./chat-welcome";
 import { ChatScrollNav } from "./chat-scroll-nav";
 import type { VersionGroup } from "../../../types/api";
 import { GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
+import { cn } from "@/lib/utils";
 import { MessageRows } from "./message-rows";
 import { PendingApprovalCard } from "./message-approval-cards";
 import { HistoryWindowPendingPrompts } from "./history-window-pending-prompts";
@@ -411,6 +412,11 @@ export function MessageList({
   // stick-to-bottom keeps them in view — the card only while that list is the one on screen.
   const liveApproval = inWindow ? null : pendingApproval;
   const hasTrailing = !!liveApproval || isStreaming;
+  // On a phone a waiting card is pinned to the foot of the transcript, its answer buttons last, so
+  // they sit in the thumb zone however short the chat is: the content is stretched to the
+  // scroller's height and the trailing block pushed down. Only while a card waits, so an ordinary
+  // chat keeps its "thinking…" line right under the last message.
+  const dockApproval = !!liveApproval;
 
   // Stable fork handler — avoids new closure per message (preserves MessageBubble memo)
   const handleFork = useCallback((msgContent: string, msgId: string | undefined) => {
@@ -590,12 +596,14 @@ export function MessageList({
       <div
         ref={setScrollRef}
         {...{ [GALLERY_ROOT_ATTR]: "" }}
-        className="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]"
+        className={cn("flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]", dockApproval && "max-md:flex max-md:flex-col")}
         style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", ...(windowView ? { visibility: "hidden" as const } : null) }}
         aria-hidden={windowView ? true : undefined}
         inert={windowView ? true : undefined}
       >
-        <div ref={contentRef as unknown as React.Ref<HTMLDivElement>} className="w-full">
+        <div ref={contentRef as unknown as React.Ref<HTMLDivElement>} className={cn("w-full", dockApproval && "max-md:flex max-md:flex-col max-md:grow")}>
+          {/* One block for the rows, so stretching the content above never turns them into flex items. */}
+          <div>
           {hasMore && <div ref={topSentinelRef} aria-hidden className="h-px" />}
           {autoLoadingCompact && <PreCompactSkeleton />}
           <MessageRows
@@ -625,9 +633,14 @@ export function MessageList({
           {!isStreaming && !pendingApproval && (
             <IdleCacheNotice promptCache={promptCache ?? null} />
           )}
+          </div>
           {hasTrailing && (
-            <div className="px-4 pt-4 pb-4 space-y-4 select-none">
-              {liveApproval && <PendingApprovalCard approval={liveApproval} onRespond={onApprovalResponse} />}
+            <div className={cn("px-4 pt-4 pb-4 flex flex-col gap-4 select-none", dockApproval && "max-md:mt-auto")} data-chat-trailing="">
+              {liveApproval && (
+                <div className="max-md:order-last" data-live-approval="">
+                  <PendingApprovalCard approval={liveApproval} onRespond={onApprovalResponse} />
+                </div>
+              )}
               {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
             </div>
           )}

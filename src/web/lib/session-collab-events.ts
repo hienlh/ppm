@@ -20,15 +20,19 @@ export function handleSessionCollabEvent(event: SessionCollabGlobalEvent): void 
   if (event.type === SESSION_CREATED_EVENT) {
     if (!str(event.sessionId) || !str(event.projectName) || !str(event.providerId)) return;
     const title = str(event.title) ? event.title : "Untitled session";
-    collab.sessionCreated({ ...event, title, spawnedBy: str(event.spawnedBy) ? event.spawnedBy : null });
+    const spawnedBy = str(event.spawnedBy) ? event.spawnedBy : null;
+    // The server names the creator, so the badge is right even when the creator is not loaded here.
+    const announcedParent = spawnedBy && str(event.parentTitle) ? event.parentTitle : null;
+    const parentProviderId = spawnedBy && str(event.parentProviderId) ? event.parentProviderId : null;
+    collab.sessionCreated({ ...event, title, spawnedBy, parentTitle: announcedParent, parentProviderId });
     const project = projectRefForName(event.projectName);
     const list = useSessionListStore.getState();
     const known = list.byProject[projectCacheId(project)]?.sessions ?? [];
-    const parentTitle = event.spawnedBy ? known.find((s) => s.id === event.spawnedBy)?.title ?? null : null;
+    const parentTitle = spawnedBy ? announcedParent ?? known.find((s) => s.id === spawnedBy)?.title ?? null : null;
     const createdAt = str(event.createdAt) ? event.createdAt : new Date().toISOString();
     list.upsertSession(project, {
       id: event.sessionId, providerId: event.providerId, title, projectName: event.projectName,
-      createdAt, updatedAt: createdAt, spawnedBy: event.spawnedBy ?? null, parentTitle,
+      createdAt, updatedAt: createdAt, spawnedBy, parentTitle,
     });
     return;
   }

@@ -85,6 +85,19 @@ describe("global events", () => {
     expect(useSessionCollabStore.getState().links[NEW]![ME]).toEqual(["parent"]);
   });
 
+  it("names the creator from the event when the list never loaded it", () => {
+    const unlisted = "ffffffff-5555-4000-8000-000000000005";
+    const child = "ffffffff-6666-4000-8000-000000000006";
+    handleSessionCollabEvent({
+      type: "session:created", sessionId: child, providerId: "claude", projectName: "ppm", title: "Helper",
+      spawnedBy: unlisted, parentTitle: "Planner", parentProviderId: "codex", depth: 1, createdAt: "2026-11-06T01:00:00.000Z",
+    });
+    const rows = useSessionListStore.getState().byProject[projectCacheId({ name: "ppm", path: "/p" })]!.sessions;
+    expect(rows.some((s) => s.id === unlisted)).toBe(false);
+    expect(rows.find((s) => s.id === child)).toMatchObject({ spawnedBy: unlisted, parentTitle: "Planner" });
+    expect(useSessionCollabStore.getState().announced[unlisted]).toEqual({ title: "Planner", providerId: "codex", projectName: "ppm" });
+  });
+
   it("links the sessions a link change names, and tracks a card until it is resolved", () => {
     handleSessionCollabEvent({ type: "session:link_changed", projectName: "ppm", sessionIds: [ME, PEER] });
     expect(useSessionCollabStore.getState().links[ME]![PEER]).toEqual(["messaged"]);

@@ -101,7 +101,8 @@ async function createReserved(env: CollabEnv, caller: CollabCaller, input: {
   env.persistChild(childId, { title, permissionMode, model, projectName: caller.projectName, projectPath: caller.projectPath });
   env.announceCreated({
     sessionId: childId, providerId, projectName: caller.projectName, title,
-    spawnedBy: caller.sessionId, depth: childDepth, createdAt: new Date().toISOString(),
+    spawnedBy: caller.sessionId, parentTitle: env.title(caller.sessionId) || null, parentProviderId: caller.providerId,
+    depth: childDepth, createdAt: new Date().toISOString(),
   });
   env.announceLinks(caller.projectName, [caller.sessionId, childId]);
   env.pairs.record(caller.sessionId, childId);

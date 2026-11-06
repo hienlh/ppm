@@ -4,12 +4,13 @@
  * that takes the user to that session. `session_status` lists each session it asked about.
  */
 import { useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, Loader2, MessageSquare, Search, UserPlus, XCircle } from "@/lib/icons";
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Loader2, MessageSquare, Search, UserPlus, XCircle } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { useSessionListStore } from "@/stores/session-list-store";
 import { openLinkedSession, providerLabel } from "@/lib/session-collab-client";
 import {
-  sessionCollabToolResult, sessionStatusText, waitEndedText, type SessionCollabToolCall,
+  sessionCollabCardState, sessionCollabToolResult, sessionStatusText, stoppedCallText, waitEndedText,
+  type SessionCollabToolCall,
 } from "@/lib/session-collab-tool-call";
 import { tabToolResultText } from "@/lib/tab-tool-call";
 import type { SessionStatus } from "../../../shared/session-collab";
@@ -48,7 +49,10 @@ export function SessionCollabToolCard({ call, toolUseId, output, isError, done, 
   const known = useKnownSession(targetId);
   const title = result?.title ?? known.title ?? (call.tool === "create_session" ? call.title : undefined);
   const providerId = result?.providerId ?? known.providerId ?? (call.tool === "create_session" ? call.provider : undefined) ?? chat?.providerId;
-  const waiting = !done && !isError && call.tool !== "session_status" && call.wait;
+  const state = sessionCollabCardState(call, { done, isError, hasOutput: output !== undefined });
+  const waiting = state === "waiting";
+  const stopped = state === "stopped";
+  const stoppedWait = stopped && call.tool !== "session_status" && call.wait;
   const reply = result?.reply;
 
   const verb = call.tool === "create_session" ? "Created" : call.tool === "send_to_session" ? "Message to" : "Session status";
@@ -80,9 +84,11 @@ export function SessionCollabToolCard({ call, toolUseId, output, isError, done, 
             {waiting && <span className="text-[10px] text-primary" data-collab-waiting="">waiting for reply…</span>}
             {reply?.replied && <span className="text-[10px] text-success">replied</span>}
             {reply && !reply.replied && <span className="text-[10px] text-warning">no reply</span>}
-            {isError
+            {stopped && <span className="text-[10px] text-warning">{stoppedWait ? "wait cancelled" : "stopped"}</span>}
+            {state === "error"
               ? <XCircle className="size-3.5 text-error" />
-              : done ? <CheckCircle2 className="size-3.5 text-success" /> : <Loader2 className="size-3.5 text-primary animate-spin" />}
+              : stopped ? <AlertCircle className="size-3.5 text-warning" />
+              : state === "answered" ? <CheckCircle2 className="size-3.5 text-success" /> : <Loader2 className="size-3.5 text-primary animate-spin" />}
             {expanded ? <ChevronDown className="size-3 text-text-3" /> : <ChevronRight className="size-3 text-text-3" />}
           </span>
         </button>
@@ -99,6 +105,11 @@ export function SessionCollabToolCard({ call, toolUseId, output, isError, done, 
       </div>
       {isError && rawText && <p className="px-2.5 pb-2 text-error whitespace-pre-wrap break-words select-text">{rawText}</p>}
       {reply && !reply.replied && <p className="px-2.5 pb-2 text-text-subtle" data-collab-no-reply={reply.reason}>{waitEndedText(reply.reason)}</p>}
+      {stopped && (
+        <p className="px-2.5 pb-2 text-text-subtle" {...(stoppedWait ? { "data-collab-no-reply": "cancelled" } : { "data-collab-no-result": "" })}>
+          {stoppedCallText(call)}
+        </p>
+      )}
       {reply?.replied && (
         <ReplyBlock text={reply.text} projectName={project}
           onOpen={targetId ? () => open(targetId, providerId, title, reply.turnId) : undefined} />

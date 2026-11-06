@@ -127,14 +127,26 @@ export async function runSettingsSteps(ctx) {
       const card = p.locator('[data-collab-approval="create"]:visible');
       await card.waitFor({ timeout: 20000 });
       const allow = card.getByRole("button", { name: "Allow once" });
-      await allow.scrollIntoViewIfNeeded();
-      const ab = await allow.boundingBox();
-      assert(ab.height >= 44 && ab.y >= 0 && ab.y + ab.height <= 844, `Allow once is a reachable 44px target (${JSON.stringify(ab)})`);
+      // Measured where the card lands, with no scrolling: the answer has to be in the thumb zone
+      // (the bottom third of the screen) on its own, even in a chat this short.
+      let ab = await allow.boundingBox();
+      await kit.until("the card settled", async () => {
+        await p.waitForTimeout(250);
+        const next = await allow.boundingBox();
+        const settled = next && ab && Math.abs(next.y - ab.y) < 1;
+        ab = next;
+        return settled;
+      }, 5000);
+      assert(ab.height >= 44 && ab.y >= (844 * 2) / 3 && ab.y + ab.height <= 844, `Allow once is a 44px target in the bottom third (${JSON.stringify(ab)})`);
+      for (const name of ["Allow for this session", "Deny"]) {
+        const box = await card.getByRole("button", { name, exact: true }).boundingBox();
+        assert(box.height >= 44 && box.y + box.height <= 844, `${name} is a 44px target on screen (${JSON.stringify(box)})`);
+      }
       await p.screenshot({ path: `${ctx.artifacts}/10d-phone-approval-card.png` });
       await allow.tap();
       const [made] = await ck.answered(from, 1, (c) => c.sessionId === lead.id);
       assert.equal(made.isError, false, made.text);
-      kit.record("10: phone — bubble header and badge sheet button are 44px, the badge opens Created by Planner on tap, the bar collapses to a summary, and the card's Allow once is reachable", { header: hb, sheetButton: ob, allow: ab });
+      kit.record("10: phone — bubble header and badge sheet button are 44px, the badge opens Created by Planner on tap, the bar collapses to a summary, and the card's Allow once is a 44px target in the bottom third", { header: hb, sheetButton: ob, allow: ab });
     } finally {
       ctx.current = page;
       await phone.close();

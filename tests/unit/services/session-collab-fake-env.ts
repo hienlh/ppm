@@ -3,7 +3,9 @@
  * cards and deliveries all live in plain maps, so a test states the world and reads what the tool did.
  */
 import { SESSION_COLLAB_DEFAULTS, type SessionCollabSettings } from "../../../src/shared/session-collab-settings.ts";
-import { permissionRank, type SessionCollabAnswer, type SessionCollabApprovalInput, type SessionDelivery } from "../../../src/shared/session-collab.ts";
+import {
+  permissionRank, type SessionCollabAnswer, type SessionCollabApprovalInput, type SessionCreatedEvent, type SessionDelivery,
+} from "../../../src/shared/session-collab.ts";
 import type { CollabEnv, LiveSessionState } from "../../../src/services/session-collab/collab-context.ts";
 import { createCollabWaits } from "../../../src/services/session-collab/collab-waits.ts";
 import type { DeliverToSessionInput } from "../../../src/server/ws/chat-inject.ts";
@@ -37,6 +39,7 @@ export function fakeEnv(opts: {
   const deliveries: DeliverToSessionInput[] = [];
   const created: string[] = [];
   const announced: string[] = [];
+  const createdEvents: Array<Omit<SessionCreatedEvent, "type">> = [];
   const pairs = new Map<string, { auto: number; extra: number }>();
   const allowCreate = new Set<string>();
   const allowEscalation = new Map<string, number>();
@@ -147,7 +150,7 @@ export function fakeEnv(opts: {
     },
     nameInProvider: () => {},
     currentTurnRef: async () => null,
-    announceCreated: (event) => { announced.push(`created:${event.sessionId}`); },
+    announceCreated: (event) => { announced.push(`created:${event.sessionId}`); createdEvents.push(event); },
     announceLinks: (_project, ids) => { announced.push(`links:${ids.join(",")}`); },
     unread: {
       add: (from, to) => { unread.set(`${from}>${to}`, (unread.get(`${from}>${to}`) ?? 0) + 1); },
@@ -159,7 +162,7 @@ export function fakeEnv(opts: {
       peek: (from, to) => unread.get(`${from}>${to}`) ?? 0,
     },
   };
-  return { env, asked, deliveries, created, announced, starting, waits, reservedSlots: () => reserved };
+  return { env, asked, deliveries, created, announced, createdEvents, starting, waits, reservedSlots: () => reserved };
 }
 
 /** The text of a tool result. */
