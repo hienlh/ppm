@@ -115,8 +115,9 @@ describe("useLinkedSessions seeding", () => {
     try {
       view = await mount(<Probe id={ME} />);
       await settle();
-      useSessionCollabStore.getState().linkChanged({ type: "session:link_changed", projectName: "ppm", sessionIds: [ME, PEER] });
-      await view.rerender(<Probe id={ME} />);
+      await act(async () => {
+        useSessionCollabStore.getState().linkChanged({ type: "session:link_changed", projectName: "ppm", sessionIds: [ME, PEER] });
+      });
       expect(shown()).toBe(`${PEER}:messaged`);
       expect(warn).toHaveBeenCalled();
     } finally {
