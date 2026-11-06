@@ -173,6 +173,50 @@ offsets `reparenting-tab.tsx` restores when a tab moves panel are ignored for a 
 late), the offset change per window load, a panel split while pinned, and the phone's long press,
 `touchcancel` and pill.
 
+## Session collaboration UI
+
+The browser half of [session collaboration](ai-chat-and-providers.md#session-collaboration).
+
+**The incoming bubble** (`from-session-bubble.tsx`). A message another session's AI sent is drawn
+apart from the user's own: on the left, in the `info` colours, headed "From: <title> · <provider>".
+The header is a button (44 px on touch) that opens the sender at the turn the message was sent from
+(`openTurnRef`; the session alone when no turn is known; another project through
+`openSessionAnywhere`). The body is markdown with raw HTML off, the turn-ref chips sit under the
+header, and the actions are Copy and Copy turn link only — there is nothing of the user's to edit
+or fork. `UserBubble` parses once and routes a message with `fromSession` here; no request.
+
+**Tool cards** (`session-collab-tool-card.tsx`, parser `lib/session-collab-tool-call.ts`, for both
+providers' tool names). They show which session was created or messaged with an Open session
+button, "waiting for reply…" while a wait runs, the reply (two lines, expandable, with "Open the
+turn that replied") or why none came, and `session_status`'s list, each row tappable. A result
+that is not the server's JSON is shown as raw text.
+
+**The linked-sessions bar** (`linked-sessions-bar.tsx`, under the running-agents bar). Chips with a
+"session" badge, provider, title and a live status — running, idle, needs you, new message — for
+the session's creator, its children and the sessions it messaged. `use-linked-sessions.ts` seeds
+the links from `GET …/sessions/:id/links` when the chat opens (so a link from before a restart, or
+older than the loaded messages, is there at once), then merges the session list's `spawnedBy`, the
+chat's own messages and `/ws/global`'s `session:created`, `session:link_changed` and
+`session:collab_approval` (`session-collab-store.ts`). On a phone more than one link collapses into
+a summary line that opens a capped list. "Stop all child sessions" shows while a direct child runs
+and asks first (a dialog on desktop, a bottom sheet on a phone).
+
+**The list badge** (`spawned-session-badge.tsx`, in the sidebar's history, the drawer and the chat
+history bar). A mouse gets "Created by <parent>" on hover and opens the parent on click; a touch
+screen opens a sheet with that line and an Open button in the thumb zone. The hit area reaches
+44 px on touch.
+
+**The card** (`collab-approval-card.tsx`), in the approval slot and over the history window: an AI
+asking to create a session (title, provider/model, depth, the first lines of the task), two
+sessions at their message limit (*Allow N more*), or a message to a session with more rights (both
+modes named). Answers go over HTTP; the card leaves when `approval_resolved` reaches every device.
+
+**Settings → Tools → Session collaboration** holds the three switches, "Ask before creating
+sessions" and the four limits, each number clamped to the server's range before it is saved
+(`session-collab-settings-controls.tsx`).
+
+`tests/e2e/session-collab-e2e.mjs` drives all of it in Chromium, desktop and phone.
+
 ## File Service & Filtering (Lazy-Load Tree, Palette Index)
 
 **Component:** FileFilterService + API endpoints `/files/list`, `/files/index`, settings endpoints

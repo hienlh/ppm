@@ -744,6 +744,109 @@ prevented.
 transcripts (fixture server `tests/e2e/fixtures/session-turn-refs-server.ts`, scripted providers
 that subclass the real ones, generators in `tests/e2e/fixtures/session-turn-refs-transcripts/`).
 
+## Session collaboration
+
+A Claude or Codex chat can open another PPM session and message any session of its project. Every
+such "subagent" is an ordinary session: listed, openable, writable and stoppable like one the user
+started. The UI half (the incoming bubble, the linked-sessions bar, the list badge, the card) is in
+[Workspace & UI](workspace-and-ui.md#session-collaboration-ui).
+
+**The tools** are served by `/api/sessions-mcp` (`src/services/session-collab/`), MCP server
+`ppm-sessions` for Claude and `ppm_sessions` for Codex, each tool with its own switch in Settings →
+Tools (on by default):
+
+- `create_session { title, task, provider?, model?, wait? }` — a new session in the caller's own
+  project, on the caller's provider and model unless the AI picks others, under the caller's
+  permission mode (never more; when the mode cannot be told, nothing is created). Its first message
+  is the task, carrying a turn reference to the caller's current turn (Claude callers; a Codex
+  caller's turn id rides in the from-session block instead, so no rollout is located).
+- `send_to_session { session_id, message, wait? }` — any session of the project except the caller
+  and design sessions. A running target reads it inside its turn (Claude takes it from the input
+  stream, Codex steers it), an idle one starts a turn.
+- `session_status { session_ids? }` — phase, what it waits on, title, provider, model, creator, the
+  opening of its last answer and unread replies; the linked sessions by default. Reads only the
+  chat registry and the database, never a transcript.
+
+Only an explicit `send_to_session` reaches another session; a final answer is never forwarded.
+
+**The inject path.** `deliverToSession` (`src/server/ws/chat-inject.ts`) is the server's own door
+into a session: the same registry entry, `user_message` echo, consumer, replay buffer and unread
+marks as a browser send (`ensureSessionEntry` / `submitToSession` in `ws/chat.ts`, shared with the
+socket handler), serialized with browser sends by one per-session lock. It reports truthfully what
+happened — `inserted`, `queued` (the target waits on an approval or is compacting) or `started` —
+resumes a cold session first, never touches a pending approval, and refuses a design session, the
+sender itself and a provider mismatch. No route exposes it. A session the server opened with no
+browser attached is `socketless` and counts as idle between turns, so the warm-process cap and the
+idle release still apply to it.
+
+**Waits** (`collab-waits.ts`). With `wait: true` the call blocks until the target calls
+`send_to_session` back to the caller, the target's turn that read the message ends without a reply,
+the wait times out (Settings, 10 minutes by default, 1–60), or it is cancelled (the caller is
+stopped, the user writes in the waiting session, the session is deleted). A wait is registered
+before delivery, the first of these settles it atomically, and "ended without a reply" counts only
+the turn that read the message (`turn_started` with the delivered message's client id, or after a
+3 s grace when no provider named one). A reply to a waiting sender is that wait's result and is not
+delivered again; a reply after the wait ended is always delivered as a new message, even if that
+restarts a stopped session. The endpoint lifts Bun's 10 s idle timeout for the request
+(`server.timeout(req, 0)`), and each provider's per-server MCP timeout is fixed at the longest wait
+the settings allow plus the card time (`SESSION_COLLAB_TOOLS_TIMEOUT_MS`, 72 min), because a
+running CLI keeps the timeout it started with.
+
+**Limits** (`ai.session_collab`, `src/shared/session-collab-settings.ts`): depth 3 (a user-started
+session is depth 0), 20 automatic messages per session pair (reset when the user writes in either),
+5 AI-created sessions running at once per project (a child counts from its creation until its first
+turn ends), and the wait timeout. Calls are also limited to 30 a minute and 3 in flight per caller
+(`session_status` is exempt from the in-flight cap). Pair counts, grants and "allow for this
+session" flags live in memory and in `<ppm dir>/session-collab/pairs.json`, keyed by canonical id.
+
+**Approvals** (`collab-approval-broker.ts`). Three cards, shown in the asking session's approval
+slot (`approval_request` with tool `ppm:session_collab`) and answered over HTTP at
+`POST /api/sessions-collab/approvals/:requestId { answer }`, never over the chat socket:
+
+- `create` — before every create unless "Ask before creating sessions" is off or the user chose
+  *Allow for this session*. Allow once / Allow for this session / Deny.
+- `pair_limit` — the pair reached its limit; *Allow N more* grants another batch. Allow / Deny only.
+- `escalation` — the target runs with more permissions than the sender (plan < default <
+  acceptEdits < bypassPermissions; an unknown target mode ranks highest). *Allow for this session*
+  is remembered per sender → target.
+
+Messaging an existing session asks nothing else. One card per session at a time, held 10 minutes.
+PPM's approvals share one generalized slot with `db_execute` (`chat-ppm-approvals.ts`). A card
+notifies as `collab_approval` ("Sessions need you"); an AI-created session finishing its turn sends
+no "Chat completed" (a turn stopped by an error still does). `POST /chat/sessions/:id/stop-children`
+stops a session's running direct children, and `GET /chat/sessions/:id/links` lists its creator,
+children and the sessions it messaged.
+
+**The from-session block** (`src/shared/chat-from-session.ts`). A delivered message carries
+`<ppm-from-session-v1>` after the body (then turn refs, then any reply block): the sender's
+canonical id, provider, project, title, turn id and time. Only the server writes one, under the
+trace origin `session`; every other door — the chat socket, drafts, schedules, bots — breaks its
+markers in the text it is handed (`neutralizeBlockMarkers`), and the body itself is neutralized
+before the server encodes it, with a zero-width space before a leading `/` so the text cannot run a
+slash command. The header line the receiving AI reads is rebuilt from the JSON; a block whose two
+disagree stays plain text. Created sessions record `spawned_by`/`spawn_depth` in
+`session_metadata` (copied along when Codex renames a session to its thread id), and every link is
+read and written by canonical id.
+
+**Threat model.**
+- Same project only: a caller resolves from its token to its canonical id and project, and every
+  target must belong to that project. A model-supplied id is never trusted about the caller. Targets
+  are resolved from the registry, then `session_metadata`, then the project's own Claude transcript
+  folder — never by scanning every Codex rollout.
+- The tools are capabilities: a per-session bearer token minted by `chatService.prepareSendOptions`
+  (`session-collab-tokens.ts`), not given to design sessions, revoked when the session is deleted.
+  A tool switched off is left out of `tools/list` and refused at the endpoint.
+- No silent escalation: a child inherits its creator's mode, and a message to a more permissive
+  session asks the user. Design sessions neither call nor receive these tools.
+- As with the turn tools, an agent running in bypass mode can still reach other sessions' files
+  with its own shell; the boundary is what PPM's tools allow, not the OS.
+
+`tests/integration/session-collab-tools.test.ts` drives the real endpoint, registry and database
+with a scripted provider; `tests/e2e/session-collab-e2e.mjs` covers the whole flow in Chromium with
+scripted Claude and Codex providers that call the real endpoint (fixture server
+`tests/e2e/fixtures/session-collab-server.ts`, a fake ntfy server for the notifications), run in the
+capped image built from `tests/e2e/docker/Dockerfile`.
+
 ## Session changes and review
 
 The bar above the composer (`src/web/components/chat/session-changes-bar.tsx`) lists every
@@ -1202,8 +1305,10 @@ covers the preview's CDN loads and its self-check on their own. Both need intern
 
 Settings → Tools (`tools-settings-section.tsx`) turns each of PPM's own AI tools on or off —
 `open_file`, `open_preview`, `open_url`, `read_terminal`, `run_in_terminal`, `search_sessions`,
-`list_session_turns`, `read_session_turns`, `db_query`, `open_query`, `db_execute`, in the groups
-Tabs, Terminal, Session history and Database — for Claude and Codex alike. Claude's and Codex's built-in tools and MCP servers are not there. The switches are
+`list_session_turns`, `read_session_turns`, `db_query`, `open_query`, `db_execute`,
+`create_session`, `send_to_session`, `session_status`, in the groups Tabs, Terminal, Session
+history, Database and Session collaboration (whose limits and "Ask before creating sessions" sit
+under its switches) — for Claude and Codex alike. Claude's and Codex's built-in tools and MCP servers are not there. The switches are
 `ai.ppm_tools` (`PUT /api/settings/ai` merges one tool at a time and refuses any other name), and
 `src/shared/ppm-tools.ts` answers for the server and the pane alike: a tool never switched takes
 its default — `open_file` and `open_preview` follow the single switch that came before
