@@ -2,22 +2,27 @@ import { decodeReply, encodeReply, REPLY_BLOCK_END, REPLY_BLOCK_START, type Repl
 import {
   decodeTurnRefs, encodeTurnRefs, TURN_REFS_BLOCK_END, TURN_REFS_BLOCK_START, type TurnReference,
 } from "./chat-turn-ref";
+import {
+  decodeFromSession, encodeFromSession, FROM_SESSION_BLOCK_END, FROM_SESSION_BLOCK_START, type FromSessionReference,
+} from "./chat-from-session";
 
 /**
  * The structured blocks PPM appends to a user message, in their fixed order: the text the person
- * typed, then a turn-references block, then a reply block. The reply block stays last, so a build
- * that only knows `decodeReply` still finds it.
+ * (or another session's AI) wrote, then a from-session block, then a turn-references block, then a
+ * reply block. The reply block stays last, so a build that only knows `decodeReply` still finds it.
  *
  * Every reader of a stored user message goes through {@link decodeMessageBlocks}, and every writer
  * through {@link encodeMessageBlocks}, which neutralizes the body first: only PPM's own encoder
  * can produce a block that decodes, whatever the text came from — a person, a Jira ticket, a
- * group-chat peer or a schedule.
+ * group-chat peer, a schedule or another session.
  */
 
 export interface MessageBlocks {
   content: string;
   replyTo: ReplyReference | null;
   turnRefs: TurnReference[] | null;
+  /** Set when another PPM session's AI sent the message; only the server encodes one. */
+  fromSession: FromSessionReference | null;
 }
 
 const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
@@ -29,6 +34,7 @@ const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
  */
 const SENTINELS: ReadonlyArray<readonly [string, string]> = [
   REPLY_BLOCK_START, REPLY_BLOCK_END, TURN_REFS_BLOCK_START, TURN_REFS_BLOCK_END,
+  FROM_SESSION_BLOCK_START, FROM_SESSION_BLOCK_END,
 ].map((s) => [s, s.replace("<", `<${ZERO_WIDTH_SPACE}`)] as const);
 
 /**
@@ -46,17 +52,25 @@ export function neutralizeBlockMarkers(text: string): string {
 export function decodeMessageBlocks(content: string): MessageBlocks {
   const reply = decodeReply(content);
   const refs = decodeTurnRefs(reply.content);
-  return { content: refs.content, replyTo: reply.replyTo, turnRefs: refs.turnRefs };
+  const from = decodeFromSession(refs.content);
+  return { content: from.content, replyTo: reply.replyTo, turnRefs: refs.turnRefs, fromSession: from.fromSession };
 }
 
 /**
  * `body` with its blocks, in order. The body is neutralized first, so it must be the text alone —
- * pass `decodeMessageBlocks(stored).content` when re-encoding a stored message.
+ * pass `decodeMessageBlocks(stored).content` when re-encoding a stored message. Text that came from
+ * a browser must never be re-encoded with a `fromSession`: only the server's session tools may say
+ * a message came from another session.
  */
 export function encodeMessageBlocks(
   body: string,
-  blocks?: { turnRefs?: readonly TurnReference[] | null; replyTo?: ReplyReference | null },
+  blocks?: {
+    turnRefs?: readonly TurnReference[] | null;
+    replyTo?: ReplyReference | null;
+    fromSession?: FromSessionReference | null;
+  },
 ): string {
-  const withRefs = encodeTurnRefs(neutralizeBlockMarkers(body), blocks?.turnRefs);
+  const withFrom = encodeFromSession(neutralizeBlockMarkers(body), blocks?.fromSession);
+  const withRefs = encodeTurnRefs(withFrom, blocks?.turnRefs);
   return encodeReply(withRefs, blocks?.replyTo);
 }

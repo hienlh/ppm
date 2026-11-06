@@ -1,0 +1,255 @@
+/**
+ * Sessions that open and message each other: the names, shapes and events the server's
+ * `ppm-sessions` tools and the browser agree on. Every created session is an ordinary PPM session
+ * the user can open, watch, chat into and stop.
+ *
+ * Claude addresses MCP tools as `mcp__<server>__<tool>`; Codex takes the server name from its
+ * config key, where a hyphen is not a safe character. Neither is plain `ppm`, which a user may
+ * already have as an MCP server of their own.
+ */
+import type { SessionPhase } from "../types/api.ts";
+
+export const CREATE_SESSION_TOOL = "create_session";
+export const SEND_TO_SESSION_TOOL = "send_to_session";
+export const SESSION_STATUS_TOOL = "session_status";
+export const SESSION_COLLAB_TOOLS = [CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL] as const;
+export type SessionCollabTool = (typeof SESSION_COLLAB_TOOLS)[number];
+
+export const isSessionCollabTool = (name: unknown): name is SessionCollabTool =>
+  (SESSION_COLLAB_TOOLS as readonly unknown[]).includes(name);
+
+export const CLAUDE_SESSION_COLLAB_MCP_SERVER = "ppm-sessions";
+export const CODEX_SESSION_COLLAB_MCP_SERVER = "ppm_sessions";
+
+// ── Approvals ─────────────────────────────────────────────────────────────
+
+/**
+ * The `tool` of the `approval_request` a create or pair-limit card waits on. Not any provider's
+ * name for a tool, so the chat can tell this approval from a provider's own and draw its own card.
+ */
+export const SESSION_COLLAB_APPROVAL = "ppm:session_collab";
+
+export type SessionCollabApprovalKind = "create" | "pair_limit" | "escalation";
+
+/**
+ * Permission modes from least to most permissive, as PPM names them (`VALID_PERMISSION_MODES` in
+ * `src/types/config.ts`; Codex sessions use the same names).
+ */
+export const PERMISSION_MODE_RANK: Readonly<Record<string, number>> = Object.freeze({
+  plan: 0,
+  default: 1,
+  acceptEdits: 2,
+  bypassPermissions: 3,
+});
+
+/**
+ * How permissive a mode is. Callers pass each session's *effective* mode (its own, else its
+ * provider's configured default). A mode PPM does not know ranks as the most permissive, so an
+ * unknown target is asked about rather than trusted.
+ */
+export function permissionRank(mode: string | null | undefined): number {
+  const rank = mode ? PERMISSION_MODE_RANK[mode] : undefined;
+  return rank ?? PERMISSION_MODE_RANK.bypassPermissions!;
+}
+
+/**
+ * Whether a message from a session in `senderMode` to one in `targetMode` lets the sender's AI
+ * act with more rights than it has: such a send needs the user's approval (`kind: "escalation"`).
+ */
+export const isPermissionEscalation = (senderMode: string | null | undefined, targetMode: string | null | undefined): boolean =>
+  permissionRank(targetMode) > permissionRank(senderMode);
+
+/** An AI asks to create a session; shown in the asking session. */
+export interface SessionCollabCreateApproval {
+  kind: "create";
+  /** The proposed title, already sanitized by the server. */
+  title: string;
+  providerId: string;
+  model: string | null;
+  /** The opening of the task the new session would be given. */
+  taskPreview: string;
+  /** Depth the new session would have (the asking session's depth + 1). */
+  depth: number;
+}
+
+/** Two sessions reached their limit of automatic messages; shown in the sending session. */
+export interface SessionCollabPairLimitApproval {
+  kind: "pair_limit";
+  targetSessionId: string;
+  targetTitle: string;
+  /** Messages sent automatically between the two since the user last wrote in either. */
+  sent: number;
+  limit: number;
+  /** How many more messages allowing grants. */
+  grant: number;
+}
+
+/**
+ * An AI asks to message a session that runs under a more permissive mode than its own; shown in
+ * the sending session. Allowing for this session stops asking for this sender and target.
+ */
+export interface SessionCollabEscalationApproval {
+  kind: "escalation";
+  targetSessionId: string;
+  targetTitle: string;
+  senderMode: string;
+  targetMode: string;
+  /** The opening of the message the sender wants to deliver. */
+  messagePreview: string;
+}
+
+export type SessionCollabApprovalInput =
+  | SessionCollabCreateApproval
+  | SessionCollabPairLimitApproval
+  | SessionCollabEscalationApproval;
+
+/** The approval event held in the asking session's one approval slot. */
+export interface SessionCollabApprovalRequest {
+  type: "approval_request";
+  requestId: string;
+  tool: typeof SESSION_COLLAB_APPROVAL;
+  input: SessionCollabApprovalInput;
+}
+
+/**
+ * The user's answer. `allow_session` on a create card lets this session create without asking
+ * again, and on an escalation card lets this sender message this target without asking again; a
+ * pair-limit card offers `allow_once` (grants `grant` more messages) and `deny` only.
+ */
+export const SESSION_COLLAB_ANSWERS = ["allow_once", "allow_session", "deny"] as const;
+export type SessionCollabAnswer = (typeof SESSION_COLLAB_ANSWERS)[number];
+
+export const isSessionCollabAnswer = (value: unknown): value is SessionCollabAnswer =>
+  (SESSION_COLLAB_ANSWERS as readonly unknown[]).includes(value);
+
+/** Narrows an approval event's input to a session-collaboration one, or null. */
+export function sessionCollabApprovalInput(tool: string, input: unknown): SessionCollabApprovalInput | null {
+  if (tool !== SESSION_COLLAB_APPROVAL || !input || typeof input !== "object") return null;
+  const kind = (input as { kind?: unknown }).kind;
+  return kind === "create" || kind === "pair_limit" || kind === "escalation" ? input as SessionCollabApprovalInput : null;
+}
+
+/** The answers a card of this kind offers. */
+export function sessionCollabAnswersFor(kind: SessionCollabApprovalKind): readonly SessionCollabAnswer[] {
+  return kind === "pair_limit" ? ["allow_once", "deny"] : SESSION_COLLAB_ANSWERS;
+}
+
+// ── Delivery rules ────────────────────────────────────────────────────────
+
+/**
+ * Why a send is refused before anything is asked or delivered. A design session never receives
+ * messages from other sessions; a session never messages itself; the target must be in the
+ * sender's project.
+ */
+export type SessionCollabRefusal = "design_session" | "self" | "other_project" | "not_found" | "depth" | "running_limit";
+
+/**
+ * A reply that arrives after the sender stopped waiting — its wait timed out, or its turn was
+ * stopped — is always delivered to the sender as a new message, starting a turn there (resuming
+ * a stopped session) if none is running. It is never dropped.
+ */
+export const LATE_REPLY_DELIVERY = "new_message" as const;
+
+// ── Status and results ────────────────────────────────────────────────────
+
+/**
+ * What a delivery actually did: `inserted` — handed to the running turn, which reads it at its next
+ * step (Claude's input stream, a Codex steer); `queued` — the target is busy (waiting on the user,
+ * compacting, or a Codex turn that cannot be steered) and it runs as soon as that is over;
+ * `started` — it opened a new turn.
+ */
+export type SessionDelivery = "inserted" | "queued" | "started";
+
+/** One session as `session_status` reports it, and as the linked-sessions bar draws it. */
+export interface SessionStatus {
+  sessionId: string;
+  title: string;
+  providerId: string;
+  model: string | null;
+  phase: SessionPhase;
+  /** What the session is waiting on the user for, if anything. */
+  waitingFor: "approval" | "question" | null;
+  /** The session whose AI created this one, or null when a person did. */
+  spawnedBy: string | null;
+  /** 0 for a session a person started; a created session is its creator's depth + 1. */
+  depth: number;
+  /** The opening of the last answer, at most 300 characters, code fences broken. */
+  lastAssistantText: string | null;
+  /** Messages this session sent to the caller that the caller has not received in a wait. */
+  unreadReplies: number;
+  /** ISO time of the session's last activity, when known. */
+  updatedAt: string | null;
+}
+
+/** How a `wait: true` call ended. */
+export type SessionWaitOutcome =
+  | { replied: true; text: string; turnId?: string; sentAt: string }
+  | { replied: false; reason: "turn_ended_without_reply" | "timeout" | "cancelled" };
+
+export interface CreateSessionResult {
+  sessionId: string;
+  title: string;
+  providerId: string;
+  model: string | null;
+  status: SessionStatus;
+  reply?: SessionWaitOutcome;
+}
+
+export interface SendToSessionResult {
+  delivered: SessionDelivery;
+  status: SessionStatus;
+  reply?: SessionWaitOutcome;
+}
+
+export interface SessionStatusResult {
+  sessions: SessionStatus[];
+}
+
+// ── Links ─────────────────────────────────────────────────────────────────
+
+export type SessionLinkRelation = "parent" | "child" | "messaged";
+
+/** Another session linked to one: its creator, a session it created, or one it exchanged messages with. */
+export interface SessionLink {
+  sessionId: string;
+  relations: SessionLinkRelation[];
+}
+
+// ── Global events (`/ws/global`) ──────────────────────────────────────────
+
+export const SESSION_CREATED_EVENT = "session:created";
+export const SESSION_LINK_CHANGED_EVENT = "session:link_changed";
+export const SESSION_COLLAB_APPROVAL_EVENT = "session:collab_approval";
+
+/** A session tool created a session: session lists refresh without a reload. */
+export interface SessionCreatedEvent {
+  type: typeof SESSION_CREATED_EVENT;
+  sessionId: string;
+  providerId: string;
+  projectName: string;
+  title: string;
+  spawnedBy: string | null;
+  depth: number;
+  /** ISO time. */
+  createdAt: string;
+}
+
+/** The links of these sessions changed (a spawn, a first message between two sessions). */
+export interface SessionLinkChangedEvent {
+  type: typeof SESSION_LINK_CHANGED_EVENT;
+  projectName: string;
+  sessionIds: string[];
+}
+
+/** A create or pair-limit card appeared in, or left, a session. */
+export interface SessionCollabApprovalEvent {
+  type: typeof SESSION_COLLAB_APPROVAL_EVENT;
+  projectName: string;
+  sessionId: string;
+  requestId: string;
+  state: "pending" | "resolved";
+  input?: SessionCollabApprovalInput;
+  answer?: SessionCollabAnswer;
+}
+
+export type SessionCollabGlobalEvent = SessionCreatedEvent | SessionLinkChangedEvent | SessionCollabApprovalEvent;

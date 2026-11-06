@@ -14,6 +14,7 @@
  */
 import { parseUserMessage, toComposerDraft } from "./user-message-parse.ts";
 import { stripSharedContext } from "./provider-context.ts";
+import { decodeMessageBlocks } from "./chat-message-blocks.ts";
 
 /**
  * What PPM sends to resume a turn a crash or a transient error cut short. The CLI writes it as an
@@ -54,6 +55,13 @@ export interface PromptMessageLike {
  */
 export function promptTextOf(content: string): string | null {
   const stripped = stripSharedContext(content);
+  // Another session's AI sent this through PPM: it opens a turn exactly as a typed prompt does,
+  // whatever its body looks like, since only the server can write the block that says so.
+  const fromSession = decodeMessageBlocks(stripped).fromSession;
+  if (fromSession) {
+    const parsed = parseUserMessage(stripped);
+    return toComposerDraft(stripped).text || parsed.terminalBlocks.join("\n\n") || `Message from ${fromSession.title}`;
+  }
   const trimmed = stripped.trim();
   if (!trimmed || trimmed === CONTINUE_NUDGE || INTERRUPT_MARKER_RE.test(trimmed)) return null;
   if (LOCAL_OUTPUT_RE.test(trimmed) || trimmed.includes("<teammate-message")) return null;

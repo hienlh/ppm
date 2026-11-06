@@ -1259,6 +1259,19 @@ export class CodexAppServerProvider implements AIProvider {
     live.channel.done();
   }
 
+  /**
+   * What a `next` follow-up handed to {@link pushMessage} right now would do: join the running
+   * turn (`inserted`, a steer), wait for it in the queue (`queued`), or open a turn (`started`).
+   * Null with no live app-server. A steer codex later refuses falls back to the queue.
+   */
+  followUpDisposition(sessionId: string): "inserted" | "queued" | "started" | null {
+    const live = this.live.get(sessionId);
+    if (!live || live.client.isClosed) return null;
+    if (live.checkingDailyGuard) return "queued";
+    if (!live.turnInFlight) return "started";
+    return this.canSteer(live) ? "inserted" : "queued";
+  }
+
   hasStreamingSession(sessionId: string): boolean {
     const live = this.live.get(sessionId);
     return !!live && !live.client.isClosed;

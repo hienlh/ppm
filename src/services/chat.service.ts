@@ -5,6 +5,7 @@ import { buildSharedProviderContext } from "./provider-shared-context.ts";
 import { stripSharedContext, withSharedContext } from "../shared/provider-context.ts";
 import { neutralizeBlockMarkers } from "../shared/chat-message-blocks.ts";
 import { deleteTurnGrants } from "./session-turns/turn-grant-ledger.ts";
+import { pairCounter } from "./session-collab/pair-counter.ts";
 import type {
   Session,
   SessionConfig,
@@ -43,13 +44,14 @@ const designLog = createLogger("design");
 export type ChatSendOpts = SendMessageOpts & { origin?: TraceOrigin };
 
 /**
- * The message as a provider may receive it. Only the chat socket encodes PPM's message blocks
- * (reply, turn references), from fields it validated itself; text arriving through any other door
- * — a schedule, a Jira ticket, a group-chat peer, PPMBot — has every block marker broken, so none
- * of it can pose as a block the chat decodes.
+ * The message as a provider may receive it. Only two doors encode PPM's message blocks, each from
+ * fields it validated itself and after neutralizing the body: the chat socket (reply, turn
+ * references) and the session tools' inject path (from-session). Text arriving through any other
+ * door — a schedule, a Jira ticket, a group-chat peer, PPMBot — has every block marker broken, so
+ * none of it can pose as a block the chat decodes.
  */
 const fromOrigin = (message: string, origin: TraceOrigin | undefined): string =>
-  origin === "ws" ? message : neutralizeBlockMarkers(message);
+  origin === "ws" || origin === "session" ? message : neutralizeBlockMarkers(message);
 
 /**
  * What the "turn start" / "turn end" log lines need about one run, which can span many turns.
@@ -202,6 +204,7 @@ class ChatService {
     tabToolsMcpTokens.revoke(sessionId);
     tabOpenBroker.forget(sessionId);
     deleteTurnGrants(sessionId);
+    pairCounter.forgetSession(sessionId);
     dbToolsMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
     this.turnEnds.delete(sessionId);

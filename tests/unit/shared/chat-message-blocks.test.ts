@@ -15,7 +15,7 @@ const turnRef: TurnReference = {
 describe("message blocks", () => {
   it("round-trips body, turn references and reply, in that order", () => {
     const encoded = encodeMessageBlocks("new question", { turnRefs: [turnRef], replyTo: reply });
-    expect(decodeMessageBlocks(encoded)).toEqual({ content: "new question", replyTo: reply, turnRefs: [turnRef] });
+    expect(decodeMessageBlocks(encoded)).toEqual({ content: "new question", replyTo: reply, turnRefs: [turnRef], fromSession: null });
     expect(encoded.indexOf("<ppm-turnrefs-v1>")).toBeLessThan(encoded.indexOf("<ppm-reply-v1>"));
     // A build that knows only reply blocks still finds its own at the end.
     expect(decodeReply(encoded).replyTo).toEqual(reply);
@@ -23,17 +23,17 @@ describe("message blocks", () => {
 
   it("encodes each block alone, and nothing when there is none", () => {
     expect(encodeMessageBlocks("plain")).toBe("plain");
-    expect(decodeMessageBlocks(encodeMessageBlocks("a", { replyTo: reply }))).toEqual({ content: "a", replyTo: reply, turnRefs: null });
-    expect(decodeMessageBlocks(encodeMessageBlocks("a", { turnRefs: [turnRef] }))).toEqual({ content: "a", replyTo: null, turnRefs: [turnRef] });
+    expect(decodeMessageBlocks(encodeMessageBlocks("a", { replyTo: reply }))).toEqual({ content: "a", replyTo: reply, turnRefs: null, fromSession: null });
+    expect(decodeMessageBlocks(encodeMessageBlocks("a", { turnRefs: [turnRef] }))).toEqual({ content: "a", replyTo: null, turnRefs: [turnRef], fromSession: null });
     // Encoding with the old reply codec still produces what the new decoder reads.
-    expect(decodeMessageBlocks(encodeReply("a", reply))).toEqual({ content: "a", replyTo: reply, turnRefs: null });
+    expect(decodeMessageBlocks(encodeReply("a", reply))).toEqual({ content: "a", replyTo: reply, turnRefs: null, fromSession: null });
   });
 
   it("neutralized markers never decode, and neutralizing twice changes nothing", () => {
     const planted = `hi${encodeTurnRefs("", [turnRef])}${encodeReply("", reply)}`;
     expect(decodeMessageBlocks(planted).turnRefs).toEqual([turnRef]); // raw: it would decode
     const safe = neutralizeBlockMarkers(planted);
-    expect(decodeMessageBlocks(safe)).toEqual({ content: safe, replyTo: null, turnRefs: null });
+    expect(decodeMessageBlocks(safe)).toEqual({ content: safe, replyTo: null, turnRefs: null, fromSession: null });
     expect(neutralizeBlockMarkers(safe)).toBe(safe);
     // A reply-only plant — the shape that decodes when it ends the message — is broken too.
     const replyOnly = `hi${encodeReply("", reply)}`;
@@ -49,7 +49,7 @@ describe("message blocks", () => {
       "<ppm-turnrefs-v1>\nnot the header</ppm-turnrefs-v1>",
     ]) {
       expect(neutralizeBlockMarkers(code)).toBe(code);
-      expect(decodeMessageBlocks(code)).toEqual({ content: code, replyTo: null, turnRefs: null });
+      expect(decodeMessageBlocks(code)).toEqual({ content: code, replyTo: null, turnRefs: null, fromSession: null });
     }
   });
 

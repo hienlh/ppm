@@ -2,6 +2,7 @@ import { CLAUDE_MODEL_IDS } from "./claude-models.ts";
 import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from "../shared/notification-settings.ts";
 import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
 import type { PpmToolSwitches } from "../shared/ppm-tools.ts";
+import type { SessionCollabSettings } from "../shared/session-collab-settings.ts";
 import { isValidLeftoverIdleMinutes } from "../shared/leftover-processes.ts";
 
 export interface TelegramConfig {
@@ -166,6 +167,12 @@ export interface AIConfig {
    * (`src/services/chat-session-processes/`).
    */
   leftover_processes_idle_minutes?: number;
+  /**
+   * Limits for sessions that open and message each other. Read through
+   * `resolveSessionCollabSettings` (`src/shared/session-collab-settings.ts`), which fills defaults
+   * and clamps, so a field missing here means its default.
+   */
+  session_collab?: Partial<SessionCollabSettings>;
   providers: Record<string, AIProviderConfig>;
 }
 

@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 57;
+export const CURRENT_SCHEMA_VERSION = 58;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1283,6 +1283,16 @@ export function runMigrations(database: Database): void {
     `);
     database.exec(`PRAGMA user_version = 57;`);
   }
+
+  if (current < 58) {
+    // Sessions an AI created through PPM's session tools: which session created each one, and
+    // how deep in such a chain it sits (0 for a session a person started). Read by the depth
+    // limit, the linked-sessions bar and the session list's "Created by".
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN spawned_by TEXT"); } catch { /* column exists */ }
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN spawn_depth INTEGER NOT NULL DEFAULT 0"); } catch { /* column exists */ }
+    try { database.exec("CREATE INDEX IF NOT EXISTS idx_session_metadata_spawned_by ON session_metadata(spawned_by)"); } catch { /* no table */ }
+    database.exec(`PRAGMA user_version = 58;`);
+  }
 }
 
 /**
@@ -1526,14 +1536,16 @@ export function setSessionMigratedTo(oldSessionId: string, newSessionId: string)
     // Carry explicit choices with it before reconnect reads session_state.
     // Keep any choices already made on the destination (including thinking OFF).
     database.query(`
-      INSERT INTO session_metadata (session_id, model, effort, thinking_budget, design_slug, permission_mode)
-      SELECT ?, model, effort, thinking_budget, design_slug, permission_mode FROM session_metadata WHERE session_id = ?
+      INSERT INTO session_metadata (session_id, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth)
+      SELECT ?, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth FROM session_metadata WHERE session_id = ?
       ON CONFLICT(session_id) DO UPDATE SET
         model = COALESCE(session_metadata.model, excluded.model),
         effort = COALESCE(session_metadata.effort, excluded.effort),
         thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget),
         design_slug = COALESCE(session_metadata.design_slug, excluded.design_slug),
-        permission_mode = COALESCE(session_metadata.permission_mode, excluded.permission_mode)
+        permission_mode = COALESCE(session_metadata.permission_mode, excluded.permission_mode),
+        spawned_by = COALESCE(session_metadata.spawned_by, excluded.spawned_by),
+        spawn_depth = MAX(session_metadata.spawn_depth, excluded.spawn_depth)
     `).run(newSessionId, oldSessionId);
     database.query(
       "INSERT INTO session_metadata (session_id, migrated_to) VALUES (?, ?) " +
@@ -1560,6 +1572,22 @@ export function resolveMigratedSession(sessionId: string): string {
     current = next;
   }
   return current;
+}
+
+/**
+ * Every id a session has been known by: its canonical id first, then the ids that migrated into
+ * it (a Codex chat is renamed during its first turn). Capped, so bad data cannot make it grow.
+ */
+export function sessionIdAliases(sessionId: string, max = 16): string[] {
+  const canonical = resolveMigratedSession(sessionId);
+  const out = [canonical];
+  const query = getDb().query("SELECT session_id FROM session_metadata WHERE migrated_to = ?");
+  for (let i = 0; i < out.length && out.length < max; i++) {
+    for (const row of query.all(out[i]!) as Array<{ session_id: string }>) {
+      if (!out.includes(row.session_id)) out.push(row.session_id);
+    }
+  }
+  return out;
 }
 
 /** Provider that owns a session — source of truth for WS routing across restarts. */

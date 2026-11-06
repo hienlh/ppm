@@ -22,7 +22,8 @@ class DraftService {
     // Silent truncation at 50KB
     const decoded = decodeMessageBlocks(content);
     const body = decoded.content.length > MAX_CONTENT_LENGTH ? decoded.content.slice(0, MAX_CONTENT_LENGTH) : decoded.content;
-    const safeContent = encodeMessageBlocks(body, decoded);
+    // A draft is the person's own text: a from-session block in it is never carried over.
+    const safeContent = encodeMessageBlocks(body, { turnRefs: decoded.turnRefs, replyTo: decoded.replyTo });
     getDb()
       .query(
         "INSERT INTO chat_drafts (project_path, session_id, content, attachments, updated_at) VALUES (?, ?, ?, ?, datetime('now')) ON CONFLICT(project_path, session_id) DO UPDATE SET content = excluded.content, attachments = excluded.attachments, updated_at = excluded.updated_at",
