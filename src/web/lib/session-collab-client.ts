@@ -11,7 +11,39 @@ import { useTabStore } from "@/stores/tab-store";
 import { canonicalSessionId } from "@/stores/chat-jump-store";
 import { openSessionAnywhere } from "./open-session-anywhere";
 import { openTurnRef } from "./open-turn-ref";
-import type { SessionCollabAnswer } from "../../shared/session-collab";
+import type { SessionCollabAnswer, SessionLink, SessionLinkRelation } from "../../shared/session-collab";
+
+const RELATIONS: ReadonlySet<string> = new Set<SessionLinkRelation>(["parent", "child", "messaged"]);
+
+/**
+ * Keeps only well-formed links out of a response body: a non-empty id and at least one known
+ * relation. Anything else is dropped rather than trusted.
+ */
+export function parseSessionLinks(body: unknown): SessionLink[] {
+  if (!Array.isArray(body)) return [];
+  const out: SessionLink[] = [];
+  for (const item of body) {
+    if (!item || typeof item !== "object") continue;
+    const { sessionId, relations } = item as { sessionId?: unknown; relations?: unknown };
+    if (typeof sessionId !== "string" || !sessionId || !Array.isArray(relations)) continue;
+    const known = relations.filter((r): r is SessionLinkRelation => typeof r === "string" && RELATIONS.has(r));
+    if (known.length) out.push({ sessionId, relations: [...new Set(known)] });
+  }
+  return out;
+}
+
+/**
+ * The links the server holds for a session: its creator, its children, and the sessions it has
+ * exchanged messages with — including those from before a restart or older than the loaded
+ * messages, which the browser cannot work out by itself.
+ */
+export async function fetchSessionLinks(projectName: string, sessionId: string, signal?: AbortSignal): Promise<SessionLink[]> {
+  const body = await api.get<unknown>(
+    `${projectUrl(projectName)}/chat/sessions/${encodeURIComponent(sessionId)}/links`,
+    signal ? { signal } : undefined,
+  );
+  return parseSessionLinks(body);
+}
 
 /** Answers a session-collaboration card. Rejects with the server's message when it refuses. */
 export async function answerCollabApproval(requestId: string, answer: SessionCollabAnswer): Promise<void> {

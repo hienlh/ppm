@@ -1,14 +1,15 @@
 /**
- * What `/ws/global` has said about sessions reaching each other since the page loaded: links that
- * appeared (a spawn, a first message between two sessions), the sessions' titles and providers as
- * announced, and which sessions hold a create, pair-limit or escalation card right now.
+ * What the browser knows about sessions reaching each other: links that `/ws/global` announced
+ * since the page loaded (a spawn, a first message between two sessions), links the server already
+ * held when a chat was opened (`seedLinks`, from `GET …/sessions/:id/links`), the sessions' titles
+ * and providers as announced, and which sessions hold a create, pair-limit or escalation card now.
  *
- * Only the live layer. What is already on disk reaches the browser through the session list's
- * `spawnedBy` and the chat's own messages; `use-linked-sessions.ts` merges the three.
+ * The session list's `spawnedBy` and the chat's own messages are the other sources;
+ * `use-linked-sessions.ts` merges them.
  */
 import { create } from "zustand";
 import type {
-  SessionCollabApprovalEvent, SessionCreatedEvent, SessionLinkChangedEvent, SessionLinkRelation,
+  SessionCollabApprovalEvent, SessionCreatedEvent, SessionLink, SessionLinkChangedEvent, SessionLinkRelation,
 } from "../../shared/session-collab";
 
 export interface AnnouncedSession {
@@ -26,6 +27,11 @@ interface SessionCollabState {
   sessionCreated: (event: SessionCreatedEvent) => void;
   linkChanged: (event: SessionLinkChangedEvent) => void;
   approvalChanged: (event: SessionCollabApprovalEvent) => void;
+  /**
+   * Merges the links the server holds for `sessionId` (each relation is the other session's, as
+   * seen from `sessionId`). Additive: a live link that arrived first is kept, nothing is removed.
+   */
+  seedLinks: (sessionId: string, links: readonly SessionLink[]) => void;
 }
 
 const MIRROR: Record<SessionLinkRelation, SessionLinkRelation> = { parent: "child", child: "parent", messaged: "messaged" };
@@ -64,5 +70,10 @@ export const useSessionCollabStore = create<SessionCollabState>((set) => ({
     else if (next[event.sessionId] === event.requestId) delete next[event.sessionId];
     else return state;
     return { pendingApprovals: next };
+  }),
+  seedLinks: (sessionId, seeded) => set((state) => {
+    let links = state.links;
+    for (const link of seeded) for (const relation of link.relations) links = addLink(links, sessionId, link.sessionId, relation);
+    return links === state.links ? state : { links };
   }),
 }));
