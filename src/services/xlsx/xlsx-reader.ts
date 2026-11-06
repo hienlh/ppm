@@ -221,23 +221,33 @@ async function readSharedStrings(e: ZipEntry | undefined): Promise<string[]> {
 
 // ── Dates ─────────────────────────────────────────────────────────────────
 
-type DateKind = "date" | "time" | "datetime" | null;
+/**
+ * What a number format shows of a serial. `duration-*` is elapsed time in a bracketed unit
+ * (`[h]`, `[m]`, `[s]`), a total that does not wrap at a day; the `s` suffix adds seconds.
+ */
+type DateKind = "date" | "time" | "datetime" | "duration-h" | "duration-hs" | "duration-m" | "duration-ms" | "duration-s" | null;
 
 const BUILTIN_DATE_FORMATS: Record<number, DateKind> = {
   14: "date", 15: "date", 16: "date", 17: "date",
   18: "time", 19: "time", 20: "time", 21: "time",
   22: "datetime",
-  45: "time", 46: "time", 47: "time",
+  45: "time", 46: "duration-hs", 47: "time",
 };
 
 /** What a custom number format shows of a date, or `null` when it is not a date format. */
 export function dateKindOfFormat(code: string): DateKind {
-  const f = code
-    .toLowerCase()
-    .replace(/"[^"]*"/g, "")
+  const unquoted = code.toLowerCase().replace(/"[^"]*"/g, "");
+  // Elapsed time is told by its bracketed unit, which the stripping below would throw away.
+  const elapsed = /\[(h+|m+|s+)\]/.exec(unquoted)?.[1]?.[0];
+  const f = unquoted
     .replace(/\[[^\]]*\]/g, "")
     .replace(/[\\_*]./g, "")
     .replace(/am\/pm|a\/p/g, "");
+  if (elapsed === "s") return "duration-s";
+  if (elapsed === "h" || elapsed === "m") {
+    const withSeconds = /s/.test(f);
+    return elapsed === "h" ? (withSeconds ? "duration-hs" : "duration-h") : withSeconds ? "duration-ms" : "duration-m";
+  }
   const hasDate = /[yd]/.test(f);
   const hasTime = /[hs]/.test(f);
   if (hasDate && hasTime) return "datetime";
@@ -265,6 +275,7 @@ const pad = (n: number, w = 2) => String(n).padStart(w, "0");
 
 /** An Excel serial date as text, in UTC. */
 export function formatSerialDate(serial: number, kind: Exclude<DateKind, null>, date1904: boolean): string {
+  if (kind.startsWith("duration-")) return formatDuration(serial, kind);
   // 1900 system: serial 1 is 1900-01-01, and Excel counts a 1900-02-29 that never was (serial 60),
   // so from serial 61 on the day count starts at 1899-12-30.
   const base = date1904 ? Date.UTC(1904, 0, 1) : serial < 60 ? Date.UTC(1899, 11, 31) : Date.UTC(1899, 11, 30);
@@ -273,6 +284,21 @@ export function formatSerialDate(serial: number, kind: Exclude<DateKind, null>, 
   const time = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
   if (kind === "time") return time;
   return kind === "datetime" ? `${date} ${time}` : date;
+}
+
+/** Elapsed time: the bracketed unit is a total (1.5 days in `[h]:mm` is `36:00`), the rest wrap. */
+function formatDuration(serial: number, kind: string): string {
+  const total = Math.round(serial * 86400);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  switch (kind) {
+    case "duration-h": return `${h}:${pad(m % 60)}`;
+    case "duration-hs": return `${h}:${pad(m % 60)}:${pad(s)}`;
+    case "duration-m": return String(m);
+    case "duration-ms": return `${m}:${pad(s)}`;
+    default: return String(total);
+  }
 }
 
 /** A number as Excel shows it in General: at most 15 significant digits. */

@@ -164,6 +164,22 @@ describe("readXlsxSheet: dates", () => {
     expect(dateKindOfFormat("0.00E+00")).toBeNull();
   });
 
+  it("shows elapsed time as a total that does not wrap at a day", async () => {
+    const st2 = styles('<numFmt numFmtId="164" formatCode="[h]:mm"/><numFmt numFmtId="165" formatCode="[mm]:ss"/>', [164, 46, 165, 20]);
+    const data = '<row r="1"><c r="A1" s="0"><v>1.5</v></c><c r="B1" s="0"><v>0.25</v></c><c r="C1" s="1"><v>1.5</v></c>'
+      + '<c r="D1" s="2"><v>0.0625</v></c><c r="E1" s="3"><v>1.5</v></c></row>';
+    const out = await readXlsxSheet(book({ styles: st2, sheets: [["S", "sheet1.xml", data]] }));
+    // A plain h:mm (built-in 20) still wraps, as Excel's does.
+    expect(out.rows).toEqual([["36:00", "6:00", "36:00:00", "90:00", "12:00:00"]]);
+  });
+
+  it("does not take an elapsed-time format for a date", () => {
+    expect(dateKindOfFormat("[h]:mm")).toBe("duration-h");
+    expect(dateKindOfFormat("[hh]:mm:ss")).toBe("duration-hs");
+    expect(dateKindOfFormat("[ss]")).toBe("duration-s");
+    expect(dateKindOfFormat("[Red][h]:mm")).toBe("duration-h");
+  });
+
   it("puts the serials before 1900-03-01 on the right day", () => {
     expect(formatSerialDate(1, "date", false)).toBe("1900-01-01");
     expect(formatSerialDate(59, "date", false)).toBe("1900-02-28");

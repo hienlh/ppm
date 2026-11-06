@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2, FileWarning } from "@/lib/icons";
-import { api, projectUrl } from "@/lib/api-client";
+import { api, ApiError, projectUrl } from "@/lib/api-client";
+import { columnLetters, columnWidths, sheetAfterError } from "@/lib/xlsx-preview-model";
 
 interface XlsxPreviewProps {
   filePath: string;
@@ -19,20 +20,7 @@ interface XlsxSheet {
 }
 
 const ROW_HEIGHT = 28;
-const COL_WIDTH = 140;
 const ROW_NUMBER_WIDTH = 52;
-
-/** `A`, `B` … `Z`, `AA` …: the letters of the 0-based `index`-th column. */
-function columnLetters(index: number): string {
-  let n = index + 1;
-  let out = "";
-  while (n > 0) {
-    const r = (n - 1) % 26;
-    out = String.fromCharCode(65 + r) + out;
-    n = Math.floor((n - 1) / 26);
-  }
-  return out;
-}
 
 function sheetUrl(filePath: string, projectName: string | undefined, sheet: number): string {
   const isExternal = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
@@ -43,57 +31,73 @@ function sheetUrl(filePath: string, projectName: string | undefined, sheet: numb
 /** Read-only preview of an .xlsx/.xlsm: one sheet at a time, read and cut to size by the server. */
 export function XlsxPreview({ filePath, projectName }: XlsxPreviewProps) {
   const [data, setData] = useState<XlsxSheet | null>(null);
-  const [sheet, setSheet] = useState(0);
+  /** The sheet being loaded after a tab was picked; lit until it loads or fails. */
+  const [pending, setPending] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<{ row: number; col: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** Only the latest request's answer is applied. */
+  const requestRef = useRef(0);
+  const shownRef = useRef<number>(0);
+  shownRef.current = data?.sheet ?? 0;
+  const pendingRef = useRef<number | null>(null);
+  pendingRef.current = pending;
 
-  const load = useCallback(
-    (quiet: boolean) => {
-      let cancelled = false;
-      if (!quiet) {
-        setLoading(true);
-        setError(null);
-      }
+  const fetchSheet = useCallback(
+    (target: number, quiet: boolean) => {
+      const id = ++requestRef.current;
+      if (!quiet) setPending(target);
+      setLoading(true);
       api
-        .get<XlsxSheet>(sheetUrl(filePath, projectName, sheet))
+        .get<XlsxSheet>(sheetUrl(filePath, projectName, target))
         .then((d) => {
-          if (cancelled) return;
+          if (id !== requestRef.current) return;
+          if (d.sheet !== shownRef.current) setSelected(null);
           setData(d);
           setError(null);
+          setPending(null);
           setLoading(false);
         })
         .catch((err) => {
-          if (cancelled) return;
-          // A sheet removed since the last load falls back to the first one.
-          if (quiet && sheet !== 0) { setSheet(0); return; }
+          if (id !== requestRef.current) return;
+          const instead = sheetAfterError(err instanceof ApiError ? err.status : undefined, target);
+          if (instead !== null) { fetchSheet(instead, quiet); return; }
+          // Keep the sheet on screen (and its tab lit); the next change of the file tries again.
           setError(err instanceof Error ? err.message : "Failed to read workbook");
+          setPending(null);
           setLoading(false);
         });
-      return () => { cancelled = true; };
     },
-    [filePath, projectName, sheet],
+    [filePath, projectName],
   );
 
-  useEffect(() => load(false), [load]);
-
-  // Reload on change of this file, keeping the chosen sheet.
   useEffect(() => {
-    let cancel: (() => void) | undefined;
+    setData(null);
+    setSelected(null);
+    setError(null);
+    fetchSheet(0, false);
+    return () => { requestRef.current++; };
+  }, [fetchSheet]);
+
+  // Reload on change of this file, keeping the sheet on screen.
+  useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail.projectName !== projectName || detail.path !== filePath) return;
-      cancel?.();
-      cancel = load(true);
+      // A tab picked but not loaded yet is still the one wanted.
+      const wanted = pendingRef.current;
+      fetchSheet(wanted ?? shownRef.current, wanted === null);
     };
     window.addEventListener("file:changed", handler);
-    return () => {
-      cancel?.();
-      window.removeEventListener("file:changed", handler);
-    };
-  }, [filePath, projectName, load]);
+    return () => window.removeEventListener("file:changed", handler);
+  }, [filePath, projectName, fetchSheet]);
 
   const rows = data?.rows ?? [];
+  const columns = data?.columns ?? 0;
+  const widths = useMemo(() => columnWidths(rows, columns), [rows, columns]);
+  const width = ROW_NUMBER_WIDTH + widths.reduce((a, b) => a + b, 0);
+
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -106,7 +110,7 @@ export function XlsxPreview({ filePath, projectName }: XlsxPreviewProps) {
     scrollRef.current?.scrollTo({ top: 0, left: 0 });
   }, [data?.sheet]);
 
-  if (loading && !data) {
+  if (!data && loading) {
     return (
       <div className="flex items-center justify-center h-full gap-2 text-text-secondary">
         <Loader2 className="size-5 animate-spin" />
@@ -115,7 +119,7 @@ export function XlsxPreview({ filePath, projectName }: XlsxPreviewProps) {
     );
   }
 
-  if (error && !data) {
+  if (!data) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-text-secondary px-6 text-center">
         <FileWarning className="size-10 text-text-subtle" />
@@ -125,36 +129,51 @@ export function XlsxPreview({ filePath, projectName }: XlsxPreviewProps) {
     );
   }
 
-  const columns = data?.columns ?? 0;
-  const width = ROW_NUMBER_WIDTH + columns * COL_WIDTH;
+  const litSheet = pending ?? data.sheet;
+  const selectedValue = selected ? rows[selected.row]?.[selected.col] ?? "" : "";
   const notices = [
-    data?.truncatedRows && `Showing the first ${rows.length.toLocaleString()} rows`,
-    data?.truncatedColumns && `Showing the first ${columns} columns`,
+    data.truncatedRows && `Showing the first ${rows.length.toLocaleString()} rows`,
+    data.truncatedColumns && `Showing the first ${columns} columns`,
   ].filter(Boolean);
 
   return (
     <div className="flex flex-col h-full min-h-0">
+      {error && (
+        <div role="alert" data-testid="xlsx-error" className="shrink-0 px-3 py-1.5 text-xs text-error bg-background border-b border-border">
+          {error}
+        </div>
+      )}
       {notices.length > 0 && (
         <div className="shrink-0 px-3 py-1.5 text-xs text-text-secondary bg-muted/50 border-b border-border">
           {notices.join(" · ")}
         </div>
       )}
 
+      {/* The cell bar: the picked cell's address and its whole value, selectable, like Excel's formula bar. */}
+      <div className="shrink-0 flex items-stretch min-h-8 border-b border-border text-xs font-mono">
+        <div data-testid="xlsx-cell-ref" className="shrink-0 w-16 flex items-center justify-center border-r border-border text-text-secondary select-none">
+          {selected ? `${columnLetters(selected.col)}${selected.row + 1}` : ""}
+        </div>
+        <div
+          data-testid="xlsx-cell-value"
+          className="flex-1 min-w-0 max-h-24 overflow-auto px-2 py-1.5 whitespace-pre-wrap break-words select-text"
+        >
+          {selected ? selectedValue : <span className="text-text-subtle select-none">Tap a cell to see its full value</span>}
+        </div>
+      </div>
+
       <div ref={scrollRef} className="relative flex-1 min-h-0 overflow-auto">
-        {error && (
-          <div className="sticky top-0 left-0 z-20 px-3 py-1.5 text-xs text-error bg-background border-b border-border">{error}</div>
-        )}
         {rows.length === 0 ? (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">Empty sheet</div>
         ) : (
           <div className="text-xs font-mono" style={{ width, minWidth: "100%" }}>
             <div className="sticky top-0 z-10 flex bg-background border-b border-border" style={{ height: ROW_HEIGHT }}>
               <div className="sticky left-0 z-10 shrink-0 bg-background border-r border-border" style={{ width: ROW_NUMBER_WIDTH }} />
-              {Array.from({ length: columns }, (_, c) => (
+              {widths.map((w, c) => (
                 <div
                   key={c}
                   className="shrink-0 flex items-center justify-center text-muted-foreground font-medium border-r border-border/50 select-none"
-                  style={{ width: COL_WIDTH }}
+                  style={{ width: w }}
                 >
                   {columnLetters(c)}
                 </div>
@@ -170,19 +189,23 @@ export function XlsxPreview({ filePath, projectName }: XlsxPreviewProps) {
                     style={{ top: 0, height: ROW_HEIGHT, width, transform: `translateY(${v.start}px)` }}
                   >
                     <div
-                      className="sticky left-0 shrink-0 flex items-center justify-end pr-2 bg-background text-muted-foreground border-r border-border select-none"
+                      className="sticky left-0 z-[1] shrink-0 flex items-center justify-end pr-2 bg-background text-muted-foreground border-r border-border select-none"
                       style={{ width: ROW_NUMBER_WIDTH }}
                     >
                       {v.index + 1}
                     </div>
-                    {Array.from({ length: columns }, (_, c) => {
+                    {widths.map((w, c) => {
                       const value = row[c];
+                      const isSelected = selected?.row === v.index && selected.col === c;
                       return (
                         <div
                           key={c}
-                          className="shrink-0 px-2 flex items-center border-r border-r-border/30 overflow-hidden"
-                          style={{ width: COL_WIDTH }}
-                          title={value && value.length > 16 ? value : undefined}
+                          data-cell={`${columnLetters(c)}${v.index + 1}`}
+                          onClick={() => setSelected({ row: v.index, col: c })}
+                          className={`shrink-0 px-2 flex items-center border-r border-r-border/30 overflow-hidden cursor-cell ${
+                            isSelected ? "outline outline-2 -outline-offset-2 outline-primary" : ""
+                          }`}
+                          style={{ width: w }}
                         >
                           <span className="truncate">{value ?? ""}</span>
                         </div>
@@ -196,17 +219,17 @@ export function XlsxPreview({ filePath, projectName }: XlsxPreviewProps) {
         )}
       </div>
 
-      {data && data.sheets.length > 0 && (
+      {data.sheets.length > 0 && (
         <div className="shrink-0 flex overflow-x-auto border-t border-border bg-muted/30" role="tablist" aria-label="Sheets">
           {data.sheets.map((name, i) => (
             <button
               key={i}
               type="button"
               role="tab"
-              aria-selected={i === sheet}
-              onClick={() => setSheet(i)}
-              className={`shrink-0 min-h-11 md:min-h-8 px-4 text-xs whitespace-nowrap border-r border-border ${
-                i === sheet ? "bg-background text-foreground font-medium" : "text-text-secondary hover:bg-muted/50"
+              aria-selected={i === litSheet}
+              onClick={() => { if (i !== litSheet) fetchSheet(i, false); }}
+              className={`shrink-0 min-h-8 pointer-coarse:min-h-11 px-4 text-xs whitespace-nowrap border-r border-border ${
+                i === litSheet ? "bg-background text-foreground font-medium" : "text-text-secondary hover:bg-muted/50"
               }`}
             >
               {name || `Sheet ${i + 1}`}
