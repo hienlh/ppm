@@ -38,7 +38,8 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
-import { buildThreadParams, dbToolsMcpEnv, designMcpEnv, requestWithInstructionsFallback, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
+import { buildThreadParams, dbToolsMcpEnv, designMcpEnv, requestWithInstructionsFallback, sessionCollabMcpEnv, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
+import type { SessionCollabMcpAccess } from "../../services/session-collab/session-collab-tool.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import type { TabToolsMcpAccess } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import type { DbToolsMcpAccess } from "../../services/db-ai-tools/db-ai-tools-tool.ts";
@@ -165,6 +166,8 @@ interface LiveSession {
   tabToolsMcp?: TabToolsMcpAccess;
   /** The database tools' endpoint, while a connection is available to the AI chat; likewise. */
   dbToolsMcp?: DbToolsMcpAccess;
+  /** The session tools' endpoint, while one of them is on; likewise. */
+  sessionCollabMcp?: SessionCollabMcpAccess;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
   /** Rollout history snapshot at connect — lets live message ids continue the
@@ -334,6 +337,17 @@ function approvalToolLabel(method: string, params: unknown): string {
   if (method.includes("fileChange") || method === "applyPatchApproval") return "Edit";
   if (method === "item/tool/requestUserInput") return "AskUserQuestion";
   return String(p.tool ?? "Tool");
+}
+
+/**
+ * The bearer tokens PPM's own MCP servers read from the app-server's environment: one place, so
+ * the first connect and the account-switch respawn cannot hand codex different sets.
+ */
+function liveMcpEnv(live: LiveSession): Record<string, string> {
+  return {
+    ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...dbToolsMcpEnv(live.dbToolsMcp),
+    ...sessionCollabMcpEnv(live.sessionCollabMcp),
+  };
 }
 
 /**
@@ -888,7 +902,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd: live.cwd, codexHome: account.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...dbToolsMcpEnv(live.dbToolsMcp) }, purpose: "chat" });
+    client.start({ cwd: live.cwd, codexHome: account.home, env: liveMcpEnv(live), purpose: "chat" });
     live.client = client;
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
@@ -903,6 +917,7 @@ export class CodexAppServerProvider implements AIProvider {
       designMcp: live.designMcp,
       tabToolsMcp: live.tabToolsMcp,
       dbToolsMcp: live.dbToolsMcp,
+      sessionCollabMcp: live.sessionCollabMcp,
     });
     await requestWithInstructionsFallback(resumeBase,
       (params) => this.resumeThread(client, threadId, found, account.home, params));
@@ -970,6 +985,7 @@ export class CodexAppServerProvider implements AIProvider {
       designMcp: opts?.designSession ? opts.designMcp : undefined,
       tabToolsMcp: opts?.designSession ? undefined : opts?.tabToolsMcp,
       dbToolsMcp: opts?.designSession ? undefined : opts?.dbToolsMcp,
+      sessionCollabMcp: opts?.designSession ? undefined : opts?.sessionCollabMcp,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
       pendingTurns: [], subagentThreadIds: new Set(),
@@ -984,7 +1000,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd, codexHome: account?.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...dbToolsMcpEnv(live.dbToolsMcp) }, purpose: "chat" });
+    client.start({ cwd, codexHome: account?.home, env: liveMcpEnv(live), purpose: "chat" });
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
@@ -996,6 +1012,7 @@ export class CodexAppServerProvider implements AIProvider {
       designMcp: live.designMcp,
       tabToolsMcp: live.tabToolsMcp,
       dbToolsMcp: live.dbToolsMcp,
+      sessionCollabMcp: live.sessionCollabMcp,
     });
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.
@@ -1275,6 +1292,23 @@ export class CodexAppServerProvider implements AIProvider {
   hasStreamingSession(sessionId: string): boolean {
     const live = this.live.get(sessionId);
     return !!live && !live.client.isClosed;
+  }
+
+  /**
+   * Names the session's thread in codex itself (`thread/name/set`), so codex's own thread list
+   * shows the title PPM shows. Needs a live app-server that already has the thread; false when
+   * there is none, or when the codex build does not know the method — PPM's title stands either way.
+   */
+  async setThreadName(sessionId: string, name: string): Promise<boolean> {
+    const live = this.live.get(sessionId);
+    if (!live || live.client.isClosed || !live.threadId) return false;
+    try {
+      await live.client.request("thread/name/set", { threadId: live.threadId, name }, CONTROL_REQUEST_TIMEOUT_MS);
+      return true;
+    } catch (e) {
+      log.warn(`thread=${live.threadId} could not be named: ${redactTruncate((e as Error)?.message ?? String(e), 200)}`);
+      return false;
+    }
   }
 
   /** Kill all live subprocesses — wired into server shutdown. */

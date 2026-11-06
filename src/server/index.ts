@@ -245,11 +245,18 @@ app.all("/api/tab-tools-mcp", tabToolsMcpHandler);
 import { dbToolsMcpHandler } from "../services/db-ai-tools/db-ai-tools-endpoint.ts";
 import { DB_TOOLS_MCP_PATH } from "../services/db-ai-tools/db-ai-tools-tokens.ts";
 app.all(DB_TOOLS_MCP_PATH, dbToolsMcpHandler);
+// Session tools (`create_session`, `send_to_session`, `session_status`): the same, for any chat
+// session that is not a design session; their cards are answered behind auth at `/api/sessions-collab`.
+import { sessionCollabMcpHandler } from "../services/session-collab/session-collab-endpoint.ts";
+import { SESSION_COLLAB_MCP_PATH } from "../services/session-collab/session-collab-tokens.ts";
+app.all(SESSION_COLLAB_MCP_PATH, sessionCollabMcpHandler);
 
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
 app.use("/api/*", gzipJson);
 app.get("/api/auth/check", (c) => c.json(ok(true)));
+import { sessionCollabRoutes } from "./routes/session-collab.ts";
+app.route("/api/sessions-collab", sessionCollabRoutes);
 // Exits the process for testing the supervisor's restart path: signed in, and opt-in only.
 import { mountDebugCrashRoute } from "./routes/debug-crash.ts";
 mountDebugCrashRoute(app);

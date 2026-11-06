@@ -30,7 +30,10 @@ import { dbToolsMcpAccessFor, dbToolsMcpTokens } from "./db-ai-tools/db-ai-tools
 import { dbApprovalBroker } from "./db-ai-tools/db-approval-broker.ts";
 import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
-import { anyPpmToolOn, TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { anyPpmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { sessionCollabMcpAccessFor, sessionCollabMcpTokens } from "./session-collab/session-collab-tokens.ts";
+import { collabApprovalBroker } from "./session-collab/collab-approval-broker.ts";
+import { collabWaits } from "./session-collab/collab-waits.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
@@ -207,6 +210,9 @@ class ChatService {
     pairCounter.forgetSession(sessionId);
     dbToolsMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
+    sessionCollabMcpTokens.revoke(sessionId);
+    collabApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing was done.");
+    collabWaits.cancelWaiter(sessionId);
     this.turnEnds.delete(sessionId);
     // The provider ends the chat's turn and closes its CLI first. Only then is everything the
     // chat's commands started stopped, running or not: the one stop that does not wait for idle.
@@ -360,13 +366,15 @@ class ChatService {
   ): Promise<SendMessageOpts> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
     // Like the design fields, the tab and database tools are only ever server-built.
-    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
+    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, sessionCollabMcp: _sessionTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
     // A design session checks its canvas with `design_check` instead. A server is attached while
     // one of its tools is on (Settings → Tools); it lists only those.
     const ai = configService.get("ai");
     const tabToolsMcp = !design.designSession && anyPpmToolOn(ai, TAB_TOOLS) ? tabToolsMcpAccessFor(sessionId) : null;
     const dbToolsMcp = !design.designSession && anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0
       ? dbToolsMcpAccessFor(sessionId) : null;
+    // Opening and messaging sessions: never from a design session, which takes no messages either.
+    const sessionCollabMcp = !design.designSession && anyPpmToolOn(ai, SESSION_TOOLS) ? sessionCollabMcpAccessFor(sessionId) : null;
     let sharedContext: string | undefined;
     if (configService.get("ai").share_provider_context === false || /^\s*\/(compact|clear|new)(\s|$)/i.test(message)) {
       this.invalidateSharedContext(providerId, sessionId);
@@ -386,7 +394,10 @@ class ChatService {
         if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
       }
     }
-    return { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}), sharedContext };
+    return {
+      ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
+      ...(sessionCollabMcp ? { sessionCollabMcp } : {}), sharedContext,
+    };
   }
 
   /**

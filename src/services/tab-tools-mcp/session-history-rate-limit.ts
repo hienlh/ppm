@@ -11,16 +11,21 @@ const WINDOW_MS = 60_000;
 export type LimitOutcome = { ok: true; release: () => void } | { ok: false; message: string };
 
 export interface CallLimiter {
-  /** A slot for one call of `key` (the caller's canonical session id), or why there is none. */
-  acquire(key: string): LimitOutcome;
+  /**
+   * A slot for one call of `key` (the caller's canonical session id), or why there is none. A call
+   * made with `exemptFromInFlight` counts against the minute but neither needs nor holds an
+   * in-flight slot: a quick read that must still answer while slow calls hold every slot.
+   */
+  acquire(key: string, opts?: { exemptFromInFlight?: boolean }): LimitOutcome;
   /** How many callers the limiter still remembers; for tests and diagnostics. */
   trackedKeys(): number;
 }
 
-export function createCallLimiter(opts: { perMinute?: number; inFlight?: number; now?: () => number } = {}): CallLimiter {
+export function createCallLimiter(opts: { perMinute?: number; inFlight?: number; now?: () => number; label?: string } = {}): CallLimiter {
   const perMinute = opts.perMinute ?? SESSION_HISTORY_CALLS_PER_MINUTE;
   const maxInFlight = opts.inFlight ?? SESSION_HISTORY_IN_FLIGHT;
   const now = opts.now ?? Date.now;
+  const label = opts.label ?? "session-history";
   const recent = new Map<string, number[]>();
   const running = new Map<string, number>();
   let lastSweep = Number.NEGATIVE_INFINITY;
@@ -41,19 +46,21 @@ export function createCallLimiter(opts: { perMinute?: number; inFlight?: number;
 
   return {
     trackedKeys: () => recent.size,
-    acquire(key) {
+    acquire(key, callOpts) {
       const t = now();
       sweep(t);
+      const exempt = callOpts?.exemptFromInFlight === true;
       const calls = (recent.get(key) ?? []).filter((at) => t - at < WINDOW_MS);
-      if ((running.get(key) ?? 0) >= maxInFlight) {
-        return { ok: false, message: `At most ${maxInFlight} session-history calls may run at once; wait for one to finish.` };
+      if (!exempt && (running.get(key) ?? 0) >= maxInFlight) {
+        return { ok: false, message: `At most ${maxInFlight} ${label} calls may run at once; wait for one to finish.` };
       }
       if (calls.length >= perMinute) {
         recent.set(key, calls);
-        return { ok: false, message: `At most ${perMinute} session-history calls a minute; wait a little before the next.` };
+        return { ok: false, message: `At most ${perMinute} ${label} calls a minute; wait a little before the next.` };
       }
       calls.push(t);
       recent.set(key, calls);
+      if (exempt) return { ok: true, release: () => {} };
       running.set(key, (running.get(key) ?? 0) + 1);
       let released = false;
       return {

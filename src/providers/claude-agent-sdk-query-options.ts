@@ -15,6 +15,9 @@ import {
 } from "../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import { TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { CLAUDE_DB_TOOLS_MCP_SERVER, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess } from "../services/db-ai-tools/db-ai-tools-tool.ts";
+import {
+  CLAUDE_SESSION_COLLAB_MCP_SERVER, SESSION_COLLAB_TOOLS, SESSION_COLLAB_TOOLS_TIMEOUT_MS, type SessionCollabMcpAccess,
+} from "../services/session-collab/session-collab-tool.ts";
 import { EFFORT_LEVELS, type EffortLevel } from "../shared/effort-status.ts";
 
 export const VALID_EFFORT_VALUES = EFFORT_LEVELS;
@@ -313,14 +316,39 @@ export function dbToolsMcpServers(access: DbToolsMcpAccess | null | undefined): 
 export const CLAUDE_DB_TOOLS: readonly string[] = DB_TOOLS.map((tool) => `mcp__${CLAUDE_DB_TOOLS_MCP_SERVER}__${tool}`);
 
 /**
- * Spawn options as `spawnFingerprint` should compare them: the tab and database tools' tokens
+ * The session tools' MCP server (`create_session`, `send_to_session`, `session_status`) as the
+ * SDK's `http` server config, while one of them is on; `{}` otherwise. The timeout is fixed at the
+ * longest wait the settings allow (plus an approval and a margin): the CLI keeps the timeout it
+ * started with, and the SDK enforces it as a hard wall-clock limit per call.
+ */
+export function sessionCollabMcpServers(access: SessionCollabMcpAccess | null | undefined): Record<string, McpHttpServerConfig> {
+  if (!access) return {};
+  return {
+    [CLAUDE_SESSION_COLLAB_MCP_SERVER]: {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: SESSION_COLLAB_TOOLS_TIMEOUT_MS,
+    },
+  };
+}
+
+/**
+ * Never asked about before they run: creating a session asks the user itself (unless they switched
+ * that off), and messaging a session is what the user allowed by leaving the tools on — a send that
+ * would reach more permissions, or run past the pair limit, asks them in PPM's own card.
+ */
+export const CLAUDE_SESSION_COLLAB_TOOLS: readonly string[] = SESSION_COLLAB_TOOLS.map((tool) => `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${tool}`);
+
+/**
+ * Spawn options as `spawnFingerprint` should compare them: the tab, database and session tools' tokens
  * blanked. A warm spare is started before its session exists, and its token is minted for the session
  * id it is given then — the one the session's own turns mint — so the token says nothing
  * the session id (which the fingerprint already leaves out) does not.
  */
 export function withSessionTokenMasked<T extends Record<string, unknown>>(options: T): T {
   const servers = options.mcpServers as Record<string, McpHttpServerConfig> | undefined;
-  const names = [CLAUDE_TAB_TOOLS_MCP_SERVER, CLAUDE_DB_TOOLS_MCP_SERVER].filter((name) => servers?.[name]);
+  const names = [CLAUDE_TAB_TOOLS_MCP_SERVER, CLAUDE_DB_TOOLS_MCP_SERVER, CLAUDE_SESSION_COLLAB_MCP_SERVER].filter((name) => servers?.[name]);
   if (!servers || names.length === 0) return options;
   const masked = { ...servers };
   for (const name of names) masked[name] = { ...masked[name]!, headers: { Authorization: "<session>" } };

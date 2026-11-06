@@ -12,6 +12,7 @@ import { readHistory } from "../../../src/services/session-file-baselines/sessio
 import { preToolUseDecision } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
+import { sessionCollabMcpAccessFor, sessionCollabMcpTokens } from "../../../src/services/session-collab/session-collab-tokens.ts";
 import {
   SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
   API_KEY_PROMPT_CACHE_TTL_MS,
@@ -1593,8 +1594,12 @@ describe("ClaudeAgentSdkProvider", () => {
         expect(session.id).toBe(spare.sessionId);
         expect(tabToolsMcpTokens.resolve(spare.mcpServers["ppm-tabs"].headers.Authorization.slice("Bearer ".length)))
           .toEqual({ sessionId: session.id });
+        expect(sessionCollabMcpTokens.resolve(spare.mcpServers["ppm-sessions"].headers.Authorization.slice("Bearer ".length)))
+          .toEqual({ sessionId: session.id });
         // What chatService.prepareSendOptions hands the session's turn.
-        await drain(provider.sendMessage(session.id, "hi", { tabToolsMcp: tabToolsMcpAccessFor(session.id)! }));
+        await drain(provider.sendMessage(session.id, "hi", {
+          tabToolsMcp: tabToolsMcpAccessFor(session.id)!, sessionCollabMcp: sessionCollabMcpAccessFor(session.id)!,
+        }));
         expect(clis).toHaveLength(1);
         expect(clis[0]!.pushed.map((m) => m.message.content)).toEqual(["hi"]);
       } finally {

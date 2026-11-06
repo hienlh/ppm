@@ -50,6 +50,12 @@ export interface SendMessageOpts {
    */
   dbToolsMcp?: { url: string; token: string };
   /**
+   * The session tools' MCP endpoint (`create_session`, `send_to_session`, `session_status`) for
+   * this session, present while one of them is on in Settings → Tools, and never for a design
+   * session. Server-built like `designMcp`.
+   */
+  sessionCollabMcp?: { url: string; token: string };
+  /**
    * The browser's id for the message being sent (its optimistic bubble), opaque to the provider.
    * Handed back on `turn_started` so the browser learns which turn that message opened.
    */

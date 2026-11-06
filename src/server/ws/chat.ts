@@ -32,8 +32,19 @@ import type { EffortStatus } from "../../shared/effort-status.ts";
 import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
-import { dbApprovalBroker, setDbApprovalChat, type DbApprovalEvent } from "../../services/db-ai-tools/db-approval-broker.ts";
+import { setDbApprovalChat, type DbApprovalEvent } from "../../services/db-ai-tools/db-approval-broker.ts";
 import { dbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
+import { ppmApprovals } from "./chat-ppm-approvals.ts";
+import { setCollabApprovalChat } from "../../services/session-collab/collab-approval-broker.ts";
+import { collabWaits, setCollabIdleProbe } from "../../services/session-collab/collab-waits.ts";
+import { collabSessionRenamed, collabTurnEnded } from "../../services/session-collab/collab-turn-events.ts";
+import { isSpawned } from "../../services/session-collab/session-links.service.ts";
+import type { LiveSessionState } from "../../services/session-collab/collab-context.ts";
+import { collabApprovalTitle } from "../../services/notification-format.ts";
+import {
+  SESSION_COLLAB_APPROVAL_EVENT, sessionCollabApprovalInput,
+  type SessionCollabAnswer, type SessionCollabApprovalEvent, type SessionCollabApprovalRequest,
+} from "../../shared/session-collab.ts";
 import { parseTabOpenResult, type TabOpenRequest } from "../../shared/tab-open-protocol.ts";
 import { readLastTurnStop } from "../../services/session-trace/turn-stop-reader.ts";
 import { describeTurnStop, type TurnStop } from "../../shared/turn-stop.ts";
@@ -191,6 +202,8 @@ export interface SessionEntry {
   turnEvents: unknown[];
   /** The opening of the turn's last top-level text block — the answer a "Chat completed" notification quotes. */
   finalText?: string;
+  /** The last finished turn's `finalText`, kept for `session_status` after the notification took it. */
+  lastAnswer?: string;
   /** The user message that initiated the current turn (for reconnect replay) */
   currentUserMessage?: string;
   /** The sending browser's own id for that message, so a reconnect replay keeps it bound to its turn. */
@@ -540,6 +553,34 @@ export function listRunningSessions(
   return running;
 }
 
+/** The registry entry for any id the session has been known by. */
+function entryOf(sessionId: string): SessionEntry | undefined {
+  return activeSessions.get(sessionId) ?? activeSessions.get(resolveMigratedSession(sessionId));
+}
+
+/**
+ * What the session tools may know of a session open in this process, or null when it is not open:
+ * read from the registry only, never from a transcript.
+ */
+export function collabLiveState(sessionId: string): LiveSessionState | null {
+  const entry = entryOf(sessionId);
+  if (!entry) return null;
+  const pending = entry.pendingApprovalEvent;
+  return {
+    providerId: entry.providerId,
+    ...(entry.projectName ? { projectName: entry.projectName } : {}),
+    ...(entry.projectPath ? { projectPath: entry.projectPath } : {}),
+    phase: entry.phase,
+    ...(entry.permissionMode ? { permissionMode: entry.permissionMode } : {}),
+    ...(entry.model ? { model: entry.model } : {}),
+    waitingFor: !pending ? null : pending.tool === "AskUserQuestion" ? "question" : "approval",
+    ...(entry.lastAnswer ? { lastAnswer: entry.lastAnswer } : {}),
+    updatedAt: entry.phase !== "idle" ? Date.now() : entry.lastTurnEndedAt ?? entry.turnRequestedAt?.at,
+    ...(entry.turnBindings?.length ? { currentTurnId: entry.turnBindings[entry.turnBindings.length - 1]!.turnId } : {}),
+  };
+}
+setCollabIdleProbe((sessionId) => (entryOf(sessionId)?.phase ?? "idle") === "idle");
+
 /**
  * App-wide broadcasts live on the global bus (`/ws/global`), not on chat sockets:
  * chat tabs mount lazily, so a chat socket is not guaranteed to exist. Re-exported
@@ -599,7 +640,8 @@ function holdApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type:
   entry.pendingApprovalEvent = ev;
 
   const isQuestion = ev.tool === "AskUserQuestion";
-  const nType = isQuestion ? "question" : "approval_request";
+  const collab = sessionCollabApprovalInput(ev.tool, ev.input);
+  const nType = isQuestion ? "question" : collab ? "collab_approval" : "approval_request";
   // Persist unread to DB + broadcast to all tabs/devices
   const approvalSession = chatService.getSession(sessionId);
   incrementSessionUnread(sessionId, nType, approvalSession?.title, entry.projectName || null);
@@ -609,9 +651,9 @@ function holdApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type:
     const project = entry.projectName || "Project";
     const session = chatService.getSession(sessionId);
     const sTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
-    const title = isQuestion ? "AI has a question" : "Waiting for approval";
+    const title = isQuestion ? "AI has a question" : collab ? collabApprovalTitle(collab) : "Waiting for approval";
     const db = dbExecuteApprovalInput(ev.tool, ev.input);
-    const body = isQuestion
+    const body = isQuestion || collab
       ? `${project} — ${sTitle}`
       : db ? `${project} — AI wants to change ${db.connectionName}` : `${project} — ${ev.tool} needs permission`;
     notificationService.broadcast(nType, {
@@ -625,56 +667,77 @@ function holdApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type:
 }
 
 /**
- * PPM's database tools ask the user here to approve a `db_execute` (`db-approval-broker.ts`).
- * Not buffered into the turn's replay: the tool call's own card already shows the SQL, and a
- * device that connects later reads the approval from `session_state.pendingApproval`.
+ * PPM's own approvals — a `db_execute` change (`db-approval-broker.ts`) and the session tools'
+ * cards (`collab-approval-broker.ts`) — ask the user here. Not buffered into the turn's replay: the
+ * tool call's own card already shows what is asked, and a device that connects later reads the
+ * approval from `session_state.pendingApproval`. Answered over HTTP, never over this socket.
  */
-function announceDbApproval(sessionId: string, event: DbApprovalEvent): boolean {
+function announcePpmApproval(sessionId: string, event: { type: string; requestId: string; tool: string; input: unknown }): boolean {
   const entry = activeSessions.get(sessionId);
   if (!entry) return false;
-  // A provider's own approval holds the session's one slot: this one waits behind it
-  // (`showWaitingDbApproval`) rather than taking that card off the user's screen.
+  // Another approval holds the session's one slot: this one waits behind it
+  // (`showWaitingPpmApproval`) rather than taking that card off the user's screen.
   if (entry.pendingApprovalEvent) return true;
   holdApprovalRequest(sessionId, entry, event);
   broadcast(sessionId, event);
   return true;
 }
 
-/** A `db_execute` approval was answered, or given up on: every device drops its card. */
-function dbApprovalResolved(sessionId: string, requestId: string, approved: boolean): void {
+/** One of PPM's own approvals was answered, or given up on: every device drops its card. */
+function ppmApprovalResolved(sessionId: string, requestId: string, approved: boolean, answer?: SessionCollabAnswer | null): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
-  if (entry.pendingApprovalEvent?.requestId === requestId) entry.pendingApprovalEvent = undefined;
-  broadcast(sessionId, { type: "approval_resolved", requestId, approved, answers: null });
+  broadcast(sessionId, { type: "approval_resolved", requestId, approved, answers: answer ? { answer } : null });
+  if (entry.pendingApprovalEvent?.requestId === requestId) clearPendingApproval(sessionId, entry);
   broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
 }
-setDbApprovalChat({ announce: announceDbApproval, resolved: dbApprovalResolved }, resolveMigratedSession);
+setDbApprovalChat({
+  announce: (sessionId, event: DbApprovalEvent) => announcePpmApproval(sessionId, event),
+  resolved: (sessionId, requestId, approved) => ppmApprovalResolved(sessionId, requestId, approved),
+}, resolveMigratedSession);
+
+/** A session tool's card appeared in, or left, a session: the tracking bar follows it app-wide. */
+function collabApprovalGlobal(sessionId: string, event: Omit<SessionCollabApprovalEvent, "type" | "projectName" | "sessionId">): void {
+  const projectName = activeSessions.get(sessionId)?.projectName ?? "";
+  broadcastGlobalEvent({ type: SESSION_COLLAB_APPROVAL_EVENT, projectName, sessionId, ...event } satisfies SessionCollabApprovalEvent);
+}
+setCollabApprovalChat({
+  announce: (sessionId, event: SessionCollabApprovalRequest) => {
+    const shown = announcePpmApproval(sessionId, event);
+    if (shown) collabApprovalGlobal(sessionId, { requestId: event.requestId, state: "pending", input: event.input });
+    return shown;
+  },
+  resolved: (sessionId, requestId, answer) => {
+    ppmApprovalResolved(sessionId, requestId, answer === "allow_once" || answer === "allow_session", answer);
+    collabApprovalGlobal(sessionId, { requestId, state: "resolved", ...(answer ? { answer } : {}) });
+  },
+}, resolveMigratedSession);
 
 /**
- * A provider's approval took the session's one pending slot while a `db_execute` approval was
- * waiting, and has now been answered: the database approval is shown again.
+ * Another approval took the session's one pending slot while one of PPM's own was waiting, and
+ * has now been answered: PPM's approval is shown again.
  */
-function showWaitingDbApproval(sessionId: string, entry: SessionEntry): void {
-  const waiting = dbApprovalBroker.pendingEvent(sessionId);
+function showWaitingPpmApproval(sessionId: string, entry: SessionEntry): void {
+  const waiting = ppmApprovals.pendingEvent(sessionId);
   if (!waiting || entry.pendingApprovalEvent) return;
-  entry.pendingApprovalEvent = waiting;
+  holdApprovalRequest(sessionId, entry, waiting);
   broadcast(sessionId, waiting);
 }
 
-/** What the AI hears when its `db_execute` is still waiting as the turn ends. */
+/** What the AI hears when one of PPM's approvals is still waiting as the turn ends. */
 const DB_APPROVAL_TURN_OVER = "The turn ended before the user answered, so nothing ran.";
 
 /**
- * Empties the session's one approval slot. A `db_execute` approval waiting behind a provider's
- * is shown in its place (`showWaitingDbApproval`), or, given a reason, cancelled first: the
- * user moved on, or the turn its call belongs to is over. Every place that empties the slot,
- * but a database approval's own answer (`dbApprovalResolved`), comes through here, so none can
- * leave a database approval waiting for a card nobody sees.
+ * Empties the session's one approval slot. A PPM approval waiting behind another is shown in its
+ * place (`showWaitingPpmApproval`), or, given a reason, cancelled first: the user moved on, or the
+ * turn its call belongs to is over. Every place that empties the slot comes through here, so none
+ * can leave a PPM approval waiting for a card nobody sees.
  */
-function clearPendingApproval(sessionId: string, entry: SessionEntry, cancelDbApproval?: string): void {
-  if (cancelDbApproval) dbApprovalBroker.cancelSession(sessionId, cancelDbApproval);
+function clearPendingApproval(sessionId: string, entry: SessionEntry, cancelPpmApprovals?: string): void {
+  // Emptied first, so a cancelled PPM approval's own `resolved` finds nothing to clear again.
   entry.pendingApprovalEvent = undefined;
-  showWaitingDbApproval(sessionId, entry);
+  if (cancelPpmApprovals) ppmApprovals.cancelSession(sessionId, cancelPpmApprovals);
+  showWaitingPpmApproval(sessionId, entry);
 }
 
 /**
@@ -1304,7 +1367,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // The consumer outlives the turn (Claude pushes a follow-up into the same stream), so
         // the next turn's answer must not start with this one's.
         entry.finalText = undefined;
-        import("../../services/notification.service.ts").then(({ notificationService }) => {
+        if (finalText) entry.lastAnswer = finalText;
+        // An AI-created session finishing is its creator's business, not the user's: no "Chat
+        // completed". A turn stopped by an error still says so.
+        if (!stopped && isSpawned(sessionId)) {
+          log.debug(`session=${sessionId} turn done: no notification for an AI-created session`);
+        } else import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
           const sessionTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
@@ -1336,6 +1404,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           // becomes unreachable from that tab the moment the turn ends.
           setSessionMigratedTo(sessionId, newId);
           pairCounter.renameSession(sessionId, newId);
+          collabSessionRenamed(sessionId, newId);
           // Stop spies tagged with old session ID before re-keying
           bashOutputSpy.stopAllForSession(sessionId);
           nestedSubagentSpy.stopAllForSession(sessionId);
@@ -1388,6 +1457,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           broadcast(sessionId, { type: "compact_status", status: "done" });
         }
         setPhase(sessionId, "idle");
+        // Waits on this session are judged, and a created session stops counting as starting.
+        collabTurnEnded(sessionId);
         // A renewal that landed while this turn ran left its subprocess holding a revoked
         // token; restart it now rather than let the next message open with a 401. Deferred so
         // the drop does not close the query from inside the loop that is reading it.
@@ -1433,6 +1504,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     }
     setPhase(sessionId, "idle");
     clearPendingApproval(sessionId, entry, DB_APPROVAL_TURN_OVER);
+    collabTurnEnded(sessionId);
     // Cleanup bash output spies
     bashOutputSpy.stopAllForSession(sessionId);
     // SDK subprocess teardown kills its background children — reflect as stopped
@@ -1602,9 +1674,9 @@ export async function submitToSession(sessionId: string, entry: SessionEntry, co
   // unblock it, then the follow-up message flows through normally.
   if (entry.pendingApprovalEvent && opts.supersedePendingApproval) {
     const pendingReqId = entry.pendingApprovalEvent.requestId;
-    if (dbApprovalBroker.has(pendingReqId)) {
-      // PPM's own approval: settling it takes the card off every device (`dbApprovalResolved`).
-      dbApprovalBroker.cancelSession(sessionId, "The user sent a message instead of approving, so nothing ran.");
+    if (ppmApprovals.has(pendingReqId)) {
+      // PPM's own approval: settling it takes the card off every device (`ppmApprovalResolved`).
+      clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
     } else {
       chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin: "ws" });
       broadcast(sessionId, {
@@ -2062,6 +2134,8 @@ export const chatWebSocket = {
       // The person wrote in this session: every pair of sessions it is in may message each other
       // automatically again. Only a browser send does this, never a message from another session.
       pairCounter.resetForSession(sessionId);
+      // The person wrote to a session waiting on another: its wait ends, and it reads the person.
+      collabWaits.cancelWaiter(sessionId);
 
       const submitting = entry;
       await withSessionLock(sessionId, () => submitToSession(sessionId, submitting, parsed.content, {
@@ -2163,7 +2237,9 @@ export const chatWebSocket = {
       const phase = entry?.phase ?? "unknown";
       log.info(`session=${sessionId} WS cancel received from FE (phase=${phase})`);
       logSessionEvent(sessionId, "CANCEL", `WS cancel from FE (phase=${phase})`);
-      dbApprovalBroker.cancelSession(sessionId, "The user stopped the chat before approving, so nothing ran.");
+      ppmApprovals.cancelSession(sessionId, "The user stopped the chat before approving, so nothing ran.");
+      // Stop covers this session only: its waits end, the sessions it waits for run on.
+      collabWaits.cancelWaiter(sessionId);
       chatService.abortQuery(providerId, sessionId, "ws_cancel", "ws");
     } else if (parsed.type === "kill_background_shell") {
       // Kill via the AI: enqueue an instruction so the model calls KillShell.
@@ -2214,8 +2290,8 @@ export const chatWebSocket = {
       }
       logSessionEvent(sessionId, "INFO", `kill_background_shell requested shellId=${shellId}`);
     } else if (parsed.type === "approval_response") {
-      // PPM's database approvals are answered over HTTP with PPM's password, never here.
-      if (dbApprovalBroker.has(parsed.requestId)) return;
+      // PPM's own approvals (database changes, session tools' cards) are answered over HTTP, never here.
+      if (ppmApprovals.has(parsed.requestId)) return;
       chatService.resolveApproval(providerId, sessionId, parsed.requestId, parsed.approved, (parsed as any).data, { origin: "ws" });
       if (entry) {
         // Enrich the buffered approval_request with response data so replayed

@@ -11,6 +11,10 @@ import { TAB_TOOLS } from "../../shared/ppm-tools.ts";
 import {
   CODEX_DB_TOOLS_MCP_SERVER, CODEX_DB_TOOLS_MCP_TOKEN_ENV, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess,
 } from "../../services/db-ai-tools/db-ai-tools-tool.ts";
+import {
+  CODEX_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_TOKEN_ENV, SESSION_COLLAB_TOOLS, SESSION_COLLAB_TOOLS_TIMEOUT_MS,
+  type SessionCollabMcpAccess,
+} from "../../services/session-collab/session-collab-tool.ts";
 
 /** Config overrides, keyed like `-c key=value` on codex's command line (dotted paths). */
 export type CodexConfigOverrides = Record<string, unknown>;
@@ -31,6 +35,8 @@ export interface ThreadParamsInput {
   tabToolsMcp?: TabToolsMcpAccess;
   /** The database tools (`db_query`, `open_query`, `db_execute`); likewise. */
   dbToolsMcp?: DbToolsMcpAccess;
+  /** The session tools (`create_session`, `send_to_session`, `session_status`); likewise. */
+  sessionCollabMcp?: SessionCollabMcpAccess;
 }
 
 /**
@@ -108,6 +114,30 @@ export function dbToolsMcpEnv(access: DbToolsMcpAccess | undefined): Record<stri
 }
 
 /**
+ * The session tools' MCP server, shaped like {@link tabToolsMcpConfig} and approved up front: a
+ * create or a send that needs the user asks them in PPM's own card. `tool_timeout_sec` is the
+ * longest wait the settings allow plus an approval and a margin, so a long wait is never cut.
+ */
+export function sessionCollabMcpConfig(access: SessionCollabMcpAccess | undefined): CodexConfigOverrides {
+  if (!access) return {};
+  return {
+    [`mcp_servers.${CODEX_SESSION_COLLAB_MCP_SERVER}`]: {
+      url: access.url,
+      bearer_token_env_var: CODEX_SESSION_COLLAB_MCP_TOKEN_ENV,
+      enabled_tools: [...SESSION_COLLAB_TOOLS],
+      default_tools_approval_mode: "approve",
+      startup_timeout_sec: 10,
+      tool_timeout_sec: Math.ceil(SESSION_COLLAB_TOOLS_TIMEOUT_MS / 1000),
+    },
+  };
+}
+
+/** The environment the app-server needs for {@link sessionCollabMcpConfig}; `{}` without the tools. */
+export function sessionCollabMcpEnv(access: SessionCollabMcpAccess | undefined): Record<string, string> {
+  return access ? { [CODEX_SESSION_COLLAB_MCP_TOKEN_ENV]: access.token } : {};
+}
+
+/**
  * One builder for the params of every thread/start and thread/resume — the first connect
  * and the account-switch respawn used to assemble them separately, which is how a field
  * added to one silently goes missing from the other. `developerInstructions` is left out
@@ -121,6 +151,7 @@ export function buildThreadParams(input: ThreadParamsInput): CodexThreadParams {
     ...designMcpConfig(input.designMcp),
     ...tabToolsMcpConfig(input.tabToolsMcp),
     ...dbToolsMcpConfig(input.dbToolsMcp),
+    ...sessionCollabMcpConfig(input.sessionCollabMcp),
   };
   return {
     ...(Object.keys(config).length ? { config } : {}),
