@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A failed upgrade was shown as "Updating, reconnecting…", and the page then reloaded as if it had worked.** When the install itself failed, PPM answered with the installer's output, for example `npm ERR! network request to https://registry.npmjs.org/… failed`, and the update flow took any message that mentioned "network" or "fetch" for a server that was restarting. It waited for a server that had never gone down, found it answering at once and reloaded the page, so the error was never shown. Only a request that got no answer at all, or a gateway error page from a proxy or tunnel while PPM is down, now counts as a restart; anything PPM answers itself is shown as "Upgrade failed: …".
+
+- **Cloning a large repository from Add project could report "Clone failed" after 10 seconds while git finished cloning in the background.** `POST /api/projects/git/clone` now disables Bun's 10-second idle request timeout while the clone runs.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed

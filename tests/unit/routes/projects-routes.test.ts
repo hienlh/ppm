@@ -476,3 +476,39 @@ describe("project image (upload / serve / delete)", () => {
     expect(existsSync(file)).toBe(false);
   });
 });
+
+describe("POST /projects/git/clone", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "ppm-clone-route-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("turns off Bun's 10 s idle timeout so a slow clone is not cut off mid-flight", async () => {
+    const origin = join(tmpDir, "origin");
+    const dest = join(tmpDir, "dest");
+    Bun.spawnSync(["git", "init", "--bare", origin]);
+
+    const timeouts: { request: Request; seconds: number }[] = [];
+    const server = { timeout: (request: Request, seconds: number) => { timeouts.push({ request, seconds }); } };
+    const app = createApp();
+
+    const res = await app.request(
+      "/projects/git/clone",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: origin, targetDir: dest, name: "cloned-proj" }),
+      },
+      server,
+    );
+
+    expect(res.status).toBe(201);
+    expect(timeouts.map((t) => t.seconds)).toEqual([0]);
+    expect(new URL(timeouts[0]!.request.url).pathname).toBe("/projects/git/clone");
+  });
+});
