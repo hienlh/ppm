@@ -18,7 +18,6 @@
  * had arrived to measure against.
  */
 import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import type { ReplyReference } from "../../../shared/chat-reply";
 import type { WindowView } from "@/lib/history-window-model";
 import type { HistoryWindowControls } from "@/hooks/use-history-window";
@@ -29,7 +28,6 @@ import { GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
 import { MessageRows } from "./message-rows";
 import { resolveReplyMessage } from "./message-reply-reference";
 import { BackToLatestPill } from "./back-to-latest-pill";
-import { usePillDock } from "./composer-edge";
 import { HistoryWindowSpinner, LoadErrorBanner, LoadingOlderNotice } from "./history-window-status";
 import { flashRow } from "./flash-row";
 import { attrSelector, firstVisibleRow, restoreRow, turnStartAt, type RowAnchor } from "./scroll-row-anchor";
@@ -75,7 +73,6 @@ export const ChatHistoryWindow = memo(function ChatHistoryWindow({ view, control
   const [unpins, setUnpins] = useState(0);
   const pin = useScrollAnchorPin(scrollEl, () => setUnpins((n) => n + 1));
   useHistoryWindowFocus(scrollEl);
-  const dock = usePillDock();
   const rows = useMemo(() => view.messages.filter(rendered), [view.messages]);
   const flashCleanup = useRef<(() => void) | null>(null);
   useEffect(() => () => flashCleanup.current?.(), []);
@@ -161,7 +158,6 @@ export const ChatHistoryWindow = memo(function ChatHistoryWindow({ view, control
   }, [rows, sessionId, providerId, land]);
 
   const error = view.loadError;
-  const pill = <BackToLatestPill turnN={topTurn ? nByTurn.get(topTurn) ?? null : null} liveActivity={liveActivity} onClick={onBackToLatest} docked={!!dock} />;
   return (
     <div className="absolute inset-0 flex flex-col bg-background" data-history-window="">
       {error && <LoadErrorBanner error={error} onRetry={retry} />}
@@ -191,7 +187,7 @@ export const ChatHistoryWindow = memo(function ChatHistoryWindow({ view, control
           <div ref={bottomRef} aria-hidden className="h-px" />
         </div>
       </div>
-      {dock ? createPortal(pill, dock) : pill}
+      <BackToLatestPill turnN={topTurn ? nByTurn.get(topTurn) ?? null : null} liveActivity={liveActivity} onClick={onBackToLatest} />
     </div>
   );
 });

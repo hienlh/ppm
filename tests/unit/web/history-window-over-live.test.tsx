@@ -5,7 +5,8 @@
  *   can be answered there; the hidden live list does not hold a second approval card.
  * - A message sent from this tab leaves the window for the live list; one from another device does not.
  * - "Loading earlier turns" floats over the window instead of pushing its rows down.
- * - On a phone the Back to latest pill docks just above the composer, a 44 px target outside the scroller.
+ * - On a phone the Back to latest pill sits above every bar under the transcript, a 44 px target outside
+ *   the scroller, with the waiting block above it.
  * - Focus moves into the window when it opens.
  * - A Review tab jump to a call in a turn the live list has not loaded opens the window on that turn.
  */
@@ -29,7 +30,6 @@ installGlobal("fetch", async (input: string) => {
 });
 
 const { MessageList } = await import("../../../src/web/components/chat/message-list");
-const { ComposerEdgeContext } = await import("../../../src/web/components/chat/composer-edge");
 const { ChatHistoryWindow } = await import("../../../src/web/components/chat/chat-history-window");
 const { useChatJumpStore } = await import("../../../src/web/stores/chat-jump-store");
 
@@ -152,24 +152,47 @@ describe("the history window over the live chat", () => {
     expect(document.activeElement).toBe(scroller);
   });
 
-  it("docks the pill just above the composer on a phone, a 44 px target outside the scroller", async () => {
+  it("keeps the pill above the bars under the transcript on a phone, a 44 px target outside the scroller", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
-    const edge = document.createElement("div");
-    document.body.appendChild(edge);
-    try {
-      view = await mount(<ComposerEdgeContext.Provider value={edge}>{list(turns(5, 6))}</ComposerEdgeContext.Provider>);
-      await openWindowOn(2);
-      const docked = edge.querySelector<HTMLElement>("[data-back-to-latest]")!;
-      expect(docked.dataset.backToLatest).toBe("docked");
-      expect(docked.className).toContain("bottom-2");
-      expect(docked.querySelector("button")!.className).toContain("min-h-[44px]");
-      expect(historyWindow()!.querySelector("[data-back-to-latest]")).toBeNull();
-      // The waiting block takes the bottom of the transcript, since the pill is no longer there.
-      await view.rerender(<ComposerEdgeContext.Provider value={edge}>{list(turns(5, 6), allow)}</ComposerEdgeContext.Provider>);
-      expect(view.container.querySelector("[data-window-pending]")!.className).toContain("bottom-3");
-    } finally {
-      edge.remove();
+    // The chat tab's column: the transcript, then the bars, then the composer (see the source-order test below).
+    const column = (approval: Approval = null) => (
+      <div className="flex flex-col">
+        {list(turns(5, 6), approval)}
+        <div data-bars="">files changed</div>
+        <div data-composer="" />
+      </div>
+    );
+    view = await mount(column());
+    await openWindowOn(2);
+    const pill = view.container.querySelector<HTMLElement>("[data-back-to-latest]")!;
+    expect(view.container.querySelectorAll("[data-back-to-latest]").length).toBe(1);
+    // Inside the window, which covers the transcript only, so above the first bar in the column.
+    expect(historyWindow()!.contains(pill)).toBe(true);
+    expect(historyWindow()!.querySelector("[aria-label='Earlier turns']")!.contains(pill)).toBe(false);
+    const bars = view.container.querySelector("[data-bars]")!;
+    expect(bars.contains(pill)).toBe(false);
+    expect(pill.compareDocumentPosition(bars) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(pill.className).toContain("bottom-3");
+    expect(pill.querySelector("button")!.className).toContain("min-h-[44px]");
+    // The waiting block sits above the pill rather than under it.
+    await view.rerender(column(allow));
+    expect(view.container.querySelector("[data-window-pending]")!.className).toContain("bottom-[4.25rem]");
+  });
+
+  it("stacks every bar under the conversation below the transcript the window covers", async () => {
+    const source = await Bun.file(new URL("../../../src/web/components/chat/chat-tab.tsx", import.meta.url)).text();
+    const at = (tag: string) => {
+      const i = source.indexOf(`<${tag}`);
+      expect(i).toBeGreaterThan(-1);
+      return i;
+    };
+    const transcript = at("MessageList");
+    for (const bar of ["RunningAgentsBar", "TurnStopBar", "McpSignInBar", "SessionChangesBar", "MessageInput"]) {
+      expect(at(bar)).toBeGreaterThan(transcript);
     }
+    // The pill is drawn where the window is; portalling it next to the composer put it over the bars.
+    const windowSource = await Bun.file(new URL("../../../src/web/components/chat/chat-history-window.tsx", import.meta.url)).text();
+    expect(windowSource).not.toContain("createPortal");
   });
 
   it("opens the window on the turn a Review tab jump names when its call is not loaded", async () => {

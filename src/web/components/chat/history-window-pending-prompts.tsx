@@ -12,12 +12,10 @@ import type { PendingAsyncQuestion } from "@/lib/history-window-live-signals";
 import { PendingApprovalCard } from "./message-approval-cards";
 import { AsyncQuestionCard } from "./async-question-card";
 
-export function HistoryWindowPendingPrompts({ approval, onRespond, question, pillDocked }: {
+export function HistoryWindowPendingPrompts({ approval, onRespond, question }: {
   approval: { requestId: string; tool: string; input: unknown } | null;
   onRespond: (requestId: string, approved: boolean, data?: unknown) => void;
   question: PendingAsyncQuestion | null;
-  /** The Back to latest pill sits outside the window (phones), so this block can take the bottom. */
-  pillDocked: boolean;
 }) {
   if (!approval && !question) return null;
   return (
@@ -25,7 +23,7 @@ export function HistoryWindowPendingPrompts({ approval, onRespond, question, pil
       data-window-pending=""
       role="region"
       aria-label="Waiting for your answer"
-      className={`absolute inset-x-0 z-30 max-h-[60%] space-y-3 overflow-y-auto px-4 select-none ${pillDocked ? "bottom-3" : "bottom-[4.25rem]"}`}
+      className="absolute inset-x-0 z-30 max-h-[60%] space-y-3 overflow-y-auto px-4 select-none bottom-[4.25rem]"
     >
       {/* Opaque behind the cards: some are tinted washes, and the window's rows scroll beneath. */}
       {approval && <div className="rounded-lg bg-background shadow-lg"><PendingApprovalCard approval={approval} onRespond={onRespond} /></div>}

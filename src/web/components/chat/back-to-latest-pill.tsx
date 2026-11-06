@@ -2,23 +2,23 @@
  * Shown while the chat is in the history window: says which turn is on screen and takes the reader
  * back to the newest message in one tap.
  *
- * It floats over the bottom of the conversation, outside the scroll container, so it stays put while
- * the window scrolls. On a phone it is docked a fixed 8 px above the composer instead
- * (`composer-edge.ts`), so it stays in the thumb zone however many bars sit under the conversation. The dot says
- * the live conversation has moved on since the jump: something streamed, or a new message arrived.
+ * It floats over the bottom of the window, outside the scroll container, so it stays put while the
+ * window scrolls. The window covers exactly the transcript area, which `chat-tab.tsx` stacks above
+ * every bar under the conversation (running agents, a stop notice, MCP sign-in, the session's file
+ * changes), so on every viewport the pill sits just above the topmost of those bars and never over
+ * one of them — on a phone that is still the bottom third, above the composer. The dot says the
+ * live conversation has moved on since the jump: something streamed, or a new message arrived.
  */
 import { ChevronsDown } from "@/lib/icons";
 
-export function BackToLatestPill({ turnN, liveActivity, onClick, docked = false }: {
+export function BackToLatestPill({ turnN, liveActivity, onClick }: {
   /** The turn at the top of the window's viewport, when it is known. */
   turnN: number | null;
   liveActivity: boolean;
   onClick: () => void;
-  /** Placed in the composer's edge element (a phone) rather than over the window. */
-  docked?: boolean;
 }) {
   return (
-    <div data-back-to-latest={docked ? "docked" : "window"} className={`pointer-events-none absolute inset-x-0 z-20 flex justify-center px-4 ${docked ? "bottom-2" : "bottom-3"}`}>
+    <div data-back-to-latest="" className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-4">
       <button
         type="button"
         onClick={onClick}

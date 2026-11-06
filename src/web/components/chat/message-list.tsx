@@ -27,7 +27,6 @@ import { GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
 import { MessageRows } from "./message-rows";
 import { PendingApprovalCard } from "./message-approval-cards";
 import { HistoryWindowPendingPrompts } from "./history-window-pending-prompts";
-import { usePillDock } from "./composer-edge";
 import { lastLocalSendId, pendingAsyncQuestion } from "@/lib/history-window-live-signals";
 import { ChatHistoryWindow, type HistoryWindowHandle, type MergeAnchor } from "./chat-history-window";
 import { attrSelector, restoreRow } from "./scroll-row-anchor";
@@ -408,7 +407,6 @@ export function MessageList({
   }, [inWindow, localSend, handleBackToLatest]);
   // While the window covers the live list, what the agent is waiting on is shown over it instead.
   const pendingQuestion = useMemo(() => (inWindow ? pendingAsyncQuestion(filtered) : null), [inWindow, filtered]);
-  const pillDock = usePillDock();
   // The approval card + "thinking…" indicator ride at the end, inside the scrolled content so
   // stick-to-bottom keeps them in view — the card only while that list is the one on screen.
   const liveApproval = inWindow ? null : pendingApproval;
@@ -650,7 +648,7 @@ export function MessageList({
         />
       )}
       {windowView && (
-        <HistoryWindowPendingPrompts approval={pendingApproval} onRespond={onApprovalResponse} question={pendingQuestion} pillDocked={!!pillDock} />
+        <HistoryWindowPendingPrompts approval={pendingApproval} onRespond={onApprovalResponse} question={pendingQuestion} />
       )}
       </div>
       {!windowView && <ChatScrollNav scrollElement={scrollEl} userIndices={userIndices} scrollToBottom={scrollToBottom} />}

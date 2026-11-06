@@ -1,7 +1,7 @@
 // Turn-reference e2e, part 5 (scenario 8): a phone (390×844, touch). A long press on a chip opens
 // its preview sheet; a press the browser cancels for a scroll (`touchcancel`) opens nothing; a tap
-// opens the session in the history window with the Back to latest pill docked just above the
-// composer, in the thumb zone.
+// opens the session in the history window with the Back to latest pill just above the topmost bar
+// under the transcript (never over the session changes bar), in the thumb zone.
 import assert from "node:assert/strict";
 
 const W = 390, H = 844;
@@ -49,14 +49,28 @@ export async function runPhoneSteps(ctx) {
     const p = await pill.boundingBox();
     assert(p.height >= 44, `the pill is a 44px target (${p.height})`);
     assert(p.y + p.height / 2 > (H * 2) / 3, `the pill sits in the bottom third (${JSON.stringify(p)})`);
-    // Docked to the composer's edge, outside the window's scroller, a fixed 8 px above the composer.
-    assert.equal(await page.locator('[data-back-to-latest="docked"]').count(), 1, "the pill is docked to the composer");
-    assert.equal(await page.locator("[data-history-window] [data-back-to-latest]").count(), 0, "the pill is not inside the window");
-    const composer = await page.locator('[data-back-to-latest="docked"]').evaluate((el) => el.parentElement.nextElementSibling.getBoundingClientRect().top);
-    const gap = composer - (p.y + p.height);
-    assert(gap >= 4 && gap <= 12, `the pill sits just above the composer (gap ${gap})`);
+    // Over the bottom of the window, outside its scroller, and above every bar under the transcript —
+    // the session changes bar included — so it covers none of them.
+    assert.equal(await page.locator("[data-back-to-latest]").count(), 1, "one pill");
+    assert.equal(await page.locator("[data-history-window] [data-back-to-latest]").count(), 1, "the pill is in the window");
+    assert.equal(await page.locator("[data-history-window] [aria-label='Earlier turns'] [data-back-to-latest]").count(), 0, "the pill is outside the scroller");
+    const below = await page.locator("[data-history-window]").evaluate((win) => {
+      // The transcript area the window covers is followed by the bars and then the composer.
+      const transcript = win.parentElement.closest(".flex-1.overflow-hidden") ?? win.parentElement;
+      const rects = [];
+      for (let el = transcript.nextElementSibling; el; el = el.nextElementSibling) {
+        const r = el.getBoundingClientRect();
+        if (r.height > 0) rects.push({ top: r.top, bottom: r.bottom, text: (el.textContent ?? "").slice(0, 40) });
+      }
+      return rects;
+    });
+    assert(below.length >= 2, `bars and composer found under the transcript (${JSON.stringify(below)})`);
+    const topBar = Math.min(...below.map((r) => r.top));
+    const gap = topBar - (p.y + p.height);
+    assert(gap >= 4 && gap <= 16, `the pill sits just above the topmost bar (gap ${gap}, ${JSON.stringify(below)})`);
+    assert(below.some((r) => /changed/i.test(r.text)), `the session changes bar is among the bars under the pill (${JSON.stringify(below)})`);
     await page.screenshot({ path: `${artifacts}/08-phone-window-pill.png` });
-    kit.record("8: phone — a cancelled press opens nothing, a long press opens the preview sheet, and the window's Back to latest pill sits in the thumb zone", { chip: box, pill: p, gapToComposer: gap });
+    kit.record("8: phone — a cancelled press opens nothing, a long press opens the preview sheet, and the window's Back to latest pill sits in the thumb zone", { chip: box, pill: p, gapToTopBar: gap });
   } finally {
     await phone.close();
   }

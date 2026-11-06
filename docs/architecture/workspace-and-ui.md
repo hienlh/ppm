@@ -150,9 +150,10 @@ and the TabPool's reshow guard see nothing change — and keeps streaming. A pag
 moving the row being read: the first visible row is measured during render, before commit, and put
 back in a layout effect (`scroll-row-anchor.ts`). The window merges back into the live list once
 the live list holds its last turn whole, and **Back to latest** (`back-to-latest-pill.tsx`, with a
-dot when the live chat moved on) leaves it at once. On a phone the pill is docked 8 px above the
-composer (`composer-edge.ts`, a zero-height element `chat-tab.tsx` places there), so the bars under
-the transcript cannot push it out of the thumb zone. Sending a message from this tab also leaves the
+dot when the live chat moved on) leaves it at once. The pill floats over the bottom of the window,
+outside its scroller; the window covers the transcript only, so the pill sits just above the topmost
+bar under it (running agents, a stop notice, MCP sign-in, the session's file changes) and never over
+one, which on a phone is still the bottom third. Sending a message from this tab also leaves the
 window, so the sender sees it go out. An approval or a question the agent waits on is drawn over the
 window above the composer (`history-window-pending-prompts.tsx`), never only in the hidden list.
 "Loading earlier turns" floats over the window rather than sitting above its rows, which would push
