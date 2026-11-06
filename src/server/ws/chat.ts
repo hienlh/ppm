@@ -183,6 +183,10 @@ interface SessionEntry {
   phase: SessionPhase;
   cleanupTimer?: ReturnType<typeof setTimeout>;
   pendingApprovalEvent?: { type: string; requestId: string; tool: string; input: unknown };
+  /** Provider approvals that arrived while another held the slot — parallel tool calls, such as
+   *  two AskUserQuestion in one message. Each is shown (and only then sent) once the one before
+   *  it is answered (`showNextApproval`). */
+  queuedApprovals?: { type: string; requestId: string; tool: string; input: unknown }[];
   turnEvents: unknown[];
   /** The opening of the turn's last top-level text block — the answer a "Chat completed" notification quotes. */
   finalText?: string;
@@ -623,6 +627,39 @@ function dbApprovalResolved(sessionId: string, requestId: string, approved: bool
 setDbApprovalChat({ announce: announceDbApproval, resolved: dbApprovalResolved }, resolveMigratedSession);
 
 /**
+ * A provider asks for an approval or an answer. The session has one slot and every device shows
+ * one card, so a request arriving while another provider request holds it waits its turn: shown
+ * there, a second AskUserQuestion of the same message replaced the first card, and once it was
+ * answered nothing could answer the first — the turn waited on it for good. A `db_execute`
+ * approval does give way, since it waits in its broker and comes back (`showWaitingDbApproval`).
+ */
+function receiveApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type: string; requestId: string; tool: string; input: unknown }): void {
+  const holder = entry.pendingApprovalEvent;
+  if (holder && holder.requestId !== ev.requestId && !dbApprovalBroker.has(holder.requestId)) {
+    (entry.queuedApprovals ??= []).push(ev);
+    logSessionEvent(sessionId, "INFO", `Approval ${ev.requestId} (${ev.tool}) queued behind ${holder.requestId}`);
+    return;
+  }
+  holdApprovalRequest(sessionId, entry, ev);
+  bufferAndBroadcast(sessionId, ev);
+}
+
+/**
+ * The slot is empty: the next provider request waiting in line is shown, else a `db_execute`
+ * approval that a provider's had taken the slot from.
+ */
+function showNextApproval(sessionId: string, entry: SessionEntry): void {
+  if (entry.pendingApprovalEvent) return;
+  const next = entry.queuedApprovals?.shift();
+  if (next) {
+    holdApprovalRequest(sessionId, entry, next);
+    bufferAndBroadcast(sessionId, next);
+    return;
+  }
+  showWaitingDbApproval(sessionId, entry);
+}
+
+/**
  * A provider's approval took the session's one pending slot while a `db_execute` approval was
  * waiting, and has now been answered: the database approval is shown again.
  */
@@ -637,16 +674,32 @@ function showWaitingDbApproval(sessionId: string, entry: SessionEntry): void {
 const DB_APPROVAL_TURN_OVER = "The turn ended before the user answered, so nothing ran.";
 
 /**
- * Empties the session's one approval slot. A `db_execute` approval waiting behind a provider's
- * is shown in its place (`showWaitingDbApproval`), or, given a reason, cancelled first: the
- * user moved on, or the turn its call belongs to is over. Every place that empties the slot,
- * but a database approval's own answer (`dbApprovalResolved`), comes through here, so none can
- * leave a database approval waiting for a card nobody sees.
+ * Empties the session's one approval slot. The next request in line is shown in its place
+ * (`showNextApproval`), or, given a reason, everything still waiting is declined first: the user
+ * moved on, or the turn the calls belong to is over. Every place that empties the slot, but a
+ * database approval's own answer (`dbApprovalResolved`), comes through here, so none can leave a
+ * request waiting for a card nobody sees.
  */
-function clearPendingApproval(sessionId: string, entry: SessionEntry, cancelDbApproval?: string): void {
-  if (cancelDbApproval) dbApprovalBroker.cancelSession(sessionId, cancelDbApproval);
+function clearPendingApproval(sessionId: string, entry: SessionEntry, cancelReason?: string): void {
+  if (cancelReason) {
+    dbApprovalBroker.cancelSession(sessionId, cancelReason);
+    declineQueuedApprovals(sessionId, entry, cancelReason);
+  }
   entry.pendingApprovalEvent = undefined;
-  showWaitingDbApproval(sessionId, entry);
+  showNextApproval(sessionId, entry);
+}
+
+/**
+ * Declines the provider requests still in line. Dropping them without an answer is the hang this
+ * line exists to prevent: a background agent can still be waiting on one after its turn's `done`.
+ */
+function declineQueuedApprovals(sessionId: string, entry: SessionEntry, reason: string): void {
+  const queued = entry.queuedApprovals ?? [];
+  entry.queuedApprovals = undefined;
+  for (const ev of queued) {
+    chatService.resolveApproval(entry.providerId, sessionId, ev.requestId, false, undefined, { reason, origin: "ws" });
+    broadcast(sessionId, { type: "approval_resolved", requestId: ev.requestId, approved: false, answers: null });
+  }
 }
 
 /**
@@ -1261,7 +1314,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           });
         }).catch(() => {});
       } else if (evType === "approval_request") {
-        holdApprovalRequest(sessionId, entry, ev);
+        // Sent by `receiveApprovalRequest` — now, or once the request before it is answered.
+        receiveApprovalRequest(sessionId, entry, ev);
+        continue;
       } else if (evType === "session_migrated") {
         // CLI providers discover real session ID from CLI output — migrate WS tracking
         const newId = ev.newSessionId as string;
@@ -1740,6 +1795,7 @@ export const chatWebSocket = {
             approved: false,
             answers: null,
           });
+          // Also declines those still in line: they block the provider just the same.
           clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
         }
         logSessionEvent(sessionId, "INFO", `Pending approval ${pendingReqId} auto-skipped (user sent a message)`);
@@ -1808,9 +1864,9 @@ export const chatWebSocket = {
             return;
           }
         }
-        // Clear turn events for new turn display + transition phase
+        // Clear turn events for new turn display + transition phase. The approval slot was settled
+        // before the push; one that filled during it is a live request and stays on screen.
         entry.turnEvents = [];
-        clearPendingApproval(sessionId, entry);
         setPhase(sessionId, "thinking");
         log.debug(`session=${sessionId} follow-up pushed to generator`);
       }
@@ -1949,7 +2005,8 @@ export const chatWebSocket = {
           return;
         }
         entry.turnEvents = [];
-        clearPendingApproval(sessionId, entry);
+        // The instruction answers no approval, so one on screen stays there: emptying the slot
+        // would leave the provider waiting on a request no device can answer.
         setPhase(sessionId, "thinking");
       }
       logSessionEvent(sessionId, "INFO", `kill_background_shell requested shellId=${shellId}`);
@@ -1982,8 +2039,12 @@ export const chatWebSocket = {
         });
         // Broadcast approval cleared to all clients
         broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
-        // After the broadcasts above, so a database approval shown next is not cleared with them.
-        clearPendingApproval(sessionId, entry);
+        // After the broadcasts above, so a request shown next is not cleared with them. An answer
+        // to a request still in line (a device holding an older card) only takes it out of line:
+        // emptying the slot then would hide the card that is still unanswered.
+        const holder = entry.pendingApprovalEvent;
+        if (!holder || holder.requestId === parsed.requestId) clearPendingApproval(sessionId, entry);
+        else entry.queuedApprovals = entry.queuedApprovals?.filter((queued) => queued.requestId !== parsed.requestId);
       }
     }
   },

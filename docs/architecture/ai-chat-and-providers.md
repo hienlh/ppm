@@ -532,6 +532,7 @@ interface SessionEntry {
   phase: SessionPhase;             // "initializing" | "connecting" | "thinking" | "streaming" | "idle"
   cleanupTimer?: ReturnType<...>;  // Auto-cleanup if no FE reconnects (5min)
   pendingApprovalEvent?: {...};    // Current tool approval waiting
+  queuedApprovals?: {...}[];       // Provider requests behind it, sent one at a time
   turnEvents: unknown[];           // Buffered events (for reconnect sync)
   streamPromise?: Promise<void>;   // Track ongoing runStreamLoop
   permissionMode?: string;         // Sticky permission mode for session
