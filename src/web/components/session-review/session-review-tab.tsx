@@ -47,7 +47,8 @@ export function SessionReviewTab({ metadata }: { metadata?: Record<string, unkno
   }, [projectName, sessionId, providerId, chatTitle]);
   const showInChat = useCallback((turn: SessionTurn, call: string) => {
     if (!sessionId) return;
-    useChatJumpStore.getState().jump({ sessionId, toolUseId: call, messageId: turn.messageId });
+    // The turn too: a turn the chat has not loaded is then read into its history window.
+    useChatJumpStore.getState().jump({ sessionId, toolUseId: call, messageId: turn.messageId, ...(turn.turnId ? { turnId: turn.turnId } : {}) });
     openChat();
   }, [sessionId, openChat]);
   const calls = useMemo(() => review.reviews.flatMap((r) => r.file.blocks?.flatMap((b) => b.calls ?? []) ?? []), [review.reviews]);

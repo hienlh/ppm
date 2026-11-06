@@ -378,6 +378,12 @@ export interface ChatMessage {
    * anyone said at that point. Never a turn, never numbered.
    */
   synthetic?: boolean;
+  /**
+   * A user record the CLI wrote rather than the person: a meta record, a compaction summary, a
+   * transcript-only copy, a task notification. Read from the record's own flags, which the text
+   * alone does not show, so it is never mistaken for a prompt (`shared/user-prompt-kind.ts`).
+   */
+  notPrompt?: boolean;
 }
 
 /**

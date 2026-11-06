@@ -137,6 +137,23 @@ describe("turn window route", () => {
     const kept = await get(id, `turn=${T(3)}`, "codex");
     expect(kept.body.data.turns.map((t: { turnId: string; n: number }) => [t.turnId, t.n])).toEqual([[T(1), 1], [T(3), 2]]);
   });
+
+  test("a Codex window gives every message an id no other turn in it shares", async () => {
+    const id = randomUUID();
+    const T = (n: number) => `019ee344-3333-7000-8000-00000000000${n}`;
+    const dir = join(sessionsDir, "2026", "11", "04");
+    mkdirSync(dir, { recursive: true });
+    const records: string[] = [codex.meta(id, projectPath)];
+    for (let n = 1; n <= 3; n++) records.push(codex.taskStarted(T(n)), codex.user(`ask ${n}`), codex.agent(`answer ${n}`), codex.taskComplete(T(n)));
+    writeFileSync(join(dir, `rollout-2026-11-04T00-00-01-${id}.jsonl`), lines(...records));
+    const { body } = await get(id, `turn=${T(2)}`, "codex");
+    const messages = body.data.messages as ChatMessage[];
+    expect(messages.length).toBe(6);
+    expect(new Set(messages.map((m) => m.id)).size).toBe(messages.length);
+    // Each id names its turn, so a row found by id is in the turn it belongs to.
+    for (const m of messages) expect(m.id.startsWith(`${m.turnId}:`)).toBe(true);
+    expect(messages.find((m) => m.content === "ask 3")!.turnId).toBe(T(3));
+  });
 });
 
 describe("pickWindowTurns", () => {

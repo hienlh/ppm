@@ -23,11 +23,12 @@ import { AlertCircle, Bot, Loader2, XCircle } from "@/lib/icons";
 import { ChatWelcome } from "./chat-welcome";
 import { ChatScrollNav } from "./chat-scroll-nav";
 import type { VersionGroup } from "../../../types/api";
-import { DbExecuteApprovalCard } from "./db-execute-approval-card";
-import { dbExecuteApprovalInput } from "../../../shared/db-ai-tools";
 import { GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
 import { MessageRows } from "./message-rows";
-import { ApprovalCard, AskUserQuestionCard } from "./message-approval-cards";
+import { PendingApprovalCard } from "./message-approval-cards";
+import { HistoryWindowPendingPrompts } from "./history-window-pending-prompts";
+import { usePillDock } from "./composer-edge";
+import { lastLocalSendId, pendingAsyncQuestion } from "@/lib/history-window-live-signals";
 import { ChatHistoryWindow, type HistoryWindowHandle, type MergeAnchor } from "./chat-history-window";
 import { attrSelector, restoreRow } from "./scroll-row-anchor";
 import { useHistoryWindow } from "@/hooks/use-history-window";
@@ -184,10 +185,6 @@ export function MessageList({
   // obvious per-row form is the thing that makes a long transcript unusable.
   const userOrdinals = useMemo(() => userMessageOrdinals(filtered), [filtered]);
 
-  // The approval card + "thinking…" indicator ride at the end, inside the scrolled
-  // content so stick-to-bottom keeps them in view.
-  const hasTrailing = !!pendingApproval || isStreaming;
-  const dbApproval = pendingApproval ? dbExecuteApprovalInput(pendingApproval.tool, pendingApproval.input) : null;
 
   // Mirror the lib's scroll-element ref into state so effects/nav re-run when the
   // scroll container mounts late (it appears only after the loading screen).
@@ -236,8 +233,11 @@ export function MessageList({
   }, []);
   useEffect(() => () => flashCleanupRef.current?.(), []);
 
-  // The Review tab names the turn that wrote each block from what this chat shows.
-  const turns = useMemo(() => sessionTurns(messages), [messages]);
+  // The Review tab names the turn that wrote each block from what this chat shows. The list holds
+  // the session from its first prompt when no older page is left and it does not open on a
+  // compaction summary (the segments before one load separately).
+  const fromStart = !hasOlderHistory && !messages[0]?.compaction;
+  const turns = useMemo(() => sessionTurns(messages, { fromStart }), [messages, fromStart]);
   useEffect(() => {
     if (sessionId) useSessionTurnsStore.getState().publish(sessionId, turns, true);
   }, [sessionId, turns]);
@@ -252,7 +252,7 @@ export function MessageList({
       for (let j = i; j >= 0 && !turn; j--) if (filtered[j]!.role === "user") turn = byId.get(filtered[j]!.id);
       if (!turn) continue;
       const prev = turnCache.current.get(turn.messageId);
-      if (prev && prev.n === turn.n && prev.at === turn.at && prev.prompt === turn.prompt
+      if (prev && prev.n === turn.n && prev.unnumbered === turn.unnumbered && prev.at === turn.at && prev.prompt === turn.prompt
         && prev.calls.length === turn.calls.length && prev.calls[prev.calls.length - 1] === turn.calls[turn.calls.length - 1]) turn = prev;
       else turnCache.current.set(turn.messageId, turn);
       out.set(i, turn);
@@ -360,7 +360,8 @@ export function MessageList({
   // `use-chat-turn-jump.ts`. A turn this list has not loaded is read from the turn index into
   // the history window, a container of its own laid over this one.
   const history = useHistoryWindow({ projectName, sessionId, providerId });
-  const livePin = useScrollAnchorPin(scrollEl);
+  // A row pinned here is held against the follow-to-bottom as well (see the pin's `onHold`).
+  const livePin = useScrollAnchorPin(scrollEl, undefined, stopScroll);
   const windowHandle = useRef<HistoryWindowHandle | null>(null);
   useChatTurnJump({
     sessionId, scrollEl, filtered, messagesLoading, stopScroll, handleJumpToEdit, showMessageAt, livePin, history, windowHandle,
@@ -394,6 +395,24 @@ export function MessageList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inWindow]);
   const liveActivity = isStreaming || (enteredAt !== undefined && lastLiveId !== enteredAt);
+  // A message sent from this tab while the window is up returns to the live list, at the bottom,
+  // so the sender sees it go out and its answer arrive.
+  const localSend = lastLocalSendId(filtered);
+  const sendAtEntry = useRef<string | null>(null);
+  useEffect(() => {
+    if (inWindow) sendAtEntry.current = localSend;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inWindow]);
+  useEffect(() => {
+    if (inWindow && localSend && localSend !== sendAtEntry.current) handleBackToLatest();
+  }, [inWindow, localSend, handleBackToLatest]);
+  // While the window covers the live list, what the agent is waiting on is shown over it instead.
+  const pendingQuestion = useMemo(() => (inWindow ? pendingAsyncQuestion(filtered) : null), [inWindow, filtered]);
+  const pillDock = usePillDock();
+  // The approval card + "thinking…" indicator ride at the end, inside the scrolled content so
+  // stick-to-bottom keeps them in view — the card only while that list is the one on screen.
+  const liveApproval = inWindow ? null : pendingApproval;
+  const hasTrailing = !!liveApproval || isStreaming;
 
   // Stable fork handler — avoids new closure per message (preserves MessageBubble memo)
   const handleFork = useCallback((msgContent: string, msgId: string | undefined) => {
@@ -553,7 +572,7 @@ export function MessageList({
           </button>
         </div>
       )}
-      {!autoLoadingCompact && compactLoadError && (
+      {!windowView && !autoLoadingCompact && compactLoadError && (
         <div className="absolute top-2 left-0 right-0 z-10 flex justify-center">
           <button
             type="button"
@@ -610,13 +629,7 @@ export function MessageList({
           )}
           {hasTrailing && (
             <div className="px-4 pt-4 pb-4 space-y-4 select-none">
-              {pendingApproval && (
-                pendingApproval.tool === "AskUserQuestion"
-                  ? <AskUserQuestionCard approval={pendingApproval} onRespond={onApprovalResponse} />
-                  : dbApproval
-                    ? <DbExecuteApprovalCard requestId={pendingApproval.requestId} input={dbApproval} />
-                    : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
-              )}
+              {liveApproval && <PendingApprovalCard approval={liveApproval} onRespond={onApprovalResponse} />}
               {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
             </div>
           )}
@@ -635,6 +648,9 @@ export function MessageList({
           providerId={providerId}
           handleRef={windowHandle}
         />
+      )}
+      {windowView && (
+        <HistoryWindowPendingPrompts approval={pendingApproval} onRespond={onApprovalResponse} question={pendingQuestion} pillDocked={!!pillDock} />
       )}
       </div>
       {!windowView && <ChatScrollNav scrollElement={scrollEl} userIndices={userIndices} scrollToBottom={scrollToBottom} />}

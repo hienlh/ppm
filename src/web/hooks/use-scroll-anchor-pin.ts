@@ -19,6 +19,13 @@
  *   back that the move reset. Scroll events for that land in the frame the tab reappears, before
  *   the ResizeObserver reports the new height, and the pin waits one more frame before it trusts
  *   the position again.
+ *
+ * A container that also follows its own bottom (the live list, through use-stick-to-bottom) needs
+ * that following held off while a row is pinned: a landing near the bottom is a downward scroll that
+ * ends near the bottom, which the follower reads as the reader returning there and locks on again,
+ * and its next resize-follow then pulls the row away. `onHold` is called on every write the pin
+ * makes and again just after the follower has judged it (it judges a scroll a moment after the
+ * event), so the pin stays the one that decides until the reader scrolls.
  */
 import { useLayoutEffect, useMemo, useRef } from "react";
 
@@ -31,6 +38,16 @@ const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home
 /** A scroll position this far from the one last written is someone else's. */
 const OWN_WRITE_TOLERANCE_PX = 1;
 
+/** After the follower's own deferred look at a scroll event (it waits 1 ms), so the hold lands last. */
+const HOLD_AFTER_SCROLL_MS = 2;
+
+/** Keys typed into a field are text, not scrolling, even when the field sits inside the container. */
+function isEditable(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.closest !== "function") return false;
+  return !!el.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])");
+}
+
 export class ScrollAnchorPin {
   private target: HTMLElement | null = null;
   /** The scroll position the pin last wrote, as the browser clamped it. */
@@ -40,12 +57,14 @@ export class ScrollAnchorPin {
   /** Shown again this frame: offsets are still being restored, so nothing is measured or judged. */
   private settling = false;
   private frame = 0;
+  private holdTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly ro: ResizeObserver;
 
   constructor(
     private readonly el: HTMLElement,
     private readonly offset = PIN_OFFSET_PX,
     private readonly onUnpin?: () => void,
+    private readonly onHold?: () => void,
   ) {
     this.hidden = el.clientHeight === 0;
     this.ro = new ResizeObserver(this.onResize);
@@ -83,12 +102,14 @@ export class ScrollAnchorPin {
     if (!target.isConnected) return this.unpin();
     if (this.suspended()) return;
     const drift = target.getBoundingClientRect().top - this.el.getBoundingClientRect().top - this.offset;
+    this.onHold?.();
     if (Math.abs(drift) >= 0.5) this.el.scrollTop += drift;
     this.lastSet = this.el.scrollTop;
   }
 
   dispose(): void {
     cancelAnimationFrame(this.frame);
+    clearTimeout(this.holdTimer);
     this.ro.disconnect();
     this.el.removeEventListener("wheel", this.onIntent);
     this.el.removeEventListener("touchmove", this.onIntent);
@@ -125,7 +146,7 @@ export class ScrollAnchorPin {
   };
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
-    if (SCROLL_KEYS.has(e.key)) this.onIntent();
+    if (SCROLL_KEYS.has(e.key) && !isEditable(e.target)) this.onIntent();
   };
 
   /** Only a press on the container itself, i.e. its scrollbar: a click on a row is not a scroll. */
@@ -135,7 +156,10 @@ export class ScrollAnchorPin {
 
   private readonly onScroll = (): void => {
     if (!this.target || this.suspended() || this.lastSet === null) return;
-    if (Math.abs(this.el.scrollTop - this.lastSet) > OWN_WRITE_TOLERANCE_PX) this.unpin();
+    if (Math.abs(this.el.scrollTop - this.lastSet) > OWN_WRITE_TOLERANCE_PX) return this.unpin();
+    if (!this.onHold) return;
+    clearTimeout(this.holdTimer);
+    this.holdTimer = setTimeout(() => { if (this.target) this.onHold?.(); }, HOLD_AFTER_SCROLL_MS);
   };
 }
 
@@ -151,20 +175,23 @@ export interface AnchorPinHandle {
  * A pin for `scrollEl`, rebuilt whenever the container element changes. `onUnpin` hears the reader
  * take over (it is not called for an `unpin()` made here).
  */
-export function useScrollAnchorPin(scrollEl: HTMLElement | null, onUnpin?: () => void): AnchorPinHandle {
+export function useScrollAnchorPin(scrollEl: HTMLElement | null, onUnpin?: () => void, onHold?: () => void): AnchorPinHandle {
   const pinRef = useRef<ScrollAnchorPin | null>(null);
   const onUnpinRef = useRef(onUnpin);
   onUnpinRef.current = onUnpin;
+  const onHoldRef = useRef(onHold);
+  onHoldRef.current = onHold;
+  const holds = !!onHold;
   // A layout effect, so a pin asked for in the same commit (a landing) finds the instance ready.
   useLayoutEffect(() => {
     if (!scrollEl) return;
-    const pin = new ScrollAnchorPin(scrollEl, PIN_OFFSET_PX, () => onUnpinRef.current?.());
+    const pin = new ScrollAnchorPin(scrollEl, PIN_OFFSET_PX, () => onUnpinRef.current?.(), holds ? () => onHoldRef.current?.() : undefined);
     pinRef.current = pin;
     return () => {
       pin.dispose();
       if (pinRef.current === pin) pinRef.current = null;
     };
-  }, [scrollEl]);
+  }, [scrollEl, holds]);
   return useMemo(() => ({
     pin: (target) => pinRef.current?.pin(target),
     unpin: () => pinRef.current?.unpin(),

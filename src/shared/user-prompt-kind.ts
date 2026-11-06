@@ -45,6 +45,7 @@ export interface PromptMessageLike {
   content: string;
   compaction?: unknown;
   synthetic?: boolean;
+  notPrompt?: boolean;
 }
 
 /**
@@ -83,19 +84,26 @@ function originKind(origin: unknown): unknown {
   return origin && typeof origin === "object" ? (origin as { kind?: unknown }).kind : undefined;
 }
 
+/**
+ * A Claude user record its own flags mark as the CLI's rather than the person's, whatever its
+ * text says: meta, a sidechain, a compaction summary, a transcript-only copy, a task notification.
+ */
+export function isFlaggedNonPromptRecord(record: ClaudePromptRecord): boolean {
+  if (record.isMeta === true || record.isSidechain === true || record.isCompactSummary === true) return true;
+  if (record.isVisibleInTranscriptOnly === true || record.queueTranscriptOnly === true) return true;
+  return record.turnOrigin === "task_notification" || originKind(record.origin) === "task-notification";
+}
+
 /** A Claude transcript record that opened a turn. */
 export function isRealPromptRecord(record: ClaudePromptRecord): boolean {
-  if (record.type !== "user") return false;
-  if (record.isMeta === true || record.isSidechain === true || record.isCompactSummary === true) return false;
-  if (record.isVisibleInTranscriptOnly === true || record.queueTranscriptOnly === true) return false;
-  if (record.turnOrigin === "task_notification" || originKind(record.origin) === "task-notification") return false;
+  if (record.type !== "user" || isFlaggedNonPromptRecord(record)) return false;
   const text = claudeRecordText(record.message);
   return text !== null && promptTextOf(text) !== null;
 }
 
 /** A message the chat or the history route holds that opened a turn. */
 export function isRealPromptMessage(msg: PromptMessageLike): boolean {
-  if (msg.role !== "user" || msg.compaction || msg.synthetic) return false;
+  if (msg.role !== "user" || msg.compaction || msg.synthetic || msg.notPrompt) return false;
   return promptTextOf(msg.content) !== null;
 }
 

@@ -112,6 +112,17 @@ export interface TurnWindow {
   latestTurnId: string | null;
 }
 
+/**
+ * A Codex message id is its position in the parse that produced it (`rollout-N`), and each turn
+ * here is parsed on its own, so every turn would start again at `rollout-0`. The window draws all
+ * of them in one list and finds rows by id, so each id is prefixed with its turn. The live list's
+ * ids are not touched: the window's ids are its own, and nothing matches the two by id.
+ */
+function windowMessages(providerId: string, read: Array<{ turn: SessionTurnSummary; messages: ChatMessage[] }>): ChatMessage[] {
+  if (providerId !== "codex") return read.flatMap((r) => r.messages);
+  return read.flatMap(({ turn, messages }) => messages.map((m) => ({ ...m, id: `${turn.turnId}:${m.id}` })));
+}
+
 export async function readTurnWindow(ref: SessionRef, query: TurnWindowQuery): Promise<TurnWindow> {
   const { sessionId, turns } = await listSessionTurns(ref);
   const index = turns.findIndex((t) => t.turnId === query.turnId);
@@ -126,7 +137,7 @@ export async function readTurnWindow(ref: SessionRef, query: TurnWindowQuery): P
   return {
     sessionId,
     turns: read.map(({ turn }) => ({ turnId: turn.turnId, n: turn.n, status: turn.status })),
-    messages: read.flatMap((r) => r.messages),
+    messages: windowMessages(ref.providerId, read),
     hasOlder: from > 0,
     hasNewer: to < turns.length,
     latestTurnId: turns[turns.length - 1]?.turnId ?? null,

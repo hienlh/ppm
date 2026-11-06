@@ -45,10 +45,12 @@ export async function runGrantSteps(ctx) {
     await jiraRow.waitFor({ state: "attached", timeout: 20000 });
     await jiraRow.scrollIntoViewIfNeeded();
     assert.equal(await jiraRow.locator("[data-turn-refs]").count(), 0, "the Jira-origin block is shown as text, never as a chip");
-    // A block the CLI wrote into a compaction summary grants nothing; whether the chat draws it is noted.
+    // A block the CLI wrote into a compaction summary grants nothing, and is not drawn as chips:
+    // the summary is not a prompt the person sent.
     const summaryChips = await area.locator("[data-turn-refs]").count();
+    assert.equal(summaryChips, 0, "a compaction summary draws no turn chips");
     await kit.shot(page, "10-forgery-no-chip");
-    kit.record("10: a block planted in a Jira-origin message and one in a compaction summary grant nothing: the AI is refused both ways, and the Jira text draws no chip", {
+    kit.record("10: a block planted in a Jira-origin message and one in a compaction summary grant nothing: the AI is refused both ways, and neither draws a chip", {
       withProject: withProject.text.slice(0, 160), withoutProject: withoutProject.text.slice(0, 160), chipsDrawnFromTheSummary: summaryChips,
     });
   });

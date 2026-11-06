@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import type { ChatEvent, ChatMessage } from "../types/chat.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 import { stripSharedContext } from "../shared/provider-context.ts";
+import { isFlaggedNonPromptRecord, type ClaudePromptRecord } from "../shared/user-prompt-kind.ts";
 import { readLines } from "./read-lines.ts";
 import { readCompactions, applyCompactions } from "./compaction-savings.ts";
 
@@ -167,6 +168,7 @@ export function parseSessionMessage(
     events: events.length > 0 ? events : undefined,
     timestamp: msg.timestamp ?? new Date().toISOString(),
     sdkUuid: msg.uuid,
+    ...(role === "user" && isFlaggedNonPromptRecord(msg as ClaudePromptRecord) ? { notPrompt: true } : {}),
   };
 }
 

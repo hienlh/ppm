@@ -190,6 +190,8 @@ interface SessionEntry {
   finalText?: string;
   /** The user message that initiated the current turn (for reconnect replay) */
   currentUserMessage?: string;
+  /** The sending browser's own id for that message, so a reconnect replay keeps it bound to its turn. */
+  currentClientMessageId?: string;
   streamPromise?: Promise<void>;
   permissionMode?: string;
   /** Per-session model override; falls back to provider default when undefined */
@@ -837,6 +839,7 @@ function sendTurnEvents(sessionId: string, ws: ChatWsSocket): void {
       type: "turn_events",
       events: entry.turnEvents,
       userMessage: entry.currentUserMessage ?? null,
+      ...(entry.currentClientMessageId ? { clientMessageId: entry.currentClientMessageId } : {}),
       // This is an authoritative full snapshot, not a delta. `truncated` tells
       // the client it must wait for the normal idle history reload to recover
       // frames beyond the bounded replay buffer.
@@ -1820,6 +1823,7 @@ export const chatWebSocket = {
         ? parsed.clientMessageId : undefined;
       // Store user message for reconnect replay (turn_events includes only assistant events)
       entry.currentUserMessage = parsed.content;
+      entry.currentClientMessageId = clientMessageId;
       entry.lastSender = ws;
       // Only a message that opens a turn is timed; one typed mid-turn joins the running turn.
       if (!entry.isStreamingActive || entry.phase === "idle") {

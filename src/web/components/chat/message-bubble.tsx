@@ -12,6 +12,7 @@ import type { TurnFileChange } from "@/lib/aggregate-turn-file-changes";
 import type { SessionTurn } from "@/lib/session-turns";
 import { AlertCircle, XCircle } from "@/lib/icons";
 import { createReplyReference } from "./message-reply-reference";
+import { isRealPromptMessage } from "../../../shared/user-prompt-kind";
 import { TurnChangeRollup } from "./turn-change-rollup";
 import { TurnCostWarning } from "./turn-cost-warning";
 import { MarkdownContent } from "./message-markdown";
@@ -52,14 +53,17 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming,
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
 }) {
   if (message.role === "user") {
-    const handleFork = onFork ? () => onFork(message.content, prevMsgId) : undefined;
-    const handleEdit = onEdit ? () => onEdit(message.content, prevMsgId, message.id) : undefined;
+    // Only a prompt the person sent carries turn chips, a turn link, Edit and Fork: a compaction
+    // summary or a notification the CLI wrote may quote a references block, but it references nothing.
+    const prompt = isRealPromptMessage(message);
+    const handleFork = onFork && prompt ? () => onFork(message.content, prevMsgId) : undefined;
+    const handleEdit = onEdit && prompt ? () => onEdit(message.content, prevMsgId, message.id) : undefined;
     return (
       <UserBubble
         content={message.content}
         messageId={message.id}
-        // A copy a compaction wrote back is in no turn; there is nothing to link to.
-        turn={message.synthetic ? undefined : message}
+        prompt={prompt}
+        turn={prompt ? message : undefined}
         timestamp={message.timestamp}
         projectName={projectName}
         onReply={onReply && createReplyReference(message, sessionId ?? "", providerId ?? "") ? () => onReply(message) : undefined}

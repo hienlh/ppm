@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { AsyncQuestionContext } from "./async-question-card";
+import { ComposerEdgeContext } from "./composer-edge";
 import { Loader2, Upload, X } from "@/lib/icons";
 import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
@@ -134,6 +135,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   // Slash picker state
   const [slashItems, setSlashItems] = useState<SlashItem[]>([]);
+  // The line above the composer that the history window's Back to latest pill docks to on a phone.
+  const [composerEdge, setComposerEdge] = useState<HTMLDivElement | null>(null);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelected, setSlashSelected] = useState<SlashItem | null>(null);
@@ -1360,7 +1363,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             <span>Starting conversation...</span>
           </div>
         </div>
-      ) : <AsyncQuestionContext.Provider value={{ messages: renderedMessages, onSend: isConnected ? (content) => sendMessage(content, { permissionMode }) : undefined }}><SessionChangesContext.Provider value={sessionChangesValue}><MessageList
+      ) : <AsyncQuestionContext.Provider value={{ messages: renderedMessages, onSend: isConnected ? (content) => sendMessage(content, { permissionMode }) : undefined }}><SessionChangesContext.Provider value={sessionChangesValue}><ComposerEdgeContext.Provider value={composerEdge}><MessageList
         messages={renderedMessages}
         onExpandCompact={expandCompact}
         isCompactExpanded={isCompactExpanded}
@@ -1391,7 +1394,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         onDismissMessage={dismissMessage}
         onClearErrors={clearErrors}
         bashPartialOutput={bashPartialOutput}
-      /></SessionChangesContext.Provider></AsyncQuestionContext.Provider>}
+      /></ComposerEdgeContext.Provider></SessionChangesContext.Provider></AsyncQuestionContext.Provider>}
 
       {/* Agents still working — pinned here so it is the last thing under the conversation */}
       <RunningAgentsBar
@@ -1425,6 +1428,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         onSetReviewed={sessionChanges.setReviewed}
         onReview={openReview}
       />
+
+      <div ref={setComposerEdge} className="relative z-30 h-0 shrink-0" />
 
       {/* Bottom toolbar */}
       <div className="border-t border-border bg-panel shrink-0">

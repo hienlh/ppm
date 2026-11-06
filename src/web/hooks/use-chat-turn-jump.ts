@@ -4,11 +4,13 @@
  *
  * Where it lands depends on which container the reader is looking at:
  * - **Live list.** A turn already drawn is pinned 16 px from the top (follow-to-bottom stopped
- *   first) and flashed. A turn not loaded opens the history window around it.
+ *   first) and flashed. A turn not loaded opens the history window around it. A call or a message
+ *   that is not drawn falls back to its turn when the request names one (the Review tab does), so
+ *   an old turn opens the window instead of waiting for pages that will not come.
  * - **History window.** Every request goes to the window — the live list underneath is hidden and
- *   is never the target. A turn the window holds is pinned there; any other turn refetches the
- *   window around it; a call or message the window does not hold leaves the window, and the next
- *   attempt looks for it in the live list.
+ *   is never the target. A call the window draws is shown there; otherwise a request naming a turn
+ *   is pinned there when the window holds it, and refetches the window around it when not; one
+ *   naming no turn leaves the window, and the next attempt looks for it in the live list.
  *
  * The wait for the place to appear is counted from when the chat is on screen with its history
  * in, not from the click, so a tab still opening — another project's, over a slow tunnel — is not
@@ -108,7 +110,8 @@ export function useChatTurnJump(p: {
         if (request.messageId) {
           const index = filtered.findIndex((m) => m.id === request.messageId);
           if (index >= 0 && showMessageAt(index)) return finish();
-        } else if (request.turnId) {
+        }
+        if (request.turnId) {
           const row = container.querySelector<HTMLElement>(attrSelector("data-turn-start", request.turnId));
           if (row) {
             stopScroll();

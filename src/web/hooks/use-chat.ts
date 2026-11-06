@@ -26,6 +26,7 @@ import { useBackgroundOutputStore } from "../stores/background-output-store";
 import { useSessionListStore } from "@/stores/session-list-store";
 import { projectRefForName } from "@/stores/session-list-sync-triggers";
 import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary";
+import { replayActiveTurn } from "@/lib/replay-active-turn";
 
 /** Slim every Agent/Task card a provider stamped `transcriptAvailable` on, walking
  *  in from the REST history response before it ever reaches React state. */
@@ -1215,38 +1216,9 @@ export function useChat(
       // duplicate copy (see session-change effect).
       replayTurnUserMsgRef.current = userMessage;
 
-      // Rebuild the active turn from scratch. Strip any existing copy of THIS turn
-      // before replay re-adds it:
-      //  - a REST-history/finalized copy: trailing assistant message(s) preceded by
-      //    the matching user message (fixes the double render on reload);
-      //  - otherwise just an in-progress "streaming-" assistant (original behavior).
-      // A completed prior turn (different user message) is left untouched.
-      setMessages(prev => {
-        let updated = [...prev];
-        let k = updated.length;
-        while (k > 0 && updated[k - 1]!.role === "assistant") k--;
-        if (userMessage != null && k > 0 && updated[k - 1]!.role === "user"
-          && updated[k - 1]!.content === userMessage) {
-          updated = updated.slice(0, k - 1);
-        } else {
-          const last = updated[updated.length - 1];
-          if (last?.role === "assistant" && last.id.startsWith("streaming-")) {
-            updated = updated.slice(0, -1);
-          }
-        }
-        if (userMessage) {
-          const lastAfter = updated[updated.length - 1];
-          if (lastAfter?.role !== "user" || lastAfter.content !== userMessage) {
-            updated = [...updated, {
-              id: `user-replay-${Date.now()}`,
-              role: "user" as const,
-              content: userMessage,
-              timestamp: new Date().toISOString(),
-            }];
-          }
-        }
-        return updated;
-      });
+      // Rebuild the active turn from scratch: see `replayActiveTurn`.
+      const clientMessageId = typeof (data as any).clientMessageId === "string" ? (data as any).clientMessageId as string : undefined;
+      setMessages(prev => replayActiveTurn(prev, userMessage, clientMessageId));
 
       // Reset streaming refs
       streamingContentRef.current = "";

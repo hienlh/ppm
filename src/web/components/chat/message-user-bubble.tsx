@@ -32,9 +32,11 @@ import { AuthImageThumbnail, isImagePath } from "./message-media";
 const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details", "local-command-caveat"]);
 
 /** User message bubble — full width, collapsible, with system tag badges */
-export function UserBubble({ content, messageId, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: {
+export function UserBubble({ content, messageId, prompt = true, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: {
   content: string;
   messageId?: string;
+  /** False for a user message that is not a prompt the person sent: its turn chips are not drawn. */
+  prompt?: boolean;
   /** What names this message's turn, for Copy turn link; without it there is no such action. */
   turn?: Pick<ChatMessage, "turnId" | "clientId" | "sdkUuid">;
   timestamp: string;
@@ -88,7 +90,7 @@ export function UserBubble({ content, messageId, turn, timestamp, projectName, o
     )}>
       {replyTo && <ReplyCard reply={replyTo} onJump={replyAvailable ? () => onJumpToReply?.(replyTo) : undefined} unavailable={!replyAvailable} />}
       {/* Drawn from the message's own block: no request, and the same size on every render. */}
-      {turnRefs && <TurnRefChipRow refs={turnRefs} currentProject={projectName} />}
+      {turnRefs && prompt && <TurnRefChipRow refs={turnRefs} currentProject={projectName} />}
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
 

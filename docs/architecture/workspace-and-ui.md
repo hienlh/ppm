@@ -149,10 +149,17 @@ with `visibility`, `inert` and `aria-hidden`, never `display: none`, so its heig
 and the TabPool's reshow guard see nothing change — and keeps streaming. A page goes in without
 moving the row being read: the first visible row is measured during render, before commit, and put
 back in a layout effect (`scroll-row-anchor.ts`). The window merges back into the live list once
-the live list holds its last turn whole, and **Back to latest** (`back-to-latest-pill.tsx`, in the
-thumb zone above the composer, with a dot when the live chat moved on) leaves it at once. Rows in
-the window offer Copy and Copy turn link only: a Codex message id is its position in the view that
-parsed it, so Reply, Edit and Fork, which send an id back, stay in the live list.
+the live list holds its last turn whole, and **Back to latest** (`back-to-latest-pill.tsx`, with a
+dot when the live chat moved on) leaves it at once. On a phone the pill is docked 8 px above the
+composer (`composer-edge.ts`, a zero-height element `chat-tab.tsx` places there), so the bars under
+the transcript cannot push it out of the thumb zone. Sending a message from this tab also leaves the
+window, so the sender sees it go out. An approval or a question the agent waits on is drawn over the
+window above the composer (`history-window-pending-prompts.tsx`), never only in the hidden list.
+"Loading earlier turns" floats over the window rather than sitting above its rows, which would push
+the row being read down by its height. Rows in the window offer Copy and Copy turn link only: a
+Codex message id is its position in the view that parsed it — the route prefixes the window's ids
+with their turn so they stay unique within it — so Reply, Edit and Fork, which send an id back,
+stay in the live list.
 
 **The landing pin** (`use-scroll-anchor-pin.ts`): a jump puts the turn 16 px below the top and holds
 it there while images decode, code highlights or cards arrive above it — the chat's scrollers set

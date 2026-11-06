@@ -7,7 +7,10 @@
  * compactions included), so the chat, the Review tab and a turn link all say the same number, and
  * loading an older segment back in moves none of them. A prompt the server has not numbered yet —
  * one sent in this tab, before the history is fetched again — takes the number after the turn
- * before it.
+ * before it. History the server could not number at all (its turn index failed to read) carries no
+ * `turnN` anywhere; unless the list is known to start at the session's first prompt, counting
+ * its prompts from 1 would only number what happens to be loaded, so those turns are marked
+ * `unnumbered` and labelled without a number.
  *
  * Pure, and cached per message object like `aggregate-turn-file-changes.ts`: the chat replaces a
  * message whenever anything in it changes, so while it streams only the newest one is walked.
@@ -16,8 +19,10 @@ import type { ChatEvent, ChatMessage } from "../../types/chat";
 import { isRealPromptMessage, promptTextOf } from "../../shared/user-prompt-kind";
 
 export interface SessionTurn {
-  /** 1-based from the session's first prompt. */
+  /** 1-based from the session's first prompt; only relative to the loaded list when `unnumbered`. */
   n: number;
+  /** The server numbered none of the loaded history, so `n` is no number to show. */
+  unnumbered?: boolean;
   /** The server's id for the turn, once it has one. */
   turnId?: string;
   /** The user message that asked for it. */
@@ -67,11 +72,21 @@ function promptOf(msg: ChatMessage): string | null {
   return prompt;
 }
 
-export function sessionTurns(messages: readonly ChatMessage[]): SessionTurn[] {
+export function sessionTurns(
+  messages: readonly ChatMessage[],
+  /** `fromStart`: the list holds the session from its first prompt, so counting from 1 is right. */
+  { fromStart = true }: { fromStart?: boolean } = {},
+): SessionTurn[] {
   const turns: SessionTurn[] = [];
   let turn: SessionTurn | null = null;
+  // Whether anything the server numbered is loaded, and whether any prompt came from history
+  // (one this tab sent carries its `clientId`, and is numbered from the turns before it).
+  let stamped = false;
+  let fromHistory = false;
   for (const msg of messages) {
+    if (msg.turnN !== undefined) stamped = true;
     const prompt = promptOf(msg);
+    if (prompt !== null && !msg.clientId) fromHistory = true;
     // A message steered into a running Codex turn reads as a prompt but is part of that turn.
     if (prompt !== null && !(turn && msg.turnId && msg.turnId === turn.turnId)) {
       const previous: SessionTurn | null = turn;
@@ -82,6 +97,7 @@ export function sessionTurns(messages: readonly ChatMessage[]): SessionTurn[] {
       turn.calls.push(...callsOf(msg));
     }
   }
+  if (!stamped && fromHistory && !fromStart) for (const t of turns) t.unnumbered = true;
   return turns;
 }
 
@@ -102,9 +118,9 @@ export function turnsOf(calls: readonly string[] | undefined, byCall: ReadonlyMa
   return out.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
-/** "Turn 3". */
-export function turnLabel(turn: Pick<SessionTurn, "n">): string {
-  return `Turn ${turn.n}`;
+/** "Turn 3", or just "Turn" when the server could not number it. */
+export function turnLabel(turn: Pick<SessionTurn, "n" | "unnumbered">): string {
+  return turn.unnumbered ? "Turn" : `Turn ${turn.n}`;
 }
 
 /** "14:02" for today, "Oct 1, 14:02" before it. */

@@ -1,6 +1,7 @@
 // Turn-reference e2e, part 5 (scenario 8): a phone (390×844, touch). A long press on a chip opens
 // its preview sheet; a press the browser cancels for a scroll (`touchcancel`) opens nothing; a tap
-// opens the session in the history window with the Back to latest pill in the thumb zone.
+// opens the session in the history window with the Back to latest pill docked just above the
+// composer, in the thumb zone.
 import assert from "node:assert/strict";
 
 const W = 390, H = 844;
@@ -48,8 +49,14 @@ export async function runPhoneSteps(ctx) {
     const p = await pill.boundingBox();
     assert(p.height >= 44, `the pill is a 44px target (${p.height})`);
     assert(p.y + p.height / 2 > (H * 2) / 3, `the pill sits in the bottom third (${JSON.stringify(p)})`);
+    // Docked to the composer's edge, outside the window's scroller, a fixed 8 px above the composer.
+    assert.equal(await page.locator('[data-back-to-latest="docked"]').count(), 1, "the pill is docked to the composer");
+    assert.equal(await page.locator("[data-history-window] [data-back-to-latest]").count(), 0, "the pill is not inside the window");
+    const composer = await page.locator('[data-back-to-latest="docked"]').evaluate((el) => el.parentElement.nextElementSibling.getBoundingClientRect().top);
+    const gap = composer - (p.y + p.height);
+    assert(gap >= 4 && gap <= 12, `the pill sits just above the composer (gap ${gap})`);
     await page.screenshot({ path: `${artifacts}/08-phone-window-pill.png` });
-    kit.record("8: phone — a cancelled press opens nothing, a long press opens the preview sheet, and the window's Back to latest pill sits in the thumb zone", { chip: box, pill: p });
+    kit.record("8: phone — a cancelled press opens nothing, a long press opens the preview sheet, and the window's Back to latest pill sits in the thumb zone", { chip: box, pill: p, gapToComposer: gap });
   } finally {
     await phone.close();
   }

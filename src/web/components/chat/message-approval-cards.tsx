@@ -1,9 +1,11 @@
 /**
  * The cards a waiting tool call puts at the end of the transcript: a plain Allow/Deny for a tool
- * that needs approval, and the question form for AskUserQuestion.
+ * that needs approval, the question form for AskUserQuestion, and a database change to approve.
  */
 import { ShieldAlert } from "@/lib/icons";
+import { dbExecuteApprovalInput } from "../../../shared/db-ai-tools";
 import { QuestionCard, type Question } from "./question-card";
+import { DbExecuteApprovalCard } from "./db-execute-approval-card";
 
 interface Approval {
   requestId: string;
@@ -12,6 +14,13 @@ interface Approval {
 }
 
 type Respond = (requestId: string, approved: boolean, data?: unknown) => void;
+
+/** The card a waiting call needs: the question form, a database change to approve, or Allow/Deny. */
+export function PendingApprovalCard({ approval, onRespond }: { approval: Approval; onRespond: Respond }) {
+  if (approval.tool === "AskUserQuestion") return <AskUserQuestionCard approval={approval} onRespond={onRespond} />;
+  const db = dbExecuteApprovalInput(approval.tool, approval.input);
+  return db ? <DbExecuteApprovalCard requestId={approval.requestId} input={db} /> : <ApprovalCard approval={approval} onRespond={onRespond} />;
+}
 
 export function ApprovalCard({ approval, onRespond }: { approval: Approval; onRespond: Respond }) {
   return (

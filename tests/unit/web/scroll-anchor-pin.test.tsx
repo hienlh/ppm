@@ -27,7 +27,7 @@ const { ScrollAnchorPin, PIN_OFFSET_PX } = await import("../../../src/web/hooks/
 afterAll(() => uninstallDom());
 
 /** A scroll container 600 px tall whose row sits `rowTop` px into the content. */
-function scene() {
+function scene(onHold?: () => void) {
   const el = document.createElement("div");
   const content = document.createElement("div");
   const row = document.createElement("div");
@@ -40,7 +40,7 @@ function scene() {
   el.getBoundingClientRect = () => ({ top: 100 } as DOMRect);
   row.getBoundingClientRect = () => ({ top: 100 + g.rowTop - g.scrollTop } as DOMRect);
   const unpinned: number[] = [];
-  const pin = new ScrollAnchorPin(el, PIN_OFFSET_PX, () => unpinned.push(1));
+  const pin = new ScrollAnchorPin(el, PIN_OFFSET_PX, () => unpinned.push(1), onHold);
   /** The row's distance from the container's top, as the reader sees it. */
   const offset = () => g.rowTop - g.scrollTop;
   const layout = () => observers.forEach((o) => o.fire());
@@ -97,6 +97,33 @@ describe("ScrollAnchorPin", () => {
     s.row.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true }));
     s.el.dispatchEvent(new window.KeyboardEvent("keydown", { key: "c" }));
     expect(s.pin.pinned).toBe(s.row);
+  });
+
+  it("typing a space or an arrow into a field inside the container is not the reader", () => {
+    const s = scene();
+    const field = document.createElement("textarea");
+    s.row.appendChild(field);
+    s.pin.pin(s.row);
+    for (const key of [" ", "ArrowDown", "End"]) field.dispatchEvent(new window.KeyboardEvent("keydown", { key, bubbles: true }));
+    expect(s.pin.pinned).toBe(s.row);
+    s.el.dispatchEvent(new window.KeyboardEvent("keydown", { key: " " }));
+    expect(s.pin.pinned).toBeNull();
+  });
+
+  it("holds a bottom follower off on its own writes, and again just after the follower judged the scroll", async () => {
+    const holds: number[] = [];
+    const s = scene(() => holds.push(s.g.scrollTop));
+    s.pin.pin(s.row);
+    expect(holds.length).toBe(1);
+    s.scrollEvent();
+    await Bun.sleep(10);
+    expect(holds.length).toBe(2);
+    // A scroll that is not the pin's own lets go, and nothing is held from then on.
+    s.g.scrollTop -= 300;
+    s.scrollEvent();
+    await Bun.sleep(10);
+    expect(s.pin.pinned).toBeNull();
+    expect(holds.length).toBe(2);
   });
 
   it("waits out a hidden tab and the offset restore when it is shown again", () => {

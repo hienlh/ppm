@@ -2,20 +2,23 @@
  * Shown while the chat is in the history window: says which turn is on screen and takes the reader
  * back to the newest message in one tap.
  *
- * It floats over the bottom of the conversation, just above the composer — the thumb zone on a
- * phone — and outside the scroll container, so it stays put while the window scrolls. The dot says
+ * It floats over the bottom of the conversation, outside the scroll container, so it stays put while
+ * the window scrolls. On a phone it is docked a fixed 8 px above the composer instead
+ * (`composer-edge.ts`), so it stays in the thumb zone however many bars sit under the conversation. The dot says
  * the live conversation has moved on since the jump: something streamed, or a new message arrived.
  */
 import { ChevronsDown } from "@/lib/icons";
 
-export function BackToLatestPill({ turnN, liveActivity, onClick }: {
+export function BackToLatestPill({ turnN, liveActivity, onClick, docked = false }: {
   /** The turn at the top of the window's viewport, when it is known. */
   turnN: number | null;
   liveActivity: boolean;
   onClick: () => void;
+  /** Placed in the composer's edge element (a phone) rather than over the window. */
+  docked?: boolean;
 }) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-4">
+    <div data-back-to-latest={docked ? "docked" : "window"} className={`pointer-events-none absolute inset-x-0 z-20 flex justify-center px-4 ${docked ? "bottom-2" : "bottom-3"}`}>
       <button
         type="button"
         onClick={onClick}

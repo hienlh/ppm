@@ -150,6 +150,21 @@ describe("turnsOf", () => {
     expect(turnLabel({ n: 3 })).toBe("Turn 3");
     expect(turnLabel({ n: 312 })).toBe("Turn 312");
   });
+
+  test("history the server numbered none of is labelled without a number", () => {
+    // The turn index could not be read: no message carries `turnN`, and the loaded page is not
+    // the session's start, so 1, 2 would only count what happens to be loaded.
+    const page = [user("h1", "older ask", 1), user("h2", "newer ask", 2)];
+    expect(sessionTurns(page, { fromStart: false }).map(turnLabel)).toEqual(["Turn", "Turn"]);
+    // The same history known to start at the session's first prompt is counted from 1.
+    expect(sessionTurns(page).map(turnLabel)).toEqual(["Turn 1", "Turn 2"]);
+    // A new chat whose prompts were all sent from this tab still counts from 1.
+    const fresh = sessionTurns([user("c1", "first", 1, { clientId: "c1" }), user("c2", "second", 2, { clientId: "c2" })], { fromStart: false });
+    expect(fresh.map(turnLabel)).toEqual(["Turn 1", "Turn 2"]);
+    // One numbered message is enough to number the rest from it.
+    const mixed = sessionTurns([user("h1", "older", 1, { turnN: 40, turnId: "t40" }), user("c1", "just sent", 2, { clientId: "c1" })], { fromStart: false });
+    expect(mixed.map(turnLabel)).toEqual(["Turn 40", "Turn 41"]);
+  });
 });
 
 describe("turnTime", () => {

@@ -17,7 +17,8 @@ export async function clickBubbleChip(ctx, project, sessionId, label) {
  * Watches the history window. A load runs from its "Loading … turns" spinner appearing to its rows
  * landing; the first visible row is taken in the frame before the load began (or, for a load too
  * quick to show a spinner, the frame before its rows landed) and measured again once they have,
- * so whatever moves it during the load — the rows, the spinner — counts.
+ * so whatever moves it during the load — the rows, the spinner — counts. The spinner is looked for
+ * anywhere in the window: "Loading earlier turns" floats over it, outside the scroller.
  */
 const installLoadMonitor = (page) => page.evaluate(() => {
   const win = document.querySelector("[data-history-window]");
@@ -43,7 +44,7 @@ const installLoadMonitor = (page) => page.evaluate(() => {
   frame();
   const count = () => scroller.querySelectorAll("[data-msg-id]").length;
   const firstId = () => scroller.querySelector("[data-msg-id]")?.getAttribute("data-msg-id");
-  const spinner = () => !!scroller.querySelector('[aria-busy="true"]');
+  const spinner = () => !!win.querySelector('[aria-busy="true"]');
   let rows = count(), head = firstId();
   new MutationObserver(() => {
     const now = count(), nowHead = firstId(), busy = spinner();
@@ -55,7 +56,7 @@ const installLoadMonitor = (page) => page.evaluate(() => {
     window.__loads.push({ rows: [rows, now], prepended: nowHead !== head, row: anchor?.id, delta: offset === null || !anchor ? null : Math.abs(offset - anchor.offset) });
     rows = now; head = nowHead; pending = null;
     last = firstVisible();
-  }).observe(scroller, { childList: true, subtree: true });
+  }).observe(win, { childList: true, subtree: true });
 });
 
 const windowScroller = (page) => page.locator("[data-history-window] .overflow-y-auto").first();

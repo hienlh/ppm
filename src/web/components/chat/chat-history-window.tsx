@@ -10,20 +10,27 @@
  * pinned the pin does that job instead, so the two never both write.
  *
  * Messages here carry only Copy and Copy turn link. A Codex message id names its position in the
- * view that parsed it, which differs between this read and the live list's, so Reply, Edit and Fork
- * — which send an id back — are offered only in the live list.
+ * view that parsed it, so the window's ids (prefixed with their turn by the route) are not the live
+ * list's, and Reply, Edit and Fork — which send an id back — are offered only in the live list.
+ *
+ * The "Loading earlier turns" notice floats over the top rather than sitting above the rows: in the
+ * flow it would push the rows being read down by its height the moment it appeared, before any page
+ * had arrived to measure against.
  */
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ReplyReference } from "../../../shared/chat-reply";
 import type { WindowView } from "@/lib/history-window-model";
 import type { HistoryWindowControls } from "@/hooks/use-history-window";
 import { useScrollAnchorPin } from "@/hooks/use-scroll-anchor-pin";
 import { useEdgeSentinels } from "@/hooks/use-edge-sentinels";
-import { AlertCircle, Loader2 } from "@/lib/icons";
+import { useHistoryWindowFocus } from "@/hooks/use-history-window-focus";
 import { GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
 import { MessageRows } from "./message-rows";
 import { resolveReplyMessage } from "./message-reply-reference";
 import { BackToLatestPill } from "./back-to-latest-pill";
+import { usePillDock } from "./composer-edge";
+import { HistoryWindowSpinner, LoadErrorBanner, LoadingOlderNotice } from "./history-window-status";
 import { flashRow } from "./flash-row";
 import { attrSelector, firstVisibleRow, restoreRow, turnStartAt, type RowAnchor } from "./scroll-row-anchor";
 
@@ -46,7 +53,8 @@ function rendered(m: { role: string; content: string; events?: unknown[] }): boo
   return m.role === "user" ? hasContent : hasContent || (m.events?.length ?? 0) > 0;
 }
 
-export function ChatHistoryWindow({ view, controls, canMerge, onMerge, onBackToLatest, liveActivity, projectName, sessionId, providerId, handleRef }: {
+/** Memoised: the live list underneath re-renders on every streamed token, and nothing here changes with it. */
+export const ChatHistoryWindow = memo(function ChatHistoryWindow({ view, controls, canMerge, onMerge, onBackToLatest, liveActivity, projectName, sessionId, providerId, handleRef }: {
   view: WindowView;
   controls: Pick<HistoryWindowControls, "loadOlder" | "loadNewer" | "retry">;
   /** The live list now holds the window's last turn whole (`canMergeToLive`). */
@@ -66,6 +74,8 @@ export function ChatHistoryWindow({ view, controls, canMerge, onMerge, onBackToL
   // Bumped when the reader takes over from a landing, so the bottom check below runs again.
   const [unpins, setUnpins] = useState(0);
   const pin = useScrollAnchorPin(scrollEl, () => setUnpins((n) => n + 1));
+  useHistoryWindowFocus(scrollEl);
+  const dock = usePillDock();
   const rows = useMemo(() => view.messages.filter(rendered), [view.messages]);
   const flashCleanup = useRef<(() => void) | null>(null);
   useEffect(() => () => flashCleanup.current?.(), []);
@@ -151,30 +161,21 @@ export function ChatHistoryWindow({ view, controls, canMerge, onMerge, onBackToL
   }, [rows, sessionId, providerId, land]);
 
   const error = view.loadError;
+  const pill = <BackToLatestPill turnN={topTurn ? nByTurn.get(topTurn) ?? null : null} liveActivity={liveActivity} onClick={onBackToLatest} docked={!!dock} />;
   return (
     <div className="absolute inset-0 flex flex-col bg-background" data-history-window="">
-      {error && (
-        <div className={`absolute left-0 right-0 z-10 flex justify-center ${error.direction === "older" ? "top-2" : "bottom-16"}`}>
-          <button
-            type="button"
-            onClick={() => retry(error.direction)}
-            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-xs text-text-primary md:min-h-0 md:py-2"
-          >
-            <AlertCircle className="size-3.5 text-destructive" />
-            <span>Could not load more turns: {error.message}</span>
-            <span className="underline">Retry</span>
-          </button>
-        </div>
-      )}
+      {error && <LoadErrorBanner error={error} onRetry={retry} />}
+      {view.loadingOlder && <LoadingOlderNotice />}
       <div
         ref={setScrollRef}
         {...{ [GALLERY_ROOT_ATTR]: "" }}
-        className="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]"
+        tabIndex={0}
+        aria-label="Earlier turns"
+        className="flex-1 overflow-y-auto overflow-x-hidden outline-none [overflow-anchor:none] focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/40"
         style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}
       >
         <div className="w-full pb-20">
           {view.hasOlder && <div ref={topRef} aria-hidden className="h-px" />}
-          {view.loadingOlder && <Spinner label="Loading earlier turns" />}
           <MessageRows
             rows={rows}
             userOrdinals={NO_ORDINALS}
@@ -186,20 +187,12 @@ export function ChatHistoryWindow({ view, controls, canMerge, onMerge, onBackToL
             historyPredecessorId={null}
             onJumpToReply={jumpToReply}
           />
-          {view.loadingNewer && <Spinner label="Loading later turns" />}
+          {view.loadingNewer && <HistoryWindowSpinner label="Loading later turns" />}
           <div ref={bottomRef} aria-hidden className="h-px" />
         </div>
       </div>
-      <BackToLatestPill turnN={topTurn ? nByTurn.get(topTurn) ?? null : null} liveActivity={liveActivity} onClick={onBackToLatest} />
+      {dock ? createPortal(pill, dock) : pill}
     </div>
   );
-}
+});
 
-function Spinner({ label }: { label: string }) {
-  return (
-    <div className="flex items-center justify-center gap-1.5 py-3 text-xs text-text-secondary" aria-busy="true" aria-label={label}>
-      <Loader2 className="size-3 animate-spin" />
-      {label}…
-    </div>
-  );
-}
