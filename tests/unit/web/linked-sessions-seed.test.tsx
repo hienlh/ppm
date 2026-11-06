@@ -11,14 +11,16 @@ afterAll(uninstallDom);
 const { parseSessionLinks, fetchSessionLinks } = await import("../../../src/web/lib/session-collab-client");
 const { useSessionCollabStore } = await import("../../../src/web/stores/session-collab-store");
 const { useProjectStore } = await import("../../../src/web/stores/project-store");
+const { useSessionListStore } = await import("../../../src/web/stores/session-list-store");
 const { useLinkedSessions } = await import("../../../src/web/hooks/use-linked-sessions");
 const { api } = await import("../../../src/web/lib/api-client");
 
-const ME = "aaaaaaaa-0000-4000-8000-000000000001";
-const OTHER = "bbbbbbbb-0000-4000-8000-000000000002";
-const PARENT = "aaaaaaaa-0000-4000-8000-000000000000";
-const PEER = "dddddddd-3333-4000-8000-000000000003";
-const OLD = "ffffffff-5555-4000-8000-000000000005";
+// Ids of this file only: the stores are module singletons shared with every test file of the run.
+const ME = "5eed0000-0000-4000-8000-000000000001";
+const OTHER = "5eed0000-0000-4000-8000-000000000002";
+const PARENT = "5eed0000-0000-4000-8000-000000000000";
+const PEER = "5eed0000-0000-4000-8000-000000000003";
+const OLD = "5eed0000-0000-4000-8000-000000000005";
 
 const { act } = await import("react");
 /** Lets the links request settle and React apply what it stored. */
@@ -77,6 +79,8 @@ describe("useLinkedSessions seeding", () => {
 
   beforeEach(() => {
     useSessionCollabStore.setState({ links: {}, announced: {}, pendingApprovals: {} });
+    // Another file's rows (a child of a session with the same id) would show up as links here.
+    useSessionListStore.setState({ byProject: {} });
     useProjectStore.setState({ projects: [{ name: "ppm", path: "/p" }] as never });
     get = spyOn(api, "get").mockImplementation(((path: string) => {
       const id = decodeURIComponent(path.split("/sessions/")[1]!.split("/")[0]!);
