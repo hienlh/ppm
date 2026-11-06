@@ -757,12 +757,16 @@ Tools (on by default):
 
 - `create_session { title, task, provider?, model?, wait? }` — a new session in the caller's own
   project, on the caller's provider and model unless the AI picks others, under the caller's
-  permission mode (never more; when the mode cannot be told, nothing is created). Its first message
-  is the task, carrying a turn reference to the caller's current turn (Claude callers; a Codex
-  caller's turn id rides in the from-session block instead, so no rollout is located).
+  permission mode (never more; when the mode cannot be told, nothing is created). The mode is stored
+  for the child and applied to every later turn that names none, so cleanup or a restart cannot
+  loosen it. Its first message is the task, carrying a turn reference to the caller's current turn
+  (Claude callers; a Codex caller's turn id rides in the from-session block instead, so no rollout
+  is located).
 - `send_to_session { session_id, message, wait? }` — any session of the project except the caller
   and design sessions. A running target reads it inside its turn (Claude takes it from the input
   stream, Codex steers it), an idle one starts a turn.
+
+A task or message may be at most 24 KB in UTF-8 bytes (`MAX_COLLAB_MESSAGE_BYTES`).
 - `session_status { session_ids? }` — phase, what it waits on, title, provider, model, creator, the
   opening of its last answer and unread replies; the linked sessions by default. Reads only the
   chat registry and the database, never a transcript.
@@ -775,9 +779,11 @@ marks as a browser send (`ensureSessionEntry` / `submitToSession` in `ws/chat.ts
 socket handler), serialized with browser sends by one per-session lock. It reports truthfully what
 happened — `inserted`, `queued` (the target waits on an approval or is compacting) or `started` —
 resumes a cold session first, never touches a pending approval, and refuses a design session, the
-sender itself and a provider mismatch. No route exposes it. A session the server opened with no
-browser attached is `socketless` and counts as idle between turns, so the warm-process cap and the
-idle release still apply to it.
+sender itself and a provider mismatch. A push that finds the stream already gone (the providers'
+`pushMessage` answers false) is handed over: it waits for the consumer to wind down and starts a
+turn, and devices draw the message only once the provider has it. No route exposes it. A session
+the server opened with no browser attached is `socketless` and counts as idle between turns, so the
+warm-process cap and the idle release still apply to it.
 
 **Waits** (`collab-waits.ts`). With `wait: true` the call blocks until the target calls
 `send_to_session` back to the caller, the target's turn that read the message ends without a reply,
@@ -794,21 +800,27 @@ running CLI keeps the timeout it started with.
 
 **Limits** (`ai.session_collab`, `src/shared/session-collab-settings.ts`): depth 3 (a user-started
 session is depth 0), 20 automatic messages per session pair (reset when the user writes in either),
-5 AI-created sessions running at once per project (a child counts from its creation until its first
-turn ends), and the wait timeout. Calls are also limited to 30 a minute and 3 in flight per caller
-(`session_status` is exempt from the in-flight cap). Pair counts, grants and "allow for this
-session" flags live in memory and in `<ppm dir>/session-collab/pairs.json`, keyed by canonical id.
+5 AI-created sessions running at once per project, and the wait timeout. A create reserves a
+running slot in the same synchronous step that checks the limit and holds it through the card, so
+creates arriving together cannot share one free slot; the created session then counts as running
+until its first turn ends. A send is counted in the same step as the pair check and taken back if
+it is refused or not delivered. Calls are also limited to 30 a minute and 3 in flight per caller
+(`session_status` is exempt from the in-flight cap). Pair counts, extra grants and the create
+card's "allow for this session" live in memory and in `<ppm dir>/session-collab/pairs.json`, keyed
+by canonical id; an escalation allowance is kept in memory only.
 
 **Approvals** (`collab-approval-broker.ts`). Three cards, shown in the asking session's approval
 slot (`approval_request` with tool `ppm:session_collab`) and answered over HTTP at
 `POST /api/sessions-collab/approvals/:requestId { answer }`, never over the chat socket:
 
 - `create` — before every create unless "Ask before creating sessions" is off or the user chose
-  *Allow for this session*. Allow once / Allow for this session / Deny.
+  *Allow for this session*. Shows the whole task (`task`) and its length. Allow once / Allow for
+  this session / Deny.
 - `pair_limit` — the pair reached its limit; *Allow N more* grants another batch. Allow / Deny only.
 - `escalation` — the target runs with more permissions than the sender (plan < default <
-  acceptEdits < bypassPermissions; an unknown target mode ranks highest). *Allow for this session*
-  is remembered per sender → target.
+  acceptEdits < bypassPermissions; an unknown target mode ranks highest). Shows the whole message
+  (`message`). *Allow for this session* holds per sender → target in memory only, until a restart,
+  and ends for good once the target runs more permissively than when it was allowed.
 
 Messaging an existing session asks nothing else. One card per session at a time, held 10 minutes.
 PPM's approvals share one generalized slot with `db_execute` (`chat-ppm-approvals.ts`). A card
@@ -823,21 +835,23 @@ canonical id, provider, project, title, turn id and time. Only the server writes
 trace origin `session`; every other door — the chat socket, drafts, schedules, bots — breaks its
 markers in the text it is handed (`neutralizeBlockMarkers`), and the body itself is neutralized
 before the server encodes it, with a zero-width space before a leading `/` so the text cannot run a
-slash command. The header line the receiving AI reads is rebuilt from the JSON; a block whose two
-disagree stays plain text. Created sessions record `spawned_by`/`spawn_depth` in
-`session_metadata` (copied along when Codex renames a session to its thread id), and every link is
-read and written by canonical id.
+slash command. The header line the receiving AI reads says the text was written by another AI
+session, not by the user; it is rebuilt from the JSON, and a block whose two disagree stays plain
+text. Created sessions record `spawned_by`/`spawn_depth` in `session_metadata` (copied along, with
+the project columns, when Codex renames a session to its thread id), and every link is read and
+written by canonical id.
 
 **Threat model.**
 - Same project only: a caller resolves from its token to its canonical id and project, and every
-  target must belong to that project. A model-supplied id is never trusted about the caller. Targets
-  are resolved from the registry, then `session_metadata`, then the project's own Claude transcript
-  folder — never by scanning every Codex rollout.
+  target must belong to that project. A model-supplied id is never trusted about the caller. A target
+  needs a live registry entry or a `session_metadata` row with a project; nothing scans a
+  provider's files, so a session PPM did not open (one running in a terminal, say) is refused —
+  a second process resuming it would write into the same transcript.
 - The tools are capabilities: a per-session bearer token minted by `chatService.prepareSendOptions`
   (`session-collab-tokens.ts`), not given to design sessions, revoked when the session is deleted.
   A tool switched off is left out of `tools/list` and refused at the endpoint.
-- No silent escalation: a child inherits its creator's mode, and a message to a more permissive
-  session asks the user. Design sessions neither call nor receive these tools.
+- No silent escalation: a child inherits its creator's mode and keeps it, and a message to a more
+  permissive session asks the user. Design sessions neither call nor receive these tools.
 - As with the turn tools, an agent running in bypass mode can still reach other sessions' files
   with its own shell; the boundary is what PPM's tools allow, not the OS.
 

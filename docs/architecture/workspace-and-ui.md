@@ -207,9 +207,12 @@ screen opens a sheet with that line and an Open button in the thumb zone. The hi
 44 px on touch.
 
 **The card** (`collab-approval-card.tsx`), in the approval slot and over the history window: an AI
-asking to create a session (title, provider/model, depth, the first lines of the task), two
-sessions at their message limit (*Allow N more*), or a message to a session with more rights (both
-modes named). Answers go over HTTP; the card leaves when `approval_resolved` reaches every device.
+asking to create a session (title, provider/model, depth and the whole task), two sessions at their
+message limit (*Allow N more*), or a message to a session with more rights (both modes named, the
+whole message, and a note that *Allow for this session* lasts until PPM restarts). The task or
+message is shown whole, line breaks kept, in a scrolling box with its length, because a preview
+cut short could hide what is being approved. Answers go over HTTP; the card leaves when
+`approval_resolved` reaches every device.
 
 **Settings → Tools → Session collaboration** holds the three switches, "Ask before creating
 sessions" and the four limits, each number clamped to the server's range before it is saved
