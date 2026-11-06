@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.31] - 2026-11-06
+
+### Fixed
+
+- **A chat no longer hangs when the AI asks two questions at once.** The second card replaced the first, and after you answered it nothing was left to answer the first, so the turn waited forever; the questions now come one after another.
+
 ## [0.23.30] - 2026-11-05
 
 ### Fixed
