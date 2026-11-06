@@ -479,11 +479,15 @@ export class CodexAppServerProvider implements AIProvider {
     }
   }
 
-  /** Follow-up turn on the live session (turn 2+). Fire-and-forget per WS contract. */
-  pushMessage(sessionId: string, content: string, opts?: SendMessageOpts): void {
+  /**
+   * Follow-up turn on the live session (turn 2+), fire-and-forget per WS contract. False when no
+   * live session took it, so the caller starts a turn instead of reporting it delivered.
+   */
+  pushMessage(sessionId: string, content: string, opts?: SendMessageOpts): boolean {
     const live = this.live.get(sessionId);
-    if (!live || live.client.isClosed) return;
+    if (!live || live.client.isClosed) return false;
     void this.startTurn(live, content, opts);
+    return true;
   }
 
   /** Return a refusal only when this session's managed account opted into pacing. */

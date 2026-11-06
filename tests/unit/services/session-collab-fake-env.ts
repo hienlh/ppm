@@ -3,7 +3,7 @@
  * cards and deliveries all live in plain maps, so a test states the world and reads what the tool did.
  */
 import { SESSION_COLLAB_DEFAULTS, type SessionCollabSettings } from "../../../src/shared/session-collab-settings.ts";
-import type { SessionCollabAnswer, SessionCollabApprovalInput, SessionDelivery } from "../../../src/shared/session-collab.ts";
+import { permissionRank, type SessionCollabAnswer, type SessionCollabApprovalInput, type SessionDelivery } from "../../../src/shared/session-collab.ts";
 import type { CollabEnv, LiveSessionState } from "../../../src/services/session-collab/collab-context.ts";
 import { createCollabWaits } from "../../../src/services/session-collab/collab-waits.ts";
 import type { DeliverToSessionInput } from "../../../src/server/ws/chat-inject.ts";
@@ -13,7 +13,8 @@ export const OTHER_PATH = process.platform === "win32" ? "C:\\work\\other" : "/w
 
 export interface FakeSession {
   providerId: "claude" | "codex";
-  projectPath: string;
+  /** Absent for a session PPM has no record of (one only a provider's own files know). */
+  projectPath?: string;
   title?: string;
   mode?: string | null;
   model?: string | null;
@@ -38,9 +39,10 @@ export function fakeEnv(opts: {
   const announced: string[] = [];
   const pairs = new Map<string, { auto: number; extra: number }>();
   const allowCreate = new Set<string>();
-  const allowEscalation = new Set<string>();
+  const allowEscalation = new Map<string, number>();
   const unread = new Map<string, number>();
   const starting = new Set<string>();
+  let reserved = 0;
   const pairKey = (a: string, b: string) => (a < b ? `${a} ${b}` : `${b} ${a}`);
   const answers = [...(opts.answers ?? [])];
   let nextId = 1;
@@ -66,7 +68,6 @@ export function fakeEnv(opts: {
     storedProjectPath: (id) => sessions[id]?.projectPath ?? null,
     storedProvider: (id) => sessions[id]?.providerId ?? null,
     isDesignSession: (id) => !!sessions[id]?.design,
-    claudeSessionInProject: () => false,
     projectNameOf: (path) => (path === PROJECT_PATH ? "app" : path === OTHER_PATH ? "other" : null),
     title: (id) => sessions[id]?.title ?? null,
     providerExists: (id) => id === "claude" || id === "codex",
@@ -93,6 +94,10 @@ export function fakeEnv(opts: {
         pairs.set(pairKey(a, b), p);
         return p.auto;
       },
+      unrecord: (a, b) => {
+        const p = pairs.get(pairKey(a, b));
+        if (p && p.auto > 0) p.auto--;
+      },
       grant: (a, b, n) => {
         const p = pairs.get(pairKey(a, b)) ?? { auto: 0, extra: 0 };
         p.extra += n;
@@ -100,8 +105,11 @@ export function fakeEnv(opts: {
       },
       setAllowCreate: (id) => { allowCreate.add(id); },
       canCreateWithoutAsking: (id) => allowCreate.has(id),
-      setAllowEscalation: (a, b) => { allowEscalation.add(`${a}>${b}`); },
-      escalationAllowed: (a, b) => allowEscalation.has(`${a}>${b}`),
+      setAllowEscalation: (a, b, mode) => { allowEscalation.set(`${a}>${b}`, permissionRank(mode)); },
+      escalationAllowed: (a, b, mode) => {
+        const rank = allowEscalation.get(`${a}>${b}`);
+        return rank !== undefined && permissionRank(mode) <= rank;
+      },
     },
     approve: async (_sessionId, input) => {
       asked.push(input);
@@ -112,6 +120,12 @@ export function fakeEnv(opts: {
     },
     waits,
     runningSpawned: () => [...(opts.running ?? []), ...starting],
+    reservedSpawnSlots: () => reserved,
+    reserveSpawnSlot: () => {
+      reserved++;
+      let held = true;
+      return () => { if (held) { held = false; reserved--; } };
+    },
     markStarting: (id) => { starting.add(id); },
     deliver: async (input) => {
       deliveries.push(input);
@@ -122,6 +136,8 @@ export function fakeEnv(opts: {
     },
     createSession: async (providerId, input) => {
       const id = `child-session-${nextId++}`;
+      // A real create awaits the provider: overlapping creates interleave here.
+      await new Promise((r) => setTimeout(r, 1));
       sessions[id] = { providerId: providerId as "claude" | "codex", projectPath: input.projectPath, title: input.title };
       created.push(id);
       return id;
@@ -143,7 +159,7 @@ export function fakeEnv(opts: {
       peek: (from, to) => unread.get(`${from}>${to}`) ?? 0,
     },
   };
-  return { env, asked, deliveries, created, announced, starting, waits };
+  return { env, asked, deliveries, created, announced, starting, waits, reservedSlots: () => reserved };
 }
 
 /** The text of a tool result. */

@@ -6,11 +6,14 @@
  *   limit (`extra`) — the pair stays listed after a reset, which is how `linkedSessions` knows two
  *   sessions have talked;
  * - the sessions the user allowed to create sessions without asking;
- * - the sender → target pairs the user allowed to message a more permissive session.
+ * - the sender → target pairs the user allowed to message a more permissive session, each with
+ *   how permissive the target was then.
  *
- * Held in memory and written, debounced and atomically, to `<ppm dir>/session-collab/pairs.json`.
- * Every id is canonical (`resolveMigratedSession`), so a Codex chat renamed during its first turn
- * keeps its counters; `renameSession` re-keys what was recorded under the old id.
+ * Held in memory and written, debounced and atomically, to `<ppm dir>/session-collab/pairs.json` —
+ * all but the escalation allowances, which last only until PPM restarts: the user read one
+ * message when allowing it, and a later restart is a natural point to be asked again. Every id is
+ * canonical (`resolveMigratedSession`), so a Codex chat renamed during its first turn keeps its
+ * counters; `renameSession` re-keys what was recorded under the old id.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -18,6 +21,7 @@ import { resolveMigratedSession } from "../db.service.ts";
 import { getPpmDir } from "../ppm-dir.ts";
 import { createLogger } from "../logger.ts";
 import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
+import { permissionRank } from "../../shared/session-collab.ts";
 
 const log = createLogger("session-collab");
 
@@ -37,7 +41,6 @@ interface SidecarFile {
   version: 1;
   pairs: Record<string, PairState>;
   allowCreate: string[];
-  allowEscalation: string[];
 }
 
 const sidecarPath = (): string => join(getPpmDir(), "session-collab", "pairs.json");
@@ -49,7 +52,8 @@ const isCount = (v: unknown): v is number => typeof v === "number" && Number.isI
 class PairCounter {
   private pairs = new Map<string, PairState>();
   private allowCreate = new Set<string>();
-  private allowEscalation = new Set<string>();
+  /** Sender → target allowances, each with the target's permission rank when it was allowed. */
+  private allowEscalation = new Map<string, number>();
   private loaded = false;
   private writeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -76,6 +80,15 @@ class PairCounter {
     this.trim();
     this.schedule();
     return p.auto;
+  }
+
+  /** Takes back one message `record` counted that was then refused or never delivered. */
+  unrecord(a: string, b: string): void {
+    const key = this.key(a, b);
+    const p = key ? this.pairs.get(key) : undefined;
+    if (!p || p.auto === 0) return;
+    p.auto -= 1;
+    this.schedule();
   }
 
   /** The user allowed `n` more messages between the two. */
@@ -126,15 +139,28 @@ class PairCounter {
     return this.allowCreate.has(canonical(sessionId));
   }
 
-  /** "Allow for this session" on an escalation card: this sender may message this target. */
-  setAllowEscalation(senderId: string, targetId: string): void {
+  /**
+   * "Allow for this session" on an escalation card: this sender may message this target while it
+   * runs in `targetMode` or a stricter mode. Kept in memory only (see the module header).
+   */
+  setAllowEscalation(senderId: string, targetId: string, targetMode: string | null): void {
     this.load();
-    this.addFlag(this.allowEscalation, escalationKey(canonical(senderId), canonical(targetId)));
+    const key = escalationKey(canonical(senderId), canonical(targetId));
+    this.allowEscalation.delete(key);
+    this.allowEscalation.set(key, permissionRank(targetMode));
+    if (this.allowEscalation.size > MAX_FLAGS) this.allowEscalation.delete(this.allowEscalation.keys().next().value!);
   }
 
-  escalationAllowed(senderId: string, targetId: string): boolean {
+  /** Allowed, and the target is no more permissive in `targetMode` than when it was allowed. */
+  escalationAllowed(senderId: string, targetId: string, targetMode: string | null): boolean {
     this.load();
-    return this.allowEscalation.has(escalationKey(canonical(senderId), canonical(targetId)));
+    const key = escalationKey(canonical(senderId), canonical(targetId));
+    const allowedRank = this.allowEscalation.get(key);
+    if (allowedRank === undefined) return false;
+    if (permissionRank(targetMode) <= allowedRank) return true;
+    // The target gained rights the user never saw when allowing: that allowance is over.
+    this.allowEscalation.delete(key);
+    return false;
   }
 
   /** A provider renamed a session: what was recorded under the old id follows it. */
@@ -153,8 +179,8 @@ class PairCounter {
       if (key.split(" ").includes(id)) { this.pairs.delete(key); changed = true; }
     }
     if (this.allowCreate.delete(id)) changed = true;
-    for (const key of [...this.allowEscalation]) {
-      if (key.split(">").includes(id)) { this.allowEscalation.delete(key); changed = true; }
+    for (const key of [...this.allowEscalation.keys()]) {
+      if (key.split(">").includes(id)) this.allowEscalation.delete(key);
     }
     if (changed) this.schedule();
   }
@@ -171,7 +197,6 @@ class PairCounter {
         version: 1,
         pairs: Object.fromEntries(this.pairs),
         allowCreate: [...this.allowCreate],
-        allowEscalation: [...this.allowEscalation],
       };
       const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
       writeFileSync(tmp, JSON.stringify(file), { mode: 0o600 });
@@ -229,12 +254,14 @@ class PairCounter {
       pairs.set(k, prev ? { auto: prev.auto + p.auto, extra: prev.extra + p.extra, lastAt: Math.max(prev.lastAt, p.lastAt) } : p);
     }
     const create = new Set([...this.allowCreate].map(map));
-    const escalation = new Set([...this.allowEscalation].map((k) => {
+    // In memory only, so a move here never needs writing.
+    const escalation = new Map<string, number>();
+    for (const [k, rank] of this.allowEscalation) {
       const [s, t] = k.split(">") as [string, string];
-      return escalationKey(map(s), map(t));
-    }));
+      const key = escalationKey(map(s), map(t));
+      escalation.set(key, Math.min(rank, escalation.get(key) ?? rank));
+    }
     if (create.size !== this.allowCreate.size || [...create].some((id) => !this.allowCreate.has(id))) moved = true;
-    if (escalation.size !== this.allowEscalation.size || [...escalation].some((k) => !this.allowEscalation.has(k))) moved = true;
     this.pairs = pairs;
     this.allowCreate = create;
     this.allowEscalation = escalation;
@@ -260,9 +287,7 @@ class PairCounter {
       for (const id of Array.isArray(raw.allowCreate) ? raw.allowCreate : []) {
         if (typeof id === "string" && SESSION_ID_RE.test(id)) this.allowCreate.add(id);
       }
-      for (const k of Array.isArray(raw.allowEscalation) ? raw.allowEscalation : []) {
-        if (typeof k === "string" && k.split(">").length === 2 && k.split(">").every((id) => SESSION_ID_RE.test(id))) this.allowEscalation.add(k);
-      }
+      // Escalation allowances an older build wrote here are not read back: they end at a restart.
       // Sessions renamed while the file sat on disk are followed to their current ids.
       if (this.rekey(canonical)) this.schedule();
       this.trim();

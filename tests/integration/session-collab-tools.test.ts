@@ -11,16 +11,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatService } from "../../src/services/chat.service.ts";
 import { providerRegistry } from "../../src/providers/registry.ts";
-import { chatWebSocket, ensureSessionEntry } from "../../src/server/ws/chat.ts";
+import { chatWebSocket, collabLiveState, ensureSessionEntry } from "../../src/server/ws/chat.ts";
 import { sessionCollabMcpHandler } from "../../src/services/session-collab/session-collab-endpoint.ts";
+import { collabEnv } from "../../src/services/session-collab/collab-env.ts";
+import { effectivePermissionMode } from "../../src/services/session-collab/collab-context.ts";
 import { sessionCollabMcpTokens } from "../../src/services/session-collab/session-collab-tokens.ts";
 import { collabApprovalBroker } from "../../src/services/session-collab/collab-approval-broker.ts";
 import { pairCounter } from "../../src/services/session-collab/pair-counter.ts";
 import { parentOf, recordSpawn } from "../../src/services/session-collab/session-links.service.ts";
-import { sessionCollabRoutes } from "../../src/server/routes/session-collab.ts";
+import { chatSessionCollabRoutes, sessionCollabRoutes } from "../../src/server/routes/session-collab.ts";
 import {
-  getSessionPermissionMode, getSessionTitle, setSessionDesignSlug, setSessionMetadata, setSessionPermissionMode,
-  setSessionProvider, setSessionTitle,
+  getDb, getSessionPermissionMode, getSessionTitle, setSessionDesignSlug, setSessionMetadata, setSessionMigratedTo,
+  setSessionPermissionMode, setSessionProvider, setSessionTitle,
 } from "../../src/services/db.service.ts";
 import { decodeMessageBlocks } from "../../src/shared/chat-message-blocks.ts";
 import { stripSharedContext } from "../../src/shared/provider-context.ts";
@@ -34,7 +36,7 @@ class ScriptedClaude {
   id = "claude";
   name = "Scripted Claude";
   sessions = new Map<string, Session>();
-  sends: Array<{ sessionId: string; message: string }> = [];
+  sends: Array<{ sessionId: string; message: string; permissionMode?: string }> = [];
   pushes: Array<{ sessionId: string; message: string }> = [];
   private streams = new Map<string, { queue: Item[]; wake?: () => void; closed: boolean }>();
   private gates: Array<() => void> = [];
@@ -65,8 +67,8 @@ class ScriptedClaude {
     s.queue.push({ content, clientMessageId: opts?.clientMessageId });
     s.wake?.();
   }
-  async *sendMessage(sessionId: string, message: string, opts?: { clientMessageId?: string }): AsyncGenerator<ChatEvent> {
-    this.sends.push({ sessionId, message });
+  async *sendMessage(sessionId: string, message: string, opts?: { clientMessageId?: string; permissionMode?: string }): AsyncGenerator<ChatEvent> {
+    this.sends.push({ sessionId, message, ...(opts?.permissionMode ? { permissionMode: opts.permissionMode } : {}) });
     const stream = { queue: [{ content: message, clientMessageId: opts?.clientMessageId }] as Item[], wake: undefined as (() => void) | undefined, closed: false };
     this.streams.set(sessionId, stream);
     try {
@@ -277,5 +279,66 @@ describe("session tools", () => {
     const status = await call(parent, "session_status", {});
     const ids = status.json.sessions.map((s: { sessionId: string }) => s.sessionId);
     expect(ids).toContain(child);
+  });
+
+  it("runs a created session in its inherited mode once its registry entry is gone, as the escalation check reads it", async () => {
+    // What create_session leaves once the child's entry was cleaned up, or after a restart: its
+    // rows in PPM's database and no registry entry.
+    const owner = await session("Owner", "default");
+    const { id: kid } = await chatService.createSession("claude", {});
+    setSessionMetadata(kid, PROJECT, projectPath);
+    setSessionProvider(kid, "claude");
+    setSessionPermissionMode(kid, "default");
+    setSessionTitle(kid, "Kid");
+    recordSpawn(kid, owner);
+    expect(collabLiveState(kid)).toBeNull();
+
+    // Both run in "default", so no card; the message starts the child's turn in that mode, not
+    // in the provider's configured default.
+    const sent = await call(owner, "send_to_session", { session_id: kid, message: "next step" });
+    expect(sent.isError).toBe(false);
+    expect(sent.json.delivered).toBe("started");
+    expect(collabApprovalBroker.pendingEvent(owner)).toBeNull();
+    await until(() => claude.sends.some((s) => s.sessionId === kid), "the child's turn");
+    expect(claude.sends.find((s) => s.sessionId === kid)!.permissionMode).toBe("default");
+    expect(collabLiveState(kid)?.permissionMode).toBe("default");
+    expect(effectivePermissionMode(collabEnv, kid, "claude")).toBe("default");
+    claude.abortQuery(kid);
+
+    // A caller that names no mode (the CLI, a schedule) gets the stored one too.
+    const { id: quiet } = await chatService.createSession("claude", {});
+    setSessionPermissionMode(quiet, "plan");
+    const turn = chatService.sendMessage("claude", quiet, "from a schedule")[Symbol.asyncIterator]();
+    await turn.next();
+    expect(claude.sends.find((s) => s.sessionId === quiet)!.permissionMode).toBe("plan");
+    claude.abortQuery(quiet);
+    await turn.return?.();
+  });
+
+  it("counts every message a session received outside a wait", () => {
+    const from = crypto.randomUUID(), to = crypto.randomUUID();
+    collabEnv.unread.add(from, to);
+    collabEnv.unread.add(from, to);
+    expect(collabEnv.unread.peek(from, to)).toBe(2);
+    expect(collabEnv.unread.take(from, to)).toBe(2);
+    expect(collabEnv.unread.peek(from, to)).toBe(0);
+  });
+
+  it("lists a renamed child among its creator's links, finding its project under its old id", async () => {
+    const lead = await session("Lead");
+    const { id: draft } = await chatService.createSession("claude", {});
+    setSessionMetadata(draft, PROJECT, projectPath);
+    recordSpawn(draft, lead);
+    const thread = crypto.randomUUID();
+    setSessionMigratedTo(draft, thread);
+    // A rename recorded before the project was carried with it.
+    getDb().query("UPDATE session_metadata SET project_path = NULL, project_name = NULL WHERE session_id = ?").run(thread);
+
+    const projectApp = new Hono<{ Variables: { projectPath: string; projectName: string } }>();
+    projectApp.use("*", async (c, next) => { c.set("projectPath", projectPath); c.set("projectName", PROJECT); await next(); });
+    projectApp.route("/chat", chatSessionCollabRoutes);
+    const res = await projectApp.request(`/chat/sessions/${lead}/links`);
+    const links = ((await res.json()) as { data: Array<{ sessionId: string }> }).data;
+    expect(links.map((l) => l.sessionId)).toContain(thread);
   });
 });

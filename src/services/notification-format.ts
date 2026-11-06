@@ -73,7 +73,7 @@ export function describeApprovalInput(tool: string, input: unknown): Pick<Notifi
   if (db) return db.reason ? { detail: db.reason, detailStyle: "quote" } : {};
 
   const collab = sessionCollabApprovalInput(tool, input);
-  if (collab) return { detail: collab.kind === "create" ? collab.taskPreview : collab.kind === "escalation" ? collab.messagePreview : `To: ${collab.targetTitle}`, detailStyle: "quote" };
+  if (collab) return { detail: collab.kind === "create" ? collab.task : collab.kind === "escalation" ? collab.message : `To: ${collab.targetTitle}`, detailStyle: "quote" };
 
   if (tool === "AskUserQuestion" && Array.isArray(i.questions)) {
     const questions = i.questions as Array<{ question?: unknown }>;

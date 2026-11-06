@@ -23,10 +23,11 @@ const MODE_LABELS: Record<string, string> = {
 };
 const modeLabel = (mode: string) => MODE_LABELS[mode] ?? mode;
 
-/** The first lines of a long text, for a preview that cannot push the buttons off screen. */
-export function firstLines(text: string, lines = 6): string {
-  const all = text.split("\n");
-  return all.length > lines ? `${all.slice(0, lines).join("\n")}\n…` : text;
+/** How long a text is, as the card states it under the text. */
+export function lengthLabel(text: string): string {
+  const chars = Array.from(text).length;
+  const lines = text.split("\n").length;
+  return `${chars.toLocaleString("en-US")} character${chars === 1 ? "" : "s"}${lines > 1 ? `, ${lines.toLocaleString("en-US")} lines` : ""}`;
 }
 
 export function answerLabel(input: SessionCollabApprovalInput, answer: SessionCollabAnswer): string {
@@ -99,7 +100,7 @@ function CollabApprovalBody({ input }: { input: SessionCollabApprovalInput }) {
             {providerLabel(input.providerId)}{input.model ? ` · ${input.model}` : ""} · depth {input.depth}
           </span>
         </div>
-        {input.taskPreview && <Preview text={input.taskPreview} />}
+        {input.task && <WholeText label="The whole task" text={input.task} />}
       </>
     );
   }
@@ -118,15 +119,28 @@ function CollabApprovalBody({ input }: { input: SessionCollabApprovalInput }) {
         <span className="font-medium">{modeLabel(input.targetMode)}</span> mode; this session runs in{" "}
         <span className="font-medium">{modeLabel(input.senderMode)}</span> mode.
       </p>
-      {input.messagePreview && <Preview text={input.messagePreview} />}
+      {input.message && <WholeText label="The whole message" text={input.message} />}
+      <p className="text-xs text-text-subtle">
+        Allow for this session lasts until PPM restarts, and ends if that session switches to a mode with more rights.
+      </p>
     </>
   );
 }
 
-function Preview({ text }: { text: string }) {
+/**
+ * Everything the user is approving, line breaks kept, in a box that scrolls rather than pushing
+ * the buttons off screen. Nothing is cut: what is shown is exactly what would be delivered.
+ */
+function WholeText({ label, text }: { label: string; text: string }) {
   return (
-    <pre className="text-xs font-mono text-text-secondary overflow-auto max-h-40 whitespace-pre-wrap break-words bg-background rounded p-2 border border-border">
-      {firstLines(text)}
-    </pre>
+    <div className="space-y-1">
+      <p className="text-xs text-text-subtle">{label} ({lengthLabel(text)}):</p>
+      <pre
+        data-collab-approval-text
+        className="text-xs font-mono text-text-secondary overflow-auto max-h-60 whitespace-pre-wrap break-words bg-background rounded p-2 border border-border"
+      >
+        {text}
+      </pre>
+    </div>
   );
 }

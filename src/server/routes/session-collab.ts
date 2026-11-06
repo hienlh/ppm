@@ -2,7 +2,9 @@ import { resolve } from "node:path";
 import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
 import { chatService } from "../../services/chat.service.ts";
-import { getSessionProjectPath, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
+import {
+  getSessionProjectPath, getSessionProvider, resolveMigratedSession, sessionIdAliases,
+} from "../../services/db.service.ts";
 import { collabApprovalBroker } from "../../services/session-collab/collab-approval-broker.ts";
 import { collabWaits } from "../../services/session-collab/collab-waits.ts";
 import { childrenOf, linkedSessions } from "../../services/session-collab/session-links.service.ts";
@@ -39,9 +41,13 @@ const samePath = (a: string, b: string): boolean => {
  */
 export const chatSessionCollabRoutes = new Hono<Env>();
 
-/** Whether PPM records the session as this project's (registry first, then the database). */
+/**
+ * Whether PPM records the session as this project's: the registry first, then the database under
+ * every id the session had (a Codex chat's thread id may have no project of its own yet).
+ */
 function inProject(sessionId: string, projectPath: string): boolean {
-  const path = collabLiveState(sessionId)?.projectPath ?? getSessionProjectPath(resolveMigratedSession(sessionId));
+  const path = collabLiveState(sessionId)?.projectPath
+    ?? sessionIdAliases(sessionId).map(getSessionProjectPath).find((p): p is string => !!p);
   return !!path && samePath(path, projectPath);
 }
 

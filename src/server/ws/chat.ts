@@ -7,7 +7,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, setSessionPermissionMode, getStoredPermissionModeAnyAlias, getLastTurnCacheState } from "../../services/db.service.ts";
 import { describeApprovalInput } from "../../services/notification-format.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
@@ -1525,8 +1525,14 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
   }
 }
 
-/** A fresh registry entry for a session, with `client` attached, or socketless without one. */
+/**
+ * A fresh registry entry for a session, with `client` attached, or socketless without one. A
+ * session with a stored permission mode (a created session inherits its creator's) starts in it:
+ * an entry is made again after cleanup or a restart, and without the stored mode the next turn
+ * would fall back to the provider's default, which is usually the most permissive one.
+ */
 function createSessionEntry(sessionId: string, providerId: string, projectPath: string | undefined, projectName: string | undefined, client?: ChatWsSocket): SessionEntry {
+  const storedMode = getStoredPermissionModeAnyAlias(sessionId);
   const entry: SessionEntry = {
     providerId,
     clients: new Set(client ? [client] : []),
@@ -1541,6 +1547,7 @@ function createSessionEntry(sessionId: string, providerId: string, projectPath: 
     teamNames: new Set(),
     compactStatus: null,
     model: getSessionModel(sessionId) ?? undefined,
+    ...(storedMode ? { permissionMode: storedMode } : {}),
     ...(client ? {} : { socketless: true, idleSince: Date.now() }),
   };
   activeSessions.set(sessionId, entry);
@@ -1621,6 +1628,11 @@ export interface SubmitToSessionOpts {
    * person, so it waits behind the approval instead.
    */
   supersedePendingApproval: boolean;
+  /**
+   * Draw the message on every device showing the session once the provider has it — for a
+   * message no device drew itself. Never before: a refused delivery must not leave a bubble.
+   */
+  echoOnHandOff?: boolean;
 }
 
 export type SubmitResult = { ok: true; delivered: SessionDelivery } | { ok: false; error: string };
@@ -1666,7 +1678,6 @@ async function awaitLiveStreamOrNone(sessionId: string, entry: SessionEntry): Pr
  */
 export async function submitToSession(sessionId: string, entry: SessionEntry, content: string, opts: SubmitToSessionOpts): Promise<SubmitResult> {
   const providerId = entry.providerId ?? providerRegistry.getDefault().id;
-  const provider = providerRegistry.get(providerId);
 
   // User sent a message instead of answering a pending question/approval.
   // The SDK generator is blocked inside canUseTool awaiting that approval, so
@@ -1690,12 +1701,40 @@ export async function submitToSession(sessionId: string, entry: SessionEntry, co
     logSessionEvent(sessionId, "INFO", `Pending approval ${pendingReqId} auto-skipped (user sent a message)`);
   }
 
-  // A push the provider has no stream for is dropped (Claude logs it and returns). That happens
-  // while a consumer is still opening its stream, or is on its way out. A server-originated
-  // message waits until either the stream is up or the consumer is gone, then pushes or starts.
+  // A push the provider has no stream for goes nowhere. That happens while a consumer is still
+  // opening its stream, or is on its way out. A server-originated message waits until either the
+  // stream is up or the consumer is gone, then pushes or starts.
   if (opts.origin === "session" && !(await awaitLiveStreamOrNone(sessionId, entry))) {
-    return { ok: false, error: "The session is still starting; try again in a moment" };
+    return { ok: false, error: STILL_STARTING };
   }
+  const handed = await handOffToSession(sessionId, entry, content, opts);
+  if (handed !== "stream_closed") return handed;
+  // The live stream closed between that check and the push (an idle release, the warm-idle cap,
+  // a token rotation — none of them waits for this lock), so the message went nowhere. Once the
+  // consumer has wound down it opens a turn of its own instead.
+  if (!(await awaitLiveStreamOrNone(sessionId, entry))) return { ok: false, error: STILL_STARTING };
+  const retried = await handOffToSession(sessionId, entry, content, opts);
+  return retried === "stream_closed"
+    ? { ok: false, error: "The session closed before it could take the message; try again in a moment" }
+    : retried;
+}
+
+const STILL_STARTING = "The session is still starting; try again in a moment";
+
+const echoHandedOff = (entry: SessionEntry, content: string, opts: SubmitToSessionOpts): void =>
+  echoUserMessage(entry, content, {
+    ...(opts.sender ? { except: opts.sender } : {}),
+    ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
+    imageCount: opts.images?.length ?? 0,
+  });
+
+/**
+ * Starts a turn with the message, or pushes it into the live stream. `stream_closed` when the
+ * provider had no stream left to take the push, so the message was not delivered.
+ */
+async function handOffToSession(sessionId: string, entry: SessionEntry, content: string, opts: SubmitToSessionOpts): Promise<SubmitResult | "stream_closed"> {
+  const providerId = entry.providerId ?? providerRegistry.getDefault().id;
+  const provider = providerRegistry.get(providerId);
 
   // Store user message for reconnect replay (turn_events includes only assistant events)
   entry.currentUserMessage = content;
@@ -1728,6 +1767,8 @@ export async function submitToSession(sessionId: string, entry: SessionEntry, co
     if (entry.projectPath && provider && "ensureProjectPath" in provider) {
       (provider as any).ensureProjectPath(sessionId, entry.projectPath);
     }
+    // Nothing below can refuse the message; the consumer has not started, so no event precedes it.
+    if (opts.echoOnHandOff) echoHandedOff(entry, content, opts);
 
     entry.turnEvents = [];
     setPhase(sessionId, "initializing");
@@ -1754,7 +1795,7 @@ export async function submitToSession(sessionId: string, entry: SessionEntry, co
     const effort = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
     try {
-      await chatService.pushMessage(providerId, sessionId, content, {
+      const pushed = await chatService.pushMessage(providerId, sessionId, content, {
         origin: opts.origin,
         priority: opts.priority ?? "next",
         images: opts.images,
@@ -1764,6 +1805,8 @@ export async function submitToSession(sessionId: string, entry: SessionEntry, co
         ...(effort ? { effort } : {}),
         ...(thinkingBudget != null ? { thinkingBudget } : {}),
       });
+      if (!pushed) return "stream_closed";
+      if (opts.echoOnHandOff) echoHandedOff(entry, content, opts);
     } catch (e) {
       log.error(`session=${sessionId} follow-up failed provider=${providerId}:`, e);
       return { ok: false, error: `Could not deliver the message: ${(e as Error).message}` };

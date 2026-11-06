@@ -20,8 +20,21 @@ export const CODEX_SESSION_COLLAB_MCP_TOKEN_ENV = "PPM_SESSIONS_MCP_TOKEN";
 /** How long the user has to answer a create, pair-limit or escalation card. */
 export const COLLAB_APPROVAL_WAIT_MS = 10 * 60_000;
 
-/** Longest task or message one call may carry, in characters. */
-export const MAX_COLLAB_MESSAGE_CHARS = 50_000;
+/**
+ * Largest task or message one call may carry, in UTF-8 bytes. The endpoint takes at most 64 KB of
+ * JSON per request, and escaping can double a text's size there, so a limit in characters would
+ * promise what a request in a three-byte script cannot deliver.
+ */
+export const MAX_COLLAB_MESSAGE_BYTES = 24 * 1024;
+
+/** Why `text` is too large for one call, in words the AI can act on; null when it fits. */
+export function collabTextTooLarge(field: "task" | "message", text: string): string | null {
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes <= MAX_COLLAB_MESSAGE_BYTES) return null;
+  return `\`${field}\` is ${Math.ceil(bytes / 1024)} KB; one call carries at most ${MAX_COLLAB_MESSAGE_BYTES / 1024} KB `
+    + "(about 24,000 characters of English, fewer in scripts that take more bytes a character). "
+    + "Shorten it, or write the details to a file in the project and send its path.";
+}
 /** Longest title a created session gets; longer ones are cut. */
 export const MAX_COLLAB_TITLE_CHARS = 60;
 /** Sessions one `session_status` call reports at most. */
@@ -68,7 +81,7 @@ export function sessionCollabToolDefinitions() {
         type: "object",
         properties: {
           title: { type: "string", description: `A short title for the new session (at most ${MAX_COLLAB_TITLE_CHARS} characters), shown in the user's session list.` },
-          task: { type: "string", description: "The task, complete enough to work from without this conversation. Say what to send back, and that the reply goes through send_to_session." },
+          task: { type: "string", description: `The task, complete enough to work from without this conversation. Say what to send back, and that the reply goes through send_to_session. At most ${MAX_COLLAB_MESSAGE_BYTES / 1024} KB; put longer material in a file and give its path.` },
           provider: { type: "string", enum: ["claude", "codex"], description: "The AI to run it on; yours by default." },
           model: { type: "string", description: "The model; the same as yours by default." },
           wait: WAIT,
@@ -93,7 +106,7 @@ export function sessionCollabToolDefinitions() {
         type: "object",
         properties: {
           session_id: { type: "string", description: "The receiving session's id." },
-          message: { type: "string", description: "What to say. Plain text; it is shown as a message from your session." },
+          message: { type: "string", description: `What to say. Plain text; it is shown as a message from your session. At most ${MAX_COLLAB_MESSAGE_BYTES / 1024} KB.` },
           wait: WAIT,
         },
         required: ["session_id", "message"],

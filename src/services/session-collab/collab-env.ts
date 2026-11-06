@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
 import {
-  getSessionDesignSlug, getSessionModel, getSessionPermissionMode, getSessionProjectPath, getSessionProvider,
+  getSessionDesignSlug, getSessionModel, getSessionProjectPath, getSessionProvider, getStoredPermissionModeAnyAlias,
   getSessionTitle, resolveMigratedSession, sessionIdAliases, setSessionMetadata, setSessionModel,
   setSessionPermissionMode, setSessionTitle,
 } from "../db.service.ts";
@@ -9,7 +9,6 @@ import { configService } from "../config.service.ts";
 import { chatService } from "../chat.service.ts";
 import { createLogger } from "../logger.ts";
 import { providerRegistry } from "../../providers/registry.ts";
-import { pinClaudeSessionDir } from "../agent-transcript/session-ownership.ts";
 import { listSessionTurns } from "../session-turns/session-turn-index.service.ts";
 import { resolveSessionCollabSettings } from "../../shared/session-collab-settings.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
@@ -20,7 +19,7 @@ import { collabLiveState, listRunningSessions, onTurnBinding } from "../../serve
 import { collabApprovalBroker } from "./collab-approval-broker.ts";
 import type { CollabCaller, CollabEnv } from "./collab-context.ts";
 import { collabWaits } from "./collab-waits.ts";
-import { markChildStarting, startingChildren } from "./collab-turn-events.ts";
+import { markChildStarting, reserveChildSlot, reservedChildSlots, startingChildren } from "./collab-turn-events.ts";
 import { pairCounter } from "./pair-counter.ts";
 import { childrenOf, depthOf, isSpawned, linkedSessions, parentOf, recordSpawn } from "./session-links.service.ts";
 
@@ -87,13 +86,13 @@ export const collabEnv: CollabEnv = {
   settings: () => resolveSessionCollabSettings(configService.get("ai").session_collab),
   canonical: (sessionId) => resolveMigratedSession(sessionId),
   live: (sessionId) => collabLiveState(sessionId),
-  storedPermissionMode: (sessionId) => firstOf(sessionId, getSessionPermissionMode),
+  // The same lookup a new registry entry and every turn's options use, so the check and the run agree.
+  storedPermissionMode: getStoredPermissionModeAnyAlias,
   providerDefaultPermissionMode: (providerId) => configService.get("ai").providers?.[providerId]?.permission_mode ?? null,
   storedModel: (sessionId) => firstOf(sessionId, getSessionModel),
   storedProjectPath: (sessionId) => firstOf(sessionId, getSessionProjectPath),
   storedProvider: (sessionId) => firstOf(sessionId, getSessionProvider),
   isDesignSession: (sessionId) => firstOf(sessionId, getSessionDesignSlug) !== null,
-  claudeSessionInProject: (sessionId, projectPath) => pinClaudeSessionDir(sessionId, projectPath) !== null,
   projectNameOf: (projectPath) => configService.get("projects").find((p) => resolve(p.path) === resolve(projectPath))?.name ?? null,
   title: (sessionId) => firstOf(sessionId, getSessionTitle) ?? chatService.getSession(resolveMigratedSession(sessionId))?.title ?? null,
   providerExists: (providerId) => !!providerRegistry.get(providerId),
@@ -108,6 +107,8 @@ export const collabEnv: CollabEnv = {
     ...listRunningSessions(projectName).map((s) => resolveMigratedSession(s.sessionId)).filter(isSpawned),
     ...startingChildren(projectName),
   ])],
+  reservedSpawnSlots: reservedChildSlots,
+  reserveSpawnSlot: reserveChildSlot,
   markStarting: markChildStarting,
   deliver: deliverToSession,
   createSession: async (providerId, input) => (await chatService.createSession(providerId, {
@@ -128,8 +129,9 @@ export const collabEnv: CollabEnv = {
   unread: {
     add: (from, to) => {
       const key = unreadKey(from, to);
-      unread.delete(key);
-      unread.set(key, (unread.get(key) ?? 0) + 1);
+      const n = (unread.get(key) ?? 0) + 1;
+      unread.delete(key); // newest last, so the cap drops the longest-quiet pairs
+      unread.set(key, n);
       if (unread.size > MAX_UNREAD_KEYS) unread.delete(unread.keys().next().value!);
     },
     take: (from, to) => {

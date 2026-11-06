@@ -21,7 +21,7 @@ import { countSpawned } from "../../services/session-collab/session-links.servic
 import { createLogger } from "../../services/logger.ts";
 import { broadcastGlobalEvent } from "./global.ts";
 import {
-  echoUserMessage, ensureSessionEntry, listRunningSessions, onTurnBinding, startCleanupTimer,
+  ensureSessionEntry, listRunningSessions, onTurnBinding, startCleanupTimer,
   submitToSession, withSessionLock, type TurnBinding,
 } from "./chat.ts";
 
@@ -165,14 +165,14 @@ export async function deliverToSession(input: DeliverToSessionInput): Promise<De
     }
     if (input.permissionMode && !entry.permissionMode) entry.permissionMode = input.permissionMode;
 
-    // Every device already showing the session draws the message now, as a second device does.
-    echoUserMessage(entry, content, { clientMessageId, imageCount: 0 });
     const result = await submitToSession(target, entry, content, {
       origin: "session",
       clientMessageId,
       priority: "next",
       receivedAt,
       supersedePendingApproval: false,
+      // No device drew this message itself: every one showing the session draws it once it is in.
+      echoOnHandOff: true,
     });
     if (!result.ok) {
       // A socketless entry made for this delivery would otherwise stay in the registry for good.

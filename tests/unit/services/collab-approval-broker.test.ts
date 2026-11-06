@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { createCollabApprovalBroker, type CollabApprovalChat } from "../../../src/services/session-collab/collab-approval-broker.ts";
 import type { SessionCollabApprovalInput, SessionCollabApprovalRequest } from "../../../src/shared/session-collab.ts";
 
-const createInput: SessionCollabApprovalInput = { kind: "create", title: "Docs", providerId: "claude", model: null, taskPreview: "Write docs", depth: 1 };
+const createInput: SessionCollabApprovalInput = { kind: "create", title: "Docs", providerId: "claude", model: null, task: "Write docs", depth: 1 };
 const pairInput: SessionCollabApprovalInput = { kind: "pair_limit", targetSessionId: "target-session", targetTitle: "T", sent: 20, limit: 20, grant: 20 };
 
 function setup(opts: { shown?: boolean } = {}) {

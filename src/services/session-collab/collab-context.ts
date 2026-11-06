@@ -43,8 +43,6 @@ export interface CollabEnv {
   storedProjectPath(sessionId: string): string | null;
   storedProvider(sessionId: string): string | null;
   isDesignSession(sessionId: string): boolean;
-  /** A Claude transcript for the session sits in the project's own folder (no scan of anything). */
-  claudeSessionInProject(sessionId: string, projectPath: string): boolean;
   projectNameOf(projectPath: string): string | null;
   title(sessionId: string): string | null;
   providerExists(providerId: string): boolean;
@@ -59,16 +57,24 @@ export interface CollabEnv {
     remaining(a: string, b: string, limit: number): number;
     count(a: string, b: string): number;
     record(a: string, b: string): number;
+    /** Takes back a message `record` counted that was never delivered. */
+    unrecord(a: string, b: string): void;
     grant(a: string, b: string, n: number): void;
     setAllowCreate(sessionId: string): void;
     canCreateWithoutAsking(sessionId: string): boolean;
-    setAllowEscalation(sender: string, target: string): void;
-    escalationAllowed(sender: string, target: string): boolean;
+    /** "Allow for this session" on an escalation card, for the target in `targetMode`. */
+    setAllowEscalation(sender: string, target: string, targetMode: string | null): void;
+    /** Allowed, and the target runs no more permissively now than when it was allowed. */
+    escalationAllowed(sender: string, target: string, targetMode: string | null): boolean;
   };
   approve(sessionId: string, input: SessionCollabApprovalInput, signal?: AbortSignal): Promise<CollabApprovalOutcome>;
   waits: CollabWaits;
   /** AI-created sessions of the project counted against the running limit. */
   runningSpawned(projectName: string): string[];
+  /** Running-limit slots held by creates still in progress (see `reserveSpawnSlot`). */
+  reservedSpawnSlots(projectName: string): number;
+  /** Holds a running-limit slot until the returned release is called; synchronous. */
+  reserveSpawnSlot(projectName: string): () => void;
   /** A created session counts as running from now until its first turn ends. */
   markStarting(childId: string, projectName: string): void;
   deliver(input: DeliverToSessionInput): Promise<DeliverToSessionResult>;
@@ -122,8 +128,9 @@ export function resolveCaller(env: CollabEnv, tokenSessionId: string): Resolved<
 
 /**
  * The session `rawId` names, proven to be in the caller's project from what PPM already knows —
- * the chat registry, then its database, then the Claude transcript in the project's own folder. A
- * Codex session PPM has no record of is not found: a tool call never scans Codex's rollouts.
+ * the chat registry, then its database. A session PPM has no record of is not found, even with a
+ * transcript in the project's folder: it may be open in the user's own terminal, where a second
+ * process resuming it would write into the same transcript. Nothing here scans a provider's files.
  */
 export function resolveTarget(env: CollabEnv, caller: CollabCaller, rawId: unknown): Resolved<CollabTarget> {
   if (typeof rawId !== "string" || !SESSION_ID_RE.test(rawId)) return { ok: false, refusal: "invalid", message: "`session_id` is not a session id." };
@@ -132,15 +139,15 @@ export function resolveTarget(env: CollabEnv, caller: CollabCaller, rawId: unkno
   if (env.isDesignSession(sessionId)) return { ok: false, refusal: "design_session", message: "That is a design session, which does not take messages from other sessions." };
   const live = env.live(sessionId);
   const projectPath = live?.projectPath ?? env.storedProjectPath(sessionId);
-  let providerId = live?.providerId ?? env.storedProvider(sessionId);
-  if (projectPath) {
-    if (!samePath(projectPath, caller.projectPath)) {
-      return { ok: false, refusal: "other_project", message: "That session belongs to another project; the session tools reach your own project only." };
-    }
-  } else if ((providerId === null || providerId === "claude") && env.claudeSessionInProject(sessionId, caller.projectPath)) {
-    providerId = "claude";
-  } else {
-    return { ok: false, refusal: "not_found", message: "No session with that id is known in this project." };
+  const providerId = live?.providerId ?? env.storedProvider(sessionId);
+  if (!projectPath) {
+    return {
+      ok: false, refusal: "not_found",
+      message: "No PPM session with that id is known in this project. Sessions PPM did not open (one running in a terminal, say) cannot be messaged.",
+    };
+  }
+  if (!samePath(projectPath, caller.projectPath)) {
+    return { ok: false, refusal: "other_project", message: "That session belongs to another project; the session tools reach your own project only." };
   }
   if (!isProvider(providerId)) return { ok: false, refusal: "not_found", message: "That session runs on a provider the session tools do not reach." };
   return { ok: true, value: { sessionId, providerId, title: titleOf(env, sessionId) } };

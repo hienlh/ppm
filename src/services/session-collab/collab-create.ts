@@ -1,29 +1,31 @@
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import type { CreateSessionResult } from "../../shared/session-collab.ts";
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
-import {
-  effectivePermissionMode, preview, sanitizeTitle, type CollabCaller, type CollabEnv,
-} from "./collab-context.ts";
+import { effectivePermissionMode, sanitizeTitle, type CollabCaller, type CollabEnv } from "./collab-context.ts";
 import { deliverAndWait } from "./collab-deliver.ts";
 import { jsonResult, statusOf } from "./collab-status.ts";
-import { MAX_COLLAB_MESSAGE_CHARS, MAX_COLLAB_TITLE_CHARS } from "./session-collab-tool.ts";
+import { collabTextTooLarge, MAX_COLLAB_TITLE_CHARS } from "./session-collab-tool.ts";
 
 /**
  * `create_session`: a new ordinary session in the caller's project, given a task by the caller.
  *
- * Refused outright past the depth limit or the running limit (a created session counts as running
- * from its creation until its first turn ends, so a burst of creates cannot overshoot it). The
- * child runs under the caller's own permission mode, read from what the caller actually runs
- * under; when PPM cannot tell what that is, nothing is created — a child never falls back to the
- * most permissive mode. Unless the user switched it off, they are asked first.
+ * Refused outright past the depth limit or the running limit. A create holds one of the running
+ * limit's slots from its check — taken in the same synchronous step, so creates arriving together
+ * cannot all see one free slot — through the card and the creation, after which the created
+ * session counts as running until its first turn ends. The child runs under the caller's own
+ * permission mode, read from what the caller actually runs under; when PPM cannot tell what that
+ * is, nothing is created — a child never falls back to the most permissive mode. Unless the user
+ * switched it off, they are asked first, and shown the whole task.
  */
 
 const isMode = (mode: string | null): mode is string =>
   !!mode && (VALID_PERMISSION_MODES as readonly string[]).includes(mode);
 
-function runningLimitHit(env: CollabEnv, caller: CollabCaller): string | null {
+/** Sessions counted against the limit, other than `ownSlots` slots this create already holds. */
+function runningLimitHit(env: CollabEnv, caller: CollabCaller, ownSlots: number): string | null {
   const max = env.settings().maxRunningSpawned;
-  if (env.runningSpawned(caller.projectName).length < max) return null;
+  const used = env.runningSpawned(caller.projectName).length + env.reservedSpawnSlots(caller.projectName) - ownSlots;
+  if (used < max) return null;
   return `${max} AI-created sessions of this project are already running, the most the user allows at once. `
     + "Wait for one to finish (session_status shows which), or do the work yourself.";
 }
@@ -33,7 +35,8 @@ export async function createSessionTool(env: CollabEnv, caller: CollabCaller, ar
   if (!title) return textResult("`title` is required: a few words the user will see in the session list.", true);
   const task = typeof args.task === "string" ? args.task : "";
   if (!task.trim()) return textResult("`task` is required.", true);
-  if (task.length > MAX_COLLAB_MESSAGE_CHARS) return textResult(`\`task\` is longer than ${MAX_COLLAB_MESSAGE_CHARS} characters.`, true);
+  const tooLarge = collabTextTooLarge("task", task);
+  if (tooLarge) return textResult(tooLarge, true);
   if (args.project !== undefined && args.project !== caller.projectName) {
     return textResult(`Sessions are created in your own project only ("${caller.projectName}"). Leave \`project\` out.`, true);
   }
@@ -53,21 +56,34 @@ export async function createSessionTool(env: CollabEnv, caller: CollabCaller, ar
   if (depth > settings.maxDepth) {
     return textResult(`Sessions created by sessions may go ${settings.maxDepth} levels deep, and yours is already at that depth. Do the work yourself, or report back to the session that created yours.`, true);
   }
-  const busy = runningLimitHit(env, caller);
-  if (busy) return textResult(busy, true);
   const permissionMode = effectivePermissionMode(env, caller.sessionId, caller.providerId);
   if (!isMode(permissionMode)) {
     return textResult("PPM cannot tell which permission mode your session runs under, so it will not create a session that might get more rights than yours. The user can pick a mode for this chat and ask again.", true);
   }
+  // Checked and reserved in one synchronous step: nothing may await between the two.
+  const busy = runningLimitHit(env, caller, 0);
+  if (busy) return textResult(busy, true);
+  const release = env.reserveSpawnSlot(caller.projectName);
+  try {
+    return await createReserved(env, caller, {
+      title, task, providerId: providerId as "claude" | "codex", model, depth, permissionMode, wait: args.wait === true,
+    }, release, signal);
+  } finally {
+    // Refused, failed or done: the slot goes back (a no-op once the created session took it over).
+    release();
+  }
+}
 
-  if (settings.askBeforeCreate && !env.pairs.canCreateWithoutAsking(caller.sessionId)) {
-    const answer = await env.approve(caller.sessionId, {
-      kind: "create", title, providerId, model, taskPreview: preview(task), depth,
-    }, signal);
+async function createReserved(env: CollabEnv, caller: CollabCaller, input: {
+  title: string; task: string; providerId: "claude" | "codex"; model: string | null; depth: number; permissionMode: string; wait: boolean;
+}, releaseSlot: () => void, signal: AbortSignal): Promise<Json> {
+  const { title, task, providerId, model, depth, permissionMode } = input;
+  if (env.settings().askBeforeCreate && !env.pairs.canCreateWithoutAsking(caller.sessionId)) {
+    const answer = await env.approve(caller.sessionId, { kind: "create", title, providerId, model, task, depth }, signal);
     if (!answer.allowed) return textResult(`The session was not created. ${answer.message}`, true);
     if (answer.answer === "allow_session") env.pairs.setAllowCreate(caller.sessionId);
-    // Time passed while the user read the card.
-    const nowBusy = runningLimitHit(env, caller);
+    // Time passed while the user read the card; this create's own slot is still held.
+    const nowBusy = runningLimitHit(env, caller, 1);
     if (nowBusy) return textResult(nowBusy, true);
   }
   if (signal.aborted) return textResult("The call was cancelled, so no session was created.", true);
@@ -78,9 +94,11 @@ export async function createSessionTool(env: CollabEnv, caller: CollabCaller, ar
   } catch (e) {
     return textResult(`The session could not be created: ${(e as Error).message}`, true);
   }
+  // The created session now counts as starting, which takes over the slot this create held.
+  env.markStarting(childId, caller.projectName);
+  releaseSlot();
   const childDepth = env.links.recordSpawn(childId, caller.sessionId);
   env.persistChild(childId, { title, permissionMode, model, projectName: caller.projectName, projectPath: caller.projectPath });
-  env.markStarting(childId, caller.projectName);
   env.announceCreated({
     sessionId: childId, providerId, projectName: caller.projectName, title,
     spawnedBy: caller.sessionId, depth: childDepth, createdAt: new Date().toISOString(),
@@ -89,9 +107,9 @@ export async function createSessionTool(env: CollabEnv, caller: CollabCaller, ar
   env.pairs.record(caller.sessionId, childId);
 
   const turnRef = await env.currentTurnRef(caller).catch(() => null);
-  const target = { sessionId: childId, providerId: providerId as "claude" | "codex", title };
+  const target = { sessionId: childId, providerId, title };
   const out = await deliverAndWait(env, {
-    caller, target, body: task, wait: args.wait === true, signal, permissionMode, turnRefs: turnRef ? [turnRef] : null,
+    caller, target, body: task, wait: input.wait, signal, permissionMode, turnRefs: turnRef ? [turnRef] : null,
   });
   if (!out.ok) {
     return textResult(`Session ${childId} ("${title}") was created, but its task was not delivered: ${out.message} Send it again with send_to_session.`, true);

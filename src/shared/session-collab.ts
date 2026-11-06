@@ -66,8 +66,8 @@ export interface SessionCollabCreateApproval {
   title: string;
   providerId: string;
   model: string | null;
-  /** The opening of the task the new session would be given. */
-  taskPreview: string;
+  /** The whole task the new session would be given, line breaks kept: the user approves all of it. */
+  task: string;
   /** Depth the new session would have (the asking session's depth + 1). */
   depth: number;
 }
@@ -86,7 +86,8 @@ export interface SessionCollabPairLimitApproval {
 
 /**
  * An AI asks to message a session that runs under a more permissive mode than its own; shown in
- * the sending session. Allowing for this session stops asking for this sender and target.
+ * the sending session. Allowing for this session stops asking for this sender and target until
+ * PPM restarts, or until the target switches to a more permissive mode than it had then.
  */
 export interface SessionCollabEscalationApproval {
   kind: "escalation";
@@ -94,8 +95,8 @@ export interface SessionCollabEscalationApproval {
   targetTitle: string;
   senderMode: string;
   targetMode: string;
-  /** The opening of the message the sender wants to deliver. */
-  messagePreview: string;
+  /** The whole message the sender wants to deliver, line breaks kept: the user approves all of it. */
+  message: string;
 }
 
 export type SessionCollabApprovalInput =
@@ -113,8 +114,9 @@ export interface SessionCollabApprovalRequest {
 
 /**
  * The user's answer. `allow_session` on a create card lets this session create without asking
- * again, and on an escalation card lets this sender message this target without asking again; a
- * pair-limit card offers `allow_once` (grants `grant` more messages) and `deny` only.
+ * again, and on an escalation card lets this sender message this target without asking again
+ * (until a restart, or the target becoming more permissive); a pair-limit card offers
+ * `allow_once` (grants `grant` more messages) and `deny` only.
  */
 export const SESSION_COLLAB_ANSWERS = ["allow_once", "allow_session", "deny"] as const;
 export type SessionCollabAnswer = (typeof SESSION_COLLAB_ANSWERS)[number];

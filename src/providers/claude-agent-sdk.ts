@@ -832,14 +832,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   /**
    * Push a follow-up message into an existing streaming session's generator.
-   * Called by WS handler for follow-up messages (Phase 2).
+   * Called by WS handler for follow-up messages. False when there is no stream to take it: the
+   * message never reached the model, and the caller has to start a turn instead.
    */
-  pushMessage(sessionId: string, content: string, opts?: import("./provider.interface.ts").SendMessageOpts): void {
+  pushMessage(sessionId: string, content: string, opts?: import("./provider.interface.ts").SendMessageOpts): boolean {
     const ss = this.streamingSessions.get(sessionId);
     if (!ss) {
-      // Returning is all this can do, and the message never reaches the model.
-      log.error(`session=${sessionId} follow-up dropped: no streaming session`);
-      return;
+      log.error(`session=${sessionId} follow-up not pushed: no streaming session`);
+      return false;
     }
     const modelInput = withSharedContext(content, opts?.sharedContext);
     const msgContent = buildMessageParam(modelInput, opts?.images);
@@ -857,6 +857,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     ss.lastClientMessageId = opts?.clientMessageId;
     ss.awaitingReply = true;
     log.debug(`pushMessage: session=${sessionId} priority=${opts?.priority ?? 'next'}`);
+    return true;
   }
 
   /** Close a streaming session — generator + query cleanup */

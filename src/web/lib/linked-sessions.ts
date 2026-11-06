@@ -68,7 +68,8 @@ export function collectLinkedSessions({ sessionId, list, messages, liveLinks, an
       const output = e.toolUseId ? results.get(e.toolUseId) : undefined;
       const result = output === undefined ? null : sessionCollabToolResult(output);
       if (call.tool === "create_session") add(result?.sessionId, "child", result?.title ?? call.title, result?.providerId);
-      else add(call.sessionId, "messaged", result?.title, result?.providerId);
+      // Only a send the server took: a refused one names whatever id the AI wrote.
+      else if (result) add(result.sessionId ?? call.sessionId, "messaged", result.title, result.providerId);
     }
   }
 
@@ -99,10 +100,13 @@ export interface StatusSources {
   pendingApprovals: Readonly<Record<string, string>>;
 }
 
+/** Unread kinds that mean the session waits on the user (a collab card is one after a reload). */
+const NEEDS_USER = new Set(["approval_request", "question", "collab_approval"]);
+
 /** Waiting on the user outranks running, which outranks an unread answer. */
 export function linkedSessionStatus(sessionId: string, { streaming, notifications, pendingApprovals }: StatusSources): LinkedSessionStatus {
   const unread = notifications.get(sessionId);
-  if (pendingApprovals[sessionId] || (unread && unread.count > 0 && (unread.type === "approval_request" || unread.type === "question"))) {
+  if (pendingApprovals[sessionId] || (unread && unread.count > 0 && NEEDS_USER.has(unread.type))) {
     return "needs_approval";
   }
   if (streaming.has(sessionId)) return "running";

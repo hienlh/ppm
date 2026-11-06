@@ -367,6 +367,13 @@ class ChatService {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
     // Like the design fields, the tab and database tools are only ever server-built.
     const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, sessionCollabMcp: _sessionTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
+    // A mode stored for the session is what it runs under when the caller names none (the CLI,
+    // a schedule, another session's message): a created session inherits its creator's this way.
+    if (!design.permissionMode) {
+      const { getStoredPermissionModeAnyAlias } = await import("./db.service.ts");
+      const stored = getStoredPermissionModeAnyAlias(sessionId);
+      if (stored) design.permissionMode = stored;
+    }
     // A design session checks its canvas with `design_check` instead. A server is attached while
     // one of its tools is on (Settings → Tools); it lists only those.
     const ai = configService.get("ai");
@@ -445,17 +452,26 @@ class ChatService {
     };
   }
 
-  /** Push a live follow-up through the same context policy as sendMessage. */
-  async pushMessage(providerId: string, sessionId: string, message: string, opts?: ChatSendOpts): Promise<void> {
+  /**
+   * Push a live follow-up through the same context policy as sendMessage. False when the
+   * provider had no live stream to take it — it closed while the context was being built (an
+   * idle release, the warm-idle cap, a token rotation) — so the message did not go anywhere and
+   * the caller must start a turn instead.
+   */
+  async pushMessage(providerId: string, sessionId: string, message: string, opts?: ChatSendOpts): Promise<boolean> {
     const provider = providerRegistry.get(providerId);
     if (!provider) throw new Error(`Provider "${providerId}" not found`);
     const streaming = provider as typeof provider & {
-      pushMessage?: (id: string, content: string, options: SendMessageOpts) => void;
+      pushMessage?: (id: string, content: string, options: SendMessageOpts) => boolean | void;
     };
-    if (!streaming.pushMessage) return;
+    if (!streaming.pushMessage) return false;
     const { origin, ...sendOpts } = opts ?? {};
     message = fromOrigin(message, origin);
     const prepared = await this.prepareSendOptions(providerId, sessionId, message, sendOpts);
+    if (provider.hasStreamingSession && !provider.hasStreamingSession(sessionId)) {
+      log.warn(`session=${sessionId} follow-up not pushed: the stream closed before it could take it`);
+      return false;
+    }
     // Written before the push, so the input precedes every event it causes in the trace.
     traceFollowUp(sessionId, providerId, message, {
       ...sendOpts,
@@ -466,11 +482,13 @@ class ChatService {
     // stream=none: no run of this process is streaming the session, so nothing will end the turn.
     const live = this.turnLogs.get(sessionId);
     logTurnStart(sessionId, providerId, origin, live ? "live" : "none", sendOpts);
-    streaming.pushMessage(sessionId,
+    const accepted = streaming.pushMessage(sessionId,
       provider.supportsSharedContext ? message : withSharedContext(message, prepared.sharedContext),
       { ...prepared, sharedContext: provider.supportsSharedContext ? prepared.sharedContext : undefined });
+    if (accepted === false) return false;
     if (live && live.startedAt === null) live.startedAt = Date.now();
     this.rememberSharedContext(providerId, sessionId, prepared.sharedContext);
+    return true;
   }
 
   /**

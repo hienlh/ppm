@@ -24,6 +24,31 @@ export function markChildStarting(childId: string, projectName: string): void {
   starting.set(id, { projectName, timer });
 }
 
+/** Running-limit slots per project held by creates still being asked about or created. */
+const reserved = new Map<string, number>();
+
+/**
+ * Holds one of the project's running-limit slots for a create from its check until the session
+ * exists (then {@link markChildStarting} counts it). Taken synchronously with the check, so
+ * creates arriving together cannot all see the same free slot. The release is idempotent.
+ */
+export function reserveChildSlot(projectName: string): () => void {
+  reserved.set(projectName, (reserved.get(projectName) ?? 0) + 1);
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    const left = (reserved.get(projectName) ?? 1) - 1;
+    if (left > 0) reserved.set(projectName, left);
+    else reserved.delete(projectName);
+  };
+}
+
+/** Slots of the project held by creates in progress. */
+export function reservedChildSlots(projectName: string): number {
+  return reserved.get(projectName) ?? 0;
+}
+
 /** Created sessions of the project whose first turn has not ended yet. */
 export function startingChildren(projectName: string): string[] {
   const out: string[] = [];

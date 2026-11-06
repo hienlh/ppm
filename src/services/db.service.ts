@@ -1536,9 +1536,11 @@ export function setSessionMigratedTo(oldSessionId: string, newSessionId: string)
     // Carry explicit choices with it before reconnect reads session_state.
     // Keep any choices already made on the destination (including thinking OFF).
     database.query(`
-      INSERT INTO session_metadata (session_id, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth)
-      SELECT ?, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth FROM session_metadata WHERE session_id = ?
+      INSERT INTO session_metadata (session_id, project_name, project_path, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth)
+      SELECT ?, project_name, project_path, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth FROM session_metadata WHERE session_id = ?
       ON CONFLICT(session_id) DO UPDATE SET
+        project_name = COALESCE(session_metadata.project_name, excluded.project_name),
+        project_path = COALESCE(session_metadata.project_path, excluded.project_path),
         model = COALESCE(session_metadata.model, excluded.model),
         effort = COALESCE(session_metadata.effort, excluded.effort),
         thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget),
@@ -1700,6 +1702,18 @@ export function getSessionDesignSlugs(sessionIds: string[]): Record<string, stri
 export function getSessionPermissionMode(sessionId: string): string | null {
   const row = getDb().query("SELECT permission_mode FROM session_metadata WHERE session_id = ?").get(sessionId) as { permission_mode: string | null } | null;
   return row?.permission_mode ?? null;
+}
+
+/**
+ * The mode stored for the session under any id it has been known by (a Codex chat takes its
+ * thread's id during its first turn); null when none was ever stored for it.
+ */
+export function getStoredPermissionModeAnyAlias(sessionId: string): string | null {
+  for (const id of sessionIdAliases(sessionId)) {
+    const mode = getSessionPermissionMode(id);
+    if (mode) return mode;
+  }
+  return null;
 }
 
 export function setSessionPermissionMode(sessionId: string, mode: string): void {

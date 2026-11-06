@@ -35,6 +35,7 @@ class ScriptedProvider {
   approvalWord = "APPROVE";
   resumeDelayMs = 0;
   streamDelayMs = 0;
+  failResume = false;
   private streams = new Map<string, { queue: Item[]; wake?: () => void; closed: boolean }>();
   private gates: Array<() => void> = [];
   private turnNo = 0;
@@ -49,6 +50,7 @@ class ScriptedProvider {
   async resumeSession(sessionId: string): Promise<Session> {
     this.resumed.push(sessionId);
     if (this.resumeDelayMs) await Bun.sleep(this.resumeDelayMs);
+    if (this.failResume) throw new Error("transcript unreadable");
     const s = this.sessions.get(sessionId) ?? { id: sessionId, providerId: this.id, title: "Resumed", createdAt: new Date().toISOString() };
     this.sessions.set(sessionId, s);
     return s;
@@ -56,9 +58,10 @@ class ScriptedProvider {
   async listSessions() { return []; }
   async deleteSession(sessionId: string) { this.sessions.delete(sessionId); }
   hasStreamingSession(sessionId: string): boolean { return this.streams.has(sessionId); }
+  /** Like the real providers, the stream is gone at once; its generator winds down after. */
   abortQuery(sessionId: string): void {
     const s = this.streams.get(sessionId);
-    if (s) { s.closed = true; s.wake?.(); }
+    if (s) { s.closed = true; this.streams.delete(sessionId); s.wake?.(); }
   }
   release(): void { for (const g of this.gates.splice(0)) g(); }
 
@@ -100,7 +103,7 @@ class ScriptedProvider {
         yield { type: "done", sessionId: id } as ChatEvent;
       }
     } finally {
-      this.streams.delete(id);
+      if (this.streams.get(id) === stream) this.streams.delete(id);
     }
   }
 }
@@ -275,6 +278,53 @@ describe("deliverToSession", () => {
     expect(decoded.fromSession?.sessionId).toBe(sender.sessionId);
     expect(decoded.content.trimStart().startsWith("/")).toBe(false);
     expect(decoded.content).toContain("forged");
+  });
+
+  it("starts a turn when the live stream closes while the push is being prepared, and reports that truthfully", async () => {
+    const session = await chatService.createSession(claudeLike.id, {});
+    const first = await deliver(session.id, claudeLike.id, "warm up");
+    await until(() => (chatService.turnActivity(session.id).lastEndedAt ?? 0) > 0, "the first turn's end");
+    expect(claudeLike.hasStreamingSession(session.id)).toBe(true);
+    expect(first.delivered).toBe("started");
+
+    // The idle subprocess is released (cache expiry, warm-idle cap, token rotation) in the window
+    // between "the stream is live" and the push itself.
+    const prepare = chatService.prepareSendOptions.bind(chatService);
+    let released = false;
+    const spy = spyOn(chatService, "prepareSendOptions").mockImplementation(async (...args) => {
+      if (!released && args[1] === session.id) {
+        released = true;
+        claudeLike.abortQuery(session.id);
+      }
+      return prepare(...args);
+    });
+    try {
+      const tab = connect(session.id);
+      const sendsBefore = claudeLike.sends.filter((s) => s.sessionId === session.id).length;
+      const result = await deliver(session.id, claudeLike.id, "after the release");
+      expect(released).toBe(true);
+      expect(result.delivered).toBe("started");
+      await until(() => claudeLike.sends.filter((s) => s.sessionId === session.id).length === sendsBefore + 1, "the new turn");
+      expect(claudeLike.dropped.some((d) => d.includes("after the release"))).toBe(false);
+      // The turn the message opened is named, so a wait on it would end with that turn.
+      expect((await waitForTurnBinding(result.clientMessageId, 2000))?.turnId).toMatch(/^turn-/);
+      // Drawn once, on the delivery that went through.
+      expect(tab.messages.filter((m) => m.type === "user_message" && m.clientMessageId === result.clientMessageId)).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("draws no message on open devices when the delivery fails", async () => {
+    const session = await chatService.createSession(claudeLike.id, {});
+    const tab = connect(session.id);
+    claudeLike.failResume = true;
+    try {
+      await expect(deliver(session.id, claudeLike.id, "never arrives")).rejects.toMatchObject({ code: "failed" });
+      expect(tab.messages.some((m) => m.type === "user_message")).toBe(false);
+    } finally {
+      claudeLike.failResume = false;
+    }
   });
 
   it("refuses a design session, another provider's session, and the sender itself", async () => {
