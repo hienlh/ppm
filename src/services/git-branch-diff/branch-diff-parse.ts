@@ -149,3 +149,12 @@ export function assertRef(value: string | undefined, label: string): string {
   }
   return s;
 }
+
+/** Only hex belongs in routes' `hash` parameters, which reach git directly as argv. */
+export function assertCommitHash(value: string | undefined, label: string): string {
+  const s = (value ?? "").trim();
+  if (!/^[0-9a-f]{4,64}$/i.test(s)) {
+    throw new Error(`Invalid commit hash for ${label}: "${s}"`);
+  }
+  return s;
+}

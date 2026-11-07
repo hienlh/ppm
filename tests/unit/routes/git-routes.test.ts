@@ -1,14 +1,18 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { Hono } from "hono";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { gitRoutes } from "../../../src/server/routes/git.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
-function createApp() {
+function createApp(projectPath = "/tmp") {
   const app = new Hono<Env>();
   app.use("/*", async (c, next) => {
-    c.set("projectPath", "/tmp");
+    c.set("projectPath", projectPath);
     c.set("projectName", "test-project");
     await next();
   });
@@ -213,6 +217,85 @@ describe("POST /git/branch/create — ref guards", () => {
       });
       expect(res.status).toBe(500);
       expect((await res.json()).error).toContain("Invalid git ref");
+    }
+  });
+});
+
+for (const { route, invalid, valid } of [
+  { route: "branch/delete", invalid: [{ body: { name: "-D" }, error: "Invalid git ref" }], valid: [{ name: " feature/x " }] },
+  { route: "merge", invalid: [{ body: { source: "--abort" }, error: "Invalid git ref" }], valid: [{ source: " main " }] },
+  { route: "cherry-pick", invalid: [{ body: { hash: "--quit" }, error: "Invalid commit hash" }], valid: [{ hash: " abcd " }] },
+  { route: "revert", invalid: [{ body: { hash: "--abort" }, error: "Invalid commit hash" }], valid: [{ hash: " ABCD " }] },
+  {
+    route: "tag",
+    invalid: [
+      { body: { name: "-d", hash: "v1.0" }, error: "Invalid git ref" },
+      { body: { name: "v2.0", hash: "--delete" }, error: "Invalid commit hash" },
+    ],
+    valid: [{ name: " v2.0 " }, { name: "v2.0", hash: " abcd " }],
+  },
+]) {
+  describe(`POST /git/${route} — ref guards`, () => {
+    it("refuses arguments that would arrive as flags", async () => {
+      for (const { body, error } of invalid) {
+        const res = await createApp().request(`/git/${route}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        expect(res.status).toBe(500);
+        expect((await res.json()).error).toContain(error);
+      }
+    });
+
+    it("accepts valid arguments past validation", async () => {
+      for (const body of valid) {
+        const res = await createApp().request(`/git/${route}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        expect((await res.json()).error ?? "").not.toContain("Invalid");
+      }
+    });
+  });
+}
+
+describe("POST /git/tag — against a real repository", () => {
+  it("preserves an existing tag when a delete flag is submitted and still creates valid tags", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "ppm-tag-guard-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+    try {
+      git("init", "-q");
+      git("config", "user.name", "PPM Test");
+      git("config", "user.email", "test@example.com");
+      // Local, so the route's own `git tag` is unsigned too on a machine that signs by default.
+      git("config", "commit.gpgsign", "false");
+      git("config", "tag.gpgsign", "false");
+      git("commit", "--allow-empty", "-m", "initial");
+      git("tag", "v1.0");
+      const app = createApp(repo);
+      const post = (body: object) => app.request("/git/tag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const refused = await post({ name: "-d", hash: "v1.0" });
+      expect(refused.status).toBe(500);
+      expect((await refused.json()).error).toContain("Invalid git ref");
+      expect(git("tag", "--list").trim()).toBe("v1.0");
+
+      const created = await post({ name: "v2.0" });
+      expect(created.status).toBe(200);
+      expect(git("tag", "--list").trim().split("\n")).toEqual(["v1.0", "v2.0"]);
+
+      const trimmed = await post({ name: " v3.0 ", hash: ` ${git("rev-parse", "HEAD").trim()} ` });
+      expect(trimmed.status).toBe(200);
+      expect((await trimmed.json()).data.tagged).toBe("v3.0");
+      expect(git("rev-parse", "v3.0")).toBe(git("rev-parse", "HEAD"));
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
     }
   });
 });

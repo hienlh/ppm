@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import {
   assertRef,
+  assertCommitHash,
   mergeBranchDiff,
   parseNumstatZ,
   parseRawZ,
@@ -109,6 +110,20 @@ describe("assertRef", () => {
     // shell; `..` would smuggle a range past the caller's choice of mode.
     for (const bad of ["--output=/tmp/x", "main..feature", "main...feature", "a\nb", ""]) {
       expect(() => assertRef(bad, "base")).toThrow();
+    }
+  });
+});
+
+describe("assertCommitHash", () => {
+  it("accepts abbreviated, full and uppercase hex hashes and trims whitespace", () => {
+    for (const hash of ["abcd", "a".repeat(40), "b".repeat(64), "ABCD", "  aB12 \n"]) {
+      expect(assertCommitHash(hash, "hash")).toBe(hash.trim());
+    }
+  });
+
+  it("rejects missing hashes, invalid lengths, refs, options and non-hex characters", () => {
+    for (const hash of [undefined, "", "abc", "a".repeat(65), "HEAD", "HEAD~1", "main", "-x", "--abort", "abc..def", "g123"]) {
+      expect(() => assertCommitHash(hash, "hash")).toThrow(`Invalid commit hash for hash: "${hash ?? ""}"`);
     }
   });
 });

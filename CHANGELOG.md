@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A branch or tag name starting with `-` was read by git as an option.** PPM's API for deleting a branch, merging, cherry-picking, reverting and tagging passed the name or commit it was given straight to git, so asking it to create a tag named `-d` at `v1.0` deleted the tag `v1.0` instead. Such names are now refused before git runs, as are names holding `..` or the characters git reserves for revision syntax, and cherry-pick, revert and a tag's commit now take only a commit hash: a branch name or `HEAD~1` there is refused too.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed
