@@ -414,6 +414,39 @@ To check a running PPM: `GetProcessInformation(ProcessMemoryPriority)` and
 `NtQueryInformationProcess(ProcessIoPriority = 33)` on its pid; Task Manager shows only the CPU
 class.
 
+## On Windows, a child holding the server's sockets makes the browser hang (2026-11-07)
+
+A live test saw the first reload after a chat cold-started Claude stay blank for 30-60s. The
+browser was waiting on PPM's own script chunks and on a `DELETE` the server log said it had
+answered in 0 ms; the server held 16 connections in CloseWait, and they vanished 3 s after only
+the `claude.exe` children were killed.
+
+Proven on Bun 1.3.10 with a scratch server and a long-lived child:
+
+- Bun creates the `Bun.serve` listener and every accepted connection **inheritable**, and
+  `Bun.spawn` — which `node:child_process` calls, so the Agent SDK's CLI on Windows too — spawns
+  with inheritance on. A child that listed its own sockets by `getsockname`/`getpeername` showed
+  the server's listener and both open client connections. The real server's PowerShell child
+  (Task Manager's collector) held the same three.
+- With the child alive, a connection the server closed on its 3 s idle timeout reached the
+  client as EOF only when the child exited (12 s, the child's lifetime). With the fix: 4 s.
+- In a browser: load PPM, make the server spawn that child, wait past the 10 s idle timeout,
+  reload. Before: **44 s**, stuck on the old page's `DELETE /api/system/resources/stream/…`
+  (2/2). After: 72-78 ms (2/2).
+
+Two fixes that look right do not work. Clearing the flag on the listener once leaves every
+accepted connection inheritable — they do not take the listener's flag. And picking out the
+sockets before clearing them (`getsockopt(SO_TYPE)`) hangs: on an inheritable synchronous pipe
+that another thread is blocked reading, the call waits on the file object's lock and never
+returned in 20 s. `windows-socket-inheritance.ts` wraps `Bun.spawn`/`Bun.spawnSync` and, before
+each spawn, clears `HANDLE_FLAG_INHERIT` on every handle in the process except the standard
+three. It reads the handle table with `NtQueryInformationProcess(ProcessHandleInformation)` and
+never touches an object: 0.25 ms when it cleared 101 handles, 0.02 ms once they were clear. libuv duplicates each child's stdio as inheritable
+inside the spawn, so pipes, `inherit`, IPC and `spawnSync` all still work (checked).
+
+Inherited handles stay inheritable, so the leak also chains: a test server run from an agent's
+shell held the agent's own 37 sockets, inherited through PowerShell and Bun.
+
 ## Bun 1.3.10 on Windows leaks every idle helper thread (2026-11-08)
 
 The supervisor reached 15.4 GB of private bytes against a 1.4 GB working set and a 3 MB JS heap,

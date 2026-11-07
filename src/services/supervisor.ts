@@ -47,6 +47,7 @@ import {
 import { EDGE_PRIOR_DEATHS_ENV } from "./edge-forwarder.ts";
 import { PLIST_LABEL } from "./autostart-generator.ts";
 import { logPriorityRaise } from "./process-priority.ts";
+import { installSpawnHandleGuard } from "./windows-socket-inheritance.ts";
 import { readThreadSnapshot, describeThreadSnapshot, type ThreadSnapshot } from "./process-thread-snapshot.ts";
 import { readMachineCpuTimes, machineBusyFraction, type MachineCpuTimes } from "./machine-cpu.ts";
 
@@ -2082,6 +2083,9 @@ export async function runSupervisor(opts: {
   log("INFO", `Supervisor started (PID: ${process.pid}, port: ${opts.port}, share: ${opts.share})`);
   // Before any child is spawned: every child inherits these, the server included.
   await logPriorityRaise("supervisor", (m) => log("WARN", m));
+  // ...and on Windows they would inherit every socket too: a bind probe or health check
+  // open at spawn time stayed open in a long-lived child (see the module).
+  installSpawnHandleGuard();
   (await import("./memory-diagnostics.ts")).startMemoryDiagnostics({ role: "supervisor" });
 
   // ── Systemd self-heal: if the unit file is stale (e.g. still has

@@ -900,6 +900,10 @@ if (process.argv.includes("__serve__")) {
   }
 
   await setupLogFile();
+  // Windows: without this every child — the Claude CLI, codex, git — keeps a copy of every
+  // browser connection open at spawn time, and the server's close of one never reaches the
+  // browser (see the module). `bun dev:server` and source installs start here directly.
+  (await import("../services/windows-socket-inheritance.ts")).installSpawnHandleGuard();
   // Before any child is spawned (they inherit it). The supervisor raises its own first,
   // so this only fires for a server started some other way.
   {
