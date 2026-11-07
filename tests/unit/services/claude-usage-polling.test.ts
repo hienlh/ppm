@@ -441,8 +441,9 @@ describe("polling lifecycle", () => {
     await new Promise(r => setTimeout(r, 200));
     stopUsagePolling();
 
-    // Only 1 account → should have exactly 1 fetch from initial poll (not 2)
-    expect(fetchCalls).toHaveLength(1);
+    // Only 1 account → should have exactly 1 fetch from initial poll (not 2).
+    // Polling covers every provider: Antigravity's source fetches too when its app runs here.
+    expect(fetchCalls.filter((c) => c.url === API_USAGE_URL)).toHaveLength(1);
   });
 
   it("refreshUsageNow works after a timed-out poll (inflightPoll cleared)", async () => {
