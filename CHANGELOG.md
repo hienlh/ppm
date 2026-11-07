@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **`ppm restore` could leave PPM with a half-written database, or none.** It moved the current `ppm.db` aside first and copied the snapshot in its place afterwards, so a copy that failed partway (a full disk, say) or a crash between the two steps left a broken file or nothing at all where PPM opens its database, and with nothing there PPM would start on a new, empty one. The snapshot is now copied beside the database and checked before anything is touched, the current database is kept under a second name (`ppm.db.replaced-<time>`, as before) without being moved out of the way, and a single rename then puts the snapshot in its place. A restore that fails at any step leaves the current database as it was, and says so.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed
