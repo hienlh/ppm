@@ -1,16 +1,18 @@
 /** Priority ranking — lower numeric value = higher priority */
 export type DefinitionSource =
-  | "project-ppm"      // 0 — .ppm/ in project tree
-  | "project-claw"     // 1 — .claw/ in project tree
-  | "project-codex"    // 2 — .codex/ in project tree
-  | "project-claude"   // 3 — .claude/ in project tree
-  | "env-var"          // 4 — $PPM_SKILLS_DIR or $CLAUDE_CONFIG_DIR
-  | "user-ppm"         // 5 — ~/.ppm/
-  | "user-claw"        // 6 — ~/.claw/
-  | "user-codex"       // 7 — ~/.codex/
-  | "user-claude"      // 8 — ~/.claude/
-  | "user-plugin"      // 9 — ~/.claude/plugins/<plugin>/
-  | "bundled";         // 10 — shipped with PPM package
+  | "project-ppm"        // 0 — .ppm/ in project tree
+  | "project-claw"       // 1 — .claw/ in project tree
+  | "project-codex"      // 2 — .codex/ in project tree
+  | "project-claude"     // 3 — .claude/ in project tree
+  | "project-agents"     // 4 — .agents/ in project tree
+  | "env-var"            // 5 — $PPM_SKILLS_DIR or $CLAUDE_CONFIG_DIR
+  | "user-ppm"           // 6 — ~/.ppm/
+  | "user-claw"          // 7 — ~/.claw/
+  | "user-codex"         // 8 — ~/.codex/
+  | "user-claude"        // 9 — ~/.claude/
+  | "user-antigravity"   // 10 — ~/.gemini/antigravity/ & ~/.gemini/config/
+  | "user-plugin"        // 11 — ~/.claude/plugins/<plugin>/
+  | "bundled";           // 12 — shipped with PPM package
 
 export type SlashItemType = "skill" | "command" | "builtin" | "agent";
 export type SlashItemScope = "project" | "user" | "bundled";

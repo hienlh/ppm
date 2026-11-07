@@ -94,7 +94,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
 
   { id: "ai-provider", group: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { id: "tools", group: "ai", label: "Tools", subtitle: "PPM tools the AI can use", icon: Wrench },
-  { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude and Codex sign-ins, rotation", icon: KeyRound },
+  { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude, Codex and Antigravity sign-ins, rotation", icon: KeyRound },
   { id: "design", group: "ai", label: "Design", subtitle: "Design instructions and skills", icon: LayoutGrid },
   { id: "voice", group: "ai", label: "Voice Input", subtitle: "Speech to text for the chat box", icon: Mic },
 

@@ -6,7 +6,7 @@
  * subscribe/unsubscribe/tick-scheduling half) to keep both files within the
  * project's file-size guideline.
  */
-import { resolveCodexDescendantFile, resolveSources } from "./agent-transcript-sources.ts";
+import { resolveAntigravityDescendantFile, resolveCodexDescendantFile, resolveSources } from "./agent-transcript-sources.ts";
 import { createFileTailState } from "./agent-transcript-file-tail-state.ts";
 import { processFileTail, type ProcessFileResult } from "./agent-transcript-file-tail-feed.ts";
 import { paginateTagged, type TaggedEnvelope } from "./agent-transcript-envelope.ts";
@@ -67,14 +67,17 @@ function refreshClaudeCardFiles(hub: SessionHub, sub: TranscriptSubscription, no
  * the live-discovery path.
  */
 function addDiscoveredCodexFiles(hub: SessionHub, sub: TranscriptSubscription, entries: FileEntry[], now: number): FileEntry[] {
-  if (hub.owned.providerId !== "codex" || sub.source.kind !== "card") return [];
+  if ((hub.owned.providerId !== "codex" && hub.owned.providerId !== "antigravity") || sub.source.kind !== "card") return [];
   const seen = new Set<string>();
   const added: FileEntry[] = [];
   for (const { result } of entries) {
     for (const threadId of result.links) {
       if (seen.has(threadId) || sub.files.has(threadId)) continue;
       seen.add(threadId);
-      const ref = resolveCodexDescendantFile(hub.owned, threadId);
+      const ref =
+        hub.owned.providerId === "antigravity"
+          ? resolveAntigravityDescendantFile(hub.owned, threadId)
+          : resolveCodexDescendantFile(hub.owned, threadId);
       if (!ref) continue;
       const fresh = createFileTailState(ref, 0, now);
       sub.files.set(threadId, fresh);

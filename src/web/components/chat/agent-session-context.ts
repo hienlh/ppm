@@ -18,9 +18,10 @@ export interface AgentSessionIdentity {
   sessionId: string;
 }
 
-/** Claude and Codex are the only hubs that exist — anything else falls back to Claude. */
+/** Normalize a session provider id into one of the supported agent-transcript hubs. */
 export function normalizeProviderId(id: string | undefined | null): AgentTranscriptProviderId {
-  return id === "codex" ? "codex" : "claude";
+  if (id === "codex" || id === "antigravity") return id;
+  return "claude";
 }
 
 const AgentSessionContext = createContext<AgentSessionIdentity | null>(null);

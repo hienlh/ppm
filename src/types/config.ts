@@ -295,9 +295,9 @@ const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;
 const VALID_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 const VALID_MODELS = CLAUDE_MODEL_IDS;
 /** Allowed CLI commands for CLI providers (prevents command injection) */
-const VALID_CLI_COMMANDS = ["cursor-agent", "codex", "gemini"] as const;
+const VALID_CLI_COMMANDS = ["cursor-agent", "codex", "gemini", "agentapi", "agy"] as const;
 /** Only these values are allowed for default_provider in config */
-export const VALID_PROVIDERS = ["claude", "cursor"] as const;
+export const VALID_PROVIDERS = ["claude", "cursor", "codex", "antigravity"] as const;
 const VALID_THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
 
 /**
@@ -440,10 +440,32 @@ export function sanitizeConfig(config: PpmConfig): boolean {
     dirty = true;
   }
 
-  // Ensure the default provider has a config entry
+  // Ensure the default provider has a config entry matching its provider type
   if (!config.ai.providers[config.ai.default_provider]) {
-    config.ai.providers[config.ai.default_provider] =
-      structuredClone(DEFAULT_CONFIG.ai.providers[DEFAULT_CONFIG.ai.default_provider]!);
+    if (config.ai.default_provider === "codex") {
+      config.ai.providers.codex = {
+        type: "cli",
+        cli_command: "codex",
+        permission_mode: "bypassPermissions",
+        model: CODEX_DEFAULT_MODEL,
+      };
+    } else if (config.ai.default_provider === "antigravity") {
+      config.ai.providers.antigravity = {
+        type: "cli",
+        cli_command: "agy",
+        permission_mode: "bypassPermissions",
+        model: "gemini-4-argon",
+      };
+    } else if (config.ai.default_provider === "cursor") {
+      config.ai.providers.cursor = {
+        type: "cli",
+        cli_command: "cursor-agent",
+        permission_mode: "bypassPermissions",
+      };
+    } else {
+      config.ai.providers[config.ai.default_provider] =
+        structuredClone(DEFAULT_CONFIG.ai.providers[DEFAULT_CONFIG.ai.default_provider]!);
+    }
     dirty = true;
   }
 

@@ -546,6 +546,7 @@ function withinCodexSessions(p: string, canonical: boolean): boolean {
     return normalize(value);
   };
   const ambientRoots = [join(homedir(), ".codex", "sessions")];
+  if (process.env.HOME) ambientRoots.push(join(process.env.HOME, ".codex", "sessions"));
   if (process.env.CODEX_HOME) ambientRoots.push(join(process.env.CODEX_HOME, "sessions"));
   if (ambientRoots.some((value) => { const root = rootPath(value); return root && n.startsWith(root + "/"); })) return true;
   const managed = rootPath(join(getPpmDir(), "codex-accounts"));

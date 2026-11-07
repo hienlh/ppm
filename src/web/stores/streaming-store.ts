@@ -30,6 +30,8 @@ interface StreamingStore {
    * not PPM's), and CLI providers do it as soon as they read their real id from the output.
    */
   dropSession: (sessionId: string) => void;
+  /** Re-key an active streaming session from `oldSessionId` to `newSessionId`. */
+  migrateSession: (oldSessionId: string, newSessionId: string, projectName?: string) => void;
 }
 
 export const useStreamingStore = create<StreamingStore>((set) => ({
@@ -50,6 +52,15 @@ export const useStreamingStore = create<StreamingStore>((set) => ({
       if (!state.sessions.has(sessionId)) return state;
       const next = new Map(state.sessions);
       next.delete(sessionId);
+      return { sessions: next };
+    }),
+  migrateSession: (oldSessionId, newSessionId, projectName) =>
+    set((state) => {
+      if (!state.sessions.has(oldSessionId)) return state;
+      const next = new Map(state.sessions);
+      const prevProject = next.get(oldSessionId) ?? "";
+      next.delete(oldSessionId);
+      next.set(newSessionId, projectName || prevProject);
       return { sessions: next };
     }),
 }));

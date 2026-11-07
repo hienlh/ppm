@@ -30,6 +30,7 @@ import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.t
 import { refreshEffortStatus, sessionEffortStatus } from "./chat-effort-status.ts";
 import type { EffortStatus } from "../../shared/effort-status.ts";
 import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
+import { extractAntigravitySessionTitle, findAntigravityTranscriptPath } from "../../providers/antigravity/antigravity-history.ts";
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
 import { setDbApprovalChat, type DbApprovalEvent } from "../../services/db-ai-tools/db-approval-broker.ts";
@@ -108,6 +109,10 @@ function resolveStoredProvider(sessionId: string): string | undefined {
     try { setSessionProvider(sessionId, "claude"); } catch { /* non-fatal */ }
     return "claude";
   }
+  if (findAntigravityTranscriptPath(sessionId)) {
+    try { setSessionProvider(sessionId, "antigravity"); } catch { /* non-fatal */ }
+    return "antigravity";
+  }
   return chatService.getSession(sessionId)?.providerId;
 }
 
@@ -145,6 +150,27 @@ function resolveSessionThinkingEnabled(sessionId: string): boolean {
     getSessionThinking(sessionId),
     sessionProviderConfig(sessionId)?.thinking_budget_tokens,
   );
+}
+
+const GENERIC_SESSION_TITLES = new Set(["Chat", "Resumed Chat"]);
+
+function isGenericSessionTitle(title: string | undefined | null, providerId?: string): boolean {
+  if (!title) return true;
+  if (GENERIC_SESSION_TITLES.has(title)) return true;
+  if (providerId === "antigravity" && title === "New Chat") return true;
+  return false;
+}
+
+/** Resolve a real display title without leaking placeholder titles like "Resumed Chat". */
+function resolveDisplaySessionTitle(sessionId: string, providerId?: string, inMemoryTitle?: string): string | null {
+  const dbTitle = getSessionTitle(sessionId);
+  if (dbTitle && !isGenericSessionTitle(dbTitle, providerId)) return dbTitle;
+  if (inMemoryTitle && !isGenericSessionTitle(inMemoryTitle, providerId)) return inMemoryTitle;
+  if (providerId === "antigravity") {
+    const agyTitle = extractAntigravitySessionTitle(sessionId);
+    if (agyTitle) return agyTitle;
+  }
+  return null;
 }
 
 const PING_INTERVAL_MS = 5_000; // Detect an active stream gap promptly through a tunnel.
@@ -931,6 +957,7 @@ async function rewriteProviderSkillSigil(
 ): Promise<void> {
   const content = parsed.content.trimStart();
   if (!content.startsWith("/")) return;
+  if (providerId === "antigravity") return;
   const provider = providerRegistry.get(providerId);
   if (!provider?.listSkills) return;
 
@@ -1238,7 +1265,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       // First content event — stop heartbeat, transition phase
       // status_update is PPM's pre-flight account selection — not actual SDK content
       // `turn_started` arrives before the model has said anything: the turn has an id, not content.
-      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update" || evType === "turn_started";
+      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update" || evType === "turn_started" || evType === "session_migrated";
       if (!firstEventReceived && !isMetadataEvent) {
         firstEventReceived = true;
         const requested = entry.turnRequestedAt;
@@ -1381,23 +1408,33 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         if (entry.clients.size === 0) scheduleSubprocessRelease(sessionId);
 
         // Fire-and-forget: fetch updated session title (DB title takes priority) + notification
-        sdkListSessions({ dir: entry.projectPath, limit: 50 }).then((sessions) => {
-          const found = sessions.find((s) => s.sessionId === sessionId || s.sessionId === ev.sessionId);
-          const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
-          const title = dbTitle ?? found?.customTitle ?? found?.summary;
+        if (entry.providerId === "antigravity") {
+          const title = resolveDisplaySessionTitle(sessionId, entry.providerId, chatService.getSession(sessionId)?.title);
           if (title) {
             broadcast(sessionId, { type: "title_updated", title });
             const session = chatService.getSession(sessionId);
             if (session) session.title = title;
           }
-        }).catch(() => {});
+        } else {
+          sdkListSessions({ dir: entry.projectPath, limit: 50 }).then((sessions) => {
+            const found = sessions.find((s) => s.sessionId === sessionId || s.sessionId === ev.sessionId);
+            const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
+            const title = dbTitle ?? found?.customTitle ?? found?.summary;
+            if (title) {
+              broadcast(sessionId, { type: "title_updated", title });
+              const session = chatService.getSession(sessionId);
+              if (session) session.title = title;
+            }
+          }).catch(() => {});
+        }
         // Persist unread to DB + broadcast to all tabs/devices
         const doneSession = chatService.getSession(sessionId);
+        const doneTitle = resolveDisplaySessionTitle(sessionId, entry.providerId, doneSession?.title) ?? undefined;
         // The project comes from the connection, not from a separate write on open: a
         // session PPM did not create has no metadata row until this runs, and this is the
         // one place that knows both the session and its project.
-        incrementSessionUnread(sessionId, "done", doneSession?.title, entry.projectName || null);
-        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: "done", projectName: entry.projectName || "", sessionTitle: doneSession?.title || null });
+        incrementSessionUnread(sessionId, "done", doneTitle, entry.projectName || null);
+        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: "done", projectName: entry.projectName || "", sessionTitle: doneTitle || null });
 
         // The trace already holds this `done`: ChatService records an event before yielding it.
         // Sent ahead of the `done` itself, so the bar is there the moment the turn goes idle.
@@ -1473,6 +1510,14 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
             newSessionId: newId,
             projectName: oldEntry?.projectName ?? "",
           });
+          if (oldEntry && oldEntry.phase !== "idle") {
+            broadcastGlobalEvent({
+              type: "session:phase_changed",
+              sessionId: newId,
+              phase: oldEntry.phase,
+              projectName: oldEntry.projectName ?? "",
+            });
+          }
           // The consumer must target the new id for every subsequent broadcast —
           // including this session_migrated event — since the entry moved. Without
           // this, a provider that always migrates (e.g. codex: threadId ≠ ppm id)
@@ -1715,34 +1760,38 @@ async function awaitLiveStreamOrNone(sessionId: string, entry: SessionEntry): Pr
 }
 
 /**
+ * User sent a message instead of answering a pending question/approval.
+ * The SDK generator is blocked inside canUseTool awaiting that approval, so
+ * it can't consume the pushed message — resolve the approval as skipped to
+ * unblock it, then the follow-up message flows through normally.
+ */
+function declinePendingApproval(sessionId: string, entry: SessionEntry): void {
+  if (!entry.pendingApprovalEvent) return;
+  const providerId = entry.providerId ?? providerRegistry.getDefault().id;
+  const pendingReqId = entry.pendingApprovalEvent.requestId;
+  if (ppmApprovals.has(pendingReqId)) {
+    // PPM's own approval: settling it takes the card off every device (`ppmApprovalResolved`).
+    clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
+  } else {
+    chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin: "ws" });
+    broadcast(sessionId, {
+      type: "approval_resolved",
+      requestId: pendingReqId,
+      approved: false,
+      answers: null,
+    });
+    clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
+  }
+  log.info(`session=${sessionId} pending approval ${pendingReqId} auto-skipped (user sent a message)`);
+}
+
+/**
  * Hands an accepted message to the session: starts the persistent consumer when none is running
  * (resuming the session first), or pushes it into the live stream. The one path a browser message
  * and a server-originated one share; callers hold `withSessionLock`.
  */
 export async function submitToSession(sessionId: string, entry: SessionEntry, content: string, opts: SubmitToSessionOpts): Promise<SubmitResult> {
-  const providerId = entry.providerId ?? providerRegistry.getDefault().id;
-
-  // User sent a message instead of answering a pending question/approval.
-  // The SDK generator is blocked inside canUseTool awaiting that approval, so
-  // it can't consume the pushed message — resolve the approval as skipped to
-  // unblock it, then the follow-up message flows through normally.
-  if (entry.pendingApprovalEvent && opts.supersedePendingApproval) {
-    const pendingReqId = entry.pendingApprovalEvent.requestId;
-    if (ppmApprovals.has(pendingReqId)) {
-      // PPM's own approval: settling it takes the card off every device (`ppmApprovalResolved`).
-      clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
-    } else {
-      chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin: "ws" });
-      broadcast(sessionId, {
-        type: "approval_resolved",
-        requestId: pendingReqId,
-        approved: false,
-        answers: null,
-      });
-      clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
-    }
-    log.info(`session=${sessionId} pending approval ${pendingReqId} auto-skipped (user sent a message)`);
-  }
+  if (opts.supersedePendingApproval) declinePendingApproval(sessionId, entry);
 
   // A push the provider has no stream for goes nowhere. That happens while a consumer is still
   // opening its stream, or is on its way out. A server-originated message waits until either the
@@ -1913,7 +1962,7 @@ export const chatWebSocket = {
         sessionId,
         phase: existing.phase,
         pendingApproval: existing.pendingApprovalEvent ?? null,
-        sessionTitle: session?.title || null,
+        sessionTitle: resolveDisplaySessionTitle(sessionId, existing.providerId, session?.title),
         compactStatus: existing.compactStatus ?? null,
         mcpNeedsAuth: existing.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
@@ -1939,16 +1988,24 @@ export const chatWebSocket = {
       void detectImplicitTeam(sessionId);
 
       // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)
-      if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
-        sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
-          const found = sessions.find((s) => s.sessionId === sessionId);
-          const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
-          const title = dbTitle ?? found?.customTitle ?? found?.summary;
+      if (isGenericSessionTitle(session?.title, existing.providerId)) {
+        if (existing.providerId === "antigravity") {
+          const title = resolveDisplaySessionTitle(sessionId, existing.providerId, session?.title);
           if (title) {
             broadcast(sessionId, { type: "title_updated", title });
             if (session) session.title = title;
           }
-        }).catch(() => {});
+        } else {
+          sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
+            const found = sessions.find((s) => s.sessionId === sessionId);
+            const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
+            const title = dbTitle ?? found?.customTitle ?? found?.summary;
+            if (title) {
+              broadcast(sessionId, { type: "title_updated", title });
+              if (session) session.title = title;
+            }
+          }).catch(() => {});
+        }
       }
       log.debug(`session=${sessionId} FE reconnected (phase=${existing.phase}, clients=${existing.clients.size})`);
       return;
@@ -1966,23 +2023,31 @@ export const chatWebSocket = {
       sessionId,
       phase: "idle",
       pendingApproval: null,
-      sessionTitle: session?.title || null,
+      sessionTitle: resolveDisplaySessionTitle(sessionId, providerId, session?.title),
       compactStatus: null,
       model: resolveSessionModel(sessionId),
       turnStop: lastTurnStop(sessionId),
     }));
 
     // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)
-    if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
-      sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
-        const found = sessions.find((s) => s.sessionId === sessionId);
-        const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
-        const title = dbTitle ?? found?.customTitle ?? found?.summary;
+    if (isGenericSessionTitle(session?.title, providerId)) {
+      if (providerId === "antigravity") {
+        const title = resolveDisplaySessionTitle(sessionId, providerId, session?.title);
         if (title) {
           broadcast(sessionId, { type: "title_updated", title });
           if (session) session.title = title;
         }
-      }).catch(() => {});
+      } else {
+        sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
+          const found = sessions.find((s) => s.sessionId === sessionId);
+          const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
+          const title = dbTitle ?? found?.customTitle ?? found?.summary;
+          if (title) {
+            broadcast(sessionId, { type: "title_updated", title });
+            if (session) session.title = title;
+          }
+        }).catch(() => {});
+      }
     }
   },
 
@@ -2086,7 +2151,7 @@ export const chatWebSocket = {
         sessionId,
         phase: entry.phase,
         pendingApproval: entry.pendingApprovalEvent ?? null,
-        sessionTitle: chatService.getSession(sessionId)?.title || null,
+        sessionTitle: resolveDisplaySessionTitle(sessionId, entry.providerId, chatService.getSession(sessionId)?.title),
         compactStatus: entry.compactStatus ?? null,
         mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
@@ -2137,6 +2202,18 @@ export const chatWebSocket = {
           }
         }
       }
+      const provider = providerRegistry.get(providerId);
+      // A provider that cannot take a message mid-turn would drop it, so the sender is told
+      // instead. The message still answers a pending approval, as it does for every provider.
+      if (entry.isStreamingActive && !(provider && "pushMessage" in provider)) {
+        declinePendingApproval(sessionId, entry);
+        ws.send(JSON.stringify({
+          type: "error",
+          message: "This provider can't take a message while it's working. Wait for the reply, or press Stop.",
+        }));
+        return;
+      }
+
       // Store permission mode — sticky for this session
       if (parsed.permissionMode) {
         entry.permissionMode = parsed.permissionMode;
@@ -2168,7 +2245,7 @@ export const chatWebSocket = {
       const typedContent = parsed.content.trimStart();
       if (typedContent.startsWith("/")) {
         const { listSlashItems, rewriteSlashAlias } = await import("../../services/slash-discovery/index.ts");
-        const canonical = rewriteSlashAlias(typedContent, listSlashItems(entry.projectPath ?? ""));
+        const canonical = rewriteSlashAlias(typedContent, listSlashItems(entry.projectPath ?? "", providerId));
         if (canonical !== typedContent) parsed.content = canonical;
       }
 

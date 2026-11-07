@@ -38,11 +38,28 @@ configService.set("host", "127.0.0.1");
 configService.set("port", port);
 await (await import("../answer-feature-intros")).answerFeatureIntrosAtStartup();
 
+const { providerRegistry } = await import("../../../../src/providers/registry");
+const { AntigravityProvider } = await import("../../../../src/providers/antigravity/antigravity-provider");
+providerRegistry.register(new AntigravityProvider());
+const ai = configService.get("ai");
+configService.set("ai", {
+  ...ai,
+  providers: {
+    ...ai.providers,
+    antigravity: {
+      type: "cli",
+      cli_command: "agentapi",
+      permission_mode: "bypassPermissions",
+      model: "pro",
+    },
+  },
+});
+
 const { app } = await import("../../../../src/server/index");
 const { chatWebSocket } = await import("../../../../src/server/ws/chat");
 const { globalWebSocket } = await import("../../../../src/server/ws/global");
 
-type SocketData = { type: "health" | "global" | "chat"; sessionId?: string; projectName?: string };
+type SocketData = { type: "health" | "global" | "chat"; sessionId?: string; projectName?: string; providerHint?: string };
 const server = Bun.serve<SocketData>({
   hostname: "127.0.0.1", port,
   fetch(req, instance) {
@@ -56,7 +73,8 @@ const server = Bun.serve<SocketData>({
     else if (url.pathname === "/ws/global") data = { type: "global" };
     else if (url.pathname.startsWith("/ws/project/")) {
       const parts = url.pathname.split("/");
-      if (parts[4] === "chat") data = { type: "chat", sessionId: parts[5] ?? "", projectName: decodeURIComponent(parts[3] ?? "") };
+      const providerHint = url.searchParams.get("providerId") ?? undefined;
+      if (parts[4] === "chat") data = { type: "chat", sessionId: parts[5] ?? "", projectName: decodeURIComponent(parts[3] ?? ""), providerHint };
     }
     if (data) return instance.upgrade(req, { data }) ? undefined : new Response("Upgrade failed", { status: 400 });
     if (url.pathname.startsWith("/ws/")) return new Response("Socket disabled in fixture", { status: 404 });

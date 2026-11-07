@@ -71,7 +71,7 @@ export interface AIProvider {
    *  host a design session; anywhere else the instructions would be silently dropped. */
   supportsDesignInstructions?: boolean;
   /** Additional instruction/memory sources; never return credentials or transcripts. */
-  getSharedContextSources?(projectPath: string): Array<{ path: string; directory?: boolean }>;
+  getSharedContextSources?(projectPath: string): Array<{ path: string; directory?: boolean; indexOnly?: boolean }>;
 
   // Session lifecycle (required)
   createSession(config: SessionConfig): Promise<Session>;

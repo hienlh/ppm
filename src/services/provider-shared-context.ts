@@ -31,7 +31,7 @@ export async function buildSharedProviderContext(
       { path: join(claudeHome, "CLAUDE.md") },
       { path: join(claudeHome, "rules"), directory: true },
     ]),
-    ...(recipient === "codex" ? [] : [{ path: join(project, "AGENTS.md") }]),
+    ...(recipient === "codex" || recipient === "antigravity" ? [] : [{ path: join(project, "AGENTS.md") }]),
   ];
   let codexHomes = options.codexHomes;
   if (!codexHomes) {
@@ -45,12 +45,18 @@ export async function buildSharedProviderContext(
   for (const codexHome of recipient === "codex" ? [] : new Set(codexHomes)) {
     sources.push({ path: join(codexHome, "AGENTS.md") });
   }
-  const ids = new Set(["claude", "codex", "cursor", ...providers.map((p) => p.id)]);
+  if (recipient !== "antigravity") {
+    sources.push(
+      { path: join(project, "GEMINI.md") },
+      { path: join(project, ".agents", "rules"), directory: true },
+    );
+  }
+  const ids = new Set(["claude", "codex", "cursor", "antigravity", ...providers.map((p) => p.id)]);
   for (const id of ids) {
     if (!/^[a-z0-9_-]+$/i.test(id)) continue;
     // Only known native loaders are excluded: new providers still get their
     // conventional sources until their adapter explicitly handles native loading.
-    if (!(id === recipient && ["claude", "codex", "cursor"].includes(id))) {
+    if (!(id === recipient && ["claude", "codex", "cursor", "antigravity"].includes(id))) {
       sources.push({ path: join(project, `.${id}`, "rules"), directory: true });
     }
     if (!(id === "claude" && recipient === "claude")) {
@@ -58,6 +64,7 @@ export async function buildSharedProviderContext(
     }
   }
   for (const provider of providers) {
+    if (provider.id === recipient) continue;
     try { sources.push(...(provider.getSharedContextSources?.(project) ?? [])); }
     catch { /* An unavailable provider must not prevent other providers from chatting. */ }
   }

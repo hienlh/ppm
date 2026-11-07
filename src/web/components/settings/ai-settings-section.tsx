@@ -44,6 +44,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   cursor: "Cursor",
   codex: "Codex",
   gemini: "Gemini",
+  antigravity: "Antigravity",
 };
 
 export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
@@ -314,15 +315,17 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
           </div>
         )}
 
-        {/* Codex sign-ins moved to the Accounts pane, next to the Claude ones — this tab is
+        {/* Codex / Antigravity sign-ins moved to the Accounts pane, next to the Claude ones — this tab is
             about how the provider runs, not which accounts it has. */}
-        {activeTab === "codex" && (
+        {(activeTab === "codex" || activeTab === "antigravity") && (
           <button
             type="button"
             onClick={() => openSettings("accounts")}
             className="w-full flex items-center justify-between gap-2 rounded-md border border-border px-2.5 py-2 text-left cursor-pointer hover:bg-surface-elevated transition-colors"
           >
-            <span className={`${labelSize} text-text-secondary`}>Codex accounts &amp; login</span>
+            <span className={`${labelSize} text-text-secondary`}>
+              {activeTab === "antigravity" ? "Antigravity account & quota" : "Codex accounts & login"}
+            </span>
             <ExternalLink className="size-3.5 text-text-subtle shrink-0" />
           </button>
         )}
@@ -341,6 +344,27 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
               </SelectTrigger>
               <SelectContent className="max-h-[300px]">
                 {modelOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {activeTab === "antigravity" && (
+          <div className={fieldGap}>
+            <Label htmlFor="ai-antigravity-effort" className={compact ? labelSize : undefined}>Effort</Label>
+            <Select
+              value={config?.effort ?? "high"}
+              onValueChange={(v) => handleSave("effort", v)}
+            >
+              <SelectTrigger id="ai-antigravity-effort" className={`w-full ${compact ? "h-7 text-[11px]" : ""}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {EFFORT_OPTIONS.filter((o) => o.value === "low" || o.value === "medium" || o.value === "high").map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </SelectItem>
@@ -572,12 +596,18 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
             rows={compact ? 3 : 4}
             defaultValue={config?.system_prompt ?? ""}
             placeholder={`Enter additional instructions for ${activeTab}...`}
+            aria-describedby={activeTab === "antigravity" ? "ai-system-prompt-description" : undefined}
             className={`w-full rounded-md border border-input bg-background px-3 py-2 ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${compact ? "text-[11px]" : "text-sm"}`}
             onBlur={(e) => {
               const val = e.target.value.trim();
               handleSave("system_prompt", val || undefined);
             }}
           />
+          {activeTab === "antigravity" && (
+            <p id="ai-system-prompt-description" className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+              Antigravity reads these only when PPM starts a new chat, and a chat keeps the ones it started with.
+            </p>
+          )}
         </div>
       </div>
 

@@ -3,7 +3,7 @@
  * → live tick scheduling. The per-tick read-and-push mechanics (exact per-page
  * cursors, dynamic file-set growth) live in `agent-transcript-session-hub-read.ts`.
  */
-import { CODEX_THREAD_ID_RE, resolveCodexDescendantFile, resolveSources } from "./agent-transcript-sources.ts";
+import { CODEX_THREAD_ID_RE, resolveAntigravityDescendantFile, resolveCodexDescendantFile, resolveSources } from "./agent-transcript-sources.ts";
 import { statSizeSafe } from "./agent-transcript-fs-io.ts";
 import { agentTranscriptClock, agentTranscriptTimers } from "./agent-transcript-hub-clock.ts";
 import { createFileTailState } from "./agent-transcript-file-tail-state.ts";
@@ -64,10 +64,13 @@ function seedCodexDescendantsFromCursor(
   cursor: AgentTranscriptCursor | undefined,
   now: number,
 ): void {
-  if (hub.owned.providerId !== "codex" || source.kind !== "card" || !cursor) return;
+  if ((hub.owned.providerId !== "codex" && hub.owned.providerId !== "antigravity") || source.kind !== "card" || !cursor) return;
   for (const key of Object.keys(cursor)) {
     if (sub.files.has(key) || !CODEX_THREAD_ID_RE.test(key)) continue;
-    const ref = resolveCodexDescendantFile(hub.owned, key);
+    const ref =
+      hub.owned.providerId === "antigravity"
+        ? resolveAntigravityDescendantFile(hub.owned, key)
+        : resolveCodexDescendantFile(hub.owned, key);
     if (!ref) continue;
     const size = statSizeSafe(ref.path) ?? 0;
     const start = sanitizeOffset(cursor[key], size);

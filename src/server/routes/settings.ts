@@ -27,6 +27,7 @@ import type { PPMBotTelegramStatus } from "../../shared/ppmbot-telegram.ts";
 import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
 import { providerRegistry, providerProbeStatuses, retryProviderProbe } from "../../providers/registry.ts";
+import { fetchAntigravityAccountStatus } from "../../providers/antigravity/antigravity-usage.ts";
 import { createLogger } from "../../services/logger.ts";
 import { settleFeaturesDecidedInSettings } from "../../services/feature-intros.service.ts";
 import { FEATURE_INTROS_CHANGED_EVENT } from "../../shared/feature-intros.ts";
@@ -360,6 +361,16 @@ settingsRoutes.get("/ai/providers/:id/effort-status", (c) => {
   if (!provider) return c.json(err(`Provider "${id}" not found`), 404);
   try {
     return c.json(ok({ status: provider.estimateEffortStatus?.(undefined, c.req.query("model") || undefined) ?? null }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** GET /settings/ai/providers/antigravity/account — live Antigravity account profile + quota status */
+settingsRoutes.get("/ai/providers/antigravity/account", async (c) => {
+  try {
+    const status = await fetchAntigravityAccountStatus();
+    return c.json(ok(status));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

@@ -38,8 +38,9 @@ import { SwitchAccountView } from "./switch-account-view";
 import { FooterPopover, FooterPopoverHeader } from "./footer-popover";
 import { FOOTER_CLUSTER, FOOTER_GHOST } from "./footer-chip";
 import { UsageWindow } from "./usage-meters";
+import { AntigravityUsagePanel } from "./antigravity-usage-panel";
 
-type Panel = "history" | "more" | "config" | "team" | null;
+type Panel = "history" | "more" | "config" | "team" | "usage" | null;
 
 interface TeamActivityState {
   hasTeams: boolean;
@@ -52,6 +53,10 @@ export interface ChatFooterToolsProps {
   tabId?: string;
   projectName: string;
   usageInfo: UsageInfo;
+  /** Antigravity's usage panel: its own refresh and the time of the reading it shows. */
+  usageLoading?: boolean;
+  lastFetchedAt?: string | null;
+  onRefreshUsage?: () => void | Promise<void>;
   sessionId?: string | null;
   providerId?: string;
   /**
@@ -77,7 +82,7 @@ export interface ChatFooterToolsProps {
 }
 
 export function ChatFooterTools({
-  tabId, projectName, usageInfo, sessionId, providerId, pickedAccountLabel, pickedAccountId, onSelectAccount,
+  tabId, projectName, usageInfo, usageLoading, lastFetchedAt, onRefreshUsage, sessionId, providerId, pickedAccountLabel, pickedAccountId, onSelectAccount,
   onSelectSession, historyFilter, isConnected, onReload, connectionTrouble, teamActivity, teamMessages, onTeamOpen,
 }: ChatFooterToolsProps) {
   const [panel, setPanel] = useState<Panel>(null);
@@ -101,6 +106,8 @@ export function ChatFooterTools({
 
   const isClaude = !providerId || providerId === "claude";
   const isCodex = providerId === "codex";
+  // Antigravity has no Switch account here: its ring opens its own usage panel instead.
+  const isAntigravity = providerId === "antigravity";
   const hasAccounts = isClaude || isCodex;
   const providerName = isCodex ? "Codex" : "Claude";
   const switcher = useSwitchAccounts(isCodex ? "codex" : "claude", hasAccounts && panel === "more");
@@ -158,12 +165,12 @@ export function ChatFooterTools({
       <div ref={clusterRef} className={FOOTER_CLUSTER} data-footer-cluster="">
         {/* No figure yet, no usage: a "--%" says nothing and takes a slot. The divider belongs to
             the usage part and lives in its branch, so whatever hides one hides both. */}
-        {hasAccounts && hasUsage && (
+        {(hasAccounts || isAntigravity) && hasUsage && (
           <>
             <button
               type="button"
-              onClick={() => openMore("ring")}
-              aria-expanded={panel === "more" && moreFrom === "ring"}
+              onClick={() => (isAntigravity ? toggle("usage") : openMore("ring"))}
+              aria-expanded={isAntigravity ? panel === "usage" : panel === "more" && moreFrom === "ring"}
               aria-haspopup="dialog"
               title={ringTitle}
               aria-label={`Usage: ${ringTitle}`}
@@ -250,6 +257,20 @@ export function ChatFooterTools({
               } : null}
             />
           </div>
+        )}
+      </FooterPopover>
+
+      <FooterPopover open={panel === "usage" && isAntigravity} onClose={close} align="right" label="Antigravity usage" anchorRef={clusterRef} className="w-[min(100%,420px)]">
+        {isAntigravity && (
+          <AntigravityUsagePanel
+            usage={usageInfo}
+            loading={usageLoading}
+            lastFetchedAt={lastFetchedAt}
+            onClose={close}
+            onReload={onRefreshUsage}
+            onSelectAccount={onSelectAccount}
+            selectedAccountId={currentId}
+          />
         )}
       </FooterPopover>
 

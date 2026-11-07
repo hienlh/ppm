@@ -26,6 +26,8 @@ export interface StoredScopedLimit {
 export interface UsageExtra {
   scoped?: StoredScopedLimit[];
   resetCredits?: ResetCredits;
+  activeAccountId?: string;
+  activeAccountLabel?: string;
 }
 
 const WEEK_HOURS = 168;
@@ -107,23 +109,39 @@ export function canUseResetCredit(u: { session?: { utilization: number }; weekly
 }
 
 /** The extra fields of a `UsageInfo`, as the JSON column holds them — null when there are none. */
-export function serializeUsageExtra(u: { weeklyScoped?: ScopedLimitBucket[]; resetCredits?: ResetCredits }): string | null {
+export function serializeUsageExtra(u: {
+  weeklyScoped?: ScopedLimitBucket[];
+  resetCredits?: ResetCredits;
+  activeAccountId?: string;
+  activeAccountLabel?: string;
+}): string | null {
   const extra: UsageExtra = {};
   if (u.weeklyScoped?.length) {
     extra.scoped = u.weeklyScoped.map((b) => ({ label: b.label, utilization: b.utilization, resetsAt: b.resetsAt }));
   }
   if (u.resetCredits) extra.resetCredits = u.resetCredits;
-  return extra.scoped || extra.resetCredits ? JSON.stringify(extra) : null;
+  if (u.activeAccountId) extra.activeAccountId = u.activeAccountId;
+  if (u.activeAccountLabel) extra.activeAccountLabel = u.activeAccountLabel;
+  return extra.scoped || extra.resetCredits || extra.activeAccountId || extra.activeAccountLabel
+    ? JSON.stringify(extra)
+    : null;
 }
 
 /** The JSON column back into `UsageInfo` fields. Malformed JSON reads as nothing, not a throw. */
-export function deserializeUsageExtra(json: string | null | undefined): { weeklyScoped?: ScopedLimitBucket[]; resetCredits?: ResetCredits } {
+export function deserializeUsageExtra(json: string | null | undefined): {
+  weeklyScoped?: ScopedLimitBucket[];
+  resetCredits?: ResetCredits;
+  activeAccountId?: string;
+  activeAccountLabel?: string;
+} {
   if (!json) return {};
   let extra: UsageExtra;
   try { extra = JSON.parse(json) as UsageExtra; } catch { return {}; }
   return {
     ...(extra.scoped?.length ? { weeklyScoped: extra.scoped.map(scopedBucket) } : {}),
     ...(extra.resetCredits ? { resetCredits: extra.resetCredits } : {}),
+    ...(extra.activeAccountId ? { activeAccountId: extra.activeAccountId } : {}),
+    ...(extra.activeAccountLabel ? { activeAccountLabel: extra.activeAccountLabel } : {}),
   };
 }
 
@@ -138,5 +156,6 @@ export function usageExtraSignature(json: string | null | undefined): string {
   const e = deserializeUsageExtra(json);
   const scoped = (e.weeklyScoped ?? []).map((b) => `${b.label}:${b.utilization.toFixed(3)}`).sort().join(",");
   const credits = e.resetCredits ? `${e.resetCredits.available}@${e.resetCredits.nextExpiresAt ?? ""}` : "";
-  return `${scoped}|${credits}`;
+  const account = e.activeAccountId || e.activeAccountLabel ? `${e.activeAccountId ?? ""}:${e.activeAccountLabel ?? ""}` : "";
+  return `${scoped}|${credits}${account ? `|${account}` : ""}`;
 }
