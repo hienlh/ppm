@@ -33,9 +33,9 @@ afterEach(() => {
   for (const restore of restores.splice(0)) restore();
 });
 
-function connect(sessionId: string) {
+function connect(sessionId: string, projectName?: string) {
   const messages: any[] = [];
-  const socket = { data: { sessionId }, send: (json: string) => messages.push(JSON.parse(json)) };
+  const socket = { data: { sessionId, ...(projectName ? { projectName } : {}) }, send: (json: string) => messages.push(JSON.parse(json)) };
   sockets.push(socket);
   chatWebSocket.open(socket as any);
   return { socket, messages };
@@ -86,6 +86,18 @@ it("carries a reply and turn references in one message, in their fixed order, an
   const ack = live.messages.find((m) => m.type === "message_accepted");
   expect(ack).toEqual({ type: "message_accepted", clientMessageId: "c-both", content: received[0] });
   expect(turnGrantsFor(session.id).map((g) => g.turnId)).toEqual([ref.turnId]);
+});
+
+it("tells the AI a referenced turn is in its own project, by the chat's project", async () => {
+  const received = captureProvider();
+  const session = await chatService.createSession("mock", {});
+  const live = connect(session.id, PROJECT.name);
+  await chatWebSocket.message(live.socket as any, JSON.stringify({ type: "message", content: "summarise", clientMessageId: "c-own", turnRefs: [ref] }));
+  await until(() => received.length === 1, "the provider call");
+  expect(received[0]).toContain(`(codex, this project (${PROJECT.name})): session_id ${ref.sessionId}`);
+  // A chat in a project may get the project's shared context in front; the message ends with this.
+  expect(received[0]!.endsWith(encodeMessageBlocks("summarise", { turnRefs: [ref], ownProject: PROJECT.name }))).toBe(true);
+  expect(decodeMessageBlocks(received[0]!).turnRefs).toEqual([ref]);
 });
 
 it("hands references back on a built-in command, grants nothing and runs nothing", async () => {

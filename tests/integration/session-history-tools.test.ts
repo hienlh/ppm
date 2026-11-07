@@ -146,19 +146,22 @@ describe("session-history tools over the MCP endpoint", () => {
     expect(found.isError).toBe(false);
     expect(found.text).toContain(`${ownClaude} · claude · Login bug hunt · Turn 1 · ${P(1)}`);
     expect(found.text).not.toContain(otherClaude); // another project's chats are not searched
+    expect(found.text).toContain(`Every session below is in this project (${OWN.name}).`);
     expectClean(found.text);
     // The output is indexed (the chat's search box finds it) — the AI's search just never reads that column.
     expect(searchContent(OWN.path, "hunter2", 10).length).toBeGreaterThan(0);
     expect((await mcp(caller, "search_sessions", { query: "hunter2" })).text).toContain("No session matches");
 
     const listed = await mcp(caller, "list_session_turns", { session_id: ownClaude });
-    expect(listed.text).toContain(`Session ${ownClaude} · claude · ${OWN.name} · 3 turns · showing turns 1–3`);
+    // The chat's own project is said to be its own: named alone, the AI compared it with its folder.
+    expect(listed.text).toContain(`Session ${ownClaude} · claude · this project (${OWN.name}) · 3 turns · showing turns 1–3`);
     expect(listed.text).toContain(`2 · ${P(2)} · `);
     expect((await mcp(caller, "list_session_turns", { session_id: ownClaude, offset: 2, limit: 1 })).text).toContain(`1 · ${P(1)} · `);
 
     const read = await mcp(caller, "read_session_turns", { session_id: ownClaude, turn_ids: [P(1), P(2)] });
     expect(read.isError).toBe(false);
-    expect(read.text).toContain(`Session ${ownClaude} · claude · ${OWN.name} · Turn 1 · `);
+    expect(read.text).toContain(`Session ${ownClaude} · claude · this project (${OWN.name}) · Turn 1 · `);
+    expect(read.text).not.toContain("not this chat's project");
     expect(read.text).toContain("User: first question about the login bug");
     expect(read.text).toContain("→ Write /src/login.ts · ");
     expect(read.text).toContain("Assistant: answer about the login bug");
@@ -190,7 +193,8 @@ describe("session-history tools over the MCP endpoint", () => {
     recordTurnGrants(caller, [grantOf(Q(1))]); // what the chat socket does when the person sends the link
     const after = await mcp(caller, "read_session_turns", { session_id: otherClaude, turn_ids: [Q(1)], project: OTHER.name });
     expect(after.isError).toBe(false);
-    expect(after.text).toContain(`Session ${otherClaude} · claude · ${OTHER.name} · Turn 1 · `);
+    expect(after.text).toContain(`Session ${otherClaude} · claude · project ${OTHER.name}, not this chat's project · Turn 1 · `);
+    expect(after.text).not.toContain("this project (");
     expect(after.text).toContain("User: first question about the billing export");
     expectClean(after.text);
     // The project may be left out; the ledger knows where the turn lives.

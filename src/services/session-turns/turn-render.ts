@@ -7,7 +7,7 @@
 import { neutralizeFences } from "../../shared/untrusted-text.ts";
 import { promptTextOf } from "../../shared/user-prompt-kind.ts";
 import { decodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
-import { turnRefHeaderLine } from "../../shared/chat-turn-ref.ts";
+import { turnProjectLabel, turnRefHeaderLine } from "../../shared/chat-turn-ref.ts";
 import type { ChatEvent, ChatMessage } from "../../types/chat.ts";
 import { COMPACTED_MARKER, type SessionTurnSummary } from "./session-turn-types.ts";
 
@@ -23,6 +23,11 @@ export interface RenderedSession {
   sessionId: string;
   providerId: string;
   projectName: string;
+  /**
+   * The project of the chat reading the turns ("" when it has none), so every project named in the
+   * answer says whether it is that chat's own: see {@link turnProjectLabel}.
+   */
+  readerProject: string;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -77,11 +82,11 @@ function resultsById(messages: ChatMessage[]): Map<string, ToolResult> {
   return out;
 }
 
-function userLines(msg: ChatMessage): string[] {
+function userLines(msg: ChatMessage, readerProject: string): string[] {
   const prompt = promptTextOf(msg.content);
   if (prompt === null) return [];
   const lines = [`User: ${cutText(prompt)}`];
-  for (const ref of decodeMessageBlocks(msg.content).turnRefs ?? []) lines.push(`  (links to ${turnRefHeaderLine(ref)})`);
+  for (const ref of decodeMessageBlocks(msg.content).turnRefs ?? []) lines.push(`  (links to ${turnRefHeaderLine(ref, readerProject)})`);
   return lines;
 }
 
@@ -115,14 +120,15 @@ function assistantLines(msg: ChatMessage, results: Map<string, ToolResult>): str
 
 /** One turn as text, its header first. */
 export function renderTurn(session: RenderedSession, turn: SessionTurnSummary, messages: ChatMessage[]): string {
-  const lines = [`Session ${session.sessionId} · ${session.providerId} · ${session.projectName} · Turn ${turn.n} · ${turn.startedAt} · ${turn.status}`];
+  const project = turnProjectLabel(session.projectName, session.readerProject);
+  const lines = [`Session ${session.sessionId} · ${session.providerId} · ${project} · Turn ${turn.n} · ${turn.startedAt} · ${turn.status}`];
   const results = resultsById(messages);
   for (const msg of messages) {
     if (msg.synthetic) {
       if (msg.content === COMPACTED_MARKER) lines.push(COMPACTED_MARKER);
       continue;
     }
-    if (msg.role === "user") lines.push(...userLines(msg));
+    if (msg.role === "user") lines.push(...userLines(msg, session.readerProject));
     else if (msg.role === "assistant") lines.push(...assistantLines(msg, results));
   }
   if (turn.status === "running") lines.push(UNFINISHED_FOOTER);

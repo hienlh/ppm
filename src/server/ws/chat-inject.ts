@@ -150,7 +150,7 @@ export async function deliverToSession(input: DeliverToSessionInput): Promise<De
   }
 
   // The body has its block markers broken here, so the only blocks that decode are these.
-  const content = encodeMessageBlocks(neutralizeLeadingCommand(input.body), { fromSession, turnRefs });
+  const content = encodeMessageBlocks(neutralizeLeadingCommand(input.body), { fromSession, turnRefs, ownProject: input.projectName || undefined });
   const clientMessageId = `${CLIENT_ID_PREFIX}${crypto.randomUUID()}`;
   const receivedAt = Date.now();
 

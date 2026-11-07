@@ -2140,7 +2140,7 @@ export const chatWebSocket = {
       // session's AI is granted their turns in other projects. Never derived from message text.
       if (parsed.turnRefs?.length) recordTurnGrants(sessionId, parsed.turnRefs);
       // The typed text has its block markers broken, so the only blocks that decode are these.
-      parsed.content = encodeMessageBlocks(parsed.content, { turnRefs: parsed.turnRefs, replyTo: parsed.replyTo });
+      parsed.content = encodeMessageBlocks(parsed.content, { turnRefs: parsed.turnRefs, replyTo: parsed.replyTo, ownProject: entry.projectName || undefined });
       // The sender drew its own copy of this message before sending. Hand it the text as it now
       // stands, so the copy matches the transcript, the echo and a replay byte for byte.
       if (typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128) {

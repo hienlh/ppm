@@ -4,8 +4,9 @@ import {
 } from "../../../src/services/session-turns/turn-render.ts";
 import { COMPACTED_MARKER, type SessionTurnSummary } from "../../../src/services/session-turns/session-turn-types.ts";
 import type { ChatMessage } from "../../../src/types/chat.ts";
+import { encodeMessageBlocks } from "../../../src/shared/chat-message-blocks.ts";
 
-const session = { sessionId: "11111111-2222-4333-8444-555555555555", providerId: "claude", projectName: "alpha" };
+const session = { sessionId: "11111111-2222-4333-8444-555555555555", providerId: "claude", projectName: "alpha", readerProject: "alpha" };
 const turn = (over: Partial<SessionTurnSummary> = {}): SessionTurnSummary => ({
   turnId: "aaaaaaaa-0000-4000-8000-000000000001", n: 4, startedAt: "2026-11-01T10:00:00.000Z",
   prompt: "Fix the build", messageCount: 2, status: "complete", ...over,
@@ -31,7 +32,7 @@ describe("turn rendering", () => {
       ]),
     ]);
     expect(text.split("\n")).toEqual([
-      "Session 11111111-2222-4333-8444-555555555555 · claude · alpha · Turn 4 · 2026-11-01T10:00:00.000Z · complete",
+      "Session 11111111-2222-4333-8444-555555555555 · claude · this project (alpha) · Turn 4 · 2026-11-01T10:00:00.000Z · complete",
       "User: Fix the build please",
       "→ Bash bun test more · exit 1",
       "→ Read /src/a.ts · ok",
@@ -39,6 +40,27 @@ describe("turn rendering", () => {
       "Assistant: Done.",
     ]);
     for (const leaked of ["SECRET-THINKING", "RAW-OUTPUT", "RAW-FILE", "AGENT-REPORT", "Grep", "<mark>"]) expect(text).not.toContain(leaked);
+  });
+
+  it("says a turn is in the reader's own project, and names any other project as another one", () => {
+    // Named alone, the reader's own project read as a different one beside its folder's name.
+    const linked = (projectName: string) => user(encodeMessageBlocks("compare", { turnRefs: [{
+      version: 1, projectName, providerId: "codex", sessionId: "22222222-2222-4333-8444-555555555555",
+      turnId: "bbbbbbbb-0000-4000-8000-000000000002", n: 2, title: "t", prompt: "p", at,
+    }] }));
+    const own = renderTurn(session, turn(), [linked("alpha")]).split("\n");
+    expect(own[0]).toContain(" · claude · this project (alpha) · Turn 4 · ");
+    expect(own[2]).toBe("  (links to Turn 2 of session 22222222-2222-4333-8444-555555555555 (codex, this project (alpha)): "
+      + "session_id 22222222-2222-4333-8444-555555555555, turn_id bbbbbbbb-0000-4000-8000-000000000002)");
+
+    const other = renderTurn({ ...session, projectName: "beta" }, turn(), [linked("gamma")]).split("\n");
+    expect(other[0]).toContain(" · claude · project beta, not this chat's project · Turn 4 · ");
+    expect(other[2]).toContain("(codex, project gamma, not this chat's project)");
+
+    // A chat with no project of its own has none to call "this project".
+    const projectless = renderTurn({ ...session, readerProject: "" }, turn(), [linked("alpha")]);
+    expect(projectless).not.toContain("this project");
+    expect(projectless).toContain("project alpha, not this chat's project");
   });
 
   it("marks a compaction once, skips other synthetic copies, and flags a running turn", () => {

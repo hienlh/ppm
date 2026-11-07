@@ -100,13 +100,46 @@ export function validateTurnRefs(value: unknown, isProject?: (name: string) => b
   return out;
 }
 
+/** Whether a turn is in the reading chat's own project, in another one, or the reader is unknown. */
+type Placement = "own" | "other" | "unknown";
+
+function placementOf(projectName: string, ownProject: string | undefined): Placement {
+  if (ownProject === undefined) return "unknown";
+  return projectName === ownProject ? "own" : "other";
+}
+
+function labelFor(projectName: string, placement: Placement): string {
+  if (placement === "own") return projectName ? `this project (${projectName})` : "this project";
+  if (placement === "other") return `project ${projectName}, not this chat's project`;
+  return `project ${projectName}`;
+}
+
+/**
+ * Where a turn is, as an AI reading it in a chat of `ownProject` should take it. A live run showed
+ * why the own project has to be said as such: told only "project demo", the model compared that
+ * name with its working folder ("proj") and reported the turn as coming from another project.
+ * `ownProject` undefined means the reader is not known, and the plain name is written.
+ */
+export function turnProjectLabel(projectName: string, ownProject?: string): string {
+  return labelFor(projectName, placementOf(projectName, ownProject));
+}
+
+function headerLine(ref: TurnReference, placement: Placement): string {
+  return `Turn ${ref.n} of session ${ref.sessionId} (${ref.providerId}, ${labelFor(ref.projectName, placement)}): `
+    + `session_id ${ref.sessionId}, turn_id ${ref.turnId}`;
+}
+
 /**
  * The one line a reader sees for a reference: where the turn is and the ids `read_session_turns`
- * takes. No title, no prompt.
+ * takes. No title, no prompt. `ownProject` is the project of the chat that reads it, when known.
  */
-export function turnRefHeaderLine(ref: TurnReference): string {
-  return `Turn ${ref.n} of session ${ref.sessionId} (${ref.providerId}, project ${ref.projectName}): `
-    + `session_id ${ref.sessionId}, turn_id ${ref.turnId}`;
+export function turnRefHeaderLine(ref: TurnReference, ownProject?: string): string {
+  return headerLine(ref, placementOf(ref.projectName, ownProject));
+}
+
+/** Every header line PPM may have written for `ref`, whichever chat it was written for. */
+function headerLineMatches(ref: TurnReference, line: string): boolean {
+  return (["unknown", "own", "other"] as const).some((placement) => headerLine(ref, placement) === line);
 }
 
 /** The header line of a block written before the ids were spelled out; decoding only. */
@@ -131,12 +164,16 @@ function fromBase64(line: string): string | null {
   }
 }
 
-/** `content` followed by the references' block; `content` unchanged when there are none. */
-export function encodeTurnRefs(content: string, refs?: readonly TurnReference[] | null): string {
+/**
+ * `content` followed by the references' block; `content` unchanged when there are none.
+ * `ownProject` is the project of the chat the message is for; given, each line says whether its
+ * turn is in that project.
+ */
+export function encodeTurnRefs(content: string, refs?: readonly TurnReference[] | null, ownProject?: string): string {
   if (!refs?.length) return content;
   const valid = validateTurnRefs(refs);
   if (!valid) throw new Error("Invalid turn references");
-  const header = valid.map(turnRefHeaderLine).join("\n");
+  const header = valid.map((ref) => turnRefHeaderLine(ref, ownProject)).join("\n");
   return `${content}${START}${header}\n${DISPLAY_PREFIX}${toBase64(JSON.stringify(valid))}${END}`;
 }
 
@@ -148,7 +185,10 @@ const readCurrent: BlockReader = (header, data) => {
   const json = fromBase64(data.slice(DISPLAY_PREFIX.length));
   if (json === null) return null;
   const refs = validateTurnRefs(JSON.parse(json));
-  return refs && refs.map(turnRefHeaderLine).join("\n") === header ? refs : null;
+  if (!refs) return null;
+  // A project name holds no control character, so each reference is exactly one line.
+  const lines = header.split("\n");
+  return lines.length === refs.length && refs.every((ref, i) => headerLineMatches(ref, lines[i]!)) ? refs : null;
 };
 
 /** A block from before: the JSON in clear on the last line, under the old header lines. */

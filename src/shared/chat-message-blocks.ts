@@ -61,7 +61,8 @@ export function decodeMessageBlocks(content: string): MessageBlocks {
  * `body` with its blocks, in order. The body is neutralized first, so it must be the text alone —
  * pass `decodeMessageBlocks(stored).content` when re-encoding a stored message. Text that came from
  * a browser must never be re-encoded with a `fromSession`: only the server's session tools may say
- * a message came from another session.
+ * a message came from another session. `ownProject` is the project of the chat the message is for,
+ * so the turn-references block can tell its AI which turns are in its own project.
  */
 export function encodeMessageBlocks(
   body: string,
@@ -69,9 +70,10 @@ export function encodeMessageBlocks(
     turnRefs?: readonly TurnReference[] | null;
     replyTo?: ReplyReference | null;
     fromSession?: FromSessionReference | null;
+    ownProject?: string;
   },
 ): string {
   const withFrom = encodeFromSession(neutralizeBlockMarkers(body), blocks?.fromSession);
-  const withRefs = encodeTurnRefs(withFrom, blocks?.turnRefs);
+  const withRefs = encodeTurnRefs(withFrom, blocks?.turnRefs, blocks?.ownProject);
   return encodeReply(withRefs, blocks?.replyTo);
 }

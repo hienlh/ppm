@@ -15,6 +15,7 @@ import {
 } from "../session-turns/session-search.ts";
 import { resolveOwnSession, resolveTurnAccess, type TurnCaller } from "../session-turns/turn-access.ts";
 import { fenced, oneLine } from "../session-turns/turn-render.ts";
+import { turnProjectLabel } from "../../shared/chat-turn-ref.ts";
 import { readTurnsReportingErrors, renderReadAnswer } from "./session-history-read.ts";
 import { createCallLimiter, type CallLimiter } from "./session-history-rate-limit.ts";
 import {
@@ -73,7 +74,9 @@ async function search(caller: TurnCaller, args: Json): Promise<Json> {
       lines.push(`- ${h.sessionId} · ${h.providerId || "?"} · ${oneLine(h.title, 120) || "(untitled)"} · ${turn} · ${h.ts} · ${h.role}: ${oneLine(h.snippet, 300)}`);
     }
   }
-  return textResult([...notes, fenced(lines.join("\n")), "Read a turn with read_session_turns(session_id, turn_ids)."].join("\n"));
+  const own = caller.projectName ?? "";
+  const scope = `Every session below is in ${turnProjectLabel(own, own)}.`;
+  return textResult([...notes, scope, fenced(lines.join("\n")), "Read a turn with read_session_turns(session_id, turn_ids)."].join("\n"));
 }
 
 async function list(caller: TurnCaller, args: Json): Promise<Json> {
@@ -87,7 +90,8 @@ async function list(caller: TurnCaller, args: Json): Promise<Json> {
     const { turns } = await listSessionTurns(target.ref);
     const end = Math.max(0, turns.length - offset);
     const shown = turns.slice(Math.max(0, end - limit), end);
-    const head = `Session ${target.sessionId} · ${target.providerId} · ${target.projectName} · ${turns.length} turns`
+    const project = turnProjectLabel(target.projectName, caller.projectName ?? "");
+    const head = `Session ${target.sessionId} · ${target.providerId} · ${project} · ${turns.length} turns`
       + (shown.length ? ` · showing turns ${shown[0]!.n}–${shown.at(-1)!.n}` : " · none in that page");
     const body = shown.map((t) => `${t.n} · ${t.turnId} · ${t.startedAt} · ${t.status} · ${oneLine(t.prompt, 200)}`).join("\n");
     const older = shown.length && shown[0]!.n > 1 ? `\nOlder turns: call again with offset ${offset + shown.length}.` : "";
@@ -134,7 +138,7 @@ async function read(caller: TurnCaller, args: Json): Promise<Json> {
       if (!ids.length) return textResult(`not_found: the session has ${turns.length} turns; none is numbered ${range.from}–${range.to}.`, true);
     }
     const { turns, errors } = await readTurnsReportingErrors(access.target.ref, ids);
-    return textResult(renderReadAnswer(access.target, turns, [...access.denied, ...errors]), !turns.length);
+    return textResult(renderReadAnswer(access.target, turns, [...access.denied, ...errors], caller.projectName ?? ""), !turns.length);
   } catch (e) {
     return failure(e);
   }

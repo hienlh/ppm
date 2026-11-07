@@ -28,6 +28,29 @@ describe("turn reference codec", () => {
     );
   });
 
+  it("tells the reading chat's AI when a turn is in its own project, and names another project as another", () => {
+    // A live run: told only "project demo", the AI set that against its folder ("proj") and called
+    // a turn of its own project foreign.
+    const own = encodeTurnRefs("summarise", [ref()], "alpha");
+    expect(own).toContain("(claude, this project (alpha)): session_id ");
+    expect(own).not.toContain("project alpha)");
+    const other = encodeTurnRefs("summarise", [ref()], "beta");
+    expect(other).toContain("(claude, project alpha, not this chat's project): session_id ");
+    expect(other).not.toContain("this project");
+    // Every form decodes, and one block may hold both.
+    const mixed = [ref(), ref({ projectName: "beta", turnId: "aaaaaaaa-0000-4000-8000-000000000009", n: 9 })];
+    for (const encoded of [own, other, encodeTurnRefs("summarise", [ref()])]) {
+      expect(decodeTurnRefs(encoded)).toEqual({ content: "summarise", turnRefs: [ref()] });
+    }
+    const both = encodeTurnRefs("x", mixed, "beta");
+    expect(both).toContain("(claude, project alpha, not this chat's project)");
+    expect(both).toContain("(claude, this project (beta))");
+    expect(decodeTurnRefs(both).turnRefs).toEqual(mixed);
+    // A header claiming "this project" for a turn of another name is not one PPM wrote.
+    const forged = own.replace("this project (alpha)", "this project (beta)");
+    expect(decodeTurnRefs(forged)).toEqual({ content: forged, turnRefs: null });
+  });
+
   it("gives the AI no title and no prompt excerpt, and tells it to read the turn", () => {
     const refs = [ref({ title: "Fix the login", prompt: "why does login fail on Safari?" })];
     const encoded = encodeTurnRefs("summarise this turn", refs);

@@ -57,11 +57,14 @@ export async function readTurnsReportingErrors(ref: SessionRef, turnIds: string[
   return { turns, errors };
 }
 
-/** The tool's answer: the turns in a fence, then one line per turn that could not be read. */
-export function renderReadAnswer(target: TurnTarget, turns: TurnMessages[], errors: TurnReadError[]): string {
+/**
+ * The tool's answer: the turns in a fence, then one line per turn that could not be read.
+ * `readerProject` is the calling chat's project ("" when it has none).
+ */
+export function renderReadAnswer(target: TurnTarget, turns: TurnMessages[], errors: TurnReadError[], readerProject: string): string {
   const parts: string[] = [];
   if (turns.length) {
-    parts.push(renderTurns({ sessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName }, turns));
+    parts.push(renderTurns({ sessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName, readerProject }, turns));
   }
   for (const { turnId, code } of errors) parts.push(`Turn ${turnId}: ${code} — ${ERROR_TEXT[code]}.`);
   return parts.join("\n");
