@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 // Isolates PPM_HOME and loads the config service before any service import reaches a database.
 import "../../test-setup.ts";
 import { Hono } from "hono";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileRoutes } from "../../../src/server/routes/files.ts";
@@ -108,16 +108,19 @@ describe("GET /fs/xlsx-sheet", () => {
     expect((await res.json()).data.rows).toEqual([["first"]]);
   });
 
-  it("refuses a symlink that points into the PPM directory", async () => {
-    const inside = join(getPpmDir(), "leak.xlsx");
-    writeFileSync(inside, workbook({ S: "credentials" }));
-    const link = join(root, "innocent.xlsx");
-    symlinkSync(inside, link);
+  it("refuses a workbook reached through a link into the PPM directory", async () => {
+    const inside = mkdtempSync(join(getPpmDir(), "leak-"));
+    writeFileSync(join(inside, "leak.xlsx"), workbook({ S: "credentials" }));
+    const link = join(root, "innocent");
+    // A directory link, as a junction on Windows: a symlink there needs Developer Mode or
+    // elevation, which would turn this guard's test red on an ordinary Windows account.
+    symlinkSync(inside, link, process.platform === "win32" ? "junction" : "dir");
     try {
-      const res = await fsApp().request(`/fs/xlsx-sheet?path=${q(link)}`);
+      const res = await fsApp().request(`/fs/xlsx-sheet?path=${q(join(link, "leak.xlsx"))}`);
       expect(res.status).toBe(403);
     } finally {
-      rmSync(inside, { force: true });
+      try { unlinkSync(link); } catch { /* Link was not created. */ }
+      rmSync(inside, { recursive: true, force: true });
     }
   });
 

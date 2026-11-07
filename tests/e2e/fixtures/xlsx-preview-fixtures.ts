@@ -1,7 +1,9 @@
 /**
  * Writes the workbooks `xlsx-preview-e2e.mjs` opens, into the directory given as the first
  * argument: `book.xlsx` (Summary, Data, Big ~20,000 rows, Wide 250 columns), `book-cut.xlsx` (the
- * same, cut off after 4 KB, as a copy caught half written) and `book-full.xlsx` (a spare full copy).
+ * same, cut off after 4 KB, as a copy caught half written), `book-data-damaged.xlsx` (only the Data
+ * sheet unreadable: it declares itself smaller than it inflates to, which unzipit refuses, while
+ * every other sheet reads) and `book-full.xlsx` (a spare full copy).
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -46,4 +48,5 @@ const bytes = makeZip(files);
 writeFileSync(join(out, "book.xlsx"), bytes);
 writeFileSync(join(out, "book-full.xlsx"), bytes);
 writeFileSync(join(out, "book-cut.xlsx"), bytes.subarray(0, 4096));
+writeFileSync(join(out, "book-data-damaged.xlsx"), makeZip(files, { "xl/worksheets/sheet2.xml": 16 }));
 console.log(JSON.stringify({ bytes: bytes.length, longNote: LONG_NOTE }));

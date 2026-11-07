@@ -143,6 +143,19 @@ try {
     assert.equal((await page.locator('[data-cell="A1"]:visible').innerText()).trim(), "data row 1");
     results.push({ check: "full file back: banner gone, still on Data", ok: true });
 
+    // The half-written copy breaks every sheet, so a reload falling back to the first sheet would fail
+    // there too and leave Data on screen regardless. With only Data broken the first sheet loads, so a
+    // fallback would lose Data.
+    await copyFile(join(fixtures, "book-data-damaged.xlsx"), join(project, "book.xlsx"));
+    await until("reload settled", async () =>
+      (await page.locator('[data-testid="xlsx-error"]:visible').count()) > 0
+      || (await tab(page, "Data").getAttribute("aria-selected")) !== "true", 20000);
+    assert.equal(await tab(page, "Data").getAttribute("aria-selected"), "true", "still on Data when only Data is damaged");
+    assert.equal((await page.locator('[data-cell="A1"]:visible').innerText()).trim(), "data row 1");
+    results.push({ check: "only Data damaged: still on Data, error banner shown", ok: true, banner: await page.locator('[data-testid="xlsx-error"]:visible').innerText() });
+    await copyFile(join(fixtures, "book-full.xlsx"), join(project, "book.xlsx"));
+    await until("banner gone again", async () => (await page.locator('[data-testid="xlsx-error"]:visible').count()) === 0, 20000);
+
     await tab(page, "Big").click();
     await page.getByText("data row", { exact: false }).first().waitFor({ state: "detached" }).catch(() => {});
     await page.locator('[data-cell="B1"]:visible', { hasText: "item 1" }).waitFor();
