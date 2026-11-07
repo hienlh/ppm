@@ -32,6 +32,10 @@ describe("codex rollout index", () => {
   it("does not read a file again while its size and modification time are unchanged", async () => {
     const id = "aaaaaaaa-1111-4111-8111-111111111111";
     const file = write(id, meta(id, CWD_A));
+    // A whole second, because a `Date` cannot carry the sub-millisecond `mtimeMs` that Bun
+    // 1.3.11+ reports on Windows: putting `before.mtime` back would move the stamp it restores.
+    const stamp = 1_700_000_000;
+    utimesSync(file, stamp, stamp);
     const before = statSync(file);
     expect((await listCodexRollouts(dir, CWD_A, "codex")).map((s) => s.id)).toEqual([id]);
 
@@ -39,7 +43,7 @@ describe("codex rollout index", () => {
     // can still place it in project A.
     writeFileSync(file, meta(id, CWD_B));
     expect(statSync(file).size).toBe(before.size);
-    utimesSync(file, before.atime, before.mtime);
+    utimesSync(file, stamp, stamp);
     expect((await listCodexRollouts(dir, CWD_A, "codex")).map((s) => s.id)).toEqual([id]);
   });
 

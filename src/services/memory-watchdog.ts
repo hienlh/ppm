@@ -24,6 +24,7 @@ import { readNativeMemory } from "./memory-diagnostics-native.ts";
 import { spawnTracker } from "./memory-diagnostics-spawns.ts";
 import { diffRequestCounts, requestTracker } from "./memory-diagnostics-requests.ts";
 import { descendantsOf, readProcessList } from "./process-tree-memory.ts";
+import { bunRuntimeAdvisory } from "./bun-runtime-advisory.ts";
 import { heapStats } from "bun:jsc";
 
 const log = createLogger("mem");
@@ -128,6 +129,9 @@ export function startMemoryWatchdog(role: string, readGauges: () => Record<strin
   let lastSummaryAt = Date.now() - SUMMARY_INTERVAL_MS + WATCH_INTERVAL_MS;
   let lastSummaryPrivateMB: number | undefined;
   let lastRequests = requestTracker.read();
+
+  const advisory = bunRuntimeAdvisory();
+  if (advisory) log.warn(`${role} pid=${process.pid}: ${advisory}`);
 
   spawnTracker.onLifecycle = (e) => {
     const who = `${e.label} pid=${e.pid}${e.session ? ` session=${e.session}` : ""}`;
