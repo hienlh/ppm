@@ -3,6 +3,9 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { AI_CHAT_MARK } from "../../services/ai-chat-env.ts";
 import { createLogger } from "../../services/logger.ts";
+import { CLAUDE_TAB_TOOLS_MCP_SERVER } from "../../shared/tab-open-protocol.ts";
+import { CLAUDE_DB_TOOLS_MCP_SERVER } from "../../shared/db-ai-tools.ts";
+import type { SendMessageOpts } from "../../types/chat.ts";
 
 const log = createLogger("antigravity");
 
@@ -36,6 +39,31 @@ export function agyEnv(home?: string, accountHome = false): Record<string, strin
   if (home) env.HOME = home;
   if (home && accountHome) env.WSL_DISTRO_NAME = "ppm";
   return { ...env, ...AI_CHAT_MARK };
+}
+
+/** An ACP `http` MCP server, as `session/new` and `session/load` take it. */
+export interface AcpHttpMcpServer {
+  type: "http";
+  name: string;
+  url: string;
+  headers: { name: string; value: string }[];
+}
+
+/**
+ * PPM's tab and database tools for a chat, as ACP MCP servers; `[]` without them. agy 1.5.2
+ * advertises no `mcpCapabilities` yet takes `http` entries and sends their headers (measured
+ * 2026-11-07), so the token travels in a header as it does for Claude, never in agy's
+ * environment, which every command it runs inherits. The names are Claude's: agy calls the
+ * tools `mcp_ppm-db_db_query` and so on, and asks no permission for them.
+ */
+export function agyMcpServers(opts?: Pick<SendMessageOpts, "tabToolsMcp" | "dbToolsMcp">): AcpHttpMcpServer[] {
+  const servers: AcpHttpMcpServer[] = [];
+  const add = (name: string, access?: { url: string; token: string }) => {
+    if (access) servers.push({ type: "http", name, url: access.url, headers: [{ name: "Authorization", value: `Bearer ${access.token}` }] });
+  };
+  add(CLAUDE_TAB_TOOLS_MCP_SERVER, opts?.tabToolsMcp);
+  add(CLAUDE_DB_TOOLS_MCP_SERVER, opts?.dbToolsMcp);
+  return servers;
 }
 
 /**

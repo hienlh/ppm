@@ -61,7 +61,7 @@ import {
   type AcpToolState,
   type AcpUpdate,
 } from "./acp-event-mapper.ts";
-import { agyEnv, agyStoreArgs } from "./acp-launch.ts";
+import { agyEnv, agyMcpServers, agyStoreArgs } from "./acp-launch.ts";
 import { rememberAgyCommands } from "./antigravity-commands.ts";
 
 const log = createLogger("antigravity");
@@ -489,10 +489,11 @@ export class AntigravityProvider implements AIProvider {
       }, ACP_CONTROL_TIMEOUT_MS);
 
       let opened: AcpSessionResult | undefined;
+      const mcpServers = agyMcpServers(opts);
       if (existing) {
         live.loading = true;
         try {
-          opened = await live.client.request<AcpSessionResult>("session/load", { sessionId, cwd, mcpServers: [] }, ACP_LOAD_TIMEOUT_MS);
+          opened = await live.client.request<AcpSessionResult>("session/load", { sessionId, cwd, mcpServers }, ACP_LOAD_TIMEOUT_MS);
         } finally {
           live.loading = false;
         }
@@ -501,7 +502,7 @@ export class AntigravityProvider implements AIProvider {
         const append = acpSystemPromptAppend(this.providerConfig()?.system_prompt, opts?.sharedContext);
         opened = await live.client.request<AcpSessionResult>("session/new", {
           cwd,
-          mcpServers: [],
+          mcpServers,
           ...(append ? { _meta: { antigravity: { systemPrompt: { append } } } } : {}),
         }, ACP_CONTROL_TIMEOUT_MS);
         if (!opened?.sessionId) throw new Error("agy opened no session.");

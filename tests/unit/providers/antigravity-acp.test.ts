@@ -106,6 +106,24 @@ describe("AntigravityProvider over agy acp", () => {
     expect(p.hasStreamingSession(session.id)).toBe(false);
   });
 
+  it("hands agy PPM's tab and database tools as http MCP servers, the token in a header", async () => {
+    const p = provider();
+    const session = await p.createSession({ projectPath: projectDir });
+    const run = consume(p.sendMessage(session.id, "hello there", {
+      tabToolsMcp: { url: "http://127.0.0.1:1/api/tab-tools-mcp", token: "tab-token" },
+      dbToolsMcp: { url: "http://127.0.0.1:1/api/db-tools-mcp", token: "db-token" },
+    }));
+    await run.until((evs) => dones(evs).length === 1);
+    expect(calls("session/new")[0]!.params.mcpServers).toEqual([
+      { type: "http", name: "ppm-tabs", url: "http://127.0.0.1:1/api/tab-tools-mcp", headers: [{ name: "Authorization", value: "Bearer tab-token" }] },
+      { type: "http", name: "ppm-db", url: "http://127.0.0.1:1/api/db-tools-mcp", headers: [{ name: "Authorization", value: "Bearer db-token" }] },
+    ]);
+    // Not on agy's command line, which any process on the machine can read.
+    expect(JSON.stringify(received()[0])).not.toContain("tab-token");
+    p.abortQuery(NEW_ID);
+    await run.finished;
+  });
+
   it("shows a tool call once, with its result, however many updates agy sends for it", async () => {
     const p = provider();
     const run = consume(p.sendMessage((await p.createSession({ projectPath: projectDir })).id, "tool please"));

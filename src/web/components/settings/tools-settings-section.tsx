@@ -1,6 +1,6 @@
 /**
- * Settings → Tools: PPM's own tools for the AI chat, on or off one by one, for Claude and Codex
- * alike (`ai.ppm_tools`; the defaults are in `src/shared/ppm-tools.ts`).
+ * Settings → Tools: PPM's own tools for the AI chat, on or off one by one, for Claude, Codex and
+ * Antigravity alike (`ai.ppm_tools`; the defaults are in `src/shared/ppm-tools.ts`).
  */
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -147,7 +147,7 @@ export function ToolsSettingsSection() {
   return (
     <div className="space-y-6">
       <p className="text-xs leading-relaxed text-muted-foreground">
-        PPM's own tools for the AI chat, with Claude and Codex alike. New chats get the tools that are
+        PPM's own tools for the AI chat, with Claude, Codex and Antigravity alike. New chats get the tools that are
         on; turning one off also stops it in chats already open.
       </p>
       {GROUPS.map((group) => (
