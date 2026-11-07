@@ -4,7 +4,7 @@ import "../../test-setup.ts";
 import { Hono } from "hono";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { fileRoutes } from "../../../src/server/routes/files.ts";
 import { isInsideProject } from "../../../src/server/helpers/project-path.ts";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
@@ -88,10 +88,12 @@ describe("project routes refuse a sibling directory sharing the project's prefix
 
 describe("isInsideProject", () => {
   it("takes the root and what is under it, nothing that only shares the prefix", () => {
-    expect(isInsideProject("/home/u/app", "/home/u/app")).toBe(true);
-    expect(isInsideProject("/home/u/app", "/home/u/app/src/a.ts")).toBe(true);
-    expect(isInsideProject("/home/u/app/", "/home/u/app/src/a.ts")).toBe(true);
-    expect(isInsideProject("/home/u/app", "/home/u/app-secrets/a")).toBe(false);
-    expect(isInsideProject("/home/u/app", "/home/u")).toBe(false);
+    // Resolved, so that on Windows they are what a route compares: `C:\home\u\app`, not `/home/u/app`.
+    const app = resolve("/home/u/app");
+    expect(isInsideProject(app, app)).toBe(true);
+    expect(isInsideProject(app, join(app, "src", "a.ts"))).toBe(true);
+    expect(isInsideProject(app + sep, join(app, "src", "a.ts"))).toBe(true);
+    expect(isInsideProject(app, resolve("/home/u/app-secrets/a"))).toBe(false);
+    expect(isInsideProject(app, resolve("/home/u"))).toBe(false);
   });
 });
