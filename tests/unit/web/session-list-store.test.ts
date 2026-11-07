@@ -106,6 +106,50 @@ describe("session-list-store — sync", () => {
   });
 });
 
+describe("session-list-store — a session another session created", () => {
+  const created = { id: "child", providerId: "claude", title: "Count TS", createdAt: "2026-11-07T10:00:00.000Z", spawnedBy: "parent", parentTitle: "Lead" };
+
+  it("is listed at once and survives syncs until the server lists it itself", async () => {
+    const project = { name: "created-proj", path: "/created-proj" };
+    const id = projectCacheId(project);
+    let listed: SessionListResponse["sessions"] = [{ id: "parent", providerId: "claude", title: "Lead", createdAt: "2026-11-07T09:00:00.000Z" }];
+    const spy = spyOn(api, "get").mockImplementation((async (url: string) =>
+      url.includes("/tags") ? tagsResponse() : sessionsResponse(listed)
+    ) as typeof api.get);
+    restore = () => spy.mockRestore();
+
+    useSessionListStore.getState().addCreatedSession(project, created);
+    expect(useSessionListStore.getState().byProject[id]?.sessions.find((s) => s.id === "child")).toMatchObject({ title: "Count TS", spawnedBy: "parent", parentTitle: "Lead" });
+
+    // The child has no transcript yet, so the server's page leaves it out: the row stays.
+    await useSessionListStore.getState().sync(project);
+    expect(useSessionListStore.getState().byProject[id]?.sessions.map((s) => s.id).sort()).toEqual(["child", "parent"]);
+
+    // Once the server lists it, its row is the server's, and a later page without it drops it.
+    listed = [...listed, { id: "child", providerId: "claude", title: "Count TS (server)", createdAt: created.createdAt }];
+    __clearInFlightForTest();
+    await useSessionListStore.getState().sync(project);
+    expect(useSessionListStore.getState().byProject[id]?.sessions.find((s) => s.id === "child")?.title).toBe("Count TS (server)");
+    listed = listed.filter((s) => s.id !== "child");
+    __clearInFlightForTest();
+    await useSessionListStore.getState().sync(project);
+    expect(useSessionListStore.getState().byProject[id]?.sessions.map((s) => s.id)).toEqual(["parent"]);
+  });
+
+  it("is dropped for good when it is removed here", async () => {
+    const project = { name: "created-removed-proj", path: "/created-removed-proj" };
+    const id = projectCacheId(project);
+    const spy = spyOn(api, "get").mockImplementation((async (url: string) =>
+      url.includes("/tags") ? tagsResponse() : sessionsResponse([])
+    ) as typeof api.get);
+    restore = () => spy.mockRestore();
+    useSessionListStore.getState().addCreatedSession(project, created);
+    useSessionListStore.getState().removeSession(project, "child");
+    await useSessionListStore.getState().sync(project);
+    expect(useSessionListStore.getState().byProject[id]?.sessions).toEqual([]);
+  });
+});
+
 describe("session-list-store — optimistic patches", () => {
   const project = { name: "mutate-proj", path: "/mutate-proj" };
 

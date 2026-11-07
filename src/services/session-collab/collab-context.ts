@@ -9,6 +9,7 @@ import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
 import type { DeliverToSessionInput, DeliverToSessionResult } from "../../server/ws/chat-inject.ts";
 import type { CollabApprovalOutcome } from "./collab-approval-broker.ts";
 import type { CollabWaits } from "./collab-waits.ts";
+import type { CollabUnread } from "./collab-unread.ts";
 
 /**
  * What the session tools need from the rest of PPM, as one object, so the tools' rules can be
@@ -85,8 +86,8 @@ export interface CollabEnv {
   currentTurnRef(caller: CollabCaller): Promise<TurnReference | null>;
   announceCreated(event: Omit<SessionCreatedEvent, "type">): void;
   announceLinks(projectName: string, sessionIds: string[]): void;
-  /** Messages from `from` that reached `to` outside a wait, since `to` last asked about `from`. */
-  unread: { add(from: string, to: string): void; take(from: string, to: string): number; peek(from: string, to: string): number };
+  /** Messages from `from` that no turn of `to` has taken yet, since `to` last asked about `from`. */
+  unread: Pick<CollabUnread, "add" | "take" | "peek">;
 }
 
 export interface CollabCaller {

@@ -24,6 +24,25 @@ export interface LinkedSessionView extends LinkedSession {
 
 const NO_LINKS: Record<string, SessionLinkRelation[]> = {};
 
+/**
+ * What one session is doing now, by the same rule as the bar; null with no id. Each store is read
+ * down to this session's entry, so a card in a long history re-renders only when its own session
+ * changes.
+ */
+export function useLinkedSessionStatus(sessionId: string | undefined): LinkedSessionStatus | null {
+  const running = useStreamingStore((s) => !!sessionId && s.sessions.has(sessionId));
+  const unread = useNotificationStore((s) => (sessionId ? s.notifications.get(sessionId) : undefined));
+  const approval = useSessionCollabStore((s) => (sessionId ? s.pendingApprovals[sessionId] : undefined));
+  if (!sessionId) return null;
+  return linkedSessionStatus(sessionId, {
+    streaming: running ? new Map([[sessionId, ""]]) : NO_SESSIONS,
+    notifications: unread ? new Map([[sessionId, unread]]) : NO_SESSIONS,
+    pendingApprovals: approval ? { [sessionId]: approval } : NO_APPROVALS,
+  });
+}
+const NO_SESSIONS = new Map<string, never>();
+const NO_APPROVALS: Record<string, string> = {};
+
 export function useLinkedSessions(projectName: string, sessionId: string | null, messages: ChatMessage[]): LinkedSessionView[] {
   const project = useProjectRef(projectName || undefined);
   const id = project ? projectCacheId(project) : null;

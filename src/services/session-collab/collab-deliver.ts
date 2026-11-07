@@ -54,8 +54,8 @@ export async function deliverAndWait(env: CollabEnv, input: {
     handle?.abandon();
     return { ok: false, message: `The message was not delivered: ${(e as Error).message}` };
   }
-  // A message the target reads outside a wait: it shows in `session_status` as unread by that session.
-  env.unread.add(caller.sessionId, target.sessionId);
+  // Unread by the target until a turn of it takes the message; a turn already named has it.
+  if (!delivered.turnBinding) env.unread.add(caller.sessionId, target.sessionId, delivered.clientMessageId, delivered.delivered);
   if (!handle) return { ok: true, delivered: delivered.delivered, clientMessageId: delivered.clientMessageId };
   handle.attach(delivered.clientMessageId, delivered.delivered, !!delivered.turnBinding);
   const reply = await handle.outcome;

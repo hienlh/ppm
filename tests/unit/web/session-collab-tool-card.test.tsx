@@ -3,9 +3,10 @@
  * flight, the reply once it came, why none did, the tool's error, and an Open session button.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { act } from "react";
 import { installDom, uninstallDom, mount, click, type Mounted } from "../../helpers/react-dom";
 import {
-  sessionCollabCardState, sessionCollabToolCall, sessionCollabToolResult, stoppedCallText, waitEndedText,
+  sessionCollabCardState, sessionCollabToolCall, sessionCollabToolResult, stoppedCallText, waitEndedText, withLiveStatus,
 } from "../../../src/web/lib/session-collab-tool-call";
 import type { SessionStatus } from "../../../src/shared/session-collab";
 
@@ -15,6 +16,8 @@ const { SessionCollabToolCard } = await import("../../../src/web/components/chat
 const { ToolCard } = await import("../../../src/web/components/chat/tool-cards");
 const { useProjectStore } = await import("../../../src/web/stores/project-store");
 const { useTabStore } = await import("../../../src/web/stores/tab-store");
+const { useStreamingStore } = await import("../../../src/web/stores/streaming-store");
+const { useSessionCollabStore } = await import("../../../src/web/stores/session-collab-store");
 
 const target = "cccccccc-2222-4000-8000-000000000002";
 const status: SessionStatus = {
@@ -70,6 +73,19 @@ describe("sessionCollabCardState", () => {
     expect(sessionCollabCardState(send, { done: true, isError: true, hasOutput: true })).toBe("error");
     expect(sessionCollabCardState(send, { done: true, isError: false, hasOutput: false })).toBe("stopped");
     expect(sessionCollabCardState(status, { done: true, isError: false, hasOutput: false })).toBe("stopped");
+  });
+});
+
+describe("withLiveStatus", () => {
+  it("brings the reported phase up to what the session does now", () => {
+    const busy = { ...status, phase: "thinking" as const, waitingFor: "question" as const };
+    expect(withLiveStatus(busy, null)).toBe(busy);
+    expect(withLiveStatus(busy, "idle")).toMatchObject({ phase: "idle", waitingFor: null });
+    expect(withLiveStatus(busy, "new_message")).toMatchObject({ phase: "idle", waitingFor: null });
+    expect(withLiveStatus(busy, "running")).toMatchObject({ phase: "thinking", waitingFor: null });
+    expect(withLiveStatus(status, "running")).toMatchObject({ phase: "streaming", waitingFor: null });
+    expect(withLiveStatus(status, "needs_approval")).toMatchObject({ phase: "streaming", waitingFor: "approval" });
+    expect(withLiveStatus(busy, "needs_approval")).toMatchObject({ waitingFor: "question" });
   });
 });
 
@@ -131,6 +147,31 @@ describe("SessionCollabToolCard", () => {
       expect(openTab.mock.calls[0]![0]).toMatchObject({ type: "chat", metadata: { sessionId: target, projectName: "ppm" } });
     } finally {
       openTab.mockRestore();
+    }
+  });
+
+  it("shows the created session as it is now, not as it was when the tool answered", async () => {
+    const create = { tool: "create_session" as const, title: "Count TS", task: "count", wait: true };
+    const running = { ...status, phase: "streaming" as const };
+    const output = JSON.stringify({ sessionId: target, title: "Count TS", providerId: "claude", model: null, status: running,
+      reply: { replied: true, text: "5 files", sentAt: "x" } });
+    useStreamingStore.getState().setStreaming(target, true, "ppm");
+    try {
+      view = await mount(<SessionCollabToolCard call={create} output={output} isError={false} done projectName="ppm" />);
+      await click(view.container.querySelector("button[aria-expanded]"));
+      expect(view.container.textContent).toContain("· Running");
+      // The child finished: the card follows without a new tool result.
+      await act(async () => { useStreamingStore.getState().setStreaming(target, false); });
+      expect(view.container.textContent).toContain("· Idle");
+      expect(view.container.textContent).not.toContain("· Running");
+      // Waiting on the user outranks both.
+      await act(async () => { useSessionCollabStore.setState({ pendingApprovals: { [target]: "r1" } }); });
+      expect(view.container.textContent).toContain("· Needs approval");
+    } finally {
+      await act(async () => {
+        useStreamingStore.getState().setStreaming(target, false);
+        useSessionCollabStore.setState({ pendingApprovals: {} });
+      });
     }
   });
 

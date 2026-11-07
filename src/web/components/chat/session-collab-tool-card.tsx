@@ -9,9 +9,10 @@ import { cn } from "@/lib/utils";
 import { useSessionListStore } from "@/stores/session-list-store";
 import { openLinkedSession, providerLabel } from "@/lib/session-collab-client";
 import {
-  sessionCollabCardState, sessionCollabToolResult, sessionStatusText, stoppedCallText, waitEndedText,
+  sessionCollabCardState, sessionCollabToolResult, sessionStatusText, stoppedCallText, waitEndedText, withLiveStatus,
   type SessionCollabToolCall,
 } from "@/lib/session-collab-tool-call";
+import { useLinkedSessionStatus } from "@/hooks/use-linked-sessions";
 import { tabToolResultText } from "@/lib/tab-tool-call";
 import type { SessionStatus } from "../../../shared/session-collab";
 import { MarkdownContent } from "./message-markdown";
@@ -160,7 +161,9 @@ function Excerpt({ label, text }: { label: string; text: string }) {
   );
 }
 
-function StatusLine({ status, onOpen }: { status: SessionStatus; onOpen?: () => void }) {
+/** One session's line: what the tool reported, with its phase as the session is now. */
+function StatusLine({ status: reported, onOpen }: { status: SessionStatus; onOpen?: () => void }) {
+  const status = withLiveStatus(reported, useLinkedSessionStatus(reported.sessionId));
   const body = (
     <>
       <ProviderBadge providerId={status.providerId} />

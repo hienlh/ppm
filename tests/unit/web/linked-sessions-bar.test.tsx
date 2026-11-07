@@ -98,6 +98,26 @@ describe("global events", () => {
     expect(useSessionCollabStore.getState().announced[unlisted]).toEqual({ title: "Planner", providerId: "codex", projectName: "ppm" });
   });
 
+  it("keeps a created session listed through a sync that does not list it yet (no transcript)", async () => {
+    const fresh = "ffffffff-7777-4000-8000-000000000007";
+    const project = { name: "ppm", path: "/p" };
+    const get = spyOn(api, "get").mockImplementation((async (url: string) =>
+      url.includes("/tags") ? { tags: [], counts: {}, defaultTagId: null } : { sessions: [session(ME, "Me")], hasMore: false }
+    ) as typeof api.get);
+    try {
+      handleSessionCollabEvent({
+        type: "session:created", sessionId: fresh, providerId: "claude", projectName: "ppm", title: "Count TS",
+        spawnedBy: ME, parentTitle: "Me", parentProviderId: "claude", depth: 1, createdAt: "2026-11-06T02:00:00.000Z",
+      });
+      await useSessionListStore.getState().sync(project);
+      const rows = useSessionListStore.getState().byProject[projectCacheId(project)]!.sessions;
+      expect(rows.find((s) => s.id === fresh)).toMatchObject({ title: "Count TS", spawnedBy: ME, parentTitle: "Me" });
+      expect(rows.some((s) => s.id === ME)).toBe(true);
+    } finally {
+      get.mockRestore();
+    }
+  });
+
   it("links the sessions a link change names, and tracks a card until it is resolved", () => {
     handleSessionCollabEvent({ type: "session:link_changed", projectName: "ppm", sessionIds: [ME, PEER] });
     expect(useSessionCollabStore.getState().links[ME]![PEER]).toEqual(["messaged"]);

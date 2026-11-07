@@ -19,6 +19,7 @@ import { collabLiveState, listRunningSessions, onTurnBinding } from "../../serve
 import { collabApprovalBroker } from "./collab-approval-broker.ts";
 import type { CollabCaller, CollabEnv } from "./collab-context.ts";
 import { collabWaits } from "./collab-waits.ts";
+import { collabUnread } from "./collab-unread.ts";
 import { markChildStarting, reserveChildSlot, reservedChildSlots, startingChildren } from "./collab-turn-events.ts";
 import { pairCounter } from "./pair-counter.ts";
 import { childrenOf, depthOf, isSpawned, linkedSessions, parentOf, recordSpawn } from "./session-links.service.ts";
@@ -45,13 +46,10 @@ const firstOf = <T>(sessionId: string, read: (id: string) => T | null): T | null
 
 // A provider naming the turn a delivered message went into settles the "did it read it" question.
 onTurnBinding((binding) => {
-  if (binding.clientMessageId) collabWaits.turnBound(binding.clientMessageId);
+  if (!binding.clientMessageId) return;
+  collabWaits.turnBound(binding.clientMessageId);
+  collabUnread.turnBound(binding.clientMessageId);
 });
-
-/** Messages that reached a session outside a wait, per sender → recipient. */
-const unread = new Map<string, number>();
-const unreadKey = (from: string, to: string): string => `${resolveMigratedSession(from)}>${resolveMigratedSession(to)}`;
-const MAX_UNREAD_KEYS = 5_000;
 
 async function claudeTurnRef(caller: CollabCaller): Promise<TurnReference | null> {
   // A Codex session's turn index means locating its rollout; the from-session block names the turn instead.
@@ -126,20 +124,5 @@ export const collabEnv: CollabEnv = {
   currentTurnRef: claudeTurnRef,
   announceCreated: announceSessionCreated,
   announceLinks: announceSessionLinkChanged,
-  unread: {
-    add: (from, to) => {
-      const key = unreadKey(from, to);
-      const n = (unread.get(key) ?? 0) + 1;
-      unread.delete(key); // newest last, so the cap drops the longest-quiet pairs
-      unread.set(key, n);
-      if (unread.size > MAX_UNREAD_KEYS) unread.delete(unread.keys().next().value!);
-    },
-    take: (from, to) => {
-      const key = unreadKey(from, to);
-      const n = unread.get(key) ?? 0;
-      unread.delete(key);
-      return n;
-    },
-    peek: (from, to) => unread.get(unreadKey(from, to)) ?? 0,
-  },
+  unread: collabUnread,
 };

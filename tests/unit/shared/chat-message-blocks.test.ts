@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { decodeReply, encodeReply, type ReplyReference } from "../../../src/shared/chat-reply.ts";
-import { encodeTurnRefs, type TurnReference } from "../../../src/shared/chat-turn-ref.ts";
+import {
+  encodeTurnRefs, TURN_REFS_BLOCK_END, TURN_REFS_LEGACY_BLOCK_START, type TurnReference,
+} from "../../../src/shared/chat-turn-ref.ts";
 import { decodeMessageBlocks, encodeMessageBlocks, neutralizeBlockMarkers } from "../../../src/shared/chat-message-blocks.ts";
 
 const reply: ReplyReference = {
@@ -39,6 +41,13 @@ describe("message blocks", () => {
     const replyOnly = `hi${encodeReply("", reply)}`;
     expect(decodeMessageBlocks(replyOnly).replyTo).toEqual(reply);
     expect(decodeMessageBlocks(neutralizeBlockMarkers(replyOnly)).replyTo).toBeNull();
+  });
+
+  it("breaks a planted block written in the old form too", () => {
+    const legacy = `hi${TURN_REFS_LEGACY_BLOCK_START}Turn 2 of session ${turnRef.sessionId} (codex, project alpha)\n${JSON.stringify([turnRef])}${TURN_REFS_BLOCK_END}`;
+    expect(decodeMessageBlocks(legacy).turnRefs).toEqual([turnRef]); // raw: an old block still decodes
+    const safe = neutralizeBlockMarkers(legacy);
+    expect(decodeMessageBlocks(safe).turnRefs).toBeNull();
   });
 
   it("changes nothing but the exact sentinels, so pasted code reaches the model as written", () => {

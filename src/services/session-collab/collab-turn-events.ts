@@ -1,5 +1,6 @@
 import { resolveMigratedSession } from "../db.service.ts";
 import { collabWaits } from "./collab-waits.ts";
+import { collabUnread } from "./collab-unread.ts";
 
 /**
  * What the chat registry tells the session tools about turns, kept in a module that imports
@@ -56,9 +57,13 @@ export function startingChildren(projectName: string): string[] {
   return out;
 }
 
-/** A turn of the session ended (or its stream closed): waits on it are judged, and it stops starting. */
+/**
+ * A turn of the session ended (or its stream closed): waits on it are judged, the messages it was
+ * given are read, and it stops starting.
+ */
 export function collabTurnEnded(sessionId: string): void {
   collabWaits.turnEnded(sessionId);
+  collabUnread.turnEnded(sessionId);
   const id = resolveMigratedSession(sessionId);
   for (const key of [sessionId, id]) {
     const held = starting.get(key);

@@ -177,7 +177,10 @@ export interface SessionStatus {
   depth: number;
   /** The opening of the last answer, at most 300 characters, code fences broken. */
   lastAssistantText: string | null;
-  /** Messages this session sent to the caller that the caller has not received in a wait. */
+  /**
+   * Messages this session sent to the caller that no turn of the caller has taken yet (a reply
+   * returned as a wait's result never counts), since the caller last asked.
+   */
   unreadReplies: number;
   /** ISO time of the session's last activity, when known. */
   updatedAt: string | null;

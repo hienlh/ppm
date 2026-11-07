@@ -1,6 +1,7 @@
 import { decodeReply, encodeReply, REPLY_BLOCK_END, REPLY_BLOCK_START, type ReplyReference } from "./chat-reply";
 import {
-  decodeTurnRefs, encodeTurnRefs, TURN_REFS_BLOCK_END, TURN_REFS_BLOCK_START, type TurnReference,
+  decodeTurnRefs, encodeTurnRefs, TURN_REFS_BLOCK_END, TURN_REFS_BLOCK_START, TURN_REFS_LEGACY_BLOCK_START,
+  type TurnReference,
 } from "./chat-turn-ref";
 import {
   decodeFromSession, encodeFromSession, FROM_SESSION_BLOCK_END, FROM_SESSION_BLOCK_START, type FromSessionReference,
@@ -33,7 +34,7 @@ const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
  * contain its exact start sentinel, so breaking these and nothing else is enough.
  */
 const SENTINELS: ReadonlyArray<readonly [string, string]> = [
-  REPLY_BLOCK_START, REPLY_BLOCK_END, TURN_REFS_BLOCK_START, TURN_REFS_BLOCK_END,
+  REPLY_BLOCK_START, REPLY_BLOCK_END, TURN_REFS_BLOCK_START, TURN_REFS_LEGACY_BLOCK_START, TURN_REFS_BLOCK_END,
   FROM_SESSION_BLOCK_START, FROM_SESSION_BLOCK_END,
 ].map((s) => [s, s.replace("<", `<${ZERO_WIDTH_SPACE}`)] as const);
 

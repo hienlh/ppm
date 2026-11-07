@@ -11,6 +11,7 @@ import {
   SESSION_STATUS_TOOL, type SessionCollabTool, type SessionStatus, type SessionWaitOutcome, type SessionDelivery,
 } from "../../shared/session-collab";
 import { tabToolResultText } from "./tab-tool-call";
+import type { LinkedSessionStatus } from "./linked-sessions";
 
 /** Claude names a tool `mcp__ppm-sessions__create_session`; Codex `ppm_sessions:create_session`. */
 const TOOL_NAME = new RegExp(
@@ -151,6 +152,20 @@ export function stoppedCallText(call: SessionCollabToolCall): string {
   return call.tool !== SESSION_STATUS_TOOL && call.wait
     ? "Wait cancelled: the turn was stopped before a reply came."
     : "The turn ended before this tool answered.";
+}
+
+/**
+ * A status as the tool reported it, brought up to what the browser knows the session is doing now.
+ * The tool's status is a snapshot from the moment it answered, and its card stays on screen long
+ * after: a create card kept saying "Running" for a child that had gone idle while the linked bar
+ * beside it said Idle. `live` is the bar's own reading (`linkedSessionStatus`); null keeps the snapshot.
+ */
+export function withLiveStatus(status: SessionStatus, live: LinkedSessionStatus | null): SessionStatus {
+  if (!live) return status;
+  const busy = status.phase === "idle" ? "streaming" : status.phase;
+  if (live === "needs_approval") return { ...status, phase: busy, waitingFor: status.waitingFor ?? "approval" };
+  if (live === "running") return { ...status, phase: busy, waitingFor: null };
+  return { ...status, phase: "idle", waitingFor: null };
 }
 
 /** A session's phase and what it waits on, in words. */

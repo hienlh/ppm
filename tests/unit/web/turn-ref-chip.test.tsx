@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bu
 import { act } from "react";
 import { installDom, uninstallDom, mount, click, type Mounted } from "../../helpers/react-dom";
 import { encodeMessageBlocks } from "../../../src/shared/chat-message-blocks";
-import type { TurnReference } from "../../../src/shared/chat-turn-ref";
+import { TURN_REFS_BLOCK_END, TURN_REFS_LEGACY_BLOCK_START, type TurnReference } from "../../../src/shared/chat-turn-ref";
 
 installDom();
 afterAll(uninstallDom);
@@ -51,6 +51,16 @@ describe("turn chips", () => {
     // The body is what the bubble shows and copies; the block is not text in it.
     expect(view.container.textContent).not.toContain("ppm-turnrefs-v1");
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it("renders the chip of a message sent by an earlier build, whose block carried the JSON in clear", async () => {
+    const json = JSON.stringify([ref]).replace(/[<>&]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+    const old = `compare${TURN_REFS_LEGACY_BLOCK_START}Turn 7 of session ${ref.sessionId} (codex, project other)\n${json}${TURN_REFS_BLOCK_END}`;
+    view = await mount(<UserBubble content={old} timestamp="2026-11-02T00:00:00Z" projectName="ppm" />);
+    const chip = view.container.querySelector('[data-turn-chip="ready"]')!;
+    expect(chip.textContent).toContain("<b>Release</b> & notes");
+    expect(chip.textContent).toContain("Turn 7");
+    expect(view.container.textContent).not.toContain("ppm-turnrefs-v1");
   });
 
   it("leaves the project out when it is the one being looked at", async () => {

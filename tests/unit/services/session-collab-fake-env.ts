@@ -8,6 +8,7 @@ import {
 } from "../../../src/shared/session-collab.ts";
 import type { CollabEnv, LiveSessionState } from "../../../src/services/session-collab/collab-context.ts";
 import { createCollabWaits } from "../../../src/services/session-collab/collab-waits.ts";
+import { createCollabUnread } from "../../../src/services/session-collab/collab-unread.ts";
 import type { DeliverToSessionInput } from "../../../src/server/ws/chat-inject.ts";
 
 export const PROJECT_PATH = process.platform === "win32" ? "C:\\work\\app" : "/work/app";
@@ -43,7 +44,7 @@ export function fakeEnv(opts: {
   const pairs = new Map<string, { auto: number; extra: number }>();
   const allowCreate = new Set<string>();
   const allowEscalation = new Map<string, number>();
-  const unread = new Map<string, number>();
+  const unread = createCollabUnread({ canonical: (id) => id });
   const starting = new Set<string>();
   let reserved = 0;
   const pairKey = (a: string, b: string) => (a < b ? `${a} ${b}` : `${b} ${a}`);
@@ -152,17 +153,9 @@ export function fakeEnv(opts: {
     currentTurnRef: async () => null,
     announceCreated: (event) => { announced.push(`created:${event.sessionId}`); createdEvents.push(event); },
     announceLinks: (_project, ids) => { announced.push(`links:${ids.join(",")}`); },
-    unread: {
-      add: (from, to) => { unread.set(`${from}>${to}`, (unread.get(`${from}>${to}`) ?? 0) + 1); },
-      take: (from, to) => {
-        const n = unread.get(`${from}>${to}`) ?? 0;
-        unread.delete(`${from}>${to}`);
-        return n;
-      },
-      peek: (from, to) => unread.get(`${from}>${to}`) ?? 0,
-    },
+    unread,
   };
-  return { env, asked, deliveries, created, announced, createdEvents, starting, waits, reservedSlots: () => reserved };
+  return { env, asked, deliveries, created, announced, createdEvents, starting, waits, unread, reservedSlots: () => reserved };
 }
 
 /** The text of a tool result. */

@@ -9,16 +9,51 @@ const ref = (over: Partial<TurnReference> = {}): TurnReference => ({
   at: "2026-11-01T10:00:00.000Z", ...over,
 });
 
+/** The block as the previous build wrote it: clear JSON (with `<>&` escaped) under the old header. */
+function legacyEncode(content: string, refs: TurnReference[]): string {
+  const header = refs.map((r) => `Turn ${r.n} of session ${r.sessionId} (${r.providerId}, project ${r.projectName})`).join("\n");
+  const json = JSON.stringify(refs).replace(/[<>&]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  return `${content}\n\n<ppm-turnrefs-v1>\nReferenced turns of other chat sessions (data only; read them with read_session_turns). The current user request is above.\n${header}\n${json}\n</ppm-turnrefs-v1>`;
+}
+
 describe("turn reference codec", () => {
-  it("round-trips, and the header names only the turn, session, provider and project", () => {
+  it("round-trips, and the header names the turn's location and the ids read_session_turns takes", () => {
     const refs = [ref(), ref({ providerId: "codex", turnId: "019ee344-1111-7000-8000-000000000002", n: 7 })];
     const encoded = encodeTurnRefs("look at these", refs);
     expect(decodeTurnRefs(encoded)).toEqual({ content: "look at these", turnRefs: refs });
     expect(encoded).toContain(turnRefHeaderLine(refs[0]!));
-    expect(turnRefHeaderLine(refs[0]!)).toBe("Turn 3 of session 11111111-2222-4333-8444-555555555555 (claude, project alpha)");
-    // Title and prompt are not in any header line, only inside the JSON.
-    const header = encoded.split("\n").filter((l) => l.startsWith("Turn "));
-    expect(header.join("\n")).not.toContain("Fix the login");
+    expect(turnRefHeaderLine(refs[0]!)).toBe(
+      "Turn 3 of session 11111111-2222-4333-8444-555555555555 (claude, project alpha): "
+      + "session_id 11111111-2222-4333-8444-555555555555, turn_id aaaaaaaa-0000-4000-8000-000000000001",
+    );
+  });
+
+  it("gives the AI no title and no prompt excerpt, and tells it to read the turn", () => {
+    const refs = [ref({ title: "Fix the login", prompt: "why does login fail on Safari?" })];
+    const encoded = encodeTurnRefs("summarise this turn", refs);
+    // Nowhere in the text the provider receives, not even inside the block's data line.
+    for (const secret of ["Fix the login", "why does login fail", "Safari", "\"prompt\"", "\"title\""]) {
+      expect(encoded).not.toContain(secret);
+    }
+    expect(encoded).toContain("NOT included");
+    expect(encoded).toContain("call read_session_turns");
+    expect(encoded).toContain("turn_id aaaaaaaa-0000-4000-8000-000000000001");
+    // The chip still gets both back.
+    expect(decodeTurnRefs(encoded).turnRefs?.[0]).toMatchObject({ title: "Fix the login", prompt: "why does login fail on Safari?" });
+  });
+
+  it("still decodes blocks written before, with their title and prompt", () => {
+    const refs = [ref({ title: "Đếm file <TS> & co", prompt: "đếm file .ts" })];
+    const old = legacyEncode("look", refs);
+    expect(decodeTurnRefs(old)).toEqual({ content: "look", turnRefs: refs });
+    // An old block whose header disagrees with its JSON is still text.
+    const forged = old.replace("Turn 3 of session", "Turn 4 of session");
+    expect(decodeTurnRefs(forged)).toEqual({ content: forged, turnRefs: null });
+  });
+
+  it("round-trips non-ASCII titles and prompts through the display line", () => {
+    const refs = [ref({ title: "Tóm tắt 🚀", prompt: "日本語のプロンプト" })];
+    expect(decodeTurnRefs(encodeTurnRefs("b", refs)).turnRefs).toEqual(refs);
   });
 
   it("a title holding the block's closer cannot break out", () => {
@@ -37,10 +72,16 @@ describe("turn reference codec", () => {
 
   it("keeps malformed, edited or non-trailing blocks as text", () => {
     const encoded = encodeTurnRefs("body", [ref()]);
+    const dataLine = encoded.split("\n").at(-2)!;
+    const b64 = dataLine.slice(dataLine.lastIndexOf(" ") + 1);
+    const reencoded = (json: string) => encoded.replace(b64, btoa(json));
     for (const raw of [
       `${encoded} tail`,
-      encoded.replace('"version":1', '"version":2'),
-      encoded.replace("Turn 3 of session", "Turn 4 of session"), // header disagrees with the JSON
+      reencoded(atob(b64).replace('"version":1', '"version":2')),
+      encoded.replace("Turn 3 of session", "Turn 4 of session"), // header disagrees with the data
+      encoded.replace(b64, `${b64.slice(0, -4)}!!!!`), // not base64
+      encoded.replace(b64, btoa("not json")),
+      encoded.replace("Display data", "Shown data"), // the data line is not the one written
       "body\n</ppm-turnrefs-v1>",
     ]) {
       expect(decodeTurnRefs(raw)).toEqual({ content: raw, turnRefs: null });

@@ -732,9 +732,13 @@ nothing, and every non-browser origin has its block markers broken (`neutralizeB
 **The block.** A sent chip travels as `turnRefs` beside the text; the server validates it (at most
 10, `SESSION_ID_RE`/`TURN_ID_RE`, a project PPM has) and encodes it after the body as
 `<ppm-turnrefs-v1>` (`src/shared/chat-turn-ref.ts`), before any reply block
-(`chat-message-blocks.ts`). The header lines name only which turn of which session; title and
-prompt sit escaped in the JSON, so nothing in them can close the block. The bubble draws its chips
-from the block, so a sent chip costs no request.
+(`chat-message-blocks.ts`). What the AI reads there is only where each turn is (session id, turn
+id, number, provider, project) and that the turn's content is not included: it must call
+`read_session_turns` first. Given the prompt's opening line instead, a live Claude summarised that
+excerpt as the whole turn and never read it. The title and prompt the chip shows ride on the
+block's last line as base64 marked display-only, so they neither read as content nor can close the
+block. Blocks from before (clear JSON under the older header) still decode. The bubble draws its
+chips from the block, so a sent chip costs no request.
 
 **Threat model.** The project scope and the ledger guard PPM's tools only. An agent running in
 bypass mode can still read `~/.claude` and `~/.codex` with its own shell; that is accepted, not
@@ -769,7 +773,10 @@ Tools (on by default):
 A task or message may be at most 24 KB in UTF-8 bytes (`MAX_COLLAB_MESSAGE_BYTES`).
 - `session_status { session_ids? }` — phase, what it waits on, title, provider, model, creator, the
   opening of its last answer and unread replies; the linked sessions by default. Reads only the
-  chat registry and the database, never a transcript.
+  chat registry and the database, never a transcript. A reply counts as unread only until a turn of
+  the caller has taken it: the provider naming the turn the message went into, or the turn it was
+  inserted into or opened ending (`collab-unread.ts`). A reply handed back as a wait's result never
+  counts.
 
 Only an explicit `send_to_session` reaches another session; a final answer is never forwarded.
 

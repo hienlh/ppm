@@ -30,10 +30,15 @@ const INITIAL: NavState = { hasAbove: false, atBottom: true, idx: 0, total: 0 };
  * rendered rows by their `data-msg-index`. Scrolling stays `behavior: "auto"` to
  * avoid fighting `use-stick-to-bottom`.
  */
-export function ChatScrollNav({ scrollElement, userIndices, scrollToBottom }: {
+export function ChatScrollNav({ scrollElement, userIndices, scrollToBottom, hideOnPhone = false }: {
   scrollElement: HTMLDivElement | null;
   userIndices: number[];
   scrollToBottom: (opts?: { animation?: "instant" | "smooth" }) => void | Promise<boolean> | boolean;
+  /**
+   * Hidden below `md` while a waiting card is pinned to the foot of the transcript: the puck sits
+   * in the same bottom-right corner and covered the right end of the card's answer buttons.
+   */
+  hideOnPhone?: boolean;
 }) {
   const isMobile = useIsMobile();
   const [nav, setNav] = useState<NavState>(INITIAL);
@@ -186,7 +191,7 @@ export function ChatScrollNav({ scrollElement, userIndices, scrollToBottom }: {
   );
 
   return (
-    <div className="absolute bottom-3 right-2.5 z-10 flex flex-col items-end gap-1.5">
+    <div data-chat-scroll-nav="" className={cn("absolute bottom-3 right-2.5 z-10 flex flex-col items-end gap-1.5", hideOnPhone && "max-md:hidden")}>
       {open ? (
         <div
           ref={clusterRef}

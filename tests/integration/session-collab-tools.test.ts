@@ -315,10 +315,10 @@ describe("session tools", () => {
     await turn.return?.();
   });
 
-  it("counts every message a session received outside a wait", () => {
+  it("counts every message no turn of the recipient has taken yet", () => {
     const from = crypto.randomUUID(), to = crypto.randomUUID();
-    collabEnv.unread.add(from, to);
-    collabEnv.unread.add(from, to);
+    collabEnv.unread.add(from, to, `m-${crypto.randomUUID()}`, "queued");
+    collabEnv.unread.add(from, to, `m-${crypto.randomUUID()}`, "queued");
     expect(collabEnv.unread.peek(from, to)).toBe(2);
     expect(collabEnv.unread.take(from, to)).toBe(2);
     expect(collabEnv.unread.peek(from, to)).toBe(0);

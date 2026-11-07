@@ -664,7 +664,7 @@ export function MessageList({
         <HistoryWindowPendingPrompts approval={pendingApproval} onRespond={onApprovalResponse} question={pendingQuestion} />
       )}
       </div>
-      {!windowView && <ChatScrollNav scrollElement={scrollEl} userIndices={userIndices} scrollToBottom={scrollToBottom} />}
+      {!windowView && <ChatScrollNav scrollElement={scrollEl} userIndices={userIndices} scrollToBottom={scrollToBottom} hideOnPhone={dockApproval} />}
     </div>
   );
 }

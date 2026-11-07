@@ -121,6 +121,17 @@ describe("the history window over the live chat", () => {
     expect(liveScroller().firstElementChild!.children.length).toBe(2);
   });
 
+  it("hides the message navigation on a phone while a card is pinned, so it cannot cover the answer buttons", async () => {
+    view = await mount(list(turns(5, 6)));
+    const nav = () => view!.container.querySelector<HTMLElement>("[data-chat-scroll-nav]")!;
+    expect(nav().className).not.toContain("max-md:hidden");
+    await view.rerender(list(turns(5, 6), allow));
+    expect(nav().className).toContain("max-md:hidden");
+    // Answered: the puck is back.
+    await view.rerender(list(turns(5, 6)));
+    expect(nav().className).not.toContain("max-md:hidden");
+  });
+
   it("shows an open question from the running turn above the composer", async () => {
     const asking: ChatMessage = { id: "a6q", role: "assistant", content: "", timestamp: at, events: [
       { type: "tool_use", tool: "RequestUserInput", toolUseId: "item-1", input: { questions: [{ question: "Which branch?", options: [{ label: "main" }] }] } },

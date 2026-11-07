@@ -30,7 +30,8 @@ export function handleSessionCollabEvent(event: SessionCollabGlobalEvent): void 
     const known = list.byProject[projectCacheId(project)]?.sessions ?? [];
     const parentTitle = spawnedBy ? announcedParent ?? known.find((s) => s.id === spawnedBy)?.title ?? null : null;
     const createdAt = str(event.createdAt) ? event.createdAt : new Date().toISOString();
-    list.upsertSession(project, {
+    // Kept through syncs: the server lists the session only once its first turn has a transcript.
+    list.addCreatedSession(project, {
       id: event.sessionId, providerId: event.providerId, title, projectName: event.projectName,
       createdAt, updatedAt: createdAt, spawnedBy, parentTitle,
     });

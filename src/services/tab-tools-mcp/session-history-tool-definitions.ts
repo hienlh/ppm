@@ -62,8 +62,10 @@ export const READ_SESSION_TURNS_TOOL_DEFINITION = {
   title: "Read turns of a chat",
   description:
     "Read 1 to 10 turns of a chat session: the prompt, the assistant's answers and one line per tool call (no tool "
-    + "output, no thinking). Call it when the user sends a turn link, or after search_sessions or list_session_turns "
-    + "found the turn you need — read the turn rather than guessing what was said. Pass turn_ids, or from_turn and "
+    + "output, no thinking). You must call it whenever the user's message references a turn — a turn link, a turn "
+    + "chip, or a <ppm-turnrefs-v1> block naming session_id and turn_id — before you say anything about that turn: "
+    + "the message carries only where the turn is, never what happened in it. Also call it after search_sessions or "
+    + "list_session_turns found the turn you need — read the turn rather than guessing what was said. Pass turn_ids, or from_turn and "
     + "to_turn as turn numbers. A session of another project can be read only for the exact turns the user sent links "
     + "to in this chat: pass those turn_ids (and the project named in the link).",
   inputSchema: {
