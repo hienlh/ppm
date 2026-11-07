@@ -8,22 +8,33 @@ export const COMPOSER = 'textarea:is([placeholder="Ask anything..."], [placehold
 export const PIN_PX = 16;
 export const PIN_TOLERANCE_PX = 2;
 
-export function createKit({ web, artifacts, currentPage }) {
+/**
+ * `onEvent(type, page, detail)` is optional: the walkthrough recorder
+ * (fixtures/e2e-video-recorder.mjs) uses it to know when each scenario started and each check
+ * passed or failed, on which page, so it can cut one clip per check out of the page's video.
+ */
+export function createKit({ web, artifacts, currentPage, onEvent }) {
   const results = [];
   const failures = [];
-  const record = (name, detail = {}) => { results.push({ name, passed: true, ...detail }); console.log(`PASS ${name}`); };
+  const record = (name, detail = {}) => {
+    results.push({ name, passed: true, ...detail });
+    onEvent?.("check", currentPage(), { name, passed: true });
+    console.log(`PASS ${name}`);
+  };
 
   /**
    * One scenario: a failure is recorded with a screenshot and the run goes on to the next one, so a
    * product bug found in one scenario does not hide what the others would have found.
    */
   async function scenario(label, fn) {
+    onEvent?.("start", currentPage(), { label });
     try {
       await fn();
     } catch (e) {
       const message = String(e?.stack ?? e);
       failures.push({ scenario: label, error: message });
       results.push({ name: `scenario ${label}`, passed: false, error: message });
+      onEvent?.("check", currentPage(), { name: `scenario ${label}`, passed: false });
       console.log(`FAIL scenario ${label}: ${message}`);
       try { await currentPage()?.screenshot({ path: `${artifacts}/FAIL-${label.replace(/[^a-z0-9]+/gi, "-")}.png` }); } catch { /* page gone */ }
     }

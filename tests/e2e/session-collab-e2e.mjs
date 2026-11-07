@@ -21,6 +21,8 @@
 // PPM_PLAYWRIGHT_EXECUTABLE=<chromium> or PPM_PLAYWRIGHT_CHANNEL=chrome picks the browser.
 // PPM_COLLAB_WEB_DIR=<dir> keeps the bundle there (built on the first run, reused after);
 // PPM_COLLAB_ARTIFACTS=<dir> keeps the screenshots and logs.
+// PPM_E2E_RECORD_VIDEO=<dir> also records a walkthrough video, one clip per check, with a small
+// slowMo (PPM_E2E_SLOWMO, default 150 ms); see fixtures/e2e-video-recorder.mjs.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
@@ -33,6 +35,7 @@ import { collabKit } from "./fixtures/session-collab-helpers.mjs";
 import { runCreateSteps } from "./fixtures/session-collab-steps-create.mjs";
 import { runLimitSteps } from "./fixtures/session-collab-steps-limits.mjs";
 import { runSettingsSteps } from "./fixtures/session-collab-steps-settings.mjs";
+import { videoRecorder } from "./fixtures/e2e-video-recorder.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-collab-e2e-"));
 const artifacts = process.env.PPM_COLLAB_ARTIFACTS ? resolve(process.env.PPM_COLLAB_ARTIFACTS) : join(sandbox, "artifacts");
@@ -66,8 +69,9 @@ const backend = spawn("bun", ["tests/e2e/fixtures/session-collab-server.ts"], { 
 let serverLog = ""; backend.stdout.on("data", (s) => serverLog += s); backend.stderr.on("data", (s) => serverLog += s);
 
 let browser;
+const recorder = videoRecorder({ suite: "collab" });
 const ctx = { web, artifacts, current: null, ids: {} };
-const kit = ctx.kit = createKit({ web, artifacts, currentPage: () => ctx.current });
+const kit = ctx.kit = createKit({ web, artifacts, currentPage: () => ctx.current, onEvent: recorder?.event });
 const ck = ctx.ck = collabKit(kit, web);
 const { until, results, failures } = kit;
 const started = Date.now();
@@ -85,7 +89,8 @@ try {
   const pw = modulePath ? await import(pathToFileURL(modulePath).href) : await import("playwright");
   const executablePath = process.env.PPM_PLAYWRIGHT_EXECUTABLE;
   const channel = process.env.PPM_PLAYWRIGHT_CHANNEL;
-  browser = ctx.browser = await pw.chromium.launch({ headless: true, ...(executablePath ? { executablePath } : channel ? { channel } : {}) });
+  browser = ctx.browser = await pw.chromium.launch({ headless: true, ...recorder?.launchOptions, ...(executablePath ? { executablePath } : channel ? { channel } : {}) });
+  recorder?.instrument(browser);
   ctx.pageInit = pageInit;
 
   const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
@@ -109,9 +114,13 @@ try {
   process.exitCode = 1;
   try { await ctx.current?.screenshot({ path: join(artifacts, "failure.png") }); } catch { /* page gone */ }
 } finally {
+  await recorder?.closeContexts();
   await browser?.close();
   backend.kill();
   await writeFile(join(artifacts, "server.log"), serverLog);
   await writeFile(join(artifacts, "results.json"), JSON.stringify(results, null, 2));
+  if (recorder) {
+    try { console.log(await recorder.finish()); } catch (e) { console.log(`NOTE video: ${e?.stack ?? e}`); }
+  }
   console.log(`${results.filter((r) => r.passed).length} passed, ${failures.length} failed in ${Math.round((Date.now() - started) / 1000)} s; artifacts in ${artifacts}`);
 }
