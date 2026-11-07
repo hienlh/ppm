@@ -10,6 +10,8 @@
 //   L4 session_status
 //   L5 Settings → Tools → Session collaboration
 //   P  phone shots (390x844)
+//   L3r (opt-in) turn refs alone: a one-turn chat, its link in a new chat, read_session_turns
+// Every page load is timed into <out>/load-timings.json.
 //
 // Env: PPM_LIVE_URL (http://127.0.0.1:<port>), PPM_LIVE_PROJECT_PATH (scratch project folder),
 // PPM_LIVE_OUT (media folder), PPM_PLAYWRIGHT_MODULE (playwright-core index.mjs),
@@ -71,13 +73,61 @@ async function show(page, sessions) {
   await page.evaluate((p) => localStorage.removeItem(`ppm-panels-${p}`), PROJECT).catch(() => {});
   // The composer is what the scenarios need, so do not hang on the window `load` event (it once
   // took over 30 s while a child session was cold-starting); log when it is that slow.
+  // Every load is timed (DOM ready, load event, composer drawn) into <out>/load-timings.json.
   const started = Date.now();
-  await page.goto(`${web}/project/${PROJECT}`, { waitUntil: "domcontentloaded" });
+  const timing = { at: new Date().toISOString(), tabs: sessions.map((s) => s.title) };
+  loadTimings.push(timing);
+  try {
+    await page.goto(`${web}/project/${PROJECT}`, { waitUntil: "domcontentloaded" });
+  } catch (e) {
+    // A hung navigation: record what the browser was still waiting for, then try once more.
+    timing.hang = await hangReport(page, started, e);
+    log(`  navigation hung: ${JSON.stringify(timing.hang)}`);
+    await writeFile(join(out, "load-timings.json"), JSON.stringify(loadTimings, null, 2));
+    await page.screenshot({ path: join(out, `hang-${loadTimings.length}.png`), timeout: 5000 }).catch(() => {});
+    const retried = Date.now();
+    await page.goto(`${web}/project/${PROJECT}`, { waitUntil: "domcontentloaded", timeout: 60000 });
+    timing.retryDomReadyMs = Date.now() - retried;
+  }
+  timing.domReadyMs = Date.now() - started;
   page.waitForLoadState("load", { timeout: 60000 })
-    .then(() => { if (Date.now() - started > 10000) log(`  slow load event: ${Date.now() - started} ms`); })
-    .catch((e) => log(`  load event not seen: ${String(e).split("\n")[0].slice(0, 120)}`));
+    .then(() => { timing.loadMs = Date.now() - started; if (timing.loadMs > 10000) log(`  slow load event: ${timing.loadMs} ms`); })
+    .catch((e) => { timing.loadError = String(e).split("\n")[0].slice(0, 120); log(`  load event not seen: ${timing.loadError}`); });
   await page.locator(`${COMPOSER}:visible`).first().waitFor({ timeout: 30000 });
+  timing.composerMs = Date.now() - started;
+  timing.slowestResources = await page.evaluate(() => performance.getEntriesByType("resource")
+    .sort((a, b) => b.duration - a.duration).slice(0, 5)
+    .map((e) => `${Math.round(e.duration)} ms ${e.name.replace(location.origin, "")}`)).catch(() => []);
+  log(`  page load: dom ${timing.domReadyMs} ms, composer ${timing.composerMs} ms; slowest: ${timing.slowestResources[0] ?? "-"}`);
+  await writeFile(join(out, "load-timings.json"), JSON.stringify(loadTimings, null, 2));
   await page.waitForTimeout(1200);
+}
+const loadTimings = [];
+
+/** Every request a page has started and not finished, with when it started; set up per page. */
+function trackRequests(page) {
+  const inflight = new Map();
+  const events = [];
+  const note = (kind, req) => { events.push(`${Date.now()} ${kind} ${req.resourceType()} ${req.url().replace(web, "")}`); if (events.length > 200) events.shift(); };
+  page.on("request", (req) => { inflight.set(req, Date.now()); note("start", req); });
+  page.on("requestfinished", (req) => { inflight.delete(req); note("done", req); });
+  page.on("requestfailed", (req) => { inflight.delete(req); note(`failed(${req.failure()?.errorText})`, req); });
+  page.on("framenavigated", (f) => { if (f === page.mainFrame()) events.push(`${Date.now()} navigated ${f.url().replace(web, "")}`); });
+  page.__requests = { inflight, events };
+}
+
+/** What a hung navigation was waiting for: pending requests, the last network events, page state. */
+async function hangReport(page, started, error) {
+  const now = Date.now();
+  const { inflight, events } = page.__requests ?? { inflight: new Map(), events: [] };
+  const pending = [...inflight].map(([req, at]) => `${now - at} ms ${req.resourceType()} ${req.method()} ${req.url().replace(web, "")}`);
+  const recent = events.filter((line) => Number(line.split(" ")[0]) >= started - 2000)
+    .map((line) => { const [t, ...rest] = line.split(" "); return `+${Number(t) - started} ${rest.join(" ")}`; });
+  const state = await Promise.race([
+    page.evaluate(() => ({ url: location.href, readyState: document.readyState, bodyChildren: document.body?.children.length ?? -1 })),
+    new Promise((r) => setTimeout(() => r("evaluate did not answer in 3 s"), 3000)),
+  ]).catch((e) => `evaluate failed: ${String(e).slice(0, 120)}`);
+  return { afterMs: now - started, error: String(error).split("\n")[0].slice(0, 160), pending, recent: recent.slice(-40), state };
 }
 
 async function send(page, text) {
@@ -111,6 +161,7 @@ async function withContext(name, options, fn) {
   await context.addInitScript(pageInit);
   await context.grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
   const page = current = await context.newPage();
+  trackRequests(page);
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(String(e)));
   const notes = [];
@@ -296,6 +347,50 @@ try {
     await shot(page, "L3-04-chip-opened-A-at-turn");
   });
 
+  // ── L3r (opt-in): turn refs on their own, from a fresh one-turn chat ──
+  // A answers one small question; its turn link goes to a new chat, whose AI has to read the turn
+  // with read_session_turns (the reference carries no content of its own) to summarise it.
+  if (only.includes("L3r")) await withContext("L3r-turn-refs", {}, async (page, notes) => {
+    await show(page, [A]);
+    await send(page, "Trong thư mục src có những file .ts nào? Liệt kê ngắn gọn kèm số dòng của mỗi file.");
+    await waitIdle(page, 240000);
+    const turns = await turnsOf(A.id);
+    if (!turns.length) throw new Error("A has no turns");
+    const target = turns.at(-1);
+    state.refTurnL3r = target.turnId; await saveState();
+    notes.push(`A turn ${target.turnId}`);
+    await shot(page, "L3r-01-A-answered");
+    await show(page, [A]);
+    const row = page.locator(`[data-turn-start="${target.turnId}"]:visible`).first();
+    await row.scrollIntoViewIfNeeded();
+    await row.hover();
+    await page.waitForTimeout(500);
+    await row.getByRole("button", { name: /Copy turn link|Link ready/ }).click();
+    const link = await until("link copied", async () => (await kit.copied(page)).at(-1), 15000);
+    notes.push(`link: ${link}`);
+    await shot(page, "L3r-02-copy-turn-link");
+
+    if (!state.B3r) { state.B3r = await newSession("Tóm tắt lượt"); await saveState(); }
+    await show(page, [state.B3r, A]);
+    const box = page.locator(`${COMPOSER}:visible`).first();
+    await kit.paste(box, link);
+    await until("ready chip", async () => (await page.locator('[data-composer-turn-refs] [data-turn-chip="ready"]').count()) >= 1, 20000);
+    notes.push(`chip: ${(await page.locator('[data-composer-turn-refs] [data-turn-chip="ready"]').first().innerText()).replace(/\s+/g, " ")}`);
+    await shot(page, "L3r-03-chip-in-composer");
+    await send(page, "Tóm tắt lượt này");
+    await waitIdle(page, 300000);
+    // Whether the AI read the turn is checked in its transcript; the screen only says a card exists.
+    const calls = await page.locator("text=/read_session_turns/").count();
+    notes.push(`read_session_turns on screen: ${calls}`);
+    await shot(page, "L3r-04-B-read-and-summarised");
+
+    const sentChip = page.locator('[data-turn-refs] [data-turn-chip="ready"]:visible').last();
+    await sentChip.click();
+    await page.waitForTimeout(3500);
+    notes.push(`after chip click: ${JSON.stringify(await kit.offsetOf(page, target.turnId).catch(() => null))}`);
+    await shot(page, "L3r-05-chip-opened-A-at-turn");
+  });
+
   // ── L4 ──
   if (only.includes("L4")) await withContext("L4-session-status", {}, async (page, notes) => {
     await show(page, [A]);
@@ -352,5 +447,6 @@ try {
 } finally {
   await browser.close();
   await saveState();
+  await writeFile(join(out, "load-timings.json"), JSON.stringify(loadTimings, null, 2));
   log(`results in ${resultsPath}`);
 }
