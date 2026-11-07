@@ -29,6 +29,16 @@ describe("resolveTargetDir", () => {
     expect(r).toBe(resolve("./rel/path"));
   });
 
+  it("codex format with user scope → ~/.agents/skills/ppm", () => {
+    const r = resolveTargetDir({ format: "codex", scope: "user" });
+    expect(r).toBe(resolve(homedir(), ".agents/skills/ppm"));
+  });
+
+  it("codex format with project scope → <cwd>/.agents/skills/ppm", () => {
+    const r = resolveTargetDir({ format: "codex", scope: "project" });
+    expect(r).toBe(resolve(process.cwd(), ".agents/skills/ppm"));
+  });
+
   it("antigravity format with user scope → ~/.gemini/config/skills/ppm", () => {
     const r = resolveTargetDir({ format: "antigravity", scope: "user" });
     expect(r).toBe(resolve(homedir(), ".gemini/config/skills/ppm"));

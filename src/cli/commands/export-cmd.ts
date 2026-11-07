@@ -1,5 +1,5 @@
-// `ppm export skill` — install bundled skill package to ~/.claude/skills/ppm/ (or custom path)
-// so external AI tools (Claude Code, compatible agents) can control PPM.
+// `ppm export skill` — install bundled skill package to ~/.claude/skills/ppm/ (Codex: ~/.agents/skills/ppm/,
+// Antigravity: ~/.gemini/config/skills/ppm/, or a custom path) so AI agents can control PPM.
 import type { Command } from "commander";
 import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -26,14 +26,14 @@ export function registerExportCommands(program: Command): void {
 
   exp
     .command("skill")
-    .description("Export skill for controlling PPM from external AI tools (Claude Code, Antigravity)")
-    .option("--install", "Install to target dir (default scope=user → ~/.claude/skills/ppm/ or ~/.gemini/config/skills/ppm/)")
+    .description("Export skill for controlling PPM from AI agents (Claude Code, Codex, Antigravity)")
+    .option("--install", "Install to target dir (default scope=user → ~/.claude/skills/ppm/, ~/.agents/skills/ppm/ or ~/.gemini/config/skills/ppm/)")
     .option("--scope <scope>", "Install scope: user | project", "user")
     .option("--output <dir>", "Custom output directory (overrides --scope)")
-    .option("--format <fmt>", "Output format: claude-code | antigravity", "claude-code")
+    .option("--format <fmt>", "Output format: claude-code | codex | antigravity", "claude-code")
     .action(async (opts: ExportSkillOpts) => {
-      if (opts.format !== "claude-code" && opts.format !== "antigravity") {
-        console.error(`Unsupported format: ${opts.format}. Supported formats: 'claude-code', 'antigravity'.`);
+      if (opts.format !== "claude-code" && opts.format !== "codex" && opts.format !== "antigravity") {
+        console.error(`Unsupported format: ${opts.format}. Supported formats: 'claude-code', 'codex', 'antigravity'.`);
         process.exit(1);
       }
       if (opts.scope && opts.scope !== "user" && opts.scope !== "project") {

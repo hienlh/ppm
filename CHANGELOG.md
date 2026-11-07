@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`ppm export skill` installs from a release binary, and for Antigravity and Codex too.** The skill was copied from `assets/` on disk, which a release binary does not have, so a release could not install it; it is now built into the binary. `--format antigravity` installs it where agy reads user skills (`~/.gemini/config/skills/ppm`), `--format codex` where every Codex account reads them (`~/.agents/skills/ppm`), and `--scope project` puts either in the project's `.agents/skills/ppm`. The skill itself is rewritten against the CLI and HTTP API as they are.
+
+### Fixed
+
+- **`--json` output could not be parsed.** Every command printed the version banner on stdout first; it is now left out when `--json` is given.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed

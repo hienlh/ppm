@@ -15,8 +15,8 @@ PPM is a local-first web IDE + project manager. This skill describes how to cont
 | Server URL | `http://localhost:<port>` — `port` from `ppm status --json` (8080 unless configured otherwise) |
 | PPM directory | `~/.ppm` (`$PPM_HOME` when set) |
 | Config DB | `~/.ppm/ppm.db` (SQLite); `--profile <name>` uses `~/.ppm/ppm.<name>.db` |
-| Skill root (user) | `~/.claude/skills/` (Claude) or `~/.gemini/config/skills/` (Antigravity) |
-| Skill root (project) | `<project>/.claude/skills/` or `<project>/.agents/skills/` |
+| Skill root (user) | `~/.claude/skills/` (Claude), `~/.agents/skills/` (Codex), `~/.gemini/config/skills/` (Antigravity) |
+| Skill root (project) | `<project>/.claude/skills/` (Claude), `<project>/.agents/skills/` (Codex, Antigravity) |
 
 ## When to Use This Skill
 
@@ -54,8 +54,8 @@ Invoke when the user asks to:
 - Many commands take `--json` (the CLI reference lists which); with it, stdout is the JSON alone. `projects list`, `chat list`, `schedule list` and `git` print text.
 - `ppm restart`, `ppm stop`, `ppm down` and `ppm upgrade` cut every running PPM chat — including the one you may be running in. Ask the user first.
 - Data in a saved database connection:
-  - Inside a Claude or Codex PPM chat (where PPM sets `PPM_AI_CHAT=1`), `db tables/schema/data/query/run` refuse and name the tool to use instead: `db_query` to read, `db_execute` to change. The user can switch those off in Settings → Tools, and approves each write.
-  - Inside an Antigravity chat (where commands run in the Antigravity Language Server environment without `PPM_AI_CHAT=1`) or outside PPM, there are no `db_query`/`db_execute` MCP tools and `ppm db` runs directly. So always run `PPM_AI_CHAT=1 ppm db list` first, leave alone any connection it hides (the user turned "Available to the AI chat" off for it), and ask before any write.
+  - Inside a PPM chat (PPM sets `PPM_AI_CHAT=1` for Claude, Codex and Antigravity alike), `db tables/schema/data/query/run` refuse. A Claude or Codex chat has tools instead: `db_query` to read, `db_execute` to change; the user can switch those off in Settings → Tools, and approves each write. An Antigravity chat has neither tool, so ask the user to run the query, or to ask it in a Claude or Codex chat.
+  - Outside PPM there are no such tools and `ppm db` runs, obeying neither. So run `PPM_AI_CHAT=1 ppm db list` first, leave alone any connection it hides (the user turned "Available to the AI chat" off for it), and ask before any write.
   - The connection commands (`list`, `add`, `test`, `remove`, `driver`) work in both.
 - The HTTP API needs `Authorization: Bearer <token>` while auth is on (the default). The token is the access password the user signs in to PPM with: ask for it — `ppm config get auth.token` deliberately does not print it. Never turn auth off to get around this: PPM's tunnel can put it on the internet.
 - The config DB is **SQLite**. You may open `~/.ppm/ppm.db` read-only for inspection — see [references/db-schema.md](references/db-schema.md). It holds secrets (the access token among them): never print or send them.
