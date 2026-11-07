@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **When Telegram refused PPMBot's request for new messages, PPMBot asked again straight away, as fast as Telegram could answer.** Telegram refuses while another program is reading the same bot, or once the bot's token has been revoked, and PPMBot kept asking until that was fixed. It now waits 2 seconds after a refusal and twice as long after each one that follows, up to 30 seconds, or as long as Telegram asks it to (up to 5 minutes), and goes back to normal as soon as a request succeeds. Turning PPMBot off now also ends a wait at once: turning it off and on again while it waited after a network error used to leave the old loop running beside the new one.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed

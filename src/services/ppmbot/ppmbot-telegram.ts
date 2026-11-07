@@ -20,23 +20,49 @@ const COMMANDS = new Set([
 
 export type UpdateHandler = (update: TelegramUpdate) => Promise<void>;
 
+export interface PPMBotTelegramOptions {
+  /** Waits between polls. Tests pass a fake; the default resolves early when `signal` aborts. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+export class TelegramPollRefused extends Error {
+  constructor(readonly code: number | undefined, readonly retryAfterSec: number | undefined) {
+    super(`getUpdates refused: ${code ?? "?"}`);
+  }
+}
+
+function sleepUntilAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
 export class PPMBotTelegram {
   private token: string;
   private offset = 0;
   private running = false;
   private abortController: AbortController | null = null;
-  private retryCount = 0;
+  private stopController: AbortController | null = null;
+  private sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   /** The getUpdates refusal last logged — see `logRefusal`. */
   private refusal: { text: string; loggedAt: number; suppressed: number } | null = null;
 
   /** Track last edit time per chatId:messageId to throttle */
   private lastEditTime = new Map<string, number>();
 
-  constructor(token: string) {
+  constructor(token: string, opts: PPMBotTelegramOptions = {}) {
     if (!BOT_TOKEN_RE.test(token)) {
       throw new Error("Invalid Telegram bot token format");
     }
     this.token = token;
+    this.sleep = opts.sleep ?? sleepUntilAborted;
   }
 
   // ── Polling ─────────────────────────────────────────────────────
@@ -62,17 +88,21 @@ export class PPMBotTelegram {
   async startPolling(handler: UpdateHandler): Promise<void> {
     if (this.running) return;
     this.running = true;
-    this.retryCount = 0;
+    let retryCount = 0;
+    const stopController = new AbortController();
+    this.stopController = stopController;
+    const { signal } = stopController;
 
     // Register commands on startup
     await this.registerCommands();
 
     log.info("Polling started");
 
-    while (this.running) {
+    while (this.running && !signal.aborted) {
       try {
         const updates = await this.getUpdates();
-        this.retryCount = 0;
+        if (!this.running || signal.aborted) break;
+        retryCount = 0;
 
         for (const update of updates) {
           this.offset = update.update_id + 1;
@@ -83,13 +113,17 @@ export class PPMBotTelegram {
           });
         }
       } catch (err) {
-        if (!this.running) break;
-        this.retryCount++;
-        const delay = Math.min(1000 * 2 ** this.retryCount, 30_000);
-        log.warn(
-          `Poll error (retry ${this.retryCount}): ${(err as Error).message}. Retrying in ${delay}ms`,
-        );
-        await Bun.sleep(delay);
+        if (!this.running || signal.aborted) break;
+        retryCount++;
+        const delay = err instanceof TelegramPollRefused && err.retryAfterSec !== undefined && err.retryAfterSec > 0
+          ? Math.min(err.retryAfterSec * 1000, 300_000)
+          : Math.min(1000 * 2 ** retryCount, 30_000);
+        if (!(err instanceof TelegramPollRefused)) {
+          log.warn(
+            `Poll error (retry ${retryCount}): ${(err as Error).message}. Retrying in ${delay}ms`,
+          );
+        }
+        await this.sleep(delay, signal);
       }
     }
 
@@ -99,6 +133,7 @@ export class PPMBotTelegram {
   /** Stop polling gracefully */
   stop(): void {
     this.running = false;
+    this.stopController?.abort();
     this.abortController?.abort();
     this.lastEditTime.clear();
   }
@@ -111,9 +146,10 @@ export class PPMBotTelegram {
 
   /** Fetch updates via long-polling */
   private async getUpdates(): Promise<TelegramUpdate[]> {
-    this.abortController = new AbortController();
+    const controller = new AbortController();
+    this.abortController = controller;
     const fetchTimeout = setTimeout(
-      () => this.abortController?.abort(),
+      () => controller.abort(),
       (POLL_TIMEOUT + 10) * 1000,
     );
 
@@ -126,26 +162,28 @@ export class PPMBotTelegram {
           timeout: POLL_TIMEOUT,
           allowed_updates: ["message"],
         }),
-        signal: this.abortController.signal,
+        signal: controller.signal,
       });
 
-      const json = (await res.json()) as { ok: boolean; result?: TelegramUpdate[]; error_code?: number; description?: string };
-      if (!json.ok) this.logRefusal(json.error_code, json.description);
-      else if (this.refusal) {
+      const json = (await res.json()) as { ok: boolean; result?: TelegramUpdate[]; error_code?: number; description?: string; parameters?: { retry_after?: number } };
+      if (!json.ok) {
+        this.logRefusal(json.error_code, json.description);
+        throw new TelegramPollRefused(json.error_code, json.parameters?.retry_after);
+      } else if (this.refusal) {
         log.info("getUpdates accepted again");
         this.refusal = null;
       }
-      if (!json.ok || !json.result) return [];
+      if (!json.result) return [];
       return json.result;
     } finally {
       clearTimeout(fetchTimeout);
-      this.abortController = null;
+      if (this.abortController === controller) this.abortController = null;
     }
   }
 
   /**
    * Telegram refused the poll — 401: the token was revoked; 409: something else reads this bot.
-   * The loop asks again at once, so a refusal is logged when it changes and then at most once a
+   * Refusals can persist across retries, so one is logged when it changes and then at most once a
    * minute, with how many went unlogged in between.
    */
   private logRefusal(code: number | undefined, description: string | undefined): void {
