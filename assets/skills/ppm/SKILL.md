@@ -1,6 +1,6 @@
 ---
 name: ppm
-description: Control PPM (Project & Process Manager) via its CLI, HTTP API, and SQLite config database. Use when the user wants to manage PPM projects, query database connections, start/stop the PPM server, view logs, or read/write PPM config.
+description: Control PPM (Project & Process Manager) via its CLI, HTTP API, and SQLite config database. Use when the user wants to start/stop or check the PPM server, manage PPM projects, chat sessions, git in a project, schedules, database connections, extensions, config, logs, backups, or autostart.
 ---
 
 # PPM Skill
@@ -12,57 +12,67 @@ PPM is a local-first web IDE + project manager. This skill describes how to cont
 | What | Where |
 |---|---|
 | CLI binary | `ppm` |
-| Default server | `http://localhost:8080` |
-| Config DB (prod) | `~/.ppm/ppm.db` (SQLite) |
-| Config DB (dev) | `~/.ppm/ppm.dev.db` (port 8081) |
-| Skill root (user) | `~/.claude/skills/` |
-| Skill root (project) | `<project>/.claude/skills/` |
+| Server URL | `http://localhost:<port>` — `port` from `ppm status --json` (8080 unless configured otherwise) |
+| PPM directory | `~/.ppm` (`$PPM_HOME` when set) |
+| Config DB | `~/.ppm/ppm.db` (SQLite); `--profile <name>` uses `~/.ppm/ppm.<name>.db` |
+| Skill root (user) | `~/.claude/skills/` (Claude) or `~/.gemini/config/skills/` (Antigravity) |
+| Skill root (project) | `<project>/.claude/skills/` or `<project>/.agents/skills/` |
 
 ## When to Use This Skill
 
 Invoke when the user asks to:
-- Start, stop, restart, or check the PPM server
+- Start, stop, restart, or check the PPM server (`start`, `stop`, `restart`, `down`, `status`)
 - Manage registered projects (`projects list/add/remove`)
-- Manage database connections stored in PPM config — PostgreSQL, MySQL / MariaDB, SQLite (`db list/add/test/query`; MySQL and MariaDB need `db driver install mysql` once)
+- Create, list, or message AI chat sessions from the terminal (`chat`)
+- Run git in a registered project (`git status/log/diff/stage/commit/push/pull/branch`)
+- Manage scheduled agents (`schedule list/add/enable/disable/run-now/runs`)
+- Manage database connections stored in PPM config — PostgreSQL, MySQL / MariaDB, SQLite (`db list/add/test/remove`; MySQL and MariaDB need `db driver install mysql` once)
 - Get or set PPM config values (`config get/set`)
-- View PPM logs, status, or report a bug
-- Install, upgrade, or inspect bundled skills / extensions
-- Control the PPM daemon autostart registration
+- View PPM logs, status, or report a bug (`logs`, `report`)
+- Snapshot or restore the config database (`backup`, `restore`)
+- Install, upgrade, or inspect bundled skills / extensions (`skills`, `ext`, `upgrade`)
+- Control the PPM daemon autostart registration (`autostart`)
 
 ## Top Tasks
 
-1. **Check if PPM is running** → `ppm status`
-2. **Start server** → `ppm start` (use `--port <n>` to override, `--profile dev` for dev DB)
+1. **Is PPM running, and on which port?** → `ppm status --json` → `running`, `healthy`, `port`
+2. **Start server** → `ppm start` (use `--port <n>` to override)
 3. **List projects** → `ppm projects list`
 4. **Add project** → `ppm projects add <path>`
-5. **List DB connections** → `PPM_AI_CHAT=1 ppm db list`
-6. **Read or change data in a saved connection** → the `db_query` / `db_execute` tools, not this CLI (see Rules of Thumb)
-7. **Read config** → `ppm config get <key>` (e.g. `port`, `auth.enabled`)
-8. **Tail logs** → `ppm logs --tail 100` or `ppm logs -f` to follow
-9. **Upgrade PPM** → `ppm upgrade` (or `--check` to only check)
-10. **Open in browser** → `ppm open`
+5. **Ask a PPM chat to do something** → `ppm chat create -p <project>`, then `ppm chat send <session-id> "<message>"`
+6. **Git status of a project** → `ppm git status -p <project>`
+7. **List DB connections** → `PPM_AI_CHAT=1 ppm db list --json`
+8. **Read or change data in a saved connection** → see Rules of Thumb
+9. **Read config** → `ppm config get <key>` (e.g. `port`, `auth.enabled`)
+10. **Tail logs** → `ppm logs --tail 100`, `ppm logs -f` to follow, `ppm logs -l error` for errors only
+11. **Upgrade PPM** → `ppm upgrade` (or `--check` to only check)
 
 ## Rules of Thumb
 
-- Always run `ppm status` before assuming the server is up.
-- Commands exit non-zero on failure and print to stderr. Capture both streams.
-- Set `PPM_AI_CHAT=1` for every `ppm db` command, as above: connections the user has made unavailable to AI are then left out of `db list` and refused by the rest. PPM's own chat sets it already.
-- Inside a PPM chat, `db tables/schema/data/query/run` do **not** run — they refuse and name the tool that serves them (`db_query`, `db_execute`). Those tools are what the user can switch off per tool in Settings → Tools, and a write through `db_execute` waits for the user to approve it; the CLI obeys neither, so it is for a person at a terminal. The connection commands (`list`, `add`, `test`, `remove`, `driver`) are unaffected.
-- Most listing commands accept `--json` for structured output; prefer JSON when parsing. Check `--help` if unsure.
-- The config DB is **SQLite**. You may open `~/.ppm/ppm.db` read-only for inspection — see [references/db-schema.md](references/db-schema.md).
+- `ppm status` exits 0 whether or not PPM is up: read `running` and `healthy` from `ppm status --json`.
+- Commands exit non-zero on failure and print the reason to stderr. Capture both streams.
+- Many commands take `--json` (the CLI reference lists which); with it, stdout is the JSON alone. `projects list`, `chat list`, `schedule list` and `git` print text.
+- `ppm restart`, `ppm stop`, `ppm down` and `ppm upgrade` cut every running PPM chat — including the one you may be running in. Ask the user first.
+- Data in a saved database connection:
+  - Inside a Claude or Codex PPM chat (where PPM sets `PPM_AI_CHAT=1`), `db tables/schema/data/query/run` refuse and name the tool to use instead: `db_query` to read, `db_execute` to change. The user can switch those off in Settings → Tools, and approves each write.
+  - Inside an Antigravity chat (where commands run in the Antigravity Language Server environment without `PPM_AI_CHAT=1`) or outside PPM, there are no `db_query`/`db_execute` MCP tools and `ppm db` runs directly. So always run `PPM_AI_CHAT=1 ppm db list` first, leave alone any connection it hides (the user turned "Available to the AI chat" off for it), and ask before any write.
+  - The connection commands (`list`, `add`, `test`, `remove`, `driver`) work in both.
+- The HTTP API needs `Authorization: Bearer <token>` while auth is on (the default). The token is the access password the user signs in to PPM with: ask for it — `ppm config get auth.token` deliberately does not print it. Never turn auth off to get around this: PPM's tunnel can put it on the internet.
+- The config DB is **SQLite**. You may open `~/.ppm/ppm.db` read-only for inspection — see [references/db-schema.md](references/db-schema.md). It holds secrets (the access token among them): never print or send them.
 - Do NOT edit the config DB directly while the server is running; use `ppm config set` or the HTTP API.
 
 ## Links
 
 - Complete CLI options, every subcommand → [references/cli-reference.md](references/cli-reference.md)
-- HTTP API routes (25+) → [references/http-api.md](references/http-api.md)
-- Config DB schema (runtime-generated from user's DB) → [references/db-schema.md](references/db-schema.md)
+- HTTP API routes, authentication, WebSockets → [references/http-api.md](references/http-api.md)
+- Config DB schema (written by `ppm export skill --install` from the user's own DB) → [references/db-schema.md](references/db-schema.md)
 - Worked recipes for common tasks → [references/common-tasks.md](references/common-tasks.md)
 
 ## Error Handling
 
-- Server not running → `ppm status` exits non-zero; start with `ppm start`.
+- Server not running → `ppm status --json` shows `"running": false`; start with `ppm start`, and read `ppm logs --tail 50` if it does not come up.
 - Port conflict → `ppm config set port <n>` then `ppm restart`.
+- `"state": "paused"` in `ppm status --json` (it crashed repeatedly) → read `ppm logs -l error`, then `ppm restart --force` to resume.
 - Missing config DB → `ppm init` creates defaults.
 - Upgrade failure → re-run `ppm upgrade` or `npm i -g @hienlh/ppm@latest`.
 

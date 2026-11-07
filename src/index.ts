@@ -16,7 +16,10 @@ export async function buildProgram(): Promise<Command> {
     .name("ppm")
     .description("Personal Project Manager — mobile-first web IDE")
     .version(VERSION)
-    .hook("preAction", () => {
+    .hook("preAction", (_program, actionCommand) => {
+      // `--json` output is parsed (by scripts, and by the AI agents the PPM skill points here),
+      // so nothing may come before it on stdout.
+      if (actionCommand.opts().json) return;
       console.log(`  PPM v${VERSION}\n`);
     });
 

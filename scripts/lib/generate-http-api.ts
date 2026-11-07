@@ -1,19 +1,22 @@
-// Static scan of Hono route definitions. Two-pass:
-//   1. Parse src/server/index.ts → mount map { mountPath: routerIdent } + import { routerIdent: relFile }.
-//   2. For each mounted route file, regex-scan HTTP method calls, group by mount prefix.
+// Static scan of Hono route definitions, starting from the `app` in src/server/index.ts: a router's
+// own method calls, then each router it `.route()`s, resolved through that file's imports — the
+// whole of /api/project/:projectName lives two levels down. Grouped by full mount prefix.
+// Only calls on the mounted router itself count, and only paths starting with `/` or `*`: route
+// files are full of `configService.get("auth")` and `c.get("projectPath")`, which are not routes.
 // No code execution — all data comes from string parsing.
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { OutputFile } from "./write-output.ts";
 
-const METHOD_RE = /\.(get|post|put|patch|delete|all)\s*\(\s*["'`]([^"'`]+)["'`]/g;
-const MOUNT_RE = /\.route\s*\(\s*["'`]([^"'`]+)["'`]\s*,\s*(\w+)\s*\)/g;
+const METHOD_RE = /\b(\w+)\s*\.(get|post|put|patch|delete|all)\s*\(\s*["'`](\/[^"'`]*|\*)["'`]/g;
+const MOUNT_RE = /\b(\w+)\s*\.route\s*\(\s*["'`]([^"'`]+)["'`]\s*,\s*(\w+)\s*\)/g;
 const IMPORT_RE = /import\s*\{\s*([\w,\s]+)\s*\}\s*from\s*["'`]([^"'`]+)["'`]/g;
+const WS_PATH_RE = /url\.pathname\s*===\s*["'`](\/ws\/[^"'`]+)["'`]/g;
+const WS_PROJECT_TYPE_RE = /wsType\s*===\s*["'`]([\w-]+)["'`]/g;
 
 interface RouteEntry {
   method: string;
   path: string;
-  desc?: string;
 }
 
 export function generateHttpApi(root: string): OutputFile[] {
@@ -23,28 +26,11 @@ export function generateHttpApi(root: string): OutputFile[] {
   }
 
   const serverSrc = readFileSync(serverIndexPath, "utf-8");
-  const importMap = parseImports(serverSrc);
-  const mounts = parseMounts(serverSrc);
 
   // Group routes by mount prefix
   const grouped: Record<string, RouteEntry[]> = {};
   const warnings: string[] = [];
-
-  for (const [prefix, routerIdent] of mounts) {
-    const rel = importMap.get(routerIdent);
-    if (!rel) {
-      warnings.push(`Unresolved import for router '${routerIdent}' (mount: ${prefix})`);
-      continue;
-    }
-    const routeFile = resolveImport(serverIndexPath, rel);
-    if (!existsSync(routeFile)) {
-      warnings.push(`Route file not found: ${routeFile} (router: ${routerIdent})`);
-      continue;
-    }
-    const entries = scanRoutes(readFileSync(routeFile, "utf-8"));
-    if (!grouped[prefix]) grouped[prefix] = [];
-    grouped[prefix].push(...entries);
-  }
+  scanRouter(serverIndexPath, "app", "", grouped, warnings, new Set());
 
   // Build markdown
   const parts: string[] = [];
@@ -52,7 +38,17 @@ export function generateHttpApi(root: string): OutputFile[] {
   parts.push("");
   parts.push("_Auto-generated. Do not edit._");
   parts.push("");
-  parts.push("_Base URL: `http://localhost:8080` (default; override via `ppm config set port <n>`)._");
+  parts.push("_Base URL: `http://localhost:<port>` — `port` in `ppm status --json` (8080 unless configured otherwise)._");
+  parts.push("");
+  parts.push("## Authentication");
+  parts.push("");
+  parts.push("With auth on (the default), `/api/*` needs `Authorization: Bearer <token>` (`GET /api/health` and `GET /api/info`");
+  parts.push("answer without one), and a WebSocket takes it as `?token=<token>`. The token is the access password the user");
+  parts.push("signs in to PPM with; `GET /api/auth/check` answers 200 when it is right.");
+  parts.push("`ppm config get auth.token` deliberately does not print it: ask the user for it rather than digging it out of");
+  parts.push("the config database, or use the CLI, which needs no token.");
+  parts.push("");
+  parts.push("JSON responses are wrapped: `{ \"ok\": true, \"data\": … }` or `{ \"ok\": false, \"error\": \"…\" }`.");
   parts.push("");
 
   const sortedPrefixes = Object.keys(grouped).sort();
@@ -62,19 +58,13 @@ export function generateHttpApi(root: string): OutputFile[] {
     parts.push(`## ${prefix || "/"}`);
     parts.push("");
     for (const r of routes) {
-      const fullPath = joinPath(prefix, r.path);
       const method = r.method.toUpperCase().padEnd(6);
-      parts.push(`- \`${method} ${fullPath}\`${r.desc ? ` — ${r.desc}` : ""}`);
+      parts.push(`- \`${method} ${r.path}\``);
     }
     parts.push("");
   }
 
-  parts.push("## WebSocket");
-  parts.push("");
-  parts.push("- `ws://<host>/ws/chat` — AI chat stream (Claude Agent SDK)");
-  parts.push("- `ws://<host>/ws/terminal` — PTY terminal multiplexer");
-  parts.push("- `ws://<host>/ws/extensions` — extension host channel");
-  parts.push("");
+  parts.push(...renderWebSockets(serverSrc, warnings));
 
   const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf-8")) as { version: string };
   parts.push(`<!-- Generated from src/server/routes/ for PPM v${pkg.version} -->`);
@@ -90,26 +80,80 @@ export function generateHttpApi(root: string): OutputFile[] {
   return [{ relPath: "references/http-api.md", content: parts.join("\n") + "\n" }];
 }
 
-function parseImports(src: string): Map<string, string> {
-  const map = new Map<string, string>();
-  let m: RegExpExecArray | null;
-  const re = new RegExp(IMPORT_RE);
-  while ((m = re.exec(src)) !== null) {
-    const ids = (m[1] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-    const path = m[2] ?? "";
-    for (const id of ids) map.set(id, path);
+/** Record `ident`'s routes in `file` under `prefix`, then those of every router it mounts. */
+function scanRouter(
+  file: string,
+  ident: string,
+  prefix: string,
+  grouped: Record<string, RouteEntry[]>,
+  warnings: string[],
+  seen: Set<string>,
+): void {
+  if (!existsSync(file)) {
+    warnings.push(`Route file not found: ${file} (router: ${ident})`);
+    return;
   }
-  return map;
+  const key = `${file}#${ident}#${prefix}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+
+  const src = readFileSync(file, "utf-8");
+  let routeCalls = matches(METHOD_RE, src);
+  let mounts = matches(MOUNT_RE, src);
+  // A router built by a factory (`export const xRoutes = createXRoutes()`) is a local `routes` or
+  // `app` inside it, so when nothing is called on the name itself, every router call in the file counts.
+  const own = ([, receiver]: string[]) => receiver === ident;
+  if (routeCalls.some(own) || mounts.some(own)) {
+    routeCalls = routeCalls.filter(own);
+    mounts = mounts.filter(own);
+  }
+  const routes = routeCalls.map(([, , method, path]) => ({ method: method!, path: joinPath(prefix, path!) }));
+  if (routes.length === 0 && mounts.length === 0) {
+    warnings.push(`No routes found on '${ident}' in ${file} (mount: ${prefix})`);
+    return;
+  }
+  // The server's own routes (`/api/health`, `/api/auth/check`) have no mount: group them by first segment.
+  for (const r of routes) (grouped[prefix || `/${r.path.split("/")[1] ?? ""}`] ??= []).push(r);
+
+  const imports = parseImports(src);
+  for (const [, , subPath, subIdent] of mounts) {
+    const rel = imports.get(subIdent!);
+    if (!rel) {
+      warnings.push(`Unresolved import for router '${subIdent}' (mount: ${joinPath(prefix, subPath!)})`);
+      continue;
+    }
+    scanRouter(resolveImport(file, rel), subIdent!, joinPath(prefix, subPath!), grouped, warnings, seen);
+  }
 }
 
-function parseMounts(src: string): Array<[string, string]> {
-  const out: Array<[string, string]> = [];
-  let m: RegExpExecArray | null;
-  const re = new RegExp(MOUNT_RE);
-  while ((m = re.exec(src)) !== null) {
-    out.push([m[1] ?? "", m[2] ?? ""]);
+/** The sockets `fetch` upgrades in src/server/index.ts, read from its own path checks. */
+function renderWebSockets(serverSrc: string, warnings: string[]): string[] {
+  const paths = [...new Set(matches(WS_PATH_RE, serverSrc).map(([, p]) => p))];
+  const projectTypes = [...new Set(matches(WS_PROJECT_TYPE_RE, serverSrc).map(([, t]) => t))];
+  if (paths.length === 0 && projectTypes.length === 0) {
+    warnings.push("No WebSocket paths found in src/server/index.ts");
+    return [];
   }
-  return out;
+  const parts = ["## WebSocket", "", "Authenticate with `?token=<token>` (see Authentication).", ""];
+  for (const p of paths) parts.push(`- \`${p}\``);
+  if (projectTypes.length > 0) {
+    const types = projectTypes.map((t) => `\`${t}\``).join(", ");
+    parts.push(`- \`/ws/project/<project>/<type>/<id>\` — \`<type>\`: ${types} (for \`chat\`, \`<id>\` is the session id)`);
+  }
+  parts.push("");
+  return parts;
+}
+
+function matches(re: RegExp, src: string): string[][] {
+  return [...src.matchAll(new RegExp(re))].map((m) => m.map((g) => g ?? ""));
+}
+
+function parseImports(src: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const [, ids, path] of matches(IMPORT_RE, src)) {
+    for (const id of ids!.split(",").map((s) => s.trim()).filter(Boolean)) map.set(id, path!);
+  }
+  return map;
 }
 
 function resolveImport(fromFile: string, spec: string): string {
@@ -120,20 +164,6 @@ function resolveImport(fromFile: string, spec: string): string {
     abs += ".ts";
   }
   return abs;
-}
-
-function scanRoutes(src: string): RouteEntry[] {
-  const entries: RouteEntry[] = [];
-  let m: RegExpExecArray | null;
-  const re = new RegExp(METHOD_RE);
-  while ((m = re.exec(src)) !== null) {
-    const method = m[1] ?? "";
-    const path = m[2] ?? "";
-    // Skip obviously-bogus matches (e.g. "http://" in URLs — regex already avoids these since path can't start with http:).
-    if (path.startsWith("http:") || path.startsWith("https:")) continue;
-    entries.push({ method, path });
-  }
-  return entries;
 }
 
 function joinPath(prefix: string, routePath: string): string {

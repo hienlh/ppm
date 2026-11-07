@@ -268,8 +268,7 @@ describe.skipIf(!enabled)("SSH tunnel and SSL files, through OpenSSH to Postgres
     expect({ code, errText }).toMatchObject({ code: 0 });
     // Well inside the minute an idle tunnel would otherwise stay open for.
     expect(performance.now() - started).toBeLessThan(20_000);
-    // The banner comes first on stdout, --json or not.
-    expect(JSON.parse(out.slice(out.indexOf("{"))).rows).toEqual([{ one: 1 }]);
+    expect(JSON.parse(out).rows).toEqual([{ one: 1 }]);
   }, 40_000);
 
   it("refuses a server whose host key changed, until its entry is removed", async () => {

@@ -28,4 +28,14 @@ describe("resolveTargetDir", () => {
     const r = resolveTargetDir({ output: "./rel/path" });
     expect(r).toBe(resolve("./rel/path"));
   });
+
+  it("antigravity format with user scope → ~/.gemini/config/skills/ppm", () => {
+    const r = resolveTargetDir({ format: "antigravity", scope: "user" });
+    expect(r).toBe(resolve(homedir(), ".gemini/config/skills/ppm"));
+  });
+
+  it("antigravity format with project scope → <cwd>/.agents/skills/ppm", () => {
+    const r = resolveTargetDir({ format: "antigravity", scope: "project" });
+    expect(r).toBe(resolve(process.cwd(), ".agents/skills/ppm"));
+  });
 });

@@ -2,11 +2,32 @@
 
 _Auto-generated. Do not edit._
 
-_Base URL: `http://localhost:8080` (default; override via `ppm config set port <n>`)._
+_Base URL: `http://localhost:<port>` — `port` in `ppm status --json` (8080 unless configured otherwise)._
+
+## Authentication
+
+With auth on (the default), `/api/*` needs `Authorization: Bearer <token>` (`GET /api/health` and `GET /api/info`
+answer without one), and a WebSocket takes it as `?token=<token>`. The token is the access password the user
+signs in to PPM with; `GET /api/auth/check` answers 200 when it is right.
+`ppm config get auth.token` deliberately does not print it: ask the user for it rather than digging it out of
+the config database, or use the CLI, which needs no token.
+
+JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "error": "…" }`.
 
 ## /
 
 - `GET    *`
+
+## /api
+
+- `GET    /api/health`
+- `GET    /api/info`
+- `GET    /api/logs/recent`
+- `GET    /api/mcp-auth/callback`
+- `ALL    /api/design-mcp`
+- `ALL    /api/tab-tools-mcp`
+- `GET    /api/auth/check`
+- `GET    /api/system/event-loop`
 
 ## /api/accounts
 
@@ -44,10 +65,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 ## /api/android
 
-- `GET    /api/android/android`
-- `GET    /api/android/auth`
 - `GET    /api/android/capabilities`
-- `GET    /api/android/auth`
 - `GET    /api/android/devices`
 - `POST   /api/android/avds/:avdId/start`
 - `GET    /api/android/operations/:id`
@@ -60,9 +78,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/android/operations/:id/cancel`
 - `POST   /api/android/devices/:deviceId/apk`
 - `POST   /api/android/devices/:deviceId/apk/project`
-- `GET    /api/android/projects`
 - `GET    /api/android/projects/:project/apks`
-- `GET    /api/android/projects`
 - `GET    /api/android/system-images`
 - `GET    /api/android/device-profiles`
 - `POST   /api/android/avds`
@@ -77,16 +93,13 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 ## /api/cloud
 
 - `GET    /api/cloud/status`
-- `GET    /api/cloud/cloud_url`
 - `POST   /api/cloud/login`
-- `GET    /api/cloud/cloud_url`
 - `POST   /api/cloud/logout`
 - `POST   /api/cloud/link`
 - `POST   /api/cloud/unlink`
 - `GET    /api/cloud/alias`
 - `PATCH  /api/cloud/alias`
 - `GET    /api/cloud/login-url`
-- `GET    /api/cloud/cloud_url`
 
 ## /api/codex-accounts
 
@@ -137,6 +150,47 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/db/connections/:id/export`
 - `GET    /api/db/search`
 
+## /api/db/connections
+
+- `POST   /api/db/connections/:id/grid`
+- `POST   /api/db/connections/:id/grid/count`
+- `POST   /api/db/connections/:id/grid/values`
+- `POST   /api/db/connections/:id/grid/export`
+- `POST   /api/db/connections/:id/grid/cell`
+- `POST   /api/db/connections/:id/changeset/preview`
+- `POST   /api/db/connections/:id/changeset/apply`
+- `GET    /api/db/connections/:id/databases`
+- `GET    /api/db/connections/:id/objects`
+- `GET    /api/db/connections/:id/columns`
+- `GET    /api/db/connections/:id/structure`
+- `GET    /api/db/connections/:id/object-sql`
+- `POST   /api/db/connections/:id/structure/preview`
+- `POST   /api/db/connections/:id/structure/apply`
+- `POST   /api/db/connections/:id/impexp/export`
+- `POST   /api/db/connections/:id/impexp/import`
+- `POST   /api/db/connections/:id/query/script`
+- `POST   /api/db/connections/:id/query/cancel`
+- `GET    /api/db/connections/:id/history`
+
+## /api/db/drivers
+
+- `GET    /api/db/drivers`
+- `POST   /api/db/drivers/:id/install`
+- `DELETE /api/db/drivers/:id`
+
+## /api/db/grid-export
+
+- `GET    /api/db/grid-export/:ticket`
+
+## /api/db/impexp
+
+- `PUT    /api/db/impexp/uploads`
+- `POST   /api/db/impexp/uploads/:id/preview`
+- `DELETE /api/db/impexp/uploads/:id`
+- `GET    /api/db/impexp/jobs/:id`
+- `POST   /api/db/impexp/jobs/:id/stop`
+- `POST   /api/db/impexp/jobs/:id/download`
+
 ## /api/design-shares
 
 - `GET    /api/design-shares/address`
@@ -169,6 +223,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/fs/transcode`
 - `DELETE /api/fs/transcode`
 - `GET    /api/fs/docx-html`
+- `GET    /api/fs/xlsx-sheet`
 - `POST   /api/fs/mkdir`
 - `PUT    /api/fs/write`
 - `GET    /api/fs/stat`
@@ -196,6 +251,43 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/group-chat/:id/resume`
 - `DELETE /api/group-chat/:id`
 
+## /api/jira
+
+- `GET    /api/jira/watchers`
+- `POST   /api/jira/watchers`
+- `PUT    /api/jira/watchers/:id`
+- `DELETE /api/jira/watchers/:id`
+- `POST   /api/jira/watchers/test-jql`
+- `POST   /api/jira/watchers/:id/pull`
+- `POST   /api/jira/watchers/pull-all`
+- `POST   /api/jira/results/:id/debug`
+- `POST   /api/jira/results/:id/resume`
+- `POST   /api/jira/results/:id/cancel`
+- `PATCH  /api/jira/results/:id/read`
+- `GET    /api/jira/results/unread-count`
+- `GET    /api/jira/results`
+- `GET    /api/jira/results/stats`
+- `GET    /api/jira/results/:id`
+- `DELETE /api/jira/results/:id`
+- `POST   /api/jira/results/manual`
+- `GET    /api/jira/search/:configId`
+- `GET    /api/jira/ticket/:configId/:issueKey`
+- `PUT    /api/jira/ticket/:configId/:issueKey`
+- `GET    /api/jira/ticket/:configId/:issueKey/transitions`
+- `POST   /api/jira/ticket/:configId/:issueKey/transition`
+- `GET    /api/jira/metadata/:configId/projects`
+- `GET    /api/jira/metadata/:configId/assignees`
+- `GET    /api/jira/metadata/:configId/:field`
+
+## /api/jira/config
+
+- `GET    /api/jira/config/projects`
+- `GET    /api/jira/config`
+- `GET    /api/jira/config/:projectId`
+- `PUT    /api/jira/config/:projectId`
+- `DELETE /api/jira/config/:projectId`
+- `POST   /api/jira/config/:projectId/test`
+
 ## /api/logs
 
 - `GET    /api/logs`
@@ -218,10 +310,6 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 ## /api/lsp
 
-- `GET    /api/lsp/status`
-- `GET    /api/lsp/projectPath`
-- `POST   /api/lsp/install`
-- `GET    /api/lsp/projectPath`
 - `GET    /api/lsp/servers`
 - `POST   /api/lsp/install`
 - `POST   /api/lsp/uninstall`
@@ -234,28 +322,21 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/mcp-auth/flows/:id/callback`
 - `POST   /api/mcp-auth/flows/:id/confirm`
 - `DELETE /api/mcp-auth/flows/:id`
-- `GET    /api/mcp-auth/state`
 
 ## /api/notifications
 
-- `GET    /api/notifications/device_name`
 - `GET    /api/notifications/settings`
-- `GET    /api/notifications/notifications`
 - `PUT    /api/notifications/settings`
-- `GET    /api/notifications/notifications`
 - `GET    /api/notifications/push`
 - `POST   /api/notifications/push/subscribe`
 - `POST   /api/notifications/push/unsubscribe`
 - `POST   /api/notifications/push/test`
 - `GET    /api/notifications/telegram`
-- `GET    /api/notifications/telegram`
 - `POST   /api/notifications/telegram/connect`
 - `DELETE /api/notifications/telegram/connect`
 - `DELETE /api/notifications/telegram/chats/:chatId`
 - `GET    /api/notifications/ntfy`
-- `GET    /api/notifications/ntfy`
 - `PUT    /api/notifications/ntfy`
-- `GET    /api/notifications/ntfy`
 - `DELETE /api/notifications/ntfy`
 - `POST   /api/notifications/ntfy/test`
 
@@ -265,6 +346,222 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `DELETE /api/preview/tunnel/:port{[0-9]+}`
 - `GET    /api/preview/tunnels`
 
+## /api/project/:projectName/chat
+
+- `GET    /api/project/:projectName/chat/slash-items`
+- `DELETE /api/project/:projectName/chat/slash-items/cache`
+- `POST   /api/project/:projectName/chat/slash-recents`
+- `GET    /api/project/:projectName/chat/usage`
+- `GET    /api/project/:projectName/chat/providers`
+- `GET    /api/project/:projectName/chat/providers/:providerId/models`
+- `GET    /api/project/:projectName/chat/providers/:providerId/effort-status`
+- `GET    /api/project/:projectName/chat/sessions`
+- `GET    /api/project/:projectName/chat/search`
+- `GET    /api/project/:projectName/chat/sessions/:id/design`
+- `GET    /api/project/:projectName/chat/sessions/:id/messages`
+- `POST   /api/project/:projectName/chat/prewarm`
+- `POST   /api/project/:projectName/chat/sessions`
+- `DELETE /api/project/:projectName/chat/sessions`
+- `DELETE /api/project/:projectName/chat/sessions/:id`
+- `PATCH  /api/project/:projectName/chat/sessions/:id`
+- `PUT    /api/project/:projectName/chat/sessions/:id/account`
+- `PUT    /api/project/:projectName/chat/sessions/:id/pin`
+- `DELETE /api/project/:projectName/chat/sessions/:id/pin`
+- `GET    /api/project/:projectName/chat/sessions/unread`
+- `GET    /api/project/:projectName/chat/sessions/running`
+- `POST   /api/project/:projectName/chat/sessions/:id/read`
+- `POST   /api/project/:projectName/chat/sessions/:id/unread`
+- `PATCH  /api/project/:projectName/chat/sessions/bulk-tag`
+- `PATCH  /api/project/:projectName/chat/sessions/:id/tag`
+- `DELETE /api/project/:projectName/chat/sessions/:id/tag`
+- `POST   /api/project/:projectName/chat/sessions/:id/fork`
+- `GET    /api/project/:projectName/chat/sessions/:id/logs`
+- `GET    /api/project/:projectName/chat/sessions/:id/debug`
+- `GET    /api/project/:projectName/chat/sessions/:id/usage`
+- `GET    /api/project/:projectName/chat/sessions/:id/images`
+- `POST   /api/project/:projectName/chat/sessions/:id/images/strip`
+- `GET    /api/project/:projectName/chat/sessions/:id/tasks`
+- `GET    /api/project/:projectName/chat/pre-compact-messages`
+- `POST   /api/project/:projectName/chat/upload`
+- `DELETE /api/project/:projectName/chat/uploads/:filename`
+- `GET    /api/project/:projectName/chat/uploads/:filename`
+- `GET    /api/project/:projectName/chat/drafts/:sessionId`
+- `PUT    /api/project/:projectName/chat/drafts/:sessionId`
+- `DELETE /api/project/:projectName/chat/drafts/:sessionId`
+- `POST   /api/project/:projectName/chat/sessions/:id/file-changes`
+- `GET    /api/project/:projectName/chat/sessions/:id/file-changes/count`
+- `POST   /api/project/:projectName/chat/sessions/:id/file-changes/reviewed`
+- `POST   /api/project/:projectName/chat/sessions/:id/file-changes/answer`
+- `POST   /api/project/:projectName/chat/sessions/:id/file-changes/undo`
+- `POST   /api/project/:projectName/chat/sessions/:id/file-changes/revert-turn`
+- `GET    /api/project/:projectName/chat/sessions/:id/file-changes/diff`
+
+## /api/project/:projectName/chat/prepare
+
+- `POST   /api/project/:projectName/chat/prepare`
+
+## /api/project/:projectName/designs
+
+- `GET    /api/project/:projectName/designs`
+- `POST   /api/project/:projectName/designs`
+- `GET    /api/project/:projectName/designs/:slug`
+- `PATCH  /api/project/:projectName/designs/:slug`
+- `DELETE /api/project/:projectName/designs/:slug`
+- `GET    /api/project/:projectName/designs/:slug/history`
+- `POST   /api/project/:projectName/designs/:slug/history/:id/restore`
+
+## /api/project/:projectName/designs/:slug/check
+
+- `POST   /api/project/:projectName/designs/:slug/check/:requestId`
+
+## /api/project/:projectName/designs/:slug/comments
+
+- `GET    /api/project/:projectName/designs/:slug/comments`
+- `POST   /api/project/:projectName/designs/:slug/comments`
+- `POST   /api/project/:projectName/designs/:slug/comments/context`
+- `PATCH  /api/project/:projectName/designs/:slug/comments/:id`
+- `DELETE /api/project/:projectName/designs/:slug/comments/:id`
+- `POST   /api/project/:projectName/designs/:slug/comments/:id/replies`
+- `PATCH  /api/project/:projectName/designs/:slug/comments/:id/replies/:replyId`
+- `DELETE /api/project/:projectName/designs/:slug/comments/:id/replies/:replyId`
+
+## /api/project/:projectName/designs/:slug/export
+
+- `GET    /api/project/:projectName/designs/:slug/export/zip`
+- `GET    /api/project/:projectName/designs/:slug/export/html`
+
+## /api/project/:projectName/designs/:slug/shares
+
+- `GET    /api/project/:projectName/designs/:slug/shares`
+- `POST   /api/project/:projectName/designs/:slug/shares`
+- `GET    /api/project/:projectName/designs/:slug/shares/:id/changes`
+- `PATCH  /api/project/:projectName/designs/:slug/shares/:id`
+- `DELETE /api/project/:projectName/designs/:slug/shares/:id/comments`
+- `DELETE /api/project/:projectName/designs/:slug/shares/:id`
+
+## /api/project/:projectName/designs/:slug/style
+
+- `POST   /api/project/:projectName/designs/:slug/style`
+
+## /api/project/:projectName/designs/:slug/tweaks
+
+- `GET    /api/project/:projectName/designs/:slug/tweaks`
+- `POST   /api/project/:projectName/designs/:slug/tweaks`
+
+## /api/project/:projectName/designs/:slug/undo
+
+- `POST   /api/project/:projectName/designs/:slug/undo`
+
+## /api/project/:projectName/designs/systems
+
+- `GET    /api/project/:projectName/designs/systems`
+- `POST   /api/project/:projectName/designs/systems`
+- `GET    /api/project/:projectName/designs/systems/:id`
+- `PATCH  /api/project/:projectName/designs/systems/:id`
+- `DELETE /api/project/:projectName/designs/systems/:id`
+- `GET    /api/project/:projectName/designs/systems/:id/stale`
+- `POST   /api/project/:projectName/designs/systems/:id/showcase`
+
+## /api/project/:projectName/files
+
+- `GET    /api/project/:projectName/files/list`
+- `POST   /api/project/:projectName/files/list-batch`
+- `GET    /api/project/:projectName/files/index`
+- `GET    /api/project/:projectName/files/index/search`
+- `GET    /api/project/:projectName/files/tree`
+- `GET    /api/project/:projectName/files/raw`
+- `GET    /api/project/:projectName/files/probe`
+- `GET    /api/project/:projectName/files/transcode`
+- `DELETE /api/project/:projectName/files/transcode`
+- `GET    /api/project/:projectName/files/docx-html`
+- `GET    /api/project/:projectName/files/xlsx-sheet`
+- `GET    /api/project/:projectName/files/read`
+- `PUT    /api/project/:projectName/files/write`
+- `POST   /api/project/:projectName/files/create`
+- `POST   /api/project/:projectName/files/upload`
+- `DELETE /api/project/:projectName/files/delete`
+- `GET    /api/project/:projectName/files/compare`
+- `POST   /api/project/:projectName/files/rename`
+- `GET    /api/project/:projectName/files/resolve`
+- `GET    /api/project/:projectName/files/search`
+- `POST   /api/project/:projectName/files/move`
+- `POST   /api/project/:projectName/files/copy`
+
+## /api/project/:projectName/files/download
+
+- `POST   /api/project/:projectName/files/download/token`
+- `GET    /api/project/:projectName/files/download/zip`
+
+## /api/project/:projectName/git
+
+- `GET    /api/project/:projectName/git/repos`
+- `GET    /api/project/:projectName/git/status`
+- `GET    /api/project/:projectName/git/changes`
+- `GET    /api/project/:projectName/git/changes/file`
+- `GET    /api/project/:projectName/git/commit-draft`
+- `PUT    /api/project/:projectName/git/commit-draft`
+- `GET    /api/project/:projectName/git/discards`
+- `POST   /api/project/:projectName/git/discard/undo`
+- `GET    /api/project/:projectName/git/diff`
+- `GET    /api/project/:projectName/git/diff-stat`
+- `GET    /api/project/:projectName/git/branch-diff`
+- `GET    /api/project/:projectName/git/file-diff`
+- `GET    /api/project/:projectName/git/file-full-diff`
+- `GET    /api/project/:projectName/git/file-blob`
+- `GET    /api/project/:projectName/git/graph`
+- `GET    /api/project/:projectName/git/branches`
+- `GET    /api/project/:projectName/git/refs`
+- `GET    /api/project/:projectName/git/pr-url`
+- `POST   /api/project/:projectName/git/fetch`
+- `POST   /api/project/:projectName/git/discard`
+- `POST   /api/project/:projectName/git/stage`
+- `POST   /api/project/:projectName/git/unstage`
+- `GET    /api/project/:projectName/git/blame`
+- `GET    /api/project/:projectName/git/commit-line`
+- `GET    /api/project/:projectName/git/hunks`
+- `POST   /api/project/:projectName/git/stage-hunks`
+- `POST   /api/project/:projectName/git/unstage-hunks`
+- `POST   /api/project/:projectName/git/discard-hunks`
+- `POST   /api/project/:projectName/git/commit`
+- `POST   /api/project/:projectName/git/push`
+- `POST   /api/project/:projectName/git/pull`
+- `POST   /api/project/:projectName/git/publish`
+- `POST   /api/project/:projectName/git/commit/undo`
+- `POST   /api/project/:projectName/git/operation/:action{abort|continue}`
+- `GET    /api/project/:projectName/git/stashes`
+- `POST   /api/project/:projectName/git/stash`
+- `POST   /api/project/:projectName/git/stash/${action}`
+- `POST   /api/project/:projectName/git/branch/create`
+- `POST   /api/project/:projectName/git/checkout`
+- `POST   /api/project/:projectName/git/branch/delete`
+- `POST   /api/project/:projectName/git/merge`
+- `POST   /api/project/:projectName/git/cherry-pick`
+- `POST   /api/project/:projectName/git/revert`
+- `POST   /api/project/:projectName/git/tag`
+- `GET    /api/project/:projectName/git/worktrees`
+- `POST   /api/project/:projectName/git/worktree/add`
+- `POST   /api/project/:projectName/git/worktree/remove`
+- `POST   /api/project/:projectName/git/worktree/prune`
+
+## /api/project/:projectName/lsp
+
+- `GET    /api/project/:projectName/lsp/status`
+- `POST   /api/project/:projectName/lsp/install`
+
+## /api/project/:projectName/tags
+
+- `GET    /api/project/:projectName/tags`
+- `POST   /api/project/:projectName/tags`
+- `PATCH  /api/project/:projectName/tags/default-tag`
+- `POST   /api/project/:projectName/tags/reset`
+- `PATCH  /api/project/:projectName/tags/:id`
+- `DELETE /api/project/:projectName/tags/:id`
+
+## /api/project/:projectName/workspace
+
+- `GET    /api/project/:projectName/workspace`
+- `PUT    /api/project/:projectName/workspace`
+
 ## /api/projects
 
 - `GET    /api/projects`
@@ -273,28 +570,18 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/projects/last-clone-dir`
 - `POST   /api/projects/git/clone`
 - `PATCH  /api/projects/reorder`
-- `GET    /api/projects/projects`
 - `PATCH  /api/projects/:name/color`
-- `GET    /api/projects/projects`
 - `POST   /api/projects/:name/image`
-- `GET    /api/projects/projects`
-- `GET    /api/projects/file`
 - `DELETE /api/projects/:name/image`
-- `GET    /api/projects/projects`
 - `GET    /api/projects/:name/image`
-- `GET    /api/projects/projects`
 - `GET    /api/projects/:name/settings`
-- `GET    /api/projects/projects`
 - `PATCH  /api/projects/:name/settings`
-- `GET    /api/projects/projects`
 - `PATCH  /api/projects/:name`
 - `DELETE /api/projects/:name`
 
 ## /api/remote-desktop
 
-- `GET    /api/remote-desktop/auth`
 - `GET    /api/remote-desktop/capabilities`
-- `GET    /api/remote-desktop/auth`
 - `GET    /api/remote-desktop/requirements/ffmpeg/install`
 - `POST   /api/remote-desktop/requirements/ffmpeg/install`
 - `POST   /api/remote-desktop/requirements/:id/:action`
@@ -309,11 +596,15 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/schedules`
 - `GET    /api/schedules/:id{[0-9]+}`
 - `POST   /api/schedules`
-- `GET    /api/schedules/ai`
 - `PATCH  /api/schedules/:id{[0-9]+}`
 - `DELETE /api/schedules/:id{[0-9]+}`
 - `POST   /api/schedules/:id{[0-9]+}/run-now`
 - `GET    /api/schedules/:id{[0-9]+}/runs`
+- `GET    /api/schedules/:id{[0-9]+}/logs`
+- `GET    /api/schedules/:id{[0-9]+}/state`
+- `PUT    /api/schedules/:id{[0-9]+}/state`
+- `GET    /api/schedules/:id{[0-9]+}/export`
+- `POST   /api/schedules/import`
 
 ## /api/sessions-collab
 
@@ -327,14 +618,11 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 - `PUT    /api/settings/device-name`
 - `GET    /api/settings/theme`
-- `GET    /api/settings/theme`
 - `PUT    /api/settings/theme`
 - `GET    /api/settings/ui-prefs`
 - `PUT    /api/settings/ui-prefs`
 - `GET    /api/settings/ai`
-- `GET    /api/settings/ai`
 - `PUT    /api/settings/ai`
-- `GET    /api/settings/ai`
 - `GET    /api/settings/ai/providers/status`
 - `POST   /api/settings/ai/providers/:id/probe`
 - `GET    /api/settings/ai/providers/:id/models`
@@ -342,35 +630,23 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/settings/keybindings`
 - `PUT    /api/settings/keybindings`
 - `GET    /api/settings/telegram`
-- `GET    /api/settings/telegram`
 - `PUT    /api/settings/telegram`
-- `GET    /api/settings/telegram`
 - `POST   /api/settings/telegram/test`
-- `GET    /api/settings/telegram`
 - `PUT    /api/settings/auth/password`
-- `GET    /api/settings/auth`
-- `GET    /api/settings/port`
 - `GET    /api/settings/proxy`
 - `PUT    /api/settings/proxy`
-- `GET    /api/settings/query_audit`
 - `GET    /api/settings/query-audit`
 - `PUT    /api/settings/query-audit`
-- `GET    /api/settings/query_audit`
 - `DELETE /api/settings/query-audit/logs`
 - `GET    /api/settings/storage`
 - `PUT    /api/settings/session-trace`
 - `GET    /api/settings/session_trace`
 - `GET    /api/settings/clawbot`
-- `GET    /api/settings/clawbot`
 - `PUT    /api/settings/clawbot`
-- `GET    /api/settings/clawbot`
 - `GET    /api/settings/clawbot/paired`
 - `DELETE /api/settings/clawbot/paired/:chatId`
 - `GET    /api/settings/clawbot/telegram`
-- `GET    /api/settings/telegram`
-- `GET    /api/settings/clawbot`
 - `PUT    /api/settings/clawbot/telegram`
-- `GET    /api/settings/clawbot`
 - `POST   /api/settings/clawbot/telegram/connect`
 - `DELETE /api/settings/clawbot/telegram/connect`
 - `GET    /api/settings/clawbot/memories`
@@ -381,7 +657,6 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 ## /api/settings/design
 
-- `GET    /api/settings/design/projects`
 - `GET    /api/settings/design`
 - `PUT    /api/settings/design`
 - `POST   /api/settings/design/skill`
@@ -406,7 +681,6 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 ## /api/share-host
 
 - `GET    /api/share-host/status`
-- `GET    /api/share-host/auth`
 - `GET    /api/share-host/zone`
 - `POST   /api/share-host/enabled`
 - `POST   /api/share-host/quick`
@@ -437,7 +711,6 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 ## /api/tailscale
 
-- `GET    /api/tailscale/auth`
 - `GET    /api/tailscale/state`
 - `POST   /api/tailscale/login`
 - `POST   /api/tailscale/login/cancel`
@@ -459,21 +732,14 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 ## /api/tunnel
 
 - `GET    /api/tunnel`
-- `GET    /api/tunnel/port`
 - `POST   /api/tunnel/enabled`
-- `GET    /api/tunnel/tunnel`
 - `POST   /api/tunnel/start`
-- `GET    /api/tunnel/port`
 - `POST   /api/tunnel/stop`
 
 ## /api/tunnel/named
 
-- `GET    /api/tunnel/named/auth`
 - `GET    /api/tunnel/named/status`
-- `GET    /api/tunnel/named/tunnel`
-- `GET    /api/tunnel/named/auth`
 - `POST   /api/tunnel/named/dismiss`
-- `GET    /api/tunnel/named/tunnel`
 - `GET    /api/tunnel/named/zone`
 - `POST   /api/tunnel/named/login`
 - `POST   /api/tunnel/named/login/cancel`
@@ -514,8 +780,13 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 
 ## WebSocket
 
-- `ws://<host>/ws/chat` — AI chat stream (Claude Agent SDK)
-- `ws://<host>/ws/terminal` — PTY terminal multiplexer
-- `ws://<host>/ws/extensions` — extension host channel
+Authenticate with `?token=<token>` (see Authentication).
+
+- `/ws/health`
+- `/ws/global`
+- `/ws/extensions`
+- `/ws/remote-desktop`
+- `/ws/android`
+- `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
 <!-- Generated from src/server/routes/ for PPM v0.23.37 -->

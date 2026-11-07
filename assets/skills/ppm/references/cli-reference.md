@@ -379,13 +379,13 @@ Export PPM metadata for external tools (AI agents, editors)
 
 ### `ppm export skill`
 
-Export Claude Code skill for controlling PPM from external AI tools
+Export skill for controlling PPM from external AI tools (Claude Code, Antigravity)
 
 **Options:**
-- `--install` — Install to target dir (default scope=user → ~/.claude/skills/ppm/)
+- `--install` — Install to target dir (default scope=user → ~/.claude/skills/ppm/ or ~/.gemini/config/skills/ppm/)
 - `--scope <scope>` — Install scope: user | project (default: `"user"`)
 - `--output <dir>` — Custom output directory (overrides --scope)
-- `--format <fmt>` — Output format (default: `"claude-code"`)
+- `--format <fmt>` — Output format: claude-code | antigravity (default: `"claude-code"`)
 
 ## `ppm ext`
 
@@ -843,7 +843,7 @@ Replace a script schedule's state with a JSON file; the schedule must be off
 Manage and inspect discovered skills & commands
 
 **Options:**
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-wt-codex-questions-main"`)
+- `--project <path>` — Project path (default: current directory)
 
 **Usage:** `ppm skills [options] [command]`
 
@@ -853,7 +853,7 @@ List all discovered skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-wt-codex-questions-main"`)
+- `--project <path>` — Project path (default: current directory)
 
 ### `ppm skills search`
 
@@ -861,7 +861,7 @@ Fuzzy search skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-wt-codex-questions-main"`)
+- `--project <path>` — Project path (default: current directory)
 
 **Usage:** `ppm skills search [options] <query>`
 
@@ -871,7 +871,7 @@ Show detailed info for a specific skill
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-wt-codex-questions-main"`)
+- `--project <path>` — Project path (default: current directory)
 
 **Usage:** `ppm skills info [options] <name>`
 

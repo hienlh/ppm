@@ -29,6 +29,12 @@ describe("generateCliReference", () => {
     expect(md).toMatch(/`-p, --port <port>`/);
   });
 
+  it("does not print the generating machine's working directory as a default", async () => {
+    const md = (await generateCliReference("/ignored"))[0]!.content;
+    expect(md).not.toContain(JSON.stringify(process.cwd()));
+    expect(md).toContain("`--project <path>` — Project path (default: current directory)");
+  });
+
   it("describes the export skill subcommand registered in phase 5", async () => {
     const result = await generateCliReference("/ignored");
     const md = result[0]!.content;
