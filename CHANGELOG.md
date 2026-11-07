@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **`ppm start --minimal` could still start the review address.** Minimal mode shut off design review pages (`/s`) but not the review address in front of them: with review links switched on, the supervisor started its worker and Cloudflare connector anyway, `/api/share-host` answered, and Settings → Remote Access offered the Review links tab. Minimal mode now leaves that address off and hides the tab, and the saved setting is kept for the next full start.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed

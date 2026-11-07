@@ -9,7 +9,7 @@ export function isMinimalPathDisabled(path: string): boolean {
     return !/^\/ws\/(health|global)\/?$/.test(path) && !/^\/ws\/project\/[^/]+\/chat(?:\/|$)/.test(path);
   }
   return /^\/(proxy|s)(\/|$)/.test(path)
-    || /^\/api\/(db|db-tools-mcp|tab-tools-mcp|sessions-mcp|design-mcp|design-preview|design-shares|system|extensions|schedules|jira|ppmbot|group-chat|remote-desktop|android|lsp|preview|html-preview|tunnels|logs)(\/|$)/.test(path)
+    || /^\/api\/(db|db-tools-mcp|tab-tools-mcp|sessions-mcp|design-mcp|design-preview|design-shares|system|extensions|schedules|jira|ppmbot|group-chat|remote-desktop|android|lsp|preview|html-preview|share-host|tunnels|logs)(\/|$)/.test(path)
     || /^\/api\/settings\/(design|clawbot)(\/|$)/.test(path)
     || /^\/api\/project\/[^/]+\/(git|lsp|designs)(\/|$)/.test(path);
 }
