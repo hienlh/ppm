@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.32] - 2026-11-08
+
+### Fixed
+
+- **PPM no longer slowly eats all the memory on Windows.** Bun before 1.3.11 leaks a little memory every time it goes idle, so PPM's background process grew about 400 MB an hour (15 GB after a day and a half); the Windows downloads now ship a fixed Bun, and PPM warns in its log with the fix (`bun upgrade`) when it runs on an affected Bun.
+
 ## [0.23.31] - 2026-11-06
 
 ### Fixed
