@@ -70,6 +70,55 @@ Verification uses `tests/e2e/onboarding-tour.mjs` and its isolated fixtures: fre
 scratch project, local ports, allowlisted test provider and real HTTP/WebSocket routes.
 Playwright captures desktop/mobile screenshots and videos without live AI credentials.
 
+### "PPM has new features" — introducing a feature inside the tour
+
+When a release adds a feature that should stay off until the user says otherwise, the tour asks
+once per install: one step per feature, with **Turn on**, **Turn off**, **Later** and a link to
+Settings → Tools. The first entry is the six session tools.
+
+- **Registry:** `FEATURE_INTROS` in `src/shared/feature-intros.ts`. Each entry has a stable `id`
+  (the answer is stored under it for the life of the install), a `title`, a short `body`, the
+  Settings → Tools switches it controls (`tools`) and `since`.
+- **State is install-wide, not per browser:** config key `feature_intros`, read and written only by
+  `src/services/feature-intros.service.ts`, behind `/api/feature-intros` (`GET /`, `POST /:id/answer`,
+  `/:id/skip`, `/:id/seen-in-settings`; `src/server/routes/feature-intros.ts`). Every change is
+  announced as `feature-intros:changed` on `/ws/global`, with a `change` of `answer`, `skip`,
+  `seen` or `settings`. Answered on one device, the step closes on every other one.
+- **The answer is the switches.** Turn on / Turn off writes every tool of the feature as an explicit
+  boolean in `ai.ppm_tools`. The record only says whether, how (`tour`, `skips`, `settings`) and when
+  the question ended. A late answer from a device that missed the change (its socket was down) is
+  ignored: the first decision, or the per-tool choices made in Settings since, stand.
+- **Who sees it when** (`featurePartAllowed`, `useTourOfferHidden` in
+  `src/web/components/onboarding/onboarding-feature-intro.tsx`):
+  - An install is **in use** once it has a chat session (`session_metadata`). Projects do not
+    count: `ppm init` adds every git repository under the home directory, and the tour's first
+    step picks one.
+  - An install in use gets the step at once and is not offered the basic tour ("Get started with
+    PPM" stays hidden while this browser's tour is `unseen`). The tour still opens from its entry
+    in the UI (`OnboardingEntry`).
+  - A new install sees the basic tour first; the step comes once that is finished or dismissed.
+- **Putting it off:** Later, the X, Escape, or swiping the phone's sheet away is one skip. At most
+  one skip counts per feature per 12 hours (`FEATURE_INTRO_SKIP_WINDOW_MS`), and the other tabs and
+  devices showing the step close it on the `skip` event without a skip of their own, so a sitting
+  with several screens open is one "later". A reload records nothing. After the third skip the
+  feature counts as off and Settings → Tools marks its switches **NEW** for one visit.
+- **Decided in Settings:** any of the feature's switches set explicitly counts as the answer and the
+  step never shows. `PUT /api/settings/ai` settles it and announces it; `GET /api/feature-intros`
+  does the same for a switch written by any other route (`ppm config set`).
+- **Browser state** is `src/web/stores/feature-intros-store.ts`, not persisted: what this page load
+  already answered or put off, and a sequence guard so an older list never replaces a newer one.
+
+**Adding a feature later:** add one entry to `FEATURE_INTROS` with a new `id`. If the feature is a
+set of `ai.ppm_tools` switches, nothing else is needed: `ppmToolOn` already keeps an introduced
+feature's tools off until the install answers, every server path reads it, and Settings → Tools
+shows the NEW marker. Do not reuse or rename an `id`, or every install is asked again. A feature
+that is not a tool switch needs its own rule for "off until answered" and its own `answerFromSwitches`
+equivalent.
+
+Verification: `tests/e2e/feature-intros-e2e.mjs` (one fresh install per scenario, fixture
+`tests/e2e/fixtures/feature-intros-server.ts`), plus the unit tests named after the service, the
+routes and the tour.
+
 ## New Chat Provider
 
 Settings → AI offers `Always use default provider` and `Follow last focused chat`.

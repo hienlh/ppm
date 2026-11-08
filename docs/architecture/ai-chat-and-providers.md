@@ -713,7 +713,8 @@ turn's. Routes, under a project's `/chat/sessions/:id`: `/turns` (list, `?resolv
 `/turn-window` (`chat-turn-window.ts`, the history window's pages).
 
 **The AI's tools** live on the `ppm-tabs` server beside the tab tools, each with its own switch
-under Session history in Settings → Tools (all on by default): `search_sessions` (this project's
+under Session history in Settings → Tools (off until the install answers the tour's question; see
+[Session tools stay off until the install answers](#session-tools-stay-off-until-the-install-answers)): `search_sessions` (this project's
 chats, matching only what was written as prose — `search-index-v3.db` keeps tool output in a
 column of its own, `tool_text`, that the AI's search never reads), `list_session_turns` (newest
 first, `offset` goes back) and `read_session_turns` (by `turn_ids`, or `from_turn`/`to_turn`).
@@ -748,6 +749,31 @@ prevented.
 transcripts (fixture server `tests/e2e/fixtures/session-turn-refs-server.ts`, scripted providers
 that subclass the real ones, generators in `tests/e2e/fixtures/session-turn-refs-transcripts/`).
 
+### Session tools stay off until the install answers
+
+The six session tools (`search_sessions`, `list_session_turns`, `read_session_turns`,
+`create_session`, `send_to_session`, `session_status`) are an introduced feature
+(`FEATURE_INTROS` in `src/shared/feature-intros.ts`). Every one of them is off until the install
+answers the tour's "PPM has new features" step (UI and registry in
+[Workspace & UI](workspace-and-ui.md#ppm-has-new-features--introducing-a-feature-inside-the-tour)).
+
+- **One rule, read everywhere.** `ppmToolOn` (`src/shared/ppm-tools.ts`): an explicit switch in
+  `ai.ppm_tools` wins; a missing switch of an introduced feature is off while none of the feature's
+  switches is set, and follows the set ones (on if any is on) otherwise. Chat token minting
+  (`prepareSendOptions`), the tab-tools and sessions MCP endpoints (`tools/list` and the
+  `unavailable` refusal), the Claude warm spare and allow list, Codex's MCP config and the CLI all
+  pass the stored `ai` settings through it, so a chat started by PPMBot, the scheduler or another
+  session gets none of the six before the answer either.
+- **An answer is written as switches.** Turn on / Turn off writes all six as explicit booleans and
+  leaves `ai.session_collab` (ask-before-create, limits) alone. Three skips write nothing, which is
+  already off.
+- **Settings explicit = answered.** A switch saved in Settings → Tools first writes the feature's
+  other switches at the state they show (`patchPpmToolSwitches`), so flipping one never flips its
+  siblings, and the question is then settled as decided in Settings and never asked. A switch set
+  any other way (`ppm config set`) is settled the same way on the next `GET /api/feature-intros`.
+- **No web UI, no answer.** An install used only through PPMBot, the scheduler or the CLI keeps the
+  six off until someone answers in the browser or sets a switch. Accepted.
+
 ## Session collaboration
 
 A Claude or Codex chat can open another PPM session and message any session of its project. Every
@@ -757,7 +783,7 @@ started. The UI half (the incoming bubble, the linked-sessions bar, the list bad
 
 **The tools** are served by `/api/sessions-mcp` (`src/services/session-collab/`), MCP server
 `ppm-sessions` for Claude and `ppm_sessions` for Codex, each tool with its own switch in Settings →
-Tools (on by default):
+Tools (off until the install answers; see the next section):
 
 - `create_session { title, task, provider?, model?, wait? }` — a new session in the caller's own
   project, on the caller's provider and model unless the AI picks others, under the caller's
@@ -1333,8 +1359,12 @@ under its switches) — for Claude and Codex alike. Claude's and Codex's built-i
 `ai.ppm_tools` (`PUT /api/settings/ai` merges one tool at a time and refuses any other name), and
 `src/shared/ppm-tools.ts` answers for the server and the pane alike: a tool never switched takes
 its default — `open_file` and `open_preview` follow the single switch that came before
-(`ai.tab_tools`, off unless set), every other tool is on. So the `ppm-tabs` server is attached to
-every chat unless all eight of its tools are off.
+(`ai.tab_tools`, off unless set), the six session tools are off until the install answers the
+tour's question ([above](#session-tools-stay-off-until-the-install-answers)), every other tool is
+on. So the `ppm-tabs` server is attached to every chat unless all eight of its tools are off. Saving
+one session-tool switch writes its five siblings at the state they show (`patchPpmToolSwitches`)
+and counts as the answer to that question. Settings → Tools marks the six **NEW** for one visit
+when the question was put off three times.
 
 A tool server is attached to a chat while one of its tools is on, and `createMcpHttpHandler`'s
 `unavailable` leaves an off tool out of `tools/list` and answers a call to it — from a chat
