@@ -49,7 +49,8 @@ export async function runLinkSteps(ctx) {
     }, 30000);
     assert.equal(search.isError, false, search.text);
     assert.match(search.text, new RegExp(`${A.id} · claude · Long refactor · Turn 77 · ${t(77)}`));
-    assert.match(list.text, new RegExp(`Session ${A.id} · claude · alpha · 330 turns · showing turns 1–5`));
+    // The session line says the turn is in the chat's own project (see `labelFor` in chat-turn-ref.ts).
+    assert.match(list.text, new RegExp(`Session ${A.id} · claude · this project \\(alpha\\) · 330 turns · showing turns 1–5`));
     assert.match(list.text, new RegExp(`^1 · ${t(1)} · `, "m"));
     assert.equal(read.isError, false, read.text);
     assert.match(read.text, /User: Q77: plan the quasar lattice migration for the storage layer/);

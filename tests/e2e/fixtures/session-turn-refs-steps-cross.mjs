@@ -40,7 +40,8 @@ export async function runCrossSteps(ctx) {
     const [granted, other, range] = await answered(kit, from, 3);
     assert.equal(granted.isError, false, granted.text);
     assert.match(granted.text, /User: Billing export, question 2/);
-    assert.match(granted.text, new RegExp(`Session ${D.id} · claude · beta · Turn 2`));
+    // Another project's turn is named as such, so the AI does not take beta for its own project.
+    assert.match(granted.text, new RegExp(`Session ${D.id} · claude · project beta, not this chat's project · Turn 2`));
     assert.equal(other.isError, true, "a turn of that session whose link was not sent stays refused");
     assert.match(other.text, /not_permitted/);
     assert.equal(range.isError, true, "a range of another project is refused even after a chip");
