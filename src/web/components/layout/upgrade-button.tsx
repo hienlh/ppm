@@ -1,14 +1,18 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
-import { Loader2, ArrowUpCircle, RefreshCw, Download, ExternalLink, History } from "@/lib/icons";
+import { Loader2, ArrowUpCircle, RefreshCw, Download, History, Maximize2 } from "@/lib/icons";
 import { useSettingsStore } from "@/stores/settings-store";
 import { fetchRecentChangelog, newestSectionVersion, compareSemver, type ChangelogSection } from "@/lib/changelog";
 import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-is-mobile";
+import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
+import { ReleaseNotesEntry } from "@/components/release-notes/release-notes-entry";
+import { ReleaseNotesView } from "@/components/release-notes/release-notes-view";
+import { openReleaseNotesWindow } from "@/components/release-notes/open-release-notes";
 
 const POLL_INTERVAL_MS = 60_000;
 const DISMISS_KEY_PREFIX = "ppm-upgrade-dismissed-";
-const RELEASES_URL = "https://github.com/hienlh/ppm/releases";
 
 // QA test hook. `?ppm_upgrade_test[=<ver|off>]` forces the update state on dev.
 // The flag is latched into sessionStorage at module load — BEFORE useUrlSync
@@ -112,6 +116,9 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
   const [dismissed, setDismissed] = useState(false);
   const [notes, setNotes] = useState<ChangelogSection[] | null>(null);
   const [notesLoading, setNotesLoading] = useState(false);
+  const isMobile = useIsMobile();
+  /** The phone's full release notes; a desktop opens them in a window instead. */
+  const [notesSheetOpen, setNotesSheetOpen] = useState(false);
 
   // `force` asks the server to bypass its registry cache. The background poll
   // stays cached (one request per client per minute must not hit the registry),
@@ -235,6 +242,13 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
     }
   }, [effectiveAvailable, enterRestartWait]);
 
+  // The popover is a glance at 18rem; reading happens in a window (or a sheet on a phone).
+  const openFullNotes = useCallback(() => {
+    setOpen(false);
+    if (isMobile) setNotesSheetOpen(true);
+    else openReleaseNotesWindow();
+  }, [isMobile]);
+
   const handleDismiss = useCallback(() => {
     // Key on the offered version, not just the server-reported one: an update
     // known only from the changelog must be dismissable too.
@@ -322,7 +336,7 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
               ) : visibleNotes && visibleNotes.length > 0 ? (
                 <div className="space-y-2.5">
                   {visibleNotes.map((s) => (
-                    <ChangelogEntry key={s.version} version={s.version} body={s.body} />
+                    <ReleaseNotesEntry key={s.version} version={s.version} body={s.body} />
                   ))}
                 </div>
               ) : (
@@ -345,14 +359,12 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
                 </button>
               )}
               <div className="flex gap-1.5">
-                <a
-                  href={RELEASES_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg border border-border bg-panel text-xs font-medium text-text-2 hover:text-text transition-colors"
+                <button
+                  onClick={openFullNotes}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg border border-border bg-panel text-xs font-medium text-text-2 hover:text-text transition-colors max-md:min-h-11"
                 >
-                  <ExternalLink className="size-3" /> Release notes
-                </a>
+                  <Maximize2 className="size-3" /> Read all release notes
+                </button>
                 {hasUpdate && (
                   <button
                     onClick={handleDismiss}
@@ -366,43 +378,12 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
           </div>
         </>
       )}
-    </div>
-  );
-}
 
-/** Strip inline markdown emphasis/code so the changelog reads cleanly in the popover. */
-function stripInline(s: string): string {
-  return s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
-}
-
-/** Render one CHANGELOG version section: version heading + category headings + bullets. */
-function ChangelogEntry({ version, body }: { version: string; body: string }) {
-  const lines = body.split("\n");
-  return (
-    <div>
-      <div className="text-[11px] font-mono font-semibold text-text mb-1">v{version}</div>
-      <div className="space-y-1">
-        {lines.map((line, i) => {
-          const t = line.trim();
-          if (!t) return null;
-          if (t.startsWith("### ")) {
-            return (
-              <div key={i} className="text-[10px] font-semibold uppercase tracking-wide text-text-3 pt-1">
-                {t.slice(4)}
-              </div>
-            );
-          }
-          if (t.startsWith("- ")) {
-            return (
-              <div key={i} className="flex gap-1.5 text-text-2">
-                <span className="text-text-3 shrink-0">•</span>
-                <span className="min-w-0 break-words">{stripInline(t.slice(2))}</span>
-              </div>
-            );
-          }
-          return <div key={i} className="text-text-2 break-words">{stripInline(t)}</div>;
-        })}
-      </div>
+      {notesSheetOpen && (
+        <BottomSheet open onClose={() => setNotesSheetOpen(false)} className="flex h-[min(88dvh,var(--sheet-vh))] flex-col">
+          <div className="min-h-0 flex-1"><ReleaseNotesView /></div>
+        </BottomSheet>
+      )}
     </div>
   );
 }

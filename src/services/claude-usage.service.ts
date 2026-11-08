@@ -7,7 +7,7 @@ import {
   getAllLatestSnapshots,
   type LimitSnapshotRow,
 } from "./db.service.ts";
-import { accountService } from "./account.service.ts";
+import { accountService, isMissingScopeResponse } from "./account.service.ts";
 import { decrypt } from "../lib/account-crypto.ts";
 import { accountSelector } from "./account-selector.service.ts";
 import { registerAllUsageSources } from "./provider-usage/register-usage-sources.ts";
@@ -46,6 +46,12 @@ export interface AccountUsageEntry {
 }
 
 const API_URL = "https://api.anthropic.com/api/oauth/usage";
+const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
+/**
+ * The cheapest model there is. Reading usage from response headers is a real request billed to
+ * the account (about ten input tokens and one output token), so it goes to the smallest model.
+ */
+const HEADER_PROBE_MODEL = "claude-haiku-4-5";
 const API_BETA = "oauth-2025-04-20";
 const USER_AGENT = "claude-code/1.0";
 const FETCH_TIMEOUT = 10_000;
@@ -106,6 +112,60 @@ function snapshotToUsage(row: LimitSnapshotRow): ClaudeUsage {
 // Fetch usage for a single token
 // ---------------------------------------------------------------------------
 
+/** Back off a token after a 429, and say for how long. */
+function coolDown(token: string, res: Response, what: string): Error {
+  const retryAfter = parseInt(res.headers.get("retry-after") ?? "60", 10);
+  const cooldownMs = Math.max(retryAfter * 1000, MIN_COOLDOWN_MS);
+  tokenCooldowns.set(token.substring(0, 20), Date.now() + cooldownMs);
+  return new Error(`${what} 429 — cooldown ${Math.ceil(cooldownMs / 1000)}s`);
+}
+
+/** One `anthropic-ratelimit-unified-<window>-*` header pair as a bucket; utilization arrives as 0–1. */
+function headerBucket(headers: Headers, window: string, windowHours: number): LimitBucket | undefined {
+  const util = Number(headers.get(`anthropic-ratelimit-unified-${window}-utilization`) ?? NaN);
+  if (!Number.isFinite(util)) return undefined;
+  const resetS = Number(headers.get(`anthropic-ratelimit-unified-${window}-reset`) ?? 0);
+  return parseApiBucket({
+    utilization: util * 100,
+    resets_at: resetS > 0 ? new Date(resetS * 1000).toISOString() : "",
+  }, windowHours);
+}
+
+/**
+ * Usage for a token that may not read the usage endpoint: one from `claude setup-token` carries
+ * only `user:inference`, so `/api/oauth/usage` answers 403. Every message response carries the
+ * same 5-hour and 7-day figures in its `anthropic-ratelimit-unified-*` headers (Claude Code's
+ * own status line reads them there), so a one-token message reads them back. Unlike the usage
+ * endpoint this spends a little of the account's limit, which is why it is the fallback only.
+ */
+async function fetchUsageFromRateLimitHeaders(token: string): Promise<ClaudeUsage> {
+  const res = await fetch(MESSAGES_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      Authorization: `Bearer ${token}`,
+      "anthropic-version": "2023-06-01",
+      "anthropic-beta": API_BETA,
+      "User-Agent": USER_AGENT,
+    },
+    body: JSON.stringify({ model: HEADER_PROBE_MODEL, max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT),
+  });
+  await res.text().catch(() => "");
+  // A refused message still reports the windows it was refused for — that is the reading an
+  // exhausted account most needs — so the headers are read whatever the status.
+  const session = headerBucket(res.headers, "5h", 5);
+  const weekly = headerBucket(res.headers, "7d", 168);
+  if (!session && !weekly) {
+    if (res.status === 429) throw coolDown(token, res, "Usage via message");
+    throw new Error(`Usage via message returned ${res.status} with no rate-limit headers`);
+  }
+  const data: ClaudeUsage = { lastFetchedAt: new Date().toISOString() };
+  if (session) data.session = session;
+  if (weekly) data.weekly = weekly;
+  return data;
+}
+
 async function fetchUsageForToken(token: string): Promise<ClaudeUsage> {
   const res = await fetch(API_URL, {
     headers: {
@@ -116,12 +176,9 @@ async function fetchUsageForToken(token: string): Promise<ClaudeUsage> {
     },
     signal: AbortSignal.timeout(FETCH_TIMEOUT),
   });
-  if (res.status === 429) {
-    const retryAfter = parseInt(res.headers.get("retry-after") ?? "60", 10);
-    const cooldownMs = Math.max(retryAfter * 1000, MIN_COOLDOWN_MS);
-    const cooldownKey = token.substring(0, 20);
-    tokenCooldowns.set(cooldownKey, Date.now() + cooldownMs);
-    throw new Error(`Usage API 429 — cooldown ${Math.ceil(cooldownMs / 1000)}s`);
+  if (res.status === 429) throw coolDown(token, res, "Usage API");
+  if (res.status === 403 && isMissingScopeResponse(res.status, await res.text().catch(() => ""))) {
+    return fetchUsageFromRateLimitHeaders(token);
   }
   if (!res.ok) throw new Error(`Usage API returned ${res.status}`);
   const raw = (await res.json()) as Record<string, any>;

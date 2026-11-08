@@ -5,9 +5,12 @@
  * Read once and shared by every chip on the page, refreshed when a composer chip mounts after the
  * answer has gone stale, so turning the tool back on is noticed without a reload. Until the first
  * answer arrives the tool counts as on, so a chip never flashes a warning it turns out not to need.
+ *
+ * Minimal mode (`ppm start --minimal`) runs no PPM tools whatever Settings says, so there it is off.
  */
 import { useEffect, useState } from "react";
 import { getAISettings } from "@/lib/api-settings";
+import { useSettingsStore } from "@/stores/settings-store";
 import { ppmToolOn } from "../../shared/ppm-tools";
 import { READ_SESSION_TURNS_TOOL } from "../../shared/session-history-tools";
 
@@ -31,6 +34,7 @@ function refresh(): Promise<boolean> {
 }
 
 export function useReadSessionTurnsOn(): boolean {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const [on, setOn] = useState(() => known?.on ?? true);
   useEffect(() => {
     listeners.add(setOn);
@@ -38,7 +42,7 @@ export function useReadSessionTurnsOn(): boolean {
     else setOn(known.on);
     return () => { listeners.delete(setOn); };
   }, []);
-  return on;
+  return on && !minimalMode;
 }
 
 /** Test hook: forget the cached answer. */

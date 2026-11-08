@@ -88,6 +88,50 @@ export class OAuthLinkExpiredError extends Error {
   }
 }
 
+/** Longest name an account may be given. */
+export const ACCOUNT_LABEL_MAX = 80;
+
+/**
+ * Whether Anthropic refused a request because the token lacks a scope, not because it is bad.
+ *
+ * A token from `claude setup-token` is valid for a year but carries only `user:inference`, so
+ * the profile and usage reads answer 403 `permission_error` ("OAuth token does not meet scope
+ * requirement user:profile") while the same token runs chats fine. A revoked or made-up
+ * token is a 401 instead, so this never vouches for one on its own.
+ */
+export function isMissingScopeResponse(status: number, body: string): boolean {
+  return status === 403 && /scope requirement/i.test(body);
+}
+
+/**
+ * Whether the token can call the model, which is all a chat needs. `count_tokens` authenticates
+ * exactly as a message does (measured: 200 for a setup-token, 401 for a made-up one) and costs
+ * no quota, so checking a token here spends none of the account's limit.
+ */
+export async function canRunInference(token: string): Promise<boolean> {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages/count_tokens", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": "ppm/1.0",
+      },
+      body: JSON.stringify({ model: "claude-haiku-4-5", messages: [{ role: "user", content: "hi" }] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    // 429 is a busy account, not a bad token — the same reading the profile check gives it.
+    if (res.status === 200 || res.status === 429) return true;
+    if (res.status >= 500) log.warn(`inference check error: HTTP ${res.status}`);
+    return false;
+  } catch (e) {
+    log.warn(`inference check error: ${(e as Error).message}`);
+    return false;
+  }
+}
+
 /**
  * Anthropic invalidates the entire refresh-token family this long after the original
  * grant, whether or not the token kept rotating in between. Measured twice on a live
@@ -372,6 +416,8 @@ class AccountService {
     subscriptionType?: string;
     authMethod?: string;
     profileData?: OAuthProfileData;
+    /** A `claude setup-token` token: runs chats, but has no profile or usage to read. */
+    inferenceOnly?: boolean;
   }> {
     const isOAuth = token.startsWith("sk-ant-oat");
 
@@ -401,6 +447,11 @@ class AccountService {
         // 429 = rate limited but valid token (no profile data available)
         if (res.status === 429) {
           return { valid: true, authMethod: "oauth_token" };
+        }
+        if (isMissingScopeResponse(res.status, await res.text().catch(() => ""))) {
+          return await canRunInference(token)
+            ? { valid: true, authMethod: "oauth_token", inferenceOnly: true }
+            : { valid: false };
         }
         // A server error says nothing about the token, though the caller reports it as invalid.
         if (res.status >= 500) log.warn(`token verification error (oauth): HTTP ${res.status}`);
@@ -478,7 +529,7 @@ class AccountService {
       } else if (info.orgName) {
         label = `${info.orgName}${info.subscriptionType ? ` (${info.subscriptionType})` : ""}`;
       } else if (info.authMethod === "oauth_token") {
-        label = `Claude Pro/Max`;
+        label = info.inferenceOnly ? "Claude Pro/Max (setup-token)" : "Claude Pro/Max";
       } else if (info.authMethod === "api_key" || params.apiKey.startsWith("sk-ant-api")) {
         label = "API Key";
       } else {
@@ -558,6 +609,20 @@ class AccountService {
 
   setDisabled(id: string): void {
     updateAccount(id, { status: "disabled" });
+  }
+
+  /**
+   * The name the user gave this account. Signing in again keeps it unless a new name is typed
+   * in that dialog, so a renamed account stays renamed. Throws on an empty name, because a
+   * card with no label falls back to a slice of its id, which names nothing a person chose.
+   */
+  setLabel(id: string, label: string): Account {
+    const name = label.trim();
+    if (!name) throw new Error("Name cannot be empty");
+    if (name.length > ACCOUNT_LABEL_MAX) throw new Error(`Name is too long (at most ${ACCOUNT_LABEL_MAX} characters)`);
+    if (!getAccountById(id)) throw new Error("Account not found");
+    updateAccount(id, { label: name });
+    return this.toAccount(getAccountById(id)!);
   }
 
   setEnabled(id: string): void {

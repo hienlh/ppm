@@ -1,62 +1,94 @@
-/** Scheduler core: 60s tick, concurrency guard, run lifecycle.
+/** Scheduler core: a timer armed for the next due schedule, concurrency guard, run lifecycle.
  * Runner is constructor-injected so tests instantiate with mocks (no module mocking),
  * and importing this module never pulls the chat/provider/SDK chain. */
-import { Cron } from "croner";
 import {
   getSchedules,
   getSchedule,
   getDueSchedules,
+  getEarliestFireAt,
   updateSchedule,
   insertScheduleRun,
   updateScheduleRun,
   cleanupScheduleRuns,
 } from "./scheduler-db.service.ts";
-import type { Schedule, RunResult } from "../types/scheduler.ts";
+import type { AlwaysOnScripts, Schedule, SchedulerRunner } from "../types/scheduler.ts";
 import { createLogger } from "./logger.ts";
+import { executePromptRun } from "./scheduler-prompt-run.ts";
+import { MAX_SLEEP_MS, nextFireAt, wakeDelay } from "./scheduler-timing.ts";
+
+export { nextFireAt, wakeDelay };
+export type { AlwaysOnScripts, SchedulerRunner };
 
 const log = createLogger("scheduler");
 
-const TICK_MS = 60_000;
-
-export interface SchedulerRunner {
-  ensureScheduleSession(schedule: Schedule): Promise<string>;
-  runScheduleOnce(schedule: Schedule, sessionId: string): Promise<RunResult>;
-}
-
-export function nextFireAt(cronExpr: string): string | null {
-  return new Cron(cronExpr).nextRun()?.toISOString() ?? null;
-}
+/** A script tick asked to run while its previous one still is: two at once never run. */
+export class ScheduleBusyError extends Error {}
 
 export class SchedulerService {
-  private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private started = false;
+  private ready: Promise<void> = Promise.resolve();
   // Refcount, not a Set: run-now can overlap a tick-run for the same id, and the
   // first finisher must not drop the guard while the second is still executing.
   private active = new Map<number, number>();
 
-  constructor(private runner: SchedulerRunner) {}
+  constructor(private runner: SchedulerRunner, private alwaysOn: AlwaysOnScripts) {}
 
   start(): void {
-    if (this.tickTimer) return;
+    if (this.started) return;
+    this.started = true;
     cleanupScheduleRuns();
     // Recompute next_fire_at from now — missed runs during downtime are not caught up
     for (const s of getSchedules(true)) {
+      if (s.mode !== "tick") continue;
       try {
         updateSchedule(s.id, { next_fire_at: nextFireAt(s.cron_expr) });
       } catch (e) {
         log.warn(`invalid cron for schedule ${s.id} (${s.name}): ${(e as Error).message}`);
       }
     }
-    this.tickTimer = setInterval(() => this.tick(), TICK_MS);
+    this.ready = this.alwaysOn.prepare()
+      .catch((e) => log.error("settling script processes left by the previous server failed:", e))
+      .then(() => this.alwaysOn.sync());
+    this.arm();
     log.info("started");
   }
 
   stop(): void {
-    if (this.tickTimer) { clearInterval(this.tickTimer); this.tickTimer = null; log.info("stopped"); }
-    // In-flight runs finish naturally
+    if (!this.started) return;
+    this.started = false;
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    this.alwaysOn.stopAll("PPM stopped");
+    log.info("stopped");
+    // In-flight prompt runs finish naturally; script processes die with PPM's stdin.
   }
 
+  /** Look again at the schedules as saved — after anything that may have changed them. */
+  rearm(): void {
+    if (!this.started) return;
+    this.arm();
+    void this.ready.then(() => this.alwaysOn.sync());
+  }
+
+  /** Sleep until the earliest due schedule, a minute at most, then tick and arm again. */
+  private arm(): void {
+    if (this.timer) clearTimeout(this.timer);
+    let delay = MAX_SLEEP_MS;
+    try {
+      delay = wakeDelay(getEarliestFireAt());
+    } catch (e) {
+      log.warn(`could not read when the next schedule is due: ${(e as Error).message}`);
+    }
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.tick();
+      if (this.started) this.arm();
+    }, delay);
+  }
+
+  /** A tick run in progress, or an always-on process running. */
   isRunning(id: number): boolean {
-    return (this.active.get(id) ?? 0) > 0;
+    return (this.active.get(id) ?? 0) > 0 || this.alwaysOn.isRunning(id);
   }
 
   listActive(): number[] {
@@ -73,7 +105,11 @@ export class SchedulerService {
       return;
     }
     for (const schedule of due) {
+      this.advance(schedule);
+      if (schedule.mode !== "tick") continue;
       if (this.isRunning(schedule.id)) {
+        // A script ticking every few seconds would bury its history under these rows.
+        if (schedule.kind === "script") continue;
         log.info(`skipped ${schedule.id} (${schedule.name}) — previous run still active`);
         const runId = insertScheduleRun(schedule.id, schedule.session_id, "skipped");
         updateScheduleRun(runId, { ended_at: new Date().toISOString() });
@@ -83,69 +119,80 @@ export class SchedulerService {
     }
   }
 
-  /** Start one run. Creates the run row synchronously; execution is fire-and-forget. `trigger` is for the log line. */
-  fire(schedule: Schedule, trigger = "tick"): number {
+  /**
+   * Move a due schedule on to its next fire before it runs. Left in the past for as long as the
+   * run lasts, it would be "due" at every wake-up, and the timer would wake at once each time.
+   * A cron that no longer parses gets no next fire, so it stops being due rather than spinning.
+   */
+  private advance(schedule: Schedule): void {
+    let next: string | null = null;
+    try {
+      if (schedule.mode === "tick") next = nextFireAt(schedule.cron_expr);
+    } catch (e) {
+      log.warn(`invalid cron for schedule ${schedule.id} (${schedule.name}): ${(e as Error).message}`);
+    }
+    try {
+      updateSchedule(schedule.id, { next_fire_at: next });
+    } catch (e) {
+      log.warn(`failed to advance schedule ${schedule.id}: ${(e as Error).message}`);
+    }
+  }
+
+  /** Start one run, fire-and-forget. A prompt's run row is made here; a script tick makes its own at the end, if any. */
+  fire(schedule: Schedule, trigger = "tick"): number | null {
     this.active.set(schedule.id, (this.active.get(schedule.id) ?? 0) + 1);
+    if (schedule.kind === "script") {
+      log.debug(`Schedule ${schedule.id} (${schedule.name}) fired (${trigger})`);
+      void this.ready.then(() => this.runner.runScriptTick(schedule))
+        .catch((e) => log.error(`Schedule ${schedule.id} (${schedule.name}) tick crashed:`, e))
+        .finally(() => this.afterRun(schedule));
+      return null;
+    }
     const runId = insertScheduleRun(schedule.id, schedule.session_id, "running");
     log.info(`Schedule ${schedule.id} (${schedule.name}) fired: run ${runId} (${trigger})`);
-    void this.execute(schedule, runId).catch((e) => {
+    void executePromptRun(this.runner, schedule, runId)
       // The run's outcome could not be recorded, so its row may still say "running".
-      log.error(`run ${runId} crashed:`, e);
-    });
+      .catch((e) => log.error(`run ${runId} crashed:`, e))
+      .finally(() => this.afterRun(schedule));
     return runId;
   }
 
-  /** Manual trigger (CLI/API). Bypasses the concurrency guard by explicit user action. */
-  runJobNow(id: number): { runId: number; wasRunning: boolean } {
+  /**
+   * Manual trigger (CLI/API). A prompt runs even over its previous run, by explicit user action;
+   * a script tick never does (ScheduleBusyError); an always-on script is restarted.
+   */
+  runJobNow(id: number): { runId: number | null; wasRunning: boolean } {
     const schedule = getSchedule(id);
     if (!schedule) throw new Error(`Schedule ${id} not found`);
     const wasRunning = this.isRunning(id);
-    const runId = this.fire(schedule, wasRunning ? "manual, previous run still active" : "manual");
-    return { runId, wasRunning };
+    if (schedule.kind === "script" && schedule.mode === "always-on") {
+      if (!schedule.enabled) throw new Error("Turn the schedule on to start it");
+      void this.ready.then(() => this.alwaysOn.restart(id))
+        .catch((e) => log.warn(`Schedule ${id} could not be restarted: ${(e as Error).message}`));
+      return { runId: null, wasRunning };
+    }
+    if (wasRunning && schedule.kind === "script") throw new ScheduleBusyError("This schedule is running now");
+    return { runId: this.fire(schedule, wasRunning ? "manual, previous run still active" : "manual"), wasRunning };
   }
 
-  private async execute(schedule: Schedule, runId: number): Promise<void> {
-    const startedAt = Date.now();
+  /** Every run, kept or not, moves last_run_at on and the next fire after it. */
+  private afterRun(schedule: Schedule): void {
+    const count = (this.active.get(schedule.id) ?? 1) - 1;
+    if (count <= 0) this.active.delete(schedule.id);
+    else this.active.set(schedule.id, count);
     try {
-      const sessionId = await this.runner.ensureScheduleSession(schedule);
-      if (sessionId !== schedule.session_id) {
-        updateScheduleRun(runId, { session_id: sessionId });
-        schedule = { ...schedule, session_id: sessionId };
+      // Read again: the cron may have been edited while this ran, or the schedule deleted.
+      const current = getSchedule(schedule.id);
+      if (current) {
+        let next: string | null | undefined;
+        if (current.mode === "tick" && current.enabled) {
+          try { next = nextFireAt(current.cron_expr); } catch { next = null; }
+        }
+        updateSchedule(schedule.id, { last_run_at: new Date().toISOString(), ...(next !== undefined && { next_fire_at: next }) });
       }
-      const result = await this.runner.runScheduleOnce(schedule, sessionId);
-      updateScheduleRun(runId, {
-        status: result.status,
-        output_truncated: result.output || null,
-        context_window_pct: result.contextWindowPct ?? null,
-        cost_usd: result.costUsd ?? null,
-        error: result.error ?? null,
-        rotated_to_session_id: result.rotatedToSessionId ?? null,
-        ended_at: new Date().toISOString(),
-      });
-      const summary = `Schedule ${schedule.id} run ${runId} ${result.status} in ${Date.now() - startedAt}ms`
-        + (result.costUsd != null ? ` cost=$${result.costUsd.toFixed(4)}` : "")
-        + (result.contextWindowPct != null ? ` ctx=${result.contextWindowPct}%` : "");
-      if (result.status === "error") log.error(`${summary}: ${(result.error ?? "unknown error").slice(0, 300)}`);
-      else log.info(summary);
+      this.rearm();
     } catch (e) {
-      log.error(`Schedule ${schedule.id} (${schedule.name}) run ${runId} failed after ${Date.now() - startedAt}ms:`, e);
-      updateScheduleRun(runId, {
-        status: "error",
-        error: (e as Error).message,
-        ended_at: new Date().toISOString(),
-      });
-    } finally {
-      const count = (this.active.get(schedule.id) ?? 1) - 1;
-      if (count <= 0) this.active.delete(schedule.id);
-      else this.active.set(schedule.id, count);
-      try {
-        updateSchedule(schedule.id, {
-          last_run_at: new Date().toISOString(),
-          next_fire_at: nextFireAt(schedule.cron_expr),
-        });
-      } catch (e) {
-        log.warn(`failed to advance schedule ${schedule.id}: ${(e as Error).message}`);
-      }
+      log.warn(`failed to advance schedule ${schedule.id}: ${(e as Error).message}`);
     }
   }
 }

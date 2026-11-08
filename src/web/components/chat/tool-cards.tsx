@@ -637,7 +637,7 @@ function ToolDetails({
         </div>
       );
     case "AskUserQuestion": {
-      const qs = (input.questions as Array<{ id?: string; question: string; header?: string; options: Array<{ label: string; description?: string }>; multiSelect?: boolean }>) ?? [];
+      const qs = (input.questions as Array<{ id?: string; question: string; header?: string; options: Array<{ label: string; description?: string; preview?: string }>; multiSelect?: boolean }>) ?? [];
       const answers = (input.answers as Record<string, string>) ?? {};
       return (
         <div className="space-y-2">
@@ -660,6 +660,14 @@ function ToolDetails({
               {(answers[q.id ?? q.question] ?? answers[q.question]) && (
                 <p className="text-foreground text-xs">Answer: {answers[q.id ?? q.question] ?? answers[q.question]}</p>
               )}
+              {/* The preview of each option, kept readable after the card has been answered — it is
+                  often the plan the answer agreed to. */}
+              {q.options.filter((opt) => opt.preview?.trim()).map((opt, oi) => (
+                <details key={`p${oi}`} className="text-xs">
+                  <summary className="cursor-pointer text-text-subtle">Preview · {opt.label}</summary>
+                  <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-text-primary">{opt.preview!.trim()}</pre>
+                </details>
+              ))}
             </div>
           ))}
         </div>

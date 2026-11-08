@@ -10,7 +10,7 @@
 
 import type { ElementType } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { Activity, FolderOpen, Monitor, ScrollText, Settings, Users } from "@/lib/icons";
+import { Activity, FolderOpen, History, Monitor, ScrollText, Settings, Users } from "@/lib/icons";
 import { getTabTypeIcon } from "@/lib/tab-type-icons";
 import { tabSessionId } from "@/lib/tab-session-id";
 import { usePanelStore } from "@/stores/panel-store";
@@ -49,6 +49,7 @@ const KIND_META: Record<Exclude<WindowKind, "tab-host">, { icon: ElementType; to
   "remote-desktop": { icon: Monitor, tone: tone("info"), label: "Remote Desktop" },
   settings: { icon: Settings, tone: tone("text-3"), label: "Settings" },
   logs: { icon: ScrollText, tone: tone("text-2"), label: "Logs" },
+  "release-notes": { icon: History, tone: tone("accent"), label: "Release notes" },
 };
 
 const TAB_LABELS: Partial<Record<TabType, string>> = {

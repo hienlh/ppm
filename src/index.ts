@@ -23,6 +23,7 @@ export async function buildProgram(): Promise<Command> {
   program
     .command("start")
     .description("Start the PPM server (background by default)")
+    .option("--minimal", "Minimal workspace: chat, files, editor and settings")
     .option("-p, --port <port>", "Port to listen on")
     .option("-s, --share", "(deprecated) Tunnel is now always enabled")
     .option("--profile <name>", "DB profile name (e.g. 'dev' → ppm.dev.db)")

@@ -202,6 +202,63 @@ describe("AccountService", () => {
     expect(accountService.getWithTokens(acc.id)!.accessToken).toBe("sk-ant-oat-new");
   });
 
+  describe("addManual() with a `claude setup-token` token", () => {
+    // Anthropic's real answer to a setup-token on the profile endpoint (inference scope only).
+    const scopeDenied = JSON.stringify({
+      type: "error",
+      error: { type: "permission_error", message: "OAuth token does not meet scope requirement any_of(user:profile, user:office)" },
+    });
+
+    async function addWith(answers: { profile: Response; countTokens?: Response }) {
+      const realFetch = globalThis.fetch;
+      const urls: string[] = [];
+      globalThis.fetch = (async (u: unknown) => {
+        urls.push(String(u));
+        if (String(u).includes("/api/oauth/profile")) return answers.profile;
+        if (String(u).includes("/v1/messages/count_tokens") && answers.countTokens) return answers.countTokens;
+        return new Response("{}", { status: 500 });
+      }) as typeof fetch;
+      try {
+        const acc = await accountService.addManual({ apiKey: "sk-ant-oat01-setup", label: null }).catch((e: Error) => e);
+        return { acc, urls };
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    }
+
+    it("adds the account once the token proves it can run a chat", async () => {
+      const { acc, urls } = await addWith({
+        profile: new Response(scopeDenied, { status: 403 }),
+        countTokens: new Response(JSON.stringify({ input_tokens: 8 }), { status: 200 }),
+      });
+      expect(acc).not.toBeInstanceOf(Error);
+      expect(urls.some((u) => u.includes("/v1/messages/count_tokens"))).toBe(true);
+      const [stored] = accountService.list();
+      expect(stored.label).toBe("Claude Pro/Max (setup-token)");
+      expect(stored.status).toBe("active");
+      expect(accountService.getWithTokens(stored.id)!.accessToken).toBe("sk-ant-oat01-setup");
+    });
+
+    it("still refuses a token the model rejects", async () => {
+      const { acc } = await addWith({
+        profile: new Response(scopeDenied, { status: 403 }),
+        countTokens: new Response("{}", { status: 401 }),
+      });
+      expect(acc).toBeInstanceOf(Error);
+      expect(accountService.list()).toHaveLength(0);
+    });
+
+    it("does not treat a 403 for another reason as a setup-token", async () => {
+      const { acc, urls } = await addWith({
+        profile: new Response(JSON.stringify({ type: "error", error: { type: "permission_error", message: "Forbidden" } }), { status: 403 }),
+        countTokens: new Response("{}", { status: 200 }),
+      });
+      expect(acc).toBeInstanceOf(Error);
+      expect(urls.some((u) => u.includes("/v1/messages/count_tokens"))).toBe(false);
+      expect(accountService.list()).toHaveLength(0);
+    });
+  });
+
   it("updateTokens() clears a stale cooldown even on a parked account", () => {
     // The parked branch used to skip cooldown_until, so a 429 that arrived before the
     // user parked the account would resurrect it the moment the park was lifted.

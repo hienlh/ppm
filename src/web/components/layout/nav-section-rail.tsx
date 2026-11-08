@@ -10,7 +10,7 @@ import { openSettings } from "@/components/settings/open-settings";
 import { FeatureBadge } from "@/components/ui/feature-badge";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
-import { getAvailableTabs } from "@/lib/sidebar-tabs/tab-registry";
+import { getAvailableTabs, isMinimalSidebarTab } from "@/lib/sidebar-tabs/tab-registry";
 import { resolveTabOrder } from "@/lib/sidebar-tabs/resolve-tab-order";
 import { useProjectStore } from "@/stores/project-store";
 import { useShallow } from "zustand/react/shallow";
@@ -113,7 +113,8 @@ function FooterUtil({ icon: Icon, label, onClick, active, featureBadge, alert }:
 
 export const NavSectionRail = memo(function NavSectionRail({ className }: { className?: string }) {
   const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
-  const sidebarActiveTab = useSettingsStore((s) => s.sidebarActiveTab);
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
+  const sidebarActiveTab = useSettingsStore((s) => s.minimalMode && !isMinimalSidebarTab(s.sidebarActiveTab) ? "history" : s.sidebarActiveTab);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
   const sidebarTabOrder = useSettingsStore((s) => s.sidebarTabOrder);
   const setSidebarTabOrder = useSettingsStore((s) => s.setSidebarTabOrder);
@@ -128,8 +129,8 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
   const historyUnreadCount = useNotificationStore(selectProjectUnread(activeProject?.name));
 
   const TABS = useMemo(
-    () => resolveTabOrder(getAvailableTabs({ jiraEnabled, contributions }), sidebarTabOrder),
-    [contributions, jiraEnabled, sidebarTabOrder],
+    () => resolveTabOrder(getAvailableTabs({ jiraEnabled, contributions }), sidebarTabOrder).filter((tab) => !minimalMode || isMinimalSidebarTab(tab.id)),
+    [contributions, jiraEnabled, sidebarTabOrder, minimalMode],
   );
 
   // Drag-to-reorder — writes the full resolved id list so mobile/desktop stay in sync.
@@ -164,10 +165,10 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
   // Command palette can't reach the popover's local state, so it asks via event.
   // The rail is `hidden md:flex`, so on mobile the drawer's bottom sheet answers.
   useEffect(() => {
-    const open = () => { if (!isMobileDevice()) setCloudOpen(true); };
+    const open = () => { if (!minimalMode && !isMobileDevice()) setCloudOpen(true); };
     window.addEventListener("open-cloud-share", open);
     return () => window.removeEventListener("open-cloud-share", open);
-  }, []);
+  }, [minimalMode]);
 
   const openRemoteDesktop = useOpenRemoteDesktop();
   const openAndroid = useOpenAndroid();
@@ -215,6 +216,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
       {/* footer utilities */}
       <div className="shrink-0 flex flex-col items-center gap-0.5 px-[3px] py-2 border-t border-border">
         <NotificationBellPopover expanded={false} />
+        {!minimalMode && <>
         <button
           ref={cloudBtnRef}
           onClick={() => setCloudOpen(!cloudOpen)}
@@ -253,6 +255,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
           active={logsOpen}
           onClick={() => openLogs()}
         />
+        </>}
         <FooterUtil icon={Settings} label="Settings" onClick={() => openSettings()} />
       </div>
     </div>

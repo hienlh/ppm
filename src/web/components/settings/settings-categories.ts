@@ -105,7 +105,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "proxy", group: "integrations", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
   { id: "remote-access", group: "integrations", label: "Remote Access", subtitle: "Tailscale, public link", icon: MonitorSmartphone },
 
-  { id: "schedules", group: "advanced", label: "Scheduled Agents", subtitle: "Run Claude on a cron schedule", icon: CalendarClock },
+  { id: "schedules", group: "advanced", label: "Scheduled Agents", subtitle: "Prompts and scripts, on a cron or always on", icon: CalendarClock },
   { id: "shortcuts", group: "advanced", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
   { id: "files", group: "advanced", label: "File Filters", subtitle: "Exclude patterns, ignore files", icon: FolderSearch },
   { id: "query-audit", group: "advanced", label: "Query Audit Log", subtitle: "SQL history retention and size", icon: DatabaseZap },
@@ -134,7 +134,22 @@ export function settingsCategory(id: SettingsCategoryId): SettingsCategoryDef {
   return SETTINGS_CATEGORIES.find((c) => c.id === id)!;
 }
 
+/** Settings for services that remain available when PPM starts with --minimal. */
+const MINIMAL_SETTINGS_CATEGORIES = new Set<SettingsCategoryId>([
+  "general", "appearance", "ai-provider", "accounts", "voice", "notifications",
+  "remote-access", "shortcuts", "files",
+]);
+
+export function settingsCategoryAvailable(id: SettingsCategoryId, minimalMode: boolean): boolean {
+  return !minimalMode || MINIMAL_SETTINGS_CATEGORIES.has(id);
+}
+
+/** Resolve before rendering so a restored disabled pane never mounts or fetches. */
+export function resolveSettingsCategory(id: SettingsCategoryId, minimalMode: boolean): SettingsCategoryId {
+  return settingsCategoryAvailable(id, minimalMode) ? id : DEFAULT_SETTINGS_CATEGORY;
+}
+
 /** Categories of one group, in declaration order. */
-export function settingsCategoriesInGroup(group: SettingsGroupId): SettingsCategoryDef[] {
-  return SETTINGS_CATEGORIES.filter((c) => c.group === group);
+export function settingsCategoriesInGroup(group: SettingsGroupId, minimalMode = false): SettingsCategoryDef[] {
+  return SETTINGS_CATEGORIES.filter((c) => c.group === group && settingsCategoryAvailable(c.id, minimalMode));
 }

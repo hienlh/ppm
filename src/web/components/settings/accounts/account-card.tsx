@@ -18,7 +18,7 @@
  * while every turn on them failed. The sign-in deadline replaced it.
  */
 
-import { CircleHelp, Download, Eye, KeyRound, RefreshCw, Trash2 } from "@/lib/icons";
+import { CircleHelp, Download, Eye, KeyRound, Pencil, RefreshCw, Trash2 } from "@/lib/icons";
 import { Switch } from "@/components/ui/switch";
 import type { AccountInfo, AccountUsageEntry, OAuthProfileData } from "../../../lib/api-settings";
 import { AccountBucketRow } from "./account-bucket-row";
@@ -38,6 +38,8 @@ export interface AccountCardProps {
   onToggle?: (id: string, status: string) => void;
   toggling?: boolean;
   onDelete?: (id: string, display: string) => void;
+  /** Give the account a name of its own. Only Settings passes it. */
+  onRename?: (id: string, current: string) => void;
   onExport?: (id: string) => void;
   onViewProfile?: (profile: OAuthProfileData, accountId: string) => void;
   /** Brief highlight when this account's usage numbers just changed. */
@@ -80,11 +82,11 @@ export interface AccountCardProps {
 
 // Fixed widths so a row scrolls instead of squeezing. Two of them: a read-only card holds a
 // name and its bars, but a card that also carries view/export/toggle/delete needs room for
-// four controls beside the name, and at the read-only width that header wraps.
-const STRIP_WIDTH = { readOnly: "min-w-[220px]", withActions: "min-w-[300px]" } as const;
+// five controls beside the name, and at the read-only width that header wraps.
+const STRIP_WIDTH = { readOnly: "min-w-[220px]", withActions: "min-w-[330px]" } as const;
 
 export function AccountCard({
-  entry, isActive, accountInfo, onToggle, toggling, onDelete, onExport, onViewProfile, flash,
+  entry, isActive, accountInfo, onToggle, toggling, onDelete, onRename, onExport, onViewProfile, flash,
   onSelect, unselectableReason, selecting, planLabel, dailyGuard, onDailyGuardToggle, dailyGuardToggling,
   reauthHint, onReauth, resetCredits, resetCreditAction, layout = "list",
 }: AccountCardProps) {
@@ -118,7 +120,7 @@ export function AccountCard({
   const grantExpiresOn = grantExpiresAtMs
     ? new Date(grantExpiresAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
     : null;
-  const hasActions = Boolean(onToggle || onDelete || onExport || onViewProfile);
+  const hasActions = Boolean(onToggle || onDelete || onRename || onExport || onViewProfile);
   // Every state that already dims this card also refuses the chat to it. `needsReauth` is
   // the one worth naming separately: the token is present and unexpired, so nothing else
   // here looks wrong, but the server has rejected it and no turn can run on it.
@@ -215,6 +217,20 @@ export function AccountCard({
         )}
 
         <div className="flex items-center gap-0.5 shrink-0">
+          {onRename && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className="p-2 rounded cursor-pointer text-text-subtle hover:text-foreground hover:bg-surface-elevated transition-colors"
+                  onClick={() => onRename(entry.accountId, entry.accountLabel ?? "")}
+                  aria-label="Rename account"
+                >
+                  <Pencil className="size-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Rename account</TooltipContent>
+            </Tooltip>
+          )}
           {!isExpired && onViewProfile && accountInfo?.profileData && (
             <Tooltip>
               <TooltipTrigger asChild>

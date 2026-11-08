@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 58;
+export const CURRENT_SCHEMA_VERSION = 59;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1285,14 +1285,82 @@ export function runMigrations(database: Database): void {
   }
 
   if (current < 58) {
+    applyScheduleScriptSchema(database);
+    database.exec(`PRAGMA user_version = 58;`);
+  }
+
+  if (current < 59) {
+    // A build of the session tools once numbered its own migration 58, so a database it opened
+    // reads 58 without the script-schedule schema above. Every step there is idempotent, so it
+    // is applied again here and such a database gets the tables it skipped.
+    applyScheduleScriptSchema(database);
     // Sessions an AI created through PPM's session tools: which session created each one, and
     // how deep in such a chain it sits (0 for a session a person started). Read by the depth
     // limit, the linked-sessions bar and the session list's "Created by".
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN spawned_by TEXT"); } catch { /* column exists */ }
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN spawn_depth INTEGER NOT NULL DEFAULT 0"); } catch { /* column exists */ }
     try { database.exec("CREATE INDEX IF NOT EXISTS idx_session_metadata_spawned_by ON session_metadata(spawned_by)"); } catch { /* no table */ }
-    database.exec(`PRAGMA user_version = 58;`);
+    database.exec(`PRAGMA user_version = 59;`);
   }
+}
+
+/**
+ * Script schedules. Columns are added rather than the table rebuilt: rebuilding a table other
+ * tables reference cascades their rows away (see migration 55). Every schedule saved before this
+ * was a prompt run once per cron fire, which is what the defaults say. Idempotent: each column is
+ * added only if missing and each table only if absent, so it may run on a database that has it.
+ */
+function applyScheduleScriptSchema(database: Database): void {
+  for (const column of [
+    "kind TEXT NOT NULL DEFAULT 'prompt' CHECK (kind IN ('prompt', 'script'))",
+    "mode TEXT NOT NULL DEFAULT 'tick' CHECK (mode IN ('tick', 'always-on'))",
+    "description TEXT NOT NULL DEFAULT ''",
+    "script TEXT",
+    "inputs_json TEXT NOT NULL DEFAULT '[]'",
+    "input_values_json TEXT NOT NULL DEFAULT '{}'",
+    "secrets_enc TEXT",
+    "state_json TEXT",
+  ]) {
+    try { database.exec(`ALTER TABLE schedules ADD COLUMN ${column}`); } catch { /* column exists */ }
+  }
+  database.exec(`
+    -- The chat a script's ctx.ai.chat(key) talks to; title is the one the script last set.
+    CREATE TABLE IF NOT EXISTS schedule_chats (
+      schedule_id  INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+      key          TEXT NOT NULL,
+      session_id   TEXT NOT NULL,
+      title        TEXT,
+      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      last_used_at TEXT,
+      PRIMARY KEY (schedule_id, key)
+    );
+    -- Chat turns a script started without waiting; ctx.ai.finished() hands each out once.
+    CREATE TABLE IF NOT EXISTS schedule_ai_turns (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+      key         TEXT NOT NULL,
+      session_id  TEXT NOT NULL,
+      status      TEXT NOT NULL CHECK (status IN ('running', 'done', 'error')),
+      text        TEXT,
+      cost_usd    REAL,
+      error       TEXT,
+      timed_out   INTEGER NOT NULL DEFAULT 0,
+      started_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      finished_at TEXT,
+      collected   INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_schedule_ai_turns_sched ON schedule_ai_turns(schedule_id, collected, status);
+    -- The child process a script schedule runs in, so a restarted server can find one it left behind.
+    CREATE TABLE IF NOT EXISTS schedule_runtime (
+      schedule_id  INTEGER PRIMARY KEY REFERENCES schedules(id) ON DELETE CASCADE,
+      pid          INTEGER,
+      token        TEXT,
+      started_at   TEXT,
+      restarts     INTEGER NOT NULL DEFAULT 0,
+      last_exit_at TEXT,
+      last_error   TEXT
+    );
+  `);
 }
 
 /**

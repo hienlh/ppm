@@ -1,4 +1,5 @@
 import { decodeMessageBlocks } from "../shared/chat-message-blocks.ts";
+import { isMinimalMode } from "../services/runtime-mode.ts";
 import type { StripMode } from "../services/transcript-images.ts";
 import {
   type Query,
@@ -542,7 +543,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // PPM's `open_preview` replaces the claude.ai Artifact tools (`Artifact`, `ArtifactComments`,
     // `ArtifactData`), whose pages live on claude.ai rather than in PPM.
-    const artifactEnv = ppmToolOn(configService.get("ai"), OPEN_PREVIEW_TOOL) ? { CLAUDE_CODE_DISABLE_ARTIFACT: "1" } : {};
+    const artifactEnv = !isMinimalMode() && ppmToolOn(configService.get("ai"), OPEN_PREVIEW_TOOL) ? { CLAUDE_CODE_DISABLE_ARTIFACT: "1" } : {};
 
     return {
       ...base,
@@ -987,18 +988,22 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
   /**
-   * One prompt, one text answer: no tools, no session on disk, no project. For PPM's own small
-   * jobs (sorting the log's errors, drafting a bug report), not for chats. It runs on the
-   * account the router would pick next and authenticates exactly as a turn does
-   * (`buildQueryEnv`), in a directory of its own with `settingSources: []`, so no project's
-   * CLAUDE.md, settings or `.env` reaches it.
+   * One prompt, one answer: no tools, no MCP server, no session on disk, no project. For PPM's
+   * own small jobs (sorting the log's errors, drafting a bug report) and a script schedule's
+   * `ctx.ai.ask`, not for chats. It runs on the account the router would pick next and
+   * authenticates exactly as a turn does (`buildQueryEnv`), in a directory of its own with
+   * `settingSources: []`, so no project's CLAUDE.md, settings or `.env` reaches it.
+   * With `jsonSchema` the answer is also `json`, through the SDK's structured output; that is
+   * a tool call of its own, so the one-turn cap is lifted for it.
    */
   async completeOnce(input: {
     prompt: string;
-    systemPrompt: string;
+    systemPrompt?: string;
     model: string;
     timeoutMs?: number;
-  }): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+    effort?: "low" | "medium" | "high";
+    jsonSchema?: Record<string, unknown>;
+  }): Promise<{ text: string; json?: unknown; costUsd: number; inputTokens: number; outputTokens: number }> {
     let account: AccountWithTokens | null = null;
     if (accountSelector.isEnabled()) {
       const picked = accountSelector.next();
@@ -1020,11 +1025,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
           cwd,
           model: input.model,
-          systemPrompt: input.systemPrompt,
+          ...(input.systemPrompt !== undefined && { systemPrompt: input.systemPrompt }),
+          ...(input.effort && { effort: input.effort }),
+          ...(input.jsonSchema ? { outputFormat: { type: "json_schema" as const, schema: input.jsonSchema } } : { maxTurns: 1 }),
           tools: [],
+          mcpServers: {},
+          strictMcpConfig: true,
           settingSources: [],
           persistSession: false,
-          maxTurns: 1,
           env: this.buildQueryEnv(undefined, account),
           abortController,
         },
@@ -1035,9 +1043,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           const detail = message.subtype === "success" ? message.result : message.subtype;
           throw new Error(`Claude did not answer: ${String(detail).slice(0, 200)}`);
         }
+        if (input.jsonSchema && message.structured_output === undefined) {
+          throw new Error("Claude did not answer in the requested JSON shape");
+        }
         if (account) accountSelector.onSuccess(account.id);
         return {
           text: message.result,
+          ...(input.jsonSchema && { json: message.structured_output }),
+          costUsd: message.total_cost_usd,
           inputTokens: (message.usage.input_tokens ?? 0) + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0),
           outputTokens: message.usage.output_tokens ?? 0,
         };
@@ -1078,13 +1091,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // The chat's turns will carry the tab tools too (`chatService.prepareSendOptions`); their
     // token is minted below, once the spare has the session id it will be taken over with.
     const ai = configService.get("ai");
-    const base = anyPpmToolOn(ai, TAB_TOOLS) ? localServerBaseUrl() : null;
+    const base = !isMinimalMode() && anyPpmToolOn(ai, TAB_TOOLS) ? localServerBaseUrl() : null;
     const tabTools = base ? { url: `${base}${TAB_TOOLS_MCP_PATH}`, token: "" } : null;
     // Likewise the database tools, while a saved connection is available to the AI chat.
-    const dbBase = anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0 ? localServerBaseUrl() : null;
+    const dbBase = !isMinimalMode() && anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0 ? localServerBaseUrl() : null;
     const dbTools = dbBase ? { url: `${dbBase}${DB_TOOLS_MCP_PATH}`, token: "" } : null;
-    // And the session tools: a spare is never a design session, which is the only chat without them.
-    const sessionBase = anyPpmToolOn(ai, SESSION_TOOLS) ? localServerBaseUrl() : null;
+    // And the session tools: a spare is never a design session, which is the only chat without
+    // them besides minimal mode, which runs no PPM tools at all.
+    const sessionBase = !isMinimalMode() && anyPpmToolOn(ai, SESSION_TOOLS) ? localServerBaseUrl() : null;
     const sessionTools = sessionBase ? { url: `${sessionBase}${SESSION_COLLAB_MCP_PATH}`, token: "" } : null;
     const options = this.buildQueryOptions({
       cwd: projectPath,

@@ -431,3 +431,61 @@ looked like a product bug first:
 
 Also: Node 20 (the capped e2e image) has no global `WebSocket`; a second device's socket has to be
 opened by the Bun fixture instead.
+
+## Bun 1.3.10 on Windows leaks every idle helper thread (2026-11-08)
+
+The supervisor reached 15.4 GB of private bytes against a 1.4 GB working set and a 3 MB JS heap,
+growing about 400 MB an hour, until the machine had 5 GB of commit left out of 53. PPM's code was
+not leaking. Bun 1.3.10 was.
+
+What the live process held, read from outside it (no tool needed beyond `bun:ffi`):
+
+- 7,352 `Thread` handles while 17 threads were alive. All of them came from one start routine
+  inside `bun.exe`, each thread had lived about 10.6 s, and they were created at 3.2 a minute for
+  37 hours. That is a JavaScriptCore helper thread that exits after 10 s idle and is recreated on
+  the next bit of work, and Bun never closes its handle.
+- 484 fully committed 32 MB allocations, 14.7 GB of the 15.4. The memory monitor's own samples
+  grew by exactly 31–33 MB about 370 times and by 0 the rest of the time, so this was allocator
+  segments taken and never given back, not a slow drip.
+
+A script that does nothing but `await Bun.sleep(15_000)` leaks about 8 thread handles a cycle on
+1.3.10 (7.2 on 1.2.23, 7.9 on 1.3.9) and none on 1.3.11, 1.3.12, 1.3.13, 1.3.14, 1.4.0 or 1.4.4
+(1.3.11 measured side by side with a 1.3.10 control). So every Windows Bun before 1.3.11 has it. Work done back to back leaks nothing on any version, which
+is why spawning PowerShell in a loop never reproduced it. The leak needs the helper thread to go
+idle, exit and come back, which is exactly what any timer longer than 10 s does.
+
+Two wrong turns, so nobody repeats them:
+
+- The comment on `snapshotServerDescendants` blamed overlapping PowerShell spawns for the 32 MB
+  segments. Serialising them did not stop the growth. Every sample of the supervisor did have one
+  PowerShell spawn in it, so per-spawn attribution looked conclusive and was confounded with time.
+- A short probe never grew a 32 MB segment, on any version. The thread churn is proven; that the
+  segments come from it is the best explanation, not a measurement.
+
+What changed: PPM is released with Bun 1.3.12 (the Windows binaries embed the builder's runtime,
+and `scripts/release.sh` now refuses to build with a leaking one), and `bun-runtime-advisory.ts`
+logs a `WARN` at start in every PPM process on a runtime measured to leak, telling the user to run
+`bun upgrade`. Why 1.3.12 and not newer, from the unit suite run against each:
+
+- 1.3.13 rejects a TLS connection made over an existing socket with `ERR_TLS_CERT_ALTNAME_INVALID`
+  (`tls-identity-check.test.ts`), which is how a database is reached through an SSH tunnel.
+  1.3.11, 1.3.12 and 1.4.4 pass.
+- Bun 1.4.x starts at about a quarter of the private bytes, but from somewhere in 1.4.1–1.4.4
+  `node:child_process` no longer goes through `Bun.spawn`, so the memory monitor's spawn tracker
+  stops seeing the Claude SDK's children (`memory-watchdog.test.ts` catches it). Move to 1.4 only
+  together with a fix for that.
+- From 1.3.11 `statSync().mtimeMs` carries sub-millisecond digits on Windows, which a `Date` passed
+  to `utimesSync` cannot put back. Only a test depended on that round trip.
+
+One trap when comparing Bun versions on this machine: a `bun.exe` anywhere but `~/.bun/bin` reads a
+freshly written file 25–50x slower the first time (855 µs against 31 µs for the same 1.3.10
+binary copied elsewhere), because Defender scans for it and not for the installed one. That made
+newer versions look 2–3x slower on file-heavy tests until the 1.3.10 control was run from the same
+folder.
+
+To look at a leaking Windows process: count its handles by object type
+(`NtQuerySystemInformation(SystemExtendedHandleInformation)` filtered by pid, type names from
+`NtQueryObject(ObjectTypesInformation)`), group its committed private memory by allocation base
+(`VirtualQueryEx`), and for `Thread` handles duplicate them and ask `NtQueryInformationThread`
+for create/exit times and the start address. That took minutes; heap snapshots and per-spawn
+attribution had not found it in weeks.

@@ -61,6 +61,11 @@ AHEAD=$(git rev-list --count "origin/main..HEAD")
 [ "$BEHIND" = "0" ] || fail "local is $BEHIND commit(s) behind origin/main — pull/rebase first."
 [ "$AHEAD" = "0" ] || fail "local is $AHEAD commit(s) ahead of origin/main — push your source first."
 
+# `bun build --compile` embeds the builder's own runtime in every binary, so a
+# Bun known to leak on Windows would ship that leak to every binary install.
+bun -e "const { bunRuntimeAdvisory } = await import('./src/services/bun-runtime-advisory.ts'); process.exit(bunRuntimeAdvisory(Bun.version, 'win32') ? 1 : 0)" || \
+  fail "Bun $(bun --version) leaks memory on Windows and would be embedded in the binaries — run \`bun upgrade\` first."
+
 echo "  ✓ on main · clean · in sync with origin · version $VERSION"
 
 # ---------------------------------------------------------------------------

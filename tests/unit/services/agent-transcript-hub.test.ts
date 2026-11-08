@@ -463,6 +463,29 @@ describe("agent transcript hub", () => {
     expect(_debugHubSnapshotForTest("claude", SESSION_ID).exists).toBe(false);
   });
 
+  it("forgetting every hub between tests stops their timers too", () => {
+    // A hub forgotten with its timer running ticks for the rest of the process: global-events
+    // resets right after closing its socket, and that tick later read a `configService.get`
+    // another file had stubbed, threw, and left the stub in place for every file after it.
+    const started: string[] = [];
+    const stopped: unknown[] = [];
+    agentTranscriptTimers.setInterval = () => {
+      started.push(`timer-${started.length}`);
+      return started.at(-1);
+    };
+    agentTranscriptTimers.clearInterval = (handle) => { stopped.push(handle); };
+    writeCard(ownClaude(), "toolu_card1");
+    const ws = makeWs();
+    subscribe(ws, "s1", "toolu_card1");
+    handleAgentActivitySubscribe(ws, {
+      type: "agent-activity:subscribe", subId: "act1", projectName: PROJECT_A, providerId: "claude", sessionId: SESSION_ID,
+    });
+    expect(started).toEqual(["timer-0", "timer-1"]);
+
+    _resetAgentTranscriptHubForTest();
+    expect(stopped.toSorted()).toEqual(started);
+  });
+
   // ── Task 4: activity feed ──
 
   it("a transcript written 10s ago shows up as running", async () => {

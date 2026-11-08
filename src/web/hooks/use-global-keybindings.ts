@@ -1,3 +1,4 @@
+import { isMinimalTab } from "@/lib/minimal-mode";
 import { useEffect, useState, useCallback } from "react";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -46,7 +47,65 @@ export function useGlobalKeybindings() {
       return true;
     }
 
+    /** Mod+1..9: the project at that place in the list. Returns true when the event was consumed. */
+    function dispatchSwitchProject(e: KeyboardEvent, m: (ev: KeyboardEvent, id: string) => boolean) {
+      for (let i = 1; i <= 9; i++) {
+        if (!m(e, `switch-project-${i}`)) continue;
+        e.preventDefault();
+        const target = useProjectStore.getState().projects[i - 1];
+        if (target) {
+          useProjectStore.getState().setActiveProject(target);
+          useTabStore.getState().switchProject(target.name);
+        }
+        return true;
+      }
+      return false;
+    }
+
     function handler(e: KeyboardEvent) {
+      if (useSettingsStore.getState().minimalMode) {
+        if (e.type !== "keydown" || composing || e.isComposing) return;
+        const { matchesEvent: match } = useKeybindingsStore.getState();
+        if (dispatchChatNav(e, match)) return;
+        if (match(e, "save-prevent")) e.preventDefault();
+        // Like full mode below: inside a text field only the locked shortcuts fire.
+        const target = e.target as HTMLElement | null;
+        if (target?.tagName === "TEXTAREA" || target?.tagName === "INPUT" || target?.isContentEditable) return;
+        if (match(e, "toggle-sidebar")) {
+          e.preventDefault();
+          useSettingsStore.getState().toggleSidebar();
+        } else if (match(e, "new-file")) {
+          e.preventDefault();
+          useTabStore.getState().openNewFile();
+        } else if (match(e, "open-settings")) {
+          e.preventDefault();
+          openSettings();
+        } else if (match(e, "open-chat")) {
+          e.preventDefault();
+          const project = useProjectStore.getState().activeProject;
+          useTabStore.getState().openTab({ type: "chat", title: "AI Chat", projectId: project?.name ?? null,
+            metadata: project ? { projectName: project.name } : undefined, closable: true });
+        } else if (match(e, "voice-input")) {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("toggle-voice-input"));
+        } else if (match(e, "open-search")) {
+          e.preventDefault();
+          const settings = useSettingsStore.getState();
+          if (settings.sidebarCollapsed) settings.toggleSidebar();
+          settings.setSidebarActiveTab("search");
+        } else if (match(e, "next-tab") || match(e, "prev-tab")) {
+          e.preventDefault();
+          const state = useTabStore.getState();
+          const chats = state.tabs.filter((tab) => isMinimalTab(tab.type));
+          if (!chats.length) return;
+          const index = chats.findIndex((tab) => tab.id === state.activeTabId);
+          const next = (index + (match(e, "next-tab") ? 1 : -1) + chats.length) % chats.length;
+          state.setActiveTab(chats[next]!.id);
+        } else {
+          dispatchSwitchProject(e, match);
+        }
+        return;
+      }
       // Track whether Shift is pressed alone (not as a modifier for another key)
       if (e.type === "keydown" && e.key === "Shift") {
         shiftAlone = true;
@@ -237,19 +296,7 @@ export function useGlobalKeybindings() {
         return;
       }
 
-      // Switch project 1-9
-      for (let i = 1; i <= 9; i++) {
-        if (match(e, `switch-project-${i}`)) {
-          e.preventDefault();
-          const projects = useProjectStore.getState().projects;
-          const target = projects[i - 1];
-          if (target) {
-            useProjectStore.getState().setActiveProject(target);
-            useTabStore.getState().switchProject(target.name);
-          }
-          return;
-        }
-      }
+      if (dispatchSwitchProject(e, match)) return;
 
       // Extension-contributed keybindings (with user override support)
       const extKbs = useExtensionStore.getState().contributions?.keybindings;
@@ -274,6 +321,7 @@ export function useGlobalKeybindings() {
 
     // Custom event listener for programmatic opening
     function handleOpenPalette(e: Event) {
+      if (useSettingsStore.getState().minimalMode) return;
       const query = (e as CustomEvent).detail;
       setPaletteInitialQuery(typeof query === "string" ? query : "");
       setPaletteOpen(true);

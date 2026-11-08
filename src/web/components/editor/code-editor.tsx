@@ -89,6 +89,7 @@ interface CodeEditorProps {
 }
 
 export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEditorProps) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const filePath = metadata?.filePath as string | undefined;
   const projectName = metadata?.projectName as string | undefined;
   // Inline content mode: read-only Monaco with pre-loaded content (e.g. cell viewer)
@@ -126,9 +127,9 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       mobileWordWrap: s.mobileWordWrap, toggleMobileWordWrap: s.toggleMobileWordWrap,
     })),
   );
-  const inlineBlame = useSettingsStore((s) => s.inlineBlame);
+  const inlineBlame = useSettingsStore((s) => s.inlineBlame) && !minimalMode;
   const toggleInlineBlame = useSettingsStore((s) => s.toggleInlineBlame);
-  const lspEnabled = useSettingsStore((s) => s.lspEnabled);
+  const lspEnabled = useSettingsStore((s) => s.lspEnabled) && !minimalMode;
   const setLspEnabled = useSettingsStore((s) => s.setLspEnabled);
   // The viewport breakpoint, not the `isMobile` further down: that one is
   // `ontouchstart`, which is also true of a touch-screen laptop with every
@@ -155,7 +156,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const isAudio = AUDIO_EXTS.has(ext);
   const isSqlite = SQLITE_EXTS.has(ext);
   const isMarkdown = ext === "md" || ext === "mdx";
-  const isHtml = (ext === "html" || ext === "htm") && !isUntitled && inlineContent == null;
+  const isHtml = !minimalMode && (ext === "html" || ext === "htm") && !isUntitled && inlineContent == null;
   // The AI's open_file with a line asks for the code; any other open lands on the preview.
   const aiView = metadata?.aiView as "code" | "preview" | undefined;
   const [htmlMode, setHtmlMode] = useState<"edit" | "preview">(aiView === "code" ? "edit" : "preview");
@@ -166,7 +167,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // Explicit language override (from language picker / New DB Query); falls back to file extension.
   const langOverride = metadata?.language as string | undefined;
   const effectiveLanguage = inlineLanguage ?? langOverride ?? getMonacoLanguage(filePath ?? "");
-  const isSql = effectiveLanguage === "sql";
+  const isSql = !minimalMode && effectiveLanguage === "sql";
   const [mdMode, setMdMode] = useState<"edit" | "preview">(aiView === "code" ? "edit" : "preview");
   const [csvMode, setCsvMode] = useState<"table" | "raw">("table");
 
@@ -190,7 +191,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   }, [aiOpenAt, aiView]);
 
   // SQL file: connection picker + autocomplete + run in DB viewer
-  const { connections, cachedTables, refreshTables, updateConnection } = useConnections();
+  const { connections, cachedTables, refreshTables, updateConnection } = useConnections(!minimalMode);
   // Persist selected connection per file (by path), or per tab for untitled files.
   const sqlConnStorageKey = filePath ? `ppm:sql-conn:${filePath}` : tabId ? `ppm:sql-conn:tab:${tabId}` : null;
   const [sqlConnId, setSqlConnId] = useState<number | null>(() => {
@@ -360,8 +361,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
 
   // Redirect .db files to sqlite viewer by changing tab type
   useEffect(() => {
-    if (isSqlite && tabId) updateTab(tabId, { type: "sqlite" });
-  }, [isSqlite, tabId, updateTab]);
+    if (!minimalMode && isSqlite && tabId) updateTab(tabId, { type: "sqlite" });
+  }, [minimalMode, isSqlite, tabId, updateTab]);
 
   // Detect external (absolute) file path — not relative to project
   const isExternalFile = filePath ? /^(\/|[A-Za-z]:[/\\])/.test(filePath) : false;
@@ -478,7 +479,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // neither has a path git could blame.
   // Never on a phone: it is a `git blame` for every file opened and a
   // `git show` for every hover, on the device least able to pay for either.
-  const canBlame = !isUntitled && inlineContent == null && !!filePath && !!projectName && !isPhone;
+  const canBlame = !minimalMode && !isUntitled && inlineContent == null && !!filePath && !!projectName && !isPhone;
   const blame = useInlineBlame({
     editor: mounted?.editor ?? null,
     monaco: mounted?.monaco ?? null,
@@ -493,7 +494,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // external file (outside any project) has no project whose node_modules,
   // tsconfig or go.mod would tell a server what it is looking at, so it gets
   // nothing rather than a server rooted somewhere arbitrary.
-  const lspServable = !isUntitled && !isExternalFile && inlineContent == null && !!filePath && !!projectName;
+  const lspServable = !minimalMode && !isUntitled && !isExternalFile && inlineContent == null && !!filePath && !!projectName;
   // Off until asked, and never on a touch-only device. A server is a real process on the
   // host — one `typescript-language-server` was 854 MB resident — so it starts because
   // someone wanted it, not because a file was opened.
@@ -653,7 +654,10 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     );
     editor.addCommand(
       monaco.KeyMod.Alt | monaco.KeyCode.KeyB,
-      () => useSettingsStore.getState().toggleInlineBlame(),
+      () => {
+        const settings = useSettingsStore.getState();
+        if (!settings.minimalMode) settings.toggleInlineBlame();
+      },
     );
     // Register CodeLens for inline Run buttons on .sql files (scoped to this editor's model)
     if (isSql) {

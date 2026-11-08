@@ -12,6 +12,7 @@ import { describeApprovalInput } from "../../services/notification-format.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
+import type { TraceOrigin } from "../../shared/session-trace.ts";
 // File watching and app-wide broadcasts are owned by the global WS (`./global.ts`)
 // — a chat socket is not guaranteed to exist now that chat tabs mount lazily.
 import { broadcastGlobalEvent } from "./global.ts";
@@ -53,7 +54,6 @@ import { dropStaleIdle, registerTokenRotation, type TokenRotationDeps } from "./
 import { registerLeftoverSweeper } from "../../services/chat-session-processes/session-processes.service.ts";
 import { setTurnRunningProbe } from "../../services/session-turns/session-turn-index.service.ts";
 import type { SubprocessCredential } from "../../providers/claude-agent-sdk.ts";
-import type { TraceOrigin } from "../../shared/session-trace.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import { pairCounter } from "../../services/session-collab/pair-counter.ts";
 
@@ -185,7 +185,8 @@ const BUFFERABLE_TYPES = new Set([
 ]);
 
 export type ChatWsSocket = {
-  data: { type: string; sessionId: string; projectName?: string; providerHint?: string };
+  /** `origin` is set only by an in-process caller (a script schedule); a browser socket leaves it unset, i.e. `ws`. */
+  data: { type: string; sessionId: string; projectName?: string; providerHint?: string; origin?: TraceOrigin };
   send: (data: string) => void;
   ping?: (data?: string | ArrayBuffer) => void;
 };
@@ -199,6 +200,10 @@ export interface SessionEntry {
   phase: SessionPhase;
   cleanupTimer?: ReturnType<typeof setTimeout>;
   pendingApprovalEvent?: { type: string; requestId: string; tool: string; input: unknown };
+  /** Provider approvals that arrived while another held the slot — parallel tool calls, such as
+   *  two AskUserQuestion in one message. Each is shown (and only then sent) once the one before
+   *  it is answered (`showNextApproval`). */
+  queuedApprovals?: { type: string; requestId: string; tool: string; input: unknown }[];
   turnEvents: unknown[];
   /** The opening of the turn's last top-level text block — the answer a "Chat completed" notification quotes. */
   finalText?: string;
@@ -714,6 +719,40 @@ setCollabApprovalChat({
 }, resolveMigratedSession);
 
 /**
+ * A provider asks for an approval or an answer. The session has one slot and every device shows
+ * one card, so a request arriving while another provider request holds it waits its turn: shown
+ * there, a second AskUserQuestion of the same message replaced the first card, and once it was
+ * answered nothing could answer the first — the turn waited on it for good. PPM's own approvals
+ * (a `db_execute`, a session tool's card) do give way, since each waits in its broker and comes
+ * back (`showWaitingPpmApproval`).
+ */
+function receiveApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type: string; requestId: string; tool: string; input: unknown }): void {
+  const holder = entry.pendingApprovalEvent;
+  if (holder && holder.requestId !== ev.requestId && !ppmApprovals.has(holder.requestId)) {
+    (entry.queuedApprovals ??= []).push(ev);
+    logSessionEvent(sessionId, "INFO", `Approval ${ev.requestId} (${ev.tool}) queued behind ${holder.requestId}`);
+    return;
+  }
+  holdApprovalRequest(sessionId, entry, ev);
+  bufferAndBroadcast(sessionId, ev);
+}
+
+/**
+ * The slot is empty: the next provider request waiting in line is shown, else one of PPM's own
+ * approvals that a provider's had taken the slot from.
+ */
+function showNextApproval(sessionId: string, entry: SessionEntry): void {
+  if (entry.pendingApprovalEvent) return;
+  const next = entry.queuedApprovals?.shift();
+  if (next) {
+    holdApprovalRequest(sessionId, entry, next);
+    bufferAndBroadcast(sessionId, next);
+    return;
+  }
+  showWaitingPpmApproval(sessionId, entry);
+}
+
+/**
  * Another approval took the session's one pending slot while one of PPM's own was waiting, and
  * has now been answered: PPM's approval is shown again.
  */
@@ -728,16 +767,35 @@ function showWaitingPpmApproval(sessionId: string, entry: SessionEntry): void {
 const DB_APPROVAL_TURN_OVER = "The turn ended before the user answered, so nothing ran.";
 
 /**
- * Empties the session's one approval slot. A PPM approval waiting behind another is shown in its
- * place (`showWaitingPpmApproval`), or, given a reason, cancelled first: the user moved on, or the
- * turn its call belongs to is over. Every place that empties the slot comes through here, so none
- * can leave a PPM approval waiting for a card nobody sees.
+ * Empties the session's one approval slot. The next request in line is shown in its place
+ * (`showNextApproval`), or, given a reason, everything still waiting is declined first: the user
+ * moved on, or the turn the calls belong to is over. Every place that empties the slot comes
+ * through here, so none can leave a request waiting for a card nobody sees.
  */
-function clearPendingApproval(sessionId: string, entry: SessionEntry, cancelPpmApprovals?: string): void {
-  // Emptied first, so a cancelled PPM approval's own `resolved` finds nothing to clear again.
+function clearPendingApproval(sessionId: string, entry: SessionEntry, cancelReason?: string): void {
+  // Emptied first. Cancelling a PPM approval settles its broker, whose `resolved` comes back
+  // through `ppmApprovalResolved`; with the slot still holding it, that inner call would show the
+  // next queued request and this one would then blank the slot over it, leaving that request
+  // with no card and its turn waiting for good.
   entry.pendingApprovalEvent = undefined;
-  if (cancelPpmApprovals) ppmApprovals.cancelSession(sessionId, cancelPpmApprovals);
-  showWaitingPpmApproval(sessionId, entry);
+  if (cancelReason) {
+    ppmApprovals.cancelSession(sessionId, cancelReason);
+    declineQueuedApprovals(sessionId, entry, cancelReason);
+  }
+  showNextApproval(sessionId, entry);
+}
+
+/**
+ * Declines the provider requests still in line. Dropping them without an answer is the hang this
+ * line exists to prevent: a background agent can still be waiting on one after its turn's `done`.
+ */
+function declineQueuedApprovals(sessionId: string, entry: SessionEntry, reason: string): void {
+  const queued = entry.queuedApprovals ?? [];
+  entry.queuedApprovals = undefined;
+  for (const ev of queued) {
+    chatService.resolveApproval(entry.providerId, sessionId, ev.requestId, false, undefined, { reason, origin: "ws" });
+    broadcast(sessionId, { type: "approval_resolved", requestId: ev.requestId, approved: false, answers: null });
+  }
 }
 
 /**
@@ -1391,7 +1449,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           });
         }).catch(() => {});
       } else if (evType === "approval_request") {
-        holdApprovalRequest(sessionId, entry, ev);
+        // Sent by `receiveApprovalRequest` — now, or once the request before it is answered.
+        receiveApprovalRequest(sessionId, entry, ev);
+        continue;
       } else if (evType === "turn_started") {
         rememberTurnBinding(entry, ev);
       } else if (evType === "session_migrated") {
@@ -1612,8 +1672,11 @@ export function echoUserMessage(entry: SessionEntry, content: string, opts: { ex
 }
 
 export interface SubmitToSessionOpts {
-  /** `ws` for a browser send, `session` for one from another session's AI. */
-  origin: "ws" | "session";
+  /**
+   * `ws` for a browser send, `session` for one from another session's AI, or the door an
+   * in-process caller of the chat socket named (`scheduler` for a script schedule).
+   */
+  origin: TraceOrigin;
   clientMessageId?: string;
   images?: Array<{ data: string; mediaType: string }>;
   imagePaths?: string[];
@@ -1814,10 +1877,10 @@ async function handOffToSession(sessionId: string, entry: SessionEntry, content:
   } else if (opts.origin === "session") {
     return { ok: false, error: `Provider "${providerId}" cannot take a message while a turn is running` };
   }
-  // Clear turn events for new turn display + transition phase
+  // Clear turn events for new turn display + transition phase. A superseded approval was settled
+  // before the push; one that filled during it is a live request and stays on screen. A message
+  // from another session leaves a pending approval where it is: it waits behind it.
   entry.turnEvents = [];
-  // A message from another session leaves a pending approval where it is: it waits behind it.
-  if (opts.supersedePendingApproval) clearPendingApproval(sessionId, entry);
   setPhase(sessionId, "thinking");
   log.debug(`session=${sessionId} follow-up pushed to generator`);
   return { ok: true, delivered };
@@ -2138,7 +2201,8 @@ export const chatWebSocket = {
       await rewriteProviderSkillSigil(parsed, providerId, sessionId);
       // A person sent these references from an authenticated browser: the one moment this
       // session's AI is granted their turns in other projects. Never derived from message text.
-      if (parsed.turnRefs?.length) recordTurnGrants(sessionId, parsed.turnRefs);
+      // An in-process caller (a script schedule) sets `ws.data.origin`; only a browser grants.
+      if (!ws.data.origin && parsed.turnRefs?.length) recordTurnGrants(sessionId, parsed.turnRefs);
       // The typed text has its block markers broken, so the only blocks that decode are these.
       parsed.content = encodeMessageBlocks(parsed.content, { turnRefs: parsed.turnRefs, replyTo: parsed.replyTo, ownProject: entry.projectName || undefined });
       // The sender drew its own copy of this message before sending. Hand it the text as it now
@@ -2174,15 +2238,20 @@ export const chatWebSocket = {
         }
       }
 
-      // The person wrote in this session: every pair of sessions it is in may message each other
-      // automatically again. Only a browser send does this, never a message from another session.
-      pairCounter.resetForSession(sessionId);
-      // The person wrote to a session waiting on another: its wait ends, and it reads the person.
-      collabWaits.cancelWaiter(sessionId);
+      // An in-process caller (a script schedule) reaches this handler with `ws.data.origin` set;
+      // a browser socket leaves it unset. Only a person writing resets the session's pair limits
+      // and ends its waits: a script posting into a session that orchestrates others must not
+      // cancel its `send_to_session` wait, nor let two AI sessions loop past the limit the user set.
+      if (!ws.data.origin) {
+        // Every pair of sessions this one is in may message each other automatically again.
+        pairCounter.resetForSession(sessionId);
+        // The person wrote to a session waiting on another: its wait ends, and it reads the person.
+        collabWaits.cancelWaiter(sessionId);
+      }
 
       const submitting = entry;
       await withSessionLock(sessionId, () => submitToSession(sessionId, submitting, parsed.content, {
-        origin: "ws",
+        origin: ws.data.origin ?? "ws",
         clientMessageId,
         images: parsed.images,
         imagePaths: parsed.imagePaths,
@@ -2283,7 +2352,7 @@ export const chatWebSocket = {
       ppmApprovals.cancelSession(sessionId, "The user stopped the chat before approving, so nothing ran.");
       // Stop covers this session only: its waits end, the sessions it waits for run on.
       collabWaits.cancelWaiter(sessionId);
-      chatService.abortQuery(providerId, sessionId, "ws_cancel", "ws");
+      chatService.abortQuery(providerId, sessionId, "ws_cancel", ws.data.origin ?? "ws");
     } else if (parsed.type === "kill_background_shell") {
       // Kill via the AI: enqueue an instruction so the model calls KillShell.
       // Cross-platform and safe (no OS-PID guessing). Runs when the AI is idle
@@ -2328,7 +2397,8 @@ export const chatWebSocket = {
           return;
         }
         entry.turnEvents = [];
-        clearPendingApproval(sessionId, entry);
+        // The instruction answers no approval, so one on screen stays there: emptying the slot
+        // would leave the provider waiting on a request no device can answer.
         setPhase(sessionId, "thinking");
       }
       logSessionEvent(sessionId, "INFO", `kill_background_shell requested shellId=${shellId}`);
@@ -2361,8 +2431,12 @@ export const chatWebSocket = {
         });
         // Broadcast approval cleared to all clients
         broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
-        // After the broadcasts above, so a database approval shown next is not cleared with them.
-        clearPendingApproval(sessionId, entry);
+        // After the broadcasts above, so a request shown next is not cleared with them. An answer
+        // to a request still in line (a device holding an older card) only takes it out of line:
+        // emptying the slot then would hide the card that is still unanswered.
+        const holder = entry.pendingApprovalEvent;
+        if (!holder || holder.requestId === parsed.requestId) clearPendingApproval(sessionId, entry);
+        else entry.queuedApprovals = entry.queuedApprovals?.filter((queued) => queued.requestId !== parsed.requestId);
       }
     }
   },

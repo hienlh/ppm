@@ -532,6 +532,7 @@ interface SessionEntry {
   phase: SessionPhase;             // "initializing" | "connecting" | "thinking" | "streaming" | "idle"
   cleanupTimer?: ReturnType<...>;  // Auto-cleanup if no FE reconnects (5min)
   pendingApprovalEvent?: {...};    // Current tool approval waiting
+  queuedApprovals?: {...}[];       // Provider requests behind it, sent one at a time
   turnEvents: unknown[];           // Buffered events (for reconnect sync)
   streamPromise?: Promise<void>;   // Track ongoing runStreamLoop
   permissionMode?: string;         // Sticky permission mode for session
@@ -1457,14 +1458,15 @@ Refused before anyone is asked: a script with `BEGIN`, `COMMIT`, `ROLLBACK`, `SA
 like (PPM owns the transaction), and a connection it cannot open (no driver, no login held).
 Then `db-approval-broker.ts` asks:
 
-1. `ws/chat.ts` holds the request as the session's pending approval (`announceDbApproval`): it
+1. `ws/chat.ts` holds the request as the session's pending approval (`announcePpmApproval`): it
    is broadcast to every device showing the chat, kept in `session_state.pendingApproval` for
    one that connects later, marks the chat unread and sends the *Waiting for approval*
    notification, whose detail is the reason, never the SQL. It is not buffered into the turn's
    replay: the tool call's own card already shows the SQL. When a provider's own approval holds
-   the session's one slot, this one waits behind it and is shown once that is answered
-   (`showWaitingDbApproval`). Every place that empties the slot, but this approval's own answer,
-   goes through `clearPendingApproval`, which shows the waiting one or, when the turn is over
+   the session's one slot, this one waits behind it, and behind any provider request queued
+   after it, and is shown once those are answered (`showNextApproval` → `showWaitingPpmApproval`).
+   Every place that empties the slot goes through `clearPendingApproval`, which shows the next
+   waiting request or, when the turn is over
    (`done`, or the provider's stream ended) or the user sent a message instead, cancels it.
 2. The browser shows `db-execute-approval-card.tsx` in place of the generic card: connection, folder, colour,
    readonly badge, database, the reason, the exact SQL and the expected rows, with a password

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 import { Loader2 } from "@/lib/icons";
 import { beginPreviewLoad, endPreviewLoads, finishPreviewLoad, previewKey } from "@/lib/html-preview-loads";
+import { openPreviewLink } from "@/lib/open-preview-link";
 import { MAX_BRIDGE_ISSUES } from "../../../shared/design-bridge-protocol";
 import { newBridgeNonce, useDesignBridge } from "../design/canvas/use-design-bridge";
 import { runCanvasCheck } from "../design/canvas/use-design-canvas-check";
@@ -60,6 +61,24 @@ export function HtmlPreview({ filePath, projectName, revision }: {
   useEffect(() => bridge.on("issue", (m) => {
     if (issues.current.length < MAX_BRIDGE_ISSUES) issues.current.push({ kind: m.kind, message: m.message, source: m.source, line: m.line });
   }), [bridge.on]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A link leaving the page: the sandbox cannot open it, so the bridge hands it here.
+  useEffect(() => bridge.on("open-link", (m) => { openPreviewLink(m.href); }), [bridge.on]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pages written for PPM may ask outright, with `{ ppm: "open-tab", url }`, and fall back to
+  // a browser tab unless `open-tab-ack` comes back — so the ack goes only when it was opened.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const frame = iframeRef.current?.contentWindow;
+      if (!frame || event.source !== frame) return;
+      const data = event.data as { ppm?: unknown; url?: unknown } | null;
+      if (data?.ppm !== "open-tab" || typeof data.url !== "string") return;
+      // "*": the frame's origin is opaque, and the ack carries nothing.
+      if (openPreviewLink(data.url)) frame.postMessage({ ppm: "open-tab-ack" }, "*");
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
 
   if (error) return <div role="alert" className="p-4 text-sm text-destructive">{error}. Use Refresh to retry.</div>;
   if (!load) return <div role="status" className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-5 animate-spin" />Loading preview…</div>;

@@ -1,3 +1,4 @@
+import { isMinimalMode } from "./runtime-mode.ts";
 import { providerRegistry } from "../providers/registry.ts";
 import { configService } from "./config.service.ts";
 import { createHash } from "node:crypto";
@@ -343,7 +344,7 @@ class ChatService {
           }
           activeSessionId = migratedId;
         }
-        if (endsDesignWork(event)) {
+        if (!isMinimalMode() && endsDesignWork(event)) {
           // Not awaited: the snapshot is debounced and must never hold up or fail the turn.
           scheduleTurnSnapshot(activeSessionId, this.getSession(activeSessionId)?.projectPath);
         }
@@ -377,11 +378,13 @@ class ChatService {
     // A design session checks its canvas with `design_check` instead. A server is attached while
     // one of its tools is on (Settings → Tools); it lists only those.
     const ai = configService.get("ai");
-    const tabToolsMcp = !design.designSession && anyPpmToolOn(ai, TAB_TOOLS) ? tabToolsMcpAccessFor(sessionId) : null;
-    const dbToolsMcp = !design.designSession && anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0
+    const tabToolsMcp = !isMinimalMode() && !design.designSession && anyPpmToolOn(ai, TAB_TOOLS) ? tabToolsMcpAccessFor(sessionId) : null;
+    const dbToolsMcp = !isMinimalMode() && !design.designSession && anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0
       ? dbToolsMcpAccessFor(sessionId) : null;
-    // Opening and messaging sessions: never from a design session, which takes no messages either.
-    const sessionCollabMcp = !design.designSession && anyPpmToolOn(ai, SESSION_TOOLS) ? sessionCollabMcpAccessFor(sessionId) : null;
+    // Opening and messaging sessions: never from a design session, which takes no messages either,
+    // nor in minimal mode, which runs no PPM tools (the history tools ride on the tab tools' server).
+    const sessionCollabMcp = !isMinimalMode() && !design.designSession && anyPpmToolOn(ai, SESSION_TOOLS)
+      ? sessionCollabMcpAccessFor(sessionId) : null;
     let sharedContext: string | undefined;
     if (configService.get("ai").share_provider_context === false || /^\s*\/(compact|clear|new)(\s|$)/i.test(message)) {
       this.invalidateSharedContext(providerId, sessionId);
@@ -423,6 +426,7 @@ class ChatService {
    */
   private async resolveDesignOptions(providerId: string, sessionId: string, opts?: SendMessageOpts): Promise<SendMessageOpts> {
     const { designInstructions: _instructions, designSession: _flag, designMcp: _mcp, ...rest } = opts ?? {};
+    if (isMinimalMode()) return rest;
     const { getSessionDesignSlug, getSessionPermissionMode, getSessionProjectPath } = await import("./db.service.ts");
     const slug = getSessionDesignSlug(sessionId);
     if (!slug || !isValidDesignSlug(slug)) return rest;

@@ -6,8 +6,10 @@ import { configService } from "../../src/services/config.service.ts";
 // scheduler.service is a tiny singleton wrapper — mocking it keeps the
 // runner→chat→provider→SDK chain out of this test process entirely.
 const runJobNowMock = mock(() => ({ runId: 7, wasRunning: false }));
+const rearmMock = mock(() => {});
 mock.module("../../src/services/scheduler.service.ts", () => ({
-  schedulerService: { runJobNow: runJobNowMock },
+  schedulerService: { runJobNow: runJobNowMock, rearm: rearmMock, isRunning: () => false },
+  alwaysOnSupervisor: { status: () => null, stop: async () => {} },
 }));
 
 // Monkey-patch (not mock.module) so later test files still get the real configService
@@ -18,6 +20,7 @@ afterAll(() => { configService.get = originalGet; });
 
 const { schedulesRoutes } = await import("../../src/server/routes/schedules.ts");
 const { insertSchedule, listScheduleRuns, insertScheduleRun } = await import("../../src/services/scheduler-db.service.ts");
+const { ScheduleBusyError } = await import("../../src/services/scheduler-core.ts");
 
 const validBody = {
   name: "api-test",
@@ -37,6 +40,16 @@ describe("schedules routes", () => {
   beforeEach(() => {
     setDb(openTestDb());
     runJobNowMock.mockClear();
+    rearmMock.mockClear();
+  });
+
+  it("every change re-arms the scheduler, so a new fire time is not up to a minute late", async () => {
+    expect((await post("/", validBody)).status).toBe(201);
+    expect((await schedulesRoutes.request("/1", {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cron_expr: "0 8 * * *" }),
+    })).status).toBe(200);
+    expect((await schedulesRoutes.request("/1", { method: "DELETE" })).status).toBe(200);
+    expect(rearmMock).toHaveBeenCalledTimes(3);
   });
 
   it("POST / creates a schedule with snapshot provider_id and next_fire_at", async () => {
@@ -48,10 +61,13 @@ describe("schedules routes", () => {
   });
 
   it("POST / rejects invalid cron with 400", async () => {
-    const res = await post("/", { ...validBody, cron_expr: "not a cron" });
+    const res = await post("/", { ...validBody, cron_expr: "99 * * * *" });
     expect(res.status).toBe(400);
     const { error } = await res.json() as { error: string };
     expect(error).toContain("Invalid cron");
+    const fields = await post("/", { ...validBody, cron_expr: "not a cron" });
+    expect(fields.status).toBe(400);
+    expect(((await fields.json()) as { error: string }).error).toBe("A prompt schedule takes 5 cron fields: minute hour day month weekday");
   });
 
   it("POST / rejects missing fields with 400", async () => {
@@ -119,6 +135,15 @@ describe("schedules routes", () => {
     const { data } = await res.json() as { data: { runId: number; wasRunning: boolean } };
     expect(data.runId).toBe(7);
     expect(runJobNowMock).toHaveBeenCalledWith(1);
+  });
+
+  it("POST /:id/run-now answers 409 while a script's tick is still running, 404 for no schedule", async () => {
+    await post("/", validBody);
+    runJobNowMock.mockImplementationOnce(() => { throw new ScheduleBusyError("This schedule is running now"); });
+    const busy = await post("/1/run-now");
+    expect(busy.status).toBe(409);
+    expect(((await busy.json()) as { error: string }).error).toBe("This schedule is running now");
+    expect((await post("/99/run-now")).status).toBe(404);
   });
 
   it("GET /:id/runs returns run history", async () => {

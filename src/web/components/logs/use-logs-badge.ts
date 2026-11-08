@@ -50,7 +50,7 @@ const subscribe = (l: () => void) => {
 };
 
 export function useLogsBadgeCount(): number {
-  const enabled = useSettingsStore((s) => s.logsBadge);
+  const enabled = useSettingsStore((s) => s.logsBadge && !s.minimalMode);
   useEffect(() => (enabled ? retain() : undefined), [enabled]);
   const n = useSyncExternalStore(subscribe, () => count);
   return enabled ? n : 0;
