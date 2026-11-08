@@ -42,6 +42,7 @@ configService.set("host", "127.0.0.1");
 configService.set("port", port);
 configService.set("ai", { default_provider: "design-test", new_chat_provider_mode: "default", share_provider_context: false,
   providers: { "design-test": { type: "mock" }, "plain-test": { type: "mock" } } });
+await (await import("./answer-feature-intros")).answerFeatureIntrosAtStartup();
 
 const { DesignScriptProvider, PlainTestProvider } = await import("./design-script-provider");
 const { providerRegistry } = await import("../../../src/providers/registry");

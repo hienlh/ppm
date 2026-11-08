@@ -46,6 +46,7 @@ configService.set("ai", {
   default_provider: "claude", new_chat_provider_mode: "default", share_provider_context: false,
   providers: { claude: { type: "mock", permission_mode: "bypassPermissions" }, "plain-test": { type: "mock" } },
 });
+await (await import("./answer-feature-intros")).answerFeatureIntrosAtStartup();
 
 const { MockProvider } = await import("../../../src/providers/mock-provider");
 type SendOpts = import("../../../src/providers/provider.interface").SendMessageOpts;

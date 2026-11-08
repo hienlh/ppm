@@ -26,6 +26,7 @@ configService.set("auth", { ...configService.get("auth"), enabled: false });
 configService.set("host", "127.0.0.1");
 configService.set("port", port);
 configService.set("ai", { default_provider: "html-preview-test", share_provider_context: false, providers: {} });
+await (await import("./answer-feature-intros")).answerFeatureIntrosAtStartup();
 const { providerRegistry } = await import("../../../src/providers/registry");
 providerRegistry.get = () => undefined;
 providerRegistry.list = () => [];

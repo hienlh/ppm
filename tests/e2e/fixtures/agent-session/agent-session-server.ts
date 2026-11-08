@@ -36,6 +36,7 @@ configService.load();
 configService.set("auth", { ...configService.get("auth"), enabled: false });
 configService.set("host", "127.0.0.1");
 configService.set("port", port);
+await (await import("../answer-feature-intros")).answerFeatureIntrosAtStartup();
 
 const { app } = await import("../../../../src/server/index");
 const { chatWebSocket } = await import("../../../../src/server/ws/chat");
