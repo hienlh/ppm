@@ -195,6 +195,9 @@ export function resolveEntryMode(
 }
 
 if (import.meta.main) {
+  // Windows: no child may inherit this process's sockets (see the module). Every mode
+  // spawns something — the CLI the supervisor, the supervisor the server and the tunnel.
+  (await import("./services/windows-socket-inheritance.ts")).installSpawnHandleGuard();
   switch (resolveEntryMode(process.argv)) {
     case "supervise":
       await import("./services/supervisor.ts");

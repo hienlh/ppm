@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { TraceCoalescer, type CoalescedRecord } from "./trace-coalescer.ts";
 import { traceWriter } from "./trace-writer.ts";
 import { recordTraceAlias, resolveTraceId } from "./session-trace-store.ts";
+import { trimTracePayload } from "./trace-payload-trim.ts";
 import type { TraceOrigin, TraceSource } from "../../shared/session-trace.ts";
 import type { SendMessageOpts } from "../../types/chat.ts";
 
@@ -47,7 +48,7 @@ function safe(what: string, fn: () => void): void {
 }
 
 function serialise(payload: unknown): string {
-  const json = JSON.stringify(payload) ?? "null";
+  const json = JSON.stringify(trimTracePayload(payload)) ?? "null";
   if (json.length <= MAX_ROW_CHARS) return json;
   const type = (payload as { type?: unknown })?.type;
   return JSON.stringify({ type, truncated: true, originalChars: json.length, head: json.slice(0, TRUNCATED_HEAD_CHARS) });

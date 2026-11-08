@@ -54,7 +54,7 @@ it("ranks Remote Access first for “remote” and opens it on its first tab", a
 it("finds Remote Access by the old panel's name", async () => {
   const s = await search("tunnel");
   try {
-    expect(labels(s.view.container).slice(0, 2).sort()).toEqual(["Forward a Port", "Remote Access"]);
+    expect(labels(s.view.container).slice(0, 2).sort()).toEqual(["Open Web Preview / Forward a Port", "Remote Access"]);
   } finally {
     await s.done();
   }
@@ -67,7 +67,7 @@ it("opens “Forward a Port” in the sidebar, expanding a collapsed one, and no
   useSettingsStore.setState({ sidebarCollapsed: true });
   const s = await search("port forwarding");
   try {
-    expect(labels(s.view.container)[0]).toBe("Forward a Port");
+    expect(labels(s.view.container)[0]).toBe("Open Web Preview / Forward a Port");
     const row = [...s.view.container.querySelectorAll("button")].find((b) => b.textContent?.includes("Forward a Port"))!;
     await click(row);
     expect(setTab).toHaveBeenCalledWith("tunnels");

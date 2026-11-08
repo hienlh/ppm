@@ -5,7 +5,6 @@ import { recordTurnGrants } from "../../services/session-turns/turn-grant-ledger
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
-import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
 import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, setSessionPermissionMode, getStoredPermissionModeAnyAlias, getLastTurnCacheState } from "../../services/db.service.ts";
 import { describeApprovalInput } from "../../services/notification-format.ts";
@@ -22,7 +21,7 @@ import { resolveSessionDir } from "../../services/subagent-transcript-merger.ts"
 import { backgroundShellRegistry } from "../../services/background-shell-registry.ts";
 import { basename } from "node:path";
 import { configService } from "../../services/config.service.ts";
-import { formatTurnUsageLog, prefixTokens } from "../../shared/turn-usage.ts";
+import { prefixTokens } from "../../shared/turn-usage.ts";
 import type { PromptCacheState } from "../../shared/prompt-cache-idle.ts";
 import { isAsyncAgentLaunchAck, isTerminalAgentStatus } from "../../shared/background-agent-status.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
@@ -317,8 +316,7 @@ function releaseSubprocess(sessionId: string, reason: string, note: string): voi
   const provider = providerRegistry.get(entry.providerId);
   if (!provider?.hasStreamingSession?.(sessionId)) return;
   chatService.abortQuery(entry.providerId, sessionId, reason, "ws");
-  log.info(`session=${sessionId} released subprocess (${reason})`);
-  logSessionEvent(sessionId, "INFO", note);
+  log.info(`session=${sessionId} released subprocess (${reason}): ${note}`);
 }
 
 /**
@@ -345,8 +343,7 @@ export function dropIdleSubprocess(sessionId: string, reason: string, note: stri
     clearTimeout(entry.cacheReleaseTimer);
     entry.cacheReleaseTimer = undefined;
   }
-  log.info(`session=${sessionId} released subprocess (${reason})`);
-  logSessionEvent(sessionId, "INFO", note);
+  log.info(`session=${sessionId} released subprocess (${reason}): ${note}`);
 }
 
 /** Whether a background agent or shell the session started is still running in its subprocess. */
@@ -535,7 +532,6 @@ export function leftoverSessionActivity(sessionId: string): { busy: boolean; las
 
 registerLeftoverSweeper({
   activity: leftoverSessionActivity,
-  onStopped: (sessionId, summary) => logSessionEvent(sessionId, "INFO", `PPM ${summary}`),
 });
 
 /**
@@ -730,7 +726,7 @@ function receiveApprovalRequest(sessionId: string, entry: SessionEntry, ev: { ty
   const holder = entry.pendingApprovalEvent;
   if (holder && holder.requestId !== ev.requestId && !ppmApprovals.has(holder.requestId)) {
     (entry.queuedApprovals ??= []).push(ev);
-    logSessionEvent(sessionId, "INFO", `Approval ${ev.requestId} (${ev.tool}) queued behind ${holder.requestId}`);
+    log.info(`session=${sessionId} approval ${ev.requestId} (${ev.tool}) queued behind ${holder.requestId}`);
     return;
   }
   holdApprovalRequest(sessionId, entry, ev);
@@ -1026,7 +1022,6 @@ export function startCleanupTimer(sessionId: string): void {
       return;
     }
     log.info(`session=${sessionId} cleanup: idle with no FE for ${CLEANUP_TIMEOUT_MS / 1000}s`);
-    logSessionEvent(sessionId, "INFO", "Session cleaned up (idle, no FE reconnected)");
     // Backstop for the subprocess: scheduleSubprocessRelease normally gets there first,
     // timed off the last turn rather than off this disconnect. It bails when a turn was in
     // flight, so the session entry going away is the last chance to free the process.
@@ -1103,8 +1098,6 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
   let lastContextWindowPct: number | undefined;
 
   try {
-    const userPreview = content.slice(0, 200);
-    logSessionEvent(sessionId, "USER", userPreview);
     log.debug(`session=${sessionId} sending message to provider=${providerId}`);
 
     let eventCount = 0;
@@ -1121,8 +1114,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       const elapsed = Math.round((Date.now() - startTime) / 1000);
       if (elapsed >= CONNECTION_TIMEOUT_S) {
         clearInterval(heartbeat);
-        log.error(`session=${sessionId} SDK connection timeout after ${elapsed}s`);
-        logSessionEvent(sessionId, "ERROR", `SDK connection timeout after ${elapsed}s — subprocess may have failed to start`);
+        log.error(`session=${sessionId} SDK connection timeout after ${elapsed}s — subprocess may have failed to start`);
         const projectPath = entry?.projectPath ?? "";
         if (providerId === "claude") {
           const isWSL = projectPath.startsWith("/home/") || projectPath.startsWith("/mnt/");
@@ -1183,7 +1175,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
             provider: providerRegistry.get(entry.providerId),
             isCurrent: () => activeSessions.get(sessionId) === entry,
             broadcast: (event) => broadcast(sessionId, event),
-            log: (line) => logSessionEvent(sessionId, "INFO", line),
+            log: (line) => log.info(`session=${sessionId} ${line}`),
           });
         } else if (sub === "compacting") {
           entry.compactStatus = "compacting";
@@ -1255,7 +1247,6 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         const waitMs = Date.now() - (requested?.at ?? startTime);
         const path = requested ? (requested.cold ? "cold" : "warm") : "unsent";
         log.info(`session=${sessionId} first SDK event after ${waitMs}ms: type=${evType} path=${path}`);
-        logSessionEvent(sessionId, "PERF", `First SDK event after ${waitMs}ms (type=${evType}, ${path})`);
         if (heartbeat) clearInterval(heartbeat);
         const newPhase = evType === "thinking" ? "thinking" : "streaming";
         setPhase(sessionId, newPhase);
@@ -1277,11 +1268,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         }
       }
 
-      // Log every event
-      if (evType === "text") {
-        logSessionEvent(sessionId, "TEXT", ev.content?.slice(0, 500) ?? "");
-      } else if (evType === "tool_use") {
-        logSessionEvent(sessionId, "TOOL_USE", `${ev.tool} ${JSON.stringify(ev.input).slice(0, 300)}`);
+      if (evType === "tool_use") {
         // Track TeamCreate calls for team detection
         if (ev.tool === "TeamCreate") {
           entry.pendingTeamCreate = ev.toolUseId;
@@ -1348,7 +1335,6 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           }
         }
       } else if (evType === "tool_result") {
-        logSessionEvent(sessionId, "TOOL_RESULT", `error=${ev.isError ?? false} ${(ev.output ?? "").slice(0, 300)}`);
         log.debug(`session=${sessionId} tool_result toolUseId=${ev.toolUseId} isError=${ev.isError ?? false} chars=${typeof ev.output === "string" ? ev.output.length : 0}`);
         // A backgrounded Agent's tool_result is only a launch ack while the agent
         // runs on — keep its nested spy until the terminal task_notification.
@@ -1377,10 +1363,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       } else if (evType === "error") {
         const errorDetail = ev.message ?? JSON.stringify(ev).slice(0, 500);
         log.error(`session=${sessionId} error: ${errorDetail}`);
-        logSessionEvent(sessionId, "ERROR", errorDetail);
       } else if (evType === "done") {
         // Turn complete — transition to idle, clear buffer for next turn
-        logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"} ctx=${ev.contextWindowPct ?? "?"}%${ev.usage ? ` ${formatTurnUsageLog(ev.usage)}` : ""}`);
         if (ev.contextWindowPct != null) lastContextWindowPct = ev.contextWindowPct;
         // The prompt cache was just written, which is what the retention window is measured
         // from. A turn can complete with nobody watching (remote trigger, scheduler), and the
@@ -1495,8 +1479,6 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           // would have all its stream events dropped.
           sessionId = newId;
         }
-      } else {
-        logSessionEvent(sessionId, evType.toUpperCase(), JSON.stringify(ev).slice(0, 200));
       }
 
       // Buffer + broadcast content events
@@ -1539,12 +1521,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       }
     }
 
-    logSessionEvent(sessionId, "INFO", `Session consumer completed (${eventCount} events total)`);
-    log.debug(`session=${sessionId} session consumer completed (${eventCount} events)`);
+    log.info(`session=${sessionId} session consumer completed (${eventCount} events)`);
   } catch (e) {
     const errMsg = (e as Error).message;
     log.error(`session=${sessionId} provider=${providerId} consumer failed:`, e);
-    logSessionEvent(sessionId, "ERROR", `Exception: ${errMsg}`);
     bufferAndBroadcast(sessionId, { type: "error", message: errMsg });
     // ChatService wrote `run_failed` and flushed the trace before the throw reached here.
     const turnStop = lastTurnStop(sessionId);
@@ -1761,7 +1741,7 @@ export async function submitToSession(sessionId: string, entry: SessionEntry, co
       });
       clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
     }
-    logSessionEvent(sessionId, "INFO", `Pending approval ${pendingReqId} auto-skipped (user sent a message)`);
+    log.info(`session=${sessionId} pending approval ${pendingReqId} auto-skipped (user sent a message)`);
   }
 
   // A push the provider has no stream for goes nowhere. That happens while a consumer is still
@@ -1824,7 +1804,6 @@ async function handOffToSession(sessionId: string, entry: SessionEntry, content:
       const elapsed = Date.now() - t0;
       if (elapsed > 500) {
         log.warn(`session=${sessionId} resumeSession took ${elapsed}ms`);
-        logSessionEvent(sessionId, "PERF", `resumeSession took ${elapsed}ms`);
       }
     }
     if (entry.projectPath && provider && "ensureProjectPath" in provider) {
@@ -2280,7 +2259,7 @@ export const chatWebSocket = {
       if (hasLiveStream && entry.phase === "idle") {
         chatService.abortQuery(providerId, sessionId, "set_model", "ws");
       }
-      logSessionEvent(sessionId, "INFO", `Model switched to ${parsed.model}`);
+      log.info(`session=${sessionId} model switched to ${parsed.model}`);
       ws.send(JSON.stringify({
         type: "session_state",
         sessionId,
@@ -2308,7 +2287,7 @@ export const chatWebSocket = {
       if ((provider?.hasStreamingSession?.(sessionId) ?? false) && entry.phase === "idle") {
         chatService.abortQuery(providerId, sessionId, "set_effort", "ws");
       }
-      logSessionEvent(sessionId, "INFO", `Effort switched to ${parsed.effort}`);
+      log.info(`session=${sessionId} effort switched to ${parsed.effort}`);
       ws.send(JSON.stringify({
         type: "session_state",
         sessionId,
@@ -2330,7 +2309,7 @@ export const chatWebSocket = {
       if ((provider?.hasStreamingSession?.(sessionId) ?? false) && entry.phase === "idle") {
         chatService.abortQuery(providerId, sessionId, "set_thinking", "ws");
       }
-      logSessionEvent(sessionId, "INFO", `Thinking ${parsed.enabled ? "on" : "off"}`);
+      log.info(`session=${sessionId} thinking ${parsed.enabled ? "on" : "off"}`);
       ws.send(JSON.stringify({
         type: "session_state",
         sessionId,
@@ -2348,7 +2327,6 @@ export const chatWebSocket = {
       // Fully teardown streaming session — user must resume to continue
       const phase = entry?.phase ?? "unknown";
       log.info(`session=${sessionId} WS cancel received from FE (phase=${phase})`);
-      logSessionEvent(sessionId, "CANCEL", `WS cancel from FE (phase=${phase})`);
       ppmApprovals.cancelSession(sessionId, "The user stopped the chat before approving, so nothing ran.");
       // Stop covers this session only: its waits end, the sessions it waits for run on.
       collabWaits.cancelWaiter(sessionId);
@@ -2401,7 +2379,7 @@ export const chatWebSocket = {
         // would leave the provider waiting on a request no device can answer.
         setPhase(sessionId, "thinking");
       }
-      logSessionEvent(sessionId, "INFO", `kill_background_shell requested shellId=${shellId}`);
+      log.info(`session=${sessionId} kill_background_shell requested shellId=${shellId}`);
     } else if (parsed.type === "approval_response") {
       // PPM's own approvals (database changes, session tools' cards) are answered over HTTP, never here.
       if (ppmApprovals.has(parsed.requestId)) return;

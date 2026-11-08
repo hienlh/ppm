@@ -26,7 +26,6 @@ import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsag
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
-import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
 import { parseCompactSegment } from "../../services/compact-segment.ts";
 import { assertSessionInProject } from "../../services/agent-transcript/session-ownership.ts";
@@ -874,18 +873,6 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
       copySessionDesignSettings(sourceId, session.id);
       return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
     }
-  } catch (e) {
-    return c.json(err((e as Error).message), 500);
-  }
-});
-
-/** GET /chat/sessions/:id/logs — get session-level debug logs */
-chatRoutes.get("/sessions/:id/logs", (c) => {
-  try {
-    const id = c.req.param("id");
-    const tail = parseInt(c.req.query("tail") ?? "200", 10);
-    const logs = getSessionLog(id, tail);
-    return c.json(ok({ logs }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

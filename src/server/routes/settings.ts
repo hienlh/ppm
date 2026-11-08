@@ -18,6 +18,11 @@ import { isLookupDescriptions } from "../../shared/db-lookup-prefs.ts";
 import { isPpmTool, patchPpmToolSwitches, type PpmToolSwitches } from "../../shared/ppm-tools.ts";
 import { isValidLeftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../shared/leftover-processes.ts";
 import { parseSessionCollabPatch, resolveSessionCollabSettings, type SessionCollabSettings } from "../../shared/session-collab-settings.ts";
+import {
+  SESSION_TRACE_MIN_RETENTION_DAYS,
+  SESSION_TRACE_MIN_SIZE_MB,
+  type SessionTraceLimitsInput,
+} from "../../shared/storage-settings.ts";
 import type { PPMBotTelegramStatus } from "../../shared/ppmbot-telegram.ts";
 import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
@@ -589,6 +594,60 @@ settingsRoutes.delete("/query-audit/logs", async (c) => {
     return c.json(ok({ deleted: clearQueryAudit() }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
+  }
+});
+
+// ── Storage (ppm.db, its snapshots, the session trace) ─────────
+
+/** GET /settings/storage — how much disk PPM's own databases and backups take */
+settingsRoutes.get("/storage", async (c) => {
+  try {
+    const { storageOverview } = await import("../../services/storage-overview.ts");
+    return c.json(ok(storageOverview()));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** PUT /settings/session-trace — body: SessionTraceLimitsInput; answers the refreshed StorageSessionTrace */
+settingsRoutes.put("/session-trace", async (c) => {
+  try {
+    const body = await c.req.json<SessionTraceLimitsInput>();
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return c.json(err("Body must be an object"), 400);
+    }
+    const current = configService.get("session_trace") ?? DEFAULT_CONFIG.session_trace;
+
+    // A field left out keeps its value; one sent as null or anything else non-integer is refused.
+    const retention_days = body.retention_days === undefined ? current.retention_days : body.retention_days;
+    const max_size_mb = body.max_size_mb === undefined ? current.max_size_mb : body.max_size_mb;
+
+    if (!Number.isInteger(retention_days) || retention_days < SESSION_TRACE_MIN_RETENTION_DAYS) {
+      return c.json(err(`retention_days must be a whole number of at least ${SESSION_TRACE_MIN_RETENTION_DAYS}`), 400);
+    }
+    if (!Number.isInteger(max_size_mb) || max_size_mb < SESSION_TRACE_MIN_SIZE_MB) {
+      return c.json(err(`max_size_mb must be a whole number of at least ${SESSION_TRACE_MIN_SIZE_MB}`), 400);
+    }
+
+    configService.set("session_trace", { retention_days, max_size_mb });
+    configService.save();
+    // Apply lowered limits now rather than at the next daily cleanup. One pass is bounded (the
+    // cleanup caps its batches), so a big cut can still read over the cap until that daily run.
+    // The limits are saved either way, so a cleanup that fails (a locked file) is logged, not a 400.
+    const { existsSync } = await import("node:fs");
+    const { getTraceDbPath } = await import("../../services/session-trace/session-trace-db.ts");
+    if (existsSync(getTraceDbPath())) {
+      try {
+        const { cleanupSessionTrace } = await import("../../services/session-trace/session-trace-cleanup.ts");
+        cleanupSessionTrace(retention_days, max_size_mb);
+      } catch (e) {
+        console.error(`[session-trace] cleanup after a limits change failed: ${(e as Error).message}`);
+      }
+    }
+    const { sessionTraceStorage } = await import("../../services/storage-overview.ts");
+    return c.json(ok(sessionTraceStorage()));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
   }
 });
 

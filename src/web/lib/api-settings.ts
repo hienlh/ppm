@@ -3,6 +3,7 @@ import { clearChatPreparationCache } from "./chat-preparation-cache";
 import { writeChatPreparationSettings } from "./chat-preference-local-cache";
 import type { PpmToolSwitches } from "../../shared/ppm-tools";
 import type { SessionCollabSettings } from "../../shared/session-collab-settings";
+import type { SessionTraceLimitsInput, StorageOverview, StorageSessionTrace } from "../../shared/storage-settings";
 
 export interface OAuthProfileData {
   account?: {
@@ -289,4 +290,12 @@ export function updateQueryAuditSettings(
 
 export function clearQueryAuditLogs(): Promise<void> {
   return api.del("/api/settings/query-audit/logs");
+}
+
+export function getStorageOverview(): Promise<StorageOverview> {
+  return api.get<StorageOverview>("/api/settings/storage");
+}
+
+export function updateSessionTraceLimits(params: SessionTraceLimitsInput): Promise<StorageSessionTrace> {
+  return api.put<StorageSessionTrace>("/api/settings/session-trace", params);
 }
