@@ -222,9 +222,15 @@ every layout change, before paint. The pin lets go only on the reader's own inpu
 scroll key, a press on the scrollbar, or a scroll position it did not write); a hidden tab and the
 offsets `reparenting-tab.tsx` restores when a tab moves panel are ignored for a frame.
 
+**The reading anchor** (the history window only, `{ readingAnchor: true }`): once the reader has
+let go of a landing, the same pin remembers the row at the top on every scroll (once per frame) and
+puts it back in its ResizeObserver callback, so an image in an older page decoding above the reader
+no longer pushes that row down. The live list does not use it: its bottom follower owns the position.
+
 `tests/e2e/session-turn-refs-e2e.mjs` measures the landing (16 ± 2 px for 3 s while images arrive
-late), the offset change per window load, a panel split while pinned, and the phone's long press,
-`touchcancel` and pill.
+late), the offset change per window load (with no image delay, and no scroll step while a page is
+in flight), late images above an unpinned reader (4c), a panel split while pinned, and the phone's
+long press, `touchcancel` and pill.
 
 ## Session collaboration UI
 
