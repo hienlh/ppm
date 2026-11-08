@@ -6,7 +6,9 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-settings";
 import { DB_TOOLS } from "../../../shared/db-ai-tools";
-import { ppmToolOn, TERMINAL_TOOLS, type PpmTool } from "../../../shared/ppm-tools";
+import { patchPpmToolSwitches, ppmToolOn, TERMINAL_TOOLS, type PpmTool } from "../../../shared/ppm-tools";
+import { FEATURE_INTROS_CHANGED_EVENT } from "../../../shared/feature-intros";
+import { useNewFeatureTools } from "./use-new-feature-tools";
 import { SESSION_HISTORY_TOOLS } from "../../../shared/session-history-tools";
 import { SESSION_COLLAB_TOOLS } from "../../../shared/session-collab";
 import type { SessionCollabSettings } from "../../../shared/session-collab-settings";
@@ -107,13 +109,19 @@ export function ToolsSettingsSection() {
     }
   }, []);
 
+  const newTools = useNewFeatureTools();
+
   useEffect(() => {
     void load();
+    // A new-feature question answered on any device rewrites the switches it covers.
+    const reload = () => void load();
+    window.addEventListener(FEATURE_INTROS_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(FEATURE_INTROS_CHANGED_EVENT, reload);
   }, [load]);
 
-  // Shown at once; a refused save reloads what the server actually has.
+  // Shown at once, as the server will store it; a refused save reloads what the server has.
   const toggle = useCallback(async (tool: PpmTool, on: boolean) => {
-    setSettings((current) => (current ? { ...current, ppm_tools: { ...current.ppm_tools, [tool]: on } } : current));
+    setSettings((current) => (current ? { ...current, ppm_tools: patchPpmToolSwitches(current.ppm_tools, { [tool]: on }) } : current));
     try {
       setSettings(await updateAISettings({ ppm_tools: { [tool]: on } }));
     } catch (e) {
@@ -153,6 +161,11 @@ export function ToolsSettingsSection() {
                   <>
                     {TOOL_COPY[tool].label}
                     <code className="ml-2 font-mono text-[11px] text-muted-foreground">{tool}</code>
+                    {newTools.has(tool) && (
+                      <span data-new-tool={tool} className="ml-2 rounded bg-primary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-primary-foreground">
+                        New
+                      </span>
+                    )}
                   </>
                 }
                 note={TOOL_COPY[tool].note}
