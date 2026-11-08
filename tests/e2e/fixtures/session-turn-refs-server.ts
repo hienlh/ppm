@@ -46,6 +46,10 @@ configService.set("ai", {
   default_provider: "claude", new_chat_provider_mode: "default", share_provider_context: false,
   providers: { claude: { type: "agent-sdk", permission_mode: "bypassPermissions" }, codex: { type: "cli", permission_mode: "bypassPermissions" } },
 } as never);
+// The session tools are off until the tour's question is answered; these flows start from "Turn on".
+const { answerFeatureIntro } = await import("../../../src/services/feature-intros.service");
+const { FEATURE_INTROS } = await import("../../../src/shared/feature-intros");
+answerFeatureIntro(FEATURE_INTROS[0]!.id, "on");
 
 const { _setClaudeProjectsRoot } = await import("../../../src/services/agent-transcript/claude-projects-root");
 _setClaudeProjectsRoot(claudeProjects);

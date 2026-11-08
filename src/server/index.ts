@@ -313,6 +313,9 @@ app.route("/api/loopback", loopbackRoutes);
 
 // API routes
 app.route("/api/settings", settingsRoutes);
+// The tour's "PPM has new features" questions, answered once for the whole install.
+import { featureIntroRoutes } from "./routes/feature-intros.ts";
+app.route("/api/feature-intros", featureIntroRoutes);
 import { notificationRoutes } from "./routes/notifications.ts";
 app.route("/api/notifications", notificationRoutes);
 app.route("/api/settings/mcp", mcpRoutes);

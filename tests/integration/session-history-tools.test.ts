@@ -18,6 +18,7 @@ import { tabToolsMcpTokens } from "../../src/services/tab-tools-mcp/tab-tools-mc
 import { recordTurnGrants, turnGrantsFor } from "../../src/services/session-turns/turn-grant-ledger.ts";
 import { encodeTurnRefs, type TurnReference } from "../../src/shared/chat-turn-ref.ts";
 import { decodeMessageBlocks } from "../../src/shared/chat-message-blocks.ts";
+import { FEATURE_INTROS, switchesForAnswer } from "../../src/shared/feature-intros.ts";
 import type { ChatEvent } from "../../src/types/chat.ts";
 import { claude, codex, lines } from "../unit/services/session-turn-fixtures.ts";
 
@@ -101,6 +102,8 @@ beforeAll(async () => {
   process.env.CLAUDE_CONFIG_DIR = root;
   _setClaudeProjectsRoot(join(root, "projects"));
   configService.set("projects", [...configService.get("projects").filter((p) => p.name !== OWN.name && p.name !== OTHER.name), OWN, OTHER]);
+  // The session tools are off until the tour's question is answered; these tests answer "Turn on".
+  configService.set("ai", { ...configService.get("ai"), ppm_tools: { ...configService.get("ai").ppm_tools, ...switchesForAnswer(FEATURE_INTROS[0]!, "on") } });
   if (!providerRegistry.get("codex")) { providerRegistry.register(new CodexAppServerProvider()); registeredCodex = true; }
   codexAccountId = createCodexAccount({ label: "history tools test", type: "apiKey" }).id;
 
@@ -128,6 +131,8 @@ afterAll(() => {
   else process.env.CLAUDE_CONFIG_DIR = saved.claudeConfig;
   _setClaudeProjectsRoot(null);
   configService.set("projects", configService.get("projects").filter((p) => p.name !== OWN.name && p.name !== OTHER.name));
+  const { ppm_tools: _answered, ...ai } = configService.get("ai");
+  configService.set("ai", ai);
   if (registeredCodex) (providerRegistry as unknown as { providers: Map<string, unknown> }).providers.delete("codex");
   removeCodexAccount(codexAccountId);
   closeSearchIndexDb();

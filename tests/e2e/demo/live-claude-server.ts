@@ -56,6 +56,10 @@ configService.set("ai", {
     },
   },
 } as never);
+// The session tools are off until the tour's question is answered; the walkthrough starts from "Turn on".
+const { answerFeatureIntro } = await import("../../../src/services/feature-intros.service");
+const { FEATURE_INTROS } = await import("../../../src/shared/feature-intros");
+answerFeatureIntro(FEATURE_INTROS[0]!.id, "on");
 
 const { app } = await import("../../../src/server/index");
 const { chatWebSocket } = await import("../../../src/server/ws/chat");

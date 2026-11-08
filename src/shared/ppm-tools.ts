@@ -8,6 +8,7 @@ import {
 } from "./tab-open-protocol.ts";
 import { SESSION_HISTORY_TOOLS } from "./session-history-tools.ts";
 import { SESSION_COLLAB_TOOLS } from "./session-collab.ts";
+import { answerFromSwitches, featureIntroOfTool } from "./feature-intros.ts";
 
 export const TERMINAL_TOOLS = [READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL] as const;
 /**
@@ -30,15 +31,36 @@ export const isPpmTool = (name: unknown): name is PpmTool => (PPM_TOOLS as reado
 
 /**
  * Whether `tool` is on. One the user never switched takes its default: `open_file` and
- * `open_preview` follow the single switch that came before these (`tab_tools`, off unless set),
- * and every other tool is on — the database tools reach only the connections marked *Available
- * to the AI chat*, nothing `run_in_terminal` types runs before the user presses Enter, and a
- * session tool asks before creating a session unless the user switched that off.
+ * `open_preview` follow the single switch that came before these (`tab_tools`, off unless set);
+ * a tool of a feature the tour introduces (`src/shared/feature-intros.ts`) is off until the user
+ * decides, and follows the feature's other switches once any is set; every other tool is on —
+ * the database tools reach only the connections marked *Available to the AI chat*, and nothing
+ * `run_in_terminal` types runs before the user presses Enter.
+ *
+ * Every server path that decides whether a tool is offered or callable comes through here with
+ * the stored `ai` settings, so the introduced features' default cannot differ between them.
  */
 export function ppmToolOn(ai: { tab_tools?: boolean; ppm_tools?: PpmToolSwitches }, tool: PpmTool): boolean {
   const set = ai.ppm_tools?.[tool];
   if (typeof set === "boolean") return set;
+  const intro = featureIntroOfTool(tool);
+  if (intro) return answerFromSwitches(ai.ppm_tools, intro) === "on";
   return LEGACY_TAB_TOOLS.includes(tool) ? ai.tab_tools === true : true;
+}
+
+/**
+ * `current` with `patch` applied, as Settings → Tools saves one switch. A patched tool that
+ * belongs to an introduced feature first writes the feature's other tools at the state they show
+ * now, so flipping one switch never flips its siblings by making the feature count as decided.
+ */
+export function patchPpmToolSwitches(current: PpmToolSwitches | undefined, patch: PpmToolSwitches): PpmToolSwitches {
+  const next: PpmToolSwitches = { ...current };
+  for (const tool of Object.keys(patch)) {
+    const intro = featureIntroOfTool(tool);
+    if (!intro) continue;
+    for (const sibling of intro.tools) next[sibling] = ppmToolOn({ ppm_tools: current }, sibling);
+  }
+  return { ...next, ...patch };
 }
 
 /** Whether a chat needs the MCP server that serves `tools`: at least one of them is on. */

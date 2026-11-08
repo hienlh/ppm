@@ -4,7 +4,7 @@
  *
  * Read once and shared by every chip on the page, refreshed when a composer chip mounts after the
  * answer has gone stale, so turning the tool back on is noticed without a reload. Until the first
- * answer arrives the tool counts as on, which is its default.
+ * answer arrives the tool counts as on, so a chip never flashes a warning it turns out not to need.
  */
 import { useEffect, useState } from "react";
 import { getAISettings } from "@/lib/api-settings";

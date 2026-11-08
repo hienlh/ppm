@@ -36,6 +36,10 @@ configService.set("ai", {
   default_provider: "claude", new_chat_provider_mode: "default", share_provider_context: false, tab_tools: true,
   providers: { claude: { type: "mock", permission_mode: "bypassPermissions" } },
 });
+// The session tools are off until the tour's question is answered; these flows start from "Turn on".
+const { answerFeatureIntro } = await import("../../../src/services/feature-intros.service");
+const { FEATURE_INTROS } = await import("../../../src/shared/feature-intros");
+answerFeatureIntro(FEATURE_INTROS[0]!.id, "on");
 
 const { MockProvider } = await import("../../../src/providers/mock-provider");
 const { stringifyToolResultContent } = await import("../../../src/shared/tool-result-content");

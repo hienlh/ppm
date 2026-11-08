@@ -92,6 +92,8 @@ describe("turn chips", () => {
   });
 
   it("does not warn while the tool is on", async () => {
+    // Off until the tour's question is answered, so "on" has to be said.
+    settings = { ...settings, ppm_tools: { read_session_turns: true } };
     view = await mount(<ComposerTurnRefRow chips={[{ key: "k", status: "ready", target: ref, ref }]} currentProject="ppm" onRemove={() => {}} />);
     await act(async () => { await Bun.sleep(10); });
     expect(view.container.querySelector('[aria-label^="The AI can\'t read this turn"]')).toBeNull();

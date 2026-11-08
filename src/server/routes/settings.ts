@@ -15,7 +15,7 @@ import {
 import { ok, err } from "../../types/api.ts";
 import { isDbExplorerPrefs } from "../../shared/db-explorer-prefs.ts";
 import { isLookupDescriptions } from "../../shared/db-lookup-prefs.ts";
-import { isPpmTool, type PpmToolSwitches } from "../../shared/ppm-tools.ts";
+import { isPpmTool, patchPpmToolSwitches, type PpmToolSwitches } from "../../shared/ppm-tools.ts";
 import { isValidLeftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../shared/leftover-processes.ts";
 import { parseSessionCollabPatch, resolveSessionCollabSettings, type SessionCollabSettings } from "../../shared/session-collab-settings.ts";
 import type { PPMBotTelegramStatus } from "../../shared/ppmbot-telegram.ts";
@@ -23,6 +23,9 @@ import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
 import { providerRegistry, providerProbeStatuses, retryProviderProbe } from "../../providers/registry.ts";
 import { createLogger } from "../../services/logger.ts";
+import { settleFeaturesDecidedInSettings } from "../../services/feature-intros.service.ts";
+import { FEATURE_INTROS_CHANGED_EVENT } from "../../shared/feature-intros.ts";
+import { broadcastGlobalEvent } from "../ws/global.ts";
 
 const log = createLogger("settings");
 const ppmbotLog = createLogger("ppmbot");
@@ -263,8 +266,9 @@ settingsRoutes.put("/ai", async (c) => {
       share_provider_context: body.share_provider_context ?? currentAi.share_provider_context ?? true,
       ...(typeof body.tab_tools === "boolean" && { tab_tools: body.tab_tools }),
       ...(body.leftover_processes_idle_minutes !== undefined && { leftover_processes_idle_minutes: body.leftover_processes_idle_minutes }),
-      // One switch at a time: the tools the body does not name keep theirs.
-      ...(body.ppm_tools && { ppm_tools: { ...currentAi.ppm_tools, ...body.ppm_tools } }),
+      // One switch at a time: the tools the body does not name keep theirs, and the other tools of
+      // an introduced feature are written at the state they showed (see `patchPpmToolSwitches`).
+      ...(body.ppm_tools && { ppm_tools: patchPpmToolSwitches(currentAi.ppm_tools, body.ppm_tools) }),
       ...(sessionCollab && { session_collab: sessionCollab }),
       ...(body.default_provider && { default_provider: body.default_provider }),
     };
@@ -297,6 +301,8 @@ settingsRoutes.put("/ai", async (c) => {
 
     configService.set("ai", updated);
     configService.save();
+    // A switch of an introduced feature set here is the user's answer: no device asks again.
+    if (body.ppm_tools && settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT });
 
     return c.json(ok(withResolvedSessionCollab(stripSensitiveFields(updated))));
   } catch (e) {
