@@ -45,6 +45,7 @@ export interface MergeAnchor extends RowAnchor {
 }
 
 const NO_ORDINALS: number[] = [];
+const READING_ANCHOR = { readingAnchor: true } as const;
 
 function rendered(m: { role: string; content: string; events?: unknown[] }): boolean {
   const hasContent = !!m.content && m.content.trim().length > 0;
@@ -71,7 +72,9 @@ export const ChatHistoryWindow = memo(function ChatHistoryWindow({ view, control
   const setScrollRef = useCallback((el: HTMLDivElement | null) => { scrollElRef.current = el; setScrollEl(el); }, []);
   // Bumped when the reader takes over from a landing, so the bottom check below runs again.
   const [unpins, setUnpins] = useState(0);
-  const pin = useScrollAnchorPin(scrollEl, () => setUnpins((n) => n + 1));
+  // The window has no bottom follower, so it also keeps the row being read in place while
+  // unpinned: an image in an older page decoding after the page landed must not push it down.
+  const pin = useScrollAnchorPin(scrollEl, () => setUnpins((n) => n + 1), undefined, READING_ANCHOR);
   useHistoryWindowFocus(scrollEl);
   const rows = useMemo(() => view.messages.filter(rendered), [view.messages]);
   const flashCleanup = useRef<(() => void) | null>(null);

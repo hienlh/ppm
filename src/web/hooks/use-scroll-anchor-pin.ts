@@ -26,8 +26,21 @@
  * and its next resize-follow then pulls the row away. `onHold` is called on every write the pin
  * makes and again just after the follower has judged it (it judges a scroll a moment after the
  * event), so the pin stays the one that decides until the reader scrolls.
+ *
+ * A container with no bottom follower (the history window) can ask for a reading anchor as well:
+ * while nothing is pinned, the row at the top of the viewport is remembered on every scroll (once
+ * per frame), and a layout change puts it back where the reader left it — what the browser's own
+ * scroll anchoring would do. Without it, an image in an older page decoding after the page landed
+ * pushed the row being read down by the image's height. Never for a container that follows its
+ * bottom: the follower owns the position there.
  */
 import { useLayoutEffect, useMemo, useRef } from "react";
+import { firstVisibleRow, restoreRow, type RowAnchor } from "@/components/chat/scroll-row-anchor";
+
+export interface ScrollAnchorPinOptions {
+  /** Keep the row being read in place across layout changes while nothing is pinned. */
+  readingAnchor?: boolean;
+}
 
 /** Where the pinned row's top sits, below the container's top. */
 export const PIN_OFFSET_PX = 16;
@@ -59,12 +72,16 @@ export class ScrollAnchorPin {
   private frame = 0;
   private holdTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly ro: ResizeObserver;
+  /** The row being read while nothing is pinned (`readingAnchor` only). */
+  private reading: RowAnchor | null = null;
+  private readingFrame = 0;
 
   constructor(
     private readonly el: HTMLElement,
     private readonly offset = PIN_OFFSET_PX,
     private readonly onUnpin?: () => void,
     private readonly onHold?: () => void,
+    private readonly options: ScrollAnchorPinOptions = {},
   ) {
     this.hidden = el.clientHeight === 0;
     this.ro = new ResizeObserver(this.onResize);
@@ -92,6 +109,7 @@ export class ScrollAnchorPin {
     if (!this.target) return;
     this.target = null;
     this.lastSet = null;
+    this.rememberReading();
     this.onUnpin?.();
   }
 
@@ -109,6 +127,7 @@ export class ScrollAnchorPin {
 
   dispose(): void {
     cancelAnimationFrame(this.frame);
+    cancelAnimationFrame(this.readingFrame);
     clearTimeout(this.holdTimer);
     this.ro.disconnect();
     this.el.removeEventListener("wheel", this.onIntent);
@@ -123,6 +142,20 @@ export class ScrollAnchorPin {
     return this.hidden || this.settling || this.el.clientHeight === 0;
   }
 
+  /** Records the row at the top of the viewport, when a reading anchor is kept and nothing is pinned. */
+  private rememberReading(): void {
+    if (!this.options.readingAnchor || this.target || this.suspended()) return;
+    this.reading = firstVisibleRow(this.el);
+  }
+
+  /** Puts the row being read back where the reader left it after a layout change. */
+  private restoreReading(): void {
+    if (!this.options.readingAnchor || this.target || !this.reading) return;
+    // A row that is gone (a page dropped from the window) leaves the position as it is.
+    restoreRow(this.el, this.reading);
+    this.reading = firstVisibleRow(this.el);
+  }
+
   private readonly onResize = (): void => {
     if (this.el.clientHeight === 0) {
       this.hidden = true;
@@ -134,11 +167,14 @@ export class ScrollAnchorPin {
       cancelAnimationFrame(this.frame);
       this.frame = requestAnimationFrame(() => {
         this.settling = false;
-        this.apply();
+        if (this.target) this.apply();
+        else this.rememberReading();
       });
       return;
     }
-    if (!this.settling) this.apply();
+    if (this.settling) return;
+    if (this.target) this.apply();
+    else this.restoreReading();
   };
 
   private readonly onIntent = (): void => {
@@ -155,6 +191,14 @@ export class ScrollAnchorPin {
   };
 
   private readonly onScroll = (): void => {
+    if (this.options.readingAnchor && !this.target && !this.readingFrame) {
+      // Once per frame: scroll events come at most once a frame anyway, before the layout the
+      // ResizeObserver reports on, so the row read here is the one a resize in this frame restores.
+      this.readingFrame = requestAnimationFrame(() => {
+        this.readingFrame = 0;
+        this.rememberReading();
+      });
+    }
     if (!this.target || this.suspended() || this.lastSet === null) return;
     if (Math.abs(this.el.scrollTop - this.lastSet) > OWN_WRITE_TOLERANCE_PX) return this.unpin();
     if (!this.onHold) return;
@@ -173,25 +217,26 @@ export interface AnchorPinHandle {
 
 /**
  * A pin for `scrollEl`, rebuilt whenever the container element changes. `onUnpin` hears the reader
- * take over (it is not called for an `unpin()` made here).
+ * take over (it is not called for an `unpin()` made here). `readingAnchor` is fixed per container.
  */
-export function useScrollAnchorPin(scrollEl: HTMLElement | null, onUnpin?: () => void, onHold?: () => void): AnchorPinHandle {
+export function useScrollAnchorPin(scrollEl: HTMLElement | null, onUnpin?: () => void, onHold?: () => void, options?: ScrollAnchorPinOptions): AnchorPinHandle {
   const pinRef = useRef<ScrollAnchorPin | null>(null);
   const onUnpinRef = useRef(onUnpin);
   onUnpinRef.current = onUnpin;
   const onHoldRef = useRef(onHold);
   onHoldRef.current = onHold;
   const holds = !!onHold;
+  const readingAnchor = !!options?.readingAnchor;
   // A layout effect, so a pin asked for in the same commit (a landing) finds the instance ready.
   useLayoutEffect(() => {
     if (!scrollEl) return;
-    const pin = new ScrollAnchorPin(scrollEl, PIN_OFFSET_PX, () => onUnpinRef.current?.(), holds ? () => onHoldRef.current?.() : undefined);
+    const pin = new ScrollAnchorPin(scrollEl, PIN_OFFSET_PX, () => onUnpinRef.current?.(), holds ? () => onHoldRef.current?.() : undefined, { readingAnchor });
     pinRef.current = pin;
     return () => {
       pin.dispose();
       if (pinRef.current === pin) pinRef.current = null;
     };
-  }, [scrollEl, holds]);
+  }, [scrollEl, holds, readingAnchor]);
   return useMemo(() => ({
     pin: (target) => pinRef.current?.pin(target),
     unpin: () => pinRef.current?.unpin(),

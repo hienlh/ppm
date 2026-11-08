@@ -63,12 +63,15 @@ const windowScroller = (page) => page.locator("[data-history-window] .overflow-y
 
 /**
  * Scrolls the window by `dy` a step at a time until `done`. Each step is an instant jump followed
- * by a pause, so a page that loads meanwhile lands while nothing else is moving the list.
+ * by a pause, so a page that loads meanwhile lands while nothing else is moving the list. No step
+ * is taken while a page is in flight (its spinner is up): on a slow machine a fetch outlasts the
+ * pause, and a step taken then would be counted against the load it landed in.
  */
 async function scrollUntil(ctx, dy, done, label, timeout = 60000) {
   const { page, kit } = ctx;
   await kit.until(label, async () => {
     if (await done()) return true;
+    if (await page.locator('[data-history-window] [aria-busy="true"]').count()) return false;
     await windowScroller(page).evaluate((el, by) => { el.scrollTop += by; }, dy);
     await page.waitForTimeout(350);
     return false;
@@ -102,22 +105,78 @@ export async function runWindowSteps(ctx) {
 
   // ── 4: scrolling loads both ways without moving the row being read; reaching live merges ──
   await kit.scenario("4", async () => {
-    await installLoadMonitor(page);
-    const loads = () => page.evaluate(() => window.__loads);
-    await scrollUntil(ctx, -400, async () => (await loads()).filter((l) => l.prepended).length >= 2, "two older pages");
-    await page.waitForTimeout(600);
-    await scrollUntil(ctx, 400, async () => (await loads()).filter((l) => !l.prepended).length >= 2, "two newer pages");
-    await page.waitForTimeout(600);
-    const all = await loads();
-    const measured = all.filter((l) => l.delta !== null);
-    assert(measured.length >= 4, `loads measured: ${JSON.stringify(all)}`);
-    const worst = Math.max(...measured.map((l) => l.delta));
-    await kit.shot(page, "04-window-scrolled");
-    const timeline = await page.evaluate(() => window.__timeline);
-    assert(worst <= 2, `the row being read moved ${worst} px on a load: ${JSON.stringify(measured)}; DOM timeline: ${JSON.stringify(timeline)}`);
-    kit.record("4: two older and two newer pages each moved the first visible row ≤2 px", {
-      loads: measured.map((l) => ({ prepended: l.prepended, delta: Math.round(l.delta * 10) / 10 })), worst,
-    });
+    // Page loads only: an image landing late moves the layout on its own (that is 4c), and one
+    // landing inside a page's load would be counted against the load.
+    await kit.post("/__turn-test/upload-delay", { ms: 0 });
+    try {
+      await installLoadMonitor(page);
+      const loads = () => page.evaluate(() => window.__loads);
+      await scrollUntil(ctx, -400, async () => (await loads()).filter((l) => l.prepended).length >= 2, "two older pages");
+      await page.waitForTimeout(600);
+      await scrollUntil(ctx, 400, async () => (await loads()).filter((l) => !l.prepended).length >= 2, "two newer pages");
+      await page.waitForTimeout(600);
+      const all = await loads();
+      const measured = all.filter((l) => l.delta !== null);
+      assert(measured.length >= 4, `loads measured: ${JSON.stringify(all)}`);
+      const worst = Math.max(...measured.map((l) => l.delta));
+      await kit.shot(page, "04-window-scrolled");
+      const timeline = await page.evaluate(() => window.__timeline);
+      assert(worst <= 2, `the row being read moved ${worst} px on a load: ${JSON.stringify(measured)}; DOM timeline: ${JSON.stringify(timeline)}`);
+      kit.record("4: two older and two newer pages each moved the first visible row ≤2 px", {
+        loads: measured.map((l) => ({ prepended: l.prepended, delta: Math.round(l.delta * 10) / 10 })), worst,
+      });
+    } finally {
+      await kit.post("/__turn-test/upload-delay", { ms: 1500 });
+    }
+  });
+
+  // ── 4c: images landing late above the row being read do not move it once the reader took over ──
+  await kit.scenario("4c", async () => {
+    await kit.post("/__turn-test/upload-delay", { ms: 2500 });
+    try {
+      await ctx.resetLayout(page); // a fresh page: no image is cached any more
+      await clickBubbleChip(ctx, "alpha", B.id, "Turn 40");
+      await kit.until("turn 40 landed", async () => (await kit.offsetOf(page, t(40)))?.inWindow, 20000, 30);
+      // The reader takes over from the landing (a wheel lets go of the pin) and reads further up.
+      await windowScroller(page).dispatchEvent("wheel");
+      await windowScroller(page).evaluate((el) => { el.scrollTop -= 300; });
+      const result = await windowScroller(page).evaluate((scroller, ms) => new Promise((done) => {
+        const top = () => scroller.getBoundingClientRect().top;
+        const first = [...scroller.querySelectorAll("[data-msg-id]")].find((r) => r.getBoundingClientRect().bottom > top() + 1);
+        if (!first) { done({ error: "no visible row" }); return; }
+        const id = first.getAttribute("data-msg-id");
+        const at = () => {
+          const row = scroller.querySelector(`[data-msg-id="${CSS.escape(id)}"]`);
+          return row ? Math.round((row.getBoundingClientRect().top - top()) * 10) / 10 : null;
+        };
+        const samples = [];
+        let loads = 0;
+        const onLoad = (e) => { if (e.target instanceof HTMLImageElement) loads++; };
+        document.addEventListener("load", onLoad, true);
+        const start = performance.now();
+        const tick = () => {
+          // A page loading here is measured by scenario 4; frames while one is in flight are skipped.
+          if (!document.querySelector('[data-history-window] [aria-busy="true"]')) {
+            const offset = at();
+            if (offset !== null) samples.push(offset);
+          }
+          if (performance.now() - start < ms) requestAnimationFrame(tick);
+          else { document.removeEventListener("load", onLoad, true); done({ id, samples, loads }); }
+        };
+        requestAnimationFrame(tick);
+      }), 4000);
+      assert(!result.error, result.error);
+      assert(result.loads >= 1, `images landed while the row was read (${result.loads})`);
+      assert(result.samples.length > 0, "no samples");
+      const spread = Math.max(...result.samples) - Math.min(...result.samples);
+      assert(spread <= 2, `the row being read moved ${spread} px as images landed: ${JSON.stringify(result.samples.slice(0, 40))}`);
+      await kit.shot(page, "04c-window-images-unpinned");
+      kit.record("4c: images landing 2.5 s late above the row being read, after the reader took over, moved it ≤2 px", {
+        samples: result.samples.length, spread, imagesLoaded: result.loads,
+      });
+    } finally {
+      await kit.post("/__turn-test/upload-delay", { ms: 1500 });
+    }
   });
 
   // ── 4 (second half): scrolling on from a window reaches the live list and merges ──

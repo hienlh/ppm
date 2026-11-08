@@ -26,11 +26,12 @@ installGlobal("cancelAnimationFrame", () => {});
 const { ScrollAnchorPin, PIN_OFFSET_PX } = await import("../../../src/web/hooks/use-scroll-anchor-pin");
 afterAll(() => uninstallDom());
 
-/** A scroll container 600 px tall whose row sits `rowTop` px into the content. */
-function scene(onHold?: () => void) {
+/** A scroll container 600 px tall whose row (300 px tall) sits `rowTop` px into the content. */
+function scene(onHold?: () => void, options?: { readingAnchor?: boolean }) {
   const el = document.createElement("div");
   const content = document.createElement("div");
   const row = document.createElement("div");
+  row.dataset.msgId = "m-read";
   content.appendChild(row);
   el.appendChild(content);
   document.body.appendChild(el);
@@ -38,9 +39,9 @@ function scene(onHold?: () => void) {
   Object.defineProperty(el, "clientHeight", { get: () => g.height });
   Object.defineProperty(el, "scrollTop", { get: () => g.scrollTop, set: (v: number) => { g.scrollTop = Math.max(0, v); } });
   el.getBoundingClientRect = () => ({ top: 100 } as DOMRect);
-  row.getBoundingClientRect = () => ({ top: 100 + g.rowTop - g.scrollTop } as DOMRect);
+  row.getBoundingClientRect = () => ({ top: 100 + g.rowTop - g.scrollTop, bottom: 400 + g.rowTop - g.scrollTop } as DOMRect);
   const unpinned: number[] = [];
-  const pin = new ScrollAnchorPin(el, PIN_OFFSET_PX, () => unpinned.push(1), onHold);
+  const pin = new ScrollAnchorPin(el, PIN_OFFSET_PX, () => unpinned.push(1), onHold, options);
   /** The row's distance from the container's top, as the reader sees it. */
   const offset = () => g.rowTop - g.scrollTop;
   const layout = () => observers.forEach((o) => o.fire());
@@ -163,6 +164,67 @@ describe("ScrollAnchorPin", () => {
     s.row.remove();
     s.layout();
     expect(s.pin.pinned).toBeNull();
+  });
+
+  describe("reading anchor", () => {
+    /** The reader scrolled to have the row `at` px below the top, and the frame after it ran. */
+    function readAt(s: ReturnType<typeof scene>, at: number) {
+      s.g.scrollTop = s.g.rowTop - at;
+      s.scrollEvent();
+      frames.splice(0).forEach((f) => f());
+    }
+
+    it("keeps the row being read in place when content above it grows after the reader took over", () => {
+      const s = scene(undefined, { readingAnchor: true });
+      s.pin.pin(s.row);
+      s.el.dispatchEvent(new window.Event("wheel"));
+      expect(s.pin.pinned).toBeNull();
+      readAt(s, 120);
+      // An image in an older page above decodes: 340 px taller.
+      s.g.rowTop += 340;
+      s.layout();
+      expect(s.offset()).toBe(120);
+      // The write is a scroll event too; the next growth is measured from where it left the row.
+      s.scrollEvent();
+      frames.splice(0).forEach((f) => f());
+      s.g.rowTop += 90;
+      s.layout();
+      expect(s.offset()).toBe(120);
+      expect(s.unpinned).toEqual([1]);
+    });
+
+    it("does nothing without the option, nor before the reader has scrolled", () => {
+      const plain = scene();
+      readAt(plain, 120);
+      plain.g.rowTop += 340;
+      plain.layout();
+      expect(plain.offset()).toBe(460);
+
+      const fresh = scene(undefined, { readingAnchor: true });
+      fresh.g.scrollTop = 1880;
+      fresh.g.rowTop += 340;
+      fresh.layout();
+      expect(fresh.g.scrollTop).toBe(1880);
+    });
+
+    it("a landing pin wins over the reading anchor while it holds", () => {
+      const s = scene(undefined, { readingAnchor: true });
+      readAt(s, 120);
+      s.pin.pin(s.row);
+      s.g.rowTop += 340;
+      s.layout();
+      expect(s.offset()).toBe(PIN_OFFSET_PX);
+    });
+
+    it("leaves the position alone while the tab is hidden", () => {
+      const s = scene(undefined, { readingAnchor: true });
+      readAt(s, 120);
+      s.g.height = 0;
+      s.layout();
+      s.g.rowTop += 340;
+      s.layout();
+      expect(s.g.scrollTop).toBe(1880);
+    });
   });
 
   it("stops listening once disposed", () => {
