@@ -23,7 +23,11 @@ await new Promise((r) => server.once("listening", r));
 const url = `http://127.0.0.1:${server.address().port}/`;
 
 const pw = await import(pathToFileURL(process.env.PPM_PLAYWRIGHT_MODULE).href);
-const browser = await pw.chromium.launch({ headless: true, channel: process.env.PPM_PLAYWRIGHT_CHANNEL || undefined });
+// PPM_PLAYWRIGHT_EXECUTABLE (set in the capped e2e image) wins, as in the other e2e scripts: that
+// image ships Debian's Chromium and none of Playwright's own browser builds.
+const executablePath = process.env.PPM_PLAYWRIGHT_EXECUTABLE;
+const channel = process.env.PPM_PLAYWRIGHT_CHANNEL;
+const browser = await pw.chromium.launch({ headless: true, ...(executablePath ? { executablePath } : channel ? { channel } : {}) });
 try {
   for (const [name, viewport, sideBySide] of [["desktop", { width: 1100, height: 900 }, true], ["phone", { width: 390, height: 1100 }, false]]) {
     const page = await browser.newPage({ viewport, deviceScaleFactor: 2 });
