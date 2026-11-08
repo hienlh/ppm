@@ -97,6 +97,10 @@ Settings → Tools. The first entry is the six session tools.
     PPM" stays hidden while this browser's tour is `unseen`). The tour still opens from its entry
     in the UI (`OnboardingEntry`).
   - A new install sees the basic tour first; the step comes once that is finished or dismissed.
+  - A basic tour under way in this browser (`choosing`, `active`, or `paused` — a reload turns
+    `active` into `paused`) always goes first, whatever the server says. The new user's own tour
+    chat makes the install count as in use, so without this a reload mid-tour put the step on top
+    of the running tour.
 - **Putting it off:** Later, the X, Escape, or swiping the phone's sheet away is one skip. At most
   one skip counts per feature per 12 hours (`FEATURE_INTRO_SKIP_WINDOW_MS`), and the other tabs and
   devices showing the step close it on the `skip` event without a skip of their own, so a sitting

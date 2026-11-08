@@ -1,10 +1,11 @@
 // Feature-introduction e2e, part 1: a new install meets the step after its basic tour and turns
 // the feature on (a); an install in use meets it at once, without the tour, and turns it off (b);
-// the phone's bottom sheet (e); and an answer on one device closing the step on another (f).
+// a tour reloaded mid-way keeps the panel even though its chat made the install "in use" (h); the
+// phone's bottom sheet (e); and an answer on one device closing the step on another (f).
 import assert from "node:assert/strict";
 import {
   addProject, allSwitches, assertNotAsked, featureStep, gotoLoaded, INTRO_TOOLS, newChat, openPage, seedInUse, sendInChat,
-  startInstall, stepButton, tourDismissed, tourOffer, tourStatus,
+  startInstall, stepButton, tourDismissed, tourMidway, tourOffer, tourStatus,
 } from "./feature-intros-helpers.mjs";
 
 export async function runAnswerSteps(ctx) {
@@ -85,6 +86,37 @@ export async function runAnswerSteps(ctx) {
       assert.equal(await tourOffer(page).count(), 0, "still no basic-tour offer after a reload");
       await kit.shot(page, "b3-chat-has-no-session-tools");
       kit.record("b: an install with a chat gets the feature step at once with no basic-tour offer before or after, and Turn off leaves a new chat with none of the six tools");
+    } finally { await install.stop(); }
+  });
+
+  // ── h: a new user's own tour chat makes the install "in use"; a reload mid-tour keeps the tour ──
+  await kit.scenario("h tour reloaded midway", async () => {
+    const install = await startInstall(ctx, "h-tour-midway");
+    try {
+      await seedInUse(install);
+      const { page } = await openPage(ctx, install, { init: tourMidway });
+      ctx.current = page;
+      // The reload brings the running tour back paused, and it keeps the panel. (Storage still says
+      // "active" here: the store writes only on its next change, so the card is the evidence.)
+      await page.getByRole("button", { name: "Resume tour" }).waitFor({ timeout: 20000 });
+      await page.getByRole("heading", { name: "Continue when you're ready" }).waitFor({ timeout: 5000 });
+      await assertNotAsked(page);
+      await kit.shot(page, "h1-reloaded-tour-paused-no-step");
+
+      await page.getByRole("button", { name: "Resume tour" }).click();
+      await kit.until("the tour runs again", async () => (await tourStatus(page)) === "active", 10000, 100);
+      await assertNotAsked(page);
+      await kit.shot(page, "h2-tour-resumed-no-step");
+
+      await gotoLoaded(page);
+      await page.getByRole("button", { name: "Resume tour" }).waitFor({ timeout: 20000 });
+      await assertNotAsked(page, 1000);
+      await page.getByRole("button", { name: "Maybe later" }).click();
+      await featureStep(page).waitFor({ timeout: 10000 });
+      assert.equal(await tourStatus(page), "dismissed");
+      await kit.shot(page, "h3-step-after-tour-put-away");
+      assert.equal((await intro(install))?.skips ?? 0, 0, "nothing was skipped while the tour ran");
+      kit.record("h: an install in use with this browser's tour under way (reloaded mid-tour) keeps the tour on screen through resume and another reload, and gets the feature step once the tour is put away");
     } finally { await install.stop(); }
   });
 

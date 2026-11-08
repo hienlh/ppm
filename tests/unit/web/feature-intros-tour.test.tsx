@@ -16,7 +16,7 @@ const { ToolsSettingsSection } = await import("../../../src/web/components/setti
 const { featurePartAllowed } = await import("../../../src/web/lib/onboarding/feature-intros-client");
 const { useFeatureIntrosStore } = await import("../../../src/web/stores/feature-intros-store");
 const { useOnboardingStore } = await import("../../../src/web/stores/onboarding-store");
-const { initialOnboardingState } = await import("../../../src/web/lib/onboarding/onboarding-state");
+const { initialOnboardingState, hydrateOnboarding } = await import("../../../src/web/lib/onboarding/onboarding-state");
 const { useProjectStore } = await import("../../../src/web/stores/project-store");
 const { api } = await import("../../../src/web/lib/api-client");
 
@@ -59,6 +59,30 @@ describe("when the part shows", () => {
     expect(featurePartAllowed({ ...base, isExistingUser: true, tourStatus: "unseen" })).toBe(true);
     expect(featurePartAllowed({ ...base, isExistingUser: true, tourStatus: "unseen", closed: true })).toBe(false);
     expect(featurePartAllowed({ ...base, isExistingUser: true, tourStatus: "unseen", remaining: 0 })).toBe(false);
+    // A tour under way here goes first for an install in use too.
+    for (const tourStatus of ["choosing", "active", "paused"] as const) expect(featurePartAllowed({ ...base, isExistingUser: true, tourStatus })).toBe(false);
+    for (const tourStatus of ["finished", "dismissed"] as const) expect(featurePartAllowed({ ...base, isExistingUser: true, tourStatus })).toBe(true);
+  });
+
+  it("lets a tour reloaded mid-way finish even though its chat made the install count as in use", async () => {
+    // The new user sent the tour's chat (the server now says "in use"), then reloaded: the running
+    // tour comes back paused and keeps the panel.
+    served.isExistingUser = true;
+    const persisted = JSON.stringify({ version: 1, status: "active", familiarity: "beginner", goal: "ai", currentStep: "history",
+      completed: ["project", "chat", "send"], skipped: [], projectName: "demo", sessionId: "s1" });
+    useOnboardingStore.setState(hydrateOnboarding(persisted));
+    useProjectStore.setState({ activeProject: { name: "demo", path: "/tmp/demo" } } as never);
+    expect(useOnboardingStore.getState().status).toBe("paused");
+    await mountRoot();
+    expect(dialog()).toBeNull();
+    expect(document.body.textContent).toContain("Continue when you're ready");
+    await act(async () => { useOnboardingStore.getState().resume("demo"); });
+    await flush();
+    expect(dialog()).toBeNull();
+    expect(useOnboardingStore.getState().status).toBe("active");
+    await act(async () => { useOnboardingStore.getState().dismiss(); });
+    await flush();
+    expect(dialog()?.textContent).toContain(INTRO.title);
   });
 
   it("gives an existing user the feature step directly and never starts the basic tour", async () => {

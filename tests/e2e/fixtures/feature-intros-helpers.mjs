@@ -21,6 +21,15 @@ export function tourDismissed() {
   localStorage.setItem("ppm-onboarding-v1", JSON.stringify({ version: 1, status: "dismissed", familiarity: null, goal: null, currentStep: null, completed: [], skipped: [], projectName: null, sessionId: null }));
 }
 
+/**
+ * This device's basic tour running at its last step (the "ai" route, after the tour's own chat was
+ * sent), written once: a reload keeps what the app stored since, as a real browser would.
+ */
+export function tourMidway() {
+  if (window.top !== window || localStorage.getItem("ppm-onboarding-v1")) return;
+  localStorage.setItem("ppm-onboarding-v1", JSON.stringify({ version: 1, status: "active", familiarity: "beginner", goal: "ai", currentStep: "history", completed: ["project", "chat", "send"], skipped: [], projectName: "alpha", sessionId: null }));
+}
+
 async function freePort() {
   const listener = createServer();
   await new Promise((r) => listener.listen(0, "127.0.0.1", r));

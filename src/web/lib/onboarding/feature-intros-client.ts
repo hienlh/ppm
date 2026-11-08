@@ -40,12 +40,18 @@ export const postFeatureIntroSkip = (id: string): Promise<unknown> => api.post(`
 
 export const postFeatureIntroSeenInSettings = (id: string): Promise<unknown> => api.post(`${base(id)}/seen-in-settings`);
 
+/** The basic tour is under way in this browser: being set up, running, or paused (a reload pauses a running tour). */
+const TOUR_IN_PROGRESS: readonly OnboardingStatus[] = ["choosing", "active", "paused"];
+
 /**
- * Whether the part may show now. Someone who already uses PPM gets it straight away, whatever
- * this browser's tour says, and the tour is never started for them; a new install waits until
- * its basic tour is finished or dismissed, so the two never compete for the same panel.
+ * Whether the part may show now. A basic tour under way in this browser always goes first, for
+ * any install: "existing user" is the server's word and turns true as soon as the new user sends
+ * the tour's own chat, so on its own it would put this part on top of a tour still running after
+ * a reload. Otherwise someone who already uses PPM gets it straight away (the tour is never
+ * started for them), and a new install waits until its basic tour is finished or dismissed.
  */
 export function featurePartAllowed(input: { remaining: number; isExistingUser: boolean; tourStatus: OnboardingStatus; closed: boolean }): boolean {
   if (input.closed || input.remaining === 0) return false;
+  if (TOUR_IN_PROGRESS.includes(input.tourStatus)) return false;
   return input.isExistingUser || input.tourStatus === "finished" || input.tourStatus === "dismissed";
 }

@@ -36,7 +36,8 @@ export function OnboardingRoot({ openProjects, openNavigation, closeNavigation, 
   }, []);
   useOnboardingSessionCheck(setNotice);
   useFeatureIntrosSync();
-  // New features take the panel: at once for an existing user, after the basic tour for a new one.
+  // New features take the panel once no basic tour is under way here: at once for an existing
+  // user who never started it, after the tour is finished or dismissed for everyone else.
   const featurePart = useFeaturePartVisible(state.status);
   const tourOfferHidden = useTourOfferHidden();
   useEffect(() => {
