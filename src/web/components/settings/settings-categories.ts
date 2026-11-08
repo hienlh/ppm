@@ -20,7 +20,7 @@ import {
   Keyboard,
   FolderSearch,
   Database,
-  DatabaseZap,
+  HardDrive,
   LayoutGrid,
   Mic,
   Zap,
@@ -55,7 +55,7 @@ export type SettingsCategoryId =
   | "schedules"
   | "shortcuts"
   | "files"
-  | "query-audit";
+  | "storage";
 
 /**
  * `core` carries no heading: its rows sit at the top of the rail as plain ones, the way a
@@ -108,7 +108,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "schedules", group: "advanced", label: "Scheduled Agents", subtitle: "Prompts and scripts, on a cron or always on", icon: CalendarClock },
   { id: "shortcuts", group: "advanced", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
   { id: "files", group: "advanced", label: "File Filters", subtitle: "Exclude patterns, ignore files", icon: FolderSearch },
-  { id: "query-audit", group: "advanced", label: "Query Audit Log", subtitle: "SQL history retention and size", icon: DatabaseZap },
+  { id: "storage", group: "advanced", label: "Storage", subtitle: "Databases, backups and logs on disk", icon: HardDrive },
 ];
 
 /**

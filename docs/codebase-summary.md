@@ -306,7 +306,7 @@ src/
 │   ├── unit/
 │   │   ├── providers/               # Mock provider, SDK tests
 │   │   ├── jira-watcher-poll.test.ts # ADDED: Jira watcher polling, rate limit backoff
-│   │   └── services/                # Chat, config, db, session-log, push-notification tests
+│   │   └── services/                # Chat, config, db, push-notification tests
 │   └── integration/
 │       ├── claude-agent-sdk-integration.test.ts
 │       ├── sqlite-migration.test.ts # SQLite migration validation
@@ -377,7 +377,6 @@ src/
   - **TerminalService** — PTY lifecycle, shell spawning
   - **ClaudeUsageService** — Token tracking, cost calculation
   - **PushNotificationService** — Web push subscriptions
-  - **SessionLogService** — Audit logs with sensitive data redaction
   - **CloudflaredService** — Download/cache cloudflared binary (platform-aware)
   - **TunnelService** — Spawn tunnel, extract URL, cleanup on exit
   - **named-tunnel/** (ADDED) — Named-tunnel (stable custom-domain) setup + runtime, orchestrated from

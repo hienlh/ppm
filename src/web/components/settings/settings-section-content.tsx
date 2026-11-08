@@ -33,7 +33,7 @@ export const SECTIONS: Record<SettingsCategoryId, PreloadableComponent<object>> 
   schedules: lazyWithPreload(() => import("./schedules/schedules-settings-section").then((m) => ({ default: m.SchedulesSettingsSection }))),
   shortcuts: lazyWithPreload(() => import("./keyboard-shortcuts-section").then((m) => ({ default: m.KeyboardShortcutsSection }))),
   files: lazyWithPreload(() => import("./files-settings-section").then((m) => ({ default: m.FilesSettingsSection }))),
-  "query-audit": lazyWithPreload(() => import("./query-audit-section").then((m) => ({ default: m.QueryAuditSection }))),
+  storage: lazyWithPreload(() => import("./storage-settings-section").then((m) => ({ default: m.StorageSettingsSection }))),
 };
 
 /** Load every pane's code, so that opening Settings shows its pane without a spinner. */

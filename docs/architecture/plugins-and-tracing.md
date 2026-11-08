@@ -232,8 +232,16 @@ What differs from the design above, and why:
   stream (76 010 events → 6 040 rows) cost 49.7 ms in all, 0.57 µs per event; the worst single call
   was the end-of-turn write at 3.75 ms.
 - **Not in the trace yet:** events of nested subagents (never streamed — see `CLAUDE.md`) and
-  background `bash_output`. The older `session_logs` / `logSessionEvent` still exists and could be
-  retired in favour of this log.
+  background `bash_output`.
+- **Long tool text is trimmed** (`trace-payload-trim.ts`): a `tool_result` output or a string in a
+  `tool_use` input over 8 KB keeps its first and last 4 KB around a `…[trimmed N of M chars]…`
+  marker, with the original length in `outputLength` / `inputLengths` and `trimmed: true`. Error
+  results are kept whole, and a payload with nothing long in it is stored byte-identical.
+- **`session_logs` is gone:** the table in `ppm.db` that duplicated this log (never pruned, 99% of
+  the file and of every snapshot of it) was dropped by migration 59. On open, `compactIfMostlyFree`
+  `VACUUM`s `ppm.db` when at least half of it (and 4 MB) is free pages, so a rebuild that failed is
+  retried at the next start. Snapshots shrink regardless, since they are taken with `VACUUM INTO`.
+  Its diagnostic notes now go to `ppm.log`; `GET /chat/sessions/:id/logs` was removed with it.
 
 ---
 

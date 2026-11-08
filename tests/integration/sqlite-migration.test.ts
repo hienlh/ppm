@@ -35,7 +35,7 @@ describe("SQLite schema migrations", () => {
     expect(names).toContain("projects");
     expect(names).toContain("session_map");
     expect(names).toContain("session_metadata");
-    expect(names).toContain("session_logs");
+    expect(names).not.toContain("session_logs");
     expect(names).toContain("usage_history");
     expect(names).toContain("connections");
     expect(names).toContain("connection_table_cache");
@@ -68,8 +68,6 @@ describe("SQLite schema migrations", () => {
     ).all() as { name: string }[];
     const names = indexes.map((i) => i.name);
 
-    expect(names).toContain("idx_session_logs_session");
-    expect(names).toContain("idx_session_logs_created");
     expect(names).toContain("idx_usage_session");
     expect(names).toContain("idx_usage_recorded");
     expect(names).toContain("idx_projects_sort");
