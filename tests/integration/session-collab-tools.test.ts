@@ -30,6 +30,7 @@ import { FEATURE_INTROS, switchesForAnswer } from "../../src/shared/feature-intr
 import { stripSharedContext } from "../../src/shared/provider-context.ts";
 import type { AIProvider } from "../../src/providers/provider.interface.ts";
 import type { ChatEvent, Session, SessionConfig } from "../../src/types/chat.ts";
+import type { PpmConfig } from "../../src/types/config.ts";
 
 interface Item { content: string; clientMessageId?: string }
 
@@ -98,16 +99,23 @@ const app = new Hono();
 app.all("/mcp", sessionCollabMcpHandler);
 app.route("/api/sessions-collab", sessionCollabRoutes);
 const sockets: any[] = [];
+let projectsBefore: PpmConfig["projects"] = [];
 
 beforeAll(() => {
   original = providerRegistry.get("claude");
   providerRegistry.register(claude as never);
+  // A browser's chat socket names a registered project. Left unregistered, the name falls back to
+  // being read as a path, and once an earlier file in the same process registered a project at
+  // the working directory, `<cwd>/collab-project` resolved and moved these sessions out of it.
+  projectsBefore = [...configService.get("projects")];
+  configService.set("projects", [...projectsBefore.filter((p) => p.name !== PROJECT), { name: PROJECT, path: projectPath }]);
   // The session tools are off until the tour's question is answered; these tests answer "Turn on".
   configService.set("ai", { ...configService.get("ai"), ppm_tools: { ...configService.get("ai").ppm_tools, ...switchesForAnswer(FEATURE_INTROS[0]!, "on") } });
 });
 afterAll(() => {
   const { ppm_tools: _answered, ...ai } = configService.get("ai");
   configService.set("ai", ai);
+  configService.set("projects", projectsBefore);
   claude.release();
   for (const s of sockets.splice(0)) chatWebSocket.close(s);
   for (const id of claude.sessions.keys()) claude.abortQuery(id);
