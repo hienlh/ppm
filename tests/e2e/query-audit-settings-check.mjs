@@ -91,9 +91,10 @@ const main = async () => {
   // Settings is a singleton tab, so deep-link instead of hunting for a nav button.
   await cdp.send("Page.navigate", { url: `${WEB}/project/ppm/settings` });
   await Bun.sleep(4000);
-  const openedSettings = await cdp.evalJs(`/query audit log/i.test(document.body.innerText || '')`);
+  // Query Audit lives inside Settings → Storage, after the session trace's own two inputs.
+  const openedSettings = await cdp.evalJs(`/storage/i.test(document.body.innerText || '')`);
 
-  const openedCategory = await cdp.evalJs(clickByText("query audit log"));
+  const openedCategory = await cdp.evalJs(clickByText("storage"));
   await Bun.sleep(1800);
 
   const state = await cdp.evalJs(`(() => {
@@ -109,7 +110,7 @@ const main = async () => {
 
   const parsed = JSON.parse(state);
   const pass = openedSettings && openedCategory
-    && parsed.inputs.length >= 2
+    && parsed.inputs.length >= 4
     && parsed.hasDiskLine
     && parsed.hasClearButton
     && cdp.errors.length === 0;

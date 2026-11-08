@@ -1,6 +1,6 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { resolve } from "node:path";
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, statSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 58;
+export const CURRENT_SCHEMA_VERSION = 59;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -56,6 +56,7 @@ export function getDb(): Database {
     const ms = Math.round(performance.now() - started);
     if (version === 0) log.info(`Created ${path} (schema v${CURRENT_SCHEMA_VERSION})`);
     else if (version < CURRENT_SCHEMA_VERSION) log.info(`Migrated ${path} from schema v${version} to v${CURRENT_SCHEMA_VERSION} in ${ms} ms`);
+    compactIfMostlyFree(db, path);
   } catch (e) {
     // Nothing runs without this file: config, projects, sessions and accounts all live in it.
     log.fatal(`Cannot open the app database ${path}${version >= 0 ? ` (schema v${version}, this version expects v${CURRENT_SCHEMA_VERSION})` : ""}:`, e);
@@ -87,6 +88,63 @@ function backupBeforeMigrations(database: Database): void {
   } catch (e: any) {
     log.error(`Pre-migration snapshot FAILED (continuing): ${e?.message ?? e}`);
   }
+}
+
+/** Below this much free space a rebuild is not worth the wait at startup. */
+const COMPACT_MIN_FREE_BYTES = 4 * 1_048_576;
+
+/**
+ * Give the file back the pages a dropped table left free, when most of the file is free pages.
+ * Migration 59 dropped `session_logs`, which on a long-lived install was 99% of the file; without
+ * this the file keeps its old size, because SQLite only reuses free pages for later writes.
+ * Snapshots are taken with `VACUUM INTO`, so they shrink either way — this is for `ppm.db` itself.
+ *
+ * Decided from the free-page count on every open rather than from a flag set by the migration, so a
+ * rebuild that failed (another process holding the write lock, say) is retried at the next start
+ * instead of never. An ordinary database has next to no free pages and pays one pragma read.
+ *
+ * `VACUUM` cannot run inside a transaction, which is why it is here and not in the migration.
+ * Under WAL it writes the rebuilt database into the `-wal` file, so a `TRUNCATE` checkpoint
+ * follows to move it back and shrink both files. Best-effort like the pre-migration snapshot: a
+ * failure only means the file stays large, so it is logged and the open goes on. Exported for a test.
+ */
+export function compactIfMostlyFree(database: Database, path: string): void {
+  let freeBytes = 0;
+  try {
+    const pageSize = (database.query("PRAGMA page_size").get() as { page_size: number }).page_size;
+    const pages = (database.query("PRAGMA page_count").get() as { page_count: number }).page_count;
+    const free = (database.query("PRAGMA freelist_count").get() as { freelist_count: number }).freelist_count;
+    freeBytes = free * pageSize;
+    if (freeBytes < COMPACT_MIN_FREE_BYTES || free * 2 < pages) return;
+  } catch {
+    return;
+  }
+  const before = fileSizeWithWal(path);
+  const started = performance.now();
+  try {
+    database.exec("VACUUM");
+    const checkpoint = database.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number } | null;
+    const ms = Math.round(performance.now() - started);
+    const after = fileSizeWithWal(path);
+    log.info(`Compacted ${path} (${formatMb(freeBytes)} of free pages): ${formatMb(before)} → ${formatMb(after)} in ${ms} ms`
+      + (checkpoint?.busy ? " (checkpoint busy: the file shrinks at a later checkpoint)" : ""));
+  } catch (e) {
+    const ms = Math.round(performance.now() - started);
+    log.error(`VACUUM of ${path} failed after ${ms} ms (continuing; the file keeps its size, ${formatMb(before)}, and is retried at the next start):`, e);
+  }
+}
+
+/** Size of a SQLite file plus its `-wal`, 0 for either that does not exist. */
+export function fileSizeWithWal(path: string): number {
+  let total = 0;
+  for (const p of [path, `${path}-wal`]) {
+    try { total += statSync(p).size; } catch { /* missing */ }
+  }
+  return total;
+}
+
+function formatMb(bytes: number): string {
+  return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
 /**
@@ -161,14 +219,6 @@ export function runMigrations(database: Database): void {
         created_at TEXT DEFAULT (datetime('now'))
       );
 
-      CREATE TABLE IF NOT EXISTS session_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        level TEXT NOT NULL,
-        message TEXT NOT NULL,
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-
       CREATE TABLE IF NOT EXISTS usage_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         cost_usd REAL,
@@ -182,8 +232,6 @@ export function runMigrations(database: Database): void {
         recorded_at TEXT DEFAULT (datetime('now'))
       );
 
-      CREATE INDEX IF NOT EXISTS idx_session_logs_session ON session_logs(session_id);
-      CREATE INDEX IF NOT EXISTS idx_session_logs_created ON session_logs(created_at);
       CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_history(session_id);
       CREATE INDEX IF NOT EXISTS idx_usage_recorded ON usage_history(recorded_at);
       CREATE INDEX IF NOT EXISTS idx_projects_sort ON projects(sort_order);
@@ -1340,6 +1388,21 @@ export function runMigrations(database: Database): void {
       PRAGMA user_version = 58;
     `);
   }
+
+  if (current < 59) {
+    // `session_logs` duplicated the session trace (`session-trace.db`) and was never pruned: on a
+    // long-lived install it was 99% of this file. `compactIfMostlyFree` gives the pages back.
+    // One statement per `exec`: Bun raises only the last statement's error from a multi-statement
+    // `exec`, so a DROP that hit a lock would be skipped silently and the version still bumped,
+    // leaving a table nothing would ever drop again.
+    database.exec("DROP INDEX IF EXISTS idx_session_logs_session");
+    database.exec("DROP INDEX IF EXISTS idx_session_logs_created");
+    database.exec("DROP TABLE IF EXISTS session_logs");
+    if (database.query("SELECT 1 FROM sqlite_master WHERE name = 'session_logs'").get() != null) {
+      throw new Error("session_logs is still present after DROP TABLE");
+    }
+    database.exec("PRAGMA user_version = 59");
+  }
 }
 
 /**
@@ -1892,31 +1955,6 @@ export function deleteSessionMapping(sessionId: string): void {
 
 export function deleteSessionTitle(sessionId: string): void {
   getDb().query("DELETE FROM session_titles WHERE session_id = ?").run(sessionId);
-}
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// Session log helpers
-// ---------------------------------------------------------------------------
-
-export interface SessionLogRow {
-  id: number;
-  session_id: string;
-  level: string;
-  message: string;
-  created_at: string;
-}
-
-export function insertSessionLog(sessionId: string, level: string, message: string): void {
-  getDb().query(
-    "INSERT INTO session_logs (session_id, level, message) VALUES (?, ?, ?)",
-  ).run(sessionId, level, message);
-}
-
-export function getSessionLogs(sessionId: string, limit = 100): SessionLogRow[] {
-  return getDb().query(
-    "SELECT id, session_id, level, message, created_at FROM session_logs WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-  ).all(sessionId, limit) as SessionLogRow[];
 }
 
 // ---------------------------------------------------------------------------
