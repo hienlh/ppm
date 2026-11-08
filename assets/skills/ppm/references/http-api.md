@@ -151,6 +151,13 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `DELETE /api/extensions/:id{.+}`
 - `PATCH  /api/extensions/:id{.+}`
 
+## /api/feature-intros
+
+- `GET    /api/feature-intros`
+- `POST   /api/feature-intros/:id/answer`
+- `POST   /api/feature-intros/:id/skip`
+- `POST   /api/feature-intros/:id/seen-in-settings`
+
 ## /api/fs
 
 - `GET    /api/fs/browse`
@@ -308,6 +315,14 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/schedules/:id{[0-9]+}/run-now`
 - `GET    /api/schedules/:id{[0-9]+}/runs`
 
+## /api/sessions-collab
+
+- `POST   /api/sessions-collab/approvals/:requestId`
+- `GET    /api/sessions-collab/sessions/:id/links`
+- `GET    /api/sessions-collab/projectPath`
+- `POST   /api/sessions-collab/sessions/:id/stop-children`
+- `GET    /api/sessions-collab/projectPath`
+
 ## /api/settings
 
 - `PUT    /api/settings/device-name`
@@ -342,6 +357,9 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `PUT    /api/settings/query-audit`
 - `GET    /api/settings/query_audit`
 - `DELETE /api/settings/query-audit/logs`
+- `GET    /api/settings/storage`
+- `PUT    /api/settings/session-trace`
+- `GET    /api/settings/session_trace`
 - `GET    /api/settings/clawbot`
 - `GET    /api/settings/clawbot`
 - `PUT    /api/settings/clawbot`
@@ -500,4 +518,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.23.32 -->
+<!-- Generated from src/server/routes/ for PPM v0.23.33 -->
