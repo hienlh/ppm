@@ -44,24 +44,40 @@ describe("feature introductions", () => {
     expect(ai().session_collab).toEqual({ askBeforeCreate: false });
     for (const tool of SIX) expect(onTools()).toContain(tool);
     expect(featureIntrosView().pending).toEqual([]);
+  });
 
-    answerFeatureIntro(INTRO.id, "off");
-    expect(ai().ppm_tools).toEqual(Object.fromEntries(SIX.map((t) => [t, false])));
-    expect(readFeatureIntroStates()[INTRO.id]!.answer).toBe("off");
+  it("ignores a second answer: the first one, or a choice made in Settings since, stands", () => {
+    answerFeatureIntro(INTRO.id, "on");
+    expect(answerFeatureIntro(INTRO.id, "off")).toMatchObject({ ok: true, changed: false, state: { answer: "on", via: "tour" } });
+    expect(ai().ppm_tools).toEqual(Object.fromEntries(SIX.map((t) => [t, true])));
+
+    // Settled by a switch saved in Settings that nothing has read yet: the late answer settles it first.
+    configService.set("feature_intros", {});
+    configService.set("ai", { ...ai(), ppm_tools: { create_session: true } });
+    expect(answerFeatureIntro(INTRO.id, "off")).toMatchObject({ changed: false, state: { answer: "on", via: "settings" } });
+    expect(ai().ppm_tools).toEqual({ create_session: true });
+
+    // Switched off by skipping: Turn on from a stale device does not overwrite it either.
+    configService.set("feature_intros", { [INTRO.id]: { answer: "off", skips: 3, via: "skips" } });
+    configService.set("ai", { ...ai(), ppm_tools: {} });
+    expect(answerFeatureIntro(INTRO.id, "on")).toMatchObject({ changed: false, state: { answer: "off", via: "skips" } });
+    for (const tool of SIX) expect(onTools()).not.toContain(tool);
   });
 
   it("asks again after a skip, and after the last allowed one leaves the feature off and NEW in Settings", () => {
+    const day = (n: number) => new Date(Date.UTC(2026, 10, 1 + n, 9));
     for (let n = 1; n < MAX_FEATURE_INTRO_SKIPS; n++) {
-      expect(skipFeatureIntro(INTRO.id)).toMatchObject({ ok: true, state: { answer: null, skips: n } });
+      expect(skipFeatureIntro(INTRO.id, day(n))).toMatchObject({ ok: true, changed: true, state: { answer: null, skips: n } });
       expect(featureIntrosView().pending).toHaveLength(1);
     }
-    expect(skipFeatureIntro(INTRO.id)).toMatchObject({ ok: true, state: { answer: "off", skips: MAX_FEATURE_INTRO_SKIPS, via: "skips" } });
+    expect(skipFeatureIntro(INTRO.id, day(MAX_FEATURE_INTRO_SKIPS)))
+      .toMatchObject({ ok: true, state: { answer: "off", skips: MAX_FEATURE_INTRO_SKIPS, via: "skips" } });
     const view = featureIntrosView();
     expect(view.pending).toEqual([]);
     expect(view.newInSettings).toEqual([INTRO.id]);
     for (const tool of SIX) expect(onTools()).not.toContain(tool);
     // A skip after the question ended changes nothing.
-    expect(skipFeatureIntro(INTRO.id)).toMatchObject({ state: { skips: MAX_FEATURE_INTRO_SKIPS } });
+    expect(skipFeatureIntro(INTRO.id, day(9))).toMatchObject({ changed: false, state: { skips: MAX_FEATURE_INTRO_SKIPS } });
     markFeatureIntroSeenInSettings(INTRO.id);
     expect(featureIntrosView().newInSettings).toEqual([]);
   });
@@ -88,12 +104,23 @@ describe("feature introductions", () => {
     expect(readFeatureIntroStates()[INTRO.id]).toEqual({ answer: null, skips: 0 });
   });
 
-  it("knows an install in use by a project or by a recorded chat session", () => {
+  it("counts one skip per window, however many tabs and devices close the question", () => {
+    const at = (hours: number) => new Date(Date.UTC(2026, 10, 8, 9) + hours * 3_600_000);
+    expect(skipFeatureIntro(INTRO.id, at(0))).toMatchObject({ changed: true, state: { skips: 1 } });
+    for (const hours of [0, 1, 11.9]) {
+      expect(skipFeatureIntro(INTRO.id, at(hours))).toMatchObject({ ok: true, changed: false, state: { answer: null, skips: 1 } });
+    }
+    expect(skipFeatureIntro(INTRO.id, at(12))).toMatchObject({ changed: true, state: { skips: 2 } });
+    expect(readFeatureIntroStates()[INTRO.id]!.lastSkipAt).toBe(at(12).toISOString());
+  });
+
+  it("knows an install in use by a recorded chat session, and not by projects alone", () => {
+    // `ppm init` adds every git repository it finds: projects say nothing about use.
+    configService.set("projects", [{ name: "p", path: "/tmp/p" }]);
     expect(isExistingUser()).toBe(false);
+    expect(featureIntrosView().isExistingUser).toBe(false);
     setSessionMetadata("feature-intro-session", "p", "/tmp/p");
     expect(isExistingUser()).toBe(true);
-    getDb().run("DELETE FROM session_metadata");
-    configService.set("projects", [{ name: "p", path: "/tmp/p" }]);
     expect(featureIntrosView().isExistingUser).toBe(true);
   });
 });

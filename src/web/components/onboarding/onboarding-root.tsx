@@ -16,7 +16,7 @@ import { OnboardingGuide } from "./onboarding-guide";
 import { findTourTarget, OnboardingHint } from "./onboarding-hint";
 import { useOnboardingSessionCheck } from "./use-onboarding-session-check";
 import { OPEN_QUICK_ORIENTATION, OnboardingQuickOrientation } from "./onboarding-quick-orientation";
-import { OnboardingFeatureIntro, useFeatureIntrosSync, useFeaturePartVisible } from "./onboarding-feature-intro";
+import { OnboardingFeatureIntro, useFeatureIntrosSync, useFeaturePartVisible, useTourOfferHidden } from "./onboarding-feature-intro";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { openRunInstructions } from "@/lib/onboarding/run-instructions";
 
@@ -38,6 +38,7 @@ export function OnboardingRoot({ openProjects, openNavigation, closeNavigation, 
   useFeatureIntrosSync();
   // New features take the panel: at once for an existing user, after the basic tour for a new one.
   const featurePart = useFeaturePartVisible(state.status);
+  const tourOfferHidden = useTourOfferHidden();
   useEffect(() => {
     const receive = (event: Event) => useOnboardingStore.getState().observe((event as CustomEvent<OnboardingEvent>).detail);
     window.addEventListener(ONBOARDING_EVENT, receive);
@@ -122,6 +123,8 @@ export function OnboardingRoot({ openProjects, openNavigation, closeNavigation, 
   }} />;
   if (featurePart) return <OnboardingFeatureIntro mobile={mobile} />;
   if (state.status === "dismissed") return null;
+  // An install already in use is not offered the basic tour; its entry in the UI still opens it.
+  if (state.status === "unseen" && tourOfferHidden) return null;
   if (state.status === "choosing") return <OnboardingSetup projectName={project?.name} />;
   return <OnboardingHint collapsed={collapsed} target={state.status === "active" && state.currentStep ? ONBOARDING_TARGETS[state.currentStep] : undefined}>
     <OnboardingStepTransition stepKey={state.status === "active" ? state.currentStep ?? "project" : state.status}

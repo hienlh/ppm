@@ -56,6 +56,8 @@ export interface FeatureIntroState {
   via?: FeatureIntroResolution;
   /** Settings → Tools was opened after the feature was switched off by skipping. */
   seenInSettings?: boolean;
+  /** When the last skip that counted was recorded; another within the window is not counted. */
+  lastSkipAt?: string;
 }
 
 /** The install-wide record, config key `feature_intros`, keyed by `FeatureIntro.id`. */
@@ -64,14 +66,34 @@ export type FeatureIntroStates = Record<string, FeatureIntroState>;
 /** "Later" this many times and the feature counts as off, marked NEW in Settings → Tools. */
 export const MAX_FEATURE_INTRO_SKIPS = 3;
 
+/**
+ * At most one skip counts per feature in this window. Several tabs and devices open at once each
+ * close the question, and counting every close would use up all three skips in one sitting.
+ */
+export const FEATURE_INTRO_SKIP_WINDOW_MS = 12 * 60 * 60 * 1000;
+
 /** `/ws/global` event sent after any change, so every open device can refresh. */
 export const FEATURE_INTROS_CHANGED_EVENT = "feature-intros:changed";
+
+/** What changed: a device answered, put the question off, opened Settings, or a switch settled it. */
+export type FeatureIntroChangeKind = "answer" | "skip" | "seen" | "settings";
+
+/** The payload of {@link FEATURE_INTROS_CHANGED_EVENT}; `id` is absent when several may have changed. */
+export interface FeatureIntrosChangedEvent {
+  type: typeof FEATURE_INTROS_CHANGED_EVENT;
+  change: FeatureIntroChangeKind;
+  id?: string;
+  answer?: FeatureIntroAnswer | null;
+}
 
 /** `GET /api/feature-intros`. */
 export interface FeatureIntrosView {
   /** Not answered, not settled in Settings and skipped fewer than the allowed times. */
   pending: FeatureIntro[];
-  /** The install already has a project or a chat session. */
+  /**
+   * The install has at least one chat session. A project alone does not count: `ppm init` adds
+   * every git repository it finds, and the basic tour's first step picks one.
+   */
   isExistingUser: boolean;
   /** Switched off by skipping and not yet seen in Settings → Tools. */
   newInSettings: string[];

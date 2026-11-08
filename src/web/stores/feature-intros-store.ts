@@ -13,6 +13,8 @@ import {
 
 interface FeatureIntrosState {
   view: FeatureIntrosView | null;
+  /** The first load finished, with an answer or without one (the server was unreachable). */
+  settled: boolean;
   /** Ids in the order they were first shown, so the counter does not jump on a refetch. */
   order: string[];
   /** Answered or put off on this device during this app open. */
@@ -33,11 +35,19 @@ interface FeatureIntrosActions {
   close: () => Promise<void>;
   /** Hides the part for this app open without counting a skip: the user went to decide in Settings. */
   hide: () => void;
+  /**
+   * Another tab or device put `id` off: treat it as handled here too, without a skip of this
+   * device's own, so a sitting with several screens open counts as one "later".
+   */
+  skippedElsewhere: (id: string) => void;
   reset: () => void;
 }
 
-const initial: FeatureIntrosState = { view: null, order: [], handled: [], skipped: [], closed: false, busy: false, error: null };
+const initial: FeatureIntrosState = { view: null, settled: false, order: [], handled: [], skipped: [], closed: false, busy: false, error: null };
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Bumped by every load; only the newest one's answer is kept, whichever order they finish in. */
+let loadSeq = 0;
 
 export const useFeatureIntrosStore = create<FeatureIntrosState & FeatureIntrosActions>((set, get) => {
   /** Records one skip, unless this app open already recorded one for `id`. */
@@ -51,12 +61,16 @@ export const useFeatureIntrosStore = create<FeatureIntrosState & FeatureIntrosAc
   return {
     ...initial,
     load: async () => {
+      const seq = ++loadSeq;
       try {
         const view = await fetchFeatureIntros();
-        if (!view) return;
-        set((s) => ({ view, order: [...s.order, ...view.pending.map((i) => i.id).filter((id) => !s.order.includes(id))] }));
+        // A slower, older request must not bring back a feature a newer one says is answered.
+        if (seq !== loadSeq) return;
+        if (!view) { set({ settled: true }); return; }
+        set((s) => ({ view, settled: true, order: [...s.order, ...view.pending.map((i) => i.id).filter((id) => !s.order.includes(id))] }));
       } catch (e) {
         // Asking about new features is never worth an error in the user's way; the next open asks.
+        if (seq === loadSeq) set({ settled: true });
         console.warn(`Could not load the new-feature introductions: ${errorText(e)}`);
       }
     },
@@ -85,7 +99,11 @@ export const useFeatureIntrosStore = create<FeatureIntrosState & FeatureIntrosAc
       }
     },
     hide: () => set({ closed: true, error: null }),
-    reset: () => set(initial),
+    skippedElsewhere: (id) => {
+      markHandled(id);
+      set((s) => ({ skipped: s.skipped.includes(id) ? s.skipped : [...s.skipped, id] }));
+    },
+    reset: () => { loadSeq++; set(initial); },
   };
 });
 

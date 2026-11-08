@@ -12,19 +12,37 @@ import { openSettings } from "@/components/settings/open-settings";
 import { featureIntroSteps, useFeatureIntrosStore } from "@/stores/feature-intros-store";
 import { featurePartAllowed } from "@/lib/onboarding/feature-intros-client";
 import type { OnboardingStatus } from "@/lib/onboarding/onboarding-types";
-import { FEATURE_INTROS_CHANGED_EVENT, type FeatureIntro } from "../../../shared/feature-intros";
+import { FEATURE_INTROS_CHANGED_EVENT, type FeatureIntro, type FeatureIntrosChangedEvent } from "../../../shared/feature-intros";
 import { OnboardingHint } from "./onboarding-hint";
 import { OnboardingStepTransition } from "./onboarding-step-transition";
 
-/** Loads the pending features once per app open, and again whenever any device changes them. */
+/**
+ * Loads the pending features once per app open, and again whenever any device changes them. A
+ * question put off on another tab or device is put off here too, with no skip of this one's own.
+ */
 export function useFeatureIntrosSync(enabled = true): void {
   useEffect(() => {
     if (!enabled) return;
-    const load = () => void useFeatureIntrosStore.getState().load();
-    load();
-    window.addEventListener(FEATURE_INTROS_CHANGED_EVENT, load);
-    return () => window.removeEventListener(FEATURE_INTROS_CHANGED_EVENT, load);
+    const store = useFeatureIntrosStore.getState;
+    const changed = (event: Event) => {
+      const detail = (event as CustomEvent<Partial<FeatureIntrosChangedEvent> | undefined>).detail;
+      if (detail?.change === "skip" && typeof detail.id === "string") store().skippedElsewhere(detail.id);
+      void store().load();
+    };
+    void store().load();
+    window.addEventListener(FEATURE_INTROS_CHANGED_EVENT, changed);
+    return () => window.removeEventListener(FEATURE_INTROS_CHANGED_EVENT, changed);
   }, [enabled]);
+}
+
+/**
+ * Whether the basic tour's own "Get started with PPM" offer stays off screen while this browser
+ * has never seen the tour: it does for an install already in use, which still opens the tour from
+ * its usual entry (`OnboardingEntry`). Nothing is offered until the server has said which kind of
+ * install this is, so the offer never flashes up for someone it is not meant for.
+ */
+export function useTourOfferHidden(): boolean {
+  return useFeatureIntrosStore((s) => !s.settled || s.view?.isExistingUser === true);
 }
 
 /** Whether the part shows now, given this browser's basic-tour status. */

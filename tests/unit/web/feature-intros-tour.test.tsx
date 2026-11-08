@@ -121,6 +121,33 @@ describe("answering", () => {
     expect(document.body.textContent).not.toContain("PPM has new features");
   });
 
+  it("hides with no skip of its own when another tab or device put the question off", async () => {
+    await mountRoot();
+    expect(dialog()).not.toBeNull();
+    // The server counted one skip at most (or none, within its window); the feature is still pending.
+    const detail = { type: FEATURE_INTROS_CHANGED_EVENT, change: "skip", id: INTRO.id, answer: null };
+    await act(async () => { window.dispatchEvent(new CustomEvent(FEATURE_INTROS_CHANGED_EVENT, { detail })); });
+    await flush();
+    expect(dialog()).toBeNull();
+    await act(async () => { await useFeatureIntrosStore.getState().close(); });
+    expect(posts).toEqual([]);
+  });
+
+  it("keeps the newest list when two loads finish out of order", async () => {
+    const replies: Array<(value: unknown) => void> = [];
+    get.mockImplementation(((path: string) => path === "/api/feature-intros"
+      ? new Promise((resolve) => { replies.push(resolve); })
+      : Promise.resolve({})) as never);
+    const store = useFeatureIntrosStore.getState();
+    const older = store.load();
+    const newer = store.load();
+    replies[1]!({ pending: [], isExistingUser: true, newInSettings: [] });
+    await newer;
+    replies[0]!({ pending: [INTRO], isExistingUser: true, newInSettings: [] });
+    await older;
+    expect(useFeatureIntrosStore.getState().view?.pending).toEqual([]);
+  });
+
   it("disappears when another device answers", async () => {
     await mountRoot();
     expect(dialog()).not.toBeNull();
@@ -129,6 +156,41 @@ describe("answering", () => {
     await flush();
     expect(dialog()).toBeNull();
     expect(posts).toEqual([]);
+  });
+});
+
+describe("the basic tour's own offer", () => {
+  const offered = () => (document.body.textContent ?? "").includes("Get started with PPM");
+
+  it("is not made to an install in use, before or after its question is answered", async () => {
+    await mountRoot();
+    expect(offered()).toBe(false);
+    await click(button("Turn on"));
+    await flush();
+    expect(dialog()).toBeNull();
+    expect(offered()).toBe(false);
+    expect(useOnboardingStore.getState().status).toBe("unseen");
+  });
+
+  it("is made to a new install once the server says it is new, and not before", async () => {
+    served = { pending: [], isExistingUser: false, newInSettings: [] };
+    let reply: (value: unknown) => void = () => {};
+    get.mockImplementation(((path: string) => path === "/api/feature-intros"
+      ? new Promise((resolve) => { reply = resolve; })
+      : Promise.resolve({})) as never);
+    await mountRoot();
+    expect(offered()).toBe(false);
+    await act(async () => { reply(structuredClone(served)); });
+    await flush();
+    expect(offered()).toBe(true);
+  });
+
+  it("is still made when the server cannot say", async () => {
+    get.mockImplementation(((path: string) => path === "/api/feature-intros"
+      ? Promise.reject(new Error("offline"))
+      : Promise.resolve({})) as never);
+    await mountRoot();
+    expect(offered()).toBe(true);
   });
 });
 
