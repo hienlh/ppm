@@ -414,6 +414,24 @@ To check a running PPM: `GetProcessInformation(ProcessMemoryPriority)` and
 `NtQueryInformationProcess(ProcessIoPriority = 33)` on its pid; Task Manager shows only the CPU
 class.
 
+## Driving a streaming chat from Playwright (2026-11-04)
+
+Three things cost several reruns of `tests/e2e/session-turn-refs-e2e.mjs`, and each
+looked like a product bug first:
+
+- Playwright's `hover`/`click` wait for the element to stop moving, and a chat that follows the
+  stream moves every row on every chunk. A click on a message during a turn therefore waits until
+  the turn ends — the "mid-turn" step silently ran after it. Use `locator.dispatchEvent("click")`
+  for anything that must happen while the chat streams.
+- The composer's placeholder is "Ask anything..." only while idle; during a turn it is "Follow-up..."
+  (or "Follow-up or Stop..."). A selector on the idle placeholder waits out the turn, so a message
+  meant to be queued mid-turn was sent after it.
+- A floating window (Settings) is restored on reload and sits over the panels, so a later step's
+  hover times out. Close it with its own **Close window** button; Escape only works while it has focus.
+
+Also: Node 20 (the capped e2e image) has no global `WebSocket`; a second device's socket has to be
+opened by the Bun fixture instead.
+
 ## On Windows, a child holding the server's sockets makes the browser hang (2026-11-07)
 
 A live test saw the first reload after a chat cold-started Claude stay blank for 30-60s. The

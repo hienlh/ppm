@@ -60,6 +60,7 @@ configService.set("ai", {
   ...ai, default_provider: "claude", new_chat_provider_mode: "default", share_provider_context: false,
   providers: { claude: { ...ai.providers.claude, type: "agent-sdk", permission_mode: "bypassPermissions", model: "claude-sonnet-5" } },
 });
+await (await import("./answer-feature-intros")).answerFeatureIntrosAtStartup();
 
 const { accountService } = await import("../../../src/services/account.service");
 const account = accountService.add({

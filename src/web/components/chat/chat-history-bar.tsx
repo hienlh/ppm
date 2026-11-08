@@ -16,6 +16,7 @@ import { UsageDetailPanel } from "./usage-badge";
 import { CodexUsagePanel } from "./codex-usage-panel";
 import { TeamActivityPanel } from "./team-activity-panel";
 import { ProviderBadge } from "./provider-selector";
+import { SpawnedSessionBadge } from "./spawned-session-badge";
 import { formatRelativeDate } from "@/lib/format-date";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { projectCacheId } from "@/lib/browser-cache/cache-keys";
@@ -575,6 +576,7 @@ export function ChatHistoryBar({
                     {session.tag && (
                       <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: session.tag.color }} title={session.tag.name} />
                     )}
+                    <SpawnedSessionBadge session={session} projectName={projectName} />
                     {editingId === session.id ? (
                       <form
                         className="flex items-center gap-1 flex-1 min-w-0"

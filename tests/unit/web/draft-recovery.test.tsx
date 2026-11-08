@@ -124,7 +124,7 @@ it("a debounced save stays with the session that owned its reply", async () => {
   const reply = { version: 1 as const, sessionId: "a", providerId: "codex", messageId: "m", role: "assistant" as const,
     timestamp: "2026-10-01T00:00:00Z", quote: "source", truncated: false };
   view = await mount(<Harness session="a" />);
-  await act(async () => { current.saveDraft("draft a", [], reply); selectSession("b"); });
+  await act(async () => { current.saveDraft("draft a", [], { replyTo: reply }); selectSession("b"); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1100)); });
   expect(put.mock.calls).toHaveLength(1);
   expect(put.mock.calls[0]![0]).toContain("/drafts/a");

@@ -268,6 +268,26 @@ describe("PUT /settings/ai", () => {
     }
   });
 
+  it("stores session collaboration limits one field at a time, clamped, and always answers them whole", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const first = await (await app.request("/settings/ai")).json();
+    expect(first.data.session_collab).toEqual({
+      askBeforeCreate: true, maxDepth: 3, maxAutoMessagesPerPair: 20, maxRunningSpawned: 5, waitTimeoutMinutes: 10,
+    });
+    const res = await put({ session_collab: { maxDepth: 9, askBeforeCreate: false } });
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.session_collab).toMatchObject({ maxDepth: 5, askBeforeCreate: false, waitTimeoutMinutes: 10 });
+    expect((await put({ session_collab: { waitTimeoutMinutes: 0 } })).status).toBe(200);
+    expect(configService.load().ai.session_collab).toMatchObject({ maxDepth: 5, askBeforeCreate: false, waitTimeoutMinutes: 1 });
+    for (const value of [{ maxDepth: "3" }, { nope: 1 }, [], null, 5]) {
+      expect((await put({ session_collab: value })).status).toBe(400);
+    }
+    expect(configService.load().ai.session_collab?.maxDepth).toBe(5);
+  });
+
   it("updates provider config and returns merged result", async () => {
     const app = createApp();
     const res = await app.request("/settings/ai", {

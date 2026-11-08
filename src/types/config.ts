@@ -2,6 +2,8 @@ import { CLAUDE_MODEL_IDS } from "./claude-models.ts";
 import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from "../shared/notification-settings.ts";
 import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
 import type { PpmToolSwitches } from "../shared/ppm-tools.ts";
+import type { FeatureIntroStates } from "../shared/feature-intros.ts";
+import type { SessionCollabSettings } from "../shared/session-collab-settings.ts";
 import { isValidLeftoverIdleMinutes } from "../shared/leftover-processes.ts";
 
 export interface TelegramConfig {
@@ -72,6 +74,11 @@ export interface PpmConfig {
   android?: AndroidConfig;
   /** Lowest level written to ppm.log. `PPM_LOG_LEVEL` overrides it; see `services/logger.ts`. */
   log_level?: LogLevel;
+  /**
+   * Which new features the tour has asked about, install-wide. Read through
+   * `readFeatureIntroStates` (`services/feature-intros.service.ts`), which drops malformed entries.
+   */
+  feature_intros?: FeatureIntroStates;
 }
 
 /**
@@ -166,6 +173,12 @@ export interface AIConfig {
    * (`src/services/chat-session-processes/`).
    */
   leftover_processes_idle_minutes?: number;
+  /**
+   * Limits for sessions that open and message each other. Read through
+   * `resolveSessionCollabSettings` (`src/shared/session-collab-settings.ts`), which fills defaults
+   * and clamps, so a field missing here means its default.
+   */
+  session_collab?: Partial<SessionCollabSettings>;
   providers: Record<string, AIProviderConfig>;
 }
 
@@ -275,6 +288,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
     mode: "quick",
   },
   log_level: DEFAULT_LOG_LEVEL,
+  feature_intros: {},
 };
 
 const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;

@@ -108,4 +108,14 @@ describe("deviceToolCall", () => {
     expect(deviceToolOf(CLAUDE_OPEN_FILE_TOOL)).toBeNull();
     expect(deviceToolOf("Bash")).toBeNull();
   });
+
+  test("the session-history tools are neither, so their calls fall to the generic card", () => {
+    for (const tool of ["search_sessions", "list_session_turns", "read_session_turns"]) {
+      for (const name of [`mcp__ppm-tabs__${tool}`, `${CODEX_TAB_TOOLS_MCP_SERVER}:${tool}`]) {
+        expect(tabToolCall(name, { path: "a.ts", session_id: "s" })).toBeNull();
+        expect(deviceToolOf(name)).toBeNull();
+        expect(deviceToolCall(name, { query: "x" })).toBeNull();
+      }
+    }
+  });
 });

@@ -7,6 +7,7 @@ import { formatRelativeDate } from "@/lib/format-date";
 import { TagSettingsSection } from "@/components/settings/tag-settings-section";
 import { SessionContextMenu } from "./session-context-menu";
 import { ProviderBadge } from "./provider-selector";
+import { SpawnedSessionBadge } from "./spawned-session-badge";
 import { SearchSnippet } from "./search-snippet";
 import { useSessionHistory } from "@/hooks/use-session-history";
 import { useChatSearch } from "@/hooks/use-chat-search";
@@ -223,6 +224,7 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
                     {session.tag && (
                       <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: session.tag.color }} title={session.tag.name} />
                     )}
+                    <SpawnedSessionBadge session={session} projectName={projectName} />
                     {h.editingId === session.id ? (
                       <form
                         className="flex items-center gap-1 flex-1 min-w-0"

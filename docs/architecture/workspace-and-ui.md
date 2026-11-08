@@ -70,6 +70,59 @@ Verification uses `tests/e2e/onboarding-tour.mjs` and its isolated fixtures: fre
 scratch project, local ports, allowlisted test provider and real HTTP/WebSocket routes.
 Playwright captures desktop/mobile screenshots and videos without live AI credentials.
 
+### "PPM has new features" — introducing a feature inside the tour
+
+When a release adds a feature that should stay off until the user says otherwise, the tour asks
+once per install: one step per feature, with **Turn on**, **Turn off**, **Later** and a link to
+Settings → Tools. The first entry is the six session tools.
+
+- **Registry:** `FEATURE_INTROS` in `src/shared/feature-intros.ts`. Each entry has a stable `id`
+  (the answer is stored under it for the life of the install), a `title`, a short `body`, the
+  Settings → Tools switches it controls (`tools`) and `since`.
+- **State is install-wide, not per browser:** config key `feature_intros`, read and written only by
+  `src/services/feature-intros.service.ts`, behind `/api/feature-intros` (`GET /`, `POST /:id/answer`,
+  `/:id/skip`, `/:id/seen-in-settings`; `src/server/routes/feature-intros.ts`). Every change is
+  announced as `feature-intros:changed` on `/ws/global`, with a `change` of `answer`, `skip`,
+  `seen` or `settings`. Answered on one device, the step closes on every other one.
+- **The answer is the switches.** Turn on / Turn off writes every tool of the feature as an explicit
+  boolean in `ai.ppm_tools`. The record only says whether, how (`tour`, `skips`, `settings`) and when
+  the question ended. A late answer from a device that missed the change (its socket was down) is
+  ignored: the first decision, or the per-tool choices made in Settings since, stand.
+- **Who sees it when** (`featurePartAllowed`, `useTourOfferHidden` in
+  `src/web/components/onboarding/onboarding-feature-intro.tsx`):
+  - An install is **in use** once it has a chat session (`session_metadata`). Projects do not
+    count: `ppm init` adds every git repository under the home directory, and the tour's first
+    step picks one.
+  - An install in use gets the step at once and is not offered the basic tour ("Get started with
+    PPM" stays hidden while this browser's tour is `unseen`). The tour still opens from its entry
+    in the UI (`OnboardingEntry`).
+  - A new install sees the basic tour first; the step comes once that is finished or dismissed.
+  - A basic tour under way in this browser (`choosing`, `active`, or `paused` — a reload turns
+    `active` into `paused`) always goes first, whatever the server says. The new user's own tour
+    chat makes the install count as in use, so without this a reload mid-tour put the step on top
+    of the running tour.
+- **Putting it off:** Later, the X, Escape, or swiping the phone's sheet away is one skip. At most
+  one skip counts per feature per 12 hours (`FEATURE_INTRO_SKIP_WINDOW_MS`), and the other tabs and
+  devices showing the step close it on the `skip` event without a skip of their own, so a sitting
+  with several screens open is one "later". A reload records nothing. After the third skip the
+  feature counts as off and Settings → Tools marks its switches **NEW** for one visit.
+- **Decided in Settings:** any of the feature's switches set explicitly counts as the answer and the
+  step never shows. `PUT /api/settings/ai` settles it and announces it; `GET /api/feature-intros`
+  does the same for a switch written by any other route (`ppm config set`).
+- **Browser state** is `src/web/stores/feature-intros-store.ts`, not persisted: what this page load
+  already answered or put off, and a sequence guard so an older list never replaces a newer one.
+
+**Adding a feature later:** add one entry to `FEATURE_INTROS` with a new `id`. If the feature is a
+set of `ai.ppm_tools` switches, nothing else is needed: `ppmToolOn` already keeps an introduced
+feature's tools off until the install answers, every server path reads it, and Settings → Tools
+shows the NEW marker. Do not reuse or rename an `id`, or every install is asked again. A feature
+that is not a tool switch needs its own rule for "off until answered" and its own `answerFromSwitches`
+equivalent.
+
+Verification: `tests/e2e/feature-intros-e2e.mjs` (one fresh install per scenario, fixture
+`tests/e2e/fixtures/feature-intros-server.ts`), plus the unit tests named after the service, the
+routes and the tour.
+
 ## New Chat Provider
 
 Settings → AI offers `Always use default provider` and `Follow last focused chat`.
@@ -111,6 +164,129 @@ own direct requests — this store only ever holds the first page.
 A syncing indicator (`session-list-sync-indicator.tsx`, `role="status"`,
 `text-text-dim`) sits in the sidebar's header row and inline after "Recent chats" on the
 welcome panel — no tap target, outside the thumb zone.
+
+## Turn links, chips and the history window
+
+The browser half of [session turn references](ai-chat-and-providers.md#session-turn-references).
+
+**Copy turn link** sits in every user bubble's action bar (`copy-turn-link-button.tsx`). The id
+comes from `message.turnId` (every history path stamps it), else the `turn_started` binding for
+the message's `clientMessageId` (`turn-binding-store.ts`), else `/turns?resolve=<uuid>`; never
+from "the newest turn", which for a queued message is someone else's. A message with no id yet
+shows "Getting link…" (a second click cancels), then "Link ready", and the clipboard is written
+only inside the next click, because a write outside a gesture is refused on plain HTTP. The link
+is the chat's URL plus `?turn=<turnId>`; opening it directly jumps to the turn and drops `?turn=`.
+
+**Chips.** A paste into a composer turns every turn link of a project this PPM has into a chip
+(`use-composer-turn-refs.ts`, `parseTurnLinks`); the origin is ignored, every segment is checked,
+at most 10, duplicates dropped, the rest of the paste inserted as typed. A chip shows a same-size
+skeleton while its turn loads, "No longer available" when it is gone (the send waits on both), the
+provider icon, the session title, "Turn N", and the project's name when it is another project.
+With `read_session_turns` off in Settings → Tools it warns and still sends. A sent bubble draws its
+chips from the message block, with no request; they come back as chips on a draft reload, a
+rejected send, an edit, a fork and an arrow-key recall. A mouse gets a tooltip (prompt line and
+time); a phone gets a 400 ms long press opening a preview sheet, disarmed on `touchcancel`.
+
+**The jump.** A chip calls `openTurnRef`: switch project if needed, open or focus the session's
+tab, and post a request to `chat-jump-store.ts` (which follows Codex renames). `use-chat-turn-jump.ts`
+takes it up once the chat is on screen with its history in. A turn already drawn in the live list
+is pinned there; one that is not loaded opens the **history window** around it.
+
+**History window** (`chat-history-window.tsx`, `use-history-window.ts`, `history-window-model.ts`):
+a container of its own laid over the live list, fed by `/turn-window`, holding at most 30 turns and
+loading 3 at a time at either end as the reader nears it. A separate container, rather than pages
+spliced into the live list, because the live list is bottom-anchored and streams: loading 300 turns
+of history into it to reach one old turn would be the whole transcript, and inserting above a list
+that follows the bottom moves what is being read. The live list stays mounted underneath — hidden
+with `visibility`, `inert` and `aria-hidden`, never `display: none`, so its height, its follow state
+and the TabPool's reshow guard see nothing change — and keeps streaming. A page goes in without
+moving the row being read: the first visible row is measured during render, before commit, and put
+back in a layout effect (`scroll-row-anchor.ts`). The window merges back into the live list once
+the live list holds its last turn whole, and **Back to latest** (`back-to-latest-pill.tsx`, with a
+dot when the live chat moved on) leaves it at once. The pill floats over the bottom of the window,
+outside its scroller; the window covers the transcript only, so the pill sits just above the topmost
+bar under it (running agents, a stop notice, MCP sign-in, the session's file changes) and never over
+one, which on a phone is still the bottom third. Sending a message from this tab also leaves the
+window, so the sender sees it go out. An approval or a question the agent waits on is drawn over the
+window above the composer (`history-window-pending-prompts.tsx`), never only in the hidden list.
+"Loading earlier turns" floats over the window rather than sitting above its rows, which would push
+the row being read down by its height. Rows in the window offer Copy and Copy turn link only: a
+Codex message id is its position in the view that parsed it — the route prefixes the window's ids
+with their turn so they stay unique within it — so Reply, Edit and Fork, which send an id back,
+stay in the live list.
+
+**The landing pin** (`use-scroll-anchor-pin.ts`): a jump puts the turn 16 px below the top and holds
+it there while images decode, code highlights or cards arrive above it — the chat's scrollers set
+`overflow-anchor: none`, so nothing else would. A ResizeObserver on the content re-measures after
+every layout change, before paint. The pin lets go only on the reader's own input (wheel, touch, a
+scroll key, a press on the scrollbar, or a scroll position it did not write); a hidden tab and the
+offsets `reparenting-tab.tsx` restores when a tab moves panel are ignored for a frame.
+
+**The reading anchor** (the history window only, `{ readingAnchor: true }`): once the reader has
+let go of a landing, the same pin remembers the row at the top on every scroll (once per frame) and
+puts it back in its ResizeObserver callback, so an image in an older page decoding above the reader
+no longer pushes that row down. The live list does not use it: its bottom follower owns the position.
+
+`tests/e2e/session-turn-refs-e2e.mjs` measures the landing (16 ± 2 px for 3 s while images arrive
+late), the offset change per window load (with no image delay, and no scroll step while a page is
+in flight), late images above an unpinned reader (4c), a panel split while pinned, and the phone's
+long press, `touchcancel` and pill.
+
+## Session collaboration UI
+
+The browser half of [session collaboration](ai-chat-and-providers.md#session-collaboration).
+
+**The incoming bubble** (`from-session-bubble.tsx`). A message another session's AI sent is drawn
+apart from the user's own: on the left, in the `info` colours, headed "From: <title> · <provider>".
+The header is a button (44 px on touch) that opens the sender at the turn the message was sent from
+(`openTurnRef`; the session alone when no turn is known; another project through
+`openSessionAnywhere`). The body is markdown with raw HTML off, the turn-ref chips sit under the
+header, and the actions are Copy and Copy turn link only — there is nothing of the user's to edit
+or fork. `UserBubble` parses once and routes a message with `fromSession` here; no request.
+
+**Tool cards** (`session-collab-tool-card.tsx`, parser `lib/session-collab-tool-call.ts`, for both
+providers' tool names). They show which session was created or messaged with an Open session
+button, "waiting for reply…" while a wait runs, the reply (two lines, expandable, with "Open the
+turn that replied") or why none came, and `session_status`'s list, each row tappable. A result
+that is not the server's JSON is shown as raw text. A call whose turn ended with no result is
+*stopped*, never a green check: Stop aborts the turn and the CLI never streams the tool's answer
+(the server's `cancelled` outcome included), so a wait reads "Wait cancelled" and any other call
+"The turn ended before this tool answered" (`sessionCollabCardState`).
+
+**The linked-sessions bar** (`linked-sessions-bar.tsx`, under the running-agents bar). Chips with a
+"session" badge, provider, title and a live status — running, idle, needs you, new message — for
+the session's creator, its children and the sessions it messaged. `use-linked-sessions.ts` seeds
+the links from `GET …/sessions/:id/links` when the chat opens (so a link from before a restart, or
+older than the loaded messages, is there at once), then merges the session list's `spawnedBy`, the
+chat's own messages and `/ws/global`'s `session:created`, `session:link_changed` and
+`session:collab_approval` (`session-collab-store.ts`). On a phone more than one link collapses into
+a summary line that opens a capped list. "Stop all child sessions" shows while a direct child runs
+and asks first (a dialog on desktop, a bottom sheet on a phone).
+
+**The list badge** (`spawned-session-badge.tsx`, in the sidebar's history, the drawer and the chat
+history bar). A mouse gets "Created by <parent>" on hover and opens the parent on click; a touch
+screen opens a sheet with that line and an Open button in the thumb zone. The hit area reaches
+44 px on touch. `session:created` carries the creator's title and provider (`parentTitle`,
+`parentProviderId`), so a child created while the list is open names a creator the list never
+loaded (an older session, past the first page) without a reload.
+
+**The card** (`collab-approval-card.tsx`), in the approval slot and over the history window: an AI
+asking to create a session (title, provider/model, depth and the whole task), two sessions at their
+message limit (*Allow N more*), or a message to a session with more rights (both modes named, the
+whole message, and a note that *Allow for this session* lasts until PPM restarts). The task or
+message is shown whole, line breaks kept, in a scrolling box with its length, because a preview
+cut short could hide what is being approved. Answers go over HTTP; the card leaves when
+`approval_resolved` reaches every device. On a phone any card in the live list's approval slot
+(this one, `db_execute`'s, a plain Allow/Deny) is pinned to the foot of the transcript, below
+"thinking…", however short the chat: `message-list.tsx` stretches the scrolled content to the
+scroller's height and pushes the trailing block down, only while a card waits. The collab card
+stacks its answers bottom-up there, the main answer nearest the thumb and Deny furthest.
+
+**Settings → Tools → Session collaboration** holds the three switches, "Ask before creating
+sessions" and the four limits, each number clamped to the server's range before it is saved
+(`session-collab-settings-controls.tsx`).
+
+`tests/e2e/session-collab-e2e.mjs` drives all of it in Chromium, desktop and phone.
 
 ## File Service & Filtering (Lazy-Load Tree, Palette Index)
 

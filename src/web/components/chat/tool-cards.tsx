@@ -116,6 +116,8 @@ import { resultHasImagePlaceholder } from "../../../shared/tool-result-content";
 import { isAsyncAgentLaunchAck } from "../../../shared/background-agent-status";
 import { ToolImagePreview } from "./tool-image-preview";
 import { TabToolCard } from "./tab-tool-card";
+import { SessionCollabToolCard } from "./session-collab-tool-card";
+import { sessionCollabToolCall } from "@/lib/session-collab-tool-call";
 import { DeviceToolDetails, DeviceToolSummary } from "./device-tool-card";
 import { deviceToolCall, deviceToolOf, tabToolCall } from "@/lib/tab-tool-call";
 import { DbToolSummary, DbToolDetails } from "./db-tool-card";
@@ -251,6 +253,15 @@ export function ToolCard({
   if (tabCall) {
     return (
       <TabToolCard call={tabCall} toolUseId={toolUseId} output={hasResult ? String((result as any).output ?? "") : undefined}
+        isError={isError} done={!!isDone} projectName={projectName} />
+    );
+  }
+
+  // So do the session tools: the session they reached, its reply, and a way to open it.
+  const collabCall = tool.type === "tool_use" ? sessionCollabToolCall(toolName, input) : null;
+  if (collabCall) {
+    return (
+      <SessionCollabToolCard call={collabCall} toolUseId={toolUseId} output={hasResult ? String((result as any).output ?? "") : undefined}
         isError={isError} done={!!isDone} projectName={projectName} />
     );
   }

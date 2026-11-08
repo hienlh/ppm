@@ -8,6 +8,10 @@ import { syncRunningSessions } from "@/lib/sync-running-sessions";
 import { syncAllKnownProjects } from "@/stores/session-list-sync-triggers";
 import { notifyGlobalReady, sendIfOpen, setGlobalWsClient } from "@/lib/global-ws-channel";
 import { SESSION_FILE_CHANGES_PUSH } from "../../shared/session-file-changes";
+import {
+  SESSION_COLLAB_APPROVAL_EVENT, SESSION_CREATED_EVENT, SESSION_LINK_CHANGED_EVENT, type SessionCollabGlobalEvent,
+} from "../../shared/session-collab";
+import { handleSessionCollabEvent } from "@/lib/session-collab-events";
 
 /** How often the client pings — well under the server's own idle timeout, so a live but
  *  silent socket never gets reaped as dead. */
@@ -37,6 +41,9 @@ const IDLE_TIMEOUT_MS = 45_000;
  *   On every (re)connect the indicators are also reconciled against the server
  *   registry, since a phase change that happened while this socket was down was
  *   never delivered and would otherwise stick until a full reload.
+ * - `session:created` / `session:link_changed` / `session:collab_approval` → sessions reaching
+ *   each other: a created session joins the session list at once, and links and cards land in
+ *   `session-collab-store` for the linked-sessions bar (also re-dispatched as window events).
  * - `jira:*` → re-dispatched as window events.
  * - `tunnel:*` → re-dispatched as window events (named-tunnel setup flow —
  *   login URL/state, setup progress/done/pending/error).
@@ -44,6 +51,8 @@ const IDLE_TIMEOUT_MS = 45_000;
  *   makes to a repository, `git:commit-draft` when the shared commit message changes).
  * - `session:file-changes` → re-dispatched as a window event: the rows of the files the agent
  *   just changed, for the changes bar of that session (`useSessionFileChanges`).
+ * - `feature-intros:changed` → re-dispatched as a window event: a new-feature question was
+ *   answered, put off or settled on some device, so the tour and Settings → Tools refetch.
  * - `design:*` → re-dispatched as window events (`design:history_changed`,
  *   `design:comments_changed`). A design's `.design/` folder is not watched, so these
  *   are the only signal that its snapshots or comments changed.
@@ -141,6 +150,12 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         return;
       }
 
+      if (type === SESSION_CREATED_EVENT || type === SESSION_LINK_CHANGED_EVENT || type === SESSION_COLLAB_APPROVAL_EVENT) {
+        handleSessionCollabEvent(data as unknown as SessionCollabGlobalEvent);
+        window.dispatchEvent(new CustomEvent(type, { detail: data }));
+        return;
+      }
+
       if (
         type.startsWith("jira:")
         || type.startsWith("tunnel:")
@@ -149,6 +164,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         || type.startsWith("git:")
         || type.startsWith("agent-transcript:")
         || type.startsWith("logs:")
+        || type.startsWith("feature-intros:")
         || type === "agent-activity"
         || type === SESSION_FILE_CHANGES_PUSH
       ) {

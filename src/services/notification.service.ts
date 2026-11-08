@@ -53,7 +53,7 @@ export interface BroadcastOptions {
 /** What became of one broadcast. Callers that only fire and forget can ignore it. */
 export type BroadcastOutcome = "sent" | "off" | "replaced" | "seen";
 
-const URGENT: ReadonlySet<NotificationType> = new Set(["approval_request", "question"]);
+const URGENT: ReadonlySet<NotificationType> = new Set(["approval_request", "question", "collab_approval"]);
 
 export class NotificationService {
   /** At most one waiting notification per session (or coalesce key): a newer event replaces the older one. */
@@ -132,7 +132,8 @@ export class NotificationService {
             project: payload.project,
             sessionId: payload.sessionId,
             sessionTitle: payload.sessionTitle,
-            notificationType: type === "schedule" || type === "jira" || type === "design_review" ? "done" : type,
+            notificationType: type === "schedule" || type === "jira" || type === "design_review" ? "done"
+              : type === "collab_approval" ? "approval_request" : type,
           });
         })
         .catch(() => {}),

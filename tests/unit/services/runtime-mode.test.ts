@@ -17,7 +17,7 @@ describe("minimal runtime mode", () => {
   });
 
   test("rejects workspace sockets and APIs including nested actions", () => {
-    for (const path of ["/ws/extensions", "/ws/remote-desktop", "/ws/project/demo/terminal/1", "/ws/project/demo/lsp", "/ws/project/demo/group/1", "/api/tunnels", "/api/tunnels/transports", "/api/preview/start", "/api/db/connections/file/objects", "/api/extensions/install", "/api/db/connections", "/api/project/demo/designs", "/api/project/demo/git/status", "/api/schedules/run", "/api/settings/clawbot/telegram/connect", "/proxy/v1/messages", "/api/tab-tools-mcp", "/api/db-tools-mcp"]) {
+    for (const path of ["/ws/extensions", "/ws/remote-desktop", "/ws/project/demo/terminal/1", "/ws/project/demo/lsp", "/ws/project/demo/group/1", "/api/tunnels", "/api/tunnels/transports", "/api/preview/start", "/api/db/connections/file/objects", "/api/extensions/install", "/api/db/connections", "/api/project/demo/designs", "/api/project/demo/git/status", "/api/schedules/run", "/api/settings/clawbot/telegram/connect", "/proxy/v1/messages", "/api/tab-tools-mcp", "/api/db-tools-mcp", "/api/sessions-mcp"]) {
       expect(isMinimalPathDisabled(path)).toBe(true);
     }
   });

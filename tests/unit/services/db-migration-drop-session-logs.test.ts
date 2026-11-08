@@ -67,7 +67,7 @@ describe("migration 59: drop session_logs", () => {
     const db = new Database(":memory:");
     applyDbPragmas(db);
     runMigrations(db);
-    expect(CURRENT_SCHEMA_VERSION).toBe(59);
+    expect(CURRENT_SCHEMA_VERSION).toBe(60);
     expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: CURRENT_SCHEMA_VERSION });
     expect(names(db, "table")).not.toContain("session_logs");
     db.close();
@@ -87,7 +87,7 @@ describe("migration 59: drop session_logs", () => {
     db.close();
   });
 
-  it("reaches 59 when a database at 58 had already lost the table", () => {
+  it("reaches the current version when a database at 58 had already lost the table", () => {
     const db = new Database(":memory:");
     applyDbPragmas(db);
     runMigrations(db);

@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from "bun:test";
 
-import { parseUserMessage, toComposerDraft, parseUserAttachments } from "../../../src/web/components/chat/user-message-parse.ts";
+import { parseUserMessage, toComposerDraft, parseUserAttachments } from "../../../src/shared/user-message-parse.ts";
 
 describe("parseUserMessage", () => {
   it("leaves plain text untouched", () => {

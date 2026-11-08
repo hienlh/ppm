@@ -51,12 +51,14 @@ function fmtSize(bytes: number): string {
  * Live render weight of the currently open transcript.
  *
  * This dialog opens from the active session's toolbar, so the tallest scroller holding
- * message nodes is that session's transcript.
+ * message nodes is that session's transcript. While the history window is up the live list is
+ * still laid out underneath it, but hidden and inert: the window is what is on screen.
  */
 function gatherRenderStats(): string[] {
   let scroller: HTMLElement | null = null;
   for (const el of document.querySelectorAll<HTMLElement>(".overflow-y-auto")) {
     if (el.clientHeight < 100 || !el.querySelector("[data-msg-index]")) continue;
+    if (el.closest("[inert]") || getComputedStyle(el).visibility === "hidden") continue;
     if (!scroller || el.scrollHeight > scroller.scrollHeight) scroller = el;
   }
   const lines: string[] = [];

@@ -3,7 +3,7 @@ import { api } from "@/lib/api-client";
 
 interface NotificationEntry {
   count: number;
-  /** Last notification type: done, approval_request, question */
+  /** Last notification type: done, approval_request, collab_approval, question */
   type: string;
   projectName: string;
   sessionTitle: string | null;
@@ -15,6 +15,8 @@ interface NotificationEntry {
 /** Badge color per notification type (Tailwind bg class) */
 const TYPE_COLORS: Record<string, string> = {
   approval_request: "bg-error",
+  // A session tool's card (create, pair limit, escalation) waits on the user like any approval.
+  collab_approval: "bg-error",
   question: "bg-warning",
   done: "bg-primary",
 };
@@ -24,6 +26,7 @@ const TYPE_PRIORITY: Record<string, number> = {
   done: 0,
   question: 1,
   approval_request: 2,
+  collab_approval: 2,
 };
 
 /** Get badge color class for a notification type */
@@ -34,6 +37,7 @@ export function notificationColor(type: string | null | undefined): string {
 /** Subtle bg tint per notification type (for unread row highlights) */
 const TYPE_TINTS: Record<string, string> = {
   approval_request: "bg-error/10",
+  collab_approval: "bg-error/10",
   question: "bg-warning/10",
   done: "bg-primary/10",
 };

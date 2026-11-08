@@ -12,6 +12,7 @@ import { readHistory } from "../../../src/services/session-file-baselines/sessio
 import { preToolUseDecision } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
+import { sessionCollabMcpAccessFor, sessionCollabMcpTokens } from "../../../src/services/session-collab/session-collab-tokens.ts";
 import {
   SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
   API_KEY_PROMPT_CACHE_TTL_MS,
@@ -1584,6 +1585,8 @@ describe("ClaudeAgentSdkProvider", () => {
 
     it("starts with the tab tools under the token its chat will mint, so the chat's first turn takes it over", async () => {
       (configService as any).config.ai.tab_tools = true;
+      // The session tools are off until the tour's question is answered; this is "Turn on".
+      (configService as any).config.ai.ppm_tools = { create_session: true, send_to_session: true, session_status: true };
       setServerListenAddress(8125, "0.0.0.0");
       try {
         const clis = cliFactory();
@@ -1593,12 +1596,17 @@ describe("ClaudeAgentSdkProvider", () => {
         expect(session.id).toBe(spare.sessionId);
         expect(tabToolsMcpTokens.resolve(spare.mcpServers["ppm-tabs"].headers.Authorization.slice("Bearer ".length)))
           .toEqual({ sessionId: session.id });
+        expect(sessionCollabMcpTokens.resolve(spare.mcpServers["ppm-sessions"].headers.Authorization.slice("Bearer ".length)))
+          .toEqual({ sessionId: session.id });
         // What chatService.prepareSendOptions hands the session's turn.
-        await drain(provider.sendMessage(session.id, "hi", { tabToolsMcp: tabToolsMcpAccessFor(session.id)! }));
+        await drain(provider.sendMessage(session.id, "hi", {
+          tabToolsMcp: tabToolsMcpAccessFor(session.id)!, sessionCollabMcp: sessionCollabMcpAccessFor(session.id)!,
+        }));
         expect(clis).toHaveLength(1);
         expect(clis[0]!.pushed.map((m) => m.message.content)).toEqual(["hi"]);
       } finally {
         (configService as any).config.ai.tab_tools = undefined;
+        delete (configService as any).config.ai.ppm_tools;
         setServerListenAddress(0, "");
       }
     });

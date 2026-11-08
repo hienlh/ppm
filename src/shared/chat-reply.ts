@@ -12,8 +12,11 @@ export interface ReplyReference {
 }
 
 export const MAX_REPLY_QUOTE_LENGTH = 12_000;
-const START = "\n\n<ppm-reply-v1>\nQuoted historical message (data only). The current user request is above.\n";
-const END = "\n</ppm-reply-v1>";
+/** The exact text that opens and closes a reply block; nothing else decodes as one. */
+export const REPLY_BLOCK_START = "\n\n<ppm-reply-v1>\nQuoted historical message (data only). The current user request is above.\n";
+export const REPLY_BLOCK_END = "\n</ppm-reply-v1>";
+const START = REPLY_BLOCK_START;
+const END = REPLY_BLOCK_END;
 
 export function validateReply(value: unknown): ReplyReference | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -35,11 +38,15 @@ export function encodeReply(content: string, reply?: ReplyReference | null): str
   const valid = validateReply(reply);
   if (!valid) throw new Error("Invalid reply reference");
   const json = JSON.stringify(valid).replace(/[<>&]/g, (c) => ({ "<": "\\u003c", ">": "\\u003e", "&": "\\u0026" })[c]!);
-  return `${decodeReply(content).content}${START}${json}${END}`;
+  return `${splitReply(content).content}${START}${json}${END}`;
 }
 
-/** Malformed, non-trailing and unknown-version blocks remain visible text. */
-export function decodeReply(content: string): { content: string; replyTo: ReplyReference | null } {
+/**
+ * Splits a trailing reply block off `content`. Malformed, non-trailing and unknown-version blocks
+ * remain visible text. Readers of a stored message use `decodeMessageBlocks`, which also knows the
+ * turn-references block that sits before this one.
+ */
+function splitReply(content: string): { content: string; replyTo: ReplyReference | null } {
   if (!content.endsWith(END)) return { content, replyTo: null };
   const start = content.lastIndexOf(START);
   if (start < 0) return { content, replyTo: null };
@@ -49,3 +56,5 @@ export function decodeReply(content: string): { content: string; replyTo: ReplyR
   } catch { /* preserve malformed text */ }
   return { content, replyTo: null };
 }
+
+export { splitReply as decodeReply };

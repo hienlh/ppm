@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import type { ChatEvent, ChatMessage } from "../types/chat.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 import { stripSharedContext } from "../shared/provider-context.ts";
+import { isFlaggedNonPromptRecord, type ClaudePromptRecord } from "../shared/user-prompt-kind.ts";
 import { readLines } from "./read-lines.ts";
 import { readCompactions, applyCompactions } from "./compaction-savings.ts";
 
@@ -167,6 +168,7 @@ export function parseSessionMessage(
     events: events.length > 0 ? events : undefined,
     timestamp: msg.timestamp ?? new Date().toISOString(),
     sdkUuid: msg.uuid,
+    ...(role === "user" && isFlaggedNonPromptRecord(msg as ClaudePromptRecord) ? { notPrompt: true } : {}),
   };
 }
 
@@ -359,6 +361,9 @@ export function validateJsonlPath(inputPath: string, maxBytes = MAX_FILE_SIZE): 
  *                    or `compactSegmentWindow` computes it; nothing else should.
  * @param opts.toByte  Stop reading at this offset (exclusive, a line start), from
  *                    `compactSegmentWindow`.
+ * @param opts.lines  The lines of `fromByte`..`toByte`, already read by the caller, parsed
+ *                    instead of reading the file again — so a caller that checked those lines
+ *                    parses exactly the bytes it checked.
  * @param beforeUuid  If provided, stop parsing at the line with this uuid (exclusive).
  *                    Used for the expand-compact feature: Claude's compact summary references
  *                    the CURRENT session file (pre+summary+post), so we truncate at the
@@ -367,10 +372,10 @@ export function validateJsonlPath(inputPath: string, maxBytes = MAX_FILE_SIZE): 
 export async function parseJsonlTranscript(
   filePath: string,
   beforeUuid?: string,
-  opts?: { oneSegment?: boolean; fromByte?: number; toByte?: number },
+  opts?: { oneSegment?: boolean; fromByte?: number; toByte?: number; lines?: AsyncIterable<string> },
 ): Promise<ChatMessage[]> {
   const parsed: ChatMessage[] = [];
-  for await (const line of readLines(filePath, opts?.fromByte ?? 0, opts?.toByte)) {
+  for await (const line of opts?.lines ?? readLines(filePath, opts?.fromByte ?? 0, opts?.toByte)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     let entry: any;

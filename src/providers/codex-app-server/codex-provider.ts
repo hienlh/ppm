@@ -38,7 +38,8 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
-import { buildThreadParams, dbToolsMcpEnv, designMcpEnv, requestWithInstructionsFallback, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
+import { buildThreadParams, dbToolsMcpEnv, designMcpEnv, requestWithInstructionsFallback, sessionCollabMcpEnv, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
+import type { SessionCollabMcpAccess } from "../../services/session-collab/session-collab-tool.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import type { TabToolsMcpAccess } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import type { DbToolsMcpAccess } from "../../services/db-ai-tools/db-ai-tools-tool.ts";
@@ -165,6 +166,8 @@ interface LiveSession {
   tabToolsMcp?: TabToolsMcpAccess;
   /** The database tools' endpoint, while a connection is available to the AI chat; likewise. */
   dbToolsMcp?: DbToolsMcpAccess;
+  /** The session tools' endpoint, while one of them is on; likewise. */
+  sessionCollabMcp?: SessionCollabMcpAccess;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
   /** Rollout history snapshot at connect — lets live message ids continue the
@@ -198,6 +201,14 @@ interface LiveSession {
   interruptRequested?: boolean;
   /** Follow-ups waiting for the current turn, in the order they will be sent. */
   pendingTurns: QueuedTurn[];
+  /**
+   * The turn `startTurn` asked codex for and codex has not named yet: the browser's id for the
+   * message it was sent for, and the transcript message it pushed (none for a replay). Taken by
+   * the first `turn/started` after it, so a turn codex starts on its own binds nothing.
+   */
+  startingTurn?: { clientMessageId?: string; transcriptId?: string };
+  /** The turn already announced with `turn_started`, so a second naming of it says nothing. */
+  announcedTurnId?: string | null;
   /** A usage-limit rotation is underway: the old app-server is being torn down and
    *  replaced by one running on another account. Everything the dying subprocess still
    *  emits belongs to the turn being abandoned, so it is dropped rather than shown. */
@@ -329,6 +340,17 @@ function approvalToolLabel(method: string, params: unknown): string {
 }
 
 /**
+ * The bearer tokens PPM's own MCP servers read from the app-server's environment: one place, so
+ * the first connect and the account-switch respawn cannot hand codex different sets.
+ */
+function liveMcpEnv(live: LiveSession): Record<string, string> {
+  return {
+    ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...dbToolsMcpEnv(live.dbToolsMcp),
+    ...sessionCollabMcpEnv(live.sessionCollabMcp),
+  };
+}
+
+/**
  * Codex provider — implements AIProvider directly (mirrors claude-agent-sdk),
  * driving `codex app-server` over JSON-RPC. Per-session live subprocess map;
  * multi-turn via a single generator multiplexing sequential turns over one
@@ -457,11 +479,15 @@ export class CodexAppServerProvider implements AIProvider {
     }
   }
 
-  /** Follow-up turn on the live session (turn 2+). Fire-and-forget per WS contract. */
-  pushMessage(sessionId: string, content: string, opts?: SendMessageOpts): void {
+  /**
+   * Follow-up turn on the live session (turn 2+), fire-and-forget per WS contract. False when no
+   * live session took it, so the caller starts a turn instead of reporting it delivered.
+   */
+  pushMessage(sessionId: string, content: string, opts?: SendMessageOpts): boolean {
     const live = this.live.get(sessionId);
-    if (!live || live.client.isClosed) return;
+    if (!live || live.client.isClosed) return false;
     void this.startTurn(live, content, opts);
+    return true;
   }
 
   /** Return a refusal only when this session's managed account opted into pacing. */
@@ -516,6 +542,8 @@ export class CodexAppServerProvider implements AIProvider {
       return;
     }
     live.turnInFlight = true;
+    live.startingTurn = undefined;
+    live.announcedTurnId = null;
     // `/compact` → trigger codex's real compaction (thread/compact/start), not a text turn.
     // Completion is surfaced on the `thread/compacted` notification (handleNotification).
     if (message.trim() === "/compact") {
@@ -528,7 +556,9 @@ export class CodexAppServerProvider implements AIProvider {
       });
       return;
     }
-    if (!replay) live.transcript.push({ id: nextRolloutId(live), role: "user", content: message, timestamp: new Date().toISOString() });
+    const transcriptId = replay ? undefined : nextRolloutId(live);
+    if (transcriptId) live.transcript.push({ id: transcriptId, role: "user", content: message, timestamp: new Date().toISOString() });
+    live.startingTurn = { clientMessageId: opts?.clientMessageId, transcriptId };
     live.lastTurnInput = { message, opts };
     live.currentAssistant = "";
     live.currentEvents = [];
@@ -593,6 +623,7 @@ export class CodexAppServerProvider implements AIProvider {
 
   private setActiveTurn(live: LiveSession, turnId: string): void {
     live.activeTurnId = turnId;
+    this.announceTurn(live, turnId);
     if (live.interruptRequested) {
       live.interruptRequested = false;
       this.interruptActiveTurn(live);
@@ -602,6 +633,34 @@ export class CodexAppServerProvider implements AIProvider {
     while (live.pendingTurns[0]?.priority === "next" && this.canSteer(live)) {
       this.steerTurn(live, live.pendingTurns.shift()!);
     }
+  }
+
+  /**
+   * Tell the browser which turn the message it sent opened, once codex names it. Bound to the
+   * message `startTurn` was called for, never guessed from "the newest user message": a queued
+   * follow-up opens its turn long after it was typed. A compaction is not a turn anyone sees, so
+   * it is not announced.
+   */
+  private announceTurn(live: LiveSession, turnId: string): void {
+    if (live.announcedTurnId === turnId || live.compactRequested) return;
+    // Taken once: a later `turn/started` — codex starting a turn PPM did not ask for — must not
+    // bind that turn to this message too.
+    const starting = live.startingTurn;
+    live.startingTurn = undefined;
+    if (!starting) return;
+    live.announcedTurnId = turnId;
+    // Only the message `startTurn` pushed. An older one still untagged belongs to a turn whose
+    // `turn/start` failed before codex named it, not to this one.
+    if (starting.transcriptId) {
+      for (let i = live.transcript.length - 1; i >= 0; i--) {
+        const m = live.transcript[i]!;
+        if (m.id !== starting.transcriptId) continue;
+        if (!m.turnId) m.turnId = turnId;
+        break;
+      }
+    }
+    const { clientMessageId } = starting;
+    live.channel.push({ type: "turn_started", turnId, ...(clientMessageId ? { clientMessageId } : {}) });
   }
 
   /**
@@ -639,12 +698,14 @@ export class CodexAppServerProvider implements AIProvider {
           : undefined;
         live.transcript.push({
           id: nextRolloutId(live), role: "assistant", content: live.currentAssistant,
-          ...(events ? { events } : {}), timestamp: new Date().toISOString(),
+          ...(events ? { events } : {}), timestamp: new Date().toISOString(), turnId,
         });
         live.currentAssistant = "";
         live.currentEvents = [];
       }
-      live.transcript.push({ id: nextRolloutId(live), role: "user", content: item.message, timestamp: new Date().toISOString() });
+      live.transcript.push({ id: nextRolloutId(live), role: "user", content: item.message, timestamp: new Date().toISOString(), turnId });
+      // A steered message joins the running turn: it is that turn's message, not one of its own.
+      live.channel.push({ type: "turn_started", turnId, ...(item.opts?.clientMessageId ? { clientMessageId: item.opts.clientMessageId } : {}) });
     }).catch((err) => {
       if (live.client.isClosed) return;
       log.warn(`session=${live.threadId} steer refused, sending as its own turn: ${redactTruncate((err as Error)?.message ?? String(err), 200)}`);
@@ -659,6 +720,8 @@ export class CodexAppServerProvider implements AIProvider {
   /** Running turn is over: send the next follow-up, if one is waiting. */
   private endTurn(live: LiveSession): void {
     live.turnInFlight = false;
+    // A turn that ends unnamed (its `turn/start` failed) leaves nothing a later turn may take.
+    live.startingTurn = undefined;
     live.activeTurnId = null;
     live.interruptRequested = false;
     live.discardingTurn = false;
@@ -843,7 +906,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd: live.cwd, codexHome: account.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...dbToolsMcpEnv(live.dbToolsMcp) }, purpose: "chat" });
+    client.start({ cwd: live.cwd, codexHome: account.home, env: liveMcpEnv(live), purpose: "chat" });
     live.client = client;
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
@@ -858,6 +921,7 @@ export class CodexAppServerProvider implements AIProvider {
       designMcp: live.designMcp,
       tabToolsMcp: live.tabToolsMcp,
       dbToolsMcp: live.dbToolsMcp,
+      sessionCollabMcp: live.sessionCollabMcp,
     });
     await requestWithInstructionsFallback(resumeBase,
       (params) => this.resumeThread(client, threadId, found, account.home, params));
@@ -925,6 +989,7 @@ export class CodexAppServerProvider implements AIProvider {
       designMcp: opts?.designSession ? opts.designMcp : undefined,
       tabToolsMcp: opts?.designSession ? undefined : opts?.tabToolsMcp,
       dbToolsMcp: opts?.designSession ? undefined : opts?.dbToolsMcp,
+      sessionCollabMcp: opts?.designSession ? undefined : opts?.sessionCollabMcp,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
       pendingTurns: [], subagentThreadIds: new Set(),
@@ -939,7 +1004,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd, codexHome: account?.home, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...dbToolsMcpEnv(live.dbToolsMcp) }, purpose: "chat" });
+    client.start({ cwd, codexHome: account?.home, env: liveMcpEnv(live), purpose: "chat" });
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
@@ -951,6 +1016,7 @@ export class CodexAppServerProvider implements AIProvider {
       designMcp: live.designMcp,
       tabToolsMcp: live.tabToolsMcp,
       dbToolsMcp: live.dbToolsMcp,
+      sessionCollabMcp: live.sessionCollabMcp,
     });
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.
@@ -1073,6 +1139,7 @@ export class CodexAppServerProvider implements AIProvider {
         live.transcript.push({
           id: nextRolloutId(live), role: "assistant", content: live.currentAssistant,
           ...(turnEvents ? { events: turnEvents } : {}), timestamp: new Date().toISOString(),
+          ...(live.activeTurnId ? { turnId: live.activeTurnId } : {}),
         });
       }
       live.currentAssistant = "";
@@ -1213,9 +1280,39 @@ export class CodexAppServerProvider implements AIProvider {
     live.channel.done();
   }
 
+  /**
+   * What a `next` follow-up handed to {@link pushMessage} right now would do: join the running
+   * turn (`inserted`, a steer), wait for it in the queue (`queued`), or open a turn (`started`).
+   * Null with no live app-server. A steer codex later refuses falls back to the queue.
+   */
+  followUpDisposition(sessionId: string): "inserted" | "queued" | "started" | null {
+    const live = this.live.get(sessionId);
+    if (!live || live.client.isClosed) return null;
+    if (live.checkingDailyGuard) return "queued";
+    if (!live.turnInFlight) return "started";
+    return this.canSteer(live) ? "inserted" : "queued";
+  }
+
   hasStreamingSession(sessionId: string): boolean {
     const live = this.live.get(sessionId);
     return !!live && !live.client.isClosed;
+  }
+
+  /**
+   * Names the session's thread in codex itself (`thread/name/set`), so codex's own thread list
+   * shows the title PPM shows. Needs a live app-server that already has the thread; false when
+   * there is none, or when the codex build does not know the method — PPM's title stands either way.
+   */
+  async setThreadName(sessionId: string, name: string): Promise<boolean> {
+    const live = this.live.get(sessionId);
+    if (!live || live.client.isClosed || !live.threadId) return false;
+    try {
+      await live.client.request("thread/name/set", { threadId: live.threadId, name }, CONTROL_REQUEST_TIMEOUT_MS);
+      return true;
+    } catch (e) {
+      log.warn(`thread=${live.threadId} could not be named: ${redactTruncate((e as Error)?.message ?? String(e), 200)}`);
+      return false;
+    }
   }
 
   /** Kill all live subprocesses — wired into server shutdown. */
@@ -1228,7 +1325,7 @@ export class CodexAppServerProvider implements AIProvider {
     const live = this.live.get(sessionId);
     if (live && !live.client.isClosed) {
       const inflight: ChatMessage[] = live.currentAssistant
-        ? [{ id: "inflight", role: "assistant", content: live.currentAssistant, timestamp: new Date().toISOString() }]
+        ? [{ id: "inflight", role: "assistant", content: live.currentAssistant, timestamp: new Date().toISOString(), ...(live.activeTurnId ? { turnId: live.activeTurnId } : {}) }]
         : [];
       return [...live.history, ...live.transcript, ...inflight];
     }
@@ -1238,6 +1335,22 @@ export class CodexAppServerProvider implements AIProvider {
     for (const dir of codexSessionsDirs(sessionId)) {
       const messages = await getRolloutMessagesAsync(dir, sessionId, cwd);
       if (messages.length) return messages;
+    }
+    return [];
+  }
+
+  /**
+   * Every message of the thread, the stretches before each compaction included — `getMessages`
+   * starts over at the last one, the way codex resumes. Read from the rollout even while the
+   * thread is live: the search index and the turn index want the record, not the live view.
+   * The same fail-closed cwd guard as `getMessages`.
+   */
+  async getFullMessages(sessionId: string): Promise<ChatMessage[]> {
+    const cwd = this.sessions.get(sessionId)?.projectPath || getSessionProjectPath(sessionId);
+    if (!cwd) return [];
+    for (const dir of codexSessionsDirs(sessionId)) {
+      const messages = await getRolloutMessagesAsync(dir, sessionId, cwd, { full: true });
+      if (messages.length) return messages.filter((m) => !m.synthetic);
     }
     return [];
   }

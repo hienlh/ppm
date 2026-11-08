@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Point a chat at a turn of another chat.** Copy turn link on any of your messages and paste it into another chat: it becomes a chip with the session, "Turn N" and the provider, and a click opens that session on that turn, even one far back in a long chat. The AI can search this project's chats and read their turns (`search_sessions`, `list_session_turns`, `read_session_turns`, each switchable in Settings → Tools); another project's turns only when you sent their links. The chat search builds a new index (`search-index-v3.db`) once on first use; the old file is left alone. A browser still on an older version shows a sent chip as plain text until it reloads.
+- **A chat can open other sessions and message them.** Claude and Codex chats get `create_session`, `send_to_session` and `session_status` (each switchable in Settings → Tools): the sessions they open are ordinary ones you can see, open, write into and stop, a message from another session shows as its own bubble that leads back to the sending turn, and linked sessions sit in a bar under the chat. PPM asks before a session is created (switchable), at 20 messages between two sessions, and before a message reaches a session with more permissions.
+- **New features are introduced in the tour, and stay off until you choose.** A "PPM has new features" step asks once per install, not per browser, whether to turn a feature on or off; the six session tools above are the first, and they stay off for every chat until it is answered or one of their switches is set in Settings → Tools. Installs with a chat get it at once; new ones after the basic tour. Put off three times (one per 12 hours, however many screens are open), it stays off and is marked NEW in Settings → Tools.
+
 ## [0.23.32] - 2026-11-08
 
 ### Fixed

@@ -16,7 +16,12 @@ import { listSlashItemsForProvider } from "../../services/slash-items-for-provid
 import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts";
 import { chatPrepareRoutes } from "./chat-prepare.ts";
 import { chatFileChangesRoutes } from "./chat-file-changes.ts";
+import { chatSessionTurnsRoutes } from "./chat-session-turns.ts";
+import { chatTurnWindowRoutes } from "./chat-turn-window.ts";
+import { chatSessionCollabRoutes } from "./session-collab.ts";
+import { applyTurnStamps, loadTurnLookup, stampSessionTurns } from "../../services/session-turns/stamp-message-turns.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
+import { sessionSpawnLinks } from "../../services/session-collab/session-list-links.ts";
 import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionProvider, resolveMigratedSession, getSessionDesignSlugs, setSessionDesignSlug, copySessionDesignSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { refreshUsageNow } from "../../services/claude-usage.service.ts";
@@ -34,13 +39,8 @@ import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-hi
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
-import {
-  search as chatSearchQuery,
-  startBackfill as chatSearchStartBackfill,
-  getIndexStatus as chatSearchGetIndexStatus,
-  getKnownSessionCount as chatSearchKnownCount,
-} from "../../services/chat-search.service.ts";
-import { compareSessionsByActivity, type ChatMessage, type ChatSearchResult, type ChatSearchResponse } from "../../types/chat.ts";
+import { searchProjectChats } from "../../services/session-turns/session-search.ts";
+import { compareSessionsByActivity, type ChatMessage } from "../../types/chat.ts";
 import { pageHistory, parseHistoryPageQuery } from "./chat-history-page.ts";
 import { ok, err } from "../../types/api.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
@@ -55,6 +55,9 @@ export const chatRoutes = new Hono<Env>();
 
 chatRoutes.route("/prepare", chatPrepareRoutes);
 chatRoutes.route("/", chatFileChangesRoutes);
+chatRoutes.route("/", chatSessionTurnsRoutes);
+chatRoutes.route("/", chatTurnWindowRoutes);
+chatRoutes.route("/", chatSessionCollabRoutes);
 
 /** GET /chat/slash-items — list available slash commands and skills for the project */
 chatRoutes.get("/slash-items", async (c) => {
@@ -219,8 +222,13 @@ chatRoutes.get("/sessions", async (c) => {
     const deduped = merged.filter((s) => { if (seen.has(s.id)) return false; seen.add(s.id); return true; });
     const tagMap = getSessionTags(deduped.map((s) => s.id));
     const designSlugs = getSessionDesignSlugs(deduped.map((s) => s.id));
+    const spawnLinks = sessionSpawnLinks(deduped.map((s) => s.id));
+    // A creator with no title of PPM's own is still named when it is on this page.
+    const pageTitles = new Map(deduped.map((s) => [s.id, s.title]));
     const enriched = deduped.map((s) => ({
       ...s, pinned: pinnedIds.has(s.id), tag: tagMap[s.id] ?? null, designSlug: designSlugs[s.id] ?? null,
+      spawnedBy: spawnLinks[s.id]?.spawnedBy ?? null,
+      parentTitle: spawnLinks[s.id] ? spawnLinks[s.id]!.parentTitle ?? pageTitles.get(spawnLinks[s.id]!.spawnedBy) ?? null : null,
     }));
 
     // Collapse edit-message branch trees: each tree shows a single row (its
@@ -244,87 +252,9 @@ chatRoutes.get("/sessions", async (c) => {
 /** GET /chat/search — unified title + full-text content search for a project */
 chatRoutes.get("/search", async (c) => {
   try {
-    const projectPath = c.get("projectPath");
     const rawQuery = c.req.query("q")?.trim() || "";
     const limit = Math.min(parseInt(c.req.query("limit") ?? "30", 10) || 30, 100);
-
-    // An empty query has nothing to match, so it must not pay to enumerate: a
-    // dir-scoped `listSessions` pages the SDK until exhausted, and all this
-    // answer carries is the indexing chip's two numbers, which the index knows
-    // by itself.
-    if (!rawQuery) {
-      const indexing = { total: chatSearchKnownCount(projectPath), ...chatSearchGetIndexStatus(projectPath) };
-      return c.json(ok({ results: [], indexing } satisfies ChatSearchResponse));
-    }
-
-    // Enumerate sessions once (also drives title matches + metadata for content hits).
-    const sessions = await chatService.listSessions(undefined, projectPath);
-    const indexing = { total: sessions.length, ...chatSearchGetIndexStatus(projectPath) };
-
-    // Lazy self-refresh; UI shows an indexing indicator while this runs. The
-    // sessions are handed over rather than enumerated again: a dir-scoped list
-    // with no limit pages the SDK until exhausted, and this route was paying
-    // for that twice on every search.
-    chatSearchStartBackfill(projectPath, sessions);
-
-    const pinnedIds = getPinnedSessionIds();
-    const tagMap = getSessionTags(sessions.map((s) => s.id));
-    const byId = new Map(sessions.map((s) => [s.id, s]));
-
-    const results: ChatSearchResult[] = [];
-    const seen = new Set<string>();
-
-    // Title matches first — a title hit is a stronger relevance signal than a
-    // body hit, so collect these ahead of content to guarantee they survive the
-    // limit (a flood of content hits must never starve out a title match).
-    const q = rawQuery.toLowerCase();
-    for (const s of sessions) {
-      if (results.length >= limit) break;
-      if (!(s.title || "").toLowerCase().includes(q)) continue;
-      seen.add(s.id);
-      results.push({
-        sessionId: s.id,
-        providerId: s.providerId,
-        title: s.title ?? null,
-        snippet: s.title ?? "",
-        messageId: "",
-        matchedIn: "title",
-        ts: s.updatedAt || s.createdAt || "",
-        pinned: pinnedIds.has(s.id),
-        tag: tagMap[s.id] ?? null,
-      });
-    }
-
-    // Content matches (best bm25 rank) for sessions not already surfaced by title.
-    for (const hit of chatSearchQuery(projectPath, rawQuery, limit * 3)) {
-      if (results.length >= limit) break;
-      if (seen.has(hit.sessionId)) continue;
-      seen.add(hit.sessionId);
-      const s = byId.get(hit.sessionId);
-      results.push({
-        sessionId: hit.sessionId,
-        providerId: s?.providerId,
-        title: s?.title ?? null,
-        snippet: hit.snippet,
-        messageId: hit.messageId,
-        matchedIn: "content",
-        ts: s?.updatedAt || s?.createdAt || hit.ts || "",
-        pinned: pinnedIds.has(hit.sessionId),
-        tag: tagMap[hit.sessionId] ?? null,
-      });
-    }
-
-    const designSlugs = getSessionDesignSlugs(results.map((r) => r.sessionId));
-    for (const r of results) r.designSlug = designSlugs[r.sessionId] ?? null;
-
-    // Pinned first, then title matches above content, then most-recent within group.
-    results.sort((a, b) => {
-      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-      if (a.matchedIn !== b.matchedIn) return a.matchedIn === "title" ? -1 : 1;
-      return new Date(b.ts).getTime() - new Date(a.ts).getTime();
-    });
-
-    return c.json(ok({ results, indexing } satisfies ChatSearchResponse));
+    return c.json(ok(await searchProjectChats(c.get("projectPath"), rawQuery, limit)));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -426,19 +356,44 @@ function historyStamp(providerId: string, id: string): string | null {
  * hour, measured), which is what took the server to 23 GB committed. Shared only while in
  * flight: a request after it settles parses afresh, so a finished turn is never served stale.
  */
-const historyInFlight = new Map<string, Promise<ChatMessage[]>>();
+const historyInFlight = new Map<string, Promise<ParsedHistory>>();
 
-function loadFullHistory(providerId: string, id: string): Promise<ChatMessage[]> {
-  const key = `${providerId}\0${id}`;
+/**
+ * A parsed history, and whether it is fit to cache: `false` when the turn index failed to read,
+ * which leaves the messages unstamped — caching that would keep them unstamped until the
+ * transcript next changes, for an idle session until the server restarts.
+ */
+interface ParsedHistory {
+  messages: ChatMessage[];
+  complete: boolean;
+}
+
+/** Keyed by project too: the turn stamps come from the project's own view of the session. */
+function historyKey(providerId: string, id: string, projectPath: string): string {
+  return `${providerId}\0${id}\0${projectPath}`;
+}
+
+function loadFullHistory(providerId: string, id: string, projectPath: string): Promise<ParsedHistory> {
+  const key = historyKey(providerId, id, projectPath);
   const running = historyInFlight.get(key);
   if (running) return running;
-  const parse = parseFullHistory(providerId, id).finally(() => historyInFlight.delete(key));
+  const parse = parseFullHistory(providerId, id, projectPath).finally(() => historyInFlight.delete(key));
   historyInFlight.set(key, parse);
   return parse;
 }
 
-async function parseFullHistory(providerId: string, id: string): Promise<ChatMessage[]> {
-  const messages = await chatService.getMessages(providerId, id);
+/**
+ * The history as the provider returns it, each message stamped with its turn (`turnId`,
+ * `turnN`) from the session's turn index, which reads only this project's transcript. The two
+ * reads run side by side: a cold index scan of a large transcript costs about as long as the
+ * parse, and nothing about either depends on the other.
+ */
+async function parseFullHistory(providerId: string, id: string, projectPath: string): Promise<ParsedHistory> {
+  const [messages, turns] = await Promise.all([
+    chatService.getMessages(providerId, id),
+    loadTurnLookup({ providerId, sessionId: id, projectPath }),
+  ]);
+  applyTurnStamps(providerId, messages, turns);
   // Forking re-timestamps the copied prefix (both the Claude SDK and codex
   // stamp the fork moment), so a version's inherited history would render as
   // "just now" and shift when switching versions. Overlay the branch root's
@@ -453,7 +408,7 @@ async function parseFullHistory(providerId: string, id: string): Promise<ChatMes
       m.timestamp = r.timestamp;
     }
   }
-  return messages;
+  return { messages, complete: !turns.failed || messages.length === 0 };
 }
 
 chatRoutes.get("/sessions/:id/messages", async (c) => {
@@ -465,7 +420,7 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
     const id = resolveMigratedSession(requestedId);
     const providerId = c.req.query("providerId") ?? "claude";
     const query = parseHistoryPageQuery((name) => c.req.query(name));
-    const cacheKey = `${providerId}\0${id}`;
+    const cacheKey = historyKey(providerId, id, c.get("projectPath"));
     const stamp = historyStamp(providerId, id);
     let all = cachedHistory(cacheKey, stamp, query.before !== undefined);
     if (!all) {
@@ -473,8 +428,9 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
       // stamp saw, so only the request that started it stores it — otherwise the end of a
       // turn could be cached away under a stamp that says it is there, for good.
       const joined = historyInFlight.has(cacheKey);
-      all = await loadFullHistory(providerId, id);
-      if (!joined && (stamp !== null || query.limit !== undefined || query.from !== undefined)) rememberHistory(cacheKey, stamp, all);
+      const parsed = await loadFullHistory(providerId, id, c.get("projectPath"));
+      all = parsed.messages;
+      if (!joined && parsed.complete && (stamp !== null || query.limit !== undefined || query.from !== undefined)) rememberHistory(cacheKey, stamp, all);
     }
     const page = pageHistory(all, query);
     // versionMap ships with the history so the `‹ n/m ›` switcher needs no
@@ -1170,6 +1126,9 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
     const { isCodexRolloutPath, getCodexPreCompactMessages } = await import("../../providers/codex-app-server/codex-history.ts");
     if (isCodexRolloutPath(jsonlPath)) {
       const messages = getCodexPreCompactMessages(jsonlPath, c.get("projectPath"), beforeUuid);
+      // Turns are numbered from the session's start, so an older segment's carry their real numbers.
+      const threadId = basename(jsonlPath).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i)?.[1];
+      if (threadId) await stampSessionTurns({ providerId: "codex", sessionId: threadId, projectPath: c.get("projectPath") }, messages);
       return c.json(ok(messages));
     }
     // No bound on the file. `parseCompactSegment` scans it as bytes, streamed, from
@@ -1180,6 +1139,7 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
     // One compaction segment per request: the client walks further back by
     // expanding the summary that arrives at the head of each one.
     const messages = await parseCompactSegment(validated, beforeUuid);
+    await stampSessionTurns({ providerId: "claude", sessionId: basename(validated, ".jsonl"), projectPath: c.get("projectPath") }, messages);
     return c.json(ok(messages));
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

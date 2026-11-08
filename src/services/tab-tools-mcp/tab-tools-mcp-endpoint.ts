@@ -19,6 +19,9 @@ import {
   RUN_IN_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL_DEFINITION,
 } from "./tab-tools-mcp-tool.ts";
 import { createTerminalTools, type TerminalTools } from "./terminal-tools.ts";
+import { SESSION_HISTORY_TOOL_DEFINITIONS } from "./session-history-tool-definitions.ts";
+import { createSessionHistoryTools, type SessionHistoryTools } from "./session-history-tools.ts";
+import { isSessionHistoryTool } from "../../shared/session-history-tools.ts";
 
 /**
  * `/api/tab-tools-mcp` — serves the tab tools to one chat session's own agent (the MCP plumbing
@@ -26,6 +29,7 @@ import { createTerminalTools, type TerminalTools } from "./terminal-tools.ts";
  * read, `open_url` a web server on the host, and `run_in_terminal` a terminal with a command
  * typed in, all on that session's devices; `read_terminal` reads the terminals of the session's
  * project. Nothing a tab shows comes back except, for an HTML page, the check of how it rendered.
+ * The session-history tools (`session-history-tools.ts`) search and read the project's other chats.
  */
 
 type Request = (sessionId: string, req: TabOpenAsk, waitMs: number) => Promise<TabOpenOutcome>;
@@ -48,6 +52,8 @@ export function createTabToolsMcpHandler(deps: {
   enabled: (tool: string) => boolean;
   terminal: TerminalTools;
   openUrl: OpenUrlTool;
+  /** `search_sessions`, `list_session_turns`, `read_session_turns`. */
+  sessionHistory: SessionHistoryTools;
   resolveTarget?: (input: unknown, binding: TabToolsBinding) => Promise<TabTargetOutcome>;
 }) {
   const resolveTarget = deps.resolveTarget ?? resolveTabTarget;
@@ -92,7 +98,7 @@ export function createTabToolsMcpHandler(deps: {
     resolveToken: deps.resolveToken,
     tools: [
       OPEN_FILE_TOOL_DEFINITION, OPEN_PREVIEW_TOOL_DEFINITION, OPEN_URL_TOOL_DEFINITION,
-      READ_TERMINAL_TOOL_DEFINITION, RUN_IN_TERMINAL_TOOL_DEFINITION,
+      READ_TERMINAL_TOOL_DEFINITION, RUN_IN_TERMINAL_TOOL_DEFINITION, ...SESSION_HISTORY_TOOL_DEFINITIONS,
     ],
     unavailable: (name) => (deps.enabled(name) ? null : ppmToolOffMessage(name)),
     callTool: async ({ sessionId }, name, rawArgs) => {
@@ -101,6 +107,7 @@ export function createTabToolsMcpHandler(deps: {
       if (name === OPEN_URL_TOOL) return deps.openUrl(binding, args);
       if (name === READ_TERMINAL_TOOL) return deps.terminal.read(binding, args);
       if (name === RUN_IN_TERMINAL_TOOL) return deps.terminal.run(binding, args);
+      if (isSessionHistoryTool(name)) return deps.sessionHistory.call(binding, name, args);
       const resolved = await resolveTarget(args.path, binding);
       if (!resolved.ok) return textResult(resolved.error, true);
       if (name === OPEN_FILE_TOOL) return openFile(binding, resolved.target, args);
@@ -157,4 +164,5 @@ export const tabToolsMcpHandler = createTabToolsMcpHandler({
     existingForward: (port) => existingForwardFor(port),
     startPrivateForward: async (port) => (await startTailscaleForward(port)).url,
   }),
+  sessionHistory: createSessionHistoryTools({ canonical: canonicalTabSession }),
 });

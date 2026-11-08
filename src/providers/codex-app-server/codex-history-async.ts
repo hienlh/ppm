@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { setImmediate as yieldToRequests } from "node:timers/promises";
 import type { ChatMessage } from "../provider.interface.ts";
-import { compactCard, rolloutMessageSteps, terminalError } from "./codex-history.ts";
+import { compactCard, rolloutMessageSteps, terminalError, type RolloutParseOptions } from "./codex-history.ts";
 import { listRolloutFiles, readRolloutHeaderAsync } from "./codex-rollout-index.ts";
 import { completeLines, parseLine, type RolloutHeader } from "./codex-rollout-header.ts";
 import { finalAssistantText, transcriptToEvents, type SubagentTranscript } from "./codex-subagent-thread.ts";
@@ -12,8 +12,12 @@ function normalized(path: string): string {
   return process.platform === "win32" ? absolute.toLowerCase() : absolute;
 }
 
-export async function parseRolloutJsonlAsync(text: string, loadSubagent?: (id: string) => Promise<SubagentTranscript | null>): Promise<ChatMessage[]> {
-  const steps = rolloutMessageSteps(text);
+export async function parseRolloutJsonlAsync(
+  text: string | readonly string[],
+  loadSubagent?: (id: string) => Promise<SubagentTranscript | null>,
+  opts?: RolloutParseOptions,
+): Promise<ChatMessage[]> {
+  const steps = rolloutMessageSteps(text, opts);
   let step = steps.next();
   let sliceStart = performance.now();
   while (!step.done) {
@@ -24,8 +28,14 @@ export async function parseRolloutJsonlAsync(text: string, loadSubagent?: (id: s
   return step.value;
 }
 
-/** One directory index per history request, shared with its subagent lookups. */
-export async function getRolloutMessagesAsync(sessionsDir: string, threadId: string, requestedCwd?: string): Promise<ChatMessage[]> {
+/**
+ * One directory index per history request, shared with its subagent lookups.
+ *
+ * `full` reads the whole thread instead of the resumable conversation (see `RolloutParseOptions`)
+ * and leaves the compaction markers in; it is then not headed by the compact card, which exists to
+ * load what a compacted view leaves out.
+ */
+export async function getRolloutMessagesAsync(sessionsDir: string, threadId: string, requestedCwd?: string, opts?: { full?: boolean }): Promise<ChatMessage[]> {
   const files = await listRolloutFiles(sessionsDir);
   const target = requestedCwd == null ? null : normalized(requestedCwd);
   const headers = new Map<string, RolloutHeader | null>();
@@ -46,7 +56,7 @@ export async function getRolloutMessagesAsync(sessionsDir: string, threadId: str
   }
 
   const seen = new Set([threadId]);
-  async function parse(text: string, depth: number): Promise<ChatMessage[]> {
+  async function parse(text: string, depth: number, full = false): Promise<ChatMessage[]> {
     return parseRolloutJsonlAsync(text, async (id) => {
       let child: SubagentTranscript | null = null;
       if (depth > 0 && !seen.has(id)) {
@@ -64,14 +74,15 @@ export async function getRolloutMessagesAsync(sessionsDir: string, threadId: str
         }
       }
       return child;
-    });
+    }, { full });
   }
 
   const file = await find(threadId);
   if (!file) return [];
   try {
     const text = await readFile(file, "utf8");
-    const messages = await parse(text, 2);
+    const messages = await parse(text, 2, opts?.full);
+    if (opts?.full) return messages;
     let count = 0;
     let summary = "";
     let sliceStart = performance.now();

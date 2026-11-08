@@ -1,4 +1,7 @@
-import { decodeReply, type ReplyReference } from "../../../shared/chat-reply";
+import type { ReplyReference } from "./chat-reply";
+import { decodeMessageBlocks } from "./chat-message-blocks";
+import type { TurnReference } from "./chat-turn-ref";
+import type { FromSessionReference } from "./chat-from-session";
 /**
  * Parsing for stored user-message content.
  *
@@ -140,6 +143,10 @@ export function extractTerminalBlocks(text: string): { blocks: string[]; remaini
 
 export interface ParsedUserMessage {
   replyTo: ReplyReference | null;
+  /** Turns of other sessions the message points at (the chips under the bubble). */
+  turnRefs: TurnReference[] | null;
+  /** The session whose AI sent the message, when another session did. */
+  fromSession: FromSessionReference | null;
   files: string[];
   /** Body text with the slash-command args folded in, for transcript display */
   text: string;
@@ -154,7 +161,7 @@ export interface ParsedUserMessage {
 
 /** Full decomposition of a stored user message, outermost wrapper first. */
 export function parseUserMessage(content: string): ParsedUserMessage {
-  const decoded = decodeReply(content);
+  const decoded = decodeMessageBlocks(content);
   const { idePath, cleanText: afterIde } = parseIdeOpenedFile(decoded.content);
   const { blocks, remainingText: afterBlocks } = extractTerminalBlocks(afterIde);
   const parsed = parseUserAttachments(afterBlocks);
@@ -165,7 +172,7 @@ export function parseUserMessage(content: string): ParsedUserMessage {
   const { command, cleanText } = parseCommandTags(noSysTags);
   const { agent, cleanText: body } = parseAgentTag(cleanText);
   const text = command?.args ? (body ? `${command.args}\n\n${body}` : command.args) : body;
-  return { files: parsed.files, text, body, tags, command, terminalBlocks: blocks, idePath, agent, replyTo: decoded.replyTo };
+  return { files: parsed.files, text, body, tags, command, terminalBlocks: blocks, idePath, agent, replyTo: decoded.replyTo, turnRefs: decoded.turnRefs, fromSession: decoded.fromSession };
 }
 
 /**

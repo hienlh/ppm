@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { createReplyReference, replyMessageText, resolveReplyMessage } from "../../../src/web/components/chat/message-reply-reference";
 import { encodeReply } from "../../../src/shared/chat-reply";
-import { parseUserMessage, toComposerDraft } from "../../../src/web/components/chat/user-message-parse";
+import { parseUserMessage, toComposerDraft } from "../../../src/shared/user-message-parse";
 import type { ChatMessage } from "../../../src/types/chat";
 
 const message: ChatMessage = { id: "native-1", role: "user", content: "hello", timestamp: "2026-10-01T10:00:00Z" };

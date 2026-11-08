@@ -14,7 +14,7 @@ import { SEND_TO_CHAT_EVENT, SEND_TO_CHAT_ACK_EVENT, type SendToChatAck, type Se
 import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { stepHistory } from "./message-history-recall";
-import { toComposerDraft } from "./user-message-parse";
+import { toComposerDraft } from "../../../shared/user-message-parse";
 import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
 import { ProviderSelector } from "./provider-selector";
 import { ModelThinkingSelector } from "./model-thinking-selector";
@@ -25,6 +25,12 @@ import type { FileNode } from "../../../types/project";
 import { useFileStore } from "@/stores/file-store";
 import { ReplyCard } from "./reply-card";
 import type { ReplyReference } from "../../../shared/chat-reply";
+import { ComposerTurnRefRow } from "./composer-turn-ref-row";
+import type { ComposerTurnChip } from "@/hooks/use-composer-turn-refs";
+import type { ParsedTurnLink } from "@/lib/turn-link";
+import type { TurnReference } from "../../../shared/chat-turn-ref";
+import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
+import { insertLikeTyping, pasteWithoutTurnLinks } from "./composer-turn-link-paste";
 import { PromptCacheChip } from "./prompt-cache-chip";
 import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
 import type { EffortStatus } from "../../../shared/effort-status";
@@ -83,8 +89,20 @@ interface MessageInputProps {
   draftReady?: boolean;
   replyTo?: ReplyReference | null;
   onCancelReply?: () => void;
-  /** Explicit reply selection/cancel also saves the current DOM text and attachments. */
+  /** A reply or turn-chip change by the user: saves the current DOM text and attachments. */
   replyChangeSignal?: number;
+  /** Turn chips from pasted turn links, shown above the input. */
+  turnChips?: readonly ComposerTurnChip[];
+  /**
+   * Turn links found in pasted text; returns the ones there was no room for, which the paste
+   * keeps as text. The links taken are inserted as chips only.
+   */
+  onTurnLinksPasted?: (links: ParsedTurnLink[]) => readonly ParsedTurnLink[];
+  /** History recall put a past message in the input: these are its chips (null for none). */
+  onRecallTurnRefs?: (refs: TurnReference[] | null) => void;
+  onRemoveTurnChip?: (key: string) => void;
+  /** Why the send waits on the turn chips (one still loading, one gone); null when it does not. */
+  turnChipsBlockedReason?: string | null;
   /** Tab id of the owning chat tab — addresses "Send to Chat" at this tab only. */
   tabId?: string;
   onSend: (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => boolean | void;
@@ -164,6 +182,11 @@ export const MessageInput = memo(function MessageInput({
   replyTo,
   onCancelReply,
   replyChangeSignal,
+  turnChips,
+  onTurnLinksPasted,
+  onRecallTurnRefs,
+  onRemoveTurnChip,
+  turnChipsBlockedReason,
   draftReady = true,
   onSend,
   isStreaming,
@@ -263,6 +286,8 @@ export const MessageInput = memo(function MessageInput({
       setAgentTag(agent);
       writeTextareas(text);
       if (replyTo) onCancelReply?.();
+      // Its turn references come back as chips, before the draft save below reads them.
+      onRecallTurnRefs?.(step.text ? decodeMessageBlocks(step.text).turnRefs : null);
       onContentChange?.(text, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
       const ta = getVisibleTextarea();
       if (!ta) return true;
@@ -274,7 +299,7 @@ export const MessageInput = memo(function MessageInput({
       }
       return true;
     },
-    [getUserHistory, writeTextareas, getVisibleTextarea, replyTo, onCancelReply, onContentChange, attachments],
+    [getUserHistory, writeTextareas, getVisibleTextarea, replyTo, onCancelReply, onRecallTurnRefs, onContentChange, attachments],
   );
 
   // Voice input. Two engines behind the same button: the browser's own
@@ -343,7 +368,7 @@ export const MessageInput = memo(function MessageInput({
       if (targetTabId ? targetTabId !== tabId : !ownsGlobalShortcut(getVisibleTextarea())) return;
       // Sent as-is only into an idle, empty composer: anything the user has typed or
       // attached is theirs, and the text joins it as a chip for them to send instead.
-      const send = !!autoSend && !!targetTabId && !disabled && !isStreaming && !replyTo && !valueRef.current.trim() && attachments.length === 0;
+      const send = !!autoSend && !!targetTabId && !disabled && !isStreaming && !replyTo && !turnChips?.length && !valueRef.current.trim() && attachments.length === 0;
       window.dispatchEvent(new CustomEvent<SendToChatAck>(SEND_TO_CHAT_ACK_EVENT, { detail: { sent: send } }));
       if (send) {
         onSend(text, []);
@@ -362,7 +387,7 @@ export const MessageInput = memo(function MessageInput({
     };
     window.addEventListener(SEND_TO_CHAT_EVENT, handler);
     return () => window.removeEventListener(SEND_TO_CHAT_EVENT, handler);
-  }, [getVisibleTextarea, tabId, disabled, isStreaming, attachments.length, onSend, replyTo]);
+  }, [getVisibleTextarea, tabId, disabled, isStreaming, attachments.length, onSend, replyTo, turnChips]);
 
   const consumedContextsRef = useRef<MessageInputProps["pendingContexts"]>(undefined);
   useEffect(() => {
@@ -806,6 +831,9 @@ export const MessageInput = memo(function MessageInput({
 
   const handleSend = useCallback(() => {
     if (disabled) return;
+    // A turn chip still loading, or one whose turn is gone, would send a message that names
+    // something it cannot carry; the reason is shown under the chips.
+    if (turnChipsBlockedReason) return;
 
     // If files are still uploading, queue the send for when they finish
     if (attachments.some((a) => a.status === "uploading")) {
@@ -817,14 +845,15 @@ export const MessageInput = memo(function MessageInput({
     }
 
     executeSend();
-  }, [attachments, disabled, executeSend]);
+  }, [attachments, disabled, executeSend, turnChipsBlockedReason]);
 
   // Auto-send when queued and all uploads complete
   useEffect(() => {
     if (!pendingSend) return;
     if (attachments.some((a) => a.status === "uploading")) return;
+    if (turnChipsBlockedReason) { setPendingSend(false); return; }
     executeSend();
-  }, [pendingSend, attachments, executeSend]);
+  }, [pendingSend, attachments, executeSend, turnChipsBlockedReason]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -839,7 +868,8 @@ export const MessageInput = memo(function MessageInput({
       // Bare arrows only — Alt+Arrow is the global chat-transcript jump.
       if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
         const browsing = historyIdxRef.current >= 0;
-        if (!browsing && (e.key === "ArrowDown" || valueRef.current !== "" || agentTag)) return;
+        // Turn chips make the input not empty: recall would replace them with the past message's.
+        if (!browsing && (e.key === "ArrowDown" || valueRef.current !== "" || agentTag || turnChips?.length)) return;
         if (recallHistory(e.key === "ArrowUp" ? 1 : -1)) e.preventDefault();
         return;
       }
@@ -852,7 +882,7 @@ export const MessageInput = memo(function MessageInput({
         onModeChange?.(next);
       }
     },
-    [handleSend, permissionMode, onModeChange, recallHistory, agentTag],
+    [handleSend, permissionMode, onModeChange, recallHistory, agentTag, turnChips],
   );
 
   const updatePickerState = useCallback(
@@ -901,6 +931,17 @@ export const MessageInput = memo(function MessageInput({
     [onSlashStateChange, onFileStateChange, loadSlashItems, projectName],
   );
 
+  /** JS auto-resize fallback — only when CSS field-sizing: content is unsupported. */
+  const scheduleResize = useCallback((el: HTMLTextAreaElement) => {
+    if (!needsJsResize.current) return;
+    if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
+    resizeRafRef.current = requestAnimationFrame(() => {
+      resizeRafRef.current = 0;
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, el === mobileTextareaRef.current ? 80 : 160) + "px";
+    });
+  }, []);
+
   /** Unified onChange for both textareas — updates ref, syncs other textarea, triggers picker */
   const handleTextareaChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -918,17 +959,9 @@ export const MessageInput = memo(function MessageInput({
       updatePickerState(text, el.selectionStart);
       // Notify parent for draft auto-save (debounced in hook)
       onContentChange?.(text, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
-      // JS auto-resize fallback — only when CSS field-sizing: content is unsupported
-      if (needsJsResize.current) {
-        if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
-        resizeRafRef.current = requestAnimationFrame(() => {
-          resizeRafRef.current = 0;
-          el.style.height = "auto";
-          el.style.height = Math.min(el.scrollHeight, el === mobileTextareaRef.current ? 80 : 160) + "px";
-        });
-      }
+      scheduleResize(el);
     },
-    [updatePickerState, onContentChange, attachments],
+    [updatePickerState, onContentChange, attachments, scheduleResize],
   );
 
   /** Handle paste — intercept images from clipboard */
@@ -947,9 +980,27 @@ export const MessageInput = memo(function MessageInput({
       if (files.length > 0) {
         e.preventDefault();
         processFiles(files);
+        return;
       }
+      // Turn links become chips; everything else in the paste goes in exactly as it was.
+      const text = onTurnLinksPasted ? e.clipboardData.getData("text/plain") : "";
+      if (!onTurnLinksPasted || !text || !text.includes("/project/")) return;
+      const projects = new Set(useProjectStore.getState().projects.map((p) => p.name));
+      const insert = pasteWithoutTurnLinks(text, (name) => projects.has(name), onTurnLinksPasted);
+      if (insert === null) return;
+      e.preventDefault();
+      const ta = e.currentTarget;
+      // Typed in by the browser, its `input` event runs handleTextareaChange as a keystroke does.
+      if (insertLikeTyping(ta, insert)) return;
+      const start = ta.selectionStart ?? ta.value.length;
+      const next = ta.value.slice(0, start) + insert + ta.value.slice(ta.selectionEnd ?? start);
+      writeTextareas(next);
+      ta.selectionStart = ta.selectionEnd = start + insert.length;
+      historyIdxRef.current = -1;
+      onContentChange?.(next, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
+      scheduleResize(ta);
     },
-    [processFiles],
+    [processFiles, onTurnLinksPasted, writeTextareas, onContentChange, attachments, scheduleResize],
   );
 
   /** Handle drop directly on textarea */
@@ -1008,6 +1059,9 @@ export const MessageInput = memo(function MessageInput({
         {replyTo && <div className="px-2 md:px-4 pt-2">
           <ReplyCard reply={replyTo} preview onCancel={onCancelReply} />
         </div>}
+        {!!turnChips?.length && onRemoveTurnChip && (
+          <ComposerTurnRefRow chips={turnChips} currentProject={projectName} blockedReason={turnChipsBlockedReason} onRemove={onRemoveTurnChip} />
+        )}
         {/* Selected agent chip — composed into a delegation prompt on send */}
         {agentTag && (
           <div className="px-2 md:px-4 pt-2">
@@ -1117,7 +1171,7 @@ export const MessageInput = memo(function MessageInput({
           ) : (
             <button
               onClick={(e) => { e.stopPropagation(); pendingSend ? setPendingSend(false) : handleSend(); }}
-              disabled={disabled || !hasContent}
+              disabled={disabled || !hasContent || !!turnChipsBlockedReason}
               className="flex items-center justify-center size-9 shrink-0 rounded-[11px] bg-primary text-primary-foreground hover:bg-primary/90 shadow-[var(--shadow-float)] disabled:opacity-30 disabled:shadow-none transition-colors"
               aria-label={pendingSend ? "Cancel queued send" : "Send"}
             >
@@ -1221,7 +1275,7 @@ export const MessageInput = memo(function MessageInput({
             ) : (
               <button
                 onClick={(e) => { e.stopPropagation(); pendingSend ? setPendingSend(false) : handleSend(); }}
-                disabled={disabled || !hasContent}
+                disabled={disabled || !hasContent || !!turnChipsBlockedReason}
                 className="flex items-center justify-center size-9 shrink-0 rounded-[11px] bg-primary text-primary-foreground hover:bg-primary/90 shadow-[var(--shadow-float)] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none transition-colors"
                 aria-label={pendingSend ? "Cancel queued send" : "Send message"}
               >

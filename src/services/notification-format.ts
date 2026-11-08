@@ -4,6 +4,14 @@
  */
 import type { NotificationPayload } from "./notification.service.ts";
 import { dbExecuteApprovalInput } from "../shared/db-ai-tools.ts";
+import { sessionCollabApprovalInput, type SessionCollabApprovalInput } from "../shared/session-collab.ts";
+
+/** What a session-collaboration card asks, as a notification's title says it. */
+export function collabApprovalTitle(input: SessionCollabApprovalInput): string {
+  if (input.kind === "create") return `AI wants to open a session: ${input.title}`;
+  if (input.kind === "pair_limit") return `Sessions reached their message limit (${input.sent}/${input.limit})`;
+  return `AI wants to message a session with more permissions: ${input.targetTitle}`;
+}
 
 const DETAIL_MAX = 300;
 
@@ -63,6 +71,9 @@ export function describeApprovalInput(tool: string, input: unknown): Pick<Notifi
   // A database change: the AI's reason, not the SQL, which may quote the rows it changes.
   const db = dbExecuteApprovalInput(tool, input);
   if (db) return db.reason ? { detail: db.reason, detailStyle: "quote" } : {};
+
+  const collab = sessionCollabApprovalInput(tool, input);
+  if (collab) return { detail: collab.kind === "create" ? collab.task : collab.kind === "escalation" ? collab.message : `To: ${collab.targetTitle}`, detailStyle: "quote" };
 
   if (tool === "AskUserQuestion" && Array.isArray(i.questions)) {
     const questions = i.questions as Array<{ question?: unknown }>;

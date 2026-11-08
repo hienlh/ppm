@@ -23,7 +23,7 @@ import { hydrateProjectCache, peekLastProjectRef } from "@/lib/browser-cache/pro
 // Registers the slash-list hydrator before boot hydration runs; the chat tab that
 // otherwise loads this module sits in a lazy chunk.
 import "@/lib/slash-items-cache";
-import { useUrlSync, parseUrlState, autoOpenFromUrl } from "@/hooks/use-url-sync";
+import { useUrlSync, parseUrlState, autoOpenFromUrl, requestTurnJumpFromUrl } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { useWakeLock } from "@/hooks/use-wake-lock";
@@ -252,6 +252,8 @@ export function App() {
       // Auto-open target tab from URL (type-based)
       if (urlState.tabType && (!useSettingsStore.getState().minimalMode || (isMinimalTab(urlState.tabType)))) {
         autoOpenFromUrl(urlState.tabType, urlState.tabIdentifier, target!.name);
+        // A turn link: the chat just opened shows that turn once it has loaded.
+        requestTurnJumpFromUrl(urlState, target!.name);
       }
       // Legacy: ?openChat= query param
       if (urlState.openChat) {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ChevronDown, ChevronUp, Pin, PinOff, Search, X } from "@/lib/icons";
+import { ChevronDown, ChevronUp, GitBranch, Pin, PinOff, Search, X } from "@/lib/icons";
+import { createdByText } from "./spawned-session-badge";
 import { api, projectUrl } from "@/lib/api-client";
 import { formatRelativeDate } from "@/lib/format-date";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -186,6 +187,11 @@ function SessionRow({ session, projectName, projectTags, onSelect, onTogglePin, 
         <ProviderBadge providerId={session.providerId} />
         {session.tag && (
           <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: session.tag.color }} title={session.tag.name} />
+        )}
+        {/* The whole row is a button, so the mark here only names the creator; the session lists
+            whose rows are not buttons carry the interactive badge. */}
+        {session.spawnedBy && (
+          <GitBranch className="size-3.5 shrink-0 text-info" role="img" aria-label={createdByText(session.parentTitle)} />
         )}
         <span className={cn("flex-1 min-w-0 text-xs truncate", notif ? "font-semibold text-foreground" : "font-medium text-text-primary")}>
           {session.title || "Untitled"}

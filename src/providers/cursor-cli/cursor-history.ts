@@ -1,4 +1,4 @@
-import { decodeReply } from "../../shared/chat-reply.ts";
+import { decodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -40,7 +40,7 @@ export async function listCursorSessions(providerId: string, chatsDir?: string):
               const hex = typeof row.value === "string" ? row.value : Buffer.from(row.value).toString("utf-8");
               const json = Buffer.from(hex, "hex").toString("utf-8");
               const meta = JSON.parse(json);
-              if (meta.name) title = decodeReply(stripSharedContext(meta.name)).content.split("\n")[0]?.slice(0, 80) || title;
+              if (meta.name) title = decodeMessageBlocks(stripSharedContext(meta.name)).content.split("\n")[0]?.slice(0, 80) || title;
               if (meta.createdAt) createdAt = new Date(meta.createdAt).toISOString();
             }
           } catch { /* use defaults */ }

@@ -1,50 +1,40 @@
-import { decodeReply, type ReplyReference } from "../../../shared/chat-reply";
+import type { ReplyReference } from "../../../shared/chat-reply";
 import { createReplyReference, resolveReplyMessage } from "./message-reply-reference";
-import { useEffect, useRef, useState, useMemo, useCallback, useLayoutEffect, memo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, useLayoutEffect } from "react";
 import { userMessageOrdinals } from "@/lib/message-ordinals";
 import { useStickToBottom } from "use-stick-to-bottom";
 import type { ChatMessage } from "../../../types/chat";
 import type { SessionPhase } from "../../../types/api";
 import type { BashPartialEntry } from "../../hooks/use-chat";
-import { ToolCard } from "./tool-cards";
-import { jumpToEdit, resolveAnchor } from "./jump-to-edit";
+import { jumpToEdit } from "./jump-to-edit";
 import { sessionTurns, type SessionTurn } from "@/lib/session-turns";
 import { useSessionTurnsStore } from "@/stores/session-turns-store";
-import { useChatJumpStore } from "@/stores/chat-jump-store";
 import {
   aggregateTurnFileChanges,
   collectTurnMessages,
   type TurnFileChange,
 } from "@/lib/aggregate-turn-file-changes";
-import { TurnChangeRollup } from "./turn-change-rollup";
-import { TurnCostWarning } from "./turn-cost-warning";
 import { TaskTracker } from "./task-tracker";
 import { extractJsonlPath } from "./pre-compact-button";
-import { MarkdownContent } from "./message-markdown";
-import { UserBubble } from "./message-user-bubble";
-import { InterleavedEvents, ThinkingIndicator } from "./message-events";
-import { CompactionDivider } from "./compaction-divider";
+import { ThinkingIndicator } from "./message-events";
 import { IdleCacheNotice } from "./idle-cache-notice";
 import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
-import { RenderErrorBoundary } from "@/components/shared/markdown-error-boundary";
-
-import {
-  AlertCircle,
-  ShieldAlert,
-  Bot,
-  Copy,
-  Check,
-  Loader2,
-  XCircle,
-} from "@/lib/icons";
+import { AlertCircle, Bot, Loader2, XCircle } from "@/lib/icons";
 import { ChatWelcome } from "./chat-welcome";
 import { ChatScrollNav } from "./chat-scroll-nav";
 import type { VersionGroup } from "../../../types/api";
-import { QuestionCard } from "./question-card";
-import { DbExecuteApprovalCard } from "./db-execute-approval-card";
-import { dbExecuteApprovalInput } from "../../../shared/db-ai-tools";
-import type { Question } from "./question-card";
 import { GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
+import { cn } from "@/lib/utils";
+import { MessageRows } from "./message-rows";
+import { PendingApprovalCard } from "./message-approval-cards";
+import { HistoryWindowPendingPrompts } from "./history-window-pending-prompts";
+import { lastLocalSendId, pendingAsyncQuestion } from "@/lib/history-window-live-signals";
+import { ChatHistoryWindow, type HistoryWindowHandle, type MergeAnchor } from "./chat-history-window";
+import { attrSelector, restoreRow } from "./scroll-row-anchor";
+import { useHistoryWindow } from "@/hooks/use-history-window";
+import { useScrollAnchorPin } from "@/hooks/use-scroll-anchor-pin";
+import { useChatTurnJump } from "@/hooks/use-chat-turn-jump";
+import { canMergeToLive } from "@/lib/history-window-model";
 
 interface MessageListProps {
   onReply?: (reply: ReplyReference) => void;
@@ -105,8 +95,6 @@ interface MessageListProps {
   historyPredecessorId?: string | null;
 }
 
-/** How long a "Show in chat" request waits for its place to be drawn: the tab opening, its history loading. */
-const CHAT_JUMP_GIVE_UP_MS = 8_000;
 
 /**
  * Placeholder for a compaction segment being fetched.
@@ -197,10 +185,6 @@ export function MessageList({
   // obvious per-row form is the thing that makes a long transcript unusable.
   const userOrdinals = useMemo(() => userMessageOrdinals(filtered), [filtered]);
 
-  // The approval card + "thinking…" indicator ride at the end, inside the scrolled
-  // content so stick-to-bottom keeps them in view.
-  const hasTrailing = !!pendingApproval || isStreaming;
-  const dbApproval = pendingApproval ? dbExecuteApprovalInput(pendingApproval.tool, pendingApproval.input) : null;
 
   // Mirror the lib's scroll-element ref into state so effects/nav re-run when the
   // scroll container mounts late (it appears only after the loading screen).
@@ -249,8 +233,11 @@ export function MessageList({
   }, []);
   useEffect(() => () => flashCleanupRef.current?.(), []);
 
-  // The Review tab names the turn that wrote each block from what this chat shows.
-  const turns = useMemo(() => sessionTurns(messages), [messages]);
+  // The Review tab names the turn that wrote each block from what this chat shows. The list holds
+  // the session from its first prompt when no older page is left and it does not open on a
+  // compaction summary (the segments before one load separately).
+  const fromStart = !hasOlderHistory && !messages[0]?.compaction;
+  const turns = useMemo(() => sessionTurns(messages, { fromStart }), [messages, fromStart]);
   useEffect(() => {
     if (sessionId) useSessionTurnsStore.getState().publish(sessionId, turns, true);
   }, [sessionId, turns]);
@@ -265,7 +252,7 @@ export function MessageList({
       for (let j = i; j >= 0 && !turn; j--) if (filtered[j]!.role === "user") turn = byId.get(filtered[j]!.id);
       if (!turn) continue;
       const prev = turnCache.current.get(turn.messageId);
-      if (prev && prev.n === turn.n && prev.at === turn.at && prev.prompt === turn.prompt
+      if (prev && prev.n === turn.n && prev.unnumbered === turn.unnumbered && prev.at === turn.at && prev.prompt === turn.prompt
         && prev.calls.length === turn.calls.length && prev.calls[prev.calls.length - 1] === turn.calls[turn.calls.length - 1]) turn = prev;
       else turnCache.current.set(turn.messageId, turn);
       out.set(i, turn);
@@ -369,31 +356,67 @@ export function MessageList({
     if (message) showMessageAt(list.indexOf(message));
   }, [sessionId, providerId, showMessageAt]);
 
-  // "Show in chat" from the Review tab: the call's card, or the prompt that asked for it when
-  // the card is not drawn (a sub-agent's call). Waits for the tab to be shown and its history to
-  // load, since the request is made just before the tab opens.
-  const jumpRequest = useChatJumpStore((s) => (sessionId && s.request?.sessionId === sessionId ? s.request : null));
+  // "Show in chat" from the Review tab, a turn chip or a `?turn=` link: mode-aware, see
+  // `use-chat-turn-jump.ts`. A turn this list has not loaded is read from the turn index into
+  // the history window, a container of its own laid over this one.
+  const history = useHistoryWindow({ projectName, sessionId, providerId });
+  // A row pinned here is held against the follow-to-bottom as well (see the pin's `onHold`).
+  const livePin = useScrollAnchorPin(scrollEl, undefined, stopScroll);
+  const windowHandle = useRef<HistoryWindowHandle | null>(null);
+  useChatTurnJump({
+    sessionId, scrollEl, filtered, messagesLoading, stopScroll, handleJumpToEdit, showMessageAt, livePin, history, windowHandle,
+  });
+  const windowView = history.view.mode === "window" ? history.view : null;
+  const canMerge = windowView ? canMergeToLive(windowView, filtered, isStreaming) : false;
+  const { exit: exitWindow } = history;
+  // Hand the reader back to this list at the place the window showed. This list stays laid out
+  // under the window (hidden, not removed), so the row can be measured before it is shown again.
+  const handleMerge = useCallback((anchor: MergeAnchor | null) => {
+    const el = scrollElRef.current;
+    const row = el && anchor ? el.querySelector<HTMLElement>(attrSelector("data-turn-start", anchor.key)) : null;
+    if (!el || !anchor || !row) return false;
+    stopScroll();
+    if (anchor.pinned) livePin.pin(row);
+    else restoreRow(el, anchor, "data-turn-start");
+    exitWindow();
+    return true;
+  }, [stopScroll, livePin, exitWindow]);
+  const handleBackToLatest = useCallback(() => {
+    exitWindow();
+    livePin.unpin();
+    scrollToBottom({ animation: "instant" });
+  }, [exitWindow, livePin, scrollToBottom]);
+  // The live list has moved on since the jump: something is streaming, or a message arrived.
+  const lastLiveId = filtered[filtered.length - 1]?.id ?? null;
+  const [enteredAt, setEnteredAt] = useState<string | null | undefined>(undefined);
+  const inWindow = !!windowView;
   useEffect(() => {
-    if (!jumpRequest || !scrollEl) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const attempt = () => {
-      const call = jumpRequest.toolUseId && `${jumpRequest.toolUseId}-0`;
-      const index = jumpRequest.messageId ? filtered.findIndex((m) => m.id === jumpRequest.messageId) : -1;
-      // A hidden tab has no layout to scroll in.
-      if (scrollEl.clientHeight > 0) {
-        if (call && resolveAnchor(scrollEl, call)) {
-          stopScroll();
-          handleJumpToEdit(call);
-          return useChatJumpStore.getState().done(jumpRequest);
-        }
-        if (index >= 0 && showMessageAt(index)) return useChatJumpStore.getState().done(jumpRequest);
-      }
-      if (Date.now() - jumpRequest.at > CHAT_JUMP_GIVE_UP_MS) return useChatJumpStore.getState().done(jumpRequest);
-      timer = setTimeout(attempt, 150);
-    };
-    attempt();
-    return () => clearTimeout(timer);
-  }, [jumpRequest, scrollEl, filtered, stopScroll, handleJumpToEdit, showMessageAt]);
+    setEnteredAt(inWindow ? lastLiveId : undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inWindow]);
+  const liveActivity = isStreaming || (enteredAt !== undefined && lastLiveId !== enteredAt);
+  // A message sent from this tab while the window is up returns to the live list, at the bottom,
+  // so the sender sees it go out and its answer arrive.
+  const localSend = lastLocalSendId(filtered);
+  const sendAtEntry = useRef<string | null>(null);
+  useEffect(() => {
+    if (inWindow) sendAtEntry.current = localSend;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inWindow]);
+  useEffect(() => {
+    if (inWindow && localSend && localSend !== sendAtEntry.current) handleBackToLatest();
+  }, [inWindow, localSend, handleBackToLatest]);
+  // While the window covers the live list, what the agent is waiting on is shown over it instead.
+  const pendingQuestion = useMemo(() => (inWindow ? pendingAsyncQuestion(filtered) : null), [inWindow, filtered]);
+  // The approval card + "thinking…" indicator ride at the end, inside the scrolled content so
+  // stick-to-bottom keeps them in view — the card only while that list is the one on screen.
+  const liveApproval = inWindow ? null : pendingApproval;
+  const hasTrailing = !!liveApproval || isStreaming;
+  // On a phone a waiting card is pinned to the foot of the transcript, its answer buttons last, so
+  // they sit in the thumb zone however short the chat is: the content is stretched to the
+  // scroller's height and the trailing block pushed down. Only while a card waits, so an ordinary
+  // chat keeps its "thinking…" line right under the last message.
+  const dockApproval = !!liveApproval;
 
   // Stable fork handler — avoids new closure per message (preserves MessageBubble memo)
   const handleFork = useCallback((msgContent: string, msgId: string | undefined) => {
@@ -553,7 +576,7 @@ export function MessageList({
           </button>
         </div>
       )}
-      {!autoLoadingCompact && compactLoadError && (
+      {!windowView && !autoLoadingCompact && compactLoadError && (
         <div className="absolute top-2 left-0 right-0 z-10 flex justify-center">
           <button
             type="button"
@@ -566,280 +589,82 @@ export function MessageList({
           </button>
         </div>
       )}
+      {/* The live list stays mounted and laid out under the history window — hidden with
+          `visibility`, not `display: none` — so its scroll position, its follow-to-bottom state
+          and the hidden-tab guard above see no change while the window is up. */}
+      <div className="relative flex-1 min-h-0 flex flex-col">
       <div
         ref={setScrollRef}
         {...{ [GALLERY_ROOT_ATTR]: "" }}
-        className="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]"
-        style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}
+        className={cn("flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]", dockApproval && "max-md:flex max-md:flex-col")}
+        style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", ...(windowView ? { visibility: "hidden" as const } : null) }}
+        aria-hidden={windowView ? true : undefined}
+        inert={windowView ? true : undefined}
       >
-        <div ref={contentRef as unknown as React.Ref<HTMLDivElement>} className="w-full">
+        <div ref={contentRef as unknown as React.Ref<HTMLDivElement>} className={cn("w-full", dockApproval && "max-md:flex max-md:flex-col max-md:grow")}>
+          {/* One block for the rows, so stretching the content above never turns them into flex items. */}
+          <div>
           {hasMore && <div ref={topSentinelRef} aria-hidden className="h-px" />}
           {autoLoadingCompact && <PreCompactSkeleton />}
-          {filtered.map((msg, globalIdx) => {
-            const prevMsg = globalIdx > 0 ? filtered[globalIdx - 1] : undefined;
-            // User-message ordinal (1-based) — stable version-group anchor across forks.
-            const localOrdinal = userOrdinals[globalIdx] ?? 0;
-            const versionOrdinal = localOrdinal ? localOrdinal + userOrdinalOffset : 0;
-            // Resolved here rather than deeper down so the ordinal→group lookup
-            // happens once per message instead of being threaded through bubbles.
-            const versionGroup = versionOrdinal ? versionMap?.[versionOrdinal] : undefined;
-            // Highlight the user message armed for edit (matched by its own id).
-            const isEditing = msg.role === "user" && editingMsgId != null && msg.id === editingMsgId;
-            // An assistant turn spans multiple consecutive assistant messages (text +
-            // tool segments). Show the action bar only on the last one of the run.
-            const nextMsg = filtered[globalIdx + 1];
-            const isLastAssistantInTurn = msg.role === "assistant" && nextMsg?.role !== "assistant";
-            // Copy gathers the whole turn: walk back over consecutive assistant
-            // messages and join their visible text (tool-only segments contribute nothing).
-            let turnCopyText: string | undefined;
-            let turnReplyMessage: ChatMessage | undefined;
-            if (isLastAssistantInTurn) {
-              const parts: string[] = [];
-              for (let j = globalIdx; j >= 0 && filtered[j]!.role === "assistant"; j--) {
-                const t = assistantMessageText(filtered[j]!);
-                if (t) {
-                  parts.unshift(t);
-                  turnReplyMessage ??= filtered[j]!;
-                }
-              }
-              turnCopyText = parts.join("\n\n");
-            }
-            // A boolean rather than a lookup the bubble calls while rendering: it has to change
-            // when older history brings the quoted message in, and not on every streamed flush.
-            const replyTo = msg.role === "user" ? decodeReply(msg.content).replyTo : null;
-            const replyAvailable = replyTo ? !!resolveReplyMessage(filtered, replyTo, sessionId, providerId) : undefined;
-            return (
-              <div
-                key={msg.id}
-                data-msg-index={globalIdx}
-                className="px-4 pt-4 select-none"
-              >
-                {/* Above the summary rather than beside it: the rule is what marks
-                    where the conversation was cut, and the summary is the first
-                    message on the new side of it. */}
-                {msg.compaction && <CompactionDivider compaction={msg.compaction} />}
-                <RenderErrorBoundary fallbackContent={msg.content}>
-                  <MessageBubble
-                    message={msg}
-                    onReply={onReply && sessionId && providerId && (msg.role !== "assistant" || turnReplyMessage)
-                      ? handleReply
-                      : undefined}
-                    replyTarget={turnReplyMessage}
-                    onJumpToReply={handleJumpToReply}
-                    replyAvailable={replyAvailable}
-                    isStreaming={isStreaming && msg.id.startsWith("streaming-")}
-                    isLastAssistantInTurn={isLastAssistantInTurn}
-                    turnCopyText={turnCopyText}
-                    turnChanges={isLastAssistantInTurn ? turnChanges.get(globalIdx) : undefined}
-                    turn={isLastAssistantInTurn ? rollupTurns.get(globalIdx) : undefined}
-                    onJumpToEdit={handleJumpToEdit}
-                    projectName={projectName}
-                    onFork={msg.role === "user" && onFork ? handleFork : undefined}
-                    onEdit={msg.role === "user" && onEdit ? handleEdit : undefined}
-                    isEditing={isEditing}
-                    onDismiss={msg.role === "system" && onDismissMessage ? handleDismiss : undefined}
-                    prevMsgId={prevMsg ? prevMsg.sdkUuid ?? prevMsg.id : historyPredecessorId ?? undefined}
-                    sessionId={sessionId}
-                    providerId={providerId}
-                    versionGroup={versionGroup}
-                    onNavigateVersion={onNavigateVersion}
-                    versionNavDisabled={isStreaming}
-                    bashPartialOutput={bashPartialOutput}
-                  />
-                </RenderErrorBoundary>
-              </div>
-            );
-          })}
+          <MessageRows
+            rows={filtered}
+            userOrdinals={userOrdinals}
+            userOrdinalOffset={userOrdinalOffset}
+            versionMap={versionMap}
+            editingMsgId={editingMsgId}
+            turnChanges={turnChanges}
+            rollupTurns={rollupTurns}
+            isStreaming={isStreaming}
+            projectName={projectName}
+            sessionId={sessionId}
+            providerId={providerId}
+            historyPredecessorId={historyPredecessorId}
+            onReply={onReply ? handleReply : undefined}
+            onJumpToReply={handleJumpToReply}
+            onJumpToEdit={handleJumpToEdit}
+            onFork={onFork ? handleFork : undefined}
+            onEdit={onEdit ? handleEdit : undefined}
+            onDismiss={onDismissMessage ? handleDismiss : undefined}
+            onNavigateVersion={onNavigateVersion}
+            bashPartialOutput={bashPartialOutput}
+          />
           {/* Idle only: once a turn starts the cache question is already answered, and the
               thinking indicator below owns that space. */}
           {!isStreaming && !pendingApproval && (
             <IdleCacheNotice promptCache={promptCache ?? null} />
           )}
+          </div>
           {hasTrailing && (
-            <div className="px-4 pt-4 pb-4 space-y-4 select-none">
-              {pendingApproval && (
-                pendingApproval.tool === "AskUserQuestion"
-                  ? <AskUserQuestionCard approval={pendingApproval} onRespond={onApprovalResponse} />
-                  : dbApproval
-                    ? <DbExecuteApprovalCard requestId={pendingApproval.requestId} input={dbApproval} />
-                    : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
+            <div className={cn("px-4 pt-4 pb-4 flex flex-col gap-4 select-none", dockApproval && "max-md:mt-auto")} data-chat-trailing="">
+              {liveApproval && (
+                <div className="max-md:order-last" data-live-approval="">
+                  <PendingApprovalCard approval={liveApproval} onRespond={onApprovalResponse} />
+                </div>
               )}
               {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
             </div>
           )}
         </div>
       </div>
-      <ChatScrollNav scrollElement={scrollEl} userIndices={userIndices} scrollToBottom={scrollToBottom} />
-    </div>
-  );
-}
-
-/** Visible assistant text of a single message — text events only (skips tool cards),
- *  falling back to raw content when there are no events. */
-function assistantMessageText(msg: ChatMessage): string {
-  return msg.events?.length
-    ? msg.events.filter((e) => e.type === "text").map((e) => e.content).join("")
-    : msg.content;
-}
-
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLastAssistantInTurn, turnCopyText, turnChanges, turn, onJumpToEdit, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled, bashPartialOutput, onReply, replyTarget, onJumpToReply, replyAvailable }: {
-  onReply?: (message: ChatMessage) => void;
-  /** Assistant only: the message of this turn that Reply quotes, which may be an earlier one. */
-  replyTarget?: ChatMessage;
-  onJumpToReply?: (reply: ReplyReference) => void;
-  /** Whether the message this one quotes is in the list; undefined when it quotes none. */
-  replyAvailable?: boolean;
-  message: ChatMessage; isStreaming: boolean; isLastAssistantInTurn?: boolean; turnCopyText?: string; projectName?: string;
-  /** Files this turn changed — drives the action-bar change pill. */
-  turnChanges?: TurnFileChange[];
-  /** The turn this message closes: what the change tray's "Revert turn" puts back. */
-  turn?: SessionTurn;
-  onJumpToEdit?: (editRef: string) => void;
-  onFork?: (content: string, messageId: string | undefined) => void;
-  onEdit?: (content: string, messageId: string | undefined, ownMsgId?: string) => void;
-  isEditing?: boolean;
-  onDismiss?: (messageId: string) => void;
-  prevMsgId?: string;
-  sessionId?: string;
-  providerId?: string;
-  versionGroup?: VersionGroup;
-  onNavigateVersion?: (sessionId: string) => void;
-  versionNavDisabled?: boolean;
-  bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
-}) {
-  if (message.role === "user") {
-    const handleFork = onFork ? () => onFork(message.content, prevMsgId) : undefined;
-    const handleEdit = onEdit ? () => onEdit(message.content, prevMsgId, message.id) : undefined;
-    return (
-      <UserBubble
-        content={message.content}
-        messageId={message.id}
-        timestamp={message.timestamp}
-        projectName={projectName}
-        onReply={onReply && createReplyReference(message, sessionId ?? "", providerId ?? "") ? () => onReply(message) : undefined}
-        onJumpToReply={onJumpToReply}
-        replyAvailable={replyAvailable}
-        onFork={handleFork}
-        onEdit={handleEdit}
-        isEditing={isEditing}
-        sessionId={sessionId}
-        providerId={providerId}
-        versionGroup={versionGroup}
-        onNavigateVersion={onNavigateVersion}
-        versionNavDisabled={versionNavDisabled}
-      />
-    );
-  }
-
-  if (message.role === "system") {
-    return (
-      <div className="group flex items-center gap-2 rounded-lg bg-error/10 border border-error/20 px-3 py-2 text-sm text-error">
-        <AlertCircle className="size-4 shrink-0" />
-        <p className="flex-1">{message.content}</p>
-        {onDismiss && (
-          <button
-            type="button"
-            onClick={() => onDismiss(message.id)}
-            aria-label="Dismiss"
-            title="Dismiss"
-            className="shrink-0 rounded p-1 text-error/70 hover:text-error hover:bg-error/15 md:opacity-0 md:group-hover:opacity-100"
-          >
-            <XCircle className="size-4" />
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  // Assistant message — render events in order (text interleaved with tool calls)
-  return (
-    <div className="flex flex-col gap-2">
-      {message.events && message.events.length > 0
-        ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} bashPartialOutput={bashPartialOutput} />
-        : message.content && (
-            <div className="text-sm text-text-primary select-text">
-              <MarkdownContent content={message.content} projectName={projectName} />
-            </div>
-          )}
-      {/* Cost notice sits above the action bar so it reads as part of the finished turn */}
-      {!isStreaming && isLastAssistantInTurn && message.usage && (
-        <TurnCostWarning usage={message.usage} />
-      )}
-      {/* Action bar: only on the last assistant message of the turn, after streaming ends */}
-      {!isStreaming && isLastAssistantInTurn && (
-        <TurnChangeRollup
-          onReply={onReply && replyTarget ? () => onReply(replyTarget) : undefined}
-          timestamp={message.timestamp}
-          content={turnCopyText ?? assistantMessageText(message)}
-          changes={turnChanges}
-          turn={turn}
-          onJumpToEdit={onJumpToEdit}
+      {windowView && (
+        <ChatHistoryWindow
+          view={windowView}
+          controls={history}
+          canMerge={canMerge}
+          onMerge={handleMerge}
+          onBackToLatest={handleBackToLatest}
+          liveActivity={liveActivity}
+          projectName={projectName}
+          sessionId={sessionId}
+          providerId={providerId}
+          handleRef={windowHandle}
         />
       )}
+      {windowView && (
+        <HistoryWindowPendingPrompts approval={pendingApproval} onRespond={onApprovalResponse} question={pendingQuestion} />
+      )}
+      </div>
+      {!windowView && <ChatScrollNav scrollElement={scrollEl} userIndices={userIndices} scrollToBottom={scrollToBottom} hideOnPhone={dockApproval} />}
     </div>
-  );
-});
-
-
-
-
-
-
-/* ToolCard, ToolSummary, ToolDetails extracted to ./tool-cards.tsx */
-
-function ApprovalCard({
-  approval,
-  onRespond,
-}: {
-  approval: { requestId: string; tool: string; input: unknown };
-  onRespond: (requestId: string, approved: boolean, data?: unknown) => void;
-}) {
-  return (
-    <div className="rounded-lg border-2 border-warning/40 bg-warning/10 p-3 space-y-2">
-      <div className="flex items-center gap-2 text-warning text-sm font-medium">
-        <ShieldAlert className="size-4" />
-        <span>Tool Approval Required</span>
-      </div>
-      <div className="text-xs text-text-primary">
-        <span className="font-medium">{approval.tool}</span>
-      </div>
-      <pre className="text-xs font-mono text-text-secondary overflow-x-auto bg-background rounded p-2 border border-border">
-        {JSON.stringify(approval.input, null, 2)}
-      </pre>
-      <div className="flex gap-2">
-        <button
-          onClick={() => onRespond(approval.requestId, true)}
-          className="px-4 py-1.5 rounded bg-success text-white text-xs font-medium hover:bg-success/80 transition-colors"
-        >
-          Allow
-        </button>
-        <button
-          onClick={() => onRespond(approval.requestId, false)}
-          className="px-4 py-1.5 rounded bg-error text-white text-xs font-medium hover:bg-error/80 transition-colors"
-        >
-          Deny
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** Interactive quiz form for AskUserQuestion — renders questions with selectable options + Other */
-function AskUserQuestionCard({
-  approval,
-  onRespond,
-}: {
-  approval: { requestId: string; tool: string; input: unknown };
-  onRespond: (requestId: string, approved: boolean, data?: unknown) => void;
-}) {
-  const input = approval.input as { questions?: Question[] };
-  const questions = input.questions ?? [];
-
-  return (
-    <QuestionCard
-      questions={questions}
-      onSubmit={(answers) => onRespond(approval.requestId, true, answers)}
-      onSkip={() => onRespond(approval.requestId, false)}
-    />
   );
 }

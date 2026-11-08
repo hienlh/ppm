@@ -6,8 +6,12 @@
  * which are *not* things the user typed and must not read as if they were, and
  * absolute file paths worth turning into something clickable.
  */
-import { decodeReply, type ReplyReference } from "../../../shared/chat-reply";
+import type { ReplyReference } from "../../../shared/chat-reply";
+import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
 import { ReplyCard } from "./reply-card";
+import { TurnRefChipRow } from "./turn-ref-chip";
+import { CopyTurnLinkButton } from "./copy-turn-link-button";
+import type { ChatMessage } from "../../../types/chat";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileText,
@@ -16,7 +20,8 @@ import {
 import { cn, basename } from "@/lib/utils";
 import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
-import { parseUserMessage, type SystemTag } from "./user-message-parse";
+import { parseUserMessage, type ParsedUserMessage, type SystemTag } from "../../../shared/user-message-parse";
+import { FromSessionBubble } from "./from-session-bubble";
 import type { VersionGroup } from "../../../types/api";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -27,10 +32,13 @@ import { AuthImageThumbnail, isImagePath } from "./message-media";
 /** Detect if tags contain system-injected content (not real user input) */
 const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details", "local-command-caveat"]);
 
-/** User message bubble — full width, collapsible, with system tag badges */
-export function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: {
+type UserBubbleProps = {
   content: string;
   messageId?: string;
+  /** False for a user message that is not a prompt the person sent: its turn chips are not drawn. */
+  prompt?: boolean;
+  /** What names this message's turn, for Copy turn link; without it there is no such action. */
+  turn?: Pick<ChatMessage, "turnId" | "clientId" | "sdkUuid">;
   timestamp: string;
   projectName?: string;
   onFork?: () => void;
@@ -44,11 +52,37 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
   versionGroup?: VersionGroup;
   onNavigateVersion?: (sessionId: string) => void;
   versionNavDisabled?: boolean;
+};
+
+/**
+ * A user message: the person's own bubble, or — when another session's AI sent it — the
+ * from-session bubble, which is drawn apart and offers no Edit, Fork or Reply.
+ */
+export function UserBubble(props: UserBubbleProps) {
+  const parsed = useMemo(() => parseUserMessage(props.content), [props.content]);
+  if (parsed.fromSession) {
+    return (
+      <FromSessionBubble
+        from={parsed.fromSession}
+        text={parsed.text}
+        plainContent={decodeMessageBlocks(props.content).content}
+        turnRefs={parsed.turnRefs}
+        turn={props.turn}
+        timestamp={props.timestamp}
+        projectName={props.projectName}
+        sessionId={props.sessionId}
+        providerId={props.providerId}
+      />
+    );
+  }
+  return <OwnUserBubble {...props} parsed={parsed} />;
+}
+
+/** User message bubble — full width, collapsible, with system tag badges */
+function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: UserBubbleProps & {
+  parsed: ParsedUserMessage;
 }) {
-  const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo } = useMemo(
-    () => parseUserMessage(content),
-    [content],
-  );
+  const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo, turnRefs } = parsed;
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
 
@@ -81,6 +115,8 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
       isEditing && "ring-2 ring-primary/60 border-primary/40",
     )}>
       {replyTo && <ReplyCard reply={replyTo} onJump={replyAvailable ? () => onJumpToReply?.(replyTo) : undefined} unavailable={!replyAvailable} />}
+      {/* Drawn from the message's own block: no request, and the same size on every render. */}
+      {turnRefs && prompt && <TurnRefChipRow refs={turnRefs} currentProject={projectName} />}
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
 
@@ -175,7 +211,10 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
     </div>
       {/* Action bar below the bubble — timestamp, copy, edit/fork (real user messages only) */}
       {!isSystemContext && (
-        <MessageActionBar timestamp={timestamp} content={decodeReply(content).content}>
+        <MessageActionBar timestamp={timestamp} content={decodeMessageBlocks(content).content}>
+          {turn && projectName && sessionId && (providerId === "claude" || providerId === "codex") && (
+            <CopyTurnLinkButton message={turn} projectName={projectName} sessionId={sessionId} providerId={providerId} />
+          )}
           {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} touchTarget />}
           {onEdit && (
             <ActionButton

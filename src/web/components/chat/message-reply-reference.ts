@@ -1,6 +1,6 @@
 import type { ChatMessage } from "../../../types/chat";
 import { MAX_REPLY_QUOTE_LENGTH, type ReplyReference } from "../../../shared/chat-reply";
-import { parseUserMessage } from "./user-message-parse";
+import { parseUserMessage } from "../../../shared/user-message-parse";
 
 /** Only text visible in the transcript: never thinking, tools or injected context. */
 export function replyMessageText(message: ChatMessage): string {

@@ -4,6 +4,9 @@ import { configService } from "./config.service.ts";
 import { createHash } from "node:crypto";
 import { buildSharedProviderContext } from "./provider-shared-context.ts";
 import { stripSharedContext, withSharedContext } from "../shared/provider-context.ts";
+import { neutralizeBlockMarkers } from "../shared/chat-message-blocks.ts";
+import { deleteTurnGrants } from "./session-turns/turn-grant-ledger.ts";
+import { pairCounter } from "./session-collab/pair-counter.ts";
 import type {
   Session,
   SessionConfig,
@@ -28,7 +31,10 @@ import { dbToolsMcpAccessFor, dbToolsMcpTokens } from "./db-ai-tools/db-ai-tools
 import { dbApprovalBroker } from "./db-ai-tools/db-approval-broker.ts";
 import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
-import { anyPpmToolOn, TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { anyPpmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { sessionCollabMcpAccessFor, sessionCollabMcpTokens } from "./session-collab/session-collab-tokens.ts";
+import { collabApprovalBroker } from "./session-collab/collab-approval-broker.ts";
+import { collabWaits } from "./session-collab/collab-waits.ts";
 import { isTerminalAgentStatus } from "../shared/background-agent-status.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
@@ -40,6 +46,16 @@ const designLog = createLogger("design");
 
 /** What a caller passes to send: the provider's options plus which door the run came through. */
 export type ChatSendOpts = SendMessageOpts & { origin?: TraceOrigin };
+
+/**
+ * The message as a provider may receive it. Only two doors encode PPM's message blocks, each from
+ * fields it validated itself and after neutralizing the body: the chat socket (reply, turn
+ * references) and the session tools' inject path (from-session). Text arriving through any other
+ * door — a schedule, a Jira ticket, a group-chat peer, PPMBot — has every block marker broken, so
+ * none of it can pose as a block the chat decodes.
+ */
+const fromOrigin = (message: string, origin: TraceOrigin | undefined): string =>
+  origin === "ws" || origin === "session" ? message : neutralizeBlockMarkers(message);
 
 /**
  * What the "turn start" / "turn end" log lines need about one run, which can span many turns.
@@ -191,8 +207,13 @@ class ChatService {
     designMcpTokens.revoke(sessionId);
     tabToolsMcpTokens.revoke(sessionId);
     tabOpenBroker.forget(sessionId);
+    deleteTurnGrants(sessionId);
+    pairCounter.forgetSession(sessionId);
     dbToolsMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
+    sessionCollabMcpTokens.revoke(sessionId);
+    collabApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing was done.");
+    collabWaits.cancelWaiter(sessionId);
     this.turnEnds.delete(sessionId);
     // The provider ends the chat's turn and closes its CLI first. Only then is everything the
     // chat's commands started stopped, running or not: the one stop that does not wait for idle.
@@ -216,6 +237,7 @@ class ChatService {
     opts?: ChatSendOpts,
   ): AsyncIterable<ChatEvent> {
     const { origin, ...sendOpts } = opts ?? {};
+    message = fromOrigin(message, origin);
     const run = new TraceRun({ sessionId, providerId, origin, message, opts: sendOpts });
     // A run already streaming this session takes the message as a follow-up — the provider
     // pushes it into that stream — and that run's events are the ones that end the turn.
@@ -345,13 +367,24 @@ class ChatService {
   ): Promise<SendMessageOpts> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
     // Like the design fields, the tab and database tools are only ever server-built.
-    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
+    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, sessionCollabMcp: _sessionTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
+    // A mode stored for the session is what it runs under when the caller names none (the CLI,
+    // a schedule, another session's message): a created session inherits its creator's this way.
+    if (!design.permissionMode) {
+      const { getStoredPermissionModeAnyAlias } = await import("./db.service.ts");
+      const stored = getStoredPermissionModeAnyAlias(sessionId);
+      if (stored) design.permissionMode = stored;
+    }
     // A design session checks its canvas with `design_check` instead. A server is attached while
     // one of its tools is on (Settings → Tools); it lists only those.
     const ai = configService.get("ai");
     const tabToolsMcp = !isMinimalMode() && !design.designSession && anyPpmToolOn(ai, TAB_TOOLS) ? tabToolsMcpAccessFor(sessionId) : null;
     const dbToolsMcp = !isMinimalMode() && !design.designSession && anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0
       ? dbToolsMcpAccessFor(sessionId) : null;
+    // Opening and messaging sessions: never from a design session, which takes no messages either,
+    // nor in minimal mode, which runs no PPM tools (the history tools ride on the tab tools' server).
+    const sessionCollabMcp = !isMinimalMode() && !design.designSession && anyPpmToolOn(ai, SESSION_TOOLS)
+      ? sessionCollabMcpAccessFor(sessionId) : null;
     let sharedContext: string | undefined;
     if (configService.get("ai").share_provider_context === false || /^\s*\/(compact|clear|new)(\s|$)/i.test(message)) {
       this.invalidateSharedContext(providerId, sessionId);
@@ -371,7 +404,10 @@ class ChatService {
         if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
       }
     }
-    return { ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}), sharedContext };
+    return {
+      ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
+      ...(sessionCollabMcp ? { sessionCollabMcp } : {}), sharedContext,
+    };
   }
 
   /**
@@ -420,16 +456,26 @@ class ChatService {
     };
   }
 
-  /** Push a live follow-up through the same context policy as sendMessage. */
-  async pushMessage(providerId: string, sessionId: string, message: string, opts?: ChatSendOpts): Promise<void> {
+  /**
+   * Push a live follow-up through the same context policy as sendMessage. False when the
+   * provider had no live stream to take it — it closed while the context was being built (an
+   * idle release, the warm-idle cap, a token rotation) — so the message did not go anywhere and
+   * the caller must start a turn instead.
+   */
+  async pushMessage(providerId: string, sessionId: string, message: string, opts?: ChatSendOpts): Promise<boolean> {
     const provider = providerRegistry.get(providerId);
     if (!provider) throw new Error(`Provider "${providerId}" not found`);
     const streaming = provider as typeof provider & {
-      pushMessage?: (id: string, content: string, options: SendMessageOpts) => void;
+      pushMessage?: (id: string, content: string, options: SendMessageOpts) => boolean | void;
     };
-    if (!streaming.pushMessage) return;
+    if (!streaming.pushMessage) return false;
     const { origin, ...sendOpts } = opts ?? {};
+    message = fromOrigin(message, origin);
     const prepared = await this.prepareSendOptions(providerId, sessionId, message, sendOpts);
+    if (provider.hasStreamingSession && !provider.hasStreamingSession(sessionId)) {
+      log.warn(`session=${sessionId} follow-up not pushed: the stream closed before it could take it`);
+      return false;
+    }
     // Written before the push, so the input precedes every event it causes in the trace.
     traceFollowUp(sessionId, providerId, message, {
       ...sendOpts,
@@ -440,11 +486,13 @@ class ChatService {
     // stream=none: no run of this process is streaming the session, so nothing will end the turn.
     const live = this.turnLogs.get(sessionId);
     logTurnStart(sessionId, providerId, origin, live ? "live" : "none", sendOpts);
-    streaming.pushMessage(sessionId,
+    const accepted = streaming.pushMessage(sessionId,
       provider.supportsSharedContext ? message : withSharedContext(message, prepared.sharedContext),
       { ...prepared, sharedContext: provider.supportsSharedContext ? prepared.sharedContext : undefined });
+    if (accepted === false) return false;
     if (live && live.startedAt === null) live.startedAt = Date.now();
     this.rememberSharedContext(providerId, sessionId, prepared.sharedContext);
+    return true;
   }
 
   /**

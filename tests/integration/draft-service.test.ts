@@ -23,9 +23,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (testDb) {
-    testDb.close();
-  }
+  // `closeDb` closes the in-memory database installed above AND clears the singleton. Closing
+  // `testDb` alone left the singleton pointing at a closed handle, so the next test file in the
+  // same process failed on its first query with "Cannot use a closed database".
+  const { closeDb } = require("../../src/services/db.service.ts");
+  closeDb();
 });
 
 describe("DraftService", () => {

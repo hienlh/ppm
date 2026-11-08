@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 59;
+export const CURRENT_SCHEMA_VERSION = 60;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1333,76 +1333,104 @@ export function runMigrations(database: Database): void {
   }
 
   if (current < 58) {
-    // Script schedules. Columns are added rather than the table rebuilt: rebuilding a table
-    // other tables reference cascades their rows away (see migration 55). Every schedule saved
-    // before this was a prompt run once per cron fire, which is what the defaults say.
-    for (const column of [
-      "kind TEXT NOT NULL DEFAULT 'prompt' CHECK (kind IN ('prompt', 'script'))",
-      "mode TEXT NOT NULL DEFAULT 'tick' CHECK (mode IN ('tick', 'always-on'))",
-      "description TEXT NOT NULL DEFAULT ''",
-      "script TEXT",
-      "inputs_json TEXT NOT NULL DEFAULT '[]'",
-      "input_values_json TEXT NOT NULL DEFAULT '{}'",
-      "secrets_enc TEXT",
-      "state_json TEXT",
-    ]) {
-      try { database.exec(`ALTER TABLE schedules ADD COLUMN ${column}`); } catch { /* column exists */ }
-    }
-    database.exec(`
-      -- The chat a script's ctx.ai.chat(key) talks to; title is the one the script last set.
-      CREATE TABLE IF NOT EXISTS schedule_chats (
-        schedule_id  INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
-        key          TEXT NOT NULL,
-        session_id   TEXT NOT NULL,
-        title        TEXT,
-        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-        last_used_at TEXT,
-        PRIMARY KEY (schedule_id, key)
-      );
-      -- Chat turns a script started without waiting; ctx.ai.finished() hands each out once.
-      CREATE TABLE IF NOT EXISTS schedule_ai_turns (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
-        key         TEXT NOT NULL,
-        session_id  TEXT NOT NULL,
-        status      TEXT NOT NULL CHECK (status IN ('running', 'done', 'error')),
-        text        TEXT,
-        cost_usd    REAL,
-        error       TEXT,
-        timed_out   INTEGER NOT NULL DEFAULT 0,
-        started_at  TEXT NOT NULL DEFAULT (datetime('now')),
-        finished_at TEXT,
-        collected   INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE INDEX IF NOT EXISTS idx_schedule_ai_turns_sched ON schedule_ai_turns(schedule_id, collected, status);
-      -- The child process a script schedule runs in, so a restarted server can find one it left behind.
-      CREATE TABLE IF NOT EXISTS schedule_runtime (
-        schedule_id  INTEGER PRIMARY KEY REFERENCES schedules(id) ON DELETE CASCADE,
-        pid          INTEGER,
-        token        TEXT,
-        started_at   TEXT,
-        restarts     INTEGER NOT NULL DEFAULT 0,
-        last_exit_at TEXT,
-        last_error   TEXT
-      );
-      PRAGMA user_version = 58;
-    `);
+    applyScheduleScriptSchema(database);
+    database.exec(`PRAGMA user_version = 58;`);
   }
 
   if (current < 59) {
-    // `session_logs` duplicated the session trace (`session-trace.db`) and was never pruned: on a
-    // long-lived install it was 99% of this file. `compactIfMostlyFree` gives the pages back.
-    // One statement per `exec`: Bun raises only the last statement's error from a multi-statement
-    // `exec`, so a DROP that hit a lock would be skipped silently and the version still bumped,
-    // leaving a table nothing would ever drop again.
-    database.exec("DROP INDEX IF EXISTS idx_session_logs_session");
-    database.exec("DROP INDEX IF EXISTS idx_session_logs_created");
-    database.exec("DROP TABLE IF EXISTS session_logs");
-    if (database.query("SELECT 1 FROM sqlite_master WHERE name = 'session_logs'").get() != null) {
-      throw new Error("session_logs is still present after DROP TABLE");
-    }
+    dropSessionLogs(database);
     database.exec("PRAGMA user_version = 59");
   }
+
+  if (current < 60) {
+    // Builds of the session tools numbered this migration 58, then 59 — numbers the script-schedule
+    // schema and the `session_logs` drop took on main. A database such a build opened skipped one
+    // or both, so both are applied again here; every step of each is idempotent.
+    applyScheduleScriptSchema(database);
+    dropSessionLogs(database);
+    // Sessions an AI created through PPM's session tools: which session created each one, and
+    // how deep in such a chain it sits (0 for a session a person started). Read by the depth
+    // limit, the linked-sessions bar and the session list's "Created by".
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN spawned_by TEXT"); } catch { /* column exists */ }
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN spawn_depth INTEGER NOT NULL DEFAULT 0"); } catch { /* column exists */ }
+    try { database.exec("CREATE INDEX IF NOT EXISTS idx_session_metadata_spawned_by ON session_metadata(spawned_by)"); } catch { /* no table */ }
+    database.exec(`PRAGMA user_version = 60;`);
+  }
+}
+
+/**
+ * `session_logs` duplicated the session trace (`session-trace.db`) and was never pruned: on a
+ * long-lived install it was 99% of this file. `compactIfMostlyFree` gives the pages back.
+ * One statement per `exec`: Bun raises only the last statement's error from a multi-statement
+ * `exec`, so a DROP that hit a lock would be skipped silently and the version still bumped,
+ * leaving a table nothing would ever drop again. Idempotent.
+ */
+function dropSessionLogs(database: Database): void {
+  database.exec("DROP INDEX IF EXISTS idx_session_logs_session");
+  database.exec("DROP INDEX IF EXISTS idx_session_logs_created");
+  database.exec("DROP TABLE IF EXISTS session_logs");
+  if (database.query("SELECT 1 FROM sqlite_master WHERE name = 'session_logs'").get() != null) {
+    throw new Error("session_logs is still present after DROP TABLE");
+  }
+}
+
+/**
+ * Script schedules. Columns are added rather than the table rebuilt: rebuilding a table other
+ * tables reference cascades their rows away (see migration 55). Every schedule saved before this
+ * was a prompt run once per cron fire, which is what the defaults say. Idempotent: each column is
+ * added only if missing and each table only if absent, so it may run on a database that has it.
+ */
+function applyScheduleScriptSchema(database: Database): void {
+  for (const column of [
+    "kind TEXT NOT NULL DEFAULT 'prompt' CHECK (kind IN ('prompt', 'script'))",
+    "mode TEXT NOT NULL DEFAULT 'tick' CHECK (mode IN ('tick', 'always-on'))",
+    "description TEXT NOT NULL DEFAULT ''",
+    "script TEXT",
+    "inputs_json TEXT NOT NULL DEFAULT '[]'",
+    "input_values_json TEXT NOT NULL DEFAULT '{}'",
+    "secrets_enc TEXT",
+    "state_json TEXT",
+  ]) {
+    try { database.exec(`ALTER TABLE schedules ADD COLUMN ${column}`); } catch { /* column exists */ }
+  }
+  database.exec(`
+    -- The chat a script's ctx.ai.chat(key) talks to; title is the one the script last set.
+    CREATE TABLE IF NOT EXISTS schedule_chats (
+      schedule_id  INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+      key          TEXT NOT NULL,
+      session_id   TEXT NOT NULL,
+      title        TEXT,
+      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      last_used_at TEXT,
+      PRIMARY KEY (schedule_id, key)
+    );
+    -- Chat turns a script started without waiting; ctx.ai.finished() hands each out once.
+    CREATE TABLE IF NOT EXISTS schedule_ai_turns (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+      key         TEXT NOT NULL,
+      session_id  TEXT NOT NULL,
+      status      TEXT NOT NULL CHECK (status IN ('running', 'done', 'error')),
+      text        TEXT,
+      cost_usd    REAL,
+      error       TEXT,
+      timed_out   INTEGER NOT NULL DEFAULT 0,
+      started_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      finished_at TEXT,
+      collected   INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_schedule_ai_turns_sched ON schedule_ai_turns(schedule_id, collected, status);
+    -- The child process a script schedule runs in, so a restarted server can find one it left behind.
+    CREATE TABLE IF NOT EXISTS schedule_runtime (
+      schedule_id  INTEGER PRIMARY KEY REFERENCES schedules(id) ON DELETE CASCADE,
+      pid          INTEGER,
+      token        TEXT,
+      started_at   TEXT,
+      restarts     INTEGER NOT NULL DEFAULT 0,
+      last_exit_at TEXT,
+      last_error   TEXT
+    );
+  `);
 }
 
 /**
@@ -1646,14 +1674,18 @@ export function setSessionMigratedTo(oldSessionId: string, newSessionId: string)
     // Carry explicit choices with it before reconnect reads session_state.
     // Keep any choices already made on the destination (including thinking OFF).
     database.query(`
-      INSERT INTO session_metadata (session_id, model, effort, thinking_budget, design_slug, permission_mode)
-      SELECT ?, model, effort, thinking_budget, design_slug, permission_mode FROM session_metadata WHERE session_id = ?
+      INSERT INTO session_metadata (session_id, project_name, project_path, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth)
+      SELECT ?, project_name, project_path, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth FROM session_metadata WHERE session_id = ?
       ON CONFLICT(session_id) DO UPDATE SET
+        project_name = COALESCE(session_metadata.project_name, excluded.project_name),
+        project_path = COALESCE(session_metadata.project_path, excluded.project_path),
         model = COALESCE(session_metadata.model, excluded.model),
         effort = COALESCE(session_metadata.effort, excluded.effort),
         thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget),
         design_slug = COALESCE(session_metadata.design_slug, excluded.design_slug),
-        permission_mode = COALESCE(session_metadata.permission_mode, excluded.permission_mode)
+        permission_mode = COALESCE(session_metadata.permission_mode, excluded.permission_mode),
+        spawned_by = COALESCE(session_metadata.spawned_by, excluded.spawned_by),
+        spawn_depth = MAX(session_metadata.spawn_depth, excluded.spawn_depth)
     `).run(newSessionId, oldSessionId);
     database.query(
       "INSERT INTO session_metadata (session_id, migrated_to) VALUES (?, ?) " +
@@ -1680,6 +1712,22 @@ export function resolveMigratedSession(sessionId: string): string {
     current = next;
   }
   return current;
+}
+
+/**
+ * Every id a session has been known by: its canonical id first, then the ids that migrated into
+ * it (a Codex chat is renamed during its first turn). Capped, so bad data cannot make it grow.
+ */
+export function sessionIdAliases(sessionId: string, max = 16): string[] {
+  const canonical = resolveMigratedSession(sessionId);
+  const out = [canonical];
+  const query = getDb().query("SELECT session_id FROM session_metadata WHERE migrated_to = ?");
+  for (let i = 0; i < out.length && out.length < max; i++) {
+    for (const row of query.all(out[i]!) as Array<{ session_id: string }>) {
+      if (!out.includes(row.session_id)) out.push(row.session_id);
+    }
+  }
+  return out;
 }
 
 /** Provider that owns a session — source of truth for WS routing across restarts. */
@@ -1792,6 +1840,18 @@ export function getSessionDesignSlugs(sessionIds: string[]): Record<string, stri
 export function getSessionPermissionMode(sessionId: string): string | null {
   const row = getDb().query("SELECT permission_mode FROM session_metadata WHERE session_id = ?").get(sessionId) as { permission_mode: string | null } | null;
   return row?.permission_mode ?? null;
+}
+
+/**
+ * The mode stored for the session under any id it has been known by (a Codex chat takes its
+ * thread's id during its first turn); null when none was ever stored for it.
+ */
+export function getStoredPermissionModeAnyAlias(sessionId: string): string | null {
+  for (const id of sessionIdAliases(sessionId)) {
+    const mode = getSessionPermissionMode(id);
+    if (mode) return mode;
+  }
+  return null;
 }
 
 export function setSessionPermissionMode(sessionId: string, mode: string): void {

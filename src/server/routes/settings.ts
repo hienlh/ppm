@@ -15,8 +15,9 @@ import {
 import { ok, err } from "../../types/api.ts";
 import { isDbExplorerPrefs } from "../../shared/db-explorer-prefs.ts";
 import { isLookupDescriptions } from "../../shared/db-lookup-prefs.ts";
-import { isPpmTool, type PpmToolSwitches } from "../../shared/ppm-tools.ts";
+import { isPpmTool, patchPpmToolSwitches, type PpmToolSwitches } from "../../shared/ppm-tools.ts";
 import { isValidLeftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../shared/leftover-processes.ts";
+import { parseSessionCollabPatch, resolveSessionCollabSettings, type SessionCollabSettings } from "../../shared/session-collab-settings.ts";
 import {
   SESSION_TRACE_MIN_RETENTION_DAYS,
   SESSION_TRACE_MIN_SIZE_MB,
@@ -27,6 +28,9 @@ import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
 import { providerRegistry, providerProbeStatuses, retryProviderProbe } from "../../providers/registry.ts";
 import { createLogger } from "../../services/logger.ts";
+import { settleFeaturesDecidedInSettings } from "../../services/feature-intros.service.ts";
+import { FEATURE_INTROS_CHANGED_EVENT } from "../../shared/feature-intros.ts";
+import { broadcastGlobalEvent } from "../ws/global.ts";
 
 const log = createLogger("settings");
 const ppmbotLog = createLogger("ppmbot");
@@ -34,7 +38,7 @@ const ppmbotLog = createLogger("ppmbot");
 export const settingsRoutes = new Hono();
 
 /** Strip api_key_env from all providers in an AI config object */
-function stripSensitiveFields(ai: { providers: Record<string, unknown> }) {
+function stripSensitiveFields<T extends { providers: Record<string, unknown> }>(ai: T): T {
   const clone = structuredClone(ai);
   for (const provider of Object.values(clone.providers)) {
     const p = provider as Record<string, unknown>;
@@ -188,8 +192,13 @@ settingsRoutes.put("/ui-prefs", async (c) => {
 /** GET /settings/ai — return current AI config (strips api_key_env) */
 settingsRoutes.get("/ai", (c) => {
   const ai = configService.get("ai");
-  return c.json(ok(stripSensitiveFields(ai)));
+  return c.json(ok(withResolvedSessionCollab(stripSensitiveFields(ai))));
 });
+
+/** The AI settings as answered: `session_collab` always complete, with defaults and clamping applied. */
+function withResolvedSessionCollab<T extends { session_collab?: Partial<SessionCollabSettings> }>(ai: T): T & { session_collab: SessionCollabSettings } {
+  return { ...ai, session_collab: resolveSessionCollabSettings(ai.session_collab) };
+}
 
 /** PUT /settings/ai — update AI settings, persists to SQLite */
 settingsRoutes.put("/ai", async (c) => {
@@ -201,6 +210,7 @@ settingsRoutes.put("/ai", async (c) => {
       tab_tools?: boolean;
       ppm_tools?: PpmToolSwitches;
       leftover_processes_idle_minutes?: number;
+      session_collab?: unknown;
       providers?: Record<string, Partial<AIProviderConfig>>;
     }>();
 
@@ -229,6 +239,13 @@ settingsRoutes.put("/ai", async (c) => {
         return c.json(err("ppm_tools must map PPM's tool names to booleans"), 400);
       }
     }
+    // Fields the body names are type-checked and clamped; the rest keep what is stored.
+    let sessionCollab: SessionCollabSettings | undefined;
+    if ("session_collab" in body) {
+      const parsed = parseSessionCollabPatch(body.session_collab);
+      if (!parsed.ok) return c.json(err(parsed.error), 400);
+      sessionCollab = resolveSessionCollabSettings({ ...resolveSessionCollabSettings(currentAi.session_collab), ...parsed.patch });
+    }
 
     // Validate each provider config
     if (body.providers) {
@@ -254,8 +271,10 @@ settingsRoutes.put("/ai", async (c) => {
       share_provider_context: body.share_provider_context ?? currentAi.share_provider_context ?? true,
       ...(typeof body.tab_tools === "boolean" && { tab_tools: body.tab_tools }),
       ...(body.leftover_processes_idle_minutes !== undefined && { leftover_processes_idle_minutes: body.leftover_processes_idle_minutes }),
-      // One switch at a time: the tools the body does not name keep theirs.
-      ...(body.ppm_tools && { ppm_tools: { ...currentAi.ppm_tools, ...body.ppm_tools } }),
+      // One switch at a time: the tools the body does not name keep theirs, and the other tools of
+      // an introduced feature are written at the state they showed (see `patchPpmToolSwitches`).
+      ...(body.ppm_tools && { ppm_tools: patchPpmToolSwitches(currentAi.ppm_tools, body.ppm_tools) }),
+      ...(sessionCollab && { session_collab: sessionCollab }),
       ...(body.default_provider && { default_provider: body.default_provider }),
     };
     if (body.providers) {
@@ -287,8 +306,10 @@ settingsRoutes.put("/ai", async (c) => {
 
     configService.set("ai", updated);
     configService.save();
+    // A switch of an introduced feature set here is the user's answer: no device asks again.
+    if (body.ppm_tools && settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
 
-    return c.json(ok(stripSensitiveFields(updated)));
+    return c.json(ok(withResolvedSessionCollab(stripSensitiveFields(updated))));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }

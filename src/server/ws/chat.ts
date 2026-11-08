@@ -1,9 +1,12 @@
-import { encodeReply, validateReply } from "../../shared/chat-reply.ts";
+import { validateReply } from "../../shared/chat-reply.ts";
+import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
+import { validateTurnRefs } from "../../shared/chat-turn-ref.ts";
+import { recordTurnGrants } from "../../services/session-turns/turn-grant-ledger.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, setSessionPermissionMode, getLastTurnCacheState } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionUnreadCount, getSessionModel, setSessionModel, getSessionProvider, setSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo, resolveMigratedSession, getSessionDesignSlug, setSessionPermissionMode, getStoredPermissionModeAnyAlias, getLastTurnCacheState } from "../../services/db.service.ts";
 import { describeApprovalInput } from "../../services/notification-format.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
@@ -29,15 +32,29 @@ import type { EffortStatus } from "../../shared/effort-status.ts";
 import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
-import { dbApprovalBroker, setDbApprovalChat, type DbApprovalEvent } from "../../services/db-ai-tools/db-approval-broker.ts";
+import { setDbApprovalChat, type DbApprovalEvent } from "../../services/db-ai-tools/db-approval-broker.ts";
 import { dbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
+import { ppmApprovals } from "./chat-ppm-approvals.ts";
+import { setCollabApprovalChat } from "../../services/session-collab/collab-approval-broker.ts";
+import { collabWaits, setCollabIdleProbe } from "../../services/session-collab/collab-waits.ts";
+import { collabSessionRenamed, collabTurnEnded } from "../../services/session-collab/collab-turn-events.ts";
+import { isSpawned } from "../../services/session-collab/session-links.service.ts";
+import type { LiveSessionState } from "../../services/session-collab/collab-context.ts";
+import { collabApprovalTitle } from "../../services/notification-format.ts";
+import {
+  SESSION_COLLAB_APPROVAL_EVENT, sessionCollabApprovalInput,
+  type SessionCollabAnswer, type SessionCollabApprovalEvent, type SessionCollabApprovalRequest,
+} from "../../shared/session-collab.ts";
 import { parseTabOpenResult, type TabOpenRequest } from "../../shared/tab-open-protocol.ts";
 import { readLastTurnStop } from "../../services/session-trace/turn-stop-reader.ts";
 import { describeTurnStop, type TurnStop } from "../../shared/turn-stop.ts";
 import { createLogger } from "../../services/logger.ts";
 import { dropStaleIdle, registerTokenRotation, type TokenRotationDeps } from "./chat-token-rotation.ts";
 import { registerLeftoverSweeper } from "../../services/chat-session-processes/session-processes.service.ts";
+import { setTurnRunningProbe } from "../../services/session-turns/session-turn-index.service.ts";
 import type { SubprocessCredential } from "../../providers/claude-agent-sdk.ts";
+import type { SessionDelivery } from "../../shared/session-collab.ts";
+import { pairCounter } from "../../services/session-collab/pair-counter.ts";
 
 const log = createLogger("chat");
 const bgShellLog = createLogger("bg-shell");
@@ -166,14 +183,14 @@ const BUFFERABLE_TYPES = new Set([
   "team_detected",
 ]);
 
-type ChatWsSocket = {
+export type ChatWsSocket = {
   /** `origin` is set only by an in-process caller (a script schedule); a browser socket leaves it unset, i.e. `ws`. */
   data: { type: string; sessionId: string; projectName?: string; providerHint?: string; origin?: TraceOrigin };
   send: (data: string) => void;
   ping?: (data?: string | ArrayBuffer) => void;
 };
 
-interface SessionEntry {
+export interface SessionEntry {
   providerId: string;
   clients: Set<ChatWsSocket>;
   projectPath?: string;
@@ -189,8 +206,12 @@ interface SessionEntry {
   turnEvents: unknown[];
   /** The opening of the turn's last top-level text block — the answer a "Chat completed" notification quotes. */
   finalText?: string;
+  /** The last finished turn's `finalText`, kept for `session_status` after the notification took it. */
+  lastAnswer?: string;
   /** The user message that initiated the current turn (for reconnect replay) */
   currentUserMessage?: string;
+  /** The sending browser's own id for that message, so a reconnect replay keeps it bound to its turn. */
+  currentClientMessageId?: string;
   streamPromise?: Promise<void>;
   permissionMode?: string;
   /** Per-session model override; falls back to provider default when undefined */
@@ -235,19 +256,40 @@ interface SessionEntry {
    * the idle gap before a follow-up as waiting on the provider.
    */
   turnRequestedAt?: { at: number; cold: boolean };
+  /**
+   * The latest turns a sent message opened, newest last (`turn_started`). Kept past the turn, in
+   * every greeting, so a device that joins later can still tell which turn its message became.
+   */
+  turnBindings?: TurnBinding[];
   /** Pending release of the subprocess once its prompt cache lapses */
   cacheReleaseTimer?: ReturnType<typeof setTimeout>;
   /** The socket whose message opened the latest turn: where the AI's tab tools open a tab. */
   lastSender?: ChatWsSocket;
   /** Events broadcast with no client attached since the session last went idle — logged then, as one count. */
   droppedEvents?: number;
+  /**
+   * Created by the server for a message no browser sent (another session's AI) and joined by no
+   * browser since. Such a session's consumer loop outlives its turns like any other, so between
+   * turns it counts as idle for the warm-subprocess cap and the cache-expiry release — otherwise
+   * nothing would ever free its subprocess, since those run only when a browser socket leaves.
+   */
+  socketless?: boolean;
+}
+
+/**
+ * Whether nothing is running in the session right now: no consumer loop, or a socketless session
+ * between turns with no approval and no background work.
+ */
+function idleBetweenTurns(sessionId: string, entry: SessionEntry): boolean {
+  if (!entry.isStreamingActive) return true;
+  return !!entry.socketless && entry.phase === "idle" && !entry.pendingApprovalEvent && !hasBackgroundWork(sessionId);
 }
 
 /** Sessions with no client attached, not mid-turn, still holding a live subprocess. */
 function listWarmIdleSessions(): { sessionId: string; entry: SessionEntry; idleSince?: number }[] {
   const out: { sessionId: string; entry: SessionEntry; idleSince?: number }[] = [];
   for (const [sessionId, entry] of activeSessions) {
-    if (entry.clients.size > 0 || entry.isStreamingActive) continue;
+    if (entry.clients.size > 0 || !idleBetweenTurns(sessionId, entry)) continue;
     const provider = providerRegistry.get(entry.providerId);
     if (!provider?.hasStreamingSession?.(sessionId)) continue;
     out.push({ sessionId, entry, idleSince: entry.idleSince });
@@ -270,7 +312,7 @@ function releaseSubprocess(sessionId: string, reason: string, note: string): voi
     clearTimeout(entry.cacheReleaseTimer);
     entry.cacheReleaseTimer = undefined;
   }
-  if (entry.clients.size > 0 || entry.isStreamingActive) return;
+  if (entry.clients.size > 0 || !idleBetweenTurns(sessionId, entry)) return;
   const provider = providerRegistry.get(entry.providerId);
   if (!provider?.hasStreamingSession?.(sessionId)) return;
   chatService.abortQuery(entry.providerId, sessionId, reason, "ws");
@@ -512,6 +554,34 @@ export function listRunningSessions(
   return running;
 }
 
+/** The registry entry for any id the session has been known by. */
+function entryOf(sessionId: string): SessionEntry | undefined {
+  return activeSessions.get(sessionId) ?? activeSessions.get(resolveMigratedSession(sessionId));
+}
+
+/**
+ * What the session tools may know of a session open in this process, or null when it is not open:
+ * read from the registry only, never from a transcript.
+ */
+export function collabLiveState(sessionId: string): LiveSessionState | null {
+  const entry = entryOf(sessionId);
+  if (!entry) return null;
+  const pending = entry.pendingApprovalEvent;
+  return {
+    providerId: entry.providerId,
+    ...(entry.projectName ? { projectName: entry.projectName } : {}),
+    ...(entry.projectPath ? { projectPath: entry.projectPath } : {}),
+    phase: entry.phase,
+    ...(entry.permissionMode ? { permissionMode: entry.permissionMode } : {}),
+    ...(entry.model ? { model: entry.model } : {}),
+    waitingFor: !pending ? null : pending.tool === "AskUserQuestion" ? "question" : "approval",
+    ...(entry.lastAnswer ? { lastAnswer: entry.lastAnswer } : {}),
+    updatedAt: entry.phase !== "idle" ? Date.now() : entry.lastTurnEndedAt ?? entry.turnRequestedAt?.at,
+    ...(entry.turnBindings?.length ? { currentTurnId: entry.turnBindings[entry.turnBindings.length - 1]!.turnId } : {}),
+  };
+}
+setCollabIdleProbe((sessionId) => (entryOf(sessionId)?.phase ?? "idle") === "idle");
+
 /**
  * App-wide broadcasts live on the global bus (`/ws/global`), not on chat sockets:
  * chat tabs mount lazily, so a chat socket is not guaranteed to exist. Re-exported
@@ -571,7 +641,8 @@ function holdApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type:
   entry.pendingApprovalEvent = ev;
 
   const isQuestion = ev.tool === "AskUserQuestion";
-  const nType = isQuestion ? "question" : "approval_request";
+  const collab = sessionCollabApprovalInput(ev.tool, ev.input);
+  const nType = isQuestion ? "question" : collab ? "collab_approval" : "approval_request";
   // Persist unread to DB + broadcast to all tabs/devices
   const approvalSession = chatService.getSession(sessionId);
   incrementSessionUnread(sessionId, nType, approvalSession?.title, entry.projectName || null);
@@ -581,9 +652,9 @@ function holdApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type:
     const project = entry.projectName || "Project";
     const session = chatService.getSession(sessionId);
     const sTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
-    const title = isQuestion ? "AI has a question" : "Waiting for approval";
+    const title = isQuestion ? "AI has a question" : collab ? collabApprovalTitle(collab) : "Waiting for approval";
     const db = dbExecuteApprovalInput(ev.tool, ev.input);
-    const body = isQuestion
+    const body = isQuestion || collab
       ? `${project} — ${sTitle}`
       : db ? `${project} — AI wants to change ${db.connectionName}` : `${project} — ${ev.tool} needs permission`;
     notificationService.broadcast(nType, {
@@ -597,41 +668,63 @@ function holdApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type:
 }
 
 /**
- * PPM's database tools ask the user here to approve a `db_execute` (`db-approval-broker.ts`).
- * Not buffered into the turn's replay: the tool call's own card already shows the SQL, and a
- * device that connects later reads the approval from `session_state.pendingApproval`.
+ * PPM's own approvals — a `db_execute` change (`db-approval-broker.ts`) and the session tools'
+ * cards (`collab-approval-broker.ts`) — ask the user here. Not buffered into the turn's replay: the
+ * tool call's own card already shows what is asked, and a device that connects later reads the
+ * approval from `session_state.pendingApproval`. Answered over HTTP, never over this socket.
  */
-function announceDbApproval(sessionId: string, event: DbApprovalEvent): boolean {
+function announcePpmApproval(sessionId: string, event: { type: string; requestId: string; tool: string; input: unknown }): boolean {
   const entry = activeSessions.get(sessionId);
   if (!entry) return false;
-  // A provider's own approval holds the session's one slot: this one waits behind it
-  // (`showWaitingDbApproval`) rather than taking that card off the user's screen.
+  // Another approval holds the session's one slot: this one waits behind it
+  // (`showWaitingPpmApproval`) rather than taking that card off the user's screen.
   if (entry.pendingApprovalEvent) return true;
   holdApprovalRequest(sessionId, entry, event);
   broadcast(sessionId, event);
   return true;
 }
 
-/** A `db_execute` approval was answered, or given up on: every device drops its card. */
-function dbApprovalResolved(sessionId: string, requestId: string, approved: boolean): void {
+/** One of PPM's own approvals was answered, or given up on: every device drops its card. */
+function ppmApprovalResolved(sessionId: string, requestId: string, approved: boolean, answer?: SessionCollabAnswer | null): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
-  if (entry.pendingApprovalEvent?.requestId === requestId) entry.pendingApprovalEvent = undefined;
-  broadcast(sessionId, { type: "approval_resolved", requestId, approved, answers: null });
+  broadcast(sessionId, { type: "approval_resolved", requestId, approved, answers: answer ? { answer } : null });
+  if (entry.pendingApprovalEvent?.requestId === requestId) clearPendingApproval(sessionId, entry);
   broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
 }
-setDbApprovalChat({ announce: announceDbApproval, resolved: dbApprovalResolved }, resolveMigratedSession);
+setDbApprovalChat({
+  announce: (sessionId, event: DbApprovalEvent) => announcePpmApproval(sessionId, event),
+  resolved: (sessionId, requestId, approved) => ppmApprovalResolved(sessionId, requestId, approved),
+}, resolveMigratedSession);
+
+/** A session tool's card appeared in, or left, a session: the tracking bar follows it app-wide. */
+function collabApprovalGlobal(sessionId: string, event: Omit<SessionCollabApprovalEvent, "type" | "projectName" | "sessionId">): void {
+  const projectName = activeSessions.get(sessionId)?.projectName ?? "";
+  broadcastGlobalEvent({ type: SESSION_COLLAB_APPROVAL_EVENT, projectName, sessionId, ...event } satisfies SessionCollabApprovalEvent);
+}
+setCollabApprovalChat({
+  announce: (sessionId, event: SessionCollabApprovalRequest) => {
+    const shown = announcePpmApproval(sessionId, event);
+    if (shown) collabApprovalGlobal(sessionId, { requestId: event.requestId, state: "pending", input: event.input });
+    return shown;
+  },
+  resolved: (sessionId, requestId, answer) => {
+    ppmApprovalResolved(sessionId, requestId, answer === "allow_once" || answer === "allow_session", answer);
+    collabApprovalGlobal(sessionId, { requestId, state: "resolved", ...(answer ? { answer } : {}) });
+  },
+}, resolveMigratedSession);
 
 /**
  * A provider asks for an approval or an answer. The session has one slot and every device shows
  * one card, so a request arriving while another provider request holds it waits its turn: shown
  * there, a second AskUserQuestion of the same message replaced the first card, and once it was
- * answered nothing could answer the first — the turn waited on it for good. A `db_execute`
- * approval does give way, since it waits in its broker and comes back (`showWaitingDbApproval`).
+ * answered nothing could answer the first — the turn waited on it for good. PPM's own approvals
+ * (a `db_execute`, a session tool's card) do give way, since each waits in its broker and comes
+ * back (`showWaitingPpmApproval`).
  */
 function receiveApprovalRequest(sessionId: string, entry: SessionEntry, ev: { type: string; requestId: string; tool: string; input: unknown }): void {
   const holder = entry.pendingApprovalEvent;
-  if (holder && holder.requestId !== ev.requestId && !dbApprovalBroker.has(holder.requestId)) {
+  if (holder && holder.requestId !== ev.requestId && !ppmApprovals.has(holder.requestId)) {
     (entry.queuedApprovals ??= []).push(ev);
     log.info(`session=${sessionId} approval ${ev.requestId} (${ev.tool}) queued behind ${holder.requestId}`);
     return;
@@ -641,8 +734,8 @@ function receiveApprovalRequest(sessionId: string, entry: SessionEntry, ev: { ty
 }
 
 /**
- * The slot is empty: the next provider request waiting in line is shown, else a `db_execute`
- * approval that a provider's had taken the slot from.
+ * The slot is empty: the next provider request waiting in line is shown, else one of PPM's own
+ * approvals that a provider's had taken the slot from.
  */
 function showNextApproval(sessionId: string, entry: SessionEntry): void {
   if (entry.pendingApprovalEvent) return;
@@ -652,36 +745,39 @@ function showNextApproval(sessionId: string, entry: SessionEntry): void {
     bufferAndBroadcast(sessionId, next);
     return;
   }
-  showWaitingDbApproval(sessionId, entry);
+  showWaitingPpmApproval(sessionId, entry);
 }
 
 /**
- * A provider's approval took the session's one pending slot while a `db_execute` approval was
- * waiting, and has now been answered: the database approval is shown again.
+ * Another approval took the session's one pending slot while one of PPM's own was waiting, and
+ * has now been answered: PPM's approval is shown again.
  */
-function showWaitingDbApproval(sessionId: string, entry: SessionEntry): void {
-  const waiting = dbApprovalBroker.pendingEvent(sessionId);
+function showWaitingPpmApproval(sessionId: string, entry: SessionEntry): void {
+  const waiting = ppmApprovals.pendingEvent(sessionId);
   if (!waiting || entry.pendingApprovalEvent) return;
-  entry.pendingApprovalEvent = waiting;
+  holdApprovalRequest(sessionId, entry, waiting);
   broadcast(sessionId, waiting);
 }
 
-/** What the AI hears when its `db_execute` is still waiting as the turn ends. */
+/** What the AI hears when one of PPM's approvals is still waiting as the turn ends. */
 const DB_APPROVAL_TURN_OVER = "The turn ended before the user answered, so nothing ran.";
 
 /**
  * Empties the session's one approval slot. The next request in line is shown in its place
  * (`showNextApproval`), or, given a reason, everything still waiting is declined first: the user
- * moved on, or the turn the calls belong to is over. Every place that empties the slot, but a
- * database approval's own answer (`dbApprovalResolved`), comes through here, so none can leave a
- * request waiting for a card nobody sees.
+ * moved on, or the turn the calls belong to is over. Every place that empties the slot comes
+ * through here, so none can leave a request waiting for a card nobody sees.
  */
 function clearPendingApproval(sessionId: string, entry: SessionEntry, cancelReason?: string): void {
+  // Emptied first. Cancelling a PPM approval settles its broker, whose `resolved` comes back
+  // through `ppmApprovalResolved`; with the slot still holding it, that inner call would show the
+  // next queued request and this one would then blank the slot over it, leaving that request
+  // with no card and its turn waiting for good.
+  entry.pendingApprovalEvent = undefined;
   if (cancelReason) {
-    dbApprovalBroker.cancelSession(sessionId, cancelReason);
+    ppmApprovals.cancelSession(sessionId, cancelReason);
     declineQueuedApprovals(sessionId, entry, cancelReason);
   }
-  entry.pendingApprovalEvent = undefined;
   showNextApproval(sessionId, entry);
 }
 
@@ -879,6 +975,7 @@ function sendTurnEvents(sessionId: string, ws: ChatWsSocket): void {
       type: "turn_events",
       events: entry.turnEvents,
       userMessage: entry.currentUserMessage ?? null,
+      ...(entry.currentClientMessageId ? { clientMessageId: entry.currentClientMessageId } : {}),
       // This is an authoritative full snapshot, not a delta. `truncated` tells
       // the client it must wait for the normal idle history reload to recover
       // frames beyond the bounded replay buffer.
@@ -908,7 +1005,7 @@ function clearClientPing(entry: SessionEntry, ws: ChatWsSocket): void {
 }
 
 /** Start cleanup timer — only for idle sessions. Active (streaming) sessions are never cleaned up; they run until done. */
-function startCleanupTimer(sessionId: string): void {
+export function startCleanupTimer(sessionId: string): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
   // Never clean up a session that is still streaming — it will self-cleanup in the consumer's finally block
@@ -945,12 +1042,44 @@ function startCleanupTimer(sessionId: string): void {
   }, CLEANUP_TIMEOUT_MS);
 }
 
+/** Which turn a sent message opened (`turn_started`). */
+export interface TurnBinding {
+  turnId: string;
+  clientMessageId?: string;
+}
+
+/** How many `turn_started` bindings a session keeps for late joiners. */
+const MAX_TURN_BINDINGS = 50;
+
+function rememberTurnBinding(entry: SessionEntry, ev: { turnId?: unknown; clientMessageId?: unknown }): void {
+  if (typeof ev.turnId !== "string") return;
+  const binding: TurnBinding = { turnId: ev.turnId, ...(typeof ev.clientMessageId === "string" ? { clientMessageId: ev.clientMessageId } : {}) };
+  const list = (entry.turnBindings ??= []);
+  list.push(binding);
+  if (list.length > MAX_TURN_BINDINGS) list.splice(0, list.length - MAX_TURN_BINDINGS);
+  for (const listener of turnBindingListeners) {
+    try { listener(binding); } catch (e) { log.warn(`turn binding listener failed: ${(e as Error).message}`); }
+  }
+}
+
+const turnBindingListeners = new Set<(binding: TurnBinding) => void>();
+
+/** Hears every `turn_started` a session's consumer sees, with the client id it was sent under. */
+export function onTurnBinding(listener: (binding: TurnBinding) => void): () => void {
+  turnBindingListeners.add(listener);
+  return () => { turnBindingListeners.delete(listener); };
+}
+
+/** A turn is in flight through any door: a running provider run, or a socket that is not idle. */
+setTurnRunningProbe((sessionId) => chatService.turnActivity(sessionId).running
+  || (activeSessions.get(sessionId)?.phase ?? "idle") !== "idle");
+
 /**
  * Persistent event consumer — runs for the entire session lifetime.
  * First message creates the query; follow-ups push into the provider's
  * message channel. Events from ALL turns flow through this single loop.
  */
-async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[], origin: TraceOrigin = "ws"): Promise<void> {
+async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[], clientMessageId?: string, origin: TraceOrigin = "ws"): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     log.error(`session=${sessionId} startSessionConsumer: no entry — aborting`);
@@ -1012,7 +1141,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), origin })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), ...(clientMessageId && { clientMessageId }), origin })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -1108,7 +1237,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
 
       // First content event — stop heartbeat, transition phase
       // status_update is PPM's pre-flight account selection — not actual SDK content
-      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update";
+      // `turn_started` arrives before the model has said anything: the turn has an id, not content.
+      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update" || evType === "turn_started";
       if (!firstEventReceived && !isMetadataEvent) {
         firstEventReceived = true;
         const requested = entry.turnRequestedAt;
@@ -1279,7 +1409,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // The consumer outlives the turn (Claude pushes a follow-up into the same stream), so
         // the next turn's answer must not start with this one's.
         entry.finalText = undefined;
-        import("../../services/notification.service.ts").then(({ notificationService }) => {
+        if (finalText) entry.lastAnswer = finalText;
+        // An AI-created session finishing is its creator's business, not the user's: no "Chat
+        // completed". A turn stopped by an error still says so.
+        if (!stopped && isSpawned(sessionId)) {
+          log.debug(`session=${sessionId} turn done: no notification for an AI-created session`);
+        } else import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
           const sessionTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
@@ -1301,6 +1436,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // Sent by `receiveApprovalRequest` — now, or once the request before it is answered.
         receiveApprovalRequest(sessionId, entry, ev);
         continue;
+      } else if (evType === "turn_started") {
+        rememberTurnBinding(entry, ev);
       } else if (evType === "session_migrated") {
         // CLI providers discover real session ID from CLI output — migrate WS tracking
         const newId = ev.newSessionId as string;
@@ -1310,6 +1447,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           // id keeps it in its own storage, so without this the conversation
           // becomes unreachable from that tab the moment the turn ends.
           setSessionMigratedTo(sessionId, newId);
+          pairCounter.renameSession(sessionId, newId);
+          collabSessionRenamed(sessionId, newId);
           // Stop spies tagged with old session ID before re-keying
           bashOutputSpy.stopAllForSession(sessionId);
           nestedSubagentSpy.stopAllForSession(sessionId);
@@ -1360,10 +1499,22 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           broadcast(sessionId, { type: "compact_status", status: "done" });
         }
         setPhase(sessionId, "idle");
+        // Waits on this session are judged, and a created session stops counting as starting.
+        collabTurnEnded(sessionId);
         // A renewal that landed while this turn ran left its subprocess holding a revoked
         // token; restart it now rather than let the next message open with a 401. Deferred so
         // the drop does not close the query from inside the loop that is reading it.
         setTimeout(() => dropStaleIdle(tokenRotationDeps), 0);
+        // A session no browser has joined is idle now, which is when its subprocess becomes
+        // releasable (`idleBetweenTurns`); re-timed here because the release scheduled at `done`
+        // ran while the turn was still in flight. Deferred for the same reason as above.
+        if (entry.socketless && entry.clients.size === 0) {
+          setTimeout(() => {
+            if (activeSessions.get(sessionId) !== entry || entry.clients.size > 0) return;
+            scheduleSubprocessRelease(sessionId);
+            enforceWarmIdleCap();
+          }, 0);
+        }
         // Reset heartbeat tracking for next turn
         firstEventReceived = false;
         startTime = Date.now();
@@ -1393,6 +1544,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     }
     setPhase(sessionId, "idle");
     clearPendingApproval(sessionId, entry, DB_APPROVAL_TURN_OVER);
+    collabTurnEnded(sessionId);
     // Cleanup bash output spies
     bashOutputSpy.stopAllForSession(sessionId);
     // SDK subprocess teardown kills its background children — reflect as stopped
@@ -1411,6 +1563,306 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     }
     log.info(`session=${sessionId} consumer loop ended`);
   }
+}
+
+/**
+ * A fresh registry entry for a session, with `client` attached, or socketless without one. A
+ * session with a stored permission mode (a created session inherits its creator's) starts in it:
+ * an entry is made again after cleanup or a restart, and without the stored mode the next turn
+ * would fall back to the provider's default, which is usually the most permissive one.
+ */
+function createSessionEntry(sessionId: string, providerId: string, projectPath: string | undefined, projectName: string | undefined, client?: ChatWsSocket): SessionEntry {
+  const storedMode = getStoredPermissionModeAnyAlias(sessionId);
+  const entry: SessionEntry = {
+    providerId,
+    clients: new Set(client ? [client] : []),
+    projectPath,
+    projectName,
+    pingIntervals: new Map(),
+    phase: "idle",
+    turnEvents: [],
+    isStreamingActive: false,
+    streamSeq: 0,
+    teamWatchers: new Map(),
+    teamNames: new Set(),
+    compactStatus: null,
+    model: getSessionModel(sessionId) ?? undefined,
+    ...(storedMode ? { permissionMode: storedMode } : {}),
+    ...(client ? {} : { socketless: true, idleSince: Date.now() }),
+  };
+  activeSessions.set(sessionId, entry);
+  if (client) setupClientPing(entry, client);
+  return entry;
+}
+
+/** A browser joined the session: from now on it is cleaned up as any browser-held session. */
+function attachClient(entry: SessionEntry, ws: ChatWsSocket): void {
+  entry.clients.add(ws);
+  entry.socketless = undefined;
+}
+
+/**
+ * The session's registry entry, created without a socket when there is none — the same entry a
+ * browser connection creates, so a browser that connects later finds the live turn, its replay
+ * and its phase exactly as if it had sent the message itself.
+ */
+export function ensureSessionEntry(sessionId: string, providerId: string, projectPath?: string, projectName?: string): SessionEntry {
+  const existing = activeSessions.get(sessionId);
+  if (existing) {
+    if (projectPath && !existing.projectPath) existing.projectPath = projectPath;
+    if (projectName && !existing.projectName) existing.projectName = projectName;
+    return existing;
+  }
+  const entry = createSessionEntry(sessionId, providerId, projectPath, projectName);
+  void detectImplicitTeam(sessionId);
+  return entry;
+}
+
+/** One submission at a time per session, browser and server alike (see `withSessionLock`). */
+const sessionLocks = new Map<string, Promise<void>>();
+
+/**
+ * Runs `fn` once every earlier submission to the same session has finished. Without it a browser
+ * message and a message from another session arriving together could both see no consumer
+ * running and start two runs of one session.
+ */
+export function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = sessionLocks.get(sessionId) ?? Promise.resolve();
+  const run = previous.then(fn, fn);
+  const tail = run.then(() => undefined, () => undefined);
+  sessionLocks.set(sessionId, tail);
+  void tail.then(() => { if (sessionLocks.get(sessionId) === tail) sessionLocks.delete(sessionId); });
+  return run;
+}
+
+/** Sends the message to every connected device but `except`, as the `user_message` echo. */
+export function echoUserMessage(entry: SessionEntry, content: string, opts: { except?: ChatWsSocket; clientMessageId?: string; imageCount: number }): void {
+  const echo = JSON.stringify({
+    type: "user_message",
+    content,
+    // Lets the other device tie this message to the `turn_started` it opens, too.
+    ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
+    imageCount: opts.imageCount,
+    timestamp: new Date().toISOString(),
+  });
+  for (const client of [...entry.clients]) {
+    if (client === opts.except) continue;
+    try { client.send(echo); } catch { evictClient(entry, client); }
+  }
+}
+
+export interface SubmitToSessionOpts {
+  /**
+   * `ws` for a browser send, `session` for one from another session's AI, or the door an
+   * in-process caller of the chat socket named (`scheduler` for a script schedule).
+   */
+  origin: TraceOrigin;
+  clientMessageId?: string;
+  images?: Array<{ data: string; mediaType: string }>;
+  imagePaths?: string[];
+  priority?: "now" | "next" | "later";
+  /** The socket that sent it; none for a server-originated message. */
+  sender?: ChatWsSocket;
+  /** When the message reached the server, for the time-to-first-event log. */
+  receivedAt: number;
+  /**
+   * Whether a pending approval or question is answered "no" by this message. A person typing
+   * instead of answering means that; a message from another session must never decide for the
+   * person, so it waits behind the approval instead.
+   */
+  supersedePendingApproval: boolean;
+  /**
+   * Draw the message on every device showing the session once the provider has it — for a
+   * message no device drew itself. Never before: a refused delivery must not leave a bubble.
+   */
+  echoOnHandOff?: boolean;
+}
+
+export type SubmitResult = { ok: true; delivered: SessionDelivery } | { ok: false; error: string };
+
+/**
+ * What a follow-up handed to the live stream right now will do. Codex says for itself whether
+ * it can steer; for Claude a turn waiting on the user or compacting reads its input stream only
+ * once that is over.
+ */
+function followUpDelivery(sessionId: string, entry: SessionEntry): SessionDelivery {
+  const provider = providerRegistry.get(entry.providerId) as { followUpDisposition?: (id: string) => SessionDelivery | null } | undefined;
+  const told = provider?.followUpDisposition?.(sessionId);
+  if (told) return told;
+  if (entry.phase === "idle") return "started";
+  if (entry.pendingApprovalEvent || entry.compactStatus === "compacting") return "queued";
+  return "inserted";
+}
+
+/** How long a server-originated message waits for a starting or ending consumer to settle. */
+const LIVE_STREAM_WAIT_MS = 30_000;
+const LIVE_STREAM_POLL_MS = 25;
+
+/**
+ * Waits until the session either has no consumer or has one whose provider stream is live — the
+ * two states in which a message is never dropped. False when neither came within the bound.
+ */
+async function awaitLiveStreamOrNone(sessionId: string, entry: SessionEntry): Promise<boolean> {
+  const deadline = Date.now() + LIVE_STREAM_WAIT_MS;
+  for (;;) {
+    if (!entry.isStreamingActive) return true;
+    const provider = providerRegistry.get(entry.providerId);
+    // A provider that cannot say keeps the browser path's behaviour: trust the consumer.
+    if (!provider?.hasStreamingSession || provider.hasStreamingSession(sessionId)) return true;
+    if (Date.now() >= deadline) return false;
+    await Bun.sleep(LIVE_STREAM_POLL_MS);
+  }
+}
+
+/**
+ * Hands an accepted message to the session: starts the persistent consumer when none is running
+ * (resuming the session first), or pushes it into the live stream. The one path a browser message
+ * and a server-originated one share; callers hold `withSessionLock`.
+ */
+export async function submitToSession(sessionId: string, entry: SessionEntry, content: string, opts: SubmitToSessionOpts): Promise<SubmitResult> {
+  const providerId = entry.providerId ?? providerRegistry.getDefault().id;
+
+  // User sent a message instead of answering a pending question/approval.
+  // The SDK generator is blocked inside canUseTool awaiting that approval, so
+  // it can't consume the pushed message — resolve the approval as skipped to
+  // unblock it, then the follow-up message flows through normally.
+  if (entry.pendingApprovalEvent && opts.supersedePendingApproval) {
+    const pendingReqId = entry.pendingApprovalEvent.requestId;
+    if (ppmApprovals.has(pendingReqId)) {
+      // PPM's own approval: settling it takes the card off every device (`ppmApprovalResolved`).
+      clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
+    } else {
+      chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin: "ws" });
+      broadcast(sessionId, {
+        type: "approval_resolved",
+        requestId: pendingReqId,
+        approved: false,
+        answers: null,
+      });
+      clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
+    }
+    log.info(`session=${sessionId} pending approval ${pendingReqId} auto-skipped (user sent a message)`);
+  }
+
+  // A push the provider has no stream for goes nowhere. That happens while a consumer is still
+  // opening its stream, or is on its way out. A server-originated message waits until either the
+  // stream is up or the consumer is gone, then pushes or starts.
+  if (opts.origin === "session" && !(await awaitLiveStreamOrNone(sessionId, entry))) {
+    return { ok: false, error: STILL_STARTING };
+  }
+  const handed = await handOffToSession(sessionId, entry, content, opts);
+  if (handed !== "stream_closed") return handed;
+  // The live stream closed between that check and the push (an idle release, the warm-idle cap,
+  // a token rotation — none of them waits for this lock), so the message went nowhere. Once the
+  // consumer has wound down it opens a turn of its own instead.
+  if (!(await awaitLiveStreamOrNone(sessionId, entry))) return { ok: false, error: STILL_STARTING };
+  const retried = await handOffToSession(sessionId, entry, content, opts);
+  return retried === "stream_closed"
+    ? { ok: false, error: "The session closed before it could take the message; try again in a moment" }
+    : retried;
+}
+
+const STILL_STARTING = "The session is still starting; try again in a moment";
+
+const echoHandedOff = (entry: SessionEntry, content: string, opts: SubmitToSessionOpts): void =>
+  echoUserMessage(entry, content, {
+    ...(opts.sender ? { except: opts.sender } : {}),
+    ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
+    imageCount: opts.images?.length ?? 0,
+  });
+
+/**
+ * Starts a turn with the message, or pushes it into the live stream. `stream_closed` when the
+ * provider had no stream left to take the push, so the message was not delivered.
+ */
+async function handOffToSession(sessionId: string, entry: SessionEntry, content: string, opts: SubmitToSessionOpts): Promise<SubmitResult | "stream_closed"> {
+  const providerId = entry.providerId ?? providerRegistry.getDefault().id;
+  const provider = providerRegistry.get(providerId);
+
+  // Store user message for reconnect replay (turn_events includes only assistant events)
+  entry.currentUserMessage = content;
+  entry.currentClientMessageId = opts.clientMessageId;
+  entry.lastSender = opts.sender;
+  // Only a message that opens a turn is timed; one typed mid-turn joins the running turn.
+  if (!entry.isStreamingActive || entry.phase === "idle") {
+    entry.turnRequestedAt = { at: opts.receivedAt, cold: !entry.isStreamingActive };
+  }
+
+  if (!entry.isStreamingActive) {
+    // First message or post-crash recovery: start persistent consumer
+    // Resume session in provider (can be slow on first call — sdkListSessions)
+    if (provider && "resumeSession" in provider) {
+      const t0 = Date.now();
+      try {
+        await (provider as any).resumeSession(sessionId);
+      } catch (e) {
+        // The message is dropped, as it was when this rejected out of the handler; this
+        // names the session and provider that the socket dispatcher's catch cannot.
+        log.error(`session=${sessionId} resume failed provider=${providerId}:`, e);
+        return { ok: false, error: `Could not resume the session: ${(e as Error).message}` };
+      }
+      const elapsed = Date.now() - t0;
+      if (elapsed > 500) {
+        log.warn(`session=${sessionId} resumeSession took ${elapsed}ms`);
+      }
+    }
+    if (entry.projectPath && provider && "ensureProjectPath" in provider) {
+      (provider as any).ensureProjectPath(sessionId, entry.projectPath);
+    }
+    // Nothing below can refuse the message; the consumer has not started, so no event precedes it.
+    if (opts.echoOnHandOff) echoHandedOff(entry, content, opts);
+
+    entry.turnEvents = [];
+    setPhase(sessionId, "initializing");
+
+    const permMode = entry.permissionMode;
+    const msgModel = entry.model;
+    let consumerStarted!: () => void;
+    const started = new Promise<void>((resolve) => { consumerStarted = resolve; });
+    entry.streamPromise = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        const run = startSessionConsumer(sessionId, providerId, content, permMode, opts.images, msgModel, opts.imagePaths, opts.clientMessageId, opts.origin);
+        // The consumer marks itself streaming before its first await: the lock may go now.
+        consumerStarted();
+        run.then(resolve, resolve);
+      }, 0);
+    });
+    await started;
+    return { ok: true, delivered: "started" };
+  }
+
+  // Follow-up: push into existing generator via provider
+  const delivered = followUpDelivery(sessionId, entry);
+  if (provider && "pushMessage" in provider) {
+    const effort = getSessionEffort(sessionId) ?? undefined;
+    const thinkingBudget = getSessionThinking(sessionId);
+    try {
+      const pushed = await chatService.pushMessage(providerId, sessionId, content, {
+        origin: opts.origin,
+        priority: opts.priority ?? "next",
+        images: opts.images,
+        imagePaths: opts.imagePaths,
+        ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
+        ...(entry.model ? { model: entry.model } : {}),
+        ...(effort ? { effort } : {}),
+        ...(thinkingBudget != null ? { thinkingBudget } : {}),
+      });
+      if (!pushed) return "stream_closed";
+      if (opts.echoOnHandOff) echoHandedOff(entry, content, opts);
+    } catch (e) {
+      log.error(`session=${sessionId} follow-up failed provider=${providerId}:`, e);
+      return { ok: false, error: `Could not deliver the message: ${(e as Error).message}` };
+    }
+  } else if (opts.origin === "session") {
+    return { ok: false, error: `Provider "${providerId}" cannot take a message while a turn is running` };
+  }
+  // Clear turn events for new turn display + transition phase. A superseded approval was settled
+  // before the push; one that filled during it is a live request and stays on screen. A message
+  // from another session leaves a pending approval where it is: it waits behind it.
+  entry.turnEvents = [];
+  setPhase(sessionId, "thinking");
+  log.debug(`session=${sessionId} follow-up pushed to generator`);
+  return { ok: true, delivered };
 }
 
 /**
@@ -1470,6 +1922,7 @@ export const chatWebSocket = {
         thinking: resolveSessionThinkingEnabled(sessionId),
         promptCache: promptCacheSnapshot(sessionId, existing),
         turnStop: existing.phase === "idle" ? lastTurnStop(sessionId) : null,
+        turnBindings: existing.turnBindings ?? [],
       }));
 
       // If actively streaming, send buffered turn events for reconnect sync
@@ -1478,7 +1931,7 @@ export const chatWebSocket = {
       }
 
       // NOW add to clients Set + set up ping
-      existing.clients.add(ws);
+      attachClient(existing, ws);
       setupClientPing(existing, ws);
 
       // A team created in an earlier turn (or before a server restart) leaves no
@@ -1502,23 +1955,7 @@ export const chatWebSocket = {
     }
 
     // New session entry
-    const newEntry: SessionEntry = {
-      providerId,
-      clients: new Set([ws]),
-      projectPath,
-      projectName,
-      pingIntervals: new Map(),
-      phase: "idle",
-      turnEvents: [],
-      isStreamingActive: false,
-      streamSeq: 0,
-      teamWatchers: new Map(),
-      teamNames: new Set(),
-      compactStatus: null,
-      model: getSessionModel(sessionId) ?? undefined,
-    };
-    activeSessions.set(sessionId, newEntry);
-    setupClientPing(newEntry, ws);
+    createSessionEntry(sessionId, providerId, projectPath, projectName, ws);
 
     // Resuming a session whose team already exists on disk (server restart, or a
     // team created many turns ago) — re-attach the watcher.
@@ -1591,6 +2028,32 @@ export const chatWebSocket = {
       parsed.replyTo = reply;
     }
 
+    // Turn references are checked here, where the browser's own fields arrive; only what passes
+    // is encoded into the message and granted to this session's AI (see recordTurnGrants below).
+    // An empty list is a composer with no chips, not a malformed reference.
+    if (parsed.type === "message" && Array.isArray(parsed.turnRefs) && parsed.turnRefs.length === 0) parsed.turnRefs = null;
+    if (parsed.type === "message" && parsed.turnRefs != null) {
+      const projectNames = new Set(configService.get("projects").map((p) => p.name));
+      const refs = validateTurnRefs(parsed.turnRefs, (name) => projectNames.has(name));
+      if (!refs) {
+        const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128 ? parsed.clientMessageId : undefined;
+        ws.send(JSON.stringify({ type: "message_rejected", clientMessageId, content: parsed.content, replyTo: parsed.replyTo ?? null, turnRefs: null, message: "Invalid turn reference" }));
+        return;
+      }
+      // A built-in command never reaches the AI, so references sent with it would be granted
+      // for nothing; handed back like a reply is, so the composer can show them again.
+      const slash = typeof parsed.content === "string" ? parsed.content.trimStart().match(/^\/(\S+)/) : null;
+      if (slash) {
+        const { isPpmHandled } = await import("../../services/slash-discovery/index.ts");
+        if (isPpmHandled(slash[1]!)) {
+          const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128 ? parsed.clientMessageId : undefined;
+          ws.send(JSON.stringify({ type: "message_rejected", clientMessageId, content: parsed.content, replyTo: parsed.replyTo ?? null, turnRefs: refs, message: "Remove turn references before running a built-in command" }));
+          return;
+        }
+      }
+      parsed.turnRefs = refs;
+    }
+
     let entry = activeSessions.get(sessionId);
 
     // Auto-create entry if missing — handles: message before open (Bun race), or session cleaned up
@@ -1603,21 +2066,13 @@ export const chatWebSocket = {
       const pid = resolveStoredProvider(sessionId) ?? providerRegistry.getDefault().id;
       let pp: string | undefined;
       if (pn) { try { pp = resolveProjectPath(pn); } catch { reportUnregisteredProject(sessionId, pn); } }
-      const newEntry: SessionEntry = {
-        providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
-        pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false, streamSeq: 0,
-        teamWatchers: new Map(), teamNames: new Set(), compactStatus: null,
-        model: getSessionModel(sessionId) ?? undefined,
-      };
-      activeSessions.set(sessionId, newEntry);
-      setupClientPing(newEntry, ws);
-      entry = newEntry;
+      entry = createSessionEntry(sessionId, pid, pp, pn, ws);
       log.info(`session=${sessionId} auto-created entry in message handler`);
     }
 
     // Ensure ws is in clients set
     if (!entry.clients.has(ws)) {
-      entry.clients.add(ws);
+      attachClient(entry, ws);
     }
 
     const providerId = entry.providerId ?? providerRegistry.getDefault().id;
@@ -1640,6 +2095,7 @@ export const chatWebSocket = {
         thinking: resolveSessionThinkingEnabled(sessionId),
         promptCache: promptCacheSnapshot(sessionId, entry),
         turnStop: entry.phase === "idle" ? lastTurnStop(sessionId) : null,
+        turnBindings: entry.turnBindings ?? [],
       }));
       if (entry.phase !== "idle") {
         sendTurnEvents(sessionId, ws);
@@ -1722,22 +2178,27 @@ export const chatWebSocket = {
       // run. Rewritten before the echo for the same reason as the alias above:
       // other devices and the stored transcript must show what actually ran.
       await rewriteProviderSkillSigil(parsed, providerId, sessionId);
-      parsed.content = encodeReply(parsed.content, parsed.replyTo);
+      // A person sent these references from an authenticated browser: the one moment this
+      // session's AI is granted their turns in other projects. Never derived from message text.
+      // An in-process caller (a script schedule) sets `ws.data.origin`; only a browser grants.
+      if (!ws.data.origin && parsed.turnRefs?.length) recordTurnGrants(sessionId, parsed.turnRefs);
+      // The typed text has its block markers broken, so the only blocks that decode are these.
+      parsed.content = encodeMessageBlocks(parsed.content, { turnRefs: parsed.turnRefs, replyTo: parsed.replyTo, ownProject: entry.projectName || undefined });
+      // The sender drew its own copy of this message before sending. Hand it the text as it now
+      // stands, so the copy matches the transcript, the echo and a replay byte for byte.
+      if (typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128) {
+        ws.send(JSON.stringify({ type: "message_accepted", clientMessageId: parsed.clientMessageId, content: parsed.content }));
+      }
+
+      // The browser's own id for this message, handed back on the `turn_started` it opens.
+      const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128
+        ? parsed.clientMessageId : undefined;
 
       // Echo the user message to OTHER connected clients (second device/tab).
       // The sender renders it optimistically; without this echo a live-connected
       // second device only sees the assistant stream for this turn.
       if (entry.clients.size > 1) {
-        const echo = JSON.stringify({
-          type: "user_message",
-          content: parsed.content,
-          imageCount: parsed.images?.length ?? 0,
-          timestamp: new Date().toISOString(),
-        });
-        for (const client of entry.clients) {
-          if (client === ws) continue;
-          try { client.send(echo); } catch { evictClient(entry, client); }
-        }
+        echoUserMessage(entry, parsed.content, { except: ws, clientMessageId, imageCount: parsed.images?.length ?? 0 });
       }
 
       // Intercept PPM-handled built-in commands (e.g. /skills, /version)
@@ -1756,99 +2217,28 @@ export const chatWebSocket = {
         }
       }
 
-      const provider = providerRegistry.get(providerId);
-
-      // User sent a message instead of answering a pending question/approval.
-      // The SDK generator is blocked inside canUseTool awaiting that approval, so
-      // it can't consume the pushed message — resolve the approval as skipped to
-      // unblock it, then the follow-up message flows through normally.
-      if (entry.pendingApprovalEvent) {
-        const pendingReqId = entry.pendingApprovalEvent.requestId;
-        if (dbApprovalBroker.has(pendingReqId)) {
-          // PPM's own approval: settling it takes the card off every device (`dbApprovalResolved`).
-          dbApprovalBroker.cancelSession(sessionId, "The user sent a message instead of approving, so nothing ran.");
-        } else {
-          chatService.resolveApproval(providerId, sessionId, pendingReqId, false, undefined, { reason: "superseded_by_message", origin: "ws" });
-          broadcast(sessionId, {
-            type: "approval_resolved",
-            requestId: pendingReqId,
-            approved: false,
-            answers: null,
-          });
-          // Also declines those still in line: they block the provider just the same.
-          clearPendingApproval(sessionId, entry, "The user sent a message instead of approving, so nothing ran.");
-        }
-        log.info(`session=${sessionId} pending approval ${pendingReqId} auto-skipped (user sent a message)`);
+      // An in-process caller (a script schedule) reaches this handler with `ws.data.origin` set;
+      // a browser socket leaves it unset. Only a person writing resets the session's pair limits
+      // and ends its waits: a script posting into a session that orchestrates others must not
+      // cancel its `send_to_session` wait, nor let two AI sessions loop past the limit the user set.
+      if (!ws.data.origin) {
+        // Every pair of sessions this one is in may message each other automatically again.
+        pairCounter.resetForSession(sessionId);
+        // The person wrote to a session waiting on another: its wait ends, and it reads the person.
+        collabWaits.cancelWaiter(sessionId);
       }
 
-      // Store user message for reconnect replay (turn_events includes only assistant events)
-      entry.currentUserMessage = parsed.content;
-      entry.lastSender = ws;
-      // Only a message that opens a turn is timed; one typed mid-turn joins the running turn.
-      if (!entry.isStreamingActive || entry.phase === "idle") {
-        entry.turnRequestedAt = { at: messageReceivedAt, cold: !entry.isStreamingActive };
-      }
-
-      if (!entry.isStreamingActive) {
-        // First message or post-crash recovery: start persistent consumer
-        // Resume session in provider (can be slow on first call — sdkListSessions)
-        if (provider && "resumeSession" in provider) {
-          const t0 = Date.now();
-          try {
-            await (provider as any).resumeSession(sessionId);
-          } catch (e) {
-            // The message is dropped, as it was when this rejected out of the handler; this
-            // names the session and provider that the socket dispatcher's catch cannot.
-            log.error(`session=${sessionId} resume failed provider=${providerId}:`, e);
-            return;
-          }
-          const elapsed = Date.now() - t0;
-          if (elapsed > 500) {
-            log.warn(`session=${sessionId} resumeSession took ${elapsed}ms`);
-          }
-        }
-        if (entry.projectPath && provider && "ensureProjectPath" in provider) {
-          (provider as any).ensureProjectPath(sessionId, entry.projectPath);
-        }
-
-        entry.turnEvents = [];
-        setPhase(sessionId, "initializing");
-
-        const permMode = entry.permissionMode;
-        const msgModel = entry.model;
-        const msgImages = parsed.type === "message" ? parsed.images : undefined;
-        const msgImagePaths = parsed.type === "message" ? parsed.imagePaths : undefined;
-        entry.streamPromise = new Promise<void>((resolve) => {
-          setTimeout(() => {
-            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages, msgModel, msgImagePaths, ws.data.origin).then(resolve, resolve);
-          }, 0);
-        });
-      } else {
-        // Follow-up: push into existing generator via provider
-        if (provider && "pushMessage" in provider && parsed.type === "message") {
-          const effort = getSessionEffort(sessionId) ?? undefined;
-          const thinkingBudget = getSessionThinking(sessionId);
-          try {
-            await chatService.pushMessage(providerId, sessionId, parsed.content, {
-              origin: ws.data.origin ?? "ws",
-              priority: parsed.priority ?? 'next',
-              images: parsed.images,
-              imagePaths: parsed.imagePaths,
-              ...(entry.model ? { model: entry.model } : {}),
-              ...(effort ? { effort } : {}),
-              ...(thinkingBudget != null ? { thinkingBudget } : {}),
-            });
-          } catch (e) {
-            log.error(`session=${sessionId} follow-up failed provider=${providerId}:`, e);
-            return;
-          }
-        }
-        // Clear turn events for new turn display + transition phase. The approval slot was settled
-        // before the push; one that filled during it is a live request and stays on screen.
-        entry.turnEvents = [];
-        setPhase(sessionId, "thinking");
-        log.debug(`session=${sessionId} follow-up pushed to generator`);
-      }
+      const submitting = entry;
+      await withSessionLock(sessionId, () => submitToSession(sessionId, submitting, parsed.content, {
+        origin: ws.data.origin ?? "ws",
+        clientMessageId,
+        images: parsed.images,
+        imagePaths: parsed.imagePaths,
+        priority: parsed.priority ?? "next",
+        sender: ws,
+        receivedAt: messageReceivedAt,
+        supersedePendingApproval: true,
+      }));
     } else if (parsed.type === "set_model") {
       // Persist per-session model override. If an idle subprocess is alive,
       // abort it so the next message recreates the query with the new model
@@ -1937,7 +2327,9 @@ export const chatWebSocket = {
       // Fully teardown streaming session — user must resume to continue
       const phase = entry?.phase ?? "unknown";
       log.info(`session=${sessionId} WS cancel received from FE (phase=${phase})`);
-      dbApprovalBroker.cancelSession(sessionId, "The user stopped the chat before approving, so nothing ran.");
+      ppmApprovals.cancelSession(sessionId, "The user stopped the chat before approving, so nothing ran.");
+      // Stop covers this session only: its waits end, the sessions it waits for run on.
+      collabWaits.cancelWaiter(sessionId);
       chatService.abortQuery(providerId, sessionId, "ws_cancel", ws.data.origin ?? "ws");
     } else if (parsed.type === "kill_background_shell") {
       // Kill via the AI: enqueue an instruction so the model calls KillShell.
@@ -1989,8 +2381,8 @@ export const chatWebSocket = {
       }
       log.info(`session=${sessionId} kill_background_shell requested shellId=${shellId}`);
     } else if (parsed.type === "approval_response") {
-      // PPM's database approvals are answered over HTTP with PPM's password, never here.
-      if (dbApprovalBroker.has(parsed.requestId)) return;
+      // PPM's own approvals (database changes, session tools' cards) are answered over HTTP, never here.
+      if (ppmApprovals.has(parsed.requestId)) return;
       chatService.resolveApproval(providerId, sessionId, parsed.requestId, parsed.approved, (parsed as any).data, { origin: "ws" });
       if (entry) {
         // Enrich the buffered approval_request with response data so replayed

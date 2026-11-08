@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { neutralizeFences, neutralizeTags, REVIEWER_UNTRUSTED_HEADER, UNTRUSTED_HEADER } from "../../../src/shared/untrusted-text.ts";
-import { extractSystemTags, parseUserMessage } from "../../../src/web/components/chat/user-message-parse.ts";
+import { extractSystemTags, parseUserMessage } from "../../../src/shared/user-message-parse.ts";
 
 const ZWSP = "​";
 

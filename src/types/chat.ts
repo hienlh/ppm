@@ -49,6 +49,17 @@ export interface SendMessageOpts {
    * Settings → Tools, and never for a design session. Server-built like `designMcp`.
    */
   dbToolsMcp?: { url: string; token: string };
+  /**
+   * The session tools' MCP endpoint (`create_session`, `send_to_session`, `session_status`) for
+   * this session, present while one of them is on in Settings → Tools, and never for a design
+   * session. Server-built like `designMcp`.
+   */
+  sessionCollabMcp?: { url: string; token: string };
+  /**
+   * The browser's id for the message being sent (its optimistic bubble), opaque to the provider.
+   * Handed back on `turn_started` so the browser learns which turn that message opened.
+   */
+  clientMessageId?: string;
 }
 
 export interface AIProvider {
@@ -175,6 +186,10 @@ export interface SessionInfo {
   tag?: { id: number; name: string; color: string } | null;
   /** Design this session belongs to; null/absent for an ordinary chat. */
   designSlug?: string | null;
+  /** The session whose AI created this one; null/absent when a person started it. */
+  spawnedBy?: string | null;
+  /** That session's title, when PPM has one for it. */
+  parentTitle?: string | null;
 }
 
 /**
@@ -324,7 +339,13 @@ export type ChatEvent =
   | { type: "team_detected"; teamName: string }
   | { type: "team_updated"; teamName: string; team: unknown }
   | { type: "team_inbox"; teamName: string; agent: string; messages: unknown[] }
-  | { type: "session_migrated"; oldSessionId: string; newSessionId: string };
+  | { type: "session_migrated"; oldSessionId: string; newSessionId: string }
+  /**
+   * A message the browser sent has opened a turn (or, for a steered Codex message, joined the
+   * running one). `turnId` is the id the turn index gives that turn; `clientMessageId` is the
+   * sender's own id for the message, absent for a turn no browser sent.
+   */
+  | { type: "turn_started"; turnId: string; clientMessageId?: string };
 
 export type ToolApprovalHandler = (
   tool: string,
@@ -349,6 +370,30 @@ export interface ChatMessage {
    * so the divider above it can say what the compaction cost and saved.
    */
   compaction?: CompactionInfo;
+  /**
+   * The turn this message belongs to: the id of the prompt that opened it (Claude: that record's
+   * `promptId`, or `u:<uuid>` when it has none; Codex: the native `turn_id`). Stamped by the
+   * history paths from the session's turn index (`session-turns/`).
+   */
+  turnId?: string;
+  /** That turn's number, counted from the start of the session — compacted segments included. */
+  turnN?: number;
+  /**
+   * Browser only: the id the sending browser gave a live user message (`clientMessageId`), which
+   * `turn_started` hands back with the turn it opened. Never in history.
+   */
+  clientId?: string;
+  /**
+   * A copy of earlier history a Codex compaction wrote back into the thread, not something
+   * anyone said at that point. Never a turn, never numbered.
+   */
+  synthetic?: boolean;
+  /**
+   * A user record the CLI wrote rather than the person: a meta record, a compaction summary, a
+   * transcript-only copy, a task notification. Read from the record's own flags, which the text
+   * alone does not show, so it is never mistaken for a prompt (`shared/user-prompt-kind.ts`).
+   */
+  notPrompt?: boolean;
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { ReplyReference } from "../shared/chat-reply.ts";
+import type { TurnReference } from "../shared/chat-turn-ref.ts";
 import type { TabOpenRequest, TabOpenResult } from "../shared/tab-open-protocol.ts";
 /** Standard API response envelope — backend wraps all responses in this */
 export interface ApiResponse<T = unknown> {
@@ -25,7 +26,9 @@ export type TerminalWsMessage =
 
 /** WebSocket message types (chat) */
 export type ChatWsClientMessage =
-  | { type: "message"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>;
+  | { type: "message"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null;
+  /** Turns of other sessions the message points at; the server validates them and grants their read. */
+  turnRefs?: TurnReference[] | null; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>;
   /** Uploaded paths for the same images, for providers that take a file not a payload. */
   imagePaths?: string[]; model?: string; effort?: string; thinking?: boolean }
   | { type: "cancel" }
@@ -83,8 +86,13 @@ export type ChatWsServerMessage =
   /** The turn that just ended was ended by an error. Sent just before its `done`. */
   | { type: "turn_stop"; stop: import("../shared/turn-stop").TurnStop }
   | { type: "turn_events"; events: unknown[]; streamSeq?: number; truncated?: boolean }
-  | { type: "message_rejected"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; message: string }
-  | { type: "user_message"; content: string; imageCount?: number; timestamp?: string }
+  | { type: "message_rejected"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; turnRefs?: TurnReference[] | null; message: string }
+  /**
+   * A message this socket sent was taken: `content` is the text as stored and as the provider
+   * gets it (blocks encoded, markers in the typed text broken). Sent to the sender only.
+   */
+  | { type: "message_accepted"; clientMessageId: string; content: string }
+  | { type: "user_message"; content: string; clientMessageId?: string; imageCount?: number; timestamp?: string }
   /** An AI tab tool asks this device to open a tab. */
   | TabOpenRequest
   | { type: "title_updated"; title: string }

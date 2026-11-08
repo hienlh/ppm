@@ -35,6 +35,12 @@ configService.set("host", "127.0.0.1");
 configService.set("port", port);
 configService.set("ai", { default_provider: "tour-test", new_chat_provider_mode: "default", share_provider_context: false,
   providers: { "tour-test": { type: "mock" } } });
+// These captures are of the basic tour: answer the new-feature question up front, or its part takes
+// the tour's panel as soon as a project exists and again once the tour finishes
+// (tests/e2e/feature-intros-e2e.mjs covers that part).
+const { answerFeatureIntro } = await import("../../../src/services/feature-intros.service");
+const { FEATURE_INTROS } = await import("../../../src/shared/feature-intros");
+for (const intro of FEATURE_INTROS) answerFeatureIntro(intro.id, "on");
 
 const { MockProvider } = await import("../../../src/providers/mock-provider");
 const { providerRegistry } = await import("../../../src/providers/registry");
