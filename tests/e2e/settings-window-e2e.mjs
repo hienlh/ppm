@@ -842,14 +842,15 @@ async function main() {
       throw new Error(`the usage ring never laid out: ${why} | layout=${layout}`);
     }
 
-    // The ring shows the busier window's figure ("52%", or "--%" before any reading) and
-    // spells out both windows in its title ("<account> · 5h 47% · Week 52%").
+    // The usage part shows one labelled figure per window ("5h 47%", "Wk 52%") and spells
+    // them out in its title ("<account> · 5h 47% · Week 52%").
     const ring = await cdp.evaluate(`(() => {
       const el = ${visibleOne(USAGE_RING)};
       return { text: el.textContent.trim(), title: el.getAttribute("title") };
     })()`);
     chatChipText = ring.title;
-    if (!/^(\d+|--)%$/.test(ring.text)) throw new Error(`the ring is not showing a usage figure: ${JSON.stringify(ring.text)}`);
+    // One labelled figure per window ("5h 47%", "Wk 52%"); a window with no figure is not drawn.
+    if (!/^(5h\s*\d+%)?\s*(Wk\s*\d+%)?$/.test(ring.text) || !/\d+%/.test(ring.text)) throw new Error(`the ring is not showing a usage figure: ${JSON.stringify(ring.text)}`);
     if (!/5h .* · Week /.test(ring.title ?? "")) throw new Error(`the ring's title does not spell out both windows: ${JSON.stringify(ring.title)}`);
 
     await openSwitchAccount(cdp);

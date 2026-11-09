@@ -1414,7 +1414,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           No rules between them. The row is the popovers' anchor, so it is `relative`. */}
       <div className="shrink-0 px-2 pb-1.5 md:px-3 md:pb-3" data-chat-footer="">
         <div className="relative flex min-w-0 items-center gap-2 px-0.5 py-2 max-md:py-1.5" data-chat-context-row="">
-          {/* Padded so the chips' focus rings and widened touch areas (9px past a 28px phone chip,
+          {/* Padded so the chips' focus rings and widened touch areas (10px past a 26px phone chip,
               see footer-chip.ts) are not cut by the clip. */}
           <div className="-my-2.5 flex min-w-0 items-center gap-1.5 overflow-hidden py-2.5 @max-[420px]/chat:gap-1 max-md:gap-1">
             <ActivityChip
@@ -1459,32 +1459,35 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           />
         </div>
 
-        {/* Pickers (in-flow, above input — only one visible at a time) */}
-        <SlashCommandPicker
-          items={slashItems}
-          filter={slashFilter}
-          onSelect={handleSlashSelect}
-          onClose={handleSlashClose}
-          visible={showSlashPicker}
-          recentNames={slashRecentNames}
-          projectName={projectName}
-        />
-        <FilePicker
-          items={indexRemote ? remoteFileItems : fileItems}
-          filter={fileFilter}
-          onSelect={handleFileSelect}
-          onClose={handleFileClose}
-          visible={showFilePicker}
-        />
-        {disambiguateItems && (
-          <FilePicker
-            items={disambiguateItems}
-            filter=""
-            onSelect={handleDisambiguateSelect}
-            onClose={() => setDisambiguateItems(null)}
-            visible={true}
+        {/* Pickers (only one visible at a time): they float above the composer, over the context
+            row, from this zero-height box — the composer's own width, sitting right on top of it. */}
+        <div className="relative" data-composer-pickers="">
+          <SlashCommandPicker
+            items={slashItems}
+            filter={slashFilter}
+            onSelect={handleSlashSelect}
+            onClose={handleSlashClose}
+            visible={showSlashPicker}
+            recentNames={slashRecentNames}
+            projectName={projectName}
           />
-        )}
+          <FilePicker
+            items={indexRemote ? remoteFileItems : fileItems}
+            filter={fileFilter}
+            onSelect={handleFileSelect}
+            onClose={handleFileClose}
+            visible={showFilePicker}
+          />
+          {disambiguateItems && (
+            <FilePicker
+              items={disambiguateItems}
+              filter=""
+              onSelect={handleDisambiguateSelect}
+              onClose={() => setDisambiguateItems(null)}
+              visible={true}
+            />
+          )}
+        </div>
 
         {/* Editing indicator — makes the armed edit state visible + cancellable */}
         {editFork && (

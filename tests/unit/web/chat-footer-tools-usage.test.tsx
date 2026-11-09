@@ -1,7 +1,8 @@
 /**
- * The usage ring in the chat footer's right end shows the highest of 5h/week percent,
- * labeled with the account that put it there. Other accounts' figures are never shown, and with
- * no figure for this chat's account there is no ring at all rather than a "--%".
+ * The chat footer's right end is one chip-shaped group: a labelled ring per usage window
+ * ("5h 47%", "Wk 52%"), each coloured on its own, then History and ···. Other accounts' figures
+ * are never shown; a window with no figure is not drawn, and with no figure at all there is no
+ * usage part — and no divider, which belongs to it.
  */
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -59,5 +60,39 @@ describe("session account usage chip", () => {
     />);
     expect(html).toContain("Developers");
     expect(html).toContain("82%");
+  });
+
+  test("labels each window and colours it on its own", () => {
+    const html = renderToStaticMarkup(<ChatFooterTools
+      projectName="test"
+      providerId="claude"
+      usageInfo={{ activeAccountId: "a", fiveHour: 0.47, sevenDay: 0.93 }}
+    />);
+    const h5 = html.slice(html.indexOf('data-usage-window="5h"'));
+    const wk = html.slice(html.indexOf('data-usage-window="Wk"'));
+    expect(h5).toMatch(/^data-usage-window="5h"[^]*?>5h<\/span><span class="[^"]*text-text-2[^"]*">47%/);
+    expect(wk).toMatch(/^data-usage-window="Wk"[^]*?>Wk<\/span><span class="[^"]*text-error[^"]*">93%/);
+    expect(html).toContain("data-usage-divider");
+  });
+
+  test("a window with no figure hides alone", () => {
+    const html = renderToStaticMarkup(<ChatFooterTools projectName="test" providerId="claude" usageInfo={{ activeAccountId: "a", sevenDay: 0.52 }} />);
+    expect(html).not.toContain('data-usage-window="5h"');
+    expect(html).toContain('data-usage-window="Wk"');
+    expect(html).toContain("data-usage-divider");
+  });
+
+  test("no usage, no divider: History follows nothing", () => {
+    const html = renderToStaticMarkup(<ChatFooterTools projectName="test" providerId="claude" usageInfo={{}} />);
+    expect(html).toContain("data-footer-cluster");
+    expect(html).not.toContain("data-usage-divider");
+  });
+
+  test("on a narrow chat with connection trouble the usage and its divider give way together", () => {
+    const html = renderToStaticMarkup(<ChatFooterTools projectName="test" providerId="claude" connectionTrouble usageInfo={{ activeAccountId: "a", fiveHour: 0.2 }} />);
+    const divider = html.match(/<span[^>]*data-usage-divider[^>]*>/)?.[0] ?? "";
+    const usage = html.match(/<button[^>]*data-usage-ring[^>]*>/)?.[0] ?? "";
+    expect(divider).toContain("@max-[420px]/chat:hidden");
+    expect(usage).toContain("@max-[420px]/chat:hidden");
   });
 });

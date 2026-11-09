@@ -557,7 +557,7 @@ html, body {
 }
 [data-chat-list] + [data-chat-footer] {
   position: relative;
-  z-index: 1;
+  z-index: 20; /* above the scroll buttons (z-10), which its pickers and popovers cover */
   margin-top: -12px;
 }
 [data-chat-list] + [data-chat-footer] > [data-chat-context-row] {

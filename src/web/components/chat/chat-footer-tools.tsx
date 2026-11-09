@@ -1,6 +1,7 @@
 /**
- * The right end of the chat footer's context row: the usage ring with the busier window's figure,
- * History, and the ··· menu. The ring opens the same menu as ···, which holds the account serving
+ * The right end of the chat footer's context row, one chip-shaped group: a labelled ring per usage
+ * window ("5h 47%", "Wk 52%"), History, and the ··· menu. The rings open the same menu as ···,
+ * which holds the account serving
  * this chat (and a drill-in to switch it), AI settings, Team activity, Reload messages and the
  * folded session actions.
  *
@@ -25,7 +26,7 @@ import { AddAccountDialog } from "@/components/settings/accounts/account-add-dia
 import { CodexSignInAgainDialog } from "@/components/settings/accounts/codex-sign-in-again-dialog";
 import { openLogs } from "@/components/logs/open-logs";
 import { useSwitchAccounts } from "@/hooks/use-switch-accounts";
-import { highestPct, percent } from "@/lib/chat-account-switch";
+import { percent } from "@/lib/chat-account-switch";
 import type { SessionInfo, UsageInfo } from "../../../types/chat";
 import type { TeamMessageItem } from "@/hooks/use-chat";
 import { SessionDebugDialog } from "./session-debug-dialog";
@@ -34,8 +35,8 @@ import { ChatHistoryPanel } from "./chat-history-panel";
 import { ChatMoreMenu } from "./chat-more-menu";
 import { SwitchAccountView } from "./switch-account-view";
 import { FooterPopover, FooterPopoverHeader } from "./footer-popover";
-import { FOOTER_GHOST } from "./footer-chip";
-import { UsageRing, usagePctClass } from "./usage-meters";
+import { FOOTER_CLUSTER, FOOTER_GHOST } from "./footer-chip";
+import { UsageWindow } from "./usage-meters";
 
 type Panel = "history" | "more" | "config" | "team" | null;
 
@@ -124,32 +125,43 @@ export function ChatFooterTools({
   const listed = switcher.accounts.find((a) => a.id === currentId);
   const fiveHourPct = usageMatches ? percent(usageInfo.fiveHour) : listed?.fiveHourPct ?? null;
   const weekPct = usageMatches ? percent(usageInfo.sevenDay) : listed?.weekPct ?? null;
-  const ringPct = highestPct({ fiveHourPct, weekPct });
+  const hasUsage = fiveHourPct != null || weekPct != null;
+  // Reconnecting or offline on a narrow chat: the figures are stale, and their room goes to the
+  // connection chip.
+  const usageHidden = connectionTrouble ? "@max-[420px]/chat:hidden max-md:hidden" : undefined;
   // With no session, the usage endpoint answers with whichever account ran last across every
   // chat; the claim (and, once a turn runs, the account the stream reports) is this chat's own.
   const accountLabel = pickedAccountLabel ?? (usageMatches ? usageInfo.activeAccountLabel : null) ?? listed?.label ?? null;
   const plan = listed?.plan ?? null;
   const who = `${accountLabel ?? "Default account"} · ${providerName}${plan ? ` ${plan}` : ""}`;
-  const ringTitle = `${accountLabel ? `${accountLabel} · ` : ""}5h ${fiveHourPct != null ? `${fiveHourPct}%` : "--"} · Week ${weekPct != null ? `${weekPct}%` : "--"}`;
+  const ringTitle = [
+    accountLabel,
+    fiveHourPct != null ? `5h ${fiveHourPct}%` : null,
+    weekPct != null ? `Week ${weekPct}%` : null,
+  ].filter(Boolean).join(" · ");
 
   return (
     <>
-      <div ref={clusterRef} className="ml-auto flex shrink-0 items-center gap-0.5">
-        {/* No figure yet, no ring: a "--%" says nothing and takes a slot. */}
-        {hasAccounts && ringPct != null && (
-          <button
-            type="button"
-            onClick={() => openMore("ring")}
-            aria-expanded={panel === "more" && moreFrom === "ring"}
-            aria-haspopup="dialog"
-            title={ringTitle}
-            aria-label={`Usage: ${ringTitle}`}
-            data-usage-ring=""
-            className={cn(FOOTER_GHOST, connectionTrouble && "@max-[420px]/chat:hidden max-md:hidden")}
-          >
-            <UsageRing pct={ringPct} />
-            <span className={cn("font-medium tabular-nums", usagePctClass(ringPct))}>{ringPct}%</span>
-          </button>
+      <div ref={clusterRef} className={FOOTER_CLUSTER} data-footer-cluster="">
+        {/* No figure yet, no usage: a "--%" says nothing and takes a slot. The divider belongs to
+            the usage part and lives in its branch, so whatever hides one hides both. */}
+        {hasAccounts && hasUsage && (
+          <>
+            <button
+              type="button"
+              onClick={() => openMore("ring")}
+              aria-expanded={panel === "more" && moreFrom === "ring"}
+              aria-haspopup="dialog"
+              title={ringTitle}
+              aria-label={`Usage: ${ringTitle}`}
+              data-usage-ring=""
+              className={cn(FOOTER_GHOST, "gap-2 px-2 @max-[420px]/chat:gap-1.5 @max-[420px]/chat:px-1 max-md:gap-1.5 max-md:px-1", usageHidden)}
+            >
+              <UsageWindow label="5h" pct={fiveHourPct} />
+              <UsageWindow label="Wk" pct={weekPct} />
+            </button>
+            <span aria-hidden="true" data-usage-divider="" className={cn("mx-0.5 h-3.5 w-px shrink-0 bg-border", usageHidden)} />
+          </>
         )}
         <button
           type="button"

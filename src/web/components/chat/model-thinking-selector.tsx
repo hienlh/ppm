@@ -189,7 +189,7 @@ export function ModelThinkingSelector({
           if (!disabled) setOpen((v) => !v);
         }}
         data-model-chip=""
-        className="inline-flex h-[30px] min-w-0 max-w-full items-center gap-1.5 whitespace-nowrap rounded-full px-[9px] text-[11.5px] text-primary transition-[background-color,transform] duration-150 motion-safe:active:scale-[0.97] can-hover:hover:bg-surface-hover disabled:cursor-default disabled:active:scale-100"
+        className="inline-flex h-[30px] min-w-0 max-w-full items-center gap-1.5 whitespace-nowrap rounded-full px-[9px] text-[11.5px] text-primary @max-[420px]/chat:gap-1 @max-[420px]/chat:px-1.5 max-md:gap-1 max-md:px-1.5 transition-[background-color,transform] duration-150 motion-safe:active:scale-[0.97] can-hover:hover:bg-surface-hover disabled:cursor-default disabled:active:scale-100"
         aria-label={`Model ${modelDisplay}, effort ${shown.level ? effortLabel(shown.level) : "none"}${notice ? ` (${notice.title})` : ""}${thinking ? ", thinking on" : ""}`}
         title={disabled ? "Can't change while running" : notice ? `${providerName} · ${chipText}\n${notice.title}:${noticeText(notice.detail)}` : `${providerName} · ${chipText}`}
       >
@@ -200,7 +200,8 @@ export function ModelThinkingSelector({
         </span>
         {notice && <TriangleAlert className="size-3 shrink-0 text-warning" />}
         {thinking && <Brain className="size-3 shrink-0" />}
-        <ChevronDown className="size-3 shrink-0 text-text-3" />
+        {/* Narrow: the chevron gives its room to the model name; the chip still opens the picker. */}
+        <ChevronDown className="size-3 shrink-0 text-text-3 @max-[420px]/chat:hidden max-md:hidden" />
       </button>
 
       {open && !disabled && (

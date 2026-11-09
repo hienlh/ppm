@@ -226,12 +226,16 @@ function AccountCard({ account: a, active, picking, onPick }: {
   );
 }
 
+/**
+ * Label and figure take fixed columns, so every bar on every card is the same length: sized by
+ * their own text, "5h" left a longer bar than "Week", and "100%" a shorter one than "8%".
+ */
 function Meter({ label, pct, dim }: { label: string; pct: number | null; dim: boolean }) {
   return (
-    <span className="grid grid-cols-[auto_1fr_auto] items-center gap-1.5 whitespace-nowrap text-[11px] text-text-3">
+    <span className="grid grid-cols-[30px_minmax(0,1fr)_32px] items-center gap-1.5 whitespace-nowrap text-[11px] text-text-3">
       <span>{label}</span>
       <UsageTrack pct={pct} />
-      <span className={cn("tabular-nums", dim ? "text-text-3" : "text-text-2")}>{pct != null ? `${pct}%` : "--%"}</span>
+      <span className={cn("text-right tabular-nums", dim ? "text-text-3" : "text-text-2")}>{pct != null ? `${pct}%` : "--%"}</span>
     </span>
   );
 }

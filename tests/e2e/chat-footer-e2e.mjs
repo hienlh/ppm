@@ -12,7 +12,7 @@
  *
  * Screenshots go to PPM_FOOTER_SHOTS (default: the harness's artifacts directory).
  */
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createHtmlPreviewHarness } from "./fixtures/html-preview-harness.mjs";
 import { bootProject, closeAllTabs, instantInstrumentation, openChatTab, until } from "./fixtures/new-chat-instant-helpers.mjs";
@@ -25,6 +25,11 @@ const check = (ok, label, detail = "") => { console.log(`${ok ? "PASS" : "FAIL"}
 const harness = await createHtmlPreviewHarness({ serverScript: "tests/e2e/fixtures/chat-footer-server.ts" });
 const SHOTS = resolve(process.env.PPM_FOOTER_SHOTS ?? join(harness.artifacts, "chat-footer"));
 await mkdir(SHOTS, { recursive: true });
+// Files for the "@" picker to find (the scratch project starts empty).
+for (const f of ["src/web/components/chat/chat-tab.tsx", "src/web/components/chat/chat-history-panel.tsx", "src/web/hooks/use-chat.ts", "tests/unit/web/chat-tab-reply.test.tsx", "README.md"]) {
+  await mkdir(join(harness.project, f, ".."), { recursive: true });
+  await writeFile(join(harness.project, f), "// fixture\n");
+}
 
 // ---------------------------------------------------------------- stubbed data
 const PARENT = "aaaaaaaa-0000-4000-8000-0000000000aa";
@@ -173,7 +178,7 @@ const shot = async (page, tabId, name) => {
   } else {
     // The chat pane from the top of the open popover (or a little above the row) to the composer.
     const box = await footer(page, tabId).boundingBox();
-    const pop = await page.evaluate((r) => document.querySelector(`${r} [data-footer-popover]`)?.getBoundingClientRect().top ?? null, root(tabId));
+    const pop = await page.evaluate((r) => document.querySelector(`${r} [data-footer-popover], ${r} [data-composer-picker="floating"]`)?.getBoundingClientRect().top ?? null, root(tabId));
     const top = Math.max(0, Math.min(box.y - 40, pop != null ? pop - 12 : Infinity));
     await page.screenshot({ path: join(SHOTS, `${name}.png`), clip: { x: Math.max(0, box.x - 8), y: top, width: Math.min(vp.width - box.x + 8, box.width + 16), height: box.y + box.height + 8 - top } });
   }
@@ -274,8 +279,49 @@ async function scenarios(phone) {
     check((await inFooter(page, tabId, "[data-activity-chip]").innerText()).includes("SESSION") === false, `${tag}: no SESSION badge`);
     check(await inFooter(page, tabId, '[data-prompt-cache="cold"]').count() === 0, `${tag}: warm cache shows nothing`);
     const ringText = await inFooter(page, tabId, "[data-usage-ring]").innerText();
-    check(ringText.includes("52%"), `${tag}: usage ring shows the busier window`, ringText);
+    check(/5h\s*47%/.test(ringText) && /Wk\s*52%/.test(ringText), `${tag}: one labelled ring per usage window`, ringText.replace(/\s+/g, " "));
+    // The right cluster is one chip: the left chips' background, border, radius and height.
+    const look = await page.evaluate((r) => {
+      const pick = (el) => { const s = getComputedStyle(el); return { h: Math.round(el.getBoundingClientRect().height), bg: s.backgroundColor, border: s.borderTopColor, radius: s.borderTopLeftRadius }; };
+      return { cluster: pick(document.querySelector(`${r} [data-footer-cluster]`)), chip: pick(document.querySelector(`${r} [data-activity-chip]`)) };
+    }, root(tabId));
+    check(JSON.stringify(look.cluster) === JSON.stringify(look.chip), `${tag}: right cluster matches the left chips`, JSON.stringify(look));
+    check(await inFooter(page, tabId, "[data-usage-divider]").isVisible(), `${tag}: divider between usage and the buttons`);
     await shot(page, tabId, `${tag}-idle`);
+
+    // "/" and "@": a popover floating above the composer — its width, 6px above it, over the
+    // context row without moving it.
+    {
+      const input = page.locator(`${root(tabId)} textarea:visible`).first();
+      const rowTop = async () => (await inFooter(page, tabId, "[data-chat-context-row]").boundingBox()).y;
+      const before = await rowTop();
+      for (const [text, name] of [["/", "slash"], ["@chat", "at"]]) {
+        await input.fill("");
+        await input.pressSequentially(text);
+        const picker = page.locator(`${root(tabId)} [data-composer-picker="floating"]:visible`);
+        await picker.first().waitFor({ timeout: 10000 });
+        await sleep(250);
+        const geo = await page.evaluate((r) => {
+          const p = [...document.querySelectorAll(`${r} [data-composer-picker="floating"]`)].find((e) => e.offsetParent).getBoundingClientRect();
+          const t = document.querySelector(`${r} [data-chat-footer] textarea:not(.md\\:hidden)`) ?? document.querySelector(`${r} [data-chat-footer] textarea`);
+          let c = t; while (c && !/rounded-\[18px\]/.test(c.className)) c = c.parentElement;
+          const cb = c.getBoundingClientRect();
+          const row = document.querySelector(`${r} [data-chat-context-row]`).getBoundingClientRect();
+          // Anything of the conversation's under the picker — the scroll buttons — stays under it.
+          const nav = document.querySelector(`${r} [data-chat-scroll-nav]`)?.getBoundingClientRect();
+          const navX = nav && nav.left + nav.width / 2, navY = nav && nav.top + nav.height / 2;
+          const navUnder = nav && navX >= p.left && navX <= p.right && navY >= p.top && navY <= p.bottom;
+          const onTop = !navUnder || !!document.elementFromPoint(navX, navY)?.closest("[data-composer-picker]");
+          return { gap: Math.round(cb.top - p.bottom), dw: Math.round(Math.abs(cb.width - p.width)), covers: p.top < row.top, onTop };
+        }, root(tabId));
+        check(Math.abs(geo.gap - 6) <= 1 && geo.dw <= 2 && geo.covers && geo.onTop, `${tag}: "${text}" picker floats over the row, composer-wide, 6px above it`, JSON.stringify(geo));
+        check(Math.abs((await rowTop()) - before) < 1, `${tag}: "${text}" picker does not push the row up`);
+        await shot(page, tabId, `${tag}-picker-${name}`);
+        await page.keyboard.press("Escape");
+        await sleep(150);
+      }
+      await input.fill("");
+    }
 
     // Streaming: Stop replaces Send, Queue appears.
     const box = page.locator(`${root(tabId)} textarea:visible`).first();
@@ -334,6 +380,9 @@ async function scenarios(phone) {
     await sleep(350);
     const rows3 = await page.locator("[data-account-row]:visible").evaluateAll((els) => els.map((e) => e.getAttribute("data-account-row")));
     check(rows3[0] === "acc-v2", `${tag}: current account first`, rows3.join(","));
+    // Every bar on every card is one length, whatever its label ("5h"/"Week") or figure ("8%"/"100%").
+    const bars = await page.locator("[data-account-row]:visible span.h-1").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().width)));
+    check(bars.length >= 4 && new Set(bars).size === 1, `${tag}: account usage bars share one length`, bars.join(","));
     await shot(page, tabId, `${tag}-accounts-3`);
     // Pick another account: ring follows, menu returns to main.
     await page.locator('[data-account-row="acc-v"]:visible').click();
@@ -437,6 +486,22 @@ async function scenarios(phone) {
       await narrow(page, tabId, 400);
       await shot(page, tabId, `${tag}-narrow-long-model`);
       await pickModel(page, tabId, "Opus 5.5");
+      await narrow(page, tabId, 400);
+      const narrowLook = await page.evaluate((r) => {
+        const chip = document.querySelector(`${r} [data-model-chip]`);
+        const svgs = [...chip.querySelectorAll("svg")];
+        const name = chip.querySelector("span.truncate");
+        const rings = [...document.querySelectorAll(`${r} [data-usage-window] svg`)];
+        return {
+          chevron: getComputedStyle(svgs[svgs.length - 1]).display,
+          cut: name ? name.scrollWidth > name.clientWidth : null,
+          rings: rings.map((s) => getComputedStyle(s).display),
+          labels: [...document.querySelectorAll(`${r} [data-usage-window]`)].map((w) => w.innerText.replace(/\s+/g, " ")),
+        };
+      }, root(tabId));
+      check(narrowLook.chevron === "none", `${tag}: narrow hides the model chevron`, narrowLook.chevron);
+      check(narrowLook.cut === false, `${tag}: narrow shows "Opus 5.5" uncut`);
+      check(narrowLook.rings.every((d) => d === "none") && /^5h \d+%,Wk \d+%$/.test(narrowLook.labels.join(",")), `${tag}: narrow drops the rings, keeps the labels`, JSON.stringify(narrowLook));
       await shot(page, tabId, `${tag}-narrow`);
       await narrow(page, tabId, 0);
     } else {
@@ -450,7 +515,13 @@ async function scenarios(phone) {
     await until("Reconnecting", () => inFooter(page, tabId, '[data-reconnect-stage="reconnecting"]').isVisible(), { timeout: 5000 });
     check((await box.getAttribute("placeholder")) === "Will send when reconnected...", `${tag}: offline placeholder`);
     await shot(page, tabId, `${tag}-reconnecting${phone ? "" : ""}`);
-    if (!phone) { await narrow(page, tabId, 400); await shot(page, tabId, `${tag}-narrow-reconnecting`); await narrow(page, tabId, 0); }
+    if (!phone) {
+      await narrow(page, tabId, 400);
+      const gone = await page.evaluate((r) => ["[data-usage-ring]", "[data-usage-divider]"].map((q) => getComputedStyle(document.querySelector(`${r} ${q}`)).display), root(tabId));
+      check(gone.every((d) => d === "none"), `${tag}: narrow + reconnecting hides usage and its divider together`, gone.join(","));
+      await shot(page, tabId, `${tag}-narrow-reconnecting`);
+      await narrow(page, tabId, 0);
+    }
     await until("lost", () => inFooter(page, tabId, '[data-reconnect-stage="lost"]').isVisible(), { timeout: 12000 });
     await shot(page, tabId, `${tag}-lost`);
     if (!phone) { await narrow(page, tabId, 400); await shot(page, tabId, `${tag}-narrow-lost`); await narrow(page, tabId, 0); }
@@ -466,6 +537,16 @@ async function scenarios(phone) {
         return { drawn: box.height, answers: up + down + 1 };
       }, root(tabId));
       check(reach.answers >= 44, `${tag}: lost chip answers a 44px press`, `${reach.answers}px answered, ${reach.drawn}px drawn`);
+      const ghost = await page.evaluate((r) => {
+        const btn = document.querySelector(`${r} [data-footer-cluster] [aria-label="History"]`);
+        const box = btn.getBoundingClientRect();
+        const x = box.left + box.width / 2, mid = box.top + box.height / 2;
+        let up = 0, down = 0;
+        while (up < 40 && btn.contains(document.elementFromPoint(x, mid - up - 0.5))) up += 0.5;
+        while (down < 40 && btn.contains(document.elementFromPoint(x, mid + down + 0.5))) down += 0.5;
+        return { drawn: box.height, answers: up + down + 1 };
+      }, root(tabId));
+      check(ghost.answers >= 44, `${tag}: History answers a 44px press`, `${ghost.answers}px answered, ${ghost.drawn}px drawn`);
     }
     refuse = false;
     await inFooter(page, tabId, '[data-reconnect-stage="lost"]').click();
@@ -495,6 +576,8 @@ async function reducedMotion() {
     await page.locator("[data-chat-more-menu]:visible").waitFor({ timeout: 10000 });
     const anim = await page.evaluate((r) => getComputedStyle(document.querySelector(`${r} [data-footer-popover]`)).animationName, root(tabId));
     check(anim === "none", "reduced motion: popover does not animate", anim);
+    check(await inFooter(page, tabId, "[data-usage-divider]").count() === 0 && await inFooter(page, tabId, "[data-footer-cluster]").isVisible(),
+      "no usage yet: the cluster has no divider before History");
     // A brand-new chat has no usage figure, so no ring: the menu's meters animate the same way.
     const meter = await page.locator("[data-chat-more-menu]:visible i").first().evaluate((el) => getComputedStyle(el).transitionProperty);
     check(meter === "none", "reduced motion: usage meters do not animate", meter);

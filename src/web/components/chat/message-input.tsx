@@ -1116,7 +1116,7 @@ export const MessageInput = memo(function MessageInput({
 
         {/* Attach, mode, model, Queue … cache, mic, send. Icons are 16px here (the ▾ is 12px);
             only the model chip shrinks, so a long model name ends in an ellipsis. */}
-        <div className="flex min-w-0 items-center gap-1 px-2 pb-2 pt-1 max-md:gap-0.5 max-md:px-1.5 max-md:pb-1 max-md:pt-0 [&>*]:shrink-0 [&>[data-model-slot]]:shrink">
+        <div className="flex min-w-0 items-center gap-1 px-2 pb-2 pt-1 @max-[420px]/chat:gap-0.5 @max-[420px]/chat:px-1.5 max-md:gap-0.5 max-md:px-1.5 max-md:pb-1 max-md:pt-0 [&>*]:shrink-0 [&>[data-model-slot]]:shrink">
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); handleAttachClick(); }}
@@ -1209,7 +1209,7 @@ const SQUARE_BUTTON =
 
 /** A borderless chip of the composer bar: the mode and, while a turn runs, Queue. */
 const BAR_CHIP =
-  "inline-flex h-[30px] items-center gap-1.5 whitespace-nowrap rounded-full px-[9px] text-[11.5px] text-text-2 transition-[background-color,color,transform] duration-150 motion-safe:active:scale-[0.97] can-hover:hover:bg-surface-hover can-hover:hover:text-text @max-[420px]/chat:px-[7px] max-md:h-7 max-md:px-1.5";
+  "inline-flex h-[30px] items-center gap-1.5 whitespace-nowrap rounded-full px-[9px] text-[11.5px] text-text-2 transition-[background-color,color,transform] duration-150 motion-safe:active:scale-[0.97] can-hover:hover:bg-surface-hover can-hover:hover:text-text @max-[420px]/chat:gap-1 @max-[420px]/chat:px-1.5 max-md:h-7 max-md:gap-1 max-md:px-1.5";
 
 /** The permission mode in one word ("Bypass"), its icon alone on a narrow chat. */
 function ModeChip({ mode, onClick }: { mode: string; onClick: () => void }) {

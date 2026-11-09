@@ -1,5 +1,5 @@
 /**
- * The usage figures of the chat footer: the ring beside the ··· button and the thin meters in the
+ * The usage figures of the chat footer: a ring per window beside the ··· button and the thin meters in the
  * menu and on each account card. Colour is spent only where it says something — below 70% the
  * ring is green and its number stays quiet, from 70% it turns amber and from 90% red.
  * Both the ring and the bars animate to a new value, and stop animating under reduced motion.
@@ -31,6 +31,22 @@ export function UsageRing({ pct, className }: { pct: number | null; className?: 
 /** The number beside the ring: quiet until it is worth reading. */
 export function usagePctClass(pct: number | null): string {
   return TEXT[usageTone(pct)];
+}
+
+/**
+ * One window in the footer: "◔ 5h 47%". Each colours on its own, and a window with no figure is
+ * not drawn at all. A narrow chat drops the ring and keeps the label, which is what tells the two
+ * apart (and from the context window's own usage).
+ */
+export function UsageWindow({ label, pct }: { label: string; pct: number | null }) {
+  if (pct == null) return null;
+  return (
+    <span className="inline-flex items-center gap-1" data-usage-window={label}>
+      <UsageRing pct={pct} className="!size-3 @max-[420px]/chat:hidden max-md:hidden" />
+      <span className="text-text-3">{label}</span>
+      <span className={cn("font-medium tabular-nums", usagePctClass(pct))}>{pct}%</span>
+    </span>
+  );
 }
 
 /** A thin bar; at 100% it reads red whatever the band, as a full window does. */

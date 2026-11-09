@@ -239,10 +239,11 @@ last turn stopped, MCP sign-in): **one context row, then the composer**, with no
 between them. The row's left holds what describes this chat — the activity chip (agents and linked
 sessions, below), the changes chip, and the connection chip, which says nothing while connected,
 "Reconnecting…" after the grace period and "Connection lost · Retry" once it drags on (the
-composer's placeholder then reads "Will send when reconnected..."). Its right holds a usage ring
-with the busier of the 5-hour and weekly figures (coloured only from 70%, and absent until a figure
-for this chat's account exists), History, and the ···
-menu: the serving account and its meters, Switch account (a drill-in listing this provider's
+composer's placeholder then reads "Will send when reconnected..."). Its right is one chip-shaped
+group with the left chips' background, border and height, so it stays anchored when the left is
+empty: a labelled ring per usage window ("5h 47%", "Wk 52%", each coloured on its own from 70%; a
+window with no figure for this chat's account is not drawn), a divider that belongs to the usage
+part and goes whenever it does, History, and the ··· menu: the serving account and its meters, Switch account (a drill-in listing this provider's
 accounts as two-line cards, current first then most headroom, the unusable ones folded under "Out
 of usage" from five accounts on, with search), AI settings, Team activity, Reload messages with
 the connection's state, and a folded More (mark unread, debug info, this chat's logs).
@@ -250,9 +251,14 @@ the connection's state, and a folded More (mark unread, debug info, this chat's 
 The composer is the textarea over one bar: Attach, the mode in one word, the model chip carrying
 the provider's logo (the provider is picked inside it before a session exists), Queue while a
 turn runs, then — only once the prompt cache has gone cold — a red clock, the mic and Send/Stop.
-The model chip is the one control that shrinks; a long name ends in an ellipsis. Below a 420px
-chat (`@max-[420px]/chat`) or `md` the labels drop and the counts and icons stay, the usage ring
-gives its room to a connection problem, and every popover becomes a bottom sheet with 44px
+The model chip is the one control that shrinks; a long name ends in an ellipsis. Typing `/` or
+`@` opens a popover floating 6px above the composer, as wide as it and over the context row:
+`/` rows carry a tile tinted by kind, the match marked, a one-line description and a scope tag,
+under All / Skills / Commands / Agents filters; `@` rows a bold name with its directory
+start-ellipsised. Key hints show only where there is a keyboard. Below a 420px
+chat (`@max-[420px]/chat`) or `md` the labels drop and the counts and icons stay, the usage rings
+drop but their "5h"/"Wk" labels stay, the usage part gives its room to a connection problem, the
+composer bar tightens and the model chip loses its chevron so its name is not cut, and every popover becomes a bottom sheet with 44px
 targets. Popovers rise in over 160ms and leave in 100ms, Switch account slides, More unfolds by
 grid rows, meters and the ring animate their value, chips press to 0.97 — all of it off under
 `prefers-reduced-motion`. Checked end to end by `tests/e2e/chat-footer-e2e.mjs`.
