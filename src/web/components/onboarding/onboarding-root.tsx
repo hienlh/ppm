@@ -16,6 +16,7 @@ import { OnboardingGuide } from "./onboarding-guide";
 import { findTourTarget, OnboardingHint } from "./onboarding-hint";
 import { useOnboardingSessionCheck } from "./use-onboarding-session-check";
 import { OPEN_QUICK_ORIENTATION, OnboardingQuickOrientation } from "./onboarding-quick-orientation";
+import { OnboardingFeatureIntro, useFeatureIntrosSync, useFeaturePartVisible, useTourOfferHidden } from "./onboarding-feature-intro";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { openRunInstructions } from "@/lib/onboarding/run-instructions";
 
@@ -34,6 +35,11 @@ export function OnboardingRoot({ openProjects, openNavigation, closeNavigation, 
     return () => window.removeEventListener(OPEN_QUICK_ORIENTATION, open);
   }, []);
   useOnboardingSessionCheck(setNotice);
+  useFeatureIntrosSync();
+  // New features take the panel once no basic tour is under way here: at once for an existing
+  // user who never started it, after the tour is finished or dismissed for everyone else.
+  const featurePart = useFeaturePartVisible(state.status);
+  const tourOfferHidden = useTourOfferHidden();
   useEffect(() => {
     const receive = (event: Event) => useOnboardingStore.getState().observe((event as CustomEvent<OnboardingEvent>).detail);
     window.addEventListener(ONBOARDING_EVENT, receive);
@@ -48,11 +54,11 @@ export function OnboardingRoot({ openProjects, openNavigation, closeNavigation, 
     return () => clearTimeout(timer);
   }, [state.status, state.currentStep]);
   useEffect(() => {
-    if (state.status !== "active" || orientationOpen || paletteOpen) return;
+    if (state.status !== "active" || orientationOpen || paletteOpen || featurePart) return;
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) useOnboardingStore.getState().pause(); };
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
-  }, [state.status, orientationOpen, paletteOpen]);
+  }, [state.status, orientationOpen, paletteOpen, featurePart]);
 
   function navigate(tab: SidebarActiveTab) {
     if (mobile) { openNavigation(tab); setCollapsed(true); }
@@ -116,7 +122,10 @@ export function OnboardingRoot({ openProjects, openNavigation, closeNavigation, 
     setCollapsed(true);
     requestAnimationFrame(() => openCommandPalette());
   }} />;
+  if (featurePart) return <OnboardingFeatureIntro mobile={mobile} />;
   if (state.status === "dismissed") return null;
+  // An install already in use is not offered the basic tour; its entry in the UI still opens it.
+  if (state.status === "unseen" && tourOfferHidden) return null;
   if (state.status === "choosing") return <OnboardingSetup projectName={project?.name} />;
   return <OnboardingHint collapsed={collapsed} target={state.status === "active" && state.currentStep ? ONBOARDING_TARGETS[state.currentStep] : undefined}>
     <OnboardingStepTransition stepKey={state.status === "active" ? state.currentStep ?? "project" : state.status}

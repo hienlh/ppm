@@ -23,7 +23,7 @@ interface SessionTurnsState {
 }
 
 const signature = (turns: readonly SessionTurn[]) =>
-  turns.map((t) => `${t.n}:${t.messageId}:${t.calls.length}:${t.calls[t.calls.length - 1] ?? ""}:${t.prompt.length}`).join("|");
+  turns.map((t) => `${t.n}${t.unnumbered ? "?" : ""}:${t.messageId}:${t.calls.length}:${t.calls[t.calls.length - 1] ?? ""}:${t.prompt.length}`).join("|");
 
 export const useSessionTurnsStore = create<SessionTurnsState>((set, get) => ({
   bySession: {},

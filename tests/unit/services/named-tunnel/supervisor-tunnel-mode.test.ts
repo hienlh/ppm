@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { _resetPpmDir } from "../../../../src/services/ppm-dir.ts";
@@ -7,6 +7,7 @@ import {
   buildTunnelAttempts, orphanedTunnelPgrepPattern, tunnelWarningPatchForSpawnSuccess,
 } from "../../../../src/services/supervisor.ts";
 import { getQuickTunnelArgs } from "../../../../src/services/cloudflared.service.ts";
+import { PLAIN_PPM_ROUTES } from "../../../../src/services/share-host/share-host-supervision.ts";
 import type { ResolvedTunnelConfig } from "../../../../src/services/named-tunnel/named-tunnel-config.ts";
 
 const TEST_PORT = 39879; // outside the Hyper-V reserved range (44620-48715)
@@ -69,6 +70,45 @@ describe("buildTunnelAttempts — spawnTunnel's actual call site", () => {
     expect(attempts).toHaveLength(1);
     expect(attempts[0]!.mode).toBe("quick");
     expect(attempts[0]!.args).toEqual(getQuickTunnelArgs(TEST_PORT));
+  });
+});
+
+describe("buildTunnelAttempts — carrying the review address on PPM's tunnel", () => {
+  const SHARE = { hostname: "share.hienle.tech", port: 39901 };
+  const ingressOf = (args: string[]) => readFileSync(args[args.indexOf("--config") + 1]!, "utf8");
+
+  test("routes both hostnames by ingress, with a 404 for anything else, and keeps the quick fallback", () => {
+    const attempts = buildTunnelAttempts(NAMED, TEST_PORT, { byHostname: true, share: SHARE });
+    expect(attempts.map((a) => a.mode)).toEqual(["named", "quick"]);
+    const named = attempts[0]!.args;
+    expect(named).not.toContain("--url");
+    expect(named.join(" ")).not.toContain(NAMED.token!);
+    const config = ingressOf(named);
+    expect(config).toContain(`hostname: ${SHARE.hostname}\n    service: http://127.0.0.1:${SHARE.port}`);
+    expect(config).toContain(`hostname: ${NAMED.hostname}\n    service: http://127.0.0.1:${TEST_PORT}`);
+    expect(config.trimEnd().endsWith("- service: http_status:404")).toBe(true);
+    // A temporary address can carry no hostname of its own: the fallback is PPM's plain quick tunnel.
+    expect(attempts[1]!.args).toEqual(getQuickTunnelArgs(TEST_PORT));
+  });
+
+  test("with a review hostname set up but no route to its worker, only PPM's hostname reaches PPM — never --url", () => {
+    // The review address switched off, its worker down or never started: its DNS record still
+    // points at this tunnel, and `--url` would answer it with all of PPM.
+    const named = buildTunnelAttempts(NAMED, TEST_PORT, { byHostname: true, share: null })[0]!.args;
+    expect(named).not.toContain("--url");
+    const config = ingressOf(named);
+    expect(config).toContain(`hostname: ${NAMED.hostname}\n    service: http://127.0.0.1:${TEST_PORT}`);
+    expect(config.match(/hostname:/g)).toHaveLength(1);
+    expect(config.trimEnd().endsWith("- service: http_status:404")).toBe(true);
+  });
+
+  test("with no review hostname ever set up, the named argv is exactly what it was", () => {
+    expect(buildTunnelAttempts(NAMED, TEST_PORT, PLAIN_PPM_ROUTES)[0]!.args).toEqual(buildTunnelAttempts(NAMED, TEST_PORT)[0]!.args);
+    expect(buildTunnelAttempts(NAMED, TEST_PORT)[0]!.args).toContain("--url");
+  });
+
+  test("a quick PPM tunnel ignores the routes", () => {
+    expect(buildTunnelAttempts(QUICK, TEST_PORT, { byHostname: true, share: SHARE })).toEqual(buildTunnelAttempts(QUICK, TEST_PORT));
   });
 });
 

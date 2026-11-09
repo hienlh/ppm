@@ -121,15 +121,25 @@ it("does not cache or display another account's returned quota under the selecte
   expect(view.container.textContent).toBe("{}");
 });
 
-it("keeps the provider picker accessible before discovering its list", async () => {
-  const { ProviderSelector } = await import("../../../src/web/components/chat/provider-selector");
-  const spy = spyOn(api, "get").mockResolvedValue([{ id: "claude", name: "Claude" }, { id: "codex", name: "Codex" }]);
+it("offers the provider inside the model chip, discovering the list only when it opens", async () => {
+  const spy = spyOn(api, "get").mockImplementation((async (url: string) => url.endsWith("/chat/providers")
+    ? [{ id: "claude", name: "Claude" }, { id: "codex", name: "Codex" }]
+    : [{ value: "opus", label: "Claude Opus" }]) as typeof api.get);
   restore = () => spy.mockRestore();
-  view = await mount(<ProviderSelector projectName="lazy-provider-picker" value="claude" onChange={() => {}} />);
+  let picked: string | null = null;
+  view = await mount(<ModelThinkingSelector projectName="lazy-provider-picker" providerId="claude" model="opus"
+    effort={null} thinking={false} onModelChange={() => {}} onEffortChange={() => {}} onThinkingChange={() => {}}
+    onProviderChange={(id) => { picked = id; }} />);
   expect(spy).not.toHaveBeenCalled();
-  await click(view.container.querySelector("button"));
-  expect(spy).toHaveBeenCalledTimes(1);
-  expect(view.container.textContent).toContain("Codex");
+  // The provider's logo is in the chip itself; there is no separate provider chip.
+  expect(view.container.querySelector("[data-model-chip] svg")).not.toBeNull();
+  await click(view.container.querySelector("[data-model-chip]"));
+  await act(async () => { await Promise.resolve(); });
+  expect(spy.mock.calls.some(([url]) => String(url).endsWith("/chat/providers"))).toBe(true);
+  const codex = [...view.container.querySelectorAll('[role="radio"]')].find((b) => b.textContent?.includes("Codex"));
+  expect(codex).toBeDefined();
+  await click(codex!);
+  expect(picked).toBe("codex");
 });
 
 it("shows cached recent history immediately, syncing once through the shared store (no artificial delay)", async () => {

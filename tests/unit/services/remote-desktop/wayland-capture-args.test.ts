@@ -1,7 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
-  bitrateKbps, buildWaylandCaptureArgs, buildWaylandPublishArgs,
-  type GstElements,
+  _resetGstElements, bitrateKbps, buildWaylandCaptureArgs, buildWaylandPublishArgs, gstElements,
+  startWaylandCapture, type GstElements, type GstProbe,
 } from "../../../../src/services/remote-desktop/remote-desktop-capture-wayland.ts";
 
 const GPU: GstElements = {
@@ -75,10 +75,17 @@ describe("buildWaylandCaptureArgs", () => {
 
   it("emits the same Annex-B shape the ffmpeg backend does", () => {
     const a = buildWaylandCaptureArgs(1, GPU, { fps: 30, bitrate: "4M" });
-    expect(a).toContain("h264parse");
     expect(a).toContain("video/x-h264,stream-format=byte-stream,alignment=au");
     // `AccessUnitAssembler` parses stdout; a different sink would silently produce no frames.
     expect(a.slice(-2)).toEqual(["fdsink", "fd=1"]);
+  });
+
+  it("needs nothing from gst-plugins-bad on the software path", () => {
+    // h264parse is a plugins-bad element and x264enc a plugins-ugly one: with the parser in the
+    // pipeline, a host holding only the encoder's package passed the checklist and then lost
+    // every session at start to `no element "h264parse"` (#48). Neither encoder needs it.
+    expect(buildWaylandCaptureArgs(1, SOFTWARE, { fps: 30, bitrate: "4M" })).not.toContain("h264parse");
+    expect(buildWaylandCaptureArgs(1, GPU, { fps: 30, bitrate: "4M" })).not.toContain("h264parse");
   });
 });
 
@@ -92,5 +99,77 @@ describe("buildWaylandPublishArgs", () => {
     // other than copy would put a second H.264 encode on the critical path.
     expect(a.join(" ")).toContain("-c:v copy");
     expect(a).toContain("pipe:0");
+  });
+});
+
+describe("gstElements", () => {
+  // Reset on the way in as well: a file that asked for readiness on a Wayland session before
+  // this one leaves the host's real answer cached, and a complete answer is never asked again.
+  beforeEach(() => _resetGstElements());
+  afterEach(() => _resetGstElements());
+
+  /** A host whose installed elements the test can change between calls, as `apt install` does. */
+  function host(installed: Set<string>, launch: () => string | null = () => "/usr/bin/gst-launch-1.0") {
+    let asked = 0;
+    const probe: GstProbe = { launch, has: async (el) => { asked++; return installed.has(el); } };
+    return { probe, asked: () => asked };
+  }
+
+  it("picks up the GPU encoder installed while PPM runs", async () => {
+    // #48: a host on the x264 fallback installed vah264enc and kept encoding with x264 until
+    // PPM restarted, because the first answer was kept for the process's life.
+    const installed = new Set(["pipewiresrc", "x264enc"]);
+    const { probe } = host(installed);
+    expect((await gstElements(false, probe)).vah264enc).toBe(false);
+    installed.add("vapostproc");
+    installed.add("vah264enc");
+    expect((await gstElements(false, probe)).vah264enc).toBe(true);
+  });
+
+  it("asks again after finding no GStreamer at all", async () => {
+    let launch: string | null = null;
+    const { probe } = host(new Set(["pipewiresrc", "x264enc"]), () => launch);
+    expect((await gstElements(false, probe)).launch).toBeNull();
+    launch = "/usr/bin/gst-launch-1.0";
+    expect((await gstElements(false, probe)).pipewiresrc).toBe(true);
+  });
+
+  it("shares one probe between everyone who asks while it runs", async () => {
+    // A host missing the GPU pair is never remembered, so each `/capabilities` request (two
+    // tabs, a phone beside a desktop) and each capture starting beside one spawned four
+    // `gst-inspect-1.0` of its own. A forced ask joins too: the probe under way is fresh.
+    const { probe, asked } = host(new Set(["pipewiresrc", "x264enc"]));
+    const answers = await Promise.all([gstElements(false, probe), gstElements(false, probe), gstElements(true, probe)]);
+    expect(asked()).toBe(4); // one probe, four elements
+    for (const els of answers) expect(els.x264enc && !els.vah264enc).toBe(true);
+  });
+
+  it("stops asking once nothing is missing", async () => {
+    const { probe, asked } = host(new Set(["pipewiresrc", "vapostproc", "vah264enc", "x264enc"]));
+    await gstElements(false, probe);
+    const afterFirst = asked();
+    await gstElements(false, probe);
+    expect(asked()).toBe(afterFirst);
+  });
+
+  it("is asked afresh by every capture, so an encoder gone since is not used", async () => {
+    // A complete answer is remembered for the life of the process. Read from that, a host that
+    // has since lost its GPU encoder (a driver update, a removed package) would build a
+    // vah264enc pipeline and die at start, every session, until PPM restarted.
+    const installed = new Set(["pipewiresrc", "vapostproc", "vah264enc", "x264enc"]);
+    const { probe } = host(installed);
+    await gstElements(false, probe);
+    installed.delete("vah264enc");
+    let used: GstElements | undefined;
+    const capture = startWaylandCapture(
+      { session: { kind: "wayland", display: "wayland-0", runtimeDir: "/run/user/1000" }, onAccessUnit: () => {} },
+      {
+        elements: async (force) => (used = await gstElements(force, probe)),
+        // The elements are settled before the portal is asked, so stopping there spawns nothing.
+        startPortal: async () => { throw new Error("no portal in a unit test"); },
+      },
+    );
+    await expect(capture).rejects.toThrow("no portal in a unit test");
+    expect(used?.vah264enc).toBe(false);
   });
 });

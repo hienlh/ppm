@@ -21,8 +21,6 @@ import {
   pinSession,
   unpinSession,
   getPinnedSessionIds,
-  insertSessionLog,
-  getSessionLogs,
   insertUsageRecord,
   getUsageSince,
 } from "../../../src/services/db.service.ts";
@@ -43,7 +41,7 @@ describe("db.service", () => {
       expect(tables).toContain("config");
       expect(tables).toContain("projects");
       expect(tables).toContain("session_metadata");
-      expect(tables).toContain("session_logs");
+      expect(tables).not.toContain("session_logs");
       expect(tables).toContain("usage_history");
       expect(tables).toContain("accounts");
     });
@@ -241,37 +239,6 @@ describe("db.service", () => {
 
     it("unpin is safe on nonexistent key", () => {
       expect(() => unpinSession("nonexistent")).not.toThrow();
-    });
-  });
-
-  describe("session logs", () => {
-    it("inserts and retrieves logs", () => {
-      insertSessionLog("sess-1", "INFO", "Started chat");
-      insertSessionLog("sess-1", "ERROR", "Something failed");
-      const logs = getSessionLogs("sess-1");
-      expect(logs).toHaveLength(2);
-      // Returned in DESC order
-      expect(logs[0]!.level).toBe("ERROR");
-      expect(logs[1]!.level).toBe("INFO");
-    });
-
-    it("returns empty for unknown session", () => {
-      expect(getSessionLogs("unknown")).toEqual([]);
-    });
-
-    it("respects limit", () => {
-      for (let i = 0; i < 10; i++) {
-        insertSessionLog("sess-2", "INFO", `msg-${i}`);
-      }
-      const logs = getSessionLogs("sess-2", 3);
-      expect(logs).toHaveLength(3);
-    });
-
-    it("isolates logs by session", () => {
-      insertSessionLog("sess-a", "INFO", "a-msg");
-      insertSessionLog("sess-b", "INFO", "b-msg");
-      expect(getSessionLogs("sess-a")).toHaveLength(1);
-      expect(getSessionLogs("sess-b")).toHaveLength(1);
     });
   });
 

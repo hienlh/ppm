@@ -67,6 +67,62 @@ export function formatResetAt(resetsAt?: string | null): string | null {
   return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+/**
+ * When a bucket resets, as an ISO timestamp, whichever of the three shapes the server sent.
+ * A countdown is turned into a moment once, here, so it keeps counting down after it arrived.
+ */
+export function bucketResetsAt(bucket?: LimitBucket | null, now = Date.now()): string | null {
+  if (!bucket) return null;
+  if (bucket.resetsAt && Number.isFinite(new Date(bucket.resetsAt).getTime())) return bucket.resetsAt;
+  if (bucket.resetsInMinutes != null) return new Date(now + bucket.resetsInMinutes * 60_000).toISOString();
+  if (bucket.resetsInHours != null) return new Date(now + bucket.resetsInHours * 3_600_000).toISOString();
+  return null;
+}
+
+/**
+ * The countdown to a reset in two units at most — "in 3h 12m", "in 2d 8h", "in 40m" — the way
+ * the quick views (the ··· menu, the usage rings' tooltip) say it. "now" once it has passed.
+ */
+export function formatResetCountdown(resetsAt: string | null | undefined, now = Date.now()): string | null {
+  if (!resetsAt) return null;
+  const at = new Date(resetsAt).getTime();
+  if (!Number.isFinite(at)) return null;
+  const mins = Math.ceil((at - now) / 60_000);
+  if (mins <= 0) return "now";
+  const d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60;
+  if (d > 0) return `in ${d}d${h > 0 ? ` ${h}h` : ""}`;
+  if (h > 0) return `in ${h}h${m > 0 ? ` ${m}m` : ""}`;
+  return `in ${m}m`;
+}
+
+const CLOCK: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+
+/**
+ * The clock time of a reset in the viewer's zone, as short as it can be without being
+ * ambiguous: "03:52" within 12 hours, "today 18:00" later the same day, "Thu 09:00" within the
+ * week, "Nov 18 09:00" beyond it.
+ */
+export function formatResetClock(resetsAt: string | null | undefined, now = Date.now()): string | null {
+  if (!resetsAt) return null;
+  const at = new Date(resetsAt);
+  if (!Number.isFinite(at.getTime())) return null;
+  const time = at.toLocaleTimeString("en-US", CLOCK);
+  const diff = at.getTime() - now;
+  if (diff <= 12 * 3_600_000) return time;
+  const today = new Date(now);
+  if (at.toDateString() === today.toDateString()) return `today ${time}`;
+  if (diff < 6.5 * 86_400_000) return `${at.toLocaleDateString("en-US", { weekday: "short" })} ${time}`;
+  return `${at.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${time}`;
+}
+
+/** Both, for Switch account's cards: "Resets in 3h 12m · 03:52". */
+export function formatResetLine(resetsAt: string | null | undefined, now = Date.now()): string | null {
+  const countdown = formatResetCountdown(resetsAt, now);
+  if (!countdown) return null;
+  if (countdown === "now") return "Resets now";
+  return `Resets ${countdown} · ${formatResetClock(resetsAt, now)}`;
+}
+
 export function formatExpiry(expiresAtMs: number): string {
   const diff = expiresAtMs - Date.now();
   if (diff <= 0) return "expired";

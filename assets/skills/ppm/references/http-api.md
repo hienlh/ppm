@@ -111,6 +111,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 ## /api/db
 
 - `GET    /api/db/ssh/agent`
+- `POST   /api/db/ai-approvals/:requestId`
 - `GET    /api/db/connections`
 - `GET    /api/db/connections/export`
 - `POST   /api/db/connections/import`
@@ -136,6 +137,10 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/db/connections/:id/export`
 - `GET    /api/db/search`
 
+## /api/design-shares
+
+- `GET    /api/design-shares/address`
+
 ## /api/extensions
 
 - `GET    /api/extensions`
@@ -145,6 +150,13 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/extensions/dev-link`
 - `DELETE /api/extensions/:id{.+}`
 - `PATCH  /api/extensions/:id{.+}`
+
+## /api/feature-intros
+
+- `GET    /api/feature-intros`
+- `POST   /api/feature-intros/:id/answer`
+- `POST   /api/feature-intros/:id/skip`
+- `POST   /api/feature-intros/:id/seen-in-settings`
 
 ## /api/fs
 
@@ -303,6 +315,14 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/schedules/:id{[0-9]+}/run-now`
 - `GET    /api/schedules/:id{[0-9]+}/runs`
 
+## /api/sessions-collab
+
+- `POST   /api/sessions-collab/approvals/:requestId`
+- `GET    /api/sessions-collab/sessions/:id/links`
+- `GET    /api/sessions-collab/projectPath`
+- `POST   /api/sessions-collab/sessions/:id/stop-children`
+- `GET    /api/sessions-collab/projectPath`
+
 ## /api/settings
 
 - `PUT    /api/settings/device-name`
@@ -318,6 +338,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/settings/ai/providers/status`
 - `POST   /api/settings/ai/providers/:id/probe`
 - `GET    /api/settings/ai/providers/:id/models`
+- `GET    /api/settings/ai/providers/:id/effort-status`
 - `GET    /api/settings/keybindings`
 - `PUT    /api/settings/keybindings`
 - `GET    /api/settings/telegram`
@@ -336,6 +357,9 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `PUT    /api/settings/query-audit`
 - `GET    /api/settings/query_audit`
 - `DELETE /api/settings/query-audit/logs`
+- `GET    /api/settings/storage`
+- `PUT    /api/settings/session-trace`
+- `GET    /api/settings/session_trace`
 - `GET    /api/settings/clawbot`
 - `GET    /api/settings/clawbot`
 - `PUT    /api/settings/clawbot`
@@ -375,6 +399,15 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/settings/themes`
 - `DELETE /api/settings/themes/:id`
 - `PATCH  /api/settings/themes/:id`
+
+## /api/share-host
+
+- `GET    /api/share-host/status`
+- `GET    /api/share-host/auth`
+- `GET    /api/share-host/zone`
+- `POST   /api/share-host/enabled`
+- `POST   /api/share-host/quick`
+- `POST   /api/share-host/setup`
 
 ## /api/speech
 
@@ -469,10 +502,17 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /proxy/:provider/v1/models`
 - `GET    /proxy/stats`
 
+## /s
+
+- `GET    /s/:code/info`
+- `GET    /s/:code`
+- `ALL    /s`
+- `ALL    /s/*`
+
 ## WebSocket
 
 - `ws://<host>/ws/chat` — AI chat stream (Claude Agent SDK)
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.23.14 -->
+<!-- Generated from src/server/routes/ for PPM v0.23.37 -->

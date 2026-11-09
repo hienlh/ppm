@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { NalSplitter, nalType, NAL_TYPE_SPS, NAL_TYPE_IDR, NAL_TYPE_PPS } from "../../../../src/services/remote-desktop/nal-splitter.ts";
+import { NalSplitter, nalType, startsPicture, NAL_TYPE_SPS, NAL_TYPE_IDR, NAL_TYPE_PPS } from "../../../../src/services/remote-desktop/nal-splitter.ts";
 
 describe("NalSplitter", () => {
   it("splits 4-byte start codes and strips them from the payload", () => {
@@ -54,5 +54,16 @@ describe("NalSplitter", () => {
     const nals = splitter.push(buf);
     expect(nals.length).toBe(1);
     expect(Array.from(nals[0]!)).toEqual([NAL_TYPE_SPS, 0x00, 0xaa]);
+  });
+});
+
+describe("startsPicture", () => {
+  it("is true only for a slice whose first macroblock is 0", () => {
+    expect(startsPicture(Uint8Array.of(0x65, 0x88))).toBe(true); // IDR, first_mb_in_slice = 0
+    expect(startsPicture(Uint8Array.of(0x41, 0x9a))).toBe(true); // non-IDR, first_mb_in_slice = 0
+    // `010` is first_mb_in_slice = 1: the rest of a picture another slice already opened.
+    expect(startsPicture(Uint8Array.of(0x65, 0x40))).toBe(false);
+    // A PPS also opens with a ue(v) of 0 (its own id), and it is no picture at all.
+    expect(startsPicture(Uint8Array.of(0x68, 0xce))).toBe(false);
   });
 });

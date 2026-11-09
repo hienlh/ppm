@@ -3,6 +3,8 @@
 import { SchedulerService, nextFireAt } from "./scheduler-core.ts";
 import { ensureScheduleSession, runScheduleOnce } from "./scheduler-runner.ts";
 import { createLogger } from "./logger.ts";
+import { AlwaysOnSupervisor } from "./schedule-script/always-on-supervisor.ts";
+import { runScriptTick } from "./schedule-script/tick-runner.ts";
 
 export { nextFireAt };
 
@@ -20,5 +22,12 @@ function announceRunFinished(): void {
     .catch((e) => log.warn(`could not announce a finished run: ${(e as Error).message}`));
 }
 
+/** The processes of always-on script schedules. */
+export const alwaysOnSupervisor = new AlwaysOnSupervisor();
+
 /** Singleton scheduler — started from server boot. */
-export const schedulerService = new SchedulerService({ ensureScheduleSession, runScheduleOnce }, announceRunFinished);
+export const schedulerService = new SchedulerService(
+  { ensureScheduleSession, runScheduleOnce, runScriptTick: (schedule) => runScriptTick(schedule) },
+  alwaysOnSupervisor,
+  announceRunFinished,
+);

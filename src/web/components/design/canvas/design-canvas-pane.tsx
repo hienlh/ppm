@@ -21,6 +21,7 @@ import { TransformReadout } from "../transform/transform-readout";
 import { useDesignExport } from "../export/use-design-export";
 import { ExportSheet } from "../export/export-menu";
 import { ExportWarningsSheet } from "../export/export-warnings-sheet";
+import { DesignShareDialog, useDesignShare } from "../share/design-share-dialog";
 import { useDesignCanvasCheckResponder } from "./use-design-canvas-check";
 import { useDesignAutoCheck } from "../use-design-auto-check";
 import { useExpandedCanvasEscape } from "./use-expanded-canvas-escape";
@@ -69,6 +70,7 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
   // for the screenshot "Build in new chat" attaches.
   const checkContext = () => ({ issues: canvas.issues, frame: framePreset(frame).label });
   const exports = useDesignExport(tab, canvas.bridge, variants.file, checkContext);
+  const share = useDesignShare();
   useDesignCanvasCheckResponder({ projectName: tab.projectName, slug: tab.slug, bridge: canvas.bridge, context: checkContext });
   const layoutIssues = useDesignAutoCheck({ tab, bridge: canvas.bridge, context: checkContext });
   const { variantWarnings } = tab.design;
@@ -80,8 +82,8 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
   useExpandedCanvasEscape(expanded, () => setExpanded(false), () => comments.picker.on);
 
   const toolbarCtx = useMemo<DesignToolbarContext>(() => ({
-    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports, variants,
-  }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports, variants]);
+    ...tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports, variants, share,
+  }), [tab, canvas, frame, setFrame, historyOpen, toggleHistory, comments, tweaks, transform, undo, exports, variants, share]);
   const tweaksPanel = tweaks.panelOpen && <TweaksPanel feature={tweaks} tabId={tab.tabId} slug={tab.slug} />;
 
   const history = historyOpen && (
@@ -157,6 +159,7 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
           colours being tweaked, and the canvas has to stay in view while a slider moves. */}
       {tab.isMobile && tweaksPanel && <div className="h-[45%] shrink-0 border-t border-border">{tweaksPanel}</div>}
       <ExportWarningsSheet feature={exports} />
+      <DesignShareDialog feature={share} />
       {tab.isMobile && (
         <>
           <ExportSheet feature={exports} />

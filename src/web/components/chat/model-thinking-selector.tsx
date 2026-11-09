@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
-import { Check, Sparkles, Brain } from "@/lib/icons";
+import { Check, Brain, ChevronDown, TriangleAlert } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { modelDisplayName } from "@/lib/model-display-name";
-import { EFFORT_OPTIONS, chipLabel } from "./model-thinking-selector-helpers";
+import type { EffortStatus } from "../../../shared/effort-status";
+import { EFFORT_OPTIONS, chipLabel, effortLabel, effortNotice, noticeText, shownEffort, type EffortNotice } from "./model-thinking-selector-helpers";
+import { ProviderChoiceRow, ProviderIcon } from "./provider-selector";
 
 interface ModelOption {
   value: string;
@@ -18,6 +20,8 @@ const MODEL_CACHE_TTL = 5 * 60 * 1000;
 interface ModelThinkingSelectorProps {
   model: string | null;
   effort: string | null;
+  /** What overrides the effort pick outside PPM, so the chip shows the effort the turns run at. */
+  effortStatus?: EffortStatus | null;
   thinking: boolean;
   onModelChange: (model: string) => void;
   onEffortChange: (effort: string) => void;
@@ -26,14 +30,14 @@ interface ModelThinkingSelectorProps {
   providerId: string;
   /** Locked while a turn is streaming (model/effort can't change mid-turn). */
   disabled?: boolean;
+  /** Start the chat on another provider; offered at the top of the popup before a session exists. */
+  onProviderChange?: (providerId: string) => void;
 }
 
 /** Strip the leading "Claude " so the chip stays compact: "Claude Opus 5" → "Opus 5" */
 function shortLabel(label: string): string {
   return label.replace(/^Claude\s+/i, "");
 }
-
-const DEFAULT_EFFORT = EFFORT_OPTIONS.find((o) => o.default)!.value;
 
 /**
  * Unified model + thinking picker — one chip, one popup. Mirrors Anthropic's native
@@ -43,6 +47,7 @@ const DEFAULT_EFFORT = EFFORT_OPTIONS.find((o) => o.default)!.value;
 export function ModelThinkingSelector({
   model,
   effort,
+  effortStatus,
   thinking,
   onModelChange,
   onEffortChange,
@@ -50,6 +55,7 @@ export function ModelThinkingSelector({
   projectName,
   providerId,
   disabled,
+  onProviderChange,
 }: ModelThinkingSelectorProps) {
   const cacheKey = JSON.stringify([projectName, providerId]);
   const cached = modelCache.get(cacheKey);
@@ -109,16 +115,22 @@ export function ModelThinkingSelector({
 
   const current = models.find((m) => m.value === model);
   const modelDisplay = current ? shortLabel(current.label) : model ? modelDisplayName(model) : "Model";
-  const effortValue = effort ?? DEFAULT_EFFORT;
+  const shown = shownEffort(effort, effortStatus);
+  const notice = effortNotice(shown, effortStatus, modelDisplay);
   const showModelList = models.length > 0 || Boolean(modelStatus);
-  const chipText = chipLabel(modelDisplay, effortValue);
+  // The effort the turns run at, which an override outside PPM can make differ from the pick.
+  const chipText = chipLabel(modelDisplay, shown.level);
 
   const pick = (fn: () => void) => {
     fn();
     if (!isMobile) setOpen(false);
   };
 
+  const providerName = providerId ? providerId.charAt(0).toUpperCase() + providerId.slice(1) : "";
   const content = (
+    <>
+    {onProviderChange && <ProviderChoiceRow value={providerId} onChange={onProviderChange} projectName={projectName} />}
+    {notice && <EffortNoticeBanner notice={notice} />}
     <div className="flex divide-x divide-border">
       {/* Left column: model list */}
       {showModelList && (
@@ -137,12 +149,13 @@ export function ModelThinkingSelector({
       <div className="flex-1 min-w-0 py-1">
         <SectionLabel>Effort</SectionLabel>
         {EFFORT_OPTIONS.map((o) => (
-          <OptionRow key={o.value} active={o.value === effortValue} onClick={() => pick(() => onEffortChange(o.value))}>
+          <OptionRow key={o.value} active={o.value === shown.pick} onClick={() => pick(() => onEffortChange(o.value))}>
             <span className="flex-1 truncate">
               {o.label}
               {o.default && <span className="ml-2 text-xs text-text-subtle">Default</span>}
+              {o.value === shown.level && shown.level !== shown.pick && <span className="ml-2 text-xs text-warning">In effect</span>}
             </span>
-            {o.value === effortValue && <Check className="size-4 shrink-0 text-primary" />}
+            {o.value === shown.pick && <Check className="size-4 shrink-0 text-primary" />}
           </OptionRow>
         ))}
         <Separator />
@@ -161,11 +174,13 @@ export function ModelThinkingSelector({
         </button>
       </div>
     </div>
+    </>
   );
 
   return (
-    // `min-w-0` + `max-w-full`: in a narrow composer this is the chip that gives way.
-    <div className="relative min-w-0">
+    // `min-w-0`: in the composer bar this is the one chip that gives way — a long model name
+    // ends in an ellipsis and the full name is in the tooltip.
+    <div className="relative flex min-w-0">
       <button
         type="button"
         disabled={disabled}
@@ -173,13 +188,20 @@ export function ModelThinkingSelector({
           e.stopPropagation();
           if (!disabled) setOpen((v) => !v);
         }}
-        className="inline-flex max-w-full items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-primary bg-accent-wash border border-accent-wash-border hover:brightness-110 transition-[filter] disabled:opacity-50 disabled:cursor-default"
-        aria-label={`Model ${modelDisplay}, effort ${effortValue}${thinking ? ", thinking on" : ""}`}
-        title={disabled ? "Can't change while running" : chipText}
+        data-model-chip=""
+        className="inline-flex h-[30px] min-w-0 max-w-full items-center gap-1.5 whitespace-nowrap rounded-full px-[9px] text-[11.5px] text-primary @max-[420px]/chat:gap-1 @max-[420px]/chat:px-1.5 max-md:gap-1 max-md:px-1.5 transition-[background-color,transform] duration-150 motion-safe:active:scale-[0.97] can-hover:hover:bg-surface-hover disabled:cursor-default disabled:active:scale-100"
+        aria-label={`Model ${modelDisplay}, effort ${shown.level ? effortLabel(shown.level) : "none"}${notice ? ` (${notice.title})` : ""}${thinking ? ", thinking on" : ""}`}
+        title={disabled ? "Can't change while running" : notice ? `${providerName} · ${chipText}\n${notice.title}:${noticeText(notice.detail)}` : `${providerName} · ${chipText}`}
       >
-        <Sparkles className="h-3.5 w-3.5 shrink-0" />
-        <span className="min-w-0 max-w-[140px] truncate">{chipText}</span>
-        {thinking && <Brain className="h-3 w-3 shrink-0" />}
+        <ProviderIcon providerId={providerId} className="size-4" />
+        <span className="block min-w-0 max-w-[180px] truncate @max-[420px]/chat:max-w-[110px] max-md:max-w-[110px]">
+          {modelDisplay}
+          {shown.level && <span className="@max-[420px]/chat:hidden max-md:hidden">{chipText.slice(modelDisplay.length)}</span>}
+        </span>
+        {notice && <TriangleAlert className="size-3 shrink-0 text-warning" />}
+        {thinking && <Brain className="size-3 shrink-0" />}
+        {/* Narrow: the chevron gives its room to the model name; the chip still opens the picker. */}
+        <ChevronDown className="size-3 shrink-0 text-text-3 @max-[420px]/chat:hidden max-md:hidden" />
       </button>
 
       {open && !disabled && (
@@ -200,6 +222,23 @@ export function ModelThinkingSelector({
           </div>
         )
       )}
+    </div>
+  );
+}
+
+/** Above both columns, so it reads at full width in the phone's sheet too. */
+function EffortNoticeBanner({ notice }: { notice: EffortNotice }) {
+  return (
+    <div role="note" className="flex gap-2 border-b border-border bg-warning/10 px-3 py-2.5 text-sm leading-relaxed text-text-secondary md:text-xs">
+      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
+      <div className="min-w-0">
+        <div className="font-medium text-text-primary">{notice.title}</div>
+        <p className="m-0 break-words">
+          {notice.detail.map((part, i) => typeof part === "string"
+            ? part
+            : <code key={i} className="rounded bg-surface-elevated px-1 font-mono text-[0.92em]">{part.code}</code>)}
+        </p>
+      </div>
     </div>
   );
 }

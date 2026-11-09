@@ -7,7 +7,10 @@ import { getPpmDir } from "../../services/ppm-dir.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import { parseApplyPatch, changeToToolUse } from "./codex-patch.ts";
 import { mapRolloutItem } from "./codex-rollout-items.ts";
-import { completeLines, parseLine, readRolloutHeader, type RolloutHeader } from "./codex-rollout-header.ts";
+import { completeLines, parseLine, rolloutHeaderReads, type RolloutHeader } from "./codex-rollout-header.ts";
+import { indexedRollouts, indexedRolloutTitle } from "./codex-rollout-index.ts";
+import { CodexTurnTracker } from "./codex-turn-tracker.ts";
+import { COMPACTED_MARKER } from "../../services/session-turns/session-turn-types.ts";
 import {
   finalAssistantText, subagentToolResult, subagentToolUse, transcriptToEvents,
   type SubagentTranscript,
@@ -97,22 +100,44 @@ export function fnOutputToToolResult(p: Record<string, unknown>): ChatEvent {
  */
 export function parseRolloutJsonl(
   text: string,
-  opts?: {
-    /** Which compaction boundary to stop at, counting from the start of the file. */
-    preCompactIndex?: number;
+  opts?: RolloutParseOptions & {
     /** Reads a spawned thread's transcript so its card can nest it. */
     loadSubagent?: (threadId: string) => SubagentTranscript | null;
   },
 ): ChatMessage[] {
-  const steps = rolloutMessageSteps(text, opts?.preCompactIndex);
+  const steps = rolloutMessageSteps(text, opts);
   let step = steps.next();
   while (!step.done) step = steps.next(step.value ? opts?.loadSubagent?.(step.value) ?? null : null);
   return step.value;
 }
 
-/** Shared parser; HTTP readers yield between batches and load children asynchronously. */
-export function* rolloutMessageSteps(text: string, preCompactIndex?: number): Generator<string | null, ChatMessage[], SubagentTranscript | null> {
+export interface RolloutParseOptions {
+  /** Which compaction boundary to stop at, counting from the start of the file. */
+  preCompactIndex?: number;
+  /**
+   * The whole thread rather than the resumable conversation: a compaction neither clears what
+   * came before nor writes its `replacement_history` copies back in — it leaves one synthetic
+   * `COMPACTED_MARKER` message where it happened. For search and the turn index.
+   */
+  full?: boolean;
+}
+
+/**
+ * Shared parser; HTTP readers yield between batches and load children asynchronously.
+ *
+ * Every message is tagged with the codex turn it belongs to (`turnId`, the native `turn_id`),
+ * by `CodexTurnTracker` — the rules the turn index scans with — so the stamper can map it to
+ * the turn a person sees. A `thread_rolled_back` drops whole turns, a steered message included.
+ *
+ * `source` is the rollout text, or its complete lines already split (a reader that read a byte
+ * range line by line hands those over rather than joining them into one large string).
+ */
+export function* rolloutMessageSteps(source: string | readonly string[], opts?: RolloutParseOptions): Generator<string | null, ChatMessage[], SubagentTranscript | null> {
+  const lines = typeof source === "string" ? completeLines(source) : source.filter((l) => l.trim() !== "");
+  const preCompactIndex = opts?.preCompactIndex;
   const messages: ChatMessage[] = [];
+  const tracker = new CodexTurnTracker();
+  let lineNo = -1;
   let i = 0;
   let pendingEvents: ChatEvent[] = [];
   let compactionsSeen = 0;
@@ -127,19 +152,32 @@ export function* rolloutMessageSteps(text: string, preCompactIndex?: number): Ge
   // which would land in the transcript. When the item events are present they
   // are the better source: already assembled, already named the way the live
   // stream names them.
-  const hasItemEvents = text.includes('"item_completed"');
+  const hasItemEvents = typeof source === "string"
+    ? source.includes('"item_completed"')
+    : lines.some((l) => l.includes('"item_completed"'));
+
+  /** The codex turn an answer goes in. */
+  const itemTurn = () => tracker.item(lineNo);
 
   const flushAssistant = (content: string, ts: string) => {
     if (!content && pendingEvents.length === 0) return;
     const events = pendingEvents.length
       ? [...pendingEvents, ...(content ? [{ type: "text", content } as ChatEvent] : [])]
       : undefined;
-    messages.push({ id: `rollout-${i++}`, role: "assistant", content, ...(events ? { events } : {}), timestamp: ts });
+    // Tool calls are not turn items (see `CodexTurnTracker.item`): they go where the turn is.
+    const turnId = tracker.latestId;
+    messages.push({ id: `rollout-${i++}`, role: "assistant", content, ...(events ? { events } : {}), timestamp: ts, ...(turnId ? { turnId } : {}) });
     pendingEvents = [];
   };
 
+  const pushUser = (text: string, ts: string) => {
+    if (pendingEvents.length) flushAssistant("", ts); // tools with no final text
+    messages.push({ id: `rollout-${i++}`, role: "user", content: stripSharedContext(text), timestamp: ts, turnId: tracker.userMessage(lineNo) });
+  };
+
   let batch = 0;
-  for (const line of completeLines(text)) {
+  for (const line of lines) {
+    lineNo++;
     if (++batch % 32 === 0) yield null;
     const rec = parseLine(line);
     if (!rec) continue;
@@ -147,10 +185,16 @@ export function* rolloutMessageSteps(text: string, preCompactIndex?: number): Ge
     const ts = rec.timestamp ?? new Date().toISOString();
 
     if (rec.type === "event_msg") {
-      if (p.type === "user_message" && typeof p.message === "string") {
-        if (pendingEvents.length) flushAssistant("", ts); // tools with no final text
-        messages.push({ id: `rollout-${i++}`, role: "user", content: stripSharedContext(p.message), timestamp: ts });
+      if (p.type === "task_started" && typeof p.turn_id === "string") {
+        // What is still pending belongs to the turn that is ending, not to this one.
+        if (pendingEvents.length) flushAssistant("", ts);
+        tracker.taskStarted(p.turn_id);
+      } else if (p.type === "task_complete" || p.type === "turn_aborted") {
+        tracker.taskEnded(typeof p.turn_id === "string" ? p.turn_id : undefined);
+      } else if (p.type === "user_message" && typeof p.message === "string") {
+        pushUser(p.message, ts);
       } else if (p.type === "agent_message" && typeof p.message === "string") {
+        itemTurn();
         flushAssistant(p.message, ts);
       } else if (p.type === "item_completed") {
         // Newer codex writes one item per finished step instead of the
@@ -158,9 +202,9 @@ export function* rolloutMessageSteps(text: string, preCompactIndex?: number): Ge
         // spelling — see codex-rollout-items.
         const mapped = mapRolloutItem(p.item);
         if (mapped.kind === "user") {
-          if (pendingEvents.length) flushAssistant("", ts);
-          messages.push({ id: `rollout-${i++}`, role: "user", content: stripSharedContext(mapped.text), timestamp: ts });
+          pushUser(mapped.text, ts);
         } else if (mapped.kind === "assistant") {
+          itemTurn();
           flushAssistant(mapped.text, ts);
         } else if (mapped.kind === "events") {
           pendingEvents.push(...mapped.events);
@@ -176,14 +220,15 @@ export function* rolloutMessageSteps(text: string, preCompactIndex?: number): Ge
         }
       } else if (p.type === "thread_rolled_back") {
         // codex doesn't truncate the rollout file on rollback/fork — it appends this
-        // marker. Drop the last `num_turns` turns (by user-message turn-start) so a
-        // forked/rewound thread renders its real (post-rollback) history.
+        // marker. It removes the last `num_turns` *turns* — a turn holding a steered
+        // message is still one — so the messages of exactly those turns go.
         const n = typeof p.num_turns === "number" ? p.num_turns : 0;
         if (n > 0) {
           pendingEvents = [];
-          const userIdxs: number[] = [];
-          for (let j = 0; j < messages.length; j++) if (messages[j]!.role === "user") userIdxs.push(j);
-          messages.length = n >= userIdxs.length ? 0 : userIdxs[userIdxs.length - n]!;
+          const removed = new Set(tracker.rollback(n));
+          const kept = messages.filter((m) => !m.turnId || !removed.has(m.turnId));
+          messages.length = 0;
+          messages.push(...kept);
         }
       }
     } else if (rec.type === "response_item") {
@@ -197,6 +242,12 @@ export function* rolloutMessageSteps(text: string, preCompactIndex?: number): Ge
       else if (typeof p.type === "string" && p.type.endsWith("_call_output")) pendingEvents.push(fnOutputToToolResult(p));
       else if (typeof p.type === "string" && p.type.endsWith("_call")) pendingEvents.push(genericCallToToolUse(p));
     } else if (rec.type === "compacted") {
+      tracker.compacted(lineNo);
+      if (opts?.full) {
+        if (pendingEvents.length) flushAssistant("", ts);
+        messages.push({ id: `codex-compacted-${lineNo}`, role: "system", content: COMPACTED_MARKER, timestamp: ts, synthetic: true });
+        continue;
+      }
       if (preCompactIndex) {
         // One segment per request, the way the Claude parser's `oneSegment` does.
         // The requested boundary ends the walk; every boundary before it closes a
@@ -211,7 +262,8 @@ export function* rolloutMessageSteps(text: string, preCompactIndex?: number): Ge
         continue;
       }
       // In-place compaction: `replacement_history` REPLACES everything before this
-      // point. Reset to the post-compact base; turns after it append normally.
+      // point. Reset to the post-compact base; turns after it append normally. The
+      // copies are written back by codex, not said here — synthetic, in no turn.
       pendingEvents = [];
       messages.length = 0;
       const rh = Array.isArray(p.replacement_history) ? p.replacement_history : [];
@@ -223,7 +275,7 @@ export function* rolloutMessageSteps(text: string, preCompactIndex?: number): Ge
         if (!role) continue;
         const rawContent = contentToText(item.content);
         const content = role === "user" ? stripSharedContext(rawContent) : rawContent;
-        if (content) messages.push({ id: `rollout-${i++}`, role, content, timestamp: ts });
+        if (content) messages.push({ id: `rollout-${i++}`, role, content, timestamp: ts, synthetic: true });
       }
     }
   }
@@ -231,44 +283,29 @@ export function* rolloutMessageSteps(text: string, preCompactIndex?: number): Ge
   return messages;
 }
 
-/** First read of a rollout's head: `session_meta` carries the base instructions, measured at 22–27 KB. */
-const HEADER_FIRST_READ_BYTES = 32 * 1024;
-
 /**
  * Read a rollout file's header (session_meta, plus its title when asked) from as little of
- * the file as answers it.
+ * the file as answers it — see `rolloutHeaderReads` for the slices it takes.
  *
  * Reading whole files here is what froze the server: identifying one rollout among thousands
  * read every transcript in full (1.8 GB, over a second of synchronous I/O) whenever no file
- * name matched. The head is read in growing slices instead, and a slice's unterminated last
- * line — possibly a split multi-byte character — is dropped by `completeLines`, so a partial
- * read never parses a partial record.
+ * name matched. This is the synchronous reader, for a single lookup; listing goes through the
+ * asynchronous index in `codex-rollout-index.ts`.
  */
 export function readSessionMeta(
   file: string,
-  opts?: { withTitle?: boolean; titleIf?: (header: RolloutHeader) => boolean },
+  opts?: { withTitle?: boolean },
 ): RolloutHeader | null {
   let fd: number | undefined;
   try {
     fd = openSync(file, "r");
-    const size = fstatSync(fd).size;
-    let buffer = Buffer.alloc(Math.min(size, HEADER_FIRST_READ_BYTES));
-    let filled = 0;
-    while (true) {
-      const read = readSync(fd, buffer, filled, buffer.length - filled, filled);
-      filled += read;
-      // A file that shrank under us reads short; stop rather than wait for bytes that are gone.
-      const eof = filled >= size || read === 0;
-      const header = readRolloutHeader(buffer.toString("utf-8", 0, filled), opts);
-      // A header the caller is about to discard needs no title: most rollouts in a shared
-      // tree belong to other projects, and a title can sit megabytes in, or nowhere at all.
-      const wanted = header && (!opts?.titleIf || opts.titleIf(header));
-      const complete = header && (!opts?.withTitle || !wanted || header.title || header.parentThreadId);
-      if (complete || eof) return header;
-      const grown = Buffer.alloc(Math.min(size, buffer.length * 4));
-      buffer.copy(grown, 0, 0, filled);
-      buffer = grown;
+    const plan = rolloutHeaderReads(fstatSync(fd).size, opts);
+    let step = plan.next();
+    while (!step.done) {
+      const { buffer, offset, length, position } = step.value;
+      step = plan.next(readSync(fd, buffer, offset, length, position));
     }
+    return step.value;
   } catch { /* unreadable file → excluded (fail-closed) */ }
   finally { if (fd !== undefined) closeSync(fd); }
   return null;
@@ -304,44 +341,43 @@ function threadIdFromName(file: string): string | null {
  * task never appears in its own transcript. Its work shows in the parent, on the
  * Agent card for that spawn.
  */
-export function listCodexRollouts(
+export async function listCodexRollouts(
   sessionsDir: string,
   requestedCwd: string,
   providerId: string,
   opts?: { limit?: number; offset?: number },
-): SessionInfo[] {
+): Promise<SessionInfo[]> {
   const target = normPath(requestedCwd);
-  const files = findRolloutFiles(sessionsDir);
-  const sessions: SessionInfo[] = [];
+  const matched: Array<{ file: string; session: SessionInfo }> = [];
 
-  for (const file of files) {
-    const meta = readSessionMeta(file, {
-      withTitle: true,
-      titleIf: (h) => !!h.cwd && !h.parentThreadId && normPath(h.cwd) === target,
-    });
-    if (!meta?.cwd) continue;            // fail-closed: no cwd → exclude
-    if (normPath(meta.cwd) !== target) continue;
-    if (meta.parentThreadId) continue;   // one step of another session, not a session
+  for (const { file, header, mtimeMs } of await indexedRollouts(sessionsDir)) {
+    if (!header?.cwd) continue;          // fail-closed: no cwd → exclude
+    if (normPath(header.cwd) !== target) continue;
+    if (header.parentThreadId) continue; // one step of another session, not a session
 
-    const id = meta.id ?? threadIdFromName(file);
+    const id = header.id ?? threadIdFromName(file);
     if (!id) continue;
 
-    let updatedAt = meta.timestamp;
-    try { updatedAt = statSync(file).mtime.toISOString(); } catch { /* keep meta ts */ }
-
-    sessions.push({
-      id,
-      providerId,
-      title: meta.title ?? "Codex session",
-      createdAt: meta.timestamp ?? new Date().toISOString(),
-      updatedAt,
+    matched.push({
+      file,
+      session: {
+        id,
+        providerId,
+        title: "Codex session",
+        createdAt: header.timestamp ?? new Date().toISOString(),
+        updatedAt: new Date(mtimeMs).toISOString(),
+      },
     });
   }
 
-  sessions.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+  matched.sort((a, b) => (b.session.updatedAt ?? "").localeCompare(a.session.updatedAt ?? ""));
   const offset = opts?.offset ?? 0;
-  const limit = opts?.limit ?? sessions.length;
-  return sessions.slice(offset, offset + limit);
+  const page = matched.slice(offset, offset + (opts?.limit ?? matched.length));
+  // Titles only for the page: one can sit megabytes into a transcript.
+  await Promise.all(page.map(async (m) => {
+    m.session.title = (await indexedRolloutTitle(m.file)) ?? m.session.title;
+  }));
+  return page.map((m) => m.session);
 }
 
 /**

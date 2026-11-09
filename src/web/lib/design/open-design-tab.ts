@@ -116,7 +116,7 @@ export interface SessionToOpen {
  * design tab for a session opened as a chat, but only this can open one that is closed.
  */
 export function openSessionInItsTab(session: SessionToOpen, projectName: string, panelId?: string): string {
-  if (session.designSlug) {
+  if (session.designSlug && !useSettingsStore.getState().minimalMode) {
     return openDesignTab({
       projectName, slug: session.designSlug, sessionId: session.id, providerId: session.providerId, panelId,
     });

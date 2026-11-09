@@ -25,7 +25,14 @@ export interface WindowBodyElement {
 
 export function useWindowBodyElement(
   windowId: string,
-  rootRef: RefObject<HTMLElement | null>,
+  /**
+   * A React-owned element, rendered after every other child of the frame, that the body is
+   * appended into. Appending to the frame itself put the body where React does not know it
+   * is: a titlebar mounted again later (the skin resolving to another OS once the host's
+   * platform arrives) is inserted before its next React sibling, and a maximized or snapped
+   * window has none — so it went in after the body and drew at the bottom of the window.
+   */
+  hostRef: RefObject<HTMLElement | null>,
   minimized: boolean,
 ): WindowBodyElement {
   const pip = useWindowPip(windowId);
@@ -44,9 +51,9 @@ export function useWindowBodyElement(
   // while the content below is still mounted, and a tab-host body's deferred re-dock still
   // gets to run afterwards on a subtree that is back in the main document.
   useLayoutEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    root.append(body);
+    const host = hostRef.current;
+    if (!host) return;
+    host.append(body);
     publishWindowSlot(windowId, body);
     return () => {
       const handle = windowPip(windowId);
@@ -54,7 +61,7 @@ export function useWindowBodyElement(
       publishWindowSlot(windowId, null);
       body.remove();
     };
-  }, [body, rootRef, windowId]);
+  }, [body, hostRef, windowId]);
 
   // Minimising hides the body via CSS rather than unmounting it — content owns per-window
   // state (explorer history, selection, filter) that a remount would wipe. Never while PiP

@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import type { TabOpenRequest, TabOpenResult } from "../../shared/tab-open-protocol.ts";
+import type { TabOpenAsk, TabOpenRequest, TabOpenResult } from "../../shared/tab-open-protocol.ts";
+import { neutralizeFences } from "../../shared/untrusted-text.ts";
 
 /**
  * A round trip to the user's device for an AI tool: only a browser can open a tab or say what
@@ -44,6 +45,10 @@ const brokers = new Set<{ forget: (sessionId: string) => void }>();
 export function forgetSessionInDeviceBrokers(sessionId: string): void {
   for (const broker of brokers) broker.forget(sessionId);
 }
+
+/** What a device said went wrong; it may quote a page, which the page's scripts wrote. */
+export const deviceError = (error: string | undefined): string =>
+  error ? neutralizeFences(error.replace(/[\u0000-\u001f\u007f]/g, " ")) : "it gave no reason";
 
 /** The longest delay a JS timer holds (2^31 − 1 ms, about 24.8 days); a longer one fires at once. */
 const MAX_TIMER_MS = 2_147_483_647;
@@ -222,9 +227,10 @@ export function createTabOpenBroker(opts: {
   maxInFlightPerSession?: number;
   perMinute?: number;
 }) {
-  return createDeviceBroker<TabOpenRequest, TabOpenResult, Omit<TabOpenRequest, "type" | "requestId">>({
+  return createDeviceBroker<TabOpenRequest, TabOpenResult, TabOpenAsk>({
     deliver: opts.deliver,
-    build: (requestId, req) => ({ type: "tab_open", requestId, ...req }),
+    // A union spread is not narrowed back to the union it came from, so the cast restates it.
+    build: (requestId, req) => ({ type: "tab_open", requestId, ...req } as TabOpenRequest),
     messages: TAB_OPEN_MESSAGES,
     logTag: "tab-tools",
     canonical: opts.canonical,
@@ -247,7 +253,10 @@ export function setTabOpenDelivery(fn: TabOpenDelivery | null, canonical?: (sess
   resolveSession = canonical ?? ((sessionId) => sessionId);
 }
 
+/** The chat a session id names now, after any rename its provider made. */
+export const canonicalTabSession = (sessionId: string): string => resolveSession(sessionId);
+
 export const tabOpenBroker = createTabOpenBroker({
   deliver: (sessionId, req) => delivery?.(sessionId, req) ?? 0,
-  canonical: (sessionId) => resolveSession(sessionId),
+  canonical: canonicalTabSession,
 });

@@ -13,6 +13,7 @@ import { preToolUseDecision } from "../../../src/providers/claude-agent-sdk-quer
 import { setServerListenAddress } from "../../../src/services/server-listen-address.ts";
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "../../../src/services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { passedMcpServers } from "../../helpers/passed-mcp-servers.ts";
+import { sessionCollabMcpAccessFor, sessionCollabMcpTokens } from "../../../src/services/session-collab/session-collab-tokens.ts";
 import {
   SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
   API_KEY_PROMPT_CACHE_TTL_MS,
@@ -283,6 +284,62 @@ describe("ClaudeAgentSdkProvider", () => {
       expect((toolUse as any).tool).toBe("Read");
     });
 
+    describe("tool results", () => {
+      // One tool call in the order the CLI streams it (captured from CLI 2.1.296): the assistant
+      // frame carrying the tool_use comes before its own block's stop and the response's end,
+      // and the tool runs only after those.
+      const toolCall = (id: string, messageId: string) => [
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "message_start", message: { id: messageId } } },
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id, name: "Bash", input: {} } } },
+        { type: "assistant", parent_tool_use_id: null, message: { id: messageId, content: [{ type: "tool_use", id, name: "Bash", input: { command: "echo" } }] } },
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 0 } },
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "message_delta", delta: { stop_reason: "tool_use" } } },
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "message_stop" } },
+      ];
+      const resultOf = (id: string) => ({ type: "user", parent_tool_use_id: null, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: `out ${id}` }] } });
+      const finalAnswer = [
+        { type: "stream_event", parent_tool_use_id: null, event: { type: "message_start", message: { id: "msg_end" } } },
+        { type: "assistant", parent_tool_use_id: null, message: { id: "msg_end", content: [{ type: "text", text: "done" }] } },
+        { type: "result", subtype: "success" },
+      ];
+      let history: ReturnType<typeof mock>;
+
+      beforeEach(async () => {
+        history = (await import("@anthropic-ai/claude-agent-sdk")).getSessionMessages as unknown as ReturnType<typeof mock>;
+        history.mockClear();
+      });
+      afterEach(() => history.mockImplementation(() => Promise.resolve([])));
+
+      async function run(items: unknown[]): Promise<string[]> {
+        mockQueryFn.mockReturnValue(createMockQueryIterator(items as any, 1));
+        const session = await provider.createSession({});
+        const results: string[] = [];
+        for await (const event of provider.sendMessage(session.id, "run it")) {
+          if (event.type === "tool_result") results.push((event as any).toolUseId);
+        }
+        return results;
+      }
+
+      it("takes each result from the stream once, and never reads the transcript for it", async () => {
+        // Reading history answers with what is on disk, which is how a result came out twice.
+        history.mockImplementation(() => Promise.resolve([resultOf("toolu_2")]));
+        const results = await run([
+          ...toolCall("toolu_1", "msg_1"), resultOf("toolu_1"),
+          ...toolCall("toolu_2", "msg_2"), resultOf("toolu_2"),
+          ...finalAnswer,
+        ]);
+        expect(history).not.toHaveBeenCalled();
+        expect(results).toEqual(["toolu_1", "toolu_2"]);
+      });
+
+      it("still reads a result back from history when the stream never carried it", async () => {
+        history.mockImplementation(() => Promise.resolve([resultOf("toolu_1")]));
+        const results = await run([...toolCall("toolu_1", "msg_1"), ...finalAnswer]);
+        expect(history).toHaveBeenCalledTimes(1);
+        expect(results).toEqual(["toolu_1"]);
+      });
+    });
+
     it("always yields done event even on empty response", async () => {
       const iter = createMockQueryIterator([{ type: "result" }]);
       mockQueryFn.mockReturnValue(iter);
@@ -372,6 +429,16 @@ describe("ClaudeAgentSdkProvider", () => {
 
       const opts = mockQueryFn.mock.calls[0]![0].options;
       expect(opts.settingSources).toEqual(["user", "project"]);
+    });
+
+    it("starts the MCP control query on the same settings files as a chat", () => {
+      mockQueryFn.mockReturnValue(createMockQueryIterator([]));
+      const control = provider.openMcpControlQuery("/tmp/my-project");
+      try {
+        expect(mockQueryFn.mock.calls[0]![0].options.settingSources).toEqual(["user", "project"]);
+      } finally {
+        control.close();
+      }
     });
 
     it("includes Agent, Skill, TodoWrite, ToolSearch in allowedTools", async () => {
@@ -649,6 +716,20 @@ describe("ClaudeAgentSdkProvider", () => {
 
       const opts = mockQueryFn.mock.calls[0]![0].options;
       expect(opts.maxTurns).toBe(1000);
+    });
+
+    it("leaves maxTurns out when Max Turns is 0, so the CLI has no limit", async () => {
+      const claude = (configService as any).config.ai.providers.claude;
+      const saved = claude.max_turns;
+      claude.max_turns = 0;
+      try {
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({});
+        for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+        expect("maxTurns" in mockQueryFn.mock.calls[0]![0].options).toBe(false);
+      } finally {
+        claude.max_turns = saved;
+      }
     });
 
     it("sets cwd to projectPath from session", async () => {
@@ -966,6 +1047,52 @@ describe("ClaudeAgentSdkProvider", () => {
     });
   });
 
+  describe("readEffortStatus", () => {
+    /** A CLI whose settings put the effort at Max whatever `--effort` it was started with. */
+    function cliAtMax() {
+      return Object.assign(createMockQueryIterator([
+        { type: "system", subtype: "init", session_id: "sdk-1" },
+        { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } },
+        { type: "result", subtype: "success" },
+      ]), {
+        getSettings: async () => ({
+          sources: [{ source: "userSettings", settings: { env: { CLAUDE_CODE_EFFORT_LEVEL: "max" } } }],
+          applied: { model: "claude-opus-5-5", effort: "max" },
+        }),
+        initializationResult: async () => ({
+          models: [{ value: "default", resolvedModel: "claude-opus-5-5", supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] }],
+        }),
+      });
+    }
+
+    it("asks the running CLI, and sets its answer beside the effort the CLI was started with", async () => {
+      mockQueryFn.mockReturnValue(cliAtMax());
+      const session = await provider.createSession({});
+      let status: unknown;
+      for await (const event of provider.sendMessage(session.id, "hi", { effort: "high" })) {
+        if (event.type === "system" && (event as any).subtype === "init") status = await provider.readEffortStatus(session.id);
+      }
+      expect(mockQueryFn.mock.calls[0]![0].options.effort).toBe("high");
+      expect(status).toMatchObject({
+        env: { value: "max", source: "userSettings" },
+        observed: { requested: "high", applied: "max", model: "claude-opus-5-5" },
+        supported: ["low", "medium", "high", "xhigh", "max"],
+      });
+    });
+
+    it("answers null with no subprocess to ask, or one that cannot say", async () => {
+      expect(await provider.readEffortStatus("no-such-session")).toBeNull();
+      const silent = Object.assign(cliAtMax(), { getSettings: async () => { throw new Error("unknown control request"); } });
+      mockQueryFn.mockReturnValue(silent);
+      const session = await provider.createSession({});
+      let status: unknown = "not asked";
+      for await (const event of provider.sendMessage(session.id, "hi")) {
+        if (event.type === "system" && (event as any).subtype === "init") status = await provider.readEffortStatus(session.id);
+      }
+      expect(status).toBeNull();
+    });
+  });
+
   describe("approval timeout", () => {
     it("auto-denies AskUserQuestion after timeout", async () => {
       let canUseToolFn: any;
@@ -1004,6 +1131,86 @@ describe("ClaudeAgentSdkProvider", () => {
       // But since our mock doesn't call canUseTool, just verify the stream completes
       const done = events.find((e) => e.type === "done");
       expect(done).toBeTruthy();
+    });
+  });
+
+  describe("an approval the CLI is waiting on", () => {
+    const question = {
+      questions: [{ question: "Ticket?", header: "Ticket", multiSelect: false, options: [{ label: "None", description: "" }, { label: "SAL-1", description: "" }] }],
+    };
+
+    /**
+     * A CLI that asks once its turn's last message is out and then sends nothing until it hears
+     * back: the order that left questions unseen until the user cancelled.
+     */
+    function askingCli(toolUse: { name: string; input: unknown }, ask: (options: any) => Promise<unknown>) {
+      const verdicts: unknown[] = [];
+      mockQueryFn.mockImplementation(({ prompt, options }: any) => {
+        const input = prompt[Symbol.asyncIterator]();
+        return {
+          close: mock(() => {}),
+          async *[Symbol.asyncIterator]() {
+            if ((await input.next()).done) return;
+            yield { type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_ask", ...toolUse }] } };
+            await Bun.sleep(10);
+            verdicts.push(await ask(options));
+            yield { type: "result", subtype: "success" };
+          },
+        };
+      });
+      return verdicts;
+    }
+
+    /** The turn's first approval request, or null if none comes within a second. */
+    async function firstApproval(stream: AsyncIterator<ChatEvent>): Promise<any> {
+      const deadline = Bun.sleep(1000).then(() => null);
+      for (;;) {
+        const step = await Promise.race([stream.next(), deadline]);
+        if (!step || step.done) return null;
+        if (step.value.type === "approval_request") return step.value;
+      }
+    }
+
+    async function rest(stream: AsyncIterator<ChatEvent>): Promise<ChatEvent[]> {
+      const events: ChatEvent[] = [];
+      for (let step = await stream.next(); !step.done; step = await stream.next()) events.push(step.value);
+      return events;
+    }
+
+    /** Lets a turn that never surfaced its approval finish, so a failure does not hang the file. */
+    function releaseApprovals() {
+      for (const id of [...((provider as any).pendingApprovals as Map<string, unknown>).keys()]) provider.resolveApproval(id, false);
+    }
+
+    it("hands out an AskUserQuestion at once, and the answer reaches the CLI", async () => {
+      const verdicts = askingCli({ name: "AskUserQuestion", input: question }, (options) => options.canUseTool("AskUserQuestion", question));
+      const session = await provider.createSession({});
+      const stream = provider.sendMessage(session.id, "commit it")[Symbol.asyncIterator]();
+      try {
+        const asked = await firstApproval(stream);
+        expect(asked).toMatchObject({ type: "approval_request", tool: "AskUserQuestion", input: question });
+        provider.resolveApproval(asked.requestId, true, { "Ticket?": "None" });
+        expect((await rest(stream)).some((e) => e.type === "done")).toBe(true);
+        expect(verdicts).toEqual([{ behavior: "allow", updatedInput: { ...question, answers: { "Ticket?": "None" } } }]);
+      } finally {
+        releaseApprovals();
+      }
+    });
+
+    it("hands out a tool approval from the permission hook at once", async () => {
+      const bash = { command: "git commit -m x" };
+      const verdicts = askingCli({ name: "Bash", input: bash }, (options) => permissionHook(options)({ tool_name: "Bash", tool_input: bash }));
+      const session = await provider.createSession({});
+      const stream = provider.sendMessage(session.id, "commit it", { permissionMode: "default" })[Symbol.asyncIterator]();
+      try {
+        const asked = await firstApproval(stream);
+        expect(asked).toMatchObject({ type: "approval_request", tool: "Bash", input: bash });
+        provider.resolveApproval(asked.requestId, true);
+        expect((await rest(stream)).some((e) => e.type === "done")).toBe(true);
+        expect(verdicts).toEqual([preToolUseDecision("allow")]);
+      } finally {
+        releaseApprovals();
+      }
     });
   });
 
@@ -1083,7 +1290,15 @@ describe("ClaudeAgentSdkProvider", () => {
         expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBe("1");
         (configService as any).config.ai.tab_tools = false;
         expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBeUndefined();
+        // open_preview is what replaces the Artifact tools, by its own switch once it has one.
+        (configService as any).config.ai.ppm_tools = { open_preview: true };
+        expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBe("1");
+        (configService as any).config.ai.tab_tools = true;
+        (configService as any).config.ai.ppm_tools = { open_preview: false };
+        expect((await envOf()).CLAUDE_CODE_DISABLE_ARTIFACT).toBeUndefined();
       } finally {
+        delete (configService as any).config.ai.ppm_tools;
+        (configService as any).config.ai.tab_tools = false;
         if (previous !== undefined) process.env.CLAUDE_CODE_DISABLE_ARTIFACT = previous;
       }
     });
@@ -1386,7 +1601,7 @@ describe("ClaudeAgentSdkProvider", () => {
 
     /**
      * Every CLI `query` starts: each reads one message, starts `during` and reports a status
-     * while it runs (the provider hands out queued approvals as messages arrive), then answers.
+     * while it runs, then answers.
      */
     function cliFactory(during?: (options: any) => Promise<void>) {
       const clis: Array<{ options: any; mcpServers: Record<string, any> | undefined; pushed: any[]; close: ReturnType<typeof mock> }> = [];
@@ -1437,6 +1652,8 @@ describe("ClaudeAgentSdkProvider", () => {
 
     it("starts with the tab tools under the token its chat will mint, so the chat's first turn takes it over", async () => {
       (configService as any).config.ai.tab_tools = true;
+      // The session tools are off until the tour's question is answered; this is "Turn on".
+      (configService as any).config.ai.ppm_tools = { create_session: true, send_to_session: true, session_status: true };
       setServerListenAddress(8125, "0.0.0.0");
       try {
         const clis = cliFactory();
@@ -1446,15 +1663,20 @@ describe("ClaudeAgentSdkProvider", () => {
         expect(session.id).toBe(spare.sessionId);
         expect(tabToolsMcpTokens.resolve(clis[0]!.mcpServers!["ppm-tabs"].headers.Authorization.slice("Bearer ".length)))
           .toEqual({ sessionId: session.id });
+        expect(sessionCollabMcpTokens.resolve(clis[0]!.mcpServers!["ppm-sessions"].headers.Authorization.slice("Bearer ".length)))
+          .toEqual({ sessionId: session.id });
         // Gone once the CLI has answered its initialize request: it holds the servers in memory.
         await Promise.resolve();
         expect(fsExists(spare.extraArgs["mcp-config"])).toBe(false);
         // What chatService.prepareSendOptions hands the session's turn.
-        await drain(provider.sendMessage(session.id, "hi", { tabToolsMcp: tabToolsMcpAccessFor(session.id)! }));
+        await drain(provider.sendMessage(session.id, "hi", {
+          tabToolsMcp: tabToolsMcpAccessFor(session.id)!, sessionCollabMcp: sessionCollabMcpAccessFor(session.id)!,
+        }));
         expect(clis).toHaveLength(1);
         expect(clis[0]!.pushed.map((m) => m.message.content)).toEqual(["hi"]);
       } finally {
         (configService as any).config.ai.tab_tools = undefined;
+        delete (configService as any).config.ai.ppm_tools;
         setServerListenAddress(0, "");
       }
     });
@@ -1471,7 +1693,7 @@ describe("ClaudeAgentSdkProvider", () => {
         await drain(provider.sendMessage(cold.id, "hi", picks));
 
         expect(clis).toHaveLength(2);
-        const comparable = ({ sessionId: _id, stderr: _stderr, canUseTool: _ask, hooks, ...rest }: any) => ({ ...rest, hooks: !!hooks });
+        const comparable = ({ sessionId: _id, stderr: _stderr, canUseTool: _ask, hooks, spawnClaudeCodeProcess: spawn, ...rest }: any) => ({ ...rest, hooks: !!hooks, spawn: typeof spawn });
         expect(comparable(clis[0]!.options)).toEqual(comparable(clis[1]!.options));
         expect(clis[0]!.options.model).toBeTruthy();
         expect(clis[0]!.options.permissionMode).toBe("acceptEdits");
@@ -1598,6 +1820,48 @@ describe("ClaudeAgentSdkProvider", () => {
         expect(clis).toHaveLength(2);
         expect(clis[1]!.options.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("sk-ant-oat01-rotated");
       });
+    });
+  });
+
+  describe("completeOnce", () => {
+    let selectorOff: ReturnType<typeof spyOn>;
+    beforeEach(() => { selectorOff = spyOn(accountSelector, "isEnabled").mockReturnValue(false); });
+    afterEach(() => selectorOff.mockRestore());
+
+    const result = (extra: Record<string, unknown> = {}) => ({
+      type: "result", subtype: "success", is_error: false, result: "fine", total_cost_usd: 0.0123,
+      usage: { input_tokens: 10, output_tokens: 5 }, ...extra,
+    });
+
+    // Ported from pr-review-bot: "Sonnet judges with no tools, no customizations and no session left behind".
+    it("asks with no tools, no MCP server, no settings and no session left behind", async () => {
+      mockQueryFn.mockReturnValue(createMockQueryIterator([result()], 0));
+      const answer = await provider.completeOnce({ prompt: "hi", model: "haiku" });
+      expect(answer).toMatchObject({ text: "fine", costUsd: 0.0123 });
+      expect(answer.json).toBeUndefined();
+      const { options } = mockQueryFn.mock.calls[0]![0];
+      expect(options).toMatchObject({ model: "haiku", tools: [], mcpServers: {}, strictMcpConfig: true, settingSources: [], persistSession: false, maxTurns: 1 });
+      expect(options.cwd).toEndWith("one-shot");
+      expect("systemPrompt" in options).toBe(false);
+      expect("effort" in options).toBe(false);
+      expect("outputFormat" in options).toBe(false);
+    });
+
+    it("passes effort and a JSON schema, and answers with the structured output", async () => {
+      const schema = { type: "object", properties: { ask: { type: "boolean" } }, required: ["ask"] };
+      mockQueryFn.mockReturnValue(createMockQueryIterator([result({ structured_output: { ask: true } })], 0));
+      const answer = await provider.completeOnce({ prompt: "hi", model: "sonnet", systemPrompt: "Judge.", effort: "low", jsonSchema: schema });
+      expect(answer).toMatchObject({ text: "fine", json: { ask: true }, costUsd: 0.0123 });
+      const { options } = mockQueryFn.mock.calls[0]![0];
+      expect(options).toMatchObject({ systemPrompt: "Judge.", effort: "low", outputFormat: { type: "json_schema", schema } });
+      // The structured answer is a tool call: a one-turn cap would end the run before it.
+      expect("maxTurns" in options).toBe(false);
+    });
+
+    it("fails when a schema was asked for and no structured output came back", async () => {
+      mockQueryFn.mockReturnValue(createMockQueryIterator([result()], 0));
+      await expect(provider.completeOnce({ prompt: "hi", model: "haiku", jsonSchema: { type: "object" } }))
+        .rejects.toThrow("Claude did not answer in the requested JSON shape");
     });
   });
 });

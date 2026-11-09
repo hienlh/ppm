@@ -57,13 +57,13 @@ env: {
 
 ### Project-local Claude settings restrict tools
 
-**Problem**: Projects may have `.claude/settings.local.json` with restrictive `permissions.allow` lists (e.g., only `Bash(python:*)`, `Bash(ls:*)`). Even with `permissionMode: "bypassPermissions"`, the SDK CLI still reads these and restricts available tools.
+**Problem**: A project's `.claude/settings.local.json` changes what a chat may do once the CLI loads it. Measured in PR #60's review: a `deny: ["Bash"]` there hid Bash from the model even with `permissionMode: "bypassPermissions"`, and an `env` with `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY` ran the chat on that key instead of the PPM account. A restrictive `permissions.allow` list, the case first written up here, restricts nothing under bypass: with `allow: ["Read"]`, Bash still ran.
 
-**Fix**: Override with explicit empty settings and no setting sources:
+**Fix**: Leave the local file out of the sources a chat loads, `CLAUDE_SETTING_SOURCES` in `claude-agent-sdk-query-options.ts`:
 ```ts
-settings: { permissions: { allow: [], deny: [] } },
-settingSources: [],
+settingSources: ["user", "project"],
 ```
+The empty `settings: { permissions: { allow: [], deny: [] } }` PPM also passes cancels neither of those, so the source list is the guard — for the local file only. The project's own `.claude/settings.json`, which `project` loads, can deny tools and set `env` the same way (measured in the same review).
 
 ---
 
@@ -76,6 +76,16 @@ settingSources: [],
 **Fix**: Pass `executable: "node"` in SDK query options. Forces SDK to spawn `node cli.js` instead of `bun cli.js`. Node is always in PATH on Windows.
 
 **File**: `src/providers/claude-agent-sdk.ts` — `queryOptions` in `sendMessage()`
+
+---
+
+### An approval the CLI asks for must wake the turn's loop
+
+**Problem**: An AskUserQuestion often never showed (7 of the 10 in the session trace from 2026-10-16 to 2026-10-22). The chat sat on "thinking" until the user cancelled, and only then did the question card appear, for a turn that was already over. In one session the trace has the `tool_use` at 08:31:08 and its `approval_request` at 08:48:09, one line after `turn_aborted`. Tool approvals outside bypass mode go through the same queue and could hang the same way.
+
+**Root cause**: `canUseTool` and the PreToolUse hook queue their `approval_request`, and the loop over the SDK's messages handed the queue out only when the next message arrived. The CLI asks through a control request and then sends nothing until it is answered. If its last message for the turn was processed before the callback ran, there was no next message, so neither side ever moved. `approvalNotify` had been declared for exactly this and never assigned. It looked intermittent because whether the trailing message landed before or after the callback was a race.
+
+**Fix**: `ApprovalQueue.alongside()` (`src/providers/claude-approval-queue.ts`) wakes the loop with `APPROVAL_WAKE` whenever something is queued while the SDK is silent. It keeps the one outstanding `next()` across wakes, and it does not await `return()` when left with that `next()` still out, because an async generator's `return()` waits behind it.
 
 ---
 
@@ -400,3 +410,142 @@ definition, policy and expression found goes through the same text check
 (`assistant-sql-reach-postgres.ts`, `assistant-sql-reach-mysql.ts`). SQLite needs no catalog read.
 The list is deliberately short: an ordinary read that misses it costs one approval card, while a
 read wrongly proven runs unasked. Design: `docs/architecture/ppm-assistant.md` → Proving a read.
+
+## A Task Scheduler task at priority 7 demotes memory and I/O, not just CPU (2026-10-26)
+
+PPM's autostart task was registered with the scheduler's default `<Priority>7</Priority>`. That
+starts the supervisor below normal on CPU **and** at memory priority 2 (normal is 5) and I/O
+priority Low (normal is Normal), and every child inherits all three: the server, every
+`claude`/`codex` process, every terminal. Windows takes pages from a low-memory-priority process
+first and reads them back at that process's I/O priority, so the server's event loop sat in
+page-in waits for 20-60s at a time, several times an hour, until the supervisor's health check
+killed it (three restarts in 40 minutes on 26/10).
+
+It was invisible to every log PPM kept. The lag monitor called each one `cause=starved` because
+the process had used little CPU, and "starved" means the CPU went to someone else — but the
+machine was at 13%. An outside watcher reading the main thread once a second found it in
+`PageIn` for 23s on an idle NVMe disk. Three things changed:
+
+- The task is registered at priority 5, and the supervisor and server raise themselves to normal
+  at start (`process-priority.ts`), which covers tasks registered before. Only raising: a
+  priority set higher on purpose is left alone. A demoted start is logged as a `WARN`.
+- The lag monitor measures the machine's CPU across a stall and says `cause=blocked` when there
+  were free cores — the thread was waiting on a page-in, a disk read, a lock or a synchronous
+  child, not starved.
+- A failed health probe logs, from the supervisor, what the server's main thread is waiting on
+  (`process-thread-snapshot.ts`: one `NtQuerySystemInformation` call on Windows, `/proc` on
+  Linux), its hard page faults and CPU since the last probe, and the machine's CPU. That line is
+  written while the server is still stalled, which is the only moment the cause can be read.
+
+To check a running PPM: `GetProcessInformation(ProcessMemoryPriority)` and
+`NtQueryInformationProcess(ProcessIoPriority = 33)` on its pid; Task Manager shows only the CPU
+class.
+
+## Driving a streaming chat from Playwright (2026-11-04)
+
+Three things cost several reruns of `tests/e2e/session-turn-refs-e2e.mjs`, and each
+looked like a product bug first:
+
+- Playwright's `hover`/`click` wait for the element to stop moving, and a chat that follows the
+  stream moves every row on every chunk. A click on a message during a turn therefore waits until
+  the turn ends — the "mid-turn" step silently ran after it. Use `locator.dispatchEvent("click")`
+  for anything that must happen while the chat streams.
+- The composer's placeholder is "Ask anything..." only while idle; during a turn it is "Follow-up..."
+  (or "Follow-up or Stop..."). A selector on the idle placeholder waits out the turn, so a message
+  meant to be queued mid-turn was sent after it.
+- A floating window (Settings) is restored on reload and sits over the panels, so a later step's
+  hover times out. Close it with its own **Close window** button; Escape only works while it has focus.
+
+Also: Node 20 (the capped e2e image) has no global `WebSocket`; a second device's socket has to be
+opened by the Bun fixture instead.
+
+## On Windows, a child holding the server's sockets makes the browser hang (2026-11-07)
+
+A live test saw the first reload after a chat cold-started Claude stay blank for 30-60s. The
+browser was waiting on PPM's own script chunks and on a `DELETE` the server log said it had
+answered in 0 ms; the server held 16 connections in CloseWait, and they vanished 3 s after only
+the `claude.exe` children were killed.
+
+Proven on Bun 1.3.10 with a scratch server and a long-lived child:
+
+- Bun creates the `Bun.serve` listener and every accepted connection **inheritable**, and
+  `Bun.spawn` — which `node:child_process` calls, so the Agent SDK's CLI on Windows too — spawns
+  with inheritance on. A child that listed its own sockets by `getsockname`/`getpeername` showed
+  the server's listener and both open client connections. The real server's PowerShell child
+  (Task Manager's collector) held the same three.
+- With the child alive, a connection the server closed on its 3 s idle timeout reached the
+  client as EOF only when the child exited (12 s, the child's lifetime). With the fix: 4 s.
+- In a browser: load PPM, make the server spawn that child, wait past the 10 s idle timeout,
+  reload. Before: **44 s**, stuck on the old page's `DELETE /api/system/resources/stream/…`
+  (2/2). After: 72-78 ms (2/2).
+
+Two fixes that look right do not work. Clearing the flag on the listener once leaves every
+accepted connection inheritable — they do not take the listener's flag. And picking out the
+sockets before clearing them (`getsockopt(SO_TYPE)`) hangs: on an inheritable synchronous pipe
+that another thread is blocked reading, the call waits on the file object's lock and never
+returned in 20 s. `windows-socket-inheritance.ts` wraps `Bun.spawn`/`Bun.spawnSync` and, before
+each spawn, clears `HANDLE_FLAG_INHERIT` on every handle in the process except the standard
+three. It reads the handle table with `NtQueryInformationProcess(ProcessHandleInformation)` and
+never touches an object: 0.25 ms when it cleared 101 handles, 0.02 ms once they were clear. libuv duplicates each child's stdio as inheritable
+inside the spawn, so pipes, `inherit`, IPC and `spawnSync` all still work (checked).
+
+Inherited handles stay inheritable, so the leak also chains: a test server run from an agent's
+shell held the agent's own 37 sockets, inherited through PowerShell and Bun.
+
+## Bun 1.3.10 on Windows leaks every idle helper thread (2026-11-08)
+
+The supervisor reached 15.4 GB of private bytes against a 1.4 GB working set and a 3 MB JS heap,
+growing about 400 MB an hour, until the machine had 5 GB of commit left out of 53. PPM's code was
+not leaking. Bun 1.3.10 was.
+
+What the live process held, read from outside it (no tool needed beyond `bun:ffi`):
+
+- 7,352 `Thread` handles while 17 threads were alive. All of them came from one start routine
+  inside `bun.exe`, each thread had lived about 10.6 s, and they were created at 3.2 a minute for
+  37 hours. That is a JavaScriptCore helper thread that exits after 10 s idle and is recreated on
+  the next bit of work, and Bun never closes its handle.
+- 484 fully committed 32 MB allocations, 14.7 GB of the 15.4. The memory monitor's own samples
+  grew by exactly 31–33 MB about 370 times and by 0 the rest of the time, so this was allocator
+  segments taken and never given back, not a slow drip.
+
+A script that does nothing but `await Bun.sleep(15_000)` leaks about 8 thread handles a cycle on
+1.3.10 (7.2 on 1.2.23, 7.9 on 1.3.9) and none on 1.3.11, 1.3.12, 1.3.13, 1.3.14, 1.4.0 or 1.4.4
+(1.3.11 measured side by side with a 1.3.10 control). So every Windows Bun before 1.3.11 has it. Work done back to back leaks nothing on any version, which
+is why spawning PowerShell in a loop never reproduced it. The leak needs the helper thread to go
+idle, exit and come back, which is exactly what any timer longer than 10 s does.
+
+Two wrong turns, so nobody repeats them:
+
+- The comment on `snapshotServerDescendants` blamed overlapping PowerShell spawns for the 32 MB
+  segments. Serialising them did not stop the growth. Every sample of the supervisor did have one
+  PowerShell spawn in it, so per-spawn attribution looked conclusive and was confounded with time.
+- A short probe never grew a 32 MB segment, on any version. The thread churn is proven; that the
+  segments come from it is the best explanation, not a measurement.
+
+What changed: PPM is released with Bun 1.3.12 (the Windows binaries embed the builder's runtime,
+and `scripts/release.sh` now refuses to build with a leaking one), and `bun-runtime-advisory.ts`
+logs a `WARN` at start in every PPM process on a runtime measured to leak, telling the user to run
+`bun upgrade`. Why 1.3.12 and not newer, from the unit suite run against each:
+
+- 1.3.13 rejects a TLS connection made over an existing socket with `ERR_TLS_CERT_ALTNAME_INVALID`
+  (`tls-identity-check.test.ts`), which is how a database is reached through an SSH tunnel.
+  1.3.11, 1.3.12 and 1.4.4 pass.
+- Bun 1.4.x starts at about a quarter of the private bytes, but from somewhere in 1.4.1–1.4.4
+  `node:child_process` no longer goes through `Bun.spawn`, so the memory monitor's spawn tracker
+  stops seeing the Claude SDK's children (`memory-watchdog.test.ts` catches it). Move to 1.4 only
+  together with a fix for that.
+- From 1.3.11 `statSync().mtimeMs` carries sub-millisecond digits on Windows, which a `Date` passed
+  to `utimesSync` cannot put back. Only a test depended on that round trip.
+
+One trap when comparing Bun versions on this machine: a `bun.exe` anywhere but `~/.bun/bin` reads a
+freshly written file 25–50x slower the first time (855 µs against 31 µs for the same 1.3.10
+binary copied elsewhere), because Defender scans for it and not for the installed one. That made
+newer versions look 2–3x slower on file-heavy tests until the 1.3.10 control was run from the same
+folder.
+
+To look at a leaking Windows process: count its handles by object type
+(`NtQuerySystemInformation(SystemExtendedHandleInformation)` filtered by pid, type names from
+`NtQueryObject(ObjectTypesInformation)`), group its committed private memory by allocation base
+(`VirtualQueryEx`), and for `Thread` handles duplicate them and ask `NtQueryInformationThread`
+for create/exit times and the start address. That took minutes; heap snapshots and per-spawn
+attribution had not found it in weeks.

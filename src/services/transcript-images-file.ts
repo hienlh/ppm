@@ -7,6 +7,7 @@ import {
   type StripMode,
   type TranscriptImageAudit,
 } from "./transcript-images.ts";
+import { readFileChunks } from "./file-chunks.ts";
 
 /**
  * File-level image auditing and removal that never holds a transcript in memory.
@@ -50,19 +51,14 @@ async function forEachLine(
   path: string,
   onLine: (line: string, terminated: boolean) => void,
 ): Promise<void> {
-  const reader = Bun.file(path).stream().getReader();
   const decoder = new TextDecoder();
   let carry = "";
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const parts = (carry + decoder.decode(value, { stream: true })).split("\n");
-      carry = parts.pop() ?? "";
-      for (const line of parts) onLine(line, true);
-    }
-  } finally {
-    reader.releaseLock();
+  // Not `Bun.file().stream()`, which keeps about the file's size in native memory per read
+  // (see `file-chunks.ts`) — and this runs over every transcript a cleanup visits.
+  for await (const value of readFileChunks(path)) {
+    const parts = (carry + decoder.decode(value, { stream: true })).split("\n");
+    carry = parts.pop() ?? "";
+    for (const line of parts) onLine(line, true);
   }
   if (carry) onLine(carry, false);
 }

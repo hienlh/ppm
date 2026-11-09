@@ -1,6 +1,229 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.37] - 2026-11-10
+
+### Changed
+
+- **Every usage bar says when it resets**: Switch account's cards give the countdown and the time ("Resets in 3h 12m · 03:52", "Thu 09:00"), in red when the bar is full; the ··· menu and the rings' tooltip give the countdown alone.
+- **Linked sessions that need you or are running are listed first** in the Sessions tab, then unread answers, then idle ones.
+
+## [0.23.36] - 2026-11-09
+
+### Changed
+
+- **Chat usage shows both windows**, as two labelled rings ("5h 47%", "Wk 52%") that colour on their own and stay hidden until there is a figure; usage, History and ··· now sit in one chip-shaped group.
+- **The `/` and `@` lists float above the composer** instead of pushing the chips up, with tinted icons by kind, the match highlighted, kind filters and keyboard hints.
+- **Tidier footer on narrow chats and phones**: smaller chips with even padding (still 44px to tap), and the model name is no longer cut by its chevron.
+
+### Fixed
+
+- **Switch account's usage bars are all the same length**, whatever the label or figure beside them.
+
+## [0.23.35] - 2026-11-09
+
+### Changed
+
+- **The chat footer is one row of chips over the composer.** Agents and linked sessions share one activity chip (Agents and Sessions tabs), beside the changes and connection chips; usage, History and a ··· menu with account meters and Switch account sit on the right. Phones get bottom sheets and 44px touch targets, and the conversation fades out just above the chips.
+- **Linked sessions can be unlinked**, one at a time or with Unlink idle & done, with Undo for six seconds and an Unlinked group to relink them; a session that messages the chat again comes back.
+
+## [0.23.34] - 2026-11-09
+
+### Fixed
+
+- **Long messages from another session fold like your own**, with Show more / Show less, and the linked-sessions bar under a chat can fold into one line ("N linked sessions", with a dot when one needs you); each device remembers your choice.
+
+## [0.23.33] - 2026-11-08
+
+### Added
+
+- **Point a chat at a turn of another chat.** Copy turn link on any of your messages and paste it into another chat: it becomes a chip with the session, "Turn N" and the provider, and a click opens that session on that turn, even one far back in a long chat. The AI can search this project's chats and read their turns (`search_sessions`, `list_session_turns`, `read_session_turns`, each switchable in Settings → Tools); another project's turns only when you sent their links. The chat search builds a new index (`search-index-v3.db`) once on first use; the old file is left alone. A browser still on an older version shows a sent chip as plain text until it reloads.
+- **A chat can open other sessions and message them.** Claude and Codex chats get `create_session`, `send_to_session` and `session_status` (each switchable in Settings → Tools): the sessions they open are ordinary ones you can see, open, write into and stop, a message from another session shows as its own bubble that leads back to the sending turn, and linked sessions sit in a bar under the chat. PPM asks before a session is created (switchable), at 20 messages between two sessions, and before a message reaches a session with more permissions.
+- **New features are introduced in the tour, and stay off until you choose.** A "PPM has new features" step asks once per install, not per browser, whether to turn a feature on or off; the six session tools above are the first, and they stay off for every chat until it is answered or one of their switches is set in Settings → Tools. Installs with a chat get it at once; new ones after the basic tour. Put off three times (one per 12 hours, however many screens are open), it stays off and is marked NEW in Settings → Tools.
+- **Settings → Storage.** Shows the size of PPM's database, its backups and the session trace, with the trace limits and Query Audit (which it replaces). The unused `session_logs` table is dropped and the database is compacted on start, which shrank a long-lived install from 677 MB to 8 MB and its hourly backups with it; long tool output in the session trace keeps only its first and last 4 KB.
+
+### Fixed
+
+- **The page no longer hangs for up to a minute on Windows after a chat starts.** Processes PPM started (Claude, Codex, git…) kept copies of the browser's connections open, so a reload waited on a connection nobody answered; they no longer inherit them.
+- **Web Preview is easier to find in the command palette**, now listed as "Open Web Preview / Forward a Port".
+
+## [0.23.32] - 2026-11-08
+
+### Fixed
+
+- **PPM no longer slowly eats all the memory on Windows.** Bun before 1.3.11 leaks a little memory every time it goes idle, so PPM's background process grew about 400 MB an hour (15 GB after a day and a half); the Windows downloads now ship a fixed Bun, and PPM warns in its log with the fix (`bun upgrade`) when it runs on an affected Bun.
+
+## [0.23.31] - 2026-11-06
+
+### Fixed
+
+- **A chat no longer hangs when the AI asks two questions at once.** The second card replaced the first, and after you answered it nothing was left to answer the first, so the turn waited forever; the questions now come one after another.
+
+## [0.23.30] - 2026-11-05
+
+### Fixed
+
+- **An AI question now shows the preview Claude attached to its options.** A plan or mockup Claude put "in the panel next to the options" was dropped, leaving only the bare question; it now sits beside the options (below them on a phone, scrolling inside), follows the option you move to, and stays readable on the answered card.
+
+## [0.23.29] - 2026-11-04
+
+### Fixed
+
+- **Links inside an HTML file preview work.** A link that opens a new tab or goes to another site used to do nothing; a PPM address now opens as a PPM tab (a chat link opens the chat) and any other site in a browser tab, and pages can ask with `{ ppm: "open-tab", url }` and get `open-tab-ack` back.
+
+## [0.23.28] - 2026-11-04
+
+### Fixed
+
+- **PPM no longer freezes for up to a minute and a half at a time.** Listing a project's chats read the start of every Codex transcript on disk (thousands of files, across every project) on each request, and the whole server waited for the disk, many times a day; it now remembers what it read, rereads only changed files, and never makes other requests wait.
+- **The usage panel opens straight away.** It shows the numbers it last loaded while fresh ones arrive, instead of "Loading..." on every open, and no longer waits for its slowest request.
+
+## [0.23.27] - 2026-11-04
+
+### Changed
+
+- **Release notes open in a window you can read.** The version chip's popover now has **Read all release notes**, which opens the last 30 releases in a resizable window on a desktop and a near-full-screen sheet on a phone, with the installed version marked.
+
+## [0.23.26] - 2026-11-04
+
+### Added
+
+- **Accounts added from `claude setup-token` show their 5-hour and weekly usage.** That token cannot read the usage page, so PPM reads the figures from a one-token message to Haiku every 5 minutes, which spends a tiny amount of the account's limit.
+
+## [0.23.25] - 2026-11-04
+
+### Added
+
+- **Claude accounts can be renamed.** A pencil on each card in Settings → Accounts → Claude gives it a name of your own, which signing in again keeps.
+- **Max Turns goes up to 1000, or can be switched off.** Settings → AI Provider accepted 1 to 500 steps per message, so a long task stopped every 500 steps, about every hour and a half, and waited for someone to say continue. 0 now means no limit, and up to 1000 steps are accepted. At 0 or above 500, Settings warns that every step is a paid model call, so a task left running unattended can cost a lot.
+- **Design review links can open without making PPM public.** Share for review now has a **Review-only address** switch: it gives links an address of their own, answered by a separate PPM process that serves the review pages and nothing else (no editor, chat, file, API or sign-in page answers there, whatever is sent), published through Cloudflare. It starts on a temporary trycloudflare address; **Use my domain**, in the same dialog, puts it on your domain, either on a Cloudflare tunnel of its own or added to the tunnel PPM's public link uses (it keeps working with that public link off). While it is on, links are copied with that address only, and the dialog says when an address opens PPM itself. The same settings are in Settings → Remote Access → Review links. It needs PPM sign-in on; a PPM started before this version picks it up after `ppm restart`.
+- **PPM can stop what a chat left running once the chat has been idle, if you turn it on.** Servers, emulators and daemons that a chat's commands started and walked away from (`npm run dev &`, `nohup`, a `systemd-run --user` unit) keep running for as long as PPM does. On Linux with a systemd user session, each chat's commands and MCP servers now run in a systemd slice of the chat's own, so whatever they leave behind can be found however it detached. Set **Settings → AI Provider → Stop leftover processes after** to a number of minutes and, once the chat has been idle that long, what it left running is stopped, never a command or MCP server still in use; deleting the chat stops everything it started. At 0, the default, nothing is stopped: `ppm.log` names what 30 idle minutes would have stopped, so you can see what a limit would do before setting one. A unit an agent starts with `systemd-run --user` joins the chat's slice too; one that must outlive the chat names its own slice: `--slice=app.slice`. If `systemd-run` stops working, commands run as before instead of failing. Nothing changes on macOS or Windows.
+- **Schedules can run JavaScript, not only a prompt.** A script schedule runs on a cron with seconds, as often as every 5 seconds, or stays on as one process that PPM restarts after a crash. The script gets `ctx`: its inputs (secrets stored encrypted), a state kept between runs, a log, notifications, and the AI, either as a one-off answer (`ctx.ai.ask`) or as a turn in a real PPM chat (`ctx.ai.chat`). Settings → Schedules has a script editor, input declarations, a live log and a status for each schedule; the CLI gains `ppm schedule export`, `import`, `state` and `set-state`.
+- **Schedules can be shared as a file.** Export writes `<name>.ppm-schedule.json` with the script and its inputs, but no secret, path or state. Import shows the whole script, asks you to confirm you trust it, and creates the schedule turned off. Two examples ship in `templates/schedules/`: watch a web page for a change, and a weekly summary written in a chat.
+- **`ppm start --minimal` runs PPM with only chat, files, the editor and Settings.** The window keeps its usual sidebar, tabs and panels, but shows only chats and their history, the file explorer, search, the editor and the Settings panes that apply; the terminal, database, Git, Design, extensions and the other panels are hidden. The server skips extensions, scheduled agents, Jira watchers, PPMBot and database startup, and refuses the hidden features' requests with a message saying they are off in minimal mode, even from a browser still showing a full-mode page. Projects, chat providers and accounts, attachments, sign-in and remote access work as before. The mode belongs to the running PPM: `ppm restart`, a restart after a crash and autostart keep it, `ppm status` shows it, and changing it means `ppm down`, then `ppm start` with or without `--minimal`. Tabs opened in full mode are kept and come back when PPM runs in full mode again.
+
+### Fixed
+
+- **A one-year token from `claude setup-token` can be added as a Claude account.** It was refused as an invalid token because it cannot read its profile; PPM now checks that it can run a chat instead. Its usage stays empty, since Anthropic does not let that token read usage.
+- **A long chat made the PPM server read the chat's whole transcript back on every tool call.** To catch a tool result the stream might not carry, PPM looks it up in the transcript once the tools have run, and it took the rest of the very response that asked for the tool as that sign: so on every tool call it read the transcript before the tool had even started, and passed each result on twice. On a 7-day chat with a 1.47 GB transcript that was a full read about every 8 seconds; the server's memory swung between 4.9 and 12.8 GB and requests to PPM timed out while it read. It now waits for Claude's next response, and reads the transcript only when the stream never carried the result. Over three tool calls on a 401 MB transcript, the server's peak memory went from 1,466 MB to 203 MB.
+- **MCP servers a chat had started could outlive it until the machine ran out of memory, and PPM was stopped with every session in it.** Claude starts a chat's MCP servers (Playwright, Slack, …) and stops them when it ends, but some kept running after it, with their browsers. On a machine that chats all day they added up: about 30 by the evening, swap full, and the system's out-of-memory killer stopped PPM, taking every chat, terminal and server started from it. Each Claude process now runs in a process group of its own, and when it exits, whatever it left behind is told to stop and is killed 20 seconds later if it has not. Commands Claude ran in its shell are in groups of their own and keep running, as before. The log names what was left behind and how Claude ended. Not on Windows, which has no process groups.
+- **In Safari, and in every browser on iPhone and iPad, a design canvas and an HTML preview showed the page without its own files.** The page's stylesheets, images and scripts were all refused, so it came out unstyled and the canvas check listed each file as blocked by the Content Security Policy, followed by collapsed elements and page overflow. Newer WebKit builds load those but still refused the page's own requests for its files, which the PowerPoint export reads images with and the canvas check's screenshot needs. The policy now names the page's address with its scheme, which WebKit matches too.
+
+## [0.23.24] - 2026-10-31
+
+### Fixed
+
+- **A chat could send one of your earlier messages again by itself, and act on it.** When a Claude process died, PPM restarted it and re-sent a message to get going again — but it had already thrown away the record of what the chat was doing, so it reached back to the message that *opened* the chat, sometimes hours old, and handed it to Claude as if you had just typed it. On 30 October two chats in different projects replayed their opening instruction within a second of each other after the same crash. A replayed instruction runs for real, so one that published, deployed or changed a database would have done it a second time. A restart now resumes a turn that was interrupted, re-sends your message only when nothing of it had reached Claude yet, and sends nothing at all when the chat was simply idle.
+
+## [0.23.23] - 2026-10-30
+
+### Fixed
+
+- **Long chats no longer slow down while the AI is answering**: since 0.23.13 every streamed update, ten a second, redrew the whole conversation and parsed all of its Markdown again, so the longer the chat the slower PPM got. Only the message being written is redrawn now, and opening a chat draws each message once instead of twice.
+- **Switching projects no longer loads more of every chat's history each time**: a chat came back scrolled to its top after its project was switched away, which read as the reader scrolling up and fetched another page of older messages on every switch back — so each switch made the next one slower. Chats now come back where you left them.
+- **Switching tabs and projects and typing a `/` command are quicker in long chats**: the row of actions under each answer no longer redraws whenever anything in the chat changes, the tab bar no longer forces the whole page to be laid out each time its tabs change, and the message navigator no longer measures the conversation while it is closed. Times like "5m ago" now update by themselves.
+- **A question from Claude often showed only after the chat was stopped.** Claude Code asks with an AskUserQuestion card, or for a tool approval outside bypass mode, and then sends nothing until it is answered, but PPM handed the question to the chat only when Claude Code's next message arrived. When that never came, the chat sat on "thinking" until it was cancelled, and the card appeared for a turn already over — 7 of the 10 questions in one week's session trace. The question now shows the moment Claude Code asks.
+
+- **The chat's effort said High while every Claude turn ran at Max.** Claude Code lets `CLAUDE_CODE_EFFORT_LEVEL` override the effort PPM asks for, from the environment or from the `env` block of a Claude Code settings file such as `~/.claude/settings.json`, and a `maxEffortLevel` there caps it; neither showed in PPM. The model chip now shows the effort the turns actually run at, with a warning sign when something outside PPM decides it, and its picker says what overrides your pick and where it is set — `CLAUDE_CODE_EFFORT_LEVEL=max in ~/.claude/settings.json`, say — while keeping your pick for when it is removed. It also says when the model cannot run the level picked: Extra and Max run as High on a model without them, and Haiku takes no effort level at all. The answer comes from the Claude Code process at the start of each turn; before a chat's first message PPM reads the same settings files. **Settings → AI Provider** shows the same warning under the default Effort.
+
+## [0.23.22] - 2026-10-30
+
+### Added
+
+- **`ppm.log` now answers "why is PPM using so much RAM" by itself, with nothing to turn on.** A summary every 30 minutes names this process, its children by program, the biggest child branches with the chat session each one serves, the busiest routes and the open sessions, terminals and LSP servers; a warning goes out the first time memory crosses each threshold, and a line marks every Claude or Codex subprocess starting and exiting. Route names are logged with ids, paths and tokens replaced.
+
+- **`PPM_MEM_DIAG=1` records more:** private bytes, handles and every child process with the chat it belongs to, the edge forwarder writes its own `mem-diag-edge.log`, and `scripts/mem-diag-report.ts` lines memory growth up against what was spawned and what was served.
+
+### Fixed
+
+- **The server leaked about a transcript's size of memory every time a chat tab opened, until the machine ran out.** Reading a file through Bun's file stream never gave the memory back, so a day of tabs reconnecting took the server to 25 GB and every new Claude session died at start. Transcripts, chat images, the app's own files, downloads and imported files are now read and sent in a way that returns it.
+
+- **A video or audio file asked for in part (seeking) was sent from that point to the end instead of just the part asked for.**
+
+- **Push could not be turned on in Brave, and the pane said only "Registration failed - push service error".** Brave delivers push through Google's service and keeps it off until "Use Google services for push messaging" is turned on in brave://settings/privacy; the pane now says so, and to restart Brave and turn push on again. In other browsers that cannot reach their push service, the pane names the service (Google's for Chrome, Mozilla's for Firefox, Apple's for Safari) and what may be blocking it, and gives up after a minute: Chrome never answers on a network that blocks Google's service, which left the switch stuck for good. Firefox with `dom.push.enabled` off in about:config is told to turn it on. The message stays under the switch instead of in a toast that was gone in four seconds, and while the browser registers the pane says it is waiting, which just after the browser starts takes about half a minute.
+
+- **Brave was listed as Chrome among the devices that get push.** Brave's user agent is Chrome's, so "This device" and the saved device both said "Chrome on macOS", and a Mac with push on in both browsers showed two identical rows. The name now says Brave. A device turned on before this keeps its old name until push is turned off and on again in it.
+
+- **A Claude chat's "Chat completed" notification quoted the previous turn's answer.** Claude keeps one stream for every turn of a session, and the answer a notification quotes was reset only when that stream started or a tool ran. So a follow-up's notification began with the last turn's text — after a long answer it held nothing else — and a turn that wrote nothing quoted the previous answer as its own. Each turn now quotes only what it wrote.
+
+## [0.23.21] - 2026-10-26
+
+### Fixed
+
+- **A pending AI question no longer takes focus back**: two chats waiting on questions side by side can each be answered, and the chat above a question can be scrolled up to read.
+
+## [0.23.20] - 2026-10-26
+
+### Fixed
+
+- **On Windows the server no longer freezes for up to a minute and gets restarted**: PPM started from autostart now runs at normal memory and disk priority.
+- **Stall logs now say what the server was waiting on**, so the cause of a freeze is on record after a restart.
+
+## [0.23.19] - 2026-10-26
+
+### Fixed
+
+- **A maximized or snapped window no longer shows its title bar at the bottom** after a reload.
+
+## [0.23.18] - 2026-10-24
+
+### Fixed
+
+- **Web preview tabs follow navigation**, keeping Reload, Copy URL and Open in browser on the current page.
+
+## [0.23.17] - 2026-10-23
+
+### Fixed
+
+- **Codex can ask and wait for your answer in Default mode**, then continue the same turn without switching to Plan.
+- **Codex async questions now show selectable answers**, retain their answered state after reload, and send replies back to the conversation.
+
+## [0.23.16] - 2026-10-22
+
+### Fixed
+
+- **Renewing a Claude sign-in no longer cuts a running chat short.** PPM now renews an account's token while nothing is running on it and moves idle chats onto the new one, so "Token refreshed — retrying" no longer appears mid-answer and subagents are not killed by it.
+- **Reconnecting no longer covers the chat.** Returning to a phone tab keeps the chat readable; a small pill appears only if reconnecting takes longer than 800 ms, and turns into "Connection lost" with Retry after 8 s.
+
+## [0.23.15] - 2026-10-22
+
+### Added
+
+- **The AI can work on your saved databases without ever seeing their passwords.** Every connection with **Available to the AI chat** on (the default; it is in each connection's settings) is offered to Claude and Codex through three tools PPM serves itself, so the AI never holds a password, URL or key.
+  - **`db_query`** reads. Its SQL runs in a read-only transaction on every connection, readonly or not, so it cannot change anything, and the rows reach the AI marked as data, not instructions.
+  - **`open_query`** opens a Query tab beside the chat holding a script the AI wrote, on the right connection and database. Nothing runs until you press Run.
+  - **`db_execute`** changes data only once you approve it. A card in the chat shows the connection, the AI's reason and the exact SQL, and **Run once** runs it after you type PPM's password; you are notified as for any approval. It runs in one transaction: a statement that fails, or a number of rows changed other than the one the AI said to expect, rolls all of it back. MySQL and MariaDB commit a CREATE, ALTER, DROP or TRUNCATE by itself, with everything before it, so there the card says which statements cannot be rolled back before you approve, and the result says which were kept. A readonly connection can be changed this way too, for that one script. Declining, sending a message, pressing Stop or not answering within 10 minutes runs nothing.
+  - **Run with write access (once)**: a Query tab on a readonly connection whose script was refused as a write now offers to run it once with write access, after PPM's password — which is how a script the AI opened for you runs on a readonly connection.
+  - Everything the AI ran is in the query audit log as the AI's, and in the Query tab's History with the agent badge.
+  - Inside an AI chat, `ppm db tables`, `schema`, `data`, `query` and `run` refuse and name the tool to use instead, so the AI cannot step around a switch in **Settings → Tools** or an approval through its shell; with the tool switched off, the chat is told the database is closed to it. At your own terminal nothing changes.
+  - PPM's password is the one you sign in with. It confirms that you, at the screen, want the change; it is not a secret from an agent running as your user, which could read PPM's own files.
+
+- **The AI can show you the app it is running, read your terminals, and type a command for you to run.** Three more tools in **Settings → Tools**, on by default, for Claude and Codex:
+  - **`open_url`** (Show running apps) opens a server running on PPM's machine, such as the dev server the AI just started, in a tab beside the chat. From another device it goes through the Tailscale forward you already have for that port, or a private one PPM starts, which only your own Tailscale devices can open and which stays in Port Forwarding until you stop it. PPM never makes a public link for it, starts private forwards for four ports of a chat at most (forward any more yourself in Port Forwarding), and opens only that machine's own servers, never other sites.
+  - **`read_terminal`** (Read terminals) reads what PPM's terminals in the chat's project printed, as the screen shows it, so you need not paste an error into the chat. What it reads reaches the AI marked as data, not instructions.
+  - **`run_in_terminal`** (Type commands) opens a terminal in the dock with a command typed at the prompt, for a step that needs your password or your eyes, such as `sudo apt install`. Nothing runs until you press Enter, and the command must be one line you can read in full. When the new shell starts by asking a question of its own, such as an update's `[Y/n]`, nothing is typed and the AI asks you to answer it first. Once you have run it, the AI can read what it printed.
+  - Each call is a card in the chat, such as "Open app localhost:5173/" or "Type in terminal sudo apt install ffmpeg".
+
+- **Settings → Tools turns each of PPM's own AI tools on or off.** One switch per tool — Open files, Show pages, Show running apps, Read terminals, Type commands, Read databases, Open Query tabs and Change databases — for Claude and Codex alike, in place of the single "Let the AI open tabs in PPM" switch, whose choice Open files and Show pages keep until you switch either. Every other tool starts on. A new chat gets only the tools that are on; turning one off also stops it in chats already open, and with Change databases off the AI is told to hand you the script in a Query tab instead.
+
+- **Share a design for review.** Share for review makes a link anyone can open without a PPM account; reviewers pin comments and reply to each other, and their threads land on your canvas to answer or send to the AI. Each link has its own expiry, revoke and "Update to latest", and you can edit the message before it goes into the chat. (An older build drops comment replies the next time it saves.)
+- **Notifications for reviewer comments**, at most once a minute per link ("Reviewer comments" in Settings → Notifications).
+
+### Fixed
+
+- **Security: HTML in chat, Markdown, Mermaid diagrams or `.docx` previews could run script in PPM's page and read your sign-in token.** It now goes through an allow-list; ordinary formatting still renders.
+- **Security: anyone who could reach a development server could stop it** through `GET /api/debug/crash`; it now needs sign-in and `PPM_DEBUG_CRASH_ROUTE=1`.
+- **Long-pressing an element on a design canvas sometimes closed the comment form as it opened.**
+- **A chat that had changed a few thousand files slowed all of PPM down while its changes bar was worked out.** The bar asked for its list again every time the transcript moved, and every answer re-read and re-diffed each file the chat had changed: two to three minutes on a session with 1,923 files, a new ask about every minute, and every other chat, Source Control and the session list waiting behind it. The list is now worked out only once you open the changes bar, its Review button or a turn's pill; until then the bar says how many files changed. From then on PPM keeps it and sends the row of each file the agent has just changed, so the bar, the pill under each answer and an open Review tab stay current without asking again, and the bar's refresh button works out again only the files that moved, in milliseconds. The first list of such a chat still takes a while, without holding up anything else. Past 500 changed files, the bar lists the 500 changed last instead of the first.
+
+- **Inline blame showed nothing in a project folder that holds several repositories.** It asked git in the folder itself unless the right repository was picked in Source Control; it now blames each file in the repository that holds it. A diff tab opened from Git Graph on such a file also no longer says "No content changes" or "not a git repository".
+
+- **Scrolling up past a compaction showed "File not found" in a chat whose session had changed folder.** Claude Code names the transcript in a compaction summary after the folder the session was started or resumed in, so a session resumed in a subfolder (a bot reopening it inside a checkout, say) pointed at a project folder that was never created. When the file a summary names does not exist, PPM now looks for that session's transcript in the folder of the chat's own project instead, and in no other project's.
+
+- **Remote Desktop on Wayland showed a solid green or black picture on a host without a GPU encoder.** It happened on a fresh Ubuntu 24.04 with GNOME (#48). The software encoder splits each frame into slices, and PPM sent every slice to the browser as a frame of its own, which no browser can decode. Slices of one frame now travel together. The same fix repairs the Android viewer on a host without a hardware encoder, and makes Remote Desktop on an X11 host without one respond about a second sooner: it had avoided the split by encoding many frames at once, which held each frame back by about a second on a 24-thread machine.
+
+- **Remote Desktop on Wayland no longer needs gst-plugins-bad, and notices GStreamer packages installed while PPM runs.** A host with the software encoder but not that package passed the checklist and then lost every session at start to `no element "h264parse"`; PPM no longer uses that element. And PPM looked for GStreamer elements once per run, so a GPU encoder installed afterwards was ignored until PPM restarted, although the checklist says it re-checks automatically. It now looks again until nothing is missing, and at the start of every session. Once the host is ready, the Remote Desktop window also stops re-checking it; it used to re-check every two seconds for as long as a session lasted.
+
+- **Login with Claude could refuse the code you pasted, and then refuse every retry.** The code Claude shows ends in `#` and the id of the sign-in link it came from. PPM dropped that part and paired the code with the newest link the dialog had opened, so a code from an earlier tab (a second Login with Claude, or a tab left open) failed with "Code challenge failed", and the link it had used was then spent, so every Connect after that said "Invalid or expired OAuth state". The code is now matched to its own link, a refused code no longer spends the link, and a link PPM no longer holds (older than 10 minutes, or from before a restart) takes the dialog back to Login with Claude with a message saying so. Signing in again from an account's card no longer reports a plain success when Claude signs in a different account: that account is kept, and the message names the one that is still signed out.
 
 ### Added
 

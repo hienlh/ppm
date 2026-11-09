@@ -16,6 +16,8 @@ export type TraceOrigin =
   | "jira"
   | "cli"
   | "proxy"
+  /** Another session's AI, through PPM's session tools (`src/server/ws/chat-inject.ts`). */
+  | "session"
   | "browser"
   /** A message the PPM Assistant sent into a chat, with the user's approval. */
   | "assistant"

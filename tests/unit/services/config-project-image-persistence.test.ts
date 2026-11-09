@@ -63,7 +63,7 @@ describe("the projects.image migration", () => {
     applyDbPragmas(db);
     runMigrations(db);
     db.query("INSERT INTO projects (path, name, color, sort_order) VALUES ('/p/old', 'old', '#abcdef', 0)").run();
-    db.exec("ALTER TABLE projects DROP COLUMN image; PRAGMA user_version = 58");
+    db.exec("ALTER TABLE projects DROP COLUMN image; PRAGMA user_version = 62");
     expect((db.query("PRAGMA table_info(projects)").all() as { name: string }[]).map((c) => c.name)).not.toContain("image");
 
     runMigrations(db);

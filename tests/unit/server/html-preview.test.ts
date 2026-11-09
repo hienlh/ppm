@@ -93,7 +93,7 @@ describe("HTML preview capabilities", () => {
     const csp = response.headers.get("content-security-policy")!;
     expect(csp).toContain("sandbox allow-scripts;");
     expect(csp).not.toContain("allow-same-origin");
-    expect(csp).toContain(`connect-src localhost${dirname(url)}/`);
+    expect(csp).toContain(`connect-src https://localhost${dirname(url)}/ http://localhost${dirname(url)}/`);
     expect(csp).toContain("form-action 'none'");
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response.headers.get("cache-control")).toBe("no-store");
@@ -109,11 +109,11 @@ describe("HTML preview capabilities", () => {
   it("uses the browser Host for CSP and rejects directive-injection characters", async () => {
     const url = await createUrl();
     const response = await request(url, { headers: { Host: "localhost:5173" } });
-    expect(response.headers.get("content-security-policy")).toContain(`connect-src localhost:5173${dirname(url)}/`);
+    expect(response.headers.get("content-security-policy")).toContain(`connect-src https://localhost:5173${dirname(url)}/ http://localhost:5173${dirname(url)}/`);
     for (const host of ["localhost; script-src *", "localhost other.example", "evil.example/path", "user@evil.example"]) {
       const rejected = await request(url, { headers: { Host: host } });
       const policy = rejected.headers.get("content-security-policy")!;
-      expect(policy).toContain(`connect-src localhost${dirname(url)}/`);
+      expect(policy).toContain(`connect-src https://localhost${dirname(url)}/ http://localhost${dirname(url)}/`);
       expect(policy).not.toContain(host);
     }
   });
@@ -160,7 +160,7 @@ describe("HTML preview capabilities", () => {
       for (const host of DESIGN_CDN_HOSTS) expect(directive(name)).toContain(`https://${host}`);
     }
     expect(directive("script-src")).toContain("'unsafe-eval'");
-    expect(directive("connect-src")).toBe(`connect-src localhost${dirname(url)}/`);
+    expect(directive("connect-src")).toBe(`connect-src https://localhost${dirname(url)}/ http://localhost${dirname(url)}/`);
     expect(csp).toContain("default-src 'none'");
   });
   it("puts the preview bridge first in <head>, carrying the load's nonce, the page and its gen", async () => {

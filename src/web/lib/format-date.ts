@@ -1,3 +1,7 @@
+// Given options, `toLocaleDateString` builds a new formatter on every call — the hottest line
+// when a long chat redraws its timestamps.
+let shortDate: Intl.DateTimeFormat | undefined;
+
 /**
  * Format an ISO timestamp as a short English relative time string.
  * Examples: "just now", "5m ago", "3h ago", "2d ago", "Apr 21".
@@ -14,7 +18,8 @@ export function formatRelativeDate(iso: string): string {
     if (diffHr < 24) return `${diffHr}h ago`;
     const diffDay = Math.floor(diffHr / 24);
     if (diffDay < 7) return `${diffDay}d ago`;
-    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    shortDate ??= new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+    return shortDate.format(date);
   } catch {
     return "";
   }

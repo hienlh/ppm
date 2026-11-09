@@ -1,6 +1,9 @@
 import { api } from "./api-client";
 import { clearChatPreparationCache } from "./chat-preparation-cache";
 import { writeChatPreparationSettings } from "./chat-preference-local-cache";
+import type { PpmToolSwitches } from "../../shared/ppm-tools";
+import type { SessionCollabSettings } from "../../shared/session-collab-settings";
+import type { SessionTraceLimitsInput, StorageOverview, StorageSessionTrace } from "../../shared/storage-settings";
 
 export interface OAuthProfileData {
   account?: {
@@ -103,7 +106,7 @@ export function deleteAccount(id: string): Promise<void> {
   return api.del(`/api/accounts/${id}`);
 }
 
-export function patchAccount(id: string, updates: { status: string }): Promise<AccountInfo | null> {
+export function patchAccount(id: string, updates: { status?: string; label?: string }): Promise<AccountInfo | null> {
   return api.patch<AccountInfo | null>(`/api/accounts/${id}`, updates);
 }
 
@@ -222,6 +225,10 @@ export interface AISettings {
   new_chat_provider_mode?: "default" | "follow-focus";
   share_provider_context?: boolean;
   tab_tools?: boolean;
+  ppm_tools?: PpmToolSwitches;
+  /** Always complete in a server answer; a PUT may send any part of it. */
+  session_collab?: Partial<SessionCollabSettings>;
+  leftover_processes_idle_minutes?: number;
   providers: Record<string, AIProviderSettings>;
 }
 
@@ -283,4 +290,12 @@ export function updateQueryAuditSettings(
 
 export function clearQueryAuditLogs(): Promise<void> {
   return api.del("/api/settings/query-audit/logs");
+}
+
+export function getStorageOverview(): Promise<StorageOverview> {
+  return api.get<StorageOverview>("/api/settings/storage");
+}
+
+export function updateSessionTraceLimits(params: SessionTraceLimitsInput): Promise<StorageSessionTrace> {
+  return api.put<StorageSessionTrace>("/api/settings/session-trace", params);
 }

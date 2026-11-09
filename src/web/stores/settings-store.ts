@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { getAuthToken } from "@/lib/api-client";
 import type { PpmTheme, PpmThemeMode, PpmThemeStyle } from "@/theme/types";
 import { parseQualityChoice, type QualityChoice } from "../../shared/remote-desktop-quality";
+import { isUnlinkMap, updateUnlinks, type UnlinkMap } from "../../shared/linked-session-unlinks";
 import {
   DEFAULT_DB_EXPLORER, DEFAULT_DB_EXPLORER_VIEW, sanitizeDbExplorer, sanitizeDbExplorerView,
   type DbExplorerPrefs, type DbExplorerView,
@@ -34,6 +35,8 @@ export type SidebarActiveTab = "explorer" | "git" | "database" | "search" | "jir
 const STORAGE_KEY = "ppm-settings";
 
 interface SettingsState {
+  /** Server startup mode, never persisted as a browser preference. */
+  minimalMode: boolean;
   themeStyle: PpmThemeStyle;
   themeMode: PpmThemeMode;
   /** Id of the selected imported theme when themeStyle === "custom". */
@@ -109,6 +112,9 @@ interface SettingsState {
    *  outside this list; a successful sign-in takes the server off it, so a later expiry
    *  is announced again. Synced like other UI prefs. */
   mcpSignInDismissed: string[];
+  /** Linked sessions each chat's Sessions list hides, and when — never stopped or deleted, only
+   *  not shown. Synced, because which sessions a chat still cares about is not a device's choice. */
+  unlinkedSessions: UnlinkMap;
   /** Hold a screen wake lock while any chat turn is running, so a propped-up tablet does not
    *  dim mid-answer. Defaults on; see `hooks/use-wake-lock.ts`. */
   keepScreenAwake: boolean;
@@ -206,6 +212,8 @@ interface SettingsState {
   dismissMcpSignIn: (serverNames: string[]) => void;
   undismissMcpSignIn: (serverName: string) => void;
   setKeepScreenAwake: (enabled: boolean) => void;
+  /** Hide linked sessions from `chatSessionId`'s list, or show them again. */
+  setSessionsUnlinked: (chatSessionId: string, linkedIds: readonly string[], unlinked: boolean, at?: (id: string) => number) => void;
   fetchServerInfo: () => Promise<void>;
   /** Re-push the in-memory theme selection to the server (see the action for why). */
   syncThemeToServer: () => Promise<void>;
@@ -239,6 +247,7 @@ interface PersistedSettings {
   remoteDesktopStatsVisible?: boolean;
   remoteDesktopWarningDismissed?: boolean;
   mcpSignInDismissed?: string[];
+  unlinkedSessions?: UnlinkMap;
   keepScreenAwake?: boolean;
   remoteDesktopQuality?: QualityChoice;
   remoteDesktopViewStyle?: ViewStyle;
@@ -413,6 +422,7 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   if (typeof data.remoteDesktopWarningDismissed === "boolean") patch.remoteDesktopWarningDismissed = data.remoteDesktopWarningDismissed;
   const mcpDismissed = sanitizeNameList(data.mcpSignInDismissed);
   if (mcpDismissed) patch.mcpSignInDismissed = mcpDismissed;
+  if (isUnlinkMap(data.unlinkedSessions)) patch.unlinkedSessions = data.unlinkedSessions;
   if (typeof data.keepScreenAwake === "boolean") patch.keepScreenAwake = data.keepScreenAwake;
   const dbExplorer = sanitizeDbExplorer(data.dbExplorer);
   if (dbExplorer) patch.dbExplorer = dbExplorer;
@@ -435,6 +445,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
   inlineBlame: _initial.inlineBlame ?? false,
+  minimalMode: false,
   designWindows: _initial.designWindows ?? true,
   wordWrap: _initial.wordWrap ?? false,
   remoteDesktopQuality: parseQualityChoice(_initial.remoteDesktopQuality),
@@ -473,6 +484,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   logsBadge: _initial.logsBadge !== false,
   remoteDesktopWarningDismissed: _initial.remoteDesktopWarningDismissed ?? false,
   mcpSignInDismissed: sanitizeNameList(_initial.mcpSignInDismissed) ?? [],
+  unlinkedSessions: isUnlinkMap(_initial.unlinkedSessions) ? _initial.unlinkedSessions : {},
   keepScreenAwake: _initial.keepScreenAwake ?? true,
   deviceName: null,
   version: null,
@@ -723,6 +735,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ mcpSignInDismissed: next });
   },
 
+  setSessionsUnlinked: (chatSessionId, linkedIds, unlinked, at) => {
+    if (!chatSessionId || linkedIds.length === 0) return;
+    const next = updateUnlinks(get().unlinkedSessions, chatSessionId, linkedIds, unlinked, at);
+    persistUiPref({ unlinkedSessions: next });
+    set({ unlinkedSessions: next });
+  },
+
   setKeepScreenAwake: (enabled) => {
     persistUiPref({ keepScreenAwake: enabled });
     set({ keepScreenAwake: enabled });
@@ -783,8 +802,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ]);
       const infoJson = await infoRes.json();
       if (infoJson.ok) {
-        const { device_name, version, tunnel_active } = infoJson.data;
-        set({ deviceName: device_name || null, version: version || null, tunnelActive: !!tunnel_active });
+        const { device_name, version, tunnel_active, minimal_mode } = infoJson.data;
+        set({ minimalMode: minimal_mode === true, deviceName: device_name || null, version: version || null, tunnelActive: !!tunnel_active });
         if (device_name) {
           document.title = `PPM — ${device_name}`;
         }

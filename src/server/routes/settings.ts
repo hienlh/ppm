@@ -15,11 +15,23 @@ import {
 import { ok, err } from "../../types/api.ts";
 import { isDbExplorerPrefs } from "../../shared/db-explorer-prefs.ts";
 import { isLookupDescriptions } from "../../shared/db-lookup-prefs.ts";
+import { isPpmTool, patchPpmToolSwitches, type PpmToolSwitches } from "../../shared/ppm-tools.ts";
+import { isValidLeftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../shared/leftover-processes.ts";
+import { parseSessionCollabPatch, resolveSessionCollabSettings, type SessionCollabSettings } from "../../shared/session-collab-settings.ts";
+import {
+  SESSION_TRACE_MIN_RETENTION_DAYS,
+  SESSION_TRACE_MIN_SIZE_MB,
+  type SessionTraceLimitsInput,
+} from "../../shared/storage-settings.ts";
 import type { PPMBotTelegramStatus } from "../../shared/ppmbot-telegram.ts";
 import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
 import { providerRegistry, providerProbeStatuses, retryProviderProbe } from "../../providers/registry.ts";
 import { createLogger } from "../../services/logger.ts";
+import { settleFeaturesDecidedInSettings } from "../../services/feature-intros.service.ts";
+import { FEATURE_INTROS_CHANGED_EVENT } from "../../shared/feature-intros.ts";
+import { broadcastGlobalEvent } from "../ws/global.ts";
+import { isUnlinkMap } from "../../shared/linked-session-unlinks";
 
 const log = createLogger("settings");
 const assistantTelegramLog = createLogger("assistant-telegram");
@@ -27,7 +39,7 @@ const assistantTelegramLog = createLogger("assistant-telegram");
 export const settingsRoutes = new Hono();
 
 /** Strip api_key_env from all providers in an AI config object */
-function stripSensitiveFields(ai: { providers: Record<string, unknown> }) {
+function stripSensitiveFields<T extends { providers: Record<string, unknown> }>(ai: T): T {
   const clone = structuredClone(ai);
   for (const provider of Object.values(clone.providers)) {
     const p = provider as Record<string, unknown>;
@@ -143,6 +155,8 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   dbLookupDescriptions: isLookupDescriptions,
   // OS Explorer window chrome override — "auto" follows the host platform
   explorerSkin: (v) => v === "auto" || v === "windows" || v === "macos",
+  // Linked sessions each chat's Sessions list hides, and when (see shared/linked-session-unlinks)
+  unlinkedSessions: isUnlinkMap,
   // Project switcher prefs
   projectSortMode: (v) => v === "recent" || v === "priority" || v === "name",
   recentOpen: (v) =>
@@ -181,8 +195,13 @@ settingsRoutes.put("/ui-prefs", async (c) => {
 /** GET /settings/ai — return current AI config (strips api_key_env) */
 settingsRoutes.get("/ai", (c) => {
   const ai = configService.get("ai");
-  return c.json(ok(stripSensitiveFields(ai)));
+  return c.json(ok(withResolvedSessionCollab(stripSensitiveFields(ai))));
 });
+
+/** The AI settings as answered: `session_collab` always complete, with defaults and clamping applied. */
+function withResolvedSessionCollab<T extends { session_collab?: Partial<SessionCollabSettings> }>(ai: T): T & { session_collab: SessionCollabSettings } {
+  return { ...ai, session_collab: resolveSessionCollabSettings(ai.session_collab) };
+}
 
 /** PUT /settings/ai — update AI settings, persists to SQLite */
 settingsRoutes.put("/ai", async (c) => {
@@ -192,6 +211,9 @@ settingsRoutes.put("/ai", async (c) => {
       new_chat_provider_mode?: NewChatProviderMode;
       share_provider_context?: boolean;
       tab_tools?: boolean;
+      ppm_tools?: PpmToolSwitches;
+      leftover_processes_idle_minutes?: number;
+      session_collab?: unknown;
       providers?: Record<string, Partial<AIProviderConfig>>;
     }>();
 
@@ -209,6 +231,23 @@ settingsRoutes.put("/ai", async (c) => {
     }
     if ("tab_tools" in body && typeof body.tab_tools !== "boolean") {
       return c.json(err("tab_tools must be a boolean"), 400);
+    }
+    if ("leftover_processes_idle_minutes" in body && !isValidLeftoverIdleMinutes(body.leftover_processes_idle_minutes)) {
+      return c.json(err(`leftover_processes_idle_minutes must be a whole number from 0 to ${MAX_LEFTOVER_IDLE_MINUTES}, 0 for never`), 400);
+    }
+    if ("ppm_tools" in body) {
+      const tools = body.ppm_tools as unknown;
+      if (!tools || typeof tools !== "object" || Array.isArray(tools)
+          || !Object.entries(tools).every(([name, on]) => isPpmTool(name) && typeof on === "boolean")) {
+        return c.json(err("ppm_tools must map PPM's tool names to booleans"), 400);
+      }
+    }
+    // Fields the body names are type-checked and clamped; the rest keep what is stored.
+    let sessionCollab: SessionCollabSettings | undefined;
+    if ("session_collab" in body) {
+      const parsed = parseSessionCollabPatch(body.session_collab);
+      if (!parsed.ok) return c.json(err(parsed.error), 400);
+      sessionCollab = resolveSessionCollabSettings({ ...resolveSessionCollabSettings(currentAi.session_collab), ...parsed.patch });
     }
 
     // Validate each provider config
@@ -234,6 +273,11 @@ settingsRoutes.put("/ai", async (c) => {
       new_chat_provider_mode: body.new_chat_provider_mode ?? currentAi.new_chat_provider_mode ?? "default",
       share_provider_context: body.share_provider_context ?? currentAi.share_provider_context ?? true,
       ...(typeof body.tab_tools === "boolean" && { tab_tools: body.tab_tools }),
+      ...(body.leftover_processes_idle_minutes !== undefined && { leftover_processes_idle_minutes: body.leftover_processes_idle_minutes }),
+      // One switch at a time: the tools the body does not name keep theirs, and the other tools of
+      // an introduced feature are written at the state they showed (see `patchPpmToolSwitches`).
+      ...(body.ppm_tools && { ppm_tools: patchPpmToolSwitches(currentAi.ppm_tools, body.ppm_tools) }),
+      ...(sessionCollab && { session_collab: sessionCollab }),
       ...(body.default_provider && { default_provider: body.default_provider }),
     };
     if (body.providers) {
@@ -265,8 +309,10 @@ settingsRoutes.put("/ai", async (c) => {
 
     configService.set("ai", updated);
     configService.save();
+    // A switch of an introduced feature set here is the user's answer: no device asks again.
+    if (body.ppm_tools && settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
 
-    return c.json(ok(stripSensitiveFields(updated)));
+    return c.json(ok(withResolvedSessionCollab(stripSensitiveFields(updated))));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
@@ -298,6 +344,22 @@ settingsRoutes.get("/ai/providers/:id/models", async (c) => {
     if (!provider) return c.json(err(`Provider "${id}" not found`), 404);
     const models = await provider.listModels?.() ?? [];
     return c.json(ok(models));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * GET /settings/ai/providers/:id/effort-status — what overrides the default effort outside PPM for
+ * every project: the user settings and the environment PPM runs in. A project's own settings can
+ * add more, which the chat's picker reports. `status` is null for a provider nothing overrides.
+ */
+settingsRoutes.get("/ai/providers/:id/effort-status", (c) => {
+  const id = c.req.param("id");
+  const provider = providerRegistry.get(id);
+  if (!provider) return c.json(err(`Provider "${id}" not found`), 404);
+  try {
+    return c.json(ok({ status: provider.estimateEffortStatus?.(undefined, c.req.query("model") || undefined) ?? null }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -536,6 +598,60 @@ settingsRoutes.delete("/query-audit/logs", async (c) => {
     return c.json(ok({ deleted: clearQueryAudit() }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
+  }
+});
+
+// ── Storage (ppm.db, its snapshots, the session trace) ─────────
+
+/** GET /settings/storage — how much disk PPM's own databases and backups take */
+settingsRoutes.get("/storage", async (c) => {
+  try {
+    const { storageOverview } = await import("../../services/storage-overview.ts");
+    return c.json(ok(storageOverview()));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** PUT /settings/session-trace — body: SessionTraceLimitsInput; answers the refreshed StorageSessionTrace */
+settingsRoutes.put("/session-trace", async (c) => {
+  try {
+    const body = await c.req.json<SessionTraceLimitsInput>();
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return c.json(err("Body must be an object"), 400);
+    }
+    const current = configService.get("session_trace") ?? DEFAULT_CONFIG.session_trace;
+
+    // A field left out keeps its value; one sent as null or anything else non-integer is refused.
+    const retention_days = body.retention_days === undefined ? current.retention_days : body.retention_days;
+    const max_size_mb = body.max_size_mb === undefined ? current.max_size_mb : body.max_size_mb;
+
+    if (!Number.isInteger(retention_days) || retention_days < SESSION_TRACE_MIN_RETENTION_DAYS) {
+      return c.json(err(`retention_days must be a whole number of at least ${SESSION_TRACE_MIN_RETENTION_DAYS}`), 400);
+    }
+    if (!Number.isInteger(max_size_mb) || max_size_mb < SESSION_TRACE_MIN_SIZE_MB) {
+      return c.json(err(`max_size_mb must be a whole number of at least ${SESSION_TRACE_MIN_SIZE_MB}`), 400);
+    }
+
+    configService.set("session_trace", { retention_days, max_size_mb });
+    configService.save();
+    // Apply lowered limits now rather than at the next daily cleanup. One pass is bounded (the
+    // cleanup caps its batches), so a big cut can still read over the cap until that daily run.
+    // The limits are saved either way, so a cleanup that fails (a locked file) is logged, not a 400.
+    const { existsSync } = await import("node:fs");
+    const { getTraceDbPath } = await import("../../services/session-trace/session-trace-db.ts");
+    if (existsSync(getTraceDbPath())) {
+      try {
+        const { cleanupSessionTrace } = await import("../../services/session-trace/session-trace-cleanup.ts");
+        cleanupSessionTrace(retention_days, max_size_mb);
+      } catch (e) {
+        console.error(`[session-trace] cleanup after a limits change failed: ${(e as Error).message}`);
+      }
+    }
+    const { sessionTraceStorage } = await import("../../services/storage-overview.ts");
+    return c.json(ok(sessionTraceStorage()));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
   }
 });
 

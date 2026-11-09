@@ -15,12 +15,19 @@ import type { BackgroundAgentStatus } from "../../shared/background-agent-status
 import type { PromptCacheState } from "../../shared/prompt-cache-idle";
 import type { TurnStop } from "../../shared/turn-stop";
 import { sessionPermissionFromGreeting, type SessionPermissionState } from "@/lib/session-permission";
-import { decodeReply, encodeReply, type ReplyReference } from "../../shared/chat-reply";
 import { isAssistantProject } from "../../shared/assistant-project";
 import { approvalAfterGreeting, approvalDrawsAsCard, approvalFromWire, approvalQuestions, type ApprovalRequest } from "@/lib/approval-request";
 import { answersForDisplay, type AnswersById } from "../../shared/approval-questions";
 import { ASSISTANT_TAB_TITLE, openAssistant } from "@/components/assistant/open-assistant";
+import type { EffortStatus } from "../../shared/effort-status";
+import type { ReplyReference } from "../../shared/chat-reply";
+import type { TurnReference } from "../../shared/chat-turn-ref";
+import { decodeMessageBlocks, encodeMessageBlocks } from "../../shared/chat-message-blocks";
+import { bindAll, useTurnBindingStore } from "@/stores/turn-binding-store";
+import { randomId } from "@/lib/utils";
 import { prefixTokens } from "../../shared/turn-usage";
+import { dbExecuteApprovalInput } from "../../shared/db-ai-tools";
+import { sessionCollabApprovalInput, type SessionCollabApprovalInput } from "../../shared/session-collab";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
 import { useSessionListStore } from "@/stores/session-list-store";
@@ -28,6 +35,14 @@ import { projectRefForName } from "@/stores/session-list-sync-triggers";
 import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary";
 import { getChatClientId } from "@/lib/chat-client-id";
 import { CHAT_CLIENT_ID_PARAM } from "../../shared/chat-client-id";
+import { replayActiveTurn } from "@/lib/replay-active-turn";
+
+/** The toast a session-collaboration card raises while its chat is not on screen. */
+function collabApprovalToast(input: SessionCollabApprovalInput): string {
+  if (input.kind === "create") return `AI wants to create "${input.title}"`;
+  if (input.kind === "pair_limit") return `Message limit reached with "${input.targetTitle}"`;
+  return `AI wants to message "${input.targetTitle}"`;
+}
 
 /** Slim every Agent/Task card a provider stamped `transcriptAvailable` on, walking
  *  in from the REST history response before it ever reaches React state. */
@@ -70,7 +85,18 @@ export interface TurnSettings {
 }
 
 export interface UseChatOptions {
-  onMessageRejected?: (rejected: { content: string; replyTo: ReplyReference | null; message: string }) => void;
+  onMessageRejected?: (rejected: { content: string; replyTo: ReplyReference | null; turnRefs: TurnReference[] | null; message: string }) => void;
+}
+
+/** What `sendMessage` takes besides the text. */
+export interface SendMessageOptions {
+  permissionMode?: string;
+  priority?: 'now' | 'next' | 'later';
+  images?: Array<{ data: string; mediaType: string }>;
+  imagePaths?: string[];
+  replyTo?: ReplyReference;
+  /** The composer's turn chips; sent as their own field, which the server validates and grants. */
+  turnRefs?: TurnReference[];
 }
 
 interface UseChatReturn {
@@ -135,6 +161,11 @@ interface UseChatReturn {
   effort: string | null;
   /** Switch the per-session effort (low|medium|high|xhigh|max) */
   setEffort: (effort: string) => void;
+  /**
+   * What overrides the effort pick outside PPM, as the server last said: undefined until it
+   * has, null when nothing can for this session's provider.
+   */
+  effortStatus: EffortStatus | null | undefined;
   /** Whether per-session thinking is on */
   thinking: boolean;
   /** Toggle per-session thinking on/off */
@@ -153,7 +184,12 @@ interface UseChatReturn {
   backgroundShells: BackgroundShell[];
   killBackgroundShell: (shellId: string) => void;
   findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
-  sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => void;
+  sendMessage: (content: string, opts?: SendMessageOptions) => void;
+  /**
+   * The id of the turn the server last said started on this socket (`turn_started`). Read it
+   * when needed; it changes without a re-render.
+   */
+  currentTurnIdRef: { readonly current: string | null };
   /** `answersById` answers a question card by question id; the server converts it for the provider. */
   respondToApproval: (requestId: string, approved: boolean, answersById?: AnswersById) => void;
   cancelStreaming: () => void;
@@ -192,7 +228,7 @@ export function useChat(
 ): UseChatReturn {
   const rejectionObserverRef = useRef(options?.onMessageRejected);
   rejectionObserverRef.current = options?.onMessageRejected;
-  const pendingSendsRef = useRef<Array<{ id: string; content: string; encoded: string; replyTo?: ReplyReference; wasIdle: boolean; streamingContent: string; streamingEvents: ChatEvent[]; finalizedId?: string; originalAssistantId?: string; sentAt: number }>>([]);
+  const pendingSendsRef = useRef<Array<{ id: string; content: string; encoded: string; replyTo?: ReplyReference; turnRefs?: TurnReference[]; wasIdle: boolean; streamingContent: string; streamingEvents: ChatEvent[]; finalizedId?: string; originalAssistantId?: string; sentAt: number }>>([]);
   const sendOrdinalRef = useRef(0);
   const attemptObserverRef = useRef(onAttempt);
   attemptObserverRef.current = onAttempt;
@@ -239,6 +275,8 @@ export function useChat(
   const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
   /** The permission mode the server holds for the chat, from its connect greeting. */
   const [sessionPermission, setSessionPermission] = useState<SessionPermissionState | null>(null);
+  // A ref, not state: nothing draws it, and every `turn_started` would redraw the whole chat tab.
+  const currentTurnIdRef = useRef<string | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -258,6 +296,7 @@ export function useChat(
   const pendingModelRef = useRef<string | null>(null);
   const [effort, setEffortState] = useState<string | null>(null);
   const effortRef = useRef<string | null>(null);
+  const [effortStatus, setEffortStatus] = useState<EffortStatus | null | undefined>(undefined);
   // Optimistic until session_state lands; the SDK default is adaptive thinking, so ON
   // is the honest starting guess.
   const [thinking, setThinkingState] = useState<boolean>(true);
@@ -706,9 +745,12 @@ export function useChat(
       }
 
       case "approval_request": {
+        const dbApproval = dbExecuteApprovalInput(ev.tool, ev.input);
+        const collabApproval = sessionCollabApprovalInput(ev.tool, ev.input);
         // Only a question is kept in the transcript: every other request belongs to a tool call
-        // whose own card is already there, and history never holds the request — keeping it drew
-        // the same call twice, the second card green even after a denial.
+        // whose own card is already there (a database change its db_execute card, a session-tool
+        // card its own), and history never holds the request — keeping it drew the same call
+        // twice, the second card green even after a denial.
         if (approvalDrawsAsCard(ev)) {
           upsertStreamingEvent((e) => e.type === "approval_request" && (e as any).requestId === ev.requestId);
         }
@@ -725,7 +767,10 @@ export function useChat(
           const isQuestion = ev.tool === "AskUserQuestion";
           const assistant = isAssistantProject(projectNameRef.current);
           approvalToastRef.current = toast[isQuestion ? "info" : "warning"](
-            isQuestion ? "AI has a question" : `${ev.tool} needs permission`,
+            isQuestion ? "AI has a question"
+              : dbApproval ? `AI wants to change ${dbApproval.connectionName}`
+              : collabApproval ? collabApprovalToast(collabApproval)
+              : `${ev.tool} needs permission`,
             {
               description: assistant ? ASSISTANT_TAB_TITLE : projectNameRef.current || `Session ${sid.slice(0, 8)}`,
               duration: Infinity,
@@ -1023,10 +1068,33 @@ export function useChat(
           streamingEventsRef.current = [...pending!.streamingEvents, ...streamingEventsRef.current];
           if (streamingContentRef.current || streamingEventsRef.current.length) syncMessages();
         }
-        const decoded = decodeReply(pending!.encoded);
-        rejectionObserverRef.current?.({ ...decoded, message: rejected.message });
+        const decoded = decodeMessageBlocks(pending!.encoded);
+        rejectionObserverRef.current?.({ content: decoded.content, replyTo: decoded.replyTo, turnRefs: decoded.turnRefs, message: rejected.message });
       }
       if (!rejectionObserverRef.current) toast.error(rejected.message || "Message could not be sent");
+      return;
+    }
+
+    // The server took a message this socket sent: adopt its text for the bubble drawn at send.
+    // Every later dedupe (a replay's user message, a history reload) compares by content.
+    if (data.type === "message_accepted") {
+      const { clientMessageId, content } = data;
+      pendingSendsRef.current = pendingSendsRef.current.filter((pending) => pending.id !== clientMessageId);
+      if (typeof content === "string") {
+        setMessages((prev) => prev.some((m) => m.id === clientMessageId && m.content !== content)
+          ? prev.map((m) => (m.id === clientMessageId ? { ...m, content } : m))
+          : prev);
+      }
+      return;
+    }
+
+    // A message this browser sent (or another device of this session) opened or joined a turn.
+    if ((data as any).type === "turn_started") {
+      const { turnId, clientMessageId } = data as unknown as { turnId?: unknown; clientMessageId?: unknown };
+      if (typeof turnId === "string") {
+        currentTurnIdRef.current = turnId;
+        if (typeof clientMessageId === "string") useTurnBindingStore.getState().bind(clientMessageId, turnId);
+      }
       return;
     }
 
@@ -1041,11 +1109,13 @@ export function useChat(
         // Dedupe: a concurrent turn_events replay or REST refetch may already
         // have appended this same turn's user message.
         if (last?.role === "user" && last.content === content) return prev;
+        const clientId = (data as any).clientMessageId;
         return [...prev, {
           id: `user-remote-${Date.now()}`,
           role: "user" as const,
           content,
           timestamp: (data as any).timestamp ?? new Date().toISOString(),
+          ...(typeof clientId === "string" ? { clientId } : {}),
         }];
       });
       return;
@@ -1078,6 +1148,11 @@ export function useChat(
 
     if ((data as any).type === "turn_stop") {
       setTurnStop((data as any).stop ?? null);
+      return;
+    }
+
+    if ((data as any).type === "effort_status") {
+      setEffortStatus(((data as any).status as EffortStatus | undefined) ?? null);
       return;
     }
 
@@ -1140,6 +1215,8 @@ export function useChat(
       if (wasIdle && p !== "idle") turnFinalizedRef.current = false;
       setPhase(p);
       phaseRef.current = p;
+      // Turns opened before this socket joined: what a Copy turn link on those messages needs.
+      bindAll(state.turnBindings);
       if (state.sessionTitle) setSessionTitle(state.sessionTitle);
       if (state.model) {
         if (pendingModelRef.current && state.model !== pendingModelRef.current) {
@@ -1156,6 +1233,8 @@ export function useChat(
         setEffortState(state.effort);
         effortRef.current = state.effort;
       }
+      // Only the greetings that carry the effort carry this; the others leave it as it was.
+      if ("effortStatus" in state) setEffortStatus((state.effortStatus as EffortStatus | null) ?? null);
       // Display only. Writing this back into the ref would promote a server-derived
       // default into an explicit user choice that rides along on every message and
       // pins the session — the path that silently disabled thinking.
@@ -1216,38 +1295,9 @@ export function useChat(
       // duplicate copy (see session-change effect).
       replayTurnUserMsgRef.current = userMessage;
 
-      // Rebuild the active turn from scratch. Strip any existing copy of THIS turn
-      // before replay re-adds it:
-      //  - a REST-history/finalized copy: trailing assistant message(s) preceded by
-      //    the matching user message (fixes the double render on reload);
-      //  - otherwise just an in-progress "streaming-" assistant (original behavior).
-      // A completed prior turn (different user message) is left untouched.
-      setMessages(prev => {
-        let updated = [...prev];
-        let k = updated.length;
-        while (k > 0 && updated[k - 1]!.role === "assistant") k--;
-        if (userMessage != null && k > 0 && updated[k - 1]!.role === "user"
-          && updated[k - 1]!.content === userMessage) {
-          updated = updated.slice(0, k - 1);
-        } else {
-          const last = updated[updated.length - 1];
-          if (last?.role === "assistant" && last.id.startsWith("streaming-")) {
-            updated = updated.slice(0, -1);
-          }
-        }
-        if (userMessage) {
-          const lastAfter = updated[updated.length - 1];
-          if (lastAfter?.role !== "user" || lastAfter.content !== userMessage) {
-            updated = [...updated, {
-              id: `user-replay-${Date.now()}`,
-              role: "user" as const,
-              content: userMessage,
-              timestamp: new Date().toISOString(),
-            }];
-          }
-        }
-        return updated;
-      });
+      // Rebuild the active turn from scratch: see `replayActiveTurn`.
+      const clientMessageId = typeof (data as any).clientMessageId === "string" ? (data as any).clientMessageId as string : undefined;
+      setMessages(prev => replayActiveTurn(prev, userMessage, clientMessageId));
 
       // Reset streaming refs
       streamingContentRef.current = "";
@@ -1355,6 +1405,8 @@ export function useChat(
     // Another session's subprocess saw another MCP state; its session_state brings its own.
     setMcpNeedsAuth([]);
     setTurnStop(null);
+    currentTurnIdRef.current = null;
+    setEffortStatus(undefined);
     // Clear ephemeral pre-compact expansions on session change
     setExpansions(new Map());
     // Drop the previous session's version groups. Keeping them would let the
@@ -1494,11 +1546,18 @@ export function useChat(
   }), []);
 
   const sendMessage = useCallback(
-    (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[]; replyTo?: ReplyReference }) => {
+    (typed: string, opts?: SendMessageOptions) => {
       // An attachment-only message is legitimate now that images travel with it: the
       // caller may have nothing to say beyond the picture.
-      if (!content.trim() && !opts?.images?.length) return;
-      const encodedContent = encodeReply(content, opts?.replyTo);
+      if (!typed.trim() && !opts?.images?.length) return;
+      // `typed` is the text alone. A reply and turn references travel only as their own fields,
+      // which the server validates: every edit, restore and re-send path decodes a stored message
+      // and passes its blocks that way. A block that is merely part of the text — pasted from
+      // elsewhere — stays text, here and on the server, which breaks its markers.
+      const content = typed;
+      const turnRefs = opts?.turnRefs?.length ? opts.turnRefs : undefined;
+      // The bubble drawn now; the server's `message_accepted` replaces it with the stored text.
+      const encodedContent = encodeMessageBlocks(content, { replyTo: opts?.replyTo, turnRefs });
       historyActivityRef.current++;
       // Whatever ended the last turn, this message moves the session past it.
       setTurnStop(null);
@@ -1527,10 +1586,12 @@ export function useChat(
         });
       }
 
-      const optimisticId = `user-${Date.now()}-${++sendOrdinalRef.current}`;
+      // Random as well as ordered: `turn_started` hands this id back, and a binding keyed by it
+      // must never match a message another tab sent in the same millisecond.
+      const optimisticId = `user-${Date.now()}-${++sendOrdinalRef.current}-${randomId()}`;
       pendingSendsRef.current = pendingSendsRef.current.filter((pending) => Date.now() - pending.sentAt < 60_000);
-      if (opts?.replyTo) pendingSendsRef.current.push({
-        id: optimisticId, content, encoded: encodedContent, replyTo: opts.replyTo, sentAt: Date.now(),
+      if (opts?.replyTo || turnRefs) pendingSendsRef.current.push({
+        id: optimisticId, content, encoded: encodedContent, replyTo: opts?.replyTo, turnRefs, sentAt: Date.now(),
         wasIdle: !isFollowUp, streamingContent: streamingContentRef.current,
         streamingEvents: [...streamingEventsRef.current],
         finalizedId: isFollowUp ? finalizedId : undefined,
@@ -1544,6 +1605,7 @@ export function useChat(
         ...prev,
         {
           id: optimisticId,
+          clientId: optimisticId,
           role: "user" as const,
           content: encodedContent,
           timestamp: new Date().toISOString(),
@@ -1573,6 +1635,7 @@ export function useChat(
         images: opts?.images,
         imagePaths: opts?.imagePaths,
         replyTo: opts?.replyTo,
+        ...(turnRefs ? { turnRefs } : {}),
         ...turnSettings(),
         // An Assistant session tells the agent what this device shows, with every message.
         ...(isAssistantProject(projectNameRef.current) ? { uiSummary: readUiSummary() } : {}),
@@ -1875,6 +1938,7 @@ export function useChat(
     setModel,
     effort,
     setEffort,
+    effortStatus,
     thinking,
     setThinking,
     turnSettings,
@@ -1886,6 +1950,7 @@ export function useChat(
     killBackgroundShell,
     findBackgroundShellByOutput,
     sendMessage,
+    currentTurnIdRef,
     respondToApproval,
     cancelStreaming,
     reconnect,

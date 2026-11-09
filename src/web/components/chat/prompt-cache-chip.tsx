@@ -2,68 +2,43 @@ import { Clock } from "@/lib/icons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMinuteClock } from "@/hooks/use-minute-clock";
 import type { PromptCacheState } from "../../../shared/prompt-cache-idle";
-import {
-  promptCacheStatus,
-  formatCacheCountdown,
-  formatIdleDuration,
-  formatContextTokens,
-} from "../../../shared/prompt-cache-idle";
+import { promptCacheStatus, formatIdleDuration, formatContextTokens } from "../../../shared/prompt-cache-idle";
 
 /**
- * How long this session's prompt cache has left, in the composer's chip row.
+ * The prompt cache, beside the mic in the composer bar — only once it has gone cold.
  *
- * The banner above the composer only appears once the cache is already gone, which answers
- * "why was that turn expensive" after the fact. This is the same fact while it can still be
- * acted on — a countdown says the next message is cheap *now*, and going red says it is not.
+ * A cache still warm is not news: a countdown with nothing to do about it was one more chip in
+ * the bar, and a red fill read as an error. So a warm or unmeasured cache shows nothing, and a
+ * cold one is a red clock and how long ago it went ("1h 51m") with no fill or border — the fact
+ * that the next message re-sends the transcript at full price, said where the Send button is.
  *
- * Reads as a chip rather than a control because there is nothing to click: the cache's clock
- * is not a setting. Renders nothing at all when PPM has not measured the session, so a chat
- * with no completed turn shows a row unchanged from before.
- *
- * The hover text is the only part that is hover-only, and deliberately so: everything it
- * says is already on screen as the chip's own number and, once expired, as the banner. So
- * touch loses a sentence of phrasing rather than a fact — which is why this needs no tap
- * affordance and stays out of the composer's tab order.
+ * The hover text is the only part that is hover-only, and deliberately so: the number is on
+ * screen and the banner above the composer says the rest, so touch loses phrasing, not a fact.
  */
 export function PromptCacheChip({ promptCache }: { promptCache: PromptCacheState | null }) {
   const status = promptCacheStatus(promptCache, useMinuteClock());
-  if (status.kind === "unknown") return null;
+  if (status.kind !== "cold") return null;
 
-  const cold = status.kind === "cold";
-  const label = status.kind === "cold"
-    ? formatIdleDuration(status.idleMs)
-    : formatCacheCountdown(status.remainingMs);
-
-  let detail: string;
-  if (status.kind !== "cold") {
-    detail = `Prompt cache warm, about ${label.replace(/m$/, " min")} left.`;
-  } else if (status.reason === "compacted") {
-    // No token figure here on purpose: what the next message re-caches is the summary the
-    // compaction just produced, and no API call has reported its size yet.
-    detail = `Prompt cache does not cover the compacted conversation. Compacted ${label} ago, so your next message will re-cache it.`;
-  } else {
-    detail = `Prompt cache expired ${label} ago. Your next message re-sends ${
-      status.contextTokens != null
-        ? `about ${formatContextTokens(status.contextTokens)} tokens`
-        : "the whole transcript"
+  const label = formatIdleDuration(status.idleMs);
+  // No token figure for a compaction on purpose: what the next message re-caches is the summary
+  // the compaction just produced, and no API call has reported its size yet.
+  const detail = status.reason === "compacted"
+    ? `Prompt cache does not cover the compacted conversation. Compacted ${label} ago, so your next message will re-cache it.`
+    : `Prompt cache expired ${label} ago. Your next message re-sends ${
+      status.contextTokens != null ? `about ${formatContextTokens(status.contextTokens)} tokens` : "the whole transcript"
     } at full price.`;
-  }
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          // Same shape as `ModeChip` and `PriorityToggle` beside it; only the colour carries
-          // the state, and only once the cache is gone — a countdown still running is not news.
-          className={`inline-flex shrink-0 items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] border transition-colors ${
-            cold
-              ? "text-error border-error/40 bg-error/10"
-              : "text-text-2 bg-panel-2 border-border-soft"
-          }`}
+          data-prompt-cache="cold"
+          aria-label={detail}
+          className="footer-fade-in inline-flex h-[30px] shrink-0 items-center gap-1 whitespace-nowrap px-1.5 text-[11px] text-error"
         >
-          <Clock className="size-3" />
-          {/* `tabular-nums` so a minute ticking over does not shift the chips beside it. */}
-          <span className="tabular-nums">{label}</span>
+          <Clock className="size-4 shrink-0" />
+          {/* `tabular-nums` so a minute ticking over does not shift the buttons beside it. */}
+          <span className="tabular-nums @max-[420px]/chat:hidden max-md:hidden">{label}</span>
         </span>
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-[240px] text-xs">

@@ -39,13 +39,18 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CHAT_INITIALIZE_TIMEOUT_MS, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
-import { assistantMcpEnv, buildThreadParams, designMcpEnv, requestWithInstructionsFallback, RequiredInstructionsError, tabToolsMcpEnv, type CodexAssistantSession, type CodexThreadParams } from "./codex-thread-params.ts";
+import {
+  assistantMcpEnv, buildThreadParams, dbToolsMcpEnv, designMcpEnv, requestWithInstructionsFallback, RequiredInstructionsError,
+  sessionCollabMcpEnv, tabToolsMcpEnv, type CodexAssistantSession, type CodexThreadParams,
+} from "./codex-thread-params.ts";
 import { planAssistantCodexMcp } from "./codex-assistant-mcp-guard.ts";
 import { planAssistantCodexSkills } from "./codex-assistant-skills.ts";
 import { assistantSpawnHome } from "./codex-assistant-home.ts";
 import { codexMcpApproval, codexMcpApprovalResponse, type CodexMcpApproval } from "./codex-mcp-approval.ts";
+import type { SessionCollabMcpAccess } from "../../services/session-collab/session-collab-tool.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import type { TabToolsMcpAccess } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
+import type { DbToolsMcpAccess } from "../../services/db-ai-tools/db-ai-tools-tool.ts";
 import { mapCodexEvent, newCodexTurnText, parseTokenUsage, type CodexTurnText } from "./codex-event-mapper.ts";
 import { recordFileChangeBaselines } from "./codex-file-baselines.ts";
 import { subagentCardId } from "./codex-subagent-thread.ts";
@@ -56,6 +61,7 @@ import { codexUsageSource } from "./codex-usage-source.ts";
 import { AMBIENT_ACCOUNT_KEY } from "../../services/provider-usage/usage-source.ts";
 import { redactFields, redactTruncate } from "./codex-redact.ts";
 import { normalizeCodexQuestions } from "../../shared/approval-questions.ts";
+import { buildUserInputResponse } from "./codex-user-input.ts";
 import { assistantShellEnv } from "../../services/assistant/assistant-shell-env.ts";
 import { approvalInput, approvalToolLabel } from "./codex-approval-input.ts";
 import { localizeRollout } from "./codex-rollout-transfer.ts";
@@ -69,7 +75,6 @@ import type {
   ModelListResponse,
   ServerRequest,
   JsonRpcNotification,
-  ToolRequestUserInputResponse,
   Thread,
   UserInput,
   CodexSkill,
@@ -177,6 +182,10 @@ interface LiveSession {
   designMcp?: DesignMcpAccess;
   /** The tab tools' endpoint, when the user has them on; kept for the same reason. */
   tabToolsMcp?: TabToolsMcpAccess;
+  /** The database tools' endpoint, while a connection is available to the AI chat; likewise. */
+  dbToolsMcp?: DbToolsMcpAccess;
+  /** The session tools' endpoint, while one of them is on; likewise. */
+  sessionCollabMcp?: SessionCollabMcpAccess;
   /** Set for a PPM Assistant session (web search off, its own tools and servers, none of the
    *  user's); kept for the same reason. */
   assistant?: CodexAssistantSession;
@@ -215,6 +224,14 @@ interface LiveSession {
   interruptRequested?: boolean;
   /** Follow-ups waiting for the current turn, in the order they will be sent. */
   pendingTurns: QueuedTurn[];
+  /**
+   * The turn `startTurn` asked codex for and codex has not named yet: the browser's id for the
+   * message it was sent for, and the transcript message it pushed (none for a replay). Taken by
+   * the first `turn/started` after it, so a turn codex starts on its own binds nothing.
+   */
+  startingTurn?: { clientMessageId?: string; transcriptId?: string };
+  /** The turn already announced with `turn_started`, so a second naming of it says nothing. */
+  announcedTurnId?: string | null;
   /** A usage-limit rotation is underway: the old app-server is being torn down and
    *  replaced by one running on another account. Everything the dying subprocess still
    *  emits belongs to the turn being abandoned, so it is dropped rather than shown. */
@@ -336,22 +353,15 @@ function loggableError(err: unknown): string {
   return redactTruncate((err as Error)?.message ?? String(err), 200);
 }
 
-function buildUserInputResponse(questions: unknown, data: unknown): ToolRequestUserInputResponse {
-  const answers: ToolRequestUserInputResponse["answers"] = {};
-  if (data && typeof data === "object" && !Array.isArray(data)) {
-    for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
-      answers[k] = { answers: Array.isArray(v) ? v.map(String) : [String(v)] };
-    }
-    return { answers };
-  }
-  const arr = Array.isArray(data) ? data : data != null ? [data] : [];
-  const qs = Array.isArray(questions) ? questions : [];
-  qs.forEach((q, i) => {
-    const qid = (q && typeof q === "object" && ((q as any).id ?? (q as any).questionId)) || String(i);
-    const a = arr[i];
-    answers[qid] = { answers: a != null ? [String(a)] : [] };
-  });
-  return { answers };
+/**
+ * The bearer tokens PPM's own MCP servers read from the app-server's environment: one place, so
+ * the first connect and the account-switch respawn cannot hand codex different sets.
+ */
+function liveMcpEnv(live: LiveSession): Record<string, string> {
+  return {
+    ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...dbToolsMcpEnv(live.dbToolsMcp),
+    ...sessionCollabMcpEnv(live.sessionCollabMcp), ...assistantMcpEnv(live.assistant?.mcp),
+  };
 }
 
 /**
@@ -434,7 +444,7 @@ export class CodexAppServerProvider implements AIProvider {
     const seen = new Set<string>();
     const sessions: SessionInfo[] = [];
     for (const sessionsDir of codexSessionsDirs()) {
-      for (const s of listCodexRollouts(sessionsDir, dir, this.id, opts)) {
+      for (const s of await listCodexRollouts(sessionsDir, dir, this.id, opts)) {
         if (seen.has(s.id)) continue;
         seen.add(s.id);
         sessions.push(s);
@@ -490,11 +500,15 @@ export class CodexAppServerProvider implements AIProvider {
     }
   }
 
-  /** Follow-up turn on the live session (turn 2+). Fire-and-forget per WS contract. */
-  pushMessage(sessionId: string, content: string, opts?: SendMessageOpts): void {
+  /**
+   * Follow-up turn on the live session (turn 2+), fire-and-forget per WS contract. False when no
+   * live session took it, so the caller starts a turn instead of reporting it delivered.
+   */
+  pushMessage(sessionId: string, content: string, opts?: SendMessageOpts): boolean {
     const live = this.live.get(sessionId);
-    if (!live || live.client.isClosed) return;
+    if (!live || live.client.isClosed) return false;
     void this.startTurn(live, content, opts);
+    return true;
   }
 
   /** Return a refusal only when this session's managed account opted into pacing. */
@@ -549,6 +563,8 @@ export class CodexAppServerProvider implements AIProvider {
       return;
     }
     live.turnInFlight = true;
+    live.startingTurn = undefined;
+    live.announcedTurnId = null;
     // `/compact` → trigger codex's real compaction (thread/compact/start), not a text turn.
     // Completion is surfaced on the `thread/compacted` notification (handleNotification).
     if (message.trim() === "/compact") {
@@ -561,7 +577,9 @@ export class CodexAppServerProvider implements AIProvider {
       });
       return;
     }
-    if (!replay) live.transcript.push({ id: nextRolloutId(live), role: "user", content: message, timestamp: new Date().toISOString() });
+    const transcriptId = replay ? undefined : nextRolloutId(live);
+    if (transcriptId) live.transcript.push({ id: transcriptId, role: "user", content: message, timestamp: new Date().toISOString() });
+    live.startingTurn = { clientMessageId: opts?.clientMessageId, transcriptId };
     live.lastTurnInput = { message, opts };
     live.currentAssistant = "";
     live.currentEvents = [];
@@ -627,6 +645,7 @@ export class CodexAppServerProvider implements AIProvider {
 
   private setActiveTurn(live: LiveSession, turnId: string): void {
     live.activeTurnId = turnId;
+    this.announceTurn(live, turnId);
     if (live.interruptRequested) {
       live.interruptRequested = false;
       this.interruptActiveTurn(live);
@@ -636,6 +655,34 @@ export class CodexAppServerProvider implements AIProvider {
     while (live.pendingTurns[0]?.priority === "next" && this.canSteer(live)) {
       this.steerTurn(live, live.pendingTurns.shift()!);
     }
+  }
+
+  /**
+   * Tell the browser which turn the message it sent opened, once codex names it. Bound to the
+   * message `startTurn` was called for, never guessed from "the newest user message": a queued
+   * follow-up opens its turn long after it was typed. A compaction is not a turn anyone sees, so
+   * it is not announced.
+   */
+  private announceTurn(live: LiveSession, turnId: string): void {
+    if (live.announcedTurnId === turnId || live.compactRequested) return;
+    // Taken once: a later `turn/started` — codex starting a turn PPM did not ask for — must not
+    // bind that turn to this message too.
+    const starting = live.startingTurn;
+    live.startingTurn = undefined;
+    if (!starting) return;
+    live.announcedTurnId = turnId;
+    // Only the message `startTurn` pushed. An older one still untagged belongs to a turn whose
+    // `turn/start` failed before codex named it, not to this one.
+    if (starting.transcriptId) {
+      for (let i = live.transcript.length - 1; i >= 0; i--) {
+        const m = live.transcript[i]!;
+        if (m.id !== starting.transcriptId) continue;
+        if (!m.turnId) m.turnId = turnId;
+        break;
+      }
+    }
+    const { clientMessageId } = starting;
+    live.channel.push({ type: "turn_started", turnId, ...(clientMessageId ? { clientMessageId } : {}) });
   }
 
   /**
@@ -673,12 +720,14 @@ export class CodexAppServerProvider implements AIProvider {
           : undefined;
         live.transcript.push({
           id: nextRolloutId(live), role: "assistant", content: live.currentAssistant,
-          ...(events ? { events } : {}), timestamp: new Date().toISOString(),
+          ...(events ? { events } : {}), timestamp: new Date().toISOString(), turnId,
         });
         live.currentAssistant = "";
         live.currentEvents = [];
       }
-      live.transcript.push({ id: nextRolloutId(live), role: "user", content: item.message, timestamp: new Date().toISOString() });
+      live.transcript.push({ id: nextRolloutId(live), role: "user", content: item.message, timestamp: new Date().toISOString(), turnId });
+      // A steered message joins the running turn: it is that turn's message, not one of its own.
+      live.channel.push({ type: "turn_started", turnId, ...(item.opts?.clientMessageId ? { clientMessageId: item.opts.clientMessageId } : {}) });
     }).catch((err) => {
       if (live.client.isClosed) return;
       log.warn(`session=${live.threadId} steer refused, sending as its own turn: ${redactTruncate((err as Error)?.message ?? String(err), 200)}`);
@@ -693,6 +742,8 @@ export class CodexAppServerProvider implements AIProvider {
   /** Running turn is over: send the next follow-up, if one is waiting. */
   private endTurn(live: LiveSession): void {
     live.turnInFlight = false;
+    // A turn that ends unnamed (its `turn/start` failed) leaves nothing a later turn may take.
+    live.startingTurn = undefined;
     live.activeTurnId = null;
     live.interruptRequested = false;
     live.discardingTurn = false;
@@ -880,7 +931,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
     const codexHome = live.assistant ? assistantSpawnHome(account.home) : account.home;
-    client.start({ cwd: live.cwd, codexHome, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...assistantMcpEnv(live.assistant?.mcp), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
+    client.start({ cwd: live.cwd, codexHome, env: { ...liveMcpEnv(live), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
     live.client = client;
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CHAT_INITIALIZE_TIMEOUT_MS);
@@ -895,6 +946,8 @@ export class CodexAppServerProvider implements AIProvider {
       developerInstructions: live.developerInstructions,
       designMcp: live.designMcp,
       tabToolsMcp: live.tabToolsMcp,
+      dbToolsMcp: live.dbToolsMcp,
+      sessionCollabMcp: live.sessionCollabMcp,
       assistant: live.assistant,
     });
     await requestWithInstructionsFallback(resumeBase,
@@ -968,7 +1021,10 @@ export class CodexAppServerProvider implements AIProvider {
       developerInstructions: assistant ? opts?.assistantInstructions : opts?.designInstructions,
       requireInstructions: assistant,
       designMcp: opts?.designSession && !assistant ? opts.designMcp : undefined,
+      // An Assistant session loads none of PPM's chat tool servers: its own server replaces them.
       tabToolsMcp: opts?.designSession || assistant ? undefined : opts?.tabToolsMcp,
+      dbToolsMcp: opts?.designSession || assistant ? undefined : opts?.dbToolsMcp,
+      sessionCollabMcp: opts?.designSession || assistant ? undefined : opts?.sessionCollabMcp,
       assistant: assistant ? { mcp: opts?.assistantMcp, servers: opts?.assistantMcpServers } : undefined,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [], turnText: newCodexTurnText(),
@@ -987,7 +1043,7 @@ export class CodexAppServerProvider implements AIProvider {
     // An Assistant app-server runs on a home of its own that shares only the account's login and
     // sessions folder, so the user's AGENTS.md, config.toml and skills stay behind.
     const codexHome = live.assistant ? assistantSpawnHome(account?.home) : account?.home;
-    client.start({ cwd, codexHome, env: { ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...assistantMcpEnv(live.assistant?.mcp), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
+    client.start({ cwd, codexHome, env: { ...liveMcpEnv(live), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
 
     // A cold first start can outlast a control call's bound; failing here would cost the user's turn.
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CHAT_INITIALIZE_TIMEOUT_MS);
@@ -1000,6 +1056,8 @@ export class CodexAppServerProvider implements AIProvider {
       developerInstructions: live.developerInstructions,
       designMcp: live.designMcp,
       tabToolsMcp: live.tabToolsMcp,
+      dbToolsMcp: live.dbToolsMcp,
+      sessionCollabMcp: live.sessionCollabMcp,
       assistant: live.assistant,
     });
     // Only treat as a resume when a rollout for this id is attributable to THIS
@@ -1131,6 +1189,7 @@ export class CodexAppServerProvider implements AIProvider {
         live.transcript.push({
           id: nextRolloutId(live), role: "assistant", content: live.currentAssistant,
           ...(turnEvents ? { events: turnEvents } : {}), timestamp: new Date().toISOString(),
+          ...(live.activeTurnId ? { turnId: live.activeTurnId } : {}),
         });
       }
       live.currentAssistant = "";
@@ -1251,7 +1310,7 @@ export class CodexAppServerProvider implements AIProvider {
       if (pending.mcpApproval) {
         this.respondOnce(live, pending.codexId, codexMcpApprovalResponse(pending.mcpApproval, approved));
       } else if (pending.method === "item/tool/requestUserInput") {
-        this.respondOnce(live, pending.codexId, buildUserInputResponse(pending.questions, data));
+        this.respondOnce(live, pending.codexId, buildUserInputResponse(pending.questions, approved ? data : undefined));
       } else if (isApprovalMethod(pending.method)) {
         this.respondOnce(live, pending.codexId, decisionFor(pending.method as ApprovalMethod, approved));
       }
@@ -1313,14 +1372,45 @@ export class CodexAppServerProvider implements AIProvider {
   private holdsToken(token: string): boolean {
     for (const live of this.live.values()) {
       if (live.client.isClosed) continue;
-      if (live.assistant?.mcp?.token === token || live.tabToolsMcp?.token === token || live.designMcp?.token === token) return true;
+      if (live.assistant?.mcp?.token === token || live.tabToolsMcp?.token === token || live.designMcp?.token === token
+        || live.dbToolsMcp?.token === token || live.sessionCollabMcp?.token === token) return true;
     }
     return false;
+  }
+
+  /**
+   * What a `next` follow-up handed to {@link pushMessage} right now would do: join the running
+   * turn (`inserted`, a steer), wait for it in the queue (`queued`), or open a turn (`started`).
+   * Null with no live app-server. A steer codex later refuses falls back to the queue.
+   */
+  followUpDisposition(sessionId: string): "inserted" | "queued" | "started" | null {
+    const live = this.live.get(sessionId);
+    if (!live || live.client.isClosed) return null;
+    if (live.checkingDailyGuard) return "queued";
+    if (!live.turnInFlight) return "started";
+    return this.canSteer(live) ? "inserted" : "queued";
   }
 
   hasStreamingSession(sessionId: string): boolean {
     const live = this.live.get(sessionId);
     return !!live && !live.client.isClosed;
+  }
+
+  /**
+   * Names the session's thread in codex itself (`thread/name/set`), so codex's own thread list
+   * shows the title PPM shows. Needs a live app-server that already has the thread; false when
+   * there is none, or when the codex build does not know the method — PPM's title stands either way.
+   */
+  async setThreadName(sessionId: string, name: string): Promise<boolean> {
+    const live = this.live.get(sessionId);
+    if (!live || live.client.isClosed || !live.threadId) return false;
+    try {
+      await live.client.request("thread/name/set", { threadId: live.threadId, name }, CONTROL_REQUEST_TIMEOUT_MS);
+      return true;
+    } catch (e) {
+      log.warn(`thread=${live.threadId} could not be named: ${redactTruncate((e as Error)?.message ?? String(e), 200)}`);
+      return false;
+    }
   }
 
   /** Kill all live subprocesses — wired into server shutdown. */
@@ -1333,7 +1423,7 @@ export class CodexAppServerProvider implements AIProvider {
     const live = this.live.get(sessionId);
     if (live && !live.client.isClosed) {
       const inflight: ChatMessage[] = live.currentAssistant
-        ? [{ id: "inflight", role: "assistant", content: live.currentAssistant, timestamp: new Date().toISOString() }]
+        ? [{ id: "inflight", role: "assistant", content: live.currentAssistant, timestamp: new Date().toISOString(), ...(live.activeTurnId ? { turnId: live.activeTurnId } : {}) }]
         : [];
       return [...live.history, ...live.transcript, ...inflight];
     }
@@ -1343,6 +1433,22 @@ export class CodexAppServerProvider implements AIProvider {
     for (const dir of codexSessionsDirs(sessionId)) {
       const messages = await getRolloutMessagesAsync(dir, sessionId, cwd);
       if (messages.length) return messages;
+    }
+    return [];
+  }
+
+  /**
+   * Every message of the thread, the stretches before each compaction included — `getMessages`
+   * starts over at the last one, the way codex resumes. Read from the rollout even while the
+   * thread is live: the search index and the turn index want the record, not the live view.
+   * The same fail-closed cwd guard as `getMessages`.
+   */
+  async getFullMessages(sessionId: string): Promise<ChatMessage[]> {
+    const cwd = this.sessions.get(sessionId)?.projectPath || getSessionProjectPath(sessionId);
+    if (!cwd) return [];
+    for (const dir of codexSessionsDirs(sessionId)) {
+      const messages = await getRolloutMessagesAsync(dir, sessionId, cwd, { full: true });
+      if (messages.length) return messages.filter((m) => !m.synthetic);
     }
     return [];
   }

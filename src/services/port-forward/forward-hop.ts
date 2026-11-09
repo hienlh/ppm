@@ -25,6 +25,7 @@
  */
 import type { ServerWebSocket } from "bun";
 import { framingOrigins, letOriginsFrame } from "./frame-ancestors.ts";
+import { PREVIEW_NAVIGATION_PATH, previewNavigationScript, withPreviewNavigation } from "./preview-navigation.ts";
 
 export type Loopback = "127.0.0.1" | "::1";
 /** IPv6 first: the order a browser on the host tries `localhost` in. */
@@ -170,6 +171,7 @@ export function startForwardHop(targetPort: number): ForwardHop {
   let upstreamHost: Loopback | null = null;
   /** The Host the forward's public URL sends, lower case and without a default port. */
   let publicHost: string | null = null;
+  let publicOrigin = "";
   const sockets = new Set<ServerWebSocket<HopSocket>>();
 
   /** The loopback to dial; re-resolved when the last one refused, as a restarted dev server may bind the other family. */
@@ -180,6 +182,13 @@ export function startForwardHop(targetPort: number): ForwardHop {
 
   async function proxyHttp(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    const framers = framingOrigins();
+    if (url.pathname === PREVIEW_NAVIGATION_PATH && req.method === "GET") {
+      return new Response(previewNavigationScript(framers), { headers: { "content-type": "text/javascript", "cache-control": "no-store" } });
+    }
+    const documentRequest = framers.length > 0 && req.method === "GET"
+      && (req.headers.get("sec-fetch-dest") === "iframe" || req.headers.get("sec-fetch-dest") === "document"
+        || !!req.headers.get("accept")?.includes("text/html"));
     const headers = upstreamRequestHeaders(req.headers, targetPort, req.headers.get("host"));
     const body = req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer();
     for (const refresh of [false, true]) {
@@ -188,14 +197,19 @@ export function startForwardHop(targetPort: number): ForwardHop {
       try {
         const res = await fetch(`http://${hostPart(host)}:${targetPort}${url.pathname}${url.search}`, {
           method: req.method, headers, body, redirect: "manual", signal: req.signal,
-          // Pass the bytes through as they are: a body Bun had decoded would still carry the
-          // upstream's Content-Encoding, and the browser would decode it a second time.
-          decompress: false,
+          // Decode navigations for HTML instrumentation; other responses stay byte-for-byte.
+          decompress: documentRequest,
         });
         const nullBody = NULL_BODY_STATUS.has(res.status) || req.method === "HEAD";
-        return new Response(nullBody ? null : res.body, {
-          status: res.status, statusText: res.statusText, headers: downstreamResponseHeaders(res.headers, targetPort, framingOrigins()),
+        const responseHeaders = downstreamResponseHeaders(res.headers, targetPort, framers);
+        if (documentRequest && res.headers.has("content-encoding")) {
+          responseHeaders.delete("content-encoding");
+          responseHeaders.delete("content-length");
+        }
+        const response = new Response(nullBody ? null : res.body, {
+          status: res.status, statusText: res.statusText, headers: responseHeaders,
         });
+        return documentRequest && !nullBody ? withPreviewNavigation(response, publicOrigin) : response;
       } catch (error) {
         // Only a refused connection is retried: anything later may have reached the dev
         // server already, and sending a POST twice is worse than a 502.
@@ -284,6 +298,7 @@ export function startForwardHop(targetPort: number): ForwardHop {
     targetPort,
     setPublicUrl(url) {
       publicHost = new URL(url).host;
+      publicOrigin = new URL(url).origin;
     },
     stop() {
       if (stopped) return;

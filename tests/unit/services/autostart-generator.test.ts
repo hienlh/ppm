@@ -281,6 +281,14 @@ describe("generateTaskXml", () => {
     expect(xml).toContain("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>");
   });
 
+  test("runs at normal priority, not the scheduler's default 7", () => {
+    // 7 also means memory priority 2 and I/O priority Low for the supervisor and every
+    // child it spawns: the server's pages were trimmed first and read back at Low, and
+    // its event loop stalled for up to a minute on an idle machine.
+    const xml = generateTaskXml("C:\\path\\run-ppm.vbs", USER);
+    expect(xml).toContain("<Priority>5</Priority>");
+  });
+
   test("launches the VBS wrapper through wscript", () => {
     const xml = generateTaskXml("C:\\custom\\run.vbs", USER);
     expect(xml).toContain("<Command>wscript.exe</Command>");

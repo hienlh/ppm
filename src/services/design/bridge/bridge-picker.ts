@@ -17,7 +17,8 @@ import type { BridgeApi } from "./bridge-core.ts";
  * The long-press is disarmed on `touchmove` past 10 px, on `touchend` and on `touchcancel`:
  * once the browser takes the gesture for a scroll it fires `touchcancel` and delivers no
  * further move or end, and a timer left armed would open the composer over a list the
- * finger is already scrolling.
+ * finger is already scrolling. A long-press that did fire cancels its `touchend`, so lifting
+ * the finger makes no click on the composer that opened under it.
  *
  * Shipped as source, so it may only use what it is handed in `ppm`.
  */
@@ -141,12 +142,21 @@ export function installPicker(ppm: BridgeApi): void {
     if (!press || !t) return;
     if (Math.abs(t.clientX - press.x) > MOVE_TOLERANCE || Math.abs(t.clientY - press.y) > MOVE_TOLERANCE) disarm();
   }, { capture: true, passive: true });
-  win.addEventListener("touchend", () => {
+  // Not passive: a completed long-press has to cancel its touchend.
+  win.addEventListener("touchend", (event: TouchEvent) => {
     lastTouchAt = Date.now();
-    // The click that follows a completed long-press is not a tap.
-    if (press && press.fired) swallowClicksUntil = lastTouchAt + TOUCH_WINDOW_MS;
+    if (press && press.fired) {
+      // Lifting the finger after a long-press is no tap, but a browser whose own long-press
+      // takes longer than ours (1 s in desktop Chromium) still reads it as one. The composer
+      // has opened under the finger by then, and where the browser hit-tests that tap when it
+      // ends rather than where it began, the click lands on the composer's backdrop and closes
+      // it the moment it opened. A cancelled touchend makes no click at all; a browser that
+      // sends one anyway sends it here, where it is swallowed.
+      if (event.cancelable) event.preventDefault();
+      swallowClicksUntil = lastTouchAt + TOUCH_WINDOW_MS;
+    }
     disarm();
-  }, { capture: true, passive: true });
+  }, { capture: true, passive: false });
   win.addEventListener("touchcancel", disarm, { capture: true, passive: true });
 
   win.addEventListener("keydown", (event: KeyboardEvent) => {

@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 /**
  * Ellipsize from the start, so the end of a string — the part that differs —
  * survives.
@@ -9,7 +11,7 @@
  * distinguishing part, and for branch names, where a repository's branches all
  * begin `fix/NX-`.
  */
-export function StartEllipsis({ children }: { children: string }) {
+export function StartEllipsis({ children }: { children: ReactNode }) {
   return (
     <span dir="rtl" className="truncate text-left min-w-0 flex-1">
       <bdi>{children}</bdi>

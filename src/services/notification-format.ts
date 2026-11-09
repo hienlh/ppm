@@ -4,6 +4,15 @@
  */
 import type { NotificationPayload } from "./notification.service.ts";
 import { isAssistantProject } from "../shared/assistant-project.ts";
+import { dbExecuteApprovalInput } from "../shared/db-ai-tools.ts";
+import { sessionCollabApprovalInput, type SessionCollabApprovalInput } from "../shared/session-collab.ts";
+
+/** What a session-collaboration card asks, as a notification's title says it. */
+export function collabApprovalTitle(input: SessionCollabApprovalInput): string {
+  if (input.kind === "create") return `AI wants to open a session: ${input.title}`;
+  if (input.kind === "pair_limit") return `Sessions reached their message limit (${input.sent}/${input.limit})`;
+  return `AI wants to message a session with more permissions: ${input.targetTitle}`;
+}
 
 const DETAIL_MAX = 300;
 
@@ -18,11 +27,14 @@ export function escapeTelegramHtml(text: string): string {
 }
 
 /**
- * Where a notification opens PPM: the session's chat when there is one.
+ * Where a notification opens PPM: the event's own path when it names one, else the
+ * session's chat when there is one.
  * `project` must be the project's NAME — the app resolves `/project/<x>` by name, and
  * a path there falls back to whichever project sorts first.
  */
-export function notificationPath(payload: Pick<NotificationPayload, "project" | "sessionId" | "providerId">): string {
+export function notificationPath(payload: Pick<NotificationPayload, "project" | "sessionId" | "providerId" | "path">): string {
+  // Only a path inside the app: `//host` and `/\host` would leave PPM's origin.
+  if (payload.path && /^\/(?![/\\])/.test(payload.path)) return payload.path;
   if (!payload.project) return "/";
   // The Assistant's virtual project is no project the app can open: `/project/__assistant__`
   // falls back to the first registered project and opens the session there as an ordinary chat.
@@ -63,6 +75,13 @@ export function formatPushNotification(payload: NotificationPayload, deviceName:
 export function describeApprovalInput(tool: string, input: unknown): Pick<NotificationPayload, "detail" | "detailStyle"> {
   if (!input || typeof input !== "object") return {};
   const i = input as Record<string, unknown>;
+
+  // A database change: the AI's reason, not the SQL, which may quote the rows it changes.
+  const db = dbExecuteApprovalInput(tool, input);
+  if (db) return db.reason ? { detail: db.reason, detailStyle: "quote" } : {};
+
+  const collab = sessionCollabApprovalInput(tool, input);
+  if (collab) return { detail: collab.kind === "create" ? collab.task : collab.kind === "escalation" ? collab.message : `To: ${collab.targetTitle}`, detailStyle: "quote" };
 
   if (tool === "AskUserQuestion" && Array.isArray(i.questions)) {
     const questions = i.questions as Array<{ question?: unknown }>;

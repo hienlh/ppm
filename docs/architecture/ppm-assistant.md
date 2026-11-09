@@ -32,7 +32,7 @@ per database file, because dev (`ppm.dev.db`) and production (`ppm.db`) share th
 both providers list a project's sessions by working directory. One shared folder would show each
 instance's Assistant chats in the other's list.
 
-**Marking a session.** `session_metadata.assistant` (migration 57) is written when the session
+**Marking a session.** `session_metadata.assistant` (migration 61) is written when the session
 is created, and copied when Codex renames the session on its first turn and when a session is
 forked. `isAssistantSession` (`src/services/assistant/assistant-session.ts`) answers true on the
 mark of the id, the mark of the id it migrated to, *or* the session's working directory being
@@ -506,7 +506,7 @@ answered or withdrawn anywhere loses its buttons everywhere.
 `addNotificationSuppressor` (`notification-suppressor.ts`) lets the bridge and the watch service
 hold back a push that would repeat what the user was just told; the unread mark is still set.
 
-The binding and watch tables (migration 58) are behind `src/services/assistant-hub/assistant-hub-db.ts`,
+The binding and watch tables (migration 62) are behind `src/services/assistant-hub/assistant-hub-db.ts`,
 which reads every id through `resolveMigratedSession`, because Codex renames a new session during
 its first turn.
 

@@ -1,19 +1,32 @@
-import { decodeReply } from "../shared/chat-reply.ts";
+import { decodeMessageBlocks } from "../shared/chat-message-blocks.ts";
+import { isMinimalMode } from "../services/runtime-mode.ts";
 import type { StripMode } from "../services/transcript-images.ts";
 import {
-  query,
   type Query,
   listSessions as sdkListSessions,
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
-import { allowedToolsFor, assistantMcpServers, buildModelQueryOptions, buildSystemPromptOption, buildToolHooks, CLAUDE_TAB_TOOLS, designMcpServers, fileWriteTarget, moveMcpServersToConfigFile, preToolUseDecision, READ_ONLY_TOOLS, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { query } from "./claude-cli-process-group.ts";
+import { allowedToolsFor, assistantMcpServers, buildModelQueryOptions, CLAUDE_SETTING_SOURCES, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_SESSION_COLLAB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, fileWriteTarget, moveMcpServersToConfigFile, preToolUseDecision, READ_ONLY_TOOLS, sessionCollabMcpServers, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { SESSION_COLLAB_MCP_PATH, sessionCollabMcpAccessFor } from "../services/session-collab/session-collab-tokens.ts";
 import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
+import { DB_TOOLS_MCP_PATH, dbToolsMcpAccessFor } from "../services/db-ai-tools/db-ai-tools-tokens.ts";
+import { aiConnections } from "../services/db-ai-tools/db-ai-connections.ts";
+import { DB_TOOLS } from "../shared/db-ai-tools.ts";
+import { OPEN_PREVIEW_TOOL } from "../shared/tab-open-protocol.ts";
+import { anyPpmToolOn, ppmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { captureBaseline } from "../services/session-file-baselines/session-file-baselines.service.ts";
 import { observeFile } from "../services/session-file-baselines/session-file-history.ts";
 import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../services/session-file-baselines/shell-change-tracker.ts";
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
+import { PromptTurnBinder } from "./claude-prompt-turn-binder.ts";
+import { CONTINUE_NUDGE } from "../shared/user-prompt-kind.ts";
+import { APPROVAL_WAKE, ApprovalQueue } from "./claude-approval-queue.ts";
+import { EFFORT_ENV_VAR, effortStatusFromCli, estimateEffortStatus, userSettingsFile, type EffortSettingsQuery } from "./claude-effort-status.ts";
+import type { EffortStatus } from "../shared/effort-status.ts";
+import { withTimeout } from "../services/mcp-oauth/mcp-control-query.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
 import { assistantToolDecision } from "../services/assistant/assistant-tool-policy.ts";
@@ -59,6 +72,8 @@ const usageLog = createLogger("usage");
 const mcpControlLog = createLogger("mcp-control");
 
 const CLAUDE_PROJECTS_DIR = resolve(homedir(), ".claude/projects");
+/** A running CLI answers `get_settings` in a few ms; this only bounds one that never does. */
+const EFFORT_READ_TIMEOUT_MS = 5_000;
 
 /**
  * Resolve the Claude CLI the SDK should spawn.
@@ -237,6 +252,40 @@ interface StreamingSession {
   lastUserContent: string;
   /** Latest user message images — updated on follow-ups for accurate retry */
   lastUserImages?: Array<{ data: string; mediaType: string }>;
+  /** The browser's id for the latest user message, so a re-sent prompt is still bound to it. */
+  lastClientMessageId?: string;
+  /**
+   * A user message has been pushed whose turn has not finished.
+   *
+   * A crash retry may only re-send a prompt while this is true. Without it the retry re-sent
+   * whatever content it could find into a session that was simply idle, and an instruction the
+   * user gave hours earlier ran a second time as a real turn.
+   */
+  awaitingReply?: boolean;
+  /** The sign-in this subprocess was started with — see `SubprocessCredential`. */
+  credential: SubprocessCredential;
+}
+
+/**
+ * The OAuth token a CLI subprocess holds, fixed for its whole life.
+ *
+ * The CLI cannot renew a token handed to it in `CLAUDE_CODE_OAUTH_TOKEN`: it carries no
+ * refresh token, and the CLI's own 401 recovery deliberately keeps a user-supplied token
+ * rather than adopting one from disk. Its only other renewal paths — the SDK's
+ * `getOAuthToken` callback and the rotated-token file — are enabled for Anthropic's own
+ * clients alone (the callback is gated on `CLAUDE_CODE_ENTRYPOINT` being Desktop, Cowork or
+ * VS Code). So when PPM renews an account's token, which revokes the previous one, every
+ * subprocess still holding it fails its next request. Recording the token per subprocess is
+ * what lets the chat layer renew while an account is quiet and restart idle subprocesses
+ * onto the new token between turns (`src/server/ws/chat-token-rotation.ts`).
+ */
+export interface SubprocessCredential {
+  accountId: string | null;
+  oauthToken: string;
+}
+
+function credentialOf(env: Record<string, string | undefined>, accountId: string | undefined): SubprocessCredential {
+  return { accountId: accountId ?? null, oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN ?? "" };
 }
 
 /**
@@ -276,10 +325,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
    * and this is the only place that knows what made it do so.
    */
   private teardownReasons = new Map<string, string>();
+  /** The `--effort` each session's CLI was started with, to set beside what it reports sending. */
+  private startedEffort = new Map<string, string | null>();
   /** The API's last rate-limit status per account and limit, so only a change is logged. */
   private rateLimitStatus = new Map<string, string>();
   /** CLIs started for chats that do not exist yet — see `prewarm`. */
   private readonly warmSpares = new WarmSpares<Query>();
+  /** Which browser message each prompt the CLI submits was pushed for (`turn_started`). */
+  private readonly turnBinder = new PromptTurnBinder();
   /** Hosts with less RAM keep no warm CLI: each one holds ~500 MB while it waits. */
   private minWarmSpareHostMemory = 8 * 1024 ** 3;
 
@@ -520,9 +573,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1", CLAUDE_CODE_ENABLE_TASKS: "1" }
       : {};
 
-    // PPM's own tab tools replace the claude.ai Artifact tools (`Artifact`, `ArtifactComments`,
+    // PPM's `open_preview` replaces the claude.ai Artifact tools (`Artifact`, `ArtifactComments`,
     // `ArtifactData`), whose pages live on claude.ai rather than in PPM.
-    const artifactEnv = configService.get("ai").tab_tools ? { CLAUDE_CODE_DISABLE_ARTIFACT: "1" } : {};
+    const artifactEnv = !isMinimalMode() && ppmToolOn(configService.get("ai"), OPEN_PREVIEW_TOOL) ? { CLAUDE_CODE_DISABLE_ARTIFACT: "1" } : {};
 
     return {
       ...base,
@@ -652,7 +705,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const sessions: SessionInfo[] = sdkSessions.map((s) => ({
         id: s.sessionId,
         providerId: this.id,
-        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? (decodeReply(stripSharedContext(s.firstPrompt ?? "")).content || "Chat"),
+        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? (decodeMessageBlocks(stripSharedContext(s.firstPrompt ?? "")).content || "Chat"),
         createdAt: new Date(s.lastModified).toISOString(),
         updatedAt: new Date(s.lastModified).toISOString(),
       }));
@@ -707,7 +760,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         return {
           id: info.sessionId,
           providerId: this.id,
-          title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? (decodeReply(stripSharedContext(info.firstPrompt ?? "")).content || "Chat"),
+          title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? (decodeMessageBlocks(stripSharedContext(info.firstPrompt ?? "")).content || "Chat"),
           createdAt: new Date(info.lastModified).toISOString(),
           updatedAt: new Date(info.lastModified).toISOString(),
         };
@@ -741,6 +794,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
     }
     this.forkSources.delete(sessionId);
+    this.startedEffort.delete(sessionId);
 
     // Best-effort: delete JSONL from ~/.claude/projects/
     try {
@@ -811,14 +865,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   /**
    * Push a follow-up message into an existing streaming session's generator.
-   * Called by WS handler for follow-up messages (Phase 2).
+   * Called by WS handler for follow-up messages. False when there is no stream to take it: the
+   * message never reached the model, and the caller has to start a turn instead.
    */
-  pushMessage(sessionId: string, content: string, opts?: import("./provider.interface.ts").SendMessageOpts): void {
+  pushMessage(sessionId: string, content: string, opts?: import("./provider.interface.ts").SendMessageOpts): boolean {
     const ss = this.streamingSessions.get(sessionId);
     if (!ss) {
-      // Returning is all this can do, and the message never reaches the model.
-      log.error(`session=${sessionId} follow-up dropped: no streaming session`);
-      return;
+      log.error(`session=${sessionId} follow-up not pushed: no streaming session`);
+      return false;
     }
     const modelInput = withSharedContext(content, opts?.sharedContext);
     const msgContent = buildMessageParam(modelInput, opts?.images);
@@ -829,14 +883,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       session_id: sessionId,
       priority: opts?.priority ?? 'next',
     });
+    this.turnBinder.register(sessionId, modelInput, opts?.clientMessageId);
     // Track latest message for retry paths (fixes stale firstMsg bug)
     ss.lastUserContent = modelInput;
     ss.lastUserImages = opts?.images;
+    ss.lastClientMessageId = opts?.clientMessageId;
+    ss.awaitingReply = true;
     log.debug(`pushMessage: session=${sessionId} priority=${opts?.priority ?? 'next'}`);
+    return true;
   }
 
   /** Close a streaming session — generator + query cleanup */
   closeStreamingSession(sessionId: string): void {
+    // Pushes the closed CLI never submitted will not open a turn (see `abortQuery`).
+    this.turnBinder.forget(sessionId);
     const ss = this.streamingSessions.get(sessionId);
     if (ss) {
       ss.controller.done();
@@ -850,6 +910,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   /** Check if a streaming session is active for a given session ID */
   hasStreamingSession(sessionId: string): boolean {
     return this.streamingSessions.has(sessionId);
+  }
+
+  /** Every session with a live subprocess, with the sign-in that subprocess holds. */
+  liveSubprocessCredentials(): Array<{ sessionId: string; credential: SubprocessCredential }> {
+    return [...this.streamingSessions].map(([sessionId, ss]) => ({ sessionId, credential: ss.credential }));
   }
 
   /**
@@ -928,6 +993,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const cliExecutablePath = resolveCliExecutablePath(
       (p.providerConfig as { cli_command?: string }).cli_command,
     );
+    // 0 = no limit: the CLI is then given no --max-turns at all.
+    const maxTurns = p.opts?.maxTurns ?? p.providerConfig.max_turns ?? 1000;
 
     return {
       // Run the CLI under node only for a .js entry (or the win32 source-mode
@@ -939,7 +1006,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ...(p.forkSession && { forkSession: true }),
       cwd: p.cwd,
       systemPrompt: p.systemPrompt,
-      settingSources: p.isolated ? [] : ["user", "project"],
+      settingSources: p.isolated ? [] : [...CLAUDE_SETTING_SOURCES],
       env: p.env,
       settings: { permissions: { allow: [], deny: [] } },
       allowedTools: p.allowedTools,
@@ -949,7 +1016,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       allowDangerouslySkipPermissions: p.permissionMode === "bypassPermissions",
       ...(mqo.model && { model: mqo.model }),
       ...(mqo.effort && { effort: mqo.effort }),
-      maxTurns: p.opts?.maxTurns ?? p.providerConfig.max_turns ?? 1000,
+      ...(maxTurns > 0 && { maxTurns }),
       ...(p.providerConfig.max_budget_usd && { maxBudgetUsd: p.providerConfig.max_budget_usd }),
       ...(mqo.thinking && { thinking: mqo.thinking }),
       // Beta headers are honored only for API-key auth; OAuth/subscription sessions
@@ -962,18 +1029,22 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
   /**
-   * One prompt, one text answer: no tools, no session on disk, no project. For PPM's own small
-   * jobs (sorting the log's errors, drafting a bug report), not for chats. It runs on the
-   * account the router would pick next and authenticates exactly as a turn does
-   * (`buildQueryEnv`), in a directory of its own with `settingSources: []`, so no project's
-   * CLAUDE.md, settings or `.env` reaches it.
+   * One prompt, one answer: no tools, no MCP server, no session on disk, no project. For PPM's
+   * own small jobs (sorting the log's errors, drafting a bug report) and a script schedule's
+   * `ctx.ai.ask`, not for chats. It runs on the account the router would pick next and
+   * authenticates exactly as a turn does (`buildQueryEnv`), in a directory of its own with
+   * `settingSources: []`, so no project's CLAUDE.md, settings or `.env` reaches it.
+   * With `jsonSchema` the answer is also `json`, through the SDK's structured output; that is
+   * a tool call of its own, so the one-turn cap is lifted for it.
    */
   async completeOnce(input: {
     prompt: string;
-    systemPrompt: string;
+    systemPrompt?: string;
     model: string;
     timeoutMs?: number;
-  }): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+    effort?: "low" | "medium" | "high";
+    jsonSchema?: Record<string, unknown>;
+  }): Promise<{ text: string; json?: unknown; costUsd: number; inputTokens: number; outputTokens: number }> {
     let account: AccountWithTokens | null = null;
     if (accountSelector.isEnabled()) {
       const picked = accountSelector.next();
@@ -995,11 +1066,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
           cwd,
           model: input.model,
-          systemPrompt: input.systemPrompt,
+          ...(input.systemPrompt !== undefined && { systemPrompt: input.systemPrompt }),
+          ...(input.effort && { effort: input.effort }),
+          ...(input.jsonSchema ? { outputFormat: { type: "json_schema" as const, schema: input.jsonSchema } } : { maxTurns: 1 }),
           tools: [],
+          mcpServers: {},
+          strictMcpConfig: true,
           settingSources: [],
           persistSession: false,
-          maxTurns: 1,
           env: this.buildQueryEnv(undefined, account),
           abortController,
         },
@@ -1010,9 +1084,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           const detail = message.subtype === "success" ? message.result : message.subtype;
           throw new Error(`Claude did not answer: ${String(detail).slice(0, 200)}`);
         }
+        if (input.jsonSchema && message.structured_output === undefined) {
+          throw new Error("Claude did not answer in the requested JSON shape");
+        }
         if (account) accountSelector.onSuccess(account.id);
         return {
           text: message.result,
+          ...(input.jsonSchema && { json: message.structured_output }),
+          costUsd: message.total_cost_usd,
           inputTokens: (message.usage.input_tokens ?? 0) + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0),
           outputTokens: message.usage.output_tokens ?? 0,
         };
@@ -1052,14 +1131,25 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // The chat's turns will carry the tab tools too (`chatService.prepareSendOptions`); their
     // token is minted below, once the spare has the session id it will be taken over with.
-    const base = configService.get("ai").tab_tools === true ? localServerBaseUrl() : null;
+    const ai = configService.get("ai");
+    const base = !isMinimalMode() && anyPpmToolOn(ai, TAB_TOOLS) ? localServerBaseUrl() : null;
     const tabTools = base ? { url: `${base}${TAB_TOOLS_MCP_PATH}`, token: "" } : null;
+    // Likewise the database tools, while a saved connection is available to the AI chat.
+    const dbBase = !isMinimalMode() && anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0 ? localServerBaseUrl() : null;
+    const dbTools = dbBase ? { url: `${dbBase}${DB_TOOLS_MCP_PATH}`, token: "" } : null;
+    // And the session tools: a spare is never a design session, which is the only chat without
+    // them besides minimal mode, which runs no PPM tools at all.
+    const sessionBase = !isMinimalMode() && anyPpmToolOn(ai, SESSION_TOOLS) ? localServerBaseUrl() : null;
+    const sessionTools = sessionBase ? { url: `${sessionBase}${SESSION_COLLAB_MCP_PATH}`, token: "" } : null;
     const options = this.buildQueryOptions({
       cwd: projectPath,
       systemPrompt: buildSystemPromptOption(providerConfig.system_prompt),
       env: this.buildQueryEnv(projectPath, account),
       allowedTools: allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams }),
-      mcpServers: { ...this.resolveMcpServers(projectPath), ...tabToolsMcpServers(tabTools) },
+      mcpServers: {
+        ...this.resolveMcpServers(projectPath), ...tabToolsMcpServers(tabTools), ...dbToolsMcpServers(dbTools),
+        ...sessionCollabMcpServers(sessionTools),
+      },
       permissionMode,
       opts,
       providerConfig,
@@ -1068,14 +1158,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     this.warmSpares.offer(projectPath, spawnFingerprint(withSessionTokenMasked(options)), (sessionId, callbacks) => {
       const { generator, controller } = createMessageChannel();
       const access = tabTools ? tabToolsMcpAccessFor(sessionId) : null;
+      const dbAccess = dbTools ? dbToolsMcpAccessFor(sessionId) : null;
+      const sessionAccess = sessionTools ? sessionCollabMcpAccessFor(sessionId) : null;
       const q = startQuery({
         prompt: generator,
         options: {
           ...options,
-          ...(access && { mcpServers: { ...options.mcpServers, ...tabToolsMcpServers(access) } }),
+          ...((access || dbAccess || sessionAccess) && {
+            mcpServers: {
+              ...options.mcpServers, ...tabToolsMcpServers(access), ...dbToolsMcpServers(dbAccess), ...sessionCollabMcpServers(sessionAccess),
+            },
+          }),
           sessionId,
           stderr: callbacks.stderr,
-          hooks: buildToolHooks({ isBypass, preToolUse: callbacks.preToolUse, fileWrite: callbacks.fileWrite, shellCommand: callbacks.shellCommand }),
+          hooks: buildToolHooks({ isBypass, preToolUse: callbacks.preToolUse, fileWrite: callbacks.fileWrite, shellCommand: callbacks.shellCommand, userPromptSubmit: callbacks.userPromptSubmit }),
           canUseTool: callbacks.canUseTool,
         } as any,
       });
@@ -1130,9 +1226,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         session_id: sessionId,
         priority: opts?.priority ?? 'next',
       });
+      this.turnBinder.register(sessionId, modelInput, opts?.clientMessageId);
       // Track latest message for retry paths (fixes stale firstMsg bug)
       existingStream.lastUserContent = modelInput;
       existingStream.lastUserImages = opts?.images;
+      existingStream.lastClientMessageId = opts?.clientMessageId;
       log.debug(`sendMessage follow-up: session=${sessionId} pushed to generator`);
       return; // Events flow through first-message's consumer loop
     }
@@ -1143,7 +1241,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const meta = this.activeSessions.get(sessionId)!;
 
     if (meta.title === "New Chat") {
-      const body = decodeReply(message).content;
+      const body = decodeMessageBlocks(message).content;
       meta.title = body.slice(0, 50) + (body.length > 50 ? "..." : "");
     }
 
@@ -1201,15 +1299,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // `design_check` only reads the canvas, so a design session never asks before it runs.
     const designCheckTool = !assistantPolicy && opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
+    // An Assistant session loads none of PPM's chat tool servers: its own server replaces them.
     const tabToolsMcp = opts?.designSession || assistantPolicy ? undefined : opts?.tabToolsMcp;
+    const dbToolsMcp = opts?.designSession || assistantPolicy ? undefined : opts?.dbToolsMcp;
+    const sessionCollabMcp = opts?.designSession || assistantPolicy ? undefined : opts?.sessionCollabMcp;
     const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool, assistantPolicy });
 
-    /**
-     * Approval events to yield from the generator.
-     * PreToolUse hook pushes events here; the main loop yields them.
-     */
-    const approvalEvents: ChatEvent[] = [];
-    let approvalNotify: (() => void) | undefined;
+    /** Approval requests from canUseTool and the PreToolUse hook, handed out by the main loop. */
+    const approvals = new ApprovalQueue<ChatEvent>();
 
     /**
      * Helper: send approval request to FE and wait for response.
@@ -1220,8 +1317,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const promise = new Promise<{ approved: boolean; data?: unknown }>((resolve) => {
         this.pendingApprovals.set(requestId, { resolve, sessionId });
       });
-      approvalEvents.push({ type: "approval_request", requestId, tool: toolName, input });
-      approvalNotify?.();
+      approvals.push({ type: "approval_request", requestId, tool: toolName, input });
       return promise;
     };
 
@@ -1273,6 +1369,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       if (designCheckTool && toolName === designCheckTool) return preToolUseDecision("allow");
       if (tabToolsMcp && CLAUDE_TAB_TOOLS.includes(toolName)) return preToolUseDecision("allow");
+      if (dbToolsMcp && CLAUDE_DB_TOOLS.includes(toolName)) return preToolUseDecision("allow");
+      if (sessionCollabMcp && CLAUDE_SESSION_COLLAB_TOOLS.includes(toolName)) return preToolUseDecision("allow");
 
       // Design policy: project-scoped file tools pass, everything else falls through to
       // the approval prompt below. The decision is explicit so the SDK's own acceptEdits
@@ -1341,7 +1439,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       return {};
     };
 
-    const queryHooks = buildToolHooks({ isBypass, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook });
+    /**
+     * The CLI is starting a turn for a prompt: name it to the browser that sent the prompt. Its
+     * `prompt_id` is the `promptId` the transcript records on that prompt, i.e. the turn id.
+     */
+    const userPromptSubmitHook = async (hookInput: any) => {
+      const bound = this.turnBinder.bind(sessionId, hookInput?.prompt_id, hookInput?.prompt);
+      if (bound) approvals.push({ type: "turn_started", ...bound });
+      return {};
+    };
+
+    const queryHooks = buildToolHooks({ isBypass, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, userPromptSubmit: userPromptSubmitHook });
 
     let assistantContent = "";
     let resultSubtype: string | undefined;
@@ -1465,6 +1573,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         if (latest) account = latest;
       }
       const queryEnv = queryEnvFor(account);
+      const queryCredential = credentialOf(queryEnv, account?.id);
 
       // Pre-flight: warn if no credentials at all (avoids 2-minute silent timeout)
       if (!account) {
@@ -1484,6 +1593,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           ...this.resolveMcpServers(effectiveCwd),
           ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
           ...tabToolsMcpServers(tabToolsMcp),
+          ...dbToolsMcpServers(dbToolsMcp),
+          ...sessionCollabMcpServers(sessionCollabMcp),
         };
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time
@@ -1513,11 +1624,31 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         providerConfig,
         stderr: stderrCallback,
       });
+      // Every retry below restarts the CLI with these same options.
+      this.startedEffort.set(sessionId, (queryOptions.effort as string | undefined) ?? null);
 
       // Crash retry: if subprocess exits with non-zero code before producing events,
       // clean up and retry once with a fresh query before surfacing the error.
       const MAX_CRASH_RETRIES = 1;
       let crashRetryCount = 0;
+
+      /**
+       * What the crashed subprocess was doing, read off its session entry before that entry is
+       * deleted. Undefined until a crash. `awaiting` false means no turn was in flight, and a
+       * retry must then push nothing at all: the session is only being rebuilt so the next real
+       * message has somewhere to go.
+       */
+      let crashed: { content: string; images?: Array<{ data: string; mediaType: string }>; clientMessageId?: string; awaiting: boolean } | undefined;
+
+      // Once the turn has produced output (top-level assistant text/tool_use), the user
+      // message + any tool_results are persisted to JSONL. Mid-turn retries must resume and
+      // continue — NOT re-push the original message, which restarts the turn and re-displays
+      // an already-answered AskUserQuestion.
+      //
+      // Declared outside `crashRetryLoop` on purpose: inside it, a crash re-entered the loop
+      // body and cleared the very flag that keeps the retry from re-sending the prompt. It is
+      // reset at the end of each turn instead.
+      let turnProgressed = false;
 
       crashRetryLoop: for (;;) {
       try {
@@ -1532,11 +1663,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         session_id: sessionId,
       };
 
-      // Once the turn has produced output (top-level assistant text/tool_use), the user
-      // message + any tool_results are persisted to JSONL. Mid-turn retries must resume and
-      // continue — NOT re-push the original message, which restarts the turn and re-displays
-      // an already-answered AskUserQuestion. Persists across retryLoop iterations.
-      let turnProgressed = false;
 
       // Build a retry message for token-refresh / transient-error retries.
       // Pre-turn (nothing persisted yet): re-push the LATEST user content so the SDK has a
@@ -1547,9 +1673,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Also returns the raw content/images for re-populating the new streaming session.
       const buildRetryMsg = () => {
         const ss = this.streamingSessions.get(sessionId);
-        const content = ss?.lastUserContent ?? modelInput;
-        const images = ss?.lastUserImages;
-        const retryContent = turnProgressed ? "Continue from where you left off." : content;
+        // `crashed` is the only source once the entry is gone: `?? modelInput` would otherwise
+        // reach past every follow-up to the message that opened the stream, hours earlier.
+        const content = ss?.lastUserContent ?? crashed?.content ?? modelInput;
+        const images = ss?.lastUserImages ?? crashed?.images;
+        const clientMessageId = ss ? ss.lastClientMessageId ?? opts?.clientMessageId : crashed?.clientMessageId ?? opts?.clientMessageId;
+        const retryContent = turnProgressed ? CONTINUE_NUDGE : content;
+        // A retry runs in a new subprocess, and only what is sent here reaches it: anything the
+        // old one still had queued will never open a turn, so its pending pushes go. The prompt
+        // sent again opens the turn the browser is waiting on; the nudge opens none.
+        this.turnBinder.forget(sessionId);
+        if (!turnProgressed) this.turnBinder.register(sessionId, content, clientMessageId);
         return {
           msg: {
             type: 'user' as const,
@@ -1559,6 +1693,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           },
           lastUserContent: content,
           lastUserImages: images,
+          lastClientMessageId: clientMessageId,
         };
       };
 
@@ -1566,13 +1701,25 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // is exactly the process it would have spawned; otherwise it spawns one as always.
       // Never for an Assistant session: a spare was started for an ordinary chat.
       const spare = crashRetryCount === 0 && isFirstMessage && !shouldFork && !assistantPolicy
-        ? this.warmSpares.adopt(sessionId, spawnFingerprint(withSessionTokenMasked(queryOptions)), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, stderr: stderrCallback })
+        ? this.warmSpares.adopt(sessionId, spawnFingerprint(withSessionTokenMasked(queryOptions)), { canUseTool, preToolUse: preToolUseHook, fileWrite: fileWriteHook, shellCommand: shellCommandHook, userPromptSubmit: userPromptSubmitHook, stderr: stderrCallback })
         : undefined;
       const channel = spare ? undefined : createMessageChannel();
       const initialCtrl = spare?.controller ?? channel!.controller;
-      // On crash retry, use buildRetryMsg to get the latest user message (not the stale firstMsg)
+      // On crash retry, use buildRetryMsg to get the latest user message (not the stale firstMsg).
+      // A crash with no turn in flight pushes NOTHING: the subprocess is replaced so the next real
+      // message has somewhere to go, and re-sending a finished instruction runs it a second time.
       const initRetry = crashRetryCount > 0 ? buildRetryMsg() : null;
-      initialCtrl.push(initRetry?.msg ?? firstMsg);
+      const resendOnCrash = crashRetryCount > 0 && crashed?.awaiting === true;
+      if (crashRetryCount === 0) {
+        this.turnBinder.register(sessionId, modelInput, opts?.clientMessageId);
+        initialCtrl.push(firstMsg);
+      }
+      else if (resendOnCrash && initRetry) initialCtrl.push(initRetry.msg);
+      else {
+        // `buildRetryMsg` registered a prompt this branch does not send; nothing will submit it.
+        this.turnBinder.forget(sessionId);
+        log.info(`session=${sessionId} crash retry rebuilt the subprocess with no turn to resume — nothing re-sent`);
+      }
       const initContent = initRetry?.lastUserContent ?? modelInput;
       const initImages = initRetry?.lastUserImages ?? opts?.images;
 
@@ -1587,7 +1734,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // The query's one start line: a warm CLI and the MCP servers belong to it.
       log.info(`query: session=${sessionId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`
         + ` cli=${spare ? `warm ageMs=${spare.ageMs}` : "cold"}${crashRetryCount > 0 ? ` crashRetry=${crashRetryCount}` : ""} mcp=${Object.keys(mcpServers).join(",") || "none"}`);
-      this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl, lastUserContent: initContent, lastUserImages: initImages });
+      this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl, lastUserContent: initContent, lastUserImages: initImages, lastClientMessageId: initRetry ? initRetry.lastClientMessageId : opts?.clientMessageId, awaitingReply: crashRetryCount === 0 || resendOnCrash, credential: queryCredential });
       this.activeQueries.set(sessionId, initialQuery);
       let eventSource: AsyncIterable<any> = initialQuery;
       log.debug(`session=${sessionId} query() created, waiting for first SDK event...`);
@@ -1615,7 +1762,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           prompt: generator,
           options: { ...opts, hooks: queryHooks, canUseTool } as any,
         });
-        this.streamingSessions.set(sessionId, { meta, query: rq, controller, lastUserContent: retry.lastUserContent, lastUserImages: retry.lastUserImages });
+        this.streamingSessions.set(sessionId, { meta, query: rq, controller, lastUserContent: retry.lastUserContent, lastUserImages: retry.lastUserImages, lastClientMessageId: retry.lastClientMessageId, credential: credentialOf(env, acc?.id) });
         this.activeQueries.set(sessionId, rq);
         return rq;
       };
@@ -1623,6 +1770,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let lastPartialText = "";
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
       let pendingToolCount = 0;
+      /** The API response those tool_use blocks came in: only a later one means the tools ran. */
+      let pendingToolsMessageId: string | undefined;
       /** A transcript that cannot be read fails every flush: WARNed once, DEBUG after. */
       let toolResultFlushWarned = false;
 
@@ -1664,7 +1813,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       assistantContent = "";
       pendingToolCount = 0;
       let sdkEventCount = 0;
-      for await (const msg of eventSource) {
+      for await (const msg of approvals.alongside(eventSource)) {
+        // An approval goes out now: the CLI sends nothing more until it is answered.
+        if (msg === APPROVAL_WAKE) {
+          yield* approvals.drain();
+          continue;
+        }
         sdkEventCount++;
         hadAnyEvents = true;
         if (sdkEventCount === 1) {
@@ -1684,7 +1838,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               prompt: retryGen,
               options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
             });
-            this.streamingSessions.set(sessionId, { meta, query: rq, controller: retryCtrl, lastUserContent: retry1.lastUserContent, lastUserImages: retry1.lastUserImages });
+            this.streamingSessions.set(sessionId, { meta, query: rq, controller: retryCtrl, lastUserContent: retry1.lastUserContent, lastUserImages: retry1.lastUserImages, lastClientMessageId: retry1.lastClientMessageId, credential: queryCredential });
             this.activeQueries.set(sessionId, rq);
             eventSource = rq;
             continue retryLoop;
@@ -1694,9 +1848,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         const parentId = (msg as any).parent_tool_use_id as string | undefined;
 
         // Yield any queued approval events
-        while (approvalEvents.length > 0) {
-          yield approvalEvents.shift()!;
-        }
+        yield* approvals.drain();
 
         // Log system events for debugging SDK lifecycle: the subtype only, never the message.
         // thinking_tokens and status=requesting arrive at token rate, so not even at DEBUG.
@@ -1770,7 +1922,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 prompt: earlyAuthGen,
                 options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
               });
-              this.streamingSessions.set(sessionId, { meta, query: rq, controller: earlyAuthCtrl, lastUserContent: retry2.lastUserContent, lastUserImages: retry2.lastUserImages });
+              this.streamingSessions.set(sessionId, { meta, query: rq, controller: earlyAuthCtrl, lastUserContent: retry2.lastUserContent, lastUserImages: retry2.lastUserImages, lastClientMessageId: retry2.lastClientMessageId, credential: credentialOf(retryEnv, account?.id) });
               this.activeQueries.set(sessionId, rq);
               eventSource = rq;
               continue retryLoop;
@@ -1823,10 +1975,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           continue;
         }
 
-        // When top-level tools were pending and a new TOP-LEVEL message arrives,
+        // When top-level tools were pending and a new TOP-LEVEL response starts,
         // the SDK has finished executing tools. Fetch tool_results from session history.
         // Skip this for child messages (parentId set) — subagent internals don't mean parent tools finished.
-        if (pendingToolCount > 0 && !parentId && (msg.type === "assistant" || (msg as any).type === "partial" || (msg as any).type === "stream_event")) {
+        // A new response, not any frame: the tool_use's own response still streams its block stop,
+        // message_delta and message_stop before the tool runs, and treating those as "the tools
+        // ran" read the whole transcript back on every tool call (1.4GB a call on one long
+        // session, the server's RAM swinging by GBs) and yielded each result twice.
+        const startsResponse = (msg as any).type === "stream_event"
+          ? (msg as any).event?.type === "message_start"
+          : (msg.type === "assistant" || (msg as any).type === "partial") && (msg as any).message?.id !== pendingToolsMessageId;
+        if (pendingToolCount > 0 && !parentId && startsResponse) {
           try {
             const sessionMsgs = await getSessionMessages(sessionId);
             // Find the last user message — it contains tool_result blocks
@@ -1997,7 +2156,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   prompt: authRetryGen,
                   options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl, lastUserContent: retry3.lastUserContent, lastUserImages: retry3.lastUserImages });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl, lastUserContent: retry3.lastUserContent, lastUserImages: retry3.lastUserImages, lastClientMessageId: retry3.lastClientMessageId, credential: credentialOf(retryEnv, account?.id) });
                 this.activeQueries.set(sessionId, rq);
                 eventSource = rq;
                 continue retryLoop;
@@ -2035,7 +2194,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   prompt: ulRetryGen,
                   options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: ulRetryCtrl, lastUserContent: retryU.lastUserContent, lastUserImages: retryU.lastUserImages });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: ulRetryCtrl, lastUserContent: retryU.lastUserContent, lastUserImages: retryU.lastUserImages, lastClientMessageId: retryU.lastClientMessageId, credential: credentialOf(ulRetryEnv, account?.id) });
                 this.activeQueries.set(sessionId, rq);
                 eventSource = rq;
                 continue retryLoop;
@@ -2167,6 +2326,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 // stream as child messages and don't need the pendingToolCount flush mechanism.
                 if (!parentId) {
                   pendingToolCount++;
+                  pendingToolsMessageId = (msg as any).message?.id;
                 }
                 yield {
                   type: "tool_use",
@@ -2260,7 +2420,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   prompt: authRetryGen2,
                   options: { ...retryOpts, hooks: queryHooks, canUseTool } as any,
                 });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl2, lastUserContent: retry6.lastUserContent, lastUserImages: retry6.lastUserImages });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl2, lastUserContent: retry6.lastUserContent, lastUserImages: retry6.lastUserImages, lastClientMessageId: retry6.lastClientMessageId, credential: credentialOf(retryEnv, account?.id) });
                 this.activeQueries.set(sessionId, rq);
                 eventSource = rq;
                 continue retryLoop;
@@ -2461,6 +2621,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             }
           }
 
+          // The turn is over: a crash from here on has nothing to resume, and must not re-send
+          // this instruction. `turnProgressed` goes with it, so the next turn starts clean.
+          const finished = this.streamingSessions.get(sessionId);
+          if (finished) finished.awaitingReply = false;
+          turnProgressed = false;
+
           // Streaming input: yield done for this turn, then continue for next turn
           yieldedDone = true;
           yield {
@@ -2497,9 +2663,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
 
       // Yield remaining approval events
-      while (approvalEvents.length > 0) {
-        yield approvalEvents.shift()!;
-      }
+      yield* approvals.drain();
 
       if (!hadAnyEvents) {
         yield { type: "error", message: "Claude did not respond. Check that 'claude' CLI works in your terminal." };
@@ -2511,11 +2675,22 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const crashMsg = (crashErr as Error).message ?? String(crashErr);
       const stderrInfo = stderrBuffer.trim() ? ` stderr: ${stderrBuffer.trim().slice(-500)}` : "";
 
-      // Clean up crashed subprocess before retry or error
+      // Clean up crashed subprocess before retry or error. Read what the turn was doing FIRST:
+      // the retry below needs it, and deleting the entry is what used to send it back to the
+      // message that opened the stream.
       this.activeQueries.delete(sessionId);
       const ss = this.streamingSessions.get(sessionId);
-      if (ss) { ss.controller.done(); ss.query.close(); this.streamingSessions.delete(sessionId); }
+      if (ss) {
+        crashed = { content: ss.lastUserContent, images: ss.lastUserImages, clientMessageId: ss.lastClientMessageId, awaiting: ss.awaitingReply === true };
+        ss.controller.done(); ss.query.close(); this.streamingSessions.delete(sessionId);
+      } else {
+        crashed = { content: modelInput, images: opts?.images, clientMessageId: opts?.clientMessageId, awaiting: false };
+      }
       log.debug(`session=${sessionId} streaming session ended`);
+      // The subprocess died with whatever it still had queued, so none of those pushes will open
+      // a turn; a retry registers again what it re-sends. An abort or a close was already cleared
+      // where it happened, and clearing again here, later, could drop a message sent since.
+      if (!crashMsg.includes("abort") && !crashMsg.includes("closed")) this.turnBinder.forget(sessionId);
 
       // Each case below logs itself: a cancel or a closed socket is not a failure.
       if (crashMsg.includes("abort") || crashMsg.includes("closed")) {
@@ -2602,7 +2777,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" }),
         ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
         cwd,
-        settingSources: ["user", "project"],
+        settingSources: [...CLAUDE_SETTING_SOURCES],
         // No account: MCP OAuth tokens belong to the CLI's own credential store, the same
         // one an interactive `claude` writes, and no model call is ever made here.
         env: this.buildQueryEnv(cwd, null),
@@ -2647,8 +2822,44 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     }
   }
 
+  /**
+   * The effort this session's CLI sends and what overrides the pick, asked of the CLI itself:
+   * `CLAUDE_CODE_EFFORT_LEVEL`, a settings cap, an organization limit and the model's own levels
+   * all count there, while the `--effort` PPM passed is only one input to it. Null when the
+   * session has no live subprocess or the CLI does not answer.
+   */
+  async readEffortStatus(sessionId: string): Promise<EffortStatus | null> {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss) return null;
+    const cli = ss.query as unknown as EffortSettingsQuery;
+    try {
+      const [answer, init] = await Promise.all([
+        withTimeout(cli.getSettings(), EFFORT_READ_TIMEOUT_MS, "Claude did not report its settings"),
+        withTimeout(cli.initializationResult(), EFFORT_READ_TIMEOUT_MS, "Claude did not report its models").catch(() => undefined),
+      ]);
+      return effortStatusFromCli({
+        answer,
+        models: init?.models,
+        requested: this.startedEffort.get(sessionId),
+        processEnv: process.env[EFFORT_ENV_VAR],
+        userFile: userSettingsFile(process.env).shown,
+      });
+    } catch (e) {
+      log.debug(`session=${sessionId} effort status unavailable: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** What the settings files say about effort for a chat in `projectPath` no CLI has answered for yet. */
+  estimateEffortStatus(projectPath: string | undefined, model?: string): EffortStatus {
+    return estimateEffortStatus({ projectPath, model, env: process.env });
+  }
+
   /** Abort and fully teardown the streaming session — user must resume to continue */
   abortQuery(sessionId: string, source = "unknown"): void {
+    // The CLI is killed with its queue: a push it had not submitted yet never opens a turn, and
+    // left pending it would bind the next prompt with the same words to the wrong message.
+    this.turnBinder.forget(sessionId);
     const ss = this.streamingSessions.get(sessionId);
     if (ss) {
       // Signal generator to end, then close the query (kills bun subprocess)

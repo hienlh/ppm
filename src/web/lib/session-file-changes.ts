@@ -59,6 +59,19 @@ export function withReviewed(files: SessionFileChange[], paths: ReadonlySet<stri
 }
 
 /**
+ * `files` with the rows the server pushed after the agent changed them: each replaces its file's
+ * row, a file not listed yet goes last (it is the newest), and the `gone` ones drop out.
+ */
+export function withPushedChanges(files: SessionFileChange[], pushed: SessionFileChange[], gone: readonly string[]): SessionFileChange[] {
+  const byPath = new Map(pushed.map((f) => [f.path, f]));
+  const drop = new Set(gone);
+  const out = files.filter((f) => !drop.has(f.path)).map((f) => byPath.get(f.path) ?? f);
+  const listed = new Set(files.map((f) => f.path));
+  for (const f of pushed) if (!listed.has(f.path)) out.push(f);
+  return out;
+}
+
+/**
  * Changes whenever what a diff of this file would show does: every write moves the version,
  * the baseline kind moves when a fallback to git HEAD turns into the session's own copy, and
  * a mark moves what a file changed since it was reviewed is diffed against.

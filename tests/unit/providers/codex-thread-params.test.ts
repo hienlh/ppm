@@ -9,17 +9,17 @@ import {
 const permission = { sandbox: "workspace-write", approvalPolicy: "untrusted" } as const;
 
 describe("buildThreadParams", () => {
-  it("sends exactly what an ordinary session always sent", () => {
+  it("enables synchronous questions without changing an ordinary session's permissions", () => {
     expect(buildThreadParams({
       cwd: "/p", permission: { sandbox: "danger-full-access", approvalPolicy: "never" },
-    })).toEqual({ cwd: "/p", sandbox: "danger-full-access", approvalPolicy: "never" });
+    })).toEqual({ config: { "features.default_mode_request_user_input": true }, cwd: "/p", sandbox: "danger-full-access", approvalPolicy: "never" });
   });
 
   it("carries model and provider config overrides", () => {
     expect(buildThreadParams({
       cwd: "/p", permission, model: "gpt-6", configOverrides: { config: { model_context_window: 1000 } },
     })).toEqual({
-      config: { model_context_window: 1000 }, cwd: "/p", sandbox: "workspace-write",
+      config: { "features.default_mode_request_user_input": true, model_context_window: 1000 }, cwd: "/p", sandbox: "workspace-write",
       approvalPolicy: "untrusted", model: "gpt-6",
     });
   });

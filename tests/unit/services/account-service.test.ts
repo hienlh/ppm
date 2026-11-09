@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { unlinkSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { openTestDb, setDb, closeDb, updateAccount } from "../../../src/services/db.service.ts";
 import { setKeyPath } from "../../../src/lib/account-crypto.ts";
-import { accountService } from "../../../src/services/account.service.ts";
+import { accountService, OAuthLinkExpiredError } from "../../../src/services/account.service.ts";
 
 const testKeyPath = resolve(tmpdir(), `ppm-test-accsvc-${Date.now()}.key`);
 setKeyPath(testKeyPath);
@@ -199,6 +200,63 @@ describe("AccountService", () => {
     expect(accountService.list()).toHaveLength(1);
     expect(after.status).toBe("disabled");
     expect(accountService.getWithTokens(acc.id)!.accessToken).toBe("sk-ant-oat-new");
+  });
+
+  describe("addManual() with a `claude setup-token` token", () => {
+    // Anthropic's real answer to a setup-token on the profile endpoint (inference scope only).
+    const scopeDenied = JSON.stringify({
+      type: "error",
+      error: { type: "permission_error", message: "OAuth token does not meet scope requirement any_of(user:profile, user:office)" },
+    });
+
+    async function addWith(answers: { profile: Response; countTokens?: Response }) {
+      const realFetch = globalThis.fetch;
+      const urls: string[] = [];
+      globalThis.fetch = (async (u: unknown) => {
+        urls.push(String(u));
+        if (String(u).includes("/api/oauth/profile")) return answers.profile;
+        if (String(u).includes("/v1/messages/count_tokens") && answers.countTokens) return answers.countTokens;
+        return new Response("{}", { status: 500 });
+      }) as typeof fetch;
+      try {
+        const acc = await accountService.addManual({ apiKey: "sk-ant-oat01-setup", label: null }).catch((e: Error) => e);
+        return { acc, urls };
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    }
+
+    it("adds the account once the token proves it can run a chat", async () => {
+      const { acc, urls } = await addWith({
+        profile: new Response(scopeDenied, { status: 403 }),
+        countTokens: new Response(JSON.stringify({ input_tokens: 8 }), { status: 200 }),
+      });
+      expect(acc).not.toBeInstanceOf(Error);
+      expect(urls.some((u) => u.includes("/v1/messages/count_tokens"))).toBe(true);
+      const [stored] = accountService.list();
+      expect(stored.label).toBe("Claude Pro/Max (setup-token)");
+      expect(stored.status).toBe("active");
+      expect(accountService.getWithTokens(stored.id)!.accessToken).toBe("sk-ant-oat01-setup");
+    });
+
+    it("still refuses a token the model rejects", async () => {
+      const { acc } = await addWith({
+        profile: new Response(scopeDenied, { status: 403 }),
+        countTokens: new Response("{}", { status: 401 }),
+      });
+      expect(acc).toBeInstanceOf(Error);
+      expect(accountService.list()).toHaveLength(0);
+    });
+
+    it("does not treat a 403 for another reason as a setup-token", async () => {
+      const { acc, urls } = await addWith({
+        profile: new Response(JSON.stringify({ type: "error", error: { type: "permission_error", message: "Forbidden" } }), { status: 403 }),
+        countTokens: new Response("{}", { status: 200 }),
+      });
+      expect(acc).toBeInstanceOf(Error);
+      expect(urls.some((u) => u.includes("/v1/messages/count_tokens"))).toBe(false);
+      expect(accountService.list()).toHaveLength(0);
+    });
   });
 
   it("updateTokens() clears a stale cooldown even on a parked account", () => {
@@ -552,5 +610,137 @@ describe("AccountService grant lifetime", () => {
     const used = mockOnce({ access_token: "refreshed", refresh_token: "y", expires_in: 28800 });
     await accountService.ensureFreshTokenChecked(inside.id);
     expect(used()).toBe(1);
+  });
+});
+
+describe("AccountService.completeOAuthCodeFlow", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /**
+   * Claude's token endpoint, as far as PKCE goes: a code exchanges only with the verifier of the
+   * sign-in link that issued it. `issued` maps each code to that link's URL, and `signedInAs` to
+   * the account it signs in, signed-in@test.com unless named.
+   */
+  function fakeTokenEndpoint(issued: Record<string, string>) {
+    const sent: Record<string, string>[] = [];
+    globalThis.fetch = mock(async (input: unknown, init?: RequestInit) => {
+      if (!String(input).endsWith("/v1/oauth/token")) return new Response("{}", { status: 404 });
+      const body = JSON.parse(String(init?.body)) as Record<string, string>;
+      sent.push(body);
+      const link = issued[body.code];
+      if (!link) return Response.json({ error: "invalid_grant", error_description: "Invalid code" }, { status: 400 });
+      const challenge = new URL(link).searchParams.get("code_challenge");
+      if (createHash("sha256").update(body.code_verifier).digest("base64url") !== challenge) {
+        return Response.json({ error: "invalid_grant", error_description: "Code challenge failed." }, { status: 400 });
+      }
+      return Response.json({
+        access_token: "sk-ant-oat-new",
+        refresh_token: "refresh",
+        expires_in: 28800,
+        account: { email_address: "signed-in@test.com" },
+      });
+    }) as any;
+    return sent;
+  }
+
+  it("pairs a pasted code with the link it names, not the newest link the dialog opened", async () => {
+    // The 2026-10-06 report: a code from an earlier "Login with Claude" tab went out with the
+    // dialog's newer state, and Claude refused it as "Code challenge failed".
+    const earlier = accountService.startOAuthCodeFlow();
+    const newer = accountService.startOAuthCodeFlow();
+    const sent = fakeTokenEndpoint({ "code-1": earlier.url });
+
+    const account = await accountService.completeOAuthCodeFlow(`code-1#${earlier.state}`, newer.state);
+
+    expect(account.email).toBe("signed-in@test.com");
+    expect(sent.map((b) => [b.code, b.state])).toEqual([["code-1", earlier.state]]);
+  });
+
+  it("keeps the link open after Claude refuses a code, so the right code still finishes it", async () => {
+    const other = accountService.startOAuthCodeFlow();
+    const link = accountService.startOAuthCodeFlow();
+    fakeTokenEndpoint({ "from-other": other.url, "from-link": link.url });
+
+    // A bare code names no link, so it is tried against the dialog's own — and refused.
+    await expect(accountService.completeOAuthCodeFlow("from-other", link.state)).rejects.toThrow("Code challenge failed");
+    const account = await accountService.completeOAuthCodeFlow(`from-link#${link.state}`, link.state);
+
+    expect(account.email).toBe("signed-in@test.com");
+  });
+
+  it("says why Claude refused a code in a sentence, not in Claude's JSON", async () => {
+    const other = accountService.startOAuthCodeFlow();
+    const link = accountService.startOAuthCodeFlow();
+    fakeTokenEndpoint({ "from-other": other.url });
+
+    const refusal = await accountService.completeOAuthCodeFlow("from-other", link.state).catch((e: Error) => e);
+
+    expect(refusal).toBeInstanceOf(Error);
+    expect((refusal as Error).message).toContain("Code challenge failed");
+    expect((refusal as Error).message).not.toContain("{");
+    expect((refusal as Error).message).toContain("Login with Claude");
+  });
+
+  it("pairs a bare code with the dialog's own link, which is all an older dialog sends", async () => {
+    const link = accountService.startOAuthCodeFlow();
+    const sent = fakeTokenEndpoint({ "code-1": link.url });
+
+    const account = await accountService.completeOAuthCodeFlow("code-1", link.state);
+
+    expect(account.email).toBe("signed-in@test.com");
+    expect(sent.map((b) => b.state)).toEqual([link.state]);
+  });
+
+  it("keeps the link open when the sign-in fails after Claude accepted the code", async () => {
+    const link = accountService.startOAuthCodeFlow();
+    fakeTokenEndpoint({ "code-1": link.url, "code-2": link.url });
+    const add = spyOn(accountService, "add").mockImplementation(() => { throw new Error("database is locked"); });
+    try {
+      await expect(accountService.completeOAuthCodeFlow(`code-1#${link.state}`, link.state)).rejects.toThrow("database is locked");
+    } finally {
+      add.mockRestore();
+    }
+
+    // Approving the same tab again issues a new code for the same link.
+    const account = await accountService.completeOAuthCodeFlow(`code-2#${link.state}`, link.state);
+
+    expect(account.email).toBe("signed-in@test.com");
+  });
+
+  it("answers a code whose link this process no longer holds as expired, without asking Claude", async () => {
+    const link = accountService.startOAuthCodeFlow();
+    const sent = fakeTokenEndpoint({ "code-1": link.url });
+    await accountService.completeOAuthCodeFlow(`code-1#${link.state}`, link.state);
+
+    // Spent by that sign-in; a link from before a restart is the same case.
+    await expect(accountService.completeOAuthCodeFlow(`code-1#${link.state}`, link.state)).rejects.toBeInstanceOf(OAuthLinkExpiredError);
+    // A code naming an unknown link is not retried against the dialog's link, which cannot verify it.
+    const open = accountService.startOAuthCodeFlow();
+    await expect(accountService.completeOAuthCodeFlow(`code-9#${"0".repeat(32)}`, open.state)).rejects.toBeInstanceOf(OAuthLinkExpiredError);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("refuses a paste with no code before the #, without asking Claude", async () => {
+    const link = accountService.startOAuthCodeFlow();
+    const sent = fakeTokenEndpoint({ "code-1": link.url });
+
+    await expect(accountService.completeOAuthCodeFlow(`#${link.state}`, link.state)).rejects.toThrow("no code before the #");
+
+    expect(sent).toHaveLength(0);
+  });
+
+  it("answers a link older than ten minutes as expired, though no newer link has swept it", async () => {
+    const link = accountService.startOAuthCodeFlow();
+    const sent = fakeTokenEndpoint({ "code-1": link.url });
+    const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 10 * 60 * 1000 + 1);
+    try {
+      await expect(accountService.completeOAuthCodeFlow(`code-1#${link.state}`, link.state)).rejects.toBeInstanceOf(OAuthLinkExpiredError);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(sent).toHaveLength(0);
   });
 });

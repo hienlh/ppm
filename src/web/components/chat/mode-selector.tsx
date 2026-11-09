@@ -2,17 +2,22 @@ import { useRef, useEffect, useCallback, type KeyboardEvent } from "react";
 import { Hand, Code, ClipboardList, ShieldOff, Check } from "@/lib/icons";
 
 const MODES = [
-  { id: "default", label: "Ask before edits", icon: Hand, description: "Claude will ask for approval before making each edit" },
-  { id: "acceptEdits", label: "Edit automatically", icon: Code, description: "Claude will edit files without asking first" },
-  { id: "plan", label: "Plan mode", icon: ClipboardList, description: "Claude will present a plan before editing" },
-  { id: "bypassPermissions", label: "Bypass permissions", icon: ShieldOff, description: "Claude will not ask before running commands" },
+  { id: "default", label: "Ask before edits", short: "Ask", icon: Hand, description: "Claude will ask for approval before making each edit" },
+  { id: "acceptEdits", label: "Edit automatically", short: "Auto-edit", icon: Code, description: "Claude will edit files without asking first" },
+  { id: "plan", label: "Plan mode", short: "Plan", icon: ClipboardList, description: "Claude will present a plan before editing" },
+  { id: "bypassPermissions", label: "Bypass permissions", short: "Bypass", icon: ShieldOff, description: "Claude will not ask before running commands" },
 ] as const;
 
 export type ModeId = typeof MODES[number]["id"];
 
-/** Short label for the mode chip */
+/** The mode's full name, for its tooltip and the list. */
 export function getModeLabel(id: string): string {
   return MODES.find((m) => m.id === id)?.label ?? "Unknown";
+}
+
+/** One word for the composer's mode chip: "Bypass permissions" cut to "Bypass permissio…" read as a bug. */
+export function getModeShortLabel(id: string): string {
+  return MODES.find((m) => m.id === id)?.short ?? "Unknown";
 }
 
 /** Icon component for the mode chip */

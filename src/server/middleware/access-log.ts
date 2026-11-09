@@ -13,6 +13,7 @@
  */
 import type { MiddlewareHandler } from "hono";
 import { createLogger, type LogLevel } from "../../services/logger.ts";
+import { requestTracker } from "../../services/memory-diagnostics-requests.ts";
 
 const log = createLogger("http");
 
@@ -39,12 +40,14 @@ const BACKGROUND_WRITES: readonly RegExp[] = [
   /^\/api\/(codex-)?accounts\/pick$/,
 ];
 
-/** Paths whose next segment is a bearer capability (a preview or export token, a WHEP ticket). */
+/** Paths whose next segment is a bearer capability (a preview or export token, a WHEP ticket, a share code). */
 const CAPABILITY_PREFIXES = [
   "/api/html-preview/content/",
   "/api/design-preview/content/",
   "/api/db/grid-export/",
   "/api/remote-desktop/whep/",
+  // A design share link: `/s/<code>/…`.
+  "/s/",
 ];
 
 const SECRET_QUERY_KEY = /token|key|secret|password|passwd|auth|code|state|ticket|sig|signature|credential/i;
@@ -71,9 +74,10 @@ export function accessLogLevel(method: string, path: string, status: number, ms:
 
 /** Path + query as logged: capability tokens cut out, credential-like query values replaced. */
 export function describeRequestTarget(url: URL): string {
-  let path = url.pathname;
+  // `//s/<code>` and `/S/<code>` miss the routes they resemble, but still carry the code here.
+  let path = url.pathname.replace(/^\/{2,}/, "/");
   for (const prefix of CAPABILITY_PREFIXES) {
-    if (path.startsWith(prefix)) {
+    if (path.toLowerCase().startsWith(prefix)) {
       const rest = path.slice(prefix.length);
       const slash = rest.indexOf("/");
       path = `${prefix}[token]${slash === -1 ? "" : rest.slice(slash)}`;
@@ -116,6 +120,8 @@ export const accessLog: MiddlewareHandler = async (c, next) => {
   const ms = Math.round(performance.now() - started);
   const url = new URL(c.req.url);
   const status = c.res.status;
+  // Before the level check: the memory monitor counts every request, logged or not.
+  requestTracker.record(c.req.method, url.pathname, c.res.headers.get("content-length"));
   const level = accessLogLevel(c.req.method, url.pathname, status, ms);
   if (!log.isEnabled(level)) return;
   const line = `${c.req.method} ${describeRequestTarget(url)} ${status} ${ms}ms${ms >= SLOW_REQUEST_MS ? " (slow)" : ""}`;

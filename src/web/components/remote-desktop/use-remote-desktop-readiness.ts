@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 /**
  * Client view of `GET /api/remote-desktop/capabilities`: the host's requirements checklist
  * (ffmpeg, macOS permissions, …) plus the derived `videoReady` / `inputReady` flags.
@@ -5,7 +6,8 @@
  * Mirrors the server types in `src/services/remote-desktop/remote-desktop-requirements.ts` —
  * the UI renders whatever items arrive and never branches on the host OS. Polls while `poll`
  * is on so a permission granted in System Settings (or `brew install ffmpeg` finishing in the
- * dock terminal) flips the panel without a reload.
+ * dock terminal) flips the panel without a reload — and only until the host is ready, when
+ * there is nothing left to flip.
  */
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
@@ -129,24 +131,30 @@ export function useRemoteDesktopReadiness(poll: boolean): {
   refresh: () => void;
   runHostAction: (id: string, action: "request" | "open-settings") => Promise<void>;
 } {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const [caps, setCaps] = useState<RemoteDesktopCapabilities | null>(null);
   const [failed, setFailed] = useState(false);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
+    if (minimalMode) return;
     let cancelled = false;
     api.get<RemoteDesktopCapabilities>("/api/remote-desktop/capabilities")
       .then((c) => { if (!cancelled) { setCaps(normalizeCapabilities(c)); setFailed(false); } })
       .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
-  }, [tick]);
+  }, [tick, minimalMode]);
 
+  // A ready host stops the poll. The gate is then showing the viewer for the rest of the
+  // session, and every poll re-ran the host's probes for it — on a Wayland host without a GPU
+  // encoder, four `gst-inspect-1.0` every two seconds beside a software encode.
+  const ready = !!caps?.videoReady && caps.inputReady;
   useEffect(() => {
-    if (!poll) return;
+    if (minimalMode || !poll || ready) return;
     const timer = setInterval(refresh, READINESS_POLL_MS);
     return () => clearInterval(timer);
-  }, [poll, refresh]);
+  }, [poll, ready, refresh, minimalMode]);
 
   const runHostAction = useCallback(async (id: string, action: "request" | "open-settings") => {
     try { await api.post(`/api/remote-desktop/requirements/${encodeURIComponent(id)}/${action}`); } catch { /* panel shows state on next poll */ }

@@ -39,14 +39,16 @@ export function useSessionTurns(p: {
     const timer = setTimeout(() => {
       fetched.set(sessionId, { at: Date.now(), unplaced: last?.unplaced ?? null });
       api
-        .get<{ messages?: ChatMessage[] } | ChatMessage[]>(
+        .get<{ messages?: ChatMessage[]; start?: number } | ChatMessage[]>(
           `${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`,
           { signal: request.signal },
         )
         .then((data) => {
           const messages = Array.isArray(data) ? data : data?.messages;
           if (request.signal.aborted || !Array.isArray(messages)) return;
-          const turns = sessionTurns(messages);
+          // A page that does not reach the session's start says so with `start > 0`, or opens on a compaction summary.
+          const start = Array.isArray(data) ? 0 : data?.start ?? 0;
+          const turns = sessionTurns(messages, { fromStart: start <= 0 && !messages[0]?.compaction });
           const placed = turnsByCall(turns);
           fetched.set(sessionId, { at: Date.now(), unplaced: unplaced.split("\n").filter((call) => call && !placed.has(call)).join("\n") });
           // A chat that opened meanwhile knows better.

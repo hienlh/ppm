@@ -1,4 +1,4 @@
-import { decodeReply } from "../../shared/chat-reply.ts";
+import { decodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
 import { mapRolloutItem } from "./codex-rollout-items.ts";
 import { stripSharedContext } from "../../shared/provider-context.ts";
 
@@ -51,7 +51,7 @@ const TITLE_MAX_CHARS = 80;
 
 /** First user prompt → a one-line label. */
 function toTitle(text: string): string | undefined {
-  const flat = decodeReply(stripSharedContext(text)).content.replace(/\s+/g, " ").trim();
+  const flat = decodeMessageBlocks(stripSharedContext(text)).content.replace(/\s+/g, " ").trim();
   if (!flat) return undefined;
   return flat.length > TITLE_MAX_CHARS ? `${flat.slice(0, TITLE_MAX_CHARS - 1)}…` : flat;
 }
@@ -98,4 +98,44 @@ export function readRolloutHeader(text: string, opts?: { withTitle?: boolean }):
     }
   }
   return header;
+}
+
+/** First read of a rollout's head: `session_meta` carries the base instructions, measured at 22–27 KB. */
+const HEADER_FIRST_READ_BYTES = 32 * 1024;
+
+/** One positional read the header scan asks for; the caller answers with the bytes it got. */
+export interface HeaderRead {
+  buffer: Buffer;
+  offset: number;
+  length: number;
+  position: number;
+}
+
+/**
+ * The reads it takes to answer `readRolloutHeader` for a file of `size` bytes, as a plan any
+ * reader can drive — synchronously for a single lookup, asynchronously for the session list,
+ * which reads thousands of rollouts and must never hold the event loop while the disk answers.
+ *
+ * The head is read in growing slices, and a slice's unterminated last line — possibly a split
+ * multi-byte character — is dropped by `completeLines`, so a partial read never parses a
+ * partial record.
+ */
+export function* rolloutHeaderReads(
+  size: number,
+  opts?: { withTitle?: boolean },
+): Generator<HeaderRead, RolloutHeader | null, number> {
+  let buffer = Buffer.alloc(Math.min(size, HEADER_FIRST_READ_BYTES));
+  let filled = 0;
+  while (true) {
+    const read = yield { buffer, offset: filled, length: buffer.length - filled, position: filled };
+    filled += read;
+    // A file that shrank under us reads short; stop rather than wait for bytes that are gone.
+    const eof = filled >= size || read === 0;
+    const header = readRolloutHeader(buffer.toString("utf-8", 0, filled), opts);
+    const complete = header && (!opts?.withTitle || header.title || header.parentThreadId);
+    if (complete || eof) return header;
+    const grown = Buffer.alloc(Math.min(size, buffer.length * 4));
+    buffer.copy(grown, 0, 0, filled);
+    buffer = grown;
+  }
 }

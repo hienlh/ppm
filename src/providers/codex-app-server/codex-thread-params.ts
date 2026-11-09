@@ -5,14 +5,21 @@ import {
   type DesignMcpAccess,
 } from "../../services/design/mcp/design-mcp-tool.ts";
 import {
-  CODEX_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_TOKEN_ENV, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, TAB_TOOLS_TIMEOUT_MS,
-  type TabToolsMcpAccess,
+  CODEX_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_TOKEN_ENV, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
 } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import {
   ASSISTANT_MCP_TIMEOUT_MS, CODEX_ASSISTANT_MCP_TOKEN_ENV, type AssistantMcpAccess,
 } from "../../services/assistant-mcp/assistant-mcp-tools.ts";
 import { ASSISTANT_TOOLS, CODEX_ASSISTANT_MCP_SERVER } from "../../shared/assistant-tool-names.ts";
 import type { AssistantMcpServer } from "../../shared/assistant-settings.ts";
+import { TAB_TOOLS } from "../../shared/ppm-tools.ts";
+import {
+  CODEX_DB_TOOLS_MCP_SERVER, CODEX_DB_TOOLS_MCP_TOKEN_ENV, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess,
+} from "../../services/db-ai-tools/db-ai-tools-tool.ts";
+import {
+  CODEX_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_TOKEN_ENV, SESSION_COLLAB_TOOLS, SESSION_COLLAB_TOOLS_TIMEOUT_MS,
+  type SessionCollabMcpAccess,
+} from "../../services/session-collab/session-collab-tool.ts";
 
 /** Config overrides, keyed like `-c key=value` on codex's command line (dotted paths). */
 export type CodexConfigOverrides = Record<string, unknown>;
@@ -31,6 +38,10 @@ export interface ThreadParamsInput {
   designMcp?: DesignMcpAccess;
   /** The tab tools (`open_file`, `open_preview`) while the user has them on; likewise. */
   tabToolsMcp?: TabToolsMcpAccess;
+  /** The database tools (`db_query`, `open_query`, `db_execute`); likewise. */
+  dbToolsMcp?: DbToolsMcpAccess;
+  /** The session tools (`create_session`, `send_to_session`, `session_status`); likewise. */
+  sessionCollabMcp?: SessionCollabMcpAccess;
   /** Set for a PPM Assistant session; see {@link CodexAssistantSession}. */
   assistant?: CodexAssistantSession;
 }
@@ -80,7 +91,8 @@ export function designMcpEnv(access: DesignMcpAccess | undefined): Record<string
 
 /**
  * The tab-tools MCP server, shaped and approved exactly like {@link designMcpConfig}: the
- * tools only open a tab for the user to look at.
+ * tools open a tab for the user to look at, read the project's terminals, or type a command
+ * that runs only when the user presses Enter.
  */
 export function tabToolsMcpConfig(access: TabToolsMcpAccess | undefined): CodexConfigOverrides {
   if (!access) return {};
@@ -88,7 +100,7 @@ export function tabToolsMcpConfig(access: TabToolsMcpAccess | undefined): CodexC
     [`mcp_servers.${CODEX_TAB_TOOLS_MCP_SERVER}`]: {
       url: access.url,
       bearer_token_env_var: CODEX_TAB_TOOLS_MCP_TOKEN_ENV,
-      enabled_tools: [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL],
+      enabled_tools: [...TAB_TOOLS],
       default_tools_approval_mode: "approve",
       startup_timeout_sec: 10,
       tool_timeout_sec: Math.ceil(TAB_TOOLS_TIMEOUT_MS / 1000),
@@ -189,6 +201,53 @@ export function assistantMcpEnv(access: AssistantMcpAccess | undefined): Record<
 }
 
 /**
+ * The database tools' MCP server, shaped like {@link tabToolsMcpConfig} and approved up front
+ * too: `db_execute` asks the user itself, in PPM's chat, with the SQL and PPM's password.
+ */
+export function dbToolsMcpConfig(access: DbToolsMcpAccess | undefined): CodexConfigOverrides {
+  if (!access) return {};
+  return {
+    [`mcp_servers.${CODEX_DB_TOOLS_MCP_SERVER}`]: {
+      url: access.url,
+      bearer_token_env_var: CODEX_DB_TOOLS_MCP_TOKEN_ENV,
+      enabled_tools: [...DB_TOOLS],
+      default_tools_approval_mode: "approve",
+      startup_timeout_sec: 10,
+      tool_timeout_sec: Math.ceil(DB_TOOLS_TIMEOUT_MS / 1000),
+    },
+  };
+}
+
+/** The environment the app-server needs for {@link dbToolsMcpConfig}; `{}` without the tools. */
+export function dbToolsMcpEnv(access: DbToolsMcpAccess | undefined): Record<string, string> {
+  return access ? { [CODEX_DB_TOOLS_MCP_TOKEN_ENV]: access.token } : {};
+}
+
+/**
+ * The session tools' MCP server, shaped like {@link tabToolsMcpConfig} and approved up front: a
+ * create or a send that needs the user asks them in PPM's own card. `tool_timeout_sec` is the
+ * longest wait the settings allow plus an approval and a margin, so a long wait is never cut.
+ */
+export function sessionCollabMcpConfig(access: SessionCollabMcpAccess | undefined): CodexConfigOverrides {
+  if (!access) return {};
+  return {
+    [`mcp_servers.${CODEX_SESSION_COLLAB_MCP_SERVER}`]: {
+      url: access.url,
+      bearer_token_env_var: CODEX_SESSION_COLLAB_MCP_TOKEN_ENV,
+      enabled_tools: [...SESSION_COLLAB_TOOLS],
+      default_tools_approval_mode: "approve",
+      startup_timeout_sec: 10,
+      tool_timeout_sec: Math.ceil(SESSION_COLLAB_TOOLS_TIMEOUT_MS / 1000),
+    },
+  };
+}
+
+/** The environment the app-server needs for {@link sessionCollabMcpConfig}; `{}` without the tools. */
+export function sessionCollabMcpEnv(access: SessionCollabMcpAccess | undefined): Record<string, string> {
+  return access ? { [CODEX_SESSION_COLLAB_MCP_TOKEN_ENV]: access.token } : {};
+}
+
+/**
  * One builder for the params of every thread/start and thread/resume — the first connect
  * and the account-switch respawn used to assemble them separately, which is how a field
  * added to one silently goes missing from the other. `developerInstructions` is left out
@@ -197,9 +256,12 @@ export function assistantMcpEnv(access: AssistantMcpAccess | undefined): Record<
 export function buildThreadParams(input: ThreadParamsInput): CodexThreadParams {
   const instructions = input.developerInstructions?.trim();
   const config = {
+    "features.default_mode_request_user_input": true,
     ...(input.configOverrides?.config ?? {}),
     ...designMcpConfig(input.designMcp),
     ...tabToolsMcpConfig(input.tabToolsMcp),
+    ...dbToolsMcpConfig(input.dbToolsMcp),
+    ...sessionCollabMcpConfig(input.sessionCollabMcp),
     ...assistantSessionConfig(input.assistant),
   };
   return {

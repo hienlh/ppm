@@ -6,7 +6,7 @@
  * meant for the Claude Code infrastructure, not raw api.anthropic.com.
  * This bridge uses the same SDK approach as opencode-claude-max-proxy.
  */
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from "../providers/claude-cli-process-group.ts";
 import { accountSelector } from "./account-selector.service.ts";
 
 /** Map Anthropic model IDs to SDK model names */

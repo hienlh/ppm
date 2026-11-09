@@ -14,6 +14,8 @@ export interface PushEnvironment {
   /** Opened from the Home Screen rather than in a browser tab. */
   standalone: boolean;
   permission: NotificationPermission | null;
+  /** `browserNameFrom`, or "Brave". */
+  browser?: string;
 }
 
 export type PushSupport =
@@ -40,10 +42,55 @@ export function pushSupportFrom(env: PushEnvironment): PushSupport {
     };
   }
   if (!env.serviceWorker || !env.pushManager || !env.notification) {
+    // Firefox hides PushManager, and nothing else, when `dom.push.enabled` is false.
+    if (env.browser === "Firefox" && env.serviceWorker && env.notification) {
+      return {
+        state: "unavailable",
+        message: "Push is turned off in this browser. Open about:config, set dom.push.enabled to true, then restart the browser.",
+      };
+    }
     return { state: "unavailable", message: "This browser cannot receive push notifications." };
   }
   if (env.permission === "denied") return { state: "blocked", message: PUSH_BLOCKED_MESSAGE };
   return { state: "available" };
+}
+
+/**
+ * The first subscribe after a browser starts took ~30 s in Chrome and Brave (3 s once
+ * running). A push service the network blocks may never answer: with Google's hosts
+ * unresolvable, Chrome kept retrying for minutes and never rejected.
+ */
+export const PUSH_SUBSCRIBE_DEADLINE_MS = 60_000;
+
+export function withinDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new DOMException("The push service did not answer.", "TimeoutError")), ms);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
+/** Whose push service each browser registers with, where that is the same on every platform. */
+const PUSH_SERVICE_OWNER: Record<string, string> = { Brave: "Google", Chrome: "Google", Firefox: "Mozilla", Safari: "Apple" };
+
+/**
+ * What to do when `pushManager.subscribe` fails because of the push service, or null for
+ * any other failure. A browser reports a service it cannot use as an AbortError.
+ */
+export function pushServiceFailureMessage(browser: string, error: unknown): string | null {
+  const { name, message } = (error ?? {}) as { name?: unknown; message?: unknown };
+  if (name !== "AbortError" && name !== "TimeoutError") return null;
+  // Brave turns Google's push service off by default and rejects at once.
+  if (browser === "Brave" && name === "AbortError") {
+    return "Brave keeps push off until you allow it: open brave://settings/privacy, turn on “Use Google services for push messaging”, restart Brave, then turn this on again.";
+  }
+  const owner = PUSH_SERVICE_OWNER[browser];
+  const service = owner ? `${owner}'s push service` : "its push service";
+  const failed = name === "TimeoutError" ? `got no answer from ${service} within a minute` : `could not register with ${service}`;
+  const said = name === "AbortError" && typeof message === "string" && message ? ` (${message})` : "";
+  return `${browser === "Browser" ? "This browser" : browser} ${failed}${said}. `
+    + `A firewall, VPN, DNS filter or ad blocker may be blocking it${owner ? "" : ", or push is turned off in this browser"}. `
+    + "Telegram and ntfy below work without it.";
 }
 
 /** iPadOS reports itself as a Mac; a Mac has no touch screen. */
@@ -51,16 +98,22 @@ export function isIosDevice(userAgent: string, platform: string, maxTouchPoints:
   return /iPhone|iPad|iPod/.test(userAgent) || (platform === "MacIntel" && maxTouchPoints > 1);
 }
 
-/** "Chrome on Android" — enough to tell a phone from a laptop in the list. */
-export function deviceLabelFrom(userAgent: string, ipadOs = false): string {
-  const browser =
-    /Edg(A|iOS)?\//.test(userAgent) ? "Edge"
+/** Brave and most other Chromium builds say "Chrome"; the user agent cannot tell them apart. */
+export function browserNameFrom(userAgent: string): string {
+  return /Edg(A|iOS)?\//.test(userAgent) ? "Edge"
     : /OPR\//.test(userAgent) ? "Opera"
     : /SamsungBrowser\//.test(userAgent) ? "Samsung Internet"
     : /Firefox\/|FxiOS\//.test(userAgent) ? "Firefox"
     : /Chrome\/|CriOS\//.test(userAgent) ? "Chrome"
     : /Safari\//.test(userAgent) ? "Safari"
     : "Browser";
+}
+
+/**
+ * "Chrome on Android" — enough to tell a phone from a laptop in the list. `browser` is for
+ * what the user agent cannot say: Brave's is Chrome's.
+ */
+export function deviceLabelFrom(userAgent: string, ipadOs = false, browser = browserNameFrom(userAgent)): string {
   const os =
     /Android/.test(userAgent) ? "Android"
     : /iPhone|iPod/.test(userAgent) ? "iPhone"

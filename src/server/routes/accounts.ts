@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { accountService } from "../../services/account.service.ts";
+import { accountService, OAuthLinkExpiredError, canRunInference, isMissingScopeResponse } from "../../services/account.service.ts";
 import { accountSelector } from "../../services/account-selector.service.ts";
 import { pickClaudeAccount } from "../../services/account-pick.service.ts";
 import { updateAccount, getSnapshotHistory } from "../../services/db.service.ts";
@@ -154,7 +154,8 @@ accountsRoutes.post("/oauth/exchange", async (c) => {
     await refreshUsageForAccount(account.id);
     return c.json(ok(account));
   } catch (e) {
-    return c.json(err((e as Error).message), 400);
+    // 410: the link is gone, so the dialog goes back to the step that opens a new one.
+    return c.json(err((e as Error).message), e instanceof OAuthLinkExpiredError ? 410 : 400);
   }
 });
 
@@ -327,6 +328,10 @@ accountsRoutes.post("/test-raw-token", async (c) => {
     if (res.status === 200) return c.json(ok({ status: "valid", code: 200 }));
     if (res.status === 429) return c.json(ok({ status: "valid_rate_limited", code: 429 }));
     const body = await res.text().catch(() => "");
+    // A `claude setup-token` token cannot read its profile but runs chats.
+    if (isMissingScopeResponse(res.status, body) && await canRunInference(token)) {
+      return c.json(ok({ status: "valid_inference_only", code: res.status }));
+    }
     return c.json(ok({ status: "invalid", code: res.status, error: body.slice(0, 300) }));
   } catch (e) {
     return c.json(ok({ status: "error", error: (e as Error).message }));
@@ -362,7 +367,10 @@ accountsRoutes.post("/:id/test-token", async (c) => {
       result.accessToken = { status: "valid_rate_limited", code: 429 };
     } else {
       const body = await res.text().catch(() => "");
-      result.accessToken = { status: "invalid", code: res.status, error: body.slice(0, 300) };
+      // A `claude setup-token` token cannot read its profile but runs chats.
+      result.accessToken = isMissingScopeResponse(res.status, body) && await canRunInference(account.accessToken)
+        ? { status: "valid_inference_only", code: res.status }
+        : { status: "invalid", code: res.status, error: body.slice(0, 300) };
     }
   } catch (e) {
     result.accessToken = { status: "error", error: (e as Error).message };
@@ -396,12 +404,20 @@ accountsRoutes.delete("/:id", (c) => {
   return c.json(ok({ deleted: true }));
 });
 
-/** PATCH /api/accounts/:id — { status: "active" | "disabled" } */
+/** PATCH /api/accounts/:id — { label?: string, status?: "active" | "disabled" } */
 accountsRoutes.patch("/:id", async (c) => {
   const { id } = c.req.param();
-  const body = await c.req.json<{ status?: string }>();
+  const body = await c.req.json<{ status?: string; label?: unknown }>();
+  if (body.label === undefined && body.status === undefined) return c.json(err("label or status required"), 400);
   try {
-    if (body.status === "disabled") {
+    if (body.label !== undefined) {
+      if (typeof body.label !== "string") return c.json(err("label must be a string"), 400);
+      accountService.setLabel(id, body.label);
+      log.info(`account ${id} renamed`);
+    }
+    if (body.status === undefined) {
+      // A rename alone: nothing below applies.
+    } else if (body.status === "disabled") {
       accountService.setDisabled(id);
       // The id is in the path but the new status only in the body, which the access log never reads.
       log.info(`account ${id} disabled`);

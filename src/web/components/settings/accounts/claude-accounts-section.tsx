@@ -22,6 +22,7 @@ import { AccountCardRow, AccountsPaneHeader, AccountsPaneMessage } from "./accou
 import { patchAccount, deleteAccount, type OAuthProfileData } from "../../../lib/api-settings";
 import { AccountProfilePanel } from "./account-profile-panel";
 import { AccountDeleteConfirm } from "./account-delete-confirm";
+import { AccountRenameDialog } from "./account-rename-dialog";
 import { AccountCard } from "./account-card";
 import { AddAccountDialog } from "./account-add-dialog";
 import { ExportAccountsDialog } from "./account-export-dialog";
@@ -37,11 +38,12 @@ export function ClaudeAccountsSection() {
   const [message, setMessage] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; display: string } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ id: string; current: string } | null>(null);
   const [profileView, setProfileView] = useState<{ profile: OAuthProfileData; accountId: string } | null>(null);
   const [exportPreselect, setExportPreselect] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"add" | "export" | "import" | "rotation" | "token-test" | null>(null);
-  /** Label of the account whose "Sign in again" chip opened the add dialog. */
-  const [signInAgainFor, setSignInAgainFor] = useState<string | undefined>(undefined);
+  /** The account whose "Sign in again" chip opened the add dialog. */
+  const [signInAgainFor, setSignInAgainFor] = useState<{ id: string; label: string } | undefined>(undefined);
 
   function handleSuccess(msg?: string) {
     void reload();
@@ -73,6 +75,15 @@ export function ClaudeAccountsSection() {
       setMessage(`Failed to remove: ${(e as Error).message}`);
     }
     setDeleteTarget(null);
+  }
+
+  async function saveRename(label: string) {
+    if (!renameTarget) return;
+    // Throws the server's reason, which the dialog shows while staying open.
+    await patchAccount(renameTarget.id, { label });
+    setRenameTarget(null);
+    setMessage(`Account renamed to "${label}".`);
+    void reload();
   }
 
   const accountMap = new Map(accounts.map((a) => [a.id, a]));
@@ -138,9 +149,10 @@ export function ClaudeAccountsSection() {
                 onToggle={handleToggle}
                 toggling={togglingId === entry.accountId}
                 onDelete={(id, display) => setDeleteTarget({ id, display })}
+                onRename={(id, current) => setRenameTarget({ id, current })}
                 onExport={(id) => { setExportPreselect(id); setDialog("export"); }}
                 onViewProfile={(profile, accountId) => setProfileView({ profile, accountId })}
-                onReauth={() => { setSignInAgainFor(entry.accountLabel ?? entry.accountId.slice(0, 8)); setDialog("add"); }}
+                onReauth={() => { setSignInAgainFor({ id: entry.accountId, label: entry.accountLabel ?? entry.accountId.slice(0, 8) }); setDialog("add"); }}
                 flash={flashIds.has(entry.accountId)}
               />
             ))}
@@ -161,6 +173,14 @@ export function ClaudeAccountsSection() {
           display={deleteTarget.display}
           onConfirm={() => void confirmDelete()}
           onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {renameTarget && (
+        <AccountRenameDialog
+          current={renameTarget.current}
+          onSave={saveRename}
+          onCancel={() => setRenameTarget(null)}
         />
       )}
 

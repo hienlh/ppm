@@ -11,6 +11,7 @@
  */
 export const SECRET_CONFIG_KEYS: readonly string[] = [
   "tunnel.namedTunnelToken",
+  "share_host.token",
   "auth.token",
   "telegram.bot_token",
   "ntfy.token",

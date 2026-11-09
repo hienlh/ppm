@@ -4,15 +4,20 @@ import type { NormalizedQuestion } from "../../shared/approval-questions.ts";
 /**
  * The approval card a chat session is waiting on, one at a time.
  *
- * Two sources ask: the session's provider (Claude's canUseTool, Codex's command and patch
- * approvals) and, in a PPM Assistant session, the Assistant's tool endpoint. Both land on the
- * same single card the chat shows, so they queue behind each other instead of overwriting: a
- * card replaced by a newer one could never be answered, and its tool call would wait forever.
+ * Three sources ask: the session's provider (Claude's canUseTool, Codex's command and patch
+ * approvals), in a PPM Assistant session the Assistant's tool endpoint, and PPM's own approvals
+ * (a `db_execute` change, a session tool's card). They land on the same single card the chat
+ * shows. Provider and endpoint cards queue behind each other instead of overwriting: a card
+ * replaced by a newer one could never be answered, and its tool call would wait forever. PPM's
+ * own approvals are never queued here: each waits in its broker, gives the slot up to any other
+ * card, and is shown again once the slot is free (`idle`). They are answered over authenticated
+ * HTTP, never through this module.
  *
  * Every way a card leaves goes through {@link PendingApprovals.clear}/{@link PendingApprovals.clearAll},
  * which finish the request on the side that is waiting for it: a provider's request is refused
  * when told to (so its blocked tool call returns), an endpoint request ends with the reason
- * (so its HTTP call answers "not run"). When the shown card leaves, the next one is shown.
+ * (so its HTTP call answers "not run"), a PPM approval is settled as not allowed when told to.
+ * When the shown card leaves, the next one is shown.
  */
 
 export interface PendingApprovalEvent {
@@ -22,8 +27,11 @@ export interface PendingApprovalEvent {
   input: unknown;
   /** Present on an endpoint card: what will happen, built by the server. */
   summary?: ApprovalSummary;
-  /** "endpoint" for a request the Assistant's tool endpoint holds; absent for the provider's own. */
-  origin?: "endpoint";
+  /**
+   * "endpoint" for a request the Assistant's tool endpoint holds, "ppm" for one of PPM's own
+   * approvals (answered over HTTP); absent for the provider's own.
+   */
+  origin?: "endpoint" | "ppm";
   /** A question card's questions in the shape every surface answers by id, whichever provider asked. */
   questions?: NormalizedQuestion[];
 }
@@ -61,6 +69,10 @@ export interface PendingApprovalOps {
   denyProvider(sessionId: string, requestId: string, reason: ApprovalEndReason): void;
   /** Ends an endpoint request without running what it asked for; a no-op once it has ended. */
   endEndpoint(requestId: string, reason: ApprovalEndReason): void;
+  /** Settles the session's PPM approvals as not allowed; their brokers report each one back. */
+  denyPpm?(sessionId: string, reason: ApprovalEndReason): void;
+  /** The slot is empty and nothing is queued: one of PPM's own approvals still waiting may be shown. */
+  idle?(sessionId: string, slot: ApprovalSlot): void;
   /**
    * Told of every card that leaves, shown or queued, announced or not, after its request was
    * finished — the one place a listener hears that a card is gone, whatever took it.
@@ -69,6 +81,7 @@ export interface PendingApprovalOps {
 }
 
 export const isEndpointApproval = (event: PendingApprovalEvent): boolean => event.origin === "endpoint";
+export const isPpmApproval = (event: PendingApprovalEvent): boolean => event.origin === "ppm";
 
 export function createPendingApprovals(ops: PendingApprovalOps) {
   const all = (slot: ApprovalSlot): PendingApprovalEvent[] =>
@@ -78,14 +91,21 @@ export function createPendingApprovals(ops: PendingApprovalOps) {
     return all(slot).some((e) => e.requestId === requestId);
   }
 
-  /** Shows `event` now when nothing is shown, otherwise queues it behind what is. */
-  function offer(sessionId: string, slot: ApprovalSlot, event: PendingApprovalEvent): "shown" | "queued" | "duplicate" {
+  /**
+   * Shows `event` now when nothing is shown, otherwise queues it behind what is. A PPM approval
+   * holding the slot gives it up to any other card; a PPM approval offered while another card is
+   * shown is not queued (`waiting`): its broker keeps it until the slot is free again.
+   */
+  function offer(sessionId: string, slot: ApprovalSlot, event: PendingApprovalEvent): "shown" | "queued" | "waiting" | "duplicate" {
     if (has(slot, event.requestId)) return "duplicate";
+    const holder = slot.pendingApprovalEvent;
+    if (holder && isPpmApproval(holder) && !isPpmApproval(event)) slot.pendingApprovalEvent = undefined;
     if (!slot.pendingApprovalEvent) {
       slot.pendingApprovalEvent = event;
       ops.show(sessionId, event);
       return "shown";
     }
+    if (isPpmApproval(event)) return "waiting";
     (slot.approvalQueue ??= []).push(event);
     return "queued";
   }
@@ -93,7 +113,10 @@ export function createPendingApprovals(ops: PendingApprovalOps) {
   function promote(sessionId: string, slot: ApprovalSlot): void {
     if (slot.pendingApprovalEvent) return;
     const next = slot.approvalQueue?.shift();
-    if (!next) return;
+    if (!next) {
+      ops.idle?.(sessionId, slot);
+      return;
+    }
     slot.pendingApprovalEvent = next;
     ops.show(sessionId, next);
   }
@@ -101,6 +124,7 @@ export function createPendingApprovals(ops: PendingApprovalOps) {
   function finish(sessionId: string, event: PendingApprovalEvent, reason: ApprovalEndReason, how: ClearHow): void {
     const endpoint = isEndpointApproval(event);
     if (endpoint) ops.endEndpoint(event.requestId, reason);
+    else if (isPpmApproval(event)) { if (how.deny) ops.denyPpm?.(sessionId, reason); }
     else if (how.deny) ops.denyProvider(sessionId, event.requestId, reason);
     if (endpoint || how.announce) ops.announceResolved(sessionId, event.requestId, how.approved ?? false, how.answers ?? null);
     ops.ended?.(sessionId, event, reason, how);

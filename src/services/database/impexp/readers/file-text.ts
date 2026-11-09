@@ -3,6 +3,7 @@
  * order mark, or UTF-16 with one — what PPM's "CSV for Excel" writes. Bytes that are not text in
  * that encoding fail the read: turned into "�" they would be imported as a different value.
  */
+import { readFileChunks } from "../../../file-chunks.ts";
 
 /** The encoding the first bytes name, and how many of them the mark takes. */
 function encodingOf(head: Uint8Array): { encoding: "utf-8" | "utf-16le" | "utf-16be"; skip: number } {
@@ -30,7 +31,9 @@ function notText(encoding: string): FileTextError {
 
 /** The text of the file at `path`, in pieces as it is read. Stop ends it between two pieces. */
 export async function* fileText(path: string, signal?: AbortSignal): AsyncGenerator<string> {
-  const reader = Bun.file(path).stream().getReader();
+  // Not `Bun.file().stream()`, which keeps about the file's size in native memory per read
+  // (see `file-chunks.ts`) — an import file can be hundreds of MB.
+  const chunks = readFileChunks(path);
   let decoder: TextDecoder | null = null;
   let encoding = "utf-8";
   let head: Uint8Array = new Uint8Array(0);
@@ -55,7 +58,7 @@ export async function* fileText(path: string, signal?: AbortSignal): AsyncGenera
         sliceStart = performance.now();
       }
       signal?.throwIfAborted();
-      const { done, value } = await reader.read();
+      const { done, value } = await chunks.next();
       if (done) break;
       let bytes: Uint8Array = value;
       if (!decoder) {
@@ -75,6 +78,6 @@ export async function* fileText(path: string, signal?: AbortSignal): AsyncGenera
     if (rest) yield rest;
   } finally {
     // Read to its end or not, the file is closed.
-    await reader.cancel().catch(() => {});
+    await chunks.return(undefined).catch(() => {});
   }
 }

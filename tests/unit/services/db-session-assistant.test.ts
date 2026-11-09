@@ -11,7 +11,7 @@ describe("session assistant mark", () => {
   beforeEach(() => getDb().run("DELETE FROM session_metadata"));
 
   it("migrates to the version that adds the column, defaulting every row to an ordinary session", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(57);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(61);
     const row = getDb().query("PRAGMA user_version").get() as { user_version: number };
     expect(row.user_version).toBe(CURRENT_SCHEMA_VERSION);
     const column = (getDb().query("PRAGMA table_info(session_metadata)").all() as { name: string; notnull: number; dflt_value: string }[])

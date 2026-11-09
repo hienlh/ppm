@@ -15,6 +15,7 @@
  * Neither cost was bounded: both grow with the file, and both were paid on the
  * one thread that also serves every other request.
  */
+import { readFileChunks } from "./file-chunks.ts";
 
 /** How much of the end of a file is read to find the last few lines. */
 export const DEFAULT_TAIL_BYTES = 64 * 1024;
@@ -89,24 +90,16 @@ export async function countLines(filePath: string): Promise<number> {
   let count = 0;
   let lastByte = -1;
   let sinceYield = 0;
-  // `getReader()` rather than `for await`: Bun's ReadableStream is async
-  // iterable at runtime, but the DOM typings it is declared against do not say
-  // so, and a cast to paper over that would outlive the reason for it.
-  const reader = Bun.file(filePath).stream().getReader();
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done || !value) break;
-      for (let i = 0; i < value.length; i++) if (value[i] === 0x0a) count++;
-      if (value.length > 0) lastByte = value[value.length - 1]!;
-      sinceYield += value.length;
-      if (sinceYield >= YIELD_EVERY_BYTES) {
-        sinceYield = 0;
-        await new Promise<void>((r) => setTimeout(r, 0));
-      }
+  // Not `Bun.file().stream()`, which keeps about the file's size in native
+  // memory per read and never returns it (see `file-chunks.ts`).
+  for await (const value of readFileChunks(filePath)) {
+    for (let i = 0; i < value.length; i++) if (value[i] === 0x0a) count++;
+    if (value.length > 0) lastByte = value[value.length - 1]!;
+    sinceYield += value.length;
+    if (sinceYield >= YIELD_EVERY_BYTES) {
+      sinceYield = 0;
+      await new Promise<void>((r) => setTimeout(r, 0));
     }
-  } finally {
-    reader.releaseLock();
   }
   if (lastByte === -1) return 0;              // empty file
   if (lastByte !== 0x0a) count++;             // last line carries no newline

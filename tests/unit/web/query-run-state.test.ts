@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
-  applyQueryEvents as applyTimed, countOf, failQueryRun, MESSAGES_TAB, noteOnQueryRun, replaceResultSet, resultEditability, resultOfTab,
-  shownResultTab, startQueryRun, stopTitle, type QueryRun, type QueryRunKind,
+  applyQueryEvents as applyTimed, countOf, failQueryRun, MESSAGES_TAB, noteOnQueryRun, refusedAsReadonly, replaceResultSet, resultEditability,
+  resultOfTab, shownResultTab, startQueryRun, stopTitle, type QueryRun, type QueryRunKind,
 } from "../../../src/web/components/database/query/query-run-state";
 import type { QueryResultSet, QueryScriptEvent, QueryStatementResult } from "../../../src/shared/db-query-script";
 import type { DbColumnInfo } from "../../../src/web/components/database/use-database";
@@ -283,5 +283,21 @@ describe("stopTitle", () => {
     for (const dialect of ["postgres", "mysql", undefined] as const) {
       expect(stopTitle(dialect)).toBe("Stop the statement running; the ones after it do not run");
     }
+  });
+});
+
+describe("refusedAsReadonly", () => {
+  it("offers a run with write access after a readonly connection refused one, or a wrong password did", () => {
+    const refused = "Connection is readonly — only SELECT queries allowed. Change this in PPM web UI.";
+    expect(refusedAsReadonly(failQueryRun(begin(), refused, 2_000))).toBe(true);
+    expect(refusedAsReadonly(failQueryRun(begin(), "Wrong password", 2_000))).toBe(true);
+    // The database itself refused a write that read as a read.
+    const byDatabase = applyQueryEvents(begin(), [
+      statement(0, 1, { error: "Connection is readonly — the database refused a write: cannot execute nextval() in a read-only transaction" }),
+      { type: "done", durationMs: 9 },
+    ], 2_000);
+    expect(refusedAsReadonly(byDatabase)).toBe(true);
+    expect(refusedAsReadonly(failQueryRun(begin(), "no such column: nosuch", 2_000))).toBe(false);
+    expect(refusedAsReadonly(begin())).toBe(false);
   });
 });

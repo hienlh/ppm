@@ -1,7 +1,7 @@
 /** Fetch + poll schedules for the settings section. */
 import { useState, useEffect, useCallback } from "react";
 import { api } from "@/lib/api-client";
-import type { Schedule, ScheduleRun } from "../../types/scheduler";
+import type { ScheduleRun, ScheduleView } from "../../types/scheduler";
 
 const POLL_MS = 10_000;
 
@@ -22,12 +22,12 @@ function useRefetchOnSchedulesChanged(refetch: () => unknown): void {
 }
 
 export function useSchedules() {
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleView[]>([]);
   const [loading, setLoading] = useState(true);
 
   const refetch = useCallback(async () => {
     try {
-      setSchedules(await api.get<Schedule[]>("/api/schedules"));
+      setSchedules(await api.get<ScheduleView[]>("/api/schedules"));
     } catch {
       // Keep stale list on transient errors; next poll retries
     } finally {

@@ -1,4 +1,4 @@
-import { CheckCircle, Send, Trash2 } from "@/lib/icons";
+import { CheckCircle, MessageSquare, Send, Trash2 } from "@/lib/icons";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/adaptive-context-menu";
@@ -12,12 +12,16 @@ import type { DesignComment } from "../../../../shared/design-comment-types";
  * Numbered pins over the canvas, one per open comment whose element is on screen, at the
  * element's top-right corner. Each is a 44px target (the dot inside is smaller) with the
  * adaptive context menu: right-click on desktop, long-press on touch; a tap opens the
- * comment. A pin that was found again by its text after an edit gets a dashed ring, so a
+ * thread. A pin that was found again by its text after an edit gets a dashed ring, so a
  * re-anchor is visible rather than silent.
+ *
+ * Pins follow `anchor`, i.e. the element in the live file. A reviewer's own pin position in
+ * the version their link shows is `pinnedAnchor`, which the canvas never sends or changes.
  */
 
 export interface PinActions {
   onOpen: (c: DesignComment) => void;
+  onReply: (c: DesignComment) => void;
   onResolve: (c: DesignComment) => void;
   onSend: (c: DesignComment) => void;
   onDelete: (c: DesignComment) => void;
@@ -43,7 +47,7 @@ export function CommentPinsOverlay({ open, pins, fit, stage, actions }: {
               <button
                 type="button"
                 onClick={() => actions.onOpen(c)}
-                aria-label={`Comment ${i + 1}: ${c.body}`}
+                aria-label={`Comment ${i + 1}${c.author?.kind === "guest" ? ` by ${c.author.name}` : ""}: ${c.body}`}
                 title={c.body}
                 className="pointer-events-auto absolute flex size-11 -translate-x-1/2 -translate-y-1/2 select-none items-center justify-center"
                 style={{ left: at.left, top: at.top }}
@@ -58,6 +62,7 @@ export function CommentPinsOverlay({ open, pins, fit, stage, actions }: {
             </ContextMenuTrigger>
             <ContextMenuContent>
               <ContextMenuItem onClick={() => actions.onResolve(c)}><CheckCircle className="size-4" /> Resolve</ContextMenuItem>
+              <ContextMenuItem onClick={() => actions.onReply(c)}><MessageSquare className="size-4" /> Reply</ContextMenuItem>
               <ContextMenuItem onClick={() => actions.onSend(c)}><Send className="size-4" /> Send to AI</ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem variant="destructive" onClick={() => actions.onDelete(c)}><Trash2 className="size-4" /> Delete</ContextMenuItem>

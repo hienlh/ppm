@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import rehypeKatex from "rehype-katex";
 import { useImageOverlay } from "@/stores/image-overlay-store";
 import { collectGallery, GALLERY_ITEM_ATTR } from "@/lib/image-gallery";
@@ -17,6 +18,7 @@ import { MdPre, MdCode } from "./markdown-code-block";
 import { isExternalResourceUrl, rehypeBlockExternalResources } from "./markdown-external-resources";
 import { rehypeStampMarkdownElements, rehypeStripAuthorPresentation } from "./markdown-author-presentation";
 import { isAssistantProject } from "../../../shared/assistant-project";
+import { markdownSanitizeSchema, rehypePrefixFragmentLinks, sanitizedRemarkRehypeOptions } from "./markdown-sanitize";
 
 interface MarkdownRendererProps {
   content: string;
@@ -26,22 +28,35 @@ interface MarkdownRendererProps {
   isStreaming?: boolean;
   /** Written by the PPM Assistant: see `MdContextValue.assistantContent`. */
   assistantContent?: boolean;
+  /**
+   * Parse HTML inside the Markdown (default), keeping only what `markdownSanitizeSchema`
+   * allows. Off for text nobody in this session wrote, such as a system tag's content, where
+   * HTML in the source is shown as text instead.
+   */
+  rawHtml?: boolean;
 }
 
 /** Plugin arrays — stable references to avoid re-creating on each render */
 const remarkPlugins = [[remarkGfm, { singleTilde: false }], [remarkMath, { singleDollarTextMath: false }], remarkBreaks] as any;
-const rehypePlugins = [rehypeRaw, rehypeKatex] as any;
+// Sanitise straight after parsing raw HTML and before KaTeX, so KaTeX's own markup is not
+// held to the allow-list.
+const rehypePlugins = [rehypeRaw, [rehypeSanitize, markdownSanitizeSchema], rehypePrefixFragmentLinks, rehypeKatex] as any;
+const rehypePluginsNoRaw = [rehypeKatex] as any;
 /**
- * The author's `class`/`style` are stripped between `rehype-raw` and KaTeX, so KaTeX's own
- * layout survives; the external-resource filter runs last, so it also sees what KaTeX produced.
+ * Assistant content goes through the same allow-list, and more: the author's `class`/`style`
+ * are stripped right after `rehype-raw` (the stamp telling Markdown's own elements from the
+ * author's is read and removed there, before the sanitiser would drop it), KaTeX's own layout
+ * survives, and the external-resource filter runs last, so it also sees what KaTeX produced.
  */
 const assistantRehypePlugins = [
-  rehypeStampMarkdownElements, rehypeRaw, rehypeStripAuthorPresentation, rehypeKatex, rehypeBlockExternalResources,
+  rehypeStampMarkdownElements, rehypeRaw, rehypeStripAuthorPresentation, [rehypeSanitize, markdownSanitizeSchema],
+  rehypePrefixFragmentLinks, rehypeKatex, rehypeBlockExternalResources,
 ] as any;
+const assistantRehypePluginsNoRaw = [rehypeKatex, rehypeBlockExternalResources] as any;
 /** Component map — stable references; dynamic state flows through MdContext */
 const mdComponents = { a: MdLink, img: MdImage, pre: MdPre, code: MdCode, table: MdTable };
 
-export function MarkdownRenderer({ content, projectName, className = "", codeActions = false, isStreaming = false, assistantContent: assistantProp }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, projectName, className = "", codeActions = false, isStreaming = false, assistantContent: assistantProp, rawHtml = true }: MarkdownRendererProps) {
   const inAssistantChat = useContext(AssistantContentContext);
   const assistantContent = Boolean(assistantProp || inAssistantChat || isAssistantProject(projectName));
   const openImageOverlayFn = useImageOverlay((s) => s.open);
@@ -66,7 +81,10 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
       <div className={`markdown-content prose-sm ${assistantContent ? "[contain:paint]" : ""} ${isStreaming ? "is-streaming" : ""} ${className}`}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={assistantContent ? assistantRehypePlugins : rehypePlugins}
+          rehypePlugins={assistantContent
+            ? (rawHtml ? assistantRehypePlugins : assistantRehypePluginsNoRaw)
+            : (rawHtml ? rehypePlugins : rehypePluginsNoRaw)}
+          remarkRehypeOptions={rawHtml ? sanitizedRemarkRehypeOptions : undefined}
           urlTransform={markdownUrlTransform}
           components={mdComponents}
         >

@@ -4,7 +4,9 @@ import type { TabToolsMcpAccess } from "./tab-tools-mcp-tool.ts";
 
 /**
  * Capability tokens for the tab-tools MCP endpoint, one per chat session (see
- * `mcp-session-tokens.ts`). A token can only open tabs on that one session's devices.
+ * `mcp-session-tokens.ts`). A token acts for that one session only: it opens tabs on the
+ * session's devices, reads the terminals its chat may read, and types — never runs — a command
+ * into a terminal it opened.
  *
  * It names the session and nothing else — the project is looked up when a tool is called —
  * so the token a warm CLI is started with, before its session has a project, is the one the

@@ -1,0 +1,25 @@
+{
+  "ppmScheduleTemplate": 1,
+  "name": "url-watch",
+  "description": "Tells you when a web page changes: every 15 minutes it fetches the page, compares it with the last fetch, and notifies you when it differs. Give a pattern to watch one part of the page only, such as a price or a version number.",
+  "kind": "script",
+  "mode": "tick",
+  "cron": "0 */15 * * * *",
+  "script": "// Tells you when a web page changes. Each run fetches the page and keeps a fingerprint of it\n// in the schedule's state; when a later run's fingerprint differs, you get a notification.\n// With a pattern, only the first part of the page that matches it counts, so a clock or an\n// ad elsewhere on the page does not set it off, and the notification shows the new value.\nimport { createHash } from \"node:crypto\";\n\nexport default async function main(ctx) {\n  const { url, pattern } = ctx.inputs;\n  const res = await fetch(url, { signal: ctx.signal });\n  if (!res.ok) throw new Error(`${url} answered ${res.status}`);\n  const page = await res.text();\n  const watched = pattern ? page.match(new RegExp(pattern))?.[0] : page;\n  if (watched === undefined) throw new Error(`nothing on ${url} matches ${pattern}`);\n\n  const fingerprint = createHash(\"sha256\").update(watched).digest(\"hex\");\n  const before = ctx.state.fingerprint;\n  ctx.state = { fingerprint }; // saved after the run\n  if (before === undefined) return ctx.log(`watching ${url}`);\n  if (before === fingerprint) return;\n  await ctx.notify({ title: \"A page you watch changed\", body: pattern ? `${url}\\n${watched.slice(0, 300)}` : url });\n}\n",
+  "inputs": [
+    {
+      "key": "url",
+      "label": "Page URL",
+      "type": "text",
+      "required": true
+    },
+    {
+      "key": "pattern",
+      "label": "Only this part",
+      "type": "text",
+      "description": "A regular expression: only the first part of the page it matches is compared. Empty compares the whole page."
+    }
+  ],
+  "timeoutMs": 60000,
+  "permissionMode": "bypassPermissions"
+}

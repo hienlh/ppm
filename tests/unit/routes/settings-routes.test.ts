@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from "bun:test";
 import { Hono } from "hono";
 import { openTestDb, setDb, getConfigValue } from "../../../src/services/db.service.ts";
 import { settingsRoutes } from "../../../src/server/routes/settings.ts";
@@ -8,6 +8,18 @@ import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
 function createApp() {
   return new Hono().route("/settings", settingsRoutes);
 }
+
+// Each test swaps in a fresh database (`setDb` closes the one before) and reloads config, which
+// turns auth back on with a new token. The files that run after this one in the same process get
+// a fresh database again and the config they had, auth off as `test-setup.ts` leaves it.
+let processConfig: unknown;
+beforeAll(() => {
+  processConfig = structuredClone((configService as any).config);
+});
+afterAll(() => {
+  setDb(openTestDb());
+  (configService as any).config = processConfig;
+});
 
 /** Set config to known defaults — uses in-memory DB to avoid corrupting prod */
 function resetConfig() {
@@ -215,6 +227,67 @@ describe("PUT /settings/ai", () => {
     }
   });
 
+  it("switches PPM's tools one at a time, and refuses tool names and values it does not know", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const res = await put({ ppm_tools: { db_execute: false } });
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.ppm_tools).toEqual({ db_execute: false });
+    expect((await put({ ppm_tools: { open_file: true } })).status).toBe(200);
+    expect(configService.load().ai.ppm_tools).toEqual({ db_execute: false, open_file: true });
+    for (const value of [{ Bash: false }, { db_query: "off" }, [], null, "db_query"]) {
+      expect((await put({ ppm_tools: value })).status).toBe(400);
+    }
+    // An own `__proto__` key, as JSON.parse makes one (an object literal would set the prototype).
+    const raw = await app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: '{"ppm_tools":{"__proto__":false}}',
+    });
+    expect(raw.status).toBe(400);
+    expect(configService.load().ai.ppm_tools).toEqual({ db_execute: false, open_file: true });
+  });
+
+  it("stores how long a chat may sit idle before its leftover processes are stopped, 0 to 1440 minutes", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    expect(configService.get("ai").leftover_processes_idle_minutes).toBeUndefined();
+    for (const minutes of [0, 45, 1440]) {
+      const res = await put({ leftover_processes_idle_minutes: minutes });
+      expect(res.status).toBe(200);
+      expect((await res.json()).data.leftover_processes_idle_minutes).toBe(minutes);
+      expect(configService.load().ai.leftover_processes_idle_minutes).toBe(minutes);
+    }
+    expect((await put({ share_provider_context: false })).status).toBe(200);
+    expect(configService.load().ai.leftover_processes_idle_minutes).toBe(1440);
+    for (const value of [-1, 1441, 2.5, "30", null]) {
+      expect((await put({ leftover_processes_idle_minutes: value })).status).toBe(400);
+      expect(configService.load().ai.leftover_processes_idle_minutes).toBe(1440);
+    }
+  });
+
+  it("stores session collaboration limits one field at a time, clamped, and always answers them whole", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const first = await (await app.request("/settings/ai")).json();
+    expect(first.data.session_collab).toEqual({
+      askBeforeCreate: true, maxDepth: 3, maxAutoMessagesPerPair: 20, maxRunningSpawned: 5, waitTimeoutMinutes: 10,
+    });
+    const res = await put({ session_collab: { maxDepth: 9, askBeforeCreate: false } });
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.session_collab).toMatchObject({ maxDepth: 5, askBeforeCreate: false, waitTimeoutMinutes: 10 });
+    expect((await put({ session_collab: { waitTimeoutMinutes: 0 } })).status).toBe(200);
+    expect(configService.load().ai.session_collab).toMatchObject({ maxDepth: 5, askBeforeCreate: false, waitTimeoutMinutes: 1 });
+    for (const value of [{ maxDepth: "3" }, { nope: 1 }, [], null, 5]) {
+      expect((await put({ session_collab: value })).status).toBe(400);
+    }
+    expect(configService.load().ai.session_collab?.maxDepth).toBe(5);
+  });
+
   it("updates provider config and returns merged result", async () => {
     const app = createApp();
     const res = await app.request("/settings/ai", {
@@ -234,17 +307,35 @@ describe("PUT /settings/ai", () => {
   });
 
   it("rejects invalid max_turns", async () => {
-    const app = createApp();
-    const res = await app.request("/settings/ai", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        providers: { claude: { max_turns: 999 } },
-      }),
-    });
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.ok).toBe(false);
+    for (const max_turns of [-1, 1.5, 1001]) {
+      const app = createApp();
+      const res = await app.request("/settings/ai", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providers: { claude: { max_turns } },
+        }),
+      });
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.ok).toBe(false);
+    }
+  });
+
+  it("accepts max_turns from 0, meaning no limit, up to 1000", async () => {
+    for (const max_turns of [0, 1000]) {
+      const app = createApp();
+      const res = await app.request("/settings/ai", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providers: { claude: { max_turns } },
+        }),
+      });
+      const json = await res.json();
+      expect(json.ok).toBe(true);
+      expect(json.data.providers.claude.max_turns).toBe(max_turns);
+    }
   });
 
   it("rejects invalid effort", async () => {

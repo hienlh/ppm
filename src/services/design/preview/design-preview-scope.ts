@@ -3,6 +3,8 @@ import { join, relative, resolve, sep } from "node:path";
 import { guardPreviewAsset, isInsideRoot, previewDenied } from "../../../server/helpers/preview-asset-guard.ts";
 import { resolveDesignDir, resolveDesignsRoot } from "../design-paths.ts";
 import { systemFilesDir } from "../design-systems-paths.ts";
+import { readSnapshotInfo, snapshotFilesDir } from "../design-snapshot-history.ts";
+import { DesignError } from "../design-error.ts";
 import { parseSystemsAliasTail } from "./design-systems-alias.ts";
 import type { DesignRef } from "./design-preview-tokens.ts";
 
@@ -42,7 +44,8 @@ function decodeRequestPath(encoded: string): string {
   }
 }
 
-async function containedFile(root: string, candidate: string): Promise<string> {
+/** `candidate` as its real path, refused unless both spellings stay inside `root` and pass the asset guard. */
+export async function containedFile(root: string, candidate: string): Promise<string> {
   if (!isInsideRoot(root, candidate)) previewDenied();
   guardPreviewAsset(candidate, root);
   const real = await realpath(candidate);
@@ -80,9 +83,30 @@ export async function resolveScopedPath(design: DesignRef, path: string): Promis
     const abs = await containedFile(base, candidate);
     return { abs, rel: `../${path}`, designDir };
   }
-  const prefix = `${design.slug}/`;
+  return designOwnFile(designDir, design.slug, path, designDir);
+}
+
+/** `<slug>/<rest>` resolved inside `root` (the design folder, or a snapshot's copy of it). */
+async function designOwnFile(root: string, slug: string, path: string, designDir: string): Promise<ScopedAsset> {
+  const prefix = `${slug}/`;
   if (!path.startsWith(prefix) || path.length === prefix.length) previewDenied();
-  const candidate = resolve(designDir, path.slice(prefix.length));
-  const abs = await containedFile(designDir, candidate);
-  return { abs, rel: relative(designDir, candidate).split(sep).join("/"), designDir };
+  const candidate = resolve(root, path.slice(prefix.length));
+  const abs = await containedFile(root, candidate);
+  return { abs, rel: relative(root, candidate).split(sep).join("/"), designDir };
+}
+
+/**
+ * {@link resolveScopedPath} for one snapshot's copy of the design: `<slug>/<rest>` under
+ * `.design/history/<id>/files/`, with the same containment and file-type checks. No alias
+ * is reachable through it — a snapshot holds the design's own files only. The snapshot must
+ * be one `readSnapshotInfo` accepts, which refuses a snapshot directory that is a symlink;
+ * a link anywhere else on the way (`history/`, `files/`, a file) fails the real-path check.
+ */
+export async function resolveSnapshotScopedPath(design: DesignRef, snapshotId: string, path: string): Promise<ScopedAsset> {
+  if (!path || path.includes("\\") || path.includes("\0") || path.includes(":")) previewDenied();
+  const designDir = await resolveDesignDir(design.projectPath, design.slug);
+  if (!(await readSnapshotInfo(designDir, snapshotId))) {
+    throw new DesignError(404, "ENOENT", "That version of the design no longer exists");
+  }
+  return designOwnFile(snapshotFilesDir(designDir, snapshotId), design.slug, path, designDir);
 }

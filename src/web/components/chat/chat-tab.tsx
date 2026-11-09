@@ -1,13 +1,21 @@
+import { useSettingsStore } from "@/stores/settings-store";
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { AsyncQuestionContext } from "./async-question-card";
 import { Loader2, Upload, X } from "@/lib/icons";
 import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
-import { decodeReply, encodeReply, type ReplyReference } from "../../../shared/chat-reply";
+import type { ReplyReference } from "../../../shared/chat-reply";
+import type { TurnReference } from "../../../shared/chat-turn-ref";
+import { decodeMessageBlocks, encodeMessageBlocks } from "../../../shared/chat-message-blocks";
+import { buildTurnLink } from "@/lib/turn-link";
+import { useComposerTurnRefs } from "@/hooks/use-composer-turn-refs";
+import { useChatJumpStore } from "@/stores/chat-jump-store";
 import { selectInlineImages } from "@/lib/image-resize-limits";
 import { splitAttachmentMarkers } from "@/lib/attachment-marker-split";
 import type { ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useChat } from "@/hooks/use-chat";
 import { useChatPrewarm } from "@/hooks/use-chat-prewarm";
+import { useEffortStatus } from "@/hooks/use-effort-status";
 import { useUsage } from "@/hooks/use-usage";
 import { useDesignSessionRedirect } from "@/hooks/use-design-session-redirect";
 import { useTabStore } from "@/stores/tab-store";
@@ -20,19 +28,20 @@ import { startPrepare, getPrepare, isPrepared, forgetPrepare } from "@/lib/new-c
 import { shownPermissionMode, storedPermissionToAdopt } from "@/lib/session-permission";
 import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
-import { RunningAgentsBar } from "./running-agents-bar";
+import { ConnectionChip } from "./connection-chip";
+import { useReconnectIndicator } from "@/hooks/use-reconnect-indicator";
+import { ActivityChip } from "./activity-chip";
 import { AgentSessionProvider, normalizeProviderId } from "./agent-session-context";
 import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
-import { SessionChangesBar } from "./session-changes-bar";
+import { SessionChangesChip } from "./session-changes-chip";
 import { CONTINUE_AFTER_STOP, TurnStopBar } from "./turn-stop-bar";
-import { SessionChangesContext, type SessionChangesValue } from "./session-changes-context";
+import { SessionChangesContext, useSessionChangesValue } from "./session-changes-context";
 import { useSessionFileChanges } from "@/hooks/use-session-file-changes";
-import { openSessionReview } from "@/lib/session-file-changes-client";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
 import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
-import { ChatHistoryBar } from "./chat-history-bar";
+import { ChatFooterTools } from "./chat-footer-tools";
 import { NewChatProviderGate, useNewChatPreparation } from "./new-chat-provider-gate";
 import { UserBubble } from "./message-user-bubble";
 import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
@@ -87,6 +96,7 @@ export function ChatTab(props: ChatTabProps) {
 }
 
 function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }: ChatTabProps) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const preparation = useNewChatPreparation();
   const metadataRef = useRef(metadata);
   metadataRef.current = metadata;
@@ -117,7 +127,11 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     if (sessionIdRef.current && pn) {
       useSessionListStore.getState().replaceSessionId(projectRefForName(pn), sessionIdRef.current, newSessionId);
     }
-    if (sessionIdRef.current) migrateComposerRef.current(sessionIdRef.current, newSessionId);
+    if (sessionIdRef.current) {
+      migrateComposerRef.current(sessionIdRef.current, newSessionId);
+      // A turn link or jump naming the old id still finds this tab.
+      useChatJumpStore.getState().noteRename(sessionIdRef.current, newSessionId);
+    }
     setSessionId(newSessionId);
   }, []);
   const [providerOverride, setProviderId] = useState<string>(
@@ -185,6 +199,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     images?: Array<{ data: string; mediaType: string }>;
     imagePaths?: string[];
     replyTo?: ReplyReference | null;
+    turnRefs?: TurnReference[] | null;
   } | null>(null);
   const pendingSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -261,7 +276,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   // Usage runs independently — auto-refreshes on interval. Scoped to this session so the
   // account shown is the one bound to it, not whichever session ran most recently.
-  const { usageInfo, usageLoading, lastFetchedAt, refreshUsage, reloadUsage } =
+  const { usageInfo, reloadUsage } =
     useUsage(projectName, providerId, sessionId ?? undefined,
       metadata?.pickedAccountProvider === providerId ? metadata?.pickedAccountId as string | undefined : undefined,
       !preparation?.pending, tabId);
@@ -274,7 +289,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   // (`forkDraft`) and the quote becomes a reply in this conversation, which the fork copied the
   // quoted message into.
   const [replySelection, setReplySelection] = useState<{ owner: string; reply: ReplyReference | null } | null>(() => {
-    const forkedReply = decodeReply((metadata?.pendingMessage as string | undefined) ?? "").replyTo;
+    const forkedReply = decodeMessageBlocks((metadata?.pendingMessage as string | undefined) ?? "").replyTo;
     return forkedReply && sessionId ? { owner: replyOwner, reply: { ...forkedReply, sessionId } } : null;
   });
   const heldReply = replySelection?.owner === replyOwner ? replySelection.reply : draft?.replyTo ?? null;
@@ -285,10 +300,22 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   const replyToRef = useRef(replyTo);
   replyToRef.current = replyTo;
   const [replyChangeSignal, setReplyChangeSignal] = useState(0);
+  // Turn chips live beside the reply, under the same owner: a fork opens with the chips of the
+  // message it was forked at, and a draft keeps them as the message's own block.
+  const turnChips = useComposerTurnRefs({
+    owner: replyOwner,
+    draftRefs: draft?.turnRefs,
+    initialRefs: sessionId ? decodeMessageBlocks((metadata?.pendingMessage as string | undefined) ?? "").turnRefs : null,
+  });
+  const turnRefsRef = turnChips.refsRef;
+  const replaceTurnChips = turnChips.replace;
+  const mergeTurnChips = turnChips.merge;
+  /** Everything the draft keeps besides the text, as it stands now. */
+  const draftBlocks = useCallback(() => ({ replyTo: replyToRef.current, turnRefs: turnRefsRef.current }), [turnRefsRef]);
   const composerDraftRef = useRef<{ owner: string; text: string; observed?: boolean; attachments?: DraftAttachment[] }>({ owner: replyOwner, text: "" });
-  const rejectedSendRef = useRef<(event: { content: string; replyTo?: ReplyReference | null; message: string }) => void>(() => {});
+  const rejectedSendRef = useRef<(event: { content: string; replyTo?: ReplyReference | null; turnRefs?: TurnReference[] | null; message: string }) => void>(() => {});
   const replyTransportOptions = useMemo(() => ({
-    onMessageRejected: (event: { content: string; replyTo?: ReplyReference | null; message: string }) => rejectedSendRef.current(event),
+    onMessageRejected: (event: { content: string; replyTo?: ReplyReference | null; turnRefs?: TurnReference[] | null; message: string }) => rejectedSendRef.current(event),
   }), []);
   const selectReply = useCallback((reply: ReplyReference | null) => {
     replyToRef.current = reply;
@@ -303,13 +330,15 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     const migrated = selected?.sessionId === oldSessionId ? { ...selected, sessionId: newSessionId } : selected;
     const nextOwner = JSON.stringify([projectName, newSessionId, providerId]);
     const current = composerDraftRef.current;
-    if (current.owner === replyOwner && (current.text || current.attachments?.length || migrated)) {
-      saveDraft(current.observed ? current.text : draft?.content ?? current.text, current.attachments ?? draft?.attachments, migrated);
+    const refs = turnRefsRef.current;
+    if (current.owner === replyOwner && (current.text || current.attachments?.length || migrated || refs.length)) {
+      saveDraft(current.observed ? current.text : draft?.content ?? current.text, current.attachments ?? draft?.attachments, { replyTo: migrated, turnRefs: refs });
       cancelPendingSave();
     }
     moveDraft(newSessionId);
     replyToRef.current = migrated;
     setReplySelection({ owner: nextOwner, reply: migrated });
+    turnChips.moveTo(nextOwner);
     composerDraftRef.current = { ...current, owner: nextOwner };
   };
 
@@ -467,6 +496,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     setModel,
     effort,
     setEffort,
+    effortStatus: sessionEffortStatus,
     thinking,
     setThinking,
     turnSettings,
@@ -493,18 +523,34 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   }, [sessionPermission, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
   const chipPermissionMode = shownPermissionMode(permissionMode, sessionPermission, sessionId);
 
-  // No project to review changes against: an empty name keeps the hook idle.
-  const sessionChanges = useSessionFileChanges({ projectName: assistant ? "" : projectName, sessionId, messages, isStreaming });
-  const openReview = useCallback((path?: string) => {
-    if (!sessionId) return;
-    openSessionReview({ projectName, sessionId, title: sessionTitle || undefined, providerId, paths: sessionChanges.paths, selectPath: path });
-  }, [projectName, sessionId, sessionTitle, providerId, sessionChanges.paths]);
+  // Shared by the ··· menu's Reload messages and the connection chip's Retry.
+  const reloadChat = useCallback(() => {
+    if (!isConnected) reconnect();
+    refetchMessages();
+  }, [isConnected, reconnect, refetchMessages]);
+  // What the footer says about the socket: nothing for a quick reconnect, then "Reconnecting…",
+  // then "Connection lost · Retry". The composer's placeholder follows the same stages.
+  const { stage: connectionStage, restart: restartReconnect } = useReconnectIndicator(isReconnecting);
+  const retryConnection = useCallback(() => {
+    restartReconnect();
+    reloadChat();
+  }, [restartReconnect, reloadChat]);
+
+  const effortStatus = useEffortStatus({
+    projectName,
+    // Not while the provider is still a guess: the answer would be about another provider.
+    providerId: preparation.pending ? undefined : preparation.providerId ?? providerId,
+    model,
+    sessionStatus: sessionEffortStatus,
+  });
+
+  // An Assistant session has no project to review changes against: no session keeps both hooks idle.
+  const reviewSessionId = minimalMode || assistant ? null : sessionId;
+  const sessionChanges = useSessionFileChanges({ projectName, sessionId: reviewSessionId, messages, isStreaming });
   // Each turn's change tray answers the same list the bar shows.
-  const sessionChangesValue = useMemo((): SessionChangesValue | null => (
-    projectName && sessionId && !assistant
-      ? { projectName, sessionId, files: sessionChanges.files, refresh: sessionChanges.refresh, openReview }
-      : null
-  ), [projectName, sessionId, assistant, sessionChanges.files, sessionChanges.refresh, openReview]);
+  const { value: sessionChangesValue, openReview } = useSessionChangesValue({
+    projectName, sessionId: reviewSessionId, title: sessionTitle || undefined, providerId, changes: sessionChanges,
+  });
 
   // `model`/`effort`/`thinking` are what change when a pick does; the picks sent are read
   // through `turnSettings`, which leaves out whatever the user has not chosen.
@@ -601,7 +647,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   // Pending fork message — show in input for user to edit, not auto-send
   const [forkDraft, setForkDraft] = useState<string | undefined>(() => {
     const pending = metadata?.pendingMessage as string | undefined;
-    return pending === undefined ? undefined : decodeReply(pending).content;
+    return pending === undefined ? undefined : decodeMessageBlocks(pending).content;
   });
 
   // "Build in new chat" hands a design screenshot over as a data URL on the tab's own
@@ -665,18 +711,24 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     firstSendContent.current = null;
     setFirstSendPreview(null);
     setFirstSendPending(false);
-    const decoded = decodeReply(content);
+    // Its reply and turn chips go back as a reply card and chips, never as text. The chips join
+    // any pasted since, as the text joins what was typed since; one over the limit goes back as
+    // its link, in the text.
+    const decoded = decodeMessageBlocks(content);
     replyToRef.current = decoded.replyTo;
     setReplySelection({ owner: replyOwner, reply: decoded.replyTo });
-    saveDraft(decoded.content, undefined, decoded.replyTo);
-    setRestore({ text: decoded.content, nonce: Date.now() });
+    const overflow = mergeTurnChips(decoded.turnRefs);
+    const text = [decoded.content, ...overflow.map((ref) => buildTurnLink(window.location.origin, ref))].filter(Boolean).join("\n");
+    saveDraft(text, undefined, { replyTo: decoded.replyTo, turnRefs: turnRefsRef.current });
+    setRestore({ text, nonce: Date.now() });
     toast.error("Message not sent", { description: `${reason} Your text is back in the input.` });
-  }, [replyOwner, saveDraft]);
+  }, [replyOwner, saveDraft, mergeTurnChips, turnRefsRef]);
 
   rejectedSendRef.current = (event) => {
     const current = composerDraftRef.current;
-    const unsent = encodeReply(event.content, event.replyTo);
-    if ((current.owner !== replyOwner || (!current.text.trim() && !current.attachments?.length && !draft?.content.trim())) && !replyToRef.current) {
+    const unsent = encodeMessageBlocks(event.content, { replyTo: event.replyTo, turnRefs: event.turnRefs });
+    if ((current.owner !== replyOwner || (!current.text.trim() && !current.attachments?.length && !draft?.content.trim()))
+      && !replyToRef.current && !turnChips.chips.length) {
       restoreUnsentMessage(unsent, event.message);
     } else {
       toast.error("Message not sent", { description: event.message, action: {
@@ -707,7 +759,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     }
     pendingSendRef.current = null;
     clearDraft(pending.draftId);
-    restoreUnsentMessage(encodeReply(pending.content, pending.replyTo), reason);
+    restoreUnsentMessage(encodeMessageBlocks(pending.content, { replyTo: pending.replyTo, turnRefs: pending.turnRefs }), reason);
   }, [restoreUnsentMessage, clearDraft]);
 
   /**
@@ -727,10 +779,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   // Flush pending message once WS connects (replaces unreliable setTimeout)
   useEffect(() => {
     if (isConnected && pendingSendRef.current) {
-      const { content, draftId, permissionMode: pm, images: pendingImages, imagePaths: pendingPaths, replyTo: pendingReply } = pendingSendRef.current;
+      const { content, draftId, permissionMode: pm, images: pendingImages, imagePaths: pendingPaths, replyTo: pendingReply, turnRefs: pendingRefs } = pendingSendRef.current;
       pendingSendRef.current = null;
       if (pendingSendTimerRef.current) { clearTimeout(pendingSendTimerRef.current); pendingSendTimerRef.current = null; }
-      sendMessage(content, { permissionMode: pm, replyTo: pendingReply ?? undefined, ...(pendingImages?.length && { images: pendingImages }), ...(pendingPaths?.length && { imagePaths: pendingPaths }) });
+      sendMessage(content, { permissionMode: pm, replyTo: pendingReply ?? undefined, ...(pendingRefs?.length && { turnRefs: pendingRefs }), ...(pendingImages?.length && { images: pendingImages }), ...(pendingPaths?.length && { imagePaths: pendingPaths }) });
       firstSendLocked.current = false;
       firstSendContent.current = null;
       setFirstSendPreview(null);
@@ -829,7 +881,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         { messageId },
       );
       // Titled by its body: the message as stored ends in its quote when it was a reply.
-      const body = decodeReply(userMessage).content;
+      const body = decodeMessageBlocks(userMessage).content;
       useSessionListStore.getState().upsertSession(projectRefForName(projectName), {
         id: forked.id, providerId, title: body.slice(0, 50), createdAt: new Date().toISOString(),
         // A fork keeps its design, so a design tab's history list still shows it.
@@ -864,7 +916,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   /** Edit a user message: prefill input + arm same-tab fork on next send */
   const handleEdit = useCallback((userMessage: string, messageId?: string, ownMsgId?: string) => {
-    const decoded = decodeReply(userMessage);
+    const decoded = decodeMessageBlocks(userMessage);
     // The edited message is in this conversation, and so is what it quotes — including a
     // message copied in when this conversation was forked, whose quote names the one it came from.
     const reply = decoded.replyTo && sessionId ? { ...decoded.replyTo, sessionId } : decoded.replyTo;
@@ -872,8 +924,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     setRestore({ text: decoded.content, nonce: Date.now(), replace: true });
     replyToRef.current = reply;
     setReplySelection({ owner: replyOwner, reply });
+    replaceTurnChips(decoded.turnRefs);
     setEditFork({ anchorMsgId: messageId, ownMsgId });
-  }, [replyOwner, sessionId]);
+  }, [replyOwner, sessionId, replaceTurnChips]);
 
   /** Abandon an armed edit: disarm the fork, drop the prefill, clear the input. */
   const handleCancelEdit = useCallback(() => {
@@ -881,14 +934,15 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     setForkDraft(undefined);
     replyToRef.current = null;
     setReplySelection({ owner: replyOwner, reply: null });
+    replaceTurnChips(null);
     setEditForking(false);
     clearDraft();
     setClearInputSignal((n) => n + 1);
-  }, [clearDraft, replyOwner]);
+  }, [clearDraft, replyOwner, replaceTurnChips]);
 
   /** Fork at the edit anchor, swap THIS tab to the forked session, queue the edited message */
   const handleEditSend = useCallback(
-    async (fullContent: string, anchorMsgId?: string, reply?: ReplyReference | null) => {
+    async (fullContent: string, anchorMsgId?: string, reply?: ReplyReference | null, turnRefs?: TurnReference[] | null) => {
       if (!fullContent.trim() || !sessionId || !projectName) return;
       // Surface a working indicator immediately — the fork API and the forked
       // session's codex connect can take ~10s; don't await in silence.
@@ -902,7 +956,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           { signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS) },
         );
         useSessionListStore.getState().upsertSession(projectRefForName(projectName), {
-          id: forked.id, providerId, title: decodeReply(fullContent).content.slice(0, 50), createdAt: new Date().toISOString(),
+          id: forked.id, providerId, title: decodeMessageBlocks(fullContent).content.slice(0, 50), createdAt: new Date().toISOString(),
           ...(designSlug && { designSlug }),
         });
         // The tree gained a sibling. Swapping sessionId below refetches
@@ -913,7 +967,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         // source session, so that is the one to clear when it goes. The edit continues in the
         // fork, so its reply is the fork's — sent beside the text, where the server checks it,
         // and handed back as the fork's if the queued message is dropped before it goes.
-        queuePendingSend({ content: fullContent, draftId: sessionId, permissionMode, replyTo: reply && { ...reply, sessionId: forked.id } });
+        queuePendingSend({ content: fullContent, draftId: sessionId, permissionMode, replyTo: reply && { ...reply, sessionId: forked.id }, turnRefs });
         moveDraft(forked.id);
         // Swap the current tab to the forked session (no new tab).
         setStaleSwap(true);
@@ -930,7 +984,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             : msg,
         });
         // The edited text was cleared from the composer on Enter — put it back.
-        restoreUnsentMessage(encodeReply(fullContent, reply), msg);
+        restoreUnsentMessage(encodeMessageBlocks(fullContent, { replyTo: reply, turnRefs }), msg);
       }
     },
     [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend, moveDraft, designSlug, restoreUnsentMessage],
@@ -1002,7 +1056,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   );
 
   const handleSend = useCallback(
-    async (content: string, attachments: ChatAttachment[] = [], priority?: MessagePriority, selectedReply?: ReplyReference | null) => {
+    async (content: string, attachments: ChatAttachment[] = [], priority?: MessagePriority, selectedReply?: ReplyReference | null, selectedRefs?: TurnReference[] | null) => {
+      const turnRefs = selectedRefs?.length ? selectedRefs : null;
       const images = selectInlineImages(attachments);
       const fullContent = buildMessageWithAttachments(content, attachments, images);
       // Providers that take a file rather than a payload (codex) read these instead.
@@ -1012,7 +1067,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       if (!sessionId) {
         if (firstSendLocked.current) return;
         firstSendLocked.current = true;
-        firstSendContent.current = encodeReply(fullContent, selectedReply);
+        firstSendContent.current = encodeMessageBlocks(fullContent, { replyTo: selectedReply, turnRefs });
         const attempt = ++firstSendAttempt.current;
         setFirstSendPending(true);
         setFirstSendPreview({ content: fullContent, timestamp: new Date().toISOString() });
@@ -1073,7 +1128,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           setProviderId(session.providerId);
           // Queue message — will be sent by effect when WS reports isConnected. It was
           // composed under the new-tab draft, which is what to clear once it goes.
-          queuePendingSend({ content: fullContent, draftId: "__new__", permissionMode: selectedPermission, images, imagePaths, replyTo: selectedReply });
+          queuePendingSend({ content: fullContent, draftId: "__new__", permissionMode: selectedPermission, images, imagePaths, replyTo: selectedReply, turnRefs });
           return;
         } catch (e) {
           if (attempt !== firstSendAttempt.current) return;
@@ -1081,11 +1136,11 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           const msg = (e as Error)?.name === "TimeoutError"
             ? "The server did not answer in time."
             : `Could not start the chat: ${(e as Error)?.message || "unknown error"}.`;
-          restoreUnsentMessage(encodeReply(fullContent, selectedReply), msg);
+          restoreUnsentMessage(encodeMessageBlocks(fullContent, { replyTo: selectedReply, turnRefs }), msg);
           return;
         }
       }
-      sendMessage(fullContent, { permissionMode, priority, replyTo: selectedReply ?? undefined, ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
+      sendMessage(fullContent, { permissionMode, priority, replyTo: selectedReply ?? undefined, ...(turnRefs && { turnRefs }), ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
       // Only now: the message is on (or queued for) a live session's socket.
       clearDraft();
     },
@@ -1109,6 +1164,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   const handleInputSend = useCallback(
     (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => {
       const selectedReply = replyToRef.current;
+      const selectedRefs = turnRefsRef.current.length ? [...turnRefsRef.current] : null;
       // Client-handled built-ins act on the UI, so they must not reach the SDK.
       const slash = content.trim().match(/^\/(\S+)(?:\s+([\s\S]+))?$/);
       if (slash) {
@@ -1117,8 +1173,14 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         );
         // This local action must also work before the lazily loaded picker
         // catalog arrives (for example, paste /clear and immediately submit).
-        if (selectedReply && (item || slash[1] === "clear" || slashItemsRef.current.some((i) => i.handler === "ppm" && i.name === slash[1]))) {
+        const builtin = item || slash[1] === "clear" || slashItemsRef.current.some((i) => i.handler === "ppm" && i.name === slash[1]);
+        if (selectedReply && builtin) {
           toast.error("Cancel reply before running this command");
+          return false;
+        }
+        // A built-in never reaches the AI, so the turns it references would go nowhere.
+        if (selectedRefs && builtin) {
+          toast.error("Remove the referenced turns before running this command");
           return false;
         }
         if (slash[1] === "clear" || item?.name === "clear") {
@@ -1131,20 +1193,21 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       setForkDraft(undefined);
       // Save synchronously in this browser tab before the composer clears. A
       // recovery reload can happen before either the POST or draft debounce ends.
-      saveDraft(content, attachments.filter((a) => a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })), selectedReply);
+      saveDraft(content, attachments.filter((a) => a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })), { replyTo: selectedReply, turnRefs: selectedRefs });
       cancelPendingSave();
       replyToRef.current = null;
       setReplySelection({ owner: replyOwner, reply: null });
+      replaceTurnChips(null);
       composerDraftRef.current = { owner: replyOwner, text: "", observed: true };
       if (editFork && sessionId && projectName) {
         const anchor = editFork.anchorMsgId;
         setEditFork(null);
-        void handleEditSend(buildMessageWithAttachments(content, attachments), anchor, selectedReply);
+        void handleEditSend(buildMessageWithAttachments(content, attachments), anchor, selectedReply, selectedRefs);
         return;
       }
-      void handleSend(content, attachments, priority, selectedReply);
+      void handleSend(content, attachments, priority, selectedReply, selectedRefs);
     },
-    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession, replyOwner],
+    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession, replyOwner, turnRefsRef, replaceTurnChips],
   );
 
   // Past user messages for the composer's ArrowUp/Down recall. Read through a ref
@@ -1164,10 +1227,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   const handleContentChange = useCallback(
     (content: string, attachments?: DraftAttachment[]) => {
       composerDraftRef.current = { owner: replyOwner, text: content, observed: true, attachments };
-      saveDraft(content, attachments, replyToRef.current);
+      saveDraft(content, attachments, draftBlocks());
       touchPrewarm();
     },
-    [saveDraft, touchPrewarm, replyOwner],
+    [saveDraft, touchPrewarm, replyOwner, draftBlocks],
   );
 
   /** Stable callback for slash items loaded — prevents MessageInput memo break */
@@ -1310,16 +1373,6 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         </div>
       )}
 
-      {/* Reconnect overlay */}
-      {isReconnecting && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            <span>Reconnecting...</span>
-          </div>
-        </div>
-      )}
-
       {/* Edit-fork overlay — covers the chat while the new version forks + connects */}
       {editForking && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm">
@@ -1342,7 +1395,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             <span>Starting conversation...</span>
           </div>
         </div>
-      ) : <SessionChangesContext.Provider value={sessionChangesValue}><MessageList
+      ) : <AsyncQuestionContext.Provider value={{ messages: renderedMessages, onSend: isConnected ? (content) => sendMessage(content, { permissionMode }) : undefined }}><SessionChangesContext.Provider value={sessionChangesValue}><MessageList
         messages={renderedMessages}
         onExpandCompact={expandCompact}
         isCompactExpanded={isCompactExpanded}
@@ -1373,17 +1426,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         onDismissMessage={dismissMessage}
         onClearErrors={clearErrors}
         bashPartialOutput={bashPartialOutput}
-      /></SessionChangesContext.Provider>}
-
-      {/* Agents still working — pinned here so it is the last thing under the conversation */}
-      <RunningAgentsBar
-        projectName={projectName}
-        providerId={agentSessionIdentity.providerId}
-        sessionId={sessionId}
-        messages={messages}
-        teamName={primaryTeam}
-        teamMembers={teamMembers}
-      />
+      /></SessionChangesContext.Provider></AsyncQuestionContext.Provider>}
 
       {/* Why the last turn ended, when an error ended it */}
       <TurnStopBar
@@ -1394,69 +1437,85 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       {/* MCP servers this session cannot use until someone signs in (a project-scoped flow) */}
       {!assistant && <McpSignInBar key={sessionId ?? "draft"} needsAuth={mcpNeedsAuth} projectName={projectName || undefined} />}
 
-      {/* Every file this session has changed, across all its turns */}
-      {!assistant && <SessionChangesBar
-        files={sessionChanges.files}
-        projectName={projectName}
-        providerId={providerId}
-        onOpen={sessionChanges.refresh}
-        onSetReviewed={sessionChanges.setReviewed}
-        onReview={openReview}
-      />}
-
-      {/* Bottom toolbar */}
-      <div className="border-t border-border bg-panel shrink-0">
-        {/* Unified toolbar: History, Config, Usage, Bug report, Connection */}
-        <ChatHistoryBar
-          tabId={tabId}
-          projectName={projectName}
-          usageInfo={usageInfo}
-          usageLoading={usageLoading}
-          refreshUsage={refreshUsage}
-          lastFetchedAt={lastFetchedAt}
-          sessionId={sessionId}
-          providerId={providerId}
-          pickedAccountLabel={servingAccount?.label ?? (claimMatchesProvider ? pickedAccountLabel : null)}
-          pickedAccountId={servingAccount?.id ?? (claimMatchesProvider ? pickedAccountId ?? null : null)}
-          onSelectAccount={!preparation.pending && !firstSendPending ? handleSelectAccount : undefined}
-          onSelectSession={handleSelectSession}
-          historyFilter={historyFilter}
-          isConnected={isConnected}
-          onReload={() => {
-            if (!isConnected) reconnect();
-            refetchMessages();
-          }}
-          teamActivity={teamActivity}
-          teamMessages={teamMessages}
-          onTeamOpen={markTeamRead}
-        />
-
-        {/* Pickers (in-flow, above input — only one visible at a time) */}
-        <SlashCommandPicker
-          items={slashItems}
-          filter={slashFilter}
-          onSelect={handleSlashSelect}
-          onClose={handleSlashClose}
-          visible={showSlashPicker}
-          recentNames={slashRecentNames}
-          projectName={projectName}
-        />
-        <FilePicker
-          items={indexRemote ? remoteFileItems : fileItems}
-          filter={fileFilter}
-          onSelect={handleFileSelect}
-          onClose={handleFileClose}
-          visible={showFilePicker}
-        />
-        {disambiguateItems && (
-          <FilePicker
-            items={disambiguateItems}
-            filter=""
-            onSelect={handleDisambiguateSelect}
-            onClose={() => setDisambiguateItems(null)}
-            visible={true}
+      {/* The footer: one context row — what runs beside this chat (agents and linked sessions),
+          what it changed, the connection when it has trouble; usage, History and ··· on the right — then the composer.
+          No rules between them. The row is the popovers' anchor, so it is `relative`. */}
+      <div className="shrink-0 px-2 pb-1.5 md:px-3 md:pb-3" data-chat-footer="">
+        <div className="relative flex min-w-0 items-center gap-2 px-0.5 py-2 max-md:py-1.5" data-chat-context-row="">
+          {/* Padded so the chips' focus rings and widened touch areas (10px past a 26px phone chip,
+              see footer-chip.ts) are not cut by the clip. */}
+          <div className="-my-2.5 flex min-w-0 items-center gap-1.5 overflow-hidden py-2.5 @max-[420px]/chat:gap-1 max-md:gap-1">
+            <ActivityChip
+              projectName={projectName}
+              agentProviderId={agentSessionIdentity.providerId}
+              sessionId={sessionId}
+              messages={messages}
+              teamName={primaryTeam}
+              teamMembers={teamMembers}
+            />
+            {!minimalMode && !assistant && <SessionChangesChip
+              files={sessionChanges.files}
+              loaded={sessionChanges.loaded}
+              loading={sessionChanges.loading}
+              unloadedCount={sessionChanges.unloadedCount}
+              projectName={projectName}
+              providerId={providerId}
+              onOpen={sessionChanges.refresh}
+              onRefresh={sessionChanges.refresh}
+              onSetReviewed={sessionChanges.setReviewed}
+              onReview={openReview}
+            />}
+            <ConnectionChip stage={connectionStage} onRetry={retryConnection} />
+          </div>
+          <ChatFooterTools
+            tabId={tabId}
+            projectName={projectName}
+            usageInfo={usageInfo}
+            sessionId={sessionId}
+            providerId={providerId}
+            pickedAccountLabel={servingAccount?.label ?? (claimMatchesProvider ? pickedAccountLabel : null)}
+            pickedAccountId={servingAccount?.id ?? (claimMatchesProvider ? pickedAccountId ?? null : null)}
+            onSelectAccount={!preparation.pending && !firstSendPending ? handleSelectAccount : undefined}
+            onSelectSession={handleSelectSession}
+            historyFilter={historyFilter}
+            isConnected={isConnected}
+            onReload={reloadChat}
+            connectionTrouble={connectionStage !== "hidden"}
+            teamActivity={teamActivity}
+            teamMessages={teamMessages}
+            onTeamOpen={markTeamRead}
           />
-        )}
+        </div>
+
+        {/* Pickers (only one visible at a time): they float above the composer, over the context
+            row, from this zero-height box — the composer's own width, sitting right on top of it. */}
+        <div className="relative" data-composer-pickers="">
+          <SlashCommandPicker
+            items={slashItems}
+            filter={slashFilter}
+            onSelect={handleSlashSelect}
+            onClose={handleSlashClose}
+            visible={showSlashPicker}
+            recentNames={slashRecentNames}
+            projectName={projectName}
+          />
+          <FilePicker
+            items={indexRemote ? remoteFileItems : fileItems}
+            filter={fileFilter}
+            onSelect={handleFileSelect}
+            onClose={handleFileClose}
+            visible={showFilePicker}
+          />
+          {disambiguateItems && (
+            <FilePicker
+              items={disambiguateItems}
+              filter=""
+              onSelect={handleDisambiguateSelect}
+              onClose={() => setDisambiguateItems(null)}
+              visible={true}
+            />
+          )}
+        </div>
 
         {/* Editing indicator — makes the armed edit state visible + cancellable */}
         {editFork && (
@@ -1483,7 +1542,12 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             onSend={handleInputSend}
             replyTo={replyTo}
             onCancelReply={handleCancelReply}
-            replyChangeSignal={replyChangeSignal}
+            replyChangeSignal={replyChangeSignal + turnChips.changeSignal}
+            turnChips={turnChips.chips}
+            onTurnLinksPasted={turnChips.addLinks}
+            onRecallTurnRefs={replaceTurnChips}
+            onRemoveTurnChip={turnChips.remove}
+            turnChipsBlockedReason={turnChips.blockedReason}
             disabled={firstSendPending}
             isStreaming={isStreaming}
             onCancel={cancelStreaming}
@@ -1520,10 +1584,12 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             model={model}
             onModelChange={!preparation?.pending && !firstSendPending ? setModel : undefined}
             effort={effort}
+            effortStatus={effortStatus}
             onEffortChange={setEffort}
             thinking={thinking}
             onThinkingChange={setThinking}
             promptCache={promptCache}
+            offline={connectionStage !== "hidden"}
           />
         )}
       </div>

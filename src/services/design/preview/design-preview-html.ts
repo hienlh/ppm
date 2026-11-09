@@ -66,10 +66,23 @@ export function injectPlain(text: string, snippet: string): string {
   return injectWithoutParsing(text, snippet);
 }
 
+export interface RenderDesignHtmlOptions {
+  nonce: string | null;
+  withBridge: boolean;
+  inject?: string;
+  /** Another assembly of the bridge (a reviewer's view gets one that proposes no writes). */
+  bridgeScript?: string;
+  /**
+   * Send no stylesheet gens. They are read from the live design folder, which a page served
+   * from a snapshot must not touch, and only a page that writes styles back needs them.
+   */
+  skipCssGens?: boolean;
+}
+
 export async function renderDesignHtml(
   design: DesignRef,
   asset: ScopedAsset,
-  opts: { nonce: string | null; withBridge: boolean; inject?: string },
+  opts: RenderDesignHtmlOptions,
 ): Promise<RenderedDesignHtml> {
   const bytes = await readDesignFileSafe(asset.abs, MAX_DESIGN_SOURCE_BYTES);
   let source: DesignSource;
@@ -84,11 +97,11 @@ export async function renderDesignHtml(
   if (!opts.withBridge) return { body: opts.inject ? injectPlain(text, opts.inject) : text, gen, instrumented: false };
 
   const tag = (instrumented: boolean, cssGens: Record<string, string>): string =>
-    bridgeTag({ nonce: opts.nonce, gen, cssGens, file: asset.rel, instrumented });
+    bridgeTag({ nonce: opts.nonce, gen, cssGens, file: asset.rel, instrumented }, opts.bridgeScript);
   if (utf8 && bytes.byteLength <= INSTRUMENT_MAX_BYTES) {
     try {
       const analysis = analyzeHtml(text);
-      const cssGens = await linkedStylesheetGens(design, asset.rel, analysis.stylesheetHrefs);
+      const cssGens = opts.skipCssGens ? {} : await linkedStylesheetGens(design, asset.rel, analysis.stylesheetHrefs);
       return { body: instrumentHtml(text, tag(true, cssGens), analysis), gen, instrumented: true };
     } catch (e) {
       console.warn(`[design-preview] instrumenting ${design.slug}/${asset.rel} failed: ${(e as Error).message}`);

@@ -36,6 +36,7 @@ configService.set("ai", {
   default_provider: "claude", new_chat_provider_mode: "default", share_provider_context: false,
   providers: { claude: { type: "mock", permission_mode: "bypassPermissions" } },
 });
+await (await import("./answer-feature-intros")).answerFeatureIntrosAtStartup();
 
 const { MockProvider } = await import("../../../src/providers/mock-provider");
 const { setSessionMetadata } = await import("../../../src/services/db.service");

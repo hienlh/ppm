@@ -37,6 +37,8 @@ import {
   Clock,
   Send,
   Users,
+  Database,
+  DatabaseZap,
 } from "@/lib/icons";
 import { ImagePlus } from "@/lib/icons";
 
@@ -63,6 +65,18 @@ function toolChip(
     return { Icon: Terminal, cls: "bg-error/15 text-error" };
   // A named teammate gets its own chip so it is not mistaken for a throwaway subagent.
   if (isAddressableAgent) return { Icon: Users, cls: "bg-accent-2/15 text-accent-2" };
+  const dbTool = dbToolOf(name);
+  if (dbTool) {
+    return dbTool === DB_EXECUTE_TOOL
+      ? { Icon: DatabaseZap, cls: "bg-warning/15 text-warning" }
+      : { Icon: Database, cls: "bg-info/15 text-info" };
+  }
+  const deviceTool = deviceToolOf(name);
+  if (deviceTool) {
+    return deviceTool === OPEN_URL_TOOL
+      ? { Icon: Globe, cls: "bg-info/15 text-info" }
+      : { Icon: Terminal, cls: "bg-panel-2 text-text-2" };
+  }
   switch (name) {
     case "Read": case "Glob": case "LS":
       return { Icon: FileSearch, cls: "bg-accent-wash text-primary" };
@@ -103,7 +117,14 @@ import { resultHasImagePlaceholder } from "../../../shared/tool-result-content";
 import { isAsyncAgentLaunchAck } from "../../../shared/background-agent-status";
 import { ToolImagePreview } from "./tool-image-preview";
 import { TabToolCard } from "./tab-tool-card";
-import { tabToolCall } from "@/lib/tab-tool-call";
+import { SessionCollabToolCard } from "./session-collab-tool-card";
+import { sessionCollabToolCall } from "@/lib/session-collab-tool-call";
+import { DeviceToolDetails, DeviceToolSummary } from "./device-tool-card";
+import { deviceToolCall, deviceToolOf, tabToolCall } from "@/lib/tab-tool-call";
+import { DbToolSummary, DbToolDetails } from "./db-tool-card";
+import { dbToolCall, dbToolOf } from "@/lib/db-tool-call";
+import { DB_EXECUTE_TOOL } from "../../../shared/db-ai-tools";
+import { OPEN_URL_TOOL } from "../../../shared/tab-open-protocol";
 import { AgentCardSummary, type AgentCardStatus } from "./agent-card-summary";
 import { useOpenAgentSession } from "./use-open-agent-session";
 import { useAgentSessionContext, normalizeProviderId } from "./agent-session-context";
@@ -240,6 +261,15 @@ export function ToolCard({
     );
   }
 
+  // So do the session tools: the session they reached, its reply, and a way to open it.
+  const collabCall = tool.type === "tool_use" ? sessionCollabToolCall(toolName, input) : null;
+  if (collabCall) {
+    return (
+      <SessionCollabToolCard call={collabCall} toolUseId={toolUseId} output={hasResult ? String((result as any).output ?? "") : undefined}
+        isError={isError} done={!!isDone} projectName={projectName} />
+    );
+  }
+
   // In chat, every Agent/Task card — named teammates included — is one line that opens the
   // live session window/sheet rather than expanding inline; `variant="window"` (the window's
   // own nested-card rendering) keeps today's inline expansion below instead.
@@ -370,6 +400,10 @@ export function ToolCard({
 /** Render one-line summary per tool type */
 function ToolSummary({ name, input }: { name: string; input: Record<string, unknown> }) {
   const s = (v: unknown) => String(v ?? "");
+  const dbCall = dbToolCall(name, input);
+  if (dbCall) return <DbToolSummary call={dbCall} />;
+  const deviceCall = deviceToolCall(name, input);
+  if (deviceCall) return <DeviceToolSummary call={deviceCall} />;
   switch (name) {
     case "Read":
     case "Write":
@@ -486,6 +520,11 @@ function ToolDetails({
       closable: true,
     });
   };
+
+  const dbCall = dbToolCall(name, input);
+  if (dbCall) return <DbToolDetails call={dbCall} />;
+  const deviceCall = deviceToolCall(name, input);
+  if (deviceCall) return <DeviceToolDetails call={deviceCall} />;
 
   switch (name) {
     case "Bash":
@@ -606,7 +645,7 @@ function ToolDetails({
         </div>
       );
     case "AskUserQuestion": {
-      const qs = (input.questions as Array<{ question: string; header?: string; options: Array<{ label: string; description?: string }>; multiSelect?: boolean }>) ?? [];
+      const qs = (input.questions as Array<{ id?: string; question: string; header?: string; options: Array<{ label: string; description?: string; preview?: string }>; multiSelect?: boolean }>) ?? [];
       const answers = (input.answers as Record<string, string>) ?? {};
       return (
         <div className="space-y-2">
@@ -615,7 +654,7 @@ function ToolDetails({
               <p className="text-text-primary font-medium">{q.header ? `${q.header}: ` : ""}{q.question}</p>
               <div className="flex flex-wrap gap-1">
                 {q.options.map((opt, oi) => {
-                  const answer = answers[q.question] ?? "";
+                  const answer = answers[q.id ?? q.question] ?? answers[q.question] ?? "";
                   const isSelected = answer.split(", ").includes(opt.label);
                   return (
                     <span key={oi} className={`inline-block rounded px-1.5 py-0.5 text-xs border ${
@@ -626,9 +665,17 @@ function ToolDetails({
                   );
                 })}
               </div>
-              {answers[q.question] && (
-                <p className="text-foreground text-xs">Answer: {answers[q.question]}</p>
+              {(answers[q.id ?? q.question] ?? answers[q.question]) && (
+                <p className="text-foreground text-xs">Answer: {answers[q.id ?? q.question] ?? answers[q.question]}</p>
               )}
+              {/* The preview of each option, kept readable after the card has been answered — it is
+                  often the plan the answer agreed to. */}
+              {q.options.filter((opt) => opt.preview?.trim()).map((opt, oi) => (
+                <details key={`p${oi}`} className="text-xs">
+                  <summary className="cursor-pointer text-text-subtle">Preview · {opt.label}</summary>
+                  <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-text-primary">{opt.preview!.trim()}</pre>
+                </details>
+              ))}
             </div>
           ))}
         </div>

@@ -280,11 +280,11 @@ let snapshotInFlight = false;
 
 export async function snapshotServerDescendants(rootPid: number): Promise<void> {
   if (process.platform !== "win32") return;
-  // The supervisor fires this from a timer without awaiting. Every concurrent
-  // call spawns a PowerShell and builds a full process map, which costs a 32MiB
-  // allocator segment that is never returned to the OS — so overlapping calls
-  // ratchet the process commit charge up permanently (observed: 19GB committed
-  // against 1GB resident). One at a time; a skipped tick is harmless.
+  // The supervisor fires this from a timer without awaiting, so calls must not
+  // overlap: each one spawns a PowerShell. One at a time; a skipped tick is
+  // harmless. The supervisor's commit charge kept climbing after this guard went
+  // in (15GB committed against 1.4GB resident); that was Bun 1.3.10 leaking idle
+  // helper threads, not this call — see bun-runtime-advisory.ts.
   if (snapshotInFlight) return;
   snapshotInFlight = true;
   try {

@@ -32,6 +32,11 @@ mock.module(SQL_OBJECT_TAB, () => ({
 }));
 
 const { GridSaveHost } = await import("../../../src/web/components/database/grid/grid-save-host.tsx");
+// The host loads the dialog with `lazy()` on the first save, and `save()` looks 10 ms later, so
+// the first test raced that load and lost whenever it took longer: 11 ms on a quiet run, 16-24 ms
+// once `bun test <name>` had walked a checkout of more than 256 directories. Loaded here, after
+// the stub above, the first save finds it ready as every later one already did.
+await import("../../../src/web/components/database/grid/grid-save-dialog.tsx");
 const { GridSaveCancelled, endGridSave, requestGridSave, useGridSave } = await import("../../../src/web/components/database/grid/grid-save-store.ts");
 const { usePanelStore } = await import("../../../src/web/stores/panel-store");
 type GridSaveRequest = import("../../../src/web/components/database/grid/grid-save-store.ts").GridSaveRequest;

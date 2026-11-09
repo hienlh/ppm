@@ -76,6 +76,33 @@ describe("PATCH /api/accounts/:id", () => {
     expect(json.data.status).toBe("disabled");
   });
 
+  it("renames an account, and the name survives signing in again", async () => {
+    const acc = accountService.add({ email: "rename@test.com", accessToken: "t", refreshToken: "r", expiresAt: 0 });
+    const res = await req(`/api/accounts/${acc.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ label: "  Work laptop  " }),
+    });
+    const json = await res.json() as any;
+    expect(json.ok).toBe(true);
+    expect(json.data.label).toBe("Work laptop");
+    expect(json.data.status).toBe("active");
+
+    // Sign in again without typing a name: the one the user chose stays.
+    accountService.add({ email: "rename@test.com", accessToken: "t2", refreshToken: "r2", expiresAt: 0 });
+    expect(accountService.list().find((a) => a.id === acc.id)!.label).toBe("Work laptop");
+  });
+
+  it("refuses a blank or non-string name and keeps the old one", async () => {
+    const acc = accountService.add({ email: "rename@test.com", accessToken: "t", refreshToken: "r", expiresAt: 0, label: "Old" });
+    for (const label of ["   ", 42]) {
+      const res = await req(`/api/accounts/${acc.id}`, { method: "PATCH", body: JSON.stringify({ label }) });
+      expect(res.status).toBe(400);
+    }
+    const none = await req(`/api/accounts/${acc.id}`, { method: "PATCH", body: JSON.stringify({}) });
+    expect(none.status).toBe(400);
+    expect(accountService.list().find((a) => a.id === acc.id)!.label).toBe("Old");
+  });
+
   it("re-enables account", async () => {
     const acc = accountService.add({ email: "patch@test.com", accessToken: "t", refreshToken: "r", expiresAt: 0 });
     accountService.setDisabled(acc.id);
@@ -254,6 +281,18 @@ describe("GET /api/accounts/oauth/callback", () => {
     expect(res.status).toBe(302);
     const location = res.headers.get("location") ?? "";
     expect(location).toContain("error=");
+  });
+});
+
+describe("POST /api/accounts/oauth/exchange", () => {
+  it("answers 410 for a link the server no longer holds, which sends the dialog back to a new link", async () => {
+    const res = await req("/api/accounts/oauth/exchange", {
+      method: "POST",
+      body: JSON.stringify({ code: `abc#${"0".repeat(32)}`, state: "0".repeat(32) }),
+    });
+    const json = await res.json() as any;
+    expect(res.status).toBe(410);
+    expect(json.error).toContain("Login with Claude");
   });
 });
 

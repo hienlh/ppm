@@ -68,6 +68,7 @@ export function DesignInstructionsEditor({ value, onChange, skills, disabled }: 
           visible={filter !== null && !disabled}
           onSelect={pick}
           onClose={() => setFilter(null)}
+          variant="static"
         />
       </div>
       <textarea

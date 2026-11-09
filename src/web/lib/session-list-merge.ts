@@ -32,6 +32,18 @@ export function upsertSession(sessions: SessionInfo[], session: SessionInfo): Se
   return sortSessions(next);
 }
 
+/**
+ * A page the server listed, plus the sessions this browser was told exist that the server does not
+ * list yet: a session another session's AI just created has no transcript until its first turn
+ * writes one, and the server's list is built from transcripts. Replacing the list with the page
+ * would drop such a row until the next sync after that, so it stays until the server lists it.
+ */
+export function withUnlisted(listed: SessionInfo[], unlisted: Iterable<SessionInfo>): SessionInfo[] {
+  const ids = new Set(listed.map((s) => s.id));
+  const extra = [...unlisted].filter((s) => !ids.has(s.id));
+  return extra.length ? sortSessions([...listed, ...extra]) : listed;
+}
+
 export function removeSession(sessions: SessionInfo[], id: string): SessionInfo[] {
   return sessions.filter((s) => s.id !== id);
 }

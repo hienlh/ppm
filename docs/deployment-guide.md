@@ -496,6 +496,16 @@ ppm logs -f                # provider errors are logged here
 If the CLI cannot be found, set `PPM_CLAUDE_CLI=/path/to/claude`. If the project has an `.env` with
 `ANTHROPIC_API_KEY`, see the SDK note above.
 
+### A server or unit an AI chat started stopped by itself
+With **Settings → AI Provider → Stop leftover processes after** set above 0, PPM stops what a
+chat's commands left running once the chat has been idle that long, and everything the chat
+started when it is deleted; `ppm.log` names each stop (`[chat-procs]`). Raise the limit or set it
+back to 0 (the default: nothing is stopped, only logged), or give a unit that must outlive the
+chat a slice of its own: `systemd-run --user --slice=app.slice …`. A restart of PPM also stops
+what chats' commands left running, at any setting, as stopping PPM's service always did; a unit
+started with `systemd-run --user` survives it. See `docs/architecture/ai-chat-and-providers.md` →
+Processes a chat leaves running.
+
 ### Terminal not working
 ```bash
 which bash zsh             # macOS/Linux
@@ -639,6 +649,45 @@ Long chat sessions are the usual growth source; the transcript is windowed rathe
 materialized. If memory climbs, check for orphaned transcode or tunnel children with the System
 Monitor, filtered to PPM's own processes.
 
+Watch **private bytes**, not RSS. A server that runs the machine out of memory can read 1–2 GB
+resident while holding 30 GB of committed memory (Windows trims the working set and pages the
+rest out); new child processes then die at start, Claude CLI with exit code 9. On Windows the
+System event log says which process it was: provider `Microsoft-Windows-Resource-Exhaustion-Detector`
+names the pid and its bytes.
+
+Without any setting, `ppm.log` already answers "who is using the memory" (scope `[mem]`, also in
+the Logs window). The server, the supervisor and the edge forwarder each write a `summary` line a
+minute after start and every 30 minutes after: their own private bytes, JS heap and handles, every
+process below them — totalled by program and by direct child, a Claude/Codex child named by the chat
+session it serves — the busiest HTTP routes since the last summary, and the gauges. The line is a
+WARN when private bytes grew by 1 GB or more since the previous one, and a separate WARN marks the
+first crossing of 2, 4, 8, 16 and 32 GB (for the server, also its children's total crossing 8, 16, 24
+and 32 GB). A Claude or Codex subprocess starting or exiting is logged with its pid and session, and
+on exit with what it last held. Read it as: private far above heap is native memory inside that
+process; a large `children` total is the chats themselves (~650 MB per open Claude session).
+
+To find the cause, run PPM with `PPM_MEM_DIAG=1` (optionally `PPM_MEM_DIAG_INTERVAL_MS`, default
+30000). Every interval the server appends a line to `~/.ppm/mem-diag.log`, the supervisor to
+`~/.ppm/mem-diag-supervisor.log` and the edge forwarder to `~/.ppm/mem-diag-edge.log` (rotated at
+50 MB to `.1`): RSS, private bytes and their change, the memory of every child process (`children`),
+the HTTP routes served with the bytes each sent (`requests`),
+kernel handles (open fds on Linux), the JS heap, the child processes started since the previous
+line by command (`git status`, `claude`, `powershell get-ciminstance` — never their arguments),
+the children still alive, counts of objects that own native memory, and gauges for long-lived
+state (chat sessions, Claude/Codex sessions, terminals, LSP servers). The first time private bytes
+cross 2, 4, 8, 16, 24 and 32 GB it also writes an `alert` line with the oldest live children and
+all-time spawn totals. Then:
+
+```bash
+bun scripts/mem-diag-report.ts                # growth rate per run, MB per spawn by command, gauges
+bun scripts/mem-diag-report.ts --supervisor   # the supervisor's log
+bun scripts/mem-diag-report.ts --edge         # the edge forwarder's log
+```
+
+The report's slope is a correlation, not proof: two commands that always run together get the
+same share, and growth no command explains points at the gauges and native-object trends instead.
+Private bytes are measured on Windows and Linux; on macOS those fields are absent.
+
 ---
 
 ## Support
@@ -648,3 +697,14 @@ Monitor, filtered to PPM's own processes.
 3. **Logs:** `ppm logs -f` (`~/.ppm/ppm.log`)
 4. **Status:** `ppm status --json`
 5. **Known traps:** [`lessons-learned.md`](lessons-learned.md)
+
+## Minimal startup
+
+`ppm start --minimal` serves chat, file explorer, editor and Settings to every browser. It keeps projects,
+chat providers/accounts, uploads, authentication and remote access; skips extension hosts,
+scheduled agents, Jira watchers, PPMBot and database startup work. Non-chat WebSocket and
+workspace API endpoints return 403. Saved workspace tabs are retained for full mode.
+
+The supervisor preserves the mode across crashes and `ppm restart`. Changing a running
+instance requires `ppm down` followed by `ppm start --minimal` (or `ppm start` for full
+mode). This is a process option, not a saved global setting or browser toggle.

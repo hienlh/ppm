@@ -53,6 +53,32 @@ export function ReparentingTab({
   const panelIdRef = useRef(panelId);
   panelIdRef.current = panelId;
 
+  // Where each scroller in the tab last stood, as its own scroll events said. A move resets
+  // every offset, and on a project switch the old panel unmounts first, taking the wrapper off
+  // the page before the move below runs — too late to read them then. A chat came back at its
+  // top, and its history loader took that for the reader scrolling up and fetched another page
+  // on every switch back.
+  // Held weakly: a scroller React removed would keep its whole tree alive, and a chat replaces
+  // its transcript's on every session switch.
+  const scrolledRef = useRef(new WeakMap<Element, { top: number; left: number }>());
+  /** The keys of `scrolledRef`, which a WeakMap cannot list. */
+  const scrollersRef = useRef(new Set<WeakRef<Element>>());
+  /** Moved while hidden, when there was no layout to put the offsets back into. */
+  const restorePendingRef = useRef(false);
+  const restoreScroll = () => {
+    for (const ref of scrollersRef.current) {
+      const el = ref.deref();
+      const at = el && scrolledRef.current.get(el);
+      if (!el || !at || !wrapper.contains(el)) {
+        scrollersRef.current.delete(ref);
+        if (el) scrolledRef.current.delete(el);
+        continue;
+      }
+      el.scrollTop = at.top;
+      el.scrollLeft = at.left;
+    }
+  };
+
   // Mount the wrapper and own its removal. The listener is native and capturing because
   // the tab content is DOM-reparented out of the panel's fiber subtree: the panel never
   // sees clicks on the content body, so focus is set here, where the panel is known.
@@ -65,17 +91,39 @@ export function ReparentingTab({
       if (pid === DOCK_PANEL_ID || isWindowPanelId(pid)) return;
       usePanelStore.getState().setFocusedPanel(pid);
     };
+    const scrolled = scrolledRef.current;
+    const scrollers = scrollersRef.current;
+    const onScroll = (e: Event) => {
+      // Parked out of sight a scroller has no size, and whatever moves it there is not the reader.
+      if (wrapper.parentElement === hiddenContainer) return;
+      const el = e.target as Element;
+      if (el.nodeType !== Node.ELEMENT_NODE) return;
+      if (!scrolled.has(el)) {
+        for (const ref of scrollers) if (!ref.deref()) scrollers.delete(ref);
+        scrollers.add(new WeakRef(el));
+      }
+      scrolled.set(el, { top: el.scrollTop, left: el.scrollLeft });
+    };
     wrapper.addEventListener("pointerdown", onMouseDown, true);
     wrapper.addEventListener("focusin", onMouseDown, true);
+    wrapper.addEventListener("scroll", onScroll, true);
     return () => {
       wrapper.removeEventListener("pointerdown", onMouseDown, true);
       wrapper.removeEventListener("focusin", onMouseDown, true);
+      wrapper.removeEventListener("scroll", onScroll, true);
       wrapper.remove();
     };
   }, [wrapper, hiddenContainer]);
 
   useLayoutEffect(() => {
     wrapper.style.display = isActive ? "" : "none";
+    // Only for a tab moved while hidden: a plain tab switch keeps its offsets, and writing them
+    // back forces a layout of the whole tab in the middle of the commit.
+    if (isActive && restorePendingRef.current) {
+      restorePendingRef.current = false;
+      restoreScroll();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wrapper, isActive]);
 
   // Imperatively move the wrapper into the correct panel slot.
@@ -96,21 +144,12 @@ export function ReparentingTab({
 
     if (wrapper.parentElement === slot) return;
 
-    // Save scroll positions — appendChild resets them during the DOM move
-    const scrollables: { el: Element; top: number; left: number }[] = [];
-    wrapper.querySelectorAll("*").forEach((el) => {
-      if (el.scrollTop || el.scrollLeft) {
-        scrollables.push({ el, top: el.scrollTop, left: el.scrollLeft });
-      }
-    });
-
     slot.appendChild(wrapper);
-
-    // Restore scroll positions synchronously before paint
-    for (const { el, top, left } of scrollables) {
-      el.scrollTop = top;
-      el.scrollLeft = left;
-    }
+    // Before paint, from what the scroll events recorded: walking every element of the tab
+    // to read offsets cost a whole transcript's worth of reads per move, and read zeros
+    // whenever the wrapper had already left the page.
+    restorePendingRef.current = !isActive;
+    if (isActive) restoreScroll();
   });
 
   // Portal target for the tab's own dropdowns, tooltips and sheets. It belongs here and

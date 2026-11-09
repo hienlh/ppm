@@ -22,8 +22,15 @@ const scheduler = new SchedulerService({
     runnerCalls.push({ id: s.id, prompt: s.prompt, sessionId });
     return { status: "done", output: "scripted run output", costUsd: 0 };
   },
+  runScriptTick: async () => {},
+}, {
+  prepare: async () => {}, sync: () => {}, restart: async () => {}, isRunning: () => false, stopAll: () => {},
 });
-mock.module("../../src/services/scheduler.service.ts", () => ({ schedulerService: scheduler, nextFireAt }));
+mock.module("../../src/services/scheduler.service.ts", () => ({
+  schedulerService: scheduler,
+  nextFireAt,
+  alwaysOnSupervisor: { status: () => null, stop: async () => {} },
+}));
 
 const { configService } = await import("../../src/services/config.service.ts");
 const { openTestDb, setDb } = await import("../../src/services/db.service.ts");

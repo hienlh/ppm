@@ -291,6 +291,27 @@ describe("a session that is not this project's", () => {
   });
 });
 
+describe("GET /chat/sessions/:id/file-changes/count", () => {
+  const count = async (sessionId: string) => {
+    const res = await app.request(`http://x/chat/sessions/${sessionId}/file-changes/count`);
+    return { status: res.status, body: (await res.json()) as any };
+  };
+
+  it("counts the files the session and its parent kept a before for, without reading them", async () => {
+    expect((await count(SESSION)).body.data).toEqual({ count: 0 });
+    recordBaseline(SESSION, join(project, "a.ts"), "a\n");
+    recordBaseline(SESSION, join(project, "b.ts"), null);
+    expect((await count(SESSION)).body.data).toEqual({ count: 2 });
+    recordBranch(CHILD, SESSION, "m1", 1, "edit");
+    recordBaseline(CHILD, join(project, "c.ts"), "c\n");
+    expect((await count(CHILD)).body.data).toEqual({ count: 3 });
+  });
+
+  it("refuses a session id that cannot name a directory", async () => {
+    expect((await count("not*valid")).status).toBe(400);
+  });
+});
+
 describe("GET /chat/sessions/:id/file-changes/diff", () => {
   it("hands back both sides of a file the session changed", async () => {
     recordBaseline(SESSION, join(project, "a.ts"), "before\n");

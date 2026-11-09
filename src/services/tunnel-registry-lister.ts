@@ -116,7 +116,7 @@ export function createTunnelLister(deps: TunnelListerDeps): TunnelLister {
       if (isAppTunnel(entry, app)) {
         entry.source = "app";
         entry.protected = true;
-        if (!entry.url) entry.url = app.shareUrl;
+        if (!entry.url) entry.url = entry.pid === app.shareHostTunnelPid ? app.shareHostUrl ?? null : app.shareUrl;
       }
     }
 

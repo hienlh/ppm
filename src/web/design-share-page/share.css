@@ -1,0 +1,63 @@
+/*
+ * The reviewer page's styles. Tailwind scans this folder only (`source(none)` + `@source`),
+ * so nothing of the app's class list lands here. The page has no theme engine: its colours
+ * follow the reviewer's own light or dark setting.
+ */
+@import "tailwindcss" source(none);
+@source ".";
+
+@custom-variant can-hover (@media (hover: hover) and (pointer: fine));
+
+@theme {
+  --color-bg: #f6f7f9;
+  --color-panel: #ffffff;
+  --color-panel-2: #eef0f3;
+  --color-border: #d9dde3;
+  --color-text: #15181d;
+  --color-text-2: #4a525e;
+  --color-text-3: #6b7380;
+  --color-primary: #2563eb;
+  --color-primary-fg: #ffffff;
+  --color-owner: #7c3aed;
+  --color-owner-fg: #ffffff;
+  --color-error: #c62828;
+  --color-warning: #9a6200;
+  --color-stage: #e6e9ee;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #111418;
+    --color-panel: #181c22;
+    --color-panel-2: #222831;
+    --color-border: #313844;
+    --color-text: #e8ebef;
+    --color-text-2: #b4bcc7;
+    --color-text-3: #8d96a3;
+    --color-primary: #5b8def;
+    --color-primary-fg: #0b1220;
+    --color-owner: #a78bfa;
+    --color-owner-fg: #140b2b;
+    --color-error: #ff7b72;
+    --color-warning: #e3b341;
+    --color-stage: #0b0d10;
+  }
+}
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}

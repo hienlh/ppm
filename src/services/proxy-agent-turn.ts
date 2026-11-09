@@ -203,6 +203,8 @@ export async function startAgentTurn(providerId: string, req: TurnRequest): Prom
 
   // No provider-level system-prompt field survives the flattening, so the
   // instructions lead the turn instead.
+  // Block markers are left as they are: these sessions live in the proxy workspace, which no PPM
+  // reader decodes, and breaking them would only change what the caller sent to the model.
   const message = req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt;
 
   // Held until cleanup, which every caller runs on every path — including a streaming

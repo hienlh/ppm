@@ -9,6 +9,8 @@ import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { isValidDesignSlug } from "../../services/design/design-slug";
 import { designTabMetadata } from "@/lib/design/design-tab-metadata";
 import { dbObjectTabTitle, dbTabMetadataFromId, targetOf } from "@/lib/db-tabs";
+import { canonicalSessionId, useChatJumpStore } from "@/stores/chat-jump-store";
+import { TURN_ID_RE } from "../../shared/session-turn-ids";
 
 // ---------------------------------------------------------------------------
 // URL state types
@@ -24,6 +26,8 @@ export interface UrlState {
    * `/project/__assistant__?openChat=…`), and the session it names. Never a project to open.
    */
   assistant: AssistantDeepLink | null;
+  /** A chat URL's `?turn=`: the turn a turn link points at, when it is a turn id at all. */
+  turnId?: string | null;
 }
 
 const VALID_TAB_TYPES: TabType[] = [
@@ -51,17 +55,18 @@ function decodePathSegment(segment: string): string {
 }
 
 /**
- * Parse the current URL to extract project name and tab info.
+ * Parse the current URL (or the one given, such as a notification's) to extract project
+ * name and tab info.
  * Format: /project/{name}/{tabType}/{...identifier}
  */
-export function parseUrlState(): UrlState {
-  const path = window.location.pathname;
-  const params = new URLSearchParams(window.location.search);
+export function parseUrlState(location: Pick<Location, "pathname" | "search"> = window.location): UrlState {
+  const path = location.pathname;
+  const params = new URLSearchParams(location.search);
   const openChat = params.get("openChat");
 
   // The Assistant's virtual project is never a workspace to open, whatever an address says:
   // an address naming it opens the Assistant instead, and its `openChat` is the Assistant's.
-  const assistant = assistantLinkFromLocation(path, window.location.search);
+  const assistant = assistantLinkFromLocation(path, location.search);
   if (assistant) return { projectName: null, tabType: null, tabIdentifier: null, openChat: null, assistant };
 
   const match = path.match(/^\/project\/([^/]+)(?:\/([^/]+)(\/.*)?)?/);
@@ -77,8 +82,24 @@ export function parseUrlState(): UrlState {
   }
 
   const tabType = VALID_TAB_TYPES.includes(rawType as TabType) ? (rawType as TabType) : null;
+  const turn = tabType === "chat" ? params.get("turn") : null;
+  const turnId = turn && TURN_ID_RE.test(turn) ? turn : null;
 
-  return { projectName, tabType, tabIdentifier: rawIdentifier, openChat, assistant: null };
+  return { projectName, tabType, tabIdentifier: rawIdentifier, openChat, assistant: null, ...(turnId ? { turnId } : {}) };
+}
+
+/**
+ * A turn link opened directly: once its chat tab is open, ask it to show the turn, and take
+ * `?turn=` off the address so a reload of the page does not jump again.
+ */
+export function requestTurnJumpFromUrl(state: UrlState, projectName: string): void {
+  if (state.tabType !== "chat" || !state.turnId || !state.tabIdentifier) return;
+  const sessionId = buildMetadataFromUrl("chat", state.tabIdentifier, projectName)?.sessionId;
+  if (typeof sessionId !== "string") return;
+  useChatJumpStore.getState().jump({ sessionId: canonicalSessionId(sessionId), turnId: state.turnId });
+  const url = new URL(window.location.href);
+  url.searchParams.delete("turn");
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 
 // ---------------------------------------------------------------------------

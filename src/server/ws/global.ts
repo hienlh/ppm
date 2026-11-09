@@ -1,3 +1,4 @@
+import { isMinimalMode } from "../../services/runtime-mode.ts";
 /**
  * Global event bus WebSocket (`/ws/global`).
  *
@@ -22,11 +23,13 @@ import { onIndexRebuilt, warmIndex } from "../../services/file-list-index.servic
 import { configService } from "../../services/config.service.ts";
 import { onDesignEvent } from "../../services/design/design-events.ts";
 import { onGitEvent } from "../../services/git-changes/git-events.ts";
+import { onSessionFileChanges } from "../../services/session-file-baselines/session-file-changes.service.ts";
+import { SESSION_FILE_CHANGES_PUSH } from "../../shared/session-file-changes.ts";
 import { subscribeLogs, unsubscribeLogs } from "../../services/logs/log-live.ts";
 import { tokenStillValid } from "../../services/agent-transcript/agent-transcript-hub-registry.ts";
 import { onIssuesChanged } from "../../services/logs/log-issues.ts";
 import { LOGS_ISSUES_CHANGED, LOGS_SUBSCRIBE, LOGS_UNSUBSCRIBE } from "../../shared/logs-api.ts";
-import { resolve } from "node:path";
+import { projectNameForPath } from "../../services/project-name-for-path.ts";
 import {
   handleAgentActivitySubscribe, handleAgentActivityUnsubscribe,
   handleAgentTranscriptClientClosed, handleAgentTranscriptPing,
@@ -77,7 +80,8 @@ function setWatch(ws: GlobalWsSocket, projectName: string): void {
   if (!project) return;
 
   void startWatching(projectName, project.path);
-  // A client opened this project: have its file list ready before the palette asks for it.
+  // A client opened this project: have its file list ready before the palette or the chat's
+  // @-picker asks for it. Minimal mode too, which keeps the composer.
   warmIndex(project.path);
   watchedProject.set(ws, projectName);
 }
@@ -86,13 +90,6 @@ function setWatch(ws: GlobalWsSocket, projectName: string): void {
 onFileChange((projectName, path) => {
   broadcastGlobalEvent({ type: "file:changed", projectName, path });
 });
-
-/** Registered project whose folder is `projectPath`, or null. Case-folded on Windows. */
-function projectNameForPath(projectPath: string): string | null {
-  const fold = (p: string) => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
-  const target = fold(projectPath);
-  return configService.get("projects").find((p) => fold(p.path) === target)?.name ?? null;
-}
 
 // A project's file index was rebuilt behind a stale one and now lists other paths. Clients do
 // not refetch the index on every `file:changed` (on a large project that is a 22 MB download
@@ -108,8 +105,18 @@ onIndexRebuilt((projectPath, changed) => {
 // registered project owns is dropped rather than broadcast.
 onGitEvent((event) => broadcastGlobalEvent(event));
 
-// The Logs window and the rail button's badge refetch the issues when this arrives.
-onIssuesChanged(() => broadcastGlobalEvent({ type: LOGS_ISSUES_CHANGED }));
+// The agent changed files of a session whose changes are open somewhere: just those rows, so the
+// changes bar, the turn pills and an open Review tab follow along without asking for the list.
+onSessionFileChanges(({ projectPath, sessionId, files, gone }) => {
+  const projectName = projectNameForPath(projectPath);
+  if (projectName) broadcastGlobalEvent({ type: SESSION_FILE_CHANGES_PUSH, projectName, sessionId, files, gone });
+});
+
+// The Logs window and the rail button's badge refetch the issues when this arrives. Not in
+// minimal mode, where `/api/logs` is refused and the Logs window is gone.
+onIssuesChanged(() => {
+  if (!isMinimalMode()) broadcastGlobalEvent({ type: LOGS_ISSUES_CHANGED });
+});
 
 onDesignEvent((type, { projectPath, slug, requestId, screenshot }) => {
   const projectName = projectNameForPath(projectPath);
@@ -141,7 +148,8 @@ export const globalWebSocket = {
     if (msg.type === "agent-activity:unsubscribe") return handleAgentActivityUnsubscribe(ws, msg as AgentActivityUnsubscribeMsg);
     if (msg.type === "ping") return handleAgentTranscriptPing(ws);
     // A Logs view that is open and following: new records are pushed while it is subscribed.
-    if (msg.type === LOGS_SUBSCRIBE) return subscribeLogs(ws, () => tokenStillValid(ws));
+    // Minimal mode refuses `/api/logs`, and so this half of it too, even for a stale full-mode tab.
+    if (msg.type === LOGS_SUBSCRIBE) return isMinimalMode() ? undefined : subscribeLogs(ws, () => tokenStillValid(ws));
     if (msg.type === LOGS_UNSUBSCRIBE) return unsubscribeLogs(ws);
   },
 

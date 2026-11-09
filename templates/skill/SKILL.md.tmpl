@@ -36,7 +36,7 @@ Invoke when the user asks to:
 3. **List projects** → `ppm projects list`
 4. **Add project** → `ppm projects add <path>`
 5. **List DB connections** → `PPM_AI_CHAT=1 ppm db list`
-6. **Query a saved DB connection** → `PPM_AI_CHAT=1 ppm db query <connection-name> "<sql>"`
+6. **Read or change data in a saved connection** → the `db_query` / `db_execute` tools, not this CLI (see Rules of Thumb)
 7. **Read config** → `ppm config get <key>` (e.g. `port`, `auth.enabled`)
 8. **Tail logs** → `ppm logs --tail 100` or `ppm logs -f` to follow
 9. **Upgrade PPM** → `ppm upgrade` (or `--check` to only check)
@@ -47,6 +47,7 @@ Invoke when the user asks to:
 - Always run `ppm status` before assuming the server is up.
 - Commands exit non-zero on failure and print to stderr. Capture both streams.
 - Set `PPM_AI_CHAT=1` for every `ppm db` command, as above: connections the user has made unavailable to AI are then left out of `db list` and refused by the rest. PPM's own chat sets it already.
+- Inside a PPM chat, `db tables/schema/data/query/run` do **not** run — they refuse and name the tool that serves them (`db_query`, `db_execute`). Those tools are what the user can switch off per tool in Settings → Tools, and a write through `db_execute` waits for the user to approve it; the CLI obeys neither, so it is for a person at a terminal. The connection commands (`list`, `add`, `test`, `remove`, `driver`) are unaffected.
 - Most listing commands accept `--json` for structured output; prefer JSON when parsing. Check `--help` if unsure.
 - The config DB is **SQLite**. You may open `~/.ppm/ppm.db` read-only for inspection — see [references/db-schema.md](references/db-schema.md).
 - Do NOT edit the config DB directly while the server is running; use `ppm config set` or the HTTP API.

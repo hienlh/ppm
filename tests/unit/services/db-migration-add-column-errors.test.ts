@@ -20,7 +20,8 @@ const version = (db: Database) => (db.query("PRAGMA user_version").get() as { us
 
 describe("a migration step that adds a column", () => {
   // A view stands in for any failure that is not "duplicate column": SQLite refuses to alter one.
-  for (const [table, before] of [["session_metadata", 56], ["projects", 58]] as const) {
+  // The Assistant mark is migration 61 and the avatar column 63; each starts from the step before.
+  for (const [table, before] of [["session_metadata", 60], ["projects", 62]] as const) {
     it(`does not raise user_version past ${before} when ${table} cannot be altered`, () => {
       const db = migratedDb();
       db.exec(`DROP TABLE ${table}; CREATE VIEW ${table} AS SELECT 'x' AS name; PRAGMA user_version = ${before}`);

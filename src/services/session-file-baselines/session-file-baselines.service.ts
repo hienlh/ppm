@@ -194,6 +194,54 @@ export function listBaselines(sessionId: string): FileBaseline[] {
     .sort((a, b) => order(a) - order(b) || a.path.localeCompare(b.path));
 }
 
+/** Per session directory, each record's path and capture order: records never change, so each is parsed once. */
+const recordIndex = new Map<string, Map<string, { path: string; order: number }>>();
+const INDEXES_KEPT = 64;
+
+/**
+ * The paths the session has a "before" for, oldest capture first — `listBaselines` without
+ * parsing every record on every call. A session that touched thousands of files holds tens of
+ * MB of them, and the list asks for these on every request.
+ */
+export function baselinePaths(sessionId: string): string[] {
+  const dir = sessionDir(sessionId);
+  if (!dir) return [];
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((n) => n.endsWith(".json"));
+  } catch {
+    recordIndex.delete(dir);
+    return [];
+  }
+  const known = recordIndex.get(dir) ?? new Map<string, { path: string; order: number }>();
+  recordIndex.delete(dir);
+  recordIndex.set(dir, known);
+  if (recordIndex.size > INDEXES_KEPT) recordIndex.delete(recordIndex.keys().next().value!);
+  const present = new Set(names);
+  for (const name of known.keys()) if (!present.has(name)) known.delete(name);
+  for (const name of names) {
+    if (known.has(name)) continue;
+    const rec = parseRecord(join(dir, name));
+    if (rec) known.set(name, { path: rec.path, order: order(rec) });
+  }
+  return [...known.values()].sort((a, b) => a.order - b.order || a.path.localeCompare(b.path)).map((r) => r.path);
+}
+
+/**
+ * How many files the session has a "before" for, from the directory listing alone: cheap enough
+ * to ask after every turn, where `listBaselines` parses every record (a session that touched
+ * thousands of files holds tens of MB of them).
+ */
+export function countBaselines(sessionId: string): number {
+  const dir = sessionDir(sessionId);
+  if (!dir) return 0;
+  try {
+    return readdirSync(dir).filter((n) => n.endsWith(".json")).length;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Whether PPM keeps anything the session itself wrote: a "before" (`<hash>.json`) or a file's
  * history (`history/`). Review marks and undo journals are the user's answers, not its writes.

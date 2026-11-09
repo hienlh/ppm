@@ -15,8 +15,12 @@ import { GRID_EXPORT_TICKET_TTL_MS } from "../../shared/db-grid-export.ts";
 export interface ExportDownload {
   fileName: string;
   contentType: string;
-  /** The file, read from the database as it is sent. */
-  open(): ReadableStream<Uint8Array>;
+  /**
+   * The file, read from the database as it is sent — or, for a file already on disk, the file
+   * itself: a `Bun.file` body is sent by Bun directly, where `Bun.file().stream()` keeps about the
+   * file's size in native memory per download (see `file-chunks.ts`).
+   */
+  open(): ReadableStream<Uint8Array> | Blob;
   /** Lets go of the rows and the connection, when the download never starts. */
   abandon(): void;
 }

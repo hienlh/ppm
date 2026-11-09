@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { FileIcon } from "@/lib/file-icons";
 import { ArrowRight, Check, ChevronLeft, ChevronRight, ExternalLink, FolderTree, ListChecks, MessageCircle, RefreshCw, RotateCcw, Terminal } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import { shellChangesHint } from "@/components/chat/session-changes-bar";
+import { shellChangesHint } from "@/components/chat/session-changes-chip";
 import { SessionChangeCounts } from "@/components/chat/session-change-row";
 import { Kbd } from "./review-code";
 import { PaneBody, type ReviewView } from "./review-view";

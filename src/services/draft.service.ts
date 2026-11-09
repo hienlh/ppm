@@ -1,4 +1,4 @@
-import { decodeReply, encodeReply } from "../shared/chat-reply.ts";
+import { decodeMessageBlocks, encodeMessageBlocks } from "../shared/chat-message-blocks.ts";
 import { getDb } from "./db.service.ts";
 
 const MAX_CONTENT_LENGTH = 50 * 1024; // ~50K characters cap
@@ -20,9 +20,10 @@ class DraftService {
 
   upsert(projectPath: string, sessionId: string, content: string, attachments?: string): void {
     // Silent truncation at 50KB
-    const decoded = decodeReply(content);
+    const decoded = decodeMessageBlocks(content);
     const body = decoded.content.length > MAX_CONTENT_LENGTH ? decoded.content.slice(0, MAX_CONTENT_LENGTH) : decoded.content;
-    const safeContent = encodeReply(body, decoded.replyTo);
+    // A draft is the person's own text: a from-session block in it is never carried over.
+    const safeContent = encodeMessageBlocks(body, { turnRefs: decoded.turnRefs, replyTo: decoded.replyTo });
     getDb()
       .query(
         "INSERT INTO chat_drafts (project_path, session_id, content, attachments, updated_at) VALUES (?, ?, ?, ?, datetime('now')) ON CONFLICT(project_path, session_id) DO UPDATE SET content = excluded.content, attachments = excluded.attachments, updated_at = excluded.updated_at",

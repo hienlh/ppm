@@ -48,6 +48,71 @@ const show = async () => {
   view = await mount(<WebPreviewTab metadata={{ url: FORWARD, port: 5173, via: "tailscale" }} />);
 };
 
+it("tracks frame navigation without reloading, then reloads the current route", async () => {
+  await show();
+  await settle();
+  const first = frame()!;
+  const current = `${FORWARD}games/lucky?lang=en#rules`;
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent("message", {
+      source: first.contentWindow, origin: new URL(FORWARD).origin,
+      data: { ppm: "web-preview-navigation", url: current },
+    }));
+  });
+  expect(view!.container.querySelector('a[aria-label="Open in browser"]')?.getAttribute("href")).toBe(current);
+  expect(frame()).toBe(first);
+  expect(frame()?.getAttribute("src")).toBe(FORWARD);
+  await click(view!.container.querySelector('button[aria-label="Reload"]'));
+  await settle();
+  expect(frame()?.getAttribute("src")).toBe(current);
+});
+
+it("ignores messages from other windows, other origins, and unsafe URLs", async () => {
+  await show();
+  await settle();
+  for (const [source, origin, url] of [
+    [window, new URL(FORWARD).origin, `${FORWARD}wrong`],
+    [frame()!.contentWindow, "https://evil.example", "https://evil.example/wrong"],
+    [frame()!.contentWindow, new URL(FORWARD).origin, `${window.location.origin}/`],
+    [frame()!.contentWindow, new URL(FORWARD).origin, "javascript:alert(1)"],
+  ] as const) {
+    await act(async () => { window.dispatchEvent(new MessageEvent("message", {
+      source, origin, data: { ppm: "web-preview-navigation", url },
+    })); });
+    expect(view!.container.querySelector('a[aria-label="Open in browser"]')?.getAttribute("href")).toBe(FORWARD);
+  }
+});
+
+it("restores the last route when the tab remounts", async () => {
+  const currentUrl = `${FORWARD}last?lang=en#section`;
+  view = await mount(<WebPreviewTab metadata={{ url: FORWARD, currentUrl }} />);
+  await settle();
+  expect(frame()?.getAttribute("src")).toBe(currentUrl);
+});
+
+it("persists navigation in the owning panel, including when another panel is focused", async () => {
+  const { usePanelStore } = await import("../../../src/web/stores/panel-store");
+  const store = usePanelStore.getState();
+  const id = store.openTab({ type: "web-preview", title: "preview", projectId: null, closable: true, metadata: { url: FORWARD } });
+  view = await mount(<WebPreviewTab tabId={id} metadata={{ url: FORWARD }} />);
+  await settle();
+  const currentUrl = `${FORWARD}persisted`;
+  const originalMetadata = Object.values(usePanelStore.getState().panels).flatMap((panel) => panel.tabs).find((item) => item.id === id)!.metadata;
+  const previousFocus = usePanelStore.getState().focusedPanelId;
+  usePanelStore.setState({ focusedPanelId: "another-panel" });
+  try {
+    await act(async () => { window.dispatchEvent(new MessageEvent("message", {
+      source: frame()!.contentWindow, origin: new URL(FORWARD).origin,
+      data: { ppm: "web-preview-navigation", url: currentUrl },
+    })); });
+    const tab = Object.values(usePanelStore.getState().panels).flatMap((panel) => panel.tabs).find((item) => item.id === id);
+    expect(tab?.metadata).toEqual({ ...originalMetadata, currentUrl });
+  } finally {
+    usePanelStore.setState({ focusedPanelId: previousFocus });
+    usePanelStore.getState().closeTab(id);
+  }
+});
+
 it("loads the page only once the server knows this PPM may frame it", async () => {
   let release!: () => void;
   answer = () => new Promise((resolve) => { release = () => resolve(json({ ok: true, data: {} })); });

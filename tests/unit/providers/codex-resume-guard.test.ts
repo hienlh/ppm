@@ -54,17 +54,17 @@ describe("Codex missing rollout guard", () => {
 
   it("omits context overrides by default and forwards explicit limits when starting", async () => {
     await internal.connect((await provider.createSession({})).id);
-    expect(params.find((p) => p.method === "thread/start")!.value).not.toHaveProperty("config");
+    expect(params.find((p) => p.method === "thread/start")!.value.config).toEqual({ "features.default_mode_request_user_input": true });
     configService.get("ai").providers.codex!.model_context_window = 872000;
     configService.get("ai").providers.codex!.model_auto_compact_token_limit = 800000;
     await internal.connect((await provider.createSession({})).id);
     expect(params.filter((p) => p.method === "thread/start").at(-1)!.value.config).toEqual({
-      model_context_window: 872000, model_auto_compact_token_limit: 800000,
+      "features.default_mode_request_user_input": true, model_context_window: 872000, model_auto_compact_token_limit: 800000,
     });
     configService.get("ai").providers.codex!.model_context_window = null;
     configService.get("ai").providers.codex!.model_auto_compact_token_limit = null;
     await internal.connect((await provider.createSession({})).id);
-    expect(params.filter((p) => p.method === "thread/start").at(-1)!.value).not.toHaveProperty("config");
+    expect(params.filter((p) => p.method === "thread/start").at(-1)!.value.config).toEqual({ "features.default_mode_request_user_input": true });
   });
 
   it("refuses a resumed thread with no rollout instead of replacing its identity", async () => {
@@ -134,12 +134,12 @@ describe("Codex missing rollout guard", () => {
     const live = await internal.connect(id);
     expect(live.threadId).toBe(id);
     expect(params.find((p) => p.method === "thread/resume")!.value.config).toEqual({
-      model_context_window: 872000, model_auto_compact_token_limit: 800000,
+      "features.default_mode_request_user_input": true, model_context_window: 872000, model_auto_compact_token_limit: 800000,
     });
     configService.get("ai").providers.codex!.model_auto_compact_token_limit = 750000;
     await internal.respawnOn(live, id, source);
     expect(params.filter((p) => p.method === "thread/resume").at(-1)!.value.config).toEqual({
-      model_context_window: 872000, model_auto_compact_token_limit: 750000,
+      "features.default_mode_request_user_input": true, model_context_window: 872000, model_auto_compact_token_limit: 750000,
     });
     expect(requests).toContain("thread/resume");
     expect(requests).not.toContain("thread/start");

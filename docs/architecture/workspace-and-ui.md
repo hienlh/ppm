@@ -2,6 +2,17 @@
 
 > Part of the [PPM system architecture](../system-architecture.md).
 
+## Web preview navigation
+
+Forwarded web previews report their current URL through a same-origin script injected by
+`services/port-forward/preview-navigation.ts`. The tab accepts reports only from its own
+iframe and the original forward origin. SPA history changes, hashes and document navigation
+update the address, Copy/Open links and persisted `currentUrl`; Reload loads that current
+route without resetting to the original address. Reporting alone never changes the iframe's
+`src`. The forward streams HTML instrumentation and preserves application CSP. Pages whose
+CSP blocks the bridge, direct local URLs that bypass the forward, and navigation to another
+origin cannot report their URL and retain the last known address.
+
 ## Adaptive guided tour
 
 The optional welcome card and Settings → General → Learn PPM open a two-screen chooser:
@@ -59,6 +70,59 @@ Verification uses `tests/e2e/onboarding-tour.mjs` and its isolated fixtures: fre
 scratch project, local ports, allowlisted test provider and real HTTP/WebSocket routes.
 Playwright captures desktop/mobile screenshots and videos without live AI credentials.
 
+### "PPM has new features" — introducing a feature inside the tour
+
+When a release adds a feature that should stay off until the user says otherwise, the tour asks
+once per install: one step per feature, with **Turn on**, **Turn off**, **Later** and a link to
+Settings → Tools. The first entry is the six session tools.
+
+- **Registry:** `FEATURE_INTROS` in `src/shared/feature-intros.ts`. Each entry has a stable `id`
+  (the answer is stored under it for the life of the install), a `title`, a short `body`, the
+  Settings → Tools switches it controls (`tools`) and `since`.
+- **State is install-wide, not per browser:** config key `feature_intros`, read and written only by
+  `src/services/feature-intros.service.ts`, behind `/api/feature-intros` (`GET /`, `POST /:id/answer`,
+  `/:id/skip`, `/:id/seen-in-settings`; `src/server/routes/feature-intros.ts`). Every change is
+  announced as `feature-intros:changed` on `/ws/global`, with a `change` of `answer`, `skip`,
+  `seen` or `settings`. Answered on one device, the step closes on every other one.
+- **The answer is the switches.** Turn on / Turn off writes every tool of the feature as an explicit
+  boolean in `ai.ppm_tools`. The record only says whether, how (`tour`, `skips`, `settings`) and when
+  the question ended. A late answer from a device that missed the change (its socket was down) is
+  ignored: the first decision, or the per-tool choices made in Settings since, stand.
+- **Who sees it when** (`featurePartAllowed`, `useTourOfferHidden` in
+  `src/web/components/onboarding/onboarding-feature-intro.tsx`):
+  - An install is **in use** once it has a chat session (`session_metadata`). Projects do not
+    count: `ppm init` adds every git repository under the home directory, and the tour's first
+    step picks one.
+  - An install in use gets the step at once and is not offered the basic tour ("Get started with
+    PPM" stays hidden while this browser's tour is `unseen`). The tour still opens from its entry
+    in the UI (`OnboardingEntry`).
+  - A new install sees the basic tour first; the step comes once that is finished or dismissed.
+  - A basic tour under way in this browser (`choosing`, `active`, or `paused` — a reload turns
+    `active` into `paused`) always goes first, whatever the server says. The new user's own tour
+    chat makes the install count as in use, so without this a reload mid-tour put the step on top
+    of the running tour.
+- **Putting it off:** Later, the X, Escape, or swiping the phone's sheet away is one skip. At most
+  one skip counts per feature per 12 hours (`FEATURE_INTRO_SKIP_WINDOW_MS`), and the other tabs and
+  devices showing the step close it on the `skip` event without a skip of their own, so a sitting
+  with several screens open is one "later". A reload records nothing. After the third skip the
+  feature counts as off and Settings → Tools marks its switches **NEW** for one visit.
+- **Decided in Settings:** any of the feature's switches set explicitly counts as the answer and the
+  step never shows. `PUT /api/settings/ai` settles it and announces it; `GET /api/feature-intros`
+  does the same for a switch written by any other route (`ppm config set`).
+- **Browser state** is `src/web/stores/feature-intros-store.ts`, not persisted: what this page load
+  already answered or put off, and a sequence guard so an older list never replaces a newer one.
+
+**Adding a feature later:** add one entry to `FEATURE_INTROS` with a new `id`. If the feature is a
+set of `ai.ppm_tools` switches, nothing else is needed: `ppmToolOn` already keeps an introduced
+feature's tools off until the install answers, every server path reads it, and Settings → Tools
+shows the NEW marker. Do not reuse or rename an `id`, or every install is asked again. A feature
+that is not a tool switch needs its own rule for "off until answered" and its own `answerFromSwitches`
+equivalent.
+
+Verification: `tests/e2e/feature-intros-e2e.mjs` (one fresh install per scenario, fixture
+`tests/e2e/fixtures/feature-intros-server.ts`), plus the unit tests named after the service, the
+routes and the tour.
+
 ## New Chat Provider
 
 Settings → AI offers `Always use default provider` and `Follow last focused chat`.
@@ -79,7 +143,7 @@ first page (50 sessions), tags, `isSyncing` and `lastSyncError` — so every sur
 shows recent chats reads the same state instead of fetching its own copy: the sidebar
 history panel (including the mobile drawer), the welcome `SessionListPanel` (in
 `chat-welcome` and `editor-panel`), the tab bar / mobile nav's tag map, and
-`chat-history-bar`'s first page. It is hydrated from IndexedDB (see [Browser cache
+the chat footer's History popover (`chat-history-panel.tsx`). It is hydrated from IndexedDB (see [Browser cache
 layer](data-and-storage.md#browser-cache-layer)) and kept fresh by one deduplicated sync
 per project (`GET /chat/sessions` + `/tags`, in-flight promises keyed outside the store
 so the dedupe check itself never triggers a re-render).
@@ -100,6 +164,189 @@ own direct requests — this store only ever holds the first page.
 A syncing indicator (`session-list-sync-indicator.tsx`, `role="status"`,
 `text-text-dim`) sits in the sidebar's header row and inline after "Recent chats" on the
 welcome panel — no tap target, outside the thumb zone.
+
+## Turn links, chips and the history window
+
+The browser half of [session turn references](ai-chat-and-providers.md#session-turn-references).
+
+**Copy turn link** sits in every user bubble's action bar (`copy-turn-link-button.tsx`). The id
+comes from `message.turnId` (every history path stamps it), else the `turn_started` binding for
+the message's `clientMessageId` (`turn-binding-store.ts`), else `/turns?resolve=<uuid>`; never
+from "the newest turn", which for a queued message is someone else's. A message with no id yet
+shows "Getting link…" (a second click cancels), then "Link ready", and the clipboard is written
+only inside the next click, because a write outside a gesture is refused on plain HTTP. The link
+is the chat's URL plus `?turn=<turnId>`; opening it directly jumps to the turn and drops `?turn=`.
+
+**Chips.** A paste into a composer turns every turn link of a project this PPM has into a chip
+(`use-composer-turn-refs.ts`, `parseTurnLinks`); the origin is ignored, every segment is checked,
+at most 10, duplicates dropped, the rest of the paste inserted as typed. A chip shows a same-size
+skeleton while its turn loads, "No longer available" when it is gone (the send waits on both), the
+provider icon, the session title, "Turn N", and the project's name when it is another project.
+With `read_session_turns` off in Settings → Tools it warns and still sends. A sent bubble draws its
+chips from the message block, with no request; they come back as chips on a draft reload, a
+rejected send, an edit, a fork and an arrow-key recall. A mouse gets a tooltip (prompt line and
+time); a phone gets a 400 ms long press opening a preview sheet, disarmed on `touchcancel`.
+
+**The jump.** A chip calls `openTurnRef`: switch project if needed, open or focus the session's
+tab, and post a request to `chat-jump-store.ts` (which follows Codex renames). `use-chat-turn-jump.ts`
+takes it up once the chat is on screen with its history in. A turn already drawn in the live list
+is pinned there; one that is not loaded opens the **history window** around it.
+
+**History window** (`chat-history-window.tsx`, `use-history-window.ts`, `history-window-model.ts`):
+a container of its own laid over the live list, fed by `/turn-window`, holding at most 30 turns and
+loading 3 at a time at either end as the reader nears it. A separate container, rather than pages
+spliced into the live list, because the live list is bottom-anchored and streams: loading 300 turns
+of history into it to reach one old turn would be the whole transcript, and inserting above a list
+that follows the bottom moves what is being read. The live list stays mounted underneath — hidden
+with `visibility`, `inert` and `aria-hidden`, never `display: none`, so its height, its follow state
+and the TabPool's reshow guard see nothing change — and keeps streaming. A page goes in without
+moving the row being read: the first visible row is measured during render, before commit, and put
+back in a layout effect (`scroll-row-anchor.ts`). The window merges back into the live list once
+the live list holds its last turn whole, and **Back to latest** (`back-to-latest-pill.tsx`, with a
+dot when the live chat moved on) leaves it at once. The pill floats over the bottom of the window,
+outside its scroller; the window covers the transcript only, so the pill sits just above the topmost
+bar under it (running agents, a stop notice, MCP sign-in, the session's file changes) and never over
+one, which on a phone is still the bottom third. Sending a message from this tab also leaves the
+window, so the sender sees it go out. An approval or a question the agent waits on is drawn over the
+window above the composer (`history-window-pending-prompts.tsx`), never only in the hidden list.
+"Loading earlier turns" floats over the window rather than sitting above its rows, which would push
+the row being read down by its height. Rows in the window offer Copy and Copy turn link only: a
+Codex message id is its position in the view that parsed it — the route prefixes the window's ids
+with their turn so they stay unique within it — so Reply, Edit and Fork, which send an id back,
+stay in the live list.
+
+**The landing pin** (`use-scroll-anchor-pin.ts`): a jump puts the turn 16 px below the top and holds
+it there while images decode, code highlights or cards arrive above it — the chat's scrollers set
+`overflow-anchor: none`, so nothing else would. A ResizeObserver on the content re-measures after
+every layout change, before paint. The pin lets go only on the reader's own input (wheel, touch, a
+scroll key, a press on the scrollbar, or a scroll position it did not write); a hidden tab and the
+offsets `reparenting-tab.tsx` restores when a tab moves panel are ignored for a frame.
+
+**The reading anchor** (the history window only, `{ readingAnchor: true }`): once the reader has
+let go of a landing, the same pin remembers the row at the top on every scroll (once per frame) and
+puts it back in its ResizeObserver callback, so an image in an older page decoding above the reader
+no longer pushes that row down. The live list does not use it: its bottom follower owns the position.
+
+`tests/e2e/session-turn-refs-e2e.mjs` measures the landing (16 ± 2 px for 3 s while images arrive
+late), the offset change per window load (with no image delay, and no scroll step while a page is
+in flight), late images above an unpinned reader (4c), a panel split while pinned, and the phone's
+long press, `touchcancel` and pill.
+
+## Chat footer
+
+Under the conversation, after the bars that only appear when something needs the person (why the
+last turn stopped, MCP sign-in): **one context row, then the composer**, with no horizontal rules
+between them. The row's left holds what describes this chat — the activity chip (agents and linked
+sessions, below), the changes chip, and the connection chip, which says nothing while connected,
+"Reconnecting…" after the grace period and "Connection lost · Retry" once it drags on (the
+composer's placeholder then reads "Will send when reconnected..."). Its right is one chip-shaped
+group with the left chips' background, border and height, so it stays anchored when the left is
+empty: a labelled ring per usage window ("5h 47%", "Wk 52%", each coloured on its own from 70%; a
+window with no figure for this chat's account is not drawn), a divider that belongs to the usage
+part and goes whenever it does, History, and the ··· menu: the serving account and its meters, Switch account (a drill-in listing this provider's
+accounts as two-line cards, current first then most headroom, the unusable ones folded under "Out
+of usage" from five accounts on, with search), AI settings, Team activity, Reload messages with
+the connection's state, and a folded More (mark unread, debug info, this chat's logs). Every
+usage bar says when it resets, at two levels of detail (`account-usage-format.ts`): the quick
+views — the menu's meters and the rings' tooltip — give the countdown alone ("in 3h 12m"), and
+Switch account's cards add the clock time under each bar ("Resets in 2d 8h · Thu 09:00", "today
+18:00" later the same day), in red once the bar is full; a full account's refusal then names
+only the window ("5-hour limit reached").
+
+The composer is the textarea over one bar: Attach, the mode in one word, the model chip carrying
+the provider's logo (the provider is picked inside it before a session exists), Queue while a
+turn runs, then — only once the prompt cache has gone cold — a red clock, the mic and Send/Stop.
+The model chip is the one control that shrinks; a long name ends in an ellipsis. Typing `/` or
+`@` opens a popover floating 6px above the composer, as wide as it and over the context row:
+`/` rows carry a tile tinted by kind, the match marked, a one-line description and a scope tag,
+under All / Skills / Commands / Agents filters; `@` rows a bold name with its directory
+start-ellipsised. Key hints show only where there is a keyboard. Below a 420px
+chat (`@max-[420px]/chat`) or `md` the labels drop and the counts and icons stay, the usage rings
+drop but their "5h"/"Wk" labels stay, the usage part gives its room to a connection problem, the
+composer bar tightens and the model chip loses its chevron so its name is not cut, and every popover becomes a bottom sheet with 44px
+targets. Popovers rise in over 160ms and leave in 100ms, Switch account slides, More unfolds by
+grid rows, meters and the ring animate their value, chips press to 0.97 — all of it off under
+`prefers-reduced-motion`. Checked end to end by `tests/e2e/chat-footer-e2e.mjs`.
+
+## Session collaboration UI
+
+The browser half of [session collaboration](ai-chat-and-providers.md#session-collaboration).
+
+**The incoming bubble** (`from-session-bubble.tsx`). A message another session's AI sent is drawn
+apart from the user's own: on the left, in the `info` colours, headed "From: <title> · <provider>".
+The header is a button (44 px on touch) that opens the sender at the turn the message was sent from
+(`openTurnRef`; the session alone when no turn is known; another project through
+`openSessionAnywhere`). The body is markdown with raw HTML off, the turn-ref chips sit under the
+header, and the actions are Copy and Copy turn link only — there is nothing of the user's to edit
+or fork. `UserBubble` parses once and routes a message with `fromSession` here; no request.
+
+**Tool cards** (`session-collab-tool-card.tsx`, parser `lib/session-collab-tool-call.ts`, for both
+providers' tool names). They show which session was created or messaged with an Open session
+button, "waiting for reply…" while a wait runs, the reply (two lines, expandable, with "Open the
+turn that replied") or why none came, and `session_status`'s list, each row tappable. A result
+that is not the server's JSON is shown as raw text. A call whose turn ended with no result is
+*stopped*, never a green check: Stop aborts the turn and the CLI never streams the tool's answer
+(the server's `cancelled` outcome included), so a wait reads "Wait cancelled" and any other call
+"The turn ended before this tool answered" (`sessionCollabCardState`).
+
+**The activity chip** (`activity-chip.tsx`, first in the chat footer's context row). The agents
+this chat launched and the sessions linked to it share one chip — "● [bot] 2 agents │ [link] 3
+linked", a part that is zero left out, no chip with neither — and one popover with two tabs. One
+dot speaks for both: pulsing green while an agent or a linked session runs, red while a linked
+session waits on the person (the chip's border turns red too), blue while one has an answer not yet
+read, grey once all is idle. The popover
+opens on the tab that needs attention: Sessions when one waits on the person, else Agents while
+one runs, else Sessions; the Agents tab exists only while an agent runs. Agents
+(`use-running-agents.ts`, disk-derived from the transcript hub's `agent-activity` feed plus the
+team poll) lists the running agents, then the finished ones launched beside them; a tap opens that
+agent's own session. Sessions (`linked-sessions-panel.tsx`) groups the linked sessions by how they
+are linked (its creator, the sessions it created, the sessions it messaged), each group ordered
+by `byAttention` (`src/web/lib/linked-sessions.ts`): waiting on the person, then running, then an
+unread answer, then idle. `use-linked-sessions.ts` seeds
+the links from `GET …/sessions/:id/links` when the chat opens (so a link from before a restart, or
+older than the loaded messages, is there at once), then merges the session list's `spawnedBy`, the
+chat's own messages and `/ws/global`'s `session:created`, `session:link_changed` and
+`session:collab_approval` (`session-collab-store.ts`). The list is a popover on a desktop and a
+bottom sheet on a phone. "Stop all child sessions" sits at its foot only while a direct child runs,
+and asks inline before it stops anything.
+
+**Unlinking** hides a session from one chat's list and does nothing else — it never stops or
+deletes it. Every row ends in an unlink button (always visible, 44px on touch); a session still
+running or waiting on the person cannot be unlinked, and its button says why. "Unlink idle & done
+(n)" hides every finished one at once. After any unlink an Undo bar stays for six seconds, and the
+hidden sessions wait folded under "Unlinked (n)" at the bottom, each with Relink. The record is the
+synced UI pref `unlinkedSessions` — chat id → linked id → when it was hidden, capped and validated
+by `src/shared/linked-session-unlinks.ts` on both sides — because which sessions a chat still
+cares about is not a device's choice. A hidden session is shown again (`splitUnlinked`) when it
+messages the chat after it was hidden, or while it runs or waits on the person, so a reply or a
+request is never missed behind an unlink. "After it was hidden" is measured on the server's clock:
+an unlink records the time of the last message that session had sent here (0 when none), never the
+device's clock, so a device whose clock is off cannot hide a later reply or undo an unlink.
+
+**The list badge** (`spawned-session-badge.tsx`, in the sidebar's history, the drawer and the chat
+history bar). A mouse gets "Created by <parent>" on hover and opens the parent on click; a touch
+screen opens a sheet with that line and an Open button in the thumb zone. The hit area reaches
+44 px on touch. `session:created` carries the creator's title and provider (`parentTitle`,
+`parentProviderId`), so a child created while the list is open names a creator the list never
+loaded (an older session, past the first page) without a reload.
+
+**The card** (`collab-approval-card.tsx`), in the approval slot and over the history window: an AI
+asking to create a session (title, provider/model, depth and the whole task), two sessions at their
+message limit (*Allow N more*), or a message to a session with more rights (both modes named, the
+whole message, and a note that *Allow for this session* lasts until PPM restarts). The task or
+message is shown whole, line breaks kept, in a scrolling box with its length, because a preview
+cut short could hide what is being approved. Answers go over HTTP; the card leaves when
+`approval_resolved` reaches every device. On a phone any card in the live list's approval slot
+(this one, `db_execute`'s, a plain Allow/Deny) is pinned to the foot of the transcript, below
+"thinking…", however short the chat: `message-list.tsx` stretches the scrolled content to the
+scroller's height and pushes the trailing block down, only while a card waits. The collab card
+stacks its answers bottom-up there, the main answer nearest the thumb and Deny furthest.
+
+**Settings → Tools → Session collaboration** holds the three switches, "Ask before creating
+sessions" and the four limits, each number clamped to the server's range before it is saved
+(`session-collab-settings-controls.tsx`).
+
+`tests/e2e/session-collab-e2e.mjs` drives all of it in Chromium, desktop and phone.
 
 ## File Service & Filtering (Lazy-Load Tree, Palette Index)
 
@@ -271,7 +518,7 @@ A **Design tab** puts a design chat beside a live, sandboxed canvas of what the 
 - **Declared apps** (`design-systems.service.ts`, `design-systems-paths.ts`, REST `/api/project/:name/designs/systems`, mounted before `/:slug` since `systems` is a reserved slug): a monorepo or a container folder (Nxsys's `payroll-fe`, `umbrella-fe`…) can have more than one UI app, each with its own design system. An app is `designs/systems/<id>/system.json` (`label`, `root` relative to the project, `platform: "web" | "mobile"`, server-recorded `builtFrom`); its `DESIGN.md`/`tokens.css`/`kit/` live in that same folder — except `default`, whose files stay at the legacy `designs/` root and are never moved. Settings → Design's "Apps in this project" (`design-apps-settings-section.tsx`) declares, edits and removes them (no auto-detection); a design's `design.json` carries `system: "<id>"` (absent = `default`).
 - **Showcase and automatic setup.** Each app has a showcase design at the fixed slug `system-<id>` (manifest `showcaseFor`), listed in the sidebar's own "Design systems" group (`design-systems-sidebar-group.tsx`) instead of the ordinary Designs list. Most users do not know what a design system is, so nothing asks them: the first design turn of any kind for an app whose `DESIGN.md` does not exist yet carries an extra instructions block (`design-instructions-auto-setup-block.ts`, embedding `buildDesignSystemInitPrompt`'s own text so the two cannot drift) that tells the agent to notify the user in one line, set the system up itself — `designs/systems/<id>/` and the showcase's `designs/system-<id>/index.html` are explicitly writable for that one turn, the only exception to "Where to work" — then build what was actually asked for. `chatService.resolveDesignOptions` gets the showcase design's own folder and manifest ready first (`ensureShowcaseDesign`), so the agent only ever has to write its `index.html`. The canvas More menu's "Set up design system" still gets or creates that showcase and auto-sends the brief as an ordinary chat message, for a manual re-run (the stale "Refresh" flow); a tab that has not mounted its composer yet is retried for up to 2 s before falling back to a plain prefill. `builtFrom` (`git rev-parse HEAD` of the app's root) is recorded server-side, via the same debounced hook as the turn snapshot (`design-turn-snapshot.ts` → `recordBuiltFromAfterDesignTurn`): unconditionally after a showcase session's turn (what the manual re-run relies on to clear "may be outdated"), or, for an ordinary design, only the one turn that leaves `DESIGN.md` in place while `builtFrom` was still absent — never on a later, unrelated edit.
 - **Stale reminder** (`design-systems-stale.ts`, cached per (root, HEAD)): comparing `builtFrom.commit..HEAD` restricted to the app root, a theme/style-config file changed (`tailwind.config.*`, `postcss.config.*`, anything named or pathed like theme/tokens/variables, a `styles/`/`theme/` `.scss`/`.less` partial) or at least 20 changed UI files makes it stale ("may be outdated (N UI files changed)"); no repo, no `builtFrom`, or a timed-out `git diff` is "unknown", shown as "built <date>", never as stale.
-- `designs/<slug>/.design/` is the canvas's own data and is never part of the design: its `.gitignore` is `*`, the file watcher skips it (`file-watcher/ignore-rules.ts`), the preview route never serves it. `history/<id>/{meta.json,files/}` holds snapshots (`turn`, `pre-restore`, `before-edit`, `manual`; 100 protected + 30 `before-edit` kept, tree-hash dedupe, a design over 50 MB or 5000 files is skipped), `comments.json` the pinned comments. Because nothing there is watched, History and Comments refresh on `design:history_changed` / `design:comments_changed` from `/ws/global` (`design-events.ts`).
+- `designs/<slug>/.design/` is the canvas's own data and is never part of the design: its `.gitignore` is `*`, the file watcher skips it (`file-watcher/ignore-rules.ts`), the preview route never serves it. `history/<id>/{meta.json,files/}` holds snapshots (`turn`, `pre-restore`, `before-edit`, `manual`; 100 protected + 30 `before-edit` kept, plus every snapshot a share link pins, which no prune removes; tree-hash dedupe, a design over 50 MB or 5000 files is skipped), `comments.json` the pinned comments and their reply threads, each entry carrying its author (the owner, or a reviewer of one share link). Because nothing there is watched, History and Comments refresh on `design:history_changed` / `design:comments_changed` from `/ws/global` (`design-events.ts`).
 - Restore snapshots the current state first and swaps through a journal (`design-restore-journal.ts`), so a crash mid-restore is finished from the staged copy on the next access rather than leaving half a design.
 - Every tree operation goes through `design-safe-walk.ts` (no symlinks, no FIFOs, no credential paths, depth and size caps).
 
@@ -293,7 +540,7 @@ A **Design tab** puts a design chat beside a live, sandboxed canvas of what the 
 - Every `ready` is a new document: a live reload, a token rotation, or the tab pool reparenting the iframe (which reloads it with the same URL). Features register `onReplay` to put their state back (scroll, picker, pins, Move target).
 
 **Write-backs:**
-- *Comments.* An anchor is `ppmId` + tag + text quote with prefix/suffix + a CSS path. It is re-resolved on every `ready` (same tag only, 0.55 similarity threshold, orphaned rather than guessed) and re-checked against the source by the server. The element context in a prompt is a snippet the server slices from the source (`design-comment-element-context.ts`), fenced as untrusted (`design-comments-prompt.ts`). "Send to AI" shows the whole message first and only fills the design chat's composer.
+- *Comments.* An anchor is `ppmId` + tag + text quote with prefix/suffix + a CSS path. It is re-resolved on every `ready` (same tag only, 0.55 similarity threshold, orphaned rather than guessed) and re-checked against the source by the server. The element context in a prompt is a snippet the server slices from the source (`design-comment-element-context.ts`), fenced as untrusted (`design-comments-prompt.ts`). "Send to AI" shows the whole message first and only fills the design chat's composer. A comment is a thread: anyone who can see it replies, the panel opens a thread in its own place (side panel, or the phone's sheet), and reviewer threads read "<name> · via <link label>" (see Share links).
 - *Tweaks.* `design.json` declares controls bound to CSS custom properties. Moving one restyles the frame live; Apply patches the last winning declaration in the design's own `:root` or appends a `:root` block (`source/tweak-patch-plan.ts`). A value set last in `../tokens.css` or `../systems/<id>/**` (both read-only), inside an at-rule or behind `!important` is refused, and values pass an allowlist, not a denylist.
 - *Move and resize.* The frame's `transform-commit` is a proposal. The parent writes it only with Move on, the chat idle, its own target, the current `ready` gen and `navigator.userActivation.isActive` (`src/web/lib/design/design-transform-proposal.ts`). The server re-checks the gen (409 `stale`) and the tag at the offset (409 `element-moved`), rate-limits (1 per 500 ms, 30 per minute), snapshots `before-edit` and writes only `translate`/`width`/`height` px into that element's `style` attribute.
 - *Undo* reverses the exact spans a canvas write replaced, with 32 characters of context on each side, so later AI edits elsewhere survive. The journal is in memory (50 writes per design, lost on restart); `cannot-undo` points to History (`design-edit-undo-journal.ts`).
@@ -315,6 +562,24 @@ A **Design tab** puts a design chat beside a live, sandboxed canvas of what the 
 - *`design_check` tool.* `/api/design-mcp` is a minimal MCP Streamable HTTP endpoint (JSON responses only) mounted before auth and authorized by a per-session capability token (`design/mcp/`, in memory, stored by SHA-256, bound to session + project + slug, revoked with the session). `chatService` adds it to a design session's options with a URL on the port the server actually bound (`server-listen-address.ts`). Claude gets it as an `http` MCP server with the token in `Authorization` and the tool pre-approved; Codex gets a `mcp_servers.ppm_design` config override on `thread/start`/`thread/resume` with `bearer_token_env_var`, so the token lives only in that app-server's environment. A call emits `design:check_request` on `/ws/global`; the first open canvas POSTs `/designs/:slug/check/:requestId` (authenticated, 768 KB cap) and the tool returns the text plus a JPEG screenshot (≤ 1280 px, ≤ 400 KB) drawn in the frame by `modern-screenshot`, whose source the parent sends in the lazy chunk it lives in. No canvas open means an error after 20 s.
 - *After each turn* (`use-design-auto-check.ts`): when the canvas reloaded during the turn or within 8 s of its end, it is measured once quiet for 700 ms; findings go into the issues badge and, at most twice per user message, back to the agent as a `[Canvas check]` message — sent only into an empty, idle composer, otherwise added as a chip.
 - Real-browser check of the grid rule and the screenshot: `node tests/e2e/design-canvas-check-e2e.mjs` (no PPM server; needs Playwright and Chrome).
+
+**Share links** let someone outside PPM look at a fixed version of a design and comment on it, without a PPM account (`src/services/design/share/`; owner REST `/api/project/:name/designs/:slug/shares` in `design-shares.ts` and `GET /api/design-shares/address`; the reviewer surface `/s/<code>` in `src/server/routes/design-share-guest*.ts`; owner UI `src/web/components/design/share/`; reviewer page `src/web/design-share-page/`).
+- *What the owner does.* The toolbar's Share (the More sheet on a phone) opens a dialog: up to 20 labelled links per design, each pinning a version (a snapshot taken now, or one from History) with an expiry of 1, 7 (the default) or 30 days, never, or the end of a chosen day up to a year ahead. A link can be copied again at any time, opened as a reviewer, renamed, given a new expiry, moved to the latest version ("Update to latest" lists the files that changed before Confirm, `design-share-changed-files.ts`), given a new code, revoked (final) or deleted, each of the last two optionally with that link's comments. A change writes only the fields it names, against the row as it is after any snapshot (`applyShareLinkChange`), so a revoke or new code from another tab survives an Update to latest still running, and that re-pin is then refused. Deleting a design deletes its links, so a later design reusing the slug inherits none.
+- *Codes are derived, not stored* (`design-share-code.ts`): base64url HMAC-SHA256 of the link id and a code version, keyed by `design-share.key` in the PPM dir. The `design_share_links` table keeps only the code's SHA-256, so a copied `ppm.db` or backup opens nothing while the owner can still copy the link. Deleting the key retires every code at once (links read "Needs new code"); New code bumps the version.
+- *What a reviewer can load.* `/s/<code>/f/<slug>/…` is read from the pinned snapshot only (`resolveSnapshotScopedPath`), never the live design and never another design. The one exception is an allow-list served live (`preview/design-guest-alias.ts`): `tokens.css`, and for the app the snapshot's `design.json` names, `systems/<id>/tokens.css` and `systems/<id>/kit/**`. It is deliberately not the canvas's `systems/<id>/**` alias, which for the `default` app is `designs/` itself. HTML gets the guest bridge (`bridge/guest-bridge.ts`: picker, pins and navigation guard, nothing that proposes a write) under the design CSP rooted at the link's own file root.
+- *Mount.* `/s` is a Hono sub-app mounted after the access log and ahead of `cors()`, `/api` authentication and the static fallback, so no `/s` response carries `Access-Control-Allow-Origin: *` and range bodies survive. A catch-all answers every other `/s` path with the one invalid page (404, the same body whatever the reason), so none reaches the app shell or its service worker. Every response is `no-store`, `no-referrer` and `noindex`, and the access log cuts the code out of the path.
+- *The reviewer page* is a second Vite build (`vite.share.config.ts`, chained in `build:web`; no PWA plugin, assets under `assets/share-*`), served only from `/s/<code>` under its own CSP (own origin only, no workers, no manifest, no framing); the static route refuses its folder. It shares PPM's origin, so it never reads or sends the PPM token and renders reviewer names and text as text only. Phone: variants in a select, threads and the composer in a bottom sheet; desktop: device frames and a side panel.
+- *Threads are per link.* Reviewers on one link see and reply to each other's threads; links never see each other's, and the owner's own canvas comments are never shown. A reviewer is a name plus a random browser key (`X-PPM-Guest-Key`, kept per link in that origin's storage; the server stores its SHA-256). A reviewer edits and deletes only their own entries, and a root with replies can be edited but no longer deleted; resolving, sending to the AI and re-anchoring are the owner's, who can delete any reviewer entry but not rewrite it. Reviewer quotas are separate from the owner's comment cap, so reviewers cannot fill it. Writes also need `X-PPM-Request: 1` and a JSON body (`crossOriginRefusal`).
+- *Refresh is polling, not SSE*: the Cloudflare tunnel does not pass a client's disconnect through to PPM, so a held connection would leak. The page polls every 10 s while visible, at once after its own write and on becoming visible, backing off to 60 s on failure. An unchanged poll is a 304 from an ETag built from a per-design revision counter, the comment file's `stat` and the pinned snapshot, without reading `comments.json`.
+- *Re-pins and revokes reach an open page.* `/info` and every thread list carry `versionId`, the pinned snapshot. A list naming another one shows "This design was updated" with Reload; a new comment names the version it was made on and is refused (409 `version-changed`) when the link now shows another. Every reviewer write checks the link again once it holds the design lock (`assertGuestLinkOpen`), so one queued behind a snapshot is refused, and notifies nobody, if the link was revoked, expired, re-coded or paused meanwhile.
+- *Sign-in off pauses sharing.* With PPM sign-in off no code opens anything and no link can be created; the dialog says "Turn on PPM sign-in first" with a link to Settings → General and lists the links as "Paused: sign-in is off". They open again once sign-in is back on.
+- *The address* (`design-share-address.ts`; cached 5 s for reviewer requests, read fresh for the owner's dialog) is the review address below whenever that is switched on, connected or not: falling back to PPM's own tunnel would hand reviewers an address that reaches all of PPM, so while it reconnects a stable hostname is kept with a warning and a quick one has none, and when no supervisor will ever act on the switch (none, or one from before `reshare`) the warning says to restart instead. Otherwise it is the named tunnel's stable host when on, else the quick tunnel's, with a warning that it changes; under a supervisor it is read from `status.json` directly, because `tunnelService.getTunnelUrl()` keeps a URL that is gone. The dialog says when the address opens PPM itself. With no public address, Copy gives `location.origin`, which opens only where this PPM is reachable.
+- *The dialog's Review-only address card* (`review-address-card.tsx`) switches the review address on and off and sets a domain up in place, so the option is found where links are made — including when PPM's own public link already gives them an address. It is Settings → Remote Access → Review links in small: the same status polling (`use-share-host-status.ts`) and the same Cloudflare sign-in and hostname steps (`review-address-setup.tsx`), with "which tunnel" asked only when PPM's own link is on a domain. Turning it on goes through the address block's start, so the block shows it coming up.
+- *The review address* (`src/services/share-host/`) lets links open while PPM itself stays private. A separate process the supervisor runs (`ppm __share_host__`, `share-host-worker.ts`) listens on loopback and forwards only `/s`, `/s/*` and `/assets/share-*` to the server, answering everything else itself with a 404 (`share-host-gateway.ts`), so no editor, `/api`, sign-in or WebSocket answers there whatever token is sent. It drops `Authorization` and `Cookie`, keeps `Host` and `CF-Connecting-IP`, caps bodies at 64 KB, and exits once its supervisor is gone. A connector of its own publishes it (`share-host-connector.ts`, `cloudflared-share.log`): a temporary trycloudflare address, the user's domain on a tunnel of its own (`ppm-share-<host>`), or the user's domain as a second hostname on PPM's named tunnel. In that last mode exactly one connector uses the tunnel, because Cloudflare spreads a hostname's requests over every connector of a tunnel: PPM's own while its public link is on (share hostname → worker, PPM's hostname → PPM, then 404), the share host's while it is off (share hostname → worker, then 404). Once a review hostname has been set up, PPM's named connector routes by hostname even when it carries no review route (switched off, worker down, moved to another tunnel): that DNS record still points at PPM's tunnel, and `--url` would answer it with PPM. The choice is the `share_host` config row (its run token a secret key), set up in Settings → Remote Access → Review links through `/api/share-host/*` (`share-host-setup.service.ts`, sign-in required); the server tells the supervisor with `reshare`, and a supervisor that predates it is reported as needing `ppm restart`. Run state is in `status.json` (`shareHostPid`, `shareHostPort`, `shareHostUrl`, `shareHostTunnelPid`, `shareHostWarning`).
+- *Rate limits* (`design-share-rate-limit.ts`) are separate budgets, so polls cannot starve asset loads: files 1200 a minute and page/info/comment reads 120 a minute per client; writes 500 ms apart and 20 a minute per reviewer; 30 writes a minute per link, whoever sends them. The client is the peer address, and `CF-Connecting-IP` is believed only from a loopback peer whose `Host` is a hostname a connector on this machine forwards — PPM's tunnel's or the review address's (`design-share-client-key.ts`). Behind the supervisor every LAN and Tailscale reviewer arrives from loopback and shares one bucket; the budgets are sized for about ten such reviewers. A LAN client can forge both headers and choose its key, which buys nothing against the per-link cap.
+- *Reviewer text and the AI.* A reviewer thread reaches the design chat only through the owner's Send to AI, with tags neutralised, fences neutralised, inside a `text` fence under a reviewer-specific untrusted header (`design-comments-prompt.ts`, `src/shared/untrusted-text.ts`); names and link labels are reduced to one quoted line. Nothing else a reviewer chose is printed: no selector for a reviewer's root, and its tag only when the server matched it in the source; any selector at all must have the exact shape the bridge's `cssPathOf` builds (`CSS_PATH_RE`). Residual risk, accepted: the model still reads the text, and in a design session file reads and writes are approved across the project, so a persuasive comment could talk the agent into copying project files into the design, which a later Update to latest would publish. What limits it is the header, the `.design/` ban in the instructions, the owner reading the whole message and sending it themselves, and the changed-files list before a re-pin. Also accepted: a design's own HTML can override the referrer policy toward the CDNs the design CSP allows and so leak the code; that HTML is the owner's.
+- *Notifications.* A reviewer's new comment or reply (not an edit or delete) raises the `design_review` event, "Reviewer comments" in Settings → Notifications, coalesced per link and sent at most once a minute (`design-share-notifier.ts`); its click opens the design, never a `/s/` tab.
+- e2e: `PPM_PLAYWRIGHT_MODULE=<playwright>/index.mjs node tests/e2e/design-share-e2e.mjs` (owner on a desktop, one reviewer on a phone and one on a desktop, sign-in off, revoke, a server restart); owner-side threads and the fenced prompt: `tests/e2e/design-comment-threads-e2e.mjs`.
 
 End to end: `tests/e2e/design-mode-e2e.mjs` (1366 px and 390 px, isolated server, scripted providers; `PPM_DESIGN_E2E_ONLY=variants` runs the named steps only), including declaring an app, the New Design dialog's app picker (no setup step in it any more), a design's own first turn auto-setting its app's system up and building on it in the same turn, its showcase and stale reminder (`fixtures/design-mode-steps-systems.mjs`); Settings → Design itself is `tests/e2e/design-settings-e2e.mjs`.
 

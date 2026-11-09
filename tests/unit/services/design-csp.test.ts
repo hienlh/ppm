@@ -3,6 +3,7 @@ import { buildDesignCsp } from "../../../src/services/design/preview/design-csp.
 import { DESIGN_CDN_HOSTS } from "../../../src/shared/design-cdn-hosts.ts";
 
 const SOURCE = "localhost:8080/api/design-preview/content/tok/";
+const OWN = [`https://${SOURCE}`, `http://${SOURCE}`];
 const directives = (policy: string): Map<string, string[]> =>
   new Map(policy.split(";").map((d) => d.trim().split(/\s+/)).map(([name, ...values]) => [name!, values]));
 
@@ -15,12 +16,12 @@ describe("design canvas CSP", () => {
     expect(policy).toBe([
       "sandbox allow-scripts",
       "default-src 'none'",
-      `script-src 'unsafe-inline' 'unsafe-eval' ${SOURCE} ${cdns.join(" ")}`,
-      `style-src 'unsafe-inline' ${SOURCE} ${cdns.join(" ")}`,
-      `font-src ${SOURCE} data: ${cdns.join(" ")}`,
-      `img-src ${SOURCE} data: blob: ${cdns.join(" ")}`,
-      `media-src ${SOURCE} blob:`,
-      `connect-src ${SOURCE}`,
+      `script-src 'unsafe-inline' 'unsafe-eval' ${OWN.join(" ")} ${cdns.join(" ")}`,
+      `style-src 'unsafe-inline' ${OWN.join(" ")} ${cdns.join(" ")}`,
+      `font-src ${OWN.join(" ")} data: ${cdns.join(" ")}`,
+      `img-src ${OWN.join(" ")} data: blob: ${cdns.join(" ")}`,
+      `media-src ${OWN.join(" ")} blob:`,
+      `connect-src ${OWN.join(" ")}`,
       "base-uri 'none'",
       "form-action 'none'",
       "frame-ancestors 'self'",
@@ -29,8 +30,15 @@ describe("design canvas CSP", () => {
   });
 
   it("limits connect-src to the design's own source, with no wildcard anywhere", () => {
-    expect(d.get("connect-src")).toEqual([SOURCE]);
+    expect(d.get("connect-src")).toEqual(OWN);
     for (const values of d.values()) for (const v of values) expect(v.includes("*")).toBe(false);
+  });
+
+  it("names every host with its scheme, since WebKit matches a scheme-less one against nothing in a sandboxed frame", () => {
+    for (const [name, values] of d) {
+      if (name === "sandbox") continue;
+      for (const v of values) expect(v).toMatch(/^(?:'[a-z-]+'|[a-z]+:$|https?:\/\/)/);
+    }
   });
 
   it("allows the five CDN hosts over https for scripts, styles, fonts and images only", () => {

@@ -1,15 +1,18 @@
 /**
- * The repository a git surface should talk to, and the two ways to address it.
+ * The repository a git surface should talk to, and the ways to address it.
  *
- * `gitUrl` builds a project-scoped git URL carrying the `repo=` scope, and
- * `repoPath` rebases a project-relative file path onto that repository. Between
- * them they cover both shapes of git route: the repo-scoped ones (status, log,
- * graph, worktrees) and the file-scoped ones (blame, hunks, file diff).
+ * `gitUrl` builds a project-scoped git URL carrying the `repo=` scope of the
+ * repository the panels are pointed at (status, log, graph, worktrees, and the
+ * hunks and staging that act on what those panels list).
+ *
+ * A call about one file — blame, a file's diff, a blob — goes through
+ * `fileScope` and `fileGitUrl` instead: a file has exactly one repository,
+ * whatever Source Control is pointed at.
  *
  * For a project that *is* a repository — nearly all of them — every URL this
- * returns is byte-identical to what the call site built before, and
- * `repoPath` is the identity. That is deliberate: the container-folder case
- * must not be able to regress the ordinary one.
+ * returns is byte-identical to what the call site built before, and every file
+ * path is unchanged. That is deliberate: the container-folder case must not be
+ * able to regress the ordinary one.
  */
 import { useCallback, useEffect, useMemo } from "react";
 import { projectUrl } from "@/lib/api-client";
@@ -19,9 +22,10 @@ import {
   needsPick,
   projectRelativePath,
   rebaseStatusPaths,
-  repoRelativePath,
+  fileGitScope,
   resolveRepo,
   withRepoParam,
+  type FileGitScope,
   type GitRepoCandidate,
   type StatusPaths,
 } from "@/lib/git-repo-scope";
@@ -39,8 +43,17 @@ export interface UseGitRepo {
   noRepo: boolean;
   /** `gitUrl("/status")`, `gitUrl("/graph?max=50")` — scope included. */
   gitUrl: (suffix: string) => string;
-  /** Project-relative → repository-relative; null when outside the repository. */
-  repoPath: (projectRelative: string) => string | null;
+  /**
+   * Where a call about this one file goes, regardless of the choice. `undefined`
+   * while discovery is pending, `null` when no repository holds the file.
+   */
+  fileScope: (projectRelative: string) => FileGitScope | null | undefined;
+  /**
+   * A git URL scoped to a `fileScope` answer's `repo` (`null`: no `repo=`). Its
+   * identity follows the project only, so an effect depending on it does not
+   * re-run when the choice changes.
+   */
+  fileGitUrl: (suffix: string, repo: GitRepoCandidate | null) => string;
   /** Repository-relative → project-relative, for paths git reported. */
   projectFile: (repoRelative: string) => string;
   /** A status answer with its paths in the project's terms, for the file tree. */
@@ -66,9 +79,15 @@ export function useGitRepo(projectName: string | undefined): UseGitRepo {
     [projectName, repo],
   );
 
-  const repoPath = useCallback(
-    (projectRelative: string) => repoRelativePath(projectRelative, repo),
-    [repo],
+  const fileScope = useCallback(
+    (projectRelative: string) => fileGitScope(discovery, projectRelative),
+    [discovery],
+  );
+
+  const fileGitUrl = useCallback(
+    (suffix: string, repo: GitRepoCandidate | null) =>
+      withRepoParam(`${projectUrl(projectName ?? "")}/git${suffix}`, repo),
+    [projectName],
   );
 
   const projectFile = useCallback(
@@ -113,12 +132,13 @@ export function useGitRepo(projectName: string | undefined): UseGitRepo {
       needsPick: needsPick(discovery, chosen),
       noRepo: hasNoRepo(discovery),
       gitUrl,
-      repoPath,
+      fileScope,
+      fileGitUrl,
       projectFile,
       rebaseStatus,
       choose,
       reload,
     }),
-    [repo, discovery, chosen, gitUrl, repoPath, projectFile, rebaseStatus, choose, reload],
+    [repo, discovery, chosen, gitUrl, fileScope, fileGitUrl, projectFile, rebaseStatus, choose, reload],
   );
 }

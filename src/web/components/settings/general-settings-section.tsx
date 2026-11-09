@@ -19,6 +19,7 @@ import { ChangePasswordSection } from "./change-password-section";
 import { OnboardingEntry } from "@/components/onboarding/onboarding-entry";
 
 export function GeneralSettingsSection() {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const { deviceName, setDeviceName, version, keepScreenAwake, setKeepScreenAwake } = useSettingsStore(
     useShallow((s) => ({
       deviceName: s.deviceName,
@@ -52,12 +53,12 @@ export function GeneralSettingsSection() {
 
   return (
     <div className="space-y-6">
-      <section className="space-y-2">
+      {!minimalMode && <><section className="space-y-2">
         <h3 className="text-sm font-medium">Learn PPM</h3>
         <p className="text-sm text-muted-foreground">Choose your experience and a task. Guidance is saved in this browser.</p>
         <OnboardingEntry compact />
       </section>
-      <Separator />
+      <Separator /></>}
       <section className="space-y-2">
         <Label htmlFor="device-name">Device Name</Label>
         <div className="flex gap-2">

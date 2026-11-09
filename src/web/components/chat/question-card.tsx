@@ -1,15 +1,18 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import type { AnswersById, NormalizedQuestion } from "../../../shared/approval-questions";
+import type { AnswersById, NormalizedQuestion, QuestionOption } from "../../../shared/approval-questions";
+import { QuestionOptionPreview, hasOptionPreviews, previewOptionIndex } from "./question-option-preview";
 
 /* ── Types ── */
 // One shape for Claude's and Codex's questions; the answer goes back by question id and the
-// server turns it into what the asking provider expects.
+// server turns it into what the asking provider expects. An option may carry a `preview`.
 export type Question = NormalizedQuestion;
+export type { QuestionOption };
 
 interface QuestionCardProps {
   questions: Question[];
   onSubmit: (answersById: AnswersById) => void;
   onSkip: () => void;
+  autoFocus?: boolean;
 }
 
 /* ── Hook: form state ── */
@@ -78,6 +81,7 @@ function useQuestionKeyboard(config: {
   onSubmit: () => void;
   customInputRef: React.RefObject<HTMLInputElement | null>;
   enabled: boolean;
+  autoFocus: boolean;
 }) {
   const [focusedOption, setFocusedOption] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -133,19 +137,25 @@ function useQuestionKeyboard(config: {
     if (el) {
       el.addEventListener("keydown", handleKeyDown);
       el.setAttribute("tabindex", "0");
-      // Same reason: asking the main document whether focus is already inside the card answers
-      // "no" for a card living in another document, and this effect re-runs on every render —
-      // which would yank focus out of the custom input after each keystroke.
-      if (!el.contains(el.ownerDocument.activeElement)) el.focus();
     }
     return () => { el?.removeEventListener("keydown", handleKeyDown); };
   }, [config, focusedOption]);
+
+  // Focus the card once, when it appears. Doing it on every render took focus back whenever the
+  // card re-rendered for any reason, so with two chats side by side each waiting on a question,
+  // the other card's chat updating pulled focus out of the card being answered. The owner
+  // document is asked rather than the global one, for a card rendered in a picture-in-picture window.
+  const autoFocusOnMount = useRef(config.autoFocus);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (autoFocusOnMount.current && el && !el.contains(el.ownerDocument.activeElement)) el.focus();
+  }, []);
 
   return { focusedOption, setFocusedOption, containerRef };
 }
 
 /* ── Component ── */
-export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps) {
+export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: QuestionCardProps) {
   const customInputRef = useRef<HTMLInputElement>(null);
   const form = useQuestionForm(questions);
   const currentQ = questions[form.activeTab];
@@ -154,6 +164,7 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
   const hasCustom = !!currentQ?.allowsFreeText;
   const totalOptions = optionCount + (hasCustom ? 1 : 0);
   const hasMultiple = questions.length > 1;
+  const hasPreview = !!currentQ && hasOptionPreviews(currentQ.options);
 
   const handleSubmit = useCallback(() => {
     if (!form.allAnswered) return;
@@ -182,7 +193,7 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
     allAnswered: form.allAnswered, hasAnswer: form.hasAnswer,
     onSelectOption: handleSelectOption,
     goToNextTab: form.goToNextTab, goToPrevTab: form.goToPrevTab,
-    onSubmit: handleSubmit, customInputRef, enabled: true,
+    onSubmit: handleSubmit, customInputRef, enabled: true, autoFocus,
   });
 
   const selectWithFocus = useCallback(
@@ -247,8 +258,11 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
           <div className="text-sm text-text-primary select-text">{currentQ.question}</div>
           {currentQ.multiSelect && <div className="text-[11px] text-text-secondary">Select multiple</div>}
 
-          {/* Options */}
-          <div className="flex flex-col gap-1.5">
+          {/* Options, with the preview pane beside them on a wide card and below them on a narrow one.
+              Sized on the card's own width, not the viewport: a chat in a split pane is narrow on a desktop. */}
+          <div className={hasPreview ? "@container" : undefined}>
+          <div className={hasPreview ? "flex flex-col gap-2 @2xl:flex-row @2xl:items-start" : undefined}>
+          <div className={`flex flex-col gap-1.5 ${hasPreview ? "@2xl:w-2/5 @2xl:shrink-0" : ""}`}>
             {currentQ.options.map((opt, oi) => {
               const isSelected = (form.answers[form.activeTab] || []).includes(opt.label);
               const isFocused = kb.focusedOption === oi;
@@ -299,6 +313,15 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
                 />
               </div>
             )}
+          </div>
+          {hasPreview && (
+            <div className="@2xl:flex-1 @2xl:min-w-0">
+              <QuestionOptionPreview
+                option={currentQ.options[previewOptionIndex(currentQ.options, kb.focusedOption, form.answers[form.activeTab] ?? [])]}
+              />
+            </div>
+          )}
+          </div>
           </div>
         </div>
       )}

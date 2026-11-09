@@ -153,7 +153,7 @@ src/
     │   │   ├── message-list.tsx
     │   │   ├── message-input.tsx
     │   │   ├── provider-selector.tsx
-    │   │   ├── chat-history-bar.tsx # ADDED: Provider badges, provider-aware usage
+    │   │   ├── chat-footer-tools.tsx # Usage ring, History, ··· menu (replaced chat-history-bar)
     │   │   └── ... (6 other chat components)
     │   ├── settings/
     │   │   ├── ai-settings-section.tsx # UPDATED: Per-provider tabs, dynamic model dropdowns
@@ -216,7 +216,7 @@ src/
 │           ├── auth/                # Login screen (88 LOC)
 │           ├── chat/                # Chat UI (13 files)
 │           │   ├── chat-tab.tsx     # Main chat container, session picker, streaming
-│           │   ├── chat-history-bar.tsx # Session history sidebar, inline rename
+│           │   ├── chat-history-panel.tsx # History popover, inline rename
 │           │   ├── chat-history-panel.tsx # Full session list modal
 │           │   ├── message-list.tsx # Scrolling message view with tool results
 │           │   ├── chat-scroll-nav.tsx # Collapsed puck to jump between your messages
@@ -225,7 +225,7 @@ src/
 │           │   ├── file-picker.tsx  # Filterable file tree picker
 │           │   ├── slash-command-picker.tsx # Command palette for / prefix
 │           │   ├── tool-cards.tsx   # Render SDK tool results/approvals
-│           │   ├── usage-badge.tsx  # Token usage display
+│           │   ├── usage-meters.tsx # Usage ring and meters
 │           │   ├── attachment-chips.tsx # Display attached files
 │           │   └── chat-placeholder.tsx # Empty state
 │           ├── editor/              # Code editor (900+ LOC, 7 files)
@@ -300,7 +300,7 @@ src/
 │   ├── unit/
 │   │   ├── providers/               # Mock provider, SDK tests
 │   │   ├── jira-watcher-poll.test.ts # ADDED: Jira watcher polling, rate limit backoff
-│   │   └── services/                # Chat, config, db, session-log, push-notification tests
+│   │   └── services/                # Chat, config, db, push-notification tests
 │   └── integration/
 │       ├── claude-agent-sdk-integration.test.ts
 │       ├── sqlite-migration.test.ts # SQLite migration validation
@@ -371,7 +371,6 @@ src/
   - **TerminalService** — PTY lifecycle, shell spawning
   - **ClaudeUsageService** — Token tracking, cost calculation
   - **PushNotificationService** — Web push subscriptions
-  - **SessionLogService** — Audit logs with sensitive data redaction
   - **CloudflaredService** — Download/cache cloudflared binary (platform-aware)
   - **TunnelService** — Spawn tunnel, extract URL, cleanup on exit
   - **named-tunnel/** (ADDED) — Named-tunnel (stable custom-domain) setup + runtime, orchestrated from

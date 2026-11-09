@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronUp, ChevronDown, ChevronsDown, ChevronsUpDown } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-is-mobile";
@@ -30,10 +30,15 @@ const INITIAL: NavState = { hasAbove: false, atBottom: true, idx: 0, total: 0 };
  * rendered rows by their `data-msg-index`. Scrolling stays `behavior: "auto"` to
  * avoid fighting `use-stick-to-bottom`.
  */
-export function ChatScrollNav({ scrollElement, userIndices, scrollToBottom }: {
+export function ChatScrollNav({ scrollElement, userIndices, scrollToBottom, hideOnPhone = false }: {
   scrollElement: HTMLDivElement | null;
   userIndices: number[];
   scrollToBottom: (opts?: { animation?: "instant" | "smooth" }) => void | Promise<boolean> | boolean;
+  /**
+   * Hidden below `md` while a waiting card is pinned to the foot of the transcript: the puck sits
+   * in the same bottom-right corner and covered the right end of the card's answer buttons.
+   */
+  hideOnPhone?: boolean;
 }) {
   const isMobile = useIsMobile();
   const [nav, setNav] = useState<NavState>(INITIAL);
@@ -52,14 +57,18 @@ export function ChatScrollNav({ scrollElement, userIndices, scrollToBottom }: {
   const rowTop = (el: HTMLElement, row: HTMLElement, elTop: number) =>
     row.getBoundingClientRect().top - elTop + el.scrollTop;
 
-  const userRows = useCallback((el: HTMLElement) =>
-    Array.from(el.querySelectorAll<HTMLElement>("[data-msg-index]"))
-      .filter((r) => userIndices.includes(Number(r.dataset.msgIndex))),
-    [userIndices]);
+  const userRows = useCallback((el: HTMLElement) => {
+    const users = new Set(userIndices);
+    return Array.from(el.querySelectorAll<HTMLElement>("[data-msg-index]"))
+      .filter((r) => users.has(Number(r.dataset.msgIndex)));
+  }, [userIndices]);
 
-  useEffect(() => {
+  // Followed only while the cluster is open, since nothing at rest shows it. A streaming answer
+  // scrolls the transcript on every flush, and each scroll measured every user row; a layout
+  // effect so opening shows the real position, not the last one.
+  useLayoutEffect(() => {
     const el = scrollElement;
-    if (!el) return;
+    if (!el || !open) return;
     let raf = 0;
     const recompute = () => {
       const top = el.scrollTop;
@@ -91,7 +100,7 @@ export function ChatScrollNav({ scrollElement, userIndices, scrollToBottom }: {
       el.removeEventListener("scroll", schedule);
       ro.disconnect();
     };
-  }, [scrollElement, userRows]);
+  }, [scrollElement, userRows, open]);
 
   // Auto-collapse. Restarts on every jump so a burst of navigation keeps it open.
   useEffect(() => {
@@ -182,7 +191,7 @@ export function ChatScrollNav({ scrollElement, userIndices, scrollToBottom }: {
   );
 
   return (
-    <div className="absolute bottom-3 right-2.5 z-10 flex flex-col items-end gap-1.5">
+    <div data-chat-scroll-nav="" className={cn("absolute bottom-3 right-2.5 z-10 flex flex-col items-end gap-1.5", hideOnPhone && "max-md:hidden")}>
       {open ? (
         <div
           ref={clusterRef}

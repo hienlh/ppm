@@ -20,6 +20,7 @@ import { hydrateProjectCache, registerProjectHydrator } from "@/lib/browser-cach
 import { registerCacheReset } from "@/lib/browser-cache/wipe-browser-caches";
 import {
   sortSessions,
+  withUnlisted,
   upsertSession as mergeUpsert,
   removeSession as mergeRemove,
   renameSession as mergeRename,
@@ -73,6 +74,27 @@ export function emptyProjectSessionState(): ProjectSessionState {
  * the dedupe check itself never triggers a re-render. */
 const inFlight = new Map<string, Promise<void>>();
 
+/**
+ * Sessions announced as created (`session:created` on `/ws/global`) that the server's list may not
+ * show yet, per project id, each with when it was announced. A sync keeps them in the list until
+ * the server lists them itself or {@link UNLISTED_TTL_MS} has passed — the server lists a session
+ * once its first turn has written a transcript, which takes seconds, so a row older than that
+ * whose session the server still does not know is one it will never list.
+ */
+const unlisted = new Map<string, Map<string, { session: SessionInfo; at: number }>>();
+export const UNLISTED_TTL_MS = 10 * 60_000;
+
+/** The announced rows a sync of `projectId` should keep, after dropping those the server listed or that expired. */
+function keepUnlisted(projectId: string, listed: SessionInfo[]): SessionInfo[] {
+  const held = unlisted.get(projectId);
+  if (!held) return [];
+  const listedIds = new Set(listed.map((s) => s.id));
+  const now = Date.now();
+  for (const [id, entry] of held) if (listedIds.has(id) || now - entry.at > UNLISTED_TTL_MS) held.delete(id);
+  if (held.size === 0) unlisted.delete(projectId);
+  return [...held.values()].map((e) => e.session);
+}
+
 type Tag = { id: number; name: string; color: string };
 
 interface SessionListStore {
@@ -80,6 +102,11 @@ interface SessionListStore {
   ensure: (project: ProjectCacheRef) => Promise<void>;
   sync: (project: ProjectCacheRef) => Promise<void>;
   upsertSession: (project: ProjectCacheRef, session: SessionInfo) => void;
+  /**
+   * A session another session's AI created: listed now, and kept through syncs until the server
+   * lists it too (it has no transcript before its first turn writes one).
+   */
+  addCreatedSession: (project: ProjectCacheRef, session: SessionInfo) => void;
   removeSession: (project: ProjectCacheRef, id: string) => void;
   renameSession: (project: ProjectCacheRef, id: string, title: string) => void;
   replaceSessionId: (project: ProjectCacheRef, oldId: string, newId: string) => void;
@@ -153,7 +180,8 @@ export const useSessionListStore = create<SessionListStore>((set, get) => {
               // Tags are secondary to the session list — keep whatever is cached.
             }
           }
-          const sessions = sortSessions(data.sessions);
+          const listed = sortSessions(data.sessions);
+          const sessions = withUnlisted(listed, keepUnlisted(id, listed));
           patch(project, () => ({
             project, sessions, hasMore: data.hasMore, tags, tagsSeededAt,
             isSyncing: false, lastSyncError: null, lastSyncedAt: Date.now(), hydrated: true,
@@ -173,9 +201,31 @@ export const useSessionListStore = create<SessionListStore>((set, get) => {
     },
 
     upsertSession: (project, session) => patchList(project, (list) => mergeUpsert(list, session)),
-    removeSession: (project, id) => patchList(project, (list) => mergeRemove(list, id)),
-    renameSession: (project, id, title) => patchList(project, (list) => mergeRename(list, id, title)),
-    replaceSessionId: (project, oldId, newId) => patchList(project, (list) => mergeReplaceId(list, oldId, newId)),
+    addCreatedSession: (project, session) => {
+      const id = projectCacheId(project);
+      const held = unlisted.get(id) ?? new Map();
+      held.set(session.id, { session, at: Date.now() });
+      unlisted.set(id, held);
+      patchList(project, (list) => mergeUpsert(list, session));
+    },
+    removeSession: (project, id) => {
+      unlisted.get(projectCacheId(project))?.delete(id);
+      patchList(project, (list) => mergeRemove(list, id));
+    },
+    renameSession: (project, id, title) => {
+      const held = unlisted.get(projectCacheId(project))?.get(id);
+      if (held) held.session = { ...held.session, title };
+      patchList(project, (list) => mergeRename(list, id, title));
+    },
+    replaceSessionId: (project, oldId, newId) => {
+      const held = unlisted.get(projectCacheId(project));
+      const entry = held?.get(oldId);
+      if (held && entry) {
+        held.delete(oldId);
+        held.set(newId, { ...entry, session: { ...entry.session, id: newId } });
+      }
+      patchList(project, (list) => mergeReplaceId(list, oldId, newId));
+    },
     setPinned: (project, id, pinned) => patchList(project, (list) => mergeSetPinned(list, id, pinned)),
     setSessionTag: (project, id, tag) => patchList(project, (list) => mergeSetTag(list, id, tag)),
     removeOlderThan: (project, days) => patchList(project, (list) => mergeRemoveOlderThan(list, days)),
@@ -248,6 +298,7 @@ registerProjectHydrator(async (project) => {
 });
 
 registerCacheReset(() => {
+  unlisted.clear();
   useSessionListStore.setState({ byProject: {} });
 });
 

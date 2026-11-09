@@ -6,17 +6,23 @@
  * which are *not* things the user typed and must not read as if they were, and
  * absolute file paths worth turning into something clickable.
  */
-import { decodeReply, type ReplyReference } from "../../../shared/chat-reply";
+import type { ReplyReference } from "../../../shared/chat-reply";
+import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
 import { ReplyCard } from "./reply-card";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { TurnRefChipRow } from "./turn-ref-chip";
+import { CopyTurnLinkButton } from "./copy-turn-link-button";
+import type { ChatMessage } from "../../../types/chat";
+import { useCallback, useMemo, useState } from "react";
 import {
-  Bot, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileText,
+  Bot, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, FileText,
   Pencil, RotateCcw, Slash, Tag, TerminalSquare, XCircle,
 } from "@/lib/icons";
+import { CollapsibleMessageBody } from "./collapsible-message-body";
 import { cn, basename } from "@/lib/utils";
 import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
-import { parseUserMessage, type SystemTag } from "./user-message-parse";
+import { parseUserMessage, type ParsedUserMessage, type SystemTag } from "../../../shared/user-message-parse";
+import { FromSessionBubble } from "./from-session-bubble";
 import type { VersionGroup } from "../../../types/api";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -28,44 +34,59 @@ import { isAssistantProject } from "../../../shared/assistant-project";
 /** Detect if tags contain system-injected content (not real user input) */
 const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details", "local-command-caveat"]);
 
-/** User message bubble — full width, collapsible, with system tag badges */
-export function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: {
+type UserBubbleProps = {
   content: string;
   messageId?: string;
+  /** False for a user message that is not a prompt the person sent: its turn chips are not drawn. */
+  prompt?: boolean;
+  /** What names this message's turn, for Copy turn link; without it there is no such action. */
+  turn?: Pick<ChatMessage, "turnId" | "clientId" | "sdkUuid">;
   timestamp: string;
   projectName?: string;
   onFork?: () => void;
   onEdit?: () => void;
   onReply?: () => void;
   onJumpToReply?: (reply: ReplyReference) => void;
-  replyAvailable?: (reply: ReplyReference) => boolean;
+  replyAvailable?: boolean;
   isEditing?: boolean;
   sessionId?: string;
   providerId?: string;
   versionGroup?: VersionGroup;
   onNavigateVersion?: (sessionId: string) => void;
   versionNavDisabled?: boolean;
+};
+
+/**
+ * A user message: the person's own bubble, or — when another session's AI sent it — the
+ * from-session bubble, which is drawn apart and offers no Edit, Fork or Reply.
+ */
+export function UserBubble(props: UserBubbleProps) {
+  const parsed = useMemo(() => parseUserMessage(props.content), [props.content]);
+  if (parsed.fromSession) {
+    return (
+      <FromSessionBubble
+        from={parsed.fromSession}
+        text={parsed.text}
+        plainContent={decodeMessageBlocks(props.content).content}
+        turnRefs={parsed.turnRefs}
+        turn={props.turn}
+        timestamp={props.timestamp}
+        projectName={props.projectName}
+        sessionId={props.sessionId}
+        providerId={props.providerId}
+      />
+    );
+  }
+  return <OwnUserBubble {...props} parsed={parsed} />;
+}
+
+/** User message bubble — full width, collapsible, with system tag badges */
+function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: UserBubbleProps & {
+  parsed: ParsedUserMessage;
 }) {
-  const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo } = useMemo(
-    () => parseUserMessage(content),
-    [content],
-  );
+  const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo, turnRefs } = parsed;
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
-
-  const [expanded, setExpanded] = useState(false);
-  const [isOverflowing, setIsOverflowing] = useState(false);
-  const contentRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el) return;
-    const check = () => setIsOverflowing(el.scrollHeight > el.clientHeight + 2);
-    check();
-    const ro = new ResizeObserver(check);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [text]);
 
   return (
     <div className={cn("flex flex-col gap-1", !isSystemContext && "items-end")}>
@@ -81,7 +102,9 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
         : "max-w-[80%] bg-accent-wash border-accent-wash-border text-text",
       isEditing && "ring-2 ring-primary/60 border-primary/40",
     )}>
-      {replyTo && <ReplyCard reply={replyTo} onJump={replyAvailable?.(replyTo) ? () => onJumpToReply?.(replyTo) : undefined} unavailable={!replyAvailable?.(replyTo)} />}
+      {replyTo && <ReplyCard reply={replyTo} onJump={replyAvailable ? () => onJumpToReply?.(replyTo) : undefined} unavailable={!replyAvailable} />}
+      {/* Drawn from the message's own block: no request, and the same size on every render. */}
+      {turnRefs && prompt && <TurnRefChipRow refs={turnRefs} currentProject={projectName} />}
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
 
@@ -143,27 +166,13 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
 
       {/* Text content — 2-line clamp by default, expandable */}
       {text && (
-        <div
-          ref={contentRef}
-          className={cn(
-            "whitespace-pre-wrap break-words transition-all duration-200 select-text",
-            !expanded && "line-clamp-2",
-            expanded && "max-h-[50vh] overflow-y-auto",
-          )}
+        <CollapsibleMessageBody
+          watch={text}
+          className="whitespace-pre-wrap break-words select-text"
+          toggleClassName={isSystemContext ? "text-text-subtle hover:text-text-secondary" : "text-primary/70 hover:text-primary"}
         >
           {isSystemContext ? <TextWithFilePaths text={text} projectName={projectName} /> : <TextWithLinks text={text} />}
-        </div>
-      )}
-      {(isOverflowing || expanded) && (
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className={cn(
-            "flex items-center gap-1 text-xs mt-1 transition-colors",
-            isSystemContext ? "text-text-subtle hover:text-text-secondary" : "text-primary/70 hover:text-primary",
-          )}
-        >
-          {expanded ? <><ChevronUp className="size-3" />Show less</> : <><ChevronDown className="size-3" />Show more</>}
-        </button>
+        </CollapsibleMessageBody>
       )}
       {/* Version switcher — only when this message has edited siblings */}
       {!isSystemContext && onNavigateVersion && (
@@ -176,7 +185,10 @@ export function UserBubble({ content, messageId, timestamp, projectName, onFork,
     </div>
       {/* Action bar below the bubble — timestamp, copy, edit/fork (real user messages only) */}
       {!isSystemContext && (
-        <MessageActionBar timestamp={timestamp} content={decodeReply(content).content}>
+        <MessageActionBar timestamp={timestamp} content={decodeMessageBlocks(content).content}>
+          {turn && projectName && sessionId && (providerId === "claude" || providerId === "codex") && (
+            <CopyTurnLinkButton message={turn} projectName={projectName} sessionId={sessionId} providerId={providerId} />
+          )}
           {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} touchTarget />}
           {onEdit && (
             <ActionButton
@@ -298,7 +310,8 @@ function TaskNotificationBadge({ content }: { content: string }) {
           {outputFile && <FilePathChip path={outputFile} />}
           {result && (
             <div className="text-[11px] text-text-subtle/80 max-h-60 overflow-y-auto leading-relaxed">
-              <MarkdownContent content={result} />
+              {/* Raw HTML off: anyone's text can arrive wrapped in this tag, an iframe srcdoc included. */}
+              <MarkdownContent content={result} rawHtml={false} />
             </div>
           )}
         </div>

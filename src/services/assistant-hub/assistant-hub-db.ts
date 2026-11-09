@@ -1,7 +1,7 @@
 import { getDb, resolveMigratedSession } from "../db.service.ts";
 
 /**
- * Storage for the PPM Assistant on Telegram (tables from migration 58):
+ * Storage for the PPM Assistant on Telegram (tables from migration 62):
  *
  * - **bindings**: which Assistant session each Telegram chat talks to, one per chat.
  * - **watches**: "tell me when that chat finishes", kept across restarts, and kept after firing

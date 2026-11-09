@@ -89,7 +89,7 @@ export function QueryAuditSection() {
             min={1}
             value={days}
             onChange={(e) => setDays(e.target.value)}
-            className="h-8 text-xs"
+            className="h-8 text-xs pointer-coarse:h-11"
           />
         </label>
         <label className="space-y-1">
@@ -99,7 +99,7 @@ export function QueryAuditSection() {
             min={10}
             value={sizeMb}
             onChange={(e) => setSizeMb(e.target.value)}
-            className="h-8 text-xs"
+            className="h-8 text-xs pointer-coarse:h-11"
           />
         </label>
       </div>
@@ -108,7 +108,7 @@ export function QueryAuditSection() {
         <span className="text-[11px] text-muted-foreground">
           {settings.entry_count.toLocaleString()} entries · {formatSize(settings.size_bytes)} on disk
         </span>
-        <Button size="sm" className="h-8 text-xs" disabled={!dirty || saving} onClick={save}>
+        <Button size="sm" className="h-8 text-xs pointer-coarse:h-11" disabled={!dirty || saving} onClick={save}>
           {saving ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
         </Button>
       </div>
@@ -116,7 +116,7 @@ export function QueryAuditSection() {
       <Button
         variant="outline"
         size="sm"
-        className="h-8 w-full gap-1.5 text-xs text-destructive"
+        className="h-8 w-full gap-1.5 text-xs text-destructive pointer-coarse:h-11"
         disabled={clearing || settings.entry_count === 0}
         onClick={clearAll}
       >

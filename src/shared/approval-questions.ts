@@ -14,6 +14,8 @@
 export interface QuestionOption {
   label: string;
   description?: string;
+  /** Text Claude attaches to an option (a plan, a mockup, a snippet) and refers the user to. */
+  preview?: string;
 }
 
 export interface NormalizedQuestion {
@@ -42,7 +44,8 @@ function options(raw: unknown): QuestionOption[] {
   for (const o of raw) {
     if (!isRecord(o) || typeof o.label !== "string" || !o.label) continue;
     const description = str(o.description);
-    out.push({ label: o.label, ...(description ? { description } : {}) });
+    const preview = str(o.preview);
+    out.push({ label: o.label, ...(description ? { description } : {}), ...(preview ? { preview } : {}) });
   }
   return out;
 }

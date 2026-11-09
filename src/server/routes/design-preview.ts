@@ -52,8 +52,8 @@ export function createDesignPreviewRoutes(now: () => number = Date.now) {
   const api = new Hono();
   const content = new Hono();
 
-  // The app's global `cors()` answers `*`, and Hono copies headers set before a handler over
-  // the handler's own response, so the value set below would be lost. Re-assert it after.
+  // Every response here must say `null`, error pages included; asserted after the handler so
+  // it holds whatever an inner layer set. The app's CORS layer leaves an existing value alone.
   content.use("*", async (c, next) => {
     await next();
     c.res.headers.set("Access-Control-Allow-Origin", "null");
@@ -127,7 +127,7 @@ export function createDesignPreviewRoutes(now: () => number = Date.now) {
     try {
       const asset = await resolveScopedAsset(cap, encoded);
       if (!(await stat(asset.abs)).isFile()) return c.json(err("File not found"), 404);
-      // A scheme-less host source follows the document's actual scheme through tunnels.
+      // The browser's Host, which tunnels keep; the policy adds both schemes to it.
       const source = `${browserFacingHost(c.req.header("host"), c.req.url)}${PREFIX}/${token}/`;
       const headers: Record<string, string> = {
         ...BASE_HEADERS,

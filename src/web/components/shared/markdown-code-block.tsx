@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useMdContext, FILE_EXT_RE, GLOB_CHARS_RE } from "./markdown-context";
 import { highlightToHtml, highlightSync, getActiveShikiTheme } from "@/theme/adapters/shiki-adapter";
@@ -46,7 +47,9 @@ let mermaidPromise: Promise<typeof import("mermaid")["default"]> | null = null;
 function getMermaid() {
   if (!mermaidPromise) {
     mermaidPromise = import("mermaid").then((mod) => {
-      mod.default.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose", fontFamily: "ui-sans-serif, system-ui, sans-serif" });
+      // "strict": a diagram is text the AI wrote, and "loose" keeps `click … href "javascript:…"`
+      // links live in the SVG, one click from running on PPM's origin. PPM wires no click handlers.
+      mod.default.initialize({ startOnLoad: false, theme: "default", securityLevel: "strict", fontFamily: "ui-sans-serif, system-ui, sans-serif" });
       return mod.default;
     });
   }
@@ -63,6 +66,7 @@ function hastToText(node: any): string {
 
 /** Pre — code block wrapper with mermaid detection, Shiki highlighting, action buttons */
 export function MdPre({ children, node, ...rest }: any) {
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
   const { codeActions, projectName, isStreaming, assistantContent } = useMdContext();
 
   const codeNode = node?.children?.[0];
@@ -93,7 +97,7 @@ export function MdPre({ children, node, ...rest }: any) {
       {codeActions && (
         <div className="code-actions absolute top-1 right-1 flex gap-1">
           <ActionBtn title="Copy" icon={<CopyIcon />} activeIcon={<CheckIcon />} onClick={() => void copyToClipboard(text)} />
-          {isBash && projectName && !assistantContent && (
+          {!minimalMode && isBash && projectName && !assistantContent && (
             <ActionBtn
               title="Send to terminal"
               icon={<PlayIcon />}

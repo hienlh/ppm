@@ -20,7 +20,23 @@ export interface QueryScriptRequest {
   continueOnError?: boolean;
   /** EXPLAIN the one statement sent, without running it: no ANALYZE, which would. */
   explain?: boolean;
+  /**
+   * Run with write access on a readonly connection, this once ("Run with write access (once)"):
+   * PPM's password, typed by the user. Ignored on a connection that is not readonly.
+   */
+  writeOnce?: { password: string };
 }
+
+/** How every refusal of a write on a readonly connection begins, wherever it was refused. */
+export const READONLY_REFUSAL_PREFIX = "Connection is readonly";
+
+/** The run, or a statement of it, was refused because the connection is readonly. */
+export function isReadonlyRefusalText(text: string | null | undefined): boolean {
+  return !!text && text.startsWith(READONLY_REFUSAL_PREFIX);
+}
+
+/** What `/query/script` answers a `writeOnce` whose password is wrong. */
+export const WRONG_PASSWORD = "Wrong password";
 
 /** `POST /connections/:id/query/cancel` */
 export interface QueryCancelRequest {

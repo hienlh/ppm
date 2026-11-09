@@ -1,3 +1,4 @@
+import { useSettingsStore } from "@/stores/settings-store";
 /**
  * Maps a settings category to the component that fills the content pane.
  *
@@ -10,7 +11,7 @@
 import { Suspense } from "react";
 import { lazyWithPreload, type PreloadableComponent } from "@/lib/lazy-with-preload";
 import { Loader2 } from "@/lib/icons";
-import type { SettingsCategoryId } from "./settings-categories";
+import { resolveSettingsCategory, settingsCategoryAvailable, type SettingsCategoryId } from "./settings-categories";
 
 export const SECTIONS: Record<SettingsCategoryId, PreloadableComponent<object>> = {
   general: lazyWithPreload(() => import("./general-settings-section").then((m) => ({ default: m.GeneralSettingsSection }))),
@@ -19,6 +20,7 @@ export const SECTIONS: Record<SettingsCategoryId, PreloadableComponent<object>> 
   "remote-desktop": lazyWithPreload(() => import("./remote-desktop-settings-section").then((m) => ({ default: m.RemoteDesktopSettingsSection }))),
   "database-drivers": lazyWithPreload(() => import("./database-drivers-section").then((m) => ({ default: m.DatabaseDriversSection }))),
   "ai-provider": lazyWithPreload(() => import("./ai-settings-section").then((m) => ({ default: m.AISettingsSection }))),
+  tools: lazyWithPreload(() => import("./tools-settings-section").then((m) => ({ default: m.ToolsSettingsSection }))),
   accounts: lazyWithPreload(() => import("./accounts/accounts-settings-section").then((m) => ({ default: m.AccountsSettingsSection }))),
   assistant: lazyWithPreload(() => import("./assistant-settings-section").then((m) => ({ default: m.AssistantSettingsSection }))),
   design: lazyWithPreload(() => import("./design-settings-section").then((m) => ({ default: m.DesignSettingsSection }))),
@@ -31,16 +33,20 @@ export const SECTIONS: Record<SettingsCategoryId, PreloadableComponent<object>> 
   schedules: lazyWithPreload(() => import("./schedules/schedules-settings-section").then((m) => ({ default: m.SchedulesSettingsSection }))),
   shortcuts: lazyWithPreload(() => import("./keyboard-shortcuts-section").then((m) => ({ default: m.KeyboardShortcutsSection }))),
   files: lazyWithPreload(() => import("./files-settings-section").then((m) => ({ default: m.FilesSettingsSection }))),
-  "query-audit": lazyWithPreload(() => import("./query-audit-section").then((m) => ({ default: m.QueryAuditSection }))),
+  storage: lazyWithPreload(() => import("./storage-settings-section").then((m) => ({ default: m.StorageSettingsSection }))),
 };
 
 /** Load every pane's code, so that opening Settings shows its pane without a spinner. */
 export function preloadSettingsSections(): Promise<unknown> {
-  return Promise.all(Object.values(SECTIONS).map((section) => section.preload()));
+  const minimalMode = useSettingsStore.getState().minimalMode;
+  return Promise.all((Object.keys(SECTIONS) as SettingsCategoryId[])
+    .filter((category) => settingsCategoryAvailable(category, minimalMode))
+    .map((category) => SECTIONS[category].preload()));
 }
 
 export function SettingsSectionContent({ category }: { category: SettingsCategoryId }) {
-  const Section = SECTIONS[category];
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
+  const Section = SECTIONS[resolveSettingsCategory(category, minimalMode)];
   return (
     <Suspense
       fallback={

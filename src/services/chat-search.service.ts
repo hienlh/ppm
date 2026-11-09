@@ -1,4 +1,3 @@
-import { decodeReply } from "../shared/chat-reply.ts";
 /**
  * Full-text content search over chat transcripts, backed by the FTS5 store in
  * `search-index-db.service.ts`.
@@ -8,10 +7,18 @@ import { decodeReply } from "../shared/chat-reply.ts";
  * snippet search. This service indexes normalized messages into FTS5 and
  * refreshes lazily (reconcile-on-search) using JSONL mtime as the staleness
  * signal — no hot-path write hook required.
+ *
+ * Each row carries the turn its message belongs to (`turn_id`, `turn_n`, from the session's turn
+ * index) and its text in two columns (`chat-search-text.ts`), so the AI's search can name a turn
+ * without ever matching what a tool printed.
  */
 import { getSearchIndexDb } from "./search-index-db.service.ts";
 import { chatService } from "./chat.service.ts";
-import type { ChatEvent, ChatMessage } from "../types/chat.ts";
+import { messageSearchColumns } from "./chat-search-text.ts";
+import { stampSessionTurns } from "./session-turns/stamp-message-turns.ts";
+import type { ChatMessage } from "../types/chat.ts";
+
+export { messageSearchColumns, messageSearchText } from "./chat-search-text.ts";
 
 export interface ChatSearchHit {
   sessionId: string;
@@ -19,6 +26,12 @@ export interface ChatSearchHit {
   role: string;
   ts: string;
   snippet: string;
+}
+
+/** What `session_meta` records about a session besides its freshness. */
+export interface IndexedSessionInfo {
+  providerId?: string;
+  title?: string;
 }
 
 /**
@@ -44,107 +57,19 @@ export function toFtsQuery(raw: string): string {
 }
 
 /**
- * Bump whenever `messageSearchText` changes what it emits. Stored per session in
+ * Bump whenever what a row holds changes. Stored per session in
  * `session_meta.indexer_version`; `isStale` compares it, so a session indexed by
  * an older, thinner indexer is re-read rather than left stamped as fresh.
  *
  * 2: `MESSAGE_TEXT_CAP`. Sessions indexed at 1 may hold multi-megabyte rows.
  * 3: Exclude reply snapshots and their transport metadata.
+ * 4: `search-index-v3.db`: prose and tool text in separate columns, turn ids, titles.
+ * 5: A user record is prose only when it is a prompt; command output and notifications are tool text.
  *
  * A bump makes *every* session stale at once, which is what `RECONCILE_BUDGET`
  * below is for — the whole corpus must not be re-read inside one search.
  */
-export const INDEXER_VERSION = 3;
-
-/** Per-event cap on indexed tool output. A single `Read`/`grep` result can be
- *  hundreds of KB; indexing all of it bloats the FTS store far more than it
- *  helps, since matches that deep are rarely what someone is looking for. */
-const EVENT_TEXT_CAP = 4000;
-
-/**
- * Whole-message cap, which the per-event one does not imply.
- *
- * `EVENT_TEXT_CAP` bounds each event and nothing bounds how many there are. One
- * agent turn is routinely hundreds of tool calls, each with children that
- * recurse through the same collector — so a single turn could contribute a
- * multi-megabyte FTS row, for a feature whose output is a twelve-token snippet.
- * The cap is generous on purpose: this is about the tail, not about trimming
- * ordinary messages.
- */
-const MESSAGE_TEXT_CAP = 64_000;
-
-function stringifyToolInput(input: unknown): string {
-  if (input == null) return "";
-  if (typeof input === "string") return input.slice(0, EVENT_TEXT_CAP);
-  try {
-    return JSON.stringify(input).slice(0, EVENT_TEXT_CAP);
-  } catch {
-    return "";
-  }
-}
-
-/**
- * Appends to `out` until the budget runs out, and reports what is left.
- *
- * The budget is threaded through rather than applied to the joined result so a
- * turn with a thousand tool calls stops *collecting* — building the array and
- * then slicing it is the same allocation this is meant to avoid.
- */
-function collectEventText(events: ChatEvent[] | undefined, out: string[], budget: number): number {
-  if (!events) return budget;
-  for (const ev of events) {
-    if (budget <= 0) return 0;
-    switch (ev.type) {
-      case "text":
-        budget = take(ev.content, out, budget);
-        break;
-      case "tool_use":
-        // The tool name and its arguments are what a search for "the commit
-        // where I opened PR 10232" actually has to match.
-        budget = take(ev.tool, out, budget);
-        budget = take(stringifyToolInput(ev.input), out, budget);
-        budget = collectEventText(ev.children, out, budget);
-        break;
-      case "tool_result":
-        budget = take(ev.output.slice(0, EVENT_TEXT_CAP), out, budget);
-        break;
-      case "error":
-        budget = take(ev.message, out, budget);
-        break;
-      // `thinking` is deliberately skipped: it is the model's scratch work, it
-      // is bulky, and a snippet drawn from it reads as noise in the results.
-      default:
-        break;
-    }
-  }
-  return budget;
-}
-
-/** Push as much of `text` as the budget allows; answer with what remains. */
-function take(text: string | undefined, out: string[], budget: number): number {
-  if (!text || budget <= 0) return budget;
-  out.push(text.length <= budget ? text : text.slice(0, budget));
-  return budget - Math.min(text.length, budget);
-}
-
-/**
- * All searchable text for one normalized message.
- *
- * `content` alone misses most of a transcript: `getMessages` merges tool calls
- * and their results into `events` and leaves `content` empty for any turn that
- * only used tools — the commit-and-open-a-PR turns are exactly those, so they
- * were the least searchable part of the history rather than the most.
- */
-export function messageSearchText(msg: ChatMessage): string {
-  const parts: string[] = [];
-  let budget = MESSAGE_TEXT_CAP;
-  if (msg.content) budget = take(decodeReply(msg.content).content, parts, budget);
-  collectEventText(msg.events, parts, budget);
-  // Threading the budget is what stops the *collection*; the final slice is
-  // what makes the cap exact, since the separators joined in below are not
-  // part of any part's length.
-  return parts.filter((p) => p && p.trim()).join("\n").trim().slice(0, MESSAGE_TEXT_CAP);
-}
+export const INDEXER_VERSION = 5;
 
 /** Index a concrete set of normalized messages (core, provider-agnostic). */
 export function indexMessages(
@@ -152,17 +77,21 @@ export function indexMessages(
   projectPath: string,
   messages: ChatMessage[],
   jsonlMtime = 0,
+  info: IndexedSessionInfo = {},
 ): void {
   const db = getSearchIndexDb();
   const del = db.query("DELETE FROM messages_fts WHERE session_id = ?");
   const ins = db.query(
-    "INSERT INTO messages_fts (text, session_id, project_path, message_id, role, ts) VALUES (?, ?, ?, ?, ?, ?)",
+    `INSERT INTO messages_fts (text, tool_text, session_id, project_path, message_id, turn_id, turn_n, role, ts)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const upsertMeta = db.query(`
-    INSERT INTO session_meta (session_id, project_path, jsonl_mtime, indexed_at, msg_count, indexer_version)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO session_meta (session_id, project_path, provider_id, title, jsonl_mtime, indexed_at, msg_count, indexer_version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(session_id) DO UPDATE SET
       project_path    = excluded.project_path,
+      provider_id     = excluded.provider_id,
+      title           = excluded.title,
       jsonl_mtime     = excluded.jsonl_mtime,
       indexed_at      = excluded.indexed_at,
       msg_count       = excluded.msg_count,
@@ -173,25 +102,40 @@ export function indexMessages(
     del.run(sessionId);
     let count = 0;
     for (const msg of messages) {
-      const text = messageSearchText(msg);
-      if (!text) continue;
-      ins.run(text, sessionId, projectPath, msg.id, msg.role, msg.timestamp ?? "");
+      const { text, toolText } = messageSearchColumns(msg);
+      if (!text && !toolText) continue;
+      ins.run(text, toolText, sessionId, projectPath, msg.id, msg.turnId ?? null, msg.turnN ?? null, msg.role, msg.timestamp ?? "");
       count++;
     }
-    upsertMeta.run(sessionId, projectPath, jsonlMtime, Date.now(), count, INDEXER_VERSION);
+    upsertMeta.run(sessionId, projectPath, info.providerId ?? "", info.title ?? "", jsonlMtime, Date.now(), count, INDEXER_VERSION);
   });
   tx();
 }
 
-/** Read a session's normalized messages via its provider, then index them. */
+/** Read a session's normalized messages via its provider, stamp their turns, then index them. */
 export async function indexSession(
   providerId: string,
   sessionId: string,
   projectPath: string,
   jsonlMtime = 0,
+  title?: string,
 ): Promise<void> {
   const messages = await chatService.getFullMessages(providerId, sessionId);
-  indexMessages(sessionId, projectPath, messages, jsonlMtime);
+  // Never fails: a session with no turn index (another provider, a transcript this project does
+  // not own) is indexed without turn ids.
+  await stampSessionTurns({ providerId, sessionId, projectPath }, messages);
+  indexMessages(sessionId, projectPath, messages, jsonlMtime, { providerId, title });
+}
+
+/**
+ * Keeps a session's indexed title current: a rename does not touch the transcript, so it never
+ * makes the session stale.
+ */
+export function refreshIndexedTitle(sessionId: string, title: string | undefined): void {
+  if (title === undefined) return;
+  getSearchIndexDb()
+    .query("UPDATE session_meta SET title = ? WHERE session_id = ? AND title IS NOT ?")
+    .run(title, sessionId, title);
 }
 
 /**
@@ -219,7 +163,10 @@ export function deleteSession(sessionId: string): void {
   tx();
 }
 
-/** Ranked full-text search scoped to a project. Returns best hit per row. */
+/**
+ * Ranked full-text search scoped to a project, for the chat's search box: matches prose and tool
+ * text alike, and the snippet (with `<mark>`) comes from whichever column matched best.
+ */
 export function search(projectPath: string, rawQuery: string, limit = 50): ChatSearchHit[] {
   const match = toFtsQuery(rawQuery);
   if (!match) return [];
@@ -229,7 +176,7 @@ export function search(projectPath: string, rawQuery: string, limit = 50): ChatS
       message_id AS messageId,
       role,
       ts,
-      snippet(messages_fts, 0, '<mark>', '</mark>', '…', 12) AS snippet
+      snippet(messages_fts, -1, '<mark>', '</mark>', '…', 12) AS snippet
     FROM messages_fts
     WHERE messages_fts MATCH ? AND project_path = ?
     ORDER BY bm25(messages_fts)
@@ -237,6 +184,7 @@ export function search(projectPath: string, rawQuery: string, limit = 50): ChatS
   `).all(match, projectPath, limit) as ChatSearchHit[];
   return rows;
 }
+
 
 /**
  * Sessions indexed for a project *by this version of the indexer*.
@@ -318,6 +266,15 @@ function staleKey(updatedAt?: string, createdAt?: string): number {
  */
 const RECONCILE_BUDGET = 200;
 
+/** A session as `reconcile` needs it: who owns it, when it changed, and what it is called. */
+export interface ReconcileSession {
+  id: string;
+  providerId: string;
+  updatedAt?: string;
+  createdAt?: string;
+  title?: string;
+}
+
 /**
  * Re-index any session whose transcript changed since last index. Enumerates
  * all providers for the project via `chatService.listSessions`. Sequential to
@@ -331,7 +288,7 @@ const RECONCILE_BUDGET = 200;
 export async function reconcile(
   projectPath: string,
   onProgress?: (done: number, total: number) => void,
-  sessions?: { id: string; providerId: string; updatedAt?: string; createdAt?: string }[],
+  sessions?: ReconcileSession[],
 ): Promise<{ total: number; indexed: number; remaining: number }> {
   const list = sessions ?? (await chatService.listSessions(undefined, projectPath));
   enumeratedTotals().set(projectPath, list.length);
@@ -340,12 +297,14 @@ export async function reconcile(
   for (let i = 0; i < list.length; i++) {
     const s = list[i]!;
     const mtime = staleKey(s.updatedAt, s.createdAt);
-    if (isStale(s.id, mtime)) {
+    if (!isStale(s.id, mtime)) {
+      refreshIndexedTitle(s.id, s.title);
+    } else {
       if (reindexed >= RECONCILE_BUDGET) {
         remaining++;
       } else {
         try {
-          await indexSession(s.providerId, s.id, projectPath, mtime);
+          await indexSession(s.providerId, s.id, projectPath, mtime, s.title);
           reindexed++;
         } catch { /* skip unreadable/broken transcript */ }
       }
@@ -362,7 +321,7 @@ const backfillRuns = new Map<string, Promise<unknown>>();
 /** Trigger a lazy backfill/reconcile for a project (idempotent, fire-and-forget safe). */
 export function startBackfill(
   projectPath: string,
-  sessions?: { id: string; providerId: string; updatedAt?: string; createdAt?: string }[],
+  sessions?: ReconcileSession[],
 ): Promise<unknown> {
   const existing = backfillRuns.get(projectPath);
   if (existing) return existing;

@@ -1,6 +1,6 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { resolve } from "node:path";
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, statSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 59;
+export const CURRENT_SCHEMA_VERSION = 63;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -56,6 +56,7 @@ export function getDb(): Database {
     const ms = Math.round(performance.now() - started);
     if (version === 0) log.info(`Created ${path} (schema v${CURRENT_SCHEMA_VERSION})`);
     else if (version < CURRENT_SCHEMA_VERSION) log.info(`Migrated ${path} from schema v${version} to v${CURRENT_SCHEMA_VERSION} in ${ms} ms`);
+    compactIfMostlyFree(db, path);
   } catch (e) {
     // Nothing runs without this file: config, projects, sessions and accounts all live in it.
     log.fatal(`Cannot open the app database ${path}${version >= 0 ? ` (schema v${version}, this version expects v${CURRENT_SCHEMA_VERSION})` : ""}:`, e);
@@ -87,6 +88,63 @@ function backupBeforeMigrations(database: Database): void {
   } catch (e: any) {
     log.error(`Pre-migration snapshot FAILED (continuing): ${e?.message ?? e}`);
   }
+}
+
+/** Below this much free space a rebuild is not worth the wait at startup. */
+const COMPACT_MIN_FREE_BYTES = 4 * 1_048_576;
+
+/**
+ * Give the file back the pages a dropped table left free, when most of the file is free pages.
+ * Migration 59 dropped `session_logs`, which on a long-lived install was 99% of the file; without
+ * this the file keeps its old size, because SQLite only reuses free pages for later writes.
+ * Snapshots are taken with `VACUUM INTO`, so they shrink either way — this is for `ppm.db` itself.
+ *
+ * Decided from the free-page count on every open rather than from a flag set by the migration, so a
+ * rebuild that failed (another process holding the write lock, say) is retried at the next start
+ * instead of never. An ordinary database has next to no free pages and pays one pragma read.
+ *
+ * `VACUUM` cannot run inside a transaction, which is why it is here and not in the migration.
+ * Under WAL it writes the rebuilt database into the `-wal` file, so a `TRUNCATE` checkpoint
+ * follows to move it back and shrink both files. Best-effort like the pre-migration snapshot: a
+ * failure only means the file stays large, so it is logged and the open goes on. Exported for a test.
+ */
+export function compactIfMostlyFree(database: Database, path: string): void {
+  let freeBytes = 0;
+  try {
+    const pageSize = (database.query("PRAGMA page_size").get() as { page_size: number }).page_size;
+    const pages = (database.query("PRAGMA page_count").get() as { page_count: number }).page_count;
+    const free = (database.query("PRAGMA freelist_count").get() as { freelist_count: number }).freelist_count;
+    freeBytes = free * pageSize;
+    if (freeBytes < COMPACT_MIN_FREE_BYTES || free * 2 < pages) return;
+  } catch {
+    return;
+  }
+  const before = fileSizeWithWal(path);
+  const started = performance.now();
+  try {
+    database.exec("VACUUM");
+    const checkpoint = database.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number } | null;
+    const ms = Math.round(performance.now() - started);
+    const after = fileSizeWithWal(path);
+    log.info(`Compacted ${path} (${formatMb(freeBytes)} of free pages): ${formatMb(before)} → ${formatMb(after)} in ${ms} ms`
+      + (checkpoint?.busy ? " (checkpoint busy: the file shrinks at a later checkpoint)" : ""));
+  } catch (e) {
+    const ms = Math.round(performance.now() - started);
+    log.error(`VACUUM of ${path} failed after ${ms} ms (continuing; the file keeps its size, ${formatMb(before)}, and is retried at the next start):`, e);
+  }
+}
+
+/** Size of a SQLite file plus its `-wal`, 0 for either that does not exist. */
+export function fileSizeWithWal(path: string): number {
+  let total = 0;
+  for (const p of [path, `${path}-wal`]) {
+    try { total += statSync(p).size; } catch { /* missing */ }
+  }
+  return total;
+}
+
+function formatMb(bytes: number): string {
+  return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
 /**
@@ -161,14 +219,6 @@ export function runMigrations(database: Database): void {
         created_at TEXT DEFAULT (datetime('now'))
       );
 
-      CREATE TABLE IF NOT EXISTS session_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        level TEXT NOT NULL,
-        message TEXT NOT NULL,
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-
       CREATE TABLE IF NOT EXISTS usage_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         cost_usd REAL,
@@ -182,8 +232,6 @@ export function runMigrations(database: Database): void {
         recorded_at TEXT DEFAULT (datetime('now'))
       );
 
-      CREATE INDEX IF NOT EXISTS idx_session_logs_session ON session_logs(session_id);
-      CREATE INDEX IF NOT EXISTS idx_session_logs_created ON session_logs(created_at);
       CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_history(session_id);
       CREATE INDEX IF NOT EXISTS idx_usage_recorded ON usage_history(recorded_at);
       CREATE INDEX IF NOT EXISTS idx_projects_sort ON projects(sort_order);
@@ -1261,15 +1309,53 @@ export function runMigrations(database: Database): void {
   }
 
   if (current < 57) {
+    // Design share links. The code a reviewer holds is derived from a secret file and the
+    // link id, so only its hash is kept: a copied database or backup opens no link.
+    // `project_key` is the folded path the rows are looked up by (case-insensitive on Windows).
+    createDesignShareLinks(database);
+    database.exec(`PRAGMA user_version = 57;`);
+  }
+
+  if (current < 58) {
+    applyScheduleScriptSchema(database);
+    database.exec(`PRAGMA user_version = 58;`);
+  }
+
+  if (current < 59) {
+    dropSessionLogs(database);
+    database.exec("PRAGMA user_version = 59");
+  }
+
+  if (current < 60) {
+    // Builds of the session tools numbered this migration 58, then 59 — numbers the script-schedule
+    // schema and the `session_logs` drop took on main. A database such a build opened skipped one
+    // or both, so both are applied again here; every step of each is idempotent.
+    applyScheduleScriptSchema(database);
+    dropSessionLogs(database);
+    // Sessions an AI created through PPM's session tools: which session created each one, and
+    // how deep in such a chain it sits (0 for a session a person started). Read by the depth
+    // limit, the linked-sessions bar and the session list's "Created by".
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN spawned_by TEXT"); } catch { /* column exists */ }
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN spawn_depth INTEGER NOT NULL DEFAULT 0"); } catch { /* column exists */ }
+    try { database.exec("CREATE INDEX IF NOT EXISTS idx_session_metadata_spawned_by ON session_metadata(spawned_by)"); } catch { /* no table */ }
+    database.exec(`PRAGMA user_version = 60;`);
+  }
+
+  if (current < 61) {
+    // Builds of the PPM Assistant numbered its migrations 57-59, the numbers design share links,
+    // script schedules and the `session_logs` drop took on main. A database such a build opened
+    // at 59 skipped all three; 60 re-applies the last two, and the share-link table is created
+    // here. Both steps are idempotent, so a database that ran either side is unchanged.
+    createDesignShareLinks(database);
     // A PPM Assistant session: its own instructions and a permission policy that ignores the
     // mode picked in the composer. Stored rather than inferred from the project because a
     // forked or provider-migrated session must stay one, and losing the mark would drop it to
     // the provider default — usually bypass. 0 = an ordinary session, every existing row.
     addColumnIfMissing(database, "session_metadata", "assistant", "INTEGER NOT NULL DEFAULT 0");
-    database.exec(`PRAGMA user_version = 57;`);
+    database.exec(`PRAGMA user_version = 61;`);
   }
 
-  if (current < 58) {
+  if (current < 62) {
     // The PPM Assistant on Telegram. A binding is which Assistant session a Telegram chat talks
     // to, one per chat. A watch is the user asking to be told when another chat finishes; it is
     // stored because it has to outlive a restart, and keeps its outcome once it fired so the
@@ -1300,17 +1386,38 @@ export function runMigrations(database: Database): void {
       );
       CREATE INDEX IF NOT EXISTS idx_assistant_watches_status ON assistant_watches(status);
       CREATE INDEX IF NOT EXISTS idx_assistant_watches_target ON assistant_watches(target_session_id);
-      PRAGMA user_version = 58;
     `);
+    database.exec(`PRAGMA user_version = 62;`);
   }
 
-  if (current < 59) {
+  if (current < 63) {
     // A project's custom avatar: the filename `writeAvatar` returned (`<sha256>.webp` under the
     // avatars directory). It used to live only in the server's memory, so every restart dropped
     // it while the file stayed on disk. Null on existing rows: none of them has one stored.
     addColumnIfMissing(database, "projects", "image", "TEXT");
-    database.exec(`PRAGMA user_version = 59;`);
+    database.exec(`PRAGMA user_version = 63;`);
   }
+}
+
+/** Design share links (see migration 57). Idempotent: every statement is `IF NOT EXISTS`. */
+function createDesignShareLinks(database: Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS design_share_links (
+      id TEXT PRIMARY KEY,
+      code_hash TEXT NOT NULL UNIQUE,
+      code_version INTEGER NOT NULL DEFAULT 1,
+      project_path TEXT NOT NULL,
+      project_key TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      snapshot_id TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      expires_at INTEGER,
+      revoked_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_design_share_links_design ON design_share_links(project_key, slug);
+  `);
 }
 
 /**
@@ -1326,6 +1433,81 @@ function addColumnIfMissing(database: Database, table: string, column: string, d
   if (columns.length === 0) return;
   if (columns.some((c) => c.name === column)) return;
   database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+/**
+ * `session_logs` duplicated the session trace (`session-trace.db`) and was never pruned: on a
+ * long-lived install it was 99% of this file. `compactIfMostlyFree` gives the pages back.
+ * One statement per `exec`: Bun raises only the last statement's error from a multi-statement
+ * `exec`, so a DROP that hit a lock would be skipped silently and the version still bumped,
+ * leaving a table nothing would ever drop again. Idempotent.
+ */
+function dropSessionLogs(database: Database): void {
+  database.exec("DROP INDEX IF EXISTS idx_session_logs_session");
+  database.exec("DROP INDEX IF EXISTS idx_session_logs_created");
+  database.exec("DROP TABLE IF EXISTS session_logs");
+  if (database.query("SELECT 1 FROM sqlite_master WHERE name = 'session_logs'").get() != null) {
+    throw new Error("session_logs is still present after DROP TABLE");
+  }
+}
+
+/**
+ * Script schedules. Columns are added rather than the table rebuilt: rebuilding a table other
+ * tables reference cascades their rows away (see migration 55). Every schedule saved before this
+ * was a prompt run once per cron fire, which is what the defaults say. Idempotent: each column is
+ * added only if missing and each table only if absent, so it may run on a database that has it.
+ */
+function applyScheduleScriptSchema(database: Database): void {
+  for (const column of [
+    "kind TEXT NOT NULL DEFAULT 'prompt' CHECK (kind IN ('prompt', 'script'))",
+    "mode TEXT NOT NULL DEFAULT 'tick' CHECK (mode IN ('tick', 'always-on'))",
+    "description TEXT NOT NULL DEFAULT ''",
+    "script TEXT",
+    "inputs_json TEXT NOT NULL DEFAULT '[]'",
+    "input_values_json TEXT NOT NULL DEFAULT '{}'",
+    "secrets_enc TEXT",
+    "state_json TEXT",
+  ]) {
+    try { database.exec(`ALTER TABLE schedules ADD COLUMN ${column}`); } catch { /* column exists */ }
+  }
+  database.exec(`
+    -- The chat a script's ctx.ai.chat(key) talks to; title is the one the script last set.
+    CREATE TABLE IF NOT EXISTS schedule_chats (
+      schedule_id  INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+      key          TEXT NOT NULL,
+      session_id   TEXT NOT NULL,
+      title        TEXT,
+      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      last_used_at TEXT,
+      PRIMARY KEY (schedule_id, key)
+    );
+    -- Chat turns a script started without waiting; ctx.ai.finished() hands each out once.
+    CREATE TABLE IF NOT EXISTS schedule_ai_turns (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+      key         TEXT NOT NULL,
+      session_id  TEXT NOT NULL,
+      status      TEXT NOT NULL CHECK (status IN ('running', 'done', 'error')),
+      text        TEXT,
+      cost_usd    REAL,
+      error       TEXT,
+      timed_out   INTEGER NOT NULL DEFAULT 0,
+      started_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      finished_at TEXT,
+      collected   INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_schedule_ai_turns_sched ON schedule_ai_turns(schedule_id, collected, status);
+    -- The child process a script schedule runs in, so a restarted server can find one it left behind.
+    CREATE TABLE IF NOT EXISTS schedule_runtime (
+      schedule_id  INTEGER PRIMARY KEY REFERENCES schedules(id) ON DELETE CASCADE,
+      pid          INTEGER,
+      token        TEXT,
+      started_at   TEXT,
+      restarts     INTEGER NOT NULL DEFAULT 0,
+      last_exit_at TEXT,
+      last_error   TEXT
+    );
+  `);
 }
 
 /**
@@ -1569,14 +1751,18 @@ export function setSessionMigratedTo(oldSessionId: string, newSessionId: string)
     // Carry explicit choices with it before reconnect reads session_state.
     // Keep any choices already made on the destination (including thinking OFF).
     database.query(`
-      INSERT INTO session_metadata (session_id, model, effort, thinking_budget, design_slug, permission_mode, assistant)
-      SELECT ?, model, effort, thinking_budget, design_slug, permission_mode, assistant FROM session_metadata WHERE session_id = ?
+      INSERT INTO session_metadata (session_id, project_name, project_path, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth, assistant)
+      SELECT ?, project_name, project_path, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth, assistant FROM session_metadata WHERE session_id = ?
       ON CONFLICT(session_id) DO UPDATE SET
+        project_name = COALESCE(session_metadata.project_name, excluded.project_name),
+        project_path = COALESCE(session_metadata.project_path, excluded.project_path),
         model = COALESCE(session_metadata.model, excluded.model),
         effort = COALESCE(session_metadata.effort, excluded.effort),
         thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget),
         design_slug = COALESCE(session_metadata.design_slug, excluded.design_slug),
         permission_mode = COALESCE(session_metadata.permission_mode, excluded.permission_mode),
+        spawned_by = COALESCE(session_metadata.spawned_by, excluded.spawned_by),
+        spawn_depth = MAX(session_metadata.spawn_depth, excluded.spawn_depth),
         -- Only ever raised: the destination row usually exists already (codex writes its
         -- metadata before announcing the swap) with the column at its default 0.
         assistant = MAX(session_metadata.assistant, excluded.assistant)
@@ -1606,6 +1792,22 @@ export function resolveMigratedSession(sessionId: string): string {
     current = next;
   }
   return current;
+}
+
+/**
+ * Every id a session has been known by: its canonical id first, then the ids that migrated into
+ * it (a Codex chat is renamed during its first turn). Capped, so bad data cannot make it grow.
+ */
+export function sessionIdAliases(sessionId: string, max = 16): string[] {
+  const canonical = resolveMigratedSession(sessionId);
+  const out = [canonical];
+  const query = getDb().query("SELECT session_id FROM session_metadata WHERE migrated_to = ?");
+  for (let i = 0; i < out.length && out.length < max; i++) {
+    for (const row of query.all(out[i]!) as Array<{ session_id: string }>) {
+      if (!out.includes(row.session_id)) out.push(row.session_id);
+    }
+  }
+  return out;
 }
 
 /** Provider that owns a session — source of truth for WS routing across restarts. */
@@ -1718,6 +1920,18 @@ export function getSessionDesignSlugs(sessionIds: string[]): Record<string, stri
 export function getSessionPermissionMode(sessionId: string): string | null {
   const row = getDb().query("SELECT permission_mode FROM session_metadata WHERE session_id = ?").get(sessionId) as { permission_mode: string | null } | null;
   return row?.permission_mode ?? null;
+}
+
+/**
+ * The mode stored for the session under any id it has been known by (a Codex chat takes its
+ * thread's id during its first turn); null when none was ever stored for it.
+ */
+export function getStoredPermissionModeAnyAlias(sessionId: string): string | null {
+  for (const id of sessionIdAliases(sessionId)) {
+    const mode = getSessionPermissionMode(id);
+    if (mode) return mode;
+  }
+  return null;
 }
 
 export function setSessionPermissionMode(sessionId: string, mode: string): void {
@@ -1905,31 +2119,6 @@ export function deleteSessionMapping(sessionId: string): void {
 
 export function deleteSessionTitle(sessionId: string): void {
   getDb().query("DELETE FROM session_titles WHERE session_id = ?").run(sessionId);
-}
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// Session log helpers
-// ---------------------------------------------------------------------------
-
-export interface SessionLogRow {
-  id: number;
-  session_id: string;
-  level: string;
-  message: string;
-  created_at: string;
-}
-
-export function insertSessionLog(sessionId: string, level: string, message: string): void {
-  getDb().query(
-    "INSERT INTO session_logs (session_id, level, message) VALUES (?, ?, ?)",
-  ).run(sessionId, level, message);
-}
-
-export function getSessionLogs(sessionId: string, limit = 100): SessionLogRow[] {
-  return getDb().query(
-    "SELECT id, session_id, level, message, created_at FROM session_logs WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-  ).all(sessionId, limit) as SessionLogRow[];
 }
 
 // ---------------------------------------------------------------------------

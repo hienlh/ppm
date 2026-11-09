@@ -2,6 +2,10 @@ import { CLAUDE_MODEL_IDS } from "./claude-models.ts";
 import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from "../shared/notification-settings.ts";
 import { DEFAULT_LOG_LEVEL, type LogLevel } from "../shared/log-levels.ts";
 import { DEFAULT_ASSISTANT_SETTINGS, type AssistantSettings } from "../shared/assistant-settings.ts";
+import type { PpmToolSwitches } from "../shared/ppm-tools.ts";
+import type { FeatureIntroStates } from "../shared/feature-intros.ts";
+import type { SessionCollabSettings } from "../shared/session-collab-settings.ts";
+import { isValidLeftoverIdleMinutes } from "../shared/leftover-processes.ts";
 
 export interface TelegramConfig {
   bot_token: string;
@@ -71,11 +75,17 @@ export interface PpmConfig {
   query_audit: QueryAuditConfig;
   session_trace: SessionTraceConfig;
   tunnel: TunnelConfig;
+  share_host: ShareHostConfig;
   android?: AndroidConfig;
   /** Settings → PPM Assistant: the Assistant's own provider, model, instructions and MCP servers. */
   assistant?: AssistantSettings;
   /** Lowest level written to ppm.log. `PPM_LOG_LEVEL` overrides it; see `services/logger.ts`. */
   log_level?: LogLevel;
+  /**
+   * Which new features the tour has asked about, install-wide. Read through
+   * `readFeatureIntroStates` (`services/feature-intros.service.ts`), which drops malformed entries.
+   */
+  feature_intros?: FeatureIntroStates;
 }
 
 /**
@@ -100,6 +110,25 @@ export interface TunnelConfig {
   accountID?: string;
   /** User answered "no domain" — popup must never nag again. */
   dismissed?: boolean;
+}
+
+/**
+ * The share host: a public address for design review links that reaches the review pages and
+ * nothing else of PPM (`src/services/share-host/`). `token` (named mode only) is secret, like
+ * `tunnel.namedTunnelToken`. The fields are kept when `mode` changes, so going back is one click.
+ */
+export interface ShareHostConfig {
+  /** Off until turned on: nothing is published for review links without it. */
+  enabled: boolean;
+  /** `quick`: its own temporary address; `named`: its own tunnel on a domain; `shared`: a hostname on PPM's tunnel. */
+  mode: "quick" | "named" | "shared";
+  hostname?: string;
+  /** The share host's own tunnel (`named`), kept after switching mode: this installation created it. */
+  tunnelName?: string;
+  /** Run token of that tunnel. Secret, like `namedTunnelToken`. */
+  token?: string;
+  zoneID?: string;
+  accountID?: string;
 }
 
 export interface QueryAuditConfig {
@@ -138,10 +167,25 @@ export interface AIConfig {
   /** Share project rules and memory between providers. Unset defaults to true. */
   share_provider_context?: boolean;
   /**
-   * Give chats the tools that open a file, or a page the AI made, in a PPM tab on the user's
-   * device, and turn Claude Code's claude.ai Artifact tools off. Unset defaults to false.
+   * The one switch the tab tools had before `ppm_tools`: `open_file` and `open_preview` follow it
+   * until the user switches either in Settings → Tools. Unset defaults to false.
    */
   tab_tools?: boolean;
+  /** PPM's own AI tools, on or off one by one (`src/shared/ppm-tools.ts` has the defaults). */
+  ppm_tools?: PpmToolSwitches;
+  /**
+   * Idle minutes after which PPM stops what a chat left running — servers, emulators and daemons
+   * its commands started. Unset or 0 never stops them, and the server log names what 30 idle
+   * minutes would have stopped. Linux with systemd only
+   * (`src/services/chat-session-processes/`).
+   */
+  leftover_processes_idle_minutes?: number;
+  /**
+   * Limits for sessions that open and message each other. Read through
+   * `resolveSessionCollabSettings` (`src/shared/session-collab-settings.ts`), which fills defaults
+   * and clamps, so a field missing here means its default.
+   */
+  session_collab?: Partial<SessionCollabSettings>;
   providers: Record<string, AIProviderConfig>;
 }
 
@@ -161,6 +205,7 @@ export interface AIProviderConfig {
   api_key?: string;
   base_url?: string;
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  // Steps one message may take, at most 1000; 0 = no limit.
   max_turns?: number;
   max_budget_usd?: number;
   thinking_budget_tokens?: number;
@@ -242,7 +287,12 @@ export const DEFAULT_CONFIG: PpmConfig = {
     enabled: true,
     mode: "quick",
   },
+  share_host: {
+    enabled: false,
+    mode: "quick",
+  },
   log_level: DEFAULT_LOG_LEVEL,
+  feature_intros: {},
 };
 
 const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;
@@ -304,8 +354,8 @@ export function validateAIProviderConfig(config: Partial<AIProviderConfig>): str
   if (config.effort && !VALID_EFFORTS.includes(config.effort as any)) {
     errors.push(`effort must be one of: ${VALID_EFFORTS.join(", ")}`);
   }
-  if (config.max_turns != null && (!Number.isInteger(config.max_turns) || config.max_turns < 1 || config.max_turns > 500)) {
-    errors.push("max_turns must be integer 1-500");
+  if (config.max_turns != null && (!Number.isInteger(config.max_turns) || config.max_turns < 0 || config.max_turns > 1000)) {
+    errors.push("max_turns must be a whole number from 0 to 1000, 0 for no limit");
   }
   if (config.max_budget_usd != null && (config.max_budget_usd < 0.01 || config.max_budget_usd > 50)) {
     errors.push("max_budget_usd must be 0.01-50.00");
@@ -375,6 +425,11 @@ export function sanitizeConfig(config: PpmConfig): boolean {
     dirty = true;
   }
 
+  if ("leftover_processes_idle_minutes" in config.ai && !isValidLeftoverIdleMinutes(config.ai.leftover_processes_idle_minutes)) {
+    delete config.ai.leftover_processes_idle_minutes;
+    dirty = true;
+  }
+
   // Migrate/repair theme (legacy string → {style, mode})
   const migrated = migrateThemeValue(config.theme);
   if (migrated) {
@@ -417,6 +472,14 @@ export function sanitizeConfig(config: PpmConfig): boolean {
     // Written before the master switch existed, when the tunnel was
     // unconditional — so an absent flag must read as on, never off.
     config.tunnel.enabled = true;
+    dirty = true;
+  }
+
+  // Same rule as `tunnel`: repair only a malformed row; incomplete identities are the resolver's call.
+  const shareHost = config.share_host as ShareHostConfig | null | undefined;
+  if (typeof shareHost !== "object" || shareHost === null || typeof shareHost.enabled !== "boolean" ||
+      (shareHost.mode !== "quick" && shareHost.mode !== "named" && shareHost.mode !== "shared")) {
+    config.share_host = structuredClone(DEFAULT_CONFIG.share_host);
     dirty = true;
   }
 

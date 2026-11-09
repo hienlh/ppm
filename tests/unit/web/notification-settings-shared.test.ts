@@ -38,6 +38,18 @@ describe("resolveNotificationSettings", () => {
   });
 });
 
+describe("the reviewer comments event", () => {
+  it("is on by default, has its copy, and can be switched off", () => {
+    expect(DEFAULT_NOTIFICATION_SETTINGS.events.design_review).toBe(true);
+    expect(NOTIFICATION_EVENT_COPY.design_review.label).toBe("Reviewer comments");
+    const parsed = parseNotificationSettingsPatch({ events: { design_review: false } });
+    expect(parsed).toEqual({ ok: true, patch: { events: { design_review: false } } });
+    if (parsed.ok) expect(applyNotificationSettingsPatch(DEFAULT_NOTIFICATION_SETTINGS, parsed.patch).events.design_review).toBe(false);
+    // A row saved before the event existed gets it switched on.
+    expect(resolveNotificationSettings({ events: { done: false } }).events.design_review).toBe(true);
+  });
+});
+
 describe("the ntfy switch", () => {
   it("is on by default, so a server once set up is used, and can be paused", () => {
     expect(DEFAULT_NOTIFICATION_SETTINGS.ntfy).toBe(true);

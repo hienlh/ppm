@@ -15,13 +15,29 @@ import {
   CLAUDE_DESIGN_MCP_SERVER, DESIGN_CHECK_TOOL_TIMEOUT_MS, type DesignMcpAccess,
 } from "../services/design/mcp/design-mcp-tool.ts";
 import {
-  CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL, CLAUDE_TAB_TOOLS_MCP_SERVER, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
+  CLAUDE_TAB_TOOLS_MCP_SERVER, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
 } from "../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import { ASSISTANT_MCP_TIMEOUT_MS, type AssistantMcpAccess } from "../services/assistant-mcp/assistant-mcp-tools.ts";
 import { CLAUDE_ASSISTANT_MCP_SERVER } from "../shared/assistant-tool-names.ts";
+import { TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { CLAUDE_DB_TOOLS_MCP_SERVER, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess } from "../services/db-ai-tools/db-ai-tools-tool.ts";
+import {
+  CLAUDE_SESSION_COLLAB_MCP_SERVER, SESSION_COLLAB_TOOLS, SESSION_COLLAB_TOOLS_TIMEOUT_MS, type SessionCollabMcpAccess,
+} from "../services/session-collab/session-collab-tool.ts";
+import { EFFORT_LEVELS, type EffortLevel } from "../shared/effort-status.ts";
 
-export const VALID_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
-export type EffortValue = (typeof VALID_EFFORT_VALUES)[number];
+export const VALID_EFFORT_VALUES = EFFORT_LEVELS;
+export type EffortValue = EffortLevel;
+
+export type ClaudeSettingSource = "user" | "project" | "local";
+
+/**
+ * The settings files a chat's CLI loads. `local` stays out: a project's
+ * `.claude/settings.local.json` can deny tools and set `env` (an `ANTHROPIC_API_KEY` there moves
+ * the chat onto another account), and the empty `settings` PPM passes cancels neither. The
+ * project's own `.claude/settings.json` is loaded and can do the same; only the local file is out.
+ */
+export const CLAUDE_SETTING_SOURCES: readonly ClaudeSettingSource[] = ["user", "project"];
 
 /**
  * Thinking is a tri-state carried as a nullable integer through config, the DB and
@@ -236,8 +252,11 @@ function thenCapture(preToolUse: ToolHook, shellCommand: ToolHook, fileWrite: To
  * would only add a round trip to every tool call, so there both run as hooks of their own.
  * Elsewhere the permission hook runs them itself once it has allowed the call: a denied call
  * records nothing, and an edit made while the approval prompt was open is not put on the call.
+ *
+ * `userPromptSubmit` names each turn the CLI starts to the browser message that asked for it
+ * (`claude-prompt-turn-binder.ts`); it decides nothing either.
  */
-export function buildToolHooks(p: { isBypass: boolean; preToolUse: ToolHook; fileWrite: ToolHook; shellCommand: ToolHook }) {
+export function buildToolHooks(p: { isBypass: boolean; preToolUse: ToolHook; fileWrite: ToolHook; shellCommand: ToolHook; userPromptSubmit?: ToolHook }) {
   const shell = { matcher: SHELL_TOOLS_MATCHER, hooks: [p.shellCommand] };
   const fileWrite = { matcher: FILE_WRITE_TOOLS_MATCHER, hooks: [p.fileWrite] };
   return {
@@ -246,6 +265,7 @@ export function buildToolHooks(p: { isBypass: boolean; preToolUse: ToolHook; fil
       : [{ matcher: ".*", hooks: [thenCapture(p.preToolUse, p.shellCommand, p.fileWrite)], timeout: PERMISSION_HOOK_TIMEOUT_SECONDS }],
     PostToolUse: [shell, fileWrite],
     PostToolUseFailure: [shell, fileWrite],
+    ...(p.userPromptSubmit ? { UserPromptSubmit: [{ hooks: [p.userPromptSubmit] }] } : {}),
   };
 }
 
@@ -267,8 +287,9 @@ export function designMcpServers(access: DesignMcpAccess | undefined): Record<st
 }
 
 /**
- * The tab-tools MCP server (`open_file`, `open_preview`) as the SDK's `http` server config,
- * while the user has the tools on; `{}` otherwise. The token travels in the header.
+ * The tab-tools MCP server (`open_file`, `open_preview`, `open_url`, `read_terminal`,
+ * `run_in_terminal`) as the SDK's `http` server config, while the user has any of them on; `{}`
+ * otherwise. The token travels in the header.
  */
 export function tabToolsMcpServers(access: TabToolsMcpAccess | null | undefined): Record<string, McpHttpServerConfig> {
   if (!access) return {};
@@ -388,20 +409,74 @@ function sweepStaleMcpConfigFiles(dir: string): void {
   }
 }
 
-/** They only open a tab for the user to look at, so they never ask first. */
-export const CLAUDE_TAB_TOOLS: readonly string[] = [CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL];
+/**
+ * Never asked about before they run: they open a tab for the user to look at, read the
+ * project's terminals, or type a command that runs only when the user presses Enter.
+ */
+export const CLAUDE_TAB_TOOLS: readonly string[] = TAB_TOOLS.map((tool) => `mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__${tool}`);
 
 /**
- * Spawn options as `spawnFingerprint` should compare them: the tab-tools token blanked. A
- * warm spare is started before its session exists, and its token is minted for the session
+ * The database tools' MCP server (`db_query`, `open_query`, `db_execute`) as the SDK's `http`
+ * server config, while a saved connection is available to the AI chat; `{}` otherwise. The
+ * timeout outlasts the user's time to approve a change and the change's own run.
+ */
+export function dbToolsMcpServers(access: DbToolsMcpAccess | null | undefined): Record<string, McpHttpServerConfig> {
+  if (!access) return {};
+  return {
+    [CLAUDE_DB_TOOLS_MCP_SERVER]: {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: DB_TOOLS_TIMEOUT_MS,
+    },
+  };
+}
+
+/**
+ * Never asked about before they run: `db_query` only reads, `open_query` opens a tab, and
+ * `db_execute` asks the user itself — with the SQL and PPM's password, which a generic Allow
+ * prompt in front of it would only repeat without either.
+ */
+export const CLAUDE_DB_TOOLS: readonly string[] = DB_TOOLS.map((tool) => `mcp__${CLAUDE_DB_TOOLS_MCP_SERVER}__${tool}`);
+
+/**
+ * The session tools' MCP server (`create_session`, `send_to_session`, `session_status`) as the
+ * SDK's `http` server config, while one of them is on; `{}` otherwise. The timeout is fixed at the
+ * longest wait the settings allow (plus an approval and a margin): the CLI keeps the timeout it
+ * started with, and the SDK enforces it as a hard wall-clock limit per call.
+ */
+export function sessionCollabMcpServers(access: SessionCollabMcpAccess | null | undefined): Record<string, McpHttpServerConfig> {
+  if (!access) return {};
+  return {
+    [CLAUDE_SESSION_COLLAB_MCP_SERVER]: {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: SESSION_COLLAB_TOOLS_TIMEOUT_MS,
+    },
+  };
+}
+
+/**
+ * Never asked about before they run: creating a session asks the user itself (unless they switched
+ * that off), and messaging a session is what the user allowed by leaving the tools on — a send that
+ * would reach more permissions, or run past the pair limit, asks them in PPM's own card.
+ */
+export const CLAUDE_SESSION_COLLAB_TOOLS: readonly string[] = SESSION_COLLAB_TOOLS.map((tool) => `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${tool}`);
+
+/**
+ * Spawn options as `spawnFingerprint` should compare them: the tab, database and session tools' tokens
+ * blanked. A warm spare is started before its session exists, and its token is minted for the session
  * id it is given then — the one the session's own turns mint — so the token says nothing
  * the session id (which the fingerprint already leaves out) does not.
  */
 export function withSessionTokenMasked<T extends Record<string, unknown>>(options: T): T {
   const servers = options.mcpServers as Record<string, McpHttpServerConfig> | undefined;
-  const tabs = servers?.[CLAUDE_TAB_TOOLS_MCP_SERVER];
-  if (!servers || !tabs) return options;
-  return { ...options, mcpServers: { ...servers, [CLAUDE_TAB_TOOLS_MCP_SERVER]: { ...tabs, headers: { Authorization: "<session>" } } } };
+  const names = [CLAUDE_TAB_TOOLS_MCP_SERVER, CLAUDE_DB_TOOLS_MCP_SERVER, CLAUDE_SESSION_COLLAB_MCP_SERVER].filter((name) => servers?.[name]);
+  if (!servers || names.length === 0) return options;
+  const masked = { ...servers };
+  for (const name of names) masked[name] = { ...masked[name]!, headers: { Authorization: "<session>" } };
+  return { ...options, mcpServers: masked };
 }
 
 /** Resolve per-call overrides against provider config. Per-call wins, else config, else omit. */

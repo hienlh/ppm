@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
 import { Hono } from "hono";
-import { cors } from "hono/cors";
+import { corsHeaders } from "../../../src/server/middleware/cors-headers.ts";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -106,7 +106,7 @@ describe("design preview route", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe("null");
     expect(response.headers.get("cache-control")).toBe("no-store");
     const csp = response.headers.get("content-security-policy")!;
-    expect(csp).toContain(`connect-src localhost:5173${base(url)}/;`);
+    expect(csp).toContain(`connect-src https://localhost:5173${base(url)}/ http://localhost:5173${base(url)}/;`);
     expect(csp).toContain("'unsafe-eval'");
     expect(csp).not.toContain("allow-modals");
     const html = await response.text();
@@ -178,7 +178,7 @@ describe("design preview route", () => {
   it("keeps ACAO null behind the app's global CORS layer, which would answer * on its own", async () => {
     const routes = createDesignPreviewRoutes(() => time);
     const withCors = new Hono();
-    withCors.use("*", cors());
+    withCors.use("*", corsHeaders);
     withCors.route("/api/design-preview/content", routes.content);
     withCors.use("/api/*", authMiddleware);
     withCors.route("/api/design-preview", routes.api);

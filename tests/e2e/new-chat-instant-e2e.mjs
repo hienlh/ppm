@@ -415,7 +415,7 @@ try {
     activePage = strict.page;
     try {
       await strict.page.goto(`${harness.web}/project/${PROJECT}`);
-      const booted = await strict.page.waitForFunction(() => !!document.querySelector('[aria-label^="AI Provider:"], textarea, [data-tab-id]') || /Recent chats|Chat History/.test(document.body.innerText), undefined, { timeout: 15000 })
+      const booted = await strict.page.waitForFunction(() => !!document.querySelector('[data-model-chip], textarea, [data-tab-id]') || /Recent chats|Chat History/.test(document.body.innerText), undefined, { timeout: 15000 })
         .then(() => true, () => false);
       const { deniedFrom } = await strict.page.evaluate(() => ({ deniedFrom: window.__e2e.deniedFrom }));
       const body = await strict.page.evaluate(() => document.body.innerText.slice(0, 80));

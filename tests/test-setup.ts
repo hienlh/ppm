@@ -6,6 +6,11 @@ import { tmpdir } from "node:os";
 const testPpmHome = mkdtempSync(resolve(tmpdir(), "ppm-test-"));
 process.env.PPM_HOME = testPpmHome;
 
+// A shell inside an AI chat carries the chat's mark (`ai-chat-env.ts`), and `ppm db` refuses its
+// data commands under it, so a run started from a chat must not inherit it. Tests that want the
+// mark set it themselves.
+delete process.env.PPM_AI_CHAT;
+
 // Create subdirectories that services expect
 mkdirSync(resolve(testPpmHome, "bin"), { recursive: true });
 mkdirSync(resolve(testPpmHome, "extensions"), { recursive: true });

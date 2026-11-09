@@ -90,8 +90,8 @@ export function builtInCommands(ctx: CommandContext): AppCommand[] {
       run: () => openRemoteAccess(),
     },
     {
-      id: "forward-port", label: "Forward a Port", icon: Globe, changesData: false,
-      keywords: "forward port forwarding localhost web preview tunnel cloudflare tailscale dev server url",
+      id: "forward-port", label: "Open Web Preview / Forward a Port", icon: Globe, changesData: false,
+      keywords: "forward port forwarding localhost web preview browser tab open website tunnel cloudflare tailscale dev server url",
       run: () => openPortForwarding(),
     },
     {

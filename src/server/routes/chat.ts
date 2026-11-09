@@ -6,25 +6,29 @@ import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { createProjectChatSession } from "../../services/chat-session-create.ts";
+import { deleteChatSession, renameChatSession } from "../../services/chat-session-admin.ts";
 import { isValidDesignSlug } from "../../services/design/design-slug.ts";
 import { isAssistantProject } from "../../shared/assistant-project.ts";
 import { draftService } from "../../services/draft.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
-import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
 import { searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
 import { invalidateSdkCommands } from "../../services/slash-discovery/sdk-commands.ts";
 import { listSlashItemsForProvider } from "../../services/slash-items-for-provider.ts";
 import { readUsageSnapshot } from "../../services/chat-usage-snapshot.service.ts";
 import { chatPrepareRoutes } from "./chat-prepare.ts";
 import { chatFileChangesRoutes } from "./chat-file-changes.ts";
+import { chatSessionTurnsRoutes } from "./chat-session-turns.ts";
+import { chatTurnWindowRoutes } from "./chat-turn-window.ts";
+import { chatSessionCollabRoutes } from "./session-collab.ts";
+import { applyTurnStamps, loadTurnLookup, stampSessionTurns } from "../../services/session-turns/stamp-message-turns.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
 import { upsertSlashRecent, getSlashRecents, listTurnUsage, getSessionProvider, getSessionDesignSlugs, copySessionForkSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { bindPickedAccount, bindRefusalReason } from "../../services/picked-account-binding.ts";
-import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
 import { parseCompactSegment } from "../../services/compact-segment.ts";
+import { assertSessionInProject } from "../../services/agent-transcript/session-ownership.ts";
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/transcript-images.ts";
 import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
@@ -51,6 +55,9 @@ export const chatRoutes = new Hono<Env>();
 
 chatRoutes.route("/prepare", chatPrepareRoutes);
 chatRoutes.route("/", chatFileChangesRoutes);
+chatRoutes.route("/", chatSessionTurnsRoutes);
+chatRoutes.route("/", chatTurnWindowRoutes);
+chatRoutes.route("/", chatSessionCollabRoutes);
 
 /** GET /chat/slash-items — list available slash commands and skills for the project */
 chatRoutes.get("/slash-items", async (c) => {
@@ -158,6 +165,23 @@ chatRoutes.get("/providers/:providerId/models", async (c) => {
   }
 });
 
+/**
+ * GET /chat/providers/:providerId/effort-status?model= — what overrides the effort picked for a
+ * new chat in this project (`CLAUDE_CODE_EFFORT_LEVEL`, a `maxEffortLevel` cap), from the settings
+ * files; a session's own socket carries the CLI's answer once a turn has run. `status` is null
+ * for a provider nothing overrides.
+ */
+chatRoutes.get("/providers/:providerId/effort-status", (c) => {
+  const provider = providerRegistry.get(c.req.param("providerId"));
+  if (!provider) return c.json(err(`Provider "${c.req.param("providerId")}" not found`), 404);
+  try {
+    const status = provider.estimateEffortStatus?.(c.get("projectPath"), c.req.query("model") || undefined) ?? null;
+    return c.json(ok({ status }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** GET /chat/sessions — list chat sessions filtered by project from context */
 chatRoutes.get("/sessions", async (c) => {
   try {
@@ -201,7 +225,7 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
   try {
     const providerId = c.req.query("providerId") ?? "claude";
     const query = parseHistoryPageQuery((name) => c.req.query(name));
-    return c.json(ok(await readSessionHistory(providerId, c.req.param("id"), query)));
+    return c.json(ok(await readSessionHistory(providerId, c.req.param("id"), query, c.get("projectPath"))));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -348,18 +372,7 @@ chatRoutes.delete("/sessions/:id", async (c) => {
     if (hasChildren(id)) {
       return c.json(err("Cannot delete: this session has edited versions branched from it"), 409);
     }
-    // Provider-specific cleanup (JSONL, process, etc.)
-    await chatService.deleteSession(providerId, id);
-    // Shared DB cleanup
-    deleteSessionMapping(id); // legacy cleanup
-    setSessionTag(id, null, c.get("projectPath"));
-    deleteSessionMetadata(id);
-    deleteSessionTitle(id);
-    unpinSession(id);
-    deleteBranchesFor(id);
-    deleteSessionBaselines(id);
-    // Fire-and-forget draft cleanup
-    try { draftService.delete(c.get("projectPath"), id); } catch { /* ignore */ }
+    await deleteChatSession(providerId, id, c.get("projectPath"));
     return c.json(ok({ deleted: id }));
   } catch (e) {
     return c.json(err((e as Error).message), 404);
@@ -373,17 +386,7 @@ chatRoutes.patch("/sessions/:id", async (c) => {
     const body = await c.req.json<{ title?: string }>();
     if (!body.title?.trim()) return c.json(err("title is required"), 400);
     const title = body.title.trim();
-    const projectPath = c.get("projectPath");
-    // Persist to PPM DB (authoritative source for user-set titles)
-    setSessionTitle(id, title);
-    // Codex owns its rollout title and has no Claude SDK session to rename.
-    // PPM's title table is the authoritative title for both providers.
-    if (getSessionProvider(id) !== "codex") {
-      await sdkRenameSession(id, title, { dir: projectPath });
-    }
-    // Also update in-memory session
-    const session = chatService.getSession(id);
-    if (session) session.title = title;
+    await renameChatSession(id, title, c.get("projectPath"));
     return c.json(ok({ id, title }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -658,18 +661,6 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
   }
 });
 
-/** GET /chat/sessions/:id/logs — get session-level debug logs */
-chatRoutes.get("/sessions/:id/logs", (c) => {
-  try {
-    const id = c.req.param("id");
-    const tail = parseInt(c.req.query("tail") ?? "200", 10);
-    const logs = getSessionLog(id, tail);
-    return c.json(ok({ logs }));
-  } catch (e) {
-    return c.json(err((e as Error).message), 500);
-  }
-});
-
 /**
  * Resolve a session's SDK JSONL transcript path: ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl
  * Tries the in-memory active session first, then the DB-persisted project_path.
@@ -891,6 +882,23 @@ chatRoutes.get("/sessions/:id/tasks", async (c) => {
   }
 });
 
+/**
+ * The transcript a compact summary points at, when the path it names is not there.
+ *
+ * Claude Code builds that path from the folder the session was started or resumed in (a `cd`
+ * does not change it), so a session resumed in a subdirectory names a project folder that was
+ * never created (`…-app-tools--runtime-checkout/<id>.jsonl`) while its transcript stayed in the
+ * folder of the project it started in, and every scroll to the top answered "File not found".
+ * The file name is still the session's own, so when the named file is missing it is looked for
+ * in this project's folder, and only there. A named file that does exist is returned unchanged,
+ * as before: this scopes the fallback, not the route.
+ */
+function compactTranscriptPath(jsonlPath: string, projectPath: string): string {
+  if (existsSync(jsonlPath)) return jsonlPath;
+  const owned = assertSessionInProject({ providerId: "claude", sessionId: basename(jsonlPath, ".jsonl"), projectPath });
+  return owned.ok && owned.claude ? `${owned.claude.sessionDir}.jsonl` : jsonlPath;
+}
+
 /** GET /chat/pre-compact-messages — read and parse a JSONL transcript file (for expand-compact feature) */
 chatRoutes.get("/pre-compact-messages", async (c) => {
   try {
@@ -901,16 +909,20 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
     const { isCodexRolloutPath, getCodexPreCompactMessages } = await import("../../providers/codex-app-server/codex-history.ts");
     if (isCodexRolloutPath(jsonlPath)) {
       const messages = getCodexPreCompactMessages(jsonlPath, c.get("projectPath"), beforeUuid);
+      // Turns are numbered from the session's start, so an older segment's carry their real numbers.
+      const threadId = basename(jsonlPath).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i)?.[1];
+      if (threadId) await stampSessionTurns({ providerId: "codex", sessionId: threadId, projectPath: c.get("projectPath") }, messages);
       return c.json(ok(messages));
     }
     // No bound on the file. `parseCompactSegment` scans it as bytes, streamed, from
     // the start to the `before` record (to the end when no record has that uuid),
     // and parses only the segment it finds there, which is what it bounds. A 543MB
     // transcript answered "File too large" to every scroll up while its segments were 3MB.
-    const validated = validateJsonlPath(jsonlPath, Number.POSITIVE_INFINITY);
+    const validated = validateJsonlPath(compactTranscriptPath(jsonlPath, c.get("projectPath")), Number.POSITIVE_INFINITY);
     // One compaction segment per request: the client walks further back by
     // expanding the summary that arrives at the head of each one.
     const messages = await parseCompactSegment(validated, beforeUuid);
+    await stampSessionTurns({ providerId: "claude", sessionId: basename(validated, ".jsonl"), projectPath: c.get("projectPath") }, messages);
     return c.json(ok(messages));
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
@@ -991,7 +1003,10 @@ chatRoutes.get("/uploads/:filename", async (c) => {
     if (c.req.header("if-none-match") === etag) {
       return new Response(null, { status: 304, headers: { ETag: etag } });
     }
-    return new Response(file.stream(), {
+    // The file itself, not `file.stream()`: that stream keeps about the file's size in native
+    // memory per response and never returns it (see `file-chunks.ts`), and chat images are
+    // served every time a tab opens without them cached.
+    return new Response(file, {
       headers: {
         "Content-Type": file.type || "application/octet-stream",
         "Cache-Control": "public, max-age=31536000, immutable",

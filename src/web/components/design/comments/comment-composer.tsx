@@ -1,45 +1,42 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Trash2 } from "@/lib/icons";
+import { Loader2 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { DesignResponsiveDialog } from "../dialogs/design-responsive-dialog";
 import { COMMENT_LIMITS } from "../../../../shared/design-comment-types";
 
 /**
- * Writing a comment on an element, editing one, or adding a note to "Send to AI" for a
- * single element. The element's text and markup are shown as plain text: both come from the
+ * Writing a comment on an element, or adding a note to "Send to AI" for a single element.
+ * An existing comment opens as its thread instead (`comment-thread-view.tsx`). The element's text and markup are shown as plain text: both come from the
  * page and are never rendered as HTML.
  */
 
 export interface ComposerTarget {
-  mode: "create" | "edit" | "send";
+  mode: "create" | "send";
   tag: string;
   /** The element's text as the page reported it (or as the comment stored it). */
   text: string;
   /** The page's markup for the element, shown for orientation only. */
   markup?: string;
-  initialBody?: string;
 }
 
 const TITLES: Record<ComposerTarget["mode"], (tag: string) => string> = {
   create: (tag) => `Comment on <${tag}>`,
-  edit: () => "Comment",
   send: (tag) => `Send <${tag}> to AI`,
 };
 
-export function CommentComposer({ target, onClose, onSubmit, onDelete }: {
+export function CommentComposer({ target, onClose, onSubmit }: {
   target: ComposerTarget | null;
   onClose: () => void;
   /** Resolves when done; a rejection keeps the dialog open with the text intact. */
   onSubmit: (body: string) => Promise<void>;
-  onDelete?: () => Promise<void>;
 }) {
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    setBody(target?.initialBody ?? "");
+    setBody("");
     setBusy(false);
     if (target) requestAnimationFrame(() => inputRef.current?.focus());
   }, [target]);
@@ -66,11 +63,6 @@ export function CommentComposer({ target, onClose, onSubmit, onDelete }: {
       title={TITLES[target.mode](target.tag)}
       description={sending ? "Add a note if you like. You will see the whole message before it goes into the chat." : undefined}
       footer={<>
-        {target.mode === "edit" && onDelete && (
-          <Button variant="outline" className="text-destructive md:mr-auto" disabled={busy} onClick={() => run(onDelete)}>
-            <Trash2 className="size-4" /> Delete
-          </Button>
-        )}
         <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
         <Button disabled={!canSubmit} onClick={() => run(() => onSubmit(body))}>
           {busy && <Loader2 className="size-4 animate-spin" />} {sending ? "Preview message" : "Save"}

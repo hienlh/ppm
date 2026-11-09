@@ -25,6 +25,9 @@ import type { CommentPatch } from "@/lib/design/api-design-comments";
 /** `elsewhere`: the comment is on another page of the design than the one on screen. */
 export type PinStatus = "pinned" | "moved" | "detached" | "pending" | "elsewhere";
 
+/** How a status reads beside a comment; pinned and pending say nothing. */
+export const PIN_STATUS_LABEL: Partial<Record<PinStatus, string>> = { detached: "Detached", moved: "Moved", elsewhere: "On another page" };
+
 export interface CommentPins {
   rects: ReadonlyMap<string, PinRect>;
   statusOf: (id: string) => PinStatus;

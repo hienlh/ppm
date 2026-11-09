@@ -157,7 +157,7 @@ export async function stepDesignSystemsPerApp(ctx) {
   ctx.record("the sidebar's Design systems group lists the declared app with its status");
   if (ctx.mobile) {
     // The drawer panel covers the backdrop's own left 90vw; click the sliver still exposed.
-    await ctx.page.locator('[aria-label="Close drawer"]:visible').click({ position: { x: Math.round(ctx.width * 0.95), y: 40 } });
+    await ctx.page.locator('div[aria-label="Close drawer"]:visible').click({ position: { x: Math.round(ctx.width * 0.95), y: 40 } });
   }
 
   if (hasGit) {

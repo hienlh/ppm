@@ -62,6 +62,7 @@ export function FloatingWindow({
   children,
 }: FloatingWindowProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const bodyHostRef = useRef<HTMLDivElement>(null);
   const [gesturing, setGesturing] = useState(false);
 
   const maximized = win.state === "maximized";
@@ -71,7 +72,7 @@ export function FloatingWindow({
   const floating = win.state === "normal";
   const rect: Rect = displayedRect(win.state, win.rect, bounds);
 
-  const { body, pip } = useWindowBodyElement(win.id, rootRef, minimized);
+  const { body, pip } = useWindowBodyElement(win.id, bodyHostRef, minimized);
 
   // Latest committed geometry, read at the first frame of a gesture (never mid-gesture,
   // where it would compound the cumulative movement).
@@ -211,6 +212,11 @@ export function FloatingWindow({
       {floating && (
         <WindowResizeHandles bind={(handle) => bindResize(handle) as Record<string, unknown>} />
       )}
+
+      {/* Where the body is appended: last among the frame's React children, so anything React
+          mounts later is inserted before it. `contents`, so the body stays a flex item of
+          the frame. */}
+      <div ref={bodyHostRef} className="contents" />
 
       {/* Radix primitives inside the content must portal into whichever document the body
           currently lives in; `undefined` (never `null`) restores the document default. */}

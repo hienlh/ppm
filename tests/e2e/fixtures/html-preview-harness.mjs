@@ -44,18 +44,33 @@ export async function createHtmlPreviewHarness({ serverScript = "tests/e2e/fixtu
   const env = { ...process.env, PPM_HOME: ppm, HOME: home, USERPROFILE: home,
     PPM_HTML_TEST_REAL_HOME: homedir(), PPM_HTML_TEST_PORT: String(apiPort), PPM_DEV_API: api };
   delete env.PPM_ALLOW_PROD_DB;
-  const backend = spawn(process.env.PPM_BUN || "bun", [serverScript], { cwd: process.cwd(), env, windowsHide: true });
-  const frontend = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--config", "vite.config.ts", "--host", "127.0.0.1", "--port", String(webPort), "--strictPort"], { cwd: process.cwd(), env, windowsHide: true });
   const logs = { api: "", web: "" };
-  for (const [name, child] of [["api", backend], ["web", frontend]]) {
+  const capture = (name, child) => {
     child.stdout.on("data", (chunk) => { logs[name] += chunk; });
     child.stderr.on("data", (chunk) => { logs[name] += chunk; });
     child.on("error", (error) => { logs[name] += String(error); });
-  }
-  const cleanup = async () => {
+    return child;
+  };
+  const startBackend = () => capture("api", spawn(process.env.PPM_BUN || "bun", [serverScript], { cwd: process.cwd(), env, windowsHide: true }));
+  let backend = startBackend();
+  const frontend = capture("web", spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--config", "vite.config.ts", "--host", "127.0.0.1", "--port", String(webPort), "--strictPort"], { cwd: process.cwd(), env, windowsHide: true }));
+  const stopBackend = async () => {
     try { await fetch(`${api}/__html-test/shutdown`, { method: "POST", signal: AbortSignal.timeout(1000) }); } catch {}
-    await new Promise((done) => setTimeout(done, 200));
+    for (let i = 0; i < 50 && backend.exitCode === null; i++) await new Promise((done) => setTimeout(done, 100));
     if (backend.exitCode === null) backend.kill();
+  };
+  /**
+   * Stops the API server and starts a new process on the same port, PPM_HOME and project, as
+   * a PPM restart would. Only a fixture that accepts a PPM_HOME it already used supports it.
+   */
+  const restartBackend = async () => {
+    await stopBackend();
+    logs.api += "\n--- restart ---\n";
+    backend = startBackend();
+    await ready(`${api}/api/health`, backend);
+  };
+  const cleanup = async () => {
+    await stopBackend();
     if (frontend.exitCode === null) frontend.kill();
     await Promise.all(Object.entries(logs).map(([name, body]) => writeFile(join(artifacts, `${name}.log`), body)));
   };
@@ -66,6 +81,6 @@ export async function createHtmlPreviewHarness({ serverScript = "tests/e2e/fixtu
     // PPM_PLAYWRIGHT_CHANNEL=chrome drives the installed Chrome when Playwright's own build is missing.
     const channel = process.env.PPM_PLAYWRIGHT_CHANNEL;
     const browser = await pw.chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
-    return { browser, sandbox, project, api, web, artifacts, cleanup };
+    return { browser, sandbox, project, api, web, artifacts, cleanup, restartBackend };
   } catch (error) { await cleanup(); throw error; }
 }

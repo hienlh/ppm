@@ -1,13 +1,15 @@
 import { chatService } from "../../services/chat.service.ts";
 import { getSessionUnreadCount, incrementSessionUnread } from "../../services/db.service.ts";
-import { describeApprovalInput } from "../../services/notification-format.ts";
+import { collabApprovalTitle, describeApprovalInput } from "../../services/notification-format.ts";
+import { dbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
+import { sessionCollabApprovalInput } from "../../shared/session-collab.ts";
 import { broadcastGlobalEvent } from "./global.ts";
 import type { PendingApprovalEvent } from "./chat-pending-approval.ts";
 import { isNotificationSuppressed } from "../../services/chat-control/notification-suppressor.ts";
 
 /**
- * What every device learns when a chat starts waiting on an approval card — a provider's or the
- * PPM Assistant endpoint's alike: the session is marked unread (with the card's kind) on every
+ * What every device learns when a chat starts waiting on an approval card — a provider's, the
+ * PPM Assistant endpoint's or one of PPM's own (a database change, a session tool's card) alike: the session is marked unread (with the card's kind) on every
  * tab strip, and a notification goes out unless the card is gone or seen before it would be sent.
  */
 export function announceApprovalRequest(
@@ -18,7 +20,8 @@ export function announceApprovalRequest(
   stillShown: () => boolean,
 ): void {
   const isQuestion = ev.tool === "AskUserQuestion";
-  const nType = isQuestion ? "question" : "approval_request";
+  const collab = sessionCollabApprovalInput(ev.tool, ev.input);
+  const nType = isQuestion ? "question" : collab ? "collab_approval" : "approval_request";
   const projectName = session.projectName || "";
   const title = chatService.getSession(sessionId)?.title;
   incrementSessionUnread(sessionId, nType, title, projectName || null);
@@ -34,9 +37,12 @@ export function announceApprovalRequest(
     const detail = ev.summary
       ? { detail: ev.summary.headline, detailStyle: "quote" as const }
       : describeApprovalInput(ev.tool, ev.input);
+    const db = dbExecuteApprovalInput(ev.tool, ev.input);
     notificationService.broadcast(nType, {
-      title: isQuestion ? "AI has a question" : "Waiting for approval",
-      body: isQuestion ? `${project} — ${sTitle}` : `${project} — ${ev.tool} needs permission`,
+      title: isQuestion ? "AI has a question" : collab ? collabApprovalTitle(collab) : "Waiting for approval",
+      body: isQuestion || collab
+        ? `${project} — ${sTitle}`
+        : db ? `${project} — AI wants to change ${db.connectionName}` : `${project} — ${ev.tool} needs permission`,
       project: projectName, sessionId, providerId: session.providerId, sessionTitle: sTitle, tool: ev.tool,
       ...detail,
     }, {

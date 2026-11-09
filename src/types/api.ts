@@ -1,4 +1,5 @@
 import type { ReplyReference } from "../shared/chat-reply.ts";
+import type { TurnReference } from "../shared/chat-turn-ref.ts";
 import type { TabOpenRequest, TabOpenResult } from "../shared/tab-open-protocol.ts";
 import type { AssistantUiRequest, AssistantUiResult, UiSummary } from "../shared/assistant-ui-protocol.ts";
 /** Standard API response envelope — backend wraps all responses in this */
@@ -26,7 +27,9 @@ export type TerminalWsMessage =
 
 /** WebSocket message types (chat) */
 export type ChatWsClientMessage =
-  | { type: "message"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>;
+  | { type: "message"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null;
+  /** Turns of other sessions the message points at; the server validates them and grants their read. */
+  turnRefs?: TurnReference[] | null; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>;
   /** Uploaded paths for the same images, for providers that take a file not a payload. */
   imagePaths?: string[]; model?: string; effort?: string; thinking?: boolean;
   /** An Assistant session's message: what the sending device shows, validated by the server. */
@@ -84,12 +87,19 @@ export type ChatWsServerMessage =
   | { type: "error"; message: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "phase_changed"; phase: SessionPhase; elapsed?: number }
-  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown; summary?: import("../shared/assistant-approval").ApprovalSummary } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean; turnStop?: import("../shared/turn-stop").TurnStop | null; permissionMode?: string | null; defaultPermissionMode?: string }
+  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown; summary?: import("../shared/assistant-approval").ApprovalSummary } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean; effortStatus?: import("../shared/effort-status").EffortStatus | null; turnStop?: import("../shared/turn-stop").TurnStop | null; permissionMode?: string | null; defaultPermissionMode?: string }
+  /** What the session's CLI said about its effort when the turn started. */
+  | { type: "effort_status"; status: import("../shared/effort-status").EffortStatus }
   /** The turn that just ended was ended by an error. Sent just before its `done`. */
   | { type: "turn_stop"; stop: import("../shared/turn-stop").TurnStop }
   | { type: "turn_events"; events: unknown[]; streamSeq?: number; truncated?: boolean }
-  | { type: "message_rejected"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; message: string }
-  | { type: "user_message"; content: string; imageCount?: number; timestamp?: string }
+  | { type: "message_rejected"; clientMessageId?: string; content: string; replyTo?: ReplyReference | null; turnRefs?: TurnReference[] | null; message: string }
+  /**
+   * A message this socket sent was taken: `content` is the text as stored and as the provider
+   * gets it (blocks encoded, markers in the typed text broken). Sent to the sender only.
+   */
+  | { type: "message_accepted"; clientMessageId: string; content: string }
+  | { type: "user_message"; content: string; clientMessageId?: string; imageCount?: number; timestamp?: string }
   /** An AI tab tool asks this device to open a tab. */
   | TabOpenRequest
   /** A PPM Assistant UI tool asks the device chatting in the session to read or act on its screen. */

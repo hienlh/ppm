@@ -17,7 +17,11 @@ import { ProviderBadge } from "@/components/chat/provider-selector";
 import { openSettings } from "./open-settings";
 import { CodexContextSettings } from "./codex-context-settings";
 import { McpSignInList } from "@/components/mcp-auth/mcp-sign-in-list";
+import { effortNotice, noticeText, shownEffort } from "@/components/chat/model-thinking-selector-helpers";
+import { modelDisplayName } from "@/lib/model-display-name";
+import type { EffortStatus } from "../../../shared/effort-status";
 import type { ModelOption } from "../../../types/chat";
+import { LOG_ONLY_IDLE_MINUTES, leftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../../shared/leftover-processes";
 import type { ProviderProbeStatus } from "../../../providers/provider-probe";
 
 const EFFORT_OPTIONS = [
@@ -88,6 +92,21 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
       .finally(() => setModelsLoading(false));
   }, [activeTab, activeRegistered]);
 
+  // `CLAUDE_CODE_EFFORT_LEVEL` or a cap in the user's Claude Code settings makes the default
+  // below inert for every project, which the select alone would not show.
+  const [effortStatus, setEffortStatus] = useState<EffortStatus | null>(null);
+  const defaultModel = settings?.providers[activeTab]?.model;
+  useEffect(() => {
+    setEffortStatus(null);
+    if (!activeTab) return;
+    let active = true;
+    const query = defaultModel ? `?model=${encodeURIComponent(defaultModel)}` : "";
+    api.get<{ status: EffortStatus | null }>(`/api/settings/ai/providers/${activeTab}/effort-status${query}`)
+      .then(({ status }) => { if (active) setEffortStatus(status); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [activeTab, defaultModel]);
+
   const retryProbe = async () => {
     setProbing(true);
     try {
@@ -108,6 +127,11 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
 
   const config = settings?.providers[activeTab];
   const isSdkProvider = config?.type === "agent-sdk" || (!config?.type && activeTab === "claude");
+  const effortOverride = effortNotice(
+    shownEffort(config?.effort, effortStatus),
+    effortStatus,
+    config?.model ? modelDisplayName(config.model) : "the model",
+  );
 
   const handleSettingsSave = async (patch: Partial<AISettings>) => {
     if (!settings) return false;
@@ -210,24 +234,33 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
         />
       </div>
 
-      <div className="flex items-start justify-between gap-3 rounded-md border border-border p-3">
-        <div className={fieldGap}>
-          <Label htmlFor="ai-tab-tools" className={compact ? labelSize : undefined}>
-            Let the AI open tabs in PPM
-          </Label>
-          <p id="ai-tab-tools-description" className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
-            The AI can open files in a PPM tab on your device, and show the pages, charts and reports
-            it makes, seeing their errors and a screenshot. Turns off Claude's claude.ai Artifact tool.
-            Applies to new chats.
-          </p>
-        </div>
-        <Switch
-          id="ai-tab-tools"
-          aria-describedby="ai-tab-tools-description"
-          checked={settings.tab_tools ?? false}
-          disabled={saving}
-          onCheckedChange={(checked) => handleSettingsSave({ tab_tools: checked })}
+      <div className={fieldGap}>
+        <Label htmlFor="ai-leftover-idle" className={compact ? labelSize : undefined}>
+          Stop leftover processes after (idle minutes, 0 = log only)
+        </Label>
+        <Input
+          key={`leftover-${revision}`}
+          id="ai-leftover-idle"
+          type="number"
+          min={0}
+          max={MAX_LEFTOVER_IDLE_MINUTES}
+          defaultValue={leftoverIdleMinutes(settings)}
+          aria-describedby="ai-leftover-idle-description"
+          className={compact ? "h-7 text-[11px]" : undefined}
+          onBlur={(e) => {
+            // min/max bound only the spinner: a typed number is brought into range here, and a
+            // cleared field shows the saved value again rather than looking saved.
+            const val = parseInt(e.target.value);
+            const minutes = isNaN(val) ? null : Math.min(Number(e.target.max), Math.max(Number(e.target.min), val));
+            e.target.value = String(minutes ?? leftoverIdleMinutes(settings));
+            if (minutes !== null) handleSettingsSave({ leftover_processes_idle_minutes: minutes });
+          }}
         />
+        <p id="ai-leftover-idle-description" className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+          Servers, emulators and other processes a chat&apos;s commands started and left running are stopped once
+          the chat has been idle this long, and at once when the chat is deleted. At 0 nothing is stopped: the
+          server log names what {LOG_ONLY_IDLE_MINUTES} idle minutes would have stopped. Linux with systemd only.
+        </p>
       </div>
 
       {/* Provider tabs */}
@@ -379,23 +412,42 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
                   ))}
                 </SelectContent>
               </Select>
+              {effortOverride && (
+                <div role="note" className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 px-2.5 py-2">
+                  <AlertTriangle className="size-3.5 text-warning shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <p className={`${labelSize} text-text-secondary`}>{effortOverride.title}</p>
+                    <p className="text-[11px] text-muted-foreground break-words">{noticeText(effortOverride.detail)}</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className={fieldGap}>
-              <Label htmlFor="ai-max-turns" className={compact ? labelSize : undefined}>Max Turns (1-500)</Label>
+              <Label htmlFor="ai-max-turns" className={compact ? labelSize : undefined}>Max Turns (up to 1000, 0 = no limit)</Label>
               <Input
                 key={`turns-${activeTab}-${revision}`}
                 id="ai-max-turns"
                 type="number"
-                min={1}
-                max={500}
+                min={0}
+                max={1000}
                 defaultValue={config?.max_turns ?? 100}
                 className={compact ? "h-7 text-[11px]" : undefined}
                 onBlur={(e) => {
+                  // min/max bound only the spinner: a typed number is brought into range here, and a
+                  // cleared field shows the saved value again rather than looking saved.
                   const val = parseInt(e.target.value);
-                  if (!isNaN(val)) handleSave("max_turns", val);
+                  const turns = isNaN(val) ? null : Math.min(Number(e.target.max), Math.max(Number(e.target.min), val));
+                  e.target.value = String(turns ?? config?.max_turns ?? 100);
+                  if (turns !== null) handleSave("max_turns", turns);
                 }}
               />
+              {(config?.max_turns === 0 || (config?.max_turns ?? 0) > 500) && (
+                <p className={`flex items-start gap-1.5 ${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+                  <AlertTriangle className="size-3 text-warning shrink-0 mt-px" />
+                  Every step is a paid model call. With a limit this high, or none, a task left running unattended can go on for hours and run up a large bill.
+                </p>
+              )}
             </div>
 
             <div className={fieldGap}>

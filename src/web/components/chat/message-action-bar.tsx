@@ -3,19 +3,38 @@ import { Copy, Check } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { formatRelativeDate } from "@/lib/format-date";
 import { copyToClipboard } from "@/lib/clipboard";
+import { useRelativeTimeTick } from "@/hooks/use-relative-time-tick";
+
+// The fields `toLocaleString()` prints, in one formatter: a long chat draws hundreds of these.
+let fullDateFormat: Intl.DateTimeFormat | undefined;
 
 /** Full timestamp for the relative-time tooltip. */
 function fullDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleString();
+    fullDateFormat ??= new Intl.DateTimeFormat(undefined, {
+      year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric",
+    });
+    return fullDateFormat.format(new Date(iso));
   } catch {
     return "";
   }
 }
 
+/** The relative time, kept current on its own so the message around it is never redrawn for it. */
+function RelativeTime({ timestamp }: { timestamp: string }) {
+  useRelativeTimeTick();
+  return (
+    <time title={fullDate(timestamp)} className="pr-1 tabular-nums">
+      {formatRelativeDate(timestamp)}
+    </time>
+  );
+}
+
 /**
  * Ghost-pill action button (icon + label) for the message action bar.
  * 44px min touch target on mobile; tighter on desktop. Always visible.
+ * `iconOnlyBelowMd` keeps the label for screen readers only on a phone, where one more labelled
+ * button wraps the row onto a second line under every message.
  */
 export function ActionButton({
   icon,
@@ -23,12 +42,14 @@ export function ActionButton({
   title,
   onClick,
   touchTarget,
+  iconOnlyBelowMd,
 }: {
   icon: ReactNode;
   label: string;
   title: string;
   onClick: () => void;
   touchTarget?: boolean;
+  iconOnlyBelowMd?: boolean;
 }) {
   return (
     <button
@@ -39,7 +60,7 @@ export function ActionButton({
       className={cn("inline-flex items-center justify-center gap-1 rounded-md px-1.5 py-1 text-text-subtle hover:text-text-primary hover:bg-surface transition-colors", touchTarget && "min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0")}
     >
       {icon}
-      <span>{label}</span>
+      <span className={cn(iconOnlyBelowMd && "sr-only md:not-sr-only")}>{label}</span>
     </button>
   );
 }
@@ -84,9 +105,7 @@ export function MessageActionBar({
         className,
       )}
     >
-      <time title={fullDate(timestamp)} className="pr-1 tabular-nums">
-        {formatRelativeDate(timestamp)}
-      </time>
+      <RelativeTime timestamp={timestamp} />
       <CopyButton content={content} />
       {children}
     </div>

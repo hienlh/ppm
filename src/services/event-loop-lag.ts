@@ -9,7 +9,7 @@
  * a busy instance against 0.12-0.65ms on an idle one of the same binary), but
  * from outside it names no culprit.
  *
- * A late tick means one of two things, and they are fixed in different places:
+ * A late tick means one of three things, and they are fixed in different places:
  *
  *   - **self** — the loop was busy with our own synchronous work, or with GC.
  *     Worth hunting: a blocking call, a whole-file read, a synchronous DB write.
@@ -18,10 +18,17 @@
  *     and one `claude` process per session. Nothing in this repository fixes
  *     that; moving work to another thread least of all, since the CPU was never
  *     ours to move it to.
+ *   - **blocked** — we got little CPU while the machine had plenty to spare, so
+ *     the thread was *waiting*: on a page-in, a disk read, a lock, a synchronous
+ *     child process. This is what every 20-60s stall on 26/10/2026 turned out to
+ *     be — the main thread in `PageIn` waits with the machine at 13% CPU, because
+ *     the process ran at memory priority 2 and I/O priority Low (see
+ *     `process-priority.ts`). They were logged as "starved" until this cause existed,
+ *     which pointed at the one explanation that was wrong.
  *
- * Sampling `process.cpuUsage()` across the same gap tells them apart: time we
- * burned is ours, time we did not is somebody else's. Without that, "the server
- * stalled" is a fact with two opposite conclusions.
+ * Sampling `process.cpuUsage()` across the same gap separates our work from not
+ * ours; the machine's CPU across it separates starved from blocked. Without both,
+ * "the server stalled" is a fact with opposite conclusions.
  *
  * The monitor costs one timer and two counter reads per tick. It holds its
  * samples in memory, and only a stall of `LOG_STALL_MS` or more also reaches
@@ -31,6 +38,7 @@
  * left nothing behind once the process restarted.
  */
 import { createLogger } from "./logger.ts";
+import { machineBusyFraction, readMachineCpuTimes, type MachineCpuTimes } from "./machine-cpu.ts";
 
 const log = createLogger("event-loop");
 
@@ -55,7 +63,13 @@ export const SELF_RATIO = 0.7;
 /** CPU/wall at or below this: the process was not running for most of the gap. */
 export const STARVED_RATIO = 0.25;
 
-export type LagCause = "self" | "starved" | "mixed";
+/**
+ * Machine-wide busy share at or above which a process not running counts as starved.
+ * Below it there were free cores, so not running means the thread was waiting.
+ */
+export const MACHINE_BUSY_FRACTION = 0.8;
+
+export type LagCause = "self" | "starved" | "blocked" | "mixed";
 
 export interface LagSample {
   /** Epoch ms at which the late tick finally ran. */
@@ -66,6 +80,8 @@ export interface LagSample {
   cpuMs: number;
   /** Resident set at that moment, to spot a stall that is really GC pressure. */
   rssMb: number;
+  /** Share of every core on the machine that was busy across the gap, 0-100; absent when unknown. */
+  machineCpuPct?: number;
   cause: LagCause;
 }
 
@@ -96,12 +112,17 @@ export interface LagReport {
  * The ratio can exceed 1: `cpuUsage` counts every thread, and Bun runs file
  * system work on a pool, so a gap spent in parallel IO bills more CPU than wall
  * time passed. That is still our own work, which is what the answer says.
+ *
+ * Without a machine reading a gap we spent off the CPU stays "starved", the only
+ * answer there was before the machine was measured.
  */
-export function classifyLag(lagMs: number, cpuMs: number): LagCause {
+export function classifyLag(lagMs: number, cpuMs: number, machineBusy?: number | null): LagCause {
   if (lagMs <= 0) return "self";
   const ratio = cpuMs / lagMs;
   if (ratio >= SELF_RATIO) return "self";
-  if (ratio <= STARVED_RATIO) return "starved";
+  if (ratio <= STARVED_RATIO) {
+    return machineBusy != null && machineBusy < MACHINE_BUSY_FRACTION ? "blocked" : "starved";
+  }
   return "mixed";
 }
 
@@ -116,18 +137,22 @@ export function sampleFromTick(args: {
   elapsedMs: number;
   cpuMicros: number;
   rssBytes: number;
+  /** Machine-wide busy share across the same gap, 0-1, when it was measured. */
+  machineBusy?: number | null;
   thresholdMs?: number;
 }): LagSample | null {
   const lagMs = args.elapsedMs - TICK_MS;
   if (lagMs < (args.thresholdMs ?? REPORT_THRESHOLD_MS)) return null;
   const cpuMs = args.cpuMicros / 1000;
-  return {
+  const sample: LagSample = {
     at: args.now,
     lagMs: Math.round(lagMs),
     cpuMs: Math.round(cpuMs),
     rssMb: Math.round(args.rssBytes / 1048576),
-    cause: classifyLag(lagMs, cpuMs),
+    cause: classifyLag(lagMs, cpuMs, args.machineBusy),
   };
+  if (args.machineBusy != null) sample.machineCpuPct = Math.round(args.machineBusy * 100);
+  return sample;
 }
 
 // ─── Monitor ───────────────────────────────────────────────────────────
@@ -137,6 +162,7 @@ let samples: LagSample[] = [];
 let startedAt = 0;
 let lastAt = 0;
 let lastCpu: { user: number; system: number } | null = null;
+let lastMachine: MachineCpuTimes | null = null;
 let ticks = 0;
 let stalls = 0;
 let blockedMs = 0;
@@ -156,7 +182,8 @@ export function logLongStall(sample: LagSample): void {
     return;
   }
   const more = longStallsNotLogged ? ` (+${longStallsNotLogged} more of ${LOG_STALL_MS}ms+ since the last one logged)` : "";
-  log.warn(`Event loop stalled ${sample.lagMs}ms (cause=${sample.cause}, cpu=${sample.cpuMs}ms, rss=${sample.rssMb}MB)${more}`);
+  const machine = sample.machineCpuPct === undefined ? "" : `, machineCpu=${sample.machineCpuPct}%`;
+  log.warn(`Event loop stalled ${sample.lagMs}ms (cause=${sample.cause}, cpu=${sample.cpuMs}ms${machine}, rss=${sample.rssMb}MB)${more}`);
   lastStallLoggedAt = sample.at;
   longStallsNotLogged = 0;
 }
@@ -168,8 +195,11 @@ function tick(): void {
   const cpuMicros = lastCpu
     ? cpu.user - lastCpu.user + (cpu.system - lastCpu.system)
     : 0;
+  const machine = readMachineCpuTimes();
+  const machineBusy = machineBusyFraction(lastMachine, machine);
   lastAt = now;
   lastCpu = cpu;
+  lastMachine = machine;
   ticks++;
 
   const sample = sampleFromTick({
@@ -177,6 +207,7 @@ function tick(): void {
     elapsedMs,
     cpuMicros,
     rssBytes: process.memoryUsage.rss(),
+    machineBusy,
   });
   if (!sample) return;
 
@@ -194,6 +225,7 @@ export function startLagMonitor(): void {
   startedAt = Date.now();
   lastAt = startedAt;
   lastCpu = process.cpuUsage();
+  lastMachine = readMachineCpuTimes();
   ticks = 0;
   stalls = 0;
   blockedMs = 0;
@@ -211,11 +243,12 @@ export function stopLagMonitor(): void {
   clearInterval(timer);
   timer = null;
   lastCpu = null;
+  lastMachine = null;
 }
 
 export function lagReport(): LagReport {
   const uptimeMs = startedAt ? Date.now() - startedAt : 0;
-  const byCause: Record<LagCause, number> = { self: 0, starved: 0, mixed: 0 };
+  const byCause: Record<LagCause, number> = { self: 0, starved: 0, blocked: 0, mixed: 0 };
   for (const s of samples) byCause[s.cause]++;
   return {
     running: timer !== null,

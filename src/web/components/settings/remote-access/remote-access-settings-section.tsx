@@ -3,6 +3,8 @@
  *
  * - Tailscale: a private address on the tailnet (its own pane, unchanged).
  * - Public link: PPM's own Cloudflare tunnel, a public https address.
+ * - Review links: a public address for design review links that opens the review pages and
+ *   nothing else of PPM, so they can be shared while PPM itself stays private.
  *
  * Forwarding a dev server is not here: it is used far more often than either of these is set
  * up, so it stays a sidebar panel (`tunnels/port-forwarding-panel.tsx`), whose Set up and
@@ -11,6 +13,7 @@
 import { cn } from "@/lib/utils";
 import { TailscaleSettingsSection } from "../tailscale/tailscale-settings-section";
 import { PublicLinkPane } from "./public-link-pane";
+import { ReviewLinksPane } from "./review-links-pane";
 import { REMOTE_ACCESS_TABS, useRemoteAccessTab } from "./remote-access-tab-store";
 
 export function RemoteAccessSettingsSection() {
@@ -43,6 +46,7 @@ export function RemoteAccessSettingsSection() {
       <div role="tabpanel">
         {tab === "tailscale" && <TailscaleSettingsSection />}
         {tab === "public-link" && <PublicLinkPane />}
+        {tab === "review-links" && <ReviewLinksPane />}
       </div>
     </div>
   );

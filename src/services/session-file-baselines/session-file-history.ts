@@ -27,6 +27,7 @@ import { isCredentialPath } from "../fs-credential-path-guard.ts";
 import { realPathOrSelf } from "../fs-ops/fs-real-path.ts";
 import { splitLines } from "../../shared/review-blocks.ts";
 import { BASELINE_MAX_BYTES, sessionDir, type BaselineSource } from "./session-file-baselines.service.ts";
+import { sessionFileWritten } from "./session-file-writes.ts";
 
 /** A log past this keeps only hashes: a file rewritten whole hundreds of times is not worth more. */
 export const HISTORY_MAX_FILE_BYTES = 16 * 1024 * 1024;
@@ -270,7 +271,7 @@ export function observeFile(sessionId: string, filePath: string, call: string, p
   if (isCredentialPath(path)) return Promise.resolve();
   const file = join(dir, logName(path));
   const at = Date.now();
-  return serialized(file, async () => {
+  const done = serialized(file, async () => {
     if (isCredentialPath(await realPathOrSelf(path))) return;
     const state = source === undefined ? await readState(path) : stateOf(source);
     if (!state) return;
@@ -300,6 +301,9 @@ export function observeFile(sessionId: string, filePath: string, call: string, p
       utimesSync(dirname(dir), now, now);
     } catch { /* pruned meanwhile: the next capture makes it again */ }
   });
+  // The call is done with the file: whoever keeps the session's list works this one out again.
+  if (phase === "after") void done.then(() => sessionFileWritten(sessionId, path));
+  return done;
 }
 
 /** Every path the session has a history for. */

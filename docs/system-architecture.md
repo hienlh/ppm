@@ -13,6 +13,7 @@ deployment and the error/security posture. Subsystem detail lives beside it:
 | [Data & Storage](architecture/data-and-storage.md) | SQLite schema and access, database viewer, MCP server management, group-chat model |
 | [Workspace & UI](architecture/workspace-and-ui.md) | Workspace switching, editor, terminal, git, file service, Design mode, OS File Explorer, tab-host windows and Document PiP |
 | [Integrations](architecture/integrations.md) | Telegram (notifications bot vs the PPM Assistant's bot), Jira watcher auto-debug |
+| [Schedules](architecture/schedules.md) | Prompt and script schedules: tick and always-on processes, the `ctx` API, shareable templates |
 | [Plugins & Tracing](architecture/plugins-and-tracing.md) | *Design, not built.* The append-only session-event log (including browser errors) and the seam inventory behind "Everything is a Plugin. Every run is traceable." |
 
 ## High-Level Architecture
@@ -62,7 +63,7 @@ deployment and the error/security posture. Subsystem detail lives beside it:
 │  │ SQLite DB        │  │ Git Repos        │  │ Session Storage │    │
 │  │ (config, projs)  │  │ (local disk)     │  │ (SQLite + SDK)  │    │
 │  │ (session map)    │  │                  │  │ (session_map,   │    │
-│  │ (push subs,      │  │ Connections:     │  │  session_logs,  │    │
+│  │ (push subs,      │  │ Connections:     │  │                 │    │
 │  │  usage, logs)    │  │ • SQLite files   │  │  usage_history) │    │
 │  │ (connections)    │  │ • PostgreSQL svr │  │  (connections)  │    │
 │  │ (table metadata) │  │   via connStr    │  │                 │    │
@@ -222,7 +223,6 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **ProjectService** | Project CRUD, scanning | add, remove, get, list, scan |
 | **ClaudeUsageService** | Token tracking, cost calculation | trackUsage, getUsage |
 | **PushNotificationService** | Web push subscriptions | subscribe, unsubscribe, notify |
-| **SessionLogService** | Audit logs with redaction | logSession, getLog |
 | **ProviderRegistry** | AI provider routing | getDefault, send (delegates) |
 | **CloudflaredService** | Download cloudflared binary | ensureCloudflared, getCloudflaredPath |
 | **TunnelService** | Cloudflare Quick Tunnel lifecycle | startTunnel, stopTunnel, getTunnelUrl |
@@ -259,7 +259,7 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 - Enforce security (no parent directory access)
 
 **Key Patterns:**
-- SQLite: WAL mode, foreign keys, lazy init, schema version `CURRENT_SCHEMA_VERSION` (tables include config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, workspace_state, extension_storage, mcp_servers, clawbot_paired_chats, jira_config, jira_watchers, jira_watch_results, proxy_requests, session_metadata, assistant_telegram_bindings, assistant_watches; see `src/services/db.service.ts` for the full set)
+- SQLite: WAL mode, foreign keys, lazy init, schema version `CURRENT_SCHEMA_VERSION` (tables include config, connections, accounts, usage_history, push_subscriptions, session_map, table_metadata, workspace_state, extension_storage, mcp_servers, clawbot_paired_chats, jira_config, jira_watchers, jira_watch_results, proxy_requests, session_metadata, schedules, design_share_links, assistant_telegram_bindings, assistant_watches; see `src/services/db.service.ts` for the full set)
 - Path validation: `projectPath/relativePath` only, reject `..`
 - Caching: Directory trees cached with TTL
 - Error handling: Descriptive messages (file not found, permission denied)

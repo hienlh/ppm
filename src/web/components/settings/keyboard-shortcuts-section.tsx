@@ -9,6 +9,8 @@ import {
   type KeyCategory,
 } from "@/stores/keybindings-store";
 import { useExtensionStore } from "@/stores/extension-store";
+import { useSettingsStore } from "@/stores/settings-store";
+import { isMinimalKeyAction } from "@/lib/minimal-mode";
 
 const CATEGORIES: { key: KeyCategory; label: string }[] = [
   { key: "general", label: "General" },
@@ -108,6 +110,7 @@ export function KeyboardShortcutsSection() {
   const extContributions = useExtensionStore((s) => s.contributions);
   const extKeybindings = extContributions?.keybindings ?? [];
   const extCommands = extContributions?.commands ?? [];
+  const minimalMode = useSettingsStore((s) => s.minimalMode);
 
   return (
     <div className="space-y-3">
@@ -136,7 +139,7 @@ export function KeyboardShortcutsSection() {
 
       {/* Categories */}
       {CATEGORIES.map((cat) => {
-        const actions = KEY_ACTIONS.filter((a) => a.category === cat.key);
+        const actions = KEY_ACTIONS.filter((a) => a.category === cat.key && (!minimalMode || isMinimalKeyAction(a.id)));
         if (actions.length === 0) return null;
         return (
           <div key={cat.key} className="space-y-1">

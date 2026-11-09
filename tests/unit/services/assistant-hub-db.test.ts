@@ -17,9 +17,9 @@ import {
 const tables = (db: Database) =>
   (db.query("SELECT name FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY name").all() as { name: string }[]).map((r) => r.name);
 
-describe("migration 58", () => {
+describe("migration 62", () => {
   it("brings a new database to the current version with both tables and their indexes", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(58);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(62);
     expect((getDb().query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(CURRENT_SCHEMA_VERSION);
     expect(tables(getDb())).toEqual(expect.arrayContaining([
       "assistant_telegram_bindings", "assistant_watches", "idx_assistant_watches_status", "idx_assistant_watches_target",
@@ -30,7 +30,7 @@ describe("migration 58", () => {
     const db = new Database(":memory:");
     applyDbPragmas(db);
     runMigrations(db);
-    db.exec("DROP TABLE assistant_telegram_bindings; DROP TABLE assistant_watches; PRAGMA user_version = 57");
+    db.exec("DROP TABLE assistant_telegram_bindings; DROP TABLE assistant_watches; PRAGMA user_version = 61");
     db.query("INSERT INTO session_metadata (session_id, assistant) VALUES ('kept', 1)").run();
     runMigrations(db);
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(CURRENT_SCHEMA_VERSION);
