@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.23.36] - 2026-11-09
+
+### Changed
+
+- **Chat usage shows both windows**, as two labelled rings ("5h 47%", "Wk 52%") that colour on their own and stay hidden until there is a figure; usage, History and ··· now sit in one chip-shaped group.
+- **The `/` and `@` lists float above the composer** instead of pushing the chips up, with tinted icons by kind, the match highlighted, kind filters and keyboard hints.
+- **Tidier footer on narrow chats and phones**: smaller chips with even padding (still 44px to tap), and the model name is no longer cut by its chevron.
+
+### Fixed
+
+- **Switch account's usage bars are all the same length**, whatever the label or figure beside them.
+
 ## [0.23.35] - 2026-11-09
 
 ### Changed
