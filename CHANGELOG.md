@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.35] - 2026-11-09
+
+### Changed
+
+- **The chat footer is one row of chips over the composer.** Agents and linked sessions share one activity chip (Agents and Sessions tabs), beside the changes and connection chips; usage, History and a ··· menu with account meters and Switch account sit on the right. Phones get bottom sheets and 44px touch targets, and the conversation fades out just above the chips.
+- **Linked sessions can be unlinked**, one at a time or with Unlink idle & done, with Undo for six seconds and an Unlinked group to relink them; a session that messages the chat again comes back.
+
 ## [0.23.34] - 2026-11-09
 
 ### Fixed
