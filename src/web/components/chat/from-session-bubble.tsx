@@ -12,6 +12,7 @@ import type { FromSessionReference } from "../../../shared/chat-from-session";
 import type { TurnReference } from "../../../shared/chat-turn-ref";
 import { openLinkedSession, providerLabel } from "@/lib/session-collab-client";
 import { MarkdownContent } from "./message-markdown";
+import { CollapsibleMessageBody } from "./collapsible-message-body";
 import { MessageActionBar } from "./message-action-bar";
 import { CopyTurnLinkButton } from "./copy-turn-link-button";
 import { ProviderBadge } from "./provider-selector";
@@ -59,8 +60,17 @@ export function FromSessionBubble({ from, text, plainContent, turnRefs, turn, ti
           <span className="shrink-0 opacity-80">{provider}</span>
         </button>
         {turnRefs && turnRefs.length > 0 && <TurnRefChipRow refs={turnRefs} currentProject={projectName} />}
-        {/* Raw HTML off: the text was written by another session's AI. */}
-        {text && <div className="min-w-0 break-words select-text"><MarkdownContent content={text} projectName={projectName} rawHtml={false} /></div>}
+        {/* Folds like the person's own bubble; the header above stays visible. Raw HTML off:
+            the text was written by another session's AI. */}
+        {text && (
+          <CollapsibleMessageBody
+            watch={text}
+            className="min-w-0 break-words select-text"
+            toggleClassName="text-info/80 can-hover:hover:text-info"
+          >
+            <MarkdownContent content={text} projectName={projectName} rawHtml={false} />
+          </CollapsibleMessageBody>
+        )}
       </div>
       <MessageActionBar timestamp={timestamp} content={plainContent}>
         {turn && projectName && sessionId && (providerId === "claude" || providerId === "codex") && (

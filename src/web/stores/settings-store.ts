@@ -104,6 +104,12 @@ interface SettingsState {
   /** Logs: the red dot on the Logs button when AI finds a likely PPM bug. Device-local, and
    *  off means this device never asks for the count — which is also what starts an Auto run. */
   logsBadge: boolean;
+  /**
+   * The chat's linked-sessions bar shown as chips (true) or folded to one summary line (false);
+   * null until the person chooses, which leaves it open on a desktop and folded on a phone.
+   * Device-local: how much of a 6-inch screen a bar may take is not a desktop's decision.
+   */
+  linkedSessionsExpanded: boolean | null;
   /** User ticked "don't show again" on the remote-desktop warning that precedes every open
    *  (`remote-desktop-warning-gate.tsx`); once true the viewer connects straight away. */
   remoteDesktopWarningDismissed: boolean;
@@ -204,6 +210,7 @@ interface SettingsState {
   setLogsUtc: (on: boolean) => void;
   setLogsWrap: (on: boolean) => void;
   setLogsBadge: (on: boolean) => void;
+  setLinkedSessionsExpanded: (expanded: boolean) => void;
   setRemoteDesktopWarningDismissed: (dismissed: boolean) => void;
   dismissMcpSignIn: (serverNames: string[]) => void;
   undismissMcpSignIn: (serverName: string) => void;
@@ -258,6 +265,7 @@ interface PersistedSettings {
   logsUtc?: boolean;
   logsWrap?: boolean;
   logsBadge?: boolean;
+  linkedSessionsExpanded?: boolean;
 }
 
 const VALID_STYLES: PpmThemeStyle[] = ["aurora", "slate", "precision", "custom"];
@@ -474,6 +482,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   logsUtc: _initial.logsUtc === true,
   logsWrap: _initial.logsWrap === true,
   logsBadge: _initial.logsBadge !== false,
+  linkedSessionsExpanded: typeof _initial.linkedSessionsExpanded === "boolean" ? _initial.linkedSessionsExpanded : null,
   remoteDesktopWarningDismissed: _initial.remoteDesktopWarningDismissed ?? false,
   mcpSignInDismissed: sanitizeNameList(_initial.mcpSignInDismissed) ?? [],
   keepScreenAwake: _initial.keepScreenAwake ?? true,
@@ -704,6 +713,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setLogsBadge: (on) => {
     persistDevicePref({ logsBadge: on });
     set({ logsBadge: on });
+  },
+
+  setLinkedSessionsExpanded: (expanded) => {
+    persistDevicePref({ linkedSessionsExpanded: expanded });
+    set({ linkedSessionsExpanded: expanded });
   },
 
   setRemoteDesktopWarningDismissed: (dismissed) => {

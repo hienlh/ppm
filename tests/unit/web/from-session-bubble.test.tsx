@@ -75,6 +75,73 @@ describe("FromSessionBubble", () => {
     }
   });
 
+  describe("folding a long message", () => {
+    // happy-dom lays nothing out, so a clamped body is made to report more content than it shows.
+    const proto = window.HTMLElement.prototype;
+    const before = {
+      scrollHeight: Object.getOwnPropertyDescriptor(proto, "scrollHeight"),
+      clientHeight: Object.getOwnPropertyDescriptor(proto, "clientHeight"),
+    };
+    const restore = () => {
+      for (const key of ["scrollHeight", "clientHeight"] as const) {
+        if (before[key]) Object.defineProperty(proto, key, before[key]!);
+        else delete (proto as unknown as Record<string, unknown>)[key];
+      }
+    };
+    const overflow = () => {
+      Object.defineProperty(proto, "scrollHeight", {
+        configurable: true,
+        get(this: HTMLElement) { return this.getAttribute("data-message-clamp") === "collapsed" ? 400 : 40; },
+      });
+      Object.defineProperty(proto, "clientHeight", { configurable: true, get: () => 40 });
+    };
+    afterEach(restore);
+
+    const long = encodeMessageBlocks(Array.from({ length: 30 }, (_, i) => `Line ${i + 1} of the report.`).join("\n\n"), { fromSession: from });
+    const toggle = (root: Element) => [...root.querySelectorAll("button")].find((b) => /Show (more|less)/.test(b.textContent ?? ""));
+
+    it("clamps a long message to two lines under a header that stays visible, and Show more / Show less toggles it", async () => {
+      overflow();
+      view = await mount(<UserBubble content={long} timestamp="2026-11-06T10:00:00Z" projectName="ppm" />);
+      const bubble = view.container.querySelector(`[data-from-session="${from.sessionId}"]`)!;
+      const body = bubble.querySelector("[data-message-clamp]")!;
+      expect(body.getAttribute("data-message-clamp")).toBe("collapsed");
+      expect(body.className).toContain("line-clamp-2");
+      // The header is outside the clamp, so folding never hides who sent it.
+      const header = bubble.querySelector("button")!;
+      expect(header.textContent).toContain("From:");
+      expect(body.contains(header)).toBe(false);
+
+      const more = toggle(bubble)!;
+      expect(more.textContent).toBe("Show more");
+      expect(more.getAttribute("aria-expanded")).toBe("false");
+      await click(more);
+      expect(body.getAttribute("data-message-clamp")).toBe("expanded");
+      expect(body.className).not.toContain("line-clamp-2");
+      expect(toggle(bubble)!.textContent).toBe("Show less");
+      expect(toggle(bubble)!.getAttribute("aria-expanded")).toBe("true");
+      await click(toggle(bubble)!);
+      expect(body.getAttribute("data-message-clamp")).toBe("collapsed");
+      expect(toggle(bubble)!.textContent).toBe("Show more");
+    });
+
+    it("offers no toggle when the message fits in two lines", async () => {
+      view = await mount(<UserBubble content={content} timestamp="2026-11-06T10:00:00Z" projectName="ppm" />);
+      const bubble = view.container.querySelector(`[data-from-session="${from.sessionId}"]`)!;
+      expect(bubble.querySelector("[data-message-clamp]")).not.toBeNull();
+      expect(toggle(bubble)).toBeUndefined();
+    });
+
+    it("folds the same way as the person's own bubble", async () => {
+      overflow();
+      view = await mount(<UserBubble content={"A long note.\n".repeat(30)} timestamp="2026-11-06T10:00:00Z" projectName="ppm" />);
+      const own = view.container.querySelector("[data-user-message]")!;
+      expect(own.querySelector("[data-message-clamp]")!.className).toContain("line-clamp-2");
+      await click(toggle(own)!);
+      expect(own.querySelector("[data-message-clamp]")!.getAttribute("data-message-clamp")).toBe("expanded");
+    });
+  });
+
   it("keeps an ordinary message in the person's own bubble", async () => {
     view = await mount(<UserBubble content="hello" timestamp="2026-11-06T10:00:00Z" projectName="ppm" onEdit={() => {}} />);
     expect(view.container.querySelector("[data-from-session]")).toBeNull();

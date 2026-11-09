@@ -12,11 +12,12 @@ import { ReplyCard } from "./reply-card";
 import { TurnRefChipRow } from "./turn-ref-chip";
 import { CopyTurnLinkButton } from "./copy-turn-link-button";
 import type { ChatMessage } from "../../../types/chat";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
-  Bot, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, ExternalLink, FileText,
+  Bot, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, FileText,
   Pencil, RotateCcw, Slash, Tag, TerminalSquare, XCircle,
 } from "@/lib/icons";
+import { CollapsibleMessageBody } from "./collapsible-message-body";
 import { cn, basename } from "@/lib/utils";
 import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
@@ -85,20 +86,6 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
   const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo, turnRefs } = parsed;
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
-
-  const [expanded, setExpanded] = useState(false);
-  const [isOverflowing, setIsOverflowing] = useState(false);
-  const contentRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el) return;
-    const check = () => setIsOverflowing(el.scrollHeight > el.clientHeight + 2);
-    check();
-    const ro = new ResizeObserver(check);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [text]);
 
   return (
     <div className={cn("flex flex-col gap-1", !isSystemContext && "items-end")}>
@@ -178,27 +165,13 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
 
       {/* Text content — 2-line clamp by default, expandable */}
       {text && (
-        <div
-          ref={contentRef}
-          className={cn(
-            "whitespace-pre-wrap break-words transition-all duration-200 select-text",
-            !expanded && "line-clamp-2",
-            expanded && "max-h-[50vh] overflow-y-auto",
-          )}
+        <CollapsibleMessageBody
+          watch={text}
+          className="whitespace-pre-wrap break-words select-text"
+          toggleClassName={isSystemContext ? "text-text-subtle hover:text-text-secondary" : "text-primary/70 hover:text-primary"}
         >
           {isSystemContext ? <TextWithFilePaths text={text} projectName={projectName} /> : <TextWithLinks text={text} />}
-        </div>
-      )}
-      {(isOverflowing || expanded) && (
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className={cn(
-            "flex items-center gap-1 text-xs mt-1 transition-colors",
-            isSystemContext ? "text-text-subtle hover:text-text-secondary" : "text-primary/70 hover:text-primary",
-          )}
-        >
-          {expanded ? <><ChevronUp className="size-3" />Show less</> : <><ChevronDown className="size-3" />Show more</>}
-        </button>
+        </CollapsibleMessageBody>
       )}
       {/* Version switcher — only when this message has edited siblings */}
       {!isSystemContext && onNavigateVersion && (

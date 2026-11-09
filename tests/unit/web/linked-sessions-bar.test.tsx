@@ -20,6 +20,7 @@ const { useSessionListStore } = await import("../../../src/web/stores/session-li
 const { projectCacheId } = await import("../../../src/web/lib/browser-cache/cache-keys");
 const { useProjectStore } = await import("../../../src/web/stores/project-store");
 const { api } = await import("../../../src/web/lib/api-client");
+const { useSettingsStore } = await import("../../../src/web/stores/settings-store");
 
 const ME = "aaaaaaaa-0000-4000-8000-000000000001";
 const PARENT = "aaaaaaaa-0000-4000-8000-000000000000";
@@ -131,7 +132,12 @@ describe("global events", () => {
 describe("LinkedSessionsBarView", () => {
   let view: Mounted | null = null;
   let post: ReturnType<typeof spyOn>;
-  beforeEach(() => { post = spyOn(api, "post").mockImplementation((() => Promise.resolve({})) as never); });
+  beforeEach(() => {
+    post = spyOn(api, "post").mockImplementation((() => Promise.resolve({})) as never);
+    // No choice made yet: a desktop (happy-dom's 1024px) starts open.
+    useSettingsStore.setState({ linkedSessionsExpanded: null });
+    localStorage.removeItem("ppm-settings");
+  });
   afterEach(async () => {
     await view?.unmount();
     view = null;
@@ -163,5 +169,77 @@ describe("LinkedSessionsBarView", () => {
   it("offers no stop while no child runs", async () => {
     view = await mount(<LinkedSessionsBarView projectName="ppm" sessionId={ME} linked={[{ ...child, status: "idle" }, peer]} />);
     expect(view.container.textContent).not.toContain("Stop all child sessions");
+  });
+
+  describe("folding the bar", () => {
+    const chips = () => view!.container.querySelectorAll("[data-linked-session]").length;
+    const toggle = () => view!.container.querySelector<HTMLButtonElement>("[data-linked-sessions-toggle]")!;
+    const stored = () => JSON.parse(localStorage.getItem("ppm-settings") ?? "{}").linkedSessionsExpanded;
+
+    it("folds to one line with the count and opens again with one tap, remembered on this device", async () => {
+      view = await mount(<LinkedSessionsBarView projectName="ppm" sessionId={ME} linked={[child, peer]} />);
+      expect(chips()).toBe(2);
+      expect(toggle().getAttribute("aria-expanded")).toBe("true");
+      expect(toggle().getAttribute("aria-label")).toBe("Hide linked sessions");
+      expect(toggle().className).toContain("min-h-11");
+
+      await click(toggle());
+      expect(chips()).toBe(0);
+      expect(toggle().getAttribute("aria-expanded")).toBe("false");
+      expect(toggle().textContent).toContain("2 linked sessions");
+      expect(toggle().textContent).toContain("1 running");
+      expect(toggle().className).toContain("min-h-11");
+      expect(view.container.textContent).not.toContain("Stop all child sessions");
+      expect(useSettingsStore.getState().linkedSessionsExpanded).toBe(false);
+      expect(stored()).toBe(false);
+
+      await click(toggle());
+      expect(chips()).toBe(2);
+      expect(view.container.textContent).toContain("Stop all child sessions");
+      expect(stored()).toBe(true);
+    });
+
+    it("stays folded across a remount once folded", async () => {
+      useSettingsStore.getState().setLinkedSessionsExpanded(false);
+      view = await mount(<LinkedSessionsBarView projectName="ppm" sessionId={ME} linked={[child]} />);
+      expect(chips()).toBe(0);
+      expect(toggle().textContent).toContain("1 linked session");
+      expect(toggle().textContent).not.toContain("1 linked sessions");
+    });
+
+    it("puts an attention dot on the folded line for a session that needs the person or has a new message", async () => {
+      useSettingsStore.setState({ linkedSessionsExpanded: false });
+      const dot = () => view!.container.querySelector("[data-linked-attention]")?.getAttribute("data-linked-attention");
+
+      view = await mount(<LinkedSessionsBarView projectName="ppm" sessionId={ME} linked={[child, peer]} />);
+      expect(dot()).toBe("new_message");
+      expect(toggle().textContent).toContain("New message");
+
+      await view.rerender(<LinkedSessionsBarView projectName="ppm" sessionId={ME} linked={[peer, { ...child, status: "needs_approval" }]} />);
+      expect(dot()).toBe("needs_approval");
+
+      await view.rerender(<LinkedSessionsBarView projectName="ppm" sessionId={ME} linked={[child, { ...peer, status: "idle" }]} />);
+      expect(dot()).toBeUndefined();
+    });
+
+    it("starts folded on a phone until the person chooses, and lists the chips under the summary when opened", async () => {
+      const width = Object.getOwnPropertyDescriptor(window, "innerWidth");
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+      try {
+        view = await mount(<LinkedSessionsBarView projectName="ppm" sessionId={ME} linked={[child, peer]} />);
+        expect(chips()).toBe(0);
+        expect(toggle().getAttribute("aria-expanded")).toBe("false");
+        await click(toggle());
+        expect(chips()).toBe(2);
+        // On a phone the summary line stays as the header, and folds the bar again.
+        expect(toggle().getAttribute("aria-expanded")).toBe("true");
+        expect(view.container.textContent).toContain("Stop all child sessions");
+        await click(toggle());
+        expect(chips()).toBe(0);
+      } finally {
+        if (width) Object.defineProperty(window, "innerWidth", width);
+        else delete (window as unknown as Record<string, unknown>).innerWidth;
+      }
+    });
   });
 });
