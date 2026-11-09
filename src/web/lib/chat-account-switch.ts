@@ -10,7 +10,7 @@
  */
 import type { AccountInfo, AccountUsageEntry, OAuthProfileData } from "./api-settings";
 import type { LimitBucket } from "../../types/chat";
-import { formatResetTime } from "@/components/settings/accounts/account-usage-format";
+import { bucketResetsAt } from "@/components/settings/accounts/account-usage-format";
 
 export interface SwitchAccount {
   id: string;
@@ -19,6 +19,9 @@ export interface SwitchAccount {
   plan: string | null;
   fiveHourPct: number | null;
   weekPct: number | null;
+  /** When each window resets (ISO), shown under its bar; null when the provider did not say. */
+  fiveHourResetsAt: string | null;
+  weekResetsAt: string | null;
   /** Why this account cannot take a turn now. Present means it is not selectable. */
   refusal: string | null;
   /** The login was refused: signing in again is the way back, and the row offers it. */
@@ -38,16 +41,11 @@ function atCap(util: number | null | undefined): boolean {
 /**
  * Reached, not approaching: the router steers away from 95% to spread load early, but an account
  * at 96% still answers. At 100% the next turn fails outright, which is where saying no is true.
+ * When it comes back is said under the full bar, so the refusal names only the window.
  */
 function limitRefusal(session?: LimitBucket, weekly?: LimitBucket): string | null {
-  if (atCap(session?.utilization)) {
-    const reset = session?.resetsAt ? formatResetTime(session) : null;
-    return `5-hour limit reached${reset ? ` · resets ${reset === "now" ? "now" : `in ${reset}`}` : ""}`;
-  }
-  if (atCap(weekly?.utilization)) {
-    const reset = weekly?.resetsAt ? formatResetTime(weekly) : null;
-    return `Weekly limit reached${reset ? ` · resets ${reset === "now" ? "now" : `in ${reset}`}` : ""}`;
-  }
+  if (atCap(session?.utilization)) return "5-hour limit reached";
+  if (atCap(weekly?.utilization)) return "Weekly limit reached";
   return null;
 }
 
@@ -75,6 +73,8 @@ export function claudeSwitchAccount(entry: AccountUsageEntry, info?: AccountInfo
     plan: claudePlanLabel(info?.profileData),
     fiveHourPct: percent(entry.usage.session?.utilization),
     weekPct: percent(entry.usage.weekly?.utilization),
+    fiveHourResetsAt: bucketResetsAt(entry.usage.session),
+    weekResetsAt: bucketResetsAt(entry.usage.weekly),
     refusal,
     signedOut,
   };
@@ -110,6 +110,8 @@ export function codexSwitchAccount(account: CodexAccountLike, usage: CodexUsageL
     plan,
     fiveHourPct: percent(usage.session?.utilization ?? usage.fiveHour),
     weekPct: percent(usage.weekly?.utilization ?? usage.sevenDay),
+    fiveHourResetsAt: bucketResetsAt(usage.session),
+    weekResetsAt: bucketResetsAt(usage.weekly),
     refusal,
     signedOut,
   };

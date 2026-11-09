@@ -114,6 +114,16 @@ export function linkedSessionStatus(sessionId: string, { streaming, notification
   return "idle";
 }
 
+const ATTENTION_RANK: Record<LinkedSessionStatus, number> = { needs_approval: 0, running: 1, new_message: 2, idle: 3 };
+
+/**
+ * A list's order for the person reading it: the sessions waiting on them first, then the ones
+ * running, then unread answers, then the idle and done. Stable, so equals keep their order.
+ */
+export function byAttention<T extends { status: LinkedSessionStatus }>(sessions: readonly T[]): T[] {
+  return [...sessions].sort((a, b) => ATTENTION_RANK[a.status] - ATTENTION_RANK[b.status]);
+}
+
 export const LINKED_STATUS_TEXT: Record<LinkedSessionStatus, string> = {
   running: "Running",
   idle: "Idle",

@@ -6,6 +6,7 @@
  */
 import { cn } from "@/lib/utils";
 import { usageTone } from "@/lib/chat-account-switch";
+import { formatResetCountdown } from "@/components/settings/accounts/account-usage-format";
 
 const RING_LENGTH = 31.4; // 2π · r=5
 
@@ -62,13 +63,18 @@ export function UsageTrack({ pct, className }: { pct: number | null; className?:
   );
 }
 
-/** One labelled meter row: "5 hours ▬▬▬── 47%". */
-export function UsageMeter({ label, pct }: { label: string; pct: number | null }) {
+/**
+ * One labelled meter row: "5 hours ▬▬▬── 47%  in 3h 12m". A quick view, so the reset is the
+ * countdown alone; Switch account's cards add the clock time.
+ */
+export function UsageMeter({ label, pct, resetsAt }: { label: string; pct: number | null; resetsAt?: string | null }) {
+  const reset = formatResetCountdown(resetsAt);
   return (
     <div className="mt-1.5 flex items-center gap-2 text-[11px] text-text-2">
       <span className="w-[52px] shrink-0">{label}</span>
       <UsageTrack pct={pct} className="flex-1" />
       <span className="w-9 shrink-0 text-right tabular-nums">{pct != null ? `${pct}%` : "--%"}</span>
+      <span data-meter-reset="" className="w-16 shrink-0 text-right text-[10.5px] tabular-nums text-text-3">{reset ?? ""}</span>
     </div>
   );
 }

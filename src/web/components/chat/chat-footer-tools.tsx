@@ -27,6 +27,7 @@ import { CodexSignInAgainDialog } from "@/components/settings/accounts/codex-sig
 import { openLogs } from "@/components/logs/open-logs";
 import { useSwitchAccounts } from "@/hooks/use-switch-accounts";
 import { percent } from "@/lib/chat-account-switch";
+import { bucketResetsAt, formatResetCountdown } from "@/components/settings/accounts/account-usage-format";
 import type { SessionInfo, UsageInfo } from "../../../types/chat";
 import type { TeamMessageItem } from "@/hooks/use-chat";
 import { SessionDebugDialog } from "./session-debug-dialog";
@@ -125,6 +126,12 @@ export function ChatFooterTools({
   const listed = switcher.accounts.find((a) => a.id === currentId);
   const fiveHourPct = usageMatches ? percent(usageInfo.fiveHour) : listed?.fiveHourPct ?? null;
   const weekPct = usageMatches ? percent(usageInfo.sevenDay) : listed?.weekPct ?? null;
+  const fiveHourResetsAt = usageMatches
+    ? bucketResetsAt(usageInfo.session) ?? usageInfo.fiveHourResetsAt ?? null
+    : listed?.fiveHourResetsAt ?? null;
+  const weekResetsAt = usageMatches
+    ? bucketResetsAt(usageInfo.weekly) ?? usageInfo.sevenDayResetsAt ?? null
+    : listed?.weekResetsAt ?? null;
   const hasUsage = fiveHourPct != null || weekPct != null;
   // Reconnecting or offline on a narrow chat: the figures are stale, and their room goes to the
   // connection chip.
@@ -134,10 +141,16 @@ export function ChatFooterTools({
   const accountLabel = pickedAccountLabel ?? (usageMatches ? usageInfo.activeAccountLabel : null) ?? listed?.label ?? null;
   const plan = listed?.plan ?? null;
   const who = `${accountLabel ?? "Default account"} · ${providerName}${plan ? ` ${plan}` : ""}`;
+  // A quick view: the countdown alone, "5h 47% (resets in 3h 12m)".
+  const windowTitle = (label: string, pct: number | null, resetsAt: string | null) => {
+    if (pct == null) return null;
+    const reset = formatResetCountdown(resetsAt);
+    return `${label} ${pct}%${reset ? ` (resets ${reset})` : ""}`;
+  };
   const ringTitle = [
     accountLabel,
-    fiveHourPct != null ? `5h ${fiveHourPct}%` : null,
-    weekPct != null ? `Week ${weekPct}%` : null,
+    windowTitle("5h", fiveHourPct, fiveHourResetsAt),
+    windowTitle("Week", weekPct, weekResetsAt),
   ].filter(Boolean).join(" · ");
 
   return (
@@ -219,6 +232,8 @@ export function ChatFooterTools({
               who={hasAccounts ? who : undefined}
               fiveHourPct={fiveHourPct}
               weekPct={weekPct}
+              fiveHourResetsAt={fiveHourResetsAt}
+              weekResetsAt={weekResetsAt}
               sessionCostUsd={usageInfo.totalCostUsd ?? null}
               accountCount={switcher.loading ? null : Math.max(switcher.accounts.length, 1)}
               onSwitchAccount={hasAccounts ? () => setMoreView("accounts") : undefined}

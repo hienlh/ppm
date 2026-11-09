@@ -16,6 +16,7 @@ import { CheckCircle2, ChevronDown, ChevronLeft, Loader2, Lock, Plus, Search, Se
 import { cn } from "@/lib/utils";
 import { matchesAccountQuery, orderSwitchAccounts, type SwitchAccount } from "@/lib/chat-account-switch";
 import { UsageTrack } from "./usage-meters";
+import { formatResetLine } from "@/components/settings/accounts/account-usage-format";
 import { FooterButton, FooterPopoverFooter, FooterPopoverHeader } from "./footer-popover";
 
 /** From this many accounts on, the view searches and folds the unusable ones away. */
@@ -217,9 +218,9 @@ function AccountCard({ account: a, active, picking, onPick }: {
         <span className={cn("-mt-1 whitespace-nowrap text-[11px] text-error", a.signedOut && "underline decoration-error/40 underline-offset-2")}>{a.refusal}</span>
       )}
       {!a.signedOut && (
-        <span className="grid grid-cols-2 gap-2.5">
-          <Meter label="5h" pct={a.fiveHourPct} dim={blocked} />
-          <Meter label="Week" pct={a.weekPct} dim={blocked} />
+        <span className="grid grid-cols-2 items-start gap-2.5">
+          <Meter label="5h" pct={a.fiveHourPct} resetsAt={a.fiveHourResetsAt} dim={blocked} />
+          <Meter label="Week" pct={a.weekPct} resetsAt={a.weekResetsAt} dim={blocked} />
         </span>
       )}
     </button>
@@ -229,13 +230,19 @@ function AccountCard({ account: a, active, picking, onPick }: {
 /**
  * Label and figure take fixed columns, so every bar on every card is the same length: sized by
  * their own text, "5h" left a longer bar than "Week", and "100%" a shorter one than "8%".
+ * Under the bar, when it resets — countdown and clock, "Resets in 3h 12m · 03:52" — in red once
+ * the bar is full, since that line is then the answer to "when can I use it again".
  */
-function Meter({ label, pct, dim }: { label: string; pct: number | null; dim: boolean }) {
+function Meter({ label, pct, resetsAt, dim }: { label: string; pct: number | null; resetsAt: string | null; dim: boolean }) {
+  const reset = formatResetLine(resetsAt);
   return (
-    <span className="grid grid-cols-[30px_minmax(0,1fr)_32px] items-center gap-1.5 whitespace-nowrap text-[11px] text-text-3">
+    <span className="grid grid-cols-[30px_minmax(0,1fr)_32px] items-center gap-x-1.5 gap-y-0.5 whitespace-nowrap text-[11px] text-text-3">
       <span>{label}</span>
       <UsageTrack pct={pct} />
       <span className={cn("text-right tabular-nums", dim ? "text-text-3" : "text-text-2")}>{pct != null ? `${pct}%` : "--%"}</span>
+      {reset && (
+        <span data-account-reset="" className={cn("col-span-3 truncate text-[10.5px] tabular-nums", (pct ?? 0) >= 100 ? "font-medium text-error" : "text-text-3")}>{reset}</span>
+      )}
     </span>
   );
 }

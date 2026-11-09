@@ -246,7 +246,12 @@ window with no figure for this chat's account is not drawn), a divider that belo
 part and goes whenever it does, History, and the ··· menu: the serving account and its meters, Switch account (a drill-in listing this provider's
 accounts as two-line cards, current first then most headroom, the unusable ones folded under "Out
 of usage" from five accounts on, with search), AI settings, Team activity, Reload messages with
-the connection's state, and a folded More (mark unread, debug info, this chat's logs).
+the connection's state, and a folded More (mark unread, debug info, this chat's logs). Every
+usage bar says when it resets, at two levels of detail (`account-usage-format.ts`): the quick
+views — the menu's meters and the rings' tooltip — give the countdown alone ("in 3h 12m"), and
+Switch account's cards add the clock time under each bar ("Resets in 2d 8h · Thu 09:00", "today
+18:00" later the same day), in red once the bar is full; a full account's refusal then names
+only the window ("5-hour limit reached").
 
 The composer is the textarea over one bar: Attach, the mode in one word, the model chip carrying
 the provider's logo (the provider is picked inside it before a session exists), Queue while a
@@ -295,7 +300,9 @@ one runs, else Sessions; the Agents tab exists only while an agent runs. Agents
 (`use-running-agents.ts`, disk-derived from the transcript hub's `agent-activity` feed plus the
 team poll) lists the running agents, then the finished ones launched beside them; a tap opens that
 agent's own session. Sessions (`linked-sessions-panel.tsx`) groups the linked sessions by how they
-are linked (its creator, the sessions it created, the sessions it messaged). `use-linked-sessions.ts` seeds
+are linked (its creator, the sessions it created, the sessions it messaged), each group ordered
+by `byAttention` (`src/web/lib/linked-sessions.ts`): waiting on the person, then running, then an
+unread answer, then idle. `use-linked-sessions.ts` seeds
 the links from `GET …/sessions/:id/links` when the chat opens (so a link from before a restart, or
 older than the loaded messages, is there at once), then merges the session list's `spawnedBy`, the
 chat's own messages and `/ws/global`'s `session:created`, `session:link_changed` and

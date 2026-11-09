@@ -18,6 +18,9 @@ export interface ChatMoreMenuProps {
   who?: string | null;
   fiveHourPct?: number | null;
   weekPct?: number | null;
+  /** When each window resets (ISO); the meters show the countdown beside the figure. */
+  fiveHourResetsAt?: string | null;
+  weekResetsAt?: string | null;
   /** Shown under the meters when the provider reports spend. */
   sessionCostUsd?: number | null;
   /** How many accounts the provider has, once known. */
@@ -38,7 +41,7 @@ export interface ChatMoreMenuProps {
 }
 
 export function ChatMoreMenu({
-  who, fiveHourPct = null, weekPct = null, sessionCostUsd, accountCount, onSwitchAccount, providerId,
+  who, fiveHourPct = null, weekPct = null, fiveHourResetsAt = null, weekResetsAt = null, sessionCostUsd, accountCount, onSwitchAccount, providerId,
   onOpenAISettings, team, isConnected, onReload, session,
 }: ChatMoreMenuProps) {
   const [moreOpen, setMoreOpen] = useState(false);
@@ -49,8 +52,8 @@ export function ChatMoreMenu({
         <>
           <div className="px-2 pb-2.5 pt-2 max-md:px-4">
             <div className="mb-2 truncate text-[11px] text-text-3">{who ?? "Usage"}</div>
-            <UsageMeter label="5 hours" pct={fiveHourPct} />
-            <UsageMeter label="Week" pct={weekPct} />
+            <UsageMeter label="5 hours" pct={fiveHourPct} resetsAt={fiveHourResetsAt} />
+            <UsageMeter label="Week" pct={weekPct} resetsAt={weekResetsAt} />
             {sessionCostUsd != null && (
               <div className="mt-1.5 text-[11px] tabular-nums text-text-3">This session ${sessionCostUsd.toFixed(4)}</div>
             )}

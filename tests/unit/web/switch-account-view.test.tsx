@@ -17,10 +17,11 @@ const { SwitchAccountView, MANY_ACCOUNTS } = await import("../../../src/web/comp
 let view: Mounted | null = null;
 afterEach(async () => { await view?.unmount(); view = null; });
 
+const inMins = (mins: number) => new Date(Date.now() + mins * 60_000 - 30_000).toISOString();
 const acc = (id: string, label: string, h5: number, wk: number, refusal: string | null = null, signedOut = false): SwitchAccount =>
-  ({ id, label, plan: "Max", fiveHourPct: h5, weekPct: wk, refusal, signedOut });
+  ({ id, label, plan: "Max", fiveHourPct: h5, weekPct: wk, fiveHourResetsAt: inMins(192), weekResetsAt: inMins(2 * 1440 + 8 * 60), refusal, signedOut });
 
-const THREE = [acc("v2", "Victor 2 (Nxsys)", 47, 52), acc("v", "Victor", 12, 30), acc("s", "Nxsys shared", 100, 88, "5-hour limit reached · resets in 2h 10m")];
+const THREE = [acc("v2", "Victor 2 (Nxsys)", 47, 52), acc("v", "Victor", 12, 30), acc("s", "Nxsys shared", 100, 88, "5-hour limit reached")];
 const NINE = [
   ...THREE,
   acc("a", "Nxsys team A", 5, 18), acc("b", "Nxsys team B", 33, 41), acc("h", "Hien personal", 64, 71), acc("q", "QA bot", 81, 60),
@@ -129,5 +130,17 @@ describe("SwitchAccountView", () => {
     await wait(320);
     expect(view!.container.querySelector('[role="alert"]')?.textContent).toContain("Account is busy");
     expect(calls.done).toBe(0);
+  });
+
+  it("says under every bar when it resets, countdown and clock, in red when the bar is full", async () => {
+    await render(THREE);
+    const resets = (id: string) => [...row(id).querySelectorAll("[data-account-reset]")];
+    const [h5, wk] = resets("v");
+    expect(h5.textContent).toMatch(/^Resets in 3h 12m · \d\d:\d\d$/);
+    expect(wk.textContent).toMatch(/^Resets in 2d 8h · [A-Z][a-z]{2} \d\d:\d\d$/);
+    expect(h5.className).not.toContain("text-error");
+    // The full 5h bar: its reset line is the answer, so it reads red; the refusal names only the window.
+    expect(resets("s")[0].className).toContain("text-error");
+    expect(row("s").textContent).not.toContain("resets in");
   });
 });

@@ -367,6 +367,11 @@ async function scenarios(phone) {
       check(anim === "footerPopIn", `${tag}: popover rises in`, anim);
     }
     await sleep(400);
+    // A quick view: the countdown alone beside each meter, and in the rings' tooltip.
+    const menuResets = await page.locator("[data-chat-more-menu]:visible [data-meter-reset]").allInnerTexts();
+    check(menuResets.length === 2 && menuResets.every((t) => /^in \d+[dhm]( \d+[hm])?$/.test(t)), `${tag}: menu meters show the countdown only`, menuResets.join(" | "));
+    const ringTip = await inFooter(page, tabId, "[data-usage-ring]").getAttribute("title");
+    check(/5h \d+% \(resets in [^)·]+\) · Week \d+% \(resets in [^)·]+\)/.test(ringTip ?? ""), `${tag}: ring tooltip gives each window's countdown`, ringTip);
     await shot(page, tabId, `${tag}-more-menu`);
     await page.locator("[data-chat-more-menu]:visible").getByText("More", { exact: true }).click();
     const fold = await page.locator("[data-chat-more-menu]:visible .grid").first().evaluate((el) => getComputedStyle(el).transitionProperty);
@@ -383,6 +388,10 @@ async function scenarios(phone) {
     // Every bar on every card is one length, whatever its label ("5h"/"Week") or figure ("8%"/"100%").
     const bars = await page.locator("[data-account-row]:visible span.h-1").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().width)));
     check(bars.length >= 4 && new Set(bars).size === 1, `${tag}: account usage bars share one length`, bars.join(","));
+    // Cards say when each bar resets, countdown and clock.
+    const cardResets = await page.locator("[data-account-row]:visible [data-account-reset]").allInnerTexts();
+    check(cardResets.length === bars.length && cardResets.every((t) => /^Resets in \d+[dhm]( \d+[hm])? · .*\d\d:\d\d$/.test(t)),
+      `${tag}: every card bar says when it resets`, cardResets.slice(0, 2).join(" | "));
     await shot(page, tabId, `${tag}-accounts-3`);
     // Pick another account: ring follows, menu returns to main.
     await page.locator('[data-account-row="acc-v"]:visible').click();

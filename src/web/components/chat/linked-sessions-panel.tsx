@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { ChevronDown, Link, Link2Off, RotateCcw, Square } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { LinkedSessionGroups, LinkedSessionView } from "@/hooks/use-linked-sessions";
-import { LINKED_STATUS_TEXT, RELATION_TEXT } from "@/lib/linked-sessions";
+import { byAttention, LINKED_STATUS_TEXT, RELATION_TEXT } from "@/lib/linked-sessions";
 import { openLinkedSession, stopChildSessions } from "@/lib/session-collab-client";
 import { canUnlink } from "../../../shared/linked-session-unlinks";
 import type { SessionLinkRelation } from "../../../shared/session-collab";
@@ -109,9 +109,9 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
     }
   };
 
-  // A heading with nothing under it goes too.
+  // A heading with nothing under it goes too. Inside each, what needs the person or runs comes first.
   const grouped = GROUP_ORDER
-    .map((relation) => ({ relation, sessions: visible.filter((l) => (l.relations[0] ?? "messaged") === relation) }))
+    .map((relation) => ({ relation, sessions: byAttention(visible.filter((l) => (l.relations[0] ?? "messaged") === relation)) }))
     .filter((g) => g.sessions.length > 0);
 
   return (
