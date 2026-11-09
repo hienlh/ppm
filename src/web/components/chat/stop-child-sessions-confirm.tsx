@@ -1,13 +1,10 @@
 /**
- * "Stop all child sessions?" — a bottom sheet on a phone, a dialog on a desktop. Names the
- * sessions it will stop, so the user knows what the button reaches before pressing it.
+ * "Stop all child sessions?" — asked inline at the foot of the linked-sessions list (which is
+ * already a bottom sheet on a phone), so nothing stops on the first press. Names the sessions it
+ * will stop, so the person knows what the button reaches before pressing it.
  */
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
-import { Button } from "@/components/ui/button";
-import { useIsMobile } from "@/hooks/use-is-mobile";
-
-const TITLE = "Stop all child sessions?";
+import { Square } from "@/lib/icons";
+import { FooterButton } from "./footer-popover";
 
 export function StopChildSessionsConfirm({ titles, busy, onConfirm, onCancel }: {
   /** The running sessions this one created. */
@@ -16,41 +13,25 @@ export function StopChildSessionsConfirm({ titles, busy, onConfirm, onCancel }: 
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const isMobile = useIsMobile();
-  const body = (
-    <div className="space-y-3" data-stop-children-confirm="">
-      <p className="text-sm">
-        Stops the running {titles.length === 1 ? "session" : `${titles.length} sessions`} this session created.
-        This session keeps running. You can chat into a stopped session to start it again.
+  const n = titles.length;
+  const what = n === 1 ? "child session" : `${n} child sessions`;
+  const named = titles.map((t) => `“${t}”`).join(n === 2 ? " and " : ", ");
+  return (
+    <div
+      data-stop-children-confirm=""
+      className="footer-from-right shrink-0 border-t border-border-soft bg-error/5 px-3 pb-3 pt-2.5 max-md:px-4"
+    >
+      <p className="m-0 mb-2.5 break-words text-xs leading-relaxed text-text-2 max-md:text-sm">
+        <b className="font-semibold text-text">Stop {what}?</b> Their current turns end now. {named}{" "}
+        {n === 1 ? "stays" : "stay"} in History and can be continued later. This session keeps running.
       </p>
-      <ul className="max-h-40 list-disc overflow-y-auto pl-5 text-sm text-text-secondary">
-        {titles.map((t, i) => <li key={i} className="break-words">{t}</li>)}
-      </ul>
-      <div className="flex flex-col-reverse gap-2 pt-1 md:flex-row md:justify-end">
-        <Button variant="outline" onClick={onCancel} className="min-h-11">Cancel</Button>
-        <Button variant="destructive" disabled={busy} onClick={onConfirm} className="min-h-11">
-          {busy ? "Stopping…" : "Stop all"}
-        </Button>
+      <div className="flex justify-end gap-1.5 max-md:gap-2">
+        <FooterButton onClick={onCancel} className="max-md:flex-1 max-md:justify-center">Cancel</FooterButton>
+        <FooterButton variant="danger-fill" disabled={busy} onClick={onConfirm} className="max-md:flex-1 max-md:justify-center">
+          <Square />
+          {busy ? "Stopping…" : `Stop ${n === 1 ? "1 session" : `${n} sessions`}`}
+        </FooterButton>
       </div>
     </div>
-  );
-
-  if (isMobile) {
-    return (
-      <BottomSheet open onClose={onCancel}>
-        <div className="px-4 pb-4">
-          <h2 className="mb-3 text-base font-semibold">{TITLE}</h2>
-          {body}
-        </div>
-      </BottomSheet>
-    );
-  }
-  return (
-    <Dialog open onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>{TITLE}</DialogTitle></DialogHeader>
-        {body}
-      </DialogContent>
-    </Dialog>
   );
 }

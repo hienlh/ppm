@@ -20,6 +20,9 @@
 //      management action, and that the add-account dialog opens and cancels. STRICTLY
 //      read-only — it never adds, removes, enables or exports an account, because the
 //      backend it points at may be the user's own.
+//   4b. Chat footer: the usage ring names the account and opens the chat menu, whose Switch
+//      account view lists the accounts (cards, never management actions) and whose
+//      "Manage in Settings" opens the Accounts pane; chat and Settings show the same figures.
 //   5. URL route (desktop, hard load): loads /project/{name}/settings directly and asserts it
 //      opens a window rather than a tab — the case that regresses if the open races the
 //      window layer's restore and gets wiped.
@@ -30,6 +33,15 @@
 //   8. Screenshots at each major step under PPM_E2E_SHOTS
 //      (default: plans/reports/screenshots/).
 //   9. Stops ONLY what this script started, by exact PID.
+//
+// Run against an isolated stack (scratch PPM_HOME, two placeholder accounts, mock providers,
+// auth off — nothing of yours is read or touched):
+//   PPM_PLAYWRIGHT_MODULE=<playwright-core>/index.mjs PPM_PLAYWRIGHT_CHANNEL=chrome \
+//   node tests/e2e/fixtures/isolated-chat-stack.mjs -- bun tests/e2e/settings-window-e2e.mjs
+// Under the stack (PPM_E2E_API / PPM_E2E_WEB set) no database is read, the dev client's
+// direct :8081 sockets are pointed at the stack's server, and usage reads are answered at the
+// network edge (see stubUsageAtTheEdge): the placeholder accounts have no usage of their own,
+// and the footer's ring is not drawn until a figure exists.
 //
 // Run (against an already-running PPM on port 3214):
 //   PPM_DEV_API=http://localhost:3214 PPM_DB=~/.ppm/ppm.db bun tests/e2e/settings-window-e2e.mjs
@@ -48,9 +60,12 @@ import { Database } from "bun:sqlite";
 // Config
 // ---------------------------------------------------------------------------
 const REPO = process.cwd();
-const API = process.env.PPM_DEV_API || "http://localhost:8081";
+// The isolated chat stack (tests/e2e/fixtures/isolated-chat-stack.mjs) hands over its own
+// origins; its server runs with auth off, so no token has to be read from any database.
+const ISOLATED = !!process.env.PPM_E2E_API && !!process.env.PPM_E2E_WEB;
+const API = process.env.PPM_E2E_API || process.env.PPM_DEV_API || "http://localhost:8081";
 const WEB_PORT = Number(process.env.PPM_E2E_WEB_PORT || 5174);
-const WEB = `http://localhost:${WEB_PORT}`;
+const WEB = process.env.PPM_E2E_WEB || `http://localhost:${WEB_PORT}`;
 const CDP_PORT = Number(process.env.PPM_E2E_CDP_PORT || 9236);
 // Whichever database the target backend is actually using — the token has to match it.
 const DB = (process.env.PPM_DB || join(homedir(), ".ppm", "ppm.dev.db")).replace(/^~(?=[/\\])/, homedir());
@@ -63,7 +78,7 @@ const NO_SERVERS = !!process.env.PPM_E2E_NO_SERVERS;
 const TOKEN_KEY = "ppm-auth-token"; // src/web/lib/api-client.ts
 
 // Never log TOKEN's value anywhere below.
-const TOKEN = (() => {
+const TOKEN = ISOLATED ? "isolated-stack-auth-off" : (() => {
   try {
     const db = new Database(DB, { readonly: true });
     try {
@@ -348,6 +363,29 @@ async function clickVisible(cdp, selectorExpr, label) {
 
 const clickTestId = (cdp, testId) => clickVisible(cdp, q(testId), `[data-testid="${testId}"]`);
 
+/** The chat footer's usage ring: it opens the chat menu with the account serving the chat. */
+const USAGE_RING = "[data-chat-footer] [data-usage-ring]";
+const MANAGE_IN_SETTINGS = `[...document.querySelectorAll('[data-switch-account-view] button')].find((b) => b.textContent?.trim() === "Manage in Settings" && ${VISIBLE}(b))`;
+
+/** Ring -> chat menu -> "Switch account", the view listing one card per account. */
+async function openSwitchAccount(cdp) {
+  await clickVisible(cdp, visibleOne(USAGE_RING), "usage ring");
+  // A desktop popover (`data-footer-popover="Chat menu"`) or, below md, a bottom sheet.
+  await waitFor(cdp, `Boolean(${visibleOne("[data-chat-more-menu]")})`, "chat menu");
+  await clickVisible(
+    cdp,
+    `[...document.querySelectorAll('[data-chat-more-menu] button')].find((b) => /Switch account/.test(b.textContent ?? "") && ${VISIBLE}(b))`,
+    '"Switch account"',
+  );
+  await waitFor(cdp, `Boolean(${visibleOne("[data-switch-account-view]")})`, "switch-account view");
+  // The list loads after the view slides in: wait for cards or the empty state.
+  await waitFor(
+    cdp,
+    `(() => { const v = ${visibleOne("[data-switch-account-view]")}; return v && (v.querySelector('[data-account-row]') || /No .* accounts yet/.test(v.textContent ?? "")); })()`,
+    "account cards",
+  );
+}
+
 /** The rail's Settings button carries no testid — FooterUtil labels itself via aria-label. */
 const clickRailSettings = (cdp) =>
   clickVisible(cdp, `document.querySelector('button[aria-label="Settings"]')`, 'nav rail button[aria-label="Settings"]');
@@ -423,13 +461,102 @@ async function closeSettingsTabs(cdp) {
   return closed;
 }
 
+/**
+ * The ring is drawn only once a usage figure exists, and the isolated stack's placeholder
+ * accounts have none (their usage would be read from Anthropic). So under the stack every usage
+ * read is answered at the network edge with fixed figures per account: the chat's own
+ * `GET /chat/usage` (for the account it names), the usage seed in `POST /chat/prepare`'s answer,
+ * and `GET /api/accounts/usage`, which both the chat's Switch account view and the Settings
+ * Accounts pane read. Nothing else in any answer is touched.
+ */
+let usageStubbed = false;
+async function stubUsageAtTheEdge(cdp) {
+  if (usageStubbed) return;
+  usageStubbed = true;
+  const accounts = (await (await fetch(`${API}/api/accounts`)).json()).data ?? [];
+  const FIGURES = [[0.2, 0.35], [0.6, 0.45], [0.05, 0.1]];
+  const figuresOf = (id) => {
+    const [h5, wk] = FIGURES[Math.max(0, accounts.findIndex((a) => a.id === id)) % FIGURES.length];
+    return { h5, wk };
+  };
+  const bucket = (u, h) => ({ utilization: u, resetsAt: new Date(Date.now() + 2 * 3600_000).toISOString(), resetsInMinutes: h <= 5 ? 120 : null, resetsInHours: h > 5 ? 50 : null, windowHours: h });
+  const fulfill = (requestId, body) => cdp.send("Fetch.fulfillRequest", {
+    requestId,
+    responseCode: 200,
+    responseHeaders: [{ name: "Content-Type", value: "application/json" }],
+    body: Buffer.from(JSON.stringify(body)).toString("base64"),
+  }).catch(() => {});
+  cdp.ws.addEventListener("message", async (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.method !== "Fetch.requestPaused") return;
+    const { requestId, request, responseStatusCode } = msg.params;
+    const url = new URL(request.url);
+    // A CDP pattern's `*` spans slashes and `?` is a wildcard, so the path itself decides:
+    // `/components/chat/usage-meters.tsx` matches the usage pattern too.
+    if (/^\/api\/project\/[^/]+\/chat\/usage$/.test(url.pathname)) {
+      const id = url.searchParams.get("accountId") ?? accounts[0]?.id ?? null;
+      const { h5, wk } = figuresOf(id);
+      return fulfill(requestId, { ok: true, data: { fiveHour: h5, sevenDay: wk, activeAccountId: id, activeAccountLabel: null } });
+    }
+    if (url.pathname === "/api/accounts/usage") {
+      return fulfill(requestId, { ok: true, data: accounts.map((a) => {
+        const { h5, wk } = figuresOf(a.id);
+        return { accountId: a.id, accountLabel: a.label ?? null, accountStatus: a.status ?? "active", isOAuth: true, usage: { session: bucket(h5, 5), weekly: bucket(wk, 168) } };
+      }) });
+    }
+    if (/^\/api\/project\/[^/]+\/chat\/prepare$/.test(url.pathname) && responseStatusCode === 200) {
+      try {
+        const res = await cdp.send("Fetch.getResponseBody", { requestId });
+        const body = JSON.parse(res.base64Encoded ? Buffer.from(res.body, "base64").toString("utf8") : res.body);
+        const picked = body?.data?.pickedAccount;
+        if (picked && typeof picked === "object" && picked.id) {
+          const { h5, wk } = figuresOf(picked.id);
+          body.data.usage = { ...(body.data.usage ?? {}), fiveHour: h5, sevenDay: wk, activeAccountId: picked.id };
+        }
+        return fulfill(requestId, body);
+      } catch { /* fall through to the real answer */ }
+    }
+    cdp.send("Fetch.continueRequest", { requestId }).catch(() => {});
+  });
+  await cdp.send("Fetch.enable", { patterns: [
+    { urlPattern: "*/api/project/*/chat/usage*", requestStage: "Request" },
+    { urlPattern: "*/api/accounts/usage*", requestStage: "Request" },
+    { urlPattern: "*/api/project/*/chat/prepare*", requestStage: "Response" },
+  ] });
+}
+
+let socketsRedirected = false;
 async function bootstrap(cdp) {
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
+  // The dev client dials the backend's sockets on :8081 directly. Under the isolated stack that
+  // would reach a developer's own `bun dev:server`, so point them at the stack's server.
+  if (process.env.PPM_E2E_API_PORT && !socketsRedirected) {
+    socketsRedirected = true;
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `(() => {
+        const NativeSocket = window.WebSocket;
+        window.WebSocket = class extends NativeSocket {
+          constructor(input, protocols) {
+            const url = new URL(String(input), location.href);
+            if (url.port === "8081") { url.hostname = "127.0.0.1"; url.port = ${JSON.stringify(process.env.PPM_E2E_API_PORT)}; }
+            super(url.href, protocols);
+          }
+        };
+      })()`,
+    });
+  }
+  if (ISOLATED) await stubUsageAtTheEdge(cdp);
   await cdp.navigate(WEB);
   await cdp.evaluate(`localStorage.setItem(${JSON.stringify(TOKEN_KEY)}, ${JSON.stringify(TOKEN)})`);
   await cdp.navigate(WEB);
-  await waitFor(cdp, `document.querySelector('button[aria-label="Settings"]') || ${q("settings-window")}`, "app shell");
+  try {
+    // The desktop rail's Settings button, or a phone's header menu (no rail is mounted there).
+    await waitFor(cdp, `document.querySelector('button[aria-label="Settings"]') || ${visibleOne('button[aria-label="Open menu"]')} || ${q("settings-window")}`, "app shell");
+  } catch (e) {
+    const seen = await cdp.evaluate(`JSON.stringify({ url: location.href, body: (document.body?.innerText ?? "").slice(0, 300) })`).catch((err) => `probe failed: ${err.message}`);
+    throw new Error(`${e.message} — page: ${seen}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -661,17 +788,17 @@ async function main() {
     await waitFor(cdp, `!${DIALOG}`, "dialog dismissed");
   });
 
-  step("4. Chat usage chip (desktop)");
-  // Also read-only. It opens a chat tab to reach the chip and closes it again in teardown.
-  await scenario("chat: the usage panel carries the account switch and nothing more", async () => {
+  step("4. Chat footer usage ring (desktop)");
+  // Also read-only. It opens a chat tab to reach the footer and closes it again in teardown.
+  await scenario("chat: the usage menu carries the account switch and nothing more", async () => {
     // A fresh tab, never a reused one: `openTab` puts it in the focused panel and activates
     // it, whereas an existing chat tab can sit in a panel that is not currently showing —
-    // its chip is then in the DOM but display:none, which says nothing about the chip.
+    // its ring is then in the DOM but display:none, which says nothing about the ring.
     harnessChatTabId = await cdp.evaluate(`(async () => {
       const tabs = (await import('/stores/tab-store.ts')).useTabStore;
       const projects = (await import('/stores/project-store.ts')).useProjectStore;
       // A chat tab with no projectId renders the select-a-project placeholder instead of a
-      // chat, so the usage chip never exists. The app always binds chat tabs to a project.
+      // chat, so the footer never exists. The app always binds chat tabs to a project.
       const name = projects.getState().activeProject?.name ?? null;
       if (!name) return null;
       return tabs.getState().openTab({
@@ -682,15 +809,15 @@ async function main() {
     if (!harnessChatTabId) throw new Error("no active project, so no chat tab could be opened");
 
     // Wait for it to be VISIBLE, not merely present: activating the tab does not lay the
-    // chat history bar out in the same frame, and asserting on presence alone made this
+    // chat footer out in the same frame, and asserting on presence alone made this
     // scenario pass or fail on timing.
     try {
-      await waitFor(cdp, `Boolean(${visibleOne('button[title="Usage limits"]')})`, "usage chip laid out", 15_000);
+      await waitFor(cdp, `Boolean(${visibleOne(USAGE_RING)})`, "usage ring laid out", 15_000);
     } catch {
       // Name the ancestor that is hiding it — "not visible" alone is not a diagnosis.
       const why = await cdp.evaluate(`(() => {
-        const el = document.querySelector('button[title="Usage limits"]');
-        if (!el) return "the chip is not in the DOM at all";
+        const el = document.querySelector(${JSON.stringify(USAGE_RING)});
+        if (!el) return "the ring is not in the DOM at all";
         let node = el, chain = [];
         while (node && node !== document.body) {
           const cs = getComputedStyle(node);
@@ -712,60 +839,77 @@ async function main() {
           panels: Object.fromEntries(Object.entries(panels.panels).map(([id, p]) => [id, { active: p.activeTabId, tabs: p.tabs.map((t) => t.id) }])),
         });
       })()`).catch((e) => `probe failed: ${e.message}`);
-      throw new Error(`the usage chip never laid out: ${why} | layout=${layout}`);
+      throw new Error(`the usage ring never laid out: ${why} | layout=${layout}`);
     }
 
-    chatChipText = await cdp.evaluate(`${visibleOne('button[title="Usage limits"]')}.textContent.trim()`);
-    if (!/5h:/.test(chatChipText)) throw new Error(`the chip is not showing usage: ${JSON.stringify(chatChipText)}`);
+    // The ring shows the busier window's figure ("52%", or "--%" before any reading) and
+    // spells out both windows in its title ("<account> · 5h 47% · Week 52%").
+    const ring = await cdp.evaluate(`(() => {
+      const el = ${visibleOne(USAGE_RING)};
+      return { text: el.textContent.trim(), title: el.getAttribute("title") };
+    })()`);
+    chatChipText = ring.title;
+    if (!/^(\d+|--)%$/.test(ring.text)) throw new Error(`the ring is not showing a usage figure: ${JSON.stringify(ring.text)}`);
+    if (!/5h .* · Week /.test(ring.title ?? "")) throw new Error(`the ring's title does not spell out both windows: ${JSON.stringify(ring.title)}`);
 
-    await clickVisible(cdp, visibleOne('button[title="Usage limits"]'), "usage chip");
-    await waitFor(cdp, `Boolean(${visibleOne('button[title="Add, remove or rotate accounts"]')})`, "usage panel");
+    await openSwitchAccount(cdp);
 
-    // Where the split falls. Parking an account is a reaction to the numbers on this panel,
-    // so the switch lives here as well as in Settings — off the same `patchAccount`, not a
-    // second implementation. Adding, removing, exporting and importing are not reactions to
-    // usage and must not come back, or the two copies can drift again. Scoped to the panel,
-    // since the Settings window may also be open.
-    const panelControls = await cdp.evaluate(`(() => {
-      const link = ${visibleOne('button[title="Add, remove or rotate accounts"]')};
-      const panel = link?.closest('div.relative');
-      if (!panel) return { stray: "no panel" };
-      const labels = ["Add", "Export", "Import", "Add account"];
+    // Where the split falls. Choosing which account serves this chat is a reaction to the
+    // numbers in this menu, so it lives here; exporting, importing, removing and rotating
+    // accounts are not reactions to usage and must not come back, or the two copies can
+    // drift again. "Add account" and "Manage in Settings" are the view's own footer.
+    const view = await cdp.evaluate(`(() => {
+      const view = ${visibleOne("[data-switch-account-view]")};
+      if (!view) return { stray: "no switch-account view" };
+      const labels = ["Add", "Export", "Import", "Remove", "Rotation", "Token test"];
+      const buttons = [...view.querySelectorAll('button')].map((b) => b.textContent?.trim());
       return {
-        stray: [...panel.querySelectorAll('button')]
-          .map((b) => b.textContent?.trim())
-          .filter((t) => labels.includes(t))
-          .join(", "),
-        switches: panel.querySelectorAll('[data-testid="account-card"] button[role="switch"]').length,
+        stray: buttons.filter((t) => labels.includes(t)).join(", "),
+        cards: view.querySelectorAll('[data-account-row]').length,
+        current: view.querySelectorAll('[data-account-row][aria-current="true"]').length,
+        empty: /No .* accounts yet/.test(view.textContent ?? ""),
+        footer: ["Add account", "Manage in Settings"].filter((l) => buttons.includes(l)),
       };
     })()`);
-    if (panelControls.stray) {
-      throw new Error(`the chat usage panel still offers account management: ${panelControls.stray}`);
-    }
-    // Presence only — this harness never flips it, because these are the host's real accounts.
-    if (!panelControls.switches) throw new Error("the chat usage panel has no account switch");
+    if (view.stray) throw new Error(`the chat menu still offers account management: ${view.stray}`);
+    if (view.footer.length !== 2) throw new Error(`the switch view's footer lacks ${["Add account", "Manage in Settings"].filter((l) => !view.footer.includes(l)).join(", ")}`);
+    // Presence only — this harness never picks a card, because these may be the host's real accounts.
+    if (!view.cards && !view.empty) throw new Error("the switch view shows neither account cards nor its empty state");
+    if (view.cards && view.current > 1) throw new Error(`${view.current} cards claim to serve this chat`);
+    log(`  switch view: ${view.cards} card(s), ${view.current} marked current`);
   });
   await cdp.screenshot(join(SHOTS, "settings-07-chat-usage-panel.png"));
 
-  await scenario("chat: \"Manage accounts\" opens Settings on the Accounts pane", async () => {
-    await clickVisible(cdp, visibleOne('button[title="Add, remove or rotate accounts"]'), '"Manage accounts"');
+  await scenario("chat: \"Manage in Settings\" opens Settings on the Accounts pane", async () => {
+    await clickVisible(cdp, MANAGE_IN_SETTINGS, '"Manage in Settings"');
     await waitFor(cdp, `${q("settings-window")}.dataset.category === "accounts"`, "settings on accounts");
     if (!(await cdp.evaluate(IN_WINDOW))) throw new Error("the link produced a tab, not a window, on desktop");
   });
 
   await scenario("chat and Settings report the same usage for the same account", async () => {
-    // Both render the same card component off the same hook; identical text is the evidence
-    // that the chat side is a read-only view of the same data, not a second implementation.
+    // "Manage in Settings" closes the chat menu; open it again beside the Settings window.
+    await openSwitchAccount(cdp);
+    // Both read the same usage endpoint; matching figures are the evidence that the chat
+    // side is a read-only view of the same data, not a second implementation. Settings says
+    // "5-Hour Session" / "Weekly" with an em dash for no reading; the chat's cards say
+    // "5h" / "Week" with "--%".
     const cmp = await cdp.evaluate(`(() => {
-      const pct = (card) => [...card.querySelectorAll('span')]
-        .map((s) => s.textContent?.trim())
-        .filter((t) => /^\\d+%$/.test(t ?? "")).join(",");
+      const num = (t) => (/^(\\d+)%$/.exec((t ?? "").trim()) || [])[1] ?? null;
       const settings = {}, chat = {};
-      for (const card of document.querySelectorAll('[data-testid="account-card"]')) {
-        // Hidden tabs keep their cards mounted; only what the user can see is comparable.
+      const pane = ${q("settings-window")};
+      for (const card of pane ? pane.querySelectorAll('[data-testid="account-card"]') : []) {
         if (!${VISIBLE}(card)) continue;
-        const bucket = card.closest('[data-testid="settings-window"]') ? settings : chat;
-        bucket[card.dataset.accountId] = pct(card);
+        const bars = {};
+        for (const bar of card.querySelectorAll('[data-testid="account-usage-bar"]')) {
+          const spans = bar.querySelectorAll('span');
+          bars[spans[0]?.textContent?.trim()] = num(spans[spans.length - 1]?.textContent);
+        }
+        settings[card.dataset.accountId] = [bars["5-Hour Session"] ?? null, bars["Weekly"] ?? null].join(",");
+      }
+      const view = ${visibleOne("[data-switch-account-view]")};
+      for (const card of view ? view.querySelectorAll('[data-account-row]') : []) {
+        const figs = [...card.querySelectorAll('span.tabular-nums')].map((s) => num(s.textContent));
+        chat[card.getAttribute('data-account-row')] = [figs[0] ?? null, figs[1] ?? null].join(",");
       }
       const shared = Object.keys(settings).filter((id) => id in chat);
       return {
@@ -773,16 +917,24 @@ async function main() {
         chatCount: Object.keys(chat).length,
         shared: shared.length,
         mismatched: shared.filter((id) => settings[id] !== chat[id]).map((id) => ({ id, settings: settings[id], chat: chat[id] })),
+        // Two empty readings agree too; at least one figure has to be on screen to compare.
+        withFigures: shared.filter((id) => /\\d/.test(settings[id])).length,
+        sample: shared.slice(0, 2).map((id) => chat[id]).join(" | "),
       };
     })()`);
     // Requires cards on BOTH sides — otherwise this scenario could only ever pass.
-    if (cmp.chatCount === 0) throw new Error("the chat panel rendered no account cards, so nothing was compared");
+    if (cmp.chatCount === 0) throw new Error("the chat menu rendered no account cards, so nothing was compared");
     if (cmp.settingsCount === 0) throw new Error("the Settings pane rendered no account cards, so nothing was compared");
     if (cmp.shared === 0) throw new Error(`no account appears in both (settings=${cmp.settingsCount}, chat=${cmp.chatCount})`);
     if (cmp.mismatched.length) {
       throw new Error(`same account shows different usage in chat vs Settings: ${JSON.stringify(cmp.mismatched)}`);
     }
-    log(`  compared ${cmp.shared} account(s) across both views`);
+    // Without a figure the comparison is two "--" against each other; the isolated stack
+    // supplies figures, a real backend may have none yet.
+    if (ISOLATED && cmp.withFigures === 0) throw new Error("no account showed a usage figure, so the comparison proved nothing");
+    log(`  compared ${cmp.shared} account(s) across both views (${cmp.withFigures} with figures: ${cmp.sample})`);
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
   });
 
   step("5. URL route (desktop, hard load)");
@@ -831,14 +983,15 @@ async function main() {
   });
   await cdp.screenshot(join(SHOTS, "settings-04-mobile-index.png"));
 
-  await scenario("mobile: \"Manage accounts\" opens the settings TAB already on Accounts", async () => {
+  await scenario("mobile: \"Manage in Settings\" opens the settings TAB already on Accounts", async () => {
     // The deep link has to work on the tab route too, or a phone user lands on the index and
     // has to find Accounts by hand. Category travels as tab metadata.
     await closeSettingsTabs(cdp);
     await waitFor(cdp, `!${q("settings-window")}`, "settings closed before the mobile deep link");
-    await waitFor(cdp, `Boolean(${visibleOne('button[title="Usage limits"]')})`, "usage chip on mobile", 15_000);
-    await clickVisible(cdp, visibleOne('button[title="Usage limits"]'), "usage chip");
-    await clickVisible(cdp, visibleOne('button[title="Add, remove or rotate accounts"]'), '"Manage accounts"');
+    await waitFor(cdp, `Boolean(${visibleOne(USAGE_RING)})`, "usage ring on mobile", 15_000);
+    // On a phone the chat menu is a bottom sheet; the route through it is the same.
+    await openSwitchAccount(cdp);
+    await clickVisible(cdp, MANAGE_IN_SETTINGS, '"Manage in Settings"');
     await waitFor(cdp, q("settings-window"), "settings body on mobile");
     if (await cdp.evaluate(IN_WINDOW)) throw new Error("a floating window opened on mobile");
     const category = await cdp.evaluate(`${q("settings-window")}.dataset.category`);

@@ -1,20 +1,19 @@
+/**
+ * The chat's session history, opened from the History button in the footer's context row: search,
+ * tag filters, and every past session of the project, each one tap from being reopened here.
+ *
+ * Mounted only while open. A search starts afresh each time it opens; the list itself comes from
+ * the project's shared session store, so opening it costs no request of its own.
+ */
 import { usePanelStore } from "@/stores/panel-store";
-import { useState, useEffect, useCallback, useRef, type MouseEvent } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "@/lib/icons";
-import { Activity } from "@/lib/icons";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Loader2, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Bot, Tags, CalendarX2 } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { openSessionInItsTab } from "@/lib/design/open-design-tab";
 import { useNotificationStore, notificationTint } from "@/stores/notification-store";
 import { cn } from "@/lib/utils";
-import { AISettingsSection } from "@/components/settings/ai-settings-section";
 import { TagSettingsSection } from "@/components/settings/tag-settings-section";
 import { SessionContextMenu } from "./session-context-menu";
-import { SessionDebugDialog } from "./session-debug-dialog";
-import { ChatToolbarOverflowMenu } from "./chat-toolbar-overflow-menu";
-import { openLogs } from "@/components/logs/open-logs";
-import { UsageDetailPanel } from "./usage-badge";
-import { CodexUsagePanel } from "./codex-usage-panel";
-import { TeamActivityPanel } from "./team-activity-panel";
 import { ProviderBadge } from "./provider-selector";
 import { SpawnedSessionBadge } from "./spawned-session-badge";
 import { formatRelativeDate } from "@/lib/format-date";
@@ -24,37 +23,11 @@ import { useSessionListStore, EMPTY_SESSIONS, commitOptimistic } from "@/stores/
 import { projectRefForName, useProjectRef } from "@/stores/session-list-sync-triggers";
 import { sortSessions, removeSession, renameSession, setPinned, setSessionTag } from "@/lib/session-list-merge";
 import type { SessionInfo, SessionListResponse } from "../../../types/chat";
-import type { UsageInfo } from "../../../types/chat";
-import type { TeamMessageItem } from "@/hooks/use-chat";
 
-type PanelType = "history" | "config" | "usage" | "team" | null;
-
-interface TeamActivityState {
-  hasTeams: boolean;
-  teamNames: string[];
-  messageCount: number;
-  unreadCount: number;
-}
-
-interface ChatHistoryBarProps {
+export interface ChatHistoryPanelProps {
   tabId?: string;
   projectName: string;
-  usageInfo: UsageInfo;
-  usageLoading?: boolean;
-  refreshUsage?: () => void | Promise<void>;
-  lastFetchedAt?: string | null;
   sessionId?: string | null;
-  providerId?: string;
-  /**
-   * Account this tab claimed before it had a session, so the chip can name who will answer
-   * the first message instead of leaving a blank until after it is sent. Once the session
-   * exists its binding takes over and this goes unused.
-   */
-  pickedAccountLabel?: string | null;
-  /** Id of that same account, so the panel can mark which card is serving this chat. */
-  pickedAccountId?: string | null;
-  /** Route this chat onto another account. */
-  onSelectAccount?: (accountId: string, label: string | null) => Promise<string | null>;
   onSelectSession?: (session: SessionInfo) => void;
   /**
    * Set inside a design tab: only that design's sessions are listed, and picking one swaps
@@ -62,36 +35,11 @@ interface ChatHistoryBarProps {
    * than switched into this chat, where it would have left design mode.
    */
   historyFilter?: string;
-  isConnected?: boolean;
-  onReload?: () => void;
-  teamActivity?: TeamActivityState;
-  teamMessages?: TeamMessageItem[];
-  onTeamOpen?: () => void;
+  /** A session was opened: the panel has done its job. */
+  onClose: () => void;
 }
 
-function relativeTime(iso: string): string {
-  const secs = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-  if (secs < 5) return "now";
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  return `${Math.floor(mins / 60)}h`;
-}
-
-function pctColor(pct: number): string {
-  if (pct >= 90) return "text-error";
-  if (pct >= 70) return "text-warning";
-  return "text-success";
-}
-
-export function ChatHistoryBar({
-  tabId,
-  projectName, usageInfo, usageLoading, refreshUsage, lastFetchedAt,
-  sessionId, providerId, pickedAccountLabel, pickedAccountId, onSelectAccount,
-  onSelectSession, historyFilter, isConnected, onReload,
-  teamActivity, teamMessages, onTeamOpen,
-}: ChatHistoryBarProps) {
-  const [activePanel, setActivePanel] = useState<PanelType>(null);
+export function ChatHistoryPanel({ tabId, projectName, sessionId, onSelectSession, historyFilter, onClose }: ChatHistoryPanelProps) {
   const project = useProjectRef(projectName);
   const id = project ? projectCacheId(project) : null;
   const storeSessions = useSessionListStore((s) => (id ? s.byProject[id]?.sessions : undefined) ?? EMPTY_SESSIONS);
@@ -107,9 +55,6 @@ export function ChatHistoryBar({
   const [searchFirstPage, setSearchFirstPage] = useState<SessionInfo[] | null>(null);
   const [loading, setLoading] = useState(false);
   const notifications = useNotificationStore((s) => s.notifications);
-  const hasUnread = useNotificationStore((s) => sessionId ? s.notifications.has(sessionId) : false);
-  const clearForSession = useNotificationStore((s) => s.clearForSession);
-  const markUnread = useNotificationStore((s) => s.markUnread);
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 300);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -117,7 +62,6 @@ export function ChatHistoryBar({
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
   const [showTagSettings, setShowTagSettings] = useState(false);
-  const [debugOpen, setDebugOpen] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const PAGE_SIZE = 50;
 
@@ -127,10 +71,6 @@ export function ChatHistoryBar({
   const effectiveLoading = loading || (!debouncedSearch && storeSyncing);
   const projectTags = tagsState?.tags ?? [];
   const tagCounts = tagsState?.counts ?? {};
-
-  const togglePanel = (panel: PanelType) => {
-    setActivePanel((prev) => prev === panel ? null : panel);
-  };
 
   const load = useCallback(async (query?: string) => {
     if (!projectName) return;
@@ -178,8 +118,11 @@ export function ChatHistoryBar({
 
   // Search re-fetches on its own request; clearing it falls back to the
   // store's shared first page (already kept fresh by `ensure` above).
+  const searchedRef = useRef(false);
   useEffect(() => {
-    if (activePanel !== "history") return;
+    // Opening the panel asks nothing: the store's first page is already kept fresh.
+    if (!searchedRef.current && !debouncedSearch) return;
+    searchedRef.current = true;
     load(debouncedSearch || undefined);
   }, [debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -195,11 +138,10 @@ export function ChatHistoryBar({
     const staysHere = historyFilter ? session.designSlug === historyFilter : !session.designSlug;
     if (onSelectSession && staysHere) {
       onSelectSession(session);
-      setActivePanel(null);
     } else {
       openSessionInItsTab(session, projectName);
-      setActivePanel(null);
     }
+    onClose();
   }
 
   const startEditing = useCallback((session: SessionInfo, e: React.MouseEvent) => {
@@ -284,7 +226,6 @@ export function ChatHistoryBar({
 
   // Keyboard shortcuts: 1-9 to assign tags to current session
   useEffect(() => {
-    if (activePanel !== "history") return;
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       const num = parseInt(e.key);
@@ -299,7 +240,7 @@ export function ChatHistoryBar({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activePanel, projectTags, sessionId, projectName, handleTagChanged]);
+  }, [projectTags, sessionId, projectName, handleTagChanged]);
 
   // Filter by tag client-side (search is now server-side via ?q=)
   // Inside a design tab the picker is that design's history, nothing else.
@@ -308,170 +249,8 @@ export function ChatHistoryBar({
     ? scopedSessions.filter((s) => s.tag?.id === selectedTagId)
     : scopedSessions;
 
-  // Usage badge display — Claude (SDK) and Codex both expose usage limits
-  const isClaudeProvider = !providerId || providerId === "claude";
-  const isCodexProvider = providerId === "codex";
-  // Account events can arrive before the new quota snapshot. Never attach the
-  // previous account's numbers to the newly selected account's name.
-  const usageMatchesAccount = !pickedAccountId || pickedAccountId === usageInfo.activeAccountId;
-  const fiveHourPct = usageMatchesAccount && usageInfo.fiveHour != null ? Math.round(usageInfo.fiveHour * 100) : null;
-  const sevenDayPct = usageMatchesAccount && usageInfo.sevenDay != null ? Math.round(usageInfo.sevenDay * 100) : null;
-  const worstPct = Math.max(fiveHourPct ?? 0, sevenDayPct ?? 0);
-  const usageColor = fiveHourPct != null || sevenDayPct != null ? pctColor(worstPct) : "text-text-subtle";
-  // Order matters, and the obvious order is wrong. With no session, the usage endpoint has
-  // no session to scope to and answers with whichever account ran last across every chat —
-  // so letting it win would show a name that has nothing to do with this tab, which is the
-  // exact confusion the claim exists to remove. The claim (and, once a turn is running, the
-  // account the stream reports) is specific to this chat and outranks it.
-  const accountLabel = pickedAccountLabel ?? (usageMatchesAccount ? usageInfo.activeAccountLabel : null) ?? null;
-
   return (
-    <div className="border-b border-border/50">
-      {/* Toolbar row — status chips scroll on the left, controls stay pinned right.
-          A narrow chat pane must never push the connection indicator out of view, and on
-          one (`@max-[420px]/chat`) the chips drop their words to their icons, keeping only
-          the usage figures, which are the one thing here that changes. */}
-      <div className="flex items-center gap-1 px-2 py-1">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none">
-          {/* History */}
-          <button
-            data-onboarding="chat-history"
-            onClick={() => togglePanel("history")}
-            title="History"
-            aria-label="History"
-            className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
-              activePanel === "history" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
-            }`}
-          >
-            <History className="size-3" />
-            <span className="@max-[420px]/chat:hidden">History</span>
-          </button>
-
-          {/* Active provider + AI Settings (combined) */}
-          {sessionId && providerId && providerId !== "mock" ? (
-            <button
-              onClick={() => togglePanel("config")}
-              className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
-                activePanel === "config" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
-              }`}
-              title="AI Settings"
-            >
-              <ProviderBadge providerId={providerId} />
-              <span className="capitalize @max-[420px]/chat:hidden">{providerId}</span>
-            </button>
-          ) : (
-            <button
-              onClick={() => togglePanel("config")}
-              className={`shrink-0 p-1 rounded transition-colors ${
-                activePanel === "config" ? "text-primary bg-primary/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"
-              }`}
-              title="AI Settings"
-            >
-              <Settings2 className="size-3" />
-            </button>
-          )}
-
-          {/* Usage & Accounts — Claude and Codex both surface usage + account mgmt here */}
-          {(isClaudeProvider || isCodexProvider) ? (
-            <button
-              onClick={() => togglePanel("usage")}
-              className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums transition-colors hover:bg-surface-elevated ${
-                activePanel === "usage" ? "bg-primary/10" : ""
-              } ${usageColor}`}
-              title={accountLabel ? `Usage limits · ${accountLabel}` : "Usage limits"}
-            >
-              <Activity className="size-3" />
-              {accountLabel && (
-                // Which account is serving this session, per provider. An email
-                // label is unreadable cut to 60px ("hienlh1298@…"), and the
-                // account is the thing a multi-account user checks here, so it
-                // gets the room and the full string on hover.
-                //
-                // Before the first message there is no session and so no binding to
-                // report; the tab's claimed account stands in, and it is the same one
-                // that message will run on.
-                <span
-                  className="text-text-secondary font-normal truncate max-w-[110px] @max-[420px]/chat:hidden"
-                  title={accountLabel}
-                >
-                  [{accountLabel}]
-                </span>
-              )}
-              <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
-              <span className="text-text-subtle">·</span>
-              <span>Wk:{sevenDayPct != null ? `${sevenDayPct}%` : "--%"}</span>
-            </button>
-          ) : null}
-
-          {/* Team activity */}
-          {teamActivity?.hasTeams && (
-            <button
-              onClick={() => {
-                togglePanel("team");
-                onTeamOpen?.();
-              }}
-              className={`shrink-0 relative flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
-                activePanel === "team" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
-              }`}
-              title="Team activity"
-            >
-              <Users className="size-3" />
-              <span className="@max-[420px]/chat:hidden">Team</span>
-              {(teamActivity.unreadCount ?? 0) > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 size-2 bg-primary rounded-full animate-pulse" />
-              )}
-            </button>
-          )}
-
-        </div>
-
-        {/* Pinned controls — always visible, never scrolled away */}
-        <div className="flex shrink-0 items-center gap-1 pl-1">
-        {/* Reload messages + connection status */}
-        {onReload && (
-          <button
-            onClick={(e: MouseEvent<HTMLButtonElement>) => {
-              const icon = e.currentTarget.querySelector("svg");
-              if (icon) {
-                icon.classList.add("animate-spin");
-                setTimeout(() => icon.classList.remove("animate-spin"), 600);
-              }
-              onReload();
-            }}
-            className="relative size-4 flex items-center justify-center"
-            title={isConnected ? "Reload messages" : "Disconnected — click to reload"}
-          >
-            <RefreshCw className={`size-3 ${isConnected ? "text-muted-foreground/60" : "text-error"}`} strokeWidth={2.5} />
-            <span className={`absolute -top-0.5 -right-0.5 size-1.5 rounded-full ${isConnected ? "bg-success" : "bg-error animate-pulse"}`} />
-          </button>
-        )}
-
-        {/* Overflow menu — session actions, and the home for future toolbar actions */}
-        {sessionId && (
-          <ChatToolbarOverflowMenu
-            hasUnread={hasUnread}
-            onToggleUnread={() => hasUnread ? clearForSession(sessionId) : markUnread(sessionId, projectName)}
-            onOpenDebug={() => setDebugOpen(true)}
-            onShowLogs={() => openLogs({ chat: sessionId })}
-          />
-        )}
-        </div>
-      </div>
-
-      {sessionId && (
-        <SessionDebugDialog
-          sessionId={sessionId}
-          projectName={projectName}
-          open={debugOpen}
-          onOpenChange={setDebugOpen}
-        />
-      )}
-
-      {/* Panels — only one visible at a time */}
-
-      {/* History panel */}
-      {activePanel === "history" && (
-        <div className="border-t border-border/30 bg-surface">
+        <div className="flex min-h-0 flex-1 flex-col" data-chat-history-panel="">
           {/* Search + refresh */}
           <div className="flex items-center gap-1.5 px-2 py-1 border-b border-border/30">
             <Search className="size-3 text-text-subtle shrink-0" />
@@ -538,7 +317,7 @@ export function ChatHistoryBar({
             </div>
           )}
 
-          <div className="max-h-[200px] overflow-y-auto">
+          <div className="max-h-[260px] min-h-0 overflow-y-auto overscroll-contain max-md:max-h-none max-md:flex-1">
             {effectiveLoading && scopedSessions.length === 0 ? (
               <div className="flex items-center justify-center py-3">
                 <Loader2 className="size-3.5 animate-spin text-text-subtle" />
@@ -587,7 +366,8 @@ export function ChatHistoryBar({
                           value={editingTitle}
                           onChange={(e) => setEditingTitle(e.target.value)}
                           onBlur={saveTitle}
-                          onKeyDown={(e) => { if (e.key === "Escape") cancelEditing(); }}
+                          // Escape cancels the rename, not the History popover around it.
+                          onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); cancelEditing(); } }}
                           className="flex-1 min-w-0 bg-surface-elevated text-[11px] text-text-primary px-1 py-0.5 rounded border border-border outline-none focus:border-primary"
                           autoFocus
                         />
@@ -659,51 +439,5 @@ export function ChatHistoryBar({
             )}
           </div>
         </div>
-      )}
-
-      {/* Config panel */}
-      {activePanel === "config" && (
-        <div className="border-t border-border/30 bg-surface px-3 py-2 max-h-[280px] overflow-y-auto">
-          <AISettingsSection compact />
-        </div>
-      )}
-
-      {/* Team activity panel — its tabs each scroll on their own, so no outer scroll */}
-      {activePanel === "team" && teamActivity?.hasTeams && (
-        <div className="border-t border-border/30 bg-surface px-3 py-2">
-          <TeamActivityPanel
-            teamNames={teamActivity.teamNames}
-            messages={teamMessages ?? []}
-            sessionId={sessionId}
-            projectName={projectName}
-            providerId={providerId}
-          />
-        </div>
-      )}
-
-      {/* Usage panel — Claude shows full account rotation; Codex shows its own accounts */}
-      {activePanel === "usage" && isClaudeProvider && (
-        <UsageDetailPanel
-          usage={usageInfo}
-          onSelectAccount={onSelectAccount}
-          selectedAccountId={pickedAccountId ?? usageInfo.activeAccountId ?? null}
-          visible={true}
-          onClose={() => setActivePanel(null)}
-          onReload={refreshUsage}
-          loading={usageLoading}
-          lastFetchedAt={lastFetchedAt}
-        />
-      )}
-      {activePanel === "usage" && isCodexProvider && (
-        <CodexUsagePanel
-          usage={usageInfo}
-          onClose={() => setActivePanel(null)}
-          onReload={refreshUsage}
-          onSelectAccount={onSelectAccount}
-          selectedAccountId={pickedAccountId ?? usageInfo.activeAccountId ?? null}
-        />
-      )}
-
-    </div>
   );
 }

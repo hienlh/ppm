@@ -15,7 +15,7 @@ const { act, useState } = await import("react");
 const { useSessionFileChanges } = await import("../../../src/web/hooks/use-session-file-changes.ts");
 const { useGlobalEvents } = await import("../../../src/web/hooks/use-global-events.ts");
 const { WsClient } = await import("../../../src/web/lib/ws-client.ts");
-const { SessionChangesBar } = await import("../../../src/web/components/chat/session-changes-bar.tsx");
+const { SessionChangesChip } = await import("../../../src/web/components/chat/session-changes-chip.tsx");
 const { TurnChangeRollup } = await import("../../../src/web/components/chat/turn-change-rollup.tsx");
 const { SessionChangesContext } = await import("../../../src/web/components/chat/session-changes-context.tsx");
 const { useProjectStore } = await import("../../../src/web/stores/project-store.ts");
@@ -99,7 +99,7 @@ function Chat({ initial, pill }: { initial: ChatMessage[]; pill?: { changes: Tur
   useSessionTurnsStore.getState().publish("s1", turns, true);
   return (
     <SessionChangesContext.Provider value={{ projectName: "proj", sessionId: "s1", files: s.files, refresh: s.refresh, openReview: () => {} }}>
-      <SessionChangesBar
+      <SessionChangesChip
         files={s.files} loaded={s.loaded} loading={s.loading} unloadedCount={s.unloadedCount}
         projectName="proj" onOpen={s.refresh} onRefresh={s.refresh} onSetReviewed={s.setReviewed} onReview={() => {}}
       />
@@ -111,14 +111,16 @@ function Chat({ initial, pill }: { initial: ChatMessage[]; pill?: { changes: Tur
 }
 
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 20)); });
-const barText = (root: ParentNode) => root.querySelector('[data-testid="session-changes-bar"]')?.textContent ?? null;
+const chipText = (root: ParentNode) => root.querySelector('[data-testid="session-changes-chip"]')?.textContent ?? null;
+/** The chip's tooltip spells the count out ("2 files changed"); the chip itself shows "2 files". */
+const chipTitle = (root: ParentNode) => root.querySelector('[data-testid="session-changes-chip"]')?.getAttribute("title") ?? null;
 const pillStatus = (root: ParentNode) => [...root.querySelectorAll("[data-testid=turn-review-status]")].map((e) => e.textContent);
 const push = (files: SessionFileChange[], gone: string[] = []) =>
   act(async () => { deliver!({ data: JSON.stringify({ type: "session:file-changes", projectName: "proj", sessionId: "s1", files, gone }) }); });
 /** The socket (re)connected: the server says so first thing. */
 const reconnect = () => act(async () => { deliver!({ data: JSON.stringify({ type: "global_ready" }) }); });
-const openBar = async (root: ParentNode) => {
-  await click(root.querySelector('[data-testid="session-changes-bar"] button')!);
+const openChip = async (root: ParentNode) => {
+  await click(root.querySelector('[data-testid="session-changes-chip"]')!);
   await settle();
 };
 
@@ -142,7 +144,7 @@ describe("the session's changes, kept current", () => {
     view = await mount(<Chat initial={turn1} />);
     await settle();
     expect(listAsks).toBe(0);
-    expect(barText(view.container)).toContain("1 file changed");
+    expect(chipTitle(view.container)).toContain("1 file changed");
 
     const messages = [...turn1, message("u2", "user"), message("a2", "assistant", [{ id: "toolu_2", path: B }])];
     await act(async () => setChat({ messages: messages.slice(0, 3), isStreaming: true }));
@@ -154,11 +156,11 @@ describe("the session's changes, kept current", () => {
     await act(async () => setChat({ messages, isStreaming: false }));
     await settle();
     expect(listAsks).toBe(0);
-    expect(barText(view.container)).toContain("2 files changed");
+    expect(chipTitle(view.container)).toContain("2 files changed");
 
-    await openBar(view.container);
+    await openChip(view.container);
     expect(listAsks).toBe(1);
-    expect(barText(view.container)).toContain("+2");
+    expect(chipText(view.container)).toContain("+2");
 
     // Asked for once: the next turn ends without asking again.
     await act(async () => setChat({ messages, isStreaming: true }));
@@ -171,14 +173,14 @@ describe("the session's changes, kept current", () => {
     server = { count: 1, list: [row(A, [["toolu_1"]])] };
     view = await mount(<Chat initial={turn1} />);
     await settle();
-    await openBar(view.container);
+    await openChip(view.container);
 
     await push([row(A, [["toolu_1"], ["toolu_2"]]), row(B, [["toolu_3"]])]);
-    expect(barText(view.container)).toContain("2 files changed");
-    expect(barText(view.container)).toContain("+3");
+    expect(chipTitle(view.container)).toContain("2 files changed");
+    expect(chipText(view.container)).toContain("+3");
 
     await push([], [B]);
-    expect(barText(view.container)).toContain("1 file changed");
+    expect(chipTitle(view.container)).toContain("1 file changed");
     expect(listAsks).toBe(1);
   });
 
@@ -188,7 +190,7 @@ describe("the session's changes, kept current", () => {
     hold = new Promise((r) => { release = r; });
     view = await mount(<Chat initial={turn1} />);
     await settle();
-    await openBar(view.container);
+    await openChip(view.container);
     expect(listAsks).toBe(1);
 
     // The list being answered may already be older than this row: it is set aside.
@@ -198,14 +200,14 @@ describe("the session's changes, kept current", () => {
     await act(async () => release());
     await settle();
     expect(listAsks).toBe(2);
-    expect(barText(view.container)).toContain("2 files changed");
+    expect(chipTitle(view.container)).toContain("2 files changed");
   });
 
   it("never call the agent's new edit 'reverted' on a later turn's pill", async () => {
     server = { count: 1, list: [row(A, [["toolu_1"]])] };
     view = await mount(<Chat initial={turn1} pill={{ changes: [turnChange(A, "toolu_2")], turnIndex: 1 }} />);
     await settle();
-    await openBar(view.container);
+    await openChip(view.container);
 
     // Turn 2 edits a.ts again: the server names toolu_2 as the writer of a new block.
     await secondTurn({ id: "toolu_2", path: A }, { count: 1, list: [row(A, [["toolu_1"], ["toolu_2"]])] });
@@ -216,16 +218,16 @@ describe("the session's changes, kept current", () => {
     server = { count: 1, list: [row(A, [["toolu_1"]])] };
     view = await mount(<Chat initial={turn1} />);
     await settle();
-    await openBar(view.container);
+    await openChip(view.container);
     // Everything put back from the Review tab: the refresh after it finds nothing.
     server = { count: 1, list: [] };
     await act(async () => announceReviewMarks({ projectName: "proj", sessionId: "s1" }));
     await settle();
-    expect(barText(view.container)).toBeNull();
+    expect(chipText(view.container)).toBeNull();
     const asked = listAsks;
 
     await secondTurn({ id: "toolu_2", path: B }, { count: 2, list: [row(B, [["toolu_2"]])] });
-    expect(barText(view.container)).toContain("1 file changed");
+    expect(chipTitle(view.container)).toContain("1 file changed");
     expect(listAsks).toBe(asked);
   });
 
@@ -238,6 +240,8 @@ describe("the session's changes, kept current", () => {
     const onChanges = (e: Event) => fed.push((e as CustomEvent<{ files: SessionFileChange[] }>).detail.files.map((f) => f.path));
     window.addEventListener(SESSION_CHANGES_EVENT, onChanges);
     try {
+      // Review sits in the chip's popover; opening it is what asks for the list.
+      await openChip(view.container);
       await click([...view.container.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Review")!);
       await settle();
       expect(listAsks).toBe(1);
@@ -256,13 +260,13 @@ describe("the session's changes, kept current", () => {
     await settle();
     expect(listAsks).toBe(0);
 
-    await openBar(view.container);
+    await openChip(view.container);
     expect(listAsks).toBe(1);
     // The server restarted mid-turn: what the agent changed meanwhile was never pushed.
     server = { count: 2, list: [row(A, [["toolu_1"]]), row(B, [["toolu_2"]])] };
     await reconnect();
     await settle();
     expect(listAsks).toBe(2);
-    expect(barText(view.container)).toContain("2 files changed");
+    expect(chipTitle(view.container)).toContain("2 files changed");
   });
 });

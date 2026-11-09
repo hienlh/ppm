@@ -163,7 +163,8 @@ export async function openChatTab(page, project) {
       if (root) {
         mark("textarea", [...root.querySelectorAll('textarea[placeholder="Ask anything..."]')].some(visible));
         mark("modeChip", [...root.querySelectorAll('button[aria-label^="Permission mode:"]')].some(visible));
-        mark("providerChip", [...root.querySelectorAll('button[aria-label^="AI Provider:"]')].some(visible));
+        // The provider rides in the model chip (its logo, and its name in the title).
+        mark("providerChip", [...root.querySelectorAll("button[data-model-chip]")].some(visible));
       }
       if (Date.now() - at < 20000 && !(seen.textarea && seen.modeChip && seen.providerChip)) requestAnimationFrame(tick);
     };
@@ -203,7 +204,7 @@ export async function closeAllTabs(page, { save = false } = {}) {
 export const tabRoot = (tabId) => `[data-tab-pool-id="${tabId}"]`;
 
 /**
- * Waits, inside the page, for the tab's visible permission and provider chips and returns
+ * Waits, inside the page, for the tab's visible permission and model chips and returns
  * their labels plus the page clock when they were first seen.
  */
 export async function waitForChips(page, tabId, timeout = 15000) {
@@ -212,10 +213,11 @@ export async function waitForChips(page, tabId, timeout = 15000) {
     if (!el) return false;
     const visible = (b) => b && b.offsetParent !== null;
     const mode = [...el.querySelectorAll('button[aria-label^="Permission mode:"]')].find(visible);
-    const provider = [...el.querySelectorAll('button[aria-label^="AI Provider:"]')].find(visible);
+    // The provider rides in the model chip: its logo, and its name first in the title.
+    const provider = [...el.querySelectorAll("button[data-model-chip]")].find(visible);
     const box = [...el.querySelectorAll('textarea[placeholder="Ask anything..."]')].find(visible);
     if (!mode || !provider || !box) return false;
-    return { at: Date.now(), mode: mode.getAttribute("aria-label"), provider: provider.getAttribute("aria-label") };
+    return { at: Date.now(), mode: mode.getAttribute("aria-label"), provider: `AI Provider: ${(provider.getAttribute("title") ?? "").split(" · ")[0]}` };
   }, tabRoot(tabId), { timeout, polling: "raf" });
   return handle.jsonValue();
 }

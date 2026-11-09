@@ -2,6 +2,7 @@
 // change), the phone (10) and which notifications are sent (11).
 import assert from "node:assert/strict";
 import { resultOf } from "./session-collab-helpers.mjs";
+import { closeLinkedSessions, linkedSessionRow, linkedSessionStatus, openLinkedSessions } from "./linked-sessions-panel-helpers.mjs";
 
 /** Settings → Tools through the rail's Settings button (Ctrl+, is not taken while a composer has focus). */
 async function openTools(page) {
@@ -111,13 +112,18 @@ export async function runSettingsSteps(ctx) {
       await p.screenshot({ path: `${ctx.artifacts}/10b-phone-badge-sheet.png` });
 
       await ck.show(p, [A]);
-      const summary = p.locator("[data-linked-sessions-bar] button[aria-expanded]:visible").first();
-      await summary.waitFor({ timeout: 15000 });
-      assert.match(await summary.innerText(), /\d+ linked sessions/);
-      assert.equal(await p.locator("[data-linked-sessions-bar] [data-linked-session]:visible").count(), 0, "collapsed: no chips until opened");
-      await summary.tap();
-      await p.locator("[data-linked-sessions-bar] [data-linked-session]:visible").first().waitFor({ timeout: 5000 });
-      await p.screenshot({ path: `${ctx.artifacts}/10c-phone-bar-collapsed-then-open.png` });
+      // On a phone the activity chip shows numbers only; its sheet lists the linked sessions.
+      const chip = p.locator("[data-activity-chip]:visible").first();
+      await chip.waitFor({ timeout: 15000 });
+      assert.match(await chip.innerText(), /\d+/);
+      assert.equal(await p.locator("[data-linked-session]:visible").count(), 0, "no rows until the chip is opened");
+      await chip.tap();
+      const tab = p.locator('[data-activity-tab="sessions"]:visible').first();
+      await tab.waitFor({ timeout: 5000 });
+      if ((await tab.getAttribute("aria-selected")) !== "true") await tab.tap();
+      await p.locator("[data-linked-sessions-panel] [data-linked-session]:visible").first().waitFor({ timeout: 5000 });
+      await p.screenshot({ path: `${ctx.artifacts}/10c-phone-activity-sheet.png` });
+      await closeLinkedSessions(p);
 
       const lead = await ck.newSession("claude", "Phone lead");
       await ck.plan(lead.id, ck.steps({ call: "create_session", args: { title: "Phone child", task: "Say hi." } }, { say: "Done from the phone." }));

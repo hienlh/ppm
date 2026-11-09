@@ -4,7 +4,7 @@
  * the server's link store (which also knows links older than the loaded messages), then live:
  * phase changes, unread marks and `/ws/global`'s link and card events reach it without a request.
  */
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { projectCacheId } from "@/lib/browser-cache/cache-keys";
 import { useSessionListStore, EMPTY_SESSIONS } from "@/stores/session-list-store";
 import { useProjectRef } from "@/stores/session-list-sync-triggers";
@@ -15,6 +15,8 @@ import {
   collectLinkedSessions, linkedSessionStatus, type LinkedSession, type LinkedSessionStatus,
 } from "@/lib/linked-sessions";
 import { fetchSessionLinks } from "@/lib/session-collab-client";
+import { useSettingsStore } from "@/stores/settings-store";
+import { lastMessageFrom, splitUnlinked } from "../../shared/linked-session-unlinks";
 import type { SessionLinkRelation } from "../../shared/session-collab";
 import type { ChatMessage } from "../../types/chat";
 
@@ -42,6 +44,37 @@ export function useLinkedSessionStatus(sessionId: string | undefined): LinkedSes
 }
 const NO_SESSIONS = new Map<string, never>();
 const NO_APPROVALS: Record<string, string> = {};
+
+const NO_UNLINKS: Record<string, number> = {};
+
+export interface LinkedSessionGroups {
+  /** Shown in the chat's Sessions list. */
+  visible: LinkedSessionView[];
+  /** Unlinked from this chat and not heard from since. */
+  hidden: LinkedSessionView[];
+  unlink: (ids: readonly string[]) => void;
+  relink: (ids: readonly string[]) => void;
+}
+
+/**
+ * The linked sessions split into the ones this chat still shows and the ones it was told to hide
+ * (`settings-store`'s synced `unlinkedSessions`). A hidden session that messages this chat again
+ * after it was hidden, or is running or waits on the person again, is shown again, so a reply or a
+ * request never goes unseen behind an unlink.
+ */
+export function useLinkedSessionGroups(projectName: string, sessionId: string | null, messages: ChatMessage[]): LinkedSessionGroups {
+  const linked = useLinkedSessions(projectName, sessionId, messages);
+  const unlinked = useSettingsStore((s) => (sessionId ? s.unlinkedSessions[sessionId] : undefined) ?? NO_UNLINKS);
+  const setUnlinked = useSettingsStore((s) => s.setSessionsUnlinked);
+  const lastFrom = useMemo(() => lastMessageFrom(messages), [messages]);
+  const { visible, hidden } = useMemo(() => splitUnlinked(linked, unlinked, lastFrom), [linked, unlinked, lastFrom]);
+  // Measured against the last message each sent here, on the server's clock: see linked-session-unlinks.
+  const unlink = useCallback((ids: readonly string[]) => {
+    if (sessionId) setUnlinked(sessionId, ids, true, (id) => lastFrom.get(id) ?? 0);
+  }, [sessionId, setUnlinked, lastFrom]);
+  const relink = useCallback((ids: readonly string[]) => { if (sessionId) setUnlinked(sessionId, ids, false); }, [sessionId, setUnlinked]);
+  return { visible, hidden, unlink, relink };
+}
 
 export function useLinkedSessions(projectName: string, sessionId: string | null, messages: ChatMessage[]): LinkedSessionView[] {
   const project = useProjectRef(projectName || undefined);

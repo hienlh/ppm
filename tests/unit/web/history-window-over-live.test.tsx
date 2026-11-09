@@ -213,7 +213,7 @@ describe("the history window over the live chat", () => {
       return i;
     };
     const transcript = at("MessageList");
-    for (const bar of ["RunningAgentsBar", "TurnStopBar", "McpSignInBar", "SessionChangesBar", "MessageInput"]) {
+    for (const bar of ["TurnStopBar", "McpSignInBar", "ActivityChip", "SessionChangesChip", "MessageInput"]) {
       expect(at(bar)).toBeGreaterThan(transcript);
     }
     // The pill is drawn where the window is; portalling it next to the composer put it over the bars.

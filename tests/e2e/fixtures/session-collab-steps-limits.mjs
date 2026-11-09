@@ -3,6 +3,7 @@
 // child sessions" (7), and Codex and Claude creating each other (8).
 import assert from "node:assert/strict";
 import { resultOf } from "./session-collab-helpers.mjs";
+import { closeLinkedSessions, linkedSessionRow, linkedSessionStatus, openLinkedSessions } from "./linked-sessions-panel-helpers.mjs";
 
 export async function runLimitSteps(ctx) {
   const { page, kit, ck, ids } = ctx;
@@ -73,14 +74,15 @@ export async function runLimitSteps(ctx) {
     await ck.show(page, [A]);
     await ck.send(page, "Ask the tests session to run the slow suite.");
     await page.locator("[data-collab-waiting]:visible").first().waitFor({ timeout: 20000 });
-    const chip = page.locator(`[data-linked-sessions-bar] [data-linked-session="${B.id}"]:visible`);
-    await kit.until("B running", async () => (await chip.getAttribute("data-linked-status")) === "running", 15000);
+    await kit.until("B running", async () => (await linkedSessionStatus(page, B.id)) === "running", 15000);
+    await closeLinkedSessions(page);
     await page.getByRole("button", { name: "Stop response" }).first().click();
     const [wait] = await ck.answered(from, 1, (c) => c.sessionId === A.id, 20000);
     assert.deepEqual(resultOf(wait)?.reply, { replied: false, reason: "cancelled" }, wait.text);
     await page.waitForTimeout(1500);
     assert.equal((await ck.live(B.id))?.phase !== "idle", true, "B keeps running after A stopped");
-    assert.equal(await chip.getAttribute("data-linked-status"), "running");
+    assert.equal(await linkedSessionStatus(page, B.id), "running");
+    await closeLinkedSessions(page);
     kit.record("7: Stop in A cancels its wait (the tool answers reason cancelled) while B keeps running");
     await kit.shot(page, "07a-stop-cancels-wait");
     // The card is the user's only view of what the stop did to the wait.
@@ -92,13 +94,15 @@ export async function runLimitSteps(ctx) {
 
   await kit.scenario("7b", async () => {
     const { B } = ids;
-    const chip = page.locator(`[data-linked-sessions-bar] [data-linked-session="${B.id}"]:visible`);
     assert.equal((await ck.live(B.id))?.phase !== "idle", true, "B is still running");
-    await page.getByRole("button", { name: "Stop all child sessions" }).first().click();
-    await page.getByRole("button", { name: "Stop all", exact: true }).first().click();
+    // Stop all sits at the foot of the activity chip's Sessions tab and asks inline first.
+    const panel = await openLinkedSessions(page);
+    await panel.getByRole("button", { name: "Stop all child sessions" }).first().click();
+    await panel.getByRole("button", { name: /^Stop \d+ sessions?$/ }).first().click();
     await kit.until("B stopped", async () => (await ck.live(B.id))?.phase === "idle", 15000);
-    await kit.until("B's chip idle", async () => (await chip.getAttribute("data-linked-status")) !== "running", 15000);
+    await kit.until("B's row idle", async () => (await linkedSessionStatus(page, B.id)) !== "running", 15000);
     await kit.shot(page, "07b-stop-all-children");
+    await closeLinkedSessions(page);
     kit.record("7b: Stop all child sessions (after its confirmation) stops B");
   });
 

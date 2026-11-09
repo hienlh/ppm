@@ -27,12 +27,12 @@ import { useChatAccountClaim } from "@/hooks/use-chat-account-claim";
 import { startPrepare, getPrepare, isPrepared, forgetPrepare } from "@/lib/new-chat-prepare-client";
 import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
-import { ChatReconnectBanner } from "./chat-reconnect-banner";
-import { RunningAgentsBar } from "./running-agents-bar";
-import { LinkedSessionsBar } from "./linked-sessions-bar";
+import { ConnectionChip } from "./connection-chip";
+import { useReconnectIndicator } from "@/hooks/use-reconnect-indicator";
+import { ActivityChip } from "./activity-chip";
 import { AgentSessionProvider, normalizeProviderId } from "./agent-session-context";
 import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
-import { SessionChangesBar } from "./session-changes-bar";
+import { SessionChangesChip } from "./session-changes-chip";
 import { CONTINUE_AFTER_STOP, TurnStopBar } from "./turn-stop-bar";
 import { SessionChangesContext, useSessionChangesValue } from "./session-changes-context";
 import { useSessionFileChanges } from "@/hooks/use-session-file-changes";
@@ -40,7 +40,7 @@ import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
 import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
-import { ChatHistoryBar } from "./chat-history-bar";
+import { ChatFooterTools } from "./chat-footer-tools";
 import { NewChatProviderGate, useNewChatPreparation } from "./new-chat-provider-gate";
 import { UserBubble } from "./message-user-bubble";
 import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
@@ -266,7 +266,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
 
   // Usage runs independently — auto-refreshes on interval. Scoped to this session so the
   // account shown is the one bound to it, not whichever session ran most recently.
-  const { usageInfo, usageLoading, lastFetchedAt, refreshUsage, reloadUsage } =
+  const { usageInfo, reloadUsage } =
     useUsage(projectName, providerId, sessionId ?? undefined,
       metadata?.pickedAccountProvider === providerId ? metadata?.pickedAccountId as string | undefined : undefined,
       !preparation?.pending, tabId);
@@ -503,11 +503,18 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     killBackgroundShell,
   } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt, replyTransportOptions);
 
-  // Shared by the history bar's reload button and the reconnect pill's Retry.
+  // Shared by the ··· menu's Reload messages and the connection chip's Retry.
   const reloadChat = useCallback(() => {
     if (!isConnected) reconnect();
     refetchMessages();
   }, [isConnected, reconnect, refetchMessages]);
+  // What the footer says about the socket: nothing for a quick reconnect, then "Reconnecting…",
+  // then "Connection lost · Retry". The composer's placeholder follows the same stages.
+  const { stage: connectionStage, restart: restartReconnect } = useReconnectIndicator(isReconnecting);
+  const retryConnection = useCallback(() => {
+    restartReconnect();
+    reloadChat();
+  }, [restartReconnect, reloadChat]);
 
   const effortStatus = useEffortStatus({
     projectName,
@@ -1338,9 +1345,6 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         </div>
       )}
 
-      {/* Reconnect status — a pill, not an overlay: the chat stays readable and usable */}
-      <ChatReconnectBanner isReconnecting={isReconnecting} onRetry={reloadChat} />
-
       {/* Edit-fork overlay — covers the chat while the new version forks + connects */}
       {editForking && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm">
@@ -1396,19 +1400,6 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         bashPartialOutput={bashPartialOutput}
       /></SessionChangesContext.Provider></AsyncQuestionContext.Provider>}
 
-      {/* Agents still working — pinned here so it is the last thing under the conversation */}
-      <RunningAgentsBar
-        projectName={projectName}
-        providerId={agentSessionIdentity.providerId}
-        sessionId={sessionId}
-        messages={messages}
-        teamName={primaryTeam}
-        teamMembers={teamMembers}
-      />
-
-      {/* Sessions this one created, was created by, or exchanged messages with */}
-      <LinkedSessionsBar projectName={projectName} sessionId={sessionId} messages={messages} />
-
       {/* Why the last turn ended, when an error ended it */}
       <TurnStopBar
         stop={phase === "idle" ? turnStop : null}
@@ -1418,43 +1409,55 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       {/* MCP servers this session cannot use until someone signs in */}
       <McpSignInBar key={sessionId ?? "draft"} needsAuth={mcpNeedsAuth} projectName={projectName || undefined} />
 
-      {/* Every file this session has changed, across all its turns */}
-      {!minimalMode && <SessionChangesBar
-        files={sessionChanges.files}
-        loaded={sessionChanges.loaded}
-        loading={sessionChanges.loading}
-        unloadedCount={sessionChanges.unloadedCount}
-        projectName={projectName}
-        providerId={providerId}
-        onOpen={sessionChanges.refresh}
-        onRefresh={sessionChanges.refresh}
-        onSetReviewed={sessionChanges.setReviewed}
-        onReview={openReview}
-      />}
-
-      {/* Bottom toolbar */}
-      <div className="border-t border-border bg-panel shrink-0">
-        {/* Unified toolbar: History, Config, Usage, Bug report, Connection */}
-        <ChatHistoryBar
-          tabId={tabId}
-          projectName={projectName}
-          usageInfo={usageInfo}
-          usageLoading={usageLoading}
-          refreshUsage={refreshUsage}
-          lastFetchedAt={lastFetchedAt}
-          sessionId={sessionId}
-          providerId={providerId}
-          pickedAccountLabel={servingAccount?.label ?? (claimMatchesProvider ? pickedAccountLabel : null)}
-          pickedAccountId={servingAccount?.id ?? (claimMatchesProvider ? pickedAccountId ?? null : null)}
-          onSelectAccount={!preparation.pending && !firstSendPending ? handleSelectAccount : undefined}
-          onSelectSession={handleSelectSession}
-          historyFilter={historyFilter}
-          isConnected={isConnected}
-          onReload={reloadChat}
-          teamActivity={teamActivity}
-          teamMessages={teamMessages}
-          onTeamOpen={markTeamRead}
-        />
+      {/* The footer: one context row — what runs beside this chat (agents and linked sessions),
+          what it changed, the connection when it has trouble; usage, History and ··· on the right — then the composer.
+          No rules between them. The row is the popovers' anchor, so it is `relative`. */}
+      <div className="shrink-0 px-2 pb-1.5 md:px-3 md:pb-3" data-chat-footer="">
+        <div className="relative flex min-w-0 items-center gap-2 px-0.5 py-2 max-md:py-1.5" data-chat-context-row="">
+          {/* Padded so the chips' focus rings and widened touch areas (9px past a 28px phone chip,
+              see footer-chip.ts) are not cut by the clip. */}
+          <div className="-my-2.5 flex min-w-0 items-center gap-1.5 overflow-hidden py-2.5 @max-[420px]/chat:gap-1 max-md:gap-1">
+            <ActivityChip
+              projectName={projectName}
+              agentProviderId={agentSessionIdentity.providerId}
+              sessionId={sessionId}
+              messages={messages}
+              teamName={primaryTeam}
+              teamMembers={teamMembers}
+            />
+            {!minimalMode && <SessionChangesChip
+              files={sessionChanges.files}
+              loaded={sessionChanges.loaded}
+              loading={sessionChanges.loading}
+              unloadedCount={sessionChanges.unloadedCount}
+              projectName={projectName}
+              providerId={providerId}
+              onOpen={sessionChanges.refresh}
+              onRefresh={sessionChanges.refresh}
+              onSetReviewed={sessionChanges.setReviewed}
+              onReview={openReview}
+            />}
+            <ConnectionChip stage={connectionStage} onRetry={retryConnection} />
+          </div>
+          <ChatFooterTools
+            tabId={tabId}
+            projectName={projectName}
+            usageInfo={usageInfo}
+            sessionId={sessionId}
+            providerId={providerId}
+            pickedAccountLabel={servingAccount?.label ?? (claimMatchesProvider ? pickedAccountLabel : null)}
+            pickedAccountId={servingAccount?.id ?? (claimMatchesProvider ? pickedAccountId ?? null : null)}
+            onSelectAccount={!preparation.pending && !firstSendPending ? handleSelectAccount : undefined}
+            onSelectSession={handleSelectSession}
+            historyFilter={historyFilter}
+            isConnected={isConnected}
+            onReload={reloadChat}
+            connectionTrouble={connectionStage !== "hidden"}
+            teamActivity={teamActivity}
+            teamMessages={teamMessages}
+            onTeamOpen={markTeamRead}
+          />
+        </div>
 
         {/* Pickers (in-flow, above input — only one visible at a time) */}
         <SlashCommandPicker
@@ -1552,6 +1555,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             thinking={thinking}
             onThinkingChange={setThinking}
             promptCache={promptCache}
+            offline={connectionStage !== "hidden"}
           />
         )}
       </div>

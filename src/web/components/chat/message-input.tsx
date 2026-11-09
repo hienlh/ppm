@@ -15,8 +15,7 @@ import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { stepHistory } from "./message-history-recall";
 import { toComposerDraft } from "../../../shared/user-message-parse";
-import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
-import { ProviderSelector } from "./provider-selector";
+import { ModeSelector, getModeLabel, getModeIcon, getModeShortLabel } from "./mode-selector";
 import { ModelThinkingSelector } from "./model-thinking-selector";
 import type { SlashItem } from "./slash-command-picker";
 import { fetchSlashItems, getCachedSlashItems, subscribeSlashItems, SLASH_ITEMS_TTL_MS } from "@/lib/slash-items-cache";
@@ -171,8 +170,10 @@ interface MessageInputProps {
   thinking?: boolean;
   /** Thinking toggle handler */
   onThinkingChange?: (enabled: boolean) => void;
-  /** This session's prompt-cache clock, for the countdown chip */
+  /** This session's prompt-cache clock: a cold cache is shown beside the mic. */
   promptCache?: PromptCacheState | null;
+  /** The chat is reconnecting or offline: what is sent now waits for the connection. */
+  offline?: boolean;
 }
 
 export const MessageInput = memo(function MessageInput({
@@ -222,6 +223,7 @@ export const MessageInput = memo(function MessageInput({
   thinking,
   onThinkingChange,
   promptCache,
+  offline = false,
   configurationPending = false,
 }: MessageInputProps) {
   // Uncontrolled textarea: value lives in DOM + ref, not React state.
@@ -1043,12 +1045,13 @@ export const MessageInput = memo(function MessageInput({
 
   const hasContent = hasText || attachments.some((a) => a.status !== "error") || !!agentTag;
   const showCancel = isStreaming && !hasContent;
+  const placeholder = offline ? "Will send when reconnected..." : isStreaming ? "Follow-up or Stop..." : "Ask anything...";
 
   return (
-    <div data-onboarding="chat-input" className="p-2 md:p-3">
+    <div data-onboarding="chat-input">
       {/* Rounded input container */}
       <div
-        className="border border-border rounded-[var(--rad)] bg-panel shadow-[var(--shadow-float)] cursor-text"
+        className="cursor-text rounded-[18px] border border-border bg-panel shadow-[var(--shadow-float)] transition-[border-color] duration-150 focus-within:border-accent-wash-border"
         onClick={(e) => {
           if (disabled) return;
           // Only focus when clicking outside the textarea (e.g. padding area)
@@ -1081,113 +1084,51 @@ export const MessageInput = memo(function MessageInput({
         )}
         {/* Attachment chips (inside container, aligned with input) */}
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
-        {/* Mobile: mode chip + provider selector row */}
-        <div className="flex flex-wrap items-center gap-1 px-2 pt-2 md:hidden relative">
-          {!configurationPending && <>
-          <ModeChip
-            mode={permissionMode ?? "bypassPermissions"}
-            onClick={() => setModeSelectorOpen((v) => !v)}
-          />
-          <ModeSelector
-            value={permissionMode ?? "bypassPermissions"}
-            onChange={(m) => onModeChange?.(m)}
-            open={modeSelectorOpen}
-            onOpenChange={setModeSelectorOpen}
-          />
-          </>}
-          {onProviderChange && projectName && (
-            <ProviderSelector
-              value={providerId ?? "claude"}
-              onChange={onProviderChange}
-              projectName={projectName}
-            />
-          )}
-          {onModelChange && projectName && (
-            <ModelThinkingSelector
-              model={model ?? null}
-              effort={effort ?? null}
-              effortStatus={effortStatus}
-              thinking={thinking ?? false}
-              onModelChange={onModelChange}
-              onEffortChange={onEffortChange ?? (() => {})}
-              onThinkingChange={onThinkingChange ?? (() => {})}
-              projectName={projectName}
-              providerId={providerId ?? "claude"}
-              disabled={isStreaming}
-            />
-          )}
-          {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
-          <PromptCacheChip promptCache={promptCache ?? null} />
-        </div>
-        {/* Mobile: single row — attach + textarea + mic + send */}
-        <div className="flex items-end gap-1 md:hidden px-2 py-2">
+        {/* The textarea on top — one per layout, since a phone keeps it shorter — and one bar below. */}
+        <textarea
+          ref={mobileTextareaRef}
+          defaultValue={initialValue ?? ""}
+          onChange={handleTextareaChange}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          placeholder={placeholder}
+          disabled={disabled}
+          rows={1}
+          aria-label="Message"
+          className="block w-full resize-none bg-transparent px-3 pb-0 pt-2 text-sm leading-relaxed text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-20 [field-sizing:content] md:hidden"
+        />
+        <textarea
+          ref={textareaRef}
+          defaultValue={initialValue ?? ""}
+          onChange={handleTextareaChange}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          placeholder={placeholder}
+          disabled={disabled}
+          rows={1}
+          aria-label="Message"
+          className="hidden w-full resize-none bg-transparent px-3.5 pb-1 pt-3 text-sm leading-relaxed text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-[160px] min-h-12 [field-sizing:content] md:block"
+        />
+
+        {/* Attach, mode, model, Queue … cache, mic, send. Icons are 16px here (the ▾ is 12px);
+            only the model chip shrinks, so a long model name ends in an ellipsis. */}
+        <div className="flex min-w-0 items-center gap-1 px-2 pb-2 pt-1 max-md:gap-0.5 max-md:px-1.5 max-md:pb-1 max-md:pt-0 [&>*]:shrink-0 [&>[data-model-slot]]:shrink">
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); handleAttachClick(); }}
             disabled={disabled}
-            className="flex items-center justify-center size-8 shrink-0 rounded-[10px] text-text-3 hover:text-text-primary transition-colors disabled:opacity-50"
+            className={SQUARE_BUTTON}
             aria-label="Attach file"
+            title="Attach file"
           >
             <Paperclip className="size-4" />
           </button>
-          <textarea
-            ref={mobileTextareaRef}
-            defaultValue={initialValue ?? ""}
-            onChange={handleTextareaChange}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            placeholder={isStreaming ? "Follow-up..." : "Ask anything..."}
-            disabled={disabled}
-            rows={1}
-            className="flex-1 resize-none bg-transparent py-1.5 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-20 [field-sizing:content]"
-          />
-          {voice.supported && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
-              disabled={disabled || isTranscribing}
-              className={`flex items-center justify-center size-8 shrink-0 rounded-[10px] transition-colors disabled:opacity-50 ${
-                voice.isListening
-                  ? "bg-error text-white animate-pulse"
-                  : "text-text-3 hover:text-text-primary"
-              }`}
-              aria-label={micLabel}
-            >
-              {isTranscribing
-                ? <Loader2 className="size-4 animate-spin" />
-                : voice.isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
-            </button>
-          )}
-          {showCancel ? (
-            <button
-              onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
-              className="flex items-center justify-center size-9 shrink-0 rounded-[11px] bg-error text-white hover:bg-error/80 shadow-[var(--shadow-float)] transition-colors"
-              aria-label="Stop"
-            >
-              <Square className="size-3.5" />
-            </button>
-          ) : (
-            <button
-              onClick={(e) => { e.stopPropagation(); pendingSend ? setPendingSend(false) : handleSend(); }}
-              disabled={disabled || !hasContent || !!turnChipsBlockedReason}
-              className="flex items-center justify-center size-9 shrink-0 rounded-[11px] bg-primary text-primary-foreground hover:bg-primary/90 shadow-[var(--shadow-float)] disabled:opacity-30 disabled:shadow-none transition-colors"
-              aria-label={pendingSend ? "Cancel queued send" : "Send"}
-            >
-              {pendingSend ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
-            </button>
-          )}
-        </div>
-
-        {/* Desktop: chips row (permission + model) then a single input row
-            (paperclip | textarea | mic | send) — design PPMWorkspace composer. */}
-        <div className="hidden md:block">
-          {/* Wraps on a wide chat; on a narrow one (`@max-[420px]/chat`) stays one line, the
-              permission chip down to its icon and the model chip giving way first. */}
-          <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2.5 @max-[420px]/chat:flex-nowrap">
-            {/* Mode indicator chip */}
-            {!configurationPending && <div className="relative shrink-0">
+          {!configurationPending && (
+            <div className="relative">
               <ModeChip
                 mode={permissionMode ?? "bypassPermissions"}
                 onClick={() => setModeSelectorOpen((v) => !v)}
@@ -1198,16 +1139,10 @@ export const MessageInput = memo(function MessageInput({
                 open={modeSelectorOpen}
                 onOpenChange={setModeSelectorOpen}
               />
-            </div>}
-            {/* Provider selector — only when no active session */}
-            {onProviderChange && projectName && (
-              <ProviderSelector
-                value={providerId ?? "claude"}
-                onChange={onProviderChange}
-                projectName={projectName}
-              />
-            )}
-            {onModelChange && projectName && (
+            </div>
+          )}
+          {onModelChange && projectName && (
+            <div data-model-slot="" className="flex min-w-0">
               <ModelThinkingSelector
                 model={model ?? null}
                 effort={effort ?? null}
@@ -1219,70 +1154,47 @@ export const MessageInput = memo(function MessageInput({
                 projectName={projectName}
                 providerId={providerId ?? "claude"}
                 disabled={isStreaming}
+                onProviderChange={onProviderChange}
               />
-            )}
-            {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
-            <PromptCacheChip promptCache={promptCache ?? null} />
-          </div>
-          <div className="flex items-end gap-2 px-2.5 py-2">
+            </div>
+          )}
+          {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
+          <span className="min-w-1 flex-1 !shrink" />
+          <PromptCacheChip promptCache={promptCache ?? null} />
+          {voice.supported && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); handleAttachClick(); }}
-              disabled={disabled}
-              className="flex items-center justify-center size-[34px] shrink-0 rounded-[10px] text-text-3 hover:text-text-primary hover:bg-surface-elevated transition-colors disabled:opacity-50"
-              aria-label="Attach file"
+              onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
+              disabled={disabled || isTranscribing}
+              className={voice.isListening ? `${SQUARE_BUTTON} !bg-error !text-white animate-pulse` : SQUARE_BUTTON}
+              aria-label={micLabel}
+              title={micLabel}
             >
-              <Paperclip className="size-[17px]" />
+              {isTranscribing
+                ? <Loader2 className="size-4 animate-spin" />
+                : voice.isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
             </button>
-            <textarea
-              ref={textareaRef}
-              defaultValue={initialValue ?? ""}
-              onChange={handleTextareaChange}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              placeholder={isStreaming ? "Follow-up or Stop..." : "Ask anything..."}
-              disabled={disabled}
-              rows={1}
-              className="flex-1 resize-none bg-transparent py-2 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-[90px] leading-relaxed [field-sizing:content]"
-            />
-            {voice.supported && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
-                disabled={disabled || isTranscribing}
-                className={`flex items-center justify-center size-[34px] shrink-0 rounded-[10px] transition-colors disabled:opacity-50 ${
-                  voice.isListening
-                    ? "bg-error text-white animate-pulse"
-                    : "text-text-3 hover:text-text-primary hover:bg-surface-elevated"
-                }`}
-                aria-label={micLabel}
-              >
-                {isTranscribing
-                  ? <Loader2 className="size-[17px] animate-spin" />
-                  : voice.isListening ? <MicOff className="size-[17px]" /> : <Mic className="size-[17px]" />}
-              </button>
-            )}
-            {showCancel ? (
-              <button
-                onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
-                className="flex items-center justify-center size-9 shrink-0 rounded-[11px] bg-error text-white hover:bg-error/80 shadow-[var(--shadow-float)] transition-colors"
-                aria-label="Stop response"
-              >
-                <Square className="size-4" />
-              </button>
-            ) : (
-              <button
-                onClick={(e) => { e.stopPropagation(); pendingSend ? setPendingSend(false) : handleSend(); }}
-                disabled={disabled || !hasContent || !!turnChipsBlockedReason}
-                className="flex items-center justify-center size-9 shrink-0 rounded-[11px] bg-primary text-primary-foreground hover:bg-primary/90 shadow-[var(--shadow-float)] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none transition-colors"
-                aria-label={pendingSend ? "Cancel queued send" : "Send message"}
-              >
-                {pendingSend ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-[17px]" />}
-              </button>
-            )}
-          </div>
+          )}
+          {showCancel ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
+              className="footer-fade-in flex size-9 items-center justify-center rounded-[11px] max-md:size-8 max-md:rounded-[10px] bg-error text-white shadow-[var(--shadow-float)] transition-[background-color,transform] duration-150 motion-safe:active:scale-[0.97] hover:bg-error/80"
+              aria-label="Stop response"
+              title="Stop"
+            >
+              <Square className="size-4" />
+            </button>
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); pendingSend ? setPendingSend(false) : handleSend(); }}
+              disabled={disabled || !hasContent || !!turnChipsBlockedReason}
+              className="flex size-9 items-center justify-center rounded-[11px] max-md:size-8 max-md:rounded-[10px] bg-primary text-primary-foreground shadow-[var(--shadow-float)] transition-[background-color,transform] duration-150 motion-safe:active:scale-[0.97] hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-30 disabled:shadow-none disabled:active:scale-100"
+              aria-label={pendingSend ? "Cancel queued send" : "Send message"}
+              title="Send"
+            >
+              {pendingSend ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1291,7 +1203,15 @@ export const MessageInput = memo(function MessageInput({
   );
 });
 
-/** Small chip showing current permission mode */
+/** The composer bar's square icon buttons: Attach and the mic. */
+const SQUARE_BUTTON =
+  "flex size-[34px] items-center justify-center rounded-[10px] text-text-3 transition-[background-color,color,transform] duration-150 motion-safe:active:scale-[0.97] can-hover:hover:bg-surface-hover can-hover:hover:text-text disabled:opacity-50 max-md:size-8";
+
+/** A borderless chip of the composer bar: the mode and, while a turn runs, Queue. */
+const BAR_CHIP =
+  "inline-flex h-[30px] items-center gap-1.5 whitespace-nowrap rounded-full px-[9px] text-[11.5px] text-text-2 transition-[background-color,color,transform] duration-150 motion-safe:active:scale-[0.97] can-hover:hover:bg-surface-hover can-hover:hover:text-text @max-[420px]/chat:px-[7px] max-md:h-7 max-md:px-1.5";
+
+/** The permission mode in one word ("Bypass"), its icon alone on a narrow chat. */
 function ModeChip({ mode, onClick }: { mode: string; onClick: () => void }) {
   const Icon = getModeIcon(mode);
   const label = getModeLabel(mode);
@@ -1299,12 +1219,12 @@ function ModeChip({ mode, onClick }: { mode: string; onClick: () => void }) {
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className="inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft hover:text-text-primary hover:border-border transition-colors @max-[420px]/chat:px-[7px]"
+      className={BAR_CHIP}
       aria-label={`Permission mode: ${label}`}
       title={`Permission mode: ${label}`}
     >
-      <Icon className="size-3" />
-      <span className="max-w-[100px] truncate @max-[420px]/chat:hidden">{label}</span>
+      <Icon className="size-4" />
+      <span className="@max-[420px]/chat:hidden max-md:hidden">{getModeShortLabel(mode)}</span>
     </button>
   );
 }
@@ -1330,12 +1250,12 @@ function PriorityToggle({ value, onChange }: { value: MessagePriority; onChange:
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); cycle(); }}
-      className="inline-flex shrink-0 items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft hover:text-text-primary hover:border-border transition-colors @max-[420px]/chat:px-[7px]"
+      className={`footer-fade-in ${BAR_CHIP}`}
       aria-label={`Message priority: ${current.label}`}
-      title={`Priority: ${current.label} (click to cycle)`}
+      title={`Your next message: ${current.label} (tap to cycle Queue → Later → Interrupt)`}
     >
-      <Icon className="size-3" />
-      <span className="@max-[420px]/chat:hidden">{current.label}</span>
+      <Icon className="size-4" />
+      <span className="@max-[420px]/chat:hidden max-md:hidden">{current.label}</span>
     </button>
   );
 }

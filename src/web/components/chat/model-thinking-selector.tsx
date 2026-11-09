@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
-import { Check, Sparkles, Brain, TriangleAlert } from "@/lib/icons";
+import { Check, Brain, ChevronDown, TriangleAlert } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { modelDisplayName } from "@/lib/model-display-name";
 import type { EffortStatus } from "../../../shared/effort-status";
 import { EFFORT_OPTIONS, chipLabel, effortLabel, effortNotice, noticeText, shownEffort, type EffortNotice } from "./model-thinking-selector-helpers";
+import { ProviderChoiceRow, ProviderIcon } from "./provider-selector";
 
 interface ModelOption {
   value: string;
@@ -29,6 +30,8 @@ interface ModelThinkingSelectorProps {
   providerId: string;
   /** Locked while a turn is streaming (model/effort can't change mid-turn). */
   disabled?: boolean;
+  /** Start the chat on another provider; offered at the top of the popup before a session exists. */
+  onProviderChange?: (providerId: string) => void;
 }
 
 /** Strip the leading "Claude " so the chip stays compact: "Claude Opus 5" → "Opus 5" */
@@ -52,6 +55,7 @@ export function ModelThinkingSelector({
   projectName,
   providerId,
   disabled,
+  onProviderChange,
 }: ModelThinkingSelectorProps) {
   const cacheKey = JSON.stringify([projectName, providerId]);
   const cached = modelCache.get(cacheKey);
@@ -122,8 +126,10 @@ export function ModelThinkingSelector({
     if (!isMobile) setOpen(false);
   };
 
+  const providerName = providerId ? providerId.charAt(0).toUpperCase() + providerId.slice(1) : "";
   const content = (
     <>
+    {onProviderChange && <ProviderChoiceRow value={providerId} onChange={onProviderChange} projectName={projectName} />}
     {notice && <EffortNoticeBanner notice={notice} />}
     <div className="flex divide-x divide-border">
       {/* Left column: model list */}
@@ -172,8 +178,9 @@ export function ModelThinkingSelector({
   );
 
   return (
-    // `min-w-0` + `max-w-full`: in a narrow composer this is the chip that gives way.
-    <div className="relative min-w-0">
+    // `min-w-0`: in the composer bar this is the one chip that gives way — a long model name
+    // ends in an ellipsis and the full name is in the tooltip.
+    <div className="relative flex min-w-0">
       <button
         type="button"
         disabled={disabled}
@@ -181,14 +188,19 @@ export function ModelThinkingSelector({
           e.stopPropagation();
           if (!disabled) setOpen((v) => !v);
         }}
-        className="inline-flex max-w-full items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-primary bg-accent-wash border border-accent-wash-border hover:brightness-110 transition-[filter] disabled:opacity-50 disabled:cursor-default"
+        data-model-chip=""
+        className="inline-flex h-[30px] min-w-0 max-w-full items-center gap-1.5 whitespace-nowrap rounded-full px-[9px] text-[11.5px] text-primary transition-[background-color,transform] duration-150 motion-safe:active:scale-[0.97] can-hover:hover:bg-surface-hover disabled:cursor-default disabled:active:scale-100"
         aria-label={`Model ${modelDisplay}, effort ${shown.level ? effortLabel(shown.level) : "none"}${notice ? ` (${notice.title})` : ""}${thinking ? ", thinking on" : ""}`}
-        title={disabled ? "Can't change while running" : notice ? `${chipText}\n${notice.title}: ${noticeText(notice.detail)}` : chipText}
+        title={disabled ? "Can't change while running" : notice ? `${providerName} · ${chipText}\n${notice.title}:${noticeText(notice.detail)}` : `${providerName} · ${chipText}`}
       >
-        <Sparkles className="h-3.5 w-3.5 shrink-0" />
-        <span className="min-w-0 max-w-[140px] truncate">{chipText}</span>
-        {notice && <TriangleAlert className="h-3 w-3 shrink-0 text-warning" />}
-        {thinking && <Brain className="h-3 w-3 shrink-0" />}
+        <ProviderIcon providerId={providerId} className="size-4" />
+        <span className="block min-w-0 max-w-[180px] truncate @max-[420px]/chat:max-w-[110px] max-md:max-w-[110px]">
+          {modelDisplay}
+          {shown.level && <span className="@max-[420px]/chat:hidden max-md:hidden">{chipText.slice(modelDisplay.length)}</span>}
+        </span>
+        {notice && <TriangleAlert className="size-3 shrink-0 text-warning" />}
+        {thinking && <Brain className="size-3 shrink-0" />}
+        <ChevronDown className="size-3 shrink-0 text-text-3" />
       </button>
 
       {open && !disabled && (

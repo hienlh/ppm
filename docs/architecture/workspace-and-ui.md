@@ -143,7 +143,7 @@ first page (50 sessions), tags, `isSyncing` and `lastSyncError` — so every sur
 shows recent chats reads the same state instead of fetching its own copy: the sidebar
 history panel (including the mobile drawer), the welcome `SessionListPanel` (in
 `chat-welcome` and `editor-panel`), the tab bar / mobile nav's tag map, and
-`chat-history-bar`'s first page. It is hydrated from IndexedDB (see [Browser cache
+the chat footer's History popover (`chat-history-panel.tsx`). It is hydrated from IndexedDB (see [Browser cache
 layer](data-and-storage.md#browser-cache-layer)) and kept fresh by one deduplicated sync
 per project (`GET /chat/sessions` + `/tags`, in-flight promises keyed outside the store
 so the dedupe check itself never triggers a re-render).
@@ -232,6 +232,31 @@ late), the offset change per window load (with no image delay, and no scroll ste
 in flight), late images above an unpinned reader (4c), a panel split while pinned, and the phone's
 long press, `touchcancel` and pill.
 
+## Chat footer
+
+Under the conversation, after the bars that only appear when something needs the person (why the
+last turn stopped, MCP sign-in): **one context row, then the composer**, with no horizontal rules
+between them. The row's left holds what describes this chat — the activity chip (agents and linked
+sessions, below), the changes chip, and the connection chip, which says nothing while connected,
+"Reconnecting…" after the grace period and "Connection lost · Retry" once it drags on (the
+composer's placeholder then reads "Will send when reconnected..."). Its right holds a usage ring
+with the busier of the 5-hour and weekly figures (coloured only from 70%, and absent until a figure
+for this chat's account exists), History, and the ···
+menu: the serving account and its meters, Switch account (a drill-in listing this provider's
+accounts as two-line cards, current first then most headroom, the unusable ones folded under "Out
+of usage" from five accounts on, with search), AI settings, Team activity, Reload messages with
+the connection's state, and a folded More (mark unread, debug info, this chat's logs).
+
+The composer is the textarea over one bar: Attach, the mode in one word, the model chip carrying
+the provider's logo (the provider is picked inside it before a session exists), Queue while a
+turn runs, then — only once the prompt cache has gone cold — a red clock, the mic and Send/Stop.
+The model chip is the one control that shrinks; a long name ends in an ellipsis. Below a 420px
+chat (`@max-[420px]/chat`) or `md` the labels drop and the counts and icons stay, the usage ring
+gives its room to a connection problem, and every popover becomes a bottom sheet with 44px
+targets. Popovers rise in over 160ms and leave in 100ms, Switch account slides, More unfolds by
+grid rows, meters and the ring animate their value, chips press to 0.97 — all of it off under
+`prefers-reduced-motion`. Checked end to end by `tests/e2e/chat-footer-e2e.mjs`.
+
 ## Session collaboration UI
 
 The browser half of [session collaboration](ai-chat-and-providers.md#session-collaboration).
@@ -253,15 +278,37 @@ that is not the server's JSON is shown as raw text. A call whose turn ended with
 (the server's `cancelled` outcome included), so a wait reads "Wait cancelled" and any other call
 "The turn ended before this tool answered" (`sessionCollabCardState`).
 
-**The linked-sessions bar** (`linked-sessions-bar.tsx`, under the running-agents bar). Chips with a
-"session" badge, provider, title and a live status — running, idle, needs you, new message — for
-the session's creator, its children and the sessions it messaged. `use-linked-sessions.ts` seeds
+**The activity chip** (`activity-chip.tsx`, first in the chat footer's context row). The agents
+this chat launched and the sessions linked to it share one chip — "● [bot] 2 agents │ [link] 3
+linked", a part that is zero left out, no chip with neither — and one popover with two tabs. One
+dot speaks for both: pulsing green while an agent or a linked session runs, red while a linked
+session waits on the person (the chip's border turns red too), blue while one has an answer not yet
+read, grey once all is idle. The popover
+opens on the tab that needs attention: Sessions when one waits on the person, else Agents while
+one runs, else Sessions; the Agents tab exists only while an agent runs. Agents
+(`use-running-agents.ts`, disk-derived from the transcript hub's `agent-activity` feed plus the
+team poll) lists the running agents, then the finished ones launched beside them; a tap opens that
+agent's own session. Sessions (`linked-sessions-panel.tsx`) groups the linked sessions by how they
+are linked (its creator, the sessions it created, the sessions it messaged). `use-linked-sessions.ts` seeds
 the links from `GET …/sessions/:id/links` when the chat opens (so a link from before a restart, or
 older than the loaded messages, is there at once), then merges the session list's `spawnedBy`, the
 chat's own messages and `/ws/global`'s `session:created`, `session:link_changed` and
-`session:collab_approval` (`session-collab-store.ts`). On a phone more than one link collapses into
-a summary line that opens a capped list. "Stop all child sessions" shows while a direct child runs
-and asks first (a dialog on desktop, a bottom sheet on a phone).
+`session:collab_approval` (`session-collab-store.ts`). The list is a popover on a desktop and a
+bottom sheet on a phone. "Stop all child sessions" sits at its foot only while a direct child runs,
+and asks inline before it stops anything.
+
+**Unlinking** hides a session from one chat's list and does nothing else — it never stops or
+deletes it. Every row ends in an unlink button (always visible, 44px on touch); a session still
+running or waiting on the person cannot be unlinked, and its button says why. "Unlink idle & done
+(n)" hides every finished one at once. After any unlink an Undo bar stays for six seconds, and the
+hidden sessions wait folded under "Unlinked (n)" at the bottom, each with Relink. The record is the
+synced UI pref `unlinkedSessions` — chat id → linked id → when it was hidden, capped and validated
+by `src/shared/linked-session-unlinks.ts` on both sides — because which sessions a chat still
+cares about is not a device's choice. A hidden session is shown again (`splitUnlinked`) when it
+messages the chat after it was hidden, or while it runs or waits on the person, so a reply or a
+request is never missed behind an unlink. "After it was hidden" is measured on the server's clock:
+an unlink records the time of the last message that session had sent here (0 when none), never the
+device's clock, so a device whose clock is off cannot hide a later reply or undo an unlink.
 
 **The list badge** (`spawned-session-badge.tsx`, in the sidebar's history, the drawer and the chat
 history bar). A mouse gets "Created by <parent>" on hover and opens the parent on click; a touch

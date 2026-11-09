@@ -27,7 +27,7 @@ interface TeamActivityPanelProps {
   /** Passed to a member window so its steps resolve project-relative paths. */
   projectName?: string;
   /** Which provider's hub to subscribe the session window on — forwarded by
-   *  `chat-history-bar.tsx` from the chat's own `providerId`; defaults to Claude when absent. */
+   *  `chat-footer-tools.tsx` from the chat's own `providerId`; defaults to Claude when absent. */
   providerId?: string;
 }
 

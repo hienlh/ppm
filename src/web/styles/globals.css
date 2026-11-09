@@ -513,6 +513,61 @@ html, body {
   .hover-label-delayed { animation-duration: 0.01s; }
 }
 
+/*
+ * The chat footer's popovers and chips. A popover rises in over 160ms and leaves in 100ms, a
+ * drill-in view slides from the side it is entered from, and a chip that appears (the
+ * connection chip, Queue) fades in instead of popping. All of it stops under reduced motion.
+ */
+@keyframes footerPopIn {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+}
+@keyframes footerPopOut {
+  to { opacity: 0; transform: translateY(4px) scale(0.98); }
+}
+@keyframes footerFromRight {
+  from { opacity: 0; transform: translateX(14px); }
+}
+@keyframes footerFromLeft {
+  from { opacity: 0; transform: translateX(-14px); }
+}
+@keyframes footerFadeIn {
+  from { opacity: 0; transform: scale(0.94); }
+}
+.footer-pop-in { animation: footerPopIn 0.16s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.footer-pop-out { animation: footerPopOut 0.1s ease-in both; pointer-events: none; }
+.footer-from-right { animation: footerFromRight 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.footer-from-left { animation: footerFromLeft 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.footer-fade-in { animation: footerFadeIn 0.16s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .footer-pop-in, .footer-pop-out, .footer-from-right, .footer-from-left, .footer-fade-in { animation: none; }
+}
+
+/*
+ * The conversation fades out inside the chat footer's own top padding rather than in a band of its
+ * own above it: the footer is pulled up over the list by that padding, and the list's last 12px
+ * (which lie behind it) fade to nothing just where the chips begin. A mask rather than a gradient
+ * painted on top: a painted fade has to match the background behind it, which differs per theme
+ * and per pane, while a mask works over any. The list's trailing padding is as tall as the fade,
+ * so the last message at rest stays solid. Only when the footer follows the list directly — a
+ * banner between them (a stopped turn, an MCP sign-in) gets the footer's ordinary padding back.
+ */
+.chat-scroll-fade {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent);
+}
+[data-chat-list] + [data-chat-footer] {
+  position: relative;
+  z-index: 1;
+  margin-top: -12px;
+}
+[data-chat-list] + [data-chat-footer] > [data-chat-context-row] {
+  padding-top: 12px;
+}
+/* The scroll buttons sit above the footer's top padding, not inside the fade. */
+[data-chat-list]:has(+ [data-chat-footer]) [data-chat-scroll-nav] {
+  bottom: 24px;
+}
+
 /* Tab streaming indicator — 3 dots bouncing inside chat bubble icon (Messenger typing style) */
 @keyframes tabTypingBounce {
   0%, 60%, 100% { transform: translateY(0); }

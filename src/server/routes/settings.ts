@@ -31,6 +31,7 @@ import { createLogger } from "../../services/logger.ts";
 import { settleFeaturesDecidedInSettings } from "../../services/feature-intros.service.ts";
 import { FEATURE_INTROS_CHANGED_EVENT } from "../../shared/feature-intros.ts";
 import { broadcastGlobalEvent } from "../ws/global.ts";
+import { isUnlinkMap } from "../../shared/linked-session-unlinks";
 
 const log = createLogger("settings");
 const ppmbotLog = createLogger("ppmbot");
@@ -154,6 +155,8 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   dbLookupDescriptions: isLookupDescriptions,
   // OS Explorer window chrome override — "auto" follows the host platform
   explorerSkin: (v) => v === "auto" || v === "windows" || v === "macos",
+  // Linked sessions each chat's Sessions list hides, and when (see shared/linked-session-unlinks)
+  unlinkedSessions: isUnlinkMap,
   // Project switcher prefs
   projectSortMode: (v) => v === "recent" || v === "priority" || v === "name",
   recentOpen: (v) =>

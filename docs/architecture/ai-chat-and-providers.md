@@ -897,8 +897,9 @@ capped image built from `tests/e2e/docker/Dockerfile`.
 
 ## Session changes and review
 
-The bar above the composer (`src/web/components/chat/session-changes-bar.tsx`) lists every
-file one chat session has changed, across all its turns, and its Review button opens a
+The changes chip in the chat footer's context row (`src/web/components/chat/session-changes-chip.tsx`,
+"N files +a −d") lists every file one chat session has changed, across all its turns, in a
+popover (a bottom sheet on a phone) whose Review button opens a
 `session-review` tab (`src/web/components/session-review/session-review-tab.tsx`) that goes
 through those changes block by block, the way Cursor and Zed review an agent's edits: each
 block of each file, compared with the state the file was in **before the session first wrote

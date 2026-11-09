@@ -66,7 +66,7 @@ function setTabSession(sessionId: string) {
   usePanelStore.setState((state) => ({ panels: { main: { ...state.panels.main!, tabs: [{ ...tab, metadata: { ...tab.metadata, sessionId } }] } } }));
 }
 async function selectHistory(title: string) {
-  await click([...view!.container.querySelectorAll("button")].find((button) => button.textContent === "History") ?? null);
+  await click([...view!.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "History") ?? null);
   await click([...view!.container.querySelectorAll("button")].find((button) => button.textContent?.includes(title)) ?? null);
 }
 describe("ChatTab reply composer", () => {
@@ -118,7 +118,7 @@ describe("ChatTab reply composer", () => {
   });
   it("does not carry reply selection when changing session", async () => {
     await render(); await click(view!.container.querySelector('[aria-label="Reply"]'));
-    await click([...view!.container.querySelectorAll("button")].find((button) => button.textContent === "History") ?? null);
+    await click([...view!.container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "History") ?? null);
     await click([...view!.container.querySelectorAll("button")].find((button) => button.textContent?.includes("other session")) ?? null);
     expect(!!preview()).toBe(false);
   });

@@ -562,7 +562,7 @@ export function MessageList({
   }
 
   return (
-    <div className="relative flex-1 overflow-hidden flex flex-col min-h-0">
+    <div className="relative flex-1 overflow-hidden flex flex-col min-h-0" data-chat-list="">
       <TaskTracker projectName={projectName} sessionId={sessionId} messages={messages} />
       {errorCount > 1 && onClearErrors && (
         <div className="absolute top-2 left-0 right-0 z-20 flex justify-center pointer-events-none">
@@ -596,7 +596,9 @@ export function MessageList({
       <div
         ref={setScrollRef}
         {...{ [GALLERY_ROOT_ATTR]: "" }}
-        className={cn("flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]", dockApproval && "max-md:flex max-md:flex-col")}
+        // `chat-scroll-fade`: what scrolls down to the footer fades out instead of meeting its chips
+        // at a hard edge. A mask, not a gradient overlay, so it works over any theme's background.
+        className={cn("chat-scroll-fade flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]", dockApproval && "max-md:flex max-md:flex-col")}
         style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", ...(windowView ? { visibility: "hidden" as const } : null) }}
         aria-hidden={windowView ? true : undefined}
         inert={windowView ? true : undefined}
@@ -634,8 +636,9 @@ export function MessageList({
             <IdleCacheNotice promptCache={promptCache ?? null} />
           )}
           </div>
+          {/* pb-3: as tall as the scroll fade, so the last message at rest is never faded. */}
           {hasTrailing && (
-            <div className={cn("px-4 pt-4 pb-4 flex flex-col gap-4 select-none", dockApproval && "max-md:mt-auto")} data-chat-trailing="">
+            <div className={cn("px-4 pt-4 pb-3 flex flex-col gap-4 select-none", dockApproval && "max-md:mt-auto")} data-chat-trailing="">
               {liveApproval && (
                 <div className="max-md:order-last" data-live-approval="">
                   <PendingApprovalCard approval={liveApproval} onRespond={onApprovalResponse} />
@@ -644,6 +647,8 @@ export function MessageList({
               {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
             </div>
           )}
+          {/* With nothing trailing, the same room under the last message for the fade to sit in. */}
+          {!hasTrailing && <div aria-hidden className="h-3" />}
         </div>
       </div>
       {windowView && (

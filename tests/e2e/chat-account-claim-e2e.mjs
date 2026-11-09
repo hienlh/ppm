@@ -1,35 +1,26 @@
-// The chat toolbar must name the account BEFORE the first message is sent.
+// The chat footer must name the account BEFORE the first message is sent.
 //
 // What this guards: a new chat tab used to show no account at all until a message had been
 // sent and answered, so the only way to learn which account a conversation would run on was
-// to run it. A tab now claims one when it opens and displays it, and the claim is what the
-// first message redeems.
+// to run it. A tab now claims one when it opens and the footer's usage ring names it (its
+// title reads "<account> · 5h … · Week …"), and the claim is what the first message redeems.
+// The ring's chat menu names the same account on its first line, and its Switch account view
+// ticks it (`aria-current`) and offers every other account; picking one moves the claim.
 //
-// STATUS: NOT YET RELIABLE. Do not read a red run as a broken feature, or a green one as
-// proof, until the setup problem below is solved.
+// Run it against a workspace it owns. A project's tab layout is synced to the server
+// (`PUT /workspace`), so against a developer's own instance clearing localStorage does not
+// give a clean slate: the next load restores real tabs, all of which already have sessions
+// and cannot exercise a claim — which is how an earlier version reported PASS without the
+// feature ever running. Every check is anchored to a tab proven to have `pickedAccountId`
+// and no `sessionId`, so a wrong starting state fails loudly rather than passing vacuously.
 //
-// The obstacle is workspace state, not the feature. A project's tab layout is synced to the
-// server (`PUT /workspace`), so clearing localStorage does not give a clean slate: the next
-// load restores the developer's real tabs, all of which already have sessions. A tab with a
-// session cannot exercise a claim — and its chip shows the usage endpoint's label, which
-// with a single account is indistinguishable from a claim. That is exactly how an earlier
-// version of this file reported PASS without the feature ever running.
-//
-// What is needed to finish it: a workspace this test owns. Either an isolated PPM_HOME with
-// seeded accounts, or a scratch project whose layout nothing else writes. Until then every
-// check below is anchored to a tab proven to have `pickedAccountId` and no `sessionId`, so
-// it fails loudly rather than passing vacuously — which is the right way round, but it is
-// not yet a usable gate.
-//
-// Verified once by hand, against a genuinely empty workspace: a session-less tab claimed a
-// real Claude account, the toolbar chip showed that account, and the claim survived a
-// reload. Re-running has not reproduced a clean starting state.
-//
-// Run:
-//   bun tests/e2e/chat-account-claim-e2e.mjs
-// or, against a workspace this test owns (isolated PPM_HOME, two seeded placeholder
-// accounts, mock providers) — the setup the note above asks for:
-//   node tests/e2e/fixtures/isolated-chat-stack.mjs -- bun tests/e2e/chat-account-claim-e2e.mjs
+// Run (isolated PPM_HOME, two seeded placeholder accounts, mock providers):
+//   PPM_PLAYWRIGHT_MODULE=<playwright-core>/index.mjs PPM_PLAYWRIGHT_CHANNEL=chrome \
+//   node tests/e2e/fixtures/isolated-chat-stack.mjs -- node tests/e2e/chat-account-claim-e2e.mjs
+// Under the stack (PPM_E2E_API_PORT set) the dev client's direct :8081 sockets are pointed at
+// the stack's server, so nothing reaches a running `bun dev:server`, and the chat usage read is
+// answered at the network edge, because the ring stays hidden until a usage figure exists and
+// the stack's placeholder accounts have none.
 //
 // Env:
 //   PPM_E2E_WEB=http://localhost:5173   dev web origin
@@ -115,6 +106,23 @@ async function newPage() {
   await send("Page.enable");
   await send("Runtime.enable");
   await send("Network.enable");
+  // The dev client dials the backend's sockets on :8081 directly. Under the isolated stack that
+  // would reach a developer's own `bun dev:server` (and its ~/.ppm/ppm.dev.db), so point every
+  // such socket at the stack's server before any page script runs.
+  if (process.env.PPM_E2E_API_PORT) {
+    await send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `(() => {
+        const NativeSocket = window.WebSocket;
+        window.WebSocket = class extends NativeSocket {
+          constructor(input, protocols) {
+            const url = new URL(String(input), location.href);
+            if (url.port === "8081") { url.hostname = "127.0.0.1"; url.port = ${JSON.stringify(process.env.PPM_E2E_API_PORT)}; }
+            super(url.href, protocols);
+          }
+        };
+      })()`,
+    });
+  }
 
   const consoleLines = [];
   const prepareCalls = [];
@@ -131,8 +139,50 @@ async function newPage() {
     if (msg.method === "Network.responseReceived" && /\/chat\/prepare$/.test(msg.params.response.url)) {
       prepareCalls.push(`${msg.params.response.status} ${msg.params.response.url}`);
     }
+    if (msg.method === "Fetch.requestPaused") answerUsage(msg.params);
     origOnMessage(e);
   };
+
+  // The ring is drawn only once a usage figure exists, and the stack's placeholder accounts
+  // have none: their usage would be fetched from Anthropic. So under the stack the figures are
+  // supplied at the network edge, for whichever account the tab claimed: in the usage seed the
+  // `POST /chat/prepare` answer carries (what a new tab shows first) and in `GET /chat/usage`
+  // (what it reads afterwards, `accountId=` being the claim). Nothing else in either answer is
+  // touched, and no label is added, so the name the ring shows can only be the claim's own.
+  const FIGURES = { fiveHour: 0.2, sevenDay: 0.35 };
+  const fulfill = (requestId, body) => send("Fetch.fulfillRequest", {
+    requestId,
+    responseCode: 200,
+    responseHeaders: [{ name: "Content-Type", value: "application/json" }],
+    body: Buffer.from(JSON.stringify(body)).toString("base64"),
+  }).catch(() => {});
+  async function answerUsage({ requestId, request, responseStatusCode }) {
+    const url = new URL(request.url);
+    // A CDP pattern's `?` is a one-character wildcard and `*` spans slashes, so check the path
+    // itself: `/components/chat/usage-meters.tsx` matches the usage pattern too.
+    if (/^\/api\/project\/[^/]+\/chat\/usage$/.test(url.pathname)) {
+      const data = { ...FIGURES, activeAccountId: url.searchParams.get("accountId"), activeAccountLabel: null };
+      return fulfill(requestId, { ok: true, data });
+    }
+    if (/^\/api\/project\/[^/]+\/chat\/prepare$/.test(url.pathname) && responseStatusCode === 200) {
+      try {
+        const res = await send("Fetch.getResponseBody", { requestId });
+        const body = JSON.parse(res.base64Encoded ? Buffer.from(res.body, "base64").toString("utf8") : res.body);
+        const picked = body?.data?.pickedAccount;
+        if (picked && typeof picked === "object" && picked.id) {
+          body.data.usage = { ...(body.data.usage ?? {}), ...FIGURES, activeAccountId: picked.id };
+        }
+        return fulfill(requestId, body);
+      } catch { /* fall through to the real answer */ }
+    }
+    send("Fetch.continueRequest", { requestId }).catch(() => {});
+  }
+  if (process.env.PPM_E2E_API_PORT) {
+    await send("Fetch.enable", { patterns: [
+      { urlPattern: "*/api/project/*/chat/usage*", requestStage: "Request" },
+      { urlPattern: "*/api/project/*/chat/prepare*", requestStage: "Response" },
+    ] });
+  }
 
   const page = {
     consoleLines,
@@ -164,13 +214,19 @@ async function newPage() {
   return page;
 }
 
-/** Text of the toolbar's account chip, e.g. "[Victor (Nxsys)]" → "Victor (Nxsys)". */
+/**
+ * The account the footer's usage ring names. Its title reads "<label> · 5h 47% · Week 52%",
+ * or just "5h -- · Week --" when no account is known yet.
+ */
+// The visible one: the tab pool keeps other chat tabs mounted, hidden, with rings of their own.
+const RING = `[...document.querySelectorAll('[data-chat-footer] [data-usage-ring]')].find((el) => el.offsetParent !== null)`;
 const READ_CHIP = `
 (() => {
-  const btn = [...document.querySelectorAll('button[title="Usage limits"]')][0];
-  if (!btn) return { found: false, label: null };
-  const span = [...btn.querySelectorAll('span')].find((s) => /^\\[.*\\]$/.test(s.textContent.trim()));
-  return { found: true, label: span ? span.textContent.trim().slice(1, -1) : null };
+  const btn = ${RING};
+  if (!btn) return { found: false, label: null, title: null };
+  const title = btn.getAttribute('title') || '';
+  const m = title.match(/^(.*) · 5h /);
+  return { found: true, label: m ? m[1] : null, title };
 })()
 `;
 
@@ -212,7 +268,7 @@ const CLAIMED_TABS = `(${READ_TABS}).filter((t) => !t.sessionId && t.pickedAccou
  */
 const OPEN_CHAT_TAB = `
 (() => {
-  const before = document.querySelectorAll('[data-testid="account-card"], button[title="Usage limits"]').length;
+  const before = document.querySelectorAll('[data-chat-footer] [data-usage-ring]').length;
   const ev = (type) => window.dispatchEvent(new KeyboardEvent(type, {
     key: 'l', code: 'KeyL', ctrlKey: true, metaKey: false, bubbles: true, cancelable: true,
   }));
@@ -275,11 +331,11 @@ async function main() {
   const openResult = await page.eval(OPEN_CHAT_TAB);
   check("a new chat tab is requested", openResult.dispatched === true);
 
-  // Claim first, toolbar second. The toolbar mounts after the tab's first render pass, and
+  // Claim first, footer second. The footer mounts after the tab's first render pass, and
   // waiting on it before the claim just spends the budget in the wrong order.
   const claimAppeared = await page.waitFor(`(${CLAIMED_TABS}).length >= 1`);
-  const toolbarUp = await page.waitFor(`!!document.querySelector('button[title="Usage limits"]')`);
-  check("the new tab renders its toolbar", toolbarUp === true);
+  const toolbarUp = await page.waitFor(`!!${RING}`);
+  check("the new tab renders its footer usage ring", toolbarUp === true);
 
   if (!claimAppeared || !toolbarUp) {
     const diag = await page.eval(`
@@ -319,12 +375,14 @@ async function main() {
     `provider=${claim.pickedAccountProvider}`,
   );
 
-  // The chip must read the claim, not the usage endpoint's cross-session label.
+  // The ring must read the claim, not the usage endpoint's cross-session label. The title is
+  // filled in once the claim lands, so wait for it rather than reading the first render.
+  await page.waitFor(`((${READ_CHIP}).label) === ${JSON.stringify(claim.pickedAccountLabel)}`, 10000);
   const chip = await page.eval(READ_CHIP);
   check(
-    "the toolbar chip shows the claimed account",
+    "the footer usage ring names the claimed account",
     chip.label === claim.pickedAccountLabel,
-    `chip=${chip.label} claim=${claim.pickedAccountLabel}`,
+    `ring title=${JSON.stringify(chip.title)} claim=${claim.pickedAccountLabel}`,
   );
 
   // The claimed id has to be a real account of some provider, not a leftover string.
@@ -353,7 +411,7 @@ async function main() {
 
   // --- the claim survives a reload -----------------------------------------------------
   await page.goto(WEB_PROJECT);
-  await page.waitFor(`!!document.querySelector('button[title="Usage limits"]')`);
+  await page.waitFor(`!!${RING}`);
   const afterReload = await page.eval(CLAIMED_TABS);
   check(
     "the claim survives a reload rather than being re-rolled",
@@ -361,45 +419,86 @@ async function main() {
     `looking for ${claim.pickedAccountLabel}`,
   );
 
-  // --- the panel marks the claim and offers the rest ------------------------------------
-  await page.waitFor(`!!document.querySelector('button[title="Usage limits"]')`);
-  const panel = await page.eval(`
+  // The ring after the reload still names the claim, before any message has been sent.
+  await page.waitFor(`((${READ_CHIP}).label) === ${JSON.stringify(claim.pickedAccountLabel)}`, 10000);
+  const chipAfter = await page.eval(READ_CHIP);
+  check(
+    "after the reload the ring still names the claimed account",
+    chipAfter.label === claim.pickedAccountLabel,
+    `ring title=${JSON.stringify(chipAfter.title)}`,
+  );
+
+  // --- the menu marks the claim and offers the rest -------------------------------------
+  // The ring opens the chat menu; its first line is "<account> · Claude <plan>", and its
+  // Switch account drill-in lists one card per account with the serving one aria-current.
+  const menu = await page.eval(`
     (async () => {
-      const btn = [...document.querySelectorAll('button[title="Usage limits"]')][0];
-      if (!btn) return { opened: false };
-      btn.click();
-      await new Promise((r) => setTimeout(r, 1500));
-      // The serving account is marked by its "Active" badge, not by a button: a disabled
-      // button saying the same thing underneath was the same fact twice, so it is gone.
-      const buttons = [...document.querySelectorAll('button')]
-        // "Use this account" is a tooltip now, not a title attribute.
-        .filter((b) => b.textContent.trim() === 'Use');
-      // The badge is a leaf element reading exactly "Active"; card class names have moved on.
-      const active = [...document.querySelectorAll('*')].filter((el) => el.children.length === 0)
-        .filter((el) => (el.textContent || '').trim() === 'Active');
-      const usageHeading = [...document.querySelectorAll('*')].find((el) => el.children.length === 0 && el.textContent.trim() === 'Usage');
-      return {
-        opened: true,
-        panelText: usageHeading ? usageHeading.parentElement.parentElement.parentElement.innerText.replace(/\\s+/g, ' ').slice(0, 300) : null,
-        offered: buttons.length,
-        activeMarks: active.length,
-        selectable: buttons.filter((b) => !b.disabled).length,
+      const ring = ${RING};
+      if (!ring) return { opened: false };
+      ring.click();
+      const wait = async (fn, ms = 5000) => {
+        const end = Date.now() + ms;
+        while (Date.now() < end) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 100)); }
+        return null;
       };
+      const pop = await wait(() => document.querySelector('[data-footer-popover="Chat menu"] [data-chat-more-menu]'));
+      if (!pop) return { opened: false };
+      const who = pop.querySelector('.truncate')?.textContent?.trim() ?? null;
+      const switchBtn = [...pop.querySelectorAll('button')].find((b) => /Switch account/.test(b.textContent));
+      if (!switchBtn) return { opened: true, who, switchFound: false };
+      switchBtn.click();
+      const view = await wait(() => {
+        const v = document.querySelector('[data-switch-account-view]');
+        return v && v.querySelector('[data-account-row]') ? v : null;
+      }, 8000);
+      if (!view) return { opened: true, who, switchFound: true, rows: [] };
+      // Usage arrives after the list; give the cards a moment to settle their refusals.
+      await new Promise((r) => setTimeout(r, 800));
+      const rows = [...view.querySelectorAll('[data-account-row]')].map((el) => ({
+        id: el.getAttribute('data-account-row'),
+        current: el.getAttribute('aria-current') === 'true',
+        disabled: el.getAttribute('aria-disabled') === 'true',
+        text: el.innerText.replace(/\\s+/g, ' ').slice(0, 120),
+      }));
+      return { opened: true, who, switchFound: true, rows };
     })()
   `);
-  check("the usage panel opens", panel.opened === true);
-  log(`  info  panel: ${panel.panelText}`);
+  check("the ring opens the chat menu", menu.opened === true);
   check(
-    "exactly one account is marked Active",
-    panel.activeMarks === 1,
-    `activeMarks=${panel.activeMarks}`,
+    "the menu names the claimed account first",
+    typeof menu.who === "string" && menu.who.startsWith(`${claim.pickedAccountLabel} · `),
+    `who=${JSON.stringify(menu.who)}`,
   );
-  // The serving card offers no button, so the count of offers is the count of alternatives.
+  check("the menu offers Switch account", menu.switchFound === true);
+  const rows = menu.rows ?? [];
+  log(`  info  accounts: ${JSON.stringify(rows)}`);
+  const current = rows.filter((r) => r.current);
+  check(
+    "exactly one account is marked as serving the chat, and it is the claim",
+    current.length === 1 && current[0].id === claim.pickedAccountId,
+    `current=${current.map((r) => r.id).join(",") || "(none)"} claim=${claim.pickedAccountId}`,
+  );
+  const others = rows.filter((r) => !r.current);
+  const offered = others.filter((r) => !r.disabled);
   check(
     "every account except the serving one offers a switch",
-    panel.offered === panel.selectable,
-    `offered=${panel.offered} selectable=${panel.selectable}`,
+    others.length >= 1 && offered.length === others.length,
+    `others=${others.length} offered=${offered.length}`,
   );
+
+  // --- picking another card moves the claim --------------------------------------------
+  if (offered.length) {
+    const target = offered[0].id;
+    const targetLabel = known.claude.find((a) => a.id === target)?.label ?? null;
+    await page.eval(`document.querySelector('[data-account-row=${JSON.stringify(target)}]').click(); true`);
+    // A landed pick goes back to the main menu ~260ms later.
+    const back = await page.waitFor(`!document.querySelector('[data-switch-account-view]') && !!document.querySelector('[data-footer-popover="Chat menu"] [data-chat-more-menu]')`, 8000);
+    check("a pick returns to the main menu", back === true);
+    const moved = await page.waitFor(`(${CLAIMED_TABS}).some((t) => t.pickedAccountId === ${JSON.stringify(target)})`, 8000);
+    check("the pick moves the session-less tab's claim", moved === true, `to ${target}`);
+    const ringMoved = await page.waitFor(`((${READ_CHIP}).label) === ${JSON.stringify(targetLabel)}`, 8000);
+    check("the ring follows the pick", ringMoved === true, JSON.stringify((await page.eval(READ_CHIP)).title));
+  }
 
   page.close();
   return finish();

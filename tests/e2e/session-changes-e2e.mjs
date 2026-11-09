@@ -1,4 +1,4 @@
-// The session changes bar and the block-by-block Review tab, on the production Vite bundle
+// The session changes chip and the block-by-block Review tab, on the production Vite bundle
 // against a disposable API/ws server whose only provider is scripted
 // (tests/e2e/fixtures/session-changes-server.ts): it really writes the project's files over
 // two turns, taking each file's "before" first the way the Claude provider's PreToolUse hook
@@ -7,7 +7,14 @@
 // turn live, and checks every answer on disk and after a reload. No live credentials, no real
 // PPM data.
 //
-//   PPM_PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs bun tests/e2e/session-changes-e2e.mjs
+//   PPM_PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs [PPM_PLAYWRIGHT_CHANNEL=chrome] \
+//   node tests/e2e/session-changes-e2e.mjs
+// Under node, not bun: on Windows, bun never completes Playwright's pipe launch of Chrome (the
+// launch times out after 180s). The build and the fixture server are still run with bun.
+//
+// The changes live in the chat footer's context row as one chip ("6 files +a -d", titled
+// "6 files changed — open the list"); its popover — a bottom sheet on a phone — holds the
+// list, Refresh, "Mark all reviewed" and the primary Review button.
 //
 // PPM_CHANGES_WEB_DIR=<dir> reuses an existing scratch build (with Monaco staged under
 // assets/monaco/vs) instead of building one; PPM_CHANGES_ONLY=desktop-review,mobile-review,
@@ -111,7 +118,12 @@ async function sendTurn(page, ops, message) {
   await until(`turn "${message}" answered`, async () => (await page.getByText(`Changed ${ops.length} file`, { exact: false }).count()) > 0);
 }
 
-const barText = (page) => page.locator('[data-testid="session-changes-bar"]:visible').first().innerText();
+/** The footer's changes chip. Its title carries the whole count ("6 files changed — open the
+ *  list", "All 6 files reviewed — …"); a phone's chip shows only the number. */
+const chip = (page) => page.locator('[data-testid="session-changes-chip"]:visible').first();
+const chipTitle = async (page) => (await chip(page).getAttribute("title")) ?? "";
+/** The chip's popover on a desktop, its bottom sheet on a phone. */
+const changesPopover = (page) => page.getByRole("dialog", { name: "Changed in this chat" });
 
 const read = (dir, path) => existsSync(join(dir, path)) ? readFileSync(join(dir, path), "utf8") : null;
 
@@ -132,7 +144,8 @@ function reviewTab(page) {
 /** The session's list as the server has it: each file's blocks and which are kept. */
 async function serverList(name, sessionId) {
   const body = await api(`/api/project/${name}/chat/sessions/${sessionId}/file-changes`, { method: "POST", body: JSON.stringify({ paths: [] }) });
-  return Object.fromEntries((body.data?.files ?? body.files ?? []).map((f) => [f.path.split("/").pop(), f]));
+  // Keyed by file name; the server's paths are absolute in the host's own spelling (backslashes on Windows).
+  return Object.fromEntries((body.data?.files ?? body.files ?? []).map((f) => [f.path.split(/[\\/]/).pop(), f]));
 }
 
 const chatTabOf = (page) => page.locator('[role="tab"], [data-tab-id]').filter({ hasText: /Changes test|turn one/ }).first();
@@ -173,7 +186,7 @@ async function desktopReview(page, name, sessionId, dir) {
   const r = reviewTab(page);
   const chatTab = () => chatTabOf(page);
   const reviewTabButton = () => reviewTabOf(page);
-  // Opened from the bar's row for app.ts: its first block in focus, compared with the state
+  // Opened from the chip list's row for app.ts: its first block in focus, compared with the state
   // before the session (version = 1), not before the last turn.
   await until("app.ts blocks", async () => (await r.blocks.count()) === 2);
   const [one, two] = [r.blocks.nth(0), r.blocks.nth(1)];
@@ -286,26 +299,26 @@ async function desktopReview(page, name, sessionId, dir) {
   assert(/\bKept\b/.test(await r.row("app.ts").innerText()));
   assert(/0\/1/.test(await r.row("notes.md").innerText()));
 
-  // A file ticked in the changes bar shows in the tab as kept.
+  // A file ticked in the changes chip's list shows in the tab as kept.
   await chatTab().click();
-  await until("bar after reload", async () => /files changed/.test(await barText(page)));
-  await page.locator('[data-testid="session-changes-bar"]:visible button', { hasText: "files changed" }).click();
-  await page.locator('[data-testid="session-changes-bar"]:visible [data-testid="session-change-item"]', { hasText: "README.md" }).getByRole("checkbox").click();
+  await until("chip after reload", async () => /files changed/.test(await chipTitle(page)));
+  await chip(page).click();
+  await changesPopover(page).locator('[data-testid="session-change-item"]', { hasText: "README.md" }).getByRole("checkbox").click();
   await reviewTabButton().click();
   await until("README kept in the tab", async () => /\bKept\b/.test(await r.row("README.md").innerText()));
 
-  // Everything left at once; the bar agrees, and so does a reload.
+  // Everything left at once; the chip agrees, and so does a reload.
   await page.getByRole("button", { name: "Keep all remaining" }).click();
   await until("all decided", async () => /All \d+ blocks decided/.test(await r.text()));
   await page.screenshot({ path: join(artifacts, "desktop-review-all-decided.png") });
   await chatTab().click();
-  await until("all reviewed in the bar", async () => /All 6 files reviewed/.test(await barText(page)));
+  await until("all reviewed in the chip", async () => /All 6 files reviewed/.test(await chipTitle(page)));
   await page.reload();
   await chatTab().click();
-  // The list is asked for only once the bar is opened: until then the bar counts the files.
-  await until("count after a reload", async () => /6 files changed/.test(await barText(page)));
-  await page.locator('[data-testid="session-changes-bar"]:visible button', { hasText: "files changed" }).click();
-  await until("marks survive a reload", async () => /All 6 files reviewed/.test(await barText(page)));
+  // The list is asked for only once the chip is opened: until then the chip counts the files.
+  await until("count after a reload", async () => /6 files changed/.test(await chipTitle(page)));
+  await chip(page).click();
+  await until("marks survive a reload", async () => /All 6 files reviewed/.test(await chipTitle(page)));
 }
 
 async function phoneReview(page, name, sessionId, dir) {
@@ -384,8 +397,13 @@ async function phoneReview(page, name, sessionId, dir) {
   await page.getByRole("button", { name: "Keep all remaining" }).tap();
   await until("all decided", async () => /All \d+ blocks decided/.test(await r.text()));
   await page.screenshot({ path: join(artifacts, "mobile-review-all-decided.png") });
-  const list = await serverList(name, sessionId);
-  assert(Object.values(list).every((f) => f.reviewed), `every file left is reviewed: ${JSON.stringify(Object.keys(list))}`);
+  // The tab shows the answer before the server has written it; wait for the server's own list.
+  let list = {};
+  try {
+    await until("every file left reviewed on the server", async () => Object.values(list = await serverList(name, sessionId)).every((f) => f.reviewed), 15000);
+  } catch {
+    assert.fail(`every file left is reviewed: ${JSON.stringify(Object.fromEntries(Object.entries(list).map(([k, f]) => [k, { reviewed: !!f.reviewed, kept: (f.blocks ?? []).map((b) => !!b.kept) }])))}`);
+  }
 }
 
 /** The change pill under each answer, and the tray it opens: each edit kept or reverted, and the turn. */
@@ -505,11 +523,14 @@ async function phoneTray(page, name, sessionId, dir) {
 }
 
 const results = []; let browser;
+/** Checks that fail the run without stopping it, so one shortfall does not hide the rest. */
+const productFindings = [];
 try {
   await until("API ready", async () => (await fetch(web + "/api/health")).ok, 60000);
   const modulePath = process.env.PPM_PLAYWRIGHT_MODULE;
   const pw = modulePath ? await import(pathToFileURL(modulePath).href) : await import("playwright");
-  browser = await pw.chromium.launch({ headless: true, ...(process.env.PPM_PLAYWRIGHT_EXECUTABLE ? { executablePath: process.env.PPM_PLAYWRIGHT_EXECUTABLE } : {}) });
+  const channel = process.env.PPM_PLAYWRIGHT_CHANNEL;
+  browser = await pw.chromium.launch({ headless: true, ...(channel ? { channel } : {}), ...(process.env.PPM_PLAYWRIGHT_EXECUTABLE ? { executablePath: process.env.PPM_PLAYWRIGHT_EXECUTABLE } : {}) });
 
   const desktopSize = { width: 1366, height: 900 }, phoneSize = { width: 390, height: 844 };
   // PPM_CHANGES_ONLY=mobile-tray,... runs only the named scenarios.
@@ -525,42 +546,60 @@ try {
     const errors = []; page.on("pageerror", (e) => errors.push(String(e)));
     await page.goto(`${web}/project/${name}`);
     await page.locator('textarea[placeholder="Ask anything..."]:visible').first().waitFor();
-    assert.equal(await page.locator('[data-testid="session-changes-bar"]').count(), 0, "no bar before the session changed anything");
+    assert.equal(await page.locator('[data-testid="session-changes-chip"]').count(), 0, "no chip before the session changed anything");
 
     await sendTurn(page, turnOne(dir), "turn one");
-    await until("bar shows the first turn", async () => /3 files changed/.test(await barText(page)));
+    await until("chip shows the first turn", async () => /3 files changed/.test(await chipTitle(page)));
     await sendTurn(page, turnTwo(dir), "turn two");
     // Cumulative: app.ts was changed in both turns and still counts once; the shell command adds two.
-    await until("bar shows both turns", async () => /6 files changed/.test(await barText(page)));
-    const bar = await barText(page);
-    console.log("  bar:", bar.replace(/\s+/g, " "));
+    await until("chip shows both turns", async () => /6 files changed/.test(await chipTitle(page)));
+    const bar = `${(await chip(page).innerText()).replace(/\s+/g, " ")} (${await chipTitle(page)})`;
+    console.log("  chip:", bar);
     await page.screenshot({ path: join(artifacts, `${device}-bar.png`) });
 
     if (flow === "tray") {
       await (device === "desktop" ? desktopTray : phoneTray)(page, name, sessionId, dir);
     } else if (device === "desktop") {
-      await page.locator('[data-testid="session-changes-bar"] button', { hasText: "6 files changed" }).click();
-      const rows = page.locator('[data-testid="session-changes-bar"] [data-testid="session-change-row"]');
-      await until("inline list", async () => (await rows.count()) === 6);
+      await chip(page).click();
+      const rows = changesPopover(page).locator('[data-testid="session-change-row"]');
+      await until("popover list", async () => (await rows.count()) === 6);
       const listed = await rows.allInnerTexts();
       console.log("  rows:", listed.map((t) => t.replace(/\s+/g, " ")));
       assert(listed[0].includes("app.ts") && listed[0].includes("src"), "project-relative, first-touched first");
       assert(listed.some((t) => t.includes("copied.ts")) && listed.some((t) => t.includes("config.json")), "the shell command's files are listed");
-      assert(await page.getByText("Shell commands are followed through git", { exact: false }).first().isVisible());
+      assert(await changesPopover(page).getByText("Shell commands are followed through git", { exact: false }).isVisible());
+      for (const name of ["Refresh changes", "Mark all reviewed", "Review"]) {
+        assert(await changesPopover(page).getByRole("button", { name, exact: true }).isVisible(), `${name} is in the popover`);
+      }
       await page.screenshot({ path: join(artifacts, `${device}-list.png`) });
       await rows.first().click();
     } else {
-      const toggle = page.locator('[data-testid="session-changes-bar"] button', { hasText: "6 files changed" });
-      assert((await toggle.boundingBox()).height >= 44, "toggle is a 44px target");
-      assert((await page.locator('[data-testid="session-changes-bar"] button', { hasText: "Review" }).boundingBox()).height >= 44);
+      // The chip is drawn 32px tall and should answer a 44px press: its ::after widens the hit
+      // area. What a finger gets is measured, half a pixel at a time, through its middle.
+      const toggle = chip(page);
+      const box = await toggle.boundingBox();
+      const span = await page.evaluate(({ x, mid }) => {
+        const hits = (d) => !!document.elementFromPoint(x, mid + d)?.closest('[data-testid="session-changes-chip"]');
+        let up = 0, down = 0;
+        while (up < 30 && hits(-(up + 0.5))) up += 0.5;
+        while (down < 30 && hits(down + 0.5)) down += 0.5;
+        return up + down;
+      }, { x: box.x + box.width / 2, mid: box.y + box.height / 2 });
+      console.log(`  chip: ${box.height}px drawn, ${span}px hittable`);
+      // Recorded, not thrown: the rest of the flow still runs and the run still fails.
+      if (span < 44) productFindings.push(`phone changes chip answers a ${span}px press (${box.height}px drawn), under the 44px touch target`);
       await toggle.tap();
-      const rows = page.locator('[data-testid="session-change-row"]:visible');
+      const sheet = changesPopover(page);
+      const rows = sheet.locator('[data-testid="session-change-row"]');
       await until("sheet list", async () => (await rows.count()) === 6);
       for (const row of await rows.all()) assert((await row.boundingBox()).height >= 52, "sheet rows are 52px");
       await page.screenshot({ path: join(artifacts, `${device}-sheet.png`) });
-      const reviewAll = page.getByRole("button", { name: "Review all 6 files" });
-      assert((await reviewAll.boundingBox()).height >= 44);
-      await reviewAll.tap();
+      // The thumb zone: the sheet's actions sit at its foot, each a 44px target.
+      for (const name of ["Refresh changes", "Mark all reviewed", "Review"]) {
+        const b = await sheet.getByRole("button", { name, exact: true }).boundingBox();
+        assert(b && b.height >= 44 && b.width >= 44, `${name} is ${b?.width}x${b?.height}`);
+      }
+      await sheet.getByRole("button", { name: "Review", exact: true }).tap();
     }
 
     if (flow === "review" && device === "desktop") await desktopReview(page, name, sessionId, dir);
@@ -570,7 +609,12 @@ try {
     results.push({ device, flow, passed: true, bar: bar.replace(/\s+/g, " ") });
     await context.close();
   }
-  console.log(JSON.stringify({ passed: true, artifacts, results }, null, 2));
+  if (productFindings.length) {
+    results.push({ passed: false, findings: productFindings });
+    console.error(`FAIL ${productFindings.length} check(s):\n${productFindings.map((f) => `  - ${f}`).join("\n")}`);
+    process.exitCode = 1;
+  }
+  console.log(JSON.stringify({ passed: !productFindings.length, artifacts, results }, null, 2));
 } catch (error) {
   results.push({ passed: false, error: error.stack }); console.error(error); process.exitCode = 1;
   for (const context of browser?.contexts() || []) for (const page of context.pages()) await page.screenshot({ path: join(artifacts, "failure.png"), fullPage: true }).catch(() => {});

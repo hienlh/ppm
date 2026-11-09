@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { getAuthToken } from "@/lib/api-client";
 import type { PpmTheme, PpmThemeMode, PpmThemeStyle } from "@/theme/types";
 import { parseQualityChoice, type QualityChoice } from "../../shared/remote-desktop-quality";
+import { isUnlinkMap, updateUnlinks, type UnlinkMap } from "../../shared/linked-session-unlinks";
 import {
   DEFAULT_DB_EXPLORER, DEFAULT_DB_EXPLORER_VIEW, sanitizeDbExplorer, sanitizeDbExplorerView,
   type DbExplorerPrefs, type DbExplorerView,
@@ -104,12 +105,6 @@ interface SettingsState {
   /** Logs: the red dot on the Logs button when AI finds a likely PPM bug. Device-local, and
    *  off means this device never asks for the count — which is also what starts an Auto run. */
   logsBadge: boolean;
-  /**
-   * The chat's linked-sessions bar shown as chips (true) or folded to one summary line (false);
-   * null until the person chooses, which leaves it open on a desktop and folded on a phone.
-   * Device-local: how much of a 6-inch screen a bar may take is not a desktop's decision.
-   */
-  linkedSessionsExpanded: boolean | null;
   /** User ticked "don't show again" on the remote-desktop warning that precedes every open
    *  (`remote-desktop-warning-gate.tsx`); once true the viewer connects straight away. */
   remoteDesktopWarningDismissed: boolean;
@@ -117,6 +112,9 @@ interface SettingsState {
    *  outside this list; a successful sign-in takes the server off it, so a later expiry
    *  is announced again. Synced like other UI prefs. */
   mcpSignInDismissed: string[];
+  /** Linked sessions each chat's Sessions list hides, and when — never stopped or deleted, only
+   *  not shown. Synced, because which sessions a chat still cares about is not a device's choice. */
+  unlinkedSessions: UnlinkMap;
   /** Hold a screen wake lock while any chat turn is running, so a propped-up tablet does not
    *  dim mid-answer. Defaults on; see `hooks/use-wake-lock.ts`. */
   keepScreenAwake: boolean;
@@ -210,11 +208,12 @@ interface SettingsState {
   setLogsUtc: (on: boolean) => void;
   setLogsWrap: (on: boolean) => void;
   setLogsBadge: (on: boolean) => void;
-  setLinkedSessionsExpanded: (expanded: boolean) => void;
   setRemoteDesktopWarningDismissed: (dismissed: boolean) => void;
   dismissMcpSignIn: (serverNames: string[]) => void;
   undismissMcpSignIn: (serverName: string) => void;
   setKeepScreenAwake: (enabled: boolean) => void;
+  /** Hide linked sessions from `chatSessionId`'s list, or show them again. */
+  setSessionsUnlinked: (chatSessionId: string, linkedIds: readonly string[], unlinked: boolean, at?: (id: string) => number) => void;
   fetchServerInfo: () => Promise<void>;
   /** Re-push the in-memory theme selection to the server (see the action for why). */
   syncThemeToServer: () => Promise<void>;
@@ -248,6 +247,7 @@ interface PersistedSettings {
   remoteDesktopStatsVisible?: boolean;
   remoteDesktopWarningDismissed?: boolean;
   mcpSignInDismissed?: string[];
+  unlinkedSessions?: UnlinkMap;
   keepScreenAwake?: boolean;
   remoteDesktopQuality?: QualityChoice;
   remoteDesktopViewStyle?: ViewStyle;
@@ -265,7 +265,6 @@ interface PersistedSettings {
   logsUtc?: boolean;
   logsWrap?: boolean;
   logsBadge?: boolean;
-  linkedSessionsExpanded?: boolean;
 }
 
 const VALID_STYLES: PpmThemeStyle[] = ["aurora", "slate", "precision", "custom"];
@@ -423,6 +422,7 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   if (typeof data.remoteDesktopWarningDismissed === "boolean") patch.remoteDesktopWarningDismissed = data.remoteDesktopWarningDismissed;
   const mcpDismissed = sanitizeNameList(data.mcpSignInDismissed);
   if (mcpDismissed) patch.mcpSignInDismissed = mcpDismissed;
+  if (isUnlinkMap(data.unlinkedSessions)) patch.unlinkedSessions = data.unlinkedSessions;
   if (typeof data.keepScreenAwake === "boolean") patch.keepScreenAwake = data.keepScreenAwake;
   const dbExplorer = sanitizeDbExplorer(data.dbExplorer);
   if (dbExplorer) patch.dbExplorer = dbExplorer;
@@ -482,9 +482,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   logsUtc: _initial.logsUtc === true,
   logsWrap: _initial.logsWrap === true,
   logsBadge: _initial.logsBadge !== false,
-  linkedSessionsExpanded: typeof _initial.linkedSessionsExpanded === "boolean" ? _initial.linkedSessionsExpanded : null,
   remoteDesktopWarningDismissed: _initial.remoteDesktopWarningDismissed ?? false,
   mcpSignInDismissed: sanitizeNameList(_initial.mcpSignInDismissed) ?? [],
+  unlinkedSessions: isUnlinkMap(_initial.unlinkedSessions) ? _initial.unlinkedSessions : {},
   keepScreenAwake: _initial.keepScreenAwake ?? true,
   deviceName: null,
   version: null,
@@ -715,11 +715,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ logsBadge: on });
   },
 
-  setLinkedSessionsExpanded: (expanded) => {
-    persistDevicePref({ linkedSessionsExpanded: expanded });
-    set({ linkedSessionsExpanded: expanded });
-  },
-
   setRemoteDesktopWarningDismissed: (dismissed) => {
     persistUiPref({ remoteDesktopWarningDismissed: dismissed });
     set({ remoteDesktopWarningDismissed: dismissed });
@@ -738,6 +733,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = current.filter((n) => n !== serverName);
     persistUiPref({ mcpSignInDismissed: next });
     set({ mcpSignInDismissed: next });
+  },
+
+  setSessionsUnlinked: (chatSessionId, linkedIds, unlinked, at) => {
+    if (!chatSessionId || linkedIds.length === 0) return;
+    const next = updateUnlinks(get().unlinkedSessions, chatSessionId, linkedIds, unlinked, at);
+    persistUiPref({ unlinkedSessions: next });
+    set({ unlinkedSessions: next });
   },
 
   setKeepScreenAwake: (enabled) => {

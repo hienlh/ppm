@@ -109,7 +109,7 @@ async bootstrapProviders() {
 - Fallback to hardcoded models if API call fails
 - Provider-aware settings (SDK vs CLI options)
 
-#### Chat History Bar (chat-history-bar.tsx) — ADDED
+#### Chat footer tools (chat-footer-tools.tsx, formerly chat-history-bar.tsx)
 - Provider badges showing active provider for each session
 - Provider-aware usage display:
   - **Claude:** Full stats `(tokens_in:X, tokens_out:Y, cost: $Z)`

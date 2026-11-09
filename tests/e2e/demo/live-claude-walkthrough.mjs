@@ -22,6 +22,7 @@ import { mkdir, readFile, rename, writeFile, rm, readdir } from "node:fs/promise
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createKit, pageInit, COMPOSER } from "../fixtures/session-turn-refs-helpers.mjs";
+import { closeLinkedSessions, linkedSessionRow, openLinkedSessions } from "../fixtures/linked-sessions-panel-helpers.mjs";
 
 const web = process.env.PPM_LIVE_URL;
 const projectPath = process.env.PPM_LIVE_PROJECT_PATH;
@@ -218,9 +219,10 @@ try {
     await saveState();
     notes.push(`child "${B.title}" (${B.id}) spawnedBy=${B.spawnedBy} parentTitle=${B.parentTitle}`);
 
-    const chip = page.locator(`[data-linked-sessions-bar] [data-linked-session="${B.id}"]:visible`).first();
-    await chip.waitFor({ timeout: 30000 });
-    notes.push(`bar chip: ${(await chip.innerText()).replace(/\s+/g, " ")}`);
+    const row = await linkedSessionRow(page, B.id, { timeout: 30000 });
+    await row.waitFor({ timeout: 30000 });
+    notes.push(`Sessions tab row: ${(await row.innerText()).replace(/\s+/g, " ")}`);
+    await closeLinkedSessions(page);
     const badge = page.locator(`[data-spawned-badge="${A.id}"]:visible`).first();
     try {
       await badge.waitFor({ timeout: 20000 });
@@ -429,20 +431,14 @@ try {
       await shot(page, "P-01-phone-child-bubble");
     }
     await show(page, [A]);
-    // The phone bar collapses into a summary button only with more than one linked session;
-    // with one it shows that session's chip directly.
-    const bar = page.locator("[data-linked-sessions-bar]:visible").first();
-    await bar.waitFor({ timeout: 15000 });
-    const summary = bar.locator("button[aria-expanded]");
-    if (await summary.count()) {
-      notes.push(`bar summary: ${(await summary.first().innerText()).replace(/\s+/g, " ")}`);
-      await summary.first().tap();
-      await page.waitForTimeout(600);
-      await shot(page, "P-02-phone-linked-bar-open");
-    } else {
-      notes.push(`bar (one linked session, no summary): ${(await bar.innerText()).replace(/\s+/g, " ")}`);
-      await shot(page, "P-02-phone-linked-bar");
-    }
+    // On a phone the activity chip shows numbers only; its sheet's Sessions tab lists the sessions.
+    const chip = page.locator("[data-activity-chip]:visible").first();
+    await chip.waitFor({ timeout: 15000 });
+    notes.push(`activity chip: ${(await chip.innerText()).replace(/\s+/g, " ")}`);
+    await openLinkedSessions(page);
+    await page.waitForTimeout(600);
+    await shot(page, "P-02-phone-sessions-sheet");
+    await closeLinkedSessions(page);
   });
 } finally {
   await browser.close();

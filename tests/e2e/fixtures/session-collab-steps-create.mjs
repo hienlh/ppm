@@ -4,12 +4,13 @@
 // whose bubble header leads back to the sending turn (4).
 import assert from "node:assert/strict";
 import { resultOf } from "./session-collab-helpers.mjs";
+import { closeLinkedSessions, linkedSessionRow, linkedSessionStatus, openLinkedSessions } from "./linked-sessions-panel-helpers.mjs";
 
 export async function runCreateSteps(ctx) {
   const { page, kit, ck, ids } = ctx;
   const { A } = ids;
 
-  // ── 1: A asks to create B; the card; Allow for this session; the list badge and the bar chip ──
+  // ── 1: A asks to create B; the card; Allow for this session; the list badge and the Sessions tab ──
   await kit.scenario("1", async () => {
     await ck.plan(A.id, ck.steps(
       { call: "create_session", args: { title: "Write the tests", task: "Write the tests for the parser, then reply to me with the result.", wait: true } },
@@ -36,11 +37,12 @@ export async function runCreateSteps(ctx) {
     assert.equal(B.parentTitle, "Planner");
     ids.B = { id: B.id, providerId: "claude", title: "Write the tests" };
 
-    const chip = page.locator(`[data-linked-sessions-bar] [data-linked-session="${B.id}"]:visible`);
-    await chip.waitFor({ timeout: 15000 });
-    const chipText = await chip.innerText();
-    assert.match(chipText, /session/i);
-    assert.match(chipText, /Write the tests/);
+    // The child is listed in the activity chip's Sessions tab, by title, with no "session" badge.
+    await kit.until("B in the Sessions tab", async () => (await (await linkedSessionRow(page, B.id)).count()) > 0, 15000);
+    const rowText = await (await linkedSessionRow(page, B.id)).innerText();
+    assert.match(rowText, /Write the tests/);
+    assert.doesNotMatch(rowText, /\bSESSION\b/);
+    await closeLinkedSessions(page);
     const badge = page.locator(`[data-spawned-badge="${A.id}"]:visible`).first();
     await badge.waitFor({ timeout: 15000 });
     await badge.hover();
@@ -48,7 +50,7 @@ export async function runCreateSteps(ctx) {
     await tooltip.waitFor({ timeout: 5000 });
     ctx.liveTooltip = (await tooltip.innerText()).trim();
     await kit.shot(page, "01b-badge-and-session-chip");
-    kit.record("1: the create card in A, Allow for this session creates B titled as asked; B is listed with the badge (tooltip on hover) and is a session chip in A's bar", { chip: chipText.replace(/\s+/g, " "), tooltip: ctx.liveTooltip });
+    kit.record("1: the create card in A, Allow for this session creates B titled as asked; B is listed with the badge (tooltip on hover) and in A's activity chip's Sessions tab", { row: rowText.replace(/\s+/g, " "), tooltip: ctx.liveTooltip });
   });
 
   // The badge's tooltip names the creator: once the list is loaded from the server, and live.

@@ -49,9 +49,10 @@ afterEach(async () => {
   sessionStorage.clear(); localStorage.clear(); clearChatPreparationCache(); __clearPrepareForTest();
 });
 async function frame(data: unknown) { await act(async () => { receive!(new MessageEvent("message", { data: JSON.stringify(data) })); }); }
-const chip = (toolbar: "phone" | "desktop") => {
-  const box = view!.container.querySelector(toolbar === "phone" ? ".md\\:hidden" : ".md\\:block");
-  return box?.querySelector<HTMLButtonElement>('button[aria-label^="Model "]') ?? null;
+// The composer has one bar on every width now, so one model chip serves phone and desktop alike.
+const chip = (_toolbar: "phone" | "desktop") => {
+  const chips = view!.container.querySelectorAll<HTMLButtonElement>("[data-model-chip]");
+  return chips.length === 1 ? chips[0]! : null;
 };
 
 it("shows the effort the CLI runs at in both toolbars, flagged as set outside PPM", async () => {

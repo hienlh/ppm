@@ -1,4 +1,4 @@
-// Run in Docker if the host segfaults: docker run --rm -v "$PWD":/app -w /app oven/bun bun test tests/unit/web/running-agents-bar.test.tsx
+// Run in Docker if the host segfaults: docker run --rm -v "$PWD":/app -w /app oven/bun bun test tests/unit/web/activity-chip-agents.test.tsx
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { installDom, uninstallDom, mount, click, type Mounted } from "../../helpers/react-dom";
@@ -102,8 +102,8 @@ describe("findCardLabel", () => {
 installDom();
 afterAll(uninstallDom);
 
-const { RunningAgentsBar } = await import("../../../src/web/components/chat/running-agents-bar");
-const { setGlobalWsClient, notifyGlobalReady } = await import("../../../src/web/lib/global-ws-channel");
+const { ActivityChip } = await import("../../../src/web/components/chat/activity-chip");
+const { setGlobalWsClient } = await import("../../../src/web/lib/global-ws-channel");
 const { useWindowStore } = await import("../../../src/web/components/floating-window/window-store");
 
 interface FakeClient {
@@ -138,10 +138,10 @@ afterEach(async () => {
   useWindowStore.setState({ windows: {} });
 });
 
-function renderBar(props: Partial<Parameters<typeof RunningAgentsBar>[0]> = {}) {
-  return mount(createElement(RunningAgentsBar, {
+function renderChip(props: Partial<Parameters<typeof ActivityChip>[0]> = {}) {
+  return mount(createElement(ActivityChip, {
     projectName: "proj",
-    providerId: "claude",
+    agentProviderId: "claude",
     sessionId: "sess-1",
     messages: [],
     teamName: "sess-1",
@@ -150,23 +150,31 @@ function renderBar(props: Partial<Parameters<typeof RunningAgentsBar>[0]> = {}) 
   } as never));
 }
 
-describe("RunningAgentsBar", () => {
-  it("renders nothing without a session id — nothing for the hub to subscribe to", async () => {
-    view = await renderBar({ sessionId: null });
+const chip = () => view!.container.querySelector<HTMLButtonElement>("[data-activity-chip]");
+/** Opens the popover, which opens on the Agents tab while an agent runs and no session needs the person. */
+async function openAgents() {
+  await click(chip());
+  expect(view!.container.querySelector('[data-activity-tab="agents"]')?.getAttribute("aria-selected")).toBe("true");
+}
+const agentRows = () => view!.container.querySelectorAll<HTMLButtonElement>("[data-agent-row]");
+
+describe("ActivityChip: agents", () => {
+  it("renders nothing without a session id, since there is nothing for the hub to subscribe to", async () => {
+    view = await renderChip({ sessionId: null });
     expect(view.container.firstElementChild).toBeNull();
   });
 
-  it("renders nothing when the hub reports no one running and no teammate is working", async () => {
+  it("renders nothing when no agent runs and nothing is linked", async () => {
     const { client } = fakeClient();
     setGlobalWsClient(client as never);
-    view = await renderBar();
+    view = await renderChip();
     expect(view.container.firstElementChild).toBeNull();
   });
 
-  it("shows a card row from the hub push and opens its session window on tap", async () => {
+  it("counts a card from the hub push, lists it in the Agents tab and opens its session window on tap", async () => {
     const { client, sent } = fakeClient();
     setGlobalWsClient(client as never);
-    view = await renderBar({
+    view = await renderChip({
       messages: [{
         id: "m1", role: "assistant", content: "", timestamp: "now",
         events: [{ type: "tool_use", tool: "Agent", toolUseId: "toolu_1", input: { description: "fix bug" } }],
@@ -175,9 +183,16 @@ describe("RunningAgentsBar", () => {
     const subId = JSON.parse(sent[0]!).subId as string;
     await pushActivity(subId, [{ cardId: "toolu_1", lastWriteAt: Date.now(), lastStep: "Editing x.ts" }]);
 
-    const row = view!.container.querySelector("button");
-    expect(row?.textContent).toContain("fix bug");
-    expect(row?.textContent).toContain("Editing x.ts");
+    expect(chip()?.textContent).toContain("1");
+    expect(chip()?.textContent).toContain("agent");
+    expect(chip()?.getAttribute("data-activity-dot")).toBe("running");
+    // No linked session: the sessions part is left out of the chip.
+    expect(view.container.querySelector('[data-activity-part="sessions"]')).toBeNull();
+
+    await openAgents();
+    const row = agentRows()[0]!;
+    expect(row.textContent).toContain("fix bug");
+    expect(row.textContent).toContain("Editing x.ts");
 
     await click(row);
     const windows = Object.values(useWindowStore.getState().windows);
@@ -190,13 +205,13 @@ describe("RunningAgentsBar", () => {
   it("shows a working teammate even before the hub push reports it", async () => {
     const { client } = fakeClient();
     setGlobalWsClient(client as never);
-    view = await renderBar({
+    view = await renderChip({
       teamMembers: [{ name: "dev-p1", workState: "working", description: "reviewing", sizeBytes: 1 }],
     });
-    expect(view.container.textContent).toContain("dev-p1");
+    await openAgents();
+    expect(agentRows()[0]!.textContent).toContain("dev-p1");
 
-    const row = view.container.querySelector("button");
-    await click(row);
+    await click(agentRows()[0]!);
     const windows = Object.values(useWindowStore.getState().windows);
     expect((windows[0]!.payload as any).source).toEqual({ kind: "member", teamName: "sess-1", memberName: "dev-p1" });
   });
@@ -211,35 +226,27 @@ describe("RunningAgentsBar", () => {
   async function renderWithRunning(running: unknown[], messages: ChatMessage[] = []) {
     const { client, sent } = fakeClient();
     setGlobalWsClient(client as never);
-    view = await renderBar({ messages });
+    view = await renderChip({ messages });
     await pushActivity(JSON.parse(sent[0]!).subId as string, running);
     return view;
   }
 
-  const summary = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent?.includes("running"));
-  const agentRows = () => view!.container.querySelectorAll('li button[title^="Open"]');
-
-  it("summarises several agents in one folded line that opens a list capped at three rows", async () => {
+  it("counts many agents in the chip and lists them all in a list that scrolls inside itself", async () => {
     await renderWithRunning(namedCards(11));
-    const toggle = summary()!;
-    expect(toggle.textContent).toContain("11 agents running");
-    expect(toggle.textContent).toContain("fix-0");
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(agentRows()).toHaveLength(0);
-
-    await click(toggle);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    const list = view!.container.querySelector('[id="' + toggle.getAttribute("aria-controls") + '"]')!;
-    expect(list.className).toContain("overflow-y-auto");
-    expect(list.className).toContain("max-h-[140px]");
+    expect(chip()?.textContent).toContain("11");
+    expect(chip()?.textContent).toContain("agents");
+    await openAgents();
     expect(agentRows()).toHaveLength(11);
+    const list = agentRows()[0]!.closest("ul")!;
+    expect(list.className).toContain("overflow-y-auto");
+    expect(list.className).toContain("max-h-[220px]");
 
     await click(agentRows()[3]!);
     const windows = Object.values(useWindowStore.getState().windows);
     expect((windows[0]!.payload as any).source).toEqual({ kind: "card", cardId: "toolu_3" });
   });
 
-  it("counts a finished agent launched beside running ones, and lists it as finished", async () => {
+  it("lists a finished agent launched beside running ones as finished, and counts only the running", async () => {
     const launch: ChatMessage = {
       id: "m1", role: "assistant", content: "", timestamp: "now",
       events: [
@@ -249,19 +256,17 @@ describe("RunningAgentsBar", () => {
       ],
     };
     await renderWithRunning(namedCards(2), [launch]);
-    const toggle = summary()!;
-    expect(toggle.textContent).toContain("2 agents running");
-    expect(toggle.textContent).toContain("1 done");
-
-    await click(toggle);
+    expect(chip()?.querySelector('[data-activity-part="agents"]')?.textContent).toContain("2");
+    await openAgents();
+    expect(agentRows()).toHaveLength(3);
     const finished = [...agentRows()].find((b) => b.textContent?.includes("review docs"))!;
     expect(finished.textContent).toContain("Finished");
   });
 
-  it("shows no row for a teammate the poll no longer reports as working", async () => {
+  it("shows no chip for a teammate the poll no longer reports as working", async () => {
     const { client } = fakeClient();
     setGlobalWsClient(client as never);
-    view = await renderBar({ teamMembers: [{ name: "dev-p1", workState: "paused", sizeBytes: 1 }] });
+    view = await renderChip({ teamMembers: [{ name: "dev-p1", workState: "paused", sizeBytes: 1 }] });
     expect(view.container.firstElementChild).toBeNull();
   });
 });
