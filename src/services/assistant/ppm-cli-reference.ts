@@ -118,6 +118,7 @@ export const PPM_CLI_REFERENCE = `# PPM CLI Reference
 \`\`\`
 ppm start
   Start the PPM server (background by default)
+  --minimal — Minimal workspace: chat, files, editor and settings
   -p, --port <port> — Port to listen on
   -s, --share — (deprecated) Tunnel is now always enabled
 
@@ -328,6 +329,7 @@ ppm autostart enable
   -p, --port <port> — Override port
   -s, --share — (deprecated) Tunnel is now always enabled
   --profile <name> — DB profile name
+  --minimal — Start with chat, files, editor and settings
 
 ppm autostart disable
   Remove PPM auto-start registration
@@ -386,13 +388,15 @@ ppm ext dev <path>
 ## ppm schedule — Scheduled agents (cron)
 \`\`\`
 ppm schedule add
-  Add a scheduled agent. Cron uses local timezone. Do not embed secrets in --prompt.
+  Add a scheduled agent (--prompt) or a script schedule (--script). Cron uses local timezone. Do not embed secrets in --prompt.
   --name <name> — Schedule name (required)
   --project <nameOrPath> — Project name or path (required)
-  --prompt <text> — Prompt sent to the agent each run (required)
+  --prompt <text> — Prompt sent to the agent each run
+  --script <file> — JavaScript module run each tick, or kept running (needs a running PPM server)
+  --mode <mode> — Script mode: tick (on the cron) or always-on [default: tick]
   --permission-mode <mode> — Permission mode [default: bypassPermissions]
-  --max-turns <n> — Max turns per run
-  --timeout <ms> — Timeout per run in ms [default: 1800000]
+  --max-turns <n> — Max turns per run (prompt only)
+  --timeout <ms> — Timeout per run in ms (default 1800000 for a prompt, 300000 for a script tick)
   --disabled — Create disabled
 
 ppm schedule list

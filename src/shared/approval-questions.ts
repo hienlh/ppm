@@ -42,6 +42,11 @@ function options(raw: unknown): QuestionOption[] {
   if (!Array.isArray(raw)) return [];
   const out: QuestionOption[] = [];
   for (const o of raw) {
+    // Codex may send a bare label.
+    if (typeof o === "string") {
+      if (o) out.push({ label: o });
+      continue;
+    }
     if (!isRecord(o) || typeof o.label !== "string" || !o.label) continue;
     const description = str(o.description);
     const preview = str(o.preview);
@@ -80,7 +85,9 @@ export function normalizeCodexQuestions(rawParams: unknown): NormalizedQuestion[
   const out: NormalizedQuestion[] = [];
   const seen = new Set<string>();
   raw.forEach((q, i) => {
-    if (!isRecord(q) || typeof q.question !== "string") return;
+    // Some Codex builds name the question `title`.
+    const question = isRecord(q) ? str(q.question) ?? str(q.title) : undefined;
+    if (!isRecord(q) || question === undefined || !question.trim()) return;
     // The same fallback the provider uses to key its answer, so both sides name it alike.
     const id = str(q.id) || str(q.questionId) || String(i);
     if (seen.has(id)) return;
@@ -89,7 +96,7 @@ export function normalizeCodexQuestions(rawParams: unknown): NormalizedQuestion[
     const header = str(q.header);
     out.push({
       id,
-      question: q.question,
+      question,
       ...(header ? { header } : {}),
       options: opts,
       multiSelect: false,

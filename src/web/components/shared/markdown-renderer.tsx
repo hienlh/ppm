@@ -45,12 +45,14 @@ const rehypePluginsNoRaw = [rehypeKatex] as any;
 /**
  * Assistant content goes through the same allow-list, and more: the author's `class`/`style`
  * are stripped right after `rehype-raw` (the stamp telling Markdown's own elements from the
- * author's is read and removed there, before the sanitiser would drop it), KaTeX's own layout
- * survives, and the external-resource filter runs last, so it also sees what KaTeX produced.
+ * author's is read and removed there, before the sanitiser would drop it), and KaTeX's own
+ * layout survives. The external-resource filter runs before the sanitiser, so an embed it turns
+ * into a link survives as one rather than being dropped with its target, and again last, so it
+ * also sees what KaTeX produced.
  */
 const assistantRehypePlugins = [
-  rehypeStampMarkdownElements, rehypeRaw, rehypeStripAuthorPresentation, [rehypeSanitize, markdownSanitizeSchema],
-  rehypePrefixFragmentLinks, rehypeKatex, rehypeBlockExternalResources,
+  rehypeStampMarkdownElements, rehypeRaw, rehypeStripAuthorPresentation, rehypeBlockExternalResources,
+  [rehypeSanitize, markdownSanitizeSchema], rehypePrefixFragmentLinks, rehypeKatex, rehypeBlockExternalResources,
 ] as any;
 const assistantRehypePluginsNoRaw = [rehypeKatex, rehypeBlockExternalResources] as any;
 /** Component map — stable references; dynamic state flows through MdContext */
