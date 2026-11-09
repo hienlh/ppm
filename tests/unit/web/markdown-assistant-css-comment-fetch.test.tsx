@@ -5,7 +5,7 @@
  * and `style` or Tailwind classes can put an invisible full-window link over an Allow button.
  * So in Assistant content the author's `class` and `style` are removed, while what PPM's own
  * pipeline writes (KaTeX, a code block's language, footnotes) keeps its presentation. An
- * ordinary chat renders both as written.
+ * ordinary chat drops them as well, through the sanitiser all raw HTML in Markdown goes through.
  */
 import { afterAll, describe, expect, it } from "bun:test";
 import { installDom, mount, uninstallDom } from "../../helpers/react-dom";
@@ -64,10 +64,13 @@ describe("the author's class and style", () => {
     expect(root.innerHTML).not.toContain("data-ppm-markdown-origin");
   });
 
-  it("still work in an ordinary chat", async () => {
+  it("are dropped in an ordinary chat too, by the sanitiser every chat's raw HTML goes through", async () => {
     const root = await ordinary(OVERLAY_CLASS + "\n\n" + '<span style="color: red">red</span>');
-    expect(root.querySelector("a")?.getAttribute("class")).toBe("fixed inset-0 z-50 opacity-0 block");
-    expect(root.querySelector("span")?.getAttribute("style")).toContain("color: red");
+    expect(root.querySelector("a")?.textContent).toBe("here");
+    // The sanitiser keeps only the classes it allows on a link, none of these: an empty value.
+    expect(root.querySelector("a")?.getAttribute("class") ?? "").toBe("");
+    expect(root.textContent).toContain("red");
+    expect(inner(root).filter((el) => el.hasAttribute("style"))).toEqual([]);
   });
 });
 

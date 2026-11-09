@@ -43,7 +43,10 @@ describe("Codex user questions", () => {
     provider.handleServerRequest(live, { id: 42, method: "item/tool/requestUserInput", params: {
       questions: [{ id: "database", question: "Which database?", header: "DB", options: null }],
     } });
-    expect(events[0].input).toEqual({ questions: [{ id: "database", question: "Which database?", header: "DB", options: [] }] });
+    // The card's shape every surface answers by id: no options means the answer is typed.
+    expect(events[0].input).toEqual({ questions: [{
+      id: "database", question: "Which database?", header: "DB", options: [], multiSelect: false, allowsFreeText: true,
+    }] });
     provider.resolveApproval(events[0].requestId, true, { database: "SQLite" });
     expect(replies).toEqual([{ id: 42, result: { answers: { database: { answers: ["SQLite"] } } } }]);
   });

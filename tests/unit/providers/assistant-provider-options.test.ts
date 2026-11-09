@@ -95,7 +95,8 @@ describe("Codex config", () => {
     const base = { cwd: "/w", permission: ASSISTANT_PERMISSION };
     const params = buildThreadParams({ ...base, assistant: { mcp: ACCESS }, configOverrides: { config: { model_context_window: 1 } } });
     expect(params.config).toMatchObject({ model_context_window: 1, web_search: "disabled", "mcp_servers.ppm_assistant": { url: ACCESS.url } });
-    expect(buildThreadParams(base)).not.toHaveProperty("config");
+    // An ordinary session carries only what every thread does, none of the Assistant's overrides.
+    expect(buildThreadParams(base).config).toEqual({ "features.default_mode_request_user_input": true });
   });
 });
 

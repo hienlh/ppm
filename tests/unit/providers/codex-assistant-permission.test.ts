@@ -101,12 +101,16 @@ describe("Codex Assistant session", () => {
     expect(start).toMatchObject({ sandbox: "read-only", approvalPolicy: "untrusted", developerInstructions: "# PPM Assistant" });
     // No tab tools; codex's own web search, apps, plugins, hooks and the user's notify program
     // off (the Assistant's tools come with an endpoint), and MCP approvals asked as elicitations.
+    // The one key every thread carries stays: the Assistant asks the user questions too.
     expect(start.config).toEqual({
+      "features.default_mode_request_user_input": true,
       web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, notify: [], "features.tool_call_mcp_elicitation": true,
       "skills.include_instructions": false, "skills.bundled.enabled": false,
     });
     expect(live.requireInstructions).toBe(true);
     expect(live.tabToolsMcp).toBeUndefined();
+    expect(live.dbToolsMcp).toBeUndefined();
+    expect(live.sessionCollabMcp).toBeUndefined();
   });
 
   it("fails the turn with the reason on a codex that refuses the instructions", async () => {

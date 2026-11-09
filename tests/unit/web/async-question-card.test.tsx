@@ -4,9 +4,12 @@ import { AsyncQuestionCard, AsyncQuestionContext } from "../../../src/web/compon
 import { QuestionCard } from "../../../src/web/components/chat/question-card.tsx";
 import { mount, click } from "../../helpers/react-dom.tsx";
 import { formatQuestionReply } from "../../../src/shared/chat-questions.ts";
+import { normalizeClaudeQuestions, toProviderAnswers, type NormalizedQuestion } from "../../../src/shared/approval-questions.ts";
 import type { ChatMessage } from "../../../src/types/chat.ts";
 
 const questions = [{ id: "db", question: "Which database?", options: [{ label: "SQLite" }, { label: "Postgres" }] }];
+/** The same question as `QuestionCard` takes it: normalized, with a typed-answer row. */
+const cardQuestions: NormalizedQuestion[] = [{ ...questions[0]!, multiSelect: false, allowsFreeText: true }];
 
 function Harness({ sent, history = [] }: { sent: string[]; history?: ChatMessage[] }) {
   const [messages, setMessages] = useState(history);
@@ -72,8 +75,8 @@ describe("async question card", () => {
       const [tick, setTick] = useState(0);
       rerenderSecond = () => setTick((value) => value + 1);
       return <>
-        <QuestionCard questions={questions} onSubmit={() => {}} onSkip={() => {}} />
-        <div data-tick={tick}><QuestionCard questions={questions} onSubmit={() => {}} onSkip={() => {}} /></div>
+        <QuestionCard questions={cardQuestions} onSubmit={() => {}} onSkip={() => {}} />
+        <div data-tick={tick}><QuestionCard questions={cardQuestions} onSubmit={() => {}} onSkip={() => {}} /></div>
       </>;
     }
     const view = await mount(<TwoCards />);
@@ -93,7 +96,7 @@ describe("async question card", () => {
     function Card() {
       const [tick, setTick] = useState(0);
       rerender = () => setTick((value) => value + 1);
-      return <div data-tick={tick}><QuestionCard questions={questions} onSubmit={() => {}} onSkip={() => {}} /></div>;
+      return <div data-tick={tick}><QuestionCard questions={cardQuestions} onSubmit={() => {}} onSkip={() => {}} /></div>;
     }
     const composer = document.createElement("textarea");
     document.body.appendChild(composer);
@@ -115,13 +118,17 @@ describe("async question card", () => {
   });
 
   it("keeps Claude question-text answer keys when no ID is provided", async () => {
-    const answers: unknown[] = [];
-    const view = await mount(<QuestionCard questions={[{ question: "Which database?", options: [{ label: "SQLite" }] }]}
+    // Claude's questions carry no ids: the card answers by the id normalizing gave each, and the
+    // server hands Claude the answer keyed by the question's text, as AskUserQuestion expects.
+    const claudeQuestions = normalizeClaudeQuestions({ questions: [{ question: "Which database?", options: [{ label: "SQLite" }] }] });
+    const answers: Record<string, string[]>[] = [];
+    const view = await mount(<QuestionCard questions={claudeQuestions}
       onSubmit={(value) => answers.push(value)} onSkip={() => {}} />);
     try {
       await click(button(view.container, "SQLite"));
       await click(button(view.container, "Submit"));
-      expect(answers).toEqual([{ "Which database?": "SQLite" }]);
+      expect(answers).toEqual([{ q1: ["SQLite"] }]);
+      expect(toProviderAnswers("claude", claudeQuestions, answers[0]!)).toEqual({ "Which database?": "SQLite" });
     } finally { await view.unmount(); }
   });
 });

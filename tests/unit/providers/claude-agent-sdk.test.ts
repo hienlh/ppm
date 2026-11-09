@@ -1693,8 +1693,14 @@ describe("ClaudeAgentSdkProvider", () => {
         await drain(provider.sendMessage(cold.id, "hi", picks));
 
         expect(clis).toHaveLength(2);
-        const comparable = ({ sessionId: _id, stderr: _stderr, canUseTool: _ask, hooks, spawnClaudeCodeProcess: spawn, ...rest }: any) => ({ ...rest, hooks: !!hooks, spawn: typeof spawn });
+        // Each CLI gets its MCP servers in a config file of its own, so the path differs; the
+        // servers in it are compared instead.
+        const comparable = ({ sessionId: _id, stderr: _stderr, canUseTool: _ask, hooks, spawnClaudeCodeProcess: spawn, extraArgs, ...rest }: any) => {
+          const { "mcp-config": _file, ...otherArgs } = extraArgs ?? {};
+          return { ...rest, extraArgs: otherArgs, hooks: !!hooks, spawn: typeof spawn };
+        };
         expect(comparable(clis[0]!.options)).toEqual(comparable(clis[1]!.options));
+        expect(clis[0]!.mcpServers).toEqual(clis[1]!.mcpServers);
         expect(clis[0]!.options.model).toBeTruthy();
         expect(clis[0]!.options.permissionMode).toBe("acceptEdits");
         expect(clis[0]!.options.systemPrompt.append).toBe("Answer in French.");
