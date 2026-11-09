@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.23.34] - 2026-11-09
+
+### Fixed
+
+- **Long messages from another session fold like your own**, with Show more / Show less, and the linked-sessions bar under a chat can fold into one line ("N linked sessions", with a dot when one needs you); each device remembers your choice.
+
 ## [0.23.33] - 2026-11-08
 
 ### Added
