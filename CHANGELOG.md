@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.37] - 2026-11-10
+
+### Changed
+
+- **Every usage bar says when it resets**: Switch account's cards give the countdown and the time ("Resets in 3h 12m · 03:52", "Thu 09:00"), in red when the bar is full; the ··· menu and the rings' tooltip give the countdown alone.
+- **Linked sessions that need you or are running are listed first** in the Sessions tab, then unread answers, then idle ones.
+
 ## [0.23.36] - 2026-11-09
 
 ### Changed
