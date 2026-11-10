@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.24.0] - 2026-11-10
 
 ### Added
 
@@ -29,6 +29,7 @@
 - **A design made of several pages could not be clicked through in the canvas.** The canvas stops every link that leaves the page it shows, so that a design cannot load something else into PPM. That included links to the design's own other pages, so a table of contents or a "back" link did nothing and only added a *Link blocked* note. Links to another HTML page of the same design now open that page in the canvas; links anywhere else are still stopped.
 - **`--json` output could not be parsed.** Every command printed the version banner on stdout first; it is now left out when `--json` is given.
 - **Opening a long Claude chat could take up to 45 seconds, and past 30 the chat opened empty until Reload messages.** To show the messages after the last compaction, the history was read from the first byte of the transcript every time, because every compaction in current Claude Code keeps a few earlier messages and that switched off the shortcut that skips the rest. A week-long session had a 1.77 GB transcript, so each open read 1.77 GB (8.5 s and 5.7 GB of RAM) to show 31 messages, and with the session still running the result could never be reused. PPM now reads the transcript backward from its end to the last compaction and the messages it keeps (1 MB for that session), so the history loads in about 40 ms. The answer is the same: on the 60 largest transcripts on the test machine it matched the old read byte for byte. The same read now serves the tool-result check during a turn.
+- **An idle account's five-hour usage bar said "Resets now".** Claude sends no reset time for a window nothing has started, and the absence was read as "zero minutes from now"; the bars, the ··· menu and the rings' tooltip now say nothing when the provider said nothing.
 
 ## [0.23.37] - 2026-11-10
 
