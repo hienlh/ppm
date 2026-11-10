@@ -20,7 +20,7 @@ import { FloatingWindow } from "./floating-window";
 import { useWindowMeta } from "./use-window-meta";
 import { WINDOW_CONTENT, windowTitle } from "./window-content-registry";
 import { snapRect, Z_BASE, MAX_WINDOWS, type Bounds } from "./window-geometry";
-import { frontWindowId, useWindowStore, windowsInRankOrder, type WindowRuntimeState } from "./window-store";
+import { frontWindowId, useWindowStore, windowsInOpenOrder, type WindowRuntimeState } from "./window-store";
 
 export function WindowLayer() {
   const isMobile = useIsMobile();
@@ -63,7 +63,13 @@ function DesktopWindowLayer() {
     return el.getBoundingClientRect().width / el.offsetWidth;
   }, []);
 
-  const ordered = windowsInRankOrder(windows).filter((win) => !minimalMode || win.kind === "settings" || win.kind === "agent-session" || (win.kind === "tab-host" && panels[windowPanelId(win.id)]?.tabs.some((tab) => (isMinimalTab(tab.type)))));
+  // Rendered in the order they were opened, never in stacking order: `rank` already stacks them
+  // through `zIndex`, and a DOM order that follows the rank moves a window's node on every focus.
+  // A pointer press on a background window's titlebar button raises that window at once, and a
+  // node moved between the press and its release makes the browser drop the click, so the
+  // button did nothing — the Assistant's settings gear and "Open in project", every time another
+  // window was in front.
+  const ordered = windowsInOpenOrder(windows).filter((win) => !minimalMode || win.kind === "settings" || win.kind === "agent-session" || (win.kind === "tab-host" && panels[windowPanelId(win.id)]?.tabs.some((tab) => (isMinimalTab(tab.type)))));
   const frontId = frontWindowId(windows);
 
   return (
@@ -107,7 +113,7 @@ function LayerWindow({ win, bounds, focused, getScale, onGestureActive }: {
     <FloatingWindow
       win={win}
       bounds={bounds}
-      title={meta.title || windowTitle(win.kind, win.payload)}
+      title={meta.titlebarTitle || meta.title || windowTitle(win.kind, win.payload)}
       identity={meta}
       focused={focused}
       getScale={getScale}
