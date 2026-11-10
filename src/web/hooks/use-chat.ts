@@ -38,6 +38,7 @@ import { getChatClientId } from "@/lib/chat-client-id";
 import { CHAT_CLIENT_ID_PARAM } from "../../shared/chat-client-id";
 import { commitReplayedTurn, replayReplacedIds, type ReplayedTurn } from "@/lib/replay-active-turn";
 import { VAULT_CARD_APPROVAL, VAULT_NOTIFICATION_BODY } from "../../shared/vault";
+import type { QueuedMessage } from "../../shared/chat-queue";
 
 /** The toast a session-collaboration card raises while its chat is not on screen. */
 function collabApprovalToast(input: SessionCollabApprovalInput): string {
@@ -96,7 +97,6 @@ export interface UseChatOptions {
 /** What `sendMessage` takes besides the text. */
 export interface SendMessageOptions {
   permissionMode?: string;
-  priority?: 'now' | 'next' | 'later';
   images?: Array<{ data: string; mediaType: string }>;
   imagePaths?: string[];
   replyTo?: ReplyReference;
@@ -104,6 +104,8 @@ export interface SendMessageOptions {
   turnRefs?: TurnReference[];
   /** Ids of the tasks the message is about; the server reads them and writes their block. */
   taskRefs?: string[];
+  /** Sent mid-turn: have the AI read the queue at once (Ctrl+Enter, Claude Code's Send now). */
+  sendNow?: boolean;
 }
 
 interface UseChatReturn {
@@ -199,6 +201,13 @@ interface UseChatReturn {
   killBackgroundShell: (shellId: string) => void;
   findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
   sendMessage: (content: string, opts?: SendMessageOptions) => void;
+  /** Messages sent while the AI worked, not yet read by it, in the order it will read them. */
+  queuedMessages: QueuedMessage[];
+  takeBackQueued: (id: string, discard?: boolean) => void;
+  sendQueuedNow: () => void;
+  /** A queued message this device took back, for the composer; cleared with `clearTakenBack`. */
+  takenBack: { id: string; content: string } | null;
+  clearTakenBack: () => void;
   /**
    * The id of the turn the server last said started on this socket (`turn_started`). Read it
    * when needed; it changes without a re-render.
@@ -242,7 +251,7 @@ export function useChat(
 ): UseChatReturn {
   const rejectionObserverRef = useRef(options?.onMessageRejected);
   rejectionObserverRef.current = options?.onMessageRejected;
-  const pendingSendsRef = useRef<Array<{ id: string; content: string; encoded: string; replyTo?: ReplyReference; turnRefs?: TurnReference[]; wasIdle: boolean; streamingContent: string; streamingEvents: ChatEvent[]; finalizedId?: string; originalAssistantId?: string; sentAt: number }>>([]);
+  const pendingSendsRef = useRef<Array<{ id: string; content: string; encoded: string; replyTo?: ReplyReference; turnRefs?: TurnReference[]; wasIdle: boolean; sentAt: number }>>([]);
   const sendOrdinalRef = useRef(0);
   const attemptObserverRef = useRef(onAttempt);
   attemptObserverRef.current = onAttempt;
@@ -289,6 +298,11 @@ export function useChat(
   const [turnStop, setTurnStop] = useState<TurnStop | null>(null);
   /** The permission mode the server holds for the chat, from its connect greeting. */
   const [sessionPermission, setSessionPermission] = useState<SessionPermissionState | null>(null);
+  /** Messages sent while a turn ran, not yet read by the AI: the server's list (`queue_state`). */
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  /** The text of a queued message this device took back, for the composer to pick up. */
+  const [takenBack, setTakenBack] = useState<{ id: string; content: string } | null>(null);
+  const discardIdsRef = useRef(new Set<string>());
   // A ref, not state: nothing draws it, and every `turn_started` would redraw the whole chat tab.
   const currentTurnIdRef = useRef<string | null>(null);
   const [boundPermissionMode, setBoundPermissionMode] = useState<string | null>(null);
@@ -542,6 +556,24 @@ export function useChat(
         }];
       });
     });
+  }, []);
+
+  /**
+   * Ends the reply streaming now as a message of its own, so what streams next starts a new one:
+   * a message joined the turn in the middle.
+   */
+  const finalizeStreamingAssistant = useCallback(() => {
+    if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
+    const finalContent = streamingContentRef.current;
+    const finalEvents = [...streamingEventsRef.current];
+    const finalizedId = `final-${Date.now()}-${randomId()}`;
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.role !== "assistant") return prev;
+      return [...prev.slice(0, -1), { ...last, id: finalizedId, content: finalContent || last.content, events: finalEvents.length > 0 ? finalEvents : last.events }];
+    });
+    streamingContentRef.current = "";
+    streamingEventsRef.current = [];
   }, []);
 
   /** Throttled sync — batches rapid WS events into one render per ~100ms.
@@ -1107,17 +1139,12 @@ export function useChat(
           && JSON.stringify(pending.replyTo ?? null) === JSON.stringify(rejected.replyTo ?? null));
       if (index !== -1) {
         const [pending] = pendingSendsRef.current.splice(index, 1);
-        setMessages((prev) => prev.filter((m) => m.id !== pending!.id).map((m) =>
-          m.id === pending!.finalizedId && pending!.originalAssistantId ? { ...m, id: pending!.originalAssistantId } : m));
+        // A queued message drew nothing, so there is nothing to remove for it.
+        setMessages((prev) => prev.filter((m) => m.id !== pending!.id));
         if (pending!.wasIdle && index === pendingSendsRef.current.length) {
           attemptRef.current?.fail();
           setPhase("idle");
           phaseRef.current = "idle";
-        }
-        if (!pending!.wasIdle && phaseRef.current !== "idle" && !turnFinalizedRef.current) {
-          streamingContentRef.current = pending!.streamingContent + streamingContentRef.current;
-          streamingEventsRef.current = [...pending!.streamingEvents, ...streamingEventsRef.current];
-          if (streamingContentRef.current || streamingEventsRef.current.length) syncMessages();
         }
         const decoded = decodeMessageBlocks(pending!.encoded);
         rejectionObserverRef.current?.({ content: decoded.content, replyTo: decoded.replyTo, turnRefs: decoded.turnRefs, message: rejected.message });
@@ -1149,18 +1176,23 @@ export function useChat(
       return;
     }
 
-    // A user message sent from another device/tab of this session — render its
-    // bubble. The sender never receives this echo (server excludes the sender),
-    // so no dedupe against the optimistic append is needed.
+    // A user message this device did not draw: one sent from another device/tab, or a queued
+    // message (this device's too) that the AI has just started reading.
     if ((data as any).type === "user_message") {
       historyActivityRef.current++;
       const content = (data as any).content as string;
+      const clientId = (data as any).clientMessageId;
+      // Mid-turn the message splits the turn: what streamed so far is its own reply, and the
+      // stream after it starts a new one, as a follow-up the sender typed always did.
+      if (phaseRef.current !== "idle" && !messagesRef.current.some((m) => typeof clientId === "string" && m.clientId === clientId)) {
+        finalizeStreamingAssistant();
+      }
       setMessages((prev) => {
         const last = prev[prev.length - 1];
-        // Dedupe: a concurrent turn_events replay or REST refetch may already
-        // have appended this same turn's user message.
-        if (last?.role === "user" && last.content === content) return prev;
-        const clientId = (data as any).clientMessageId;
+        // Dedupe: a concurrent turn_events replay or REST refetch may already have appended this
+        // message, and the sender's own bubble carries the same id when one was drawn.
+        if (typeof clientId === "string" && prev.some((m) => m.clientId === clientId)) return prev;
+        if (typeof clientId !== "string" && last?.role === "user" && last.content === content) return prev;
         return [...prev, {
           id: `user-remote-${Date.now()}`,
           role: "user" as const,
@@ -1169,6 +1201,19 @@ export function useChat(
           ...(typeof clientId === "string" ? { clientId } : {}),
         }];
       });
+      return;
+    }
+
+    if ((data as any).type === "queue_state") {
+      const queue = (data as any).queue;
+      if (Array.isArray(queue)) setQueuedMessages(queue);
+      return;
+    }
+    if ((data as any).type === "queue_taken_back") {
+      const { id, content, error } = data as unknown as { id: string; content?: string; error?: string };
+      const discard = discardIdsRef.current.delete(id);
+      if (typeof content === "string") { if (!discard) setTakenBack({ id, content }); }
+      else if (error) toast.info(error);
       return;
     }
 
@@ -1268,6 +1313,8 @@ export function useChat(
       phaseRef.current = p;
       // Turns opened before this socket joined: what a Copy turn link on those messages needs.
       bindAll(state.turnBindings);
+      // Builders that do not carry the queue leave it as it was.
+      if (Array.isArray(state.queue)) setQueuedMessages(state.queue);
       if (
         state.sessionTitle &&
         state.sessionTitle !== "Resumed Chat" &&
@@ -1663,43 +1710,39 @@ export function useChat(
       // Whatever ended the last turn, this message moves the session past it.
       setTurnStop(null);
 
-      const isFollowUp = phaseRef.current !== "idle";
-      if (sessionIdRef.current) attemptRef.current?.start(sessionIdRef.current, !isFollowUp, isConnected && connectedSessionId === sessionIdRef.current);
-      turnFinalizedRef.current = false;
-
-      const finalizedId = `final-${Date.now()}-${sendOrdinalRef.current + 1}`;
-      const originalAssistant = messagesRef.current.at(-1);
-      if (isFollowUp) {
-        // Cancel pending throttled sync before finalizing
-        if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
-        // Streaming follow-up: finalize current assistant message, then send
-        const finalContent = streamingContentRef.current;
-        const finalEvents = [...streamingEventsRef.current];
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "assistant") {
-            return [
-              ...prev.slice(0, -1),
-              { ...last, id: finalizedId, content: finalContent || last.content, events: finalEvents.length > 0 ? finalEvents : last.events },
-            ];
-          }
-          return prev;
-        });
-      }
-
       // Random as well as ordered: `turn_started` hands this id back, and a binding keyed by it
       // must never match a message another tab sent in the same millisecond.
       const optimisticId = `user-${Date.now()}-${++sendOrdinalRef.current}-${randomId()}`;
       pendingSendsRef.current = pendingSendsRef.current.filter((pending) => Date.now() - pending.sentAt < 60_000);
       if (opts?.replyTo || turnRefs || taskRefs) pendingSendsRef.current.push({
         id: optimisticId, content, encoded: encodedContent, replyTo: opts?.replyTo, turnRefs, sentAt: Date.now(),
-        wasIdle: !isFollowUp, streamingContent: streamingContentRef.current,
-        streamingEvents: [...streamingEventsRef.current],
-        finalizedId: isFollowUp ? finalizedId : undefined,
-        originalAssistantId: originalAssistant?.role === "assistant" ? originalAssistant.id : undefined,
+        wasIdle: phaseRef.current === "idle",
       });
       // Keep only recent unacknowledged sends; rejection is an immediate response.
       if (pendingSendsRef.current.length > 20) pendingSendsRef.current.shift();
+
+      if (phaseRef.current !== "idle") {
+        // Sent while the AI works: it waits in the queue under the conversation (`queue_state`) and
+        // joins the conversation as `user_message` when the AI starts reading it. Nothing is drawn
+        // here, and the reply streaming now goes on untouched. A rejection still finds it above,
+        // and gives its text back.
+        send(JSON.stringify({
+          type: "message",
+          clientMessageId: optimisticId,
+          content,
+          queued: true,
+          ...(opts?.sendNow ? { sendNow: true } : {}),
+          permissionMode: opts?.permissionMode,
+          images: opts?.images,
+          imagePaths: opts?.imagePaths,
+          replyTo: opts?.replyTo,
+          ...(turnRefs ? { turnRefs } : {}),
+          ...turnSettings(),
+        }));
+        return;
+      }
+      if (sessionIdRef.current) attemptRef.current?.start(sessionIdRef.current, true, isConnected && connectedSessionId === sessionIdRef.current);
+      turnFinalizedRef.current = false;
 
       // Add user message
       setMessages((prev) => [
@@ -1717,13 +1760,8 @@ export function useChat(
       streamingContentRef.current = "";
       streamingEventsRef.current = [];
       pendingMessageRef.current = null;
-      if (!isFollowUp) {
-        setPhase("initializing");
-        phaseRef.current = "initializing";
-      } else {
-        setPhase("thinking");
-        phaseRef.current = "thinking";
-      }
+      setPhase("initializing");
+      phaseRef.current = "initializing";
       setPendingApproval(null);
       if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
 
@@ -1732,7 +1770,6 @@ export function useChat(
         clientMessageId: optimisticId,
         content,
         permissionMode: opts?.permissionMode,
-        priority: opts?.priority,
         images: opts?.images,
         imagePaths: opts?.imagePaths,
         replyTo: opts?.replyTo,
@@ -1795,6 +1832,20 @@ export function useChat(
     },
     [send, markApprovalAnswered],
   );
+
+  /**
+   * Take a queued message back; the server answers with `queue_taken_back` (see `takenBack`).
+   * `discard`: remove it instead, so nothing comes back to the composer.
+   */
+  const takeBackQueued = useCallback((id: string, discard = false) => {
+    if (discard) discardIdsRef.current.add(id);
+    send(JSON.stringify({ type: "queue_take_back", id }));
+  }, [send]);
+  /** Claude Code's Send now: the AI reads the queue now instead of at its next step. */
+  const sendQueuedNow = useCallback(() => {
+    send(JSON.stringify({ type: "queue_send_now" }));
+  }, [send]);
+  const clearTakenBack = useCallback(() => setTakenBack(null), []);
 
   const cancelStreaming = useCallback(() => {
     attemptRef.current?.fail();
@@ -2053,6 +2104,11 @@ export function useChat(
     killBackgroundShell,
     findBackgroundShellByOutput,
     sendMessage,
+    queuedMessages,
+    takeBackQueued,
+    sendQueuedNow,
+    takenBack,
+    clearTakenBack,
     currentTurnIdRef,
     respondToApproval,
     cancelStreaming,

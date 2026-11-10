@@ -441,7 +441,9 @@ Structure WebSocket messages as typed JSON objects:
 
 ```typescript
 // Client -> Server (chat, v0.8.55+)
-{ type: "message"; content: string; priority?: "now"|"next"|"later"; images?: {id: string; data: string}[] }
+{ type: "message"; content: string; queued?: boolean; sendNow?: boolean; images?: {id: string; data: string}[] }
+{ type: "queue_take_back"; id: string }  // answered with queue_taken_back, to the sender only
+{ type: "queue_send_now" }
 { type: "cancel" }
 { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown }
 { type: "ready" }  // FE handshake after WS open
@@ -463,7 +465,7 @@ Structure WebSocket messages as typed JSON objects:
 ```
 
 **New Fields (v0.8.55+):**
-- `priority` — Message priority for queue ordering (future: "now" interrupts, "next" queues first, "later" queues at end)
+- `queued` / `sendNow` — sent while a turn ran: the message waits in the session queue (`queue_state`), see `docs/architecture/ai-chat-and-providers.md` → Message queue
 - `images` — Image attachments sent with message
 - `phase_changed` — Phase transitions (initializing → connecting → thinking/streaming → idle)
 - `session_state` — Session state snapshot on WS open/ready (includes current phase and pending approval)

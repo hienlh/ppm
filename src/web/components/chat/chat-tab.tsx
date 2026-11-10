@@ -45,7 +45,8 @@ import { CONTINUE_AFTER_STOP, TurnStopBar } from "./turn-stop-bar";
 import { SessionChangesContext, useSessionChangesValue } from "./session-changes-context";
 import { useSessionFileChanges } from "@/hooks/use-session-file-changes";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
-import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
+import { MessageInput, type ChatAttachment } from "./message-input";
+import { QueuedMessagesStack } from "./queued-messages-stack";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { ChatFooterTools } from "./chat-footer-tools";
@@ -562,6 +563,11 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     bashPartialOutput,
     backgroundShells,
     killBackgroundShell,
+    queuedMessages,
+    takeBackQueued,
+    sendQueuedNow,
+    takenBack,
+    clearTakenBack,
   } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt, replyTransportOptions);
 
   // The chat's stored mode replaces whatever this tab carries, so the chip shows the mode the
@@ -782,6 +788,23 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     setRestore({ text, nonce: Date.now() });
     toast.error("Message not sent", { description: `${reason} Your text is back in the input.` });
   }, [replyOwner, saveDraft, mergeTurnChips, turnRefsRef]);
+
+  const removeQueued = useCallback((id: string) => takeBackQueued(id, true), [takeBackQueued]);
+
+  // A queued message taken back with Edit joins what is in the composer, its reply card and turn
+  // chips included, the way Claude Code's Up puts queued messages back into the input.
+  useEffect(() => {
+    if (!takenBack) return;
+    clearTakenBack();
+    const decoded = decodeMessageBlocks(takenBack.content);
+    if (decoded.replyTo) {
+      replyToRef.current = decoded.replyTo;
+      setReplySelection({ owner: replyOwner, reply: decoded.replyTo });
+    }
+    const overflow = mergeTurnChips(decoded.turnRefs);
+    const text = [decoded.content, ...overflow.map((ref) => buildTurnLink(window.location.origin, ref))].filter(Boolean).join("\n");
+    if (text) setRestore({ text, nonce: Date.now() });
+  }, [takenBack, clearTakenBack, replyOwner, mergeTurnChips]);
 
   rejectedSendRef.current = (event) => {
     // The task chips that went with it come back too, joining any added since.
@@ -1083,7 +1106,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
   );
 
   const handleSend = useCallback(
-    async (content: string, attachments: ChatAttachment[] = [], priority?: MessagePriority, selectedReply?: ReplyReference | null, selectedRefs?: TurnReference[] | null, selectedTaskIds?: string[] | null) => {
+    async (content: string, attachments: ChatAttachment[] = [], selectedReply?: ReplyReference | null, selectedRefs?: TurnReference[] | null, selectedTaskIds?: string[] | null, sendNow = false) => {
       const turnRefs = selectedRefs?.length ? selectedRefs : null;
       const taskRefs = selectedTaskIds?.length ? selectedTaskIds : null;
       const images = selectInlineImages(attachments);
@@ -1168,7 +1191,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           return;
         }
       }
-      sendMessage(fullContent, { permissionMode, priority, replyTo: selectedReply ?? undefined, ...(turnRefs && { turnRefs }), ...(taskRefs && { taskRefs }), ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
+      sendMessage(fullContent, { permissionMode, ...(sendNow && { sendNow }), replyTo: selectedReply ?? undefined, ...(turnRefs && { turnRefs }), ...(taskRefs && { taskRefs }), ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
       // Only now: the message is on (or queued for) a live session's socket.
       clearDraft();
     },
@@ -1190,7 +1213,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
    * dropped, or it would land under whichever session the tab is on a second later.
    */
   const handleInputSend = useCallback(
-    (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => {
+    (content: string, attachments: ChatAttachment[], opts?: { sendNow?: boolean }) => {
       const selectedReply = replyToRef.current;
       const selectedRefs = turnRefsRef.current.length ? [...turnRefsRef.current] : null;
       const selectedTasks = taskChipsRef.current.length ? [...taskChipsRef.current] : null;
@@ -1242,7 +1265,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
         void handleEditSend(buildMessageWithAttachments(content, attachments), anchor, selectedReply, selectedRefs, selectedTaskIds);
         return;
       }
-      void handleSend(content, attachments, priority, selectedReply, selectedRefs, selectedTaskIds);
+      void handleSend(content, attachments, selectedReply, selectedRefs, selectedTaskIds, !!opts?.sendNow);
     },
     [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, handleNewSession, replyOwner, turnRefsRef, replaceTurnChips, tabId, rememberSentTaskChips],
   );
@@ -1588,6 +1611,13 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           </div>
         )}
 
+        <QueuedMessagesStack
+          messages={queuedMessages}
+          onSendNow={sendQueuedNow}
+          onEdit={takeBackQueued}
+          onRemove={removeQueued}
+        />
+
         {composerOverride}
         {/* Input is available immediately; network preparation never gates typing. `contents`
             keeps the box out of the layout unless a host's override hides it. */}
@@ -1597,6 +1627,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
             configurationPending={preparation.pending}
             tabId={tabId}
             onSend={handleInputSend}
+            onSendNow={queuedMessages.length ? sendQueuedNow : undefined}
             replyTo={replyTo}
             onCancelReply={handleCancelReply}
             replyChangeSignal={replyChangeSignal + turnChips.changeSignal}

@@ -1,7 +1,7 @@
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
-import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock, Bot, X } from "@/lib/icons";
+import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Bot, X } from "@/lib/icons";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useWhisperVoiceInput } from "@/hooks/use-whisper-voice-input";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -82,7 +82,6 @@ export interface ChatAttachment {
   status: "uploading" | "ready" | "error";
 }
 
-export type MessagePriority = 'now' | 'next' | 'later';
 
 interface MessageInputProps {
   pendingContexts?: Array<{ text: string; label?: string }>;
@@ -109,7 +108,10 @@ interface MessageInputProps {
   onRemoveTaskChip?: (taskId: string) => void;
   /** Tab id of the owning chat tab — addresses "Send to Chat" at this tab only. */
   tabId?: string;
-  onSend: (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => boolean | void;
+  /** `sendNow`: Ctrl/Cmd+Enter — while the AI works, have it read the queue at once. */
+  onSend: (content: string, attachments: ChatAttachment[], opts?: { sendNow?: boolean }) => boolean | void;
+  /** Ctrl/Cmd+Enter in an empty box while messages are queued (Claude Code's Send now). */
+  onSendNow?: () => void;
   isStreaming?: boolean;
   onCancel?: () => void;
   disabled?: boolean;
@@ -209,6 +211,7 @@ export const MessageInput = memo(function MessageInput({
   onRemoveTaskChip,
   draftReady = true,
   onSend,
+  onSendNow,
   isStreaming,
   onCancel,
   disabled,
@@ -265,7 +268,6 @@ export const MessageInput = memo(function MessageInput({
   // put that label on chats the server runs in "Ask before edits".
   const chipMode = permissionLocked ? "default" : boundAwareMode;
   const [pendingSend, setPendingSend] = useState(false);
-  const [priority, setPriority] = useState<MessagePriority>('next');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mobileTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -820,6 +822,9 @@ export const MessageInput = memo(function MessageInput({
     onContentChange?.(valueRef.current, attachments.filter((a) => a.id !== id && a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
   }, [discardUpload, onContentChange, attachments]);
 
+  /** Ctrl/Cmd+Enter armed the send executed next (it may wait on an upload). */
+  const sendNowRef = useRef(false);
+
   /** Execute the actual send (called directly or after uploads complete) */
   const executeSend = useCallback(() => {
     const trimmed = valueRef.current.trim();
@@ -844,7 +849,9 @@ export const MessageInput = memo(function MessageInput({
       if (useWhisper) whisperVoice.cancel();
       else voice.stop();
     }
-    if (onSend(content, readyAttachments, isStreaming ? priority : undefined) === false) return;
+    const sendNow = sendNowRef.current;
+    sendNowRef.current = false;
+    if (onSend(content, readyAttachments, sendNow ? { sendNow } : undefined) === false) return;
     writeTextareas("");
     // Revoke preview URLs
     for (const att of attachments) {
@@ -853,13 +860,12 @@ export const MessageInput = memo(function MessageInput({
     setAttachments([]);
     setAgentTag(null);
     setPendingSend(false);
-    setPriority('next');
     historyIdxRef.current = -1;
     if (needsJsResize.current) {
       if (textareaRef.current) textareaRef.current.style.height = "auto";
       if (mobileTextareaRef.current) mobileTextareaRef.current.style.height = "auto";
     }
-  }, [attachments, agentTag, onSend, onSlashStateChange, onFileStateChange, isStreaming, priority, writeTextareas,
+  }, [attachments, agentTag, onSend, onSlashStateChange, onFileStateChange, writeTextareas,
       voice.isListening, voice.stop, whisperVoice.cancel, useWhisper]);
 
   const handleSend = useCallback(() => {
@@ -892,6 +898,12 @@ export const MessageInput = memo(function MessageInput({
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
+        const now = !!isStreaming && (e.ctrlKey || e.metaKey);
+        if (now && !valueRef.current.trim() && attachments.length === 0 && !agentTag) {
+          onSendNow?.();
+          return;
+        }
+        sendNowRef.current = now;
         handleSend();
         return;
       }
@@ -917,7 +929,7 @@ export const MessageInput = memo(function MessageInput({
         onModeChange?.(next);
       }
     },
-    [handleSend, boundAwareMode, allowedModeIds, onModeChange, permissionLocked, recallHistory, agentTag, turnChips],
+    [handleSend, boundAwareMode, allowedModeIds, onModeChange, permissionLocked, recallHistory, agentTag, turnChips, isStreaming, attachments.length, onSendNow],
   );
 
   const updatePickerState = useCallback(
@@ -1059,7 +1071,7 @@ export const MessageInput = memo(function MessageInput({
 
   const hasContent = hasText || attachments.some((a) => a.status !== "error") || !!agentTag;
   const showCancel = isStreaming && !hasContent;
-  const placeholder = offline ? "Will send when reconnected..." : isStreaming ? "Follow-up or Stop..." : "Ask anything...";
+  const placeholder = offline ? "Will send when reconnected..." : isStreaming ? "Queue a message, or Stop..." : "Ask anything...";
 
   return (
     <div data-onboarding="chat-input">
@@ -1173,7 +1185,6 @@ export const MessageInput = memo(function MessageInput({
               />
             </div>
           )}
-          {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
           <span className="min-w-1 flex-1 !shrink" />
           <PromptCacheChip promptCache={promptCache ?? null} />
           {voice.supported && (
@@ -1250,33 +1261,3 @@ function ModeChip({ mode, locked = false, onClick }: { mode: string; locked?: bo
   );
 }
 
-const PRIORITY_OPTIONS: { value: MessagePriority; label: string; Icon: typeof Zap }[] = [
-  { value: 'now', label: 'Interrupt', Icon: Zap },
-  { value: 'next', label: 'Queue', Icon: ListOrdered },
-  { value: 'later', label: 'Later', Icon: Clock },
-];
-
-/** Compact priority toggle — visible only during streaming */
-function PriorityToggle({ value, onChange }: { value: MessagePriority; onChange: (v: MessagePriority) => void }) {
-  const cycle = useCallback(() => {
-    const order: MessagePriority[] = ['next', 'later', 'now'];
-    const idx = order.indexOf(value);
-    onChange(order[(idx + 1) % order.length]!);
-  }, [value, onChange]);
-
-  const current = PRIORITY_OPTIONS.find((o) => o.value === value) ?? PRIORITY_OPTIONS[1]!;
-  const Icon = current.Icon;
-
-  return (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); cycle(); }}
-      className={`footer-fade-in ${BAR_CHIP}`}
-      aria-label={`Message priority: ${current.label}`}
-      title={`Your next message: ${current.label} (tap to cycle Queue → Later → Interrupt)`}
-    >
-      <Icon className="size-4" />
-      <span className="@max-[420px]/chat:hidden max-md:hidden">{current.label}</span>
-    </button>
-  );
-}
