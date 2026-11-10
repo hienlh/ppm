@@ -11,6 +11,7 @@ import {
   Users,
   Palette,
   ListTodo,
+  ClipboardList,
 } from "@/lib/icons";
 import type { SidebarActiveTab } from "@/stores/settings-store";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
@@ -44,6 +45,7 @@ export const BUILTIN_SIDEBAR_TABS: SidebarTabDef[] = [
   { id: "tasks", label: "Tasks", icon: ListTodo },
   { id: "teams", label: "Teams", icon: Users, badge: "teams" },
   { id: "designs", label: "Designs", icon: Palette, badge: "designs" },
+  { id: "specs", label: "Specs", icon: ClipboardList },
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "search", label: "Search", icon: Search },
   { id: "git", label: "Git", icon: GitBranch },

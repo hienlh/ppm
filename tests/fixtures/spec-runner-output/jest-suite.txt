@@ -1,0 +1,10 @@
+FAIL src/x.test.js
+  ● Test suite failed to run
+
+    Cannot find module './nope' from 'src/x.test.js'
+
+Test Suites: 1 failed, 1 total
+Tests:       0 total
+Snapshots:   0 total
+Time:        0.3 s
+exit=1

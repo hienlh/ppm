@@ -131,8 +131,8 @@ export class CursorCliProvider extends CliProvider {
   }
 
   // Workspace trust detection: log warning so user knows to re-run with --trust
-  protected override spawnProcess(args: string[], cwd: string): ChildProcess {
-    const proc = super.spawnProcess(args, cwd);
+  protected override spawnProcess(args: string[], cwd: string, extraEnv?: Record<string, string>): ChildProcess {
+    const proc = super.spawnProcess(args, cwd, extraEnv);
 
     proc.stderr?.on("data", (data: Buffer) => {
       const text = data.toString();

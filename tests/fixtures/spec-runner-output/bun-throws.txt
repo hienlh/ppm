@@ -1,0 +1,15 @@
+bun test v1.3.11 (af24e281)
+
+throws.test.ts:
+1 | import { it } from "bun:test";
+2 | function exportHtml(): string { throw new Error("not implemented"); }
+                                                                     ^
+error: not implemented
+      at exportHtml (/work/throws.test.ts:2:66)
+      at <anonymous> (/work/throws.test.ts:3:23)
+(fail) exports
+
+ 0 pass
+ 1 fail
+Ran 1 test across 1 file. [7.00ms]
+exit=1
