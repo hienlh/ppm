@@ -6,6 +6,7 @@
 
 - **Claude Fable 5.2 is selectable** in the model picker, above Fable 5.1 (Agent SDK 0.3.322, Claude Code 2.1.322).
 - **`ppm export skill` installs from a release binary, and for Antigravity and Codex too.** The skill was copied from `assets/` on disk, which a release binary does not have, so a release could not install it; it is now built into the binary. `--format antigravity` installs it where agy reads user skills (`~/.gemini/config/skills/ppm`), `--format codex` where every Codex account reads them (`~/.agents/skills/ppm`), and `--scope project` puts either in the project's `.agents/skills/ppm`. The skill itself is rewritten against the CLI and HTTP API as they are.
+- **Excel files open in PPM.** Clicking an `.xlsx` or `.xlsm` shows it as a read-only table with its sheets as tabs along the bottom, so a workbook no longer has to be downloaded to look at it. Large sheets show their first rows with a note saying so, and an old `.xls` or a password-protected workbook says why it cannot be shown.
 
 ### Fixed
 
