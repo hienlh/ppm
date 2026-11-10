@@ -1,11 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdtempSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { _resetPpmDir } from "../../../../src/services/ppm-dir.ts";
 import { backupDbSync, verifyBackupFile } from "../../../../src/services/db-backup/db-backup-sync.ts";
-import { getBackupsDir } from "../../../../src/services/db-backup/db-backup-paths.ts";
+import { formatBackupStamp, getBackupsDir } from "../../../../src/services/db-backup/db-backup-paths.ts";
 import { listBackups } from "../../../../src/services/db-backup/db-backup.service.ts";
 import { restoreDb } from "../../../../src/services/db-backup/db-backup-restore.ts";
 import { assertIsolatedPpmHome } from "../../../helpers/assert-isolated-ppm-home.ts";
@@ -125,6 +125,137 @@ describe("backupDbSync", () => {
 });
 
 describe("restoreDb", () => {
+  test("leaves the live database and directory untouched when copying fails", () => {
+    const snapshot = backupDbSync("manual", { dbPath }).path;
+    const before = readFileSync(dbPath);
+    const files = readdirSync(ppmHome).sort();
+    const failure = new Error("disk full");
+    expect(() => restoreDb(snapshot, {
+      dbPath, force: true,
+      fs: { copyFileSync(_from, to) {
+        writeFileSync(to, "partial copy");
+        writeFileSync(`${to}-wal`, "partial wal");
+        writeFileSync(`${to}-shm`, "partial shm");
+        throw failure;
+      } },
+    })).toThrow(failure);
+    expect(readFileSync(dbPath)).toEqual(before);
+    expect(readdirSync(ppmHome).sort()).toEqual(files);
+  });
+
+  test("leaves the live database and directory untouched when staging is corrupt", () => {
+    const snapshot = backupDbSync("manual", { dbPath }).path;
+    const before = readFileSync(dbPath);
+    const files = readdirSync(ppmHome).sort();
+    expect(() => restoreDb(snapshot, {
+      dbPath, force: true,
+      fs: { copyFileSync(_from, to) {
+        writeFileSync(to, "not a database");
+        writeFileSync(`${to}-wal`, "partial wal");
+        writeFileSync(`${to}-shm`, "partial shm");
+      } },
+    })).toThrow(/integrity_check/);
+    expect(readFileSync(dbPath)).toEqual(before);
+    expect(readdirSync(ppmHome).sort()).toEqual(files);
+  });
+
+  test("leaves the database and its sidecars in place when the final rename fails", () => {
+    const snapshot = backupDbSync("manual", { dbPath }).path;
+    const before = readFileSync(dbPath);
+    writeFileSync(`${dbPath}-wal`, "original wal");
+    writeFileSync(`${dbPath}-shm`, "original shm");
+    const files = readdirSync(ppmHome).sort();
+    let failed = false;
+    expect(() => restoreDb(snapshot, {
+      dbPath, force: true,
+      fs: {
+        renameSync(from, to) {
+          if (to === dbPath && !failed) {
+            failed = true;
+            throw new Error("rename failed");
+          }
+          renameSync(from, to);
+        },
+      },
+    })).toThrow("rename failed");
+    expect(failed).toBe(true);
+    expect(readFileSync(dbPath)).toEqual(before);
+    expect(readFileSync(`${dbPath}-wal`, "utf8")).toBe("original wal");
+    expect(readFileSync(`${dbPath}-shm`, "utf8")).toBe("original shm");
+    expect(readdirSync(ppmHome).sort()).toEqual(files);
+  });
+
+  test("keeps a database at the live path after every filesystem step", () => {
+    // A crash can land between any two steps; the old order renamed the live file
+    // away first, so a crash before the swap left the directory with no database.
+    const snapshot = backupDbSync("manual", { dbPath }).path;
+    writeFileSync(`${dbPath}-wal`, "original wal");
+    const missingAfter: string[] = [];
+    const watch = <A extends unknown[]>(name: string, call: (...args: A) => void) => (...args: A) => {
+      call(...args);
+      if (!existsSync(dbPath)) missingAfter.push(`${name}(${args.join(", ")})`);
+    };
+    restoreDb(snapshot, {
+      dbPath, force: true,
+      fs: {
+        copyFileSync: watch("copyFileSync", (from: string, to: string) => copyFileSync(from, to)),
+        renameSync: watch("renameSync", (from: string, to: string) => renameSync(from, to)),
+        linkSync: watch("linkSync", (existing: string, newPath: string) => linkSync(existing, newPath)),
+      },
+    });
+    expect(missingAfter).toEqual([]);
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+  });
+
+  test("archives by copying when the filesystem has no hard links", () => {
+    const snapshot = backupDbSync("manual", { dbPath }).path;
+    writeFileSync(dbPath, "secret");
+    const result = restoreDb(snapshot, {
+      dbPath, force: true,
+      fs: { linkSync() { throw Object.assign(new Error("operation not permitted"), { code: "EPERM" }); } },
+    });
+    expect(readFileSync(result.archivedTo!, "utf8")).toBe("secret");
+    expect(verifyBackupFile(dbPath).ok).toBe(true);
+  });
+
+  test("changes nothing when the current database cannot be archived", () => {
+    const snapshot = backupDbSync("manual", { dbPath }).path;
+    const before = readFileSync(dbPath);
+    const files = readdirSync(ppmHome).sort();
+    expect(() => restoreDb(snapshot, {
+      dbPath, force: true,
+      fs: {
+        linkSync() { throw Object.assign(new Error("operation not permitted"), { code: "EPERM" }); },
+        copyFileSync(from, to) {
+          if (to.includes(".replaced-")) {
+            writeFileSync(to, "half an archive");
+            throw new Error("disk full");
+          }
+          copyFileSync(from, to);
+        },
+      },
+    })).toThrow("disk full");
+    expect(readFileSync(dbPath)).toEqual(before);
+    expect(readdirSync(ppmHome).sort()).toEqual(files);
+  });
+
+  test("never replaces an earlier archive that has the same name", () => {
+    const snapshot = backupDbSync("manual", { dbPath }).path;
+    const now = new Date("2026-11-07T04:27:30Z");
+    const earlier = `${dbPath}.replaced-${formatBackupStamp(now)}`;
+    writeFileSync(earlier, "an earlier restore's evidence");
+    const before = readFileSync(dbPath);
+    expect(() => restoreDb(snapshot, { dbPath, force: true, now })).toThrow();
+    expect(readFileSync(earlier, "utf8")).toBe("an earlier restore's evidence");
+    expect(readFileSync(dbPath)).toEqual(before);
+  });
+
+  test("removes staging files after a successful restore", () => {
+    const snapshot = backupDbSync("manual", { dbPath }).path;
+    restoreDb(snapshot, { dbPath, force: true });
+    expect(readdirSync(ppmHome).filter((name) => name.includes(".restoring-"))).toEqual([]);
+  });
+
   test("restore drill: destroy the database, get the data back", () => {
     // The only test that proves the mechanism works end to end. A backup that
     // has never been restored is not known to be a backup — during the incident
