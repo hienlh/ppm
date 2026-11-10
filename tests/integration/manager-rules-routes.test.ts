@@ -41,7 +41,7 @@ describe("assigning a manager", () => {
     expect(fx.readRules(project.path)).toBe(T);
     expect(readFileSync(join(project.path, ".ppm", ".gitignore"), "utf8")).toBe("/manager.md\n/.gitignore\n");
     expect(fx.git(project.path, "status", "--porcelain", "--", ".ppm")).toBe("");
-    expect(await rulesOf(project.name)).toMatchObject({ approved: T, accepted: T, proposed: null, pendingHash: null, addedSince: [] });
+    expect(await rulesOf(project.name)).toMatchObject({ approved: T, accepted: T, proposed: null, pendingHash: null, addedSince: [], proposedDiff: null });
     expect(fx.events).toEqual([]);
   });
 
@@ -53,7 +53,10 @@ describe("assigning a manager", () => {
     expect(rules).toMatchObject({ approved: T, accepted: T, proposed: old });
     expect(fx.events).toEqual([expect.objectContaining({ type: "rules_loosen_pending", reason: "existing_file", hash: rules.pendingHash })]);
     expect((await fx.call("GET", "/api/assistant/managers")).json.data.managers
-      .find((m: { projectName: string }) => m.projectName === project.name)).toMatchObject({ rulesPending: true });
+      .find((m: { projectName: string }) => m.projectName === project.name)).toMatchObject({ rulesPending: true, toolsPending: false });
+    // Settings shows the held change as lines: the old file's own, against the template's.
+    expect(rules.proposedDiff.added).toEqual(["# Our rules", "- Ship whenever the tests pass."]);
+    expect(rules.proposedDiff.removed).toContain(CLIENT);
 
     expect((await decide(project.name, "approve", rules.pendingHash)).status).toBe(200);
     expect(fx.readRules(project.path)).toBe(old);
@@ -94,8 +97,9 @@ describe("deciding a held change", () => {
     const { project, sessionId } = await fx.managed();
     fx.writeRules(project.path, T.replace(`${CLIENT}\n`, ""));
     await chatService.prepareSendOptions("claude", sessionId, "hi");
-    const { pendingHash } = await rulesOf(project.name);
+    const { pendingHash, proposedDiff } = await rulesOf(project.name);
     expect(pendingHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(proposedDiff).toEqual({ added: [], removed: [CLIENT] });
     expect(await decide(project.name, "approve", "0".repeat(64))).toMatchObject({ status: 400, json: { error: "That rules change is no longer waiting" } });
     expect(fx.readRules(project.path)).toBe(T);
     expect((await decide(project.name, "approve", pendingHash)).status).toBe(200);

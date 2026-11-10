@@ -20,6 +20,8 @@ const log = createLogger("manager-rules");
 export interface ManagerRulesView extends ManagerRules {
   /** Lines in force that the user has not approved yet, in order. */
   addedSince: string[];
+  /** The held change against the rules in force, when one waits: what it adds and removes. */
+  proposedDiff: { added: string[]; removed: string[] } | null;
 }
 
 function targetFor(projectName: string): RulesTarget {
@@ -51,7 +53,14 @@ export async function managerRulesEntryFor(sessionId: string, guard: ManagerRule
 export function managerRulesView(projectName: string): ManagerRulesView {
   const rules = getManagerRules(targetFor(projectName).projectKey);
   if (!rules) throw new ManagerChatError("That project has no manager chat", 404);
-  return { ...rules, addedSince: rules.approved !== null && rules.accepted !== null ? linesAddedSince(rules.approved, rules.accepted) : [] };
+  const base = rules.accepted ?? rules.approved ?? "";
+  return {
+    ...rules,
+    addedSince: rules.approved !== null && rules.accepted !== null ? linesAddedSince(rules.approved, rules.accepted) : [],
+    proposedDiff: rules.proposed !== null
+      ? { added: linesAddedSince(base, rules.proposed), removed: linesRemovedSince(base, rules.proposed) }
+      : null,
+  };
 }
 
 /**

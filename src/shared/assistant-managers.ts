@@ -33,6 +33,11 @@ export interface ManagerChatSummary {
   /** Cards waiting on the user for this project. */
   waiting: number;
   rulesPending: boolean;
+  /**
+   * The chat's live stream started before it was made the manager, so its manager tools arrive
+   * the next time it starts. Absent from a server that predates the field.
+   */
+  toolsPending?: boolean;
 }
 
 export interface MainSessionRef {

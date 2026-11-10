@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { providerRegistry } from "../../providers/registry.ts";
 import { assistantSettingsView, saveAssistantSettings } from "../../services/assistant/assistant-settings.service.ts";
 import { ASSISTANT_INSTRUCTIONS_MAX_CHARS, ASSISTANT_MCP_MAX_SERVERS } from "../../shared/assistant-settings.ts";
+import { RULES_FILE_MAX_BYTES } from "../../shared/assistant-limits.ts";
+import { DEFAULT_MANAGER_RULES_TEMPLATE } from "../../services/assistant-managers/manager-rules-default-template.ts";
 import { createLogger } from "../../services/logger.ts";
 import { assistantTelegramRoutes } from "./assistant-telegram.ts";
 import { assistantManagerRoutes } from "./assistant-managers.ts";
@@ -36,7 +38,13 @@ function payload() {
   return {
     settings: assistantSettingsView(),
     providers: assistantProviders(),
-    limits: { instructionsMaxChars: ASSISTANT_INSTRUCTIONS_MAX_CHARS, maxServers: ASSISTANT_MCP_MAX_SERVERS },
+    limits: {
+      instructionsMaxChars: ASSISTANT_INSTRUCTIONS_MAX_CHARS,
+      maxServers: ASSISTANT_MCP_MAX_SERVERS,
+      managerTemplateMaxBytes: RULES_FILE_MAX_BYTES,
+    },
+    /** What a new manager's rules start as while `manager_template` is empty. */
+    managerTemplateBuiltIn: DEFAULT_MANAGER_RULES_TEMPLATE,
   };
 }
 

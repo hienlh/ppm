@@ -15,6 +15,16 @@ import { managerChats } from "./manager-chats.service.ts";
 const log = createLogger("assistant-managers");
 
 type SessionInfoById = { getSessionInfoById?: (id: string, dir?: string) => Promise<{ title?: string } | null> };
+type LiveStreamClock = { liveStreamStartedAt?: (id: string) => number | null };
+
+/**
+ * Whether the chat's live stream predates its assignment: its MCP servers were fixed when the
+ * stream started, so the manager's tools reach it only when it next starts.
+ */
+export function managerToolsPending(sessionId: string, providerId: string, assignedAt: number): boolean {
+  const started = (providerRegistry.get(providerId) as unknown as LiveStreamClock | undefined)?.liveStreamStartedAt?.(sessionId);
+  return typeof started === "number" && started < assignedAt;
+}
 
 /** PPM's own title for the chat, else the provider's. Null when neither has one yet. */
 export async function managerChatTitle(sessionId: string, providerId: string, projectPath: string): Promise<string | null> {
@@ -52,6 +62,7 @@ export async function managerSummaries(): Promise<ManagerChatSummary[]> {
       telegramDetail: row.telegramDetail,
       waiting: waiting[row.projectName] ?? 0,
       rulesPending: row.rulesPendingHash !== null,
+      toolsPending: managerToolsPending(row.sessionId, row.providerId, row.assignedAt),
     };
   }));
 }
