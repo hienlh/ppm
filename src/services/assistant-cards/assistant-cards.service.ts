@@ -72,7 +72,7 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
     return {
       id: row.id, kind: row.kind, projectName, projectKey: row.projectKey, sessionId: row.sessionId,
       title: row.title, body: row.body, payload, status: row.status, answer: row.answer,
-      provenance: reportProvenanceLine(row.kind, projectName, payload.subagent === true),
+      provenance: reportProvenanceLine(row.kind, projectName, payload.subagent === true, payload.detected === true),
       createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
   }

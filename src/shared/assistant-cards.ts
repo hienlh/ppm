@@ -116,9 +116,12 @@ export function isNoReplyText(text: string | null | undefined): boolean {
   return typeof text === "string" && text.trim().toLowerCase() === NO_REPLY_TEXT;
 }
 
-/** The server-written line on a card filed by a manager chat; null for PPM's own cards. */
-export function reportProvenanceLine(kind: AssistantCardKind, projectName: string | null, subagent: boolean): string | null {
-  if (!(REPORT_KINDS as readonly string[]).includes(kind)) return null;
+/**
+ * The server-written line on a card filed by a manager chat; null for PPM's own cards, a failure
+ * PPM saw itself (`detected`) included.
+ */
+export function reportProvenanceLine(kind: AssistantCardKind, projectName: string | null, subagent: boolean, detected = false): string | null {
+  if (detected || !(REPORT_KINDS as readonly string[]).includes(kind)) return null;
   const project = projectName ?? "project";
   if (subagent) return `From a subagent of the ${project} manager`;
   if (kind === "urgent") return `Marked urgent by the ${project} manager AI`;

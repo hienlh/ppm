@@ -19,10 +19,12 @@ import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-te
 import type { BridgeStateStore } from "./assistant-telegram-state.ts";
 import { TurnRenderer } from "./assistant-telegram-turn-renderer.ts";
 import { WakeTurnGate } from "./assistant-telegram-wake-gate.ts";
+import { NEWS_OPENER } from "../assistant-wake/wake-news-text.ts";
 
 /** How much of a message typed in PPM is repeated on Telegram. */
 export const MIRRORED_MESSAGE_MAX = 1000;
 export const WATCH_NEWS_LINE = "🔔 PPM: news about a watched chat";
+export const MANAGER_NEWS_LINE = "🔔 PPM: news from manager chats";
 const BOUND_CACHE_MS = 2000;
 
 /** Cards of a bound session, handed to whoever renders them on Telegram. */
@@ -126,7 +128,7 @@ export class AssistantTelegramMirror {
   private onUserMessage(p: ChatLifecycleEvents["user_message"]): void {
     // A turn PPM started waits until it has something to say (see WakeTurnGate).
     if (p.origin === "watch" && this.chatsFor(p.sessionId).length > 0) {
-      this.wakeGate.hold(p.sessionId);
+      this.wakeGate.hold(p.sessionId, p.text.includes(NEWS_OPENER) ? MANAGER_NEWS_LINE : WATCH_NEWS_LINE);
       return;
     }
     for (const chatId of this.chatsFor(p.sessionId)) {
@@ -166,9 +168,9 @@ export class AssistantTelegramMirror {
   }
 
   /** A held wake turn turned out to say something: its line, tools and text go out as they came. */
-  private releaseWake(sessionId: string, held: { text: string; tools: string[] }): void {
+  private releaseWake(sessionId: string, held: { text: string; tools: string[]; line?: string }): void {
     for (const chatId of this.chatsFor(sessionId)) {
-      this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: WATCH_NEWS_LINE }, { label: "mirrored message" }));
+      this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: held.line ?? WATCH_NEWS_LINE }, { label: "mirrored message" }));
       const r = this.renderer(sessionId, chatId, "watch");
       for (const tool of held.tools) r.tool(tool);
       if (held.text) r.text(held.text);

@@ -11,14 +11,16 @@ import { NO_REPLY_TEXT } from "../../shared/assistant-cards.ts";
 interface Held {
   text: string;
   tools: string[];
+  /** The line that announces the turn on Telegram once it is released. */
+  line?: string;
 }
 
 export class WakeTurnGate {
   private readonly held = new Map<string, Held>();
 
-  /** A wake turn began in this session: hold it. */
-  hold(sessionId: string): void {
-    this.held.set(sessionId, { text: "", tools: [] });
+  /** A wake turn began in this session: hold it, and the line that will announce it. */
+  hold(sessionId: string, line?: string): void {
+    this.held.set(sessionId, { text: "", tools: [], ...(line ? { line } : {}) });
   }
 
   isHeld(sessionId: string): boolean {

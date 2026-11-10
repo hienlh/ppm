@@ -104,6 +104,14 @@ describe("listing and counts", () => {
     expect(cards.waiting()).toEqual({ total: 2, byProject: { api: 1, web: 1 } });
     expect(cards.list({ limit: 10 }).cards.find((x) => x.kind === "done")!.provenance).toBe("Written by the web manager AI");
   });
+
+  it("gives PPM's own cards no manager provenance line, a failure PPM saw included", () => {
+    const seen = cards.create({ kind: "failed", projectName: "api", projectPath: "/p/api", sessionId: "mgr-1", title: "Stopped", payload: { detected: true } });
+    const reported = cards.create({ kind: "failed", projectName: "api", projectPath: "/p/api", sessionId: "mgr-1", title: "Deploy failed" });
+    expect(seen.provenance).toBeNull();
+    expect(reported.provenance).toBe("Written by the api manager AI");
+    expect(approval().provenance).toBeNull();
+  });
 });
 
 describe("the restart sweep", () => {
