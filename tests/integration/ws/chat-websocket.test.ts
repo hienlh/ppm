@@ -1201,7 +1201,8 @@ describe("Chat control from the server, with or without a browser", () => {
     const id = `held-${crypto.randomUUID()}`;
     setSessionAssistant(id);
     setSessionProvider(id, HELD);
-    const pushed = spyOn(chatService, "pushMessage").mockImplementation(async () => {});
+    // True: the live stream took the push (false would mean it closed and the message went nowhere).
+    const pushed = spyOn(chatService, "pushMessage").mockImplementation(async () => true);
     const opts = { origin: "telegram", channel: "telegram", projectName: ASSISTANT_PROJECT_NAME, providerId: HELD } as const;
     try {
       expect((await ctl().sendUserMessage(id, "start", opts)).ok).toBe(true);

@@ -289,9 +289,13 @@ describe("deliverToSession", () => {
 
     // The idle subprocess is released (cache expiry, warm-idle cap, token rotation) in the window
     // between "the stream is live" and the push itself.
-    const prepare = chatService.prepareSendOptions.bind(chatService);
+    // `prepareSend` is the step both a new stream and a push go through (`prepareSendOptions`
+    // wraps it); it is private, so it is reached through a structural view of the service.
+    type PrepareSend = (providerId: string, sessionId: string, message: string, opts?: unknown) => Promise<unknown>;
+    const service = chatService as unknown as { prepareSend: PrepareSend };
+    const prepare = service.prepareSend.bind(chatService);
     let released = false;
-    const spy = spyOn(chatService, "prepareSendOptions").mockImplementation(async (...args) => {
+    const spy = spyOn(service, "prepareSend").mockImplementation(async (...args: Parameters<PrepareSend>) => {
       if (!released && args[1] === session.id) {
         released = true;
         claudeLike.abortQuery(session.id);
