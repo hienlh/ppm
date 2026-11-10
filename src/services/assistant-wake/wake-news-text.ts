@@ -42,7 +42,11 @@ function newsLine(n: WakeNewsNotice): string {
     const text = cleanEventText(n.text, NEWS_QUOTE_MAX);
     return `${head} answered your earlier message${when}.\n  Its answer began: ${text ? quote(text) : "(no text)"}`;
   }
-  const lines = [`${head}${n.subagent ? ", through a subagent," : ""} ${REPORT_TEXT[n.reportKind ?? "done"]}${when} (card ${cleanEventText(n.key, 40)}).`];
+  const card = `(card ${cleanEventText(n.key, 40)})`;
+  // The digest PPM put together speaks for every project at once; its items name their project.
+  const lines = n.reportKind === "digest" && !n.sessionId
+    ? [`- PPM's morning digest of the manager chats${when} ${card}; each item was written by that project's manager AI.`]
+    : [`${head}${n.subagent ? ", through a subagent," : ""} ${REPORT_TEXT[n.reportKind ?? "done"]}${when} ${card}.`];
   const title = cleanEventText(n.title, MAX_EVENT_TITLE_CHARS);
   if (title) lines.push(`  Title: ${quote(title)}`);
   const body = cleanEventText(n.body, NEWS_QUOTE_MAX);

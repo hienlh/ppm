@@ -1,6 +1,7 @@
 /**
  * `report_to_assistant` as the running server provides it: the card store, the shared clock,
- * quiet hours from Settings, and the morning digest's open asks (none until the digest exists).
+ * quiet hours from Settings, and the morning digest's answers (refused while the digest is not
+ * running).
  */
 import { managerChats } from "../assistant-managers/manager-chats.service.ts";
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
@@ -8,16 +9,19 @@ import { currentQuietWindowStart } from "../assistant-wake/wake-quiet-hours.ts";
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import { assistantCards } from "./assistant-cards.service.ts";
 import { countSessionCardsSince, findOpenUrgentTitled } from "./assistant-cards-db.ts";
-import { fileReport, type ReportEnv } from "./manager-report-tool.ts";
+import { DIGEST_NOT_ASKED, fileReport, type ReportEnv } from "./manager-report-tool.ts";
 
 /** Refused for every chat but a project's current manager chat. */
 export const NOT_A_MANAGER = "Only a project's manager chat can report to PPM Assistant. Answer the user in this chat instead.";
 
-let digestAsks: (sessionId: string) => boolean = () => false;
+type DigestAnswerHandler = ReportEnv["digestAnswer"];
 
-/** The morning digest registers how to tell whether it asked this manager and awaits its answer. */
-export function setDigestAskProbe(probe: (sessionId: string) => boolean): void {
-  digestAsks = probe;
+const NO_DIGEST: DigestAnswerHandler = () => ({ ok: false, message: DIGEST_NOT_ASKED });
+let digestAnswers: DigestAnswerHandler = NO_DIGEST;
+
+/** The morning digest takes the digest answers while it runs; null puts the refusal back. */
+export function setDigestAnswerHandler(handler: DigestAnswerHandler | null): void {
+  digestAnswers = handler ?? NO_DIGEST;
 }
 
 export const reportEnv: ReportEnv = {
@@ -28,7 +32,7 @@ export const reportEnv: ReportEnv = {
     return row ? assistantCards.toCard(row) : null;
   },
   quietWindowStart: currentQuietWindowStart,
-  digestOpen: (sessionId) => digestAsks(sessionId),
+  digestAnswer: (sessionId, items) => digestAnswers(sessionId, items),
   create: (card) => assistantCards.create(card),
 };
 
@@ -41,5 +45,7 @@ export function reportToAssistantCall(sessionId: string, args: unknown, env: Rep
   if (!row) return textResult(NOT_A_MANAGER, true);
   const result = fileReport(env, { sessionId: row.sessionId, projectName: row.projectName, projectPath: row.projectPath }, args);
   if (!result.ok) return textResult(result.message, true);
-  return textResult(JSON.stringify({ cardId: result.cardId, kind: result.kind, ...(result.note ? { note: result.note } : {}) }));
+  return textResult(JSON.stringify({
+    ...(result.cardId ? { cardId: result.cardId } : {}), kind: result.kind, ...(result.note ? { note: result.note } : {}),
+  }));
 }

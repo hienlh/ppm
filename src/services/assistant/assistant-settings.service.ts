@@ -88,8 +88,8 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
   const saved = getAssistantSettings();
   // The main session is PPM's to pick and the user's to change through its own route; a pane
   // opened before the change would otherwise put the old one back. A body naming no default mode
-  // for manager chats, no rules template, no quiet hours or no time zone (a pane that predates
-  // them) keeps the saved one.
+  // for manager chats, no rules template, no quiet hours, no digest or no time zone (a pane that
+  // predates them) keeps the saved one.
   const sentKey = (key: string) => typeof input === "object" && input !== null && key in input;
   const { main_session: _ignored, timezone: _zone, ...sent } = value;
   const timezone = sentKey("timezone") ? value.timezone : saved.timezone;
@@ -99,8 +99,23 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
     manager_default_mode: sentKey("manager_default_mode") ? value.manager_default_mode : saved.manager_default_mode,
     manager_template: sentKey("manager_template") ? value.manager_template : saved.manager_template,
     quiet_hours: sentKey("quiet_hours") ? value.quiet_hours : saved.quiet_hours,
+    digest: sentKey("digest") ? value.digest : saved.digest,
     ...(timezone ? { timezone } : {}),
   };
   configService.set("assistant", next);
+  for (const listener of [...savedListeners]) {
+    try { listener(); } catch { /* a listener's own problem; the save stands */ }
+  }
   return { ok: true, settings: maskAssistantSettings(next) };
+}
+
+const savedListeners = new Set<() => void>();
+
+/**
+ * Hears every settings save from the pane, so a schedule that reads them (the morning digest's
+ * timer) is recomputed at once instead of at its next fire. The returned function unsubscribes.
+ */
+export function onAssistantSettingsSaved(listener: () => void): () => void {
+  savedListeners.add(listener);
+  return () => { savedListeners.delete(listener); };
 }

@@ -21,6 +21,11 @@ const MAX_ZONE = 64;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
+/** Whether `text` is a 24-hour "HH:MM" time. */
+export function isClockTime(text: unknown): text is string {
+  return typeof text === "string" && HHMM_RE.test(text);
+}
+
 /** Whether `zone` is an IANA time zone this runtime knows. */
 export function isTimeZone(zone: string): boolean {
   if (!zone || zone.length > MAX_ZONE) return false;

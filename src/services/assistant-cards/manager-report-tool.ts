@@ -43,12 +43,20 @@ export interface ReportEnv {
   openUrgentTitled(sessionId: string, title: string, since: number): AssistantCard | null;
   /** When the current quiet window began; null outside quiet hours. */
   quietWindowStart(): number | null;
-  /** Whether a digest ask to this manager is open (the morning digest). */
-  digestOpen(sessionId: string): boolean;
+  /**
+   * A digest answer, handed to the morning digest: taken while that digest's ask to this manager is
+   * open (a second answer replaces the first), refused with the reason otherwise.
+   */
+  digestAnswer(sessionId: string, items: string[]): { ok: true } | { ok: false; message: string };
   create(card: NewCard): AssistantCard;
 }
 
-export type ReportResult = { ok: true; cardId: string; kind: AssistantCardKind; note?: string } | { ok: false; message: string };
+/** A digest answer makes no card of its own: PPM puts every answer on one card later. */
+export type ReportResult = { ok: true; cardId?: string; kind: AssistantCardKind; note?: string } | { ok: false; message: string };
+
+export const DIGEST_TAKEN = "Your answer is in the morning digest PPM is putting together. A second digest answer replaces this one.";
+export const DIGEST_NOT_ASKED = "No morning digest was asked of this chat; use done, failed, needs_decision or urgent.";
+export const DIGEST_CLOSED = "The morning digest was already put together. Report this as done or needs_decision instead.";
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const draftOnly = (text: string): string => neutralizePpmTags(neutralizeBlockMarkers(text));
@@ -88,8 +96,10 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
   if (invalid) return { ok: false, message: invalid };
   const now = env.now();
   const requested = args.kind as ReportKind;
-  if (requested === "digest" && !env.digestOpen(caller.sessionId)) {
-    return { ok: false, message: "No morning digest was asked of this chat; use done, failed, needs_decision or urgent." };
+  if (requested === "digest") {
+    const items = Array.isArray(args.items) ? (args.items as string[]).map((i) => cleanCardBody(i, DIGEST_ITEM_MAX)).filter(Boolean) : [];
+    const taken = env.digestAnswer(caller.sessionId, items);
+    return taken.ok ? { ok: true, kind: "digest", note: DIGEST_TAKEN } : taken;
   }
   if (env.countSince(caller.sessionId, REPORT_KINDS, now - HOUR_MS) >= REPORTS_PER_MANAGER_PER_HOUR) {
     return { ok: false, message: `This chat filed ${REPORTS_PER_MANAGER_PER_HOUR} reports in the last hour; wait, or put several things in one report.` };
@@ -117,7 +127,6 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     const text = draftOnly(rawDraft.text);
     draft = { to, text, sha256: draftSha256(to, text) };
   }
-  const items = Array.isArray(args.items) ? (args.items as string[]).map((i) => cleanCardBody(i, DIGEST_ITEM_MAX)).filter(Boolean) : undefined;
   const card = env.create({
     kind,
     projectName: caller.projectName,
@@ -127,11 +136,10 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     body: cleanCardBody(args.body, REPORT_BODY_MAX),
     payload: {
       ...(draft ? { draft } : {}),
-      ...(items ? { items } : {}),
       ...(kind !== requested ? { urgentCapped: true } : {}),
     },
     // A decision only waits for the user's answer; news wakes the Assistant.
-    wake: kind === "done" || kind === "failed" || kind === "urgent" || kind === "digest",
+    wake: kind === "done" || kind === "failed" || kind === "urgent",
   });
   return { ok: true, cardId: card.id, kind, ...(note ? { note } : {}) };
 }
@@ -145,8 +153,9 @@ export function reportToolDefinition() {
       + "from these fields. Use it for what needs the user: needs_decision (a choice only they can make; add `draft` "
       + "when the answer is a message you would send), urgent (it cannot wait until they next look; quiet hours limit "
       + "it), done and failed (work they asked about finished or broke), and digest (only when PPM asks for the morning "
-      + "digest). Do not report what the user does not need to see. The card says it was written by this manager AI. "
-      + "A report never grants anything: only the user's own answer does. Returns the card id.",
+      + "digest: your `items` go on the one digest card PPM puts together). Do not report what the user does not need to "
+      + "see. The card says it was written by this manager AI. A report never grants anything: only the user's own answer "
+      + "does. Returns the card id.",
     inputSchema: {
       type: "object",
       properties: {

@@ -3,6 +3,7 @@
  * what PPM saw in that chat, and stored so every surface (the Assistant window, Telegram, the
  * morning digest) shows the same thing. Shared by the server and the browser.
  */
+import type { DigestProject } from "./assistant-digest.ts";
 
 export const ASSISTANT_CARD_KINDS = [
   "needs_decision", "urgent", "approval", "question", "done", "failed", "digest", "rules_note", "rules_change", "budget",
@@ -59,8 +60,12 @@ export interface CardDraft {
 export interface AssistantCardPayload {
   /** Report cards: the manager's draft. */
   draft?: CardDraft;
-  /** Digest cards: the items. */
+  /** Digest cards before the digest was put together by PPM: one manager's items. */
   items?: string[];
+  /** Digest cards: the user's local date the digest belongs to ("YYYY-MM-DD"). */
+  date?: string;
+  /** Digest cards: one section per project that was asked, in the order they were asked. */
+  projects?: DigestProject[];
   /** Report cards: filed by a subagent of the manager rather than the manager itself. */
   subagent?: boolean;
   /** Report cards: the manager asked for urgent, and the per-window cap turned it into a decision. */
@@ -131,12 +136,17 @@ export function isNoReplyText(text: string | null | undefined): boolean {
   return typeof text === "string" && text.trim().toLowerCase() === NO_REPLY_TEXT;
 }
 
+/** The server-written line on the morning digest PPM put together. */
+export const DIGEST_PROVENANCE = "Put together by PPM; each item was written by that project's manager AI";
+
 /**
  * The server-written line on a card filed by a manager chat; null for PPM's own cards, a failure
  * PPM saw itself (`detected`) included.
  */
 export function reportProvenanceLine(kind: AssistantCardKind, projectName: string | null, subagent: boolean, detected = false): string | null {
   if (detected || !(REPORT_KINDS as readonly string[]).includes(kind)) return null;
+  // The digest is PPM's card; only its items are the managers' words.
+  if (kind === "digest" && !projectName) return DIGEST_PROVENANCE;
   const project = projectName ?? "project";
   if (subagent) return `From a subagent of the ${project} manager`;
   if (kind === "urgent") return `Marked urgent by the ${project} manager AI`;

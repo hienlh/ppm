@@ -1,6 +1,6 @@
 /**
- * Starts the PPM Assistant's hub: the watches ("tell me when that chat finishes") and, when it is
- * switched on and has a bot, the Telegram bridge. The one startup both the server and the e2e
+ * Starts the PPM Assistant's hub: the watches ("tell me when that chat finishes"), the cards and the
+ * morning digest, and, when it is switched on and has a bot, the Telegram bridge. The one startup both the server and the e2e
  * fixtures call, so a test exercises the same wiring the server runs.
  *
  * Order: the watch service first (it settles what a restart left behind; its reports go out on a
@@ -14,6 +14,7 @@
 import { assistantWatchService } from "../assistant-watch/assistant-watch.service.ts";
 import { assistantWakeQueue } from "../assistant-wake/assistant-wake-queue.ts";
 import { startAssistantCards, stopAssistantCards } from "../assistant-cards/assistant-cards-startup.ts";
+import { startAssistantDigest, stopAssistantDigest } from "../assistant-digest/assistant-digest-env.ts";
 import {
   assistantTelegramBridge, assistantTelegramConfig, type BridgeStartOptions,
 } from "../assistant-telegram/assistant-telegram.service.ts";
@@ -52,6 +53,8 @@ export async function startAssistantHub(opts: AssistantHubOptions = {}): Promise
   } catch (e) {
     log.error("Assistant cards could not start:", e);
   }
+  // After the cards, so a digest a restart left past its deadline becomes a card that is heard.
+  void startAssistantDigest().catch((e) => log.error("The morning digest could not start:", e));
   try {
     migratePPMBotSettings();
   } catch (e) {
@@ -80,6 +83,7 @@ const upgradePickSources: UpgradePickSources = {
 /** Stops both halves; safe to call when nothing runs. */
 export async function stopAssistantHub(): Promise<void> {
   await assistantTelegramBridge.stop();
+  stopAssistantDigest();
   stopAssistantCards();
   assistantWatchService.stop();
   assistantWakeQueue.stop();

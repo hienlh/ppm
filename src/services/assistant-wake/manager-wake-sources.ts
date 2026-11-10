@@ -7,7 +7,8 @@ import type { WakeItem, WakeSource } from "./assistant-wake-queue.ts";
 /**
  * The wake queue's two sources of manager news.
  *
- * - Cards: a `done`, `failed`, `urgent` or digest report is news for the main Assistant session.
+ * - Cards: a `done`, `failed` or `urgent` report, and the morning digest, are news for the main
+ *   Assistant session.
  *   The card's `wake` column keeps it pending across a restart. With no main session the news
  *   waits (and the card stands in front of the user regardless).
  * - Late replies: a manager answering a message nobody waited for. Kept in memory: after a
@@ -28,7 +29,26 @@ export interface CardSourceDeps {
   setWake(id: string, wake: "pending" | "delivered"): void;
 }
 
+/** At most this many digest items reach the Assistant; the rest are on the card. */
+const DIGEST_NEWS_ITEMS = 12;
+
+/**
+ * The morning digest PPM put together: one notice for every project, its items prefixed with the
+ * project's name, and a line per project saying whether it answered.
+ */
+function digestNewsOf(row: CardRow): WakeNewsNotice {
+  const projects = row.payload.projects ?? [];
+  const items = projects.flatMap((p) => p.items.map((i) => `${p.name}: ${i}`)).slice(0, DIGEST_NEWS_ITEMS);
+  const body = projects.map((p) => (p.state === "answered" ? `${p.name}: ${p.items.length} item(s)` : `${p.name}: no answer`)).join("; ");
+  return {
+    kind: "report", key: row.id, project: "", sessionId: "", at: row.createdAt, reportKind: "digest", title: row.title,
+    ...(body ? { body } : {}),
+    ...(items.length ? { items } : {}),
+  };
+}
+
 function newsOf(row: CardRow, project: string): WakeNewsNotice {
+  if (row.kind === "digest" && row.payload.projects) return digestNewsOf(row);
   return {
     kind: "report", key: row.id, project, sessionId: row.sessionId ?? "", at: row.createdAt,
     reportKind: (REPORT_KINDS.includes(row.kind) ? row.kind : "done") as WakeReportKind,
