@@ -45,6 +45,11 @@ export class AssistantTelegramCardReplies {
     return { channel: "telegram", telegramChatId: chatId };
   }
 
+  /** Whether this message of this chat shows one of the Assistant's cards. */
+  isCardMessage(chatId: string, messageId: number): boolean {
+    return (this.deps.findCard ?? findCardByTelegramRef)(chatId, messageId) !== null;
+  }
+
   /** Whether the message answered a card (and so is not for the Assistant). */
   async reply(chatId: string, m: CardReplyMessage): Promise<boolean> {
     const row = (this.deps.findCard ?? findCardByTelegramRef)(chatId, m.replyToMessageId);
@@ -81,6 +86,13 @@ export class AssistantTelegramCardReplies {
 
   /** A button on one of the Assistant's cards: the toast to show, after acting. */
   async press(chatId: string, press: ManagerCardPress, group: string): Promise<string> {
+    if (press.op === "ok") {
+      const result = await (this.deps.ok ?? okCard)(press.cardId, { draftSha256: press.draftSha256 ?? null }, this.actor(chatId));
+      // A forward that failed opened the card again: its button stays usable.
+      if (result.ok || result.status !== 502) this.deps.codes.dropGroup(group);
+      if (result.ok) return result.to === "manager" ? `Sent to the ${result.projectName ?? "project"} manager.` : "Sent.";
+      return (result.question ?? result.error).slice(0, 180);
+    }
     this.deps.codes.dropGroup(group);
     if (press.op === "send_anyway") {
       const waiting = press.pendingId ? this.pending.get(press.pendingId) : undefined;
@@ -89,11 +101,6 @@ export class AssistantTelegramCardReplies {
       const result = await (this.deps.replyTo ?? replyToCard)(press.cardId, { text: waiting.text, force: true }, this.actor(chatId));
       this.answer(chatId, press.cardId, result, waiting.text);
       return result.ok ? "Sent." : "Not sent.";
-    }
-    if (press.op === "ok") {
-      const result = await (this.deps.ok ?? okCard)(press.cardId, { draftSha256: press.draftSha256 ?? null }, this.actor(chatId));
-      if (result.ok) return result.to === "manager" ? `Sent to the ${result.projectName ?? "project"} manager.` : "Sent.";
-      return (result.question ?? result.error).slice(0, 180);
     }
     if (!press.rulesHash || !press.projectName) return "This button is no longer valid.";
     try {

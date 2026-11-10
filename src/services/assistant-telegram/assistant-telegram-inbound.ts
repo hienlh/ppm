@@ -56,6 +56,8 @@ export interface InboundDeps {
   pressManagerCard?: (chatId: string, press: ManagerCardPress, group: string) => Promise<string>;
   /** A message sent as a reply to a card's message: true when it answered the card. */
   replyToCard?: (chatId: string, m: CardReplyMessage) => Promise<boolean>;
+  /** Whether this message of this chat shows one of the Assistant's cards. */
+  isCardMessage?: (chatId: string, messageId: number) => boolean;
   now?: () => number;
 }
 
@@ -180,7 +182,7 @@ export class AssistantTelegramInbound {
     // A reply to one of the Assistant's cards answers that card, word for word, and is never merged
     // into a gathered message. One sent while PPM was off is asked about first, like any other.
     const repliedTo = message.reply_to_message?.message_id;
-    if (repliedTo !== undefined && this.deps.replyToCard) {
+    if (repliedTo !== undefined && this.deps.replyToCard && this.deps.isCardMessage?.(chatId, repliedTo)) {
       const card: CardReplyMessage = { text, replyToMessageId: repliedTo, notTheUsers: !!from || !!message.via_bot };
       await this.flush(chatId);
       if (this.now() - message.date * 1000 > BACKLOG_AGE_MS) {

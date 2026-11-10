@@ -163,6 +163,7 @@ export class AssistantTelegramBridge {
       relayCard: (chatId, card) => cards.relayed(chatId, card),
       pressManagerCard: (chatId, press, group) => cardReplies.press(chatId, press, group),
       replyToCard: (chatId, m) => cardReplies.reply(chatId, m),
+      isCardMessage: (chatId, messageId) => cardReplies.isCardMessage(chatId, messageId),
     });
     poller = new AssistantTelegramPoller(client, state, (update) => inbound.dispatch(update));
     const offs = [

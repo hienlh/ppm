@@ -888,6 +888,53 @@ person pressed it, and the Allow rule guarantees they saw what it allows. The re
 reports of unbound sessions' watches to every connected chat. A card is shown once per chat, even
 when two watches and `/status` all want it.
 
+### Manager cards, replies and quiet hours
+
+**Cards on the phone** (`card-outbound.ts`, `assistant-telegram-manager-cards.ts`,
+`assistant-telegram-card-kinds.ts`). Every card the Assistant stores goes to every connected chat
+once the gate lets it. A manager's approval or question goes out as the relay's own card (same
+Allow rule, answers the manager chat directly); every other kind is formatted per kind. A project's
+`telegram_detail` (`full` or `title`) decides how much: at `title` the phone gets the kind, the
+project and the title only — no body, draft or diff, no OK, and an approval offers Deny alone. The
+message ids are stored on the card as `(chatId, messageId)` pairs (`telegram_refs_json`), because
+Telegram counts ids per chat. When a card stops waiting, every copy loses its buttons and says how.
+The "Waiting for approval" push for a manager chat's request is held back while its card reaches
+the phone; no other push changes.
+
+**OK** (`card-ok-rule.ts`, `card-reply-actions.ts`). A needs-decision card offers "OK, send" ("OK"
+with no draft) only when its title, body and draft fit `REVIEW_FIT_MAX` whole and nothing in them
+was hidden as a secret — Allow's bar, the same in PPM and on Telegram. `POST /cards/:id/ok
+{draftSha256}` (and the button, whose code carries the hash it showed) must name the card's draft;
+the card goes `open → answered` by compare-and-set first, so the first OK on any surface forwards
+and a later one is told "Already answered on Telegram at 22:41". A forward that fails opens the
+card again.
+
+**The user's own words** (`forward-verbatim.ts`, `src/server/ws/chat-user-words.ts`). A reply —
+`POST /cards/:id/reply {text, force?}` from the reply-to bar in PPM, or a Telegram message sent as
+a reply to a card's message — goes to the card's manager chat **word for word**, followed by a
+`<ppm-user-words-v1>` block (`src/shared/user-words-block.ts`) that names the card by id, the
+channel and the time, and for an OK the draft's hash and recipient. Its header reads "Typed by the
+user, forwarded word for word by PPM". Only `forward-verbatim.ts` builds one; every other door,
+the forwarded text included, breaks its markers, and a unit test checks the source for any second
+writer. A card that stopped waiting or is older than `STALE_REPLY_MS` asks "send anyway?" first. A
+reply to an approval or question card refuses that request, as typing in the manager chat would;
+any other forward waits behind a pending request. Forwarding resets the pair counts, leaves a line
+for the Assistant's next turn (no turn is started for it) and records the device and fetch site, or
+the Telegram chat, in the session trace. A card with no manager (digest, rules, budget) takes no
+reply in PPM; a Telegram reply to one goes to the Assistant as an ordinary message.
+
+**Telegram replies** are matched after the access and backlog checks, with the chat's gathered
+messages flushed first and the reply never merged into them. A forwarded message, or one sent
+through an inline bot, is someone else's words and never answers a card.
+
+**Quiet hours** (`quiet_hours` and `timezone` in Settings → PPM Assistant). Inside the window every
+card but an `urgent` one is `held` in the database; past two urgent reports per manager per window
+an urgent report is already a held decision. A clock timer at the window's end — or the bridge
+starting after a window that ended while PPM was off — sends "While you were away: N items" and
+the held cards, oldest first, skipping any that stopped waiting meanwhile. The end is worked out in
+the user's zone, corrected once for a clock change inside the window. The user's own conversation
+with the Assistant is never held, and wake turns are held by the wake queue itself.
+
 ### Commands, links and settings
 
 Commands are `BOT_COMMANDS` in `assistant-telegram-commands.ts` (`/new`, `/sessions`, `/status`,
