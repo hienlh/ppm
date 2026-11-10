@@ -111,6 +111,67 @@ tool, once it exists, is the one kept on for a manager regardless. The tool list
 stream starts, so a chat made a manager while its stream is live gets the server at its next start
 (idle release, the warm-idle cap, a restart); nothing restarts it for this.
 
+`POST /api/assistant/managers/:project/create` (Settings) makes a new Claude chat titled "Manager"
+the project's manager, in the mode Settings → PPM Assistant gives new manager chats
+(`manager_default_mode`), with the rules files below. No card: a person pressed the button.
+
+### Manager rules
+
+A manager chat works by `<project>/.ppm/manager.md` (`src/services/assistant-managers/manager-rules-*.ts`).
+It is written from a template when the project gets a manager and has none — Settings' own
+`manager_template`, else PPM's, which carries the safety rules inline — and `.ppm/.gitignore` gets
+`/manager.md` and `/.gitignore` appended (never `*`: `.ppm/` is also a skill root), so git sees
+nothing new. Writes are atomic and retried on Windows' EPERM/EBUSY.
+
+**How the rules reach the chat.** Never through the system prompt, which is fixed per Claude query:
+changing it would restart the stream, cold-read the manager's whole context and kill its background
+work. They ride the `<ppm-shared-context>` block as a PPM-owned entry (`managerContextEntry`), built
+for every manager turn whatever *share provider context* says, left off only for a slash command,
+and re-sent like every entry there: when it changes, after a compaction, after an error. The entry
+holds the fixed manager block (the chat's role, who may authorize what, how to report), then
+**Approved rules (authoritative)** — what the user approved, or the template — then, when there
+are any, **Rules the manager added since**, labelled unreviewed and told it may only add caution.
+Rules text has PPM's message-block markers broken, like every other door.
+
+**The guard** (`manager-rules-guard.ts`) runs at every manager turn start, one rules operation per
+project at a time, and keeps the file and the prompt in agreement. The file is read only when it is
+a plain file of its own (not a link, not one name of a hardlinked file, inside a real `.ppm`) of at
+most 16 KB (`RULES_FILE_MAX_BYTES`), and judged against the rules in force with an ordered line diff
+(whitespace and blank lines ignored, so a moved line is a removal and an addition):
+- unchanged: nothing to do;
+- held for the user — any removed, edited or moved line; any added heading, fence, comment, quote
+  marker, HTML tag, setext underline, link definition or hidden character; any added line with
+  "ignore", "override", "exception", "no longer", "does not need", "instead of", "unless" or
+  "except"; a file over the size limit (held whole, never cut);
+- otherwise only plain lines were inserted, and one `completeOnce` call (Claude Haiku, no tools,
+  15 s, `manager-rules-check.ts`) judges each one. Only "restriction" for every line accepts the
+  change; a relaxing or missing verdict, an answer that is not the JSON asked for, an error, a
+  timeout or no Claude account holds it (fail closed). One call per distinct change, never per turn.
+
+A held change is kept off disk (`rules_proposed`, `rules_pending_hash`) and the file goes back to
+the rules in force, so the manager never reads rules that are not in force. Writing the same change
+again is put back without a second announcement. A missing file is written back. A file git tracks
+is never read or written ("Untrack .ppm/manager.md (git rm --cached) to use it as manager rules"):
+a cloned repository may ship one and `git pull` may rewrite it. A file that already exists when the
+project gets its manager is untrusted the same way: the template goes in force and the old text
+waits for approval.
+
+Every outcome is a `managerRulesEvents` event (`rules_tightened` quoting the accepted lines
+verbatim, `rules_loosen_pending` once per held change, `rules_restored`, `rules_unreadable` once per
+reason, `rules_edited`, `rules_decided`), which the Assistant's cards turn into something the user
+sees. `GET /managers/:project/rules` reads the rules; `POST …/rules/decision {action, hash}`
+approves (the held text becomes approved and in force) or reverts, and is refused unless `hash` is
+the change held now, so a stale card cannot apply a newer one; `PUT …/rules {text}` is the user's
+own edit — approved and in force at once, no decision — and is always announced with its diff, so
+a write the user did not make shows on their phone.
+
+**What the guard does not cover.** PPM guards only `.ppm/manager.md`. A guide the rules point to
+(nxsys's `manager-sessions-guide.md`, say) stays the manager's own working file and is not guarded;
+the fixed block says the rules and the block win over any file they point to, and the safety rules
+belong inline in `manager.md`. The guard targets text a model wrote or a repository shipped; a
+process running as the same OS user can write the file and the database anyway, just as it can
+read PPM's auth token ("PPM's password" in `CLAUDE.md`).
+
 ## Isolation
 
 The Assistant inherits none of the user's own agent setup or of ordinary chats' settings.
