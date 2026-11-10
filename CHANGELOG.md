@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Claude Fable 5.2 is selectable** in the model picker, above Fable 5.1 (Agent SDK 0.3.322, Claude Code 2.1.322).
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed

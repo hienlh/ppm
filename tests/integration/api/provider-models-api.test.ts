@@ -41,11 +41,12 @@ describe("Provider Models API", () => {
       const json = (await res.json()) as any;
       expect(json.ok).toBe(true);
       expect(Array.isArray(json.data)).toBe(true);
-      expect(json.data.length).toBe(10);
+      expect(json.data.length).toBe(11);
 
       const values = json.data.map((m: any) => m.value);
       expect(values).toContain("claude-opus-5-5");
       expect(values).toContain("claude-opus-5");
+      expect(values).toContain("claude-fable-5-2");
       expect(values).toContain("claude-fable-5-1");
       expect(values).toContain("claude-fable-5");
       expect(values).toContain("claude-sonnet-5");
@@ -114,11 +115,12 @@ describe("Provider Models API", () => {
       const json = (await res.json()) as any;
       expect(json.ok).toBe(true);
       expect(Array.isArray(json.data)).toBe(true);
-      expect(json.data.length).toBe(10);
+      expect(json.data.length).toBe(11);
 
       const values = json.data.map((m: any) => m.value);
       expect(values).toContain("claude-opus-5-5");
       expect(values).toContain("claude-opus-5");
+      expect(values).toContain("claude-fable-5-2");
       expect(values).toContain("claude-fable-5-1");
       expect(values).toContain("claude-fable-5");
       expect(values).toContain("claude-sonnet-5");
