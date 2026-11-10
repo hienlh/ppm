@@ -69,6 +69,10 @@ projectRoutes.post("/git/clone", async (c) => {
     if (!url) return c.json(err("Missing: url"), 400);
     if (!targetDir) return c.json(err("Missing: targetDir"), 400);
 
+    // A clone over the network can outlast Bun's 10 s idle timeout; 0 turns the idle timer off
+    // for this request so Bun does not cut the connection while git is still cloning.
+    (c.env as { timeout?: (request: Request, seconds: number) => void } | undefined)?.timeout?.(c.req.raw, 0);
+
     // Expand ~ to home directory (path.resolve does not do this)
     const resolvedDir = targetDir.startsWith("~")
       ? targetDir.replace(/^~/, homedir())

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Loader2, ArrowUpCircle, RefreshCw, Download, History, Maximize2 } from "@/lib/icons";
 import { useSettingsStore } from "@/stores/settings-store";
 import { fetchRecentChangelog, newestSectionVersion, compareSemver, type ChangelogSection } from "@/lib/changelog";
+import { looksLikeServerRestart } from "@/lib/upgrade-restart";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
@@ -83,21 +84,6 @@ async function reloadWhenServerReady() {
     await new Promise((r) => setTimeout(r, 2_000));
   }
   await clearCachesAndReload();
-}
-
-/**
- * Whether an /api/upgrade/apply failure actually means "the server is
- * restarting", not "the upgrade failed". The self-replace tears the server down
- * mid-request, so the response often never arrives cleanly: the connection
- * drops (TypeError) or a proxy/tunnel in front returns a gateway error while the
- * origin is briefly gone (502/503/504, or Cloudflare's 52x). Real upgrade
- * failures come back as a JSON 500 with a specific message and won't match here.
- */
-function looksLikeServerRestart(e: unknown): boolean {
-  if (e instanceof TypeError) return true; // dropped connection / fetch failure
-  const msg = (e as Error)?.message ?? "";
-  if (/fetch|network|failed to fetch|load failed/i.test(msg)) return true;
-  return /HTTP 5(0[234]|2\d)\b/.test(msg); // 502/503/504 + Cloudflare 520–529
 }
 
 /**
