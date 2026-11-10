@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
  *
  * Delivery hints only: a restart or an eviction just sends a fresh copy.
  */
-export type SharedContextPart = "shared" | "ui" | "manager" | "managers";
+export type SharedContextPart = "shared" | "ui" | "manager" | "managers" | "notebook";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -20,6 +20,11 @@ export class SharedContextSnapshots {
   /** True when `text` is exactly what the session's model last received for this entry. */
   unchanged(key: string, part: SharedContextPart, text: string): boolean {
     return this.sent.get(key)?.[part] === hash(text);
+  }
+
+  /** True when the session's model was sent this entry at all since its last reset. */
+  has(key: string, part: SharedContextPart): boolean {
+    return this.sent.get(key)?.[part] !== undefined;
   }
 
   /** Records the entries a message carried; entries it left out keep their last record. */

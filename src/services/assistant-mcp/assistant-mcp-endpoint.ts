@@ -6,9 +6,10 @@ import {
   DB_QUERY_TOOL, PROJECTS_LIST_TOOL, UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_GET_STATE_TOOL, UI_OPEN_TAB_TOOL,
   UI_LIST_COMMANDS_TOOL, UI_READ_TAB_TOOL, UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
   CHATS_ATTENTION_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
-  CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
+  CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL, NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import { chatListWatchesTool, chatUnwatchTool, chatWatchTool } from "./assistant-watch-tools.ts";
+import { notebookAddTool, notebookDeleteTool, notebookEditTool } from "./assistant-notebook-tools.ts";
 import { chatAnswerApproval, chatsAttentionTool, ppmCliReferenceTool } from "./assistant-hub-tools.ts";
 import { ASSISTANT_MCP_HOLD_OPEN_SECONDS, ASSISTANT_TOOL_DEFINITIONS } from "./assistant-mcp-tools.ts";
 import { assistantMcpTokens, type AssistantMcpTokenBinding } from "./assistant-mcp-tokens.ts";
@@ -93,6 +94,9 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, sig
     case CHAT_WATCH_TOOL: return chatWatchTool(sessionId, args);
     case CHAT_UNWATCH_TOOL: return chatUnwatchTool(sessionId, args);
     case CHAT_LIST_WATCHES_TOOL: return chatListWatchesTool(sessionId);
+    case NOTEBOOK_ADD_TOOL: return notebookAddTool(sessionId, args);
+    case NOTEBOOK_EDIT_TOOL: return notebookEditTool(sessionId, args);
+    case NOTEBOOK_DELETE_TOOL: return notebookDeleteTool(sessionId, args);
     // The git, schedule and tunnel tools: each family dispatches its own, with a route caller
     // confined to the routes that family declared.
     default: return callFamilyTool(name, { sessionId, ask, signal }, args) ?? errorResult(`Unknown tool: ${name.slice(0, 60)}`);

@@ -9,6 +9,7 @@ import { UI_COMMAND_TOOL_DEFINITIONS, UI_NAV_TOOL_DEFINITIONS, UI_READ_TAB_DEFIN
 import { GIT_TOOL_DEFINITIONS } from "./assistant-git-tool-definitions.ts";
 import { SCHEDULE_TOOL_DEFINITIONS } from "./assistant-schedule-tool-definitions.ts";
 import { TUNNEL_TOOL_DEFINITIONS } from "./assistant-tunnel-tool-definitions.ts";
+import { NOTEBOOK_TOOL_DEFINITIONS } from "./assistant-notebook-tool-definitions.ts";
 
 /**
  * The tools the Assistant's MCP endpoint serves, and how long a call may take. The names each
@@ -200,6 +201,7 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
     inputSchema: object({}),
     annotations: READ_ONLY,
   },
+  ...NOTEBOOK_TOOL_DEFINITIONS,
   // The families that work through PPM's own routes, in the order of their names in `ASSISTANT_TOOLS`.
   ...GIT_TOOL_DEFINITIONS,
   ...SCHEDULE_TOOL_DEFINITIONS,

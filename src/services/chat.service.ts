@@ -41,6 +41,7 @@ import { isAssistantProject } from "../shared/assistant-project.ts";
 import { isAssistantSession, isAssistantWorkDir } from "./assistant/assistant-session.ts";
 import { ASSISTANT_APPROVAL_SECTION, ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, assistantUserMcpSection, buildAssistantInstructions } from "./assistant/assistant-instructions.ts";
 import { ASSISTANT_OPS_SECTION } from "./assistant/assistant-instructions-ops.ts";
+import { ASSISTANT_NOTEBOOK_SECTION } from "./assistant/assistant-instructions-notebook.ts";
 import { enabledAssistantMcpServers, getAssistantSettings } from "./assistant/assistant-settings.service.ts";
 import { assistantMcpAccessFor, assistantMcpTokens } from "./assistant-mcp/assistant-mcp-tokens.ts";
 import { ensureAssistantWorkDir } from "./assistant/assistant-work-dir.ts";
@@ -568,17 +569,37 @@ class ChatService {
       managersEntry = await this.assistantManagersEntry();
       if (managersEntry && this.sharedSnapshots.unchanged(key, "managers", managersEntry)) managersEntry = undefined;
     }
+    // The Assistant's notebook, sent when it changes (and after a compaction or an error).
+    const notebookEntry = design.assistantSession && !slash ? await this.assistantNotebookEntry(key) : undefined;
     // Cards the user answered themselves since the Assistant's last turn: news once, never compared.
     const cardNotes = design.assistantSession && !slash ? takeCardAnswerNotes(sessionId) : undefined;
     // Every entry is server-built: a caller's own `sharedContext` is dropped here.
-    const sharedContext = joinSharedContextEntries(managerEntry, shared, ui, channelEntry, managersEntry, cardNotes);
+    const sharedContext = joinSharedContextEntries(managerEntry, shared, ui, channelEntry, managersEntry, notebookEntry, cardNotes);
     return {
       opts: {
         ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
         ...(sessionCollabMcp ? { sessionCollabMcp } : {}), sharedContext,
       },
-      sent: { shared, ui, manager: managerEntry, managers: managersEntry },
+      sent: { shared, ui, manager: managerEntry, managers: managersEntry, notebook: notebookEntry },
     };
+  }
+
+  /**
+   * The notebook entry for an Assistant turn, or undefined when the model already has it. Without
+   * notes there is no entry, except once after the notebook the model last saw was emptied.
+   * Undefined, and logged, when the notebook cannot be read: a turn is never refused for it.
+   */
+  private async assistantNotebookEntry(key: string): Promise<string | undefined> {
+    try {
+      const { assistantNotes } = await import("./assistant-notes/assistant-notes.service.ts");
+      const { notebookContextEntry, NOTEBOOK_EMPTY_ENTRY } = await import("./assistant-notes/assistant-notes-entry.ts");
+      const entry = notebookContextEntry(assistantNotes.list().notes)
+        ?? (this.sharedSnapshots.has(key, "notebook") ? NOTEBOOK_EMPTY_ENTRY : undefined);
+      return entry && !this.sharedSnapshots.unchanged(key, "notebook", entry) ? entry : undefined;
+    } catch (e) {
+      log.warn(`could not read the Assistant's notebook: ${(e as Error).message}`);
+      return undefined;
+    }
   }
 
   /** The manager chats an Assistant turn is told about; undefined when the list cannot be read. */
@@ -628,7 +649,7 @@ class ChatService {
     const defaults = settings.providers[providerId] ?? {};
     const servers = enabledAssistantMcpServers();
     const sections = [
-      ...(assistantMcp ? [ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, ASSISTANT_APPROVAL_SECTION, ASSISTANT_OPS_SECTION] : []),
+      ...(assistantMcp ? [ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, ASSISTANT_APPROVAL_SECTION, ASSISTANT_OPS_SECTION, ASSISTANT_NOTEBOOK_SECTION] : []),
       ...(servers.length > 0 ? [assistantUserMcpSection(servers.map((s) => s.name))] : []),
     ];
     return {

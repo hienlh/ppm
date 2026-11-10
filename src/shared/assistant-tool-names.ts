@@ -28,6 +28,9 @@ export const PPM_CLI_REFERENCE_TOOL = "ppm_cli_reference";
 export const CHAT_WATCH_TOOL = "chat_watch";
 export const CHAT_UNWATCH_TOOL = "chat_unwatch";
 export const CHAT_LIST_WATCHES_TOOL = "chat_list_watches";
+export const NOTEBOOK_ADD_TOOL = "notebook_add";
+export const NOTEBOOK_EDIT_TOOL = "notebook_edit";
+export const NOTEBOOK_DELETE_TOOL = "notebook_delete";
 
 /**
  * Every tool the endpoint serves, in the order `tools/list` gives them. The git, schedule and
@@ -42,6 +45,7 @@ export const ASSISTANT_TOOLS = [
   UI_LIST_COMMANDS_TOOL, UI_RUN_COMMAND_TOOL,
   CHATS_ATTENTION_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
+  NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,
   ...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS,
 ] as const;
 export type AssistantToolName = (typeof ASSISTANT_TOOLS)[number];
