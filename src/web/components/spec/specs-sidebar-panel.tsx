@@ -25,7 +25,7 @@ export function SpecsSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
 
   const open = async (s: SpecSummary) => {
     if (s.sessionId) {
-      await openSpecChat(projectName, s.sessionId, s.title);
+      await openSpecChat(projectName, s.sessionId, s.title, undefined, { showSpec: true });
       onNavigate?.();
       return;
     }
@@ -33,7 +33,7 @@ export function SpecsSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
     try {
       const session = await api.post<Session>(`${projectUrl(projectName)}/chat/sessions`, { title: s.title });
       await specsApi.attachSession(projectName, s.slug, session.id);
-      await openSpecChat(projectName, session.id, s.title, session.providerId);
+      await openSpecChat(projectName, session.id, s.title, session.providerId, { showSpec: true });
       onNavigate?.();
     } catch (e) {
       toast.error("Could not open the spec", { description: (e as Error).message });
