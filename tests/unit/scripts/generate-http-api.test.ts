@@ -16,9 +16,15 @@ function makeFixture(): string {
     [
       `import { fooRoutes } from "./routes/foo";`,
       `import { barRoutes } from "./routes/bar";`,
+      `import { nestRoutes } from "./routes/nest";`,
       `const app: any = {};`,
+      `app.get("/api/health", () => {});`,
       `app.route("/api/foo", fooRoutes);`,
       `app.route("/api/bar", barRoutes);`,
+      `app.route("/api/project/:projectName", nestRoutes);`,
+      `if (url.pathname === "/ws/global") {}`,
+      `if (wsType === "terminal") {}`,
+      `if (wsType === "chat") {}`,
     ].join("\n"),
   );
 
@@ -29,15 +35,43 @@ function makeFixture(): string {
       `fooRoutes.get("/", () => {});`,
       `fooRoutes.post("/", () => {});`,
       `fooRoutes.delete("/:id", () => {});`,
+      // Not routes: a config read and a context variable, which a route file is full of.
+      `const auth = configService.get("auth");`,
+      `fooRoutes.get("/me", (c: any) => c.get("projectPath"));`,
     ].join("\n"),
   );
 
+  // A router that only mounts others, two of them living in one file.
+  writeFileSync(
+    resolve(root, "src/server/routes/nest.ts"),
+    [
+      `import { gitRoutes, jobRoutes } from "./git";`,
+      `export const nestRoutes: any = {};`,
+      `nestRoutes.route("/git", gitRoutes);`,
+      `nestRoutes.route("/jobs", jobRoutes);`,
+    ].join("\n"),
+  );
+  writeFileSync(
+    resolve(root, "src/server/routes/git.ts"),
+    [
+      `export const gitRoutes: any = {};`,
+      `export const jobRoutes: any = {};`,
+      `gitRoutes.get("/status", () => {});`,
+      `jobRoutes.post("/:id/cancel", () => {});`,
+    ].join("\n"),
+  );
+
+  // A router built by a factory: its calls are on a local, not on the exported name.
   writeFileSync(
     resolve(root, "src/server/routes/bar.ts"),
     [
-      `export const barRoutes: any = {};`,
-      `barRoutes.get("/list", () => {});`,
-      `barRoutes.put("/update/:id", () => {});`,
+      `function createBarRoutes() {`,
+      `  const routes: any = {};`,
+      `  routes.get("/list", () => {});`,
+      `  routes.put("/update/:id", () => {});`,
+      `  return routes;`,
+      `}`,
+      `export const barRoutes = createBarRoutes();`,
     ].join("\n"),
   );
 
@@ -83,11 +117,41 @@ describe("generateHttpApi", () => {
     expect(fooIdx).toBeGreaterThan(barIdx);
   });
 
-  it("appends WebSocket section", () => {
-    const root = makeFixture();
-    const md = generateHttpApi(root)[0]!.content;
+  it("follows nested mounts, taking each router's own calls only", () => {
+    const md = generateHttpApi(makeFixture())[0]!.content;
+    expect(md).toContain("## /api/project/:projectName/git");
+    expect(md).toMatch(/GET\s+\/api\/project\/:projectName\/git\/status`/);
+    expect(md).toMatch(/POST\s+\/api\/project\/:projectName\/jobs\/:id\/cancel`/);
+    // Two routers in one file: neither one's routes appear under the other's mount.
+    expect(md).not.toContain("/git/:id/cancel");
+    expect(md).not.toContain("/jobs/status");
+  });
+
+  it("lists the server's own routes", () => {
+    const md = generateHttpApi(makeFixture())[0]!.content;
+    expect(md).toMatch(/GET\s+\/api\/health`/);
+  });
+
+  it("does not take a config read or a context variable for a route", () => {
+    const md = generateHttpApi(makeFixture())[0]!.content;
+    expect(md).toMatch(/GET\s+\/api\/foo\/me`/);
+    expect(md).not.toContain("/api/foo/auth");
+    expect(md).not.toContain("projectPath");
+  });
+
+  it("says how to authenticate", () => {
+    const md = generateHttpApi(makeFixture())[0]!.content;
+    expect(md).toContain("## Authentication");
+    expect(md).toContain("Authorization: Bearer <token>");
+    expect(md).toContain("?token=<token>");
+  });
+
+  it("lists the WebSocket paths the server upgrades", () => {
+    const md = generateHttpApi(makeFixture())[0]!.content;
     expect(md).toContain("## WebSocket");
-    expect(md).toContain("/ws/chat");
+    expect(md).toContain("`/ws/global`");
+    expect(md).toContain("`/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`");
+    expect(md).not.toContain("Scanner warnings");
   });
 
   it("returns graceful placeholder when server index missing", () => {

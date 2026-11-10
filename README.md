@@ -226,8 +226,10 @@ bunx @hienlh/ppm init -y \
 Install the PPM skill so Claude Code (and other compatible AI agents) can control PPM via its CLI, HTTP API, and SQLite config DB:
 
 ```bash
-ppm export skill --install
-# Installs to ~/.claude/skills/ppm/ (use --scope project for per-project install).
+ppm export skill --install                      # Claude Code: ~/.claude/skills/ppm/
+ppm export skill --install --format codex       # Codex: ~/.agents/skills/ppm/
+ppm export skill --install --format antigravity # Antigravity: ~/.gemini/config/skills/ppm/
+# Add --scope project to install into the current project instead.
 ```
 
 Then in Claude Code: `/ppm list my projects` → Claude invokes `ppm projects list` automatically. Re-run any time to refresh (existing files are backed up with a `.bak-<timestamp>` suffix). Requires PPM v0.13.0+.

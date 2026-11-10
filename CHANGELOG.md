@@ -5,6 +5,7 @@
 ### Added
 
 - **Claude Fable 5.2 is selectable** in the model picker, above Fable 5.1 (Agent SDK 0.3.322, Claude Code 2.1.322).
+- **`ppm export skill` installs from a release binary, and for Antigravity and Codex too.** The skill was copied from `assets/` on disk, which a release binary does not have, so a release could not install it; it is now built into the binary. `--format antigravity` installs it where agy reads user skills (`~/.gemini/config/skills/ppm`), `--format codex` where every Codex account reads them (`~/.agents/skills/ppm`), and `--scope project` puts either in the project's `.agents/skills/ppm`. The skill itself is rewritten against the CLI and HTTP API as they are.
 
 ### Fixed
 
@@ -25,6 +26,7 @@
 - **Two hunk-staging errors showed `â€”` instead of a dash**, for a renamed file and for a binary file.
 - **A long design page in the canvas did not scroll with the mouse wheel or trackpad in Chrome.** The app's design kit is a copy of the app's own CSS, which sets `overscroll-behavior: none` on `html` and `body`. A long design page also sets `body { overflow: auto }` so the page can grow, and the two together stopped every wheel at `body`, a box that has nothing to scroll; only dragging the scrollbar moved the page. The canvas and the reviewer page now give `body` back the default overscroll behaviour. This changes how a scroll passes from one box to the next, not anything drawn.
 - **A design made of several pages could not be clicked through in the canvas.** The canvas stops every link that leaves the page it shows, so that a design cannot load something else into PPM. That included links to the design's own other pages, so a table of contents or a "back" link did nothing and only added a *Link blocked* note. Links to another HTML page of the same design now open that page in the canvas; links anywhere else are still stopped.
+- **`--json` output could not be parsed.** Every command printed the version banner on stdout first; it is now left out when `--json` is given.
 
 ## [0.23.37] - 2026-11-10
 
