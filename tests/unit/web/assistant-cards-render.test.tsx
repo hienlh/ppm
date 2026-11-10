@@ -125,9 +125,26 @@ describe("assistant cards", () => {
       await view.unmount();
       view = null;
     }
-    view = await mount(<AssistantCard card={base({ kind: "digest", title: "Today", payload: { items: ["a", "b"] } })} />);
-    expect(view.container.textContent).toContain("Morning digest");
-    expect(view.container.textContent).toContain("2 items");
+    view = await mount(<AssistantCard card={base({
+      kind: "digest", projectName: null, projectKey: null, sessionId: null, title: "Morning digest · 3 projects, 2 items",
+      provenance: "Put together by PPM; each item was written by that project's manager AI",
+      payload: { date: "2026-11-10", projects: [
+        { name: "nxsys", state: "answered", items: ["OK the <b>Slack</b> draft", "Release 2.14"] },
+        { name: "ppm", state: "answered", items: [] },
+        { name: "pex", state: "no_answer", items: [] },
+      ] },
+    })} />);
+    const text = view.container.textContent ?? "";
+    expect(text).toContain("Morning digest");
+    expect(text).toContain("3 projects, 2 items");
+    expect(text).toContain("Put together by PPM");
+    const sections = [...view.container.querySelectorAll("[data-digest-project]")].map((s) => s.getAttribute("data-digest-project"));
+    expect(sections).toEqual(["nxsys", "ppm", "pex"]);
+    expect(view.container.querySelectorAll("[data-digest-project='nxsys'] li")).toHaveLength(2);
+    expect(view.container.querySelector("[data-digest-project='nxsys'] b")).toBeNull();
+    expect(view.container.querySelector("[data-digest-project='ppm']")?.textContent).toContain("Nothing new");
+    expect(view.container.querySelector("[data-digest-project='pex']")?.textContent).toContain("No answer yet (busy)");
+    expect(buttons()).toEqual([]);
     await view.unmount();
     view = await mount(<AssistantCard card={base({ kind: "rules_note", status: "info", title: "The manager added 1 rule line", payload: { added: ["x"] } })} />);
     expect(view.container.textContent).toContain("Rules updated");

@@ -77,6 +77,36 @@ describe("a rules change on Telegram", () => {
   });
 });
 
+describe("the morning digest on Telegram", () => {
+  const digest = (projects: NonNullable<AssistantCard["payload"]["projects"]>) => card({
+    kind: "digest", projectName: null, projectKey: null, sessionId: null, body: "", title: "Morning digest · 3 projects, 2 items",
+    provenance: "Put together by PPM; each item was written by that project's manager AI", payload: { date: "2026-11-10", projects },
+  });
+
+  it("lists each project's items, says who did not answer, and keeps a title-only project's items off the phone", () => {
+    const f = formatManagerCard(digest([
+      { name: "nxsys", state: "answered", items: ["OK the Slack draft <now>", "Release 2.14"] },
+      { name: "pex", state: "no_answer", items: [] },
+      { name: "tax", state: "answered", items: ["Client 4471 payslip wrong"], titleOnly: true },
+    ]), "full");
+    const text = visible(f.html);
+    expect(text).toContain("Morning digest");
+    expect(text).toContain("1. OK the Slack draft <now>");
+    expect(text).toContain("2. Release 2.14");
+    expect(text).toContain("No answer yet (busy)");
+    expect(text).toContain("1 item; the details stay in PPM for this project.");
+    expect(text).not.toContain("4471");
+    expect(f.buttons).toEqual([]);
+  });
+
+  it("stays under Telegram's limit however many projects answered", () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ name: `p${i}`, state: "answered" as const, items: Array(12).fill("x".repeat(200)) }));
+    const text = visible(formatManagerCard(digest(many), "full").html);
+    expect(text.length).toBeLessThan(4096);
+    expect(text).toContain("The rest is on the card in PPM.");
+  });
+});
+
 describe("the end of a card", () => {
   it("says how it ended", () => {
     expect(visible(cardEndLine(card({ status: "answered", answer: { by: "user", channel: "ppm", at: 1, note: "OK given in PPM" } })))).toBe("OK given in PPM");

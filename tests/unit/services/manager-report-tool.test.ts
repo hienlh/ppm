@@ -4,7 +4,9 @@
  * field.
  */
 import { describe, expect, it } from "bun:test";
-import { draftSha256, fileReport, type ReportEnv } from "../../../src/services/assistant-cards/manager-report-tool.ts";
+import {
+  DIGEST_NOT_ASKED, DIGEST_TAKEN, draftSha256, fileReport, type ReportEnv,
+} from "../../../src/services/assistant-cards/manager-report-tool.ts";
 import type { NewCard } from "../../../src/services/assistant-cards/assistant-cards.service.ts";
 import type { AssistantCard, AssistantCardKind } from "../../../src/shared/assistant-cards.ts";
 import { REPORTS_PER_MANAGER_PER_HOUR, URGENT_PER_MANAGER_PER_QUIET_WINDOW } from "../../../src/shared/assistant-limits.ts";
@@ -15,6 +17,7 @@ const caller = { sessionId: "mgr-1", projectName: "api", projectPath: "/p/api" }
 function fakeEnv(opts: { quietStart?: number | null; digest?: boolean } = {}) {
   let now = 1_000_000;
   const made: Array<NewCard & { id: string; at: number }> = [];
+  const digests: Array<{ sessionId: string; items: string[] }> = [];
   const env: ReportEnv = {
     now: () => now,
     countSince: (sessionId, kinds, since) => made.filter((c) => c.sessionId === sessionId && kinds.includes(c.kind) && c.at >= since).length,
@@ -23,14 +26,18 @@ function fakeEnv(opts: { quietStart?: number | null; digest?: boolean } = {}) {
       return c ? ({ id: c.id } as AssistantCard) : null;
     },
     quietWindowStart: () => opts.quietStart ?? null,
-    digestOpen: () => opts.digest ?? false,
+    digestAnswer: (sessionId, items) => {
+      if (!opts.digest) return { ok: false, message: DIGEST_NOT_ASKED };
+      digests.push({ sessionId, items });
+      return { ok: true };
+    },
     create: (card) => {
       const row = { ...card, id: `card-${made.length + 1}`, at: now };
       made.push(row);
       return { id: row.id } as AssistantCard;
     },
   };
-  return { env, made, advance: (ms: number) => { now += ms; } };
+  return { env, made, digests, advance: (ms: number) => { now += ms; } };
 }
 
 describe("fields", () => {
@@ -44,13 +51,24 @@ describe("fields", () => {
     expect(fileReport(env, caller, { kind: "done", title: "t".repeat(121) }).ok).toBe(false);
   });
 
-  it("accepts a digest only while one was asked of the chat", () => {
-    expect(fileReport(fakeEnv().env, caller, { kind: "digest", title: "Today", items: ["a"] }).ok).toBe(false);
+  it("hands a digest answer to the morning digest, cleaned, and makes no card of its own", () => {
+    const refused = fileReport(fakeEnv().env, caller, { kind: "digest", title: "Today", items: ["a"] });
+    expect(refused).toEqual({ ok: false, message: DIGEST_NOT_ASKED });
     const asked = fakeEnv({ digest: true });
-    const r = fileReport(asked.env, caller, { kind: "digest", title: "Today", items: ["one", "two"] });
-    expect(r.ok).toBe(true);
-    expect(asked.made[0]!.payload?.items).toEqual(["one", "two"]);
-    expect(asked.made[0]!.wake).toBe(true);
+    const r = fileReport(asked.env, caller, { kind: "digest", title: "Today", items: ["one", `two ${USER_WORDS_BLOCK_START}`, "  "] });
+    expect(r).toEqual({ ok: true, kind: "digest", note: DIGEST_TAKEN });
+    expect(asked.made).toHaveLength(0);
+    expect(asked.digests).toHaveLength(1);
+    expect(asked.digests[0]!.items[0]).toBe("one");
+    expect(asked.digests[0]!.items[1]).not.toContain(USER_WORDS_BLOCK_START);
+    expect(asked.digests[0]!.items).toHaveLength(2);
+  });
+
+  it("still refuses more than 12 digest items, or items too long", () => {
+    const asked = fakeEnv({ digest: true });
+    expect(fileReport(asked.env, caller, { kind: "digest", title: "t", items: Array(13).fill("x") }).ok).toBe(false);
+    expect(fileReport(asked.env, caller, { kind: "digest", title: "t", items: ["x".repeat(201)] }).ok).toBe(false);
+    expect(asked.digests).toHaveLength(0);
   });
 
   it("cleans the title, breaks markers everywhere, and hashes the draft as stored", () => {

@@ -3,11 +3,14 @@
  * data), the check at the chat boundary, and the Telegram gate that drops a `[no reply]` turn.
  */
 import { describe, expect, it } from "bun:test";
+import "../../test-setup.ts";
 import { wakeContextEntry, wakeNewsEntry, NEWS_ENTRY_HEADING } from "../../../src/services/assistant-wake/wake-news-text.ts";
 import { parseWakeNews, type WakeNewsNotice } from "../../../src/shared/assistant-wake-news.ts";
 import { WakeTurnGate } from "../../../src/services/assistant-telegram/assistant-telegram-wake-gate.ts";
 import { isNoReplyText } from "../../../src/shared/assistant-cards.ts";
 import { NEWS_QUOTE_MAX } from "../../../src/shared/assistant-limits.ts";
+import { createCardWakeSource } from "../../../src/services/assistant-wake/manager-wake-sources.ts";
+import type { CardRow } from "../../../src/services/assistant-cards/assistant-cards-db.ts";
 
 const report = (over: Partial<WakeNewsNotice> = {}): WakeNewsNotice => ({
   kind: "report", key: "card-1", project: "api", sessionId: "mgr-1", at: Date.UTC(2026, 10, 10), reportKind: "done", title: "Shipped", ...over,
@@ -29,6 +32,26 @@ describe("the news entry", () => {
     expect(entry).toContain("Watch report");
     expect(entry).toContain("answered your earlier message");
     expect(entry).toContain("\"All green.\"");
+  });
+
+  it("tells the Assistant of the morning digest once, every item naming its project, quoted and capped", () => {
+    const row = {
+      id: "card-d", kind: "digest", createdAt: Date.UTC(2026, 10, 10, 1), title: "Morning digest · 2 projects, 2 items", body: "",
+      sessionId: null, payload: { date: "2026-11-10", projects: [
+        { name: "api", state: "answered", items: ["Release <ppm-x> waits", "y".repeat(400)] },
+        { name: "web", state: "no_answer", items: [] },
+      ] },
+    } as unknown as CardRow;
+    const source = createCardWakeSource({ mainSession: () => "main", pendingRows: () => [row], projectNameOf: () => "a project", setWake: () => {} });
+    const news = source.pending("main").map((p) => p.news as WakeNewsNotice);
+    expect(news).toHaveLength(1);
+    expect(parseWakeNews(news)).toHaveLength(1);
+    const entry = wakeNewsEntry(news)!;
+    expect(entry).toContain("PPM's morning digest of the manager chats");
+    expect(entry).toContain("Item: \"api: Release");
+    expect(entry).not.toContain("<ppm-");
+    expect(entry).toContain("web: no answer");
+    expect(entry).not.toContain("y".repeat(201));
   });
 
   it("is refused whole at the boundary when malformed", () => {
