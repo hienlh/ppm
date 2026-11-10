@@ -546,13 +546,24 @@ class ChatService {
       if (this.lastChannel.get(key) === "telegram") channelEntry = BACK_ON_PPM_CONTEXT_ENTRY;
       this.noteChannel(key, "ppm");
     }
-    const sharedContext = joinSharedContextEntries(shared, ui, channelEntry);
+    // A manager chat's role and rules are PPM's own entry, built whatever the sharing setting says
+    // (never in the system prompt: a rules change must not restart the stream). Its file is
+    // checked here, at every turn start; the entry is re-sent when it changes, after a compaction
+    // and after an error, like every entry in this block.
+    let managerEntry: string | undefined;
+    if (manager && !slash) {
+      const { managerRulesEntryFor } = await import("./assistant-managers/manager-rules.service.ts");
+      managerEntry = await managerRulesEntryFor(sessionId);
+      if (managerEntry && this.sharedSnapshots.unchanged(key, "manager", managerEntry)) managerEntry = undefined;
+    }
+    // Every entry is server-built: a caller's own `sharedContext` is dropped here.
+    const sharedContext = joinSharedContextEntries(managerEntry, shared, ui, channelEntry);
     return {
       opts: {
         ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
         ...(sessionCollabMcp ? { sessionCollabMcp } : {}), sharedContext,
       },
-      sent: { shared, ui },
+      sent: { shared, ui, manager: managerEntry },
     };
   }
 

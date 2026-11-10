@@ -14,6 +14,7 @@ import { projectKey } from "../project-name-for-path.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { chatLifecycle } from "../chat-control/chat-lifecycle.ts";
 import { providerRegistry } from "../../providers/registry.ts";
+import { createLogger } from "../logger.ts";
 import { MANAGER_CLAUDE_ONLY, MANAGER_PROVIDER_ID } from "../../shared/assistant-managers.ts";
 import {
   deleteManagerChatRow, deleteManagerChatRowsFor, getManagerChatRow, listManagerChatRows, patchManagerChatRow,
@@ -39,7 +40,11 @@ export interface ManagerChatsEnv {
   /** Called after any change, with the projects it touched. */
   changed(projectNames: string[]): void;
   now(): number;
+  /** A project got a manager: its rules files are ensured (template, `.gitignore`). Never throws. */
+  ensureRules?(target: { projectKey: string; projectPath: string; projectName: string; sessionId: string }): Promise<void>;
 }
+
+const log = createLogger("assistant-managers");
 
 type SessionInfoById = { getSessionInfoById?: (id: string, dir?: string) => Promise<unknown | null> };
 
@@ -62,6 +67,15 @@ const realEnv: ManagerChatsEnv = {
       .catch(() => { /* logged by the announcement */ });
   },
   now: () => Date.now(),
+  ensureRules: async (target) => {
+    try {
+      const { managerRulesGuard } = await import("./manager-rules-guard.ts");
+      await managerRulesGuard.seed(target);
+    } catch (e) {
+      // The next manager turn seeds them instead.
+      log.warn(`could not set up the rules of ${target.projectName}: ${(e as Error).message}`);
+    }
+  },
 };
 
 export function createManagerChats(env: ManagerChatsEnv = realEnv) {
@@ -121,6 +135,13 @@ export function createManagerChats(env: ManagerChatsEnv = realEnv) {
     managerFor(projectPath: string): ManagerChatRow | null {
       return load().byKey.get(projectKey(projectPath)) ?? null;
     },
+    /** The row of the project this chat manages, with the name the list shows; null for any other chat. */
+    forSession(sessionId: string): (ManagerChatRow & { projectName: string }) | null {
+      const { byKey, bySession } = load();
+      const key = bySession.get(sessionId) ?? (bySession.size > 0 ? bySession.get(resolveMigratedSession(sessionId)) : undefined);
+      const row = key ? byKey.get(key) : undefined;
+      return row ? { ...row, projectName: nameFor(row) } : null;
+    },
     isManagerChat(sessionId: string): boolean {
       const { bySession } = load();
       return bySession.has(sessionId) || (bySession.size > 0 && bySession.has(resolveMigratedSession(sessionId)));
@@ -147,6 +168,7 @@ export function createManagerChats(env: ManagerChatsEnv = realEnv) {
         assignedBy: by, assignedAt: env.now(),
       });
       invalidate();
+      await env.ensureRules?.({ projectKey: target.key, projectPath: target.path, projectName: target.name, sessionId: current });
       env.changed([...touched]);
       return { row: getManagerChatRow(target.key)!, replaced: previous && previous.sessionId !== current ? previous.sessionId : null };
     },

@@ -8,6 +8,8 @@
  * blank back for "keep what is saved".
  */
 
+import { RULES_FILE_MAX_BYTES } from "./assistant-limits.ts";
+
 export const ASSISTANT_INSTRUCTIONS_MAX_CHARS = 8000;
 export const ASSISTANT_MCP_MAX_SERVERS = 20;
 const MAX_NAME = 48;
@@ -81,6 +83,8 @@ export interface AssistantSettings {
   main_session?: AssistantMainSession | null;
   /** The mode a manager chat PPM creates starts in. */
   manager_default_mode: ManagerMode;
+  /** What a project's `.ppm/manager.md` starts as; empty means PPM's own template. */
+  manager_template: string;
 }
 
 /**
@@ -95,6 +99,7 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   instructions: "",
   mcp_servers: [],
   manager_default_mode: "default",
+  manager_template: "",
 };
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -249,11 +254,20 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
     else errors.push(`manager_default_mode must be one of ${MANAGER_MODES.join(", ")}`);
   }
 
+  let managerTemplate = "";
+  if (raw.manager_template !== undefined && raw.manager_template !== null) {
+    if (typeof raw.manager_template !== "string") errors.push("manager_template must be text");
+    else if (new TextEncoder().encode(raw.manager_template).length > RULES_FILE_MAX_BYTES) {
+      errors.push(`manager_template must be at most ${RULES_FILE_MAX_BYTES / 1024} KB`);
+    } else managerTemplate = raw.manager_template;
+  }
+
   return {
     value: {
       default_provider: defaultProvider, providers: readProviders(raw.providers, errors), instructions, mcp_servers: servers,
       ...(raw.main_session !== undefined ? { main_session: readMainSession(raw.main_session) } : {}),
       manager_default_mode: managerMode,
+      manager_template: managerTemplate,
     },
     errors,
   };

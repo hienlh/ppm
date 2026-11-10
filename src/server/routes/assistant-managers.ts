@@ -1,10 +1,12 @@
 import { Hono } from "hono";
-import { managerChats, ManagerChatError } from "../../services/assistant-managers/manager-chats.service.ts";
-import { getMainSession, MainSessionError, setMainSession } from "../../services/assistant/assistant-main-session.ts";
+import { managerChats } from "../../services/assistant-managers/manager-chats.service.ts";
+import { getMainSession, setMainSession } from "../../services/assistant/assistant-main-session.ts";
 import { followMainSession } from "../../services/assistant-telegram/assistant-telegram-binding.ts";
 import { MANAGER_TELEGRAM_DETAILS, type ManagerAssignCheck, type ManagerTelegramDetail } from "../../shared/assistant-managers.ts";
 import { createLogger } from "../../services/logger.ts";
 import { ok, err } from "../../types/api.ts";
+import { managerRouteFailure as failure, readJsonObject as readBody } from "./assistant-manager-route-helpers.ts";
+import { assistantManagerRulesRoutes } from "./assistant-manager-rules.ts";
 
 /**
  * The main Assistant session and each project's manager chat (`/api/assistant/main-session`,
@@ -18,20 +20,8 @@ const ID_RE = /^[\w.:-]{1,256}$/;
 /** The announcement reaches the chat registry, which loads after the routes. */
 const announce = () => import("../../services/assistant-managers/manager-chats-announce.ts");
 
-async function readBody(c: { req: { json: () => Promise<unknown> } }): Promise<Record<string, unknown> | null> {
-  try {
-    const body = await c.req.json();
-    return body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null;
-  } catch {
-    return null;
-  }
-}
-
-function failure(e: unknown): { message: string; status: 400 | 404 | 500 } {
-  if (e instanceof ManagerChatError) return { message: e.message, status: e.status };
-  if (e instanceof MainSessionError) return { message: e.message, status: 400 };
-  return { message: (e as Error).message, status: 500 };
-}
+// Rules of a project's manager, and creating one: `/managers/:project/rules…`, `/managers/:project/create`.
+assistantManagerRoutes.route("/", assistantManagerRulesRoutes);
 
 assistantManagerRoutes.get("/main-session", (c) => c.json(ok({ main: getMainSession() })));
 
