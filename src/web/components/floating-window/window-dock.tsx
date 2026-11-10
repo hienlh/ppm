@@ -123,7 +123,8 @@ function DockChip({ win, state, showTitle, busy, measuring }: {
 }) {
   const meta = useWindowMeta(win);
   const title = meta.title || windowTitle(win.kind, win.payload);
-  const label = `${title}${state === "min" ? " (minimized)" : ""}${busy ? " · working" : ""}`;
+  const count = meta.count ?? 0;
+  const label = `${title}${state === "min" ? " (minimized)" : ""}${busy ? " · working" : ""}${count ? ` · ${count} waiting` : ""}`;
   return (
     <button
       type="button"
@@ -147,6 +148,15 @@ function DockChip({ win, state, showTitle, busy, measuring }: {
         {busy && <WindowBusyDot />}
       </WindowTile>
       {showTitle && <span className="min-w-0 truncate">{title}</span>}
+      {count > 0 && (
+        <span
+          aria-hidden="true"
+          data-dock-count=""
+          className="grid h-[15px] min-w-[15px] shrink-0 place-items-center rounded-full bg-error px-1 text-[9.5px] font-semibold leading-none text-white"
+        >
+          {count > 99 ? "99+" : count}
+        </span>
+      )}
       {state !== "min" && (
         <span
           aria-hidden="true"

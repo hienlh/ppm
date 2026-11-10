@@ -15,14 +15,16 @@
  */
 import { usePanelStore } from "@/stores/panel-store";
 import { windowIdFromPanelId } from "@/stores/panel-utils";
-import { useWindowStore } from "@/components/floating-window/window-store";
-import { cascadeSpawnRect } from "@/components/floating-window/window-geometry";
+import { frontWindowId, useWindowStore } from "@/components/floating-window/window-store";
+import { clampRect, type Bounds, type Rect } from "@/components/floating-window/window-geometry";
 import { currentTabMetadata, patchTabMetadata } from "@/lib/patch-tab-metadata";
 import { ASSISTANT_PROJECT_NAME } from "../../../shared/assistant-project";
 
 /** The Assistant's one tab id (`deriveTabId("assistant")`). */
 export const ASSISTANT_TAB_ID = "assistant";
 export const ASSISTANT_TAB_TITLE = "PPM Assistant";
+/** What its window's titlebar says; the dock chip keeps the tab's title. */
+export const ASSISTANT_WINDOW_TITLE = "Assistant";
 
 export interface OpenAssistantInput {
   /** Show this session (a notification, a history entry) instead of the one already open. */
@@ -85,14 +87,36 @@ function showInWindow(tabId: string, wasOpen: boolean): void {
     return;
   }
   if (wasOpen) return;
-  const windows = useWindowStore.getState();
-  const rect = cascadeSpawnRect(
-    Object.values(windows.windows).map((w) => w.rect),
-    windows.bounds,
-    { w: Math.min(ASSISTANT_WINDOW_MAX_W, Math.round(windows.bounds.w * 0.62)), h: Math.round(windows.bounds.h * 0.84) },
-  );
+  const rect = assistantSpawnRect(useWindowStore.getState().bounds);
   usePanelStore.getState().popOutTab(tabId, panelId, { closeTabsOnClose: true, rect });
 }
 
-/** Wide enough for the session list beside the chat, without covering a whole desktop. */
-const ASSISTANT_WINDOW_MAX_W = 980;
+/** A portrait window, top-right, so the code on the left stays readable. */
+const ASSISTANT_WINDOW = { w: 470, h: 620, margin: 16, right: 28 };
+
+export function assistantSpawnRect(bounds: Bounds): Rect {
+  const w = Math.min(ASSISTANT_WINDOW.w, bounds.w - ASSISTANT_WINDOW.margin * 2);
+  const h = Math.min(ASSISTANT_WINDOW.h, bounds.h - ASSISTANT_WINDOW.margin * 2);
+  return clampRect({ x: bounds.w - ASSISTANT_WINDOW.right - w, y: ASSISTANT_WINDOW.margin, w, h }, bounds);
+}
+
+/** The Assistant's window, when it is in one. */
+export function assistantWindowId(): string | null {
+  const panelId = usePanelStore.getState().getPanelForTab(ASSISTANT_TAB_ID)?.id;
+  return panelId ? windowIdFromPanelId(panelId) : null;
+}
+
+/**
+ * The rail button: a window in front minimizes to the dock, anything else (closed, behind,
+ * minimized, docked in the grid, a phone tab) brings the Assistant forward.
+ */
+export function toggleAssistant(): void {
+  const id = assistantWindowId();
+  const windows = useWindowStore.getState();
+  const win = id ? windows.windows[id] : undefined;
+  if (win && win.state !== "minimized" && frontWindowId(windows.windows) === win.id) {
+    windows.setState(win.id, "minimized");
+    return;
+  }
+  openAssistant();
+}

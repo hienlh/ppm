@@ -66,11 +66,13 @@ export interface WindowTitleTextProps {
   subtitle?: string;
   busy: boolean;
   focused: boolean;
+  /** Say "Idle" when nothing runs, for a window whose state is the point of it (the Assistant). */
+  showIdle?: boolean;
   className?: string;
 }
 
 /** Title, subtitle and the "Working" marker, in a row that truncates the subtitle first. */
-export function WindowTitleText({ title, subtitle, busy, focused, className }: WindowTitleTextProps) {
+export function WindowTitleText({ title, subtitle, busy, focused, showIdle, className }: WindowTitleTextProps) {
   return (
     <span className={cn("flex min-w-0 items-center gap-2", className)}>
       <span className={cn("truncate text-[13px] font-semibold", focused ? "text-text" : "text-text-2")}>{title}</span>
@@ -79,6 +81,12 @@ export function WindowTitleText({ title, subtitle, busy, focused, className }: W
         <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-success">
           <span className="size-1.5 rounded-full bg-current" />
           Working
+        </span>
+      )}
+      {!busy && showIdle && (
+        <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-text-3">
+          <span className="size-1.5 rounded-full bg-current" />
+          Idle
         </span>
       )}
     </span>

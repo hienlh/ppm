@@ -32,16 +32,25 @@ function ProjectSection({ project }: { project: DigestProject }) {
   );
 }
 
-export function DigestCard({ card }: { card: AssistantCard }) {
-  // A digest from before PPM put them together was one manager's list.
-  const projects: DigestProject[] = card.payload.projects
+/** A digest's sections; one from before PPM put them together was one manager's list. */
+export function digestProjects(card: AssistantCard): DigestProject[] {
+  return card.payload.projects
     ?? [{ name: card.projectName ?? "project", state: "answered", items: card.payload.items ?? [] }];
+}
+
+/** "3 projects, 4 items". */
+export function digestSummary(projects: readonly DigestProject[]): string {
   const items = projects.reduce((n, p) => n + p.items.length, 0);
+  return `${plural(projects.length, "project")}, ${plural(items, "item")}`;
+}
+
+export function DigestCard({ card }: { card: AssistantCard }) {
+  const projects = digestProjects(card);
   return (
     <CardShell
       card={card}
       look={{ label: "Morning digest", Icon: Coffee, tone: "digest" }}
-      meta={`${plural(projects.length, "project")}, ${plural(items, "item")}`}
+      meta={digestSummary(projects)}
     >
       <div className="space-y-2">
         {projects.map((p, i) => <ProjectSection key={`${i}:${p.name}`} project={p} />)}

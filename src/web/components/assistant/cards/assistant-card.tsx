@@ -2,7 +2,7 @@
 import type { AssistantCard as Card } from "../../../../shared/assistant-cards";
 import { ApprovalMirrorCard, QuestionMirrorCard } from "./approval-mirror-card";
 import { DecisionCard } from "./decision-card";
-import { DigestCard } from "./digest-card";
+import { DigestFold } from "./digest-fold";
 import { BudgetCard, OutcomeCard } from "./outcome-card";
 import { RulesChangeCard, RulesNoteCard } from "./rules-cards";
 
@@ -21,7 +21,7 @@ export function AssistantCard({ card, onCard }: { card: Card; onCard?: (card: Ca
     case "budget":
       return <BudgetCard card={card} onCard={onCard} />;
     case "digest":
-      return <DigestCard card={card} />;
+      return <DigestFold card={card} />;
     case "rules_note":
       return <RulesNoteCard card={card} />;
     case "rules_change":

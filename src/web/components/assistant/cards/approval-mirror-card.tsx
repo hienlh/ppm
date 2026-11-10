@@ -8,12 +8,13 @@ import { answerAssistantCard } from "@/lib/assistant-cards-api";
 import { escapeHiddenCharacters } from "../../../../shared/reveal-hidden-characters";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardButton, CardShell } from "./card-shell";
-import { openManagerChat, useCardAction } from "./use-card-action";
+import { openCardManagerChat, useCardAction } from "./use-card-action";
 
 type Props = { card: AssistantCard; onCard?: (card: AssistantCard) => void };
 
-const OpenChat = ({ card }: { card: AssistantCard }) => (
-  <CardButton variant="ghost" onClick={() => openManagerChat(card)} disabled={!card.sessionId}>
+/** Secondary (in the long-press sheet on a phone) where the card has buttons of its own. */
+const OpenChat = ({ card, secondary = true }: { card: AssistantCard; secondary?: boolean }) => (
+  <CardButton variant="ghost" secondary={secondary} onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
     <ExternalLink className="size-3.5" />Open manager chat
   </CardButton>
 );
@@ -71,7 +72,7 @@ export function QuestionMirrorCard({ card, onCard }: Props) {
               {escapeHiddenCharacters(o.label)}
             </CardButton>
           ))}
-          <OpenChat card={card} />
+          <OpenChat card={card} secondary={!!single} />
         </>
       )}
     >

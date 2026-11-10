@@ -7,6 +7,7 @@
 import type { ComponentType, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
+import { CardMenu } from "./card-menu";
 
 export type CardTone = "need" | "ok" | "fail" | "info" | "digest";
 
@@ -53,8 +54,10 @@ export function cardStatusLine(card: AssistantCard): string | null {
   }
 }
 
-export function CardButton({ children, onClick, variant = "default", disabled }: {
+export function CardButton({ children, onClick, variant = "default", disabled, secondary }: {
   children: ReactNode; onClick: () => void; variant?: "primary" | "default" | "danger" | "ghost"; disabled?: boolean;
+  /** Below `md` this action lives in the card's long-press sheet instead of the button row. */
+  secondary?: boolean;
 }) {
   return (
     <button
@@ -63,6 +66,7 @@ export function CardButton({ children, onClick, variant = "default", disabled }:
       onClick={onClick}
       className={cn(
         "inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors disabled:opacity-50 md:h-8 md:w-auto md:text-xs",
+        secondary && "max-md:hidden",
         variant === "primary" && "bg-primary text-primary-foreground can-hover:hover:bg-primary/90",
         variant === "default" && "border border-border text-text-primary can-hover:hover:bg-surface-elevated",
         variant === "danger" && "border border-error/40 text-error can-hover:hover:bg-error/10",
@@ -81,9 +85,10 @@ export function CardShell({ card, look, children, actions, error, meta }: {
 }) {
   const status = cardStatusLine(card);
   const waiting = card.status === "open" && look.tone === "need";
-  return (
+  const article = (
     <article
-      className={cn("w-full overflow-hidden rounded-xl border bg-surface select-text", waiting ? "border-error/40" : "border-border")}
+      // A long press opens the card's menu on a phone, so it must not start a text selection there.
+      className={cn("w-full overflow-hidden rounded-xl border bg-surface select-text max-md:select-none", waiting ? "border-error/40" : "border-border")}
       data-assistant-card={card.kind}
       data-card-status={card.status}
     >
@@ -106,4 +111,5 @@ export function CardShell({ card, look, children, actions, error, meta }: {
       {error && <p className="px-3 pb-2 text-xs text-error">{error}</p>}
     </article>
   );
+  return <CardMenu card={card}>{article}</CardMenu>;
 }

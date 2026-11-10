@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
-import { Settings, Cloud, FolderTree, MonitorSmartphone, ScrollText, Smartphone } from "@/lib/icons";
+import { Bot, Settings, Cloud, FolderTree, MonitorSmartphone, ScrollText, Smartphone } from "@/lib/icons";
+import { toggleAssistant } from "@/components/assistant/open-assistant";
+import { useAssistantWindowShown } from "@/components/assistant/use-assistant-window-shown";
+import { useAssistantWaitingTotal } from "@/stores/assistant-waiting-store";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
 import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";
@@ -177,6 +180,8 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
 
   const likelyBugs = useLogsBadgeCount();
   const logsOpen = useWindowStore((s) => Object.values(s.windows).some((w) => w.kind === "logs" && w.state !== "minimized"));
+  const assistantWaiting = useAssistantWaitingTotal(!minimalMode);
+  const assistantShown = useAssistantWindowShown();
 
   // Rail tab click: collapsed → open on any tab; open → clicking the active tab closes it.
   const handleTabClick = (tabId: SidebarActiveTab) => {
@@ -247,6 +252,14 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
         {androidAvailable && (
           <FooterUtil icon={Smartphone} label="Android" featureBadge="android" onClick={openAndroid} />
         )}
+        {/* The Assistant's window; the red count is what waits on the user, open or not. */}
+        <FooterUtil
+          icon={Bot}
+          label={assistantWaiting ? `PPM Assistant · ${assistantWaiting} waiting` : "PPM Assistant"}
+          alert={assistantWaiting}
+          active={assistantShown}
+          onClick={toggleAssistant}
+        />
         {/* Replaces Report Bug: a report is now made from the lines it is about. */}
         <FooterUtil
           icon={ScrollText}

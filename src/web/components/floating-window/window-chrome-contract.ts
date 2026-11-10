@@ -6,7 +6,7 @@
  * `titlebarProps` — a chrome that spreads it gets drag, focus and keyboard for free.
  */
 
-import type { ComponentType, ElementType, HTMLAttributes } from "react";
+import type { ComponentType, ElementType, HTMLAttributes, ReactNode } from "react";
 import type { WindowKind, WindowVisualState } from "./window-store-types";
 
 /** What a titlebar says about its window beyond the title; see `useWindowMeta`. */
@@ -21,6 +21,15 @@ export interface WindowChromeIdentity {
   busy: boolean;
   /** False for content that must not move into picture-in-picture (a design canvas). */
   allowPip: boolean;
+  /**
+   * Buttons the hosted tab adds to the titlebar, left of the caption buttons (the Assistant's
+   * settings gear, "Open in project"); see `tab-window-extras-registry.ts`.
+   */
+  renderExtras?: (skin: "windows" | "macos") => ReactNode;
+  /** A count wanting attention (the Assistant's waiting cards), shown on the dock chip. */
+  count?: number;
+  /** The titlebar says "Idle" when nothing runs, not only "Working" when something does. */
+  showIdle?: boolean;
 }
 
 export interface WindowChromeProps {

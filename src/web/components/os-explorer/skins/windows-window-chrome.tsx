@@ -48,8 +48,9 @@ export function WindowsWindowChrome({
         {kind === "explorer"
           ? <WindowsFolderIcon className="size-4 shrink-0" />
           : <WindowTile icon={identity.icon} tone={identity.tone} />}
-        <WindowTitleText title={title} subtitle={identity.subtitle} busy={identity.busy} focused={focused} />
+        <WindowTitleText title={title} subtitle={identity.subtitle} busy={identity.busy} focused={focused} showIdle={identity.showIdle} />
       </div>
+      {identity.renderExtras?.("windows")}
       {identity.allowPip && <PipCaptionButton id={id} className={CAPTION_BUTTON} />}
       <button type="button" aria-label="Snap to the right"
         title={state === "snapped" ? "Unsnap" : "Snap to the right"}

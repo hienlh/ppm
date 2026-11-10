@@ -2,14 +2,17 @@
  * The reply-to bar: while the user answers a card in their own words, it stands where the
  * Assistant's composer is and says where the words go ("Replying to: nxsys · Slack draft") and
  * that they go word for word. Sending posts them to the card's manager chat, not to the Assistant;
- * a card that stopped waiting or is a day old asks "send anyway?" first. Closed by its X, by a
- * sent reply, or when the Assistant view goes away — it never sticks.
+ * a card that stopped waiting or is a day old asks "send anyway?" first. Closed by its X, Esc, a
+ * sent reply, a project switch, or the Assistant view going away; never stored, so a reload ends it.
  */
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, ArrowUp, X } from "@/lib/icons";
 import { cardRefusal, replyToAssistantCard } from "@/lib/assistant-cards-api";
 import { useCardReplyStore } from "@/stores/assistant-card-reply-store";
 import { cn } from "@/lib/utils";
+import { useProjectStore } from "@/stores/project-store";
+
+export const REPLY_PLACEHOLDER = "Your words go to the manager chat word for word…";
 
 export function CardReplyBar() {
   const target = useCardReplyStore((s) => s.target);
@@ -25,8 +28,13 @@ export function CardReplyBar() {
     setText(""); setError(null); setQuestion(null);
     if (target) input.current?.focus();
   }, [target?.cardId]);
-  // Leaving the Assistant view ends reply-to mode.
+  // Leaving the Assistant view ends reply-to mode, and so does switching project.
   useEffect(() => () => close(), [close]);
+  const project = useProjectStore((s) => s.activeProject?.name ?? null);
+  const projectAtMount = useRef(project);
+  useEffect(() => {
+    if (project !== projectAtMount.current) { projectAtMount.current = project; close(); }
+  }, [project, close]);
 
   if (!target) return null;
 
@@ -46,12 +54,11 @@ export function CardReplyBar() {
   }
 
   return (
-    <div className="border-t border-border bg-panel px-3 pb-3 pt-2 md:px-4" data-card-reply-bar="">
+    <div className="px-1 pt-0.5" data-card-reply-bar="">
       <div className="flex items-center gap-2 pb-2 text-xs text-text-secondary">
         <ArrowRight className="size-3.5 shrink-0" />
         <span className="min-w-0 truncate">
           Replying to: <b className="font-medium text-text-primary">{target.projectName ?? "Assistant"} · {target.title}</b>
-          <span className="hidden text-text-subtle sm:inline"> — Your words go to the manager chat word for word</span>
         </span>
         <button
           type="button" onClick={close} aria-label="Stop replying to this card"
@@ -60,7 +67,6 @@ export function CardReplyBar() {
           <X className="size-3.5" />
         </button>
       </div>
-      <p className="pb-2 text-[11px] text-text-subtle sm:hidden">Your words go to the manager chat word for word</p>
       {question && (
         <div className="mb-2 flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-xs md:flex-row md:items-center" role="alert">
           <span className="flex-1">{question}</span>
@@ -78,8 +84,11 @@ export function CardReplyBar() {
           value={text}
           rows={2}
           onChange={(e) => { setText(e.target.value); setQuestion(null); }}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(false); } }}
-          placeholder="Your answer, in your own words…"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") { e.preventDefault(); close(); return; }
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(false); }
+          }}
+          placeholder={REPLY_PLACEHOLDER}
           aria-label="Your reply to the card"
           className="max-h-40 min-h-11 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none placeholder:text-text-subtle"
         />

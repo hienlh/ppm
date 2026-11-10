@@ -13,6 +13,8 @@ import {
 } from "../../shared/session-collab";
 import { handleSessionCollabEvent } from "@/lib/session-collab-events";
 import { resyncManagerChats } from "./use-manager-chats";
+import { resyncAssistantCards } from "@/stores/assistant-cards-store";
+import { resyncAssistantWaiting } from "@/stores/assistant-waiting-store";
 
 /** How often the client pings — well under the server's own idle timeout, so a live but
  *  silent socket never gets reaped as dead. */
@@ -116,6 +118,8 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         // project this browser already knows about.
         syncAllKnownProjects();
         resyncManagerChats();
+        resyncAssistantCards();
+        resyncAssistantWaiting();
         notifyGlobalReady();
         return;
       }

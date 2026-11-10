@@ -37,6 +37,8 @@ import { useHistoryWindow } from "@/hooks/use-history-window";
 import { useScrollAnchorPin } from "@/hooks/use-scroll-anchor-pin";
 import { useChatTurnJump } from "@/hooks/use-chat-turn-jump";
 import { canMergeToLive } from "@/lib/history-window-model";
+import { placeTimelineItems } from "@/lib/assistant-timeline-merge";
+import { LOAD_EARLIER_LABEL, type ChatTimelineExtension, type ChatTimelineItem } from "./chat-timeline-extension";
 
 interface MessageListProps {
   onReply?: (reply: ReplyReference) => void;
@@ -96,6 +98,8 @@ interface MessageListProps {
   /** The fork/edit anchor of `messages[0]` while older history is not loaded: the id of
    *  the message before it, which this list cannot see. */
   historyPredecessorId?: string | null;
+  /** A host's items and filter over the rows; see `chat-timeline-extension.ts`. */
+  timeline?: ChatTimelineExtension;
 }
 
 
@@ -133,6 +137,22 @@ function PreCompactSkeleton() {
   );
 }
 
+/** Older history on request, for a host that turned scroll-to-load off. 44 px on a phone. */
+function LoadEarlierButton({ onClick }: { onClick: () => void }) {
+  return (
+    <div className="flex justify-center px-4 pt-3">
+      <button
+        type="button"
+        onClick={onClick}
+        data-load-earlier=""
+        className="inline-flex min-h-11 items-center rounded-full border border-border bg-surface px-4 text-xs text-text-secondary hover:bg-surface-elevated md:min-h-7"
+      >
+        {LOAD_EARLIER_LABEL}
+      </button>
+    </div>
+  );
+}
+
 export function MessageList({
   messages,
   messagesLoading,
@@ -164,6 +184,7 @@ export function MessageList({
   onDismissMessage,
   onClearErrors,
   onReply,
+  timeline,
 }: MessageListProps) {
   // Non-virtualized transcript: every message lives in the real DOM. Content that
   // grows BELOW the viewport (streaming) no longer shifts the user's scroll — that's
@@ -481,6 +502,16 @@ export function MessageList({
   const topCompactId = topUnexpandedCompact?.id ?? null;
   const topCompactPath = topUnexpandedCompact?.jsonlPath ?? null;
 
+  // A host's items among the rows, by time; held back above the loaded window while older rows exist.
+  const extension = useMemo(() => timeline?.build(filtered) ?? null, [timeline, filtered]);
+  const placed = useMemo(() => {
+    if (!extension) return null;
+    const { before, trailing } = placeTimelineItems(filtered, extension.items, (i) => i.at, { olderHidden: hasMore });
+    const draw = (item: ChatTimelineItem) => <div key={item.key} className="px-4 pt-4" data-timeline-item="">{item.node}</div>;
+    return { before: new Map([...before].map(([i, items]) => [i, items.map(draw)] as const)), trailing: trailing.map(draw) };
+  }, [extension, filtered, hasMore]);
+  const manualPaging = !!timeline?.manualPaging;
+
   // Fetch pre-compact history from the server (prepends older messages).
   // Older pages of this segment first; only once they are all in does the top of the
   // list reach the compact summary whose pre-compact history can be expanded.
@@ -517,7 +548,7 @@ export function MessageList({
   useEffect(() => {
     const el = scrollEl;
     const sentinel = topSentinelRef.current;
-    if (!el || !sentinel || !hasMore || compactLoadError) return;
+    if (!el || !sentinel || !hasMore || compactLoadError || manualPaging) return;
     // A transcript parked out of sight (its panel unmounted on a project switch) has no height,
     // so its top always reads as in range; loading then grew the chat by a page on every switch
     // back. What the observer says there is set aside and asked again once there is a height:
@@ -544,7 +575,7 @@ export function MessageList({
       io.disconnect();
       ro.disconnect();
     };
-  }, [scrollEl, hasMore, compactLoadError, loadMore]);
+  }, [scrollEl, hasMore, compactLoadError, loadMore, manualPaging]);
 
   if (messagesLoading && (!keepStaleWhileLoading || messages.length === 0)) {
     return (
@@ -555,7 +586,7 @@ export function MessageList({
     );
   }
 
-  if (messages.length === 0 && !isStreaming) {
+  if (messages.length === 0 && !isStreaming && !extension?.items.length) {
     return (
       <ChatWelcome
         projectName={projectName || ""}
@@ -610,6 +641,9 @@ export function MessageList({
           {/* One block for the rows, so stretching the content above never turns them into flex items. */}
           <div>
           {hasMore && <div ref={topSentinelRef} aria-hidden className="h-px" />}
+          {manualPaging && (hasMore || timeline?.hasEarlier) && !autoLoadingCompact && (
+            <LoadEarlierButton onClick={() => { if (hasMore) void loadMore(); timeline?.onLoadEarlier?.(); }} />
+          )}
           {autoLoadingCompact && <PreCompactSkeleton />}
           <MessageRows
             rows={filtered}
@@ -632,7 +666,10 @@ export function MessageList({
             onDismiss={onDismissMessage ? handleDismiss : undefined}
             onNavigateVersion={onNavigateVersion}
             bashPartialOutput={bashPartialOutput}
+            hidden={extension?.hidden}
+            before={placed?.before}
           />
+          {placed?.trailing}
           {/* Idle only: once a turn starts the cache question is already answered, and the
               thinking indicator below owns that space. */}
           {!isStreaming && !pendingApproval && (

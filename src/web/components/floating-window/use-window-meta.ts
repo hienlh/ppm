@@ -8,7 +8,7 @@
  * a chat that acquired a name).
  */
 
-import type { ElementType } from "react";
+import { createElement, useSyncExternalStore, type ElementType } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Activity, FolderOpen, History, Monitor, ScrollText, Settings, Users } from "@/lib/icons";
 import { getTabTypeIcon } from "@/lib/tab-type-icons";
@@ -19,11 +19,14 @@ import { NON_PIP_TAB_TYPES, windowPanelId } from "@/stores/panel-utils";
 import type { Tab, TabType } from "@/stores/tab-store";
 import type { WindowChromeIdentity } from "./window-chrome-contract";
 import { windowTitle } from "./window-content-registry";
+import { tabWindowExtras, type WindowSkinName } from "./tab-window-extras-registry";
 import type { WindowKind, WindowRuntimeState } from "./window-store-types";
 
 export interface WindowMeta extends WindowChromeIdentity {
   /** The hosted tab's live title, when there is one; the caller falls back to `windowTitle`. */
   title?: string;
+  /** What the titlebar says when it differs from `title` (the dock keeps `title`). */
+  titlebarTitle?: string;
   /** What kind of window this is, in words: the dock list's second line. */
   kindLabel: string;
   /** A design: its tile is filled with its own colour rather than tinted. */
@@ -88,8 +91,11 @@ function hostedTab(windowId: string): (s: ReturnType<typeof usePanelStore.getSta
   };
 }
 
-/** Pure half of {@link useWindowMeta}: everything but the store reads. */
-export function describeWindow(kind: WindowKind, tab: Tab | undefined, busy: boolean): WindowMeta {
+/**
+ * Pure half of {@link useWindowMeta}: everything but the store reads. `count` is what the hosted
+ * tab's registry entry reported (see `tab-window-extras-registry.ts`).
+ */
+export function describeWindow(kind: WindowKind, tab: Tab | undefined, busy: boolean, count = 0): WindowMeta {
   if (kind !== "tab-host") {
     const meta = KIND_META[kind];
     return { icon: meta.icon, tone: meta.tone, kindLabel: meta.label, busy: false, allowPip: true, filled: false };
@@ -99,17 +105,29 @@ export function describeWindow(kind: WindowKind, tab: Tab | undefined, busy: boo
   const kindLabel = TAB_LABELS[tab.type] ?? "Tab";
   const project = tab.projectId ?? undefined;
   const slug = typeof tab.metadata?.designSlug === "string" ? tab.metadata.designSlug : tab.title;
+  const extras = tabWindowExtras(tab.type);
+  const TitleExtras = extras?.TitleExtras;
+  // A tab with no project of its own (a manager chat opened beside another project) still names
+  // the project it works in.
+  const where = project ?? (tab.type === "chat" && typeof tab.metadata?.projectName === "string" ? tab.metadata.projectName : undefined);
   return {
     title: tab.title,
+    ...(extras?.titlebarTitle ? { titlebarTitle: extras.titlebarTitle } : {}),
     icon: getTabTypeIcon(tab.type),
     tone: isDesign ? designTone(slug) : (TAB_TONES[tab.type] ?? tone("primary")),
-    subtitle: project ? `${kindLabel} · ${project}` : kindLabel,
+    // A titlebar that already names itself ("Assistant") needs no kind beside it.
+    subtitle: where ? `${kindLabel} · ${where}` : extras?.titlebarTitle ? undefined : kindLabel,
+    ...(extras?.showIdle ? { showIdle: true } : {}),
     kindLabel,
     busy,
     allowPip: !NON_PIP_TAB_TYPES.has(tab.type),
     filled: isDesign,
+    ...(TitleExtras ? { renderExtras: (skin: WindowSkinName) => createElement(TitleExtras, { tab, busy, skin }) } : {}),
+    ...(count > 0 ? { count } : {}),
   };
 }
+
+const noSubscribe = () => () => {};
 
 /**
  * Each window's searchable words — its live title and its kind — for filtering a list of
@@ -137,5 +155,7 @@ export function useWindowMeta(win: Pick<WindowRuntimeState, "id" | "kind">): Win
   const tab = usePanelStore(win.kind === "tab-host" ? hostedTab(win.id) : () => undefined);
   const sessionId = tabSessionId(tab);
   const busy = useStreamingStore((s) => (sessionId ? s.sessions.has(sessionId) : false));
-  return describeWindow(win.kind, tab, busy);
+  const counter = tabWindowExtras(tab?.type)?.count;
+  const count = useSyncExternalStore(counter?.subscribe ?? noSubscribe, () => (tab && counter ? counter.read(tab) : 0));
+  return describeWindow(win.kind, tab, busy, count);
 }

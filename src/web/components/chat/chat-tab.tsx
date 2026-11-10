@@ -27,6 +27,8 @@ import { useChatAccountClaim } from "@/hooks/use-chat-account-claim";
 import { startPrepare, getPrepare, isPrepared, forgetPrepare } from "@/lib/new-chat-prepare-client";
 import { shownPermissionMode, storedPermissionToAdopt } from "@/lib/session-permission";
 import { MessageList } from "./message-list";
+import type { ChatTimelineExtension } from "./chat-timeline-extension";
+import { AssistantBackBar } from "@/components/assistant/assistant-back-button";
 import { BackgroundCommandBar } from "./background-command-bar";
 import { ConnectionChip } from "./connection-chip";
 import { useReconnectIndicator } from "@/hooks/use-reconnect-indicator";
@@ -75,6 +77,13 @@ interface ChatTabProps {
   onFork?: (fork: ChatForkRequest) => void;
   /** Lists only this design's sessions in the history picker. */
   historyFilter?: string;
+  /** Items placed among the messages and rows hidden from view (the Assistant's cards and filter). */
+  timeline?: ChatTimelineExtension;
+  /**
+   * Stands where the composer is while set (the Assistant's reply-to bar). The composer stays
+   * mounted underneath, so what was typed in it is still there afterwards.
+   */
+  composerOverride?: React.ReactNode;
 }
 
 /**
@@ -95,7 +104,7 @@ export function ChatTab(props: ChatTabProps) {
   ) : <ChatTabContent {...props} />;
 }
 
-function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }: ChatTabProps) {
+function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter, timeline, composerOverride }: ChatTabProps) {
   const minimalMode = useSettingsStore((s) => s.minimalMode);
   const preparation = useNewChatPreparation();
   const metadataRef = useRef(metadata);
@@ -1383,6 +1392,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         </div>
       )}
 
+      {/* A manager chat a phone opened from the Assistant: the way back to it. */}
+      {tabId && <AssistantBackBar tabId={tabId} metadata={metadata} />}
+
       {/* Background commands running for this session */}
       <BackgroundCommandBar shells={backgroundShells} onKill={killBackgroundShell} />
 
@@ -1426,6 +1438,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         onDismissMessage={dismissMessage}
         onClearErrors={clearErrors}
         bashPartialOutput={bashPartialOutput}
+        timeline={timeline}
       /></SessionChangesContext.Provider></AsyncQuestionContext.Provider>}
 
       {/* Why the last turn ended, when an error ended it */}
@@ -1533,8 +1546,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           </div>
         )}
 
-        {/* Input is available immediately; network preparation never gates typing. */}
-        {(
+        {composerOverride}
+        {/* Input is available immediately; network preparation never gates typing. `contents`
+            keeps the box out of the layout unless a host's override hides it. */}
+        <div className={composerOverride ? "hidden" : "contents"}>
           <MessageInput
             draftReady={!draftLoading}
             configurationPending={preparation.pending}
@@ -1591,7 +1606,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             promptCache={promptCache}
             offline={connectionStage !== "hidden"}
           />
-        )}
+        </div>
       </div>
     </div>
     </AssistantContentContext.Provider>

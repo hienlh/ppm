@@ -69,9 +69,10 @@ export function MacosWindowChrome({
           painting over either of them. Centre is a few px off true middle — acceptable. */}
       <span className="pointer-events-none flex flex-1 min-w-0 items-center justify-center gap-2 px-2">
         {kind !== "explorer" && <WindowTile icon={identity.icon} tone={identity.tone} size="sm" />}
-        <WindowTitleText title={title} subtitle={identity.subtitle} busy={identity.busy} focused={focused} />
+        <WindowTitleText title={title} subtitle={identity.subtitle} busy={identity.busy} focused={focused} showIdle={identity.showIdle} />
       </span>
       <div className="flex items-center gap-0.5 pr-2">
+        {identity.renderExtras?.("macos")}
         {identity.allowPip && <PipCaptionButton id={id} />}
         <button type="button" aria-label="Snap to the right"
           title={state === "snapped" ? "Unsnap" : "Snap to the right"} aria-pressed={state === "snapped"}

@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from "react";
-import { X, Cloud, FolderTree, MonitorSmartphone, ScrollText, Settings, Smartphone } from "@/lib/icons";
+import { X, Bot, Cloud, FolderTree, MonitorSmartphone, ScrollText, Settings, Smartphone } from "@/lib/icons";
+import { openAssistant } from "@/components/assistant/open-assistant";
+import { useAssistantWaitingTotal } from "@/stores/assistant-waiting-store";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
@@ -128,6 +130,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
   }, [minimalMode]);
 
   const likelyBugs = useLogsBadgeCount();
+  const assistantWaiting = useAssistantWaitingTotal();
 
   // Built as a list so the row's column count can follow the tile count. With a fixed column
   // count an optional tile (Remote, only on a capable host) pushes the last tile onto a second
@@ -144,6 +147,8 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
     { icon: Cloud, label: "Cloud", onClick: () => setCloudOpen(true) },
     // Also not a sidebar tab — settings open as their own tab here, window on desktop.
     { icon: Settings, label: "Settings", onClick: () => { onClose(); openSettings(); } },
+    // The Assistant as a full-screen tab; the red count is what waits on the user.
+    { icon: Bot, label: "Assistant", alert: assistantWaiting, alertLabel: "waiting", onClick: () => { onClose(); openAssistant(); } },
     // Replaces Report Bug: a report is now made from the lines it is about.
     { icon: ScrollText, label: "Logs", alert: likelyBugs, alertLabel: likelyBugs === 1 ? "likely bug" : "likely bugs", onClick: () => { onClose(); openLogs(); } },
   ];

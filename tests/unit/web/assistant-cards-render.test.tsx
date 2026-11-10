@@ -81,8 +81,8 @@ describe("assistant cards", () => {
     await click([...view.container.querySelectorAll("button")].find((b) => b.textContent === "Edit")!);
     const bar = view.container.querySelector("[data-card-reply-bar]")!;
     expect(bar.textContent).toContain("Replying to: nxsys · Release 2.14");
-    expect(bar.textContent).toContain("Your words go to the manager chat word for word");
     const area = bar.querySelector("textarea")!;
+    expect(area.getAttribute("placeholder")).toBe("Your words go to the manager chat word for word…");
     const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(area), "value")!.set!;
     const { act } = await import("react");
     await act(async () => {
@@ -134,6 +134,11 @@ describe("assistant cards", () => {
         { name: "pex", state: "no_answer", items: [] },
       ] },
     })} />);
+    // Folded to one line until opened.
+    expect(view.container.querySelector("[data-digest-fold]")?.getAttribute("data-digest-fold")).toBe("closed");
+    expect(view.container.textContent).toContain("Morning digest · 3 projects, 2 items");
+    expect(view.container.querySelectorAll("[data-digest-project]")).toHaveLength(0);
+    await click(view.container.querySelector("[data-digest-fold] button")!);
     const text = view.container.textContent ?? "";
     expect(text).toContain("Morning digest");
     expect(text).toContain("3 projects, 2 items");
@@ -144,7 +149,8 @@ describe("assistant cards", () => {
     expect(view.container.querySelector("[data-digest-project='nxsys'] b")).toBeNull();
     expect(view.container.querySelector("[data-digest-project='ppm']")?.textContent).toContain("Nothing new");
     expect(view.container.querySelector("[data-digest-project='pex']")?.textContent).toContain("No answer yet (busy)");
-    expect(buttons()).toEqual([]);
+    // Only the fold's own toggle: a digest asks nothing of the user.
+    expect(buttons()).toHaveLength(1);
     await view.unmount();
     view = await mount(<AssistantCard card={base({ kind: "rules_note", status: "info", title: "The manager added 1 rule line", payload: { added: ["x"] } })} />);
     expect(view.container.textContent).toContain("Rules updated");

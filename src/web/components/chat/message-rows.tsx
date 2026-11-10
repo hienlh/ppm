@@ -6,6 +6,7 @@
  * neighbours — whether it closes an assistant turn, what Copy gathers, whether the message a
  * reply quotes is loaded — is worked out here from the list it is given.
  */
+import { Fragment, type ReactNode } from "react";
 import type { ReplyReference } from "../../../shared/chat-reply";
 import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
 import type { ChatMessage } from "../../../types/chat";
@@ -44,6 +45,10 @@ export interface MessageRowsProps {
   onDismiss?: (messageId: string) => void;
   onNavigateVersion?: (sessionId: string) => void;
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
+  /** Rows not drawn (a host's filter); they keep their index, so neighbours read the same. */
+  hidden?: ReadonlySet<string>;
+  /** A host's items drawn right before the row at that index (see `chat-timeline-extension.ts`). */
+  before?: ReadonlyMap<number, ReactNode[]>;
 }
 
 /**
@@ -62,12 +67,15 @@ function turnStarts(rows: ChatMessage[]): (string | undefined)[] {
 export function MessageRows({
   rows, userOrdinals, userOrdinalOffset, versionMap, editingMsgId, turnChanges, rollupTurns, isStreaming,
   projectName, sessionId, providerId, historyPredecessorId, onReply, onJumpToReply, onJumpToEdit,
-  onFork, onEdit, onDismiss, onNavigateVersion, bashPartialOutput,
+  onFork, onEdit, onDismiss, onNavigateVersion, bashPartialOutput, hidden, before,
 }: MessageRowsProps) {
   const starts = turnStarts(rows);
   return (
     <>
       {rows.map((msg, globalIdx) => {
+        const extras = before?.get(globalIdx);
+        const extrasNode = extras?.length ? extras : null;
+        if (hidden?.has(msg.id)) return extrasNode ? <Fragment key={msg.id}>{extrasNode}</Fragment> : null;
         const prevMsg = globalIdx > 0 ? rows[globalIdx - 1] : undefined;
         // User-message ordinal (1-based) — stable version-group anchor across forks.
         const localOrdinal = userOrdinals[globalIdx] ?? 0;
@@ -100,7 +108,7 @@ export function MessageRows({
         // when older history brings the quoted message in, and not on every streamed flush.
         const replyTo = msg.role === "user" ? decodeMessageBlocks(msg.content).replyTo : null;
         const replyAvailable = replyTo ? !!resolveReplyMessage(rows, replyTo, sessionId, providerId) : undefined;
-        return (
+        const row = (
           <div
             key={msg.id}
             data-msg-index={globalIdx}
@@ -143,6 +151,8 @@ export function MessageRows({
             </RenderErrorBoundary>
           </div>
         );
+        // Always the same keyed fragment, so an item arriving above a row never remounts the row.
+        return <Fragment key={msg.id}>{extrasNode}{row}</Fragment>;
       })}
     </>
   );

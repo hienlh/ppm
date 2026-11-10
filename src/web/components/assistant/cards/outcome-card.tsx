@@ -7,7 +7,7 @@ import { CircleCheckIcon, ExternalLink, Pause, X, XCircle } from "@/lib/icons";
 import { dismissAssistantCard } from "@/lib/assistant-cards-api";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardButton, CardShell } from "./card-shell";
-import { openManagerChat, useCardAction } from "./use-card-action";
+import { openCardManagerChat, useCardAction } from "./use-card-action";
 
 type Props = { card: AssistantCard; onCard?: (card: AssistantCard) => void };
 
@@ -21,10 +21,10 @@ export function OutcomeCard({ card, onCard }: Props) {
       error={error}
       actions={(
         <>
-          <CardButton onClick={() => openManagerChat(card)} disabled={!card.sessionId}>
+          <CardButton onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
             <ExternalLink className="size-3.5" />Open manager chat
           </CardButton>
-          <CardButton variant="ghost" disabled={busy} onClick={() => void run(() => dismissAssistantCard(card.id))}>
+          <CardButton variant="ghost" secondary disabled={busy} onClick={() => void run(() => dismissAssistantCard(card.id))}>
             <X className="size-3.5" />Dismiss
           </CardButton>
         </>
