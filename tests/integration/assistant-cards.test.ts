@@ -68,6 +68,7 @@ const app = new Hono();
 app.all("/mcp", sessionCollabMcpHandler);
 app.route("/api/assistant", assistantCardRoutes);
 let projectsBefore: PpmConfig["projects"] = [];
+let assistantBefore: unknown;
 let manager = "";
 let child = "";
 let assistant = "";
@@ -91,6 +92,8 @@ beforeAll(async () => {
   mkdirSync(projectPath, { recursive: true });
   original = providerRegistry.get("claude");
   providerRegistry.register(stub);
+  const saved = configService.get("assistant");
+  assistantBefore = saved === undefined ? undefined : structuredClone(saved);
   setAssistantClock({ now: () => clock, setTimer: (fn, ms) => { const t = { at: clock + ms, fn, live: true }; timers.push(t); return () => { t.live = false; }; } });
   projectsBefore = [...configService.get("projects")];
   configService.set("projects", [...projectsBefore, { name: "cards", path: projectPath }]);
@@ -111,6 +114,8 @@ afterAll(() => {
   stopAssistantCards();
   assistantWakeQueue.stop();
   clearMainSessionIf(assistant);
+  // The main session as it was before this file, so a later file's startup pick sees the same row.
+  if (assistantBefore !== undefined) configService.set("assistant", assistantBefore as never);
   managerChats.unassign("cards");
   configService.set("projects", projectsBefore);
   setAssistantClock(null);

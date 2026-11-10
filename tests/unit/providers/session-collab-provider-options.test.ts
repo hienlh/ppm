@@ -17,13 +17,14 @@ describe("session tools provider options", () => {
     expect(SESSION_COLLAB_TOOLS_TIMEOUT_MS).toBeGreaterThan(SESSION_COLLAB_LIMITS.waitTimeoutMinutes.max * 60_000 + COLLAB_APPROVAL_WAIT_MS);
   });
 
-  it("gives Claude one http server with that timeout, its three tools pre-approved", () => {
+  it("gives Claude one http server with that timeout, its tools and the manager's report tool pre-approved", () => {
     expect(sessionCollabMcpServers(undefined)).toEqual({});
     expect(sessionCollabMcpServers(access)).toEqual({
       "ppm-sessions": { type: "http", url: access.url, headers: { Authorization: "Bearer collab-secret" }, timeout: SESSION_COLLAB_TOOLS_TIMEOUT_MS },
     });
     expect(CLAUDE_SESSION_COLLAB_TOOLS).toEqual([
       "mcp__ppm-sessions__create_session", "mcp__ppm-sessions__send_to_session", "mcp__ppm-sessions__session_status",
+      "mcp__ppm-sessions__report_to_assistant",
     ]);
   });
 
