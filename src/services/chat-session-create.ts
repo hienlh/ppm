@@ -7,7 +7,7 @@ import type { Session } from "../types/chat.ts";
 
 /**
  * Creating a chat in a project, the one way both the new-chat route and the Assistant's
- * `chat_start` do it, so a chat the Assistant opens is set up exactly like one the user opens:
+ * `create_session` do it, so a chat the Assistant opens is set up exactly like one the user opens:
  * the same provider record, the same project default tag, the same account binding rules.
  * Callers validate their own input first (the route its request body, the tool its arguments).
  */

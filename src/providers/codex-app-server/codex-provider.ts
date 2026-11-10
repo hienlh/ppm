@@ -1021,10 +1021,11 @@ export class CodexAppServerProvider implements AIProvider {
       developerInstructions: assistant ? opts?.assistantInstructions : opts?.designInstructions,
       requireInstructions: assistant,
       designMcp: opts?.designSession && !assistant ? opts.designMcp : undefined,
-      // An Assistant session loads none of PPM's chat tool servers: its own server replaces them.
+      // An Assistant session loads none of PPM's chat tool servers but the session tools: its own
+      // server replaces the rest, and it opens and messages chats through `ppm_sessions`.
       tabToolsMcp: opts?.designSession || assistant ? undefined : opts?.tabToolsMcp,
       dbToolsMcp: opts?.designSession || assistant ? undefined : opts?.dbToolsMcp,
-      sessionCollabMcp: opts?.designSession || assistant ? undefined : opts?.sessionCollabMcp,
+      sessionCollabMcp: opts?.designSession ? undefined : opts?.sessionCollabMcp,
       assistant: assistant ? { mcp: opts?.assistantMcp, servers: opts?.assistantMcpServers } : undefined,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [], turnText: newCodexTurnText(),
@@ -1256,6 +1257,7 @@ export class CodexAppServerProvider implements AIProvider {
     const assistant = live.assistant!;
     assistant.disableUserServers = await planAssistantCodexMcp(client, live.cwd, {
       ownServer: !!assistant.mcp,
+      sessionTools: !!live.sessionCollabMcp,
       privateNames: (assistant.servers ?? []).filter((s) => s.enabled).map((s) => s.name),
     });
     if (assistant.disableUserServers.length > 0) {

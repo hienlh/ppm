@@ -1,7 +1,7 @@
 import { createDeviceBroker } from "../tab-tools-mcp/tab-open-broker.ts";
 import { ASSISTANT_MCP_TIMEOUT_MS } from "./assistant-mcp-tools.ts";
 import type { ApprovalSummary, EndpointApprovalRequest } from "../../shared/assistant-approval.ts";
-import { isWatchTurn, WATCH_TURN_REFUSAL } from "../chat-control/chat-control.ts";
+import { isUnattendedTurn, UNATTENDED_TURN_REFUSAL } from "../chat-control/chat-control.ts";
 
 /**
  * Approvals the PPM Assistant's tool endpoint asks for before it changes anything, the same way
@@ -206,17 +206,17 @@ export const assistantApprovalBroker = createApprovalBroker({
 
 /**
  * The asker one tool call gets: bound to its session and to the HTTP call it answers. In a turn
- * PPM started to report on a watched chat it asks nobody and refuses (see `WATCH_TURN_REFUSAL`):
- * checked when the tool asks, so a message the user types into that turn makes it theirs again.
+ * PPM started on its own it asks nobody and refuses (see `UNATTENDED_TURN_REFUSAL`): checked when
+ * the tool asks, so a message the user types into that turn makes it theirs again.
  */
 export function approvalAskerFor(
   sessionId: string,
   signal?: AbortSignal,
   broker: ApprovalBroker = assistantApprovalBroker,
-  watchTurn: (sessionId: string) => boolean = isWatchTurn,
+  unattended: (sessionId: string) => boolean = isUnattendedTurn,
 ): AskApproval {
-  return async (ask) => watchTurn(sessionId)
-    ? { verdict: "unavailable", reason: WATCH_TURN_REFUSAL }
+  return async (ask) => unattended(sessionId)
+    ? { verdict: "unavailable", reason: UNATTENDED_TURN_REFUSAL }
     : broker.request(sessionId, ask, signal);
 }
 

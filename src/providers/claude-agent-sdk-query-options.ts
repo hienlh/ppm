@@ -305,23 +305,25 @@ export function tabToolsMcpServers(access: TabToolsMcpAccess | null | undefined)
 
 /**
  * An Assistant session's whole MCP server list: the servers the user connected for the Assistant
- * in Settings → PPM Assistant, then the PPM Assistant's own server as the SDK's `http` config,
- * written last so nothing can stand in for it. `{}` for any other session. The own server's
- * timeout is long because a query may run for minutes and a change waits for the user's approval
- * inside the call; its token travels in the header. The user's servers carry no permission of
- * their own: the Assistant policy asks before every one of their tools runs.
+ * in Settings → PPM Assistant, then PPM's session tools and the PPM Assistant's own server as the
+ * SDK's `http` config, written last so nothing can stand in for them. `{}` for any other session.
+ * The own server's timeout is long because a query may run for minutes and a change waits for the
+ * user's approval inside the call; its token travels in the header. The user's servers carry no
+ * permission of their own: the Assistant policy asks before every one of their tools runs.
  */
 export function assistantMcpServers(
   access: AssistantMcpAccess | null | undefined,
   servers: readonly AssistantMcpServer[] = [],
+  sessionTools?: SessionCollabMcpAccess | null,
 ): Record<string, McpServerConfig> {
   const out: Record<string, McpServerConfig> = {};
   for (const server of servers) {
-    if (!server.enabled || server.name === CLAUDE_ASSISTANT_MCP_SERVER) continue;
+    if (!server.enabled || server.name === CLAUDE_ASSISTANT_MCP_SERVER || server.name === CLAUDE_SESSION_COLLAB_MCP_SERVER) continue;
     out[server.name] = server.transport === "stdio"
       ? { type: "stdio", command: server.command, args: [...server.args], ...(Object.keys(server.env).length ? { env: { ...server.env } } : {}) }
       : { type: "http", url: server.url, ...(Object.keys(server.headers).length ? { headers: { ...server.headers } } : {}) };
   }
+  Object.assign(out, sessionCollabMcpServers(sessionTools));
   if (access) {
     out[CLAUDE_ASSISTANT_MCP_SERVER] = {
       type: "http",

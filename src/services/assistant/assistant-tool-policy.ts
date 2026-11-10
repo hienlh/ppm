@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { canonicalPath, isInside, patternLeavesRoot } from "../design/design-tool-policy.ts";
 import { ASSISTANT_TOOLS, CLAUDE_ASSISTANT_MCP_PREFIX, CLAUDE_ASSISTANT_MCP_SERVER, claudeAssistantToolName } from "../../shared/assistant-tool-names.ts";
+import { CLAUDE_SESSION_COLLAB_MCP_SERVER, SESSION_COLLAB_TOOLS } from "../../shared/session-collab.ts";
 import { assistantPrivateScope, isAssistantPrivatePath, privateRootWithin } from "./assistant-private-paths.ts";
 
 /**
@@ -18,7 +19,8 @@ import { assistantPrivateScope, isAssistantPrivatePath, privateRootWithin } from
  *    Read. A Glob or Grep searches everything below its folder, so one whose folder *holds* a
  *    private root, or the home folder, asks too;
  *  - ToolSearch and TodoWrite, which touch nothing outside the conversation;
- *  - the Assistant's own MCP tools, by exact name, which ask inside their endpoint before any change.
+ *  - the Assistant's own MCP tools and PPM's session tools, by exact name, which ask inside their
+ *    endpoint before any change.
  * Everything else — web, shell, file writes, subagents, skills, the user's own MCP servers,
  * reads anywhere else — answers "ask".
  *
@@ -53,7 +55,11 @@ const ALWAYS_ALLOWED = new Set(["ToolSearch", "TodoWrite"]);
  * The Assistant's tools as Claude names them, matched whole. A prefix test would also pass a
  * user server named `ppm-assistant_`, whose tools Claude spells `mcp__ppm-assistant___<tool>`.
  */
-const OWN_MCP_TOOLS: ReadonlySet<string> = new Set(ASSISTANT_TOOLS.map(claudeAssistantToolName));
+const OWN_MCP_TOOLS: ReadonlySet<string> = new Set([
+  ...ASSISTANT_TOOLS.map(claudeAssistantToolName),
+  // PPM's session tools, which ask the user inside their endpoint before every create or message.
+  ...SESSION_COLLAB_TOOLS.map((tool) => `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${tool}`),
+]);
 
 /** Tool → the input field naming its target; Glob and Grep default to the working directory. */
 const READ_TOOLS: Record<string, { field: string; optional: boolean }> = {

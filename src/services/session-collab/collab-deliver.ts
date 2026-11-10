@@ -13,11 +13,13 @@ export type DeliverOutcome =
   | { ok: true; delivered: SessionDelivery; clientMessageId: string; reply?: SessionWaitOutcome }
   | { ok: false; message: string };
 
+/** The sender as the from-session block names it; the PPM Assistant is marked as such. */
 export function fromSessionOf(env: CollabEnv, caller: CollabCaller): FromSessionReference {
   const turnId = env.live(caller.sessionId)?.currentTurnId;
   return {
     version: 1, sessionId: caller.sessionId, providerId: caller.providerId, projectName: caller.projectName,
     title: normalizeFromSessionTitle(caller.title), ...(turnId ? { turnId } : {}), sentAt: new Date().toISOString(),
+    ...(caller.kind === "assistant" ? { kind: "assistant" as const } : {}),
   };
 }
 
@@ -29,6 +31,8 @@ export async function deliverAndWait(env: CollabEnv, input: {
   signal: AbortSignal;
   turnRefs?: TurnReference[] | null;
   permissionMode?: string;
+  /** The mode the user approved the message in; the delivery refuses a chat that would run it in another. */
+  expectedMode?: string;
 }): Promise<DeliverOutcome> {
   const { caller, target } = input;
   let handle: WaitHandle | null = null;
@@ -43,12 +47,14 @@ export async function deliverAndWait(env: CollabEnv, input: {
   }
   let delivered;
   try {
+    // The target's own project: a chat with no live entry is started there, never in the caller's.
     delivered = await env.deliver({
       targetSessionId: target.sessionId, providerId: target.providerId,
-      projectName: caller.projectName, projectPath: caller.projectPath,
+      projectName: target.projectName, projectPath: target.projectPath,
       body: input.body, fromSession: fromSessionOf(env, caller),
       ...(input.turnRefs?.length ? { turnRefs: input.turnRefs } : {}),
       ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
+      ...(input.expectedMode ? { expectedMode: input.expectedMode } : {}),
     });
   } catch (e) {
     handle?.abandon();

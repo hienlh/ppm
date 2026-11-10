@@ -11,7 +11,7 @@ import { createServer as createHttpServer } from "node:http";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-/** The words a watch turn's refusal starts with (`WATCH_TURN_REFUSAL`). */
+/** The words a watch turn's refusal starts with (`UNATTENDED_TURN_REFUSAL`). */
 const WATCH_REFUSED = /Refused without asking the user: PPM started this turn on its own/;
 const BYPASS_WARNING = "Every run executes every tool without asking, with nobody watching.";
 

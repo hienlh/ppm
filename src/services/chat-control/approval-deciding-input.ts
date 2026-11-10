@@ -1,6 +1,8 @@
 import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import { normalizeClaudeQuestions, type NormalizedQuestion } from "../../shared/approval-questions.ts";
 import { escapeHiddenCharacters } from "../../shared/reveal-hidden-characters.ts";
+import { sessionCollabApprovalInput } from "../../shared/session-collab.ts";
+import { collabDecidingParts } from "./collab-deciding-input.ts";
 
 /**
  * The part of an approval card a person has to see in full before "Allow" means anything: the
@@ -135,6 +137,10 @@ export function decidingInput(card: DecidingCard): DecidingInput {
       complete: true,
     }, null);
   }
+
+  // A session tool's card: built by the server from input it checked, never capped on the way.
+  const collab = sessionCollabApprovalInput(tool, input);
+  if (collab) return finish({ kind: "endpoint", ...collabDecidingParts(collab), lang: "text", complete: true }, null);
 
   if (tool === "AskUserQuestion") {
     const questions = card.questions ?? normalizeClaudeQuestions(input);

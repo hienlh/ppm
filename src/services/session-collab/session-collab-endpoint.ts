@@ -4,6 +4,7 @@ import { isPpmTool, ppmToolOffMessage, ppmToolOn } from "../../shared/ppm-tools.
 import { CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL } from "../../shared/session-collab.ts";
 import { configService } from "../config.service.ts";
 import type { CallLimiter } from "../tab-tools-mcp/session-history-rate-limit.ts";
+import { collabToolPolicy } from "./collab-caller-policy.ts";
 import { resolveCaller, type CollabEnv } from "./collab-context.ts";
 import { createSessionTool } from "./collab-create.ts";
 import { createCollabLimiter } from "./collab-rate-limit.ts";
@@ -38,6 +39,9 @@ export function createSessionCollabMcpHandler(deps: {
       const env = deps.env();
       const caller = resolveCaller(env, sessionId);
       if (!caller.ok) return textResult(caller.message, true);
+      // Decided before anything is asked or delivered: an unattended Assistant turn is refused here.
+      const policy = collabToolPolicy(caller.value, name);
+      if (!policy.allowed) return textResult(policy.message, true);
       const slot = limiter.acquire(caller.value.sessionId, { exemptFromInFlight: name === SESSION_STATUS_TOOL });
       if (!slot.ok) return textResult(slot.message, true);
       const args = isObj(rawArgs) ? rawArgs : {};

@@ -2,10 +2,11 @@ import { resolveMigratedSession } from "../db.service.ts";
 import { chatLifecycle, type ChatLifecycle } from "../chat-control/chat-lifecycle.ts";
 
 /**
- * The id `chat_start` hands back for the chat it opened: the one the chat will keep.
+ * The id `create_session` hands the PPM Assistant back for the chat it opened: the one the chat
+ * will keep.
  *
  * Codex creates a new chat under a draft id and replaces it with its thread id once the first
- * turn has started its thread — after the message was accepted, so after `chat_start` would have
+ * turn has started its thread — after the message was accepted, so after the create would have
  * answered. An Assistant told the draft id then hears every later report under the thread id, and
  * cannot tell they are the same chat (in a live trial it disowned the very report it had promised).
  * So for Codex the answer waits for the rename, bounded: a thread that never starts ends its turn,

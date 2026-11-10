@@ -25,7 +25,7 @@ import { unnamedChat, watchedChatTitle } from "./watched-chat-title.ts";
  * - A watched chat's run ending (done, stopped, interrupted by a restart, or the watch expiring
  *   after 24 hours) is recorded on the watch, then reported by waking the Assistant session for
  *   one short turn. That turn opens with a fixed sentence and carries the news in its shared
- *   context; nothing in it may ask the user to approve anything (`WATCH_TURN_REFUSAL`).
+ *   context; nothing in it may ask the user to approve anything (`UNATTENDED_TURN_REFUSAL`).
  * - A watched chat showing a card wakes nothing: `watch_decision` lets the Telegram relay show
  *   the card with buttons. A model turn per card would cost a turn per tool call, and invite the
  *   model to act on a card the user never saw. Every watch relays its chat's cards; `notifyOn`
@@ -78,7 +78,7 @@ export interface WatchRequest {
   targetProject: string;
   targetProvider: string;
   notifyOn: NotifyKind[];
-  /** The chat is known to be starting a turn now (`chat_start`), whatever its state reads. */
+  /** The chat is known to be starting a turn now (a caller that just started it), whatever its state reads. */
   armed?: boolean;
 }
 

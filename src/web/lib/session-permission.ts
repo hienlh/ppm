@@ -3,7 +3,7 @@
  * with it.
  *
  * Every chat remembers its permission mode on the server, and a message sent with no mode
- * runs in that stored mode. A chat created somewhere else — the PPM Assistant's `chat_start`,
+ * runs in that stored mode. A chat created somewhere else — the session tools' `create_session`,
  * another device — reaches a tab whose metadata holds no mode at all, so the tab learns the
  * chat's mode from the connect greeting (`session_state`). Without that, the composer showed
  * its own fallback ("Bypass permissions") over a chat the user had approved as "Ask before

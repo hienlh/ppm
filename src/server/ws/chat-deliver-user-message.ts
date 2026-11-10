@@ -1,5 +1,5 @@
 import { configService } from "../../services/config.service.ts";
-import { getSessionDesignSlug, getSessionPermissionMode } from "../../services/db.service.ts";
+import { getSessionDesignSlug, getSessionPermissionMode, getStoredPermissionModeAnyAlias } from "../../services/db.service.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import type { ModeSource } from "../../services/assistant-mcp/assistant-approval-summary.ts";
@@ -48,7 +48,8 @@ export type TargetModeSource = ModeSource;
 
 export function targetChatMode(sessionId: string, state: ChatDeliveryState): { mode: string; source: TargetModeSource } {
   if (state.running && state.liveMode) return { mode: state.liveMode, source: "running" };
-  const stored = getSessionPermissionMode(sessionId);
+  // Any id the chat was known by, as the turn itself resolves it: a renamed Codex chat keeps its mode.
+  const stored = getStoredPermissionModeAnyAlias(sessionId);
   if (stored) return { mode: stored, source: "stored" };
   if (state.entryMode) return { mode: state.entryMode, source: "live" };
   return { mode: providerDefaultMode(state.providerId), source: "provider-default" };

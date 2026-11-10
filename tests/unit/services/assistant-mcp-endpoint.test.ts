@@ -67,8 +67,12 @@ describe("assistant MCP endpoint", () => {
     // extension's among them, which may also reach outside.
     // Setting and stopping a watch changes only PPM's own record of what to report, like navigation.
     const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab", "chat_watch", "chat_unwatch"]);
-    const writes = new Set(["db_query", "chat_send_message", "chat_start", "chat_answer_approval"]);
-    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(expect.arrayContaining(["chats_attention", "chat_start", "chat_answer_approval", "ppm_cli_reference"]));
+    const writes = new Set(["db_query", "chat_answer_approval"]);
+    const names = list.result.tools.map((t: { name: string }) => t.name);
+    expect(names).toEqual(expect.arrayContaining(["chats_attention", "chat_answer_approval", "ppm_cli_reference"]));
+    // Opening and messaging chats is the session tools' job, never this server's.
+    expect(names).not.toContain("chat_send_message");
+    expect(names).not.toContain("chat_start");
     // The git, schedule and tunnel families annotate their own tools, checked beside each family.
     const familyTools = new Set<string>([...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS]);
     for (const tool of list.result.tools) {

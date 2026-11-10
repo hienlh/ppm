@@ -1,7 +1,6 @@
 /**
  * The Assistant's watch tools: they never ask, they only ever point at a chat of a registered
- * project, and none of them runs in a turn a watch started. `chat_start` can watch the chat it
- * opens, set before the first message goes and dropped if that message never does.
+ * project, and none of them runs in a turn a watch started.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
@@ -14,11 +13,7 @@ import { _setClaudeProjectsRoot } from "../../../src/services/agent-transcript/c
 import { listAssistantWatches } from "../../../src/services/assistant-hub/assistant-hub-db.ts";
 import { createChatLifecycle } from "../../../src/services/chat-control/chat-lifecycle.ts";
 import { AssistantWatchService } from "../../../src/services/assistant-watch/assistant-watch.service.ts";
-import {
-  chatListWatchesTool, chatStartWatcher, chatUnwatchTool, chatWatchTool,
-} from "../../../src/services/assistant-mcp/assistant-watch-tools.ts";
-import { chatStart } from "../../../src/services/assistant-mcp/assistant-hub-tools.ts";
-import type { AssistantChatDelivery } from "../../../src/services/assistant-mcp/assistant-chat-send.ts";
+import { chatListWatchesTool, chatUnwatchTool, chatWatchTool } from "../../../src/services/assistant-mcp/assistant-watch-tools.ts";
 
 const text = (r: Record<string, unknown>) => (r.content as Array<{ text: string }>)[0]!.text;
 const isError = (r: Record<string, unknown>) => r.isError === true;
@@ -114,39 +109,5 @@ describe("chat_watch", () => {
     service.stop();
     expect(text(chatWatchTool(ASSISTANT, { project: "api", sessionId: SESSION }, { service, watchTurn: notWatchTurn }))).toContain("not available");
     expect(isError(chatListWatchesTool(ASSISTANT, { service }))).toBe(true);
-  });
-});
-
-describe("chat_start with watch", () => {
-  function deps(deliverError?: string) {
-    const delivery: AssistantChatDelivery = {
-      inspect: () => { throw new Error("not used"); },
-      deliver: async (target) => {
-        // The watch exists before the first message goes.
-        expect(listAssistantWatches({ targetSessionId: target.sessionId })).toHaveLength(1);
-        return deliverError ? { ok: false, error: deliverError } : { ok: true, sessionId: target.sessionId };
-      },
-    };
-    const create = async (input: Record<string, unknown>) => ({ id: crypto.randomUUID(), providerId: String(input.providerId), title: "", createdAt: "" });
-    return { delivery, create: create as never, broadcast: () => {}, watch: chatStartWatcher(ASSISTANT, service) };
-  }
-  const approve = async () => ({ verdict: "approved" as const });
-
-  it("watches the new chat as running and says so", async () => {
-    const result = await chatStart({ project: "api", text: "run the tests", permissionMode: "default", watch: true }, approve, deps());
-    const body = JSON.parse(text(result));
-    expect(body.watchId).toBeString();
-    const [w] = listAssistantWatches();
-    expect(w).toEqual(expect.objectContaining({ id: body.watchId, assistantSessionId: ASSISTANT, armedRunning: true, status: "active" }));
-  });
-
-  it("drops the watch when the first message never went", async () => {
-    const result = await chatStart({ project: "api", text: "run the tests", permissionMode: "default", watch: true }, approve, deps("nope"));
-    expect(isError(result)).toBe(true);
-    expect(listAssistantWatches()[0]!.status).toBe("cancelled");
-  });
-
-  it("refuses a watch flag that is not a boolean", async () => {
-    expect(text(await chatStart({ project: "api", text: "x", watch: "yes" }, approve, deps()))).toContain("`watch`");
   });
 });

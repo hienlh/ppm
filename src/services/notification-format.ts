@@ -11,6 +11,7 @@ import { sessionCollabApprovalInput, type SessionCollabApprovalInput } from "../
 export function collabApprovalTitle(input: SessionCollabApprovalInput): string {
   if (input.kind === "create") return `AI wants to open a session: ${input.title}`;
   if (input.kind === "pair_limit") return `Sessions reached their message limit (${input.sent}/${input.limit})`;
+  if (input.kind === "message") return `Assistant wants to message a chat in ${input.projectName}: ${input.targetTitle}`;
   return `AI wants to message a session with more permissions: ${input.targetTitle}`;
 }
 
@@ -81,7 +82,11 @@ export function describeApprovalInput(tool: string, input: unknown): Pick<Notifi
   if (db) return db.reason ? { detail: db.reason, detailStyle: "quote" } : {};
 
   const collab = sessionCollabApprovalInput(tool, input);
-  if (collab) return { detail: collab.kind === "create" ? collab.task : collab.kind === "escalation" ? collab.message : `To: ${collab.targetTitle}`, detailStyle: "quote" };
+  if (collab) {
+    const detail = collab.kind === "create" ? collab.task
+      : collab.kind === "escalation" || collab.kind === "message" ? collab.message : `To: ${collab.targetTitle}`;
+    return { detail, detailStyle: "quote" };
+  }
 
   if (tool === "AskUserQuestion" && Array.isArray(i.questions)) {
     const questions = i.questions as Array<{ question?: unknown }>;

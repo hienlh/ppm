@@ -3,6 +3,7 @@ import {
   SESSION_COLLAB_APPROVAL, isSessionCollabAnswer, sessionCollabAnswersFor,
   type SessionCollabAnswer, type SessionCollabApprovalInput, type SessionCollabApprovalRequest,
 } from "../../shared/session-collab.ts";
+import { isUnattendedTurn, UNATTENDED_TURN_REFUSAL } from "../chat-control/chat-control.ts";
 import { COLLAB_APPROVAL_WAIT_MS } from "./session-collab-tool.ts";
 
 /**
@@ -24,7 +25,7 @@ export interface CollabApprovalChat {
 
 export type CollabApprovalOutcome =
   | { allowed: true; answer: "allow_once" | "allow_session" }
-  | { allowed: false; reason: "denied" | "timeout" | "cancelled" | "no-chat" | "busy"; message: string };
+  | { allowed: false; reason: "denied" | "timeout" | "cancelled" | "no-chat" | "busy" | "unattended"; message: string };
 
 export type CollabApprovalAnswerResult =
   | { ok: true; answer: SessionCollabAnswer }
@@ -39,6 +40,11 @@ interface Pending {
 export function createCollabApprovalBroker(opts: {
   chat: () => CollabApprovalChat | null;
   canonical?: (sessionId: string) => string;
+  /**
+   * Whether the session's turn is unattended (PPM started it, nobody has written in it since):
+   * such a turn asks nobody. The session tools refuse first; this keeps any other way of asking shut.
+   */
+  unattended?: (sessionId: string) => boolean;
 }) {
   const canonical = opts.canonical ?? ((sessionId: string) => sessionId);
   const pending = new Map<string, Pending>();
@@ -53,6 +59,7 @@ export function createCollabApprovalBroker(opts: {
   function request(asked: string, input: SessionCollabApprovalInput, signal?: AbortSignal, waitMs = COLLAB_APPROVAL_WAIT_MS): Promise<CollabApprovalOutcome> {
     const sessionId = canonical(asked);
     if (signal?.aborted) return Promise.resolve({ allowed: false, reason: "cancelled", message: "The call was cancelled before the user was asked." });
+    if (opts.unattended?.(sessionId)) return Promise.resolve({ allowed: false, reason: "unattended", message: UNATTENDED_TURN_REFUSAL });
     if (pendingOf(sessionId)) {
       return Promise.resolve({ allowed: false, reason: "busy", message: "Another request is already waiting for the user's answer in this chat; wait for it, then call again." });
     }
@@ -97,8 +104,9 @@ export function createCollabApprovalBroker(opts: {
     const entry = pending.get(requestId);
     if (!entry) return { ok: false, status: 404, error: "This request is no longer waiting: it was answered, cancelled or timed out." };
     const raw = body && typeof body === "object" ? (body as { answer?: unknown }).answer : undefined;
-    if (!isSessionCollabAnswer(raw) || !sessionCollabAnswersFor(entry.event.input.kind).includes(raw)) {
-      return { ok: false, status: 400, error: `answer must be one of: ${sessionCollabAnswersFor(entry.event.input.kind).join(", ")}` };
+    const offered = sessionCollabAnswersFor(entry.event.input);
+    if (!isSessionCollabAnswer(raw) || !offered.includes(raw)) {
+      return { ok: false, status: 400, error: `answer must be one of: ${offered.join(", ")}` };
     }
     if (raw === "deny") entry.settle({ allowed: false, reason: "denied", message: "The user said no, so nothing was done. Do not ask again in this turn." });
     else entry.settle({ allowed: true, answer: raw });
@@ -135,4 +143,5 @@ export function setCollabApprovalChat(fn: CollabApprovalChat | null, canonical?:
 export const collabApprovalBroker = createCollabApprovalBroker({
   chat: () => chat,
   canonical: (sessionId) => resolveSession(sessionId),
+  unattended: isUnattendedTurn,
 });

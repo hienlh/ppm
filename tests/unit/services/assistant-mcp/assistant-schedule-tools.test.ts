@@ -19,7 +19,7 @@ import { scheduleGet, schedulesList } from "../../../../src/services/assistant-m
 import { scheduleDelete, scheduleRunNow, scheduleSave } from "../../../../src/services/assistant-mcp/assistant-schedule-write-tools.ts";
 import { SCHEDULE_BYPASS_WARNING } from "../../../../src/services/assistant-mcp/assistant-approval-summary-schedule.ts";
 import { SCHEDULE_TOOLS } from "../../../../src/shared/assistant-schedule-tool-names.ts";
-import { WATCH_TURN_REFUSAL } from "../../../../src/services/chat-control/chat-control.ts";
+import { UNATTENDED_TURN_REFUSAL } from "../../../../src/services/chat-control/chat-control.ts";
 
 const WEB = join(tmpdir(), "ppm-schedule-unit-web");
 const ELSEWHERE = join(tmpdir(), "ppm-schedule-unit-elsewhere");
@@ -174,7 +174,7 @@ describe("creating a schedule", () => {
   it("writes nothing when the user declines or the turn is a watch turn", async () => {
     for (const verdict of [
       { verdict: "denied", reason: "no" },
-      { verdict: "unavailable", reason: WATCH_TURN_REFUSAL },
+      { verdict: "unavailable", reason: UNATTENDED_TURN_REFUSAL },
       { verdict: "withdrawn", reason: "typed" },
     ] as ApprovalVerdict[]) {
       const routes = fakeRoutes([sched()]);

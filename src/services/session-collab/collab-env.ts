@@ -7,6 +7,7 @@ import {
 } from "../db.service.ts";
 import { configService } from "../config.service.ts";
 import { chatService } from "../chat.service.ts";
+import { createProjectChatSession } from "../chat-session-create.ts";
 import { createLogger } from "../logger.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { listSessionTurns } from "../session-turns/session-turn-index.service.ts";
@@ -15,7 +16,11 @@ import type { TurnReference } from "../../shared/chat-turn-ref.ts";
 import {
   announceSessionCreated, announceSessionLinkChanged, deliverToSession, waitForTurnBinding,
 } from "../../server/ws/chat-inject.ts";
-import { collabLiveState, listRunningSessions, onTurnBinding } from "../../server/ws/chat.ts";
+import { chatTargetMode, collabLiveState, listRunningSessions, onTurnBinding } from "../../server/ws/chat.ts";
+import { isAssistantProject } from "../../shared/assistant-project.ts";
+import { isAssistantSession } from "../assistant/assistant-session.ts";
+import { isUnattendedTurn } from "../chat-control/chat-control.ts";
+import { awaitCanonicalSessionId } from "../assistant-mcp/assistant-chat-start-session-id.ts";
 import { collabApprovalBroker } from "./collab-approval-broker.ts";
 import type { CollabCaller, CollabEnv } from "./collab-context.ts";
 import { collabWaits } from "./collab-waits.ts";
@@ -98,6 +103,15 @@ export const collabEnv: CollabEnv = {
     parentOf, depthOf, childrenOf, recordSpawn,
     linked: (sessionId) => linkedSessions(sessionId).map((l) => l.sessionId),
   },
+  isAssistantSession: (sessionId, cwd) => isAssistantSession(sessionId, cwd),
+  isUnattendedTurn,
+  projectByName: (name) => {
+    if (isAssistantProject(name)) return null;
+    const project = configService.get("projects").find((p) => p.name === name);
+    return project ? { name: project.name, path: project.path } : null;
+  },
+  chatMode: chatTargetMode,
+  settledSessionId: (sessionId, providerId) => awaitCanonicalSessionId(sessionId, providerId),
   pairs: pairCounter,
   approve: (sessionId, input, signal) => collabApprovalBroker.request(sessionId, input, signal),
   waits: collabWaits,
@@ -109,9 +123,13 @@ export const collabEnv: CollabEnv = {
   reserveSpawnSlot: reserveChildSlot,
   markStarting: markChildStarting,
   deliver: deliverToSession,
-  createSession: async (providerId, input) => (await chatService.createSession(providerId, {
-    projectName: input.projectName, projectPath: input.projectPath, title: input.title,
-  })).id,
+  createSession: async (providerId, input) => (input.asUserChat
+    ? await createProjectChatSession({
+      providerId, projectName: input.projectName, projectPath: input.projectPath, title: input.title, adoptWarmSpare: false,
+    })
+    : await chatService.createSession(providerId, {
+      projectName: input.projectName, projectPath: input.projectPath, title: input.title,
+    })).id,
   persistChild: (childId, input) => {
     setSessionMetadata(childId, input.projectName, input.projectPath);
     setSessionTitle(childId, input.title);

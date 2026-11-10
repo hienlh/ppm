@@ -34,6 +34,13 @@ export function fakeEnv(opts: {
   delivered?: SessionDelivery;
   providerDefaultMode?: string | null;
   running?: string[];
+  /** PPM Assistant sessions, and those of them in an unattended turn. */
+  assistants?: string[];
+  unattended?: string[];
+  /** The mode a message would run in, per target; changed by `onApprove` to model a mode switch. */
+  chatModes?: Record<string, string>;
+  /** Runs after each card is answered, before the tool goes on. */
+  onApprove?: () => void;
 }) {
   const sessions = opts.sessions;
   const asked: SessionCollabApprovalInput[] = [];
@@ -79,8 +86,8 @@ export function fakeEnv(opts: {
       parentOf: (id) => sessions[id]?.parent ?? null,
       depthOf: (id) => sessions[id]?.depth ?? 0,
       childrenOf: (id) => Object.keys(sessions).filter((k) => sessions[k]!.parent === id),
-      recordSpawn: (child, parent) => {
-        const depth = (sessions[parent]?.depth ?? 0) + 1;
+      recordSpawn: (child, parent, at) => {
+        const depth = at ?? (sessions[parent]?.depth ?? 0) + 1;
         sessions[child] = { ...sessions[child]!, parent, depth };
         return depth;
       },
@@ -115,8 +122,13 @@ export function fakeEnv(opts: {
         return rank !== undefined && permissionRank(mode) <= rank;
       },
     },
+    isAssistantSession: (id) => (opts.assistants ?? []).includes(id),
+    isUnattendedTurn: (id) => (opts.unattended ?? []).includes(id),
+    projectByName: (name) => (name === "app" ? { name, path: PROJECT_PATH } : name === "other" ? { name, path: OTHER_PATH } : null),
+    chatMode: (id) => ({ mode: opts.chatModes?.[id] ?? sessions[id]?.mode ?? "bypassPermissions", source: sessions[id]?.mode ? "stored" : "provider-default" }),
     approve: async (_sessionId, input) => {
       asked.push(input);
+      opts.onApprove?.();
       const answer = answers.shift() ?? "deny";
       if (answer === "timeout") return { allowed: false, reason: "timeout", message: "The user did not answer." };
       if (answer === "deny") return { allowed: false, reason: "denied", message: "The user said no." };

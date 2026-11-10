@@ -3,6 +3,7 @@ import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import {
   effectivePermissionMode, resolveTarget, type CollabCaller, type CollabEnv, type CollabTarget,
 } from "./collab-context.ts";
+import { assistantSendCheck } from "./collab-send-assistant.ts";
 import { deliverAndWait } from "./collab-deliver.ts";
 import { jsonResult, statusOf } from "./collab-status.ts";
 import { collabTextTooLarge } from "./session-collab-tool.ts";
@@ -61,8 +62,17 @@ export async function sendToSessionTool(env: CollabEnv, caller: CollabCaller, ar
   if (!resolved.ok) return textResult(resolved.message, true);
   const target = resolved.value;
 
-  const refused = await sendChecks(env, caller, target, message, signal);
-  if (refused) return textResult(refused, true);
+  // The PPM Assistant asks the user about every message instead of the pair and mode checks, and
+  // the message must still run in the mode the user approved when it is handed over.
+  let expectedMode: string | undefined;
+  if (caller.kind === "assistant") {
+    const check = await assistantSendCheck(env, caller, target, message, signal);
+    if (!check.ok) return textResult(check.message, true);
+    expectedMode = check.mode;
+  } else {
+    const refused = await sendChecks(env, caller, target, message, signal);
+    if (refused) return textResult(refused, true);
+  }
 
   // The target is waiting for exactly this: hand it over as the wait's result, once.
   const sentAt = new Date().toISOString();
@@ -72,16 +82,18 @@ export async function sendToSessionTool(env: CollabEnv, caller: CollabCaller, ar
     return jsonResult(result);
   }
 
-  const out = await deliverAndWait(env, { caller, target, body: message, wait: args.wait === true, signal });
+  const out = await deliverAndWait(env, { caller, target, body: message, wait: args.wait === true, signal, ...(expectedMode ? { expectedMode } : {}) });
   if (!out.ok) {
     // Never reached the target: it does not count against the pair's limit.
     env.pairs.unrecord(caller.sessionId, target.sessionId);
     return textResult(out.message, true);
   }
-  const result: SendToSessionResult = {
+  const result: SendToSessionResult & { project?: string } = {
     delivered: out.delivered,
     status: statusOf(env, target.sessionId, target.providerId, caller.sessionId, !!out.reply),
     ...(out.reply ? { reply: out.reply } : {}),
+    // The Assistant's targets live in other projects; its tool card opens them there.
+    ...(caller.kind === "assistant" ? { project: target.projectName } : {}),
   };
   return jsonResult(result);
 }

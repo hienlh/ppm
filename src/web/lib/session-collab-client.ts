@@ -11,6 +11,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { canonicalSessionId } from "@/stores/chat-jump-store";
 import { openSessionAnywhere } from "./open-session-anywhere";
 import { openTurnRef } from "./open-turn-ref";
+import { isAssistantProject } from "../../shared/assistant-project";
 import type { SessionCollabAnswer, SessionLink, SessionLinkRelation } from "../../shared/session-collab";
 
 const RELATIONS: ReadonlySet<string> = new Set<SessionLinkRelation>(["parent", "child", "messaged"]);
@@ -70,6 +71,13 @@ export interface LinkedSessionTarget {
  */
 export async function openLinkedSession(target: LinkedSessionTarget): Promise<void> {
   const { providerId } = target;
+  // A PPM Assistant session belongs to no project: it opens in the Assistant itself.
+  if (isAssistantProject(target.projectName)) {
+    // Loaded on use: the window stores it reaches are not needed until the Assistant opens.
+    const { openAssistant } = await import("@/components/assistant/open-assistant");
+    openAssistant({ sessionId: canonicalSessionId(target.sessionId), providerId });
+    return;
+  }
   // Only Claude and Codex sessions have turns to jump to.
   if (target.turnId && (providerId === "claude" || providerId === "codex")) {
     await openTurnRef({ ...target, providerId, turnId: target.turnId, title: target.title ?? "Chat" });

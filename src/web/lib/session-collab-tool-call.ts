@@ -34,6 +34,8 @@ export interface SessionCollabToolResult {
   reply?: SessionWaitOutcome;
   /** `session_status`'s list. */
   sessions?: SessionStatus[];
+  /** The session's project, when it is not the caller's (the PPM Assistant's calls). */
+  project?: string;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -119,6 +121,7 @@ export function sessionCollabToolResult(output: string): SessionCollabToolResult
     ...(status ? { status } : {}),
     ...(reply ? { reply } : {}),
     ...(sessions ? { sessions } : {}),
+    ...(text(parsed.project) ? { project: parsed.project as string } : {}),
   };
   return Object.keys(result).length > 0 ? result : null;
 }

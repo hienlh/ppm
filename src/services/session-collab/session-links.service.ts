@@ -35,10 +35,11 @@ export function depthOf(sessionId: string): number {
 }
 
 /**
- * Records that `parentId`'s AI created `childId`, at the parent's depth + 1, and returns that
+ * Records that `parentId`'s AI created `childId`, at the parent's depth + 1 — or at `depth` when
+ * given (a chat the PPM Assistant opens starts at 0, as one the user opens does) — and returns that
  * depth. Refuses a session creating itself or one of its own ancestors.
  */
-export function recordSpawn(childId: string, parentId: string): number {
+export function recordSpawn(childId: string, parentId: string, depthOverride?: number): number {
   const child = requireId(childId);
   const parent = requireId(parentId);
   if (child === parent) throw new Error("A session cannot create itself");
@@ -47,7 +48,7 @@ export function recordSpawn(childId: string, parentId: string): number {
     if (ancestor === child) throw new Error("A session cannot be created by one of its own descendants");
     ancestor = parentOf(ancestor);
   }
-  const depth = depthOf(parent) + 1;
+  const depth = depthOverride ?? depthOf(parent) + 1;
   getDb().query(
     "INSERT INTO session_metadata (session_id, spawned_by, spawn_depth) VALUES (?, ?, ?) "
     + "ON CONFLICT(session_id) DO UPDATE SET spawned_by = excluded.spawned_by, spawn_depth = excluded.spawn_depth",

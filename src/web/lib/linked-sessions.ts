@@ -58,7 +58,8 @@ export function collectLinkedSessions({ sessionId, list, messages, liveLinks, an
   for (const m of messages) {
     if (m.role === "user") {
       const from = decodeMessageBlocks(m.content).fromSession;
-      if (from) add(from.sessionId, "messaged", from.title, from.providerId);
+      // The PPM Assistant belongs to no project, so this bar could not open it; its bubble does.
+      if (from && from.kind !== "assistant") add(from.sessionId, "messaged", from.title, from.providerId);
       continue;
     }
     for (const e of m.events ?? []) {

@@ -122,7 +122,8 @@ export function tabToolsMcpEnv(access: TabToolsMcpAccess | undefined): Record<st
 export function assistantUserMcpConfig(servers: readonly AssistantMcpServer[] | undefined): CodexConfigOverrides {
   const out: CodexConfigOverrides = {};
   for (const server of servers ?? []) {
-    if (!server.enabled) continue;
+    // PPM's own servers keep their names, whatever an older saved setting says.
+    if (!server.enabled || server.name === CODEX_ASSISTANT_MCP_SERVER || server.name === CODEX_SESSION_COLLAB_MCP_SERVER) continue;
     out[`mcp_servers.${server.name}`] = server.transport === "stdio"
       ? {
         command: server.command,

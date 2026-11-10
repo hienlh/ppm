@@ -85,7 +85,12 @@ export function sessionCollabToolDefinitions() {
           provider: { type: "string", enum: ["claude", "codex"], description: "The AI to run it on; yours by default." },
           model: { type: "string", description: "The model; the same as yours by default." },
           wait: WAIT,
-          project: { type: "string", description: "Reserved: the session is always created in your own project. If given, it must be that project's name." },
+          project: {
+            type: "string",
+            description: "A session always creates in its own project: leave this out, or give that project's name. The PPM "
+              + "Assistant must name the registered project to open the chat in (see projects_list); its chat starts in "
+              + "the provider's default mode and model, and the user is always asked first.",
+          },
         },
         required: ["title", "task"],
         additionalProperties: false,
@@ -101,7 +106,8 @@ export function sessionCollabToolDefinitions() {
         + "other AI only through this tool: your final answer is not forwarded), to ask a session that already "
         + "holds the context, or to hand a running session more to do. A running session reads the message at its "
         + "next step; an idle one starts a turn. The user sees every message in both sessions. Sending to a session "
-        + "with more permissions than yours, and sending many messages back and forth, asks the user first.",
+        + "with more permissions than yours, and sending many messages back and forth, asks the user first. The PPM "
+        + "Assistant may message a chat of any registered project, and every message it sends is asked first.",
       inputSchema: {
         type: "object",
         properties: {

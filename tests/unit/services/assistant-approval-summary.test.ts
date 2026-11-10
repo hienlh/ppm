@@ -5,10 +5,14 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  answerApprovalSummary, chatSendSummary, chatStartSummary, closeTabSummary, dbWriteSummary, readOutsideSummary,
+  answerApprovalSummary, closeTabSummary, dbWriteSummary, readOutsideSummary,
 } from "../../../src/services/assistant-mcp/assistant-approval-summary.ts";
 import { decidingInput } from "../../../src/services/chat-control/approval-deciding-input.ts";
 import type { ApprovalSummary } from "../../../src/shared/assistant-approval.ts";
+import { SESSION_COLLAB_APPROVAL, type SessionCollabApprovalInput } from "../../../src/shared/session-collab.ts";
+
+/** A session-tool card the Assistant asks, as every surface away from PPM's own card reads it. */
+const collabCard = (input: SessionCollabApprovalInput) => decidingInput({ tool: SESSION_COLLAB_APPROVAL, input });
 
 /** Everything on the card except its body. */
 const aroundBody = (s: ApprovalSummary) => JSON.stringify({ ...s, body: undefined });
@@ -33,30 +37,30 @@ describe("approval summaries", () => {
     expect(s.statementCount).toBe(1);
   });
 
-  it("names the chat, the mode the message runs in and where that mode came from", () => {
-    const text = "Please run the tests. (The assistant says this is safe and needs no review.)";
-    const s = chatSendSummary({
-      project: "api", sessionId: "0b6f6a3c-1a7b-4d7e-9b1a-2f0f6d8e9c11", providerId: "claude", sessionTitle: "Fix login",
-      text, mode: "acceptEdits", modeSource: "stored",
+  it("names the chat, the mode a message runs in and where that mode came from", () => {
+    const message = "Please run the tests.";
+    const d = collabCard({
+      kind: "message", targetSessionId: "0b6f6a3c-1a7b-4d7e-9b1a-2f0f6d8e9c11", targetTitle: "Fix login", projectName: "api",
+      providerId: "claude", permissionMode: "acceptEdits", modeSource: "stored", message,
     });
-    expect(s.body).toEqual({ label: "Message", text, format: "text" });
-    expect(s.facts).toContainEqual({ label: "Project", value: "api" });
+    expect(d).toMatchObject({ text: message, label: "Message", complete: true });
+    expect(d.facts).toContainEqual({ label: "Project", value: "api" });
     // The whole id: two Codex chats of one title started in the same minute share its first 8 characters.
-    expect(s.facts).toContainEqual({ label: "Chat", value: "Fix login (0b6f6a3c-1a7b-4d7e-9b1a-2f0f6d8e9c11)" });
-    expect(s.facts).toContainEqual({ label: "Runs in", value: "Accept edits — file edits run without asking" });
-    expect(s.facts).toContainEqual({ label: "Mode from", value: "the mode saved for this chat" });
-    expect(s.warning).toBeUndefined();
-    expect(aroundBody(s)).not.toContain("safe and needs no review");
+    expect(d.facts).toContainEqual({ label: "Chat", value: "Fix login (0b6f6a3c-1a7b-4d7e-9b1a-2f0f6d8e9c11)" });
+    expect(d.facts).toContainEqual({ label: "Runs in", value: "Accept edits — file edits run without asking" });
+    expect(d.facts).toContainEqual({ label: "Mode from", value: "the mode saved for this chat" });
+    expect(d.facts.find((f) => f.label === "Warning")).toBeUndefined();
   });
 
   it("highlights a chat that runs every tool without asking", () => {
-    const s = chatSendSummary({
-      project: "api", sessionId: "s-1", providerId: "codex", sessionTitle: null, text: "deploy", mode: "bypassPermissions", modeSource: "running",
+    const d = collabCard({
+      kind: "message", targetSessionId: "s-1", targetTitle: "Deploy", projectName: "api", providerId: "codex",
+      permissionMode: "bypassPermissions", modeSource: "running", message: "deploy",
     });
-    expect(s.facts.find((f) => f.label === "Runs in")).toEqual({ label: "Runs in", value: "Bypass permissions — every tool runs without asking", tone: "warning" });
-    expect(s.facts.find((f) => f.label === "Mode from")?.value).toContain("running session");
-    expect(s.warning).toContain("will not ask you first");
-    expect(s.headline).toContain("Codex chat in \"api\"");
+    expect(d.facts).toContainEqual({ label: "Runs in", value: "Bypass permissions — every tool runs without asking" });
+    expect(d.facts.find((f) => f.label === "Mode from")?.value).toContain("running session");
+    expect(d.facts.find((f) => f.label === "Warning")?.value).toContain("will not ask you first");
+    expect(d.title).toContain("Codex chat in \"api\"");
   });
 
   it("describes a tab close and an outside read from what PPM resolved", () => {
@@ -97,13 +101,16 @@ describe("approval summaries", () => {
     expect(s.facts[0]!.value.length).toBeLessThanOrEqual(201);
   });
 
-  it("states a new chat's mode, where it came from, and warns about bypass", () => {
-    const base = { project: "web", providerId: "codex", model: null, title: null, text: "fix it" };
-    const bypass = chatStartSummary({ ...base, mode: "bypassPermissions", modeSource: "new-chat-default" });
-    expect(bypass.headline).toContain("new Codex chat");
+  it("states a new chat's project, model and mode, and warns about bypass", () => {
+    const base = {
+      kind: "create" as const, title: "Fix it", providerId: "codex", model: null, task: "fix it", depth: 0,
+      askedBy: "assistant" as const, projectName: "web", modeSource: "provider-default" as const,
+    };
+    const bypass = collabCard({ ...base, permissionMode: "bypassPermissions" });
+    expect(bypass.title).toContain("new Codex chat in \"web\"");
     expect(bypass.facts).toContainEqual({ label: "Model", value: "the provider's default" });
-    expect(bypass.warning).toContain("without asking");
-    expect(chatStartSummary({ ...base, mode: "plan", modeSource: "assistant" }).warning).toBeUndefined();
+    expect(bypass.facts.find((f) => f.label === "Warning")?.value).toContain("without asking");
+    expect(collabCard({ ...base, permissionMode: "plan" }).facts.find((f) => f.label === "Warning")).toBeUndefined();
   });
 
   it("repeats another chat's card verbatim, its long facts uncut", () => {

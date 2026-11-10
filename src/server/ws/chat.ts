@@ -60,14 +60,15 @@ import { APPROVAL_NO_LONGER_VALID_MESSAGE, type ApprovalStaleMessage } from "../
 import {
   effectivePermissionMode, targetChatMode, providerDefaultMode, type ChatDeliveryState,
 } from "./chat-deliver-user-message.ts";
-import { setAssistantChatDelivery, TARGET_HAS_PENDING_APPROVAL, type DeliverResult } from "../../services/assistant-mcp/assistant-chat-send.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
+import { collabCardForListeners, settleCollabApprovalFromServer } from "./chat-collab-approval-relay.ts";
 import { assistantProviderDefaults } from "../../services/assistant/assistant-settings.service.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
 import type { ReplyReference } from "../../shared/chat-reply.ts";
 import { CHAT_CLIENT_ID_PARAM, chatClientIdFrom } from "../../shared/chat-client-id.ts";
 import {
-  CHAT_BUSY, WATCH_TURN_REFUSAL, setChatControl, type ApprovalAnswer, type ChatMessageOrigin, type LiveApprovalCard, type LiveChatState, type ServerOrigin,
+  CHAT_BUSY, UNATTENDED_TURN_REFUSAL, setChatControl, type ApprovalAnswer, type ChatMessageOrigin, type DeliverResult,
+  type LiveApprovalCard, type LiveChatState, type MessageServerOrigin,
 } from "../../services/chat-control/chat-control.ts";
 import {
   answersForDisplay, coerceAnswersById, legacyAnswersToById, normalizeClaudeQuestions, questionsFromWire, toProviderAnswers,
@@ -760,9 +761,12 @@ const approvals: PendingApprovals = createPendingApprovals({
     if (!entry) return;
     if (isPpmApproval(ev)) {
       // Not buffered into the turn's replay: the tool call's own card already shows what is
-      // asked, and a device that connects later reads the approval from `session_state`. Not
-      // told to chat listeners either: it is answered over HTTP with PPM's password, nowhere else.
+      // asked, and a device that connects later reads the approval from `session_state`. Told to
+      // chat listeners only when it is a session-tool card of the PPM Assistant, which Telegram
+      // shows too; the others are answered over HTTP with PPM's password, nowhere else.
       broadcast(sessionId, ev);
+      const relayed = collabCardForListeners(sessionId, entry.projectPath, ev);
+      if (relayed) chatLifecycle.emit("approval_shown", { sessionId, card: relayed, projectName: entry.projectName ?? "", providerId: entry.providerId });
       announceApprovalRequest(sessionId, entry, ev, () => activeSessions.get(sessionId)?.pendingApprovalEvent?.requestId === ev.requestId);
       return;
     }
@@ -791,7 +795,7 @@ const approvals: PendingApprovals = createPendingApprovals({
     if (waiting) approvals.offer(sessionId, slot, ppmApprovalEvent(waiting));
   },
   ended: (sessionId, ev, reason, how) => {
-    if (isPpmApproval(ev)) return;
+    if (isPpmApproval(ev) && !collabCardForListeners(sessionId, activeSessions.get(sessionId)?.projectPath, ev)) return;
     chatLifecycle.emit("approval_resolved", {
       sessionId,
       requestId: ev.requestId,
@@ -844,12 +848,15 @@ function announcePpmApproval(sessionId: string, event: { type: string; requestId
   return true;
 }
 
-/** One of PPM's own approvals was answered, or given up on: every device drops its card. */
+/**
+ * One of PPM's own approvals was answered, or given up on: every device drops its card. A session
+ * tool's card that nobody answered (timed out, cancelled) comes with a null `answer`.
+ */
 function ppmApprovalResolved(sessionId: string, requestId: string, approved: boolean, answer?: SessionCollabAnswer | null): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
   broadcast(sessionId, { type: "approval_resolved", requestId, approved, answers: answer ? { answer } : null });
-  approvals.clear(sessionId, entry, requestId, APPROVAL_END.answered, { approved });
+  approvals.clear(sessionId, entry, requestId, answer === null ? APPROVAL_END.requestEnded : APPROVAL_END.answered, { approved });
   broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
 }
 setDbApprovalChat({
@@ -1568,7 +1575,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // hears a plain denial; the turn's context already told the model why.
         if (entry.turnOrigin === "watch") {
           chatService.resolveApproval(entry.providerId, sessionId, ev.requestId, false, undefined, { reason: "watch_turn", origin: "watch" });
-          log.info(`session=${sessionId} approval for ${String(ev.tool).slice(0, 60)} refused without asking: ${WATCH_TURN_REFUSAL}`);
+          log.info(`session=${sessionId} approval for ${String(ev.tool).slice(0, 60)} refused without asking: ${UNATTENDED_TURN_REFUSAL}`);
           continue;
         }
         // A question card carries its questions normalized, so every surface answers it by id:
@@ -1732,17 +1739,15 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
 /** How a message reaches {@link deliverUserMessage}, and who sent it. */
 interface DeliverOpts {
   /**
-   * "ws": a device's message, `sender` being its socket. "assistant": a message the PPM
-   * Assistant sends into this chat with the user's approval — it never answers a waiting card
-   * on the user's behalf, never makes any device the chat's "chatting device", and is shown to
-   * every device showing the chat, since none of them typed it.
+   * "ws": a device's message, `sender` being its socket.
    * "telegram": the user typing on Telegram — their own message, so it answers a waiting card
    * as a typed message does, but no PPM screen typed it, so none stays the chatting device.
    * "watch": the server reporting on a watched chat — never the user, so it is refused while a
    * card waits or a turn runs rather than cancelling or steering it, and it leaves no chatting
    * device either.
+   * Another session's AI, the PPM Assistant included, comes in through `deliverToSession`.
    */
-  origin: ChatMessageOrigin;
+  origin: "ws" | MessageServerOrigin;
   sender?: ChatWsSocket;
   /** The channel the user typed on, when it is not a PPM screen. */
   channel?: "telegram";
@@ -1792,12 +1797,8 @@ async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: 
 async function deliverMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<DeliverResult> {
   const providerId = entry.providerId;
   const parsed = { content: text };
-  const fromAssistant = opts.origin === "assistant";
   // Only the user's own messages (typed in PPM or on Telegram) may push a waiting card aside.
   const fromUser = opts.origin === "ws" || opts.origin === "telegram";
-  // Checked before anything is echoed: the Assistant's message must not answer a card for the
-  // user, and a card is how that chat asks them anything.
-  if (fromAssistant && entry.pendingApprovalEvent) return { ok: false, error: TARGET_HAS_PENDING_APPROVAL };
   // A watch report waits for a quiet chat: pushed into a running turn it would steer the user's
   // work mid-way, and with a card waiting it would cancel the card.
   if (opts.origin === "watch" && busyForWatch(entry)) return { ok: false, error: CHAT_BUSY };
@@ -1912,8 +1913,6 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
     receivedAt: opts.receivedAt ?? Date.now(),
     // Already done above, for the user's own messages only.
     supersedePendingApproval: false,
-    // The Assistant's message is not typed at any screen, but the user is still where they were.
-    keepChattingDevice: opts.origin === "assistant",
     ...(opts.permissionMode ? { permissionMode: opts.permissionMode } : {}),
     turnContext: {
       ...(uiSummary ? { uiSummary } : {}),
@@ -1957,21 +1956,26 @@ function messageImagesError(images: unknown): string | null {
   return null;
 }
 
-/** What the PPM Assistant's `chat_send_message` needs to know about its target before asking. */
-function assistantTargetState(sessionId: string, providerId: string): ChatDeliveryState {
-  const entry = activeSessions.get(resolveMigratedSession(sessionId));
-  return {
+/**
+ * The mode a message would run in now in this chat, and where that came from: what the PPM
+ * Assistant's message card states, and what the message must still run in once it is allowed.
+ */
+export function chatTargetMode(asked: string, providerId: string): ReturnType<typeof targetChatMode> {
+  const sessionId = resolveMigratedSession(asked);
+  const entry = activeSessions.get(sessionId);
+  const state: ChatDeliveryState = {
     providerId: entry?.providerId ?? providerId,
     running: !!entry?.isStreamingActive,
     ...(entry?.liveMode ? { liveMode: entry.liveMode } : {}),
     ...(entry?.permissionMode ? { entryMode: entry.permissionMode } : {}),
     pendingApproval: !!entry?.pendingApprovalEvent,
   };
+  return targetChatMode(sessionId, state);
 }
 
 /**
- * The live entry of a chat the server acts on with no socket attached (a message from the PPM
- * Assistant, from Telegram, from a watch). A chat nobody has open gets an entry of its own, so
+ * The live entry of a chat the server acts on with no socket attached (a message from Telegram,
+ * from a watch). A chat nobody has open gets an entry of its own, so
  * whoever opens it later sees the turn; nobody may ever open it, so it is marked idle and goes
  * like any abandoned entry once its turn is over. `sessionId` must already be the current id.
  */
@@ -1992,41 +1996,6 @@ function ensureServerEntry(
 }
 
 /**
- * A message the PPM Assistant sends into one of the user's chats, once the user approved it
- * (`chat_send_message`). Runs in `permissionMode`, the mode the card showed: if the chat would
- * now run it in another one — its session started meanwhile in a different mode — nothing is
- * sent. A chat nobody has open gets an entry of its own, so whoever opens it later sees the turn.
- */
-async function deliverFromAssistant(
-  target: { sessionId: string; projectName: string; providerId: string },
-  text: string,
-  permissionMode: string,
-): Promise<DeliverResult> {
-  const sessionId = resolveMigratedSession(target.sessionId);
-  if (isAssistantSession(sessionId)) return { ok: false, error: "The Assistant cannot send messages into its own chats." };
-  const ensured = ensureServerEntry(sessionId, target.projectName, target.providerId);
-  if (!ensured.ok) return ensured;
-  const { entry } = ensured;
-  const now = targetChatMode(sessionId, assistantTargetState(sessionId, entry.providerId));
-  if (now.mode !== permissionMode) {
-    return { ok: false, error: `The chat would now run in "${now.mode}" rather than "${permissionMode}", the mode the user approved; nothing was sent. Ask again.` };
-  }
-  log.info(`session=${sessionId} message from the PPM Assistant, approved by the user (mode ${permissionMode})`);
-  const result = await deliverUserMessage(sessionId, entry, text, { origin: "assistant", permissionMode });
-  // An entry made for this message and left unused must not outlive the attempt.
-  if (!result.ok && entry.clients.size === 0 && !entry.isStreamingActive) startCleanupTimer(sessionId);
-  return result;
-}
-
-setAssistantChatDelivery({
-  inspect: (sessionId, providerId) => {
-    const state = assistantTargetState(sessionId, providerId);
-    return { ...targetChatMode(resolveMigratedSession(sessionId), state), pendingApproval: state.pendingApproval };
-  },
-  deliver: deliverFromAssistant,
-});
-
-/**
  * Answers a session's approval card — from a browser, or from the server on a person's behalf
  * (a Telegram button). The one way a card is answered, so whichever answer arrives first wins and
  * the other finds nothing waiting. "stale": nothing waits on that id any more — answered
@@ -2040,10 +2009,19 @@ function answerApprovalCore(
   answer: ApprovalAnswer,
   origin: ChatMessageOrigin,
 ): "answered" | "stale" {
-  // PPM's own approvals are answered over authenticated HTTP with PPM's password, by a person in
-  // PPM: no other surface may settle one, so for them there is nothing here to answer.
-  if (ppmApprovals.has(requestId)) return "stale";
   const approved = answer.approved === true;
+  // PPM's own approvals are answered over authenticated HTTP (a `db_execute` change with PPM's
+  // password). The one exception is a session tool's card pressed on Telegram, which settles it
+  // through its broker, once and never "for the session" (see `chat-collab-approval-relay.ts`).
+  if (ppmApprovals.has(requestId)) {
+    const previous = resolvingBy;
+    resolvingBy = origin;
+    try {
+      return settleCollabApprovalFromServer(sessionId, entry.projectPath, requestId, approved, origin);
+    } finally {
+      resolvingBy = previous;
+    }
+  }
   // A question card is answered by question id, from any surface (an older tab still sends the
   // provider's own shape); the provider gets its own shape, and every device is shown the
   // answers keyed by question text, the way the transcript's question card reads them.
@@ -2146,7 +2124,8 @@ function liveChatState(entry: SessionEntry): LiveChatState {
   };
 }
 
-const SERVER_ORIGINS: readonly ServerOrigin[] = ["telegram", "watch", "assistant"];
+/** The server's own message doors; the PPM Assistant's messages go through the session tools instead. */
+const SERVER_ORIGINS: readonly MessageServerOrigin[] = ["telegram", "watch"];
 
 setChatControl({
   async sendUserMessage(asked, text, opts) {
@@ -2206,7 +2185,7 @@ setChatControl({
 
 /**
  * The permission fields of a connect greeting. A chat remembers its mode on the server, and
- * one created elsewhere (the PPM Assistant's `chat_start`, another device) reaches a tab whose
+ * one created elsewhere (the session tools' `create_session`, another device) reaches a tab whose
  * metadata holds no mode at all — so the browser has to be told which mode the chat runs in.
  * `permissionMode` is only the stored mode, null when none is stored: the browser adopts it,
  * and adopting a provider default instead would pin that default on the next send.
@@ -2332,12 +2311,6 @@ export interface SubmitToSessionOpts {
    * message no device drew itself. Never before: a refused delivery must not leave a bubble.
    */
   echoOnHandOff?: boolean;
-  /**
-   * With no `sender`, leave the chatting device as it is (a message the PPM Assistant sends for
-   * the user) instead of clearing it, so the UI tools answer "no device" (Telegram, a watch,
-   * another session's AI).
-   */
-  keepChattingDevice?: boolean;
   /** The mode a turn this message starts runs in; the chat's sticky mode when absent. */
   permissionMode?: string;
   /** A PPM Assistant turn's extra context (see {@link TurnContext}). */
@@ -2436,9 +2409,10 @@ async function handOffToSession(sessionId: string, entry: SessionEntry, content:
     entry.lastSender = opts.sender;
     // A tab that sends no id (an older bundle) must not inherit the previous sender's.
     entry.lastSenderClientId = opts.sender.data.clientId;
-  } else if (!opts.keepChattingDevice) {
-    // The user is not at any PPM screen for this turn: the UI tools must answer "no device"
-    // rather than drive the screen the user last typed on, which may be in another room.
+  } else {
+    // The user is not at any PPM screen for this turn (Telegram, a watch, another session's AI):
+    // the UI tools must answer "no device" rather than drive the screen the user last typed on,
+    // which may be in another room.
     entry.lastSender = undefined;
     entry.lastSenderClientId = undefined;
   }

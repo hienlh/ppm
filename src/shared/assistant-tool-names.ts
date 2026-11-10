@@ -22,9 +22,7 @@ export const UI_CLOSE_TAB_TOOL = "ui_close_tab";
 export const UI_READ_TAB_TOOL = "ui_read_tab";
 export const UI_LIST_COMMANDS_TOOL = "ui_list_commands";
 export const UI_RUN_COMMAND_TOOL = "ui_run_command";
-export const CHAT_SEND_MESSAGE_TOOL = "chat_send_message";
 export const CHATS_ATTENTION_TOOL = "chats_attention";
-export const CHAT_START_TOOL = "chat_start";
 export const CHAT_ANSWER_APPROVAL_TOOL = "chat_answer_approval";
 export const PPM_CLI_REFERENCE_TOOL = "ppm_cli_reference";
 export const CHAT_WATCH_TOOL = "chat_watch";
@@ -34,14 +32,15 @@ export const CHAT_LIST_WATCHES_TOOL = "chat_list_watches";
 /**
  * Every tool the endpoint serves, in the order `tools/list` gives them. The git, schedule and
  * tunnel families keep their names in their own files and come last, in that order — the order
- * `ASSISTANT_TOOL_DEFINITIONS` spreads their definitions in.
+ * `ASSISTANT_TOOL_DEFINITIONS` spreads their definitions in. Opening and messaging the user's
+ * chats is not here: the Assistant uses PPM's session tools (`ppm-sessions`) for that.
  */
 export const ASSISTANT_TOOLS = [
   PROJECTS_LIST_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_SEARCH_TOOL, CHAT_READ_MESSAGES_TOOL,
   DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, UI_GET_STATE_TOOL,
   UI_OPEN_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_SWITCH_PROJECT_TOOL, UI_CLOSE_TAB_TOOL, UI_READ_TAB_TOOL,
-  UI_LIST_COMMANDS_TOOL, UI_RUN_COMMAND_TOOL, CHAT_SEND_MESSAGE_TOOL,
-  CHATS_ATTENTION_TOOL, CHAT_START_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
+  UI_LIST_COMMANDS_TOOL, UI_RUN_COMMAND_TOOL,
+  CHATS_ATTENTION_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
   ...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS,
 ] as const;

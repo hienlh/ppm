@@ -12,7 +12,7 @@ import type { GitChanges } from "../../../../src/shared/git-changes.ts";
 import type { CallPpmRoute, RouteCallResult } from "../../../../src/services/assistant-mcp/assistant-route-rules.ts";
 import type { ToolContext } from "../../../../src/services/assistant-mcp/assistant-tool-family.ts";
 import { approvalAskerFor, noApprover, type ApprovalAsk, type ApprovalVerdict } from "../../../../src/services/assistant-mcp/assistant-approval-broker.ts";
-import { WATCH_TURN_REFUSAL } from "../../../../src/services/chat-control/chat-control.ts";
+import { UNATTENDED_TURN_REFUSAL } from "../../../../src/services/chat-control/chat-control.ts";
 import { GIT_TOOL_HANDLERS } from "../../../../src/services/assistant-mcp/assistant-git-tools.ts";
 import { GIT_TOOLS } from "../../../../src/shared/assistant-git-tool-names.ts";
 import { hideRemoteUrls } from "../../../../src/services/assistant-mcp/assistant-git-tool-helpers.ts";
@@ -168,7 +168,7 @@ describe("write tools", () => {
         const { call, writes } = fakeRoutes();
         const result = await run(name, ctxOf(call, ask), args);
         expect({ name, isError: result.isError, writes: writes().length }).toEqual({ name, isError: true, writes: 0 });
-        if (ask === watch) expect(text(result)).toContain(WATCH_TURN_REFUSAL.slice(0, 40));
+        if (ask === watch) expect(text(result)).toContain(UNATTENDED_TURN_REFUSAL.slice(0, 40));
       }
     }
   });

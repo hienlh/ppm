@@ -1,7 +1,7 @@
 import type { Json } from "../mcp-http-endpoint.ts";
-import { isWatchTurn, WATCH_TURN_REFUSAL } from "../chat-control/chat-control.ts";
+import { isUnattendedTurn, UNATTENDED_TURN_REFUSAL } from "../chat-control/chat-control.ts";
 import { assistantWatchService, type AssistantWatchService } from "../assistant-watch/assistant-watch.service.ts";
-import { NOTIFY_KINDS, parseNotifyOn } from "../assistant-watch/watch-state.ts";
+import { parseNotifyOn } from "../assistant-watch/watch-state.ts";
 import { resolveAssistantProject, resolveAssistantSessionTarget } from "./assistant-project-scope.ts";
 import { errorResult, jsonResult } from "./assistant-tool-output.ts";
 
@@ -16,11 +16,11 @@ export interface WatchToolDeps {
   watchTurn?: (sessionId: string) => boolean;
 }
 
-const REFUSED_IN_WATCH_TURN = `${WATCH_TURN_REFUSAL} Setting or stopping watches is one of those things.`;
+const REFUSED_IN_WATCH_TURN = `${UNATTENDED_TURN_REFUSAL} Setting or stopping watches is one of those things.`;
 
 /** `chat_watch`, for the Assistant session `sessionId`. */
 export function chatWatchTool(sessionId: string, args: Record<string, unknown>, deps: WatchToolDeps = {}): Json {
-  if ((deps.watchTurn ?? isWatchTurn)(sessionId)) return errorResult(REFUSED_IN_WATCH_TURN);
+  if ((deps.watchTurn ?? isUnattendedTurn)(sessionId)) return errorResult(REFUSED_IN_WATCH_TURN);
   const project = resolveAssistantProject(args.project);
   if (!project.ok) return errorResult(project.error);
   const target = resolveAssistantSessionTarget(project.value, args.sessionId, args.providerId);
@@ -54,31 +54,9 @@ export function chatWatchTool(sessionId: string, args: Record<string, unknown>, 
   });
 }
 
-/** What `chat_start` uses to watch the chat it opens: set before the first message goes, so a quick run is not missed. */
-export type ChatStartWatcher = (target: { sessionId: string; projectName: string; providerId: string }) =>
-  { ok: true; watchId: string; cancel: () => void } | { ok: false; error: string };
-
-/** The watcher for `chat_start` calls of the Assistant session `sessionId`. */
-export function chatStartWatcher(sessionId: string, service: AssistantWatchService = assistantWatchService): ChatStartWatcher {
-  return (target) => {
-    const result = service.watch({
-      assistantSessionId: sessionId,
-      targetSessionId: target.sessionId,
-      targetProject: target.projectName,
-      targetProvider: target.providerId,
-      notifyOn: [...NOTIFY_KINDS],
-      armed: true,
-    });
-    if (!result.ok) return result;
-    if (!("watch" in result)) return { ok: false, error: "The new chat could not be watched." };
-    const watchId = result.watch.watchId;
-    return { ok: true, watchId, cancel: () => { service.unwatch(sessionId, watchId); } };
-  };
-}
-
 /** `chat_unwatch`. */
 export function chatUnwatchTool(sessionId: string, args: Record<string, unknown>, deps: WatchToolDeps = {}): Json {
-  if ((deps.watchTurn ?? isWatchTurn)(sessionId)) return errorResult(REFUSED_IN_WATCH_TURN);
+  if ((deps.watchTurn ?? isUnattendedTurn)(sessionId)) return errorResult(REFUSED_IN_WATCH_TURN);
   if (typeof args.watchId !== "string" || !args.watchId || args.watchId.length > 100) {
     return errorResult("`watchId` is required: the id chat_watch or chat_list_watches gave.");
   }

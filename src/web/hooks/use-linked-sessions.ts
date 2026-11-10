@@ -17,6 +17,7 @@ import {
 import { fetchSessionLinks } from "@/lib/session-collab-client";
 import { useSettingsStore } from "@/stores/settings-store";
 import { lastMessageFrom, splitUnlinked } from "../../shared/linked-session-unlinks";
+import { isAssistantProject } from "../../shared/assistant-project";
 import type { SessionLinkRelation } from "../../shared/session-collab";
 import type { ChatMessage } from "../../types/chat";
 
@@ -77,6 +78,9 @@ export function useLinkedSessionGroups(projectName: string, sessionId: string | 
 }
 
 export function useLinkedSessions(projectName: string, sessionId: string | null, messages: ChatMessage[]): LinkedSessionView[] {
+  // The PPM Assistant's chats reach sessions of every project, which this bar would open in the
+  // Assistant's own; its tool cards open each in its project instead.
+  const linkable = !isAssistantProject(projectName);
   const project = useProjectRef(projectName || undefined);
   const id = project ? projectCacheId(project) : null;
   const list = useSessionListStore((s) => (id ? s.byProject[id]?.sessions : undefined) ?? EMPTY_SESSIONS);
@@ -87,7 +91,7 @@ export function useLinkedSessions(projectName: string, sessionId: string | null,
   const notifications = useNotificationStore((s) => s.notifications);
 
   useEffect(() => {
-    if (!projectName || !sessionId) return;
+    if (!projectName || !sessionId || !linkable) return;
     const controller = new AbortController();
     fetchSessionLinks(projectName, sessionId, controller.signal)
       .then((links) => {
@@ -98,11 +102,11 @@ export function useLinkedSessions(projectName: string, sessionId: string | null,
         if (!controller.signal.aborted) console.warn("[linked-sessions] could not load links", error);
       });
     return () => controller.abort();
-  }, [projectName, sessionId]);
+  }, [projectName, sessionId, linkable]);
 
   const linked = useMemo(
-    () => (sessionId ? collectLinkedSessions({ sessionId, list, messages, liveLinks, announced }) : []),
-    [sessionId, list, messages, liveLinks, announced],
+    () => (sessionId && linkable ? collectLinkedSessions({ sessionId, list, messages, liveLinks, announced }) : []),
+    [sessionId, linkable, list, messages, liveLinks, announced],
   );
   return useMemo(
     () => linked.map((l) => ({ ...l, status: linkedSessionStatus(l.sessionId, { streaming, notifications, pendingApprovals }) })),

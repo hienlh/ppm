@@ -2,6 +2,7 @@ import type { DialectName } from "../../shared/db-types.ts";
 import { splitSqlStatements } from "../../shared/split-sql-statements.ts";
 import type { ApprovalFact, ApprovalSummary } from "../../shared/assistant-approval.ts";
 import type { DecidingInput } from "../chat-control/approval-deciding-input.ts";
+import type { SessionCollabModeSource } from "../../shared/session-collab.ts";
 
 /**
  * What an Assistant approval card says, built only from input the endpoint has already
@@ -54,20 +55,13 @@ export function dbWriteSummary({ connection, dialect, sql }: DbWriteApproval): A
 }
 
 /** Where the mode a chat message runs in came from. */
-export type ModeSource = "running" | "stored" | "live" | "provider-default";
+export type ModeSource = SessionCollabModeSource;
 
 const MODE_LABELS: Record<string, string> = {
   default: "Ask before risky tools (default)",
   acceptEdits: "Accept edits — file edits run without asking",
   plan: "Plan — no changes until a plan is approved",
   bypassPermissions: "Bypass permissions — every tool runs without asking",
-};
-
-const SOURCE_LABELS: Record<ModeSource, string> = {
-  running: "the mode its running session started in (a message joins that session)",
-  stored: "the mode saved for this chat",
-  live: "the mode this chat last ran in",
-  "provider-default": "the provider's default (Settings), since this chat has no saved mode",
 };
 
 export const modeLabel = (mode: string): string => MODE_LABELS[mode] ?? mode;
@@ -81,70 +75,6 @@ function chatFact(title: string | null, sessionId: string): ApprovalFact {
   if (!title) return exactFact("Chat", sessionId);
   const name = title.length > MAX_FACT_CHARS ? `${title.slice(0, MAX_FACT_CHARS)}…` : title;
   return exactFact("Chat", `${name} (${sessionId})`);
-}
-
-export interface ChatSendApproval {
-  project: string;
-  sessionId: string;
-  providerId: string;
-  /** The chat's title as PPM records it, when it has one. */
-  sessionTitle: string | null;
-  text: string;
-  mode: string;
-  modeSource: ModeSource;
-}
-
-export function chatSendSummary(input: ChatSendApproval): ApprovalSummary {
-  const bypass = input.mode === "bypassPermissions";
-  return {
-    headline: `Send a message to a ${input.providerId === "codex" ? "Codex" : "Claude"} chat in "${input.project}"; it runs there as if you sent it`,
-    facts: [
-      fact("Project", input.project),
-      chatFact(input.sessionTitle, input.sessionId),
-      fact("Runs in", modeLabel(input.mode), bypass ? "warning" : undefined),
-      fact("Mode from", SOURCE_LABELS[input.modeSource]),
-    ],
-    body: { label: "Message", text: input.text, format: "text" },
-    ...(bypass ? { warning: BYPASS_WARNING } : {}),
-  };
-}
-
-/** Where the mode a new chat starts in came from. */
-export type NewChatModeSource = "assistant" | "new-chat-default";
-
-const NEW_CHAT_SOURCE_LABELS: Record<NewChatModeSource, string> = {
-  assistant: "chosen by the Assistant",
-  "new-chat-default": "the mode a new chat gets when you open one in PPM (Settings → AI provider)",
-};
-
-const BYPASS_WARNING = "That chat runs every tool without asking: whatever it does after this message will not ask you first.";
-
-export interface ChatStartApproval {
-  project: string;
-  providerId: string;
-  /** The model asked for; null runs the provider's default. */
-  model: string | null;
-  title: string | null;
-  text: string;
-  mode: string;
-  modeSource: NewChatModeSource;
-}
-
-export function chatStartSummary(input: ChatStartApproval): ApprovalSummary {
-  const bypass = input.mode === "bypassPermissions";
-  return {
-    headline: `Start a new ${providerLabel(input.providerId)} chat in "${input.project}" and send it this message; it runs there as if you sent it`,
-    facts: [
-      fact("Project", input.project),
-      fact("Provider", providerLabel(input.providerId)),
-      fact("Model", input.model ?? "the provider's default"),
-      ...(input.title ? [fact("Title", input.title)] : []),
-      fact("Runs in", modeLabel(input.mode), bypass ? "warning" : undefined),
-      fact("Mode from", NEW_CHAT_SOURCE_LABELS[input.modeSource]),
-    ],
-    body: { label: "Message", text: input.text, format: "text" },
-    ...(bypass ? { warning: BYPASS_WARNING } : {}),
-  };
 }
 
 const providerLabel = (providerId: string): string => (providerId === "codex" ? "Codex" : "Claude");

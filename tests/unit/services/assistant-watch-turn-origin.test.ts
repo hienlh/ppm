@@ -10,7 +10,7 @@ import { chatService, BACK_ON_PPM_CONTEXT_ENTRY, TELEGRAM_CHANNEL_CONTEXT_ENTRY 
 import { providerRegistry } from "../../../src/providers/registry.ts";
 import { getDb, setSessionAssistant } from "../../../src/services/db.service.ts";
 import { approvalAskerFor, createApprovalBroker } from "../../../src/services/assistant-mcp/assistant-approval-broker.ts";
-import { WATCH_TURN_REFUSAL } from "../../../src/services/chat-control/chat-control.ts";
+import { UNATTENDED_TURN_REFUSAL } from "../../../src/services/chat-control/chat-control.ts";
 import { WATCH_ENTRY_HEADING } from "../../../src/services/assistant-watch/watch-event-text.ts";
 import { HIDDEN_ANSWER, toProviderAnswers, withSecretAnswersHidden, type NormalizedQuestion } from "../../../src/shared/approval-questions.ts";
 import { traceWriter } from "../../../src/services/session-trace/trace-writer.ts";
@@ -39,7 +39,7 @@ describe("approvals in a watch turn", () => {
     const broker = createApprovalBroker({ deliver: () => { delivered++; return 1; } });
     const ask = approvalAskerFor("asst", undefined, broker, () => true);
     const verdict = await ask({ tool: "db_query", input: {}, summary: { title: "x" } as never });
-    expect(verdict).toEqual({ verdict: "unavailable", reason: WATCH_TURN_REFUSAL });
+    expect(verdict).toEqual({ verdict: "unavailable", reason: UNATTENDED_TURN_REFUSAL });
     expect(delivered).toBe(0);
   });
 

@@ -1,4 +1,5 @@
 import { CODEX_ASSISTANT_MCP_SERVER } from "../../shared/assistant-tool-names.ts";
+import { CODEX_SESSION_COLLAB_MCP_SERVER } from "../../shared/session-collab.ts";
 import { CONTROL_REQUEST_TIMEOUT_MS } from "./codex-jsonrpc-client.ts";
 
 /**
@@ -19,7 +20,7 @@ import { CONTROL_REQUEST_TIMEOUT_MS } from "./codex-jsonrpc-client.ts";
 
 export class AssistantMcpNameConflictError extends Error {
   constructor(name: string = CODEX_ASSISTANT_MCP_SERVER) {
-    super(name === CODEX_ASSISTANT_MCP_SERVER
+    super(name === CODEX_ASSISTANT_MCP_SERVER || name === CODEX_SESSION_COLLAB_MCP_SERVER
       ? `Your Codex configuration already defines an MCP server named "${name}", which the PPM Assistant `
         + "needs for its own tools. Rename or remove that server in your Codex config.toml to use the Assistant on Codex."
       : `Your Codex configuration already defines an MCP server named "${name}", and so do the Assistant's settings. `
@@ -45,14 +46,15 @@ const SAFE_NAME = /^[A-Za-z0-9_-]+$/;
 
 /**
  * The user's codex MCP servers to switch off for an Assistant session. `ownServer` says whether
- * PPM will define its own `ppm_assistant` server; `privateNames` are the servers of Settings →
- * PPM Assistant. Throws {@link AssistantMcpNameConflictError} on a clash and
- * {@link AssistantMcpConfigUnreadableError} when the config cannot be read.
+ * PPM will define its own `ppm_assistant` server, `sessionTools` whether it defines `ppm_sessions`;
+ * `privateNames` are the servers of Settings → PPM Assistant. Throws
+ * {@link AssistantMcpNameConflictError} on a clash and {@link AssistantMcpConfigUnreadableError}
+ * when the config cannot be read.
  */
 export async function planAssistantCodexMcp(
   client: ConfigReader,
   cwd: string,
-  opts: { ownServer: boolean; privateNames: readonly string[] },
+  opts: { ownServer: boolean; sessionTools?: boolean; privateNames: readonly string[] },
 ): Promise<string[]> {
   let config: unknown;
   try {
@@ -64,6 +66,7 @@ export async function planAssistantCodexMcp(
   const raw = config && typeof config === "object" ? (config as { mcp_servers?: unknown }).mcp_servers : undefined;
   const names = raw && typeof raw === "object" && !Array.isArray(raw) ? Object.keys(raw) : [];
   if (opts.ownServer && names.includes(CODEX_ASSISTANT_MCP_SERVER)) throw new AssistantMcpNameConflictError();
+  if (opts.sessionTools && names.includes(CODEX_SESSION_COLLAB_MCP_SERVER)) throw new AssistantMcpNameConflictError(CODEX_SESSION_COLLAB_MCP_SERVER);
   const clash = names.find((n) => opts.privateNames.includes(n));
   if (clash) throw new AssistantMcpNameConflictError(clash);
   const unsafe = names.find((n) => !SAFE_NAME.test(n));

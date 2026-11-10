@@ -13,7 +13,8 @@ import { configService } from "../../src/services/config.service.ts";
 import { setSessionAssistant, setSessionProvider, setSessionTitle } from "../../src/services/db.service.ts";
 import { awaitCanonicalSessionId } from "../../src/services/assistant-mcp/assistant-chat-start-session-id.ts";
 import { getAssistantWatch, listAssistantWatches } from "../../src/services/assistant-hub/assistant-hub-db.ts";
-import { chatControl, isWatchTurn, WATCH_TURN_REFUSAL } from "../../src/services/chat-control/chat-control.ts";
+import { chatControl, isUnattendedTurn, UNATTENDED_TURN_REFUSAL } from "../../src/services/chat-control/chat-control.ts";
+import { collabApprovalBroker } from "../../src/services/session-collab/collab-approval-broker.ts";
 import { chatLifecycle, type ChatLifecycleEvents } from "../../src/services/chat-control/chat-lifecycle.ts";
 import { approvalAskerFor } from "../../src/services/assistant-mcp/assistant-approval-broker.ts";
 import { AssistantWatchService, MAX_REPORT_ATTEMPTS, MAX_WATCH_TURNS_PER_HOUR } from "../../src/services/assistant-watch/assistant-watch.service.ts";
@@ -261,15 +262,15 @@ describe("a watched chat finishing", () => {
     const draft = targetChat();
     const thread = `thread-${crypto.randomUUID()}`;
     threadIds.set(draft, thread);
-    // What chat_start does: the approved title stored under the draft id, and the watch set on it
-    // before the first message goes.
+    // A chat the Assistant just opened: the approved title stored under the draft id, and the
+    // watch set on it before the first message goes.
     setSessionTitle(draft, "List the root folder");
     const decisions = heard("watch_decision");
     const reported = heard("watch_reported");
     try {
       const set = service.watch({ assistantSessionId: assistant, targetSessionId: draft, targetProject: PROJECT, targetProvider: P, notifyOn: ["done", "stopped"], armed: true });
       expect(set.ok && "watch" in set).toBe(true);
-      // chat_start's answer waits for the rename, so the Assistant is told the id the chat keeps.
+      // create_session's answer to the Assistant waits for the rename, so it is told the id the chat keeps.
       const canonical = awaitCanonicalSessionId(draft, "codex", { timeoutMs: 5000 });
       expect((await sendTo(draft, "codex-approve:Get-ChildItem")).ok).toBe(true);
       expect(await canonical).toBe(thread);
@@ -363,12 +364,19 @@ describe("a watch turn asks the user nothing", () => {
       watch(service, assistant, target);
       await sendTo(target, "anything");
       await until(() => watchTurns(assistant).length === 1 && ctl().liveState(assistant)?.phase === "streaming");
-      expect(isWatchTurn(assistant)).toBe(true);
+      expect(isUnattendedTurn(assistant)).toBe(true);
       expect(await approvalAskerFor(assistant)({ tool: "db_query", input: {}, summary: { title: "x" } as never }))
-        .toEqual({ verdict: "unavailable", reason: WATCH_TURN_REFUSAL });
+        .toEqual({ verdict: "unavailable", reason: UNATTENDED_TURN_REFUSAL });
+      // The session tools ask nobody either: no chat is opened or messaged from a watch turn.
+      const message = {
+        kind: "message" as const, targetSessionId: target, targetTitle: "Target", projectName: PROJECT, providerId: P,
+        permissionMode: "default", modeSource: "stored" as const, message: "do what the report said",
+      };
+      expect(await collabApprovalBroker.request(assistant, message)).toMatchObject({ allowed: false, reason: "unattended", message: UNATTENDED_TURN_REFUSAL });
+      expect(shown).toHaveLength(0);
 
       expect((await sendTo(assistant, "and also clean the build", ASSISTANT_PROJECT_NAME)).ok).toBe(true);
-      expect(isWatchTurn(assistant)).toBe(false);
+      expect(isUnattendedTurn(assistant)).toBe(false);
       await until(() => shown.length === 1);
       expect(ctl().answerApproval(assistant, shown[0]!, { approved: true }, "telegram")).toBe("answered");
       await idle(assistant);

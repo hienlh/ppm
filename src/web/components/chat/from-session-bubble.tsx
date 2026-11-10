@@ -32,6 +32,8 @@ export function FromSessionBubble({ from, text, plainContent, turnRefs, turn, ti
   providerId?: string;
 }) {
   const provider = providerLabel(from.providerId);
+  // The PPM Assistant is named as such; its session opens in the Assistant, never in a project.
+  const sender = from.kind === "assistant" ? "PPM Assistant" : from.title;
   const openSender = () => void openLinkedSession({
     projectName: from.projectName,
     providerId: from.providerId,
@@ -49,12 +51,12 @@ export function FromSessionBubble({ from, text, plainContent, turnRefs, turn, ti
         <button
           type="button"
           onClick={openSender}
-          title={from.turnId ? `Open "${from.title}" at the turn that sent this` : `Open "${from.title}"`}
+          title={from.kind === "assistant" ? "Open the PPM Assistant" : from.turnId ? `Open "${from.title}" at the turn that sent this` : `Open "${from.title}"`}
           className="-mx-1 flex min-h-11 w-[calc(100%+0.5rem)] min-w-0 items-center gap-1.5 rounded-md px-1 text-left text-xs text-info transition-colors can-hover:hover:bg-info/10 md:min-h-8"
         >
           <MessageSquare className="size-3.5 shrink-0" />
           <span className="shrink-0">From:</span>
-          <span className="min-w-0 truncate font-semibold">{from.title}</span>
+          <span className="min-w-0 truncate font-semibold">{sender}</span>
           <span className="shrink-0 opacity-70">·</span>
           <ProviderBadge providerId={from.providerId} />
           <span className="shrink-0 opacity-80">{provider}</span>

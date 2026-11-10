@@ -464,8 +464,8 @@ class ChatService {
       if (stored) design.permissionMode = stored;
     }
     // A design session checks its canvas with `design_check` instead. A server is attached while
-    // one of its tools is on (Settings → Tools); it lists only those. An Assistant session gets
-    // none of them: it loads its own server and the ones connected for it, nothing else.
+    // one of its tools is on (Settings → Tools); it lists only those. An Assistant session gets no
+    // tab or database tools: it loads its own server, the session tools and the ones connected for it.
     const ai = configService.get("ai");
     const ppmTools = !isMinimalMode() && !design.designSession && !design.assistantSession;
     const tabToolsMcp = ppmTools && anyPpmToolOn(ai, TAB_TOOLS) ? tabToolsMcpAccessFor(sessionId) : null;
@@ -473,7 +473,10 @@ class ChatService {
       ? dbToolsMcpAccessFor(sessionId) : null;
     // Opening and messaging sessions: never from a design session, which takes no messages either,
     // nor in minimal mode, which runs no PPM tools (the history tools ride on the tab tools' server).
-    const sessionCollabMcp = ppmTools && anyPpmToolOn(ai, SESSION_TOOLS)
+    // An Assistant session gets them beside its own server, which is how it opens and messages the
+    // user's chats; its endpoint holds it to the Assistant's policy (every write asks first).
+    const assistantSessionTools = !!design.assistantSession && !!design.assistantMcp && !isMinimalMode();
+    const sessionCollabMcp = (ppmTools || assistantSessionTools) && anyPpmToolOn(ai, SESSION_TOOLS)
       ? sessionCollabMcpAccessFor(sessionId) : null;
     const key = `${providerId}:${sessionId}`;
     // The user's shared instructions and memories belong to their own chats: an Assistant

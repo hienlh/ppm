@@ -1,6 +1,5 @@
 import type { SessionPhase } from "../../types/api.ts";
 import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
-import type { DeliverResult } from "../assistant-mcp/assistant-chat-send.ts";
 import type { AnswersById, NormalizedQuestion } from "../../shared/approval-questions.ts";
 import type { WatchEventNotice } from "../../types/chat.ts";
 
@@ -18,11 +17,23 @@ import type { WatchEventNotice } from "../../types/chat.ts";
  * a message the user typed); nothing here decides on the user's behalf.
  */
 
-/** Who, inside the server, is acting on a chat. */
+/**
+ * Who, inside the server, is acting on a chat. `assistant` only answers cards and stops turns: the
+ * PPM Assistant's messages into chats go through the session tools, as origin `session`.
+ */
 export type ServerOrigin = "telegram" | "watch" | "assistant";
 
-/** Where a message into a chat came from: a browser's socket, or the server itself. */
-export type ChatMessageOrigin = "ws" | ServerOrigin;
+/** The server origins that may send a chat a message (see {@link ChatControl.sendUserMessage}). */
+export type MessageServerOrigin = Exclude<ServerOrigin, "assistant">;
+
+/**
+ * Where a message into a chat came from: a browser's socket, the server itself, or another
+ * session's AI through the session tools (`session`, the PPM Assistant included).
+ */
+export type ChatMessageOrigin = "ws" | ServerOrigin | "session";
+
+/** How a message the server sends into a chat went. */
+export type DeliverResult = { ok: true; sessionId: string } | { ok: false; error: string };
 
 /**
  * The error a `watch` message gets when the chat is not quiet: a waiting approval card would be
@@ -31,18 +42,21 @@ export type ChatMessageOrigin = "ws" | ServerOrigin;
 export const CHAT_BUSY = "busy";
 
 /**
- * Why a call in a `watch` turn was refused without a card. Such a turn carries another chat's
+ * Why a call in an unattended turn was refused without a card. Such a turn carries another chat's
  * words, and an approval card there — one tap on a phone, at a moment the user did not choose —
  * is the shortest path from injected text to an action, so nothing in it is asked at all.
  */
-export const WATCH_TURN_REFUSAL = "Refused without asking the user: PPM started this turn on its own to report on a watched "
-  + "chat, so nothing that changes data or needs approval runs in it. Tell the user what you would do and let them ask for it.";
+export const UNATTENDED_TURN_REFUSAL = "Refused without asking the user: PPM started this turn on its own to report "
+  + "news, so nothing that changes data or needs approval runs in it. Tell the user what you would do and let them ask for it.";
 
-/** Whether the session's running turn was started by a watch and nobody has written in it since. */
-export const isWatchTurn = (sessionId: string): boolean => control?.liveState(sessionId)?.turnOrigin === "watch";
+/**
+ * Whether the session's running turn is unattended: PPM started it on its own (a watch report)
+ * and nobody has written in it since. A message the user types makes the turn theirs.
+ */
+export const isUnattendedTurn = (sessionId: string): boolean => control?.liveState(sessionId)?.turnOrigin === "watch";
 
 export interface SendUserMessageOpts {
-  origin: ServerOrigin;
+  origin: MessageServerOrigin;
   /** The chat's project; used only when the chat has no live entry yet. */
   projectName: string;
   /** The chat's provider; the stored owner wins when there is one. */

@@ -1,7 +1,8 @@
 /**
  * What the user is asked before sessions reach each other: an AI asking to create a session, two
- * sessions at their limit of automatic messages, or a message to a session that runs with more
- * rights than the sender. Shown in the asking session's approval slot (and over the history window).
+ * sessions at their limit of automatic messages, a message to a session that runs with more
+ * rights than the sender, or the PPM Assistant asking to message one of the user's chats. Shown in
+ * the asking session's approval slot (and over the history window).
  *
  * The answer goes over HTTP; the card leaves when `approval_resolved` reaches every device showing
  * the chat. Every title and text here came from an AI, so all of it renders as text.
@@ -37,9 +38,24 @@ export function answerLabel(input: SessionCollabApprovalInput, answer: SessionCo
 }
 
 function heading(input: SessionCollabApprovalInput): string {
-  if (input.kind === "create") return "The AI wants to create a session";
+  if (input.kind === "create") return input.projectName ? `The Assistant wants to open a chat in ${input.projectName}` : "The AI wants to create a session";
   if (input.kind === "pair_limit") return "These sessions reached their message limit";
+  if (input.kind === "message") return `The Assistant wants to message a chat in ${input.projectName}`;
   return "The AI wants to message a session with more rights";
+}
+
+const BYPASS_NOTE = "That chat runs every tool without asking: whatever it does after this message will not ask you first.";
+
+/** The mode a chat will run the message or task in, called out when it asks nothing. */
+function RunsIn({ mode }: { mode: string }) {
+  return (
+    <>
+      <p className="text-xs text-text-primary">
+        Runs in <span className="font-medium">{modeLabel(mode)}</span> mode.
+      </p>
+      {mode === "bypassPermissions" && <p className="text-xs font-medium text-warning">{BYPASS_NOTE}</p>}
+    </>
+  );
 }
 
 export function CollabApprovalCard({ requestId, input }: { requestId: string; input: SessionCollabApprovalInput }) {
@@ -66,7 +82,7 @@ export function CollabApprovalCard({ requestId, input }: { requestId: string; in
       <CollabApprovalBody input={input} />
       {/* Stacked bottom-up on a phone: the main answer nearest the thumb, Deny furthest from it. */}
       <div className="flex flex-col-reverse gap-2 md:flex-row" data-collab-approval-actions="">
-        {sessionCollabAnswersFor(input.kind).map((choice) => (
+        {sessionCollabAnswersFor(input).map((choice) => (
           <button
             key={choice}
             type="button"
@@ -101,7 +117,21 @@ function CollabApprovalBody({ input }: { input: SessionCollabApprovalInput }) {
             {providerLabel(input.providerId)}{input.model ? ` · ${input.model}` : ""} · depth {input.depth}
           </span>
         </div>
+        {input.permissionMode && <RunsIn mode={input.permissionMode} />}
         {input.task && <WholeText label="The whole task" text={input.task} />}
+      </>
+    );
+  }
+  if (input.kind === "message") {
+    return (
+      <>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+          <ProviderBadge providerId={input.providerId} />
+          <span className="min-w-0 truncate font-medium text-text-primary">{input.targetTitle}</span>
+          <span className="text-text-subtle">{input.projectName}</span>
+        </div>
+        <RunsIn mode={input.permissionMode} />
+        <WholeText label="The whole message" text={input.message} />
       </>
     );
   }

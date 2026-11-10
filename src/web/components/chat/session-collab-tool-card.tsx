@@ -15,6 +15,7 @@ import {
 import { useLinkedSessionStatus } from "@/hooks/use-linked-sessions";
 import { tabToolResultText } from "@/lib/tab-tool-call";
 import type { SessionStatus } from "../../../shared/session-collab";
+import { isAssistantProject } from "../../../shared/assistant-project";
 import { MarkdownContent } from "./message-markdown";
 import { ProviderBadge } from "./provider-selector";
 import { useAgentSessionContext } from "./agent-session-context";
@@ -58,8 +59,12 @@ export function SessionCollabToolCard({ call, toolUseId, output, isError, done, 
 
   const verb = call.tool === "create_session" ? "Created" : call.tool === "send_to_session" ? "Message to" : "Session status";
   const Icon = call.tool === "create_session" ? UserPlus : call.tool === "send_to_session" ? MessageSquare : Search;
-  const open = (sessionId: string, provider: string | undefined, name?: string, turnId?: string) =>
-    void openLinkedSession({ projectName: project, providerId: provider ?? "", sessionId, title: name, turnId });
+  // The PPM Assistant's calls reach other projects: the server names the target's project, and a
+  // target with none named is never opened in the Assistant's own.
+  const targetProject = result?.project ?? (isAssistantProject(project) ? null : project);
+  const open = (sessionId: string, provider: string | undefined, name?: string, turnId?: string) => {
+    if (targetProject) void openLinkedSession({ projectName: targetProject, providerId: provider ?? "", sessionId, title: name, turnId });
+  };
 
   return (
     <div data-tool-ref={toolUseId} data-session-collab-card={call.tool} className="rounded-[11px] border border-info/30 overflow-hidden text-xs bg-panel">

@@ -2,14 +2,14 @@ import { createMcpHttpHandler, type Json } from "../mcp-http-endpoint.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { resolveMigratedSession } from "../db.service.ts";
 import {
-  CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CHAT_SEND_MESSAGE_TOOL, CLAUDE_ASSISTANT_MCP_SERVER, DB_LIST_CONNECTIONS_TOOL,
+  CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CLAUDE_ASSISTANT_MCP_SERVER, DB_LIST_CONNECTIONS_TOOL,
   DB_QUERY_TOOL, PROJECTS_LIST_TOOL, UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_GET_STATE_TOOL, UI_OPEN_TAB_TOOL,
   UI_LIST_COMMANDS_TOOL, UI_READ_TAB_TOOL, UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
-  CHATS_ATTENTION_TOOL, CHAT_START_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
+  CHATS_ATTENTION_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
 } from "../../shared/assistant-tool-names.ts";
-import { chatListWatchesTool, chatStartWatcher, chatUnwatchTool, chatWatchTool } from "./assistant-watch-tools.ts";
-import { chatAnswerApproval, chatsAttentionTool, chatStart, ppmCliReferenceTool } from "./assistant-hub-tools.ts";
+import { chatListWatchesTool, chatUnwatchTool, chatWatchTool } from "./assistant-watch-tools.ts";
+import { chatAnswerApproval, chatsAttentionTool, ppmCliReferenceTool } from "./assistant-hub-tools.ts";
 import { ASSISTANT_MCP_HOLD_OPEN_SECONDS, ASSISTANT_TOOL_DEFINITIONS } from "./assistant-mcp-tools.ts";
 import { assistantMcpTokens, type AssistantMcpTokenBinding } from "./assistant-mcp-tokens.ts";
 import { chatListSessions, chatReadMessages, chatSearch, projectsList } from "./assistant-read-tools.ts";
@@ -20,7 +20,6 @@ import { uiCloseTab, uiFocusTab, uiOpenTab, uiSwitchProject } from "./assistant-
 import { uiReadTab } from "./assistant-ui-read-tool.ts";
 import { uiListCommands, uiRunCommand } from "./assistant-ui-command-tools.ts";
 import { approvalAskerFor } from "./assistant-approval-broker.ts";
-import { chatSendMessage } from "./assistant-chat-send.ts";
 import { callFamilyTool } from "./assistant-tool-family.ts";
 
 /**
@@ -66,7 +65,6 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, sig
     case CHAT_LIST_SESSIONS_TOOL: return chatListSessions(args);
     case CHAT_SEARCH_TOOL: return chatSearch(args);
     case CHAT_READ_MESSAGES_TOOL: return chatReadMessages(args);
-    case CHAT_SEND_MESSAGE_TOOL: return chatSendMessage(args, ask);
     case DB_LIST_CONNECTIONS_TOOL: return dbListConnections();
     case DB_QUERY_TOOL:
       return dbQuery(args, { actor: "agent", callerIp: null, callerUa: `PPM Assistant (session ${sessionId})` }, ask, undefined, { signal });
@@ -79,7 +77,6 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, sig
     case UI_LIST_COMMANDS_TOOL: return uiListCommands(sessionId, args);
     case UI_RUN_COMMAND_TOOL: return uiRunCommand(sessionId, args, ask);
     case CHATS_ATTENTION_TOOL: return chatsAttentionTool(args);
-    case CHAT_START_TOOL: return chatStart(args, ask, { watch: chatStartWatcher(sessionId) });
     case CHAT_ANSWER_APPROVAL_TOOL: return chatAnswerApproval(args, ask);
     case PPM_CLI_REFERENCE_TOOL: return ppmCliReferenceTool();
     case CHAT_WATCH_TOOL: return chatWatchTool(sessionId, args);

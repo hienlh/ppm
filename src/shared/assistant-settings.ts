@@ -24,6 +24,8 @@ export type AssistantEffort = (typeof ASSISTANT_EFFORTS)[number];
 
 /** The Assistant's own tool server, as each provider names it. No user server may take either. */
 const RESERVED_NAMES = ["ppm-assistant", "ppm_assistant"];
+/** PPM's session tools, which an Assistant session loads beside its own server. */
+const SESSION_TOOL_NAMES = ["ppm-sessions", "ppm_sessions"];
 
 export interface AssistantProviderDefaults {
   /** Empty or absent: the provider's own chat default. */
@@ -102,6 +104,7 @@ export function assistantMcpNameError(name: string): string | null {
   if (name.includes("__")) return "Name cannot contain two underscores in a row";
   const bare = foldMcpName(name).replace(/[-_]+$/, "");
   if (RESERVED_NAMES.some((r) => foldMcpName(r) === bare)) return `"${name}" is the Assistant's own tool server`;
+  if (SESSION_TOOL_NAMES.some((r) => foldMcpName(r) === bare)) return `"${name}" is PPM's session tool server`;
   return null;
 }
 

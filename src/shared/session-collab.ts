@@ -29,7 +29,10 @@ export const CODEX_SESSION_COLLAB_MCP_SERVER = "ppm_sessions";
  */
 export const SESSION_COLLAB_APPROVAL = "ppm:session_collab";
 
-export type SessionCollabApprovalKind = "create" | "pair_limit" | "escalation";
+export type SessionCollabApprovalKind = "create" | "pair_limit" | "escalation" | "message";
+
+/** Where the mode a message or a new chat runs in came from, as a card states it. */
+export type SessionCollabModeSource = "running" | "stored" | "live" | "provider-default";
 
 /**
  * Permission modes from least to most permissive, as PPM names them (`VALID_PERMISSION_MODES` in
@@ -68,8 +71,15 @@ export interface SessionCollabCreateApproval {
   model: string | null;
   /** The whole task the new session would be given, line breaks kept: the user approves all of it. */
   task: string;
-  /** Depth the new session would have (the asking session's depth + 1). */
+  /** Depth the new session would have (the asking session's depth + 1; 0 when the PPM Assistant asks). */
   depth: number;
+  /** Set when the PPM Assistant asks: such a card is answered once, never for the whole session. */
+  askedBy?: "assistant";
+  /** The project the chat opens in, when it is not the asking session's own (the Assistant's create). */
+  projectName?: string;
+  /** The mode the new chat runs in, when the card states it. */
+  permissionMode?: string;
+  modeSource?: SessionCollabModeSource;
 }
 
 /** Two sessions reached their limit of automatic messages; shown in the sending session. */
@@ -99,10 +109,30 @@ export interface SessionCollabEscalationApproval {
   message: string;
 }
 
+/**
+ * The PPM Assistant asks to message one of the user's chats; shown in the Assistant's session. The
+ * chat then works on the message in its own permission mode, which the card names, so a chat that
+ * runs every tool unasked is called out before the user allows it.
+ */
+export interface SessionCollabMessageApproval {
+  kind: "message";
+  targetSessionId: string;
+  targetTitle: string;
+  /** The chat's project. */
+  projectName: string;
+  providerId: string;
+  /** The mode the message will run in, and where that came from. */
+  permissionMode: string;
+  modeSource: SessionCollabModeSource;
+  /** The whole message, line breaks kept: the user approves all of it. */
+  message: string;
+}
+
 export type SessionCollabApprovalInput =
   | SessionCollabCreateApproval
   | SessionCollabPairLimitApproval
-  | SessionCollabEscalationApproval;
+  | SessionCollabEscalationApproval
+  | SessionCollabMessageApproval;
 
 /** The approval event held in the asking session's one approval slot. */
 export interface SessionCollabApprovalRequest {
@@ -128,12 +158,21 @@ export const isSessionCollabAnswer = (value: unknown): value is SessionCollabAns
 export function sessionCollabApprovalInput(tool: string, input: unknown): SessionCollabApprovalInput | null {
   if (tool !== SESSION_COLLAB_APPROVAL || !input || typeof input !== "object") return null;
   const kind = (input as { kind?: unknown }).kind;
-  return kind === "create" || kind === "pair_limit" || kind === "escalation" ? input as SessionCollabApprovalInput : null;
+  return kind === "create" || kind === "pair_limit" || kind === "escalation" || kind === "message"
+    ? input as SessionCollabApprovalInput : null;
 }
 
-/** The answers a card of this kind offers. */
-export function sessionCollabAnswersFor(kind: SessionCollabApprovalKind): readonly SessionCollabAnswer[] {
-  return kind === "pair_limit" ? ["allow_once", "deny"] : SESSION_COLLAB_ANSWERS;
+const ONCE_OR_DENY: readonly SessionCollabAnswer[] = ["allow_once", "deny"];
+
+/**
+ * The answers a card offers. A pair-limit card and every card the PPM Assistant asks (a message,
+ * a create) are answered one at a time: allowing the Assistant "for this session" would let it
+ * write into chats unasked from then on.
+ */
+export function sessionCollabAnswersFor(card: SessionCollabApprovalKind | SessionCollabApprovalInput): readonly SessionCollabAnswer[] {
+  if (typeof card === "string") return card === "pair_limit" || card === "message" ? ONCE_OR_DENY : SESSION_COLLAB_ANSWERS;
+  if (card.kind === "pair_limit" || card.kind === "message") return ONCE_OR_DENY;
+  return card.kind === "create" && card.askedBy === "assistant" ? ONCE_OR_DENY : SESSION_COLLAB_ANSWERS;
 }
 
 // ── Delivery rules ────────────────────────────────────────────────────────
@@ -143,7 +182,8 @@ export function sessionCollabAnswersFor(kind: SessionCollabApprovalKind): readon
  * messages from other sessions; a session never messages itself; the target must be in the
  * sender's project.
  */
-export type SessionCollabRefusal = "design_session" | "self" | "other_project" | "not_found" | "depth" | "running_limit";
+export type SessionCollabRefusal =
+  | "design_session" | "assistant_session" | "self" | "other_project" | "not_found" | "depth" | "running_limit";
 
 /**
  * A reply that arrives after the sender stopped waiting — its wait timed out, or its turn was

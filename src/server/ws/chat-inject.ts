@@ -18,10 +18,12 @@ import {
 } from "../../shared/session-collab.ts";
 import { getSessionDesignSlug, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import { countSpawned } from "../../services/session-collab/session-links.service.ts";
+import { chatLifecycle } from "../../services/chat-control/chat-lifecycle.ts";
 import { createLogger } from "../../services/logger.ts";
 import { broadcastGlobalEvent } from "./global.ts";
+import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
 import {
-  ensureSessionEntry, listRunningSessions, onTurnBinding, startCleanupTimer,
+  chatTargetMode, ensureSessionEntry, listRunningSessions, onTurnBinding, startCleanupTimer,
   submitToSession, withSessionLock, type TurnBinding,
 } from "./chat.ts";
 
@@ -51,6 +53,11 @@ export interface DeliverToSessionInput {
    * created session inherits from its creator. Never overrides a mode already chosen.
    */
   permissionMode?: string;
+  /**
+   * The mode the user approved this message in (a PPM Assistant message's card). Checked under the
+   * session's lock, so a run started in another mode meanwhile gets nothing.
+   */
+  expectedMode?: string;
 }
 
 export interface DeliverToSessionResult {
@@ -144,6 +151,9 @@ export async function deliverToSession(input: DeliverToSessionInput): Promise<De
   if (getSessionDesignSlug(target)) {
     throw new DeliverToSessionError("A design session does not take messages from other sessions", "design_session");
   }
+  if (isAssistantSession(target)) {
+    throw new DeliverToSessionError("A PPM Assistant session does not take messages from other sessions", "invalid");
+  }
   const stored = getSessionProvider(target);
   if (stored && stored !== input.providerId) {
     throw new DeliverToSessionError(`Session ${target} belongs to ${stored}, not ${input.providerId}`, "provider_mismatch");
@@ -164,7 +174,19 @@ export async function deliverToSession(input: DeliverToSessionInput): Promise<De
       entry.providerId = input.providerId;
     }
     if (input.permissionMode && !entry.permissionMode) entry.permissionMode = input.permissionMode;
+    if (input.expectedMode) {
+      const now = chatTargetMode(target, entry.providerId).mode;
+      if (now !== input.expectedMode) {
+        if (entry.clients.size === 0 && !entry.isStreamingActive) startCleanupTimer(target);
+        throw new DeliverToSessionError(
+          `The chat would now run it in "${now}" rather than "${input.expectedMode}", the mode the user approved; ask again.`, "failed",
+        );
+      }
+    }
 
+    // Whose turn this is from now on, as for any message: another session's, never the user's.
+    const previousOrigin = entry.turnOrigin;
+    entry.turnOrigin = "session";
     const result = await submitToSession(target, entry, content, {
       origin: "session",
       clientMessageId,
@@ -175,12 +197,18 @@ export async function deliverToSession(input: DeliverToSessionInput): Promise<De
       echoOnHandOff: true,
     });
     if (!result.ok) {
+      entry.turnOrigin = previousOrigin;
       // A socketless entry made for this delivery would otherwise stay in the registry for good.
       if (entry.clients.size === 0 && !entry.isStreamingActive) startCleanupTimer(target);
       log.warn(`session=${target} delivery from session=${fromSession.sessionId} failed: ${result.error}`);
       throw new DeliverToSessionError(result.error, result.error.includes("still starting") ? "busy" : "failed");
     }
     log.info(`session=${target} message from session=${fromSession.sessionId} ${result.delivered}`);
+    // Server-side listeners hear this message as they hear one a device typed.
+    chatLifecycle.emit("user_message", {
+      sessionId: target, text: content, origin: "session", imageCount: 0,
+      projectName: entry.projectName ?? input.projectName, providerId: entry.providerId,
+    });
     const turnBinding = recentBindings.get(clientMessageId);
     return { delivered: result.delivered, targetSessionId: target, clientMessageId, content, ...(turnBinding ? { turnBinding } : {}) };
   });

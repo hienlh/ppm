@@ -2,8 +2,9 @@ import { resolve } from "node:path";
 import type { SessionPhase } from "../../types/api.ts";
 import type { SessionCollabSettings } from "../../shared/session-collab-settings.ts";
 import type {
-  SessionCollabApprovalInput, SessionCollabRefusal, SessionCreatedEvent,
+  SessionCollabApprovalInput, SessionCollabModeSource, SessionCollabRefusal, SessionCreatedEvent,
 } from "../../shared/session-collab.ts";
+import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
 import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
 import type { DeliverToSessionInput, DeliverToSessionResult } from "../../server/ws/chat-inject.ts";
@@ -51,9 +52,21 @@ export interface CollabEnv {
     parentOf(sessionId: string): string | null;
     depthOf(sessionId: string): number;
     childrenOf(sessionId: string): string[];
-    recordSpawn(childId: string, parentId: string): number;
+    /** Records the spawn at the parent's depth + 1, or at `depth` when given; returns the depth. */
+    recordSpawn(childId: string, parentId: string, depth?: number): number;
     linked(sessionId: string): string[];
   };
+  // The PPM Assistant as a caller. Optional, so an environment without the Assistant has none.
+  /** Whether the session is a PPM Assistant session; `cwd` is its working folder when known. */
+  isAssistantSession?(sessionId: string, cwd?: string | null): boolean;
+  /** Whether the session's running turn is one PPM started on its own and nobody has written in since. */
+  isUnattendedTurn?(sessionId: string): boolean;
+  /** A registered project by name; never the Assistant's own. */
+  projectByName?(name: string): { name: string; path: string } | null;
+  /** The mode a message would run in now in that chat, and where that came from. */
+  chatMode?(sessionId: string, providerId: string): { mode: string; source: SessionCollabModeSource };
+  /** The id a just-started chat will keep (Codex renames a new chat during its first turn). */
+  settledSessionId?(sessionId: string, providerId: string): Promise<string>;
   pairs: {
     remaining(a: string, b: string, limit: number): number;
     count(a: string, b: string): number;
@@ -79,7 +92,8 @@ export interface CollabEnv {
   /** A created session counts as running from now until its first turn ends. */
   markStarting(childId: string, projectName: string): void;
   deliver(input: DeliverToSessionInput): Promise<DeliverToSessionResult>;
-  createSession(providerId: string, input: { projectName: string; projectPath: string; title: string }): Promise<string>;
+  /** `asUserChat`: set up as a chat the user opens in that project (the PPM Assistant's creates). */
+  createSession(providerId: string, input: { projectName: string; projectPath: string; title: string; asUserChat?: boolean }): Promise<string>;
   persistChild(childId: string, input: { title: string; permissionMode: string; model: string | null; projectName: string; projectPath: string }): void;
   /** Names the session in its provider once its first turn has a transcript; never throws. */
   nameInProvider(childId: string, providerId: string, title: string, projectPath: string, clientMessageId: string): void;
@@ -90,18 +104,28 @@ export interface CollabEnv {
   unread: Pick<CollabUnread, "add" | "take" | "peek">;
 }
 
+/** `assistant`: a PPM Assistant session, which reaches every registered project under its own policy. */
+export type CollabCallerKind = "session" | "assistant";
+
 export interface CollabCaller {
   sessionId: string;
   providerId: "claude" | "codex";
+  /** The caller's own project; the Assistant's virtual one for an Assistant session. */
   projectName: string;
   projectPath: string;
   title: string;
+  kind: CollabCallerKind;
+  /** The caller's turn was started by PPM and nobody has written in it since. */
+  unattended: boolean;
 }
 
+/** A session a tool acts on, with the project it belongs to: what delivery and links use. */
 export interface CollabTarget {
   sessionId: string;
   providerId: "claude" | "codex";
   title: string;
+  projectName: string;
+  projectPath: string;
 }
 
 export type Resolved<T> = { ok: true; value: T } | { ok: false; refusal: SessionCollabRefusal | "invalid"; message: string };
@@ -114,30 +138,48 @@ const samePath = (a: string, b: string): boolean => {
 
 export const titleOf = (env: CollabEnv, sessionId: string): string => env.title(sessionId) || `Session ${sessionId.slice(0, 8)}`;
 
-/** The calling chat, by its canonical id, with the project it works in; never a design session. */
+/**
+ * The calling chat, by its canonical id, with the project it works in; never a design session. A
+ * PPM Assistant session is a caller of its own kind: it belongs to no registered project.
+ */
 export function resolveCaller(env: CollabEnv, tokenSessionId: string): Resolved<CollabCaller> {
   const sessionId = env.canonical(tokenSessionId);
   if (env.isDesignSession(sessionId)) return { ok: false, refusal: "design_session", message: "A design session cannot use the session tools." };
   const live = env.live(sessionId);
   const projectPath = live?.projectPath ?? env.storedProjectPath(sessionId);
   const providerId = live?.providerId ?? env.storedProvider(sessionId);
+  if (env.isAssistantSession?.(sessionId, projectPath)) {
+    if (!isProvider(providerId)) return { ok: false, refusal: "not_found", message: "This Assistant chat runs on a provider the session tools do not reach." };
+    return {
+      ok: true,
+      value: {
+        sessionId, providerId, projectName: ASSISTANT_PROJECT_NAME, projectPath: projectPath ?? "", title: titleOf(env, sessionId),
+        kind: "assistant", unattended: env.isUnattendedTurn?.(sessionId) ?? false,
+      },
+    };
+  }
   if (!projectPath || !isProvider(providerId)) return { ok: false, refusal: "not_found", message: "This chat has no project, so it cannot open or message sessions." };
   const projectName = live?.projectName ?? env.projectNameOf(projectPath);
   if (!projectName) return { ok: false, refusal: "not_found", message: "This chat's project is not registered in PPM." };
-  return { ok: true, value: { sessionId, providerId, projectName, projectPath, title: titleOf(env, sessionId) } };
+  return { ok: true, value: { sessionId, providerId, projectName, projectPath, title: titleOf(env, sessionId), kind: "session", unattended: false } };
 }
 
 /**
- * The session `rawId` names, proven to be in the caller's project from what PPM already knows —
- * the chat registry, then its database. A session PPM has no record of is not found, even with a
- * transcript in the project's folder: it may be open in the user's own terminal, where a second
- * process resuming it would write into the same transcript. Nothing here scans a provider's files.
+ * The session `rawId` names, proven to be one the caller may reach from what PPM already knows —
+ * the chat registry, then its database: a session of the caller's own project, or for the PPM
+ * Assistant a session of any registered project. A session PPM has no record of is not found, even
+ * with a transcript in the project's folder: it may be open in the user's own terminal, where a
+ * second process resuming it would write into the same transcript. Nothing here scans a provider's
+ * files. No caller may reach a PPM Assistant session or a design session.
  */
 export function resolveTarget(env: CollabEnv, caller: CollabCaller, rawId: unknown): Resolved<CollabTarget> {
   if (typeof rawId !== "string" || !SESSION_ID_RE.test(rawId)) return { ok: false, refusal: "invalid", message: "`session_id` is not a session id." };
   const sessionId = env.canonical(rawId);
   if (sessionId === caller.sessionId) return { ok: false, refusal: "self", message: "That is your own session; a session cannot message itself." };
   if (env.isDesignSession(sessionId)) return { ok: false, refusal: "design_session", message: "That is a design session, which does not take messages from other sessions." };
+  if (env.isAssistantSession?.(sessionId)) {
+    return { ok: false, refusal: "assistant_session", message: "That is a PPM Assistant chat; the session tools never message the Assistant." };
+  }
   const live = env.live(sessionId);
   const projectPath = live?.projectPath ?? env.storedProjectPath(sessionId);
   const providerId = live?.providerId ?? env.storedProvider(sessionId);
@@ -147,11 +189,18 @@ export function resolveTarget(env: CollabEnv, caller: CollabCaller, rawId: unkno
       message: "No PPM session with that id is known in this project. Sessions PPM did not open (one running in a terminal, say) cannot be messaged.",
     };
   }
-  if (!samePath(projectPath, caller.projectPath)) {
+  let projectName = caller.projectName;
+  let targetPath = caller.projectPath;
+  if (caller.kind === "assistant") {
+    const registered = env.projectNameOf(projectPath);
+    if (!registered) return { ok: false, refusal: "not_found", message: "That chat's project is not registered in PPM." };
+    projectName = registered;
+    targetPath = projectPath;
+  } else if (!samePath(projectPath, caller.projectPath)) {
     return { ok: false, refusal: "other_project", message: "That session belongs to another project; the session tools reach your own project only." };
   }
   if (!isProvider(providerId)) return { ok: false, refusal: "not_found", message: "That session runs on a provider the session tools do not reach." };
-  return { ok: true, value: { sessionId, providerId, title: titleOf(env, sessionId) } };
+  return { ok: true, value: { sessionId, providerId, title: titleOf(env, sessionId), projectName, projectPath: targetPath } };
 }
 
 /** The mode a session runs under: the one chosen for it, else its provider's configured default; null if neither. */

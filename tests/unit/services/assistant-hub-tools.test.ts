@@ -1,8 +1,7 @@
 /**
- * `chat_start` and `chat_answer_approval` act on the user's chats, so both ask first and act
- * only on approval: a new chat gets the mode a new chat gets in PPM unless the Assistant names
- * one (bypass flagged on the card), and an answer to another chat's card repeats exactly what
- * that card runs, is never given for a card PPM cannot show in full, and is never given twice.
+ * `chat_answer_approval` acts on another chat's card, so it asks first and acts only on approval:
+ * the confirmation repeats exactly what that card runs, an answer is never given for a card PPM
+ * cannot show in full, and never twice. (Opening chats goes through the session tools now.)
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
@@ -10,13 +9,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { configService } from "../../../src/services/config.service.ts";
-import {
-  getSessionModel, getSessionPermissionMode, getSessionTitle, resolveMigratedSession, setSessionMigratedTo,
-} from "../../../src/services/db.service.ts";
-import { watchedChatTitle } from "../../../src/services/assistant-watch/watched-chat-title.ts";
 import { _setClaudeProjectsRoot } from "../../../src/services/agent-transcript/claude-projects-root.ts";
-import { chatAnswerApproval, chatStart } from "../../../src/services/assistant-mcp/assistant-hub-tools.ts";
-import type { AssistantChatDelivery } from "../../../src/services/assistant-mcp/assistant-chat-send.ts";
+import { chatAnswerApproval } from "../../../src/services/assistant-mcp/assistant-hub-tools.ts";
 import type { ApprovalAsk, ApprovalVerdict, AskApproval } from "../../../src/services/assistant-mcp/assistant-approval-broker.ts";
 import type { ChatControl, LiveApprovalCard } from "../../../src/services/chat-control/chat-control.ts";
 import { approvalInput } from "../../../src/providers/codex-app-server/codex-approval-input.ts";
@@ -56,101 +50,6 @@ afterAll(() => {
   configService.set("projects", savedProjects as never);
   configService.set("ai", savedAi);
   rmSync(root, { recursive: true, force: true });
-});
-
-describe("chat_start", () => {
-  function fakes(deliverError?: string) {
-    const created: Array<Record<string, unknown>> = [];
-    const sent: Array<{ sessionId: string; text: string; mode: string }> = [];
-    const events: unknown[] = [];
-    const delivery: AssistantChatDelivery = {
-      inspect: () => { throw new Error("not used"); },
-      deliver: async (target, t, mode) => {
-        sent.push({ sessionId: target.sessionId, text: t, mode });
-        return deliverError ? { ok: false, error: deliverError } : { ok: true, sessionId: target.sessionId };
-      },
-    };
-    const create = async (input: Record<string, unknown>) => {
-      created.push(input);
-      return { id: crypto.randomUUID(), providerId: String(input.providerId), title: "", createdAt: "" };
-    };
-    return { created, sent, events, deps: { delivery, create: create as never, broadcast: (e: unknown) => events.push(e) } };
-  }
-
-  it("starts in the mode a new chat gets in PPM when none is named, and flags bypass on the card", async () => {
-    const f = fakes();
-    const { ask, asked } = asker(APPROVE);
-    const result = await chatStart({ project: "api", text: "Run the test suite and fix failures" }, ask, f.deps);
-    const out = JSON.parse(text(result));
-    expect(out).toMatchObject({ started: true, project: "api", providerId: "claude", permissionMode: "bypassPermissions" });
-    expect(getSessionPermissionMode(out.sessionId)).toBe("bypassPermissions");
-    expect(f.created[0]).toMatchObject({ providerId: "claude", projectName: "api", adoptWarmSpare: false });
-    expect(f.sent).toEqual([{ sessionId: out.sessionId, text: "Run the test suite and fix failures", mode: "bypassPermissions" }]);
-    expect(f.events).toEqual([{ type: "sessions:list_changed", projectName: "api" }]);
-    const card = asked[0]!.summary;
-    expect(card.facts).toContainEqual({ label: "Runs in", value: "Bypass permissions — every tool runs without asking", tone: "warning" });
-    expect(card.facts.find((x) => x.label === "Mode from")?.value).toContain("new chat gets when you open one in PPM");
-    expect(card.warning).toContain("without asking");
-    expect(card.body?.text).toBe("Run the test suite and fix failures");
-  });
-
-  it("uses the mode and model the Assistant names, with no bypass warning", async () => {
-    const f = fakes();
-    const { ask, asked } = asker(APPROVE);
-    const out = JSON.parse(text(await chatStart({ project: "api", text: "hi", permissionMode: "default", model: "claude-sonnet-5", title: "Tidy <up>" }, ask, f.deps)));
-    expect(getSessionPermissionMode(out.sessionId)).toBe("default");
-    expect(getSessionModel(out.sessionId)).toBe("claude-sonnet-5");
-    expect(asked[0]!.summary.warning).toBeUndefined();
-    expect(asked[0]!.summary.facts).toContainEqual({ label: "Mode from", value: "chosen by the Assistant" });
-    expect(f.created[0]!.title).toBe("Tidy up");
-  });
-
-  it("creates nothing when the user declines, and refuses bad input before asking", async () => {
-    const f = fakes();
-    const declined = await chatStart({ project: "api", text: "hi" }, asker(DENY).ask, f.deps);
-    expect(declined.isError).toBe(true);
-    expect(f.created).toHaveLength(0);
-    for (const args of [
-      { project: "nope", text: "hi" }, { project: "api", text: "" }, { project: "api", text: "hi", providerId: "gpt" },
-      { project: "api", text: "hi", permissionMode: "yolo" }, { project: "api", text: "hi", model: "a b" },
-    ]) {
-      const { ask, asked } = asker(APPROVE);
-      expect((await chatStart(args, ask, f.deps)).isError).toBe(true);
-      expect(asked).toHaveLength(0);
-    }
-    expect(f.created).toHaveLength(0);
-  });
-
-  it("stores the approved title, so the chat goes by it everywhere a watch names it", async () => {
-    const f = fakes();
-    const out = JSON.parse(text(await chatStart({ project: "api", text: "hi", title: "List the root folder" }, asker(APPROVE).ask, f.deps)));
-    expect(out.title).toBe("List the root folder");
-    expect(getSessionTitle(out.sessionId)).toBe("List the root folder");
-    expect(watchedChatTitle(out.sessionId)).toBe("List the root folder");
-    // No title asked for, none stored: the chat keeps the one its provider gives it.
-    const untitled = JSON.parse(text(await chatStart({ project: "api", text: "hi" }, asker(APPROVE).ask, f.deps)));
-    expect(getSessionTitle(untitled.sessionId)).toBeNull();
-  });
-
-  it("answers with the id the chat keeps once its provider renames it, still carrying the title", async () => {
-    const f = fakes();
-    const thread = crypto.randomUUID();
-    let draft = "";
-    // What Codex does to a new chat during its first turn: a thread id replaces the draft id.
-    const canonicalId = async (id: string) => { draft = id; setSessionMigratedTo(id, thread); return resolveMigratedSession(id); };
-    const out = JSON.parse(text(await chatStart({ project: "api", text: "hi", title: "List the root folder" }, asker(APPROVE).ask, { ...f.deps, canonicalId })));
-    expect(out.sessionId).toBe(thread);
-    expect(f.sent[0]!.sessionId).toBe(draft);
-    expect(getSessionTitle(thread)).toBe("List the root folder");
-    expect(watchedChatTitle(draft)).toBe("List the root folder");
-  });
-
-  it("says which chat exists when its first message could not be sent", async () => {
-    const f = fakes("provider unavailable");
-    const result = await chatStart({ project: "api", text: "hi" }, asker(APPROVE).ask, f.deps);
-    expect(result.isError).toBe(true);
-    expect(JSON.parse(text(result))).toMatchObject({ started: true, sent: false, error: "provider unavailable" });
-  });
 });
 
 describe("chat_answer_approval", () => {

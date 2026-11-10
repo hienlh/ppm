@@ -6,7 +6,7 @@ import { getDb, resolveMigratedSession } from "../db.service.ts";
  * The same lookup `chats_attention` makes (the title given to the chat, else the one PPM last saw
  * for it), so one chat does not go by different names on different surfaces. It also walks the
  * ids the chat had before a provider renamed it: Codex replaces a new chat's id during its first
- * turn, and a title stored under the first id (`chat_start` stores the approved one at once) would
+ * turn, and a title stored under the first id (`create_session` stores the approved one at once) would
  * otherwise be lost to the watch, which only ever sees the new id — and a report naming
  * "Session 01a127b8" for a chat the user knows as "List the root folder" reads as another chat's.
  */

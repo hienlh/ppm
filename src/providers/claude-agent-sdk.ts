@@ -1299,10 +1299,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // `design_check` only reads the canvas, so a design session never asks before it runs.
     const designCheckTool = !assistantPolicy && opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
-    // An Assistant session loads none of PPM's chat tool servers: its own server replaces them.
+    // An Assistant session loads none of PPM's chat tool servers but the session tools: its own
+    // server replaces the rest, and it opens and messages chats through `ppm-sessions`.
     const tabToolsMcp = opts?.designSession || assistantPolicy ? undefined : opts?.tabToolsMcp;
     const dbToolsMcp = opts?.designSession || assistantPolicy ? undefined : opts?.dbToolsMcp;
-    const sessionCollabMcp = opts?.designSession || assistantPolicy ? undefined : opts?.sessionCollabMcp;
+    const sessionCollabMcp = opts?.designSession ? undefined : opts?.sessionCollabMcp;
     const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool, assistantPolicy });
 
     /** Approval requests from canUseTool and the PreToolUse hook, handed out by the main loop. */
@@ -1588,7 +1589,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // user settings or a plugin. The Assistant policy allows `mcp__ppm-assistant__*` unasked,
       // and PPM's own entry is written last, so nothing else can answer to that name.
       const mcpServers = assistantPolicy
-        ? assistantMcpServers(opts?.assistantMcp, opts?.assistantMcpServers)
+        ? assistantMcpServers(opts?.assistantMcp, opts?.assistantMcpServers, sessionCollabMcp)
         : {
           ...this.resolveMcpServers(effectiveCwd),
           ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),

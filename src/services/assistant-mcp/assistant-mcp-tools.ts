@@ -1,5 +1,5 @@
 import {
-  CHAT_ANSWER_APPROVAL_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CHAT_SEND_MESSAGE_TOOL, CHAT_START_TOOL,
+  CHAT_ANSWER_APPROVAL_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL,
   CHATS_ATTENTION_TOOL, DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, PPM_CLI_REFERENCE_TOOL, PROJECTS_LIST_TOOL,
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
 } from "../../shared/assistant-tool-names.ts";
@@ -13,10 +13,9 @@ import { TUNNEL_TOOL_DEFINITIONS } from "./assistant-tunnel-tool-definitions.ts"
 /**
  * The tools the Assistant's MCP endpoint serves, and how long a call may take. The names each
  * provider knows them by are in `assistant-tool-names.ts`. Reading needs no approval; a call that
- * would change something (a database write, a message into a chat, closing a tab with unsaved
+ * would change something (a database write, answering a chat's card, closing a tab with unsaved
  * work) or read a tab's content from outside the registered projects asks the user inside the
- * endpoint first. The
- * tools that work on the user's screen are defined beside their handlers.
+ * endpoint first. The tools that work on the user's screen are defined beside their handlers.
  */
 
 export interface AssistantMcpAccess {
@@ -47,7 +46,6 @@ export const ASSISTANT_MCP_HOLD_OPEN_SECONDS = 0;
 export const MAX_SESSIONS_LISTED = 100;
 export const MAX_SEARCH_RESULTS = 50;
 export const MAX_MESSAGES_READ = 100;
-export const MAX_CHAT_MESSAGE_CHARS = 20_000;
 
 const PROJECT = { type: "string", description: "Name of a registered PPM project, as projects_list gives it." };
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false };
@@ -128,21 +126,6 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
   UI_READ_TAB_DEFINITION,
   ...UI_COMMAND_TOOL_DEFINITIONS,
   {
-    name: CHAT_SEND_MESSAGE_TOOL,
-    title: "Send a message into a chat",
-    description: "Send a message into one of a project's chats, which then works on it as if the user had typed it. "
-      + "Always asks the user first: the card shows the chat, the full message and the permission mode it will run in. "
-      + "Refused for the Assistant's own chats and for a chat waiting on an approval of its own. Answers with the "
-      + "session id; read the chat's reply later with chat_read_messages.",
-    inputSchema: object({
-      project: PROJECT,
-      sessionId: { type: "string", description: "The chat's session id, from chat_list_sessions or chat_search." },
-      providerId: { type: "string", enum: ["claude", "codex"], description: "The chat's provider, when known." },
-      text: { type: "string", minLength: 1, maxLength: MAX_CHAT_MESSAGE_CHARS, description: "The message, exactly as it should be sent." },
-    }, ["project", "sessionId", "text"]),
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-  },
-  {
     name: CHATS_ATTENTION_TOOL,
     title: "What needs the user",
     description: "Overview of the user's chats across projects, open or not: cards waiting for an answer (with what "
@@ -153,25 +136,6 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
       since: { type: "string", description: "Finished and stopped chats from \"today\" (default) or the last hours, e.g. \"6h\" (up to 168h)." },
     }),
     annotations: READ_ONLY,
-  },
-  {
-    name: CHAT_START_TOOL,
-    title: "Start a new chat",
-    description: "Open a new chat in a project and send it a first message, which it then works on as if the user "
-      + "had typed it. Always asks the user first; the card shows the project, provider, model, the permission mode "
-      + "it runs in and the full message. Without `permissionMode` the chat gets the mode a new chat gets in PPM "
-      + "(often bypass, which runs every tool unasked); suggest a safer mode when the user did not say. Answers "
-      + "with the new session id.",
-    inputSchema: object({
-      project: PROJECT,
-      text: { type: "string", minLength: 1, maxLength: MAX_CHAT_MESSAGE_CHARS, description: "The first message, exactly as it should be sent." },
-      providerId: { type: "string", enum: ["claude", "codex"], description: "The chat's provider (default: PPM's default provider)." },
-      model: { type: "string", description: "A model id for the chat; the provider's default when absent." },
-      permissionMode: { type: "string", enum: ["default", "acceptEdits", "plan", "bypassPermissions"], description: "The mode the chat runs in." },
-      title: { type: "string", maxLength: 200, description: "A title for the chat." },
-      watch: { type: "boolean", description: "Also watch the new chat, as chat_watch does: you are woken to report when its run ends." },
-    }, ["project", "text"]),
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   },
   {
     name: CHAT_ANSWER_APPROVAL_TOOL,
