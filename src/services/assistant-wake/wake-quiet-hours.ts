@@ -27,15 +27,18 @@ export function quietWindowStart(nowMs: number, quiet: QuietHours, zone?: string
 }
 
 /**
- * When the quiet window `nowMs` falls in ends (ms, to the minute); null outside one. Counted in
- * wall-clock minutes of the zone, so a clock change inside the window can move the real end by its
- * size; whoever waits for it checks again when it comes.
+ * When the quiet window `nowMs` falls in ends (ms, to the minute); null outside one. A clock change
+ * inside the window (summer time) is corrected for once, by reading the zone's own clock at the
+ * first guess, so the end lands on the wall-clock time the user set.
  */
 export function quietWindowEnd(nowMs: number, quiet: QuietHours, zone?: string): number | null {
   if (!inQuietHours(nowMs, quiet, zone)) return null;
-  const left = (minutesOf(quiet.end) - minutesOfDay(nowMs, zone) + 1440) % 1440 || 1440;
-  const minuteStart = nowMs - (nowMs % 60_000);
-  return minuteStart + left * 60_000;
+  const end = minutesOf(quiet.end);
+  const left = (end - minutesOfDay(nowMs, zone) + 1440) % 1440 || 1440;
+  const guess = nowMs - (nowMs % 60_000) + left * 60_000;
+  // Signed difference between the zone's clock at the guess and the end, in (-720, 720].
+  const off = ((minutesOfDay(guess, zone) - end + 1440 + 720) % 1440) - 720;
+  return guess - off * 60_000;
 }
 
 /** The current quiet window's end from Settings, or null outside quiet hours. */
