@@ -38,9 +38,9 @@ afterEach(async () => {
   send.mockRestore(); connect.mockRestore(); onMessage.mockRestore(); get.mockRestore();
 });
 it("sends raw body and reply separately while preserving the snapshot in the optimistic transcript", async () => {
-  await act(async () => chat.sendMessage("do it", { replyTo: reply, priority: "later", imagePaths: ["new.png"] }));
+  await act(async () => chat.sendMessage("do it", { replyTo: reply, imagePaths: ["new.png"] }));
   expect(decodeReply(chat.messages.at(-1)!.content)).toEqual({ content: "do it", replyTo: reply });
-  expect(JSON.parse(send.mock.calls.at(-1)![0] as string)).toMatchObject({ type: "message", content: "do it", replyTo: reply, priority: "later", imagePaths: ["new.png"] });
+  expect(JSON.parse(send.mock.calls.at(-1)![0] as string)).toMatchObject({ type: "message", content: "do it", replyTo: reply, imagePaths: ["new.png"] });
 });
 it("keeps a reply block that is only part of the typed text as text, and renders a remote echo with its snapshot", async () => {
   // Pasted from elsewhere: a reply exists only when the caller passes one as the field.
@@ -93,8 +93,11 @@ it("correlates rejection to the exact request among identical concurrent sends",
   await act(async () => chat.sendMessage("same", { replyTo: reply }));
   const second = JSON.parse(send.mock.calls.at(-1)![0] as string);
   expect(first.clientMessageId).not.toBe(second.clientMessageId);
+  // The second went out while the first's turn ran: queued, so nothing was drawn for it.
+  expect(second.queued).toBe(true);
   await emit({ type: "message_rejected", clientMessageId: first.clientMessageId, content: "same", replyTo: reply, message: "First rejected" });
-  expect(chat.messages.map((message) => message.id)).toEqual([second.clientMessageId]);
+  expect(chat.messages).toHaveLength(0);
+  expect(rejected).toHaveLength(1);
   await emit({ type: "message_rejected", clientMessageId: second.clientMessageId, content: "same", replyTo: reply, message: "Second rejected" });
   expect(chat.messages.filter((message) => message.role === "user")).toHaveLength(0);
   expect(rejected).toHaveLength(2);
