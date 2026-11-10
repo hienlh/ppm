@@ -45,3 +45,8 @@ export const STALE_REPLY_MS = 24 * 60 * 60_000;
 
 /** The longest reply to a card PPM forwards word for word. */
 export const CARD_REPLY_MAX_CHARS = 8000;
+
+/** The whole notebook, every line's text together, whoever wrote it. */
+export const NOTEBOOK_CAP_CHARS = 4000;
+/** One notebook line. */
+export const NOTE_MAX_CHARS = 300;

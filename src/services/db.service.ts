@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 65;
+export const CURRENT_SCHEMA_VERSION = 66;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1449,6 +1449,23 @@ export function runMigrations(database: Database): void {
     database.exec(`CREATE INDEX IF NOT EXISTS idx_assistant_cards_created ON assistant_cards(created_at)`);
     database.exec(`CREATE INDEX IF NOT EXISTS idx_assistant_cards_open ON assistant_cards(status, kind)`);
     database.exec(`PRAGMA user_version = 65;`);
+  }
+
+  if (current < 66) {
+    // PPM Assistant's notebook: short lines it keeps across a long session, written by the user
+    // (Settings) or by the Assistant. `unverified` marks a line the Assistant wrote or changed in
+    // a turn nobody started, so it is never mistaken for something the user confirmed.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS assistant_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('user','assistant')),
+        unverified INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    database.exec(`PRAGMA user_version = 66;`);
   }
 }
 
