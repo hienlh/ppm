@@ -154,9 +154,17 @@ export function resolveTarget(env: CollabEnv, caller: CollabCaller, rawId: unkno
   return { ok: true, value: { sessionId, providerId, title: titleOf(env, sessionId) } };
 }
 
-/** The mode a session runs under: the one chosen for it, else its provider's configured default; null if neither. */
+/**
+ * What a provider runs when neither the chat nor the config names a mode: `claude-agent-sdk.ts`
+ * falls back to bypass, and so does `permissionModeToCodex`. A Claude chat never given a mode is
+ * therefore a bypass chat, not one whose mode cannot be told.
+ */
+const PROVIDER_FALLBACK_MODE: Record<string, string> = { claude: "bypassPermissions", codex: "bypassPermissions" };
+
+/** The mode a session runs under: the one chosen for it, else its provider's configured default, else what the provider falls back to; null if none. */
 export function effectivePermissionMode(env: CollabEnv, sessionId: string, providerId: string): string | null {
-  return env.live(sessionId)?.permissionMode || env.storedPermissionMode(sessionId) || env.providerDefaultPermissionMode(providerId) || null;
+  return env.live(sessionId)?.permissionMode || env.storedPermissionMode(sessionId) || env.providerDefaultPermissionMode(providerId)
+    || PROVIDER_FALLBACK_MODE[providerId] || null;
 }
 
 /** First line of text the user reads on a card: one line, at most `max` characters. */
