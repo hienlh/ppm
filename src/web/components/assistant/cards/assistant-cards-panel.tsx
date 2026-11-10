@@ -17,7 +17,7 @@ export function AssistantCardsPanel() {
   if (cards === null || (cards.length === 0 && !error)) return null;
 
   return (
-    <section className="flex max-h-[45%] min-h-0 shrink-0 flex-col border-b border-border" aria-label="Assistant cards" data-assistant-cards="">
+    <section className="flex max-h-[60%] min-h-0 shrink-0 flex-col border-b border-border md:max-h-[45%]" aria-label="Assistant cards" data-assistant-cards="">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
