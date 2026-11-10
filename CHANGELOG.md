@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A long design page in the canvas did not scroll with the mouse wheel or trackpad in Chrome.** The app's design kit is a copy of the app's own CSS, which sets `overscroll-behavior: none` on `html` and `body`. A long design page also sets `body { overflow: auto }` so the page can grow, and the two together stopped every wheel at `body`, a box that has nothing to scroll; only dragging the scrollbar moved the page. The canvas and the reviewer page now give `body` back the default overscroll behaviour. This changes how a scroll passes from one box to the next, not anything drawn.
+
+- **A design made of several pages could not be clicked through in the canvas.** The canvas stops every link that leaves the page it shows, so that a design cannot load something else into PPM. That included links to the design's own other pages, so a table of contents or a "back" link did nothing and only added a *Link blocked* note. Links to another HTML page of the same design now open that page in the canvas; links anywhere else are still stopped.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed
