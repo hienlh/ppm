@@ -16,7 +16,10 @@
  *  - `fail`: the run itself throws, as a crashed CLI does;
  *  - `codexPatch` / `codexQuestion`: a card shaped exactly as the Codex provider sends it — a
  *    patch approval that names files and never its diff, and `item/tool/requestUserInput`'s
- *    questions with their own ids, answered by id.
+ *    questions with their own ids, answered by id;
+ *  - `session`: call one of PPM's session tools (`ppm-sessions`: `create_session`,
+ *    `send_to_session`, `session_status`, `report_to_assistant`) with the turn's own token;
+ *  - `writeFile`: leave a file on disk inside the chat's project, as the model's Write would.
  * A builtin may be any tool (Write, Edit, AskUserQuestion…); AskUserQuestion always asks, and the
  * answer the provider receives is recorded. A posted script runs on the session it names, on the
  * first turn whose message contains its `match`, or on whichever turn comes next.
@@ -24,6 +27,8 @@
  * With PPM_ASSISTANT_FAKE_TELEGRAM=1 the Assistant's bot points at a fake Bot API and the bridge
  * runs (`assistant-telegram-fixture-setup.ts`). With PPM_ASSISTANT_FAKE_CLOUDFLARED=1 the fixture
  * refuses to start unless `<PPM_HOME>/bin/cloudflared` is `tests/fixtures/fake-cloudflared.ts`.
+ * With PPM_ASSISTANT_MANAGER_LOOP=1 the Assistant's clock is one the e2e moves, the rules check
+ * gets a scripted answer, and a project chat can be typed into (`assistant-manager-fixture.ts`).
  * The "codex" provider renames each new session on its first turn (`session_migrated`), as Codex
  * does when its thread id replaces PPM's draft id. Sessions and transcripts are kept in a JSON
  * file (PPM_ASSISTANT_FIXTURE_STATE) and Claude's are also written where the CLI writes them, so
@@ -67,11 +72,17 @@ configService.set("host", "127.0.0.1");
 configService.set("port", port);
 configService.set("ai", {
   default_provider: "claude", new_chat_provider_mode: "default", share_provider_context: false, tab_tools: true,
+  // The session tools are how the Assistant opens and messages chats; Settings → Tools leaves
+  // them off until the user answers the feature's introduction.
+  ppm_tools: { create_session: true, send_to_session: true, session_status: true },
   providers: {
     claude: { type: "mock", permission_mode: "bypassPermissions" },
     codex: { type: "mock", permission_mode: "bypassPermissions" },
   },
 });
+const managerLoop = process.env.PPM_ASSISTANT_MANAGER_LOOP === "1"
+  ? await (await import("./assistant-manager-fixture")).setupManagerLoop({ port })
+  : null;
 
 // A forward spawns whatever sits where PPM looks for cloudflared, and downloads the real one when
 // nothing does. A run that forwards ports must have put the stand-in there first.
@@ -92,6 +103,10 @@ const { setServerListenAddress } = await import("../../../src/services/server-li
 const { assistantToolDecision } = await import("../../../src/services/assistant/assistant-tool-policy");
 const { setSessionMetadata, setSessionProvider } = await import("../../../src/services/db.service");
 const { CODEX_ASSISTANT_MCP_SERVER, CLAUDE_ASSISTANT_MCP_PREFIX } = await import("../../../src/shared/assistant-tool-names");
+const { decodeMessageBlocks } = await import("../../../src/shared/chat-message-blocks");
+const { NEWS_OPENER } = await import("../../../src/services/assistant-wake/wake-news-text");
+const { NO_REPLY_TEXT } = await import("../../../src/shared/assistant-cards");
+const { CLAUDE_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_SERVER } = await import("../../../src/shared/session-collab");
 type SendOpts = import("../../../src/providers/provider.interface").SendMessageOpts;
 type ChatEvent = import("../../../src/providers/provider.interface").ChatEvent;
 type ChatMessage = import("../../../src/providers/provider.interface").ChatMessage;
@@ -106,9 +121,15 @@ type ScriptOp =
   | { error: string }
   | { fail: string }
   | { codexPatch: { files: string[]; reason?: string } }
-  | { codexQuestion: { questions: Array<Record<string, unknown>> } };
-/** One posted script: the ops of one turn, and the words that turn ends with. */
-interface Script { label: string; ops: ScriptOp[]; match?: string }
+  | { codexQuestion: { questions: Array<Record<string, unknown>> } }
+  | { session: string; args?: Record<string, unknown> }
+  | { writeFile: { path: string; text: string } };
+/**
+ * One posted script: the ops of one turn. `match` is looked for in the message and in what PPM put
+ * in the shared-context block (a wake turn's news is only there); `sessionId` with `match` keeps
+ * it to that session. `reply` replaces the turn's closing words.
+ */
+interface Script { label: string; ops: ScriptOp[]; match?: string; sessionId?: string; reply?: string }
 
 interface CallRecord {
   label: string;
@@ -144,11 +165,17 @@ const scripts = new Map<string, Script[]>();
 /** Scripts waiting for the first turn whose message contains their `match`. */
 const matchScripts: Script[] = [];
 const calls: CallRecord[] = [];
-const turnsSeen: Array<{ label: string; sessionId: string; provider: string; message: string; assistant: boolean; images: number; mode?: string; at: number }> = [];
+const turnsSeen: Array<{
+  label: string; sessionId: string; provider: string; message: string; assistant: boolean; images: number; mode?: string; at: number;
+  /** What PPM put in the shared-context block, the priority it sent the message with, and the run (stream) that took it. */
+  sharedContext?: string; priority?: string; runId: string;
+  /** The message as PPM's block decoder reads it: content, sender, provenance, the user's words. */
+  blocks: ReturnType<typeof decodeMessageBlocks>;
+}> = [];
 const pendingApprovals = new Map<string, (answer: { approved: boolean; data?: unknown }) => void>();
 
-function takeScript(ids: string[], message: string): Script | null {
-  const matched = matchScripts.findIndex((s) => message.includes(s.match!));
+function takeScript(ids: string[], haystack: string): Script | null {
+  const matched = matchScripts.findIndex((s) => haystack.includes(s.match!) && (!s.sessionId || ids.includes(s.sessionId)));
   if (matched >= 0) return matchScripts.splice(matched, 1)[0]!;
   for (const id of [...ids, "*"]) {
     const queue = scripts.get(id);
@@ -167,10 +194,14 @@ const pause = (ms: number, signal: AbortSignal) => new Promise<void>((done) => {
 const claudeSlug = (projectPath: string) => projectPath.replace(/[/\\:.]/g, "-");
 
 /** A follow-up waiting for the session's live run, and how that run is told to stop. */
-interface LiveRun { queue: Array<{ message: string; opts?: SendOpts }>; wake?: () => void; abort: AbortController; cards: Set<string> }
+interface LiveRun { id: string; queue: Array<{ message: string; opts?: SendOpts }>; wake?: () => void; abort: AbortController; cards: Set<string> }
 
 class ScriptedProvider {
   readonly supportsAssistantSessions = true;
+  /** The manager-loop e2e reads the shared-context block as the provider is handed it, apart from the message. */
+  readonly supportsSharedContext = managerLoop !== null;
+  /** The rules check's one-shot question (manager-loop e2e only). */
+  completeOnce?: (input: { prompt: string }) => Promise<{ text: string }>;
   /** Read by `chatService.getSession` (`(provider as any).sessions`). */
   readonly sessions = new Map<string, Session>();
   private live = new Map<string, LiveRun>();
@@ -223,6 +254,13 @@ class ScriptedProvider {
       .map((s) => this.info(s));
   }
 
+  /** One session by id in a working directory, as the Claude provider looks a chat up in its CLI's folders. */
+  async getSessionInfoById(sessionId: string, dir?: string): Promise<SessionInfo | null> {
+    const s = this.stored(sessionId);
+    const fold = (p?: string) => (p ? resolve(p).toLowerCase() : "");
+    return s && (!dir || fold(s.projectPath) === fold(dir)) ? this.info(s) : null;
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     delete state.sessions[sessionId];
     this.sessions.delete(sessionId);
@@ -261,7 +299,7 @@ class ScriptedProvider {
   /** Like the CLI providers, one run per session that stays alive between turns. */
   async *sendMessage(sessionId: string, message: string, opts?: SendOpts): AsyncIterable<ChatEvent> {
     await this.resumeSession(sessionId);
-    const run: LiveRun = { queue: [{ message, opts }], abort: new AbortController(), cards: new Set() };
+    const run: LiveRun = { id: crypto.randomUUID(), queue: [{ message, opts }], abort: new AbortController(), cards: new Set() };
     const ids = [sessionId];
     this.live.set(sessionId, run);
     try {
@@ -304,8 +342,15 @@ class ScriptedProvider {
     if (s.title === "New Chat") s.title = stripSharedContext(message).slice(0, 50);
     const now = () => new Date().toISOString();
     s.messages.push({ id: crypto.randomUUID(), role: "user", content: message, timestamp: now() });
-    const script = takeScript(ids, message) ?? { label: `unscripted ${stripSharedContext(message).slice(0, 40)}`, ops: [] };
-    turnsSeen.push({ label: script.label, sessionId, provider: this.id, message, assistant, images: opts?.images?.length ?? 0, mode: opts?.permissionMode, at: Date.now() });
+    const script = takeScript(ids, `${message}\n${opts?.sharedContext ?? ""}`) ?? {
+      label: `unscripted ${stripSharedContext(message).slice(0, 40)}`, ops: [],
+      // A turn PPM started to tell the Assistant news it has nothing to add to, as the instructions ask.
+      ...(managerLoop && message.includes(NEWS_OPENER) ? { reply: NO_REPLY_TEXT } : {}),
+    };
+    turnsSeen.push({
+      label: script.label, sessionId, provider: this.id, message, assistant, images: opts?.images?.length ?? 0, mode: opts?.permissionMode, at: Date.now(),
+      sharedContext: opts?.sharedContext, priority: opts?.priority, runId: run.id, blocks: decodeMessageBlocks(stripSharedContext(message)),
+    });
     // Both CLIs put the user's message on disk as the turn starts, which is what proves a chat
     // in its first turn belongs to its project.
     if (s.projectPath) this.writeTranscript(s, "user", message);
@@ -333,6 +378,21 @@ class ScriptedProvider {
       }
       if ("codexPatch" in op || "codexQuestion" in op) {
         yield* this.codexCard(record, op, run);
+        continue;
+      }
+      if ("writeFile" in op) {
+        // What the model's own Write tool would leave on disk, inside the chat's project only.
+        const target = resolve(s.projectPath ?? "", op.writeFile.path);
+        if (!s.projectPath || !canonical(dirname(target)).startsWith(canonical(s.projectPath))) throw new Error(`writeFile outside the project: ${target}`);
+        writeFileSync(target, op.writeFile.text);
+        record.text = "written";
+        record.done = true;
+        yield emit({ type: "tool_use", tool: "Write", input: { file_path: target }, toolUseId } as ChatEvent);
+        yield emit({ type: "tool_result", output: "written", toolUseId } as ChatEvent);
+        continue;
+      }
+      if ("session" in op) {
+        yield* this.sessionTool(record, op, toolUseId, opts, run, emit);
         continue;
       }
       const args = op.args ?? {};
@@ -374,7 +434,7 @@ class ScriptedProvider {
       return;
     }
     // An error is the turn's last word: nothing the model says follows it.
-    const text = endedOnError ? "" : `Turn "${script.label}" done.`;
+    const text = endedOnError ? "" : script.reply ?? `Turn "${script.label}" done.`;
     if (text) yield emit({ type: "text", content: text });
     s.messages.push({ id: crypto.randomUUID(), role: "assistant", content: events.filter((e) => e.type === "text").map((e) => (e as { content: string }).content).join("\n\n"), events, timestamp: now() } as ChatMessage);
     saveState();
@@ -409,6 +469,42 @@ class ScriptedProvider {
     record.text = approved ? `${op.builtin} ran` : "User denied tool execution";
     record.done = true;
     yield emit({ type: "tool_result", output: record.text, isError: !approved, toolUseId } as ChatEvent);
+  }
+
+  /** One of PPM's session tools (`ppm-sessions`), called the way the CLIs call it, with the turn's own token. */
+  private async *sessionTool(
+    record: CallRecord, op: Extract<ScriptOp, { session: string }>, toolUseId: string, opts: SendOpts | undefined,
+    run: LiveRun, emit: (ev: ChatEvent) => ChatEvent,
+  ): AsyncIterable<ChatEvent> {
+    const args = op.args ?? {};
+    yield emit((this.id === "codex"
+      ? { type: "tool_use", tool: `${CODEX_SESSION_COLLAB_MCP_SERVER}:${op.session}`, input: { server: CODEX_SESSION_COLLAB_MCP_SERVER, tool: op.session, arguments: args }, toolUseId }
+      : { type: "tool_use", tool: `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${op.session}`, input: args, toolUseId }) as ChatEvent);
+    const access = opts?.sessionCollabMcp;
+    const started = Date.now();
+    if (!access) {
+      record.isError = true;
+      record.text = "No such tool available: the turn was not given the session tools";
+    } else {
+      try {
+        const response = await fetch(access.url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${access.token}` },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: op.session, arguments: args } }),
+          signal: run.abort.signal,
+        });
+        record.status = response.status;
+        const body = await response.json().catch(() => null) as { result?: { content?: Array<Record<string, unknown>>; isError?: boolean } } | null;
+        record.isError = body?.result?.isError === true;
+        record.text = (body?.result?.content ?? []).filter((b) => b.type === "text").map((b) => String(b.text)).join("\n");
+      } catch (e) {
+        record.isError = true;
+        record.text = `call failed: ${(e as Error).message}`;
+      }
+    }
+    record.ms = Date.now() - started;
+    record.done = true;
+    yield emit({ type: "tool_result", output: stringifyToolResultContent([{ type: "text", text: record.text ?? "" }]), isError: record.isError, toolUseId } as ChatEvent);
   }
 
   /**
@@ -472,6 +568,7 @@ class ScriptedProvider {
 const { providerRegistry } = await import("../../../src/providers/registry");
 const claude = new ScriptedProvider("claude", "Claude");
 const codex = new ScriptedProvider("codex", "Codex");
+if (managerLoop) claude.completeOnce = (input) => managerLoop.completeOnce(input);
 const providers = [claude, codex];
 for (const p of providers) providerRegistry.register(p as never);
 // Keep the imported production provider instances unreachable, including aggregate routes.
@@ -490,15 +587,20 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 async function testRoute(req: Request, path: string): Promise<Response> {
   if (path === "/__assistant-test/calls") return json({ calls, turns: turnsSeen, pendingProviderApprovals: pendingApprovals.size });
   if (path === "/__assistant-test/script" && req.method === "POST") {
-    const body = await req.json() as { sessionId?: string; label?: unknown; ops?: unknown; match?: unknown };
+    const body = await req.json() as { sessionId?: string; label?: unknown; ops?: unknown; match?: unknown; reply?: unknown };
     if (typeof body.label !== "string" || !Array.isArray(body.ops)) return json({ error: "label and ops required" }, 400);
+    const reply = typeof body.reply === "string" ? { reply: body.reply } : {};
     if (typeof body.match === "string" && body.match) {
-      matchScripts.push({ label: body.label, ops: body.ops as ScriptOp[], match: body.match });
+      matchScripts.push({ label: body.label, ops: body.ops as ScriptOp[], match: body.match, ...(body.sessionId ? { sessionId: body.sessionId } : {}), ...reply });
       return json({ ok: true });
     }
     const key = body.sessionId ?? "*";
-    scripts.set(key, [...(scripts.get(key) ?? []), { label: body.label, ops: body.ops as ScriptOp[] }]);
+    scripts.set(key, [...(scripts.get(key) ?? []), { label: body.label, ops: body.ops as ScriptOp[], ...reply }]);
     return json({ ok: true });
+  }
+  if (managerLoop && path.startsWith("/__assistant-test/")) {
+    const answered = await managerLoop.route(req, path.slice("/__assistant-test/".length));
+    if (answered) return answered;
   }
   if (telegram && path.startsWith("/__assistant-test/tg/")) {
     return (await telegram.route(req, path.slice("/__assistant-test/tg/".length))) ?? json({ error: "unknown test route" }, 404);
