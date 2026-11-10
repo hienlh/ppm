@@ -24,8 +24,12 @@ export function expandTestCommand(template: string, files: string[]): string {
   return template.replace(/\{files\}/g, files.map(shellQuote).join(" "));
 }
 
+// cmd.exe reads its command line itself, not as argv: quoted as one argument, `"sum.test.ts"`
+// reached bun as `\"sum.test.ts\"` and matched no file. So the line goes through verbatim,
+// wrapped in the outer quotes `/s` strips (Node's `shell: true` does the same).
+const isWindows = process.platform === "win32";
 const shellArgv = (command: string): string[] =>
-  process.platform === "win32" ? ["cmd.exe", "/d", "/s", "/c", command] : ["/bin/sh", "-c", command];
+  isWindows ? ["cmd.exe", "/d", "/s", "/c", `"${command}"`] : ["/bin/sh", "-c", command];
 
 const spawnTest = (command: string, cwd: string) =>
   Bun.spawn(shellArgv(command), {
@@ -34,6 +38,7 @@ const spawnTest = (command: string, cwd: string) =>
     stderr: "pipe",
     stdin: "ignore",
     windowsHide: true,
+    windowsVerbatimArguments: isWindows,
     // CI=1 makes most runners print plainly (no watch mode, no colour, no spinner).
     env: { ...process.env, CI: "1", FORCE_COLOR: "0", NO_COLOR: "1" },
   });
