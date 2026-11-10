@@ -80,6 +80,9 @@ export async function createManagerSessionTool(
     if (out.ok) {
       env.nameInProvider(childId, MANAGER_PROVIDER_ID, title, project.path, out.clientMessageId);
       reply = out.reply;
+      // The manager's answer to its task, when nothing waited for it, comes back as wake news.
+      const claimed = reply && (reply.replied || reply.reason === "turn_ended_without_reply");
+      if (assignError === null && !claimed) env.managerAsked?.(caller.sessionId, childId, project.name, false);
     } else {
       taskNote = `Its task was not delivered: ${out.message} Send it again with send_to_session.`;
     }

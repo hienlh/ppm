@@ -22,8 +22,9 @@ import { CLAUDE_ASSISTANT_MCP_SERVER } from "../shared/assistant-tool-names.ts";
 import { TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { CLAUDE_DB_TOOLS_MCP_SERVER, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess } from "../services/db-ai-tools/db-ai-tools-tool.ts";
 import {
-  CLAUDE_SESSION_COLLAB_MCP_SERVER, SESSION_COLLAB_TOOLS, SESSION_COLLAB_TOOLS_TIMEOUT_MS, type SessionCollabMcpAccess,
+  CLAUDE_SESSION_COLLAB_MCP_SERVER, SESSION_COLLAB_TOOLS_TIMEOUT_MS, type SessionCollabMcpAccess,
 } from "../services/session-collab/session-collab-tool.ts";
+import { SESSION_SERVER_TOOLS } from "../shared/session-collab.ts";
 import { EFFORT_LEVELS, type EffortLevel } from "../shared/effort-status.ts";
 
 export const VALID_EFFORT_VALUES = EFFORT_LEVELS;
@@ -464,7 +465,7 @@ export function sessionCollabMcpServers(access: SessionCollabMcpAccess | null | 
  * that off), and messaging a session is what the user allowed by leaving the tools on — a send that
  * would reach more permissions, or run past the pair limit, asks them in PPM's own card.
  */
-export const CLAUDE_SESSION_COLLAB_TOOLS: readonly string[] = SESSION_COLLAB_TOOLS.map((tool) => `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${tool}`);
+export const CLAUDE_SESSION_COLLAB_TOOLS: readonly string[] = SESSION_SERVER_TOOLS.map((tool) => `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${tool}`);
 
 /**
  * Spawn options as `spawnFingerprint` should compare them: the tab, database and session tools' tokens

@@ -12,6 +12,8 @@
  * watches: it is logged, and Settings shows the bridge as not running.
  */
 import { assistantWatchService } from "../assistant-watch/assistant-watch.service.ts";
+import { assistantWakeQueue } from "../assistant-wake/assistant-wake-queue.ts";
+import { startAssistantCards, stopAssistantCards } from "../assistant-cards/assistant-cards-startup.ts";
 import {
   assistantTelegramBridge, assistantTelegramConfig, type BridgeStartOptions,
 } from "../assistant-telegram/assistant-telegram.service.ts";
@@ -46,6 +48,11 @@ export async function startAssistantHub(opts: AssistantHubOptions = {}): Promise
     log.error("Assistant watches could not start:", e);
   }
   try {
+    startAssistantCards();
+  } catch (e) {
+    log.error("Assistant cards could not start:", e);
+  }
+  try {
     migratePPMBotSettings();
   } catch (e) {
     log.warn(`PPMBot's settings could not be carried over: ${(e as Error).message}`);
@@ -73,7 +80,9 @@ const upgradePickSources: UpgradePickSources = {
 /** Stops both halves; safe to call when nothing runs. */
 export async function stopAssistantHub(): Promise<void> {
   await assistantTelegramBridge.stop();
+  stopAssistantCards();
   assistantWatchService.stop();
+  assistantWakeQueue.stop();
 }
 
 /**

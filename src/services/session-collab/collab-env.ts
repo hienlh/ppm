@@ -25,6 +25,7 @@ import { managerChats } from "../assistant-managers/manager-chats.service.ts";
 import { assistantTurnProvenance } from "../assistant/assistant-turn-provenance.ts";
 import { getAssistantSettings } from "../assistant/assistant-settings.service.ts";
 import { traceServerEvent } from "../session-trace/trace-recorder.ts";
+import { noteManagerAsked } from "../assistant-cards/manager-reply-expectations.ts";
 import { assistantSendGuards } from "./assistant-send-guards-live.ts";
 import { collabApprovalBroker } from "./collab-approval-broker.ts";
 import type { CollabCaller, CollabEnv } from "./collab-context.ts";
@@ -130,6 +131,7 @@ export const collabEnv: CollabEnv = {
   managerDefaultMode: () => getAssistantSettings().manager_default_mode,
   assignManager: async (projectName, sessionId) => { await managerChats.assign(projectName, sessionId, "assistant", { onlyIfNone: true }); },
   trace: (sessionId, type, payload) => traceServerEvent(sessionId, firstOf(sessionId, getSessionProvider) ?? "claude", type, payload),
+  managerAsked: noteManagerAsked,
   pairs: pairCounter,
   approve: (sessionId, input, signal) => collabApprovalBroker.request(sessionId, input, signal),
   waits: collabWaits,

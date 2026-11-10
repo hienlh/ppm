@@ -48,7 +48,7 @@ import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-tr
 import type { TraceOrigin } from "../shared/session-trace.ts";
 import { stopChatSessionProcesses } from "./chat-session-processes/session-processes.service.ts";
 import { createLogger } from "./logger.ts";
-import { watchEventsContextEntry } from "./assistant-watch/watch-event-text.ts";
+import { wakeContextEntry } from "./assistant-wake/wake-news-text.ts";
 import { deleteAssistantWatchesFor } from "./assistant-hub/assistant-hub-db.ts";
 import { assistantManagersContextEntry } from "./assistant/assistant-managers-context.ts";
 // Loaded with the chat service, so they hear every message from the first one: how each PPM
@@ -473,7 +473,7 @@ class ChatService {
     opts?: SendMessageOpts,
   ): Promise<{ opts: SendMessageOpts; sent: SentContext }> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
-    const { uiSummary, channel, watchEvents, ...callerOpts } = opts ?? {};
+    const { uiSummary, channel, watchEvents, wakeNews, ...callerOpts } = opts ?? {};
     // Like the design fields, the tab, database and session tools are only ever server-built. An
     // Assistant session is never also a design session: its policy replaces the design one outright.
     const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, sessionCollabMcp: _sessionTools, ...design } =
@@ -533,11 +533,11 @@ class ChatService {
     // setting says: it is how the Assistant knows which screen it is talking about.
     let ui: string | undefined;
     let channelEntry: string | undefined;
-    if (design.assistantSession && watchEvents?.length) {
-      // PPM woke the session to report on watched chats: the entry carries the news, says that
-      // nobody typed and no screen is attached, and is news once — never compared with a
-      // previous one. Where the user last wrote from is unchanged: they did not write.
-      channelEntry = watchEventsContextEntry(watchEvents);
+    if (design.assistantSession && (watchEvents?.length || wakeNews?.length)) {
+      // PPM woke the session to report on watched chats or manager news: the entry carries the
+      // news, says that nobody typed and no screen is attached, and is news once — never compared
+      // with a previous one. Where the user last wrote from is unchanged: they did not write.
+      channelEntry = wakeContextEntry(watchEvents, wakeNews);
     } else if (design.assistantSession && channel === "telegram") {
       // No screen is attached to this turn. The screen the model last saw is forgotten, so the
       // next message typed in PPM sends it again instead of the model assuming it is unchanged.

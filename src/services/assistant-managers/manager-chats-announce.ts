@@ -31,6 +31,13 @@ export async function managerChatTitle(sessionId: string, providerId: string, pr
 
 /** Every project's manager, with what the chat is doing now. */
 export async function managerSummaries(): Promise<ManagerChatSummary[]> {
+  const { assistantCards } = await import("../assistant-cards/assistant-cards.service.ts");
+  let waiting: Record<string, number> = {};
+  try {
+    waiting = assistantCards.waiting().byProject;
+  } catch (e) {
+    log.warn(`Could not count the cards waiting per project: ${(e as Error).message}`);
+  }
   return Promise.all(managerChats.list().map(async (row) => {
     const live = collabLiveState(row.sessionId);
     return {
@@ -43,8 +50,7 @@ export async function managerSummaries(): Promise<ManagerChatSummary[]> {
       permissionMode: chatTargetMode(row.sessionId, row.providerId).mode,
       digest: row.digest,
       telegramDetail: row.telegramDetail,
-      // Cards arrive with the reports; until then nothing waits on the user here.
-      waiting: 0,
+      waiting: waiting[row.projectName] ?? 0,
       rulesPending: row.rulesPendingHash !== null,
     };
   }));

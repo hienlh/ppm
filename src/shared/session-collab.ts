@@ -18,6 +18,14 @@ export type SessionCollabTool = (typeof SESSION_COLLAB_TOOLS)[number];
 export const isSessionCollabTool = (name: unknown): name is SessionCollabTool =>
   (SESSION_COLLAB_TOOLS as readonly unknown[]).includes(name);
 
+/**
+ * A manager chat's report to the user through PPM Assistant. Served by the same endpoint, but no
+ * Settings switch: it is listed for manager chats only, and always for them.
+ */
+export const REPORT_TO_ASSISTANT_TOOL = "report_to_assistant";
+/** Every tool the session tools' server can serve. */
+export const SESSION_SERVER_TOOLS = [...SESSION_COLLAB_TOOLS, REPORT_TO_ASSISTANT_TOOL] as const;
+
 export const CLAUDE_SESSION_COLLAB_MCP_SERVER = "ppm-sessions";
 export const CODEX_SESSION_COLLAB_MCP_SERVER = "ppm_sessions";
 

@@ -101,6 +101,8 @@ export interface SendMessageOpts {
    * handed to a provider; ignored for any other session.
    */
   watchEvents?: WatchEventNotice[];
+  /** News from manager chats in a turn PPM started; rendered beside `watchEvents`, the same way. */
+  wakeNews?: import("../shared/assistant-wake-news.ts").WakeNewsNotice[];
 }
 
 /** How a watched chat's run ended, as the Assistant is told it. */

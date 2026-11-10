@@ -4,18 +4,19 @@ import {
   getAssistantWatch, insertAssistantWatch, listAssistantWatches, telegramChatsBoundTo, updateAssistantWatch,
   type AssistantWatch,
 } from "../assistant-hub/assistant-hub-db.ts";
-import { chatControl, CHAT_BUSY, type ChatControl, type LiveChatState } from "../chat-control/chat-control.ts";
+import { chatControl, type ChatControl, type LiveChatState } from "../chat-control/chat-control.ts";
 import { chatLifecycle, type ChatLifecycle, type ChatLifecycleEvents } from "../chat-control/chat-lifecycle.ts";
 import { addNotificationSuppressor } from "../chat-control/notification-suppressor.ts";
 import type { NotificationPayload } from "../notification.service.ts";
 import { describeTurnStop } from "../../shared/turn-stop.ts";
-import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
+import { isNoReplyText } from "../../shared/assistant-cards.ts";
+import { WAKE_TURNS_PER_HOUR } from "../../shared/assistant-limits.ts";
 import type { WatchEventNotice } from "../../types/chat.ts";
-import { WATCH_OPENER } from "./watch-event-text.ts";
+import { AssistantWakeQueue, assistantWakeQueue, type WakeItem, type WakeSource } from "../assistant-wake/assistant-wake-queue.ts";
 import { watchEvents } from "./watch-events.ts";
 import { readTurnEndSince, type TraceTurnEnd } from "./watch-turn-end-reader.ts";
 import { awaitsDelivery, MAX_ACTIVE_WATCHES, readWatchState, wakesFor, watchView, writeWatchState, type NotifyKind, type WatchView } from "./watch-state.ts";
-import { firstLine, reportedPush, unreportedPush } from "./watch-push.ts";
+import { reportedPush, unreportedPush } from "./watch-push.ts";
 import { unnamedChat, watchedChatTitle } from "./watched-chat-title.ts";
 
 /**
@@ -30,8 +31,9 @@ import { unnamedChat, watchedChatTitle } from "./watched-chat-title.ts";
  *   the card with buttons. A model turn per card would cost a turn per tool call, and invite the
  *   model to act on a card the user never saw. Every watch relays its chat's cards; `notifyOn`
  *   only picks which ends of the run wake the Assistant.
- * - Watch turns are capped per Assistant session per hour; news that arrives over the cap, or
- *   while the session is busy, waits and goes into the next turn together.
+ * - Turns are started by the Assistant's wake queue, which caps them per Assistant session per
+ *   hour for every kind of news together; news that arrives over the cap, or while the session is
+ *   busy, waits and goes into the next turn together.
  * - A report counts as delivered only when its turn ends with an answer. A turn that fails is
  *   tried again; after {@link MAX_REPORT_ATTEMPTS} a push notification names the chat instead.
  *   A turn the user stopped is not a failure: its news is closed, with no retry and no push.
@@ -43,15 +45,8 @@ import { unnamedChat, watchedChatTitle } from "./watched-chat-title.ts";
 
 export const MAX_ACTIVE_WATCHES_PER_SESSION = MAX_ACTIVE_WATCHES;
 export const WATCH_TTL_MS = 24 * 60 * 60_000;
-export const MAX_WATCH_TURNS_PER_HOUR = 6;
+export const MAX_WATCH_TURNS_PER_HOUR = WAKE_TURNS_PER_HOUR;
 export const MAX_REPORT_ATTEMPTS = 3;
-const HOUR_MS = 60 * 60_000;
-/** How long after a failed watch turn the next one may start. */
-const RETRY_DELAY_MS = 60_000;
-/** A watch turn that has said nothing for this long counts as failed. */
-const WATCH_TURN_TIMEOUT_MS = 20 * 60_000;
-/** How often expiries, retries and news held back by the hourly cap are looked at. */
-const TICK_MS = 30_000;
 /** How many sessions' "the user last asked at" is remembered. */
 const MAX_ASKED_RECORDS = 1_000;
 
@@ -67,6 +62,8 @@ export interface AssistantWatchDeps {
   notify?: (payload: NotificationPayload) => void;
   turnEndSince?: (sessionId: string, sinceMs: number) => TraceTurnEnd | null;
   addSuppressor?: typeof addNotificationSuppressor;
+  /** The wake queue that starts the report turns; a private one built from the deps below when absent. */
+  queue?: AssistantWakeQueue;
   tickMs?: number;
   retryDelayMs?: number;
   turnTimeoutMs?: number;
@@ -87,15 +84,6 @@ export type WatchResult =
   | { ok: true; alreadyEnded: { kind: "done" | "stopped"; endedAt: string; stopReason?: string } }
   | { ok: false; error: string };
 
-/** One watch turn: started (`sent`) or being started, and the news it carries. */
-interface WatchTurn {
-  watchIds: string[];
-  startedAt: number;
-  sent: boolean;
-  /** A turn end heard while the message was still on its way, settled once it is known to be ours. */
-  earlyEnd?: ChatLifecycleEvents["turn_ended"];
-}
-
 const NOT_RUNNING = "Watching chats is not available in this PPM process.";
 
 async function sendPush(payload: NotificationPayload): Promise<void> {
@@ -103,7 +91,8 @@ async function sendPush(payload: NotificationPayload): Promise<void> {
   await notificationService.broadcast("done", payload);
 }
 
-export class AssistantWatchService {
+export class AssistantWatchService implements WakeSource {
+  readonly name = "watch";
   private readonly control: () => ChatControl | null;
   private readonly lifecycle: ChatLifecycle;
   private readonly now: () => number;
@@ -113,18 +102,11 @@ export class AssistantWatchService {
   private readonly notify: (payload: NotificationPayload) => void;
   private readonly turnEndSince: (sessionId: string, sinceMs: number) => TraceTurnEnd | null;
   private readonly addSuppressor: typeof addNotificationSuppressor;
-  private readonly tickMs: number;
-  private readonly retryDelayMs: number;
-  private readonly turnTimeoutMs: number;
+  private readonly queue: AssistantWakeQueue;
+  /** A queue built for this service alone (tests): started and stopped with it. */
+  private readonly ownsQueue: boolean;
 
   private stops: Array<() => void> = [];
-  private timer: ReturnType<typeof setInterval> | null = null;
-  /** Watch turns, by Assistant session (current id). */
-  private turns = new Map<string, WatchTurn>();
-  /** When each Assistant session's watch turns started, within the last hour. */
-  private turnTimes = new Map<string, number[]>();
-  /** No watch turn before this, after one failed. */
-  private retryAt = new Map<string, number>();
   /** When the user last wrote in each session: what "already finished" is measured against. */
   private askedAt = new Map<string, number>();
 
@@ -138,33 +120,36 @@ export class AssistantWatchService {
     this.notify = deps.notify ?? ((payload) => { sendPush(payload).catch((e) => log.warn(`push failed: ${(e as Error).message}`)); });
     this.turnEndSince = deps.turnEndSince ?? readTurnEndSince;
     this.addSuppressor = deps.addSuppressor ?? addNotificationSuppressor;
-    this.tickMs = deps.tickMs ?? TICK_MS;
-    this.retryDelayMs = deps.retryDelayMs ?? RETRY_DELAY_MS;
-    this.turnTimeoutMs = deps.turnTimeoutMs ?? WATCH_TURN_TIMEOUT_MS;
+    this.ownsQueue = !deps.queue;
+    this.queue = deps.queue ?? new AssistantWakeQueue({
+      control: this.control, lifecycle: this.lifecycle, now: this.now, provider: this.providerOf,
+      ...(deps.tickMs !== undefined ? { tickMs: deps.tickMs } : {}),
+      ...(deps.retryDelayMs !== undefined ? { retryDelayMs: deps.retryDelayMs } : {}),
+      ...(deps.turnTimeoutMs !== undefined ? { turnTimeoutMs: deps.turnTimeoutMs } : {}),
+    });
   }
 
   get running(): boolean {
     return this.stops.length > 0;
   }
 
-  /** Subscribes, settles what a restart left behind, and starts the clock. Calling it twice changes nothing. */
+  /** Subscribes, settles what a restart left behind, and joins the wake queue. Calling it twice changes nothing. */
   start(): void {
     if (this.running) return;
     this.stops = [
       this.lifecycle.on("user_message", (p) => this.onUserMessage(p)),
       this.lifecycle.on("approval_shown", (p) => this.onApprovalShown(p)),
-      this.lifecycle.on("approval_resolved", (p) => this.schedule(this.canon(p.sessionId))),
       this.lifecycle.on("turn_ended", (p) => this.onTurnEnded(p)),
       this.lifecycle.on("migrated", (p) => this.onMigrated(p.oldSessionId, p.newSessionId)),
       this.addSuppressor((sessionId, kind) => kind === "done" && this.holdsAlertFor(this.canon(sessionId))),
+      this.queue.addSource(this),
     ];
     try {
       this.reconcile();
     } catch (e) {
       log.warn(`could not settle the watches a restart left: ${(e as Error).message}`);
     }
-    this.timer = setInterval(() => this.tick(), this.tickMs);
-    (this.timer as { unref?: () => void }).unref?.();
+    this.queue.start();
     this.tick();
     log.info("Assistant watches started");
   }
@@ -172,9 +157,7 @@ export class AssistantWatchService {
   stop(): void {
     for (const stop of this.stops) stop();
     this.stops = [];
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-    this.turns.clear();
+    if (this.ownsQueue) this.queue.stop();
   }
 
   // ── What the Assistant's tools call ─────────────────────────────────────────
@@ -257,10 +240,8 @@ export class AssistantWatchService {
   }
 
   private onTurnEnded(p: ChatLifecycleEvents["turn_ended"]): void {
+    // The Assistant's own report turn ending is the wake queue's; this hears the watched chats.
     const id = this.canon(p.sessionId);
-    const turn = this.turns.get(id);
-    if (turn && !turn.sent) turn.earlyEnd = p;
-    else if (turn) this.finishWatchTurn(id, turn, p);
     for (const w of listAssistantWatches({ status: "active", targetSessionId: id })) {
       this.fire(w, this.notice(w, {
         kind: p.outcome === "done" ? "done" : "stopped",
@@ -269,21 +250,17 @@ export class AssistantWatchService {
         ...(p.outcome !== "done" ? { stopReason: stopReasonOf(p) } : {}),
       }));
     }
-    // A session that just went idle may have news waiting for it.
-    if (!turn) this.schedule(id);
   }
 
   private onMigrated(oldId: string, newId: string): void {
-    for (const map of [this.turns, this.turnTimes, this.retryAt, this.askedAt] as Array<Map<string, unknown>>) {
-      if (!map.has(oldId)) continue;
-      map.set(newId, map.get(oldId));
-      map.delete(oldId);
-    }
+    if (!this.askedAt.has(oldId)) return;
+    this.askedAt.set(newId, this.askedAt.get(oldId)!);
+    this.askedAt.delete(oldId);
   }
 
-  /** The Assistant's own "Chat completed" is held back while a watch turn runs where a push of ours replaces it. */
+  /** The Assistant's own "Chat completed" is held back while a report turn runs where a push of ours replaces it. */
   private holdsAlertFor(sessionId: string): boolean {
-    return this.turns.get(sessionId)?.sent === true && this.boundChats(sessionId).length === 0;
+    return this.queue.reporting(sessionId) && this.boundChats(sessionId).length === 0;
   }
 
   // ── News ────────────────────────────────────────────────────────────────────
@@ -315,7 +292,7 @@ export class AssistantWatchService {
       eventJson: writeWatchState({ ...state, event }),
       ...(silent ? { deliveredAt: now } : {}),
     }, { ifStatus: "active" });
-    if (recorded && !silent && report) this.schedule(w.assistantSessionId);
+    if (recorded && !silent && report) this.queue.schedule(w.assistantSessionId);
   }
 
   private relayCard(w: AssistantWatch, card: NonNullable<LiveChatState["card"]>): void {
@@ -332,108 +309,61 @@ export class AssistantWatchService {
 
   // ── Watch turns ─────────────────────────────────────────────────────────────
 
-  /**
-   * Starts a watch turn once the current event has played out. Mostly heard from a `turn_ended`,
-   * which the chat emits while its stream is still unwinding: a message sent at that moment
-   * would be pushed into a stream about to close, and lost with it.
-   */
-  private schedule(assistantSessionId: string): void {
-    setTimeout(() => {
-      this.pump(assistantSessionId).catch((e) => log.warn(`session=${assistantSessionId} could not report watch news: ${(e as Error).message}`));
-    }, 0);
+  /** Starts a report turn for this session now if the wake queue lets it (tests call this). */
+  pump(assistantSessionId: string): Promise<void> {
+    return this.queue.pump(assistantSessionId);
   }
 
-  /** Starts a watch turn carrying every piece of news waiting for this session, when it may. */
-  async pump(assistantSessionId: string): Promise<void> {
-    const id = this.canon(assistantSessionId);
-    if (!this.running || this.turns.has(id)) return;
-    // In the order it happened.
-    const pending = listAssistantWatches({ assistantSessionId: id }).filter(awaitsDelivery)
-      .sort((a, b) => (a.firedAt ?? 0) - (b.firedAt ?? 0));
-    if (pending.length === 0) return;
-    const now = this.now();
-    if ((this.retryAt.get(id) ?? 0) > now) return;
-    const recent = (this.turnTimes.get(id) ?? []).filter((t) => t > now - HOUR_MS);
-    this.turnTimes.set(id, recent);
-    if (recent.length >= MAX_WATCH_TURNS_PER_HOUR) return;
-    const control = this.control();
-    if (!control) return;
-    const live = control.liveState(id);
-    if (live && (live.running || live.card)) return;
-
-    const events = pending.map((w) => readWatchState(w).event).filter((e): e is WatchEventNotice => !!e);
-    if (events.length === 0) return;
-    const turn: WatchTurn = { watchIds: pending.map((w) => w.id), startedAt: now, sent: false };
-    this.turns.set(id, turn);
-    let result: Awaited<ReturnType<ChatControl["sendUserMessage"]>>;
-    try {
-      result = await control.sendUserMessage(id, WATCH_OPENER, {
-        origin: "watch",
-        projectName: ASSISTANT_PROJECT_NAME,
-        providerId: this.providerOf(id) ?? live?.providerId ?? "claude",
-        watchEvents: events,
-      });
-    } catch (e) {
-      result = { ok: false, error: (e as Error)?.message ?? String(e) };
-    }
-    if (this.turns.get(id) !== turn) return; // stopped meanwhile
-    if (!result.ok) {
-      this.turns.delete(id);
-      // The turn or card in the way ends with an event that brings this back.
-      if (result.error === CHAT_BUSY) return;
-      this.recordFailure(id, pending, `the watch turn could not start: ${result.error}`);
-      return;
-    }
-    turn.sent = true;
-    recent.push(now);
-    const current = this.canon(result.sessionId);
-    if (current !== id) this.onMigrated(id, current);
-    if (turn.earlyEnd) this.finishWatchTurn(current, turn, turn.earlyEnd);
+  /** The wake queue's view: the Assistant sessions with watch news not yet reported. */
+  sessions(): string[] {
+    return [...new Set(listAssistantWatches().filter(awaitsDelivery).map((w) => w.assistantSessionId))];
   }
 
-  private finishWatchTurn(id: string, turn: WatchTurn, end: ChatLifecycleEvents["turn_ended"]): void {
-    this.turns.delete(id);
-    const rows = turn.watchIds.map((watchId) => getAssistantWatch(watchId)).filter((w): w is AssistantWatch => !!w && awaitsDelivery(w));
-    const text = end.finalText?.trim();
-    if (end.outcome === "done" && text) {
-      this.retryAt.delete(id);
-      const now = this.now();
-      const reported: WatchEventNotice[] = [];
-      for (const w of rows) {
-        if (!updateAssistantWatch(w.id, { deliveredAt: now }, { ifStatus: w.status })) continue;
+  /** Watch news waiting for this session, in the order it happened. */
+  pending(assistantSessionId: string): WakeItem[] {
+    if (!this.running) return [];
+    return listAssistantWatches({ assistantSessionId: this.canon(assistantSessionId) }).filter(awaitsDelivery)
+      .sort((a, b) => (a.firedAt ?? 0) - (b.firedAt ?? 0))
+      .flatMap((w) => {
         const event = readWatchState(w).event;
-        if (!event) continue;
-        reported.push(event);
-        watchEvents.emit("watch_reported", {
-          watchId: w.id, assistantSessionId: id, targetSessionId: w.targetSessionId, targetProject: w.targetProject,
-          targetTitle: event.title, kind: event.kind, text,
-        });
-      }
-      if (reported.length > 0 && this.boundChats(id).length === 0) {
-        this.notify(reportedPush(reported, text, { sessionId: id, providerId: this.providerOf(id) ?? end.providerId }));
-      }
-    } else if (end.cancelledBy) {
-      // The user stopped the report themselves: they are looking at it, and want it to stop, not
-      // to come back as a retry or a push. The news is over.
-      this.endUnreported(id, rows, end.cancelledBy);
-    } else {
-      const why = end.outcome === "done" ? "it ended without an answer" : `it ${end.outcome}${end.error ? `: ${firstLine(end.error, 200)}` : ""}`;
-      this.recordFailure(id, rows, `the watch turn did not report: ${why}`);
+        return event ? [{ key: w.id, at: w.firedAt ?? 0, watch: event }] : [];
+      });
+  }
+
+  private rowsOf(items: WakeItem[]): AssistantWatch[] {
+    return items.map((i) => getAssistantWatch(i.key)).filter((w): w is AssistantWatch => !!w && awaitsDelivery(w));
+  }
+
+  delivered(id: string, items: WakeItem[], text: string): void {
+    const now = this.now();
+    const reported: WatchEventNotice[] = [];
+    for (const w of this.rowsOf(items)) {
+      if (!updateAssistantWatch(w.id, { deliveredAt: now }, { ifStatus: w.status })) continue;
+      const event = readWatchState(w).event;
+      if (!event) continue;
+      reported.push(event);
+      watchEvents.emit("watch_reported", {
+        watchId: w.id, assistantSessionId: id, targetSessionId: w.targetSessionId, targetProject: w.targetProject,
+        targetTitle: event.title, kind: event.kind, text,
+      });
     }
-    this.schedule(id);
+    // An answer that says there is nothing to add needs no push of its own.
+    if (reported.length > 0 && this.boundChats(id).length === 0 && !isNoReplyText(text)) {
+      this.notify(reportedPush(reported, text, { sessionId: id, providerId: this.providerOf(id) ?? "claude" }));
+    }
   }
 
   /** News whose report the user cut short: closed without a retry, a push or `watch_reported`. */
-  private endUnreported(id: string, rows: AssistantWatch[], by: string): void {
+  ended(id: string, items: WakeItem[], by: string): void {
+    const rows = this.rowsOf(items);
     log.info(`session=${id} watch turn stopped by ${by}: ${rows.length} watch(es) closed unreported`);
-    this.retryAt.delete(id);
     const now = this.now();
     for (const w of rows) updateAssistantWatch(w.id, { deliveredAt: now }, { ifStatus: w.status });
   }
 
   /** One more failed attempt for each watch; those out of attempts are pushed to the user as they are. */
-  private recordFailure(id: string, rows: AssistantWatch[], why: string): void {
-    log.warn(`session=${id} ${why}`);
+  failed(id: string, items: WakeItem[], _why: string): boolean {
+    const rows = this.rowsOf(items);
     const now = this.now();
     const exhausted: WatchEventNotice[] = [];
     let retry = false;
@@ -449,32 +379,34 @@ export class AssistantWatchService {
       if (done && state.event) exhausted.push(state.event);
       if (!done) retry = true;
     }
-    if (retry) this.retryAt.set(id, now + this.retryDelayMs);
     if (exhausted.length > 0) {
       this.notify(unreportedPush(exhausted, { sessionId: id, providerId: this.providerOf(id) ?? "claude" }));
     }
+    return retry;
   }
 
   // ── Clock and restart ───────────────────────────────────────────────────────
 
-  /** Expires overdue watches, gives up on silent watch turns, and starts turns the cap or a failure held back. */
+  /**
+   * Expires overdue watches (the queue calls {@link expire} first), then the wake queue gives up on
+   * silent turns and starts the turns its cap or a failure held back. The queue's own clock runs
+   * the same tick.
+   */
   tick(): void {
+    if (!this.running) return;
+    this.queue.tick();
+  }
+
+  /** The wake queue's tick hook: watches past their time fire as expired. */
+  expire(): void {
     if (!this.running) return;
     try {
       const now = this.now();
       for (const w of listAssistantWatches({ status: "active" })) {
         if (w.expiresAt <= now) this.fire(w, this.notice(w, { kind: "expired", at: now }), false);
       }
-      for (const [id, turn] of [...this.turns]) {
-        if (!turn.sent || now - turn.startedAt < this.turnTimeoutMs) continue;
-        this.turns.delete(id);
-        const rows = turn.watchIds.map((watchId) => getAssistantWatch(watchId)).filter((w): w is AssistantWatch => !!w && awaitsDelivery(w));
-        this.recordFailure(id, rows, "the watch turn never ended");
-      }
-      const waiting = new Set(listAssistantWatches().filter(awaitsDelivery).map((w) => w.assistantSessionId));
-      for (const id of waiting) this.schedule(id);
     } catch (e) {
-      log.warn(`watch tick failed: ${(e as Error).message}`);
+      log.warn(`watch expiry check failed: ${(e as Error).message}`);
     }
   }
 
@@ -546,4 +478,4 @@ function stopReasonOf(p: ChatLifecycleEvents["turn_ended"]): string {
 }
 
 /** The process-wide service; the Assistant hub starts and stops it. */
-export const assistantWatchService = new AssistantWatchService();
+export const assistantWatchService = new AssistantWatchService({ queue: assistantWakeQueue });

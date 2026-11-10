@@ -18,6 +18,7 @@ import { canSendTo } from "./assistant-telegram-access.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { BridgeStateStore } from "./assistant-telegram-state.ts";
 import { TurnRenderer } from "./assistant-telegram-turn-renderer.ts";
+import { WakeTurnGate } from "./assistant-telegram-wake-gate.ts";
 
 /** How much of a message typed in PPM is repeated on Telegram. */
 export const MIRRORED_MESSAGE_MAX = 1000;
@@ -45,6 +46,7 @@ export class AssistantTelegramMirror {
   private readonly turns = new Map<string, Map<string, TurnRenderer>>();
   private offs: Array<() => void> = [];
   private readonly bound = new Map<string, { at: number; chats: string[] }>();
+  private readonly wakeGate = new WakeTurnGate();
 
   constructor(private readonly deps: MirrorDeps) {}
 
@@ -122,6 +124,11 @@ export class AssistantTelegramMirror {
   }
 
   private onUserMessage(p: ChatLifecycleEvents["user_message"]): void {
+    // A turn PPM started waits until it has something to say (see WakeTurnGate).
+    if (p.origin === "watch" && this.chatsFor(p.sessionId).length > 0) {
+      this.wakeGate.hold(p.sessionId);
+      return;
+    }
     for (const chatId of this.chatsFor(p.sessionId)) {
       const line = mirroredLine(p.origin, p.text, p.imageCount);
       if (line) this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: line }, { label: "mirrored message" }));
@@ -133,6 +140,14 @@ export class AssistantTelegramMirror {
     const ev = p.event as { type?: string; content?: unknown; tool?: unknown; parentToolUseId?: unknown };
     // A subagent's own text and tools are its business; the answer is the session's.
     if (!ev || ev.parentToolUseId) return;
+    if (this.wakeGate.isHeld(p.sessionId)) {
+      if (ev.type === "tool_use" && typeof ev.tool === "string") this.wakeGate.tool(p.sessionId, ev.tool);
+      else if (ev.type === "text" && typeof ev.content === "string") {
+        const released = this.wakeGate.text(p.sessionId, ev.content);
+        if (released) this.releaseWake(p.sessionId, released);
+      }
+      return;
+    }
     if (ev.type === "text" && typeof ev.content === "string") {
       // A chat bound while a turn was already running joins it from here.
       for (const chatId of this.chatsFor(p.sessionId)) this.renderer(p.sessionId, chatId, "ws").text(ev.content);
@@ -150,13 +165,26 @@ export class AssistantTelegramMirror {
     return [...byChat].filter(([chatId, r]) => allowed.has(chatId) && !r.isFinished).map(([, r]) => r);
   }
 
+  /** A held wake turn turned out to say something: its line, tools and text go out as they came. */
+  private releaseWake(sessionId: string, held: { text: string; tools: string[] }): void {
+    for (const chatId of this.chatsFor(sessionId)) {
+      this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: WATCH_NEWS_LINE }, { label: "mirrored message" }));
+      const r = this.renderer(sessionId, chatId, "watch");
+      for (const tool of held.tools) r.tool(tool);
+      if (held.text) r.text(held.text);
+    }
+  }
+
   private onTurnEnded(p: ChatLifecycleEvents["turn_ended"]): void {
+    const held = this.wakeGate.end(p.sessionId, p.outcome);
+    if (held) this.releaseWake(p.sessionId, held);
     const footer = turnFooter(p);
     for (const r of this.live(p.sessionId)) r.finish(footer);
     this.turns.delete(p.sessionId);
   }
 
   private onMigrated(p: ChatLifecycleEvents["migrated"]): void {
+    this.wakeGate.rename(p.oldSessionId, p.newSessionId);
     const byChat = this.turns.get(p.oldSessionId);
     if (!byChat) return;
     this.turns.delete(p.oldSessionId);

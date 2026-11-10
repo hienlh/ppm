@@ -116,6 +116,11 @@ async function deliverChecked(
     else if (caller.kind !== "assistant") env.pairs.unrecord(caller.sessionId, target.sessionId);
     return textResult(out.message, true);
   }
+  // A manager's answer nobody waited for (or that came after the wait gave up) comes back to the
+  // Assistant later, as news in a turn PPM starts.
+  const claimed = out.reply && (out.reply.replied || out.reply.reason === "turn_ended_without_reply");
+  // After a wait that gave up, the turn running now is the one that took the message.
+  if (manager && !claimed) env.managerAsked?.(caller.sessionId, target.sessionId, target.projectName, out.delivered === "queued" && !out.reply);
   const result: SendToSessionResult & { project?: string } = {
     delivered: out.delivered,
     status: statusOf(env, target.sessionId, target.providerId, caller.sessionId, !!out.reply),

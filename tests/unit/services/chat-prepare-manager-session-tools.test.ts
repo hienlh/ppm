@@ -2,7 +2,7 @@
  * A manager chat always gets the session-tools server attached — it is how it will report to PPM
  * Assistant — even with every session tool switched off in Settings → Tools, while an ordinary
  * chat gets it only when a tool is on. The tools themselves follow the switches for every chat,
- * the manager included: the endpoint lists none for either while they are off.
+ * the manager included; `report_to_assistant` alone is listed for the manager whatever they say.
  */
 import { afterEach, beforeEach, expect, it } from "bun:test";
 import "../../test-setup.ts";
@@ -15,6 +15,7 @@ import { setServerListenAddress } from "../../../src/services/server-listen-addr
 import { managerChats } from "../../../src/services/assistant-managers/manager-chats.service.ts";
 import { createSessionCollabMcpHandler, sessionToolOnFor } from "../../../src/services/session-collab/session-collab-endpoint.ts";
 import { SESSION_TOOLS } from "../../../src/shared/ppm-tools.ts";
+import { REPORT_TO_ASSISTANT_TOOL } from "../../../src/shared/session-collab.ts";
 import type { AIProvider } from "../../../src/types/chat.ts";
 
 const project = { name: "mgr-tools", path: join(process.env.PPM_HOME!, "mgr-tools") };
@@ -64,7 +65,7 @@ it("attaches the session tools to a manager chat with every one switched off, an
   expect(await chatService.prepareSendOptions("claude", manager, "hi")).not.toHaveProperty("sessionCollabMcp");
 });
 
-it("lists the tools by the switches for the manager as for any chat", async () => {
+it("lists the tools by the switches for the manager as for any chat, plus the report tool for the manager alone", async () => {
   const manager = chat();
   const ordinary = chat();
   await managerChats.assign(project.name, manager);
@@ -84,9 +85,12 @@ it("lists the tools by the switches for the manager as for any chat", async () =
     });
     return ((await res.json()) as { result: { tools: Array<{ name: string }> } }).result.tools.map((t) => t.name);
   };
-  expect(await list(manager)).toEqual([]);
+  expect(await list(manager)).toEqual([REPORT_TO_ASSISTANT_TOOL]);
   expect(await list(ordinary)).toEqual([]);
   configService.get("ai").ppm_tools = Object.fromEntries(SESSION_TOOLS.map((tool) => [tool, true]));
-  expect((await list(manager)).sort()).toEqual([...SESSION_TOOLS].sort());
+  expect((await list(manager)).sort()).toEqual([...SESSION_TOOLS, REPORT_TO_ASSISTANT_TOOL].sort());
   expect((await list(ordinary)).sort()).toEqual([...SESSION_TOOLS].sort());
+  // Unassigned, the chat loses the report tool at its next listing.
+  managerChats.unassign(project.name);
+  expect((await list(manager)).sort()).toEqual([...SESSION_TOOLS].sort());
 });

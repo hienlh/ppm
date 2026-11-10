@@ -2,6 +2,7 @@ import type { SessionPhase } from "../../types/api.ts";
 import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import type { AnswersById, NormalizedQuestion } from "../../shared/approval-questions.ts";
 import type { WatchEventNotice } from "../../types/chat.ts";
+import type { WakeNewsNotice } from "../../shared/assistant-wake-news.ts";
 
 /**
  * What the rest of the server may do to a chat that only a browser could do before: send it a
@@ -20,11 +21,13 @@ import type { WatchEventNotice } from "../../types/chat.ts";
 /**
  * Who, inside the server, is acting on a chat. `assistant` only answers cards and stops turns: the
  * PPM Assistant's messages into chats go through the session tools, as origin `session`.
+ * `assistant_card` is the user pressing a button on one of the Assistant's cards, which mirrors a
+ * manager chat's own approval or question.
  */
-export type ServerOrigin = "telegram" | "watch" | "assistant";
+export type ServerOrigin = "telegram" | "watch" | "assistant" | "assistant_card";
 
 /** The server origins that may send a chat a message (see {@link ChatControl.sendUserMessage}). */
-export type MessageServerOrigin = Exclude<ServerOrigin, "assistant">;
+export type MessageServerOrigin = Exclude<ServerOrigin, "assistant" | "assistant_card">;
 
 /**
  * Where a message into a chat came from: a browser's socket, the server itself, or another
@@ -71,6 +74,8 @@ export interface SendUserMessageOpts {
    * shared context, never into the stored message.
    */
   watchEvents?: WatchEventNotice[];
+  /** With `watch` only: news from manager chats (reports, late replies), rendered the same way. */
+  wakeNews?: WakeNewsNotice[];
 }
 
 /** The approval card a chat shows, as far as a non-browser caller needs it. */

@@ -78,6 +78,7 @@ import { chatLifecycle } from "../../services/chat-control/chat-lifecycle.ts";
 import { isNotificationSuppressed } from "../../services/chat-control/notification-suppressor.ts";
 import { neutralizePpmTags, parseWatchEventNotices } from "../../services/assistant-watch/watch-event-text.ts";
 import type { WatchEventNotice } from "../../types/chat.ts";
+import { parseWakeNews, type WakeNewsNotice } from "../../shared/assistant-wake-news.ts";
 import { dropStaleIdle, registerTokenRotation, type TokenRotationDeps } from "./chat-token-rotation.ts";
 import { registerLeftoverSweeper } from "../../services/chat-session-processes/session-processes.service.ts";
 import { setTurnRunningProbe } from "../../services/session-turns/session-turn-index.service.ts";
@@ -1162,6 +1163,7 @@ interface TurnContext {
   uiSummary?: UiSummary;
   channel?: "telegram";
   watchEvents?: WatchEventNotice[];
+  wakeNews?: WakeNewsNotice[];
 }
 
 /** Which turn a sent message opened (`turn_started`). */
@@ -1202,7 +1204,7 @@ setTurnRunningProbe((sessionId) => chatService.turnActivity(sessionId).running
  * message channel. Events from ALL turns flow through this single loop.
  */
 async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[], clientMessageId?: string, origin: TraceOrigin = "ws", turnContext: TurnContext = {}): Promise<void> {
-  const { uiSummary, channel, watchEvents } = turnContext;
+  const { uiSummary, channel, watchEvents, wakeNews } = turnContext;
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     log.error(`session=${sessionId} startSessionConsumer: no entry — aborting`);
@@ -1270,7 +1272,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), ...(clientMessageId && { clientMessageId }), ...(uiSummary && { uiSummary }), ...(channel && { channel }), ...(watchEvents?.length && { watchEvents }), origin })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }), ...(clientMessageId && { clientMessageId }), ...(uiSummary && { uiSummary }), ...(channel && { channel }), ...(watchEvents?.length && { watchEvents }), ...(wakeNews?.length && { wakeNews }), origin })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -1761,6 +1763,8 @@ interface DeliverOpts {
   receivedAt?: number;
   /** A `watch` message's news, rendered into the turn's shared context. */
   watchEvents?: WatchEventNotice[];
+  /** A `watch` message's news from manager chats (reports, late replies); likewise. */
+  wakeNews?: WakeNewsNotice[];
   /** The browser's own id for the message, handed back on `message_accepted` and `turn_started`. */
   clientMessageId?: string;
   /** Turns of other chats the person referenced, already validated; granted to this session's AI. */
@@ -1919,6 +1923,7 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
       ...(uiSummary ? { uiSummary } : {}),
       ...(opts.channel ? { channel: opts.channel } : {}),
       ...(opts.watchEvents?.length ? { watchEvents: opts.watchEvents } : {}),
+      ...(opts.wakeNews?.length ? { wakeNews: opts.wakeNews } : {}),
     },
   }));
   return result.ok ? { ok: true, sessionId } : result;
@@ -2146,6 +2151,13 @@ setChatControl({
       if (!parsed) return { ok: false, error: "The watch events are malformed." };
       watchEvents = parsed;
     }
+    let wakeNews: WakeNewsNotice[] | undefined;
+    if (opts.wakeNews !== undefined) {
+      if (opts.origin !== "watch") return { ok: false, error: "Only a watch message carries manager news." };
+      const parsed = parseWakeNews(opts.wakeNews);
+      if (!parsed) return { ok: false, error: "The manager news is malformed." };
+      wakeNews = parsed;
+    }
     const sessionId = resolveMigratedSession(asked);
     const ensured = ensureServerEntry(sessionId, opts.projectName, opts.providerId);
     if (!ensured.ok) return ensured;
@@ -2156,6 +2168,7 @@ setChatControl({
       ...(opts.permissionMode ? { permissionMode: opts.permissionMode } : {}),
       ...(opts.channel ? { channel: opts.channel } : {}),
       ...(watchEvents ? { watchEvents } : {}),
+      ...(wakeNews ? { wakeNews } : {}),
       receivedAt: Date.now(),
     });
     // Nobody is watching: the entry goes once it is idle (a running turn re-arms this when it ends).
@@ -2482,6 +2495,7 @@ async function handOffToSession(sessionId: string, entry: SessionEntry, content:
         ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
         ...(ctx?.channel ? { channel: ctx.channel } : {}),
         ...(ctx?.watchEvents?.length ? { watchEvents: ctx.watchEvents } : {}),
+        ...(ctx?.wakeNews?.length ? { wakeNews: ctx.wakeNews } : {}),
         ...(ctx?.uiSummary ? { uiSummary: ctx.uiSummary } : {}),
         ...(entry.model ? { model: entry.model } : {}),
         ...(effort ? { effort } : {}),

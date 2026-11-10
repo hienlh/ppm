@@ -1,8 +1,12 @@
 import type { Context } from "hono";
 import { createMcpHttpHandler, textResult, type Json } from "../mcp-http-endpoint.ts";
 import { isPpmTool, ppmToolOffMessage, ppmToolOn } from "../../shared/ppm-tools.ts";
-import { CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL } from "../../shared/session-collab.ts";
+import {
+  CREATE_SESSION_TOOL, REPORT_TO_ASSISTANT_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL,
+} from "../../shared/session-collab.ts";
 import { configService } from "../config.service.ts";
+import { reportToolDefinition } from "../assistant-cards/manager-report-tool.ts";
+import { isReportingManager, NOT_A_MANAGER, reportToAssistantCall } from "../assistant-cards/manager-report-env.ts";
 import type { CallLimiter } from "../tab-tools-mcp/session-history-rate-limit.ts";
 import { collabToolPolicy } from "./collab-caller-policy.ts";
 import { resolveCaller, type CollabEnv } from "./collab-context.ts";
@@ -28,18 +32,30 @@ export function createSessionCollabMcpHandler(deps: {
   /** Whether the tool is on for the chat the token names. */
   enabled: (tool: string, sessionId: string) => boolean;
   limiter?: CallLimiter;
+  /** `report_to_assistant`, for the chat the token names (the live one by default). */
+  report?: (sessionId: string, args: unknown) => Json;
 }) {
   const limiter = deps.limiter ?? createCollabLimiter();
+  const report = deps.report ?? reportToAssistantCall;
   return createMcpHttpHandler<SessionCollabTokenBinding>({
     serverName: "ppm-sessions",
     tokenRequired: "A chat session token is required",
     resolveToken: deps.resolveToken,
-    tools: sessionCollabToolDefinitions(),
-    unavailable: (name, { sessionId }) => (deps.enabled(name, sessionId) ? null : ppmToolOffMessage(name)),
+    tools: [...sessionCollabToolDefinitions(), reportToolDefinition()],
+    unavailable: (name, { sessionId }) => {
+      if (deps.enabled(name, sessionId)) return null;
+      return name === REPORT_TO_ASSISTANT_TOOL ? NOT_A_MANAGER : ppmToolOffMessage(name);
+    },
     callTool: async ({ sessionId }, name, rawArgs, signal) => {
       const env = deps.env();
       const caller = resolveCaller(env, sessionId);
       if (!caller.ok) return textResult(caller.message, true);
+      // A manager's report: no card, no delivery, so none of the send policy applies. The PPM
+      // Assistant is never a manager chat, and the report checks the live table again itself.
+      if (name === REPORT_TO_ASSISTANT_TOOL) {
+        if (caller.value.kind === "assistant") return textResult(NOT_A_MANAGER, true);
+        return report(caller.value.sessionId, rawArgs);
+      }
       // Decided before anything is asked or delivered: an unattended Assistant turn is refused here.
       const policy = collabToolPolicy(caller.value, name);
       if (!policy.allowed) return textResult(policy.message, true);
@@ -62,11 +78,12 @@ let collabEnvRef: CollabEnv | null = null;
 
 /**
  * Whether the tool is on for the chat the token names: the user's Settings → Tools switches, for a
- * manager chat as for any other. A manager chat always has the server attached (the Assistant's
- * report tool, when it exists, is the one tool kept on for it regardless of the switches); its
- * create, send and status tools follow the switches like everyone else's.
+ * manager chat as for any other. `report_to_assistant` is the exception: on for a project's current
+ * manager chat whatever the switches say (it is how the manager reaches the user), off for every
+ * other chat. A manager chat always has the server attached.
  */
-export function sessionToolOnFor(tool: string, _sessionId: string): boolean {
+export function sessionToolOnFor(tool: string, sessionId: string): boolean {
+  if (tool === REPORT_TO_ASSISTANT_TOOL) return isReportingManager(sessionId);
   return isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool);
 }
 

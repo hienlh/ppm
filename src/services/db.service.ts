@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 64;
+export const CURRENT_SCHEMA_VERSION = 65;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1421,6 +1421,34 @@ export function runMigrations(database: Database): void {
       )
     `);
     database.exec(`PRAGMA user_version = 64;`);
+  }
+
+  if (current < 65) {
+    // What needs the user, as PPM Assistant shows it: a card built by PPM from a manager chat's
+    // report or from what PPM saw in that chat. The status changes compare-and-set, so the first
+    // answer wins on every surface; `wake` keeps news the Assistant has not been told yet across a
+    // restart. One statement per `exec`: bun:sqlite reports only the last statement's error.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS assistant_cards (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('needs_decision','urgent','approval','question','done','failed','digest','rules_note','rules_change','budget')),
+        project_key TEXT,
+        session_id TEXT,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL DEFAULT '',
+        payload_json TEXT,
+        status TEXT NOT NULL CHECK (status IN ('open','answered','dismissed','resolved','gone','info')),
+        answer_json TEXT,
+        outbound TEXT NOT NULL DEFAULT 'pending' CHECK (outbound IN ('pending','held','sent','skipped')),
+        wake TEXT NOT NULL DEFAULT 'none' CHECK (wake IN ('none','pending','delivered')),
+        telegram_refs_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    database.exec(`CREATE INDEX IF NOT EXISTS idx_assistant_cards_created ON assistant_cards(created_at)`);
+    database.exec(`CREATE INDEX IF NOT EXISTS idx_assistant_cards_open ON assistant_cards(status, kind)`);
+    database.exec(`PRAGMA user_version = 65;`);
   }
 }
 

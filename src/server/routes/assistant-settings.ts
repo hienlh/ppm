@@ -5,6 +5,7 @@ import { ASSISTANT_INSTRUCTIONS_MAX_CHARS, ASSISTANT_MCP_MAX_SERVERS } from "../
 import { createLogger } from "../../services/logger.ts";
 import { assistantTelegramRoutes } from "./assistant-telegram.ts";
 import { assistantManagerRoutes } from "./assistant-managers.ts";
+import { assistantCardRoutes } from "./assistant-cards.ts";
 import { ok, err } from "../../types/api.ts";
 
 /** Counts and names only: a server's settings carry secrets. */
@@ -19,6 +20,7 @@ export const assistantSettingsRoutes = new Hono();
 
 assistantSettingsRoutes.route("/telegram", assistantTelegramRoutes);
 assistantSettingsRoutes.route("/", assistantManagerRoutes);
+assistantSettingsRoutes.route("/", assistantCardRoutes);
 
 /** Registered providers that can run an Assistant session. */
 function assistantProviders(): Array<{ id: string; name: string }> {

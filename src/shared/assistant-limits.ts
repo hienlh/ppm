@@ -21,3 +21,21 @@ export const DUPLICATE_SEND_WINDOW_MS = 60 * 60_000;
 
 /** The user's opening words a provenance block quotes, at most. */
 export const PROVENANCE_OPENING_MAX_CHARS = 200;
+
+/**
+ * Turns PPM starts on its own in one Assistant session per rolling hour: watch reports, manager
+ * reports, the digest and late replies alike. News over the cap waits and goes into the next turn.
+ */
+export const WAKE_TURNS_PER_HOUR = 6;
+
+/** Reports one manager chat may file per rolling hour. */
+export const REPORTS_PER_MANAGER_PER_HOUR = 20;
+
+/** Urgent reports one manager chat may file per quiet window; past it, urgent becomes a decision. */
+export const URGENT_PER_MANAGER_PER_QUIET_WINDOW = 2;
+
+/** Longest quote of one report field in the news the Assistant reads; the card keeps all of it. */
+export const NEWS_QUOTE_MAX = 500;
+
+/** A failure PPM saw in a manager chat becomes a card only if the manager has not reported by then. */
+export const FAILED_CARD_GRACE_MS = 10 * 60_000;

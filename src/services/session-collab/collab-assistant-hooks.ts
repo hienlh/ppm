@@ -26,4 +26,10 @@ export interface AssistantCollabHooks {
   assignManager?(projectName: string, sessionId: string): Promise<void>;
   /** Writes a server event to the session's trace. Never throws. */
   trace?(sessionId: string, type: string, payload: Record<string, unknown>): void;
+  /**
+   * The Assistant's message reached a manager chat and nothing claimed that chat's answer (no wait,
+   * or a wait that ended before the answer): the answer comes back later as wake news. `queued`
+   * when the message waits for the turn running now, whose end is not the answer.
+   */
+  managerAsked?(assistantSessionId: string, managerSessionId: string, projectName: string, queued: boolean): void;
 }
