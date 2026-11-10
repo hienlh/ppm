@@ -54,7 +54,7 @@ interface GitResult {
  *
  * Chunks are collected as `Buffer` and decoded **once**. Decoding each chunk as
  * it arrives (`stdout += c.toString()`) splits any multi-byte sequence that
- * straddles a chunk boundary into two invalid halves, which become U+FFFD â€” and
+ * straddles a chunk boundary into two invalid halves, which become U+FFFD — and
  * because a patch built from that text still *applies*, the corruption lands in
  * the index with no error anywhere. Measured on a 2 MB all-Japanese diff: 43
  * mangled lines.
@@ -62,7 +62,7 @@ interface GitResult {
  * The decode is **latin1**, not utf8, so it is a lossless byte round-trip: the
  * patch written back to `git apply` is the bytes git gave us, whatever the
  * file's encoding actually is (a Latin-1 file could not be hunk-staged at all
- * before). Everything the parser looks at â€” `@@`, `+`, `-`, `\` â€” is ASCII and
+ * before). Everything the parser looks at — `@@`, `+`, `-`, `\` — is ASCII and
  * reads the same either way. Only text leaving for the browser is turned back
  * into UTF-8, by `toDisplay` below.
  */
@@ -168,7 +168,7 @@ class GitHunksService {
    * is describing a file rather than changing one: doing it to the user's index
    * turns `?? file` into `A file` behind their back, on nothing more than
    * opening a dialog, and the exit code went unread so a failure showed up as
-   * "no changes" instead. It goes into a throwaway index instead â€” git reads the
+   * "no changes" instead. It goes into a throwaway index instead — git reads the
    * same config and the same `.gitattributes`, normalises line endings the same
    * way and produces the same bytes, while the real index is never opened for
    * writing. `git apply --cached` needs no entry of its own to add a new file,
@@ -213,7 +213,7 @@ class GitHunksService {
       // Belt and braces: a future flag or a repository config that reintroduces
       // rename headers must fail loudly rather than reach `git apply --reverse`.
       if (/^rename (from|to) /m.test(res.stdout)) {
-        throw new Error("This file was renamed â€” stage or unstage it whole rather than by hunk.");
+        throw new Error("This file was renamed — stage or unstage it whole rather than by hunk.");
       }
       return res.stdout;
     } finally {
@@ -251,12 +251,12 @@ class GitHunksService {
     if (requested.length === 0) throw new Error("No hunks were selected.");
 
     const parsed = parseUnifiedDiff(await this.rawDiff(projectPath, filePath, scope));
-    if (parsed.binary) throw new Error("A binary file cannot be staged by hunk â€” stage the whole file.");
+    if (parsed.binary) throw new Error("A binary file cannot be staged by hunk — stage the whole file.");
     if (parsed.hunks.length === 0) throw new Error("This file has no changes to apply.");
 
     // The client's indexes describe the diff it was *shown*; this diff was read
     // again just now. Resolving by content is what makes the two the same list
-    // â€” or refuses. `git apply` cannot be the guard here, because the patch is
+    // — or refuses. `git apply` cannot be the guard here, because the patch is
     // built from this fresh parse and therefore always applies cleanly.
     const selection = selectionFromRequest(
       parsed,
