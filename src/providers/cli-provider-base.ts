@@ -12,6 +12,7 @@ import { configService } from "../services/config.service.ts";
 import { withSharedContext } from "../shared/provider-context.ts";
 import { AI_CHAT_MARK } from "../services/ai-chat-env.ts";
 import { ppmInstanceEnv } from "../services/ppm-instance-env.ts";
+import { SPEC_TOKEN_ENV, SPEC_URL_ENV } from "../shared/spec-tools.ts";
 import { createLogger, type Logger } from "../services/logger.ts";
 
 /**
@@ -137,7 +138,9 @@ export abstract class CliProvider implements AIProvider {
     const cwd = meta.projectPath || process.cwd();
     let capturedSessionId = isResume ? sessionId : null;
 
-    const proc = this.spawnProcess(args, cwd);
+    // Spec mode reaches a CLI with no MCP through `ppm spec call`, which reads these.
+    const extraEnv = opts?.specMcp ? { [SPEC_URL_ENV]: opts.specMcp.url, [SPEC_TOKEN_ENV]: opts.specMcp.token } : undefined;
+    const proc = this.spawnProcess(args, cwd, extraEnv);
     const processKey = sessionId;
     this.activeProcesses.set(processKey, proc);
     // Never the argv: it carries the user's message (`-p <prompt>`).
@@ -224,13 +227,13 @@ export abstract class CliProvider implements AIProvider {
 
   // --- Helpers ---
 
-  protected spawnProcess(args: string[], cwd: string): ChildProcess {
+  protected spawnProcess(args: string[], cwd: string, extraEnv?: Record<string, string>): ChildProcess {
     const proc = spawn(this.cliCommand, args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       // AI_CHAT_MARK: `ppm db` run by the model then keeps to the connections available to the AI chat.
       // ppmInstanceEnv: a `ppm …` command it runs reaches this PPM's database and server.
-      env: { ...process.env, ...AI_CHAT_MARK, ...ppmInstanceEnv() },
+      env: { ...process.env, ...AI_CHAT_MARK, ...ppmInstanceEnv(), ...extraEnv },
     });
     proc.stdin?.end();
 

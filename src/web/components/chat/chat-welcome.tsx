@@ -3,6 +3,7 @@ import { SessionListPanel } from "./session-list-panel";
 import { OnboardingEntry } from "@/components/onboarding/onboarding-entry";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { SessionInfo } from "../../../types/chat";
+import { SpecWorkflowCards } from "@/components/spec/spec-workflow";
 
 interface ChatWelcomeProps {
   projectName: string;
@@ -19,6 +20,8 @@ export function ChatWelcome({ projectName, onSelectSession }: ChatWelcomeProps) 
         <p className="text-sm">Send a message to start a new conversation</p>
         {!minimalMode && <OnboardingEntry compact />}
       </div>
+
+      {!minimalMode && <SpecWorkflowCards />}
 
       <SessionListPanel
         projectName={projectName}

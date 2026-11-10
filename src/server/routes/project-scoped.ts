@@ -10,6 +10,7 @@ import { fileRoutes } from "./files.ts";
 import { workspaceRoutes } from "./workspace.ts";
 import { downloadRoutes } from "./file-download.ts";
 import { designRoutes } from "./designs.ts";
+import { specRoutes } from "./specs.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
@@ -50,3 +51,4 @@ projectScopedRouter.route("/files", fileRoutes);
 projectScopedRouter.route("/workspace", workspaceRoutes);
 projectScopedRouter.route("/files/download", downloadRoutes);
 projectScopedRouter.route("/designs", designRoutes);
+projectScopedRouter.route("/specs", specRoutes);

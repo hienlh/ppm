@@ -22,6 +22,8 @@ export type TraceOrigin =
   | "provider"
   /** A turn an extension started over RPC or the headless REST route. */
   | "extension"
+  /** Spec mode: an approval the user gave in the Spec pane, or a task Run all handed to a chat. */
+  | "spec"
   | "browser"
   /** A message the PPM Assistant sent into a chat, with the user's approval. */
   | "assistant"

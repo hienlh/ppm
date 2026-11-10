@@ -48,13 +48,14 @@ import { assistantMayActOnOwn, logAssistantDecision, recordAssistantAutoAllow } 
 import { assistantWritableRoots } from "../../services/assistant/assistant-tool-policy.ts";
 import {
   assistantMcpEnv, buildThreadParams, dbToolsMcpEnv, designMcpEnv, joinDeveloperInstructions, requestWithInstructionsFallback, RequiredInstructionsError,
-  sessionCollabMcpEnv, tabToolsMcpEnv, type CodexAssistantSession, type CodexThreadParams,
+  sessionCollabMcpEnv, specMcpEnv, tabToolsMcpEnv, type CodexAssistantSession, type CodexThreadParams,
 } from "./codex-thread-params.ts";
 import { planAssistantCodexMcp } from "./codex-assistant-mcp-guard.ts";
 import { planAssistantCodexSkills } from "./codex-assistant-skills.ts";
 import { assistantSpawnHome } from "./codex-assistant-home.ts";
 import { codexMcpApproval, codexMcpApprovalResponse, type CodexMcpApproval } from "./codex-mcp-approval.ts";
 import type { SessionCollabMcpAccess } from "../../services/session-collab/session-collab-tool.ts";
+import type { SpecMcpAccess } from "../../services/specs/spec-mcp-tokens.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import type { TabToolsMcpAccess } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import type { DbToolsMcpAccess } from "../../services/db-ai-tools/db-ai-tools-tool.ts";
@@ -204,6 +205,8 @@ interface LiveSession {
   /** Commands an Assistant session ran with no card because PPM showed they only read, by item
    *  id: their results carry the badge. */
   autoApprovedItems?: Set<string>;
+  /** Spec mode's endpoint, while one of its tools is on; likewise. */
+  specMcp?: SpecMcpAccess;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
   /** Rollout history snapshot at connect — lets live message ids continue the
@@ -362,7 +365,7 @@ function loggableError(err: unknown): string {
 function liveMcpEnv(live: LiveSession): Record<string, string> {
   return {
     ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...dbToolsMcpEnv(live.dbToolsMcp),
-    ...sessionCollabMcpEnv(live.sessionCollabMcp), ...assistantMcpEnv(live.assistant?.mcp),
+    ...sessionCollabMcpEnv(live.sessionCollabMcp), ...assistantMcpEnv(live.assistant?.mcp), ...specMcpEnv(live.specMcp),
   };
 }
 
@@ -961,6 +964,7 @@ export class CodexAppServerProvider implements AIProvider {
       dbToolsMcp: live.dbToolsMcp,
       sessionCollabMcp: live.sessionCollabMcp,
       assistant: live.assistant,
+      specMcp: live.specMcp,
     });
     await requestWithInstructionsFallback(resumeBase,
       (params) => this.resumeThread(client, threadId, found, codexHome, params), undefined, live.requireInstructions);
@@ -1041,6 +1045,8 @@ export class CodexAppServerProvider implements AIProvider {
       dbToolsMcp: opts?.designSession || assistant ? undefined : opts?.dbToolsMcp,
       sessionCollabMcp: opts?.designSession ? undefined : opts?.sessionCollabMcp,
       assistant: assistant ? { mcp: opts?.assistantMcp, servers: opts?.assistantMcpServers } : undefined,
+      // Spec mode is for project chats: an Assistant session gets none of PPM's chat tool servers.
+      specMcp: opts?.designSession || assistant ? undefined : opts?.specMcp,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [], turnText: newCodexTurnText(),
       pendingTurns: [], subagentThreadIds: new Set(),
@@ -1074,6 +1080,7 @@ export class CodexAppServerProvider implements AIProvider {
       dbToolsMcp: live.dbToolsMcp,
       sessionCollabMcp: live.sessionCollabMcp,
       assistant: live.assistant,
+      specMcp: live.specMcp,
     });
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.
