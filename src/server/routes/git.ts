@@ -4,7 +4,7 @@ import { gitService, remoteForLog } from "../../services/git.service.ts";
 import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
 import { assertSafeRev, gitBlameService } from "../../services/git-blame/git-blame.service.ts";
 import { branchDiff } from "../../services/git-branch-diff/branch-diff.service.ts";
-import { assertRef } from "../../services/git-branch-diff/branch-diff-parse.ts";
+import { assertRef, assertCommitHash } from "../../services/git-branch-diff/branch-diff-parse.ts";
 import { discoverGitRepos, isGitRepo } from "../../services/git-repos/git-repo-discovery.ts";
 import { gitChangesService } from "../../services/git-changes/git-changes.service.ts";
 import { gitDiscardJournal } from "../../services/git-discard-journal/git-discard-journal.service.ts";
@@ -793,9 +793,10 @@ gitRoutes.post("/branch/delete", async (c) => {
     const projectPath = c.get("projectPath");
     const { name, force } = await c.req.json<{ name: string; force?: boolean }>();
     if (!name) return c.json(err("Missing: name"), 400);
-    await gitService.deleteBranch(projectPath, name, force);
-    log.info(`deleted branch ${name} force=${!!force} in ${projectPath}`);
-    return c.json(ok({ deleted: name }));
+    const ref = assertRef(name, "name");
+    await gitService.deleteBranch(projectPath, ref, force);
+    log.info(`deleted branch ${ref} force=${!!force} in ${projectPath}`);
+    return c.json(ok({ deleted: ref }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -807,9 +808,10 @@ gitRoutes.post("/merge", async (c) => {
     const projectPath = c.get("projectPath");
     const { source } = await c.req.json<{ source: string }>();
     if (!source) return c.json(err("Missing: source"), 400);
-    await gitService.merge(projectPath, source);
-    log.info(`merged ${source} into HEAD in ${projectPath}`);
-    return c.json(ok({ merged: source }));
+    const ref = assertRef(source, "source");
+    await gitService.merge(projectPath, ref);
+    log.info(`merged ${ref} into HEAD in ${projectPath}`);
+    return c.json(ok({ merged: ref }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -821,8 +823,9 @@ gitRoutes.post("/cherry-pick", async (c) => {
     const projectPath = c.get("projectPath");
     const { hash } = await c.req.json<{ hash: string }>();
     if (!hash) return c.json(err("Missing: hash"), 400);
-    await gitService.cherryPick(projectPath, hash);
-    return c.json(ok({ cherryPicked: hash }));
+    const commit = assertCommitHash(hash, "hash");
+    await gitService.cherryPick(projectPath, commit);
+    return c.json(ok({ cherryPicked: commit }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -834,8 +837,9 @@ gitRoutes.post("/revert", async (c) => {
     const projectPath = c.get("projectPath");
     const { hash } = await c.req.json<{ hash: string }>();
     if (!hash) return c.json(err("Missing: hash"), 400);
-    await gitService.revert(projectPath, hash);
-    return c.json(ok({ reverted: hash }));
+    const commit = assertCommitHash(hash, "hash");
+    await gitService.revert(projectPath, commit);
+    return c.json(ok({ reverted: commit }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -847,8 +851,10 @@ gitRoutes.post("/tag", async (c) => {
     const projectPath = c.get("projectPath");
     const { name, hash } = await c.req.json<{ name: string; hash?: string }>();
     if (!name) return c.json(err("Missing: name"), 400);
-    await gitService.createTag(projectPath, name, hash);
-    return c.json(ok({ tagged: name }));
+    const tag = assertRef(name, "name");
+    const at = hash ? assertCommitHash(hash, "hash") : undefined;
+    await gitService.createTag(projectPath, tag, at);
+    return c.json(ok({ tagged: tag }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
