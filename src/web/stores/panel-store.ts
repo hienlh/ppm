@@ -34,6 +34,7 @@ import {
 import { saveWindowPanels } from "./window-panel-persistence";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { tabSessionId } from "@/lib/tab-session-id";
+import { randomId } from "@/lib/utils";
 import { hydrateProjectCache } from "@/lib/browser-cache/project-cache-hydration";
 import { projectCacheId } from "@/lib/browser-cache/cache-keys";
 import { readChatPreparationSettings, readChatProviders } from "@/lib/chat-preference-local-cache";
@@ -681,8 +682,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         }
       }
 
+      // No tab holds this session, or the check above would have focused it. A chat tab keeps
+      // the id it was opened with when its session is switched in place (its own History, a
+      // cleared or migrated session), so one still answering to this id shows another
+      // conversation — and focusing it left the session impossible to open.
+      const sessionChat = tabDef.type === "chat" && !!tabDef.metadata?.sessionId;
+
       // Mobile: dedup across all panels (merged tab bar shows all tabs)
-      if (mobile) {
+      if (mobile && !sessionChat) {
         for (const gpid of get().grid.flat()) {
           const p = get().panels[gpid];
           if (!p) continue;
@@ -703,7 +710,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
 
       // Non-singleton: dedup within SAME panel only
       const currentPanel = get().panels[pid]!;
-      const existingInPanel = currentPanel.tabs.find((t) => t.id === baseId);
+      const existingInPanel = sessionChat ? undefined : currentPanel.tabs.find((t) => t.id === baseId);
       if (existingInPanel) {
         set((s) => ({
           panels: {
@@ -724,7 +731,8 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       const existsElsewhere = Object.values(get().panels).some(
         (p) => p.id !== pid && p.tabs.some((t) => t.id === baseId),
       );
-      const id = existsElsewhere ? `${baseId}@${pid}` : baseId;
+      const idTaken = sessionChat && Object.values(get().panels).some((p) => p.tabs.some((t) => t.id === baseId));
+      const id = idTaken ? `${baseId}@${randomId()}` : existsElsewhere ? `${baseId}@${pid}` : baseId;
 
       const tab: Tab = { ...tabDef, id, metadata: { ...tabDef.metadata, lastActiveAt: Date.now() } };
       set((s) => {

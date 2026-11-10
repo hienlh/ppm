@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A chat in Chat History could not be opened when its old tab had moved on to another conversation.** A chat tab whose session was switched in place (from the tab's own History list, a cleared or migrated session) kept the id it was opened with, so clicking the original session, its notification or a link to it found that tab by its id and focused the other conversation, with nothing to say why. A chat now opens in the tab that holds that session, or in a new tab, and the address bar names the session on screen, so a reload or a copied link reopens what you were looking at.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed
