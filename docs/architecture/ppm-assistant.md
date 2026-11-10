@@ -60,11 +60,34 @@ the disk) asks.
 Codex gets its own profile (below).
 
 **The UI.** One tab type, `assistant` (`src/web/components/assistant/`): on a desktop it opens
-inside a `tab-host` floating window, below `md` it stays a tab, and it belongs to no project so
-it comes onto whichever grid is on screen. It holds the session list, a new-session button per
-provider that `supportsAssistantSessions`, and the chat with its permission chip locked. It opens
-from the Command Palette (*PPM Assistant*), an unbound keybinding (`open-assistant`) and
-notifications, all through `openAssistant`.
+inside a `tab-host` floating window — portrait, top right, about 470×620, then wherever the user
+left it — and below `md` it is a full-screen tab; it belongs to no project, so it comes onto
+whichever grid is on screen. It opens from the Command Palette (*PPM Assistant*), the rail button
+before Logs (whose red count is what waits on the user, and which minimizes a window in front),
+the drawer tile, an unbound keybinding (`open-assistant`) and notifications, all through
+`openAssistant`. The window's titlebar says "Assistant" with Working or Idle and a gear to
+Settings → PPM Assistant, and its dock chip carries the waiting count: both come from
+`floating-window/tab-window-extras-registry.ts`, keyed by the hosted tab's type, which is also
+how a manager chat opened beside another project gets "Open in project". The counts are
+`stores/assistant-waiting-store.ts`, fed by `assistant:waiting_changed`; nothing polls.
+
+Inside: a chip row — Filter (a dropdown; a bottom sheet of 48 px rows on a phone), then one chip
+per manager chat with its dot (working, waiting on you, idle) and waiting count — over one
+stream, the main session's `ChatTab` with the cards placed among its messages by `created_at`
+(`chat/chat-timeline-extension.ts` over the pure `lib/assistant-timeline-merge.ts`; the digest
+folded to one line, a wake turn answered `[no reply]` to "Assistant read N reports"). A project
+filter keeps that project's cards (fetched filtered, `stores/assistant-cards-store.ts`, the
+choice this device's own) and the loaded turns in which the Assistant messaged or asked its
+manager chat (`lib/assistant-stream-filter.ts`); while it is on, older history comes from
+"Load earlier" only. Reply-to — a decision card's Edit, or Reply in a card's right-click or
+long-press menu — stands where the composer is, says "Replying to: {project} · {title}", posts
+to `/cards/:id/reply` instead of the Assistant, and ends on send, Esc, ✕, a session or project
+switch; it is never stored. A chip or "Open manager chat" opens that chat in a window of its
+own without switching project (`open-manager-chat.ts`: a `projectId: null` tab placed straight
+into a new window panel by `openTabInNewWindow`, never through a grid, and the project's slash
+cache hydrated); on a phone it switches project and opens the chat as a tab whose "‹ Assistant"
+goes back. A session other than the main one (a notification, Settings) shows "One-off session
+· Back to main". The session list lives in Settings → PPM Assistant.
 
 **The main session** (`assistant.main_session`, `src/services/assistant/assistant-main-session.ts`)
 is the one Assistant session Telegram follows. It must be a Claude Assistant session; a Codex one
