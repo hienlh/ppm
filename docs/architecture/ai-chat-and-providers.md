@@ -467,7 +467,7 @@ PPM uses a **persistent streaming session** model instead of per-message query e
 - Provider maintains **long-lived AsyncGenerator streaming input** per chat session (not per message)
 - Follow-up messages **push into the existing generator** instead of abort-and-replace
 - **Single streaming loop** per session decoupled from WebSocket message handler
-- Message priority support: `now` (interrupt current), `next` (queue first), `later` (queue at end)
+- Messages typed while a turn runs wait in a queue shown above the composer (see *Message queue* below)
 - Supports image attachments in messages
 
 **Design Benefits:**
@@ -491,10 +491,7 @@ Sends: { type: "message", content: "Debug...", priority?: "now"|"next"|"later" }
 WS handler in chat.ts receives message
     ↓
 If already streaming with different content → abort previous + wait cleanup
-If streaming, new message priority determines queue behavior:
-    • priority: "now" → abort current, restart with new content
-    • priority: "next" → push into pending queue (higher priority)
-    • priority: "later" → push to end of queue (FIFO)
+If streaming, the message joins the session's queue (see Message queue below)
     ↓
 runStreamLoop() executes in detached async context
     ↓
@@ -527,6 +524,42 @@ Phase transitions to idle, clients can send new message
     ↓
 useChat saves message to store, displays in chat history
 ```
+
+### Message queue
+
+A message a person sends while a turn runs works like Claude Code's queue. It is not drawn in the
+conversation. Instead it waits in a stack above the composer (`queued-messages-stack.tsx`), with
+**Send now**, **Edit** (back into the composer) and **Remove**. Ctrl/Cmd+Enter does Send now. The
+queue is the server's (`SessionEntry.queue`, `src/server/ws/chat-message-queue.ts`), so every device
+shows the same stack: it goes out as `queue_state` and in the greeting's `session_state.queue`.
+
+- **Claude** gets the message at once, pushed with the entry's id as the SDK message `uuid`. The
+  CLI reads it at the turn's next step, as soon as the running tool calls finish, or right after
+  the turn. It reports each step as a `command_lifecycle` frame, which the provider yields as
+  `queue_lifecycle`. On `started` the entry leaves the stack and joins the conversation
+  (`user_message` to every device, the sender's included). Edit and Remove call
+  `cancelAsyncMessage(uuid)`, which answers `false` once the CLI has started reading. Send now
+  calls `backgroundTasks()` (running shells and subagents move to the background, and the CLI reads
+  the queue in the same turn); when there is nothing to move, it calls `interrupt()`, which keeps
+  the queue and sends it next.
+- **Every other provider** (Codex, Antigravity, …): PPM holds the entries and sends them as one
+  message when the turn ends. Send now pushes them right away; Codex steers that push into the
+  running turn.
+- **Stop or a crash** kills Claude's own queue together with its process, so whatever was queued is
+  sent once the stream ends.
+- **Merging into one message.** Queued messages are merged by decoding each message's blocks and
+  encoding them once (a block decodes only at the end of a message). One message carries one reply
+  and one set of turn references, so a second reply waits for the next turn (`mergeablePrefix`).
+- **Send now needs a command old enough to be a task.** `backgroundTasks()` moves a Bash command
+  only after the CLI has registered it as a task, about 3 s after it starts. Before that, the
+  call still answers `true` and changes nothing. So the provider interrupts the turn unless the CLI
+  starts reading the queue within 1.5 s (`SEND_NOW_GRACE_MS`). The interrupted turn's
+  `error_during_execution` result is an ordinary end, not an error.
+- **Mid-turn delivery format.** A queued message the CLI reads mid-turn reaches the API inside a
+  `<system-reminder>`, in a trailing `role: "system"` message, beside the tool result.
+
+e2e: `PPM_PLAYWRIGHT_MODULE=<playwright-core>/index.mjs node tests/e2e/chat-queue-e2e.mjs`. It runs the
+real Claude CLI against the fake API in `fixtures/chat-queue-server.ts`.
 
 ### Session State Management
 

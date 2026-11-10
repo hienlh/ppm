@@ -141,6 +141,27 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(done).toBeTruthy();
     });
 
+    it("reports a queued push's lifecycle frames as queue_lifecycle, and drops malformed ones", async () => {
+      const iter = createMockQueryIterator([
+        { type: "command_lifecycle", command_uuid: "q1", state: "queued" } as any,
+        { type: "command_lifecycle", command_uuid: "q1", state: "started" } as any,
+        { type: "command_lifecycle", command_uuid: "q1", state: "exploded" } as any,
+        { type: "command_lifecycle", state: "started" } as any,
+        { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } },
+        { type: "result" },
+      ]);
+      mockQueryFn.mockReturnValue(iter);
+
+      const session = await provider.createSession({});
+      const events: ChatEvent[] = [];
+      for await (const event of provider.sendMessage(session.id, "hi")) events.push(event);
+
+      expect(events.filter((e) => e.type === "queue_lifecycle")).toEqual([
+        { type: "queue_lifecycle", id: "q1", state: "queued" },
+        { type: "queue_lifecycle", id: "q1", state: "started" },
+      ]);
+    });
+
     it("says why the API refused a turn, not just that the request was invalid", async () => {
       // A refusal comes back as a synthetic assistant message whose error is "invalid_request",
       // and only the CLI's own text says what to do about it.

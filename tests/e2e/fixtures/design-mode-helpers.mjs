@@ -97,7 +97,7 @@ export async function designComposer(ctx) {
   if (ctx.mobile) await ctx.page.getByRole("navigation", { name: "Design view" }).getByRole("button", { name: "Chat" }).click();
   else await (await desktopPaneToggle(ctx, "Chat"))?.click();
   const scope = composerScope(ctx);
-  const box = ctx.page.locator(`${scope}textarea[placeholder="Ask anything..."]:visible, ${scope}textarea[placeholder="Follow-up or Stop..."]:visible`).first();
+  const box = ctx.page.locator(`${scope}textarea[placeholder="Ask anything..."]:visible, ${scope}textarea[placeholder="Queue a message, or Stop..."]:visible`).first();
   await box.waitFor({ timeout: 15000 });
   return box;
 }

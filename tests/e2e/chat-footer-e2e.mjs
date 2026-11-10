@@ -330,7 +330,7 @@ async function scenarios(phone) {
     await page.keyboard.press("Enter");
     await until("Stop", () => inFooter(page, tabId, '[aria-label="Stop response"]').isVisible(), { timeout: 15000 });
     check(await inFooter(page, tabId, '[aria-label^="Message priority"]').isVisible(), `${tag}: Queue shows while streaming`);
-    check((await box.getAttribute("placeholder")) === "Follow-up or Stop...", `${tag}: streaming placeholder`);
+    check((await box.getAttribute("placeholder")) === "Queue a message, or Stop...", `${tag}: streaming placeholder`);
     await shot(page, tabId, `${tag}-streaming`);
     await fetch(`${harness.api}/__instant-test/release`, { method: "POST" });
     await until("Send back", () => inFooter(page, tabId, '[aria-label="Send message"]').isVisible(), { timeout: 15000 });
