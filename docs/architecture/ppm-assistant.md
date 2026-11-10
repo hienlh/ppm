@@ -442,7 +442,8 @@ caller of kind `assistant`, and `collab-caller-policy.ts` decides what it may do
 - **Every create and every message asks**, on a card in the Assistant's session (and on Telegram,
   below), whatever `askBeforeCreate` says: `create` with `askedBy: "assistant"`, the project and the
   mode; `message` with the chat, its project, the mode it runs in and the whole message. These cards
-  offer Allow once and Deny only.
+  offer Allow once and Deny only. **The one exception is a message to the current manager chat of
+  the target's project** (next section).
 - `create_session` needs `project`; the chat is set up as one the user opens there
   (`createProjectChatSession`), at depth 0, in `providerDefaultMode` and the provider's default
   model unless `model` is given. It is **not** recorded as AI-created (no `spawned_by`): it notifies
@@ -459,8 +460,59 @@ caller of kind `assistant`, and `collab-caller-policy.ts` decides what it may do
 - The message is delivered with origin `session`, and its from-session block carries
   `kind: "assistant"`: the receiving AI is told it is the Assistant, another AI, and that it cannot
   reply through the tools; the bubble reads "PPM Assistant" and opens the Assistant.
-- In an unattended turn nothing is created or messaged and no card is shown
-  (`UNATTENDED_TURN_REFUSAL`, from the endpoint and again from the approval broker).
+- In an unattended turn nothing is created, no chat but a manager is messaged, and no card is
+  shown (`UNATTENDED_TURN_REFUSAL`, from the endpoint and again from the approval broker).
+
+**Messaging manager chats** (`collab-send-manager.ts`). A message from the Assistant to the chat
+that is, at that moment, its project's manager (`managerFor`, read live per send) goes without a
+card. What stands in for the card:
+- **Provenance.** Every such message carries a `<ppm-assistant-provenance-v1>` block between the
+  text and the from-session block (`src/shared/assistant-provenance.ts`): who started the
+  Assistant's turn (`user_ppm`, `user_telegram` or `ppm`), the user's first 200 characters that
+  turn, and whether text the user did not write reached it (`untrusted`, with the reasons: watch
+  `news`, a `forwarded` Telegram message, a `scheduled` script, a `read` through
+  `chat_read_messages`, `chat_search`, `ui_read_tab`, `chats_attention` or `db_query`, or a
+  session-tool result quoting another chat's last answer or reply). It covers that turn only, not
+  what earlier turns left in the model's context, and the header says so; tools of the user's own
+  MCP servers are invisible to PPM and do not set it. It is written by the server from
+  `assistant-turn-provenance.ts`, which follows the chat lifecycle (a turn runs from the message
+  that opened it to `turn_ended`; one PPM began stays PPM's after the user types into it), never
+  from the tool's input. The bubble shows it as one muted line ("Asked by PPM Assistant · started
+  by you on Telegram"). The block's markers, and those of the user-words block
+  (`<ppm-user-words-v1>`, the user's own forwarded words, written later by the reply flow), are
+  broken at every door like the from-session block's, and `deliverToSession` defuses every
+  PPM-looking tag in a session-tool body (`neutralizePpmTags`), since a model reads them loosely.
+- **Priority.** `next` (read at the manager's next step) only when the user started the turn and
+  nothing untrusted reached it; otherwise `later` (after the manager's running turn, reported as
+  `queued`).
+- **Secrets.** A body that `redactSecretsForTelegram` would hide shows the ordinary `message` card in
+  a turn the user started and is refused in one PPM started.
+- **Duplicates.** The same text to the same manager within an hour is dropped ("Already sent").
+- **Unattended turns** (a watch report, or a scheduled script posting into the Assistant, whose
+  turn `deliverMessage` records as `watch`) may message managers only, to ask for status (the
+  provenance says so, and the manager's fixed block makes it binding there), and are held to
+  `UNATTENDED_SENDS_PER_HOUR`/`_PER_DAY` (6/20 per Assistant session, rolling, kept in the
+  `assistant_budget_state` config row so a restart does not refill them and no settings save
+  touches them), to the pair limit (`maxAutoMessagesPerPair`, counted only for these sends and
+  restarted by any message the user writes in either chat, on PPM or Telegram), and to quiet hours
+  (`quiet_hours` + `timezone` in the `assistant` row: nothing is sent). A budget running out pauses
+  the Assistant's unattended messaging until the user's next message to it, and raises one
+  `assistantBudgetEvents` `paused` event (the budget card). Every refusal is written to the
+  session trace (`assistant_send_refused`).
+
+Other chats keep the card, and only in a turn the user started. `create_session` with
+`manager: true` (`collab-create-manager.ts`) asks once — "Create the manager chat for {project}",
+the mode from `manager_default_mode` with the bypass warning, the task if given, and "After this,
+PPM Assistant can message this chat without asking, also while you are away" — and is refused when
+the project has a manager or in an unattended turn. On Allow the chat is created as one the user
+opens there, assigned with `assigned_by: "assistant"` (which writes its rules files) and given the
+task with the turn's provenance; if the assignment fails it stays an ordinary chat and the tool says
+so. The assignment is compare-and-set (`assign(..., { onlyIfNone })`): a manager the user set while
+the card was open is never replaced. The budget card itself is the Assistant's card service's
+(`assistantBudgetEvents` is its source); until then the refusal text is what the Assistant tells
+the user. `session_status` with
+no ids lists every manager chat, and each Assistant turn's shared context carries the list (project
+→ session id, title; `assistant-managers-context.ts`), re-sent when it changes.
 
 
 - **`chats_attention`** (`src/services/assistant-hub/chat-attention.service.ts`) answers "which
