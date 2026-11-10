@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Opening a long Claude chat could take up to 45 seconds, and past 30 the chat opened empty until Reload messages.** To show the messages after the last compaction, the history was read from the first byte of the transcript every time, because every compaction in current Claude Code keeps a few earlier messages and that switched off the shortcut that skips the rest. A week-long session had a 1.77 GB transcript, so each open read 1.77 GB (8.5 s and 5.7 GB of RAM) to show 31 messages, and with the session still running the result could never be reused. PPM now reads the transcript backward from its end to the last compaction and the messages it keeps (1 MB for that session), so the history loads in about 40 ms. The answer is the same: on the 60 largest transcripts on the test machine it matched the old read byte for byte. The same read now serves the tool-result check during a turn.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed
