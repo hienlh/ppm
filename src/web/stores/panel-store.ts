@@ -23,7 +23,9 @@ import {
   isWindowPanelId,
   windowIdFromPanelId,
 } from "./panel-utils";
+import type { Rect } from "@/components/floating-window/window-geometry";
 import {
+  makeOpenTabInNewWindow,
   makePopOutTab,
   makeRedockFromWindow,
   hydrateWindowPanels,
@@ -241,6 +243,8 @@ export interface PanelStore {
    * in which case nothing changed and the caller reports it.
    */
   popOutTab: (tabId: string, fromPanelId: string, options?: PopOutOptions) => string | null;
+  /** Open a new tab straight into a new window, bypassing every grid; null when refused. */
+  openTabInNewWindow: (tab: Omit<Tab, "id">, options?: { rect?: Rect }) => { tabId: string; windowId: string } | null;
   /** Send a window's tabs back to the grid and drop its panel. Runs on window close. */
   redockFromWindow: (windowId: string, originPanelId?: string | null) => void;
 
@@ -357,6 +361,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     openInDock: makeOpenInDock(set, get),
     redockTab: makeRedockTab(set, get),
     popOutTab: makePopOutTab(set, get),
+    openTabInNewWindow: makeOpenTabInNewWindow(set, get),
     redockFromWindow: makeRedockFromWindow(set, get),
 
     switchProject: (projectName) => {

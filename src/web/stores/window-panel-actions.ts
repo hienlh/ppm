@@ -13,8 +13,10 @@
  */
 import type { StoreApi } from "zustand";
 import type { Panel } from "./panel-utils";
+import type { Tab } from "./tab-store";
 import {
   createWindowPanel,
+  deriveTabId,
   isWindowPanelId,
   NON_POPPABLE_TAB_TYPES,
   windowIdFromPanelId,
@@ -135,6 +137,32 @@ export function makePopOutTab(set: Set, get: Get) {
     if (focus) set({ focusedPanelId: focus });
     persistWindowPanelChange(get);
     return windowId;
+  };
+}
+
+/**
+ * Open a new tab straight into a new floating window, never through a grid: the way to show
+ * another project's chat beside the current one. Going through `openTab` would focus a copy
+ * already sitting in that project's hidden keep-alive grid, and popping that out would take it
+ * out of the project's layout. The tab is the window's home (closing the window closes it).
+ * Null when refused (a phone, or the window cap); nothing is created then.
+ */
+export function makeOpenTabInNewWindow(set: Set, get: Get) {
+  return function openTabInNewWindow(tabDef: Omit<Tab, "id">, options: { rect?: Rect } = {}): { tabId: string; windowId: string } | null {
+    if (get().isMobile()) return null;
+    const windowStore = useWindowStore.getState();
+    if (Object.keys(windowStore.windows).length >= MAX_WINDOWS) return null;
+
+    const windowId = windowStore.open("tab-host", { originPanelId: null, title: tabDef.title, closeTabsOnClose: true }, options.rect);
+    const panelId = windowPanelId(windowId);
+    const baseId = deriveTabId(tabDef.type, tabDef.metadata);
+    // The same session may be open in a grid too: a tab id is unique across every panel.
+    const taken = Object.values(get().panels).some((p) => p.tabs.some((t) => t.id === baseId));
+    const id = taken ? `${baseId}@${panelId}` : baseId;
+    const tab: Tab = { ...tabDef, id, metadata: { ...tabDef.metadata, lastActiveAt: Date.now() } };
+    set((s) => ({ panels: { ...s.panels, [panelId]: { ...createWindowPanel(windowId), tabs: [tab], activeTabId: id, tabHistory: [id] } } }));
+    saveWindowPanels(get().panels);
+    return { tabId: id, windowId };
   };
 }
 
