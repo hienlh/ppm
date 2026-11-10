@@ -184,10 +184,12 @@ const COMPOSER = ['Ask anything...', 'Follow-up...', 'Follow-up or Stop...'].map
  * or — for the device showing an ordinary project chat — the page. Scoped, because a project's
  * own chat can be on screen beside the Assistant with a composer and cards of its own.
  */
-const ASSISTANT_BODY = '[class*="@container/assistant"]';
+const ASSISTANT_BODY = "[data-assistant-body]";
 const chatRoot = (dev) => (dev.plain ? dev.page.locator("body") : dev.page.locator(`${ASSISTANT_BODY}:visible`).first());
 const composer = (dev) => chatRoot(dev).locator(COMPOSER).first();
 const card = (dev) => chatRoot(dev).locator("[data-approval-request]:visible").last();
+/** A session tools' card (a chat the Assistant wants to open or message). */
+const collabCard = (dev) => chatRoot(dev).locator("[data-collab-approval]:visible").last();
 
 async function shot(dev, name) {
   const path = join(shots, `${dev.name}-${name}.png`);
@@ -240,12 +242,17 @@ async function sessionsPane(dev) {
   await dev.page.locator('button[aria-label^="New Assistant session"]:visible').first().waitFor();
   return dev.page;
 }
-/** Starts a new Assistant session on `provider`; its first message creates it. */
+/**
+ * A new Assistant session on `provider`, opened in the Assistant through its deep link. The session
+ * list lives in Settings → PPM Assistant now; the Assistant window shows one session at a time.
+ */
 async function newSession(dev, provider = "Claude") {
-  const pane = await sessionsPane(dev);
-  await pane.locator(`button[aria-label="New Assistant session with ${provider}"]:visible`).click();
+  const providerId = provider.toLowerCase();
+  const { id } = (await api("/api/project/__assistant__/chat/sessions", { method: "POST", body: JSON.stringify({ providerId }) })).data;
+  await dev.page.goto(`${web}/assistant?session=${providerId}/${id}`);
   await composer(dev).waitFor({ timeout: 30000 });
   await until("new session's chat is empty", async () => (await chatRoot(dev).getByText(/^Turn ".*" done\.$/).count()) === 0, 10000);
+  return id;
 }
 async function openSessionFromList(dev, title) {
   const pane = await sessionsPane(dev);
@@ -665,44 +672,59 @@ async function s6(dev) {
   }
 }
 
-/** 7. Sending into a project's chat: the card names its mode, the message arrives there; a chat waiting on its own card is refused. */
+/** Answers the session tools' card in the Assistant with `label` ("Allow once" or "Deny"). */
+async function answerCollabCard(dev, label) {
+  const button = collabCard(dev).getByRole("button", { name: label, exact: true });
+  if (dev.name === "phone") assert.ok((await button.boundingBox()).height >= 44, `${label} is a 44px touch target on a phone`);
+  await button.click();
+}
+
+/**
+ * 7. Sending into a project's chat through the session tools: the card names the chat and its mode,
+ * the message arrives there; a chat waiting on its own card gets it queued behind that card.
+ */
 async function s7(dev, target) {
   await openAssistant(dev);
   await newSession(dev);
   const text = `Hello from the Assistant on the ${dev.name}`;
   await script(`t7-recv-${dev.name}`, [], target.sessionId);
-  await send(dev, `s7-send-${dev.name}`, [{ mcp: "chat_send_message", args: { project: "alpha", sessionId: target.sessionId, providerId: "claude", text } }], "Tell the target chat hello");
+  await send(dev, `s7-send-${dev.name}`, [{ session: "send_to_session", args: { session_id: target.sessionId, message: text } }], "Tell the target chat hello");
   const sessionId = (await turnOf(`s7-send-${dev.name}`)).sessionId;
-  const shown = await waitCard(dev);
-  assert.match(shown.text, /Send a message to a Claude chat in "alpha"; it runs there as if you sent it/);
-  assert.match(shown.text, /Accept edits — file edits run without asking/);
-  // Where the mode came from: saved for the chat, or the run it would join, whichever holds now.
-  assert.match(shown.text, /Mode from\n(the mode saved for this chat|the mode its running session started in)/);
-  assert.ok(shown.text.includes(text), "the card shows the message in full");
+  await collabCard(dev).waitFor({ timeout: 30000 });
+  const shown = await collabCard(dev).innerText();
+  assert.match(shown, /The Assistant wants to message a chat in alpha/);
+  assert.match(shown, /Runs in Accept edits mode\./, "the card names the mode the chat runs the message in");
+  assert.ok(shown.includes(text), "the card shows the message in full");
   await shot(dev, "s7-send-card");
-  await answerCard(dev, "Allow");
+  await answerCollabCard(dev, "Allow once");
   const [sent] = await answered(`s7-send-${dev.name}`, 1);
   assert.equal(sent.isError, false, sent.text);
-  assert.equal(parse(sent).sent, true);
-  assert.equal(parse(sent).permissionMode, "acceptEdits");
+  assert.equal(parse(sent).project, "alpha");
+  assert.ok(["started", "inserted"].includes(parse(sent).delivered), parse(sent).delivered);
   await chatRoot(target.dev).getByText(text).first().waitFor({ timeout: 15000 });
   await turnDone(target.dev, `t7-recv-${dev.name}`);
   await shot(target.dev, `s7-target-received-from-${dev.name}`);
 
-  // The target chat asks its user something; a message from the Assistant now is refused.
+  // The target chat asks its user something; a message from the Assistant now waits behind that card.
   await script(`t7-ask-${dev.name}`, [{ builtin: "Bash", input: { command: "echo waiting" } }], target.sessionId);
   await composer(target.dev).fill("Run a command for me");
   await composer(target.dev).press("Enter");
   const targetCard = await waitCard(target.dev);
   assert.match(targetCard.text, /Tool Approval Required/);
-  const [refused] = await turn(dev, `s7-refused-${dev.name}`, [{ mcp: "chat_send_message", args: { project: "alpha", sessionId: target.sessionId, text: "Another hello" } }], "Say hello again", sessionId);
-  assert.equal(refused.isError, true);
-  assert.match(refused.text, /That chat is waiting for the user to answer an approval card/);
-  assert.equal(await card(dev).count(), 0, "no card was shown for it");
+  const later = `Another hello from the ${dev.name}`;
+  await script(`t7-later-${dev.name}`, [], target.sessionId);
+  await send(dev, `s7-queued-${dev.name}`, [{ session: "send_to_session", args: { session_id: target.sessionId, message: later } }], "Say hello again", sessionId);
+  await collabCard(dev).waitFor({ timeout: 30000 });
+  await answerCollabCard(dev, "Allow once");
+  const [queued] = await answered(`s7-queued-${dev.name}`, 1);
+  assert.equal(queued.isError, false, queued.text);
+  assert.equal(parse(queued).delivered, "queued", "it never answers the target's card");
+  assert.ok(await card(target.dev).isVisible(), "the target's own card is still waiting");
   await answerCard(target.dev, "Deny");
   const [bash] = await answered(`t7-ask-${dev.name}`, 1);
   assert.equal(bash.approved, false);
-  record("s7", dev.name, "chat_send_message: the card names the target's mode, the message arrives in the other browser; a chat waiting on a card is refused");
+  await until("the queued message ran", () => turnOf(`t7-later-${dev.name}`), 30000);
+  record("s7", dev.name, "send_to_session from the Assistant: the card names the chat and its mode, the message arrives in the other browser; one to a chat waiting on its own card is queued behind it");
 }
 
 /** 8. A session the provider renames on its first turn stays an Assistant session; tools and cards work. */
@@ -790,7 +812,11 @@ try {
 
   const modulePath = process.env.PPM_PLAYWRIGHT_MODULE;
   const pw = modulePath ? await import(pathToFileURL(modulePath).href) : await import("playwright");
-  browser = await pw.chromium.launch({ headless: true, channel: process.env.PPM_PLAYWRIGHT_CHANNEL || undefined });
+  browser = await pw.chromium.launch({
+    headless: true, channel: process.env.PPM_PLAYWRIGHT_CHANNEL || undefined,
+    // playwright-core ships no browser: the e2e image names its own Chromium.
+    ...(process.env.PPM_PLAYWRIGHT_EXECUTABLE ? { executablePath: process.env.PPM_PLAYWRIGHT_EXECUTABLE } : {}),
+  });
 
   const desk = await openDevice("desktop", "desktop");
   const phone = await openDevice("phone", "phone");

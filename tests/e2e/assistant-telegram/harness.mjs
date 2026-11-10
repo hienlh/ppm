@@ -142,7 +142,7 @@ export async function transcript(dir, id, tg, chatIds, startedAt) {
 
 // ------------------------------------------------------------------ browser
 const COMPOSER = ["Ask anything...", "Follow-up...", "Follow-up or Stop..."].map((p) => `textarea[placeholder="${p}"]:visible`).join(", ");
-const ASSISTANT_BODY = '[class*="@container/assistant"]';
+const ASSISTANT_BODY = "[data-assistant-body]";
 
 export function browserKit({ web, shotsDir, browser }) {
   const devices = {};
@@ -151,7 +151,8 @@ export function browserKit({ web, shotsDir, browser }) {
     devices,
     chatRoot,
     composer: (dev) => chatRoot(dev).locator(COMPOSER).first(),
-    card: (dev) => chatRoot(dev).locator("[data-approval-request]:visible").last(),
+    // A provider's or the Assistant's own card, or a session tools' card (a chat to open or message).
+    card: (dev) => chatRoot(dev).locator("[data-approval-request]:visible, [data-collab-approval]:visible").last(),
     async open(name, kind) {
       const context = await browser.newContext(kind === "phone"
         ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, serviceWorkers: "block" }

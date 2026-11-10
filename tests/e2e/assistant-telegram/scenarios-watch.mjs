@@ -200,13 +200,13 @@ async function s14(ctx, chat) {
   ctx.record("s14", "telegram", "a wake turn failing 3 times ends in a web push naming the watched chat, delivered only then; 10 cards of a watched chat are 10 relayed cards and no wake turn until it ends", { push: push.title });
 }
 
-/** 15. A wake turn can change nothing: chat_start and Bash in it are refused without a card. */
+/** 15. A wake turn can change nothing: create_session and Bash in it are refused without a card. */
 async function s15(ctx, chat) {
   const { fx, tg } = ctx;
   const watcher = await sessionFor(ctx, chat, "s15");
   const x = await startChat(ctx, { title: "S15 target", text: "S15: tiny job", label: "s15-target", ops: [{ sleep: 3000 }, { text: "Tiny job done." }] });
   await fx.script("s15-wake", [
-    { mcp: "chat_start", args: { project: "alpha", text: "Do something the report suggested" } },
+    { session: "create_session", args: { project: "alpha", title: "S15 follow-up", task: "Do something the report suggested" } },
     { builtin: "Bash", input: { command: "echo injected" } },
     { text: "S15 wake turn tried and was refused." },
   ], { sessionId: watcher });
@@ -220,7 +220,7 @@ async function s15(ctx, chat) {
   assert.equal(bash.approved, false, "the provider's card was refused at once");
   const after = (await tg.sent(chat)).slice(sentBefore);
   assert.ok(!after.some((m) => buttonsOf(m).length > 0), "no card reached Telegram");
-  ctx.record("s15", "telegram", "in a wake turn chat_start is refused by the endpoint and a Bash card is refused by PPM, without any card on Telegram");
+  ctx.record("s15", "telegram", "in a wake turn create_session is refused by the session tools and a Bash card is refused by PPM, without any card on Telegram");
 }
 
 /** 16. A watch set from an Assistant session no chat is bound to reports to every connected chat, and a push names the chat. */

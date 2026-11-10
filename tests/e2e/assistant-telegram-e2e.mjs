@@ -128,7 +128,11 @@ try {
 
   const modulePath = process.env.PPM_PLAYWRIGHT_MODULE;
   const pw = modulePath ? await import(pathToFileURL(modulePath).href) : await import("playwright");
-  browser = await pw.chromium.launch({ headless: true, channel: process.env.PPM_PLAYWRIGHT_CHANNEL || undefined });
+  browser = await pw.chromium.launch({
+    headless: true, channel: process.env.PPM_PLAYWRIGHT_CHANNEL || undefined,
+    // playwright-core ships no browser: the e2e image names its own Chromium.
+    ...(process.env.PPM_PLAYWRIGHT_EXECUTABLE ? { executablePath: process.env.PPM_PLAYWRIGHT_EXECUTABLE } : {}),
+  });
   const kit = browserKit({ web, shotsDir, browser });
   const desk = await kit.open("desktop", "desktop");
   const mobile = await kit.open("phone", "phone");

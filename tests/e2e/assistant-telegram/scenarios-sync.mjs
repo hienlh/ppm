@@ -136,45 +136,58 @@ export async function s3(ctx, chat) {
   return { waiting };
 }
 
-/** 4. "Open a new chat…" → a card on Telegram and in PPM; Allow on Telegram starts it in the mode the card named. */
+/**
+ * 4. "Open a new chat…" → the session tools' card on Telegram and in PPM; Allow on Telegram creates
+ * it in the mode the card named (the provider's default, since the Assistant does not pick one).
+ */
 export async function s4(ctx, dev, chat, sessionId) {
   const { fx, tg, kit } = ctx;
+  // Run on its own, the chat binds to a session with its first message.
+  if (!sessionId) {
+    await fx.script(`s4-hello-${dev.name}`, [{ text: "s4 ready." }], { match: `S4 hello (${dev.name})` });
+    await tg.send(chat, `S4 hello (${dev.name})`);
+    await tg.waitText(chat, "s4 ready.");
+  }
+  // The bound session open in PPM, wherever the previous scenario left the screen.
+  await kit.openLink(dev, `${ctx.web}/assistant?session=claude/${sessionId ?? (await boundSessionOf(ctx, chat)).sessionId}`);
   const first = `S4 (${dev.name}): list the files in README`;
   const label = `s4-start-${dev.name}`;
   await fx.script(`s4-target-${dev.name}`, [{ text: "README.md, notes.txt" }], { match: first });
   const ask = `mở chat mới ở alpha để liệt kê file (${dev.name})`;
-  await fx.script(label, [{ mcp: "chat_start", args: { project: "alpha", text: first, permissionMode: "default", title: `S4 list files ${dev.name}` } }], { match: ask });
+  await fx.script(label, [{ session: "create_session", args: { project: "alpha", task: first, title: `S4 list files ${dev.name}` } }], { match: ask });
   await tg.send(chat, ask);
-  const tgCard = await tg.waitFor(chat, "chat_start card", (m) => m.text.includes("Start a new Claude chat in \"alpha\"") && buttonsOf(m).length > 0);
+  const tgCard = await tg.waitFor(chat, "create_session card", (m) => m.text.includes("Open a new Claude chat in \"alpha\"") && buttonsOf(m).length > 0);
   assert.deepEqual(labelsOf(tgCard), ["Allow", "Deny"], "Allow and Deny; the link is in the text (no tunnel)");
-  assert.ok(tgCard.text.includes(first), "the card shows the whole first message");
-  assert.match(tgCard.text, /Runs in: Ask before risky tools \(default\)/);
+  assert.ok(tgCard.text.includes(first), "the card shows the whole task");
+  const mode = tgCard.text.match(/Runs in: ([^\n]+)/)?.[1];
+  assert.ok(mode, "the card names the mode the chat will run in");
+  assert.match(tgCard.text, /Mode from: the provider's default \(Settings\)/);
   const ppmCard = kit.card(dev);
   await ppmCard.waitFor({ timeout: 15000 });
   assert.ok((await ppmCard.innerText()).includes(first), "PPM shows the same card");
-  await kit.shot(dev, "s4-chat-start-card-in-ppm");
+  await kit.shot(dev, "s4-create-session-card-in-ppm");
   const before = (await tg.answers()).length;
   const allow = await tg.pressLabel(chat, tgCard, "Allow");
   assert.equal((await tg.answerAfter(before)).text, "Allowed.");
-  const [rec] = await until("chat_start answered", async () => { const r = await fx.recordsOf(label); return r[0]?.done && r; });
+  const [rec] = await until("create_session answered", async () => { const r = await fx.recordsOf(label); return r[0]?.done && r; });
   assert.equal(rec.isError, false, rec.text);
   const started = JSON.parse(rec.text);
-  assert.equal(started.started, true);
-  assert.equal(started.permissionMode, "default", "the chat runs in the mode the card named");
+  assert.equal(started.project, "alpha");
   const target = await until("new chat ran", () => fx.turnOf(`s4-target-${dev.name}`));
   assert.equal(target.sessionId, started.sessionId);
   assert.equal(target.assistant, false, "an ordinary chat, not an Assistant session");
-  assert.equal(target.mode, "default", "its first turn ran in that mode");
+  const LABEL_START = { default: "Ask", acceptEdits: "Accept edits", bypassPermissions: "Bypass permissions", plan: "Plan" };
+  assert.ok(mode.startsWith(LABEL_START[target.mode] ?? "?"), `its first turn ran in the mode the card named (${target.mode} vs "${mode}")`);
   const listed = (await fx.api("/api/project/alpha/chat/sessions")).data.sessions.map((s) => s.id);
   assert.ok(listed.includes(started.sessionId), "the new chat is one of alpha's");
   await until("PPM card gone", async () => (await kit.card(dev).count()) === 0, 15000);
-  await tg.waitFor(chat, "card closed", (m) => m.message_id === tgCard.message_id && /Allowed here/.test(m.text) && buttonsOf(m).length === 0);
+  await tg.waitFor(chat, "card closed", (m) => m.message_id === tgCard.message_id && buttonsOf(m).length === 0);
   // The same button again: nothing is waiting on it any more.
   const again = (await tg.answers()).length;
   await tg.press(chat, tgCard.message_id, allow, { stale: true });
   assert.match((await tg.answerAfter(again)).text, /no longer valid/);
   await kit.shot(dev, "s4-after-allow-card-gone");
-  ctx.record("s4", dev.name, "chat_start from Telegram: card with buttons on Telegram and in PPM; Allow on Telegram starts the alpha chat in the card's mode, PPM's card goes, a second press is 'no longer valid'", { chat: started.sessionId });
+  ctx.record("s4", dev.name, "create_session from Telegram: card with buttons on Telegram and in PPM; Allow on Telegram creates the alpha chat in the card's mode, PPM's card goes, a second press is 'no longer valid'", { chat: started.sessionId });
   return { link: tgCard.text.match(/Open in PPM: (\S+)/)?.[1], started };
 }
 

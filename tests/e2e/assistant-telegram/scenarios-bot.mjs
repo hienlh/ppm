@@ -172,23 +172,24 @@ async function s11(ctx, chat, devs) {
   rows.push("edit: Allow");
   await deny("S11-c edit", c);
 
-  c = await cardFor("S11-e start-long", { mcp: "chat_start", args: { project: "alpha", text: "z".repeat(20000), permissionMode: "default" } }, (m) => m.text.includes("Start a new Claude chat"));
-  assert.deepEqual(labelsOf(c), ["Deny"], "a 20 000-character first message cannot be allowed from Telegram");
+  c = await cardFor("S11-e start-long", { session: "create_session", args: { project: "alpha", title: "S11 long task", task: "z".repeat(20000) } }, (m) => m.text.includes("Open a new Claude chat"));
+  assert.deepEqual(labelsOf(c), ["Deny"], "a 20 000-character task cannot be allowed from Telegram");
   assert.ok(c.text.includes("Too long to review here"));
-  rows.push("chat_start 20000: Deny only");
+  rows.push("create_session 20000: Deny only");
   await deny("S11-e start-long", c);
 
   const key = `sk-ant-api03-${"K".repeat(40)}`;
   c = await cardFor("S11-f secret", { builtin: "Bash", input: { command: `curl -H "x-api-key: ${key}" https://api.example.com/v1/ping` } }, (m) => m.text.includes("api.example.com"));
-  assert.deepEqual(labelsOf(c), ["Allow", "Deny"], "a hidden secret does not take Allow away");
+  // The hidden part could be the very thing that runs, so a card that hid anything offers no Allow.
+  assert.deepEqual(labelsOf(c), ["Deny"], "a hidden secret takes Allow away");
   assert.ok(!c.text.includes(key) && c.text.includes("[REDACTED]"));
   assert.match(c.text, /1 secret-looking value hidden/);
-  rows.push("secret in command: Allow + note");
+  rows.push("secret in command: Deny only + note");
   await deny("S11-f secret", c);
 
   // Bypass: the new chat's default mode here is "every tool without asking" — said on both screens.
   for (const dev of devs) await kit.openLink(dev, `${ctx.web}/assistant?session=claude/${session}`);
-  c = await cardFor("S11-g bypass", { mcp: "chat_start", args: { project: "alpha", text: "S11 run the whole test suite" } }, (m) => m.text.includes("S11 run the whole test suite"));
+  c = await cardFor("S11-g bypass", { session: "create_session", args: { project: "alpha", title: "S11 test suite", task: "S11 run the whole test suite" } }, (m) => m.text.includes("S11 run the whole test suite"));
   assert.deepEqual(labelsOf(c), ["Allow", "Deny"]);
   assert.match(c.text, /Bypass permissions/);
   assert.match(c.text, /Warning: That chat runs every tool without asking/);
