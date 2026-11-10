@@ -22,7 +22,8 @@ import { parseCommand, runCommand } from "./assistant-telegram-commands.ts";
 import { fetchPhoto } from "./assistant-telegram-photos.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
-import type { BridgeAction } from "./assistant-telegram-actions.ts";
+import type { BridgeAction, ManagerCardPress } from "./assistant-telegram-actions.ts";
+import type { CardReplyMessage } from "./assistant-telegram-card-replies.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { forwardedFrom, wrapForwarded, backlogQuestion } from "./assistant-telegram-inbound-text.ts";
 import { createLogger } from "../logger.ts";
@@ -51,6 +52,10 @@ export interface InboundDeps {
   switchSession: (chatId: string, sessionId: string) => string;
   /** `/status` shows a chat's waiting card here. */
   relayCard: (chatId: string, card: RelayedCard) => void;
+  /** A button on one of the Assistant's own cards: the toast to show, after acting. */
+  pressManagerCard?: (chatId: string, press: ManagerCardPress, group: string) => Promise<string>;
+  /** A message sent as a reply to a card's message: true when it answered the card. */
+  replyToCard?: (chatId: string, m: CardReplyMessage) => Promise<boolean>;
   now?: () => number;
 }
 
@@ -59,7 +64,7 @@ interface ChatLane { chain: Promise<void>; gathered: Gathered | null; timer: Ret
 export class AssistantTelegramInbound {
   private readonly lanes = new Map<string, ChatLane>();
   private readonly refused = new Set<string>();
-  private readonly backlog = new Map<string, { chatId: string; text: string; images: Image[] }>();
+  private readonly backlog = new Map<string, { chatId: string; text: string; images: Image[]; card?: CardReplyMessage }>();
   private readonly now: () => number;
   private stopped = false;
 
@@ -172,6 +177,19 @@ export class AssistantTelegramInbound {
       return false;
     }
 
+    // A reply to one of the Assistant's cards answers that card, word for word, and is never merged
+    // into a gathered message. One sent while PPM was off is asked about first, like any other.
+    const repliedTo = message.reply_to_message?.message_id;
+    if (repliedTo !== undefined && this.deps.replyToCard) {
+      const card: CardReplyMessage = { text, replyToMessageId: repliedTo, notTheUsers: !!from || !!message.via_bot };
+      await this.flush(chatId);
+      if (this.now() - message.date * 1000 > BACKLOG_AGE_MS) {
+        this.askAboutBacklog(chatId, message.date, from ? wrapForwarded(from, text) : text, [], updateId, card);
+        return false;
+      }
+      if (await this.deps.replyToCard(chatId, card)) return false;
+    }
+
     let image: Image | null = null;
     if (message.photo?.length) {
       const photo = await fetchPhoto(this.deps.client, message.photo);
@@ -235,10 +253,10 @@ export class AssistantTelegramInbound {
     }
   }
 
-  private askAboutBacklog(chatId: string, date: number, text: string, images: Image[], updateId: number): void {
+  private askAboutBacklog(chatId: string, date: number, text: string, images: Image[], updateId: number, card?: CardReplyMessage): void {
     while (this.backlog.size >= MAX_PENDING_BACKLOG) this.backlog.delete(this.backlog.keys().next().value!);
     const pendingId = `${chatId}:${updateId}`;
-    this.backlog.set(pendingId, { chatId, text, images });
+    this.backlog.set(pendingId, { chatId, text, images, ...(card ? { card } : {}) });
     const group = `backlog:${pendingId}`;
     const markup = { inline_keyboard: [[
       { text: "Run", callback_data: this.deps.codes.mint(chatId, group, { kind: "backlog", pendingId, run: true }) },
@@ -264,6 +282,11 @@ export class AssistantTelegramInbound {
       await this.deps.client.answerCallbackQuery(cq.id, this.deps.pressCard(chatId, action, found.group, cq));
       return;
     }
+    if (action.kind === "mcard") {
+      const toast = this.deps.pressManagerCard ? await this.deps.pressManagerCard(chatId, action, found.group) : "This button is no longer valid.";
+      await this.deps.client.answerCallbackQuery(cq.id, toast);
+      return;
+    }
     this.deps.codes.dropGroup(found.group);
     const messageId = cq.message?.message_id;
     if (messageId) this.removeButtons(chatId, messageId);
@@ -274,7 +297,10 @@ export class AssistantTelegramInbound {
     const pending = this.backlog.get(action.pendingId);
     this.backlog.delete(action.pendingId);
     await this.deps.client.answerCallbackQuery(cq.id, !pending ? "This button is no longer valid." : action.run ? "Sending it now." : "Skipped.");
-    if (pending && action.run) await this.deliver(chatId, pending.text, pending.images);
+    if (!pending || !action.run) return;
+    // A reply to a card that waited while PPM was off still answers that card.
+    if (pending.card && this.deps.replyToCard && await this.deps.replyToCard(chatId, pending.card)) return;
+    await this.deliver(chatId, pending.text, pending.images);
   }
 
   private removeButtons(chatId: string, messageId: number): void {

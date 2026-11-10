@@ -25,14 +25,33 @@ export interface CardRow {
   answer: AssistantCardAnswer | null;
   outbound: CardOutbound;
   wake: CardWake;
+  /** The Telegram messages showing this card; a message id means something only with its chat. */
+  telegramRefs: TelegramCardRef[];
   createdAt: number;
   updatedAt: number;
+}
+
+export interface TelegramCardRef {
+  chatId: string;
+  messageId: number;
 }
 
 interface Raw {
   id: string; kind: string; project_key: string | null; session_id: string | null; title: string; body: string;
   payload_json: string | null; status: string; answer_json: string | null; outbound: string; wake: string;
-  created_at: number; updated_at: number;
+  telegram_refs_json: string | null; created_at: number; updated_at: number;
+}
+
+function parseRefs(json: string | null): TelegramCardRef[] {
+  if (!json) return [];
+  try {
+    const value = JSON.parse(json) as unknown;
+    if (!Array.isArray(value)) return [];
+    return value.filter((r): r is TelegramCardRef =>
+      !!r && typeof r === "object" && typeof r.chatId === "string" && Number.isInteger(r.messageId));
+  } catch {
+    return [];
+  }
 }
 
 function parse<T>(json: string | null, fallback: T): T {
@@ -57,11 +76,16 @@ const toRow = (r: Raw): CardRow => ({
   answer: parse<AssistantCardAnswer | null>(r.answer_json, null),
   outbound: r.outbound as CardOutbound,
   wake: r.wake as CardWake,
+  telegramRefs: parseRefs(r.telegram_refs_json),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
 
-const COLUMNS = "id, kind, project_key, session_id, title, body, payload_json, status, answer_json, outbound, wake, created_at, updated_at";
+export const CARD_COLUMNS = "id, kind, project_key, session_id, title, body, payload_json, status, answer_json, outbound, wake, telegram_refs_json, created_at, updated_at";
+const COLUMNS = CARD_COLUMNS;
+
+/** A stored row as the card store reads it; for the other storage modules of cards. */
+export const rowFromDb = (raw: unknown): CardRow => toRow(raw as Raw);
 
 export interface NewCardRow {
   kind: AssistantCardKind;

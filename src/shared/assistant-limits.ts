@@ -39,3 +39,9 @@ export const NEWS_QUOTE_MAX = 500;
 
 /** A failure PPM saw in a manager chat becomes a card only if the manager has not reported by then. */
 export const FAILED_CARD_GRACE_MS = 10 * 60_000;
+
+/** A reply to a card older than this (or no longer open) is sent only after the user confirms. */
+export const STALE_REPLY_MS = 24 * 60 * 60_000;
+
+/** The longest reply to a card PPM forwards word for word. */
+export const CARD_REPLY_MAX_CHARS = 8000;

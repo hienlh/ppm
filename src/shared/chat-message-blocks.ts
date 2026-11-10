@@ -10,6 +10,7 @@ import {
   decodeProvenance, encodeProvenance, PROVENANCE_BLOCK_END, PROVENANCE_BLOCK_START, USER_WORDS_BLOCK_END,
   USER_WORDS_BLOCK_START, type AssistantProvenance,
 } from "./assistant-provenance";
+import { decodeUserWords, encodeUserWords, type UserWordsReference } from "./user-words-block";
 
 /**
  * The structured blocks PPM appends to a user message, in their fixed order: the text the person
@@ -31,6 +32,8 @@ export interface MessageBlocks {
   fromSession: FromSessionReference | null;
   /** How the PPM Assistant's turn that sent the message started; only with an Assistant sender. */
   provenance: AssistantProvenance | null;
+  /** Set when PPM forwarded the user's own words from a card; never with a from-session sender. */
+  userWords: UserWordsReference | null;
 }
 
 const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
@@ -64,7 +67,12 @@ export function decodeMessageBlocks(content: string): MessageBlocks {
   const from = decodeFromSession(refs.content);
   // A provenance block means something only on a message the PPM Assistant sent.
   const prov = from.fromSession?.kind === "assistant" ? decodeProvenance(from.content) : { content: from.content, provenance: null };
-  return { content: prov.content, replyTo: reply.replyTo, turnRefs: refs.turnRefs, fromSession: from.fromSession, provenance: prov.provenance };
+  // The user's forwarded words are never another session's message.
+  const words = from.fromSession ? { content: prov.content, userWords: null } : decodeUserWords(prov.content);
+  return {
+    content: words.content, replyTo: reply.replyTo, turnRefs: refs.turnRefs, fromSession: from.fromSession,
+    provenance: prov.provenance, userWords: words.userWords,
+  };
 }
 
 /**
@@ -82,11 +90,15 @@ export function encodeMessageBlocks(
     fromSession?: FromSessionReference | null;
     /** Only with a `fromSession` of kind `assistant`; written by the session tools alone. */
     provenance?: AssistantProvenance | null;
+    /** The user's own words forwarded from a card; written by `forward-verbatim.ts` alone. */
+    userWords?: UserWordsReference | null;
     ownProject?: string;
   },
 ): string {
   if (blocks?.provenance && blocks.fromSession?.kind !== "assistant") throw new Error("A provenance block needs a PPM Assistant sender");
-  const withProv = encodeProvenance(neutralizeBlockMarkers(body), blocks?.provenance);
+  if (blocks?.userWords && blocks.fromSession) throw new Error("The user's words never carry another session as sender");
+  const safeBody = neutralizeBlockMarkers(body);
+  const withProv = blocks?.userWords ? encodeUserWords(safeBody, blocks.userWords) : encodeProvenance(safeBody, blocks?.provenance);
   const withFrom = encodeFromSession(withProv, blocks?.fromSession);
   const withRefs = encodeTurnRefs(withFrom, blocks?.turnRefs, blocks?.ownProject);
   return encodeReply(withRefs, blocks?.replyTo);

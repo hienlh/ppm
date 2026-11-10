@@ -51,6 +51,7 @@ import { createLogger } from "./logger.ts";
 import { wakeContextEntry } from "./assistant-wake/wake-news-text.ts";
 import { deleteAssistantWatchesFor } from "./assistant-hub/assistant-hub-db.ts";
 import { assistantManagersContextEntry } from "./assistant/assistant-managers-context.ts";
+import { takeCardAnswerNotes } from "./assistant-cards/card-answer-notes.ts";
 // Loaded with the chat service, so they hear every message from the first one: how each PPM
 // Assistant turn started, and the user's messages that restart its limits on manager chats.
 import "./assistant/assistant-turn-provenance.ts";
@@ -567,8 +568,10 @@ class ChatService {
       managersEntry = await this.assistantManagersEntry();
       if (managersEntry && this.sharedSnapshots.unchanged(key, "managers", managersEntry)) managersEntry = undefined;
     }
+    // Cards the user answered themselves since the Assistant's last turn: news once, never compared.
+    const cardNotes = design.assistantSession && !slash ? takeCardAnswerNotes(sessionId) : undefined;
     // Every entry is server-built: a caller's own `sharedContext` is dropped here.
-    const sharedContext = joinSharedContextEntries(managerEntry, shared, ui, channelEntry, managersEntry);
+    const sharedContext = joinSharedContextEntries(managerEntry, shared, ui, channelEntry, managersEntry, cardNotes);
     return {
       opts: {
         ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),

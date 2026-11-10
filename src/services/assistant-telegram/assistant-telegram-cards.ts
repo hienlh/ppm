@@ -40,6 +40,13 @@ export interface RelayedCard {
   targetProvider: string;
   targetTitle: string;
   card: LiveApprovalCard;
+  /**
+   * A manager chat's card on a project whose Telegram detail is "title": only this title is shown,
+   * and only Deny is offered — Allow would approve what the phone was not shown.
+   */
+  titleOnly?: string;
+  /** Called with the message id once the card is on the phone (replies to it are matched by it). */
+  onSent?: (messageId: number) => void;
 }
 
 /** What a card is, whoever's it is. */
@@ -50,6 +57,8 @@ interface CardPresentation {
   approvalHeadline: string;
   questionHeadline: string;
   link: () => Promise<string>;
+  titleOnly?: string;
+  onSent?: (messageId: number) => void;
 }
 
 /** A chat or project name inside a card's headline: plain (the headline is escaped), redacted, short. */
@@ -104,6 +113,8 @@ export class AssistantTelegramCards implements BridgeCards {
       approvalHeadline: `Chat ${where} needs your decision`,
       questionHeadline: `Chat ${where} asks`,
       link: () => this.deps.chatLink(p.targetProject, p.targetProvider, p.targetSessionId),
+      ...(p.titleOnly !== undefined ? { titleOnly: p.titleOnly } : {}),
+      ...(p.onSent ? { onSent: p.onSent } : {}),
     });
   }
 
@@ -136,7 +147,15 @@ export class AssistantTelegramCards implements BridgeCards {
       this.deps.codes.mint(chatId, group, { kind: "card", sessionId: p.sessionId, requestId: p.card.requestId, ...press });
 
     let rows: ShownCard["rows"] = () => [];
-    if (card.isQuestion) {
+    if (how.titleOnly !== undefined) {
+      // The project keeps its details off the phone: the title, and nothing that acts on the rest.
+      const headline = card.isQuestion ? how.questionHeadline : how.approvalHeadline;
+      card.html = `${card.isQuestion ? "❓" : "🔐"} <b>${escapeTelegramHtml(headline)}</b>\n<b>${escapeTelegramHtml(titleForCard(how.titleOnly))}</b>`;
+      if (!card.isQuestion) {
+        const deny = [{ text: "Deny", callback_data: mint({ op: "deny" }) }];
+        rows = () => [deny];
+      }
+    } else if (card.isQuestion) {
       card.html = formatQuestionCard(questions, how.questionHeadline);
       if (visibleLength(card.html) > CARD_VISIBLE_MAX) card.html = `❓ <b>${escapeTelegramHtml(how.questionHeadline)}</b>\nThis question is too long to show here — answer it in PPM.`;
       else if (questions.length > 0 && !questions.some(needsPpm)) rows = questionRows(questions, mint);
@@ -162,6 +181,7 @@ export class AssistantTelegramCards implements BridgeCards {
       label: "approval card",
       onSent: (sent) => {
         card.messageId = sent.message_id;
+        try { how.onSent?.(sent.message_id); } catch (e) { log.warn(`card ${card.requestId}: ${(e as Error).message}`); }
         if (card.done) this.finish(card);
         else this.deps.state.add(chatId, "cards", sent.message_id);
       },

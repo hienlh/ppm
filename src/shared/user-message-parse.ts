@@ -3,6 +3,7 @@ import { decodeMessageBlocks } from "./chat-message-blocks";
 import type { TurnReference } from "./chat-turn-ref";
 import type { FromSessionReference } from "./chat-from-session";
 import type { AssistantProvenance } from "./assistant-provenance";
+import type { UserWordsReference } from "./user-words-block";
 /**
  * Parsing for stored user-message content.
  *
@@ -150,6 +151,8 @@ export interface ParsedUserMessage {
   fromSession: FromSessionReference | null;
   /** How the PPM Assistant's turn that sent it started, when the Assistant sent it to a manager chat. */
   provenance: AssistantProvenance | null;
+  /** Set when PPM forwarded the user's own words from one of the Assistant's cards. */
+  userWords: UserWordsReference | null;
   files: string[];
   /** Body text with the slash-command args folded in, for transcript display */
   text: string;
@@ -175,7 +178,7 @@ export function parseUserMessage(content: string): ParsedUserMessage {
   const { command, cleanText } = parseCommandTags(noSysTags);
   const { agent, cleanText: body } = parseAgentTag(cleanText);
   const text = command?.args ? (body ? `${command.args}\n\n${body}` : command.args) : body;
-  return { files: parsed.files, text, body, tags, command, terminalBlocks: blocks, idePath, agent, replyTo: decoded.replyTo, turnRefs: decoded.turnRefs, fromSession: decoded.fromSession, provenance: decoded.provenance };
+  return { files: parsed.files, text, body, tags, command, terminalBlocks: blocks, idePath, agent, replyTo: decoded.replyTo, turnRefs: decoded.turnRefs, fromSession: decoded.fromSession, provenance: decoded.provenance, userWords: decoded.userWords };
 }
 
 /**

@@ -41,6 +41,12 @@ import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { AssistantTelegramPoller } from "./assistant-telegram-poller.ts";
 import { AssistantTelegramSendQueue, EDIT_INTERVAL_MS, outcomeOf, sendMessageTask } from "./assistant-telegram-send-queue.ts";
 import { BridgeStateStore, readBridgeState } from "./assistant-telegram-state.ts";
+import { AssistantTelegramManagerCards } from "./assistant-telegram-manager-cards.ts";
+import { AssistantTelegramCardReplies } from "./assistant-telegram-card-replies.ts";
+import { cardOutbound } from "../assistant-cards/card-outbound.ts";
+import { managerChats } from "../assistant-managers/manager-chats.service.ts";
+import { currentQuietWindowEnd } from "../assistant-wake/wake-quiet-hours.ts";
+import type { InlineKeyboardMarkup } from "../telegram/telegram-types.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -139,6 +145,14 @@ export class AssistantTelegramBridge {
       showToolCalls: () => bridgeConfig().show_tool_calls,
       onTurnDelivered: (sessionId) => markRead(sessionId),
     });
+    const managerCards = new AssistantTelegramManagerCards({
+      queue, codes, ...links,
+      relayCard: (chatId, card) => cards.relayed(chatId, card),
+      isShowing: (chatId, requestId) => cards.isShowing(chatId, requestId),
+    });
+    const replyTo = (chatId: string, html: string, markup?: InlineKeyboardMarkup) =>
+      queue.enqueue(chatId, sendMessageTask(queue, chatId, { html, ...(markup ? { markup } : {}) }, { label: "card reply" }));
+    const cardReplies = new AssistantTelegramCardReplies({ codes, reply: replyTo });
     let poller: AssistantTelegramPoller | null = null;
     const inbound = new AssistantTelegramInbound({
       client, token, queue, codes, now,
@@ -147,12 +161,19 @@ export class AssistantTelegramBridge {
       pressCard: (chatId, press, group, cq) => cards.press(chatId, press, group, cq),
       switchSession: (chatId, sessionId) => this.switchSession(chatId, sessionId),
       relayCard: (chatId, card) => cards.relayed(chatId, card),
+      pressManagerCard: (chatId, press, group) => cardReplies.press(chatId, press, group),
+      replyToCard: (chatId, m) => cardReplies.reply(chatId, m),
     });
     poller = new AssistantTelegramPoller(client, state, (update) => inbound.dispatch(update));
     const offs = [
       onBindingChanged(() => mirror.invalidate()),
       addNotificationSuppressor((sessionId) => mirror.telling(sessionId) || recentlyTold(queue, sessionId)),
+      // A manager chat's approval or question is on the phone as a card already (unless quiet
+      // hours hold it): its push would say the same thing twice. Nothing else is held back.
+      addNotificationSuppressor((sessionId, kind) => kind === "approval" && managerCardReachesPhone(sessionId, managerCards)),
+      () => cardOutbound.detach(managerCards),
     ];
+    cardOutbound.attach(managerCards);
     this.run = { poller, queue, state, inbound, mirror, relay, cards, codes, offs };
 
     recoverInterrupted(queue, state);
@@ -221,6 +242,11 @@ function recentlyTold(queue: AssistantTelegramSendQueue, sessionId: string): boo
   const now = Date.now();
   return telegramChatsBoundTo(sessionId).some((chatId) =>
     canSendTo(chatId) && now - (queue.lastSentAt(chatId) ?? -Infinity) < SUPPRESS_WINDOW_MS);
+}
+
+/** Whether a manager chat's request goes to the phone as a card right now. */
+function managerCardReachesPhone(sessionId: string, sink: AssistantTelegramManagerCards): boolean {
+  return managerChats.isManagerChat(sessionId) && sink.ready() && currentQuietWindowEnd() === null;
 }
 
 /** The answer is on the phone: the session is read. */

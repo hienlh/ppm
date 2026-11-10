@@ -19,6 +19,7 @@ import {
 import {
   casCardStatus, getCardRow, insertCardRow, listCardRows, listOpenCardRows, setCardWake, type CardRow, type CardWake,
 } from "./assistant-cards-db.ts";
+import { cardOkOffered } from "./card-ok-rule.ts";
 
 const log = createLogger("assistant-cards");
 
@@ -73,6 +74,7 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
       id: row.id, kind: row.kind, projectName, projectKey: row.projectKey, sessionId: row.sessionId,
       title: row.title, body: row.body, payload, status: row.status, answer: row.answer,
       provenance: reportProvenanceLine(row.kind, projectName, payload.subagent === true, payload.detected === true),
+      ...(cardOkOffered(row) ? { okOffered: true } : {}),
       createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
   }
@@ -133,6 +135,16 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
       if (!casCardStatus(id, "open", to, answer, env.now())) return { ok: false, card: toCard(getCardRow(id) ?? before) };
       const after = getCardRow(id)!;
       return { ok: true, card: tell(after, "changed", isWaiting(before)) };
+    },
+    /**
+     * Puts a card this caller just answered back to open: what the answer had to do (forward the
+     * user's words) did not happen, so the card still waits. Only from `answered`, only once.
+     */
+    reopen(id: string): boolean {
+      if (!casCardStatus(id, "answered", "open", null, env.now())) return false;
+      const row = getCardRow(id);
+      if (row) tell(row, "changed", isWaiting(row));
+      return true;
     },
     setWake(id: string, wake: CardWake): void {
       setCardWake(id, wake, env.now());

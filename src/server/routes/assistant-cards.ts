@@ -1,6 +1,8 @@
 import { Hono, type Context } from "hono";
 import { assistantCards } from "../../services/assistant-cards/assistant-cards.service.ts";
 import { answerCard, dismissCard, type CardActionResult } from "../../services/assistant-cards/assistant-card-actions.ts";
+import { okCard, replyToCard } from "../../services/assistant-cards/card-reply-actions.ts";
+import type { CardActor } from "../../services/assistant-cards/forward-verbatim.ts";
 import { createLogger } from "../../services/logger.ts";
 import { ok, err } from "../../types/api.ts";
 
@@ -62,6 +64,43 @@ assistantCardRoutes.post("/cards/:id/answer", async (c) => {
     return c.json(err((e as Error).message), 500);
   }
 });
+
+const DEVICE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** The person's device and how the request reached PPM, for the session trace. */
+function actorOf(c: Context, body: unknown): CardActor {
+  const raw = body && typeof body === "object" ? (body as Record<string, unknown>).deviceId : undefined;
+  const site = c.req.header("sec-fetch-site");
+  return {
+    channel: "ppm",
+    ...(typeof raw === "string" && DEVICE_ID_RE.test(raw) ? { deviceId: raw } : {}),
+    ...(site && /^[a-z-]{1,20}$/.test(site) ? { fetchSite: site } : {}),
+  };
+}
+
+/** OK on a needs-decision card, or the user's reply to a card: forwarded word for word. */
+for (const action of ["ok", "reply"] as const) {
+  assistantCardRoutes.post(`/cards/:id/${action}`, async (c) => {
+    const id = c.req.param("id");
+    if (!CARD_ID_RE.test(id)) return c.json(err("No such card"), 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json(err("Body must be JSON"), 400);
+    }
+    try {
+      const actor = actorOf(c, body);
+      const result = action === "ok" ? await okCard(id, body, actor) : await replyToCard(id, body, actor);
+      log.info(`card ${id} ${action}: ${result.ok ? `sent to ${result.to}` : `${result.status} ${result.error}`} (site=${actor.fetchSite ?? "none"})`);
+      if (result.ok) return c.json(ok({ card: result.card, to: result.to, ...(result.projectName ? { projectName: result.projectName } : {}) }));
+      const data = { ...(result.card ? { card: result.card } : {}), ...(result.question ? { question: result.question } : {}) };
+      return c.json({ ...err(result.error), ...(Object.keys(data).length ? { data } : {}) }, result.status);
+    } catch (e) {
+      return c.json(err((e as Error).message), 500);
+    }
+  });
+}
 
 assistantCardRoutes.post("/cards/:id/dismiss", (c) => {
   const id = c.req.param("id");

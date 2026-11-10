@@ -26,6 +26,24 @@ export function quietWindowStart(nowMs: number, quiet: QuietHours, zone?: string
   return minuteStart - elapsed * 60_000;
 }
 
+/**
+ * When the quiet window `nowMs` falls in ends (ms, to the minute); null outside one. Counted in
+ * wall-clock minutes of the zone, so a clock change inside the window can move the real end by its
+ * size; whoever waits for it checks again when it comes.
+ */
+export function quietWindowEnd(nowMs: number, quiet: QuietHours, zone?: string): number | null {
+  if (!inQuietHours(nowMs, quiet, zone)) return null;
+  const left = (minutesOf(quiet.end) - minutesOfDay(nowMs, zone) + 1440) % 1440 || 1440;
+  const minuteStart = nowMs - (nowMs % 60_000);
+  return minuteStart + left * 60_000;
+}
+
+/** The current quiet window's end from Settings, or null outside quiet hours. */
+export function currentQuietWindowEnd(): number | null {
+  const settings = getAssistantSettings();
+  return quietWindowEnd(assistantClock.now(), settings.quiet_hours, settings.timezone);
+}
+
 /** The current quiet window's start from Settings, or null outside quiet hours. */
 export function currentQuietWindowStart(): number | null {
   const settings = getAssistantSettings();

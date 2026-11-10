@@ -23,6 +23,14 @@ export const DISMISSABLE_CARD_KINDS: readonly AssistantCardKind[] = ["needs_deci
 /** Kinds answered through `POST /cards/:id/answer`. */
 export const ANSWERABLE_CARD_KINDS: readonly AssistantCardKind[] = ["approval", "question"];
 
+/** Kinds that may take the user's OK (`POST /cards/:id/ok`). */
+export const OK_CARD_KINDS: readonly AssistantCardKind[] = ["needs_decision", "urgent"];
+
+/** Kinds whose reply goes to the card's manager chat; any other card's reply goes to the Assistant. */
+export const MANAGER_REPLY_CARD_KINDS: readonly AssistantCardKind[] = [
+  "needs_decision", "urgent", "approval", "question", "done", "failed",
+];
+
 /** The kinds a manager chat may file with `report_to_assistant`. */
 export const REPORT_KINDS = ["needs_decision", "urgent", "done", "failed", "digest"] as const;
 export type ReportKind = (typeof REPORT_KINDS)[number];
@@ -34,8 +42,10 @@ export interface AssistantCardAnswer {
   at: number;
   /** For an approval: whether it was allowed. */
   approved?: boolean;
-  /** What happened, in a few words, when it was not the user's answer ("No longer waiting"). */
+  /** What happened, in a few words ("No longer waiting", "Sent with your OK on Telegram"). */
   note?: string;
+  /** The user's OK on a needs-decision card, forwarded to its manager. */
+  ok?: boolean;
 }
 
 /** A draft message a manager asks the user to approve sending. */
@@ -93,6 +103,11 @@ export interface AssistantCard {
   answer: AssistantCardAnswer | null;
   /** Server-written line separating a manager's own words from PPM's ("Written by the X manager AI"). */
   provenance: string | null;
+  /**
+   * A needs-decision card may take "OK, send" (or "OK"): the title, body and draft are shown whole
+   * and nothing in them was hidden as a secret. Worked out by the server, on every surface alike.
+   */
+  okOffered?: boolean;
   createdAt: number;
   updatedAt: number;
 }

@@ -104,6 +104,12 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
       isEditing && "ring-2 ring-primary/60 border-primary/40",
     )}>
       {replyTo && <ReplyCard reply={replyTo} onJump={replyAvailable ? () => onJumpToReply?.(replyTo) : undefined} unavailable={!replyAvailable} />}
+      {/* PPM forwarded these words from one of the Assistant's cards; the block itself is not shown. */}
+      {parsed.userWords && (
+        <p className="mb-0.5 text-[11px] text-text-subtle" data-user-words={parsed.userWords.channel}>
+          {parsed.userWords.ok ? "Your OK" : "Your words"}, forwarded from a PPM Assistant card {parsed.userWords.channel === "telegram" ? "on Telegram" : "in PPM"}
+        </p>
+      )}
       {/* Drawn from the message's own block: no request, and the same size on every render. */}
       {turnRefs && prompt && <TurnRefChipRow refs={turnRefs} currentProject={projectName} />}
       {/* System tags as badges */}

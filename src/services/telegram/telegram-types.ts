@@ -58,6 +58,8 @@ export interface TelegramMessage {
   photo?: TelegramPhotoSize[];
   reply_to_message?: TelegramMessage;
   reply_markup?: InlineKeyboardMarkup;
+  /** Sent through an inline bot: the text is that bot's, not the sender's own. */
+  via_bot?: TelegramUser;
 }
 
 /** A press on an inline button. `message` is the message the button sits under. */
