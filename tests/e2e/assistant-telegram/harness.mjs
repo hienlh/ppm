@@ -6,6 +6,7 @@ import { createWriteStream } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import assert from "node:assert/strict";
+import { assistantSessionRow, closeAssistantSessionList, openAssistantSessionList } from "../assistant/assistant-settings-session-list.mjs";
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -190,18 +191,10 @@ export function browserKit({ web, shotsDir, browser }) {
       await dev.page.goto(`${web}/project/${project}?openChat=${encodeURIComponent(`${provider}/${sessionId}`)}`);
       await kit.composer(dev).waitFor({ timeout: 30000 });
     },
-    /** The Assistant's session list: a sidebar on a wide window, a sheet on a phone. */
-    async sessionsPane(dev) {
-      if (await dev.page.locator('aside:visible button[aria-label^="New Assistant session"]').count()) return dev.page.locator("aside:visible");
-      const sheetOpen = await dev.page.locator('ul[aria-label="Assistant sessions"]:visible').count();
-      if (!sheetOpen) await dev.page.locator('button[aria-label="Assistant sessions"]:visible').click();
-      await dev.page.locator('button[aria-label^="New Assistant session"]:visible').first().waitFor();
-      return dev.page;
-    },
-    sessionRow: (pane, title) => pane.locator('ul[aria-label="Assistant sessions"] button:visible', { hasText: title }).first(),
-    async closeSheet(dev) {
-      if (dev.kind === "phone") await dev.page.keyboard.press("Escape");
-    },
+    /** The Assistant's session list, in Settings → PPM Assistant → Sessions & Telegram. */
+    sessionsPane: (dev) => openAssistantSessionList(dev.page),
+    sessionRow: assistantSessionRow,
+    closeSessionsPane: (dev) => closeAssistantSessionList(dev.page),
     /** Desktop: the status bar's window list → "Minimize all", so a floating window covers nothing. */
     async minimizeWindows(dev) {
       if (dev.kind !== "desktop") return;

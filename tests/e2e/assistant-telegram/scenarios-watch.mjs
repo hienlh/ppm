@@ -2,7 +2,7 @@
 // Codex and Claude questions, and the wake turns a watch starts.
 import assert from "node:assert/strict";
 import { buttonsOf, labelsOf, sleep, until } from "./harness.mjs";
-import { answerFromSocket, boundSessionOf, cardOf, startChat } from "./scenarios-sync.mjs";
+import { answerFromSocket, boundSessionOf, cardOf, freshSession, startChat } from "./scenarios-sync.mjs";
 
 const WATCH_OPENER = "[PPM] News about a chat you asked me to watch";
 const WATCH_NEWS = "🔔 PPM: news about a watched chat";
@@ -21,6 +21,9 @@ export async function watchFromTelegram(ctx, chat, target, label, provider = "cl
 
 /** A Telegram chat's own Assistant session, made by its first message. */
 async function sessionFor(ctx, chat, label) {
+  // Its own session: the main one also carries other scenarios' wake turns, and those count
+  // against the same hourly cap.
+  await freshSession(ctx, chat);
   await ctx.fx.script(label, [{ text: `${label} ready.` }], { match: `${label} hello` });
   await ctx.tg.send(chat, `${label} hello`);
   await ctx.tg.waitText(chat, `${label} ready.`);

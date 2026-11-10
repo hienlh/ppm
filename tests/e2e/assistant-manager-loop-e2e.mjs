@@ -150,4 +150,6 @@ try {
   else if (process.env.PPM_MANAGER_LOOP_KEEP !== "1") {
     try { rmSync(sandbox, { recursive: true, force: true }); } catch (e) { console.error(`could not remove ${sandbox}: ${e.message}`); }
   }
+  // Browser, fixture and fake Bot API are closed above; nothing left open may keep this alive.
+  process.exit(process.exitCode ?? 0);
 }

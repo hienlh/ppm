@@ -55,9 +55,10 @@ export async function setupFakeTelegram(opts: { resuming: boolean }): Promise<Te
     return { sent: 1, failed: 0, removed: 0 };
   }) as typeof webPushService.send;
 
-  // Shorter clocks for the watch service, which the hub starts: the same code, minutes become seconds.
-  const { assistantWatchService } = await import("../../../src/services/assistant-watch/assistant-watch.service");
-  const clocks = assistantWatchService as unknown as Record<string, number>;
+  // Shorter clocks for the wake queue that starts watch report turns (and retries a failed one),
+  // which the hub starts after this: the same code, minutes become seconds.
+  const { assistantWakeQueue } = await import("../../../src/services/assistant-wake/assistant-wake-queue");
+  const clocks = assistantWakeQueue as unknown as Record<string, number>;
   if (env.PPM_ASSISTANT_FIXTURE_WATCH_RETRY_MS) clocks.retryDelayMs = Number(env.PPM_ASSISTANT_FIXTURE_WATCH_RETRY_MS);
   if (env.PPM_ASSISTANT_FIXTURE_WATCH_TICK_MS) clocks.tickMs = Number(env.PPM_ASSISTANT_FIXTURE_WATCH_TICK_MS);
 

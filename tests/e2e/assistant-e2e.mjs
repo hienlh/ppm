@@ -30,6 +30,7 @@ import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import * as ops from "./assistant/scenarios-ops.mjs";
+import { assistantSessionRow, closeAssistantSessionList, openAssistantSessionList } from "./assistant/assistant-settings-session-list.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-assistant-e2e-"));
 const artifacts = process.env.PPM_ASSISTANT_ARTIFACTS ? resolve(process.env.PPM_ASSISTANT_ARTIFACTS) : join(sandbox, "artifacts");
@@ -235,13 +236,6 @@ async function openAssistant(dev, project = "alpha") {
   await dev.page.goto(`${web}/project/${project}/assistant`);
   await composer(dev).waitFor({ timeout: 30000 });
 }
-/** The Assistant's session list: a sidebar on a wide window, a drawer (sheet on a phone) otherwise. */
-async function sessionsPane(dev) {
-  if (await dev.page.locator('aside:visible button[aria-label^="New Assistant session"]').count()) return dev.page.locator("aside:visible");
-  await dev.page.locator('button[aria-label="Assistant sessions"]:visible').click();
-  await dev.page.locator('button[aria-label^="New Assistant session"]:visible').first().waitFor();
-  return dev.page;
-}
 /**
  * A new Assistant session on `provider`, opened in the Assistant through its deep link. The session
  * list lives in Settings → PPM Assistant now; the Assistant window shows one session at a time.
@@ -254,9 +248,11 @@ async function newSession(dev, provider = "Claude") {
   await until("new session's chat is empty", async () => (await chatRoot(dev).getByText(/^Turn ".*" done\.$/).count()) === 0, 10000);
   return id;
 }
+/** Opens a session from the list in Settings, as a user picking it there would. */
 async function openSessionFromList(dev, title) {
-  const pane = await sessionsPane(dev);
-  await pane.locator('ul[aria-label="Assistant sessions"] button:visible', { hasText: title }).first().click();
+  const list = await openAssistantSessionList(dev.page);
+  await assistantSessionRow(list, title).click();
+  await closeAssistantSessionList(dev.page);
   await composer(dev).waitFor({ timeout: 30000 });
 }
 
@@ -356,12 +352,12 @@ async function s1(dev) {
     const ids = (await api(`/api/project/${project}/chat/sessions`)).data.sessions.map((s) => s.id);
     assert.ok(!ids.includes(first.sessionId) && !ids.includes(second.sessionId), `neither is in ${project}'s chats`);
   }
-  const pane = await sessionsPane(dev);
+  const list = await openAssistantSessionList(dev.page);
   for (const title of [`First Assistant session (${dev.name})`, `Second Assistant session (${dev.name})`]) {
-    await pane.locator('ul[aria-label="Assistant sessions"] button:visible', { hasText: title }).first().waitFor();
+    await assistantSessionRow(list, title).waitFor();
   }
   await shot(dev, "s1-two-sessions");
-  if (dev.kind === "phone") await dev.page.keyboard.press("Escape");
+  await closeAssistantSessionList(dev.page);
 
   // A terminal in the Assistant's project is refused at the socket, and the agent cannot ask for one.
   const socket = new WebSocket(`${web.replace("http", "ws")}/ws/project/__assistant__/terminal/new`);
@@ -894,4 +890,6 @@ try {
       try { rmSync(dir, { recursive: true, force: true }); } catch (e) { console.error(`could not remove ${dir}: ${e.message}`); }
     }
   }
+  // Browser and server are closed above; a socket a scenario left open must not keep this alive.
+  process.exit(process.exitCode ?? 0);
 }

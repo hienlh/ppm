@@ -8,11 +8,25 @@ export async function boundSessionOf(ctx, chatId, timeout = 15000) {
   return until(`chat ${chatId} bound`, async () => (await ctx.fx.tg("bindings")).find((b) => b.telegramChatId === String(chatId)), timeout);
 }
 
+/**
+ * A session of the chat's own. Once a main Assistant session exists, a chat's first message joins
+ * it, so a scenario that needs a session to itself starts one with /new, as a user would.
+ */
+export async function freshSession(ctx, chatId) {
+  const last = Math.max(0, ...(await ctx.tg.sent(chatId)).map((m) => m.message_id));
+  await ctx.tg.send(chatId, "/new");
+  await ctx.tg.waitFor(chatId, "/new answered", (m) => m.message_id > last && m.text.includes("New conversation on Claude"));
+  return (await boundSessionOf(ctx, chatId)).sessionId;
+}
+
 /** 1. Telegram → PPM: a first message creates and binds a session the open Assistant lists at once, and both show the exchange. */
 export async function s1(ctx, dev, chat) {
   const { fx, tg, kit } = ctx;
   await kit.openAssistant(dev);
   const pane = await kit.sessionsPane(dev);
+  // The first run's message starts the main session; a later run's chat would join it, so it
+  // starts a session of its own, listed once its first message lands.
+  if ((await fx.api("/api/assistant/main-session")).data?.main) await freshSession(ctx, chat);
   const hello = `xin chào (${dev.name})`;
   // A model takes a moment to answer; the list is announced again once this first turn ends.
   await fx.script(`s1-hello-${dev.name}`, [{ sleep: 800 }, { text: `Chào bạn, mình là PPM Assistant (${dev.name}).` }], { match: hello });
@@ -29,6 +43,7 @@ export async function s1(ctx, dev, chat) {
   await row.locator('[data-testid="assistant-session-telegram"]').waitFor({ timeout: 10000 });
   await kit.shot(dev, "s1-session-listed-with-telegram-label");
   await row.click();
+  await kit.closeSessionsPane(dev);
   const root = kit.chatRoot(dev);
   await root.getByText(hello).first().waitFor({ timeout: 15000 });
   await root.getByText(`Chào bạn, mình là PPM Assistant (${dev.name}).`).first().waitFor({ timeout: 15000 });

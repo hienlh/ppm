@@ -3,7 +3,7 @@
 // answers, and a Codex session renamed on its first turn.
 import assert from "node:assert/strict";
 import { buttonsOf, labelsOf, sleep, until } from "./harness.mjs";
-import { boundSessionOf, liveOf, startChat } from "./scenarios-sync.mjs";
+import { boundSessionOf, freshSession, liveOf, startChat } from "./scenarios-sync.mjs";
 import { watchFromTelegram } from "./scenarios-watch.mjs";
 
 const done = async (ctx, label, n = 1, timeout = 30000) =>
@@ -291,6 +291,8 @@ async function s22(ctx, chat) {
 /** 5 (restart) + 17. A restart mid-turn: drafts and cards are closed, nothing runs twice, an old message is asked about, a watch reports "interrupted". */
 async function restart(ctx, owner, ownerSession, desk) {
   const { fx, tg, kit, CHATS } = ctx;
+  // A session each: on the main session the draft's long turn would hold the card's message back.
+  for (const chat of [CHATS.restartDraft, CHATS.restartCard]) await freshSession(ctx, chat);
   const x = await startChat(ctx, { title: "R long job", text: "R: very long job", label: "r-target", ops: [{ sleep: 600000 }] });
   const watch = await watchFromTelegram(ctx, owner, x, "r-watch");
   await fx.script("r-draft", [{ text: "Đang viết dở" }, { sleep: 600000 }], { match: "R viết dài" });
