@@ -16,12 +16,12 @@ describe("resolveTargetDir", () => {
 
   it("output flag overrides scope", () => {
     const r = resolveTargetDir({ scope: "user", output: "/tmp/custom" });
-    expect(r).toBe("/tmp/custom");
+    expect(r).toBe(resolve("/tmp/custom"));
   });
 
   it("default (no scope) uses user scope", () => {
     const r = resolveTargetDir({});
-    expect(r).toEndWith(".claude/skills/ppm");
+    expect(r).toBe(resolve(homedir(), ".claude/skills/ppm"));
   });
 
   it("relative output is resolved to absolute", () => {
