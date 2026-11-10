@@ -170,15 +170,18 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
   `previousProject` or enough to reopen what it closed, so the agent can undo — there is no
   Undo of PPM's own. A database table tab opens only for a relation `db_query` could read
   unasked (see Databases below); a view that does more than read is refused, not opened.
-- **Ask first**: `db_query` for anything not proven to read, `chat_send_message`, `chat_start`
-  and `chat_answer_approval` (always — the last even to deny, since a denial changes what that
-  chat does next),
+- **Ask first**: `db_query` for anything not proven to read, `chat_answer_approval` (always — even
+  to deny, since a denial changes what that chat does next),
   `ui_run_command` for a command declared `changesData` and for every extension command,
   `ui_close_tab` for a tab that would lose work (unsaved editor text, unsaved SQL or table edits,
   a terminal), and `ui_read_tab` for an editor's unsaved text, a terminal's output or a database
   file's rows from outside every registered project or from a credential store (below) — a file
   tab itself answers with its path, and reading the file is the provider's read tool's call.
   Every git, schedule and tunnel tool that changes something asks too, stage and fetch included.
+
+Opening and messaging the user's chats is not on this server: an Assistant session also gets PPM's
+session tools (`ppm-sessions`, see [Running the user's chats](#running-the-users-chats)), under an
+Assistant policy of their own.
 
 **Reading a tab** (`assistant-tab-reader.ts`). A file tab answers with the file's absolute path
 and its project, never the file: the agent reads it with its provider's own read tool, so one
@@ -271,10 +274,12 @@ approved runs anything. The device broker under it arms no timer for an unbounde
 (`createDeviceBroker`), since a delay past 2^31 − 1 ms would fire at once instead of never.
 
 **What the card shows** is built by the server from the checked input, never from the agent's
-own wording (`assistant-approval-summary.ts`): the full SQL or message, wrapped, with hidden and
-bidirectional characters made visible, and for `chat_send_message` the target chat's permission
-mode and where it comes from. That mode is checked again at send time and the message is not sent
-if it changed. Every chat now has its permission mode stored on the server for this reason.
+own wording (`assistant-approval-summary.ts`): the full SQL, wrapped, with hidden and
+bidirectional characters made visible. The session tools' cards (a message into a chat, a chat to
+open) are built the same way (`collab-send-assistant.ts`, `collab-create.ts`) and state the mode
+the chat will run in and where it comes from; a message's mode is checked again once the user
+allows it, and nothing is sent if it changed. Every chat has its permission mode stored on the
+server for this reason.
 
 **Stale answers.** An `approval_response` for a request nothing holds any more — answered on
 another device, ended, or from before a restart — gets `approval_stale` and "no longer valid",
@@ -315,9 +320,42 @@ closes (`src/services/database/query-stop.ts`). An approved query is the user's 
 
 ## Running the user's chats
 
-Four tools in `src/services/assistant-mcp/assistant-hub-tools.ts` let the Assistant manage the
-user's working chats instead of only reading them. They are what PPMBot's shell delegation was
-for, rebuilt as tools that ask.
+Three tools in `src/services/assistant-mcp/assistant-hub-tools.ts`, and PPM's session tools, let
+the Assistant manage the user's working chats instead of only reading them. They are what PPMBot's
+shell delegation was for, rebuilt as tools that ask.
+
+**Opening and messaging chats: the session tools.** An Assistant session gets `ppm-sessions`
+(`create_session`, `send_to_session`, `session_status`) beside its own server — the same tools
+every chat has, through one delivery path (`deliverToSession` in `src/server/ws/chat-inject.ts`).
+`resolveCaller` (`src/services/session-collab/collab-context.ts`) marks an Assistant session as a
+caller of kind `assistant`, and `collab-caller-policy.ts` decides what it may do:
+
+- It reaches a chat of **any** registered project, never an Assistant or design chat. The target's
+  project travels on `CollabTarget`: delivery, the running limit, links and announcements all use
+  it, so a chat nobody has open is started in its own folder, not the Assistant's.
+- **Every create and every message asks**, on a card in the Assistant's session (and on Telegram,
+  below), whatever `askBeforeCreate` says: `create` with `askedBy: "assistant"`, the project and the
+  mode; `message` with the chat, its project, the mode it runs in and the whole message. These cards
+  offer Allow once and Deny only.
+- `create_session` needs `project`; the chat is set up as one the user opens there
+  (`createProjectChatSession`), at depth 0, in `providerDefaultMode` and the provider's default
+  model unless `model` is given. It is **not** recorded as AI-created (no `spawned_by`): it notifies
+  like a chat the user opened and stops counting against the running limit once its first turn
+  ends. Its answer waits for a Codex rename (`awaitCanonicalSessionId`), so the Assistant is told
+  the id later news names.
+- A message to a chat waiting on a card of its own waits behind it (`queued`) and never answers it.
+  The mode the card showed is checked again under the chat's lock (`expectedMode` in
+  `deliverToSession`); a chat that would now run it in another mode gets nothing.
+- Neither a create nor a message links the chat to the Assistant (no pair, no spawn): the Assistant
+  belongs to no project, so a project chat's linked-sessions bar could only open it in the wrong
+  one. The incoming bubble links back instead, and the Assistant's own linked-sessions bar is off;
+  its tool cards open each chat in the project the result names (`project`).
+- The message is delivered with origin `session`, and its from-session block carries
+  `kind: "assistant"`: the receiving AI is told it is the Assistant, another AI, and that it cannot
+  reply through the tools; the bubble reads "PPM Assistant" and opens the Assistant.
+- In an unattended turn nothing is created or messaged and no card is shown
+  (`UNATTENDED_TURN_REFUSAL`, from the endpoint and again from the approval broker).
+
 
 - **`chats_attention`** (`src/services/assistant-hub/chat-attention.service.ts`) answers "which
   chats need me": chats waiting on a card or question, running, whose card was lost (an unread
@@ -327,13 +365,6 @@ for, rebuilt as tools that ask.
   opened since the restart still counts), and how a turn ended is in the session trace
   (`src/services/session-trace/turn-ends-query.ts`). Assistant sessions are left out. Titles and
   card text come back labelled as data from those chats, not instructions.
-- **`chat_start`** creates a chat in a registered project (`createProjectChatSession` in
-  `src/services/chat-session-create.ts`, which the REST route shares), stores its mode and model,
-  and sends the first message — after a card naming the project, provider, model, the mode the
-  chat **runs in** and where that mode came from. Without an explicit mode it uses
-  `providerDefaultMode`, the mode a chat opened by hand in PPM gets: the Assistant must not open
-  chats that behave differently from the user's own. A bypass mode adds a warning line to the card,
-  on PPM and on Telegram. `watch: true` also sets a watch on the new chat.
 - **`chat_answer_approval`** answers another chat's waiting card. Its confirmation card copies the
   target card's deciding input (below) verbatim, the turn re-checks that the card is still there
   before answering, and an answer that lost the race reports that it was answered elsewhere. It
@@ -492,8 +523,12 @@ carry a person's decision — a button pressed, a message typed.
 
 Origins say who acts. `telegram` is the user typing elsewhere: like a typed message it supersedes a
 waiting card. `watch` is never the user: it is refused with `busy` while the chat has a card or a
-running turn, rather than cancelling or steering either. `assistant` is a message the Assistant
-sends with approval. All three are trace origins too (`TraceOrigin` in `src/shared/session-trace.ts`).
+running turn, rather than cancelling or steering either. `assistant` only answers cards and stops
+turns: the Assistant's messages into chats come through the session tools' door
+(`deliverToSession`) as origin `session`, like any other session's, so the guards main keys on that
+origin (waiting for a starting consumer, the from-session block decoding) hold for it too. That door
+emits the lifecycle `user_message` and sets the chat's `turnOrigin` the way a typed message does.
+These are trace origins too (`TraceOrigin` in `src/shared/session-trace.ts`).
 
 `chatLifecycle` (`src/services/chat-control/chat-lifecycle.ts`) is the bus the rest listens on; the
 event names and payloads are `ChatLifecycleEvents`. It is emitted whether or not a browser is
@@ -529,8 +564,9 @@ outlives a restart, and it covers one run of the target chat.
 - **Wake turns cannot change anything.** Such a turn carries another chat's words, and a card in
   it is one tap on a phone at a moment the user did not choose — the shortest path from injected
   text to an action. So everything that would ask is refused without a card
-  (`WATCH_TURN_REFUSAL`): the endpoint returns that reason, and the provider's own approvals are
-  denied outright. A message the user types into the turn makes it theirs again.
+  (`UNATTENDED_TURN_REFUSAL`, checked by `isUnattendedTurn`): the endpoint returns that reason, the
+  session tools refuse to create or message anything, and the provider's own approvals are denied
+  outright. A message the user types into the turn makes it theirs again.
 - **The news is not a message.** The turn's message is the fixed `WATCH_OPENER`; what happened is
   an entry in the shared-context block (`watch-event-text.ts`), which `stripSharedContext` keeps out
   of history, titles and search. `<ppm-…` tags typed by a user into an Assistant session are
@@ -617,6 +653,13 @@ thing that runs; the card says how many values it hid and offers Deny and Open i
 question card keeps its choices, since answering one runs nothing by itself. Allow is a promise
 that the person saw what they allowed; a phone screen that shows half a command cannot make it.
 
+**The session tools' cards** (a message the Assistant wants to send, a chat it wants to open) are
+PPM's own approvals, answered over HTTP in PPM; in an Assistant session they are also told to the
+lifecycle bus (`chat-collab-approval-relay.ts`), so they reach Telegram under the same Allow rule
+(their deciding input is `collab-deciding-input.ts`). A press settles the card that Assistant session
+is showing, through the session tools' broker, as Allow once or Deny; nothing settles them "for the
+session", and the Assistant answering a card never does.
+
 Questions show their choices as buttons (several at once: toggle, then Send); a question that
 only takes typed text points to PPM. Buttons carry random codes bound to the chat they were sent
 to (`assistant-telegram-button-codes.ts`): pressing one spends every code of that card, and after
@@ -675,7 +718,11 @@ the connect-link poller to leave that bot alone (`assistantBridgeReading` in
 
 - Telegram changes nothing about what asks: an Assistant session is still forced to ask, the cards
   are the same cards, and PPMBot's bypass path no longer exists anywhere.
-- A watch turn never asks and never acts; a card in a watched chat never starts a model turn.
+- Every chat the Assistant opens and every message it sends into a chat is asked on a card first,
+  answered once; it never reaches an Assistant or design chat.
+- An unattended turn (a watch turn) never asks and never acts: it creates and messages no chat. The
+  only exception planned is a status question to a project's manager chat, which does not exist yet.
+  A card in a watched chat never starts a model turn.
 - Allow appears only where the whole deciding input is visible; everything else is Deny or PPM.
 - Private chat, still connected, the right person — checked on receipt and on every send.
 - No tool input or output is sent to Telegram; text is redacted before it leaves.

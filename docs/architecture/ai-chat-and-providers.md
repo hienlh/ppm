@@ -805,15 +805,28 @@ A task or message may be at most 24 KB in UTF-8 bytes (`MAX_COLLAB_MESSAGE_BYTES
   inserted into or opened ending (`collab-unread.ts`). A reply handed back as a wait's result never
   counts.
 
-Only an explicit `send_to_session` reaches another session; a final answer is never forwarded.
+Only an explicit `send_to_session` reaches another session; a final answer is never forwarded. No
+caller reaches a PPM Assistant session.
+
+**The PPM Assistant as a caller.** An Assistant session gets the same server beside its own, and
+`resolveCaller` gives it the caller kind `assistant` (`collab-caller-policy.ts`): it reaches a
+session of any registered project (`create_session` requires `project`), every create and send
+asks on a card whatever `askBeforeCreate` says (a `message` card for a send; both offer Allow once
+and Deny only), the new chat starts at depth 0 in the provider's default mode and model and is not
+recorded as AI-created or linked to the Assistant, and an unattended Assistant turn creates and
+sends nothing. `CollabTarget` carries the target's project,
+which delivery, the running limit and links use. The message's from-session block says
+`kind: "assistant"`. Details in [PPM Assistant](ppm-assistant.md#running-the-users-chats).
 
 **The inject path.** `deliverToSession` (`src/server/ws/chat-inject.ts`) is the server's own door
 into a session: the same registry entry, `user_message` echo, consumer, replay buffer and unread
 marks as a browser send (`ensureSessionEntry` / `submitToSession` in `ws/chat.ts`, shared with the
 socket handler), serialized with browser sends by one per-session lock. It reports truthfully what
 happened — `inserted`, `queued` (the target waits on an approval or is compacting) or `started` —
-resumes a cold session first, never touches a pending approval, and refuses a design session, the
-sender itself and a provider mismatch. A push that finds the stream already gone (the providers'
+resumes a cold session first (in the target's own project), never touches a pending approval, and
+refuses a design session, the sender itself and a provider mismatch. A delivered message sets the
+chat's `turnOrigin` to `session` and is emitted on the lifecycle bus as `user_message`, the way a
+typed one is. A push that finds the stream already gone (the providers'
 `pushMessage` answers false) is handed over: it waits for the consumer to wind down and starts a
 turn, and devices draw the message only once the provider has it. No route exposes it. A session
 the server opened with no browser attached is `socketless` and counts as idle between turns, so the
