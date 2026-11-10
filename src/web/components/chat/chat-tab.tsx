@@ -52,6 +52,7 @@ import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
 import type { Session, SessionInfo } from "../../../types/chat";
 import { specsApi, specStartBody, specStartFromMetadata, type SpecStartChoice } from "@/lib/api-specs";
+import { SPEC_PANE_EVENT, takeSpecPaneRequest } from "@/lib/open-spec-chat";
 import { useSessionSpec, useSpec } from "@/hooks/use-spec";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { SpecWorkflowChip, SpecWorkflowContext, SpecWorkflowMenuSection, type SpecWorkflowState } from "@/components/spec/spec-workflow";
@@ -221,6 +222,16 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   const specState = useSpec(projectName, specBinding?.slug ?? null);
   const isMobileLayout = useIsMobile();
   const [specPaneOpen, setSpecPaneOpen] = useState(() => !isMobileLayout);
+  // Opening a spec from the sidebar shows its pane even when this chat was already open with it closed.
+  useEffect(() => {
+    if (!sessionId) return;
+    if (takeSpecPaneRequest(sessionId)) setSpecPaneOpen(true);
+    const onRequest = (e: Event) => {
+      if ((e as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId && takeSpecPaneRequest(sessionId)) setSpecPaneOpen(true);
+    };
+    window.addEventListener(SPEC_PANE_EVENT, onRequest);
+    return () => window.removeEventListener(SPEC_PANE_EVENT, onRequest);
+  }, [sessionId]);
   // The session's title is known further down; starting a spec in an existing chat names it after it.
   const specTitleRef = useRef("");
   const startSpecHere = useCallback(async (choice: SpecStartChoice) => {
