@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A running chat sometimes stopped scrolling with the reply until you scrolled down yourself.** When the chat area got taller while following the reply (the message box shrinking after a multi-line message, the queue or a bar above the box going away, a phone keyboard closing), the browser moved the scroll position to the new bottom, and the chat took that for you scrolling up. It then stopped following although it was still at the bottom. It now keeps following, and scrolling up still stops it.
+
+- **A file dropped on the message box was attached twice.** The box handled the drop itself and then let it reach the chat area, which attached the same files again. Only the chat area handles a drop now.
+
+- **An attachment removed from the message box came back after a reload and was sent with the next message.** Removing it deleted the uploaded file but left it in the saved draft, so the restored chip pointed at a file that no longer existed. Removing an attachment now updates the draft too.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed

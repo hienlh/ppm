@@ -36,6 +36,11 @@ import { useScrollAnchorPin } from "@/hooks/use-scroll-anchor-pin";
 import { useChatTurnJump } from "@/hooks/use-chat-turn-jump";
 import { canMergeToLive } from "@/lib/history-window-model";
 
+/** How long after the container grows its clamp's scroll event is taken for the clamp. */
+const RELOCK_WINDOW_MS = 150;
+/** After use-stick-to-bottom's own deferred look at a scroll event (it waits 1 ms). */
+const RELOCK_AFTER_SCROLL_MS = 2;
+
 interface MessageListProps {
   onReply?: (reply: ReplyReference) => void;
   messages: ChatMessage[];
@@ -309,21 +314,57 @@ export function MessageList({
   useEffect(() => {
     if (scrollEl && scrollEl.clientHeight > 0) followIntentRef.current = isAtBottom;
   }, [isAtBottom, scrollEl]);
+  //
+  // The container itself changing height while following is not the reader either, and the lib
+  // watches only the content. When the container grows (the composer shrinking after a multi-line
+  // send, the queue stack or a bar going away, a phone keyboard closing), the browser clamps
+  // `scrollTop` down to the new maximum, and the lib reads that scroll as the reader scrolling up:
+  // it stops following while the view still sits at the bottom, and the reply grows out of sight.
+  // So a grow re-locks just after the lib's own look at the clamp's scroll event (it waits 1 ms);
+  // a shrink, which clamps nothing, just keeps the bottom in view. The clamp's scroll event can
+  // come before the resize report (a layout forced earlier, such as the composer measuring itself,
+  // clamps then) or after it, so both ends look.
   useEffect(() => {
     const el = scrollEl;
     if (!el) return;
     let lastHeight = el.clientHeight;
+    /** The container's height at the last scroll event, for a clamp seen before the resize. */
+    let heightAtScroll = el.clientHeight;
+    let relockUntil = 0;
+    const relock = () => setTimeout(() => scrollToBottom({ animation: "instant" }), RELOCK_AFTER_SCROLL_MS);
+    const onScroll = () => {
+      const h = el.clientHeight;
+      const grewFirst = heightAtScroll > 0 && h > heightAtScroll && followIntentRef.current;
+      heightAtScroll = h;
+      if (!grewFirst && performance.now() > relockUntil) return;
+      relockUntil = 0;
+      relock();
+    };
     const ro = new ResizeObserver(() => {
       const h = el.clientHeight;
       const reshown = lastHeight === 0 && h > 0;
+      const resized = lastHeight > 0 && h > 0 && h !== lastHeight;
+      const grew = h > lastHeight;
       lastHeight = h;
       // Cancel the lib's reshow-follow synchronously (before its rAF tick) — setting
       // isAtBottom=false makes its queued scrollToBottom abort.
       if (reshown && !followIntentRef.current) stopScroll();
+      if (!resized || !followIntentRef.current) {
+        heightAtScroll = h;
+        return;
+      }
+      if (grew && heightAtScroll < h) relockUntil = performance.now() + RELOCK_WINDOW_MS;
+      heightAtScroll = h;
+      if (grew) relock();
+      else scrollToBottom({ animation: "instant" });
     });
+    el.addEventListener("scroll", onScroll, { passive: true });
     ro.observe(el);
-    return () => ro.disconnect();
-  }, [scrollEl, stopScroll]);
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, [scrollEl, stopScroll, scrollToBottom]);
 
   const handleReply = useCallback((message: ChatMessage) => {
     if (!sessionId || !providerId) return;
