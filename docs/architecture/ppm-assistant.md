@@ -1137,8 +1137,8 @@ and runs in bypass mode:
    connected if the phone should get cards.
 2. *Digest & quiet hours*: the digest time and quiet hours, saved from a browser in the user's zone.
 3. In the project, right-click (long-press) the chat → *Set as manager chat*. Its mode stays what it
-   was; in bypass mode the dialog says nothing in it asks.
-4. *Manager chats* → the project → *Edit rules*. Keep two things in `.ppm/manager.md`: a pointer
+   was; in bypass mode the dialog says "This chat runs without approval prompts."
+4. *Manager chats* → the project's row → *Edit* in its Rules column. Keep two things in `.ppm/manager.md`: a pointer
    ("read and follow `<path to the guide>`") and the safety rules **inline** — only what is inline is
    guarded; the guide stays the manager's own working file.
 5. *Telegram detail*: *Title only* keeps client data off Telegram.
