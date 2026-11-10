@@ -25,7 +25,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import type { UsageInfo } from "../../../../types/chat";
 import { AccountUsageBar } from "./account-bucket-row";
-import { formatResetTime } from "./account-usage-format";
+import { formatLastUpdated, formatResetTime } from "./account-usage-format";
+import { currentAntigravityUsage, isAntigravityUsageStale } from "@/lib/antigravity-usage-view";
 import {
   AccountCardRow,
   AccountCardShell,
@@ -363,7 +364,7 @@ export function AntigravityAccountsSection() {
         ) : (
           <AccountCardRow>
             {accounts.map((a) => {
-              const u = usages[a.id] ?? {};
+              const u = currentAntigravityUsage(usages[a.id] ?? {});
               const unread =
                 u.session == null &&
                 u.weekly == null &&
@@ -459,6 +460,11 @@ export function AntigravityAccountsSection() {
                       />
                     ))}
                   </div>
+                  {u.lastFetchedAt && isAntigravityUsageStale(u.lastFetchedAt) && (
+                    <p className="text-[10px] text-warning">
+                      Last read {formatLastUpdated(Date.parse(u.lastFetchedAt))}. Neither agy nor the Antigravity app has answered since.
+                    </p>
+                  )}
                 </AccountCardShell>
               );
             })}

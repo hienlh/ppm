@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { AntigravityProvider } from "../../../src/providers/antigravity/antigravity-provider.ts";
 import { agyStoreArgs } from "../../../src/providers/antigravity/acp-launch.ts";
+import { AUTO_CONTINUE_PROMPT } from "../../../src/providers/antigravity/background-task-watch.ts";
 import { mapAcpUpdate, newToolState } from "../../../src/providers/antigravity/acp-event-mapper.ts";
 import { agySlashItems, parseAgyCommands, rememberAgyCommands } from "../../../src/providers/antigravity/antigravity-commands.ts";
 import { createAntigravityAccount, removeAntigravityAccount } from "../../../src/services/antigravity-account.service.ts";
@@ -173,6 +174,32 @@ describe("AntigravityProvider over agy acp", () => {
     p.abortQuery(existingId);
     await run.finished;
   });
+
+  it("asks for a turn once a background task agy left running reports back after the turn ended", async () => {
+    const existingId = "0e2b9b41-aaaa-4bbb-8ccc-000000000002";
+    const store = join(tempHome, ".gemini", "antigravity");
+    const system = join(store, "brain", existingId, ".system_generated");
+    mkdirSync(join(system, "logs"), { recursive: true });
+    mkdirSync(join(system, "tasks"), { recursive: true });
+    mkdirSync(join(system, "messages"), { recursive: true });
+    writeFileSync(join(system, "logs", "transcript.jsonl"), `${JSON.stringify({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>run the tests</USER_REQUEST>" })}\n`);
+
+    const p = provider();
+    await p.resumeSession(existingId);
+    p.ensureProjectPath(existingId, projectDir);
+    const run = consume(p.sendMessage(existingId, "run the tests"));
+    // Started by this process, still running when the turn ends.
+    writeFileSync(join(system, "tasks", "task-7.log"), "gradle…\n");
+    await run.until((evs) => dones(evs).length === 1);
+    await Bun.sleep(100);
+    expect(run.events.some((e) => e.type === "provider_continue")).toBe(false);
+
+    writeFileSync(join(system, "messages", "m1.json"), JSON.stringify({ sender: `${existingId}/task-7`, content: `Task id "${existingId}/task-7" finished with result: ok` }));
+    await run.until((evs) => evs.some((e) => e.type === "provider_continue"));
+    expect(run.events.filter((e) => e.type === "provider_continue")).toEqual([{ type: "provider_continue", content: AUTO_CONTINUE_PROMPT }]);
+    p.abortQuery(existingId);
+    await run.finished;
+   }, 15_000);
 
   it("gives a new chat the Additional Instructions and the shared context as its system prompt, not in the message", async () => {
     const previousAi = configService.get("ai");

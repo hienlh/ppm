@@ -1,11 +1,14 @@
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LimitBucket, ScopedLimitBucket, UsageInfo } from "../../types/chat.ts";
 import { AMBIENT_ACCOUNT_KEY, type ProviderUsageSource } from "../../services/provider-usage/usage-source.ts";
 import {
   ensureLanguageServerConnection,
+  findAgyExecutable,
   type LanguageServerConnection,
 } from "./antigravity-connection.ts";
+import { agyEnv } from "./acp-launch.ts";
 import {
   clearAntigravityAccountAuthFailure,
   formatAntigravityAccountLabel,
@@ -167,6 +170,76 @@ export function parseAntigravityUsage(
   return out;
 }
 
+/** `agy -p /usage --output-format json`: the same quota groups the language server reports. */
+interface AgyUsageJson {
+  status?: string;
+  command?: {
+    data?: {
+      groups?: Array<{
+        name?: string;
+        buckets?: Array<{ id?: string; window?: string; remaining_fraction?: number; reset_time?: string }>;
+      }>;
+    };
+  };
+}
+
+/** agy's `/usage` answer in the language server's shape, or null when it holds no quota. */
+export function agyUsageToQuota(raw: AgyUsageJson | null | undefined): RetrieveUserQuotaSummaryRaw | null {
+  const groups = raw?.status === "SUCCESS" ? raw.command?.data?.groups : undefined;
+  if (!groups?.length) return null;
+  return {
+    response: {
+      groups: groups.map((g) => ({
+        displayName: g.name,
+        buckets: (g.buckets ?? []).map((b) => ({
+          bucketId: b.id,
+          window: b.window,
+          remainingFraction: b.remaining_fraction,
+          resetTime: b.reset_time,
+        })),
+      })),
+    },
+  };
+}
+
+/** agy answers `/usage` in about 3 s; one that has not by then is stuck, and is killed. */
+const AGY_USAGE_TIMEOUT_MS = 15_000;
+
+/**
+ * Quota read by agy itself (`agy -p /usage`), which asks Google directly: it needs no Antigravity
+ * app running, unlike the language server. `accountHome` is an extra account's home, signed in
+ * the way `agyEnv` describes.
+ */
+export async function fetchAntigravityUsageViaAgy(home?: string, accountHome = false): Promise<UsageInfo> {
+  const exe = findAgyExecutable(home);
+  if (!exe) throw new Error("agy is not installed");
+  const proc = spawnAgy(exe, home, accountHome);
+  const [out, err, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  let parsed: AgyUsageJson | null = null;
+  try { parsed = JSON.parse(out) as AgyUsageJson; } catch { /* reported below */ }
+  const quota = agyUsageToQuota(parsed);
+  if (!quota) {
+    const why = (err.trim() || out.trim()).split("\n").at(-1)?.slice(0, 200) || `exit ${code}`;
+    throw new Error(`agy /usage returned no quota: ${why}`);
+  }
+  return parseAntigravityUsage(quota);
+}
+
+function spawnAgy(exe: string, home: string | undefined, accountHome: boolean) {
+  return Bun.spawn([exe, "-p", "/usage", "--output-format", "json"], {
+    cwd: tmpdir(),
+    env: agyEnv(home, accountHome),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: AGY_USAGE_TIMEOUT_MS,
+  });
+}
+
 /** Fetch live quota & account status from the running Antigravity Language Server. */
 export async function fetchAntigravityUsageLive(customHome?: string): Promise<UsageInfo> {
   const conn = await ensureLanguageServerConnection(customHome);
@@ -229,6 +302,15 @@ export async function fetchAntigravityAccountStatus(customHome?: string): Promis
   }
 }
 
+/** agy's reading, or both reasons when the language server and agy each failed. */
+async function viaAgyOr(lsError: Error, home?: string, accountHome = false): Promise<UsageInfo> {
+  try {
+    return await fetchAntigravityUsageViaAgy(home, accountHome);
+  } catch (e) {
+    throw new Error(`${lsError.message} ${(e as Error).message}.`);
+  }
+}
+
 export const antigravityUsageSource: ProviderUsageSource = {
   providerId: "antigravity",
   listAccountIds(): string[] {
@@ -236,7 +318,12 @@ export const antigravityUsageSource: ProviderUsageSource = {
   },
   async fetch(accountId = AMBIENT_ACCOUNT_KEY): Promise<UsageInfo> {
     if (accountId === AMBIENT_ACCOUNT_KEY) {
-      return fetchAntigravityUsageLive();
+      try {
+        return await fetchAntigravityUsageLive();
+      } catch (e) {
+        // The language server runs only while the Antigravity app is open; agy reads the same quota without it.
+        return { ...(await viaAgyOr(e as Error)), lastFetchedAt: new Date().toISOString() };
+      }
     }
     const account = getAntigravityAccount(accountId);
     if (!account) {
@@ -248,7 +335,9 @@ export const antigravityUsageSource: ProviderUsageSource = {
     }
     const status = await fetchAntigravityAccountStatus(account.home || undefined);
     if (!status.connected) {
-      throw new Error(status.error || "Unable to fetch Antigravity account quota");
+      // No language server for this account (the app is closed, or the account is not the app's):
+      // agy reads the quota itself. Email and plan stay as last recorded.
+      status.usage = await viaAgyOr(new Error(status.error || "Unable to fetch Antigravity account quota"), account.home || undefined, !!account.home);
     }
     clearAntigravityAccountAuthFailure(account.id);
     if (status.email || status.planName) {
@@ -260,6 +349,7 @@ export const antigravityUsageSource: ProviderUsageSource = {
     const updated = getAntigravityAccount(account.id) ?? account;
     return {
       ...status.usage,
+      lastFetchedAt: new Date().toISOString(),
       activeAccountId: updated.id,
       activeAccountLabel: formatAntigravityAccountLabel(updated),
     };

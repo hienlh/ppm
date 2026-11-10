@@ -63,6 +63,7 @@ import {
 } from "./acp-event-mapper.ts";
 import { agyEnv, agyMcpServers, agyStoreArgs } from "./acp-launch.ts";
 import { rememberAgyCommands } from "./antigravity-commands.ts";
+import { AUTO_CONTINUE_PROMPT, watchBackgroundTasks, type TaskWatch } from "./background-task-watch.ts";
 
 const log = createLogger("antigravity");
 
@@ -149,6 +150,10 @@ interface LiveSession {
   loading: boolean;
   /** The chat was just created with the shared context in its system prompt, so its first message goes without it. */
   contextInSystemPrompt: boolean;
+  /** When the process started: a background task older than that died with an earlier one. */
+  openedAt: number;
+  /** Between turns, waits for a background task to report back so the chat can carry on. */
+  taskWatch: TaskWatch | null;
   closed: boolean;
 }
 
@@ -437,6 +442,8 @@ export class AntigravityProvider implements AIProvider {
       pendingPermissions: new Map(),
       loading: false,
       contextInSystemPrompt: false,
+      openedAt: Date.now(),
+      taskWatch: null,
       closed: false,
     };
     this.live.set(sessionId, live);
@@ -569,6 +576,8 @@ export class AntigravityProvider implements AIProvider {
 
   /** Queue a prompt behind whatever was sent before it. Only its sending waits, never its turn. */
   private startPrompt(live: LiveSession, message: string, opts?: SendMessageOpts): void {
+    // A prompt opens agy's update stream, which is all a waiting background task needs.
+    this.stopTaskWatch(live);
     live.chain = live.chain.then(async () => {
       if (live.closed || !live.acpSessionId) return;
       const cfg = this.providerConfig();
@@ -621,6 +630,36 @@ export class AntigravityProvider implements AIProvider {
     this.settle(live);
     if (live.closed) return;
     for (const ev of stopReasonEvents(res?.stopReason, live.acpSessionId!, live.usage)) live.channel.push(ev);
+    this.watchTasks(live);
+  }
+
+  /**
+   * After a turn: when a background task agy started is still running, ask the chat socket for
+   * a turn once it reports back, because agy carries on without running a single tool until a
+   * prompt arrives (see background-task-watch.ts).
+   */
+  private watchTasks(live: LiveSession): void {
+    this.stopTaskWatch(live);
+    const conversationId = live.acpSessionId;
+    if (!conversationId) return;
+    const loc = findAntigravityTranscriptPath(conversationId, this.getAllBrainDirs());
+    if (!loc) return;
+    live.taskWatch = watchBackgroundTasks({
+      systemDir: join(loc.brainDir, conversationId, ".system_generated"),
+      conversationId,
+      since: live.openedAt,
+      onReport: () => {
+        live.taskWatch = null;
+        if (live.closed || live.inFlight > 0) return;
+        log.info(`session=${conversationId} a background task reported back after the turn ended: continuing`);
+        live.channel.push({ type: "provider_continue", content: AUTO_CONTINUE_PROMPT });
+      },
+    });
+  }
+
+  private stopTaskWatch(live: LiveSession): void {
+    live.taskWatch?.stop();
+    live.taskWatch = null;
   }
 
   private onPromptFailed(live: LiveSession, err: unknown): void {
@@ -690,6 +729,7 @@ export class AntigravityProvider implements AIProvider {
   private closeLive(live: LiveSession): void {
     if (live.closed) return;
     live.closed = true;
+    this.stopTaskWatch(live);
     for (const [id, entry] of this.live) if (entry === live) this.live.delete(id);
     for (const pending of live.pendingPermissions.values()) {
       live.client.respond(pending.rpcId, { outcome: { outcome: "cancelled" } });

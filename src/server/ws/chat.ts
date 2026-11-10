@@ -1102,6 +1102,24 @@ setTurnRunningProbe((sessionId) => chatService.turnActivity(sessionId).running
   || (activeSessions.get(sessionId)?.phase ?? "idle") !== "idle");
 
 /**
+ * A turn the provider asked for (`provider_continue`), sent the way another session's message is:
+ * every device draws it once the provider has it, and it never answers a pending approval.
+ */
+async function continueFromProvider(sessionId: string, content: string): Promise<void> {
+  const entry = activeSessions.get(sessionId);
+  if (!entry || entry.phase !== "idle" || !content) return;
+  const result = await withSessionLock(sessionId, async () => entry.phase !== "idle" ? null
+    : submitToSession(sessionId, entry, content, {
+      origin: "provider",
+      priority: "next",
+      receivedAt: Date.now(),
+      supersedePendingApproval: false,
+      echoOnHandOff: true,
+    }));
+  if (result && !result.ok) log.error(`session=${sessionId} provider continuation failed: ${result.error}`);
+}
+
+/**
  * Persistent event consumer — runs for the entire session lifetime.
  * First message creates the query; follow-ups push into the provider's
  * message channel. Events from ALL turns flow through this single loop.
@@ -1184,6 +1202,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       // or create replay that would replace the completed assistant history.
       if (evType === "tool_result" && ev.toolUseId?.startsWith("subagent-") && entry.phase === "idle") {
         broadcast(sessionId, event);
+        continue;
+      }
+      // A provider asking for a turn of its own: a follow-up like one the user sends, shown as
+      // their message. Ignored while a turn runs, which reaches the provider anyway.
+      if (evType === "provider_continue") {
+        if (entry.phase === "idle") void continueFromProvider(sessionId, String(ev.content ?? ""));
         continue;
       }
 

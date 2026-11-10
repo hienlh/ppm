@@ -8,7 +8,10 @@ import { formatLastUpdated, formatResetTime } from "@/components/settings/accoun
 import type { AccountUsageEntry } from "@/lib/api-settings";
 import type { AntigravityAccount } from "@/components/settings/accounts/antigravity-accounts-section";
 import { UsagePanelShell } from "./usage-panel-shell";
+import { currentAntigravityUsage, isAntigravityUsageStale } from "@/lib/antigravity-usage-view";
 import type { UsageInfo } from "../../../types/chat";
+
+const STALE_HINT = "Neither agy nor the Antigravity app has answered since, so the bars still show that reading. Check that agy is installed and signed in.";
 
 function atCap(util: number | null | undefined): boolean {
   return Math.round((util ?? 0) * 100) >= 100;
@@ -21,6 +24,7 @@ function toEntry(account: AntigravityAccount, usage: UsageInfo): AccountUsageEnt
     accountStatus: account.status ?? "active",
     isOAuth: true,
     usage: {
+      lastFetchedAt: usage.lastFetchedAt,
       session: usage.session,
       weekly: usage.weekly,
       weeklyScoped: usage.weeklyScoped,
@@ -118,7 +122,7 @@ export function AntigravityUsagePanel({
     if (!onSelectAccount) return;
     const account = accounts.find((a) => a.id === accountId);
     if (!account) return;
-    const refused = unselectableReason(account, usages[accountId] ?? {});
+    const refused = unselectableReason(account, currentAntigravityUsage(usages[accountId] ?? {}));
     if (refused) {
       setPanelError(`Cannot switch to this account — ${refused.toLowerCase()}.`);
       return;
@@ -203,7 +207,7 @@ export function AntigravityUsagePanel({
     >
       {(layout) =>
         accounts.map((a) => {
-          const u = usages[a.id] ?? {};
+          const u = currentAntigravityUsage(usages[a.id] ?? {});
           const activeId = selectedAccountId ?? usage.activeAccountId;
           const isActive = a.id === activeId || (a.email != null && a.email === activeId);
           return (
@@ -218,6 +222,8 @@ export function AntigravityUsagePanel({
               selecting={selectingId === a.id}
               onToggle={handleToggle}
               toggling={togglingId === a.id}
+              usageSourceName="Antigravity"
+              staleUsageHint={isAntigravityUsageStale(u.lastFetchedAt) ? STALE_HINT : null}
             />
           );
         })

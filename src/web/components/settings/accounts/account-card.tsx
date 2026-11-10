@@ -78,6 +78,11 @@ export interface AccountCardProps {
   resetCredits?: ResetCredits;
   /** Control beside the reset count — Codex's "Use reset", which renders only at a limit. */
   resetCreditAction?: ReactNode;
+  /** Who the usage is read from, named in the last-read hint. */
+  usageSourceName?: string;
+  /** Set when the last reading is too old to trust, explaining why; the last-read time then
+   *  shows as a warning. Without it an old reading looks exactly like a fresh one. */
+  staleUsageHint?: string | null;
 }
 
 // Fixed widths so a row scrolls instead of squeezing. Two of them: a read-only card holds a
@@ -89,6 +94,7 @@ export function AccountCard({
   entry, isActive, accountInfo, onToggle, toggling, onDelete, onRename, onExport, onViewProfile, flash,
   onSelect, unselectableReason, selecting, planLabel, dailyGuard, onDailyGuardToggle, dailyGuardToggling,
   reauthHint, onReauth, resetCredits, resetCreditAction, layout = "list",
+  usageSourceName = "Anthropic", staleUsageHint,
 }: AccountCardProps) {
   const { usage } = entry;
   const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet || usage.weeklyScoped?.length;
@@ -344,8 +350,8 @@ export function AccountCard({
         {resetCreditAction}
         {usage.lastFetchedAt && (
           <AccountHint
-            className="inline-flex items-center gap-1"
-            hint={`Usage last read from Anthropic on ${new Date(usage.lastFetchedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}. The bars above are only as current as this.`}
+            className={["inline-flex items-center gap-1", staleUsageHint ? "text-warning" : ""].filter(Boolean).join(" ")}
+            hint={`Usage last read from ${usageSourceName} on ${new Date(usage.lastFetchedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}. ${staleUsageHint ?? "The bars above are only as current as this."}`}
           >
             <RefreshCw className="size-3 shrink-0" aria-hidden />
             {formatLastUpdated(new Date(usage.lastFetchedAt).getTime())}

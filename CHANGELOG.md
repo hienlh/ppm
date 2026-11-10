@@ -6,6 +6,8 @@
 
 - **`ppm export skill` installs from a release binary, and for Antigravity and Codex too.** The skill was copied from `assets/` on disk, which a release binary does not have, so a release could not install it; it is now built into the binary. `--format antigravity` installs it where agy reads user skills (`~/.gemini/config/skills/ppm`), `--format codex` where every Codex account reads them (`~/.agents/skills/ppm`), and `--scope project` puts either in the project's `.agents/skills/ppm`. The skill itself is rewritten against the CLI and HTTP API as they are.
 
+- **Antigravity chats.** Antigravity (Google's `agy` CLI) can be picked as a chat's provider: replies, thinking and tool calls stream as with Claude and Codex, with approvals, Stop, images, agy's own slash commands and skills, extra accounts with a sign-in of their own (Settings → Accounts), a quota panel, and PPM's tab and database tools. Each open chat runs one `agy acp` process. A slow command agy moves to the background no longer ends the chat halfway, and the quota is read from agy itself when the Antigravity app is closed. Needs agy installed and signed in.
+
 ### Fixed
 
 - **`--json` output could not be parsed.** Every command printed the version banner on stdout first; it is now left out when `--json` is given.
