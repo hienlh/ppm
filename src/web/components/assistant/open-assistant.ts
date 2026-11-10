@@ -66,6 +66,27 @@ export function openAssistant(input: OpenAssistantInput = {}): string {
   return id;
 }
 
+/** What an Assistant chat always runs with: the server asks before every change regardless. */
+export const ASSISTANT_PERMISSION = { permissionMode: "default", permissionModeSource: "user" } as const;
+
+/**
+ * A blank chat on `providerId` in the Assistant (Settings' "New session"). Its first message
+ * creates the session, which is a one-off unless no main session exists yet.
+ */
+export function openAssistantNewSession(providerId: string): void {
+  const id = openAssistant({ providerId });
+  if (!id) return;
+  patchTabMetadata(id, {
+    sessionId: undefined,
+    providerId,
+    pendingMessage: undefined,
+    clearedFrom: undefined,
+    ...ASSISTANT_PERMISSION,
+    projectName: ASSISTANT_PROJECT_NAME,
+    assistantChatEpoch: nextAssistantChatEpoch(currentTabMetadata(id)),
+  });
+}
+
 /** The epoch after the one `metadata` carries; the Assistant keys its chat on it. */
 export function nextAssistantChatEpoch(metadata: Record<string, unknown> | undefined): number {
   const epoch = metadata?.assistantChatEpoch;

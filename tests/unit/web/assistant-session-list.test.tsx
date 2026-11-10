@@ -1,6 +1,7 @@
 /**
  * The Assistant runs on Claude and Codex only, so its "New" control offers just the ones of
- * those two that are configured, and its list picks a session with a single tap.
+ * those two that are configured, and its list (in Settings) opens a session with a single tap and
+ * marks the main one.
  */
 import { afterAll, afterEach, expect, it, spyOn } from "bun:test";
 import { act } from "react";
@@ -8,7 +9,8 @@ import { installDom, uninstallDom, mount, click, type Mounted } from "../../help
 
 installDom();
 afterAll(uninstallDom);
-const { AssistantNewSession, AssistantSessionList, useAssistantProviders } = await import("../../../src/web/components/assistant/assistant-session-list");
+const { AssistantNewSession, AssistantSessionList } = await import("../../../src/web/components/settings/assistant/assistant-session-list");
+const { useAssistantProviders } = await import("../../../src/web/hooks/use-assistant-sessions");
 const { clearChatPreparationCache } = await import("../../../src/web/lib/chat-preparation-cache");
 const { api } = await import("../../../src/web/lib/api-client");
 
@@ -25,6 +27,8 @@ function Providers() {
   const { providers } = useAssistantProviders();
   return <output>{providers?.map((p) => p.id).join(",") ?? "loading"}</output>;
 }
+
+const noop = () => {};
 
 it("offers only the configured providers that can run the Assistant, asked of its own project", async () => {
   const get = spyOn(api, "get").mockResolvedValue([
@@ -70,22 +74,26 @@ it("starts a session on the provider whose button was pressed", async () => {
   expect(picked).toEqual(["codex"]);
 });
 
-it("lists the sessions, marks the open one, and picks one with a tap", async () => {
-  const chosen: string[] = [];
+it("lists the sessions, marks the main one, and opens one with a tap", async () => {
+  spies.push(spyOn(api, "get").mockRejectedValue(new Error("no Telegram here") as never));
+  const opened: string[] = [];
   const sessions = [
     { id: "s1", providerId: "claude", title: "Find the failing chat", createdAt: "2026-10-09T01:00:00Z" },
     { id: "s2", providerId: "codex", title: "Query orders", createdAt: "2026-10-09T02:00:00Z" },
     { id: "s3", providerId: "cursor", title: "Not an Assistant provider", createdAt: "2026-10-09T03:00:00Z" },
   ];
-  view = await mount(<AssistantSessionList sessions={sessions} activeSessionId="s2" onSelect={(s) => chosen.push(s.id)} />);
+  view = await mount(<AssistantSessionList sessions={sessions} mainSessionId="s1"
+    onOpen={(s) => opened.push(s.id)} onSetMain={noop} onDelete={noop} />);
   const rows = [...view.container.querySelectorAll("li button")];
   expect(rows.map((r) => r.textContent)).toEqual([expect.stringContaining("Find the failing chat"), expect.stringContaining("Query orders")]);
-  expect(rows[1]!.getAttribute("aria-current")).toBe("true");
-  await click(rows[0]!);
-  expect(chosen).toEqual(["s1"]);
+  expect(rows[0]!.getAttribute("aria-current")).toBe("true");
+  expect(rows[0]!.querySelector("[data-testid=assistant-session-main]")?.textContent).toBe("Main");
+  expect(rows[1]!.querySelector("[data-testid=assistant-session-main]")).toBeNull();
+  await click(rows[1]!);
+  expect(opened).toEqual(["s2"]);
 });
 
 it("says so when there are no sessions yet", async () => {
-  view = await mount(<AssistantSessionList sessions={[]} activeSessionId={null} onSelect={() => {}} />);
+  view = await mount(<AssistantSessionList sessions={[]} mainSessionId={null} onOpen={noop} onSetMain={noop} onDelete={noop} />);
   expect(view.container.textContent).toContain("No Assistant sessions yet.");
 });

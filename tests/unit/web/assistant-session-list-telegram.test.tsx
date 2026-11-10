@@ -14,7 +14,7 @@ afterAll(uninstallDom);
 installGlobal("MutationObserver", (window as unknown as { MutationObserver: unknown }).MutationObserver);
 
 const { act } = await import("react");
-const { AssistantSessionList } = await import("../../../src/web/components/assistant/assistant-session-list");
+const { AssistantSessionList } = await import("../../../src/web/components/settings/assistant/assistant-session-list");
 const { TELEGRAM_BINDING_CHANGED_EVENT, parseAssistantTelegramState } = await import("../../../src/web/hooks/use-assistant-telegram-binding");
 const { api } = await import("../../../src/web/lib/api-client");
 
@@ -29,6 +29,8 @@ const ONE_CHAT = {
 
 let binding: unknown = ONE_CHAT;
 let posts: Array<{ url: string; body: unknown }> = [];
+let setMain: string[] = [];
+let deleted: string[] = [];
 const spies: Array<{ mockRestore(): void }> = [];
 let view: Mounted | null = null;
 const realWidth = window.innerWidth;
@@ -36,6 +38,8 @@ const realWidth = window.innerWidth;
 beforeEach(() => {
   binding = ONE_CHAT;
   posts = [];
+  setMain = [];
+  deleted = [];
   spies.push(
     spyOn(api, "get").mockImplementation((async (url: string) => {
       if (url === "/api/assistant/telegram") return binding;
@@ -62,6 +66,7 @@ const row = (title: string) =>
   [...document.body.querySelectorAll<HTMLButtonElement>('ul[aria-label="Assistant sessions"] button')].find((b) => b.textContent?.includes(title))!;
 const labelOn = (title: string) => row(title).querySelector("[data-testid=assistant-session-telegram]") !== null;
 const menuItems = () => [...document.body.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent?.trim());
+const telegramItems = () => menuItems().filter((t) => t?.includes("Telegram"));
 
 async function rightClick(el: Element): Promise<void> {
   await act(async () => {
@@ -78,7 +83,8 @@ async function longPress(el: Element): Promise<void> {
 }
 
 async function mountList(onSelect: (id: string) => void = () => {}) {
-  view = await mount(<AssistantSessionList sessions={SESSIONS} activeSessionId={null} onSelect={(s) => onSelect(s.id)} />);
+  view = await mount(<AssistantSessionList sessions={SESSIONS} mainSessionId="s1" onOpen={(s) => onSelect(s.id)}
+    onSetMain={(s) => setMain.push(s.id)} onDelete={(s) => deleted.push(s.id)} />);
   await settle();
 }
 
@@ -93,9 +99,10 @@ describe("on a desktop", () => {
   it("puts another session on Telegram from its menu", async () => {
     await mountList();
     await rightClick(row("Query orders"));
-    expect(menuItems()).toEqual(["Use on Telegram"]);
+    // A Codex session cannot be the main one, so its menu has no "Set as main session".
+    expect(menuItems()).toEqual(["Open", "Use on Telegram", "Delete"]);
     binding = { ...ONE_CHAT, chats: [{ ...ONE_CHAT.chats[0]!, sessionId: "s2", sessionTitle: "Query orders" }] };
-    const item = [...document.body.querySelectorAll('[role="menuitem"]')][0]!;
+    const item = [...document.body.querySelectorAll('[role="menuitem"]')].find((el) => el.textContent?.trim() === "Use on Telegram")!;
     await click(item);
     await settle();
     expect(posts).toEqual([{ url: "/api/assistant/telegram/bind", body: { sessionId: "s2", chatId: "42" } }]);
@@ -107,18 +114,48 @@ describe("on a desktop", () => {
   it("offers nothing to do for the session the chat already talks to", async () => {
     await mountList();
     await rightClick(row("Morning check"));
-    const item = document.body.querySelector('[role="menuitem"]')!;
+    const item = [...document.body.querySelectorAll('[role="menuitem"]')].find((el) => el.textContent?.includes("Telegram"))!;
     expect(item.textContent?.trim()).toBe("On Telegram");
     expect(item.getAttribute("aria-disabled") ?? item.getAttribute("data-disabled")).not.toBeNull();
   });
 
-  it("has no menu while the bridge is off or no chat is connected, and a tap still selects", async () => {
+  it("offers Set as main session on a Claude session that is not the main one, and Delete on every one", async () => {
+    view = await mount(<AssistantSessionList sessions={[...SESSIONS, { id: "s3", providerId: "claude", title: "Evening", createdAt: "2026-10-11T03:00:00Z" }]}
+      mainSessionId="s1" onOpen={() => {}} onSetMain={(s) => setMain.push(s.id)} onDelete={(s) => deleted.push(s.id)} />);
+    await settle();
+    await rightClick(row("Morning check"));
+    expect(menuItems()).not.toContain("Set as main session");
+    await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    await settle();
+    await rightClick(row("Evening"));
+    const setAsMain = [...document.body.querySelectorAll('[role="menuitem"]')].find((el) => el.textContent?.trim() === "Set as main session")!;
+    await click(setAsMain);
+    await settle();
+    expect(setMain).toEqual(["s3"]);
+  });
+
+  it("deletes a session only after the confirmation", async () => {
+    await mountList();
+    await rightClick(row("Query orders"));
+    await click([...document.body.querySelectorAll('[role="menuitem"]')].find((el) => el.textContent?.trim() === "Delete")!);
+    await settle();
+    expect(deleted).toEqual([]);
+    expect(document.body.textContent).toContain("Delete this session?");
+    const confirm = [...document.body.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Delete").at(-1)!;
+    await click(confirm);
+    await settle();
+    expect(deleted).toEqual(["s2"]);
+  });
+
+  it("has no Telegram item while the bridge is off or no chat is connected, and a tap still opens", async () => {
     for (const off of [{ ...ONE_CHAT, enabled: false }, { ...ONE_CHAT, chats: [] }]) {
       binding = off;
       const picked: string[] = [];
       await mountList((id) => picked.push(id));
       await rightClick(row("Query orders"));
-      expect(menuItems()).toEqual([]);
+      expect(telegramItems()).toEqual([]);
+      await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+      await settle();
       await click(row("Query orders"));
       expect(picked).toEqual(["s2"]);
       await view!.unmount();
@@ -140,7 +177,7 @@ describe("on a desktop", () => {
     await mountList();
     expect(labelOn("Morning check")).toBe(false);
     await rightClick(row("Query orders"));
-    expect(menuItems()).toEqual([]);
+    expect(telegramItems()).toEqual([]);
   });
 });
 

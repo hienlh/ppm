@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api-client";
 import { useAssistantTelegramBinding } from "@/hooks/use-assistant-telegram-binding";
-import { useAssistantSessions } from "@/components/assistant/assistant-session-list";
+import { useAssistantSessions } from "@/hooks/use-assistant-sessions";
 import type { TelegramChatInfo } from "../../../shared/notification-settings";
 import type { PPMBotTelegramStatus } from "../../../shared/ppmbot-telegram";
 import { SectionHeader, SwitchRow } from "./settings-rows";
@@ -51,7 +51,7 @@ export function parseDebounceMs(text: string): number | null {
   return value <= DEBOUNCE_MAX_MS ? value : null;
 }
 
-export function AssistantTelegramSettings() {
+export function AssistantTelegramSettings({ embedded = false }: { embedded?: boolean } = {}) {
   const [status, setStatus] = useState<PPMBotTelegramStatus | null>(null);
   const [options, setOptions] = useState<AssistantTelegramOptions | null>(null);
   const [debounceText, setDebounceText] = useState("");
@@ -149,13 +149,12 @@ export function AssistantTelegramSettings() {
     return `Talks to “${title || "Untitled session"}”`;
   };
 
+  const intro = "Talk to the PPM Assistant from Telegram, through a bot of its own. A connected chat shares one "
+    + "Assistant session with PPM, and everything it asks to change still waits for your Allow — connect only your own chat.";
   return (
     <section className="space-y-3" data-testid="assistant-telegram-settings">
-      <SectionHeader title="Telegram">
-        Talk to the PPM Assistant from Telegram, through a bot of its own. A connected chat shares one
-        Assistant session with PPM, and everything it asks to change still waits for your Allow — connect
-        only your own chat.
-      </SectionHeader>
+      {/* Inside a card already titled Telegram, only the explanation is repeated. */}
+      {embedded ? <p className="text-xs leading-relaxed text-muted-foreground">{intro}</p> : <SectionHeader title="Telegram">{intro}</SectionHeader>}
       {loadError && <p className="text-xs text-error" role="alert">{loadError}</p>}
 
       {status?.configured && (
@@ -184,7 +183,7 @@ export function AssistantTelegramSettings() {
               <p className="text-xs text-muted-foreground">Chats that can use the Assistant</p>
               <TelegramChatList chats={chats} detail={sessionOf} onDisconnect={(chat) => void disconnect(chat)} />
               <p className="text-xs leading-relaxed text-muted-foreground">
-                To move a chat to another conversation, send /sessions or /new there, or choose Use on Telegram on a session in the Assistant.
+                To move a chat to another conversation, send /sessions or /new there, or choose Use on Telegram on a session in the list above.
               </p>
             </div>
           )}

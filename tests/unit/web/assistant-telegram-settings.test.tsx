@@ -249,10 +249,10 @@ describe("where the old PPMBot pane went", () => {
     expect(Object.keys(SECTIONS)).not.toContain("ppmbot");
   });
 
-  it("leads an old `ppmbot` link to PPM Assistant → Telegram", () => {
+  it("leads an old `ppmbot` link to PPM Assistant → Sessions & Telegram", () => {
     useAssistantSettingsTab.setState({ tab: "general" });
     expect(resolveSettingsLink("ppmbot")).toBe("assistant");
-    expect(useAssistantSettingsTab.getState().tab).toBe("telegram");
+    expect(useAssistantSettingsTab.getState().tab).toBe("sessions");
     // Real ids pass through and leave the sub-tab alone; anything else names nothing.
     useAssistantSettingsTab.setState({ tab: "general" });
     expect(resolveSettingsLink("assistant")).toBe("assistant");
@@ -262,7 +262,7 @@ describe("where the old PPMBot pane went", () => {
     expect(useAssistantSettingsTab.getState().tab).toBe("general");
   });
 
-  it("opens the pane on the Telegram sub-tab and keeps the General draft when switching back", async () => {
+  it("opens the pane on the Sessions & Telegram sub-tab and keeps the General draft when switching back", async () => {
     serve(
       on("GET", "/api/settings/clawbot/telegram", ok(READY)),
       on("GET", "/api/assistant/settings", ok({
@@ -275,13 +275,14 @@ describe("where the old PPMBot pane went", () => {
     view = await mount(<AssistantSettingsSection />);
     await settle();
     const pane = document.body.querySelector("[data-testid=assistant-settings]")!;
-    expect(pane.getAttribute("data-tab")).toBe("telegram");
+    expect(pane.getAttribute("data-tab")).toBe("sessions");
     expect(text()).toContain("Use the Assistant on Telegram");
+    expect(text()).toContain("Telegram follows the main session.");
 
     await click(button("General"));
     await settle();
     await typeInto(document.body.querySelector("#asst-instructions") as HTMLTextAreaElement, "Answer in Vietnamese.");
-    await click(button("Telegram"));
+    await click(button("Sessions & Telegram"));
     await settle();
     await click(button("General"));
     await settle();

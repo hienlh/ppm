@@ -2,17 +2,21 @@
  * Which sub-tab Settings → PPM Assistant shows, and where retired category ids now lead.
  *
  * A store rather than component state so a link from outside the pane can land on a given
- * sub-tab: the old Settings → PPMBot (`ppmbot`) is now the Telegram sub-tab here, and that id
- * still arrives from a remembered window, a persisted tab or an AI asking for it by name.
+ * sub-tab (`openAssistantSettings("managers")` in `open-assistant-settings.ts`): the old Settings → PPMBot (`ppmbot`) is now the
+ * Sessions & Telegram sub-tab here, and that id still arrives from a remembered window, a
+ * persisted tab or an AI asking for it by name.
  */
 import { create } from "zustand";
 import { isSettingsCategoryId, type SettingsCategoryId } from "./settings-categories";
 
-export type AssistantSettingsTabId = "general" | "telegram";
+export type AssistantSettingsTabId = "general" | "sessions" | "digest" | "managers" | "notebook";
 
 export const ASSISTANT_SETTINGS_TABS: { id: AssistantSettingsTabId; label: string }[] = [
   { id: "general", label: "General" },
-  { id: "telegram", label: "Telegram" },
+  { id: "sessions", label: "Sessions & Telegram" },
+  { id: "digest", label: "Digest & quiet hours" },
+  { id: "managers", label: "Manager chats" },
+  { id: "notebook", label: "Notebook" },
 ];
 
 export const useAssistantSettingsTab = create<{
@@ -25,7 +29,7 @@ export const useAssistantSettingsTab = create<{
 
 /** Ids no longer in the rail, and the pane plus sub-tab each one moved to. */
 const RETIRED_CATEGORIES: Record<string, { category: SettingsCategoryId; assistantTab: AssistantSettingsTabId }> = {
-  ppmbot: { category: "assistant", assistantTab: "telegram" },
+  ppmbot: { category: "assistant", assistantTab: "sessions" },
 };
 
 /**

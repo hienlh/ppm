@@ -11,12 +11,9 @@ import { currentTabMetadata, patchTabMetadata } from "@/lib/patch-tab-metadata";
 import { readChatPreparationSettings } from "@/lib/chat-preference-local-cache";
 import { getAssistantSettings } from "@/lib/assistant-settings-api";
 import { useAssistantMainSession } from "@/hooks/use-assistant-main-session";
-import { nextAssistantChatEpoch } from "./open-assistant";
-import { useAssistantProviders, useAssistantSessions } from "./assistant-session-list";
+import { useAssistantProviders, useAssistantSessions } from "@/hooks/use-assistant-sessions";
+import { ASSISTANT_PERMISSION, nextAssistantChatEpoch } from "./open-assistant";
 import { ASSISTANT_PROJECT_NAME } from "../../../shared/assistant-project";
-
-/** What an Assistant chat always runs with: the server asks before every change regardless. */
-const ASSISTANT_PERMISSION = { permissionMode: "default", permissionModeSource: "user" } as const;
 
 const str = (v: unknown) => (typeof v === "string" && v ? v : null);
 
