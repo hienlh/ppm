@@ -226,7 +226,7 @@ export async function s21(ctx, chat, sessionId, other) {
   const shows = async (dev, id, name) => {
     const latest = await latestOf(id);
     await kit.chatRoot(dev).getByText(`Turn "${latest.label}" done.`).first().waitFor({ timeout: 20000 });
-    assert.equal(await dev.page.locator('[class*="@container/assistant"]:visible').count(), 1, `one Assistant on screen (${dev.name})`);
+    assert.equal(await dev.page.locator("[data-assistant-body]:visible").count(), 1, `one Assistant on screen (${dev.name})`);
     await kit.shot(dev, name);
   };
   for (const dev of [kit.devices.desktop, kit.devices.phone]) {
