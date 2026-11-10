@@ -375,7 +375,6 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `PATCH  /api/project/:projectName/chat/sessions/:id/tag`
 - `DELETE /api/project/:projectName/chat/sessions/:id/tag`
 - `POST   /api/project/:projectName/chat/sessions/:id/fork`
-- `GET    /api/project/:projectName/chat/sessions/:id/logs`
 - `GET    /api/project/:projectName/chat/sessions/:id/debug`
 - `GET    /api/project/:projectName/chat/sessions/:id/usage`
 - `GET    /api/project/:projectName/chat/sessions/:id/images`
@@ -395,6 +394,11 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `POST   /api/project/:projectName/chat/sessions/:id/file-changes/undo`
 - `POST   /api/project/:projectName/chat/sessions/:id/file-changes/revert-turn`
 - `GET    /api/project/:projectName/chat/sessions/:id/file-changes/diff`
+- `GET    /api/project/:projectName/chat/sessions/:id/turns`
+- `GET    /api/project/:projectName/chat/sessions/:id/turns/:turnId`
+- `GET    /api/project/:projectName/chat/sessions/:id/turn-window`
+- `GET    /api/project/:projectName/chat/sessions/:id/links`
+- `POST   /api/project/:projectName/chat/sessions/:id/stop-children`
 
 ## /api/project/:projectName/chat/prepare
 
@@ -609,10 +613,6 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 ## /api/sessions-collab
 
 - `POST   /api/sessions-collab/approvals/:requestId`
-- `GET    /api/sessions-collab/sessions/:id/links`
-- `GET    /api/sessions-collab/projectPath`
-- `POST   /api/sessions-collab/sessions/:id/stop-children`
-- `GET    /api/sessions-collab/projectPath`
 
 ## /api/settings
 
@@ -640,7 +640,6 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `DELETE /api/settings/query-audit/logs`
 - `GET    /api/settings/storage`
 - `PUT    /api/settings/session-trace`
-- `GET    /api/settings/session_trace`
 - `GET    /api/settings/clawbot`
 - `PUT    /api/settings/clawbot`
 - `GET    /api/settings/clawbot/paired`
@@ -789,4 +788,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.23.37 -->
+<!-- Generated from src/server/routes/ for PPM v0.24.0 -->
