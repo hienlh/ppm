@@ -1,0 +1,16 @@
+
+ RUN  v2.1.8 /work
+
+ ❯ src/x.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/x.test.ts [ src/x.test.ts ]
+Error: Failed to load url ./nope (resolved id: ./nope) in /work/src/x.test.ts. Does the file exist?
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Duration  180ms
+exit=1

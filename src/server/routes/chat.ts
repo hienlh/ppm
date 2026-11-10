@@ -47,6 +47,21 @@ import { pageHistory, parseHistoryPageQuery } from "./chat-history-page.ts";
 import { ok, err } from "../../types/api.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { THINKING_ADAPTIVE, VALID_EFFORT_VALUES } from "../../providers/claude-agent-sdk-query-options.ts";
+import { createSpec } from "../../services/specs/spec.service.ts";
+import { isSpecChecks, isSpecKind, isSpecWorkflow, type SpecChecks, type SpecKind, type SpecWorkflow } from "../../shared/spec-types.ts";
+
+/** The `spec` a new chat may ask for: which kind, where it starts, its checks and a title. */
+function parseSpecStart(v: unknown): { kind: SpecKind; workflow: SpecWorkflow; checks: SpecChecks; title: string } | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  if (!isSpecKind(o.kind)) return null;
+  return {
+    kind: o.kind,
+    workflow: isSpecWorkflow(o.workflow) ? o.workflow : "requirements-first",
+    checks: isSpecChecks(o.checks) ? o.checks : "standard",
+    title: typeof o.title === "string" ? o.title.trim().slice(0, 120) : "",
+  };
+}
 import { createLogger } from "../../services/logger.ts";
 
 const log = createLogger("chat");
@@ -502,7 +517,7 @@ chatRoutes.post("/sessions", async (c) => {
   try {
     const projectName = c.get("projectName");
     const projectPath = c.get("projectPath");
-    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string; designSlug?: unknown }>();
+    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string; designSlug?: unknown; spec?: unknown }>();
     // A design session is only created on a provider that will carry its instructions;
     // anywhere else it would silently be an ordinary chat that believes it is not.
     const designSlug = body.designSlug;
@@ -523,6 +538,18 @@ chatRoutes.post("/sessions", async (c) => {
     });
     if (body.clearedFrom) setSessionClearedFrom(session.id, body.clearedFrom);
     if (isValidDesignSlug(designSlug)) setSessionDesignSlug(session.id, designSlug);
+    // A chat started in Spec mode: its spec is created now, bound to it, so the first message
+    // already carries the spec's rules. A spec that cannot be created leaves an ordinary chat.
+    let spec: { slug: string } | undefined;
+    const specStart = parseSpecStart(body.spec);
+    if (specStart && !isValidDesignSlug(designSlug)) {
+      try {
+        const v = await createSpec(projectPath, { ...specStart, title: specStart.title || body.title || "Spec", sessionId: session.id });
+        spec = { slug: v.slug };
+      } catch (e) {
+        log.warn(`session=${session.id} spec could not be created: ${(e as Error).message}`);
+      }
+    }
     // The tab claimed an account when it opened and showed its name; honour that here so
     // the first message runs on the account the user was actually looking at. Advisory,
     // never authoritative: bindPickedAccount re-checks the id against the server's own
@@ -532,7 +559,7 @@ chatRoutes.post("/sessions", async (c) => {
     // Auto-assign default tag if project has one
     const defaultTagId = getProjectDefaultTagId(projectPath);
     if (defaultTagId) setSessionTag(session.id, defaultTagId, projectPath);
-    return c.json(ok(session), 201);
+    return c.json(ok(spec ? { ...session, spec } : session), 201);
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }

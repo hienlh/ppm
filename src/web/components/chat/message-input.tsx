@@ -83,6 +83,10 @@ export interface ChatAttachment {
 export type MessagePriority = 'now' | 'next' | 'later';
 
 interface MessageInputProps {
+  /** Rendered after the mode chip: the chat's workflow (Spec mode). */
+  workflowSlot?: React.ReactNode;
+  /** Rendered under the permission modes in the Modes menu; `close` shuts the menu. */
+  modeMenuFooter?: (close: () => void) => React.ReactNode;
   pendingContexts?: Array<{ text: string; label?: string }>;
   onContextsConsumed?: () => void;
   draftReady?: boolean;
@@ -177,6 +181,8 @@ interface MessageInputProps {
 }
 
 export const MessageInput = memo(function MessageInput({
+  workflowSlot,
+  modeMenuFooter,
   tabId,
   pendingContexts,
   onContextsConsumed,
@@ -1120,9 +1126,11 @@ export const MessageInput = memo(function MessageInput({
                 onChange={(m) => onModeChange?.(m)}
                 open={modeSelectorOpen}
                 onOpenChange={setModeSelectorOpen}
+                footer={modeMenuFooter?.(() => setModeSelectorOpen(false))}
               />
             </div>
           )}
+          {workflowSlot}
           {onModelChange && projectName && (
             <div data-model-slot="" className="flex min-w-0">
               <ModelThinkingSelector

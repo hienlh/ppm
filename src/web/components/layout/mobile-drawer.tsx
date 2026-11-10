@@ -36,11 +36,13 @@ import { cn } from "@/lib/utils";
 // Lazy so the design UI stays out of the entry bundle until the section is opened.
 const DesignsSidebarPanel = lazy(() =>
   import("@/components/design/designs-sidebar-panel").then((m) => ({ default: m.DesignsSidebarPanel })));
+const SpecsSidebarPanel = lazy(() =>
+  import("@/components/spec/specs-sidebar-panel").then((m) => ({ default: m.SpecsSidebarPanel })));
 
 // Tab ids the mobile drawer can render content for;
 // ext views are supported via the `ext:` prefix.
 const MOBILE_SUPPORTED = new Set<string>([
-  "history", "teams", "designs", "explorer", "search", "git", "database", "tunnels", "ai-resources", "jira",
+  "history", "teams", "designs", "specs", "explorer", "search", "git", "database", "tunnels", "ai-resources", "jira",
 ]);
 const isMobileSupported = (id: SidebarActiveTab) => MOBILE_SUPPORTED.has(id) || id.startsWith("ext:");
 
@@ -195,6 +197,9 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           {activeTab === "teams" && (activeProject ? <GroupList /> : noProject)}
           {activeTab === "designs" && (activeProject
             ? <Suspense fallback={null}><DesignsSidebarPanel onNavigate={onClose} /></Suspense>
+            : noProject)}
+          {activeTab === "specs" && (activeProject
+            ? <Suspense fallback={null}><SpecsSidebarPanel onNavigate={onClose} /></Suspense>
             : noProject)}
           {isOpen && activeTab === "explorer" && (activeProject ? <FileTree onFileOpen={onClose} /> : noProject)}
           {isOpen && activeTab === "search" && <SearchPanel onNavigate={onClose} />}
