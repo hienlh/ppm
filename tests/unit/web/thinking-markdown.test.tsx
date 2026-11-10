@@ -8,6 +8,24 @@ const { markdownRendererImport } = await import("../../../src/web/components/cha
 await markdownRendererImport;
 afterAll(uninstallDom);
 
+test("text streaming is labeled Responding and completion removes the status", async () => {
+  const events = [{ type: "text" as const, content: "Finished answer." }];
+  const streaming = await mount(<InterleavedEvents events={events} isStreaming />);
+  try {
+    expect(streaming.container.textContent).toContain("Responding...");
+    expect(streaming.container.textContent).not.toContain("Thinking");
+  } finally {
+    await streaming.unmount();
+  }
+  const completed = await mount(<InterleavedEvents events={events} isStreaming={false} />);
+  try {
+    expect(completed.container.textContent).toContain("Finished answer.");
+    expect(completed.container.textContent).not.toContain("Responding...");
+  } finally {
+    await completed.unmount();
+  }
+});
+
 test("Codex summary sections render as separate bold paragraphs, with working collapse", async () => {
   const events = [
     { method: "item/reasoning/summaryPartAdded", params: { summaryIndex: 0 } },

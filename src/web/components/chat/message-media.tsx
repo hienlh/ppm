@@ -16,8 +16,12 @@ import { collectGallery, GALLERY_ITEM_ATTR } from "@/lib/image-gallery";
 /** Image extensions that can be previewed inline */
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
-/** Build a preview URL for an uploaded file (served from /chat/uploads/:filename) */
+/** Native provider attachments keep absolute paths; legacy uploads may keep only a name. */
 export function uploadPreviewUrl(filePath: string, projectName?: string): string {
+  // Uploads remain addressable by name after a session is moved between machines.
+  if (/^(\/|[A-Za-z]:[/\\])/.test(filePath) && !/[/\\]uploads[/\\][^/\\]+$/.test(filePath)) {
+    return `/api/fs/raw?path=${encodeURIComponent(filePath)}`;
+  }
   const filename = basename(filePath);
   // Use a generic project name — the upload route is project-scoped but files are global
   return `/api/project/${encodeURIComponent(projectName ?? "_")}/chat/uploads/${encodeURIComponent(filename)}`;

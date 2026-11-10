@@ -223,7 +223,7 @@ function StreamingText({ content, animate: isStreaming, projectName }: { content
     <>
       <MarkdownContent content={content} projectName={projectName} isStreaming={isStreaming} />
       {isStreaming && (
-        <span className="text-text-subtle text-sm animate-pulse">Thinking...</span>
+        <span className="text-text-subtle text-sm animate-pulse">Responding...</span>
       )}
     </>
   );

@@ -597,7 +597,9 @@ export class CodexAppServerProvider implements AIProvider {
       }
       if (!live.client.isClosed) live.channel.push({ type: "error", message: redactTruncate(reason, 256) });
       // No turn is running, so nothing will report `turn/completed` — release the
-      // queue here or every later follow-up waits on a turn that never existed.
+      // UI as well as the queue. The channel stays open for later turns, so an
+      // error alone leaves the chat displaying Thinking indefinitely.
+      live.channel.push({ type: "done", sessionId: live.threadId ?? "", resultSubtype: "error_during_execution" });
       this.endTurn(live);
     });
   }
