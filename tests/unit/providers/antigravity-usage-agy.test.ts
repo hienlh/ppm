@@ -57,9 +57,12 @@ describe("fetchAntigravityUsageViaAgy", () => {
 
   /** A stand-in agy that prints `stdout` and records the arguments it was given. */
   function fakeAgy(stdout: string, exitCode = 0): string {
-    const exe = join(dir, "agy");
+    const win = process.platform === "win32";
+    const exe = join(dir, win ? "agy.cmd" : "agy");
     writeFileSync(join(dir, "out.json"), stdout);
-    writeFileSync(exe, `#!/bin/sh\necho "$@" > "${dir}/args"\ncat "${dir}/out.json"\nexit ${exitCode}\n`);
+    writeFileSync(exe, win
+      ? `@echo off\r\n>"${join(dir, "args")}" echo %*\r\ntype "${join(dir, "out.json")}"\r\nexit /b ${exitCode}\r\n`
+      : `#!/bin/sh\necho "$@" > "${dir}/args"\ncat "${dir}/out.json"\nexit ${exitCode}\n`);
     chmodSync(exe, 0o755);
     process.env.ANTIGRAVITY_AGY_EXE = exe;
     return exe;
@@ -75,7 +78,7 @@ describe("fetchAntigravityUsageViaAgy", () => {
   it("asks agy for /usage as JSON and returns the buckets as utilization", async () => {
     fakeAgy(JSON.stringify(AGY_USAGE));
     const usage = await fetchAntigravityUsageViaAgy();
-    expect(await Bun.file(join(dir, "args")).text()).toBe("-p /usage --output-format json\n");
+    expect((await Bun.file(join(dir, "args")).text()).replace(/\r\n/g, "\n")).toBe("-p /usage --output-format json\n");
     expect(usage.weekly?.utilization).toBeCloseTo(1 - 0.5375659465789795, 6);
     expect(usage.session?.utilization).toBeCloseTo(1 - 0.9392018914222717, 6);
     expect(usage.session?.resetsAt).toBe("2026-11-09T06:27:33Z");

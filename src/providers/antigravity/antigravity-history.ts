@@ -134,13 +134,16 @@ export function isAntigravitySessionInProject(
   } catch { /* DB may not be initialized in isolated unit tests */ }
 
   try {
+    // The transcript is JSON lines, so a Windows path in it reads `C:\\Users\\…`: an escaped
+    // backslash is part of the path, any other escape (`\n`) ends it.
     const raw = readFileSync(transcriptPath, "utf-8");
-    const cwdMatch = /Command Working Directory:\s*([^\r\n"\\]+)/i.exec(raw);
+    const cwdMatch = /Command Working Directory:\s*((?:[^\r\n"\\]|\\\\)+)/i.exec(raw);
     if (cwdMatch?.[1]) {
-      const normCwd = normalizePathForMatch(cwdMatch[1].trim());
+      const normCwd = normalizePathForMatch(cwdMatch[1].replace(/\\\\/g, "\\").trim());
       return normCwd === normProject || normCwd.startsWith(`${normProject}/`);
     }
-    const haystack = process.platform === "win32" ? raw.toLowerCase() : raw;
+    // Tool arguments are JSON inside JSON, so there a Windows separator is four backslashes.
+    const haystack = process.platform === "win32" ? raw.replace(/\\+/g, "/").toLowerCase() : raw;
     const escaped = normProject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const boundaryRe = new RegExp(`${escaped}(?:[/\\\\"\\r\\n]|$)`);
     return boundaryRe.test(haystack);

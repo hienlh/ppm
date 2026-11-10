@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseHttpPortFromLsLog } from "../../../src/providers/antigravity/antigravity-connection.ts";
@@ -27,6 +28,7 @@ import { closeDb, getSessionAccount } from "../../../src/services/db.service.ts"
 import { discoverSkillRoots } from "../../../src/services/slash-discovery/discover-skill-roots.ts";
 import { buildSharedProviderContext } from "../../../src/services/provider-shared-context.ts";
 import type { ChatEvent } from "../../../src/types/chat.ts";
+import { rmRetrying } from "../../helpers/rm-retrying.ts";
 
 describe("AntigravityProvider & ecosystem integration", () => {
   let tempHome: string;
@@ -38,8 +40,8 @@ describe("AntigravityProvider & ecosystem integration", () => {
     mkdirSync(projectDir, { recursive: true });
   });
 
-  afterEach(() => {
-    rmSync(tempHome, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmRetrying(tempHome, 20);
   });
 
   it("parses HTTP port from language_server.log", () => {
@@ -237,13 +239,14 @@ describe("AntigravityProvider & ecosystem integration", () => {
       "utf-8",
     );
 
-    const prevHome = process.env.HOME;
-    process.env.HOME = tempHome;
+    // Bun reads the home directory once, so HOME set here would leave the real ~/.gemini in play.
+    const home = spyOn(os, "homedir").mockReturnValue(tempHome);
     invalidateAll();
     try {
       const rootsAll = discoverSkillRoots(proj21);
-      const agentsRoot = rootsAll.find((r) => r.path.endsWith(".agents/skills"));
-      const geminiRoot = rootsAll.find((r) => r.path.includes(".gemini/antigravity"));
+      const slashed = (p: string) => p.replaceAll("\\", "/");
+      const agentsRoot = rootsAll.find((r) => slashed(r.path).endsWith(".agents/skills"));
+      const geminiRoot = rootsAll.find((r) => slashed(r.path).includes(".gemini/antigravity"));
       expect(agentsRoot?.source).toBe("project-agents" as any);
       expect(geminiRoot?.source).toBe("user-antigravity" as any);
 
@@ -263,7 +266,7 @@ describe("AntigravityProvider & ecosystem integration", () => {
       const directAgy = (listSlashItems as any)(proj21, "antigravity") as Array<{ name: string }>;
       expect(directAgy.map((i) => i.name)).toContain("foo-agy-skill");
     } finally {
-      process.env.HOME = prevHome;
+      home.mockRestore();
       invalidateAll();
     }
   });
@@ -318,7 +321,7 @@ describe("AntigravityProvider & ecosystem integration", () => {
     writeFileSync(join(projectDir, ".agents", "rules", "style.md"), "Keep files under 200 lines.", "utf-8");
 
     const roots = discoverSkillRoots(projectDir);
-    expect(roots.some((r) => r.path.endsWith(".agents/skills"))).toBe(true);
+    expect(roots.some((r) => r.path.replaceAll("\\", "/").endsWith(".agents/skills"))).toBe(true);
 
     const provider = new AntigravityProvider({ customHome: tempHome });
     const ctxForClaude = await buildSharedProviderContext(projectDir, [provider], {

@@ -12,6 +12,7 @@ import { createAntigravityAccount, removeAntigravityAccount } from "../../../src
 import { configService } from "../../../src/services/config.service.ts";
 import { getConfigValue, getSessionAccount, openTestDb, setDb } from "../../../src/services/db.service.ts";
 import type { ChatEvent } from "../../../src/types/chat.ts";
+import { rmRetrying } from "../../helpers/rm-retrying.ts";
 
 const FAKE_AGY = resolve(import.meta.dir, "../../fixtures/fake-agy-acp.ts");
 const NEW_ID = "4d0c6a5e-1111-4222-8333-444455556666";
@@ -61,8 +62,10 @@ describe("AntigravityProvider over agy acp", () => {
     logFile = join(tempHome, "agy.log");
   });
 
-  afterEach(() => {
-    rmSync(tempHome, { recursive: true, force: true });
+  afterEach(async () => {
+    // A stopped agy is still exiting when its chat ends, and Windows will not delete the folder
+    // it runs in until it has.
+    await rmRetrying(tempHome, 20);
     // The slash commands a chat stored would otherwise reach the next test file in this process.
     setDb(openTestDb());
   });
@@ -405,7 +408,8 @@ describe("AntigravityProvider over agy acp", () => {
     const p = new AntigravityProvider({ customHome: tempHome, agyCommand: [join(tempHome, "no-such-agy")] });
     const run = consume(p.sendMessage((await p.createSession({ projectPath: projectDir })).id, "hello"));
     await run.finished;
-    expect(run.events.find((e) => e.type === "error")).toMatchObject({ message: expect.stringContaining("ENOENT") });
+    // Linux names the errno; Bun on Windows says "Executable not found" with no code.
+    expect(run.events.find((e) => e.type === "error")).toMatchObject({ message: expect.stringMatching(/ENOENT|Executable not found/) });
     expect(run.events.at(-1)).toMatchObject({ type: "done", resultSubtype: "error_during_execution" });
   });
 });
