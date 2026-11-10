@@ -750,7 +750,8 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
 `src/shared/assistant-cards.ts`, routes in `src/server/routes/assistant-cards.ts`.
 
 - **Two sources.** A project's manager chat files `report_to_assistant` (`manager-report-tool.ts`):
-  `needs_decision`, `urgent`, `done`, `failed`, and `digest` while a digest ask is open. What PPM
+  `needs_decision`, `urgent`, `done` and `failed`; a `digest` answer makes no card of its own and
+  goes to the morning digest while its ask is open (see [Morning digest](#morning-digest)). What PPM
   sees in the manager chat itself (`manager-signals.ts`) adds an `approval` or `question` card
   mirroring its own request, and a `failed` card for a turn that failed with no report within
   `FAILED_CARD_GRACE_MS` (a stop the user asked for, a rate limit or an overloaded provider is
@@ -782,7 +783,7 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
 
 `src/services/assistant-wake/assistant-wake-queue.ts` is the one door through which PPM starts an
 Assistant turn on its own. Its sources are the watches, the card news (`done`, `failed`, `urgent`,
-the digest; for the main session) and late manager replies (`manager-wake-sources.ts`). It starts
+the morning digest; for the main session) and late manager replies (`manager-wake-sources.ts`). It starts
 at most `WAKE_TURNS_PER_HOUR` per Assistant session, never while that session runs a turn or shows
 a card, and during quiet hours only when something urgent waits; news held back goes into the next
 turn together. The turn opens with a fixed sentence and carries the news in the shared-context
@@ -886,7 +887,10 @@ the Assistant session that set the watch, or to every connected chat when that s
 unbound. Pressing a button answers the watched chat directly, with no model turn — safe because a
 person pressed it, and the Allow rule guarantees they saw what it allows. The relay also sends
 reports of unbound sessions' watches to every connected chat. A card is shown once per chat, even
-when two watches and `/status` all want it.
+when two watches and `/status` all want it. In quiet hours a watched chat's card is held
+(`assistant-telegram-quiet-hold.ts`) and sent when they end, to the chats bound then, only if that
+chat still shows the request; one answered meanwhile is skipped. The hold is in memory: a restart
+drops it, and the card itself stays in PPM for as long as the chat shows it.
 
 ### Manager cards, replies and quiet hours
 
@@ -933,7 +937,44 @@ an urgent report is already a held decision. A clock timer at the window's end �
 starting after a window that ended while PPM was off — sends "While you were away: N items" and
 the held cards, oldest first, skipping any that stopped waiting meanwhile. The end is worked out in
 the user's zone, corrected once for a clock change inside the window. The user's own conversation
-with the Assistant is never held, and wake turns are held by the wake queue itself.
+with the Assistant is never held, and wake turns are held by the wake queue itself. A watched
+chat's approval or question is held too (see Relayed cards above): only `urgent` reaches the phone
+in quiet hours.
+
+### Morning digest
+
+`src/services/assistant-digest/`. Once a day, at `digest.time` in `timezone` (Settings → PPM
+Assistant; on by default at 08:00, the zone being the one the browser saved, else the server's),
+PPM asks every manager chat whose digest switch is on (`PATCH /api/assistant/managers/:project
+{digest}`) for a short status, and puts the answers on one "Morning digest" card.
+
+- **One timer.** `digest-next-fire.ts` works out the next `HH:MM` on the zone's clock from `Intl`
+  offsets (a time a spring-forward night skips becomes the first minute after it), and the service
+  arms one timer on the injectable clock for it. A Settings save re-arms it. Tests move the clock.
+- **The ask** is fixed PPM text (`DIGEST_ASK_TEXT`), delivered through the session door with origin
+  `session`, the main Assistant session as sender, a provenance block (`startedBy: "ppm"`, nothing
+  untrusted, reason `morning_digest`), and priority `later`: it waits for a running manager turn to
+  end and never joins it. With no manager switched on, or no main session, nothing runs.
+- **The run** lives in the config row `assistant_digest_state` (`digest-state.ts`) and is written
+  **before** the first ask, so a crash loop finds it and never asks twice for the same date. It
+  records which chats were asked, each ask's client id, which asks a turn took (`turn_started`
+  naming that id, or an answer), and the answers.
+- **Answers** arrive as `report_to_assistant` with kind `digest`: cleaned like every report field,
+  at most 12 items, one answer per asked project (a second replaces the first). An answer from a
+  chat that was not asked, or after the digest was put together, is refused with a hint to report
+  it as `done` or `needs_decision` instead.
+- **The card** is made when every asked project answered or `DIGEST_ANSWER_WINDOW_MS` (60 min)
+  passed: kind `digest`, no project, payload `{date, projects: [{name, state, items, titleOnly?}]}`,
+  title "Morning digest · N projects, M items", provenance "Put together by PPM; each item was
+  written by that project's manager AI". A project with no answer shows "No answer yet (busy)";
+  nothing is retried that day. The card goes out through the quiet-hours gate like any other
+  (held, then sent at the window's end) and wakes the main Assistant session once, with the items
+  (prefixed by project, at most 12) as quoted news. On Telegram a project at the `title` detail
+  level shows only how many items it has.
+- **Restarts.** At startup a run past its deadline is put together at once; before the deadline,
+  an ask no turn took (a `later` message dies with the CLI's input queue) is handed over once more,
+  and never a second time. A digest whose time passed while PPM was off runs at startup when it is
+  less than `DIGEST_CATCH_UP_MS` (3 h) late, and is skipped otherwise.
 
 ### Commands, links and settings
 
@@ -970,7 +1011,8 @@ hand. PPMBot's old tables are left in place, unused.
 
 `startAssistantHub()` (`src/services/assistant-hub/assistant-hub-startup.ts`) starts the watch
 service and the cards (signals, rules and budget cards, the wake queue's manager sources, the
-restart sweep), carries PPMBot's settings over, then starts the Telegram bridge when it is switched on and
+restart sweep), the morning digest (its timer, and whatever a restart left of a run), carries
+PPMBot's settings over, then starts the Telegram bridge when it is switched on and
 has a bot. `src/server/index.ts` and the e2e fixture call the same function, so a test exercises
 the wiring the server runs. A Telegram failure (bad token, Telegram unreachable) is logged and shown
 in Settings, never stops the server or the watches. Settings calls `syncAssistantTelegram` after a
