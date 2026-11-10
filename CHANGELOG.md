@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **`create_session` refused in a Claude chat that had never picked a permission mode.** It answered that PPM could not tell which mode the session runs under, but such a chat runs as Bypass permissions, the provider's own fallback, and the session it opens now gets exactly that mode.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed

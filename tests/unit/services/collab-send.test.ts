@@ -108,11 +108,17 @@ describe("send_to_session", () => {
     }]);
     expect(w.deliveries).toHaveLength(2);
 
-    // A target whose mode PPM cannot tell counts as the most permissive.
-    const unknown = world({ mode: null }, { answers: ["deny"] }, { mode: "plan" });
-    const result = await sendToSessionTool(unknown.env, unknown.caller, { session_id: B, message: "x" }, signal());
+    // A target given no mode runs its provider's fallback, bypass.
+    const unset = world({ mode: null }, { answers: ["deny"] }, { mode: "plan" });
+    const result = await sendToSessionTool(unset.env, unset.caller, { session_id: B, message: "x" }, signal());
     expect(result.isError).toBe(true);
-    expect(unknown.asked[0]).toMatchObject({ kind: "escalation", targetMode: "unknown" });
+    expect(unset.asked[0]).toMatchObject({ kind: "escalation", targetMode: "bypassPermissions" });
+    expect(unset.deliveries).toHaveLength(0);
+
+    // A target whose mode PPM cannot tell counts as the most permissive.
+    const unknown = world({ mode: "notAMode" }, { answers: ["deny"] }, { mode: "acceptEdits" });
+    await sendToSessionTool(unknown.env, unknown.caller, { session_id: B, message: "x" }, signal());
+    expect(unknown.asked[0]).toMatchObject({ kind: "escalation", targetMode: "notAMode" });
     expect(unknown.deliveries).toHaveLength(0);
   });
 
