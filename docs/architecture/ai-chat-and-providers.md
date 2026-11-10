@@ -816,7 +816,18 @@ and Deny only), the new chat starts at depth 0 in the provider's default mode an
 recorded as AI-created or linked to the Assistant, and an unattended Assistant turn creates and
 sends nothing. `CollabTarget` carries the target's project,
 which delivery, the running limit and links use. The message's from-session block says
-`kind: "assistant"`. Details in [PPM Assistant](ppm-assistant.md#running-the-users-chats).
+`kind: "assistant"`. The one send with no card is a message to the target project's **manager
+chat** (`collab-send-manager.ts`): it carries a server-written provenance block, goes `next` only
+when the user started the Assistant's turn and nothing untrusted reached it, and in an unattended
+turn is held to status questions, hourly and daily budgets, the pair limit and quiet hours.
+`create_session` with `manager: true` creates and assigns a project's manager behind one card.
+Details in [PPM Assistant](ppm-assistant.md#running-the-users-chats).
+
+**`report_to_assistant`** is a fourth tool, listed only for a project's current manager chat
+(whatever Settings → Tools says) and checked against the live table on every call: `needs_decision`,
+`urgent`, `done`, `failed` and `digest` reports that PPM turns into the Assistant's cards
+([Reports and cards](ppm-assistant.md#reports-and-cards)). A manager chat always gets the server
+attached, from its next stream start.
 
 **The inject path.** `deliverToSession` (`src/server/ws/chat-inject.ts`) is the server's own door
 into a session: the same registry entry, `user_message` echo, consumer, replay buffer and unread
@@ -1102,5 +1113,8 @@ sent the latest message, and anything that changes data asks on the session's si
 card. Reads run unasked only inside the registered projects, and a SQL query only once it is
 proven to read. It also runs the user's chats (which ones need them, opening new ones, answering
 their cards after a confirmation, reporting when a watched chat finishes), and a connected
-Telegram chat is a second window onto one Assistant session. Full design, limitations and
+Telegram chat is a second window onto one Assistant session. Each project can have one **manager
+chat** the Assistant messages without a card, guided by a rules file PPM guards
+(`.ppm/manager.md`); managers report through `report_to_assistant`, and PPM turns reports into
+cards, a morning digest and quiet-hours-aware Telegram messages. Full design, limitations and
 verification: [PPM Assistant](ppm-assistant.md).

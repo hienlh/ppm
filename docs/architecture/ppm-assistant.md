@@ -1112,12 +1112,53 @@ change. Telegram allows one `getUpdates` reader per bot, so while the bridge rea
 the connect-link poller to leave that bot alone (`assistantBridgeReading` in
 `src/services/telegram-connect.service.ts`).
 
+## Threat model
+
+The guards here protect against model drift and injected text: words a model read in a chat, a
+ticket, an email, a report or a Telegram forward. They do **not** protect against a process running
+as the same OS user. Such a process — a bypass-mode chat included — already has the user's power: it
+can read PPM's auth token from `ppm.db` ("PPM's password" in `CLAUDE.md`) and the MCP bearer tokens
+on the CLI's command line, so it can call any route this page describes, write `.ppm/manager.md` and
+the database directly. That risk is accepted, and nothing here claims more. The cheap speed bumps:
+every rules write through a route posts a `rules_note` with its diff, and the reply, OK and rules
+routes record the device and `Sec-Fetch-Site` in the session trace.
+
+Two message blocks are written by the server only — `<ppm-assistant-provenance-v1>` (how the
+Assistant's turn started) and `<ppm-user-words-v1>` (the user's own words, by card id). Every other
+door breaks their markers: a `send_to_session` body, every `report_to_assistant` field, Telegram text
+(the user's forwarded text included), notebook text and the rules file.
+
+## Setting up a manager chat (worked example)
+
+A project whose manager already works from a guide file of its own (a work board, a sessions guide)
+and runs in bypass mode:
+
+1. Settings → PPM Assistant → *Sessions & Telegram*: check the main session, and that Telegram is
+   connected if the phone should get cards.
+2. *Digest & quiet hours*: the digest time and quiet hours, saved from a browser in the user's zone.
+3. In the project, right-click (long-press) the chat → *Set as manager chat*. Its mode stays what it
+   was; in bypass mode the dialog says nothing in it asks.
+4. *Manager chats* → the project → *Edit rules*. Keep two things in `.ppm/manager.md`: a pointer
+   ("read and follow `<path to the guide>`") and the safety rules **inline** — only what is inline is
+   guarded; the guide stays the manager's own working file.
+5. *Telegram detail*: *Title only* keeps client data off Telegram.
+6. The manager tools (`report_to_assistant`) arrive at the chat's next stream start; then ask it once
+   to report through `report_to_assistant` instead of answering in its own chat.
+7. Watch a day: the counts on the rail and the dock, and the next morning's digest.
+
 ## Rules the hub keeps
 
 - Telegram changes nothing about what asks: an Assistant session is still forced to ask, the cards
   are the same cards, and PPMBot's bypass path no longer exists anywhere.
 - Every chat the Assistant opens and every message it sends into a chat is asked on a card first,
-  answered once; it never reaches an Assistant or design chat.
+  answered once; it never reaches an Assistant or design chat. The one exception is a message to a
+  project's current manager chat, which carries a provenance block instead and is held to the
+  budgets, the pair limit and quiet hours when PPM started the turn.
+- Manager rules reach the model through the shared-context block, never the system prompt: no
+  stream is ever restarted for them. A change that removes, edits or could loosen a rule is held
+  off disk until the user decides; a check that fails holds it too.
+- Cards are built by PPM from records, never from a model turn; a report's text is data, shown as
+  plain text with a server-written provenance line.
 - An unattended turn (a watch or news turn) never asks and never acts: it creates and messages no
   chat, except a status question to a project's manager chat. Every such turn starts through the
   wake queue. A card that only waits for the user never starts a model turn.
@@ -1185,6 +1226,18 @@ the connect-link poller to leave that bot alone (`assistantBridgeReading` in
   too large for `/git/changes` to list whole, commit and stash save are refused.
 - **`schedules:changed` misses CLI writes.** `ppm schedule …` writes the database directly, so
   an open Settings → Schedules shows those on its next read.
+- **Manager chats run on Claude only.** A Codex chat cannot be assigned, and the main session must
+  be a Claude session; Codex managers need the Codex side of the session tools' forced attachment.
+- **A manager's tools arrive at its next stream start.** A chat made a manager while its stream is
+  live gets `report_to_assistant` when that stream next starts (idle release, a restart); nothing
+  restarts it. Rules, by contrast, apply from the next turn.
+- **A restart drops what is held in memory.** Late-reply news, the quiet-hours hold of a watched
+  chat's card and the hourly wake count live in memory; approval and question cards whose request
+  no chat still shows are marked gone. Report cards, held outbound cards and the digest run are in
+  the database and survive.
+- **Only `.ppm/manager.md` is guarded.** A guide the rules point to is the manager's own file.
+- **A subagent's report looks like its manager's.** An MCP call carries nothing that ties it to the
+  CLI's tool call, so PPM cannot label it.
 
 ## Verify
 
@@ -1192,6 +1245,17 @@ the connect-link poller to leave that bot alone (`assistantBridgeReading` in
 Assistant on the production bundle, on a desktop and a phone viewport, against a scripted
 provider (`tests/e2e/fixtures/assistant-server.ts`) that calls the real endpoint with each turn's
 token and an isolated `PPM_HOME`. The header of the test file lists its scenarios and options.
+
+`PPM_ASSISTANT_WEB_DIR=<web build> node tests/e2e/assistant-manager-loop-e2e.mjs` runs the
+manager-chat loop end to end in eleven steps on one desktop: a manager assigned from the chat menu
+and one created by the Assistant behind a card, a card-free ask, a decision card on both surfaces
+and its counts, a Telegram reply forwarded word for word, an approval allowed in PPM, wake turns
+answered `[no reply]`, the rules guard (held removal, approval with no stream restart, a held
+"Exception:", an accepted restriction), a forged user-words block and the send budget, quiet hours,
+the digest with a busy manager, and the notebook. The fixture runs with
+`PPM_ASSISTANT_MANAGER_LOOP=1` (`tests/e2e/fixtures/assistant-manager-fixture.ts`): a clock the
+script moves forward, a scripted rules check, and a route that types into a project chat. It runs
+on Node 20 in the `ppm-e2e-chromium` image.
 
 `PPM_PLAYWRIGHT_MODULE=<playwright>/index.mjs node tests/e2e/assistant-telegram-e2e.mjs` does the
 same for Telegram, with a fake Bot API in place of the phone. It needs Node 22.5+, Bun and a web
@@ -1201,7 +1265,10 @@ runs a subset, and its header lists the rest.
 The hub is covered below the browser: `tests/integration/assistant-telegram-bridge.test.ts` and
 `assistant-telegram-relay.test.ts` run the bridge against the fake Bot API
 (`tests/helpers/fake-telegram-bot-api.ts`) and the real chat socket layer with a mock provider, and
-`tests/integration/assistant-watch-flow.test.ts` runs watches end to end; the unit tests are in
+`tests/integration/assistant-watch-flow.test.ts` runs watches end to end;
+`assistant-cards.test.ts`, `assistant-telegram-manager-cards.test.ts`, `assistant-digest.test.ts`,
+`manager-rules-routes.test.ts` and `session-collab-assistant.test.ts` cover the manager chats on a
+fake clock; the unit tests are in
 `tests/unit/services/assistant-telegram/`. The git, schedule and tunnel families run against their
 real routes in `tests/integration/assistant-{git,schedule,tunnel}-tools.test.ts` (a scratch repo with
 a bare `file://` remote, a scratch database, and `tests/fixtures/fake-cloudflared.ts` in place of
