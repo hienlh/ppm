@@ -117,6 +117,8 @@ describe("design preview route", () => {
     // First thing inside <head>, ahead of every stylesheet and script.
     const headOpen = html.indexOf(">", html.indexOf("<head")) + 1;
     expect(html.indexOf("<script data-ppm-bridge")).toBe(headOpen);
+    // Right behind the bridge: lets a wheel over the page reach the viewport (SCROLL_CHAIN_STYLE).
+    expect(html.indexOf("<style data-ppm-scroll")).toBe(html.indexOf("</script>", headOpen) + "</script>".length);
   });
 
   it("drops a malformed nonce, so the bridge reports null", async () => {
@@ -208,6 +210,7 @@ describe("design preview route", () => {
     expect(html.startsWith(INDEX.slice(0, at) + "<style data-ppm-print")).toBe(true);
     expect(html.endsWith(INDEX.slice(at))).toBe(true);
     expect(html).not.toContain("data-ppm-bridge");
+    expect(html).not.toContain("data-ppm-scroll");
   });
 
   it("serves an oversized page uninstrumented but still with the bridge", async () => {

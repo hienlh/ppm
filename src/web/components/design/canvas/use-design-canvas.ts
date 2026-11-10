@@ -26,6 +26,65 @@ export function acceptsExpired(readyForCurrentLoad: boolean): boolean {
   return !readyForCurrentLoad;
 }
 
+/**
+ * Where the design's own folder starts in a canvas URL path:
+ * `/api/design-preview/content/<token>/<slug>/<page>` → the index of `<page>`'s first segment.
+ */
+function pageStart(segments: string[], slug: string): number {
+  for (let i = 1; i + 2 < segments.length; i++) {
+    if (segments[i - 1] === "design-preview" && segments[i] === "content") {
+      return segments[i + 2] === encodeURIComponent(slug) ? i + 3 : -1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * The page of this design a blocked link points at, as a path inside the design folder, or
+ * null when the link leaves the design (another design, another token, another origin, not an
+ * HTML page).
+ *
+ * The frame cannot navigate itself — the bridge cancels every link out of its document — so a
+ * design made of several pages has its links followed here instead. The canvas token already
+ * covers the whole design folder; only the page under it changes. `currentUrl` is the shown
+ * page's absolute URL; the frame reports `href` absolute too.
+ */
+export function designPageFor(href: string, currentUrl: string, slug: string): string | null {
+  let current: URL;
+  let target: URL;
+  try {
+    current = new URL(currentUrl);
+    target = new URL(href, current);
+  } catch {
+    return null;
+  }
+  if (target.origin !== current.origin) return null;
+  const now = current.pathname.split("/");
+  const next = target.pathname.split("/");
+  const start = pageStart(now, slug);
+  if (start < 0 || pageStart(next, slug) !== start) return null;
+  // Same token: a link cannot borrow another canvas's capability.
+  if (now.slice(0, start).join("/") !== next.slice(0, start).join("/")) return null;
+  let page: string[];
+  try {
+    page = next.slice(start).map(decodeURIComponent);
+  } catch {
+    return null;
+  }
+  // A dot-folder (`.design/`) is PPM's own; an encoded slash would load another path than linked.
+  if (!page.length || page.some((s) => s === "" || s.startsWith(".") || /[/\\]/.test(s))) return null;
+  const path = page.join("/");
+  return /\.html?$/i.test(path) ? path : null;
+}
+
+/** A canvas URL for some page of the design, pointed at `page` instead. */
+export function withDesignPage(url: string, slug: string, page: string): string {
+  const segments = url.split("/");
+  const start = pageStart(segments, slug);
+  if (start < 0) return url;
+  return [...segments.slice(0, start), ...page.split("/").map(encodeURIComponent)].join("/");
+}
+
 /** `file` is the variant to show: the entry page, or one of the other variants. */
 export function useDesignCanvas(ctx: DesignTabContextValue, file: string) {
   const { projectName, slug, isActive, refreshDesign } = ctx;
@@ -37,12 +96,25 @@ export function useDesignCanvas(ctx: DesignTabContextValue, file: string) {
   const recovering = useRef(false);
   const lastScroll = useRef<{ x: number; y: number } | null>(null);
 
+  // The page of the design a followed link moved the canvas to, kept across token reloads;
+  // null while the variant itself is shown.
+  const page = useRef<string | null>(null);
+  const loadUrl = useRef<string | null>(null);
+  loadUrl.current = load?.url ?? null;
+
   const reload = useCallback(async (opts?: { remint?: boolean }) => {
     const url = opts?.remint ? await preview.remint() : preview.latestUrl();
     if (!url) { setDead(true); return; }
     setIssues([]);
-    setLoad({ url, nonce: newBridgeNonce() });
-  }, [preview]);
+    setLoad({ url: page.current ? withDesignPage(url, slug, page.current) : url, nonce: newBridgeNonce() });
+  }, [preview, slug]);
+
+  const openPage = useCallback((url: string, next: string) => {
+    page.current = next === file ? null : next;
+    lastScroll.current = null;
+    setIssues([]);
+    setLoad({ url: withDesignPage(url, slug, next), nonce: newBridgeNonce() });
+  }, [file, slug]);
 
   const recover = useCallback(() => {
     if (recovering.current) { setDead(true); return; }
@@ -67,6 +139,7 @@ export function useDesignCanvas(ctx: DesignTabContextValue, file: string) {
   useEffect(() => {
     if (shown.current === file) return;
     shown.current = file;
+    page.current = null;
     void preview.retarget(file).then((url) => {
       if (!url || shown.current !== file) return;
       setIssues([]);
@@ -81,8 +154,16 @@ export function useDesignCanvas(ctx: DesignTabContextValue, file: string) {
       bridge.on("scroll", (m) => { lastScroll.current = { x: m.x, y: m.y }; }),
       bridge.on("issue", (m) => setIssues((list) => list.length >= MAX_CANVAS_ISSUES ? list
         : [...list, { kind: m.kind, message: m.message, source: m.source, line: m.line }])),
-      bridge.on("navigate-blocked", (m) => setIssues((list) => list.length >= MAX_CANVAS_ISSUES ? list
-        : [...list, { kind: "navigate-blocked", message: "The canvas does not follow links out of the design.", source: m.href }])),
+      bridge.on("navigate-blocked", (m) => {
+        const url = loadUrl.current;
+        const page = url ? designPageFor(m.href, new URL(url, window.location.origin).href, slug) : null;
+        if (url && page) {
+          openPage(url, page);
+          return;
+        }
+        setIssues((list) => list.length >= MAX_CANVAS_ISSUES ? list
+          : [...list, { kind: "navigate-blocked", message: "The canvas does not follow links out of the design.", source: m.href }]);
+      }),
       // Every new document starts at the top; put the reader back where they were.
       bridge.onReplay((send) => {
         const at = lastScroll.current;
@@ -90,7 +171,7 @@ export function useDesignCanvas(ctx: DesignTabContextValue, file: string) {
       }),
     ];
     return () => { for (const off of offs) off(); };
-  }, [bridge.on, bridge.onReplay, recover]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bridge.on, bridge.onReplay, recover, openPage, slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const readyGen = useRef<string | null>(null);
   readyGen.current = bridge.ready?.gen ?? null;
