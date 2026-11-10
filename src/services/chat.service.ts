@@ -31,7 +31,11 @@ import { dbToolsMcpAccessFor, dbToolsMcpTokens } from "./db-ai-tools/db-ai-tools
 import { dbApprovalBroker } from "./db-ai-tools/db-approval-broker.ts";
 import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
-import { anyPpmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { anyPpmToolOn, SESSION_TOOLS, SPEC_MODE_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { specMcpAccessFor, specMcpTokens } from "./specs/spec-mcp-tokens.ts";
+import { specForSession, unbindSpecSession } from "./specs/spec-store.ts";
+import { getSpec } from "./specs/spec.service.ts";
+import { buildSpecContext, splitSpecContext } from "./specs/spec-context.ts";
 import { sessionCollabMcpAccessFor, sessionCollabMcpTokens } from "./session-collab/session-collab-tokens.ts";
 import { collabApprovalBroker } from "./session-collab/collab-approval-broker.ts";
 import { collabWaits } from "./session-collab/collab-waits.ts";
@@ -130,6 +134,8 @@ class ChatService {
   }
 
   private rememberSharedContext(providerId: string, sessionId: string, context?: string): void {
+    // The spec block changes with every step; only the part shared across providers is deduplicated.
+    if (context) context = splitSpecContext(context).shared;
     if (!context) return;
     const key = `${providerId}:${sessionId}`;
     this.sharedSnapshots.delete(key);
@@ -212,6 +218,8 @@ class ChatService {
     dbToolsMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
     sessionCollabMcpTokens.revoke(sessionId);
+    specMcpTokens.revoke(sessionId);
+    unbindSpecSession(sessionId);
     collabApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing was done.");
     collabWaits.cancelWaiter(sessionId);
     this.turnEnds.delete(sessionId);
@@ -367,7 +375,7 @@ class ChatService {
   ): Promise<SendMessageOpts> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
     // Like the design fields, the tab and database tools are only ever server-built.
-    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, sessionCollabMcp: _sessionTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
+    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, sessionCollabMcp: _sessionTools, specMcp: _specTools, ...design } = await this.resolveDesignOptions(providerId, sessionId, opts);
     // A mode stored for the session is what it runs under when the caller names none (the CLI,
     // a schedule, another session's message): a created session inherits its creator's this way.
     if (!design.permissionMode) {
@@ -404,10 +412,36 @@ class ChatService {
         if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
       }
     }
+    // Spec mode: the tools for any chat (a chat can start a spec mid-way, and a running CLI keeps
+    // the servers it started with), and the spec's rules and state in front of each message of a
+    // chat bound to one. Cursor has no MCP: it gets the token as environment for `ppm spec call`.
+    const specMcp = !isMinimalMode() && !design.designSession && anyPpmToolOn(ai, SPEC_MODE_TOOLS)
+      ? specMcpAccessFor(sessionId) : null;
+    if (specMcp && !message.trimStart().startsWith("/")) {
+      const specBlock = await this.specContextFor(sessionId, providerId === "cursor" ? "cli" : "mcp");
+      if (specBlock) sharedContext = sharedContext ? `${sharedContext}\n\n${specBlock}` : specBlock;
+    }
     return {
       ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
-      ...(sessionCollabMcp ? { sessionCollabMcp } : {}), sharedContext,
+      ...(sessionCollabMcp ? { sessionCollabMcp } : {}), ...(specMcp ? { specMcp } : {}), sharedContext,
     };
+  }
+
+  /** The `<ppm_spec_state>` block of a chat bound to a spec, or null. Never fails a turn. */
+  private async specContextFor(sessionId: string, via: "mcp" | "cli"): Promise<string | null> {
+    let binding = specForSession(sessionId);
+    if (!binding) {
+      // A Codex chat is renamed during its first turn; a spec bound before that is under the old id.
+      const { sessionIdAliases } = await import("./db.service.ts");
+      binding = sessionIdAliases(sessionId).map((id) => specForSession(id)).find((b) => b !== null) ?? null;
+    }
+    if (!binding) return null;
+    try {
+      return buildSpecContext(await getSpec(binding.projectPath, binding.slug), { via, taskId: binding.taskId });
+    } catch (e) {
+      log.warn(`session=${sessionId} spec ${binding.slug} could not be read for the turn: ${(e as Error).message}`);
+      return null;
+    }
   }
 
   /**

@@ -55,6 +55,8 @@ export interface SendMessageOpts {
    * session. Server-built like `designMcp`.
    */
   sessionCollabMcp?: { url: string; token: string };
+  /** Spec mode's tools (`/api/specs-mcp`); server-built per turn like the others. */
+  specMcp?: { url: string; token: string };
   /**
    * The browser's id for the message being sent (its optimistic bubble), opaque to the provider.
    * Handed back on `turn_started` so the browser learns which turn that message opened.

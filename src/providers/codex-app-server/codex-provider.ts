@@ -38,8 +38,9 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
-import { buildThreadParams, dbToolsMcpEnv, designMcpEnv, requestWithInstructionsFallback, sessionCollabMcpEnv, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
+import { buildThreadParams, dbToolsMcpEnv, designMcpEnv, requestWithInstructionsFallback, sessionCollabMcpEnv, specMcpEnv, tabToolsMcpEnv, type CodexThreadParams } from "./codex-thread-params.ts";
 import type { SessionCollabMcpAccess } from "../../services/session-collab/session-collab-tool.ts";
+import type { SpecMcpAccess } from "../../services/specs/spec-mcp-tokens.ts";
 import type { DesignMcpAccess } from "../../services/design/mcp/design-mcp-tool.ts";
 import type { TabToolsMcpAccess } from "../../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import type { DbToolsMcpAccess } from "../../services/db-ai-tools/db-ai-tools-tool.ts";
@@ -168,6 +169,8 @@ interface LiveSession {
   dbToolsMcp?: DbToolsMcpAccess;
   /** The session tools' endpoint, while one of them is on; likewise. */
   sessionCollabMcp?: SessionCollabMcpAccess;
+  /** Spec mode's endpoint, while one of its tools is on; likewise. */
+  specMcp?: SpecMcpAccess;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
   /** Rollout history snapshot at connect — lets live message ids continue the
@@ -346,7 +349,7 @@ function approvalToolLabel(method: string, params: unknown): string {
 function liveMcpEnv(live: LiveSession): Record<string, string> {
   return {
     ...designMcpEnv(live.designMcp), ...tabToolsMcpEnv(live.tabToolsMcp), ...dbToolsMcpEnv(live.dbToolsMcp),
-    ...sessionCollabMcpEnv(live.sessionCollabMcp),
+    ...sessionCollabMcpEnv(live.sessionCollabMcp), ...specMcpEnv(live.specMcp),
   };
 }
 
@@ -924,6 +927,7 @@ export class CodexAppServerProvider implements AIProvider {
       tabToolsMcp: live.tabToolsMcp,
       dbToolsMcp: live.dbToolsMcp,
       sessionCollabMcp: live.sessionCollabMcp,
+      specMcp: live.specMcp,
     });
     await requestWithInstructionsFallback(resumeBase,
       (params) => this.resumeThread(client, threadId, found, account.home, params));
@@ -992,6 +996,7 @@ export class CodexAppServerProvider implements AIProvider {
       tabToolsMcp: opts?.designSession ? undefined : opts?.tabToolsMcp,
       dbToolsMcp: opts?.designSession ? undefined : opts?.dbToolsMcp,
       sessionCollabMcp: opts?.designSession ? undefined : opts?.sessionCollabMcp,
+      specMcp: opts?.designSession ? undefined : opts?.specMcp,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
       history: [], transcript: [], currentAssistant: "", currentEvents: [],
       pendingTurns: [], subagentThreadIds: new Set(),
@@ -1019,6 +1024,7 @@ export class CodexAppServerProvider implements AIProvider {
       tabToolsMcp: live.tabToolsMcp,
       dbToolsMcp: live.dbToolsMcp,
       sessionCollabMcp: live.sessionCollabMcp,
+      specMcp: live.specMcp,
     });
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.

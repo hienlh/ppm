@@ -1,0 +1,28 @@
+
+ RUN  v2.1.8 /work
+
+ ❯ src/x.test.ts (2 tests | 1 failed) 4ms
+   × adds 3ms
+     → expected 0 to be 3 // Object.is equality
+   ✓ other
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/x.test.ts > adds
+AssertionError: expected 0 to be 3 // Object.is equality
+
+- Expected
++ Received
+
+- 3
++ 0
+
+ ❯ src/x.test.ts:4:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  10:00:00
+   Duration  210ms
+exit=1

@@ -21,6 +21,8 @@ import { NavSectionRail } from "./nav-section-rail";
 // Lazy so the design UI stays out of the entry bundle until the section is opened.
 const DesignsSidebarPanel = lazy(() =>
   import("@/components/design/designs-sidebar-panel").then((m) => ({ default: m.DesignsSidebarPanel })));
+const SpecsSidebarPanel = lazy(() =>
+  import("@/components/spec/specs-sidebar-panel").then((m) => ({ default: m.SpecsSidebarPanel })));
 
 function ResizeHandle({ onResize }: { onResize: (width: number) => void }) {
   const dragging = useRef(false);
@@ -140,6 +142,9 @@ export const Sidebar = memo(function Sidebar() {
             {sidebarActiveTab === "teams" && <GroupList />}
             {sidebarActiveTab === "designs" && (
               <Suspense fallback={null}><DesignsSidebarPanel /></Suspense>
+            )}
+            {sidebarActiveTab === "specs" && (
+              <Suspense fallback={null}><SpecsSidebarPanel /></Suspense>
             )}
             {sidebarActiveTab === "database" && <DatabaseSidebar />}
             {sidebarActiveTab === "tunnels" && <PortForwardingPanel />}

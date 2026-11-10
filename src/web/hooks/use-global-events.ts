@@ -160,6 +160,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         || type.startsWith("tunnel:")
         || type.startsWith("tailscale:")
         || type.startsWith("design:")
+        || type.startsWith("spec:")
         || type.startsWith("git:")
         || type.startsWith("agent-transcript:")
         || type.startsWith("logs:")

@@ -14,6 +14,8 @@ import {
   CLAUDE_TAB_TOOLS_MCP_SERVER, TAB_TOOLS_TIMEOUT_MS, type TabToolsMcpAccess,
 } from "../services/tab-tools-mcp/tab-tools-mcp-tool.ts";
 import { TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { CLAUDE_SPEC_MCP_SERVER, SPEC_TOOLS } from "../shared/spec-tools.ts";
+import { SPEC_TOOLS_TIMEOUT_MS, type SpecMcpAccess } from "../services/specs/spec-mcp-tokens.ts";
 import { CLAUDE_DB_TOOLS_MCP_SERVER, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess } from "../services/db-ai-tools/db-ai-tools-tool.ts";
 import {
   CLAUDE_SESSION_COLLAB_MCP_SERVER, SESSION_COLLAB_TOOLS, SESSION_COLLAB_TOOLS_TIMEOUT_MS, type SessionCollabMcpAccess,
@@ -341,6 +343,25 @@ export function sessionCollabMcpServers(access: SessionCollabMcpAccess | null | 
 export const CLAUDE_SESSION_COLLAB_TOOLS: readonly string[] = SESSION_COLLAB_TOOLS.map((tool) => `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${tool}`);
 
 /**
+ * Spec mode's MCP server (`spec_submit`, `task_red`, …) as the SDK's `http` server config, while
+ * one of its tools is on; `{}` otherwise. The timeout outlasts a green run plus the whole suite.
+ */
+export function specMcpServers(access: SpecMcpAccess | null | undefined): Record<string, McpHttpServerConfig> {
+  if (!access) return {};
+  return {
+    [CLAUDE_SPEC_MCP_SERVER]: {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: SPEC_TOOLS_TIMEOUT_MS,
+    },
+  };
+}
+
+/** Never asked about: none approves anything, and the test runs use the command the user approved. */
+export const CLAUDE_SPEC_TOOLS: readonly string[] = SPEC_TOOLS.map((tool) => `mcp__${CLAUDE_SPEC_MCP_SERVER}__${tool}`);
+
+/**
  * Spawn options as `spawnFingerprint` should compare them: the tab, database and session tools' tokens
  * blanked. A warm spare is started before its session exists, and its token is minted for the session
  * id it is given then — the one the session's own turns mint — so the token says nothing
@@ -348,7 +369,7 @@ export const CLAUDE_SESSION_COLLAB_TOOLS: readonly string[] = SESSION_COLLAB_TOO
  */
 export function withSessionTokenMasked<T extends Record<string, unknown>>(options: T): T {
   const servers = options.mcpServers as Record<string, McpHttpServerConfig> | undefined;
-  const names = [CLAUDE_TAB_TOOLS_MCP_SERVER, CLAUDE_DB_TOOLS_MCP_SERVER, CLAUDE_SESSION_COLLAB_MCP_SERVER].filter((name) => servers?.[name]);
+  const names = [CLAUDE_TAB_TOOLS_MCP_SERVER, CLAUDE_DB_TOOLS_MCP_SERVER, CLAUDE_SESSION_COLLAB_MCP_SERVER, CLAUDE_SPEC_MCP_SERVER].filter((name) => servers?.[name]);
   if (!servers || names.length === 0) return options;
   const masked = { ...servers };
   for (const name of names) masked[name] = { ...masked[name]!, headers: { Authorization: "<session>" } };

@@ -23,6 +23,7 @@ import { onIndexRebuilt, warmIndex } from "../../services/file-list-index.servic
 import { configService } from "../../services/config.service.ts";
 import { onDesignEvent } from "../../services/design/design-events.ts";
 import { onGitEvent } from "../../services/git-changes/git-events.ts";
+import { onSpecEvent } from "../../services/specs/spec-events.ts";
 import { onSessionFileChanges } from "../../services/session-file-baselines/session-file-changes.service.ts";
 import { SESSION_FILE_CHANGES_PUSH } from "../../shared/session-file-changes.ts";
 import { subscribeLogs, unsubscribeLogs } from "../../services/logs/log-live.ts";
@@ -104,6 +105,15 @@ onIndexRebuilt((projectPath, changed) => {
 // Services know the project path; browsers address projects by name, and a path no
 // registered project owns is dropped rather than broadcast.
 onGitEvent((event) => broadcastGlobalEvent(event));
+
+// A spec's state or documents changed through PPM (approvals, task runs): the Spec tab and the
+// sidebar refresh. Edits the AI makes to the documents arrive as `file:changed` under `specs/`.
+onSpecEvent((event) => {
+  const projectName = projectNameForPath(event.projectPath);
+  if (!projectName) return;
+  const { projectPath: _path, ...rest } = event;
+  broadcastGlobalEvent({ ...rest, projectName });
+});
 
 // The agent changed files of a session whose changes are open somewhere: just those rows, so the
 // changes bar, the turn pills and an open Review tab follow along without asking for the list.

@@ -1403,8 +1403,8 @@ covers the preview's CDN loads and its self-check on their own. Both need intern
 Settings → Tools (`tools-settings-section.tsx`) turns each of PPM's own AI tools on or off —
 `open_file`, `open_preview`, `open_url`, `read_terminal`, `run_in_terminal`, `search_sessions`,
 `list_session_turns`, `read_session_turns`, `db_query`, `open_query`, `db_execute`,
-`create_session`, `send_to_session`, `session_status`, in the groups Tabs, Terminal, Session
-history, Database and Session collaboration (whose limits and "Ask before creating sessions" sit
+`create_session`, `send_to_session`, `session_status` and the nine [Spec mode](#spec-mode) tools, in the groups Tabs, Terminal, Session
+history, Database, Session collaboration and Spec mode (whose limits and "Ask before creating sessions" sit
 under its switches) — for Claude and Codex alike. Claude's and Codex's built-in tools and MCP servers are not there. The switches are
 `ai.ppm_tools` (`PUT /api/settings/ai` merges one tool at a time and refuses any other name), and
 `src/shared/ppm-tools.ts` answers for the server and the pane alike: a tool never switched takes
@@ -1564,3 +1564,66 @@ on the production bundle, with PPM's auth on and a SQLite file in the sandbox, a
 through both providers' cards, a wrong password then the right one, a decline, `open_query`
 followed by *Run with write access (once)*, the History, and the card on a phone.
 `PPM_DB_TOOLS_WEB_DIR` reuses a scratch build.
+
+## Spec mode
+
+Spec mode is Kiro-style spec-driven development for every provider: the chat writes what to
+build, then how, then the task list, and the user approves each document in PPM before the next
+one starts. Optionally each task is held to TDD, with PPM running the tests.
+
+**Workflows.** A new chat's welcome screen and the **Workflow** group of the composer's Modes menu
+(under the permission modes, chosen alongside one, never instead of it) offer the workflows below.
+A chat that already exists can be turned into a spec from the same group: the spec is created
+bound to it and the AI picks it up with the next message. While a workflow is on, a Spec chip in
+the composer shows it and toggles the Spec pane.
+
+| Workflow | Documents | Approvals |
+|---|---|---|
+| Chat | none | none |
+| Spec | `requirements.md` → `design.md` → `tasks.md` (or design first) | each one, in PPM |
+| Quick Spec | the same three, written in one go | automatic, except Thorough's design |
+| Bug Fix | `bugfix.md` (current / expected / unchanged behaviour) → design → tasks | each one |
+
+The documents live in the repository, `<project>/specs/<slug>/`, in Kiro's formats: EARS
+acceptance criteria under `### Requirement N` (ids `N.k`), and tasks as `- [ ] N. title` with
+`_Requirements:_`, `_Deps:_`, `_Files:_`, `_Test:_` and `_Screen:_` lines (`- [ ]* N.` is
+optional). PPM's record of the spec — approvals, check level, task runs — lives in the PPM
+directory, out of reach of the AI's file tools.
+
+**Approvals.** The AI calls `spec_submit` and is told to stop and wait. The Spec pane beside the
+chat shows the document with **Approve** and **Request changes** (with a note); either can send
+the chat its next instruction. What is approved is a hash of the document: editing it later
+makes it *stale*, which reopens it and every phase after it. A box PPM ticks in `tasks.md` does
+not count as an edit.
+
+**Checks.** The pane's header switches between:
+
+- **Standard** (default): the AI calls `task_start` and `task_done`; PPM records them.
+- **Thorough**: `design.md` must carry a `ppm-test` block with the test command
+  (`task: bun test {files}`, `suite: bun test`), and every task a `_Test:_` line. For each task the
+  AI writes the tests, calls `task_red` (PPM runs them; they must fail on an assertion, not on a
+  missing module), writes the code, and calls `task_green` (the same tests, unchanged, must pass).
+  The whole suite is then compared with a baseline taken when execution started; a new failure
+  stops later tasks until `suite_check` passes.
+
+**UI: yes.** When the requirements say so, the AI calls `spec_open_design`, which creates a PPM
+Design and opens it, and draws the screens before design.md can be approved. The drawing is
+approved on its own and hashed like a document, so changing it reopens Design.
+
+**Running tasks.** The AI decides the order when it writes the plan: `_Deps:_` says what a task
+waits for and `_Files:_` what it touches. PPM checks the plan and groups it into waves of tasks
+that neither depend on nor share files with each other. A task can be started from the pane
+(the spec chat is asked to run it), or **Run all** runs the plan wave by wave, each task in a
+child chat of its own (linked to the spec chat, at most 3 at once). A child that goes idle
+without finishing marks its task failed; the rest of its wave finishes and later waves wait.
+
+**Providers.** Claude, Codex and Antigravity get the tools from the `ppm-specs` MCP server
+(`/api/specs-mcp`, a token per chat). Cursor gets `PPM_SPEC_URL` / `PPM_SPEC_TOKEN` and calls
+`ppm spec call <tool> '<json>'`. Every provider is told the rules and where the spec stands in a
+`<ppm_spec_state>` block in front of each message. The nine tools are switches in Settings →
+Tools → Spec mode, on by default.
+
+**CLI.** `ppm spec list|status|new|approve|checks|run|stop` drives the same service;
+`approve` and `checks` refuse inside an AI chat.
+
+Code and gotchas: `src/services/specs/` and its `CLAUDE.md`. UI: `src/web/components/spec/`.
