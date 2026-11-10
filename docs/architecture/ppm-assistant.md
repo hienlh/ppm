@@ -103,6 +103,39 @@ bound to a one-off session stay. An unbound Telegram chat binds to the main sess
 starts a session on the Assistant's provider as before, which becomes main when that is Claude. A
 settings save never writes the key, so a pane opened before a change cannot put the old one back.
 
+**Settings.** Everything not needed every day lives in Settings → PPM Assistant
+(`src/web/components/settings/assistant-settings-section.tsx`, sub-tabs in
+`assistant-settings-tab-store.ts`; `openAssistantSettings(tab)` in `open-assistant-settings.ts`
+lands on one; the window's gear opens the pane). Sub-tabs, in order:
+- *General* — provider, model, instructions, MCP servers (`assistant-general-settings.tsx`). Its
+  Save leaves out the keys the other sub-tabs own (`KEYS_SAVED_ELSEWHERE` in
+  `lib/assistant-settings-api.ts`); each of those saves through `patchAssistantSettings`, which
+  reads the stored row and sends it back whole with only its own keys changed, so an older draft
+  never puts a value back.
+- *Sessions & Telegram* (`settings/assistant/`) — the main-session picker (Claude sessions only,
+  `{title} · since {date}`, `PUT /main-session`), "New session" (`openAssistantNewSession`: a blank
+  chat in the Assistant whose first message makes a one-off session), the session list with Open
+  / Set as main session / Use on Telegram / Delete, and the Telegram block, which follows the main
+  session.
+- *Digest & quiet hours* — switch and time for each. There is no zone field: every save sends the
+  browser's `Intl…timeZone`, and the zone in force is shown as text.
+- *Manager chats* — one row per project: the chat (opens through `openManagerChat`), its mode as
+  text (changed in the chat's own composer), `.ppm/manager.md` with Edit and a "Change waiting"
+  marker, Telegram detail (Full / Title only), the digest switch, and "Manager tools arrive the
+  next time this chat starts" while the chat's live stream predates its assignment
+  (`toolsPending`, from the provider's `liveStreamStartedAt`; recomputed each time the pane opens,
+  since a stream restart is not announced). The row menu (right-click, long press, or ⋯) has
+  Replace… and Unset; a project with none has Assign / create, which reuses the "Set as manager
+  chat" dialog or calls the create route. The header sets the default mode for new manager chats
+  (choosing bypass asks first); below the table, the template for new rules (16 KB, Reset to
+  built-in, which stores an empty template). The rules dialog edits the whole file through
+  `PUT …/rules`, lists "Added by the manager since" read-only, and shows a held change
+  (`proposedDiff` on the rules view) with Approve change / Revert. The table becomes stacked rows
+  below a 680 px pane, by the pane's own `@container` width.
+- *Notebook* — the lines with source and date, "Unverified" with "Mark as verified", edit and
+  delete, "Add line" (off at the cap) and the `used / 4,000 characters` meter; refetched on
+  `assistant:notes_changed` and after a `/ws/global` reconnect.
+
 ## Manager chats
 
 A project's **manager chat** is the one chat PPM Assistant talks to about that project
@@ -1049,15 +1082,16 @@ public https — a tunnel or Tailscale Service address — because Telegram refu
 whose button points at localhost or a LAN address (`assistant-telegram-links.ts`); otherwise it
 sits in the text.
 
-**Settings → PPM Assistant → Telegram** (`src/web/components/settings/assistant-telegram-settings.tsx`)
-holds the Assistant's own bot token (the `ppmbot_telegram` row, separate from the Notifications
-bot, so a chat connected for alerts cannot command the Assistant), the switch, the connected chats
-with the session each talks to, the Connect link, and the two display settings. The old settings
-id `ppmbot` opens it (`assistant-settings-tab-store.ts`). The REST surface stayed where PPMBot had
+**Settings → PPM Assistant → Sessions & Telegram** (the Telegram block is
+`src/web/components/settings/assistant-telegram-settings.tsx`) holds the Assistant's own bot token
+(the `ppmbot_telegram` row, separate from the Notifications bot, so a chat connected for alerts
+cannot command the Assistant), the switch, the connected chats with the session each talks to,
+the Connect link, and the two display settings. The old settings id `ppmbot` opens it
+(`assistant-settings-tab-store.ts`). The REST surface stayed where PPMBot had
 it, under `/api/settings/clawbot*` in `src/server/routes/settings.ts`, now taking only `enabled`,
 `show_tool_calls` and `debounce_ms`; `/api/assistant/telegram` (`src/server/routes/assistant-telegram.ts`)
 lists chats and their sessions, binds, and lists PPMBot's old memories. The Assistant's session
-list marks the bound session and offers *Use on Telegram* (`assistant-session-row.tsx`, `src/web/hooks/use-assistant-telegram-binding.ts`).
+list marks the bound session and offers *Use on Telegram* (`settings/assistant/assistant-session-row.tsx`, `src/web/hooks/use-assistant-telegram-binding.ts`).
 
 **From PPMBot** (`ppmbot-migration.ts`, once): only the user-written `system_prompt` is copied into
 the Assistant's instructions. Memories PPMBot's AI wrote for itself (`clawbot_memories`) are not:
