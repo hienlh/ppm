@@ -1,5 +1,6 @@
 import { createLogger } from "../logger.ts";
 import type { TurnStop } from "../../shared/turn-stop.ts";
+import type { TraceOrigin } from "../../shared/session-trace.ts";
 import type { ChatMessageOrigin, LiveApprovalCard, ServerOrigin } from "./chat-control.ts";
 
 /**
@@ -26,6 +27,11 @@ export interface ChatLifecycleEvents {
     imageCount: number;
     projectName: string;
     providerId: string;
+    /**
+     * Set when an in-process caller of the chat socket posted it (`scheduler` for a script
+     * schedule): `origin` then names the socket, but no person wrote the message.
+     */
+    traceOrigin?: TraceOrigin;
   };
   /** A card is now on the chat's screen (a queued one only once it reaches the front). */
   approval_shown: { sessionId: string; card: LiveApprovalCard; projectName: string; providerId: string };

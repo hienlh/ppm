@@ -92,6 +92,22 @@ describe("CollabApprovalCard", () => {
     expect(view.container.textContent).toContain("until PPM restarts");
   });
 
+  it("asks once to create a manager chat, naming the project, the mode and what it allows from then on", async () => {
+    const manager: SessionCollabApprovalInput = {
+      kind: "create", manager: true, askedBy: "assistant", title: "Manager", providerId: "claude", model: null, task: "",
+      depth: 0, projectName: "nxsys", permissionMode: "bypassPermissions",
+    };
+    view = await mount(<CollabApprovalCard requestId="r8" input={manager} />);
+    const text = view.container.textContent ?? "";
+    expect(text).toContain("Create the manager chat for nxsys");
+    expect(text).toContain("Bypass permissions");
+    expect(text).toContain("runs every tool without asking");
+    expect(text).toContain("After this, PPM Assistant can message this chat without asking, also while you are away.");
+    // No task was given, so no task box; the Assistant's cards are answered once.
+    expect(view.container.querySelector("[data-collab-approval-text]")).toBeNull();
+    expect(buttons(view.container)).toEqual(["Allow once", "Deny"]);
+  });
+
   it("states a text's length in characters and lines", () => {
     expect(lengthLabel("a")).toBe("1 character");
     expect(lengthLabel("ab\ncd")).toBe("5 characters, 2 lines");

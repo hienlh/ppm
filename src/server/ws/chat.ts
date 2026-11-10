@@ -1857,7 +1857,7 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   // reaches only other browsers.
   chatLifecycle.emit("user_message", {
     sessionId, text: parsed.content, origin: opts.origin, imageCount: opts.images?.length ?? 0,
-    projectName: entry.projectName ?? "", providerId,
+    projectName: entry.projectName ?? "", providerId, ...(opts.traceOrigin ? { traceOrigin: opts.traceOrigin } : {}),
   });
 
   // Intercept PPM-handled built-in commands (e.g. /skills, /version)
@@ -1896,8 +1896,9 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   if (fromUser) supersedeApprovals(sessionId, entry);
 
   // Whose turn this is from now on: the user typing into a watch turn makes it theirs, and the
-  // approvals it then asks for are shown again.
-  entry.turnOrigin = opts.origin;
+  // approvals it then asks for are shown again. A scheduled script posting into a PPM Assistant
+  // session is PPM, not the user: that turn is unattended like a watch report's.
+  entry.turnOrigin = opts.traceOrigin && isAssistantSession(sessionId, entry.projectPath) ? "watch" : opts.origin;
   // What this device shows, for an Assistant session's turn. Validated and cleaned by
   // chatService, which ignores it for every other session; only an object is passed on.
   const rawSummary = opts.uiSummary as unknown;
@@ -2464,8 +2465,10 @@ async function handOffToSession(sessionId: string, entry: SessionEntry, content:
     return { ok: true, delivered: "started" };
   }
 
-  // Follow-up: push into existing generator via provider
-  const delivered = followUpDelivery(sessionId, entry);
+  // Follow-up: push into existing generator via provider. A `later` message never joins the
+  // running turn: the provider holds it until that turn is over.
+  const disposition = followUpDelivery(sessionId, entry);
+  const delivered: SessionDelivery = opts.priority === "later" && disposition === "inserted" ? "queued" : disposition;
   if (provider && "pushMessage" in provider) {
     const effort = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);

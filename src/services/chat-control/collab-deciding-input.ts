@@ -23,6 +23,7 @@ const SOURCE_LABELS: Record<SessionCollabModeSource, string> = {
 };
 
 const BYPASS_WARNING = "That chat runs every tool without asking: whatever it does after this message will not ask you first.";
+const MANAGER_CONSEQUENCE = "PPM Assistant can message this chat without asking, also while you are away.";
 const providerLabel = (id: string): string => (id === "codex" ? "Codex" : id === "claude" ? "Claude" : id);
 
 function modeFacts(mode: string | undefined, source: SessionCollabModeSource | undefined): Array<{ label: string; value: string }> {
@@ -45,6 +46,19 @@ export function collabDecidingParts(input: SessionCollabApprovalInput): CollabDe
       ],
       text: input.message,
       label: "Message",
+    };
+  }
+  if (input.kind === "create" && input.manager) {
+    return {
+      title: `Create the manager chat for "${input.projectName ?? "this project"}"`,
+      facts: [
+        ...(input.projectName ? [{ label: "Project", value: input.projectName }] : []),
+        { label: "Title", value: input.title },
+        ...modeFacts(input.permissionMode, input.modeSource),
+        { label: "After this", value: MANAGER_CONSEQUENCE },
+      ],
+      text: input.task,
+      ...(input.task ? { label: "Task" } : {}),
     };
   }
   if (input.kind === "create") {

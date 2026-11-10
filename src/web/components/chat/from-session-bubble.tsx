@@ -9,6 +9,7 @@
 import { MessageSquare } from "@/lib/icons";
 import type { ChatMessage } from "../../../types/chat";
 import type { FromSessionReference } from "../../../shared/chat-from-session";
+import type { AssistantProvenance } from "../../../shared/assistant-provenance";
 import type { TurnReference } from "../../../shared/chat-turn-ref";
 import { openLinkedSession, providerLabel } from "@/lib/session-collab-client";
 import { MarkdownContent } from "./message-markdown";
@@ -18,8 +19,21 @@ import { CopyTurnLinkButton } from "./copy-turn-link-button";
 import { ProviderBadge } from "./provider-selector";
 import { TurnRefChipRow } from "./turn-ref-chip";
 
-export function FromSessionBubble({ from, text, plainContent, turnRefs, turn, timestamp, projectName, sessionId, providerId }: {
+const STARTED_BY_TEXT: Record<AssistantProvenance["startedBy"], string> = {
+  user_ppm: "started by you in PPM",
+  user_telegram: "started by you on Telegram",
+  ppm: "started by PPM on a report",
+};
+
+/** One line saying how the Assistant's turn behind this message started, as PPM recorded it. */
+export function provenanceLine(p: AssistantProvenance): string {
+  return `Asked by PPM Assistant · ${STARTED_BY_TEXT[p.startedBy]}${p.untrusted ? " · other text in that turn" : ""}`;
+}
+
+export function FromSessionBubble({ from, provenance, text, plainContent, turnRefs, turn, timestamp, projectName, sessionId, providerId }: {
   from: FromSessionReference;
+  /** How the PPM Assistant's turn that sent it started; only on its messages to a manager chat. */
+  provenance?: AssistantProvenance | null;
   /** The message body without its blocks. */
   text: string;
   /** What Copy copies: the body as the receiving AI read it, blocks removed. */
@@ -61,6 +75,11 @@ export function FromSessionBubble({ from, text, plainContent, turnRefs, turn, ti
           <ProviderBadge providerId={from.providerId} />
           <span className="shrink-0 opacity-80">{provider}</span>
         </button>
+        {provenance && (
+          <p className="-mt-1 mb-1 text-xs text-text-subtle" data-provenance={provenance.startedBy}>
+            {provenanceLine(provenance)}
+          </p>
+        )}
         {turnRefs && turnRefs.length > 0 && <TurnRefChipRow refs={turnRefs} currentProject={projectName} />}
         {/* Folds like the person's own bubble; the header above stays visible. Raw HTML off:
             the text was written by another session's AI. */}

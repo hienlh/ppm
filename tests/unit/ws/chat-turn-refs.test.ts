@@ -81,7 +81,7 @@ it("carries a reply and turn references in one message, in their fixed order, an
   await chatWebSocket.message(live.socket as any, JSON.stringify({ type: "message", content: "compare these", clientMessageId: "c-both", replyTo: reply, turnRefs: [ref] }));
   await until(() => received.length === 1, "the provider call");
   const decoded = decodeMessageBlocks(received[0]!);
-  expect(decoded).toEqual({ content: "compare these", replyTo: reply, turnRefs: [ref], fromSession: null });
+  expect(decoded).toEqual({ content: "compare these", replyTo: reply, turnRefs: [ref], fromSession: null, provenance: null });
   expect(received[0]).toBe(encodeMessageBlocks("compare these", { turnRefs: [ref], replyTo: reply }));
   const ack = live.messages.find((m) => m.type === "message_accepted");
   expect(ack).toEqual({ type: "message_accepted", clientMessageId: "c-both", content: received[0] });

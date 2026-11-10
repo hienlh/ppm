@@ -21,6 +21,7 @@ import { uiReadTab } from "./assistant-ui-read-tool.ts";
 import { uiListCommands, uiRunCommand } from "./assistant-ui-command-tools.ts";
 import { approvalAskerFor } from "./assistant-approval-broker.ts";
 import { callFamilyTool } from "./assistant-tool-family.ts";
+import { assistantTurnProvenance } from "../assistant/assistant-turn-provenance.ts";
 
 /**
  * `/api/assistant-mcp` — the PPM Assistant's own tools, for one Assistant session's agent (the
@@ -32,6 +33,14 @@ import { callFamilyTool } from "./assistant-tool-family.ts";
  */
 
 type ToolCall = (binding: AssistantMcpTokenBinding, name: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<Json>;
+
+/**
+ * The tools that put text the user did not write in front of the Assistant: another chat's words,
+ * a tab's content, other chats' cards, database rows.
+ */
+const UNTRUSTED_READS = new Set<string>([
+  CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, UI_READ_TAB_TOOL, CHATS_ATTENTION_TOOL, DB_QUERY_TOOL,
+]);
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -60,6 +69,8 @@ export function createAssistantMcpHandler(deps: {
  */
 export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, signal) => {
   const ask = approvalAskerFor(sessionId, signal);
+  // What another chat or a tab says reaches this turn: its messages to manager chats say so.
+  if (UNTRUSTED_READS.has(name)) assistantTurnProvenance.markUntrusted(resolveMigratedSession(sessionId), "read");
   switch (name) {
     case PROJECTS_LIST_TOOL: return projectsList();
     case CHAT_LIST_SESSIONS_TOOL: return chatListSessions(args);

@@ -66,6 +66,7 @@ export function UserBubble(props: UserBubbleProps) {
     return (
       <FromSessionBubble
         from={parsed.fromSession}
+        provenance={parsed.provenance}
         text={parsed.text}
         plainContent={decodeMessageBlocks(props.content).content}
         turnRefs={parsed.turnRefs}

@@ -1,5 +1,6 @@
 import { normalizeFromSessionTitle, type FromSessionReference } from "../../shared/chat-from-session.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
+import type { AssistantProvenance } from "../../shared/assistant-provenance.ts";
 import type { SessionDelivery, SessionWaitOutcome } from "../../shared/session-collab.ts";
 import type { CollabCaller, CollabEnv, CollabTarget } from "./collab-context.ts";
 import type { WaitHandle } from "./collab-waits.ts";
@@ -33,6 +34,10 @@ export async function deliverAndWait(env: CollabEnv, input: {
   permissionMode?: string;
   /** The mode the user approved the message in; the delivery refuses a chat that would run it in another. */
   expectedMode?: string;
+  /** `later` waits for the target's running turn to end; `next` (the default) joins it. */
+  priority?: "next" | "later";
+  /** A PPM Assistant message to a manager chat: how the Assistant's turn started. */
+  provenance?: AssistantProvenance;
 }): Promise<DeliverOutcome> {
   const { caller, target } = input;
   let handle: WaitHandle | null = null;
@@ -55,6 +60,8 @@ export async function deliverAndWait(env: CollabEnv, input: {
       ...(input.turnRefs?.length ? { turnRefs: input.turnRefs } : {}),
       ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
       ...(input.expectedMode ? { expectedMode: input.expectedMode } : {}),
+      ...(input.priority ? { priority: input.priority } : {}),
+      ...(input.provenance ? { provenance: input.provenance } : {}),
     });
   } catch (e) {
     handle?.abandon();

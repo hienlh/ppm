@@ -37,7 +37,11 @@ export function answerLabel(input: SessionCollabApprovalInput, answer: SessionCo
   return input.kind === "pair_limit" ? `Allow ${input.grant} more` : "Allow once";
 }
 
+/** What creating a manager chat lets the Assistant do from then on, stated before the user allows it. */
+export const MANAGER_CREATE_CONSEQUENCE = "After this, PPM Assistant can message this chat without asking, also while you are away.";
+
 function heading(input: SessionCollabApprovalInput): string {
+  if (input.kind === "create" && input.manager) return `Create the manager chat for ${input.projectName ?? "this project"}`;
   if (input.kind === "create") return input.projectName ? `The Assistant wants to open a chat in ${input.projectName}` : "The AI wants to create a session";
   if (input.kind === "pair_limit") return "These sessions reached their message limit";
   if (input.kind === "message") return `The Assistant wants to message a chat in ${input.projectName}`;
@@ -118,6 +122,7 @@ function CollabApprovalBody({ input }: { input: SessionCollabApprovalInput }) {
           </span>
         </div>
         {input.permissionMode && <RunsIn mode={input.permissionMode} />}
+        {input.manager && <p className="text-xs font-medium text-text-primary">{MANAGER_CREATE_CONSEQUENCE}</p>}
         {input.task && <WholeText label="The whole task" text={input.task} />}
       </>
     );

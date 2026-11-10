@@ -299,6 +299,16 @@ export function traceApproval(
   });
 }
 
+/** A decision PPM took about the session outside any provider event (a refused send, a paused budget). */
+export function traceServerEvent(sessionId: string, providerId: string, type: string, payload: Record<string, unknown>): void {
+  safe(type, () => {
+    const live = liveRuns.get(sessionId);
+    if (live) flushOpenBlock(live);
+    const target = live ?? { traceId: traceIdFor(sessionId), providerId, origin: "unknown" as TraceOrigin };
+    enqueue(target, live?.currentTurnId ?? null, "server", type, Date.now(), { type, ...payload });
+  });
+}
+
 /** For tests: forget every live run. */
 export function _resetTraceRuns(): void {
   liveRuns.clear();

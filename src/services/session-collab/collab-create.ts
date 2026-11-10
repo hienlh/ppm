@@ -4,7 +4,8 @@ import type { CreateSessionResult, SessionCollabCreateApproval } from "../../sha
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import { effectivePermissionMode, sanitizeTitle, type CollabCaller, type CollabEnv } from "./collab-context.ts";
 import { deliverAndWait } from "./collab-deliver.ts";
-import { jsonResult, statusOf } from "./collab-status.ts";
+import { createManagerSessionTool } from "./collab-create-manager.ts";
+import { jsonResult, noteAiTextRead, statusOf } from "./collab-status.ts";
 import { collabTextTooLarge, MAX_COLLAB_TITLE_CHARS } from "./session-collab-tool.ts";
 
 /**
@@ -22,7 +23,8 @@ import { collabTextTooLarge, MAX_COLLAB_TITLE_CHARS } from "./session-collab-too
  *
  * The PPM Assistant names the project, and the chat it opens is set up as one the user opens
  * there: depth 0, not recorded as AI-created, the provider's default mode and model unless a model
- * is given. It always asks, and the card states the project and the mode.
+ * is given. It always asks, and the card states the project and the mode. With `manager: true` it
+ * asks to create the project's manager chat instead (`collab-create-manager.ts`).
  */
 
 const isMode = (mode: string | null): mode is string =>
@@ -60,7 +62,23 @@ function projectFor(env: CollabEnv, caller: CollabCaller, raw: unknown): { name:
   return project ?? `No registered project is named "${raw.slice(0, 100)}". Call projects_list for the names.`;
 }
 
+/** `manager: true`: the project's manager chat, checked here and created in `collab-create-manager.ts`. */
+async function createManagerFromArgs(env: CollabEnv, caller: CollabCaller, args: Json, signal: AbortSignal): Promise<Json> {
+  const title = args.title === undefined ? null : sanitizeTitle(args.title, MAX_COLLAB_TITLE_CHARS);
+  if (args.title !== undefined && !title) return textResult("`title` must be a few words the user will see in the session list.", true);
+  if (args.task !== undefined && typeof args.task !== "string") return textResult("`task` must be text.", true);
+  const task = typeof args.task === "string" ? args.task : "";
+  const tooLarge = collabTextTooLarge("task", task);
+  if (tooLarge) return textResult(tooLarge, true);
+  const project = projectFor(env, caller, args.project);
+  if (typeof project === "string") return textResult(project, true);
+  if (args.wait !== undefined && typeof args.wait !== "boolean") return textResult("`wait` must be true or false.", true);
+  return createManagerSessionTool(env, caller, { title, task, project, provider: args.provider, model: args.model, wait: args.wait === true }, signal);
+}
+
 export async function createSessionTool(env: CollabEnv, caller: CollabCaller, args: Json, signal: AbortSignal): Promise<Json> {
+  if (args.manager !== undefined && typeof args.manager !== "boolean") return textResult("`manager` must be true or false.", true);
+  if (args.manager === true) return createManagerFromArgs(env, caller, args, signal);
   const assistant = caller.kind === "assistant";
   const title = sanitizeTitle(args.title, MAX_COLLAB_TITLE_CHARS);
   if (!title) return textResult("`title` is required: a few words the user will see in the session list.", true);
@@ -174,5 +192,6 @@ async function createReserved(env: CollabEnv, caller: CollabCaller, plan: Create
     ...(out.reply ? { reply: out.reply } : {}),
     ...(assistant ? { project: project.name } : {}),
   };
+  noteAiTextRead(env, caller, [result.status], out.reply);
   return jsonResult(result);
 }

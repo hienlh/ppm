@@ -88,14 +88,18 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
   const saved = getAssistantSettings();
   // The main session is PPM's to pick and the user's to change through its own route; a pane
   // opened before the change would otherwise put the old one back. A body naming no default mode
-  // for manager chats, or no rules template (a pane that predates them), keeps the saved one.
+  // for manager chats, no rules template, no quiet hours or no time zone (a pane that predates
+  // them) keeps the saved one.
   const sentKey = (key: string) => typeof input === "object" && input !== null && key in input;
-  const { main_session: _ignored, ...sent } = value;
+  const { main_session: _ignored, timezone: _zone, ...sent } = value;
+  const timezone = sentKey("timezone") ? value.timezone : saved.timezone;
   const next: AssistantSettings = {
     ...sent, mcp_servers: servers,
     ...(saved.main_session !== undefined ? { main_session: saved.main_session } : {}),
     manager_default_mode: sentKey("manager_default_mode") ? value.manager_default_mode : saved.manager_default_mode,
     manager_template: sentKey("manager_template") ? value.manager_template : saved.manager_template,
+    quiet_hours: sentKey("quiet_hours") ? value.quiet_hours : saved.quiet_hours,
+    ...(timezone ? { timezone } : {}),
   };
   configService.set("assistant", next);
   return { ok: true, settings: maskAssistantSettings(next) };

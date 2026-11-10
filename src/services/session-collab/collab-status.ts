@@ -1,5 +1,5 @@
 import { neutralizeFences } from "../../shared/untrusted-text.ts";
-import type { SessionStatus, SessionStatusResult } from "../../shared/session-collab.ts";
+import type { SessionStatus, SessionStatusResult, SessionWaitOutcome } from "../../shared/session-collab.ts";
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import {
   preview, resolveTarget, titleOf, toEpochIso, type CollabCaller, type CollabEnv,
@@ -34,13 +34,24 @@ export function statusOf(env: CollabEnv, sessionId: string, providerId: string, 
   };
 }
 
+/**
+ * A result put another AI's words in front of the PPM Assistant (a chat's last answer, a reply it
+ * waited for): its turn is no longer one only the user wrote into, which its next messages to
+ * manager chats say.
+ */
+export function noteAiTextRead(env: CollabEnv, caller: CollabCaller, statuses: readonly SessionStatus[], reply?: SessionWaitOutcome): void {
+  if (caller.kind !== "assistant") return;
+  if (reply?.replied || statuses.some((s) => !!s.lastAssistantText)) env.markUntrusted?.(caller.sessionId, "read");
+}
+
 /** The tools' JSON answer: the shapes in `src/shared/session-collab.ts`, as the chat card reads them. */
 export const jsonResult = (value: unknown, isError = false): Json => textResult(JSON.stringify(value, null, 2), isError);
 
 export function sessionStatusTool(env: CollabEnv, caller: CollabCaller, args: Json): Json {
   let ids: string[];
   if (args.session_ids === undefined || args.session_ids === null) {
-    ids = env.links.linked(caller.sessionId);
+    // The Assistant links to no chat; what it asks about by default is every project's manager.
+    ids = caller.kind === "assistant" ? (env.managers?.() ?? []).map((m) => m.sessionId) : env.links.linked(caller.sessionId);
   } else {
     const raw = args.session_ids;
     if (!Array.isArray(raw) || raw.length > MAX_STATUS_SESSIONS || !raw.every((v) => typeof v === "string")) {
@@ -58,6 +69,7 @@ export function sessionStatusTool(env: CollabEnv, caller: CollabCaller, args: Js
     }
     sessions.push(statusOf(env, target.value.sessionId, target.value.providerId, caller.sessionId, true));
   }
+  noteAiTextRead(env, caller, sessions);
   // `errors` names ids that were refused; with none asked for, an empty list means nothing is linked yet.
   const result: SessionStatusResult & { errors?: string[] } = { sessions, ...(problems.length ? { errors: problems } : {}) };
   return jsonResult(result, sessions.length === 0 && problems.length > 0);

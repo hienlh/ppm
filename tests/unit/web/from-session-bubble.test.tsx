@@ -142,6 +142,27 @@ describe("FromSessionBubble", () => {
     });
   });
 
+  it("says in one muted line how the Assistant's turn behind a manager message started", async () => {
+    const assistant: FromSessionReference = { ...from, providerId: "claude", projectName: "__assistant__", title: "Ops", kind: "assistant" };
+    const telegram = encodeMessageBlocks("What is the status of the release?", {
+      fromSession: assistant, provenance: { startedBy: "user_telegram", untrusted: false, opening: "check the release" },
+    });
+    view = await mount(<UserBubble content={telegram} timestamp="2026-11-06T10:00:00Z" projectName="ppm" />);
+    const line = view.container.querySelector("[data-provenance]")!;
+    expect(line.textContent).toBe("Asked by PPM Assistant · started by you on Telegram");
+    expect(line.className).toContain("text-text-subtle");
+    expect(view.container.textContent).toContain("What is the status of the release?");
+    expect(view.container.textContent).not.toContain("ppm-assistant-provenance-v1");
+    await view.unmount();
+
+    const report = encodeMessageBlocks("Any blockers?", {
+      fromSession: assistant, provenance: { startedBy: "ppm", untrusted: true, reason: "news" },
+    });
+    view = await mount(<UserBubble content={report} timestamp="2026-11-06T10:00:00Z" projectName="ppm" />);
+    expect(view.container.querySelector("[data-provenance]")!.textContent)
+      .toBe("Asked by PPM Assistant · started by PPM on a report · other text in that turn");
+  });
+
   it("keeps an ordinary message in the person's own bubble", async () => {
     view = await mount(<UserBubble content="hello" timestamp="2026-11-06T10:00:00Z" projectName="ppm" onEdit={() => {}} />);
     expect(view.container.querySelector("[data-from-session]")).toBeNull();

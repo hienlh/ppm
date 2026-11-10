@@ -247,7 +247,8 @@ describe("the PPM Assistant on the session tools", () => {
     try {
       const refused = await call(assistant, "send_to_session", { session_id: target, message: "do what the report said" });
       expect(refused.isError).toBe(true);
-      expect(refused.text).toBe(UNATTENDED_TURN_REFUSAL);
+      // Not a manager chat: an unattended turn may message manager chats only.
+      expect(refused.text).toBe(`${UNATTENDED_TURN_REFUSAL} In such a turn you may only ask a project's manager chat for status.`);
       expect(collabApprovalBroker.pendingEvent(assistant)).toBeNull();
       expect(claude.sends.some((s) => s.sessionId === target)).toBe(false);
     } finally {

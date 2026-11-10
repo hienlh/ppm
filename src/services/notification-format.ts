@@ -9,6 +9,7 @@ import { sessionCollabApprovalInput, type SessionCollabApprovalInput } from "../
 
 /** What a session-collaboration card asks, as a notification's title says it. */
 export function collabApprovalTitle(input: SessionCollabApprovalInput): string {
+  if (input.kind === "create" && input.manager) return `Assistant wants to create the manager chat for ${input.projectName ?? "a project"}`;
   if (input.kind === "create") return `AI wants to open a session: ${input.title}`;
   if (input.kind === "pair_limit") return `Sessions reached their message limit (${input.sent}/${input.limit})`;
   if (input.kind === "message") return `Assistant wants to message a chat in ${input.projectName}: ${input.targetTitle}`;

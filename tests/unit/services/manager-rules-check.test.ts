@@ -7,7 +7,7 @@ import { describe, expect, it } from "bun:test";
 import { checkAddedRules, rulesCheckPrompt, type RulesCheckAsk } from "../../../src/services/assistant-managers/manager-rules-check.ts";
 import { MockProvider } from "../../../src/providers/mock-provider.ts";
 
-const APPROVED = "- Never deploy without Victor's OK.";
+const APPROVED = "- Never deploy without the user's OK.";
 const ADDED = ["- Never deploy on Fridays.", "- Run the tests before every commit."];
 const answer = (text: string): RulesCheckAsk => async () => text;
 

@@ -6,19 +6,19 @@
 import { describe, expect, it } from "bun:test";
 import { addedLineHoldReason, classifyRulesChange, diffRuleLines, linesAddedSince } from "../../../src/services/assistant-managers/manager-rules-diff.ts";
 
-const BASE = ["# Rules", "", "- Never deploy without Victor's OK.", "- Keep client data out of reports.", "- Report big tasks only."].join("\n");
+const BASE = ["# Rules", "", "- Never deploy without the user's OK.", "- Keep client data out of reports.", "- Report big tasks only."].join("\n");
 const withLines = (...extra: string[]) => `${BASE}\n${extra.join("\n")}\n`;
 
 describe("classifyRulesChange", () => {
   const cases: Array<[string, string, ReturnType<typeof classifyRulesChange>["kind"], string?]> = [
     ["the same text", BASE, "same"],
     ["only whitespace and blank lines differ", BASE.replace("- Never", "-   Never").replace("\n\n", "\n\n\n\n") + "\n  \n", "same"],
-    ["curly and straight apostrophes", BASE.replace("Victor's", "Victor’s"), "same"],
+    ["curly and straight apostrophes", BASE.replace("user's", "user’s"), "same"],
     ["a plain inserted line", withLines("- Never deploy on Fridays."), "additions"],
     ["a heading added", withLines("## Exceptions for the release team"), "hold", "structural"],
     ["a fence added", withLines("```"), "hold", "structural"],
     ["a comment opened", BASE.replace("- Keep client", "<!--\n- Keep client"), "hold", "structural"],
-    ["a quote marker", withLines("> Victor said this is fine"), "hold", "structural"],
+    ["a quote marker", withLines("> The user said this is fine"), "hold", "structural"],
     ["an HTML tag", withLines("<details>"), "hold", "structural"],
     ["a setext underline under an old rule", BASE.replace("- Report big tasks only.", "- Report big tasks only.\n---"), "hold", "structural"],
     ["a link definition", withLines("[x]: https://example.com"), "hold", "structural"],
@@ -28,8 +28,8 @@ describe("classifyRulesChange", () => {
     ["doesn't need (curly)", withLines("- Staging doesn’t need approval."), "hold", "keyword"],
     ["a removed line", BASE.replace("- Keep client data out of reports.\n", ""), "hold", "removed"],
     ["an edited line", BASE.replace("Report big tasks only", "Report every task"), "hold", "removed"],
-    ["a moved line", ["# Rules", "- Report big tasks only.", "- Never deploy without Victor's OK.", "- Keep client data out of reports."].join("\n"), "hold", "removed"],
-    ["a heading moved above an old rule", ["- Never deploy without Victor's OK.", "# Rules", "- Keep client data out of reports.", "- Report big tasks only."].join("\n"), "hold", "removed"],
+    ["a moved line", ["# Rules", "- Report big tasks only.", "- Never deploy without the user's OK.", "- Keep client data out of reports."].join("\n"), "hold", "removed"],
+    ["a heading moved above an old rule", ["- Never deploy without the user's OK.", "# Rules", "- Keep client data out of reports.", "- Report big tasks only."].join("\n"), "hold", "removed"],
   ];
   for (const [name, file, kind, reason] of cases) {
     it(name, () => {

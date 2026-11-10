@@ -9,6 +9,7 @@
  */
 
 import { RULES_FILE_MAX_BYTES } from "./assistant-limits.ts";
+import { DEFAULT_QUIET_HOURS, readQuietHours, readTimeZone, type QuietHours } from "./assistant-quiet-hours.ts";
 
 export const ASSISTANT_INSTRUCTIONS_MAX_CHARS = 8000;
 export const ASSISTANT_MCP_MAX_SERVERS = 20;
@@ -85,6 +86,10 @@ export interface AssistantSettings {
   manager_default_mode: ManagerMode;
   /** What a project's `.ppm/manager.md` starts as; empty means PPM's own template. */
   manager_template: string;
+  /** The daily window in which nothing PPM started on its own reaches a manager chat. */
+  quiet_hours: QuietHours;
+  /** The user's IANA time zone, saved with the quiet hours; absent means the server's own. */
+  timezone?: string;
 }
 
 /**
@@ -100,6 +105,7 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   mcp_servers: [],
   manager_default_mode: "default",
   manager_template: "",
+  quiet_hours: { ...DEFAULT_QUIET_HOURS },
 };
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -262,12 +268,15 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
     } else managerTemplate = raw.manager_template;
   }
 
+  const timezone = readTimeZone(raw.timezone, errors);
   return {
     value: {
       default_provider: defaultProvider, providers: readProviders(raw.providers, errors), instructions, mcp_servers: servers,
       ...(raw.main_session !== undefined ? { main_session: readMainSession(raw.main_session) } : {}),
       manager_default_mode: managerMode,
       manager_template: managerTemplate,
+      quiet_hours: readQuietHours(raw.quiet_hours, errors),
+      ...(timezone ? { timezone } : {}),
     },
     errors,
   };
@@ -286,6 +295,7 @@ export function maskAssistantSettings(settings: AssistantSettings): AssistantSet
   return {
     ...settings,
     providers: structuredClone(settings.providers),
+    quiet_hours: { ...settings.quiet_hours },
     mcp_servers: settings.mcp_servers.map((s) => s.transport === "stdio"
       ? { ...s, args: [...s.args], env: blank(s.env) }
       : { ...s, headers: blank(s.headers) }),

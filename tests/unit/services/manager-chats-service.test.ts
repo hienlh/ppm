@@ -88,6 +88,18 @@ describe("assigning", () => {
     expect(changes).toEqual([[A.name], [A.name]]);
   });
 
+  it("never replaces a manager when asked to assign only if there is none", async () => {
+    const m = managers();
+    const chosen = chat(A);
+    await m.assign(A.name, chosen, "user");
+    await expect(m.assign(A.name, chat(A), "assistant", { onlyIfNone: true })).rejects.toThrow("already has a manager chat");
+    expect(m.managerFor(A.path)).toMatchObject({ sessionId: chosen, assignedBy: "user" });
+    // The same chat again is not a replacement.
+    expect((await m.assign(A.name, chosen, "assistant", { onlyIfNone: true })).replaced).toBeNull();
+    const fresh = chat(B);
+    expect((await m.assign(B.name, fresh, "assistant", { onlyIfNone: true })).row).toMatchObject({ sessionId: fresh, assignedBy: "assistant" });
+  });
+
   it("tells the assign dialog which chat it replaces, and writes nothing", async () => {
     const m = managers();
     const first = chat(A);

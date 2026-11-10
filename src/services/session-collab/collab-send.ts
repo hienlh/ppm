@@ -4,8 +4,9 @@ import {
   effectivePermissionMode, resolveTarget, type CollabCaller, type CollabEnv, type CollabTarget,
 } from "./collab-context.ts";
 import { assistantSendCheck } from "./collab-send-assistant.ts";
+import { isManagerTarget, managerSendCheck, UNATTENDED_MANAGERS_ONLY, type ManagerSendPlan } from "./collab-send-manager.ts";
 import { deliverAndWait } from "./collab-deliver.ts";
-import { jsonResult, statusOf } from "./collab-status.ts";
+import { jsonResult, noteAiTextRead, statusOf } from "./collab-status.ts";
 import { collabTextTooLarge } from "./session-collab-tool.ts";
 
 /**
@@ -15,6 +16,7 @@ import { collabTextTooLarge } from "./session-collab-tool.ts";
  * rights it was never given) — shown the whole message. A message the target is waiting for — the
  * target called with `wait: true` and this caller is who it waits on — is that wait's reply and is
  * not delivered again; any other, a reply that came after the wait ended included, is a new message.
+ * The PPM Assistant follows its own rules instead (`collab-send-manager.ts`, `collab-send-assistant.ts`).
  */
 
 /**
@@ -62,10 +64,18 @@ export async function sendToSessionTool(env: CollabEnv, caller: CollabCaller, ar
   if (!resolved.ok) return textResult(resolved.message, true);
   const target = resolved.value;
 
-  // The PPM Assistant asks the user about every message instead of the pair and mode checks, and
-  // the message must still run in the mode the user approved when it is handed over.
+  // The PPM Assistant messages a project's manager chat without a card, within the limits that
+  // replace it, and asks the user about every other message instead of the pair and mode checks;
+  // a message the user approved must still run in the mode they approved when it is handed over.
   let expectedMode: string | undefined;
-  if (caller.kind === "assistant") {
+  let manager: Extract<ManagerSendPlan, { ok: true }> | null = null;
+  if (caller.kind === "assistant" && isManagerTarget(env, target)) {
+    const plan = await managerSendCheck(env, caller, target, message, signal);
+    if (!plan.ok) return textResult(plan.message, true);
+    manager = plan;
+    expectedMode = plan.expectedMode;
+  } else if (caller.kind === "assistant") {
+    if (caller.unattended) return textResult(UNATTENDED_MANAGERS_ONLY, true);
     const check = await assistantSendCheck(env, caller, target, message, signal);
     if (!check.ok) return textResult(check.message, true);
     expectedMode = check.mode;
@@ -74,18 +84,36 @@ export async function sendToSessionTool(env: CollabEnv, caller: CollabCaller, ar
     if (refused) return textResult(refused, true);
   }
 
+  try {
+    return await deliverChecked(env, caller, target, message, args.wait === true, signal, expectedMode, manager);
+  } catch (e) {
+    // Whatever failed after the checks, a message that did not go gives back what it reserved.
+    manager?.release();
+    throw e;
+  }
+}
+
+async function deliverChecked(
+  env: CollabEnv, caller: CollabCaller, target: CollabTarget, message: string, wait: boolean, signal: AbortSignal,
+  expectedMode: string | undefined, manager: Extract<ManagerSendPlan, { ok: true }> | null,
+): Promise<Json> {
   // The target is waiting for exactly this: hand it over as the wait's result, once.
   const sentAt = new Date().toISOString();
   const turnId = env.live(caller.sessionId)?.currentTurnId;
   if (env.waits.claimReply(caller.sessionId, target.sessionId, { text: message, ...(turnId ? { turnId } : {}), sentAt })) {
     const result: SendToSessionResult = { delivered: "inserted", status: statusOf(env, target.sessionId, target.providerId, caller.sessionId) };
+    noteAiTextRead(env, caller, [result.status]);
     return jsonResult(result);
   }
 
-  const out = await deliverAndWait(env, { caller, target, body: message, wait: args.wait === true, signal, ...(expectedMode ? { expectedMode } : {}) });
+  const out = await deliverAndWait(env, {
+    caller, target, body: message, wait, signal, ...(expectedMode ? { expectedMode } : {}),
+    ...(manager ? { priority: manager.priority, provenance: manager.provenance } : {}),
+  });
   if (!out.ok) {
-    // Never reached the target: it does not count against the pair's limit.
-    env.pairs.unrecord(caller.sessionId, target.sessionId);
+    // Never reached the target: it does not count against the pair's limit or the Assistant's budgets.
+    if (manager) manager.release();
+    else if (caller.kind !== "assistant") env.pairs.unrecord(caller.sessionId, target.sessionId);
     return textResult(out.message, true);
   }
   const result: SendToSessionResult & { project?: string } = {
@@ -95,5 +123,6 @@ export async function sendToSessionTool(env: CollabEnv, caller: CollabCaller, ar
     // The Assistant's targets live in other projects; its tool card opens them there.
     ...(caller.kind === "assistant" ? { project: target.projectName } : {}),
   };
+  noteAiTextRead(env, caller, [result.status], out.reply);
   return jsonResult(result);
 }

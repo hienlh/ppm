@@ -21,6 +21,11 @@ import { isAssistantProject } from "../../shared/assistant-project.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { isUnattendedTurn } from "../chat-control/chat-control.ts";
 import { awaitCanonicalSessionId } from "../assistant-mcp/assistant-chat-start-session-id.ts";
+import { managerChats } from "../assistant-managers/manager-chats.service.ts";
+import { assistantTurnProvenance } from "../assistant/assistant-turn-provenance.ts";
+import { getAssistantSettings } from "../assistant/assistant-settings.service.ts";
+import { traceServerEvent } from "../session-trace/trace-recorder.ts";
+import { assistantSendGuards } from "./assistant-send-guards-live.ts";
 import { collabApprovalBroker } from "./collab-approval-broker.ts";
 import type { CollabCaller, CollabEnv } from "./collab-context.ts";
 import { collabWaits } from "./collab-waits.ts";
@@ -112,6 +117,19 @@ export const collabEnv: CollabEnv = {
   },
   chatMode: chatTargetMode,
   settledSessionId: (sessionId, providerId) => awaitCanonicalSessionId(sessionId, providerId),
+  managerOf: (projectPath) => {
+    const row = managerChats.managerFor(projectPath);
+    return row ? resolveMigratedSession(row.sessionId) : null;
+  },
+  managers: () => managerChats.list().map((r) => ({
+    projectName: r.projectName, projectPath: r.projectPath, sessionId: resolveMigratedSession(r.sessionId),
+  })),
+  turnProvenance: (sessionId) => assistantTurnProvenance.provenance(sessionId),
+  markUntrusted: (sessionId, reason) => assistantTurnProvenance.markUntrusted(sessionId, reason),
+  assistantGuards: assistantSendGuards,
+  managerDefaultMode: () => getAssistantSettings().manager_default_mode,
+  assignManager: async (projectName, sessionId) => { await managerChats.assign(projectName, sessionId, "assistant", { onlyIfNone: true }); },
+  trace: (sessionId, type, payload) => traceServerEvent(sessionId, firstOf(sessionId, getSessionProvider) ?? "claude", type, payload),
   pairs: pairCounter,
   approve: (sessionId, input, signal) => collabApprovalBroker.request(sessionId, input, signal),
   waits: collabWaits,

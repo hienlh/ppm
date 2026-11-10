@@ -24,7 +24,7 @@ const reply: ReplyReference = {
 describe("from-session block", () => {
   it("round-trips through the message codec", () => {
     const encoded = encodeMessageBlocks("Please check the tests", { fromSession: from });
-    expect(decodeMessageBlocks(encoded)).toEqual({ content: "Please check the tests", fromSession: from, turnRefs: null, replyTo: null });
+    expect(decodeMessageBlocks(encoded)).toEqual({ content: "Please check the tests", fromSession: from, turnRefs: null, replyTo: null, provenance: null });
   });
 
   it("sits after the text and before turn references and a reply, which stays last", () => {
@@ -35,7 +35,7 @@ describe("from-session block", () => {
     expect(fromAt).toBeGreaterThan(encoded.indexOf("body"));
     expect(refsAt).toBeGreaterThan(fromAt);
     expect(replyAt).toBeGreaterThan(refsAt);
-    expect(decodeMessageBlocks(encoded)).toEqual({ content: "body", fromSession: from, turnRefs: [ref], replyTo: reply });
+    expect(decodeMessageBlocks(encoded)).toEqual({ content: "body", fromSession: from, turnRefs: [ref], replyTo: reply, provenance: null });
     // A build that only knows reply blocks still finds its own.
     expect(decodeReply(encoded).replyTo).toEqual(reply);
   });

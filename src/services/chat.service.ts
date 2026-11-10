@@ -50,6 +50,11 @@ import { stopChatSessionProcesses } from "./chat-session-processes/session-proce
 import { createLogger } from "./logger.ts";
 import { watchEventsContextEntry } from "./assistant-watch/watch-event-text.ts";
 import { deleteAssistantWatchesFor } from "./assistant-hub/assistant-hub-db.ts";
+import { assistantManagersContextEntry } from "./assistant/assistant-managers-context.ts";
+// Loaded with the chat service, so they hear every message from the first one: how each PPM
+// Assistant turn started, and the user's messages that restart its limits on manager chats.
+import "./assistant/assistant-turn-provenance.ts";
+import "./session-collab/assistant-send-guards-live.ts";
 
 const log = createLogger("chat");
 const designLog = createLogger("design");
@@ -556,15 +561,36 @@ class ChatService {
       managerEntry = await managerRulesEntryFor(sessionId);
       if (managerEntry && this.sharedSnapshots.unchanged(key, "manager", managerEntry)) managerEntry = undefined;
     }
+    // The Assistant's list of manager chats, sent when it changes (and after a compaction).
+    let managersEntry: string | undefined;
+    if (design.assistantSession && !slash) {
+      managersEntry = await this.assistantManagersEntry();
+      if (managersEntry && this.sharedSnapshots.unchanged(key, "managers", managersEntry)) managersEntry = undefined;
+    }
     // Every entry is server-built: a caller's own `sharedContext` is dropped here.
-    const sharedContext = joinSharedContextEntries(managerEntry, shared, ui, channelEntry);
+    const sharedContext = joinSharedContextEntries(managerEntry, shared, ui, channelEntry, managersEntry);
     return {
       opts: {
         ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
         ...(sessionCollabMcp ? { sessionCollabMcp } : {}), sharedContext,
       },
-      sent: { shared, ui, manager: managerEntry },
+      sent: { shared, ui, manager: managerEntry, managers: managersEntry },
     };
+  }
+
+  /** The manager chats an Assistant turn is told about; undefined when the list cannot be read. */
+  private async assistantManagersEntry(): Promise<string | undefined> {
+    try {
+      const { managerChats } = await import("./assistant-managers/manager-chats.service.ts");
+      const { getSessionTitle, resolveMigratedSession } = await import("./db.service.ts");
+      return assistantManagersContextEntry(managerChats.list().map((m) => {
+        const id = resolveMigratedSession(m.sessionId);
+        return { projectName: m.projectName, sessionId: id, title: getSessionTitle(id) ?? this.getSession(id)?.title ?? null };
+      }));
+    } catch (e) {
+      log.warn(`could not list manager chats for an Assistant turn: ${(e as Error).message}`);
+      return undefined;
+    }
   }
 
   /**

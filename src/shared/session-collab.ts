@@ -80,6 +80,11 @@ export interface SessionCollabCreateApproval {
   /** The mode the new chat runs in, when the card states it. */
   permissionMode?: string;
   modeSource?: SessionCollabModeSource;
+  /**
+   * The PPM Assistant asks to create the project's manager chat: once it exists, the Assistant
+   * messages it without asking, also while the user is away. The task may then be empty.
+   */
+  manager?: true;
 }
 
 /** Two sessions reached their limit of automatic messages; shown in the sending session. */

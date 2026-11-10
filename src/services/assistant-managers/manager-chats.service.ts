@@ -153,14 +153,24 @@ export function createManagerChats(env: ManagerChatsEnv = realEnv) {
       const existing = getManagerChatRow(target.key);
       return { target, sessionId: current, replaces: existing && existing.sessionId !== current ? existing : null };
     },
-    async assign(projectName: string, sessionId: string, by: "user" | "assistant" = "user"): Promise<{ row: ManagerChatRow; replaced: string | null }> {
+    /**
+     * Makes the chat the project's manager. `onlyIfNone` refuses when the project already has one,
+     * checked in the same synchronous step as the write, so a create that raced a user's own
+     * assignment never takes the role away from the chat the user chose.
+     */
+    async assign(
+      projectName: string, sessionId: string, by: "user" | "assistant" = "user", opts: { onlyIfNone?: boolean } = {},
+    ): Promise<{ row: ManagerChatRow; replaced: string | null }> {
       const target = project(projectName);
       const { sessionId: current, found } = await check(target, sessionId);
+      const previous = getManagerChatRow(target.key);
+      if (opts.onlyIfNone && previous && previous.sessionId !== current) {
+        throw new ManagerChatError(`${target.name} already has a manager chat (session ${previous.sessionId})`);
+      }
       if (found) {
         setSessionMetadata(current, target.name, target.path);
         setSessionProvider(current, MANAGER_PROVIDER_ID);
       }
-      const previous = getManagerChatRow(target.key);
       const touched = new Set([target.name]);
       for (const row of listManagerChatRows()) if (row.sessionId === current) touched.add(nameFor(row));
       putManagerChatRow({

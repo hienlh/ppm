@@ -81,7 +81,7 @@ export function sessionCollabToolDefinitions() {
         type: "object",
         properties: {
           title: { type: "string", description: `A short title for the new session (at most ${MAX_COLLAB_TITLE_CHARS} characters), shown in the user's session list.` },
-          task: { type: "string", description: `The task, complete enough to work from without this conversation. Say what to send back, and that the reply goes through send_to_session. At most ${MAX_COLLAB_MESSAGE_BYTES / 1024} KB; put longer material in a file and give its path.` },
+          task: { type: "string", description: `The task, complete enough to work from without this conversation (required, except with \`manager\`). Say what to send back, and that the reply goes through send_to_session. At most ${MAX_COLLAB_MESSAGE_BYTES / 1024} KB; put longer material in a file and give its path.` },
           provider: { type: "string", enum: ["claude", "codex"], description: "The AI to run it on; yours by default." },
           model: { type: "string", description: "The model; the same as yours by default." },
           wait: WAIT,
@@ -91,8 +91,14 @@ export function sessionCollabToolDefinitions() {
               + "Assistant must name the registered project to open the chat in (see projects_list); its chat starts in "
               + "the provider's default mode and model, and the user is always asked first.",
           },
+          manager: {
+            type: "boolean",
+            description: "PPM Assistant only: create the project's manager chat (Claude, titled \"Manager\" unless you give a "
+              + "title). Refused when the project already has one. The user is asked once; after that you message it "
+              + "without asking. `task` is optional here.",
+          },
         },
-        required: ["title", "task"],
+        required: ["title"],
         additionalProperties: false,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -107,7 +113,8 @@ export function sessionCollabToolDefinitions() {
         + "holds the context, or to hand a running session more to do. A running session reads the message at its "
         + "next step; an idle one starts a turn. The user sees every message in both sessions. Sending to a session "
         + "with more permissions than yours, and sending many messages back and forth, asks the user first. The PPM "
-        + "Assistant may message a chat of any registered project, and every message it sends is asked first.",
+        + "Assistant may message a chat of any registered project: a project's manager chat without asking (within "
+        + "limits), every other chat only after the user allows it on a card.",
       inputSchema: {
         type: "object",
         properties: {
@@ -127,8 +134,8 @@ export function sessionCollabToolDefinitions() {
         "Report on sessions of this project: whether each is running, idle or waiting on the user, its title, AI and "
         + "model, who created it, the opening of its last answer, and how many of its messages to you arrived "
         + "outside a wait. Without session_ids it reports the sessions linked to yours (created by you, your "
-        + "creator, and those you exchanged messages with). Use it to check progress instead of waiting, or before "
-        + "messaging a session.",
+        + "creator, and those you exchanged messages with); for the PPM Assistant, every project's manager chat. "
+        + "Use it to check progress instead of waiting, or before messaging a session.",
       inputSchema: {
         type: "object",
         properties: {

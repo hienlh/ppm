@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
  *
  * Delivery hints only: a restart or an eviction just sends a fresh copy.
  */
-export type SharedContextPart = "shared" | "ui" | "manager";
+export type SharedContextPart = "shared" | "ui" | "manager" | "managers";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 

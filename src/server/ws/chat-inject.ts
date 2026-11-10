@@ -9,6 +9,8 @@
  * every browser send to it (`withSessionLock`), so two senders can never start two runs.
  */
 import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
+import type { AssistantProvenance } from "../../shared/assistant-provenance.ts";
+import { neutralizePpmTags } from "../../services/assistant-watch/watch-event-text.ts";
 import { validateFromSession, type FromSessionReference } from "../../shared/chat-from-session.ts";
 import { validateTurnRefs, type TurnReference } from "../../shared/chat-turn-ref.ts";
 import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
@@ -58,6 +60,13 @@ export interface DeliverToSessionInput {
    * session's lock, so a run started in another mode meanwhile gets nothing.
    */
   expectedMode?: string;
+  /**
+   * `next` (the default) joins a running turn at its next step; `later` waits until that turn is
+   * over. A PPM Assistant message the user did not start cleanly goes `later`.
+   */
+  priority?: "next" | "later";
+  /** How the PPM Assistant's turn started; only with a sender of kind `assistant`, written by the server. */
+  provenance?: AssistantProvenance;
 }
 
 export interface DeliverToSessionResult {
@@ -159,8 +168,13 @@ export async function deliverToSession(input: DeliverToSessionInput): Promise<De
     throw new DeliverToSessionError(`Session ${target} belongs to ${stored}, not ${input.providerId}`, "provider_mismatch");
   }
 
-  // The body has its block markers broken here, so the only blocks that decode are these.
-  const content = encodeMessageBlocks(neutralizeLeadingCommand(input.body), { fromSession, turnRefs, ownProject: input.projectName || undefined });
+  if (input.provenance && fromSession.kind !== "assistant") throw new DeliverToSessionError("Only a PPM Assistant message carries a provenance block", "invalid");
+  // An AI's text may not pose as a block only PPM writes (the user's words, a provenance): every
+  // PPM-looking tag is defused, as a model reads it loosely; the exact block markers are broken by
+  // the encoder, so the only blocks that decode are these.
+  const content = encodeMessageBlocks(neutralizeLeadingCommand(neutralizePpmTags(input.body)), {
+    fromSession, turnRefs, ownProject: input.projectName || undefined, ...(input.provenance ? { provenance: input.provenance } : {}),
+  });
   const clientMessageId = `${CLIENT_ID_PREFIX}${crypto.randomUUID()}`;
   const receivedAt = Date.now();
 
@@ -190,7 +204,7 @@ export async function deliverToSession(input: DeliverToSessionInput): Promise<De
     const result = await submitToSession(target, entry, content, {
       origin: "session",
       clientMessageId,
-      priority: "next",
+      priority: input.priority ?? "next",
       receivedAt,
       supersedePendingApproval: false,
       // No device drew this message itself: every one showing the session draws it once it is in.

@@ -11,6 +11,7 @@ import type { DeliverToSessionInput, DeliverToSessionResult } from "../../server
 import type { CollabApprovalOutcome } from "./collab-approval-broker.ts";
 import type { CollabWaits } from "./collab-waits.ts";
 import type { CollabUnread } from "./collab-unread.ts";
+import type { AssistantCollabHooks } from "./collab-assistant-hooks.ts";
 
 /**
  * What the session tools need from the rest of PPM, as one object, so the tools' rules can be
@@ -35,7 +36,7 @@ export interface LiveSessionState {
   currentTurnId?: string;
 }
 
-export interface CollabEnv {
+export interface CollabEnv extends AssistantCollabHooks {
   settings(): SessionCollabSettings;
   canonical(sessionId: string): string;
   live(sessionId: string): LiveSessionState | null;
