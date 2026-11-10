@@ -248,6 +248,17 @@ async function newSession(dev, provider = "Claude") {
   await until("new session's chat is empty", async () => (await chatRoot(dev).getByText(/^Turn ".*" done\.$/).count()) === 0, 10000);
   return id;
 }
+/**
+ * A blank Assistant chat on `provider` from Settings' "New session", as a user starts one: its
+ * first message creates the session, and the list shows it under that message.
+ */
+async function newSessionFromSettings(dev, provider = "Claude") {
+  const sessionList = await openAssistantSessionList(dev.page);
+  await sessionList.locator(`button[aria-label="New Assistant session with ${provider}"]`).click();
+  await closeAssistantSessionList(dev.page);
+  await composer(dev).waitFor({ timeout: 30000 });
+  await until("new session's chat is empty", async () => (await chatRoot(dev).getByText(/^Turn ".*" done\.$/).count()) === 0, 10000);
+}
 /** Opens a session from the list in Settings, as a user picking it there would. */
 async function openSessionFromList(dev, title) {
   const list = await openAssistantSessionList(dev.page);
@@ -337,11 +348,11 @@ const DB = () => ({ connectionId: "shop" });
 /** 1. Two Assistant sessions, kept out of the projects' chats; the Assistant project has no terminal. */
 async function s1(dev) {
   await openAssistant(dev);
-  await newSession(dev);
+  await newSessionFromSettings(dev);
   const [list] = await turn(dev, `s1-first-${dev.name}`, [{ mcp: "projects_list" }], `First Assistant session (${dev.name})`);
   const projects = parse(list).projects.map((p) => p.name);
   assert.deepEqual(projects.sort(), ["alpha", "beta"], "projects_list names the user's projects only");
-  await newSession(dev);
+  await newSessionFromSettings(dev);
   await turn(dev, `s1-second-${dev.name}`, [], `Second Assistant session (${dev.name})`);
   const first = await turnOf(`s1-first-${dev.name}`), second = await turnOf(`s1-second-${dev.name}`);
   assert.notEqual(first.sessionId, second.sessionId, "two sessions");
@@ -352,9 +363,9 @@ async function s1(dev) {
     const ids = (await api(`/api/project/${project}/chat/sessions`)).data.sessions.map((s) => s.id);
     assert.ok(!ids.includes(first.sessionId) && !ids.includes(second.sessionId), `neither is in ${project}'s chats`);
   }
-  const list = await openAssistantSessionList(dev.page);
+  const sessionList = await openAssistantSessionList(dev.page);
   for (const title of [`First Assistant session (${dev.name})`, `Second Assistant session (${dev.name})`]) {
-    await assistantSessionRow(list, title).waitFor();
+    await assistantSessionRow(sessionList, title).waitFor();
   }
   await shot(dev, "s1-two-sessions");
   await closeAssistantSessionList(dev.page);
@@ -726,7 +737,8 @@ async function s7(dev, target) {
 /** 8. A session the provider renames on its first turn stays an Assistant session; tools and cards work. */
 async function s8(dev) {
   await openAssistant(dev);
-  await newSession(dev, "Codex");
+  // A blank chat: its first message is what creates the session, the request awaited below.
+  await newSessionFromSettings(dev, "Codex");
   const created = dev.page.waitForResponse((r) => r.request().method() === "POST" && /\/project\/__assistant__\/chat\/sessions$/.test(r.url()));
   const label = `s8-codex-${dev.name}`;
   const before = qty(2);
