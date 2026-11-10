@@ -729,9 +729,9 @@ outlives a restart, and it covers one run of the target chat.
   an entry in the shared-context block (`watch-event-text.ts`), which `stripSharedContext` keeps out
   of history, titles and search. `<ppm-…` tags typed by a user into an Assistant session are
   neutralised so nobody can fake one.
-- **Caps.** Active watches per session, the expiry, and wake turns per Assistant session per hour
-  are constants in `watch-state.ts` and `assistant-watch.service.ts`; news beyond the hourly cap,
-  or arriving while the session is busy, waits and goes into the next turn together.
+- **Caps.** Active watches per session and the expiry are constants in `watch-state.ts`. Report
+  turns are started by the wake queue (below), whose hourly cap counts every kind of news; news
+  beyond it, or arriving while the session is busy, waits and goes into the next turn together.
 - **Delivered means answered.** A report counts as delivered only when its turn ends with text.
   A failed or silent turn is retried; after `MAX_REPORT_ATTEMPTS` a push names the chat instead. A
   turn the user stopped is closed with no retry and no push.
@@ -741,6 +741,64 @@ outlives a restart, and it covers one run of the target chat.
 
 Deleting an Assistant session deletes its watches. Asking to watch a chat whose run already ended
 after the user asked answers with how it ended instead of creating a watch.
+
+## Reports and cards
+
+What needs the user becomes a **card**: built by PPM from records, never from a model turn, stored
+in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:card` and
+`assistant:waiting_changed`. Code in `src/services/assistant-cards/`, shapes in
+`src/shared/assistant-cards.ts`, routes in `src/server/routes/assistant-cards.ts`.
+
+- **Two sources.** A project's manager chat files `report_to_assistant` (`manager-report-tool.ts`):
+  `needs_decision`, `urgent`, `done`, `failed`, and `digest` while a digest ask is open. What PPM
+  sees in the manager chat itself (`manager-signals.ts`) adds an `approval` or `question` card
+  mirroring its own request, and a `failed` card for a turn that failed with no report within
+  `FAILED_CARD_GRACE_MS` (a stop the user asked for, a rate limit or an overloaded provider is
+  skipped). Rules events become `rules_note` / `rules_change` cards, and the Assistant pausing its
+  own messages a `budget` card (`assistant-event-cards.ts`). A child chat's approvals are not
+  carded: the manager relays them.
+- **Who may report.** The tool is listed by the session tools' endpoint for a project's current
+  manager chat only, whatever Settings → Tools says, and every call checks the live table again.
+  Any other chat, the Assistant included, is refused.
+- **Report text is untrusted.** Titles lose leading emoji and openers that imitate PPM ("PPM",
+  "Allow", "Approval"), hidden characters are shown as `⟨U+XXXX⟩`, and the server-only block
+  markers are broken in every field (`card-text-cleaning.ts`). A draft is only neutralized, so the
+  text the user approves is the text sent; it carries `sha256(to + "\n" + text)`. Every report card
+  carries a server-written line, "Written by the {project} manager AI" (or "Marked urgent by…").
+  The browser renders all of it as plain text.
+- **Caps.** 20 reports per manager per hour; 2 urgent per manager per quiet window, after which an
+  urgent report becomes a decision held for the morning; the same urgent title collapses into one
+  card (`src/shared/assistant-limits.ts`).
+- **Answering.** `POST /api/assistant/cards/:id/answer` answers the exact request an approval or
+  question card mirrors, through `chatControl().answerApproval` with origin `assistant_card`; Allow
+  is refused when the card does not show everything that would run. `POST …/dismiss` takes reports
+  and the budget card. Status changes are compare-and-set, so a second answer gets
+  `already_answered`; a request answered anywhere else resolves its card; a request that no longer
+  waits resolves it with nothing run.
+- **After a restart**, an approval or question card whose request no live chat shows is marked
+  `gone`; news not yet told to the Assistant is still pending on its card.
+
+### The wake queue
+
+`src/services/assistant-wake/assistant-wake-queue.ts` is the one door through which PPM starts an
+Assistant turn on its own. Its sources are the watches, the card news (`done`, `failed`, `urgent`,
+the digest; for the main session) and late manager replies (`manager-wake-sources.ts`). It starts
+at most `WAKE_TURNS_PER_HOUR` per Assistant session, never while that session runs a turn or shows
+a card, and during quiet hours only when something urgent waits; news held back goes into the next
+turn together. The turn opens with a fixed sentence and carries the news in the shared-context
+entry ("Manager news", `wake-news-text.ts`): quoted data, capped at `NEWS_QUOTE_MAX` per field. A
+card that only waits for an answer wakes nothing.
+
+A **late reply** is the end of a manager turn that took an Assistant message nothing waited for
+(or whose wait gave up first): its final text becomes news, with no card. These live in memory; after
+a restart the answer is still in the manager chat.
+
+A wake turn whose whole answer is `[no reply]` sends nothing to Telegram (`WakeTurnGate`) and no
+push; a turn carrying only manager news never sends "Chat completed", since its cards are the news.
+
+**Known limitation:** a manager's subagent calls the tool with the manager's own token, and an MCP
+call carries nothing that ties it to the CLI's tool call, so PPM cannot label a report as a
+subagent's. The manager rules tell the manager not to report on a child's say-so.
 
 ## Telegram
 
@@ -864,7 +922,8 @@ hand. PPMBot's old tables are left in place, unused.
 ## Startup
 
 `startAssistantHub()` (`src/services/assistant-hub/assistant-hub-startup.ts`) starts the watch
-service, carries PPMBot's settings over, then starts the Telegram bridge when it is switched on and
+service and the cards (signals, rules and budget cards, the wake queue's manager sources, the
+restart sweep), carries PPMBot's settings over, then starts the Telegram bridge when it is switched on and
 has a bot. `src/server/index.ts` and the e2e fixture call the same function, so a test exercises
 the wiring the server runs. A Telegram failure (bad token, Telegram unreachable) is logged and shown
 in Settings, never stops the server or the watches. Settings calls `syncAssistantTelegram` after a
@@ -878,9 +937,9 @@ the connect-link poller to leave that bot alone (`assistantBridgeReading` in
   are the same cards, and PPMBot's bypass path no longer exists anywhere.
 - Every chat the Assistant opens and every message it sends into a chat is asked on a card first,
   answered once; it never reaches an Assistant or design chat.
-- An unattended turn (a watch turn) never asks and never acts: it creates and messages no chat. The
-  only exception planned is a status question to a project's manager chat, which does not exist yet.
-  A card in a watched chat never starts a model turn.
+- An unattended turn (a watch or news turn) never asks and never acts: it creates and messages no
+  chat, except a status question to a project's manager chat. Every such turn starts through the
+  wake queue. A card that only waits for the user never starts a model turn.
 - Allow appears only where the whole deciding input is visible; everything else is Deny or PPM.
 - Private chat, still connected, the right person — checked on receipt and on every send.
 - No tool input or output is sent to Telegram; text is redacted before it leaves.
