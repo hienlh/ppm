@@ -74,8 +74,10 @@ export function CardButton({ children, onClick, variant = "default", disabled }:
   );
 }
 
-export function CardShell({ card, look, children, actions, error }: {
+export function CardShell({ card, look, children, actions, error, meta }: {
   card: AssistantCard; look: CardLook; children?: ReactNode; actions?: ReactNode; error?: string | null;
+  /** Shown in the head after the label when the card has no project of its own ("3 projects"). */
+  meta?: string;
 }) {
   const status = cardStatusLine(card);
   const waiting = card.status === "open" && look.tone === "need";
@@ -91,6 +93,7 @@ export function CardShell({ card, look, children, actions, error }: {
           {look.label}
         </span>
         {card.projectName && <span className="min-w-0 truncate font-semibold text-text-primary">{card.projectName}</span>}
+        {!card.projectName && meta && <span className="min-w-0 truncate text-text-secondary">{meta}</span>}
         <time className="ml-auto shrink-0 text-[11px] text-text-subtle">{cardTime(card.createdAt)}</time>
       </header>
       {card.provenance && (

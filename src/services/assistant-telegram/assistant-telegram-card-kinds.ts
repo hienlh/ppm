@@ -13,6 +13,7 @@
  * change" the same bar on the rules diff, so neither ever stands for text the user did not see.
  */
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
+import { DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, type DigestProject } from "../../shared/assistant-digest.ts";
 import { escapeHiddenCharacters } from "../../shared/reveal-hidden-characters.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
 import { redactSecretsForTelegram } from "../telegram/telegram-html-format.ts";
@@ -52,6 +53,34 @@ function clean(text: string, counter: { hidden: number }): string {
 
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 
+/** Room for the digest's sections under Telegram's 4096, leaving the head and the link. */
+const DIGEST_TELEGRAM_MAX = 3200;
+
+/**
+ * The digest's sections: a project's numbered items, or why there are none. A project whose
+ * details stay off the phone shows only how many items it has. Past the room left, the rest is
+ * said to be in PPM rather than cut mid-item.
+ */
+function digestLines(projects: readonly DigestProject[], counter: { hidden: number }): string[] {
+  const out: string[] = [];
+  let used = 0;
+  for (const p of projects) {
+    const section = [`\n<b>${clean(oneLine(p.name), counter)}</b>`];
+    if (p.state === "no_answer") section.push(`<i>${DIGEST_NO_ANSWER}</i>`);
+    else if (p.items.length === 0) section.push(`<i>${DIGEST_NOTHING_NEW}</i>`);
+    else if (p.titleOnly) section.push(`<i>${p.items.length} item${p.items.length === 1 ? "" : "s"}; the details stay in PPM for this project.</i>`);
+    else p.items.slice(0, 12).forEach((item, i) => section.push(`${i + 1}. ${clean(oneLine(item), counter)}`));
+    const size = section.reduce((n, l) => n + l.length + 1, 0);
+    if (used + size > DIGEST_TELEGRAM_MAX) {
+      out.push("\n<i>The rest is on the card in PPM.</i>");
+      break;
+    }
+    used += size;
+    out.push(...section);
+  }
+  return out;
+}
+
 export function formatManagerCard(card: AssistantCard, detail: CardDetail): FormattedManagerCard {
   const look = LOOK[card.kind];
   const counter = { hidden: 0 };
@@ -74,7 +103,8 @@ export function formatManagerCard(card: AssistantCard, detail: CardDetail): Form
     if (full && card.okOffered) buttons.push({ text: draft ? "OK, send" : "OK", op: "ok" });
     if (full) lines.push(`<i>${REPLY_HINT}</i>`);
   } else if (card.kind === "digest" && full) {
-    for (const item of (card.payload.items ?? []).slice(0, 12)) lines.push(`• ${clean(oneLine(item), counter)}`);
+    if (card.payload.projects) lines.push(...digestLines(card.payload.projects, counter));
+    else for (const item of (card.payload.items ?? []).slice(0, 12)) lines.push(`• ${clean(oneLine(item), counter)}`);
   } else if (card.kind === "rules_note" && full) {
     const added = card.payload.added ?? [];
     if (added.length) lines.push(`<blockquote>${clean(added.join("\n"), counter)}</blockquote>`);
