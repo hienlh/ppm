@@ -90,11 +90,11 @@ function sessionActivityTime(session: SessionInfo): number {
 }
 
 /** An approximation of the server's bulk delete, applied to the cached rows until the
- * re-sync that follows it lands: pinned rows survive, everything else is dropped once its
+ * re-sync that follows it lands: pinned rows and the manager chat survive, everything else is dropped once its
  * last activity is older than `days`. The server's rule is narrower — it goes by
  * `createdAt`, lists only the default provider's sessions and keeps any session that has
  * forks — so this can briefly hide a row the server kept; the re-sync brings it back. */
 export function removeOlderThan(sessions: SessionInfo[], days: number, now: number = Date.now()): SessionInfo[] {
   const cutoff = now - days * 24 * 60 * 60 * 1000;
-  return sessions.filter((s) => s.pinned || sessionActivityTime(s) >= cutoff);
+  return sessions.filter((s) => s.pinned || s.manager || sessionActivityTime(s) >= cutoff);
 }

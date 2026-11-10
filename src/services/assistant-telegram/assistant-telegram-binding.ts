@@ -14,7 +14,10 @@ import { getAssistantSettings } from "../assistant/assistant-settings.service.ts
 import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { ensureAssistantWorkDir } from "../assistant/assistant-work-dir.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
-import { deleteTelegramBinding, getTelegramBinding, setTelegramBinding, type TelegramBinding } from "../assistant-hub/assistant-hub-db.ts";
+import {
+  deleteTelegramBinding, getTelegramBinding, setTelegramBinding, telegramChatsBoundTo, type TelegramBinding,
+} from "../assistant-hub/assistant-hub-db.ts";
+import { getMainSession } from "../assistant/assistant-main-session.ts";
 import { broadcastGlobalEvent } from "../../server/ws/global.ts";
 import { chatLifecycle, type ChatLifecycle } from "../chat-control/chat-lifecycle.ts";
 import { canSendTo } from "./assistant-telegram-access.ts";
@@ -137,9 +140,34 @@ export function announceAfterFirstTurn(
   }
 }
 
-/** The chat's session, a new one when it has none that still exists. */
+/**
+ * The chat's session; for a chat with none that still exists, the main Assistant session. With no
+ * main session either, a new session is started on the Assistant's provider — which becomes the
+ * main one when it runs on Claude (`adoptAsMainIfNone`, called as it is created).
+ */
 export async function ensureBoundSession(chatId: string): Promise<TelegramBinding> {
-  return boundSession(chatId) ?? startNewSession(chatId);
+  const bound = boundSession(chatId);
+  if (bound) return bound;
+  const main = getMainSession();
+  if (main) return bindChat(chatId, main.sessionId);
+  return startNewSession(chatId);
+}
+
+/**
+ * The main session moved: every chat that talked to the old main now talks to the new one. A chat
+ * bound to a one-off session stays where it is. The chats moved.
+ */
+export function followMainSession(previous: string, current: string): string[] {
+  const moved = telegramChatsBoundTo(previous);
+  if (moved.length === 0 || resolveMigratedSession(previous) === resolveMigratedSession(current)) return [];
+  const providerId = getSessionProvider(resolveMigratedSession(current)) ?? getSessionProvider(current);
+  if (!providerId) return [];
+  for (const chatId of moved) {
+    setTelegramBinding(chatId, current, providerId);
+    announce(chatId, current, providerId);
+  }
+  log.info(`Telegram chat(s) ${moved.join(", ")} moved to the main Assistant session ${current}`);
+  return moved;
 }
 
 /** How far down a provider's newest sessions a title is looked for when it cannot be asked by id. */

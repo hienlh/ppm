@@ -66,6 +66,51 @@ provider that `supportsAssistantSessions`, and the chat with its permission chip
 from the Command Palette (*PPM Assistant*), an unbound keybinding (`open-assistant`) and
 notifications, all through `openAssistant`.
 
+**The main session** (`assistant.main_session`, `src/services/assistant/assistant-main-session.ts`)
+is the one Assistant session Telegram follows. It must be a Claude Assistant session; a Codex one
+stays usable for one-off questions. PPM sets it by itself twice: when an Assistant session is
+created on Claude and none is main (`chatService.createSession`), and at the first start of an
+install that never had one (`pickMainSessionOnStartup`, from the hub's startup), which prefers the
+session the most recently used Telegram chat talks to, then the most recently active Assistant
+session. The key being *absent* is what marks "never had one": deleting the main session writes
+`null`, and the next start leaves it so (Settings offers to start one, and the next Claude session
+created takes it). `PUT /api/assistant/main-session {sessionId}` changes it and announces
+`assistant:main_session_changed`; Telegram chats bound to the old main move with it, and chats
+bound to a one-off session stay. An unbound Telegram chat binds to the main session; with none, it
+starts a session on the Assistant's provider as before, which becomes main when that is Claude. A
+settings save never writes the key, so a pane opened before a change cannot put the old one back.
+
+## Manager chats
+
+A project's **manager chat** is the one chat PPM Assistant talks to about that project
+(`manager_chats`, migration 64, keyed by the project's folder in `projectKey` spelling, so a
+renamed project keeps its manager). At most one per project and one project per chat; only a
+Claude chat of that same project that is neither a design nor an Assistant session
+(`src/services/assistant-managers/manager-chats.service.ts`; Codex is refused with "Manager chats
+run on Claude for now"). A chat PPM holds no row for (started in the CLI) is accepted once Claude
+finds it in the project's folder, and gets its rows then. The user assigns it from the session
+row's menu (*Set as manager chat* / *Unset manager chat*, `adaptive-context-menu`, so a long press
+opens it on a phone) through a dialog that states the consequence — PPM Assistant may message the
+chat without asking, also while the user is away; in bypass mode nothing in it asks either — and
+names the manager it replaces. Unassigning removes the row and nothing else; deleting the chat
+unassigns it; a bulk delete of old chats keeps it, like a pinned one.
+
+The session list puts the manager first (manager, then pinned, then activity:
+`compareSessionsByActivity`), injects it on page 1 like a pinned row and shows a *Manager* badge.
+`GET /api/assistant/managers` lists every project's manager with its phase and mode; every change
+is announced as `assistant:managers_changed` (the whole list) followed by `sessions:list_changed`
+for each project it touched. `isManagerChat` and `managerFor` are answered from memory and dropped
+on every change and on a session's rename (the chat lifecycle's `migrated`), because they are
+asked on every turn. A project removed from PPM keeps its row, listed under its folder's name,
+until it is unassigned.
+
+A manager chat always gets the session-tools server (`ppm-sessions`) attached, whatever Settings →
+Tools says (`prepareSendOptions`): it is how the chat will report to the Assistant. The tools it
+lists still follow the switches like any chat's (`sessionToolOnFor` in the endpoint); the report
+tool, once it exists, is the one kept on for a manager regardless. The tool list is fixed when a
+stream starts, so a chat made a manager while its stream is live gets the server at its next start
+(idle release, the warm-idle cap, a restart); nothing restarts it for this.
+
 ## Isolation
 
 The Assistant inherits none of the user's own agent setup or of ordinary chats' settings.

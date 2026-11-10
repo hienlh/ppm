@@ -55,6 +55,16 @@ export interface AssistantMcpHttpServer extends McpServerBase {
 
 export type AssistantMcpServer = AssistantMcpStdioServer | AssistantMcpHttpServer;
 
+/** The permission modes a manager chat PPM creates may start in. */
+export const MANAGER_MODES = ["plan", "default", "acceptEdits", "bypassPermissions"] as const;
+export type ManagerMode = (typeof MANAGER_MODES)[number];
+
+/** The main Assistant session: the one Telegram follows. Claude only for now. */
+export interface AssistantMainSession {
+  provider_id: "claude";
+  session_id: string;
+}
+
 export interface AssistantSettings {
   /** The provider a new Assistant session starts on; null follows the chat default. */
   default_provider: string | null;
@@ -63,6 +73,14 @@ export interface AssistantSettings {
   /** The user's own instructions, added after PPM's. */
   instructions: string;
   mcp_servers: AssistantMcpServer[];
+  /**
+   * The main Assistant session; null once it was cleared, absent while none was ever set (which
+   * is what lets PPM pick one at the first start after an upgrade). Written only by
+   * `PUT /api/assistant/main-session` and PPM's own picks; a settings save keeps the stored value.
+   */
+  main_session?: AssistantMainSession | null;
+  /** The mode a manager chat PPM creates starts in. */
+  manager_default_mode: ManagerMode;
 }
 
 /**
@@ -76,6 +94,7 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   providers: {},
   instructions: "",
   mcp_servers: [],
+  manager_default_mode: "default",
 };
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -224,10 +243,27 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
     });
   }
 
+  let managerMode: ManagerMode = DEFAULT_ASSISTANT_SETTINGS.manager_default_mode;
+  if (raw.manager_default_mode !== undefined && raw.manager_default_mode !== null) {
+    if (MANAGER_MODES.includes(raw.manager_default_mode as ManagerMode)) managerMode = raw.manager_default_mode as ManagerMode;
+    else errors.push(`manager_default_mode must be one of ${MANAGER_MODES.join(", ")}`);
+  }
+
   return {
-    value: { default_provider: defaultProvider, providers: readProviders(raw.providers, errors), instructions, mcp_servers: servers },
+    value: {
+      default_provider: defaultProvider, providers: readProviders(raw.providers, errors), instructions, mcp_servers: servers,
+      ...(raw.main_session !== undefined ? { main_session: readMainSession(raw.main_session) } : {}),
+      manager_default_mode: managerMode,
+    },
     errors,
   };
+}
+
+/** A stored main session, or null for anything else: it is never typed by a person. */
+function readMainSession(raw: unknown): AssistantMainSession | null {
+  if (!isRecord(raw) || raw.provider_id !== "claude") return null;
+  const id = raw.session_id;
+  return typeof id === "string" && ID_RE.test(id) ? { provider_id: "claude", session_id: id } : null;
 }
 
 /** The settings with every env and header value blanked, for a browser. */

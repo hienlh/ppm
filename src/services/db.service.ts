@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 63;
+export const CURRENT_SCHEMA_VERSION = 64;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1396,6 +1396,31 @@ export function runMigrations(database: Database): void {
     // it while the file stayed on disk. Null on existing rows: none of them has one stored.
     addColumnIfMissing(database, "projects", "image", "TEXT");
     database.exec(`PRAGMA user_version = 63;`);
+  }
+
+  if (current < 64) {
+    // A project's manager chat: the one chat PPM Assistant talks to about that project. Keyed by
+    // the project's folder in `projectKey` spelling (a project can be renamed, not moved), one row
+    // per project and one project per chat. The session id is stored as given and followed
+    // through `migrated_to` on read. The rules columns stay empty until rules are first written.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS manager_chats (
+        project_key TEXT PRIMARY KEY,
+        project_path TEXT NOT NULL,
+        session_id TEXT NOT NULL UNIQUE,
+        provider_id TEXT NOT NULL,
+        digest INTEGER NOT NULL DEFAULT 1,
+        telegram_detail TEXT NOT NULL DEFAULT 'full' CHECK (telegram_detail IN ('full','title')),
+        rules_approved TEXT,
+        rules_accepted TEXT,
+        rules_proposed TEXT,
+        rules_pending_hash TEXT,
+        rules_approved_at INTEGER,
+        assigned_by TEXT NOT NULL CHECK (assigned_by IN ('user','assistant')),
+        assigned_at INTEGER NOT NULL
+      )
+    `);
+    database.exec(`PRAGMA user_version = 64;`);
   }
 }
 

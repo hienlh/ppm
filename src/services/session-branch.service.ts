@@ -184,6 +184,7 @@ export interface GroupableSession {
   createdAt: string;
   updatedAt?: string;
   pinned?: boolean;
+  manager?: boolean;
 }
 
 /**
@@ -205,15 +206,15 @@ export function getCollapseGroupId(sessionId: string): string {
 
 /**
  * Collapse each edit-version group to a single row — its head, the most recently
- * active node (max updatedAt, falling back to createdAt). Pinned sessions are
- * passed through untouched. Caller is responsible for final sort.
+ * active node (max updatedAt, falling back to createdAt). Pinned sessions and a
+ * project's manager chat are passed through untouched. Caller is responsible for final sort.
  */
 export function collapseTreesToHeads<T extends GroupableSession>(sessions: T[]): T[] {
   const heads = new Map<string, T>();
   const out: T[] = [];
   const activity = (s: T) => new Date(s.updatedAt ?? s.createdAt).getTime();
   for (const s of sessions) {
-    if (s.pinned) {
+    if (s.pinned || s.manager) {
       out.push(s);
       continue;
     }

@@ -8,6 +8,7 @@ import { TagSettingsSection } from "@/components/settings/tag-settings-section";
 import { SessionContextMenu } from "./session-context-menu";
 import { ProviderBadge } from "./provider-selector";
 import { SpawnedSessionBadge } from "./spawned-session-badge";
+import { ManagerChatBadge } from "./manager-chat-badge";
 import { SearchSnippet } from "./search-snippet";
 import { useSessionHistory } from "@/hooks/use-session-history";
 import { useChatSearch } from "@/hooks/use-chat-search";
@@ -257,11 +258,12 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
                               {session.title?.startsWith("[PPM]") && (
                                 <Bot className="size-3.5 text-muted-foreground shrink-0" />
                               )}
-                              <span className={cn("truncate text-[13px]", isUnread ? "font-semibold" : "font-medium")}>
+                              <span className={cn("min-w-0 truncate text-[13px]", isUnread ? "font-semibold" : "font-medium")}>
                                 {session.title?.startsWith("[PPM]")
                                   ? session.title.slice(7)
                                   : session.title || "Untitled"}
                               </span>
+                              <ManagerChatBadge session={session} />
                             </span>
                             {session.updatedAt && (
                               <span className="block text-[11px] text-text-subtle">{formatRelativeDate(session.updatedAt)}</span>

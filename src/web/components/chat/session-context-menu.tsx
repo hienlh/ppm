@@ -1,14 +1,18 @@
-import { useCallback } from "react";
-import { Check, Pin, PinOff, Pencil, Trash2, Tag, Circle } from "@/lib/icons";
+import { useCallback, useState } from "react";
+import { Bot, Check, Pin, PinOff, Pencil, Trash2, Tag, Circle, X } from "@/lib/icons";
 import {
   ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem,
   ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
   ContextMenuSeparator,
-} from "@/components/ui/context-menu";
+} from "@/components/ui/adaptive-context-menu";
 import { api, projectUrl } from "@/lib/api-client";
 import { useNotificationStore } from "@/stores/notification-store";
 import { commitOptimistic } from "@/stores/session-list-store";
 import { projectRefForName } from "@/stores/session-list-sync-triggers";
+import { useIsManagerChat } from "@/hooks/use-manager-chats";
+import { toast } from "sonner";
+import { canOfferManagerRole } from "../../../shared/assistant-managers";
+import { managersUrl, SetManagerChatDialog } from "./set-manager-chat-dialog";
 import type { SessionInfo, ProjectTag } from "../../../types/chat";
 
 interface SessionContextMenuProps {
@@ -22,12 +26,18 @@ interface SessionContextMenuProps {
   onTagChanged: (sessionId: string, tag: { id: number; name: string; color: string } | null) => void;
 }
 
+/**
+ * A session row's menu: right-click on a desktop, a long press opening a bottom sheet on a phone
+ * (the row's own tap still opens the chat).
+ */
 export function SessionContextMenu({
   session, projectName, projectTags, children,
   onTogglePin, onStartEditing, onDeleteSession, onTagChanged,
 }: SessionContextMenuProps) {
   const markUnread = useNotificationStore((s) => s.markUnread);
   const isUnread = useNotificationStore((s) => s.notifications.has(session.id));
+  const isManager = useIsManagerChat(session);
+  const [assigning, setAssigning] = useState(false);
   // Optimistic: the row shows the new tag before the request goes out. A refused change
   // puts the previous tag back in the lists this menu was opened from, and
   // `commitOptimistic` re-syncs the shared store from the server.
@@ -42,72 +52,101 @@ export function SessionContextMenu({
     if (!ok) onTagChanged(session.id, previous);
   }, [session.id, session.tag, projectName, projectTags, onTagChanged]);
 
+  const unsetManager = useCallback(async () => {
+    try {
+      await api.del(managersUrl(projectName));
+    } catch (e) {
+      toast.error(`Could not unset the manager chat: ${(e as Error).message}`);
+    }
+  }, [projectName]);
+
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        {children}
-      </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem
-          onClick={(e) => onTogglePin(e as unknown as React.MouseEvent, session)}
-        >
-          {session.pinned ? <PinOff className="size-3.5 mr-2" /> : <Pin className="size-3.5 mr-2" />}
-          {session.pinned ? "Unpin" : "Pin"}
-        </ContextMenuItem>
-        {!isUnread && (
-          <ContextMenuItem onClick={() => markUnread(session.id, projectName, session.title)}>
-            <Circle className="size-3.5 mr-2 fill-primary text-primary" />
-            Mark as unread
-          </ContextMenuItem>
-        )}
-        {onStartEditing && (
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          {children}
+        </ContextMenuTrigger>
+        <ContextMenuContent>
           <ContextMenuItem
-            onClick={(e) => onStartEditing(session, e as unknown as React.MouseEvent)}
+            onClick={(e) => onTogglePin(e as unknown as React.MouseEvent, session)}
           >
-            <Pencil className="size-3.5 mr-2" />
-            Rename
+            {session.pinned ? <PinOff className="size-3.5 mr-2" /> : <Pin className="size-3.5 mr-2" />}
+            {session.pinned ? "Unpin" : "Pin"}
           </ContextMenuItem>
-        )}
-
-        {projectTags.length > 0 && (
-          <ContextMenuSub>
-            <ContextMenuSubTrigger>
-              <Tag className="size-3.5 mr-2" />
-              Set Tag
-            </ContextMenuSubTrigger>
-            <ContextMenuSubContent>
-              {projectTags.map((tag) => (
-                <ContextMenuItem key={tag.id} onClick={() => assignTag(tag.id)}>
-                  <span className="size-2.5 rounded-full mr-2 shrink-0" style={{ backgroundColor: tag.color }} />
-                  {tag.name}
-                  {session.tag?.id === tag.id && <Check className="size-3 ml-auto" />}
-                </ContextMenuItem>
-              ))}
-              {session.tag && (
-                <>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem onClick={() => assignTag(null)}>
-                    Remove tag
-                  </ContextMenuItem>
-                </>
-              )}
-            </ContextMenuSubContent>
-          </ContextMenuSub>
-        )}
-
-        {onDeleteSession && (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              className="text-error focus:text-error"
-              onClick={(e) => onDeleteSession(e as unknown as React.MouseEvent, session)}
-            >
-              <Trash2 className="size-3.5 mr-2" />
-              Delete
+          {!isUnread && (
+            <ContextMenuItem onClick={() => markUnread(session.id, projectName, session.title)}>
+              <Circle className="size-3.5 mr-2 fill-primary text-primary" />
+              Mark as unread
             </ContextMenuItem>
-          </>
-        )}
-      </ContextMenuContent>
-    </ContextMenu>
+          )}
+          {onStartEditing && (
+            <ContextMenuItem
+              onClick={(e) => onStartEditing(session, e as unknown as React.MouseEvent)}
+            >
+              <Pencil className="size-3.5 mr-2" />
+              Rename
+            </ContextMenuItem>
+          )}
+          {isManager ? (
+            <ContextMenuItem onClick={() => void unsetManager()}>
+              <X className="size-3.5 mr-2" />
+              Unset manager chat
+            </ContextMenuItem>
+          ) : canOfferManagerRole(session, projectName) && (
+            <ContextMenuItem onClick={() => setAssigning(true)}>
+              <Bot className="size-3.5 mr-2" />
+              Set as manager chat
+            </ContextMenuItem>
+          )}
+
+          {projectTags.length > 0 && (
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>
+                <Tag className="size-3.5 mr-2" />
+                Set Tag
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                {projectTags.map((tag) => (
+                  <ContextMenuItem key={tag.id} onClick={() => assignTag(tag.id)}>
+                    <span className="size-2.5 rounded-full mr-2 shrink-0" style={{ backgroundColor: tag.color }} />
+                    {tag.name}
+                    {session.tag?.id === tag.id && <Check className="size-3 ml-auto" />}
+                  </ContextMenuItem>
+                ))}
+                {session.tag && (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => assignTag(null)}>
+                      Remove tag
+                    </ContextMenuItem>
+                  </>
+                )}
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+          )}
+
+          {onDeleteSession && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                variant="destructive"
+                onClick={(e) => onDeleteSession(e as unknown as React.MouseEvent, session)}
+              >
+                <Trash2 className="size-3.5 mr-2" />
+                Delete
+              </ContextMenuItem>
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
+      {assigning && (
+        <SetManagerChatDialog
+          projectName={projectName}
+          sessionId={session.id}
+          sessionTitle={session.title}
+          onClose={() => setAssigning(false)}
+        />
+      )}
+    </>
   );
 }

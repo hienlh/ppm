@@ -5,6 +5,8 @@ import { getSessionTags } from "./tag.service.ts";
 import { collapseTreesToHeads } from "./session-branch.service.ts";
 import { sessionSpawnLinks } from "./session-collab/session-list-links.ts";
 import { compareSessionsByActivity } from "../types/chat.ts";
+import { managerChats } from "./assistant-managers/manager-chats.service.ts";
+import { MANAGER_PROVIDER_ID } from "../shared/assistant-managers.ts";
 
 /**
  * A project's chat list and chat search, as `GET /chat/sessions` and `GET /chat/search` answer
@@ -32,12 +34,16 @@ export async function listProjectSessions(projectPath: string, opts: ListProject
   const filterTagId = opts.tagId ?? null;
   const sessions = await chatService.listSessions(providerId, projectPath, { limit, offset });
   const pinnedIds = getPinnedSessionIds();
+  // The project's manager chat is listed first on page 1 like a pinned one, wherever its activity
+  // would put it. It runs on Claude, so a list of another provider's sessions leaves it out.
+  const managerId = !providerId || providerId === MANAGER_PROVIDER_ID ? managerChats.managerFor(projectPath)?.sessionId ?? null : null;
+  const lookupIds = managerId ? new Set([managerId, ...pinnedIds]) : pinnedIds;
 
   // On first page, fetch pinned sessions that may be outside the current page
   let pinnedSessions: typeof sessions = [];
-  if (offset === 0 && pinnedIds.size > 0) {
+  if (offset === 0 && lookupIds.size > 0) {
     const pageIds = new Set(sessions.map((s) => s.id));
-    const missingPinnedIds = [...pinnedIds].filter((id) => !pageIds.has(id));
+    const missingPinnedIds = [...lookupIds].filter((id) => !pageIds.has(id));
     if (missingPinnedIds.length > 0) {
       // Fetch individual pinned sessions by ID via SDK
       const claudeProvider = providerRegistry.get("claude") as any;
@@ -60,16 +66,17 @@ export async function listProjectSessions(projectPath: string, opts: ListProject
   // A creator with no title of PPM's own is still named when it is on this page.
   const pageTitles = new Map(deduped.map((s) => [s.id, s.title]));
   const enriched = deduped.map((s) => ({
-    ...s, pinned: pinnedIds.has(s.id), tag: tagMap[s.id] ?? null, designSlug: designSlugs[s.id] ?? null,
+    ...s, pinned: pinnedIds.has(s.id), ...(s.id === managerId ? { manager: true as const } : {}),
+    tag: tagMap[s.id] ?? null, designSlug: designSlugs[s.id] ?? null,
     spawnedBy: spawnLinks[s.id]?.spawnedBy ?? null,
     parentTitle: spawnLinks[s.id] ? spawnLinks[s.id]!.parentTitle ?? pageTitles.get(spawnLinks[s.id]!.spawnedBy) ?? null : null,
   }));
 
   // Collapse edit-message branch trees: each tree shows a single row (its
-  // most recently active node). Pinned sessions are never collapsed.
+  // most recently active node). Pinned sessions and the manager chat are never collapsed.
   const collapsed = collapseTreesToHeads(enriched);
 
-  // Pinned first, then most recently active (not merely most recently created).
+  // Manager, then pinned, then most recently active (not merely most recently created).
   collapsed.sort(compareSessionsByActivity);
 
   // Server-side search + tag filter

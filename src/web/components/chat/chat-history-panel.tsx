@@ -16,6 +16,7 @@ import { TagSettingsSection } from "@/components/settings/tag-settings-section";
 import { SessionContextMenu } from "./session-context-menu";
 import { ProviderBadge } from "./provider-selector";
 import { SpawnedSessionBadge } from "./spawned-session-badge";
+import { ManagerChatBadge } from "./manager-chat-badge";
 import { formatRelativeDate } from "@/lib/format-date";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { projectCacheId } from "@/lib/browser-cache/cache-keys";
@@ -387,9 +388,12 @@ export function ChatHistoryPanel({ tabId, projectName, sessionId, onSelectSessio
                           {session.title?.startsWith("[PPM]") && (
                             <Bot className="size-3 text-muted-foreground shrink-0" />
                           )}
-                          {session.title?.startsWith("[PPM]")
-                            ? session.title.slice(7)
-                            : session.title || "Untitled"}
+                          <span className="min-w-0 truncate">
+                            {session.title?.startsWith("[PPM]")
+                              ? session.title.slice(7)
+                              : session.title || "Untitled"}
+                          </span>
+                          <ManagerChatBadge session={session} />
                         </button>
                         <button
                           onClick={(e) => togglePin(e, session)}

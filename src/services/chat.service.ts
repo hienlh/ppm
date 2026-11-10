@@ -209,6 +209,15 @@ class ChatService {
     try {
       setSessionProvider(session.id, provider.id);
     } catch { /* non-fatal */ }
+    if (assistant) {
+      // The first Assistant session on Claude becomes the main one, the one Telegram follows.
+      try {
+        const { adoptAsMainIfNone } = await import("./assistant/assistant-main-session.ts");
+        adoptAsMainIfNone(session.id, provider.id);
+      } catch (e) {
+        log.warn(`session=${session.id} could not be checked as the main Assistant session: ${(e as Error).message}`);
+      }
+    }
     return session;
   }
 
@@ -288,6 +297,16 @@ class ChatService {
       await provider.deleteSession(sessionId);
     } finally {
       stopChatSessionProcesses(sessionId);
+    }
+    // Once the chat is really gone: it is no project's manager any more, and a deleted main
+    // session leaves none. A delete the provider refused keeps both roles.
+    try {
+      const { managerChats } = await import("./assistant-managers/manager-chats.service.ts");
+      managerChats.forgetSession(sessionId);
+      const { clearMainSessionIf } = await import("./assistant/assistant-main-session.ts");
+      clearMainSessionIf(sessionId);
+    } catch (e) {
+      log.warn(`session=${sessionId} could not drop its Assistant roles: ${(e as Error).message}`);
     }
   }
 
@@ -476,7 +495,12 @@ class ChatService {
     // An Assistant session gets them beside its own server, which is how it opens and messages the
     // user's chats; its endpoint holds it to the Assistant's policy (every write asks first).
     const assistantSessionTools = !!design.assistantSession && !!design.assistantMcp && !isMinimalMode();
-    const sessionCollabMcp = (ppmTools || assistantSessionTools) && anyPpmToolOn(ai, SESSION_TOOLS)
+    // A manager chat always gets the server, whatever Settings → Tools says: it is how the chat
+    // will report to the Assistant (the tools it lists still follow the switches). The tool list
+    // is fixed when a stream starts, so a chat made a manager while its stream is live gets it at
+    // its next start; nothing restarts it for this.
+    const manager = ppmTools && (await import("./assistant-managers/manager-chats.service.ts")).managerChats.isManagerChat(sessionId);
+    const sessionCollabMcp = (ppmTools || assistantSessionTools) && (manager || anyPpmToolOn(ai, SESSION_TOOLS))
       ? sessionCollabMcpAccessFor(sessionId) : null;
     const key = `${providerId}:${sessionId}`;
     // The user's shared instructions and memories belong to their own chats: an Assistant

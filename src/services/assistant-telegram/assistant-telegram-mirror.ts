@@ -76,6 +76,16 @@ export class AssistantTelegramMirror {
   }
 
   /**
+   * Whether the session's current answer is being written to a connected chat right now. A turn
+   * can end before the first draft's `sendMessage` has returned (a short answer ends in a
+   * millisecond), so the send queue's "last sent" stamp alone would let a push through for an
+   * answer that is on its way to the phone.
+   */
+  telling(sessionId: string): boolean {
+    return this.live(sessionId).length > 0;
+  }
+
+  /**
    * Chats that should see this session now: bound to it, and still connected. Every streamed
    * chunk of every chat in PPM asks, so the answer is kept briefly; a binding change clears it,
    * and the send lane checks the connection itself before each call, so a revocation is never

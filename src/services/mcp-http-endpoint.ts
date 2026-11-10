@@ -53,10 +53,11 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
   /** The tools, or a function giving them as they are now (a description naming what exists). */
   tools: readonly Json[] | (() => readonly Json[]);
   /**
-   * Why a tool in `tools` is off right now, or null. An off tool is left out of `tools/list`, and
-   * a chat that listed it before it went off gets this as the call's error result.
+   * Why a tool in `tools` is off right now for the chat the token names, or null. An off tool is
+   * left out of `tools/list`, and a chat that listed it before it went off gets this as the call's
+   * error result.
    */
-  unavailable?: (name: string) => string | null;
+  unavailable?: (name: string, binding: B) => string | null;
   /**
    * A `tools/call` result for a tool named in `tools`. `signal` is the call's HTTP request: it
    * aborts when the provider gives up on the call, e.g. because the user stopped the turn.
@@ -70,7 +71,7 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
   holdOpenSeconds?: number;
 }) {
   const toolList = (): readonly Json[] => (typeof opts.tools === "function" ? opts.tools() : opts.tools);
-  const offReason = (name: string): string | null => opts.unavailable?.(name) ?? null;
+  const offReason = (name: string, binding: B): string | null => opts.unavailable?.(name, binding) ?? null;
   const log = createLogger(opts.serverName);
 
   /** `signal` aborts when the caller closes the request: a tool still waiting can stop. */
@@ -89,12 +90,12 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
       case "ping":
         return rpcResult(id, {});
       case "tools/list":
-        return rpcResult(id, { tools: toolList().filter((t) => !offReason(String(t.name))) });
+        return rpcResult(id, { tools: toolList().filter((t) => !offReason(String(t.name), binding)) });
       case "tools/call": {
         if (typeof params.name !== "string" || !toolList().some((t) => t.name === params.name)) {
           return rpcError(id, -32602, `Unknown tool: ${String(params.name).slice(0, 60)}`);
         }
-        const off = offReason(params.name);
+        const off = offReason(params.name, binding);
         if (off) return rpcResult(id, textResult(off, true));
         return rpcResult(id, await opts.callTool(binding, params.name, params.arguments, signal));
       }

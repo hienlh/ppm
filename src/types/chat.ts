@@ -250,6 +250,8 @@ export interface SessionInfo {
   createdAt: string;
   updatedAt?: string;
   pinned?: boolean;
+  /** The project's manager chat: the one PPM Assistant talks to about the project. */
+  manager?: true;
   tag?: { id: number; name: string; color: string } | null;
   /** Design this session belongs to; null/absent for an ordinary chat. */
   designSlug?: string | null;
@@ -260,11 +262,13 @@ export interface SessionInfo {
 }
 
 /**
- * Keeps every history surface in the same order: pinned conversations first,
- * then the conversation most recently written to. Older providers may not
+ * Keeps every history surface in the same order: the project's manager chat first, then pinned
+ * conversations, then the conversation most recently written to. Older providers may not
  * expose an update timestamp, so their creation time remains the fallback.
  */
 export function compareSessionsByActivity(a: SessionInfo, b: SessionInfo): number {
+  if (a.manager && !b.manager) return -1;
+  if (!a.manager && b.manager) return 1;
   if (a.pinned && !b.pinned) return -1;
   if (!a.pinned && b.pinned) return 1;
   return sessionActivityTime(b) - sessionActivityTime(a);

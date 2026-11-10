@@ -77,6 +77,17 @@ describe("assistant settings service", () => {
       .toEqual({ ok: false, errors: ['"cursor" cannot run PPM Assistant sessions'] });
   });
 
+  it("never lets a save move the main session, and keeps the manager mode when none is sent", () => {
+    configService.set("assistant", {
+      ...structuredClone(DEFAULT_ASSISTANT_SETTINGS), main_session: { provider_id: "claude", session_id: "main-1" }, manager_default_mode: "plan",
+    });
+    saveOk({ main_session: { provider_id: "claude", session_id: "other" }, instructions: "x" });
+    expect(getAssistantSettings()).toMatchObject({ main_session: { session_id: "main-1" }, manager_default_mode: "plan" });
+    saveOk({ manager_default_mode: "acceptEdits" });
+    expect(getAssistantSettings().manager_default_mode).toBe("acceptEdits");
+    expect(saveAssistantSettings({ manager_default_mode: "yolo" }, anyProvider).ok).toBe(false);
+  });
+
   it("keeps the whole server list out of config dumps", () => {
     saveOk({ mcp_servers: [SERVER] });
     expect(JSON.stringify(redactSecretConfigValue("assistant", configService.get("assistant")))).not.toContain("ghp-secret");

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ChevronDown, ChevronUp, GitBranch, Pin, PinOff, Search, X } from "@/lib/icons";
 import { createdByText } from "./spawned-session-badge";
+import { ManagerChatBadge } from "./manager-chat-badge";
 import { api, projectUrl } from "@/lib/api-client";
 import { formatRelativeDate } from "@/lib/format-date";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -92,8 +93,9 @@ function ProjectSessionListPanel({ projectName, onSelectSession, className }: Se
   const filtered = selectedTagId !== null
     ? sessions.filter((s) => s.tag?.id === selectedTagId)
     : sessions;
-  const pinnedSessions = filtered.filter((s) => s.pinned);
-  const allRecentSessions = filtered.filter((s) => !s.pinned);
+  // The manager chat heads the pinned group: it is first in the list either way.
+  const pinnedSessions = filtered.filter((s) => s.pinned || s.manager);
+  const allRecentSessions = filtered.filter((s) => !s.pinned && !s.manager);
   const recentSessions = showAll ? allRecentSessions : allRecentSessions.slice(0, MAX_RECENT_SESSIONS);
   const hasMore = allRecentSessions.length > MAX_RECENT_SESSIONS;
 
@@ -196,6 +198,7 @@ function SessionRow({ session, projectName, projectTags, onSelect, onTogglePin, 
         <span className={cn("flex-1 min-w-0 text-xs truncate", notif ? "font-semibold text-foreground" : "font-medium text-text-primary")}>
           {session.title || "Untitled"}
         </span>
+        <ManagerChatBadge session={session} />
         {session.updatedAt && (
           <span className="text-[10px] text-text-subtle shrink-0">
             {formatRelativeDate(session.updatedAt)}

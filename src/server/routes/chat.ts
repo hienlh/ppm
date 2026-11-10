@@ -40,6 +40,7 @@ import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionT
 import { setSessionTag, bulkSetSessionTag, getTagById } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
 import { listProjectSessions, searchProjectChats } from "../../services/chat-session-queries.service.ts";
+import { managerChats } from "../../services/assistant-managers/manager-chats.service.ts";
 import { readSessionHistory } from "../../services/chat-history-read.service.ts";
 import { parseHistoryPageQuery } from "./chat-history-page.ts";
 import { ok, err } from "../../types/api.ts";
@@ -324,8 +325,9 @@ chatRoutes.delete("/sessions", async (c) => {
     }
 
     const pinnedIds = getPinnedSessionIds();
+    // Like a pinned chat, the project's manager is kept: a clean-up must not end its role.
     const toDelete = allSessions.filter((s) =>
-      new Date(s.createdAt) < cutoff && !pinnedIds.has(s.id) && !hasChildren(s.id),
+      new Date(s.createdAt) < cutoff && !pinnedIds.has(s.id) && !hasChildren(s.id) && !managerChats.isManagerChat(s.id),
     );
 
     let deleted = 0;

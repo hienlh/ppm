@@ -25,7 +25,8 @@ const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.
 export function createSessionCollabMcpHandler(deps: {
   resolveToken: (token: string | null) => SessionCollabTokenBinding | null;
   env: () => CollabEnv;
-  enabled: (tool: string) => boolean;
+  /** Whether the tool is on for the chat the token names. */
+  enabled: (tool: string, sessionId: string) => boolean;
   limiter?: CallLimiter;
 }) {
   const limiter = deps.limiter ?? createCollabLimiter();
@@ -34,7 +35,7 @@ export function createSessionCollabMcpHandler(deps: {
     tokenRequired: "A chat session token is required",
     resolveToken: deps.resolveToken,
     tools: sessionCollabToolDefinitions(),
-    unavailable: (name) => (deps.enabled(name) ? null : ppmToolOffMessage(name)),
+    unavailable: (name, { sessionId }) => (deps.enabled(name, sessionId) ? null : ppmToolOffMessage(name)),
     callTool: async ({ sessionId }, name, rawArgs, signal) => {
       const env = deps.env();
       const caller = resolveCaller(env, sessionId);
@@ -59,13 +60,23 @@ export function createSessionCollabMcpHandler(deps: {
 /** Loaded on the first call: the environment reaches the chat registry, which loads after this module. */
 let collabEnvRef: CollabEnv | null = null;
 
+/**
+ * Whether the tool is on for the chat the token names: the user's Settings → Tools switches, for a
+ * manager chat as for any other. A manager chat always has the server attached (the Assistant's
+ * report tool, when it exists, is the one tool kept on for it regardless of the switches); its
+ * create, send and status tools follow the switches like everyone else's.
+ */
+export function sessionToolOnFor(tool: string, _sessionId: string): boolean {
+  return isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool);
+}
+
 const handler = createSessionCollabMcpHandler({
   resolveToken: (token) => sessionCollabMcpTokens.resolve(token),
   env: () => {
     if (!collabEnvRef) throw new Error("The session tools are not ready yet");
     return collabEnvRef;
   },
-  enabled: (tool) => isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool),
+  enabled: sessionToolOnFor,
 });
 
 /**

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { configService } from "../config.service.ts";
 import {
   maskAssistantSettings, readAssistantSettings,
-  type AssistantMcpServer, type AssistantProviderDefaults, type AssistantSettings, type AssistantSettingsView,
+  type AssistantMainSession, type AssistantMcpServer, type AssistantProviderDefaults, type AssistantSettings, type AssistantSettingsView,
 } from "../../shared/assistant-settings.ts";
 
 /**
@@ -28,6 +28,11 @@ export function assistantProviderDefaults(providerId: string): AssistantProvider
 /** The servers an Assistant session runs with, secrets included. Server-side only. */
 export function enabledAssistantMcpServers(): AssistantMcpServer[] {
   return getAssistantSettings().mcp_servers.filter((s) => s.enabled);
+}
+
+/** Stores the main session as given; `assistant-main-session.ts` decides what may be stored. */
+export function writeMainSessionSetting(value: AssistantMainSession | null): void {
+  configService.set("assistant", { ...getAssistantSettings(), main_session: value });
 }
 
 /** Whether two stored URLs (both validated as http/https on the way in) share scheme, host and port. */
@@ -80,7 +85,17 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
     return { ...server, id, headers: fill(server.headers, savedHeaders, "header", moved) };
   });
   if (errors.length > 0) return { ok: false, errors };
-  const next: AssistantSettings = { ...value, mcp_servers: servers };
+  const saved = getAssistantSettings();
+  // The main session is PPM's to pick and the user's to change through its own route; a pane
+  // opened before the change would otherwise put the old one back. A body naming no default mode
+  // for manager chats (a pane that predates it) keeps the saved one.
+  const sentMode = typeof input === "object" && input !== null && "manager_default_mode" in input;
+  const { main_session: _ignored, ...sent } = value;
+  const next: AssistantSettings = {
+    ...sent, mcp_servers: servers,
+    ...(saved.main_session !== undefined ? { main_session: saved.main_session } : {}),
+    manager_default_mode: sentMode ? value.manager_default_mode : saved.manager_default_mode,
+  };
   configService.set("assistant", next);
   return { ok: true, settings: maskAssistantSettings(next) };
 }

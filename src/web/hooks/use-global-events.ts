@@ -12,6 +12,7 @@ import {
   SESSION_COLLAB_APPROVAL_EVENT, SESSION_CREATED_EVENT, SESSION_LINK_CHANGED_EVENT, type SessionCollabGlobalEvent,
 } from "../../shared/session-collab";
 import { handleSessionCollabEvent } from "@/lib/session-collab-events";
+import { resyncManagerChats } from "./use-manager-chats";
 
 /** How often the client pings — well under the server's own idle timeout, so a live but
  *  silent socket never gets reaped as dead. */
@@ -114,6 +115,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         // device renamed, pinned or deleted a session) — re-sync every
         // project this browser already knows about.
         syncAllKnownProjects();
+        resyncManagerChats();
         notifyGlobalReady();
         return;
       }

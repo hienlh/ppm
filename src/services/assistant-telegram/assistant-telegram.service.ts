@@ -151,7 +151,7 @@ export class AssistantTelegramBridge {
     poller = new AssistantTelegramPoller(client, state, (update) => inbound.dispatch(update));
     const offs = [
       onBindingChanged(() => mirror.invalidate()),
-      addNotificationSuppressor((sessionId) => recentlyTold(queue, sessionId)),
+      addNotificationSuppressor((sessionId) => mirror.telling(sessionId) || recentlyTold(queue, sessionId)),
     ];
     this.run = { poller, queue, state, inbound, mirror, relay, cards, codes, offs };
 
@@ -213,7 +213,10 @@ export class AssistantTelegramBridge {
   }
 }
 
-/** A push for a bound session says nothing the phone was not just told. */
+/**
+ * A push for a bound session says nothing the phone was not just told. The answer being written
+ * right now is the mirror's to know (`telling`); this covers what was sent a moment ago.
+ */
 function recentlyTold(queue: AssistantTelegramSendQueue, sessionId: string): boolean {
   const now = Date.now();
   return telegramChatsBoundTo(sessionId).some((chatId) =>

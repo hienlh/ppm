@@ -27,9 +27,9 @@ const columns = (db: Database, table: string): string[] =>
 const version = (db: Database) => (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
 
 describe("the Assistant's migrations after main's", () => {
-  it("ends at migration 63", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(63);
-    expect(version(openCurrent())).toBe(63);
+  it("ends at the latest migration, past the Assistant's 61-63", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(63);
+    expect(version(openCurrent())).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   it("gives a database an Assistant build left at 59 every step of main's it skipped, keeping its rows", () => {
