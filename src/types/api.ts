@@ -30,13 +30,21 @@ export type ChatWsClientMessage =
   /** Turns of other sessions the message points at; the server validates them and grants their read. */
   turnRefs?: TurnReference[] | null; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>;
   /** Uploaded paths for the same images, for providers that take a file not a payload. */
-  imagePaths?: string[]; model?: string; effort?: string; thinking?: boolean }
+  imagePaths?: string[]; model?: string; effort?: string; thinking?: boolean;
+  /** Sent while a turn ran, so the browser drew no bubble: the server shows it to the sender too when it goes in. */
+  queued?: boolean;
+  /** With `queued`: the AI reads the queue at once (Ctrl+Enter, Claude Code's Send now). */
+  sendNow?: boolean }
   | { type: "cancel" }
   | { type: "set_model"; model: string }
   | { type: "set_effort"; effort: string }
   | { type: "set_thinking"; enabled: boolean }
   | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown }
   | { type: "kill_background_shell"; shellId: string }
+  /** Take a queued message out of the queue; answered to the sender with `queue_taken_back`. */
+  | { type: "queue_take_back"; id: string }
+  /** Have the AI read the queue now (Claude Code's Send now). */
+  | { type: "queue_send_now" }
   | { type: "ready" }
   /** Replay an in-progress turn after a downstream WebSocket content gap. */
   | { type: "resync" }

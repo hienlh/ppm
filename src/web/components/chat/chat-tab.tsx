@@ -37,7 +37,8 @@ import { CONTINUE_AFTER_STOP, TurnStopBar } from "./turn-stop-bar";
 import { SessionChangesContext, useSessionChangesValue } from "./session-changes-context";
 import { useSessionFileChanges } from "@/hooks/use-session-file-changes";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
-import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
+import { MessageInput, type ChatAttachment } from "./message-input";
+import { QueuedMessagesStack } from "./queued-messages-stack";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { ChatFooterTools } from "./chat-footer-tools";
@@ -501,6 +502,11 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     bashPartialOutput,
     backgroundShells,
     killBackgroundShell,
+    queuedMessages,
+    takeBackQueued,
+    sendQueuedNow,
+    takenBack,
+    clearTakenBack,
   } = useChat(sessionId, providerId, projectName, handleSessionMigrated, observeAttempt, replyTransportOptions);
 
   // Shared by the ··· menu's Reload messages and the connection chip's Retry.
@@ -700,6 +706,23 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     setRestore({ text, nonce: Date.now() });
     toast.error("Message not sent", { description: `${reason} Your text is back in the input.` });
   }, [replyOwner, saveDraft, mergeTurnChips, turnRefsRef]);
+
+  const removeQueued = useCallback((id: string) => takeBackQueued(id, true), [takeBackQueued]);
+
+  // A queued message taken back with Edit joins what is in the composer, its reply card and turn
+  // chips included, the way Claude Code's Up puts queued messages back into the input.
+  useEffect(() => {
+    if (!takenBack) return;
+    clearTakenBack();
+    const decoded = decodeMessageBlocks(takenBack.content);
+    if (decoded.replyTo) {
+      replyToRef.current = decoded.replyTo;
+      setReplySelection({ owner: replyOwner, reply: decoded.replyTo });
+    }
+    const overflow = mergeTurnChips(decoded.turnRefs);
+    const text = [decoded.content, ...overflow.map((ref) => buildTurnLink(window.location.origin, ref))].filter(Boolean).join("\n");
+    if (text) setRestore({ text, nonce: Date.now() });
+  }, [takenBack, clearTakenBack, replyOwner, mergeTurnChips]);
 
   rejectedSendRef.current = (event) => {
     const current = composerDraftRef.current;
@@ -1033,7 +1056,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   );
 
   const handleSend = useCallback(
-    async (content: string, attachments: ChatAttachment[] = [], priority?: MessagePriority, selectedReply?: ReplyReference | null, selectedRefs?: TurnReference[] | null) => {
+    async (content: string, attachments: ChatAttachment[] = [], selectedReply?: ReplyReference | null, selectedRefs?: TurnReference[] | null, sendNow = false) => {
       const turnRefs = selectedRefs?.length ? selectedRefs : null;
       const images = selectInlineImages(attachments);
       const fullContent = buildMessageWithAttachments(content, attachments, images);
@@ -1114,7 +1137,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           return;
         }
       }
-      sendMessage(fullContent, { permissionMode, priority, replyTo: selectedReply ?? undefined, ...(turnRefs && { turnRefs }), ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
+      sendMessage(fullContent, { permissionMode, ...(sendNow && { sendNow }), replyTo: selectedReply ?? undefined, ...(turnRefs && { turnRefs }), ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
       // Only now: the message is on (or queued for) a live session's socket.
       clearDraft();
     },
@@ -1136,7 +1159,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
    * dropped, or it would land under whichever session the tab is on a second later.
    */
   const handleInputSend = useCallback(
-    (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => {
+    (content: string, attachments: ChatAttachment[], opts?: { sendNow?: boolean }) => {
       const selectedReply = replyToRef.current;
       const selectedRefs = turnRefsRef.current.length ? [...turnRefsRef.current] : null;
       // Client-handled built-ins act on the UI, so they must not reach the SDK.
@@ -1179,7 +1202,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
         void handleEditSend(buildMessageWithAttachments(content, attachments), anchor, selectedReply, selectedRefs);
         return;
       }
-      void handleSend(content, attachments, priority, selectedReply, selectedRefs);
+      void handleSend(content, attachments, selectedReply, selectedRefs, !!opts?.sendNow);
     },
     [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession, replyOwner, turnRefsRef, replaceTurnChips],
   );
@@ -1508,6 +1531,13 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
           </div>
         )}
 
+        <QueuedMessagesStack
+          messages={queuedMessages}
+          onSendNow={sendQueuedNow}
+          onEdit={takeBackQueued}
+          onRemove={removeQueued}
+        />
+
         {/* Input is available immediately; network preparation never gates typing. */}
         {(
           <MessageInput
@@ -1515,6 +1545,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             configurationPending={preparation.pending}
             tabId={tabId}
             onSend={handleInputSend}
+            onSendNow={queuedMessages.length ? sendQueuedNow : undefined}
             replyTo={replyTo}
             onCancelReply={handleCancelReply}
             replyChangeSignal={replyChangeSignal + turnChips.changeSignal}
