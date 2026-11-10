@@ -20,6 +20,7 @@ import { readChatPreparationSettings } from "@/lib/chat-preference-local-cache";
 import { getAssistantSettings } from "@/lib/assistant-settings-api";
 import { nextAssistantChatEpoch } from "./open-assistant";
 import { AssistantCardsPanel } from "./cards/assistant-cards-panel";
+import { CardReplyBar } from "./cards/card-reply-bar";
 import {
   AssistantNewSession, AssistantSessionList, useAssistantProviders, useAssistantSessions,
 } from "./assistant-session-list";
@@ -140,7 +141,11 @@ export function AssistantBody({ tabId, metadata }: { tabId: string; metadata: Re
           </button>
         </div>
         <AssistantCardsPanel />
-        <div className="min-h-0 flex-1">{chat}</div>
+        <div className="relative min-h-0 flex-1">
+          {chat}
+          {/* Answering a card: the bar stands over the chat's composer until it is sent or closed. */}
+          <div className="absolute inset-x-0 bottom-0 z-30"><CardReplyBar /></div>
+        </div>
       </div>
 
       {isMobile ? (

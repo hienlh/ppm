@@ -5,6 +5,7 @@
  */
 import { useCallback, useState } from "react";
 import { openSessionAnywhere } from "@/lib/open-session-anywhere";
+import { cardRefusal } from "@/lib/assistant-cards-api";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 
 const MESSAGES: Record<string, string> = {
@@ -23,8 +24,10 @@ export function useCardAction(onCard?: (card: AssistantCard) => void) {
       const card = result && typeof result === "object" ? (result as { card?: AssistantCard }).card : undefined;
       if (card && onCard) onCard(card);
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setError(MESSAGES[message] ?? message);
+      // The server says who answered first, and when ("Already answered on Telegram at 22:41").
+      const refusal = cardRefusal(e);
+      setError(refusal.question ?? MESSAGES[refusal.error] ?? refusal.error);
+      if (refusal.card && onCard) onCard(refusal.card);
     } finally {
       setBusy(false);
     }
