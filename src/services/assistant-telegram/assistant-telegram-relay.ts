@@ -5,7 +5,8 @@
  *   buttons that answer that chat directly — no model turn, and the same Allow rule as every
  *   card. The watch is the user's request to hear about that chat, so it goes where they asked:
  *   to the Telegram chats bound to the Assistant session that set the watch, or, when none is,
- *   to every connected chat (the user asked somewhere they are not on their phone).
+ *   to every connected chat (the user asked somewhere they are not on their phone). In quiet
+ *   hours the card is held and sent when they end, only if the chat still waits on it.
  * - A watch reported (`watch_reported`) from an Assistant session no Telegram chat talks to: its
  *   answer was only written in PPM, so every connected chat gets one line naming the chat.
  *   A bound session's report needs nothing here: it is a turn of that session, and the mirror
@@ -24,6 +25,10 @@ import { canSendTo, reachableChats } from "./assistant-telegram-access.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
+import { createQuietHold, type QuietHold, type QuietHoldDeps } from "./assistant-telegram-quiet-hold.ts";
+import { chatControl } from "../chat-control/chat-control.ts";
+import { assistantClock } from "../assistant-wake/assistant-clock.ts";
+import { currentQuietWindowEnd } from "../assistant-wake/wake-quiet-hours.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -42,7 +47,15 @@ export interface RelayDeps {
   connectedChats?: () => string[];
   providerOf?: (sessionId: string) => string | null;
   events?: Pick<typeof watchEvents, "on">;
+  /** Quiet hours for watched chats' cards (tests pass a fake clock and window). */
+  quiet?: QuietHoldDeps;
 }
+
+const realQuiet: QuietHoldDeps = {
+  clock: assistantClock,
+  quietEnd: currentQuietWindowEnd,
+  stillWaiting: (sessionId, requestId) => chatControl()?.liveState(sessionId)?.card?.requestId === requestId,
+};
 
 const HOW: Record<WatchEventKind, string> = {
   done: "finished",
@@ -56,11 +69,14 @@ export class AssistantTelegramRelay {
   private readonly boundChats: (assistantSessionId: string) => string[];
   private readonly connectedChats: () => string[];
   private readonly providerOf: (sessionId: string) => string | null;
+  /** Watched chats' cards that arrived in quiet hours, sent at their end if still waiting. */
+  private readonly quietHold: QuietHold<WatchEvents["watch_decision"]>;
 
   constructor(private readonly deps: RelayDeps) {
     this.boundChats = deps.boundChats ?? telegramChatsBoundTo;
     this.connectedChats = deps.connectedChats ?? (() => reachableChats().map((c) => c.chatId));
     this.providerOf = deps.providerOf ?? getSessionProvider;
+    this.quietHold = createQuietHold(deps.quiet ?? realQuiet, (p) => this.relayDecision(p));
   }
 
   attach(): void {
@@ -74,6 +90,7 @@ export class AssistantTelegramRelay {
 
   detach(): void {
     for (const off of this.offs.splice(0)) off();
+    this.quietHold.clear();
   }
 
   /** Chats that hear about a watch set in this Assistant session (see the header). */
@@ -83,6 +100,11 @@ export class AssistantTelegramRelay {
   }
 
   private onDecision(p: WatchEvents["watch_decision"]): void {
+    if (this.quietHold.offer(p)) return;
+    this.relayDecision(p);
+  }
+
+  private relayDecision(p: WatchEvents["watch_decision"]): void {
     const card: RelayedCard = {
       targetSessionId: p.targetSessionId, targetProject: p.targetProject, targetProvider: p.targetProvider,
       targetTitle: p.targetTitle, card: p.card,
