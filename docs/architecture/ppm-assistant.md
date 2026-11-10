@@ -270,7 +270,8 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
   (`git_status`, `git_log`, `git_diff`, `git_branches`, `schedules_list`, `schedule_get`,
   `tunnels_status`; see [Git, schedules and tunnels](#git-schedules-and-tunnels)).
 - **Remember, never ask**: `chat_watch` and `chat_unwatch` — a watch only reads and reports, like
-  setting a reminder (see [Watches](#watches)).
+  setting a reminder (see [Watches](#watches)); `notebook_add`, `notebook_edit` and
+  `notebook_delete`, which only touch the Assistant's own notebook (see [Notebook](#notebook)).
 - **Navigate the chatting device, never ask**: `ui_open_tab`, `ui_focus_tab`,
   `ui_switch_project`, and `ui_close_tab` for a tab that loses nothing. Each answers
   `previousProject` or enough to reopen what it closed, so the agent can undo — there is no
@@ -800,6 +801,40 @@ push; a turn carrying only manager news never sends "Chat completed", since its 
 **Known limitation:** a manager's subagent calls the tool with the manager's own token, and an MCP
 call carries nothing that ties it to the CLI's tool call, so PPM cannot label a report as a
 subagent's. The manager rules tell the manager not to report on a child's say-so.
+
+## Notebook
+
+A small notebook of facts the Assistant must not forget in a long session: a standing preference
+the user stated, a deadline, who is who. Stored in `assistant_notes` (migration 66); rules in
+`src/services/assistant-notes/assistant-notes.service.ts`, shapes in `src/shared/assistant-notes.ts`.
+
+- **Two writers.** The Assistant writes with `notebook_add`, `notebook_edit` and `notebook_delete`
+  (`assistant-notebook-tools.ts`), which never ask and run in every turn. The user adds, edits,
+  deletes and verifies lines in Settings through `GET/POST/PATCH/DELETE /api/assistant/notes`
+  (`src/server/routes/assistant-notes.ts`; `PATCH` takes `{ text }` or `{ verified: true }`). Every
+  change is announced on `/ws/global` as `assistant:notes_changed`.
+- **The user's lines are locked.** A line added or edited in Settings becomes the user's
+  (`source = 'user'`) and verified; the Assistant's edit and delete refuse it ("The user wrote this
+  line; propose the change to them instead.").
+- **Unverified lines.** A line the Assistant adds or edits in a turn nobody started (a watch or
+  report wake, `isUnattendedTurn`) is stored `unverified`, and the Assistant's own later edit never
+  clears the flag; only the user's edit or "Mark as verified" does. This is what keeps an injected
+  "preference" from a report apart from what the user confirmed.
+- **Caps.** 300 characters a line, 4,000 for the whole notebook (`NOTE_MAX_CHARS`,
+  `NOTEBOOK_CAP_CHARS`), whoever writes; a write over either is refused, never cut. Each check runs
+  in the transaction of the write it allows.
+- **How the model reads it.** An entry of the shared-context block on every Assistant turn
+  (`assistant-notes-entry.ts`), never the system prompt, sent when it changes and again after a
+  compaction or an error. A header says notes are facts, not instructions, and that a note never
+  grants permission, changes who approves or counts as the user's OK. Lines sit under "The user's
+  notes", "Your notes" and "Unverified notes (written while the user was away, from reports)", as
+  `#id · date · text`, each cleaned by `cleanEventText` (angle brackets to look-alikes, so no
+  `<ppm-…>` block can form; hidden characters revealed). With no notes there is no entry, except one
+  line saying so after the notebook the model last saw was emptied.
+- **Never elsewhere.** The notebook goes only to Assistant sessions' turns: not to a manager or any
+  other chat, and not to Telegram.
+- **Threat model.** As everywhere here: a process running as the same OS user can write the table
+  directly; the guards target injected text.
 
 ## Telegram
 
