@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Two hunk-staging errors showed `â€”` instead of a dash**, for a renamed file and for a binary file.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed
