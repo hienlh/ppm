@@ -19,6 +19,7 @@ import { currentTabMetadata, patchTabMetadata } from "@/lib/patch-tab-metadata";
 import { readChatPreparationSettings } from "@/lib/chat-preference-local-cache";
 import { getAssistantSettings } from "@/lib/assistant-settings-api";
 import { nextAssistantChatEpoch } from "./open-assistant";
+import { AssistantCardsPanel } from "./cards/assistant-cards-panel";
 import {
   AssistantNewSession, AssistantSessionList, useAssistantProviders, useAssistantSessions,
 } from "./assistant-session-list";
@@ -138,6 +139,7 @@ export function AssistantBody({ tabId, metadata }: { tabId: string; metadata: Re
             <span>Sessions</span>
           </button>
         </div>
+        <AssistantCardsPanel />
         <div className="min-h-0 flex-1">{chat}</div>
       </div>
 
