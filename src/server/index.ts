@@ -37,6 +37,7 @@ import { lspWebSocket } from "./ws/lsp.ts";
 import { androidWebSocket } from "./ws/android.ts";
 import { lspManager } from "../services/lsp/lsp-manager.ts";
 import { stopCommandScopesSync } from "../services/chat-session-processes/session-processes.service.ts";
+import { stopSearchHost } from "../services/content-search/search-host-client.ts";
 import { isRemoteDesktopEnabled } from "../services/remote-desktop/remote-desktop-flag.ts";
 import { isAndroidEmulatorEnabled } from "../services/android/android-flag.ts";
 import { ok, err } from "../types/api.ts";
@@ -1346,6 +1347,8 @@ if (process.argv.includes("__serve__")) {
     // Chats' commands and MCP servers run in scopes outside PPM's cgroup, so stopping PPM's unit
     // no longer takes them along.
     try { stopCommandScopesSync(); } catch {}
+    // The content search host would exit on stdin EOF anyway; a hung one would not.
+    try { stopSearchHost(); } catch {}
     try { server.stop(true); } catch {}
     process.exit(0);
   };

@@ -14,6 +14,10 @@ describe("resolveEntryMode — binary daemon sentinel routing", () => {
   it("routes __share_host__ to the share host worker", () => {
     expect(resolveEntryMode(["/opt/ppm/bin/ppm", "__share_host__", "0"])).toBe("share-host");
   });
+  it("routes __search__ to the search host", () => {
+    expect(resolveEntryMode(["/opt/ppm/bin/ppm", "__search__"])).toBe("search");
+    expect(resolveEntryMode(["/home/u/.bun/bin/bun", "/repo/src/index.ts", "__search__"])).toBe("search");
+  });
   it("treats normal CLI commands as cli", () => {
     expect(resolveEntryMode(["ppm", "start"])).toBe("cli");
     expect(resolveEntryMode(["ppm", "upgrade", "--check"])).toBe("cli");
