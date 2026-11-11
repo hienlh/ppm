@@ -15,7 +15,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 76;
+export const CURRENT_SCHEMA_VERSION = 77;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1615,6 +1615,26 @@ export function runMigrations(database: Database): void {
       database.exec("CREATE INDEX IF NOT EXISTS idx_schedules_task ON schedules(task_id)");
     }
     database.exec(`PRAGMA user_version = 76;`);
+  }
+
+  if (current < 77) {
+    // Every notification PPM sends, with its kind and read state, for the notification feed.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS notification_feed (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind        TEXT NOT NULL,
+        project     TEXT NOT NULL DEFAULT '',
+        session_id  TEXT,
+        schedule_id TEXT,
+        title       TEXT NOT NULL,
+        body        TEXT NOT NULL DEFAULT '',
+        created_at  INTEGER NOT NULL,
+        read_at     INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS notification_feed_created ON notification_feed(created_at DESC);
+      CREATE INDEX IF NOT EXISTS notification_feed_session ON notification_feed(session_id) WHERE session_id IS NOT NULL;
+      PRAGMA user_version = 77;
+    `);
   }
 }
 
