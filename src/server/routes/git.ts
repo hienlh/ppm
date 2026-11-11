@@ -9,6 +9,7 @@ import { discoverGitRepos, isGitRepo } from "../../services/git-repos/git-repo-d
 import { gitChangesService } from "../../services/git-changes/git-changes.service.ts";
 import { gitDiscardJournal } from "../../services/git-discard-journal/git-discard-journal.service.ts";
 import { gitCommitDraftService } from "../../services/git-commit-draft.service.ts";
+import { GitCommitMessageError, gitCommitMessageService } from "../../services/git-commit-message.service.ts";
 import { gitWorkflowService } from "../../services/git-workflow/git-workflow.service.ts";
 import { emitGitEvent } from "../../services/git-changes/git-events.ts";
 import { isInsideDir, realPathOrSelfSync } from "../../services/fs-ops/fs-real-path.ts";
@@ -76,7 +77,7 @@ gitRoutes.use("*", async (c, next) => {
  */
 gitRoutes.use("*", async (c, next) => {
   await next();
-  if (c.req.method !== "POST") return;
+  if (c.req.method !== "POST" || c.req.path.endsWith("/commit-message")) return;
   const repo = c.get("projectPath");
   gitChangesService.invalidate(repo);
   emitGitEvent({ type: "git:changed", projectName: c.get("projectName"), repo });
@@ -177,6 +178,22 @@ gitRoutes.put("/commit-draft", async (c) => {
     broadcastCommitDraft(c.get("projectName"), repo, draft, typeof body.clientId === "string" ? body.clientId : null);
     return c.json(ok(draft));
   } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * POST /git/commit-message — draft a commit message from the staged diff via AI.
+ * Never commits; answers 409 when nothing is staged and 502 when the AI fails.
+ */
+gitRoutes.post("/commit-message", async (c) => {
+  try {
+    const result = await gitCommitMessageService.generate(c.get("projectPath"));
+    return c.json(ok(result));
+  } catch (e) {
+    if (e instanceof GitCommitMessageError) {
+      return c.json(err(e.message), e.status);
+    }
     return c.json(err((e as Error).message), 500);
   }
 });
