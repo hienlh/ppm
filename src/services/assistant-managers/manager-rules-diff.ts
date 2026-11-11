@@ -124,6 +124,25 @@ export function heldChangeLines(base: string, next: string): Array<{ op: "add" |
   return ops.filter((o) => o.op !== "same").map((o) => ({ op: o.op as "add" | "remove", line: o.line }));
 }
 
+const HEADING = /^#{1,6}\s+\S/;
+
+/**
+ * The lines `next` adds to `base`, in order, each with the heading it sits under in `next` (null
+ * above the first heading). Where a line lands decides what it means: a plain line under
+ * "## Allowed without asking" reads as a permission, so it is never judged or shown without it.
+ */
+export function addedLinesWithHeading(base: string, next: string): Array<{ line: string; under: string | null }> {
+  const out: Array<{ line: string; under: string | null }> = [];
+  let under: string | null = null;
+  for (const op of diffRuleLines(base, next) ?? []) {
+    if (op.op === "remove") continue;
+    if (op.op === "add") out.push({ line: op.line, under });
+    const text = normalizeRulesLine(op.line);
+    if (HEADING.test(text)) under = text;
+  }
+  return out;
+}
+
 /** The lines `next` has that `base` does not, in order (the ordered diff's insertions). */
 export function linesAddedSince(base: string, next: string): string[] {
   return (diffRuleLines(base, next) ?? []).filter((o) => o.op === "add").map((o) => o.line);

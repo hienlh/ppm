@@ -90,7 +90,16 @@ export function ManagerRulesDialog({ projectName, onClose }: { projectName: stri
             <div className="space-y-1">
               <p className="text-xs font-medium text-text-subtle">Added by the manager since</p>
               <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-panel-2 px-3 py-2 font-mono text-xs text-text-secondary" data-added-since="">
-                {rules.addedSince.join("\n")}
+                {rules.addedSince.map((line, i) => {
+                  // Where the line sits decides what it means: one under "Allowed without asking" is a permission.
+                  const under = rules.addedSinceUnder?.[i];
+                  return (
+                    <span key={i} className="block">
+                      {line}
+                      {under && <span className="text-text-subtle" data-added-under=""> — under {under}</span>}
+                    </span>
+                  );
+                })}
               </pre>
             </div>
           )}

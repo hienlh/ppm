@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { createLogger } from "../logger.ts";
 import { managerChats } from "./manager-chats.service.ts";
 import { checkAddedRules, askClaudeForRulesCheck, type RulesCheckAsk } from "./manager-rules-check.ts";
-import { classifyRulesChange, heldChangeLines } from "./manager-rules-diff.ts";
+import { addedLinesWithHeading, classifyRulesChange, heldChangeLines } from "./manager-rules-diff.ts";
 import { ensureRulesGitignore, readRulesFile, rulesFileTracked, writeRulesFile, type RulesFileUnsafe } from "./manager-rules-file.ts";
 import { acceptManagerRules, getManagerRules, holdManagerRules, seedManagerRules, type ManagerRules } from "./manager-rules-db.ts";
 import { managerRulesEvents, type ManagerRulesEvent, type RulesHeldReason } from "./manager-rules-events.ts";
@@ -187,7 +187,8 @@ export function createManagerRulesGuard(overrides: Partial<RulesGuardEnv> = {}) 
     if (!change) await hold(t, rules, read.text, hash, "too_large", []);
     else if (change.kind === "hold") await hold(t, rules, read.text, hash, change.reason, change.lines);
     else {
-      const verdict = await checkAddedRules(rules.approved ?? "", change.lines, env.ask, env.checkTimeoutMs);
+      // Each line with the heading it lands under: where it sits decides what it means.
+      const verdict = await checkAddedRules(rules.approved ?? "", addedLinesWithHeading(accepted, read.text!), env.ask, env.checkTimeoutMs);
       if (verdict.ok) {
         acceptManagerRules(t.projectKey, read.text);
         env.emit({ ...base(t), type: "rules_tightened", lines: change.lines });

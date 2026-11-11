@@ -18,6 +18,8 @@ export interface ManagerRulesView {
   pendingHash: string | null;
   approvedAt: number | null;
   addedSince: string[];
+  /** The heading each added line sits under (null above the first); absent from an older server. */
+  addedSinceUnder?: Array<string | null>;
   proposedDiff: { added: string[]; removed: string[] } | null;
 }
 

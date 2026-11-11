@@ -8,7 +8,7 @@ import { RULES_FILE_MAX_BYTES } from "../../shared/assistant-limits.ts";
 import { managerChats, ManagerChatError } from "./manager-chats.service.ts";
 import { managerContextEntry } from "./manager-context-entry.ts";
 import { managerRulesTemplate } from "./manager-rules-default-template.ts";
-import { linesAddedSince, linesRemovedSince } from "./manager-rules-diff.ts";
+import { addedLinesWithHeading, linesAddedSince, linesRemovedSince } from "./manager-rules-diff.ts";
 import { rulesFileTracked } from "./manager-rules-file.ts";
 import { approveHeldManagerRules, clearHeldManagerRules, getManagerRules, setManagerRulesByUser, type ManagerRules } from "./manager-rules-db.ts";
 import { managerRulesGuard, UNTRACK_MESSAGE, type ManagerRulesGuard, type RulesTarget } from "./manager-rules-guard.ts";
@@ -20,6 +20,11 @@ const log = createLogger("manager-rules");
 export interface ManagerRulesView extends ManagerRules {
   /** Lines in force that the user has not approved yet, in order. */
   addedSince: string[];
+  /**
+   * The heading each of `addedSince` sits under in the rules in force (null above the first):
+   * approving the rules approves each line in its section, so it is never shown apart from it.
+   */
+  addedSinceUnder: Array<string | null>;
   /** The held change against the rules in force, when one waits: what it adds and removes. */
   proposedDiff: { added: string[]; removed: string[] } | null;
 }
@@ -54,9 +59,11 @@ export function managerRulesView(projectName: string): ManagerRulesView {
   const rules = getManagerRules(targetFor(projectName).projectKey);
   if (!rules) throw new ManagerChatError("That project has no manager chat", 404);
   const base = rules.accepted ?? rules.approved ?? "";
+  const since = rules.approved !== null && rules.accepted !== null ? addedLinesWithHeading(rules.approved, rules.accepted) : [];
   return {
     ...rules,
-    addedSince: rules.approved !== null && rules.accepted !== null ? linesAddedSince(rules.approved, rules.accepted) : [],
+    addedSince: since.map((a) => a.line),
+    addedSinceUnder: since.map((a) => a.under),
     proposedDiff: rules.proposed !== null
       ? { added: linesAddedSince(base, rules.proposed), removed: linesRemovedSince(base, rules.proposed) }
       : null,
