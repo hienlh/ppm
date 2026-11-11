@@ -47,6 +47,8 @@ export function createCardDelivery(deps: CardDeliveryDeps) {
   return {
     /** A turn opened with the message sent under `clientMessageId`. */
     turnBound(clientMessageId: string): void {
+      // Only forwarded words are sent under a `card-` id; every other turn start is not ours.
+      if (!clientMessageId.startsWith("card-")) return;
       recentlyBound.push(clientMessageId);
       if (recentlyBound.length > RECENT_BOUND_MAX) recentlyBound.splice(0, recentlyBound.length - RECENT_BOUND_MAX);
       for (const row of deps.undelivered()) {

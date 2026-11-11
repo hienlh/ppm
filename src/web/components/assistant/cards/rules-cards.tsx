@@ -7,13 +7,20 @@
  */
 import { Check, ScrollText, Settings, Undo2 } from "@/lib/icons";
 import { decideRulesChange } from "@/lib/assistant-cards-api";
-import { openSettings } from "@/components/settings/open-settings";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardButton, CardShell, cardTime } from "./card-shell";
 import { useCardAction } from "./use-card-action";
 
 type Props = { card: AssistantCard; onCard?: (card: AssistantCard) => void };
 type Change = { op: "add" | "remove"; line: string };
+
+/**
+ * Settings → PPM Assistant, where the whole change is shown. Loaded on use: the settings module
+ * pulls in the app's stores, which a card list has no other reason to load.
+ */
+const openRulesSettings = () => {
+  void import("@/components/settings/open-settings").then(({ openSettings }) => openSettings("assistant")).catch(() => {});
+};
 
 const DIFF_CLASS = "max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-panel-2 px-3 py-2 font-mono text-xs";
 
@@ -80,7 +87,7 @@ export function RulesChangeCard({ card, onCard }: Props) {
               <Check className="size-3.5" />Approve change
             </CardButton>
           ) : (
-            <CardButton variant="primary" onClick={() => openSettings("assistant")}>
+            <CardButton variant="primary" onClick={openRulesSettings}>
               <Settings className="size-3.5" />Review in Settings
             </CardButton>
           )}
