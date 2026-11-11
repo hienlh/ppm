@@ -47,6 +47,14 @@ describe("chat-preference-local-cache — settings", () => {
     });
   });
 
+  it("keeps each provider's default model and effort, which a new chat's chip shows", () => {
+    writeChatPreparationSettings({
+      default_provider: "claude",
+      providers: { claude: { model: "claude-sonnet-5", effort: "low", max_turns: 100 } as any },
+    });
+    expect(readChatPreparationSettings()?.providers.claude).toEqual({ model: "claude-sonnet-5", effort: "low" });
+  });
+
   it("strips fields outside the cached subset, even from a full settings object", () => {
     writeChatPreparationSettings({
       default_provider: "claude",
