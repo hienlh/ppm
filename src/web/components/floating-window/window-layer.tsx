@@ -74,8 +74,10 @@ function DesktopWindowLayer() {
 
   return (
     // Stops at the status bar (26px) rather than covering it: the bar holds the window dock,
-    // and a maximized or snapped window must never hide the way back to the others.
-    <div ref={containerRef} className="absolute inset-x-0 top-0 bottom-[26px] overflow-hidden pointer-events-none">
+    // and a maximized or snapped window must never hide the way back to the others. Only the
+    // vertical axis is clipped, so a window hanging off the left draws over the sidebar (the
+    // windows' z-band sits above it) rather than vanishing at the working area's edge.
+    <div ref={containerRef} className="absolute inset-x-0 top-0 bottom-[26px] overflow-x-visible overflow-y-clip pointer-events-none">
       {snapPreview && <SnapGhost bounds={bounds} />}
 
       {ordered.map((win) => (

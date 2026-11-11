@@ -372,8 +372,12 @@ export function App() {
           {!isMobileViewport && <Sidebar />}
 
           {/* Content area — keep-alive per project. `relative` is the positioning context
-              the floating window layer measures and clamps its windows against. */}
-          <div className="relative flex-1 flex flex-col overflow-hidden">
+              the floating window layer measures and clamps its windows against. Only the
+              vertical axis is clipped: a window dragged left hangs over the sidebar instead
+              of being cut off at its edge, which read as the window sliding under it. The
+              row above still clips at the viewport, and `min-w-0` keeps the flex sizing the
+              old `overflow-hidden` gave. */}
+          <div className="relative flex-1 min-w-0 flex flex-col overflow-x-visible overflow-y-clip">
             {[...mountedProjects].map((projectName) => (
               <div
                 key={projectName}
