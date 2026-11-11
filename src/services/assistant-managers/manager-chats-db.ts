@@ -4,7 +4,8 @@ import { MANAGER_TELEGRAM_DETAILS, type ManagerTelegramDetail } from "../../shar
 /**
  * Storage for manager chats (`manager_chats`, migration 64): one row per project, keyed by the
  * project's folder in `projectKey` spelling. Session ids are stored as given and answered with the
- * id the session goes by now; lookups by session compare current ids.
+ * id the session goes by now; lookups by session compare current ids. A project's own settings
+ * outlive its manager in `manager_project_settings` (migration 67).
  */
 
 export interface ManagerChatRow {
@@ -64,19 +65,32 @@ export interface NewManagerChat {
   assignedAt: number;
 }
 
+/** The project-owned columns of a manager row, kept in `manager_project_settings` while it has none. */
+const SETTINGS = "digest, telegram_detail, rules_approved, rules_accepted, rules_proposed, rules_pending_hash, rules_approved_at";
+
+/**
+ * Removes a project's manager row, keeping what belongs to the project (digest, Telegram detail,
+ * rules) for the next chat that manages it. Runs inside the caller's transaction.
+ */
+function retireRow(projectKey: string): boolean {
+  const db = getDb();
+  db.query(`INSERT OR REPLACE INTO manager_project_settings (project_key, ${SETTINGS})
+    SELECT project_key, ${SETTINGS} FROM manager_chats WHERE project_key = ?`).run(projectKey);
+  return db.query("DELETE FROM manager_chats WHERE project_key = ?").run(projectKey).changes > 0;
+}
+
 /**
  * Makes the chat the project's manager. Replaces the project's previous row and removes any row
- * the chat held for another project (under any of its ids), in one transaction. A replaced row's
- * settings (digest, Telegram detail) belong to the project and are kept.
+ * the chat held for another project (under any of its ids), in one transaction. The project's
+ * settings (digest, Telegram detail, rules) belong to the project: a replaced row keeps them, and
+ * a project that had a manager before gets back the ones kept when that one went.
  */
 export function putManagerChatRow(input: NewManagerChat): void {
   const db = getDb();
   const current = resolveMigratedSession(input.sessionId);
   db.transaction(() => {
     for (const row of listManagerChatRows()) {
-      if (row.sessionId === current && row.projectKey !== input.projectKey) {
-        db.query("DELETE FROM manager_chats WHERE project_key = ?").run(row.projectKey);
-      }
+      if (row.sessionId === current && row.projectKey !== input.projectKey) retireRow(row.projectKey);
     }
     db.query(`
       INSERT INTO manager_chats (project_key, project_path, session_id, provider_id, assigned_by, assigned_at)
@@ -85,21 +99,45 @@ export function putManagerChatRow(input: NewManagerChat): void {
         project_path = excluded.project_path, session_id = excluded.session_id, provider_id = excluded.provider_id,
         assigned_by = excluded.assigned_by, assigned_at = excluded.assigned_at
     `).run(input.projectKey, input.projectPath, current, input.providerId, input.assignedBy, input.assignedAt);
+    const kept = db.query(`SELECT ${SETTINGS} FROM manager_project_settings WHERE project_key = ?`).get(input.projectKey) as KeptSettings | null;
+    if (!kept) return;
+    db.query(`UPDATE manager_chats SET digest = ?, telegram_detail = ?, rules_approved = ?, rules_accepted = ?, rules_proposed = ?,
+      rules_pending_hash = ?, rules_approved_at = ? WHERE project_key = ?`).run(
+      kept.digest, kept.telegram_detail, kept.rules_approved, kept.rules_accepted, kept.rules_proposed,
+      kept.rules_pending_hash, kept.rules_approved_at, input.projectKey,
+    );
+    db.query("DELETE FROM manager_project_settings WHERE project_key = ?").run(input.projectKey);
   })();
 }
 
-/** False when the project had no manager. */
+interface KeptSettings {
+  digest: number; telegram_detail: string; rules_approved: string | null; rules_accepted: string | null;
+  rules_proposed: string | null; rules_pending_hash: string | null; rules_approved_at: number | null;
+}
+
+/** False when the project had no manager. Its settings are kept for the next one. */
 export function deleteManagerChatRow(projectKey: string): boolean {
-  return getDb().query("DELETE FROM manager_chats WHERE project_key = ?").run(projectKey).changes > 0;
+  return getDb().transaction(() => retireRow(projectKey))();
 }
 
 /** Removes the row a chat holds, under any of its ids; the project keys it was manager of. */
 export function deleteManagerChatRowsFor(sessionId: string): string[] {
   const current = resolveMigratedSession(sessionId);
   const keys = listManagerChatRows().filter((r) => r.sessionId === current || r.sessionId === sessionId).map((r) => r.projectKey);
-  const remove = getDb().query("DELETE FROM manager_chats WHERE project_key = ?");
-  for (const key of keys) remove.run(key);
+  getDb().transaction(() => { for (const key of keys) retireRow(key); })();
   return keys;
+}
+
+/**
+ * How much of a project's cards may reach Telegram: its manager's setting, else the one kept from
+ * its last manager; null for a project that never had one.
+ */
+export function projectTelegramDetail(projectKey: string): ManagerTelegramDetail | null {
+  const db = getDb();
+  const row = (db.query("SELECT telegram_detail FROM manager_chats WHERE project_key = ?").get(projectKey)
+    ?? db.query("SELECT telegram_detail FROM manager_project_settings WHERE project_key = ?").get(projectKey)) as { telegram_detail: string } | null;
+  if (!row) return null;
+  return row.telegram_detail === "title" ? "title" : "full";
 }
 
 export interface ManagerChatPatch {

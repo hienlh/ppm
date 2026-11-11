@@ -16,6 +16,20 @@ export function setCardOutbound(id: string, outbound: CardOutbound, at: number):
   return getDb().query("UPDATE assistant_cards SET outbound = ?, updated_at = ? WHERE id = ?").run(outbound, at, id).changes > 0;
 }
 
+/**
+ * Telegram refused the card for good (it is not retried): kept with the reason, so a card that
+ * never reached the phone is on record. A later successful copy in another chat does not clear it.
+ */
+export function setCardOutboundError(id: string, why: string, at: number): boolean {
+  return getDb().query("UPDATE assistant_cards SET outbound_error = ?, updated_at = ? WHERE id = ?").run(why.slice(0, 300), at, id).changes > 0;
+}
+
+/** Why Telegram refused the card, when it did. */
+export function getCardOutboundError(id: string): string | null {
+  const row = getDb().query("SELECT outbound_error FROM assistant_cards WHERE id = ?").get(id) as { outbound_error: string | null } | null;
+  return row?.outbound_error ?? null;
+}
+
 /** Records that `ref` shows the card; the same pair twice is kept once. */
 export function addCardTelegramRef(id: string, ref: TelegramCardRef): void {
   const db = getDb();

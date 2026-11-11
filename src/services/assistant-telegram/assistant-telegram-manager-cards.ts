@@ -9,9 +9,9 @@
  */
 import { chatControl, type LiveApprovalCard } from "../chat-control/chat-control.ts";
 import { getSessionProvider, getSessionTitle } from "../db.service.ts";
-import { managerChats } from "../assistant-managers/manager-chats.service.ts";
+import { projectTelegramDetail } from "../assistant-managers/manager-chats-db.ts";
 import { getMainSession } from "../assistant/assistant-main-session.ts";
-import { addCardTelegramRef } from "../assistant-cards/assistant-cards-outbound-db.ts";
+import { addCardTelegramRef, setCardOutboundError } from "../assistant-cards/assistant-cards-outbound-db.ts";
 import { getCardRow } from "../assistant-cards/assistant-cards-db.ts";
 import type { CardOutboundSink } from "../assistant-cards/card-outbound.ts";
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
@@ -42,8 +42,15 @@ export interface ManagerCardsDeps {
 
 const groupOf = (cardId: string, chatId: string): string => `mcard:${cardId}:${chatId}`;
 
+/**
+ * A project's detail level outlives its manager chat. A card of a project PPM has no setting for
+ * gets the title only: the safe side for work whose details must not reach a phone. PPM's own
+ * cards with no project (the digest, a budget pause) are shown in full; the digest keeps each
+ * project's own level inside it.
+ */
 function realDetail(card: AssistantCard): CardDetail {
-  return managerChats.list().find((m) => m.projectKey === card.projectKey)?.telegramDetail ?? "full";
+  if (!card.projectKey) return "full";
+  return projectTelegramDetail(card.projectKey) ?? "title";
 }
 
 function realLiveCard(sessionId: string, requestId: string): LiveApprovalCard | null {
@@ -121,7 +128,14 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       html,
       ...(rows.length ? { markup: { inline_keyboard: rows } } : {}),
       ...(link.button ? { fallbackHtml: `${html}\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}` } : {}),
-    }, { label: `${card.kind} card`, onSent: (sent) => record(sent.message_id), onDropped: () => this.deps.codes.dropGroup(group) }));
+    }, {
+      label: `${card.kind} card`, onSent: (sent) => record(sent.message_id),
+      // Refused (a 400 is never retried), past its deadline or its chat gone: on record, not assumed sent.
+      onDropped: (why) => {
+        this.deps.codes.dropGroup(group);
+        try { setCardOutboundError(card.id, why, Date.now()); } catch (e) { log.warn(`card ${card.id}: could not record the failed send: ${(e as Error).message}`); }
+      },
+    }));
   }
 
   changed(card: AssistantCard): void {

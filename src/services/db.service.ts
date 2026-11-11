@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 66;
+export const CURRENT_SCHEMA_VERSION = 68;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1466,6 +1466,33 @@ export function runMigrations(database: Database): void {
       )
     `);
     database.exec(`PRAGMA user_version = 66;`);
+  }
+
+  if (current < 67) {
+    // A project's manager settings (digest, Telegram detail) and its rules belong to the project,
+    // not to the chat that manages it: kept here while the project has no manager chat, so
+    // unsetting, deleting or replacing that chat never drops them, and moved back onto the
+    // project's `manager_chats` row when it gets one again.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS manager_project_settings (
+        project_key TEXT PRIMARY KEY,
+        digest INTEGER NOT NULL DEFAULT 1,
+        telegram_detail TEXT NOT NULL DEFAULT 'full' CHECK (telegram_detail IN ('full','title')),
+        rules_approved TEXT,
+        rules_accepted TEXT,
+        rules_proposed TEXT,
+        rules_pending_hash TEXT,
+        rules_approved_at INTEGER
+      )
+    `);
+    database.exec(`PRAGMA user_version = 67;`);
+  }
+
+  if (current < 68) {
+    // Why Telegram refused a card for good (a 400: too long, bad markup), so a card that never
+    // reached the phone is on record rather than assumed sent. Null on every existing row.
+    addColumnIfMissing(database, "assistant_cards", "outbound_error", "TEXT");
+    database.exec(`PRAGMA user_version = 68;`);
   }
 }
 
