@@ -667,10 +667,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // SDK not available
     }
 
-    // Session not found in SDK list — it may still have a JSONL on disk.
-    // Use messageCount=1 so sendMessage uses resume instead of sessionId.
-    // resume gracefully handles missing JSONL, while sessionId crashes
-    // when a JSONL file for the same ID already exists on disk.
+    // Session not found in SDK list — it may still have a JSONL on disk, and then
+    // sendMessage must resume (passing sessionId for an id whose JSONL exists crashes).
+    // With no JSONL anywhere the CLI never wrote this conversation — its first turn
+    // failed before the CLI started (no usable account, say) — and resuming it fails
+    // with "No conversation found" on every later turn, so it starts fresh under its id.
+    const hasTranscript = resolveSessionDir(sessionId, dbProjectPath) !== null;
     const meta: Session = {
       id: sessionId,
       providerId: this.id,
@@ -679,7 +681,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       createdAt: new Date().toISOString(),
     };
     this.activeSessions.set(sessionId, meta);
-    this.messageCount.set(sessionId, 1);
+    this.messageCount.set(sessionId, hasTranscript ? 1 : 0);
     return meta;
   }
 
@@ -1547,6 +1549,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               hint = "All accounts are disabled or in cooldown. Check Settings → Accounts.";
             }
             log.error(`session=${sessionId} account auth failed (${reason}): ${hint}`);
+            // The CLI never ran, so it wrote no conversation: the next turn must start it
+            // rather than resume one that does not exist.
+            if (isFirstMessage) this.messageCount.set(sessionId, 0);
             yield { type: "error" as const, message: `Authentication failed: ${hint}` };
             yield { type: "done" as const, sessionId, resultSubtype: "error_auth" };
             return;

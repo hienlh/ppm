@@ -410,6 +410,18 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(secondCall.options.sessionId).toBeUndefined();
       expect(secondCall.options.resume).toBe(session.id);
     });
+
+    it("starts a known session whose conversation was never written instead of resuming it", async () => {
+      // A first turn that failed before the CLI ran (no usable account) leaves a PPM
+      // record but no transcript; resuming that id fails with "No conversation found".
+      mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+      const sessionId = crypto.randomUUID();
+      await provider.resumeSession(sessionId);
+      for await (const _ of provider.sendMessage(sessionId, "hello")) { /* consume */ }
+      const call = mockQueryFn.mock.calls[0]![0];
+      expect(call.options.resume).toBeUndefined();
+      expect(call.options.sessionId).toBe(sessionId);
+    });
   });
 
   describe("SDK options configuration", () => {
