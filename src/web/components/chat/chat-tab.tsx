@@ -8,6 +8,7 @@ import type { ReplyReference } from "../../../shared/chat-reply";
 import type { TurnReference } from "../../../shared/chat-turn-ref";
 import { decodeMessageBlocks, encodeMessageBlocks } from "../../../shared/chat-message-blocks";
 import { buildTurnLink } from "@/lib/turn-link";
+import { readChatPreparationSettings } from "@/lib/chat-preference-local-cache";
 import { useComposerTurnRefs } from "@/hooks/use-composer-turn-refs";
 import { useChatJumpStore } from "@/stores/chat-jump-store";
 import { selectInlineImages } from "@/lib/image-resize-limits";
@@ -516,11 +517,20 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
     reloadChat();
   }, [restartReconnect, reloadChat]);
 
+  // A chat with no session has had no `session_state`, so its chip would read "Model": until one
+  // arrives it shows the provider's default model and effort, which its first message runs on
+  // unless something is picked (only picks are sent, `turnSettings`).
+  const providerDefaults = !sessionId && !preparation.pending
+    ? readChatPreparationSettings()?.providers[preparation.providerId ?? providerId ?? "claude"]
+    : undefined;
+  const shownModel = model ?? providerDefaults?.model ?? null;
+  const shownEffort = effort ?? providerDefaults?.effort ?? null;
+
   const effortStatus = useEffortStatus({
     projectName,
     // Not while the provider is still a guess: the answer would be about another provider.
     providerId: preparation.pending ? undefined : preparation.providerId ?? providerId,
-    model,
+    model: shownModel,
     sessionStatus: sessionEffortStatus,
   });
 
@@ -1553,9 +1563,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
             // A design chat's provider was chosen among those that carry design instructions;
             // the composer's picker offers every provider, so it is not offered here.
             onProviderChange={!sessionId && !designSlug && !preparation?.pending && !firstSendPending ? handleProviderChange : undefined}
-            model={model}
+            model={shownModel}
             onModelChange={!preparation?.pending && !firstSendPending ? setModel : undefined}
-            effort={effort}
+            effort={shownEffort}
             effortStatus={effortStatus}
             onEffortChange={setEffort}
             thinking={thinking}

@@ -52,14 +52,16 @@ export class UnknownProviderError extends Error {
   }
 }
 
-/** Only provider selection and permissions are retained; never api_key/api_key_env. */
+/** Only provider selection, permissions and the default model/effort are retained; never api_key/api_key_env. */
 function toChatPreparationSettings(): ChatPreparationSettings {
   const ai = configService.get("ai");
   return {
     default_provider: ai.default_provider,
     new_chat_provider_mode: ai.new_chat_provider_mode,
     providers: Object.fromEntries(
-      Object.entries(ai.providers).map(([id, provider]) => [id, { permission_mode: provider.permission_mode }]),
+      Object.entries(ai.providers).map(([id, provider]) => [id, {
+        permission_mode: provider.permission_mode, model: provider.model, effort: provider.effort,
+      }]),
     ),
   };
 }

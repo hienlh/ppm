@@ -57,6 +57,11 @@ describe("POST /chat/prepare", () => {
     expect(data.resolvedProviderId).toBe("claude");
     expect(data.providerId).toBe("claude");
     expect(data.settings.default_provider).toBe("claude");
+    // A new chat's chip shows the model and effort its first message will run on.
+    const { configService } = await import("../../../src/services/config.service.ts");
+    const claude = configService.get("ai").providers.claude;
+    expect(data.settings.providers.claude.model).toBe(claude.model);
+    expect(data.settings.providers.claude.effort).toBe(claude.effort);
     expect(Array.isArray(data.providers)).toBe(true);
     expect(data.providers.some((p: { id: string }) => p.id === "claude")).toBe(true);
     // No accounts configured — nothing to pick, and no usage to read for it.

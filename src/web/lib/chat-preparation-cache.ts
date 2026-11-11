@@ -33,7 +33,7 @@ function cached<T>(cache: Map<string, Entry<T>>, key: string, fetch: () => Promi
   return entry.request;
 }
 
-/** Only provider selection and permissions are retained; never account credentials. */
+/** Only provider selection, permissions and the default model/effort are retained; never account credentials. */
 export function getChatPreparationSettings(projectName = ""): Promise<AISettings> {
   return cached(settings, projectName, async () => {
     const value = await api.get<AISettings>("/api/settings/ai", { signal: AbortSignal.timeout(CHAT_PREPARATION_TIMEOUT_MS) });
@@ -41,7 +41,7 @@ export function getChatPreparationSettings(projectName = ""): Promise<AISettings
       default_provider: value.default_provider,
       new_chat_provider_mode: value.new_chat_provider_mode,
       providers: Object.fromEntries(Object.entries(value.providers).map(([id, provider]) =>
-        [id, { permission_mode: provider.permission_mode }])),
+        [id, { permission_mode: provider.permission_mode, model: provider.model, effort: provider.effort }])),
     };
   });
 }
