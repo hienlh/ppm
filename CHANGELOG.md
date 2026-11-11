@@ -941,16 +941,16 @@
 ## [0.20.9] - 2026-09-16
 
 ### Added
-- **Daily guard for weekly-only Codex accounts** â€” paces usage across the remaining weekly window, warns and pauses new turns after the daily cap, and can be switched off any time.
+- **Daily guard for weekly-only Codex accounts** — paces usage across the remaining weekly window, warns and pauses new turns after the daily cap, and can be switched off any time.
 
 ### Fixed
 - **Codex browser sign-in follows its loopback success redirect** after a pasted callback, completing remote and tunnel-based login instead of waiting at the intermediate redirect.
-- **Codex web-search cards and subscription labels are readable** â€” search results now render their titles, links and snippets, while internal plan names show as ChatGPT plan labels.
+- **Codex web-search cards and subscription labels are readable** — search results now render their titles, links and snippets, while internal plan names show as ChatGPT plan labels.
 
 ## [0.20.8] - 2026-09-16
 
 ### Fixed
-- **Windows file links in chat now open in PPM** â€” Markdown links such as `D:/Projects/app/report.md` retain their path instead of being cleared as an unsafe URL scheme.
+- **Windows file links in chat now open in PPM** — Markdown links such as `D:/Projects/app/report.md` retain their path instead of being cleared as an unsafe URL scheme.
 
 ## [0.20.7] - 2026-09-15
 
