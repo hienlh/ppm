@@ -15,7 +15,7 @@ import { assistantWakeQueue } from "../assistant-wake/assistant-wake-queue.ts";
 import { createCardWakeSource, createLateReplySource } from "../assistant-wake/manager-wake-sources.ts";
 import { createLogger } from "../logger.ts";
 import { assistantCards } from "./assistant-cards.service.ts";
-import { countSessionCardsSince, findOpenCardsBy, findOpenRequestCard } from "./assistant-cards-db.ts";
+import { CARD_RETENTION_MS, countSessionCardsSince, findOpenCardsBy, findOpenRequestCard, pruneOldCardRows } from "./assistant-cards-db.ts";
 import { budgetEventCard, rulesEventCard, type EventCardsDeps } from "./assistant-event-cards.ts";
 import { sweepGoneRequestCards } from "./assistant-card-actions.ts";
 import { startCardDelivery } from "./card-delivery.ts";
@@ -76,6 +76,12 @@ export function startAssistantCards(): void {
   ];
   // An answer whose words never reached its manager chat opens its card again (now, for a restart).
   stops.push(startCardDelivery());
+  try {
+    const pruned = pruneOldCardRows(assistantClock.now() - CARD_RETENTION_MS);
+    if (pruned > 0) log.info(`${pruned} card(s) older than 90 days and no longer waiting removed`);
+  } catch (e) {
+    log.warn(`could not prune old cards: ${(e as Error).message}`);
+  }
   try {
     sweepGoneRequestCards({ cards: assistantCards, control: chatControl, now: () => assistantClock.now() });
   } catch (e) {

@@ -135,6 +135,17 @@ export function listUndeliveredAnswerRows(): CardRow[] {
     WHERE status = 'answered' AND json_extract(answer_json, '$.delivery') = 'pending' ORDER BY updated_at`).all() as Raw[]).map(toRow);
 }
 
+/** How long a card that no longer waits is kept. */
+export const CARD_RETENTION_MS = 90 * 24 * 60 * 60_000;
+
+/**
+ * Deletes cards that stopped waiting before `before` and carry no news still to tell. Open cards
+ * are kept whatever their age. Bounds the table that every Telegram reply is matched against.
+ */
+export function pruneOldCardRows(before: number): number {
+  return getDb().query("DELETE FROM assistant_cards WHERE created_at < ? AND status <> 'open' AND wake <> 'pending'").run(before).changes;
+}
+
 export function setCardWake(id: string, wake: CardWake, at: number): boolean {
   return getDb().query("UPDATE assistant_cards SET wake = ?, updated_at = ? WHERE id = ?").run(wake, at, id).changes > 0;
 }
