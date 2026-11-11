@@ -149,7 +149,10 @@ row's menu (*Set as manager chat* / *Unset manager chat*, `adaptive-context-menu
 opens it on a phone) through a dialog that states the consequence — PPM Assistant may message the
 chat without asking, also while the user is away; in bypass mode nothing in it asks either — and
 names the manager it replaces. Unassigning removes the row and nothing else; deleting the chat
-unassigns it; a bulk delete of old chats keeps it, like a pinned one.
+unassigns it; a bulk delete of old chats keeps it, like a pinned one. What belongs to the project —
+its digest switch, Telegram detail level and rules (approved, in force, held) — outlives the row:
+it waits in `manager_project_settings` (migration 67) and goes back onto the project's next
+manager row, so a re-assigned project keeps its approved rules and its privacy level.
 
 The session list puts the manager first (manager, then pinned, then activity:
 `compareSessionsByActivity`), injects it on page 1 like a pinned row and shows a *Manager* badge.
@@ -747,6 +750,11 @@ origin (waiting for a starting consumer, the from-session block decoding) hold f
 emits the lifecycle `user_message` and sets the chat's `turnOrigin` the way a typed message does.
 These are trace origins too (`TraceOrigin` in `src/shared/session-trace.ts`).
 
+Only a message that owns a turn sets `turnOrigin` (`src/server/ws/chat-turn-origin.ts`): one that
+opens a turn, or the user typing into a running one. A scheduled script posting into an Assistant
+session opens an unattended (`watch`) turn, but never turns the user's running turn into one; it,
+and a `later` message, queued behind the running turn own only the turn they open.
+
 `chatLifecycle` (`src/services/chat-control/chat-lifecycle.ts`) is the bus the rest listens on; the
 event names and payloads are `ChatLifecycleEvents`. It is emitted whether or not a browser is
 connected — the socket layer drops events when no client is there, and a turn started from
@@ -875,11 +883,13 @@ the user stated, a deadline, who is who. Stored in `assistant_notes` (migration 
   (`source = 'user'`) and verified; the Assistant's edit and delete refuse it ("The user wrote this
   line; propose the change to them instead.").
 - **Unverified lines.** A line the Assistant adds or edits in a turn nobody started (a watch or
-  report wake, `isUnattendedTurn`) is stored `unverified`, and the Assistant's own later edit never
-  clears the flag; only the user's edit or "Mark as verified" does. This is what keeps an injected
-  "preference" from a report apart from what the user confirmed.
+  report wake, `isUnattendedTurn`), or in a turn outside text reached (the turn provenance says
+  `untrusted`: another chat, a file, a tool's answer), is stored `unverified`, and the Assistant's
+  own later edit never clears the flag; only the user's edit or "Mark as verified" does. This is
+  what keeps an injected "preference" apart from what the user confirmed.
 - **Caps.** 300 characters a line, 4,000 for the whole notebook (`NOTE_MAX_CHARS`,
-  `NOTEBOOK_CAP_CHARS`), whoever writes; a write over either is refused, never cut. Each check runs
+  `NOTEBOOK_CAP_CHARS`); the Assistant's writes stop 1,000 short of it
+  (`NOTEBOOK_USER_RESERVE_CHARS`), so the user always has room. A write over a cap is refused, never cut. Each check runs
   in the transaction of the write it allows.
 - **How the model reads it.** An entry of the shared-context block on every Assistant turn
   (`assistant-notes-entry.ts`), never the system prompt, sent when it changes and again after a
@@ -992,19 +1002,30 @@ drops it, and the card itself stays in PPM for as long as the chat shows it.
 once the gate lets it. A manager's approval or question goes out as the relay's own card (same
 Allow rule, answers the manager chat directly); every other kind is formatted per kind. A project's
 `telegram_detail` (`full` or `title`) decides how much: at `title` the phone gets the kind, the
-project and the title only — no body, draft or diff, no OK, and an approval offers Deny alone. The
+project and the title only — no body, draft or diff, no OK, and an approval offers Deny alone. A
+project's level is read from its manager row, else from the one kept since its last manager; a
+card of a project PPM has no level for goes at `title`. A card Telegram refuses for good (a 400)
+is not retried; the reason is kept in `assistant_cards.outbound_error` (migration 68). The
 message ids are stored on the card as `(chatId, messageId)` pairs (`telegram_refs_json`), because
 Telegram counts ids per chat. When a card stops waiting, every copy loses its buttons and says how.
 The "Waiting for approval" push for a manager chat's request is held back while its card reaches
 the phone; no other push changes.
 
 **OK** (`card-ok-rule.ts`, `card-reply-actions.ts`). A needs-decision card offers "OK, send" ("OK"
-with no draft) only when its title, body and draft fit `REVIEW_FIT_MAX` whole and nothing in them
-was hidden as a secret — Allow's bar, the same in PPM and on Telegram. `POST /cards/:id/ok
+with no draft) only when its title, body and draft fit `REVIEW_FIT_MAX` whole, nothing in them
+was hidden as a secret, and the whole card fits one Telegram message as it would be shown (hidden
+characters revealed; `TELEGRAM_CARD_ROOM`) — Allow's bar, the same in PPM and on Telegram. A
+decision too long for that goes out as a preview without the button. A held rules change offers
+Approve change only when its card carries the whole change (every added and removed line, in file
+order, uncut and unaltered: `rulesComplete`); otherwise it is reviewed in Settings. `POST /cards/:id/ok
 {draftSha256}` (and the button, whose code carries the hash it showed) must name the card's draft;
 the card goes `open → answered` by compare-and-set first, so the first OK on any surface forwards
 and a later one is told "Already answered on Telegram at 22:41". A forward that fails opens the
-card again.
+card again. The answer carries `delivery`: words that started or joined a turn are `delivered`;
+words queued behind the manager's running turn stay `pending` until a `turn_started` names their
+client id (`card-delivery.ts`). A card still pending two minutes after the turn it waited on
+ended, or at startup, is opened again with "Your answer did not reach the manager chat; send it
+again." — on Telegram as a new copy.
 
 **The user's own words** (`forward-verbatim.ts`, `src/server/ws/chat-user-words.ts`). A reply —
 `POST /cards/:id/reply {text, force?}` from the reply-to bar in PPM, or a Telegram message sent as
