@@ -93,7 +93,7 @@ describe("AntigravityProvider over agy acp", () => {
     const init = calls("initialize")[0]!;
     expect(init.params.clientCapabilities).toEqual({ fs: { readTextFile: false, writeTextFile: false }, terminal: false });
     expect(calls("session/new")[0]!.params).toEqual({ cwd: projectDir, mcpServers: [] });
-    expect(calls("session/set_model").map((m) => m.params.modelId)).toEqual(["gemini-4-argon-high"]);
+    expect(calls("session/set_model").map((m) => m.params.modelId)).toEqual(["gemini-4-carbon-high"]);
 
     // The generator outlives the turn; a follow-up runs on the same process, under either id.
     expect(run.isEnded()).toBe(false);

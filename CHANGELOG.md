@@ -6,6 +6,10 @@
 
 - **Antigravity chats.** Antigravity (Google's `agy` CLI) can be picked as a chat's provider: replies, thinking and tool calls stream as with Claude and Codex, with approvals, Stop, images, agy's own slash commands and skills, extra accounts with a sign-in of their own (Settings → Accounts), a quota panel, and PPM's tab and database tools. Each open chat runs one `agy acp` process. A slow command agy moves to the background no longer ends the chat halfway, and the quota is read from agy itself when the Antigravity app is closed. Needs agy installed and signed in.
 
+### Changed
+
+- **New default models: Gemini 4 Carbon for Antigravity, GPT-6.1 Sol for Codex.** Both pickers already list every model the provider offers; this changes what a new install starts on, and Gemini 4 Carbon is in the list Antigravity falls back to when its app is closed.
+
 ## [0.24.1] - 2026-11-12
 
 ### Fixed
