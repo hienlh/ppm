@@ -1,14 +1,16 @@
 import type { Json } from "../mcp-http-endpoint.ts";
 import { isUnattendedTurn } from "../chat-control/chat-control.ts";
 import { resolveMigratedSession } from "../db.service.ts";
+import { assistantTurnProvenance } from "../assistant/assistant-turn-provenance.ts";
 import { assistantNotes, type AssistantNotes, type NoteResult } from "../assistant-notes/assistant-notes.service.ts";
 import { errorResult, jsonResult } from "./assistant-tool-output.ts";
 
 /**
  * The Assistant's notebook tools (definitions in `assistant-notebook-tool-definitions.ts`): write
  * down, correct or drop a short fact it must not forget in a long session. They never ask and run
- * in every Assistant turn. In a turn nobody started (a watch or report wake) a line is stored
- * unverified, and an edit there marks the line unverified; a line the user wrote is refused to
+ * in every Assistant turn. In a turn nobody started (a watch or report wake), or one that outside
+ * text reached (`assistant-turn-provenance.ts`), a line is stored unverified, and an edit there
+ * marks the line unverified; a line the user wrote is refused to
  * edit and delete. The notebook reaches the model as a shared-context entry
  * (`assistant-notes-entry.ts`), which is where the ids come from.
  */
@@ -19,12 +21,13 @@ export interface NotebookToolDeps {
 }
 
 /**
- * Whether the call comes from a turn nobody started. Asked under the id the token was minted for
- * and the one the session goes by now: either saying so is enough, since being wrong this way only
- * labels a line unverified.
+ * Whether the line must be stored unverified: the call comes from a turn nobody started, or from a
+ * turn that text the user did not write has reached (another chat, a file, a tool's answer), which
+ * could have dictated it. Asked under the id the token was minted for and the one the session goes
+ * by now: either saying so is enough, since being wrong this way only labels a line unverified.
  */
 function unattended(sessionId: string, deps: NotebookToolDeps): boolean {
-  const check = deps.unattended ?? isUnattendedTurn;
+  const check = deps.unattended ?? ((id: string) => isUnattendedTurn(id) || assistantTurnProvenance.provenance(id).untrusted);
   return check(sessionId) || check(resolveMigratedSession(sessionId));
 }
 
@@ -36,7 +39,7 @@ function answer(result: NoteResult, verb: string): Json {
   const { id, source, unverified } = result.note;
   return jsonResult({
     [verb]: true, id, source, unverified,
-    ...(unverified ? { note: "Stored as unverified: written in a turn the user did not start. The user sees it labelled so." } : {}),
+    ...(unverified ? { note: "Stored as unverified: written in a turn the user did not start, or one that read text the user did not write. The user sees it labelled so." } : {}),
   });
 }
 

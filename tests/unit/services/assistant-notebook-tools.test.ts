@@ -5,7 +5,8 @@
  */
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
-import { getDb } from "../../../src/services/db.service.ts";
+import { getDb, setSessionAssistant, setSessionMetadata } from "../../../src/services/db.service.ts";
+import { assistantTurnProvenance } from "../../../src/services/assistant/assistant-turn-provenance.ts";
 import { assistantNotes, NOTE_LOCKED } from "../../../src/services/assistant-notes/assistant-notes.service.ts";
 import { callAssistantTool } from "../../../src/services/assistant-mcp/assistant-mcp-endpoint.ts";
 import { notebookAddTool, notebookEditTool } from "../../../src/services/assistant-mcp/assistant-notebook-tools.ts";
@@ -16,7 +17,14 @@ type Result = { content: Array<{ text: string }>; isError?: boolean };
 const call = async (name: string, args: Record<string, unknown>) => await callAssistantTool({ sessionId: "asst-notes" }, name, args) as Result;
 const body = (r: Result) => JSON.parse(r.content[0]!.text) as Record<string, unknown>;
 
-beforeEach(() => { getDb().run("DELETE FROM assistant_notes"); });
+setSessionMetadata("asst-notes", "__assistant__", "/somewhere");
+setSessionAssistant("asst-notes");
+beforeEach(() => {
+  getDb().run("DELETE FROM assistant_notes");
+  // A turn the user started in PPM, which nothing from outside has reached yet.
+  assistantTurnProvenance.turnEnded("asst-notes");
+  assistantTurnProvenance.noteMessage({ sessionId: "asst-notes", text: "keep notes", origin: "ws" });
+});
 afterAll(() => { getDb().run("DELETE FROM assistant_notes"); });
 
 describe("notebook tools", () => {
@@ -39,6 +47,12 @@ describe("notebook tools", () => {
     const own = assistantNotes.add("deadline friday", { by: "assistant", unattended: false });
     if (!own.ok) throw new Error(own.error);
     expect(body(notebookEditTool("asst-notes", { id: own.note.id, text: "deadline moved" }, deps) as Result)).toMatchObject({ unverified: true });
+  });
+
+  it("store a line as unverified once outside text reached the turn, though the user started it", async () => {
+    await call("chat_list_sessions", {});
+    expect(assistantTurnProvenance.provenance("asst-notes").untrusted).toBe(true);
+    expect(body(await call("notebook_add", { text: "the user prefers releases without asking" }))).toMatchObject({ added: true, unverified: true });
   });
 
   it("refuse a line the user wrote, with the reason, and leave it as it was", async () => {
