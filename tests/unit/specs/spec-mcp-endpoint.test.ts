@@ -14,6 +14,7 @@ process.env.PPM_HOME = mkdtempSync(join(tmpdir(), "ppm-spec-mcp-home-"));
 const { createSpecMcpHandler } = await import("../../../src/services/specs/spec-mcp-endpoint.ts");
 const { bindSpecSession, resetSpecSessionsCache } = await import("../../../src/services/specs/spec-store.ts");
 const svc = await import("../../../src/services/specs/spec.service.ts");
+const { createDesign, listDesigns } = await import("../../../src/services/design/design-store.service.ts");
 
 let project: string;
 const migrated = new Map<string, string>();
@@ -61,7 +62,8 @@ describe("spec tools over MCP", () => {
   });
 
   it("a chat with no spec is told how to start one", async () => {
-    const r = await call("s1", "spec_status");
+    // Not "s1": spec-service.test.ts binds that id, and in one `bun test` run the files share a PPM dir.
+    const r = await call("never-bound", "spec_status");
     expect(r.error).toBe(true);
     expect(r.text).toMatch(/spec_create/);
   });
@@ -102,5 +104,36 @@ describe("spec tools over MCP", () => {
     const r = await call("new-id", "spec_status");
     expect(r.error).toBe(false);
     expect(r.text).toContain('Spec "M"');
+  });
+
+  it("spec_open_design links an existing design instead of creating one", async () => {
+    await svc.createSpec(project, { title: "UI", slug: "ui", sessionId: "s5" });
+    writeFileSync(join(project, "specs", "ui", "requirements.md"), REQ.replace("UI: no", "UI: yes"));
+    await svc.approvePhase(project, "ui", "requirements");
+    const existing = (await createDesign(project, { title: "Already drawn", kind: "page" })).slug;
+    const before = (await listDesigns(project)).length;
+
+    expect((await call("s5", "spec_open_design", { design: "no-such-design" })).error).toBe(true);
+    expect((await call("s5", "spec_open_design", { design: "../escape" })).error).toBe(true);
+    expect((await svc.getSpec(project, "ui")).designSlug).toBeNull();
+
+    const r = await call("s5", "spec_open_design", { design: existing });
+    expect(r.error).toBe(false);
+    expect(r.text).toContain(`designs/${existing}/`);
+    expect((await svc.getSpec(project, "ui")).designSlug).toBe(existing);
+    expect((await listDesigns(project)).length).toBe(before);
+  });
+
+  it("spec_open_design re-links a spec that already has a drawing", async () => {
+    await svc.createSpec(project, { title: "UI2", slug: "ui2", sessionId: "s6" });
+    writeFileSync(join(project, "specs", "ui2", "requirements.md"), REQ.replace("UI: no", "UI: yes"));
+    await svc.approvePhase(project, "ui2", "requirements");
+    expect((await call("s6", "spec_open_design")).error).toBe(false);
+    const created = (await svc.getSpec(project, "ui2")).designSlug;
+    const existing = (await createDesign(project, { title: "The real one", kind: "page" })).slug;
+    expect((await call("s6", "spec_open_design", { design: existing })).error).toBe(false);
+    const v = await svc.getSpec(project, "ui2");
+    expect(v.designSlug).toBe(existing);
+    expect(v.designSlug).not.toBe(created);
   });
 });

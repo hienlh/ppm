@@ -53,8 +53,12 @@ export const SPEC_TOOL_DEFINITIONS = [
   {
     name: SPEC_OPEN_DESIGN_TOOL,
     title: "Draw the screens",
-    description: "For a spec whose requirements say UI: yes: PPM creates the spec's PPM Design (designs/<slug>/) and opens it for the user. Draw the screens there as one self-contained HTML page (index.html), then tell the user; they approve the drawing in PPM before design.md. Tasks that build a screen name it with _Screen: <name>_.",
-    inputSchema: none,
+    description: "For a spec whose requirements say UI: yes: PPM creates the spec's PPM Design (designs/<slug>/) and opens it for the user. Draw the screens there as one self-contained HTML page (index.html), then tell the user; they approve the drawing in PPM before design.md. When the screens are already drawn in a design of this project, pass its slug as `design` instead: PPM links the spec to that design and nothing is drawn again. Tasks that build a screen name it with _Screen: <name>_.",
+    inputSchema: {
+      type: "object",
+      properties: { design: { type: "string", description: "Slug of an existing design (designs/<slug>/) that already holds these screens." } },
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: false, openWorldHint: false },
   },
   {
