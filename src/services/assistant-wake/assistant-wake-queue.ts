@@ -1,5 +1,5 @@
 import { createLogger } from "../logger.ts";
-import { getSessionProvider, resolveMigratedSession } from "../db.service.ts";
+import { getConfigValue, getSessionProvider, resolveMigratedSession, setConfigValue } from "../db.service.ts";
 import { chatControl, CHAT_BUSY, type ChatControl } from "../chat-control/chat-control.ts";
 import { chatLifecycle, type ChatLifecycle, type ChatLifecycleEvents } from "../chat-control/chat-lifecycle.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
@@ -58,7 +58,17 @@ export interface WakeQueueDeps {
   tickMs?: number;
   retryDelayMs?: number;
   turnTimeoutMs?: number;
+  /** Where the wake-turn times are kept across restarts (the process-wide queue: a config row); memory when absent. */
+  turnLog?: { load(): string | null; save(json: string): void };
 }
+
+/** The config row holding when each session's wake turns started in the last hour. */
+export const WAKE_TURNS_ROW = "assistant_wake_turns";
+
+const configTurnLog = {
+  load: () => getConfigValue(WAKE_TURNS_ROW),
+  save: (json: string) => setConfigValue(WAKE_TURNS_ROW, json),
+};
 
 interface WakeTurn {
   batch: Array<{ source: WakeSource; items: WakeItem[] }>;
@@ -83,7 +93,8 @@ export class AssistantWakeQueue {
   private stops: Array<() => void> = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private turns = new Map<string, WakeTurn>();
-  private turnTimes = new Map<string, number[]>();
+  private turnTimes: Map<string, number[]> | null = null;
+  private readonly turnLog: NonNullable<WakeQueueDeps["turnLog"]>;
   private retryAt = new Map<string, number>();
 
   constructor(deps: WakeQueueDeps = {}) {
@@ -95,6 +106,35 @@ export class AssistantWakeQueue {
     this.tickMs = deps.tickMs ?? 30_000;
     this.retryDelayMs = deps.retryDelayMs ?? 60_000;
     this.turnTimeoutMs = deps.turnTimeoutMs ?? 20 * 60_000;
+    // Kept in memory unless a log is given: only the process-wide queue writes the config row.
+    let memory: string | null = null;
+    this.turnLog = deps.turnLog ?? { load: () => memory, save: (json) => { memory = json; } };
+  }
+
+  /**
+   * When each session's wake turns started, read once from the config row: the hourly cap holds
+   * across restarts, so a restart loop cannot start a wake turn per process.
+   */
+  private times(): Map<string, number[]> {
+    if (this.turnTimes) return this.turnTimes;
+    this.turnTimes = new Map();
+    try {
+      const raw = JSON.parse(this.turnLog.load() ?? "null") as Record<string, unknown> | null;
+      for (const [id, list] of Object.entries(raw ?? {})) {
+        if (Array.isArray(list)) this.turnTimes.set(id, list.filter((t): t is number => typeof t === "number" && Number.isFinite(t)));
+      }
+    } catch { /* unreadable: count afresh */ }
+    return this.turnTimes;
+  }
+
+  private saveTimes(): void {
+    const cutoff = this.now() - HOUR_MS;
+    const out: Record<string, number[]> = {};
+    for (const [id, list] of this.times()) {
+      const kept = list.filter((t) => t > cutoff);
+      if (kept.length) out[id] = kept;
+    }
+    try { this.turnLog.save(JSON.stringify(out)); } catch (e) { log.warn(`could not keep the wake-turn times: ${(e as Error).message}`); }
   }
 
   get running(): boolean { return this.stops.length > 0; }
@@ -147,8 +187,8 @@ export class AssistantWakeQueue {
     if (batch.length === 0) return;
     const now = this.now();
     if ((this.retryAt.get(id) ?? 0) > now) return;
-    const recent = (this.turnTimes.get(id) ?? []).filter((t) => t > now - HOUR_MS);
-    this.turnTimes.set(id, recent);
+    const recent = (this.times().get(id) ?? []).filter((t) => t > now - HOUR_MS);
+    this.times().set(id, recent);
     if (recent.length >= WAKE_TURNS_PER_HOUR) return;
     const items = batch.flatMap((b) => b.items);
     if (!items.some((i) => i.urgent) && this.safeQuiet()) return;
@@ -180,6 +220,7 @@ export class AssistantWakeQueue {
     }
     turn.sent = true;
     recent.push(now);
+    this.saveTimes();
     const current = resolveMigratedSession(result.sessionId);
     if (current !== id) this.onMigrated(id, current);
     if (turn.earlyEnd) this.finish(current, turn, turn.earlyEnd);
@@ -237,15 +278,19 @@ export class AssistantWakeQueue {
   }
 
   private onMigrated(oldId: string, newId: string): void {
-    for (const map of [this.turns, this.turnTimes, this.retryAt] as Array<Map<string, unknown>>) {
+    for (const map of [this.turns, this.times(), this.retryAt] as Array<Map<string, unknown>>) {
       if (!map.has(oldId)) continue;
       map.set(newId, map.get(oldId));
       map.delete(oldId);
     }
   }
 
+  /** Quiet hours that cannot be read count as quiet: news waits, and urgent news still goes. */
   private safeQuiet(): boolean {
-    try { return this.quiet(); } catch { return false; }
+    try { return this.quiet(); } catch (e) {
+      log.warn(`quiet hours unreadable, holding non-urgent news: ${(e as Error).message}`);
+      return true;
+    }
   }
 
   private safely(fn: () => void): void {
@@ -254,4 +299,4 @@ export class AssistantWakeQueue {
 }
 
 /** The process-wide queue; the Assistant hub starts it, and every source registers with it. */
-export const assistantWakeQueue = new AssistantWakeQueue();
+export const assistantWakeQueue = new AssistantWakeQueue({ turnLog: configTurnLog });

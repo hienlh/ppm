@@ -131,6 +131,61 @@ describe("the wake queue", () => {
     expect(h.sent[0]!.opts.wakeNews).toHaveLength(2);
   });
 
+  it("keeps the hourly cap across a restart: a new queue reads the turns the last one started", async () => {
+    let stored: string | null = null;
+    const turnLog = { load: () => stored, save: (json: string) => { stored = json; } };
+    const clock = Date.UTC(2026, 10, 10, 9, 0, 0);
+    const lifecycle = createChatLifecycle();
+    const sent: string[] = [];
+    const control = {
+      async sendUserMessage(sessionId: string, text: string) { sent.push(text); return { ok: true, sessionId }; },
+      answerApproval: () => "stale", cancelTurn: () => false, liveState: () => null, listLive: () => [],
+    } as unknown as ChatControl;
+    const make = () => {
+      const q = new AssistantWakeQueue({ control: () => control, lifecycle, now: () => clock, provider: () => "claude", quiet: () => false, tickMs: 3_600_000, retryDelayMs: 0, turnLog });
+      q.start();
+      queues.push(q);
+      return q;
+    };
+    const cards = fakeSource("cards");
+    for (let i = 0; i < WAKE_TURNS_PER_HOUR; i++) {
+      const q = make(); // every turn in a new process, as in a restart loop
+      q.addSource(cards.source);
+      cards.add(true);
+      q.schedule(MAIN);
+      await new Promise((r) => setTimeout(r, 5));
+      q.stop();
+    }
+    expect(sent).toHaveLength(WAKE_TURNS_PER_HOUR);
+    const last = make();
+    last.addSource(cards.source);
+    cards.add(true);
+    last.schedule(MAIN);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(sent).toHaveLength(WAKE_TURNS_PER_HOUR);
+  });
+
+  it("holds non-urgent news when quiet hours cannot be read, and still sends urgent news", async () => {
+    const h = harness();
+    const cards = fakeSource("cards");
+    const broken = new AssistantWakeQueue({
+      control: () => ({ ...({} as ChatControl), sendUserMessage: async (sessionId: string, text: string, opts: SendUserMessageOpts) => { h.sent.push({ text, opts }); return { ok: true, sessionId }; }, liveState: () => null } as ChatControl),
+      lifecycle: createChatLifecycle(), now: () => Date.now(), provider: () => "claude", tickMs: 3_600_000,
+      quiet: () => { throw new Error("settings unreadable"); },
+    });
+    broken.start();
+    queues.push(broken);
+    broken.addSource(cards.source);
+    cards.add();
+    broken.schedule(MAIN);
+    await h.settle();
+    expect(h.sent).toHaveLength(0);
+    cards.add(true);
+    broken.schedule(MAIN);
+    await h.settle();
+    expect(h.sent).toHaveLength(1);
+  });
+
   it("reports a turn without an answer as failed, and one the user stopped as ended", async () => {
     const h = harness();
     const cards = fakeSource("cards");

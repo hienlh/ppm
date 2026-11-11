@@ -26,6 +26,26 @@ function guards(start = Date.parse("2026-11-10T01:00:00Z")) {
   return { g: make(), make, clock, events };
 }
 
+describe("what survives a restart", () => {
+  it("keeps the pair counts, until the user writes", () => {
+    const { g, make } = guards();
+    expect(g.reserveUnattended(A, M, 2).ok).toBe(true);
+    expect(g.reserveUnattended(A, M, 2).ok).toBe(true);
+    const restarted = make();
+    expect(restarted.reserveUnattended(A, M, 2)).toMatchObject({ ok: false, reason: "pair" });
+    restarted.userWrote(A);
+    expect(make().reserveUnattended(A, M, 2).ok).toBe(true);
+  });
+
+  it("holds a message when quiet hours cannot be read", () => {
+    const g = createAssistantSendGuards({
+      now: () => Date.parse("2026-11-10T01:00:00Z"), quiet: () => { throw new Error("settings unreadable"); },
+      load: () => null, save: () => {},
+    });
+    expect(g.reserveUnattended(A, M, 20)).toMatchObject({ ok: false, reason: "quiet", message: QUIET_HOURS_REFUSAL });
+  });
+});
+
 describe("unattended budgets", () => {
   it("allows six an hour, then refuses and pauses once, whatever the managers", () => {
     const { g, clock, events } = guards();
