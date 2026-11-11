@@ -112,6 +112,18 @@ export function classifyRulesChange(accepted: string, file: string): RulesChange
   return { kind: "additions", lines: added };
 }
 
+/**
+ * The whole change from `base` to `next` as a card shows it: every added and removed line, in file
+ * order. Null when it cannot be shown line by line — too large to diff, or `next` holds no rule
+ * line at all (nothing to read, so nothing a person can approve from a card).
+ */
+export function heldChangeLines(base: string, next: string): Array<{ op: "add" | "remove"; line: string }> | null {
+  if (ruleLines(next).length === 0) return null;
+  const ops = diffRuleLines(base, next);
+  if (!ops) return null;
+  return ops.filter((o) => o.op !== "same").map((o) => ({ op: o.op as "add" | "remove", line: o.line }));
+}
+
 /** The lines `next` has that `base` does not, in order (the ordered diff's insertions). */
 export function linesAddedSince(base: string, next: string): string[] {
   return (diffRuleLines(base, next) ?? []).filter((o) => o.op === "add").map((o) => o.line);

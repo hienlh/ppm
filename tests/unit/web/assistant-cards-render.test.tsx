@@ -112,6 +112,23 @@ describe("assistant cards", () => {
     expect(posts[0]!.body).toEqual({ answersById: { q1: ["No"] } });
   });
 
+  it("draws a held rules change in file order and offers Approve only for the whole change", async () => {
+    const changes = [{ op: "remove" as const, line: "Never merge to master without the user's OK." }, { op: "add" as const, line: "Keep PRs small." }];
+    view = await mount(<AssistantCard card={base({ kind: "rules_change", payload: { changes, rulesComplete: true, rulesHash: "h" } })} />);
+    const ops = [...view.container.querySelectorAll("[data-diff-op]")].map((l) => `${l.getAttribute("data-diff-op")}:${l.textContent}`);
+    expect(ops).toEqual(["remove:- Never merge to master without the user's OK.", "add:+ Keep PRs small."]);
+    expect(buttons()).toEqual(["Approve change", "Revert"]);
+    await view.unmount();
+    // Not the whole change (or none at all): approved in Settings, never from the card.
+    for (const payload of [{ changes, rulesHash: "h" }, { changes: [], rulesHash: "h" }]) {
+      view = await mount(<AssistantCard card={base({ kind: "rules_change", payload })} />);
+      expect(buttons()).toEqual(["Review in Settings", "Revert"]);
+      expect(view.container.querySelector("[data-rules-incomplete]")).not.toBeNull();
+      await view.unmount();
+      view = null;
+    }
+  });
+
   it("draws every other kind with its own controls, 44 px tall on a phone", async () => {
     for (const card of [
       base({ kind: "done" }), base({ kind: "failed", payload: { detected: true } }), base({ kind: "urgent" }),

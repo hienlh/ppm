@@ -29,6 +29,7 @@ export interface FormattedManagerCard {
 
 const PREVIEW_MAX = 1200;
 const BODY_MAX = 1500;
+const RULES_IN_PPM_NOTE = "Not the whole change, or too long to review here — open the rules in PPM (Settings → Assistant) to approve it.";
 export const REPLY_HINT = "Reply to this message to answer in your own words.";
 
 const LOOK: Record<AssistantCard["kind"], { icon: string; label: string }> = {
@@ -81,7 +82,31 @@ function digestLines(projects: readonly DigestProject[], counter: { hidden: numb
   return out;
 }
 
-export function formatManagerCard(card: AssistantCard, detail: CardDetail): FormattedManagerCard {
+/**
+ * Most a card's own text may take as Telegram counts it (after parsing: tags gone, an entity is
+ * one character), leaving room under its 4096 for the link and the line a finished card gets.
+ */
+export const TELEGRAM_CARD_ROOM = 3800;
+
+/** The length Telegram counts for `html`: what is left once tags are parsed and entities read. */
+export function telegramVisibleLength(html: string): number {
+  return html.replace(/<[^>]*>/g, "").replace(/&(?:amp|lt|gt|quot|#39|#x27);/g, "x").length;
+}
+
+/** The parts of a card the Telegram copy is built from. */
+export type CardForTelegram = Pick<AssistantCard, "kind" | "projectName" | "provenance" | "title" | "body" | "payload" | "okOffered">;
+
+/**
+ * A card's Telegram copy. A decision shown whole that would not fit in one message is sent as
+ * the preview instead, without the button that stood for the whole of it.
+ */
+export function formatManagerCard(card: CardForTelegram, detail: CardDetail): FormattedManagerCard {
+  const whole = renderCard(card, detail, true);
+  const decides = whole.buttons.some((b) => b.op !== "revert");
+  return decides && telegramVisibleLength(whole.html) > TELEGRAM_CARD_ROOM ? renderCard({ ...card, okOffered: false }, detail, false) : whole;
+}
+
+function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boolean): FormattedManagerCard {
   const look = LOOK[card.kind];
   const counter = { hidden: 0 };
   const project = card.projectName ? ` · ${clean(oneLine(card.projectName), counter)}` : "";
@@ -109,12 +134,13 @@ export function formatManagerCard(card: AssistantCard, detail: CardDetail): Form
     const added = card.payload.added ?? [];
     if (added.length) lines.push(`<blockquote>${clean(added.join("\n"), counter)}</blockquote>`);
   } else if (card.kind === "rules_change") {
-    const diff = [...(card.payload.removed ?? []).map((l) => `- ${l}`), ...(card.payload.added ?? []).map((l) => `+ ${l}`)].join("\n");
+    // In file order, removals as removals: the same change Settings shows.
+    const diff = (card.payload.changes ?? []).map((c) => `${c.op === "remove" ? "-" : "+"} ${c.line}`).join("\n");
     const before = counter.hidden;
-    const fits = diff.length <= REVIEW_FIT_MAX;
-    if (full && diff) lines.push(`<pre>${clean(fits ? diff : `${diff.slice(0, PREVIEW_MAX)}\n…`, counter)}</pre>`);
-    if (full && !fits) lines.push(`⚠️ ${escapeTelegramHtml(TOO_LONG_NOTE)}`);
-    if (full && fits && counter.hidden === before && card.payload.rulesHash) buttons.push({ text: "Approve change", op: "approve" });
+    const whole = offerWhole && card.payload.rulesComplete === true && diff.length <= REVIEW_FIT_MAX;
+    if (full && diff) lines.push(`<pre>${clean(whole ? diff : `${diff.slice(0, PREVIEW_MAX)}${diff.length > PREVIEW_MAX ? "\n…" : ""}`, counter)}</pre>`);
+    if (full && !whole) lines.push(`⚠️ ${escapeTelegramHtml(RULES_IN_PPM_NOTE)}`);
+    if (full && whole && counter.hidden === before && card.payload.rulesHash) buttons.push({ text: "Approve change", op: "approve" });
     if (card.payload.rulesHash) buttons.push({ text: "Revert", op: "revert" });
   }
   if (counter.hidden > 0) lines.push(`<i>🔒 ${counter.hidden} secret-looking value${counter.hidden === 1 ? "" : "s"} hidden.</i>`);

@@ -14,6 +14,12 @@ interface Base {
   sessionId: string;
 }
 
+/** One changed line of a held change: added or removed, as written. */
+export interface RulesChangeLine {
+  op: "add" | "remove";
+  line: string;
+}
+
 export type RulesHeldReason =
   | "existing_file" | "removed" | "structural" | "keyword" | "too_complex" | "too_large"
   | "relaxes_or_unclear" | "check_failed";
@@ -23,8 +29,12 @@ export type ManagerRulesEvent =
   | (Base & { type: "rules_tightened"; lines: string[] })
   /** The user's own edit (Settings): never a decision, always said, so a write they did not make shows. */
   | (Base & { type: "rules_edited"; added: string[]; removed: string[]; fetchSite: string | null })
-  /** A change held for the user; once per distinct change. `lines` are the ones that held it. */
-  | (Base & { type: "rules_loosen_pending"; hash: string; reason: RulesHeldReason; lines: string[]; detail?: string })
+  /**
+   * A change held for the user; once per distinct change. `lines` are the ones that held it;
+   * `diff` is the whole change against the rules in force, in file order (what Settings shows),
+   * or null when it cannot be shown line by line (too large to compare, or an empty file).
+   */
+  | (Base & { type: "rules_loosen_pending"; hash: string; reason: RulesHeldReason; lines: string[]; diff: RulesChangeLine[] | null; detail?: string })
   /** The file was missing and PPM wrote the rules in force back. */
   | (Base & { type: "rules_restored" })
   /** The file cannot be read as rules (a link, not a file, tracked by git…); the stored rules stay in force. */

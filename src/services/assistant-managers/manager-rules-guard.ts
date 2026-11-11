@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { createLogger } from "../logger.ts";
 import { managerChats } from "./manager-chats.service.ts";
 import { checkAddedRules, askClaudeForRulesCheck, type RulesCheckAsk } from "./manager-rules-check.ts";
-import { classifyRulesChange } from "./manager-rules-diff.ts";
+import { classifyRulesChange, heldChangeLines } from "./manager-rules-diff.ts";
 import { ensureRulesGitignore, readRulesFile, rulesFileTracked, writeRulesFile, type RulesFileUnsafe } from "./manager-rules-file.ts";
 import { acceptManagerRules, getManagerRules, holdManagerRules, seedManagerRules, type ManagerRules } from "./manager-rules-db.ts";
 import { managerRulesEvents, type ManagerRulesEvent, type RulesHeldReason } from "./manager-rules-events.ts";
@@ -103,7 +103,9 @@ export function createManagerRulesGuard(overrides: Partial<RulesGuardEnv> = {}) 
   async function hold(t: RulesTarget, rules: ManagerRules, text: string, hash: string, reason: RulesHeldReason, lines: string[], detail?: string) {
     holdManagerRules(t.projectKey, text, hash);
     await write(t, rules.accepted ?? "");
-    env.emit({ ...base(t), type: "rules_loosen_pending", hash, reason, lines, ...(detail ? { detail } : {}) });
+    // The card shows the whole change, the way Settings does, never only the lines that held it.
+    const diff = reason === "too_large" ? null : heldChangeLines(rules.accepted ?? rules.approved ?? "", text);
+    env.emit({ ...base(t), type: "rules_loosen_pending", hash, reason, lines, diff, ...(detail ? { detail } : {}) });
     env.pendingChanged(t.projectName);
   }
 
@@ -131,7 +133,10 @@ export function createManagerRulesGuard(overrides: Partial<RulesGuardEnv> = {}) 
     if (writeTemplate) await write(t, template);
     else if (read.kind !== "unsafe" || read.reason !== "dir_unsafe") await ensureRulesGitignore(t.projectPath).catch(() => {});
     if (held) {
-      env.emit({ ...base(t), type: "rules_loosen_pending", hash: held.hash, reason: "existing_file", lines: [] });
+      // Against the template now in force, as Settings shows it; a file with no rule line has
+      // nothing to read on a card, so it is decided in Settings only.
+      const diff = read.kind === "too_large" ? null : heldChangeLines(template, held.text);
+      env.emit({ ...base(t), type: "rules_loosen_pending", hash: held.hash, reason: "existing_file", lines: [], diff });
       env.pendingChanged(t.projectName);
     }
   }

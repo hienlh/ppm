@@ -82,9 +82,16 @@ export interface AssistantCardPayload {
     id: string; question: string; header?: string; multiSelect?: boolean; allowsFreeText?: boolean;
     options: Array<{ label: string; description?: string }>;
   }>;
-  /** Rules cards: the lines added and removed, and the held change's hash. */
+  /** Rules notes: the lines added and removed. */
   added?: string[];
   removed?: string[];
+  /** A held rules change: every added and removed line, in file order, as the card shows them. */
+  changes?: Array<{ op: "add" | "remove"; line: string }>;
+  /**
+   * A held rules change: `changes` is the whole change, every line uncut and unaltered, so
+   * Approve on the card approves exactly what it shows. Absent means decide in Settings.
+   */
+  rulesComplete?: boolean;
   rulesHash?: string;
   rulesReason?: string;
   /** Budget cards: the Assistant session that paused. */

@@ -1,6 +1,6 @@
 import { createLogger } from "../logger.ts";
 import type { AssistantBudgetEvent } from "../assistant/assistant-budget-events.ts";
-import type { ManagerRulesEvent } from "../assistant-managers/manager-rules-events.ts";
+import type { ManagerRulesEvent, RulesChangeLine } from "../assistant-managers/manager-rules-events.ts";
 import type { AssistantCards, NewCard } from "./assistant-cards.service.ts";
 import type { CardRow } from "./assistant-cards-db.ts";
 import { cleanCardBody } from "./card-text-cleaning.ts";
@@ -36,8 +36,21 @@ const HELD_TEXT: Record<string, string> = {
   check_failed: "The check could not run, so the change waits for you.",
 };
 
-const lines = (list: readonly string[]): string[] => list.slice(0, MAX_LINES).map((l) => cleanCardBody(l, 500));
+const MAX_LINE = 500;
+const lines = (list: readonly string[]): string[] => list.slice(0, MAX_LINES).map((l) => cleanCardBody(l, MAX_LINE));
 const log = createLogger("assistant-cards");
+
+/**
+ * A held change as its card shows it, and whether that is the whole change: no line left out, cut
+ * or altered by cleaning (a revealed or neutralized line is not the text Approve would put in
+ * force). Anything less is decided in Settings, which shows the full text.
+ */
+export function heldChangePayload(diff: readonly RulesChangeLine[] | null): { changes: RulesChangeLine[]; rulesComplete?: true } {
+  if (!diff) return { changes: [] };
+  const changes = diff.slice(0, MAX_LINES).map((c) => ({ op: c.op, line: cleanCardBody(c.line, MAX_LINE) }));
+  const complete = diff.length > 0 && diff.length <= MAX_LINES && changes.every((c, i) => c.line === diff[i]!.line.trim());
+  return complete ? { changes, rulesComplete: true } : { changes };
+}
 
 export function rulesEventCard(deps: EventCardsDeps, e: ManagerRulesEvent): void {
   const base = { projectName: e.projectName, projectPath: null, projectKey: e.projectKey, sessionId: e.sessionId } as const;
@@ -64,7 +77,10 @@ export function rulesEventCard(deps: EventCardsDeps, e: ManagerRulesEvent): void
       const reason = e.reason === "check_failed" && /no claude/i.test(e.detail ?? "")
         ? "The check could not run (no Claude account could run it), so the change waits for you."
         : HELD_TEXT[e.reason] ?? "The change waits for you.";
-      create({ ...base, kind: "rules_change", title: "The manager changed its rules", body: reason, payload: { added: lines(e.lines), rulesHash: e.hash, rulesReason: e.reason } });
+      create({
+        ...base, kind: "rules_change", title: "The manager changed its rules", body: reason,
+        payload: { ...heldChangePayload(e.diff), rulesHash: e.hash, rulesReason: e.reason },
+      });
       return;
     }
     case "rules_decided":

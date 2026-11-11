@@ -59,15 +59,39 @@ describe("a needs-decision card on Telegram", () => {
 });
 
 describe("a rules change on Telegram", () => {
-  const rules = (added: string[]) => card({
+  const rules = (added: string[], complete = true) => card({
     kind: "rules_change", provenance: null, body: "", title: "Rules change waiting",
-    payload: { added, removed: ["Never push to main."], rulesHash: "f".repeat(64) },
+    payload: {
+      changes: [{ op: "remove", line: "Never push to main." }, ...added.map((line) => ({ op: "add" as const, line }))],
+      ...(complete ? { rulesComplete: true } : {}), rulesHash: "f".repeat(64),
+    },
   });
 
   it("offers Approve change only when the whole diff fits; Revert always", () => {
     expect(formatManagerCard(rules(["Push to main when green."]), "full").buttons.map((b) => b.op)).toEqual(["approve", "revert"]);
     expect(formatManagerCard(rules(["x".repeat(4000)]), "full").buttons.map((b) => b.op)).toEqual(["revert"]);
     expect(formatManagerCard(rules(["Push to main when green."]), "title").buttons.map((b) => b.op)).toEqual(["revert"]);
+  });
+
+  it("draws a removal as a removal, in file order", () => {
+    const text = visible(formatManagerCard(rules(["Push to main when green."]), "full").html);
+    expect(text).toContain("- Never push to main.\n+ Push to main when green.");
+  });
+
+  it("offers no Approve when the card does not hold the whole change, or holds nothing", () => {
+    expect(formatManagerCard(rules(["Push to main when green."], false), "full").buttons.map((b) => b.op)).toEqual(["revert"]);
+    const empty = card({ kind: "rules_change", provenance: null, body: "", title: "t", payload: { changes: [], rulesHash: "f".repeat(64) } });
+    const f = formatManagerCard(empty, "full");
+    expect(f.buttons.map((b) => b.op)).toEqual(["revert"]);
+    expect(visible(f.html)).toContain("open the rules in PPM");
+  });
+
+  it("offers no Approve when the change as shown would not fit one message", () => {
+    // Each hidden character is shown as ⟨U+200B⟩: 30 raw characters become 270 shown.
+    const hidden = Array.from({ length: 30 }, (_, i) => `Rule ${i}: ${"​".repeat(30)}`);
+    const f = formatManagerCard(rules(hidden), "full");
+    expect(f.buttons.map((b) => b.op)).toEqual(["revert"]);
+    expect(visible(f.html).length).toBeLessThan(4096);
   });
 
   it("offers no Approve when part of the diff was hidden as a secret", () => {
