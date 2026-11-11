@@ -11,6 +11,7 @@
 import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
 import type { AssistantProvenance } from "../../shared/assistant-provenance.ts";
 import { neutralizePpmTags } from "../../services/assistant-watch/watch-event-text.ts";
+import { defuseUserWordsHeader } from "../../shared/user-words-block.ts";
 import { validateFromSession, type FromSessionReference } from "../../shared/chat-from-session.ts";
 import { validateTurnRefs, type TurnReference } from "../../shared/chat-turn-ref.ts";
 import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
@@ -170,9 +171,12 @@ export async function deliverToSession(input: DeliverToSessionInput): Promise<De
 
   if (input.provenance && fromSession.kind !== "assistant") throw new DeliverToSessionError("Only a PPM Assistant message carries a provenance block", "invalid");
   // An AI's text may not pose as a block only PPM writes (the user's words, a provenance): every
-  // PPM-looking tag is defused, as a model reads it loosely; the exact block markers are broken by
-  // the encoder, so the only blocks that decode are these.
-  const content = encodeMessageBlocks(neutralizeLeadingCommand(neutralizePpmTags(input.body)), {
+  // PPM-looking tag is defused, as a model reads it loosely, and so is the user-words header's
+  // sentence, which needs no tag to be copied; the exact block markers are broken by the encoder,
+  // so the only blocks that decode are these. This applies between ordinary chats too: a literal
+  // `<ppm-…` tag in a session message (HTML naming such an element, say) arrives defused — accepted,
+  // since no other door may carry PPM's own tags either.
+  const content = encodeMessageBlocks(neutralizeLeadingCommand(defuseUserWordsHeader(neutralizePpmTags(input.body))), {
     fromSession, turnRefs, ownProject: input.projectName || undefined, ...(input.provenance ? { provenance: input.provenance } : {}),
   });
   const clientMessageId = `${CLIENT_ID_PREFIX}${crypto.randomUUID()}`;

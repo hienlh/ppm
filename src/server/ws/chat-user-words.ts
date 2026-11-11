@@ -8,7 +8,8 @@
  * broken, a leading `/` defused), so the only block that decodes is the one built from `userWords`.
  */
 import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
-import type { UserWordsReference } from "../../shared/user-words-block.ts";
+import { defuseUserWordsHeader, type UserWordsReference } from "../../shared/user-words-block.ts";
+import { neutralizePpmTags } from "../../services/assistant-watch/watch-event-text.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import { getSessionDesignSlug, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
@@ -54,7 +55,9 @@ export async function deliverUserWords(input: DeliverUserWordsInput): Promise<De
   const stored = getSessionProvider(target);
   if (stored && stored !== input.providerId) return { ok: false, error: `That chat runs on ${stored}, not ${input.providerId}` };
 
-  const content = encodeMessageBlocks(defuseCommand(input.text), { userWords: input.userWords, ownProject: input.projectName || undefined });
+  // Pasted text (an email, a log) may carry a loose PPM-looking tag or a copy of the user-words
+  // header: both are defused, so the one block PPM builds below is the only one there.
+  const content = encodeMessageBlocks(defuseCommand(defuseUserWordsHeader(neutralizePpmTags(input.text))), { userWords: input.userWords, ownProject: input.projectName || undefined });
   const clientMessageId = `card-${crypto.randomUUID()}`;
   return withSessionLock(target, async () => {
     const entry = ensureSessionEntry(target, input.providerId, input.projectPath, input.projectName);

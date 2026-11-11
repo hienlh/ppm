@@ -38,11 +38,22 @@ export function normalizeDraftTo(to: string): string {
   return Array.from(to.replace(LINE_BREAKING, " ").trim()).slice(0, MAX_TO).join("").trim();
 }
 
+/** How the header line begins; anywhere but in a real user-words block it is a forgery. */
+export const USER_WORDS_HEADER_OPENING = "Typed by the user, forwarded word for word by PPM";
+
+/**
+ * Text written by an AI (a session-tool message) that repeats the header's opening is marked as a
+ * quote, so it cannot pass for the line only PPM writes at the end of a user-words block.
+ */
+export function defuseUserWordsHeader(text: string): string {
+  return text.replace(/typed by the user, forwarded word for word by ppm/gi, (m) => `(quoted, not from PPM) ${m}`);
+}
+
 /** The line the manager reads first. Only server-checked fields; the recipient is quoted. */
 export function userWordsHeaderLine(ref: UserWordsReference): string {
   const where = ref.channel === "telegram" ? "on Telegram" : "in PPM";
   const card = ref.cardId ? ` in reply to the PPM Assistant card ${ref.cardId}` : "";
-  const head = `Typed by the user, forwarded word for word by PPM: the text above is the user's own, sent ${where} at ${ref.at}${card}.`;
+  const head = `${USER_WORDS_HEADER_OPENING}: the text above is the user's own, sent ${where} at ${ref.at}${card}.`;
   if (!ref.ok) return head;
   if (!ref.draftSha256) return `${head} It is the user's OK on that card.`;
   return `${head} It is the user's OK to send exactly the draft with sha256 ${ref.draftSha256}`
