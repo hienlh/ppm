@@ -13,6 +13,7 @@
 ### Fixed
 
 - **A spec could not use screens that were already drawn.** When the requirements said the feature has a UI, the AI always created a new, empty design for the spec, even when the screens were already in another design of the project, so it either drew them again or left a design that only pointed elsewhere. The AI can now link the spec to the existing design, and that design is what you approve.
+- **Switching the public tunnel on or off restarted PPM's server and cut every running chat.** The switch is applied by reloading the tunnel, but that reload then went on to restart the server as well. It now only starts or stops the tunnel; `ppm restart` still restarts.
 
 ## [0.24.1] - 2026-11-12
 
