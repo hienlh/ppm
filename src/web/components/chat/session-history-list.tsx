@@ -20,7 +20,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { openLinkedSession } from "@/lib/session-collab-client";
 import { buildSessionTree, descendantsOf, type SessionTreeNode, type SessionTreeRoot } from "@/lib/session-tree";
 import { useSpecList } from "@/hooks/use-spec";
-import { orderTaskChats, specBar, specProgress, taskCellBySession, type SpecBarCell } from "@/lib/spec-family";
+import { orderTaskChats, specBar, specProgress, taskCellBySession, taskLabelBySession, type SpecBarCell } from "@/lib/spec-family";
 import type { SpecSummary } from "../../../shared/spec-types";
 import type { SessionInfo, ChatSearchResult } from "../../../types/chat";
 
@@ -279,7 +279,7 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
   }
 
   /** A task chat under its spec: one line, with the task's state in front. */
-  function renderTaskRow(session: SessionInfo, cell: SpecBarCell | undefined) {
+  function renderTaskRow(session: SessionInfo, cell: SpecBarCell | undefined, label: string | undefined) {
     const notif = notifications.get(session.id);
     const active = sessionId === session.id;
     return (
@@ -303,7 +303,7 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
           )}
         >
           <TaskMark cell={cell} running={streaming.has(session.id)} />
-          <span className="min-w-0 flex-1 truncate">{session.title || "Untitled"}</span>
+          <span className="min-w-0 flex-1 truncate">{label ?? (session.title || "Untitled")}</span>
           {session.updatedAt && <span className="shrink-0 text-[11px] font-normal text-text-subtle">{formatRelativeDate(session.updatedAt)}</span>}
         </button>
       </SessionContextMenu>
@@ -317,6 +317,7 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
     const unread = all.filter((x) => notifications.has(x.id)).length;
     const p = specProgress(spec);
     const cells = taskCellBySession(spec);
+    const labels = taskLabelBySession(spec);
     const ordered = orderTaskChats(children, cells);
     // The open chat is never hidden behind "Show more".
     const everything = showAll[session.id] || ordered.findIndex((n) => n.session.id === sessionId) >= TASK_CHATS_SHOWN;
@@ -354,7 +355,7 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
           <div className="pt-0.5 pb-1.5 pr-1" style={{ paddingLeft: SPEC_KIDS_INDENT }}>
             {shown.map((n) => (
               <Fragment key={n.session.id}>
-                {renderTaskRow(n.session, cells.get(n.session.id))}
+                {renderTaskRow(n.session, cells.get(n.session.id), labels.get(n.session.id))}
                 {renderChildren(n.session.id, n.children, 1)}
               </Fragment>
             ))}

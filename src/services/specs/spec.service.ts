@@ -23,6 +23,7 @@ import {
   type SpecSummary, type SpecTaskState, type SpecWorkflow, type TaskStatus,
 } from "../../shared/spec-types.ts";
 import { createLogger } from "../logger.ts";
+import { resolveMigratedSession } from "../db.service.ts";
 
 const log = createLogger("spec");
 
@@ -149,7 +150,7 @@ export async function listSpecs(projectPath: string): Promise<SpecSummary[]> {
         red: v.tasks.filter((t) => t.status === "red").length,
         running: v.tasks.filter((t) => t.status === "running" || t.status === "red").length,
         waitingForYou: v.current !== "execution" && v.phases[v.current].submitted,
-        tasks: v.tasks.map((t) => ({ id: t.id, status: t.done ? "done" : t.status, optional: t.optional, sessionId: t.run?.sessionId ?? null })),
+        tasks: v.tasks.map((t) => ({ id: t.id, title: t.title, status: t.done ? "done" : t.status, optional: t.optional, sessionId: t.run?.sessionId ? resolveMigratedSession(t.run.sessionId) : null })),
         sessionId: v.sessionId,
         updatedAt: v.updatedAt,
       });

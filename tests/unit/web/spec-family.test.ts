@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { orderTaskChats, specBar, specProgress, taskCellBySession } from "../../../src/web/lib/spec-family";
+import { orderTaskChats, specBar, specProgress, taskCellBySession, taskLabelBySession } from "../../../src/web/lib/spec-family";
 import type { SpecSummary } from "../../../src/shared/spec-types";
 
 const spec = (tasks: SpecSummary["tasks"]): SpecSummary => ({
@@ -7,7 +7,7 @@ const spec = (tasks: SpecSummary["tasks"]): SpecSummary => ({
   tasksDone: tasks.filter((t) => !t.optional && t.status === "done").length, tasksTotal: tasks.filter((t) => !t.optional).length,
   red: 0, running: 0, waitingForYou: false, sessionId: "chat", updatedAt: "", tasks,
 });
-const T = (id: string, status: SpecSummary["tasks"][number]["status"], sessionId: string | null = null, optional = false) => ({ id, status, optional, sessionId });
+const T = (id: string, status: SpecSummary["tasks"][number]["status"], sessionId: string | null = null, optional = false) => ({ id, title: `Task ${id}`, status, optional, sessionId });
 
 describe("spec family", () => {
   const s = spec([T("1", "done", "a"), T("2", "red", "b"), T("3", "failed", "c"), T("4", "todo"), T("5", "running", "d", true)]);
@@ -20,5 +20,10 @@ describe("spec family", () => {
   it("lists running, then failed, then the rest in their own order", () => {
     const nodes = ["a", "x", "c", "b", "d"].map((id) => ({ session: { id } }));
     expect(orderTaskChats(nodes, taskCellBySession(s)).map((n) => n.session.id)).toEqual(["b", "d", "c", "a", "x"]);
+  });
+
+  it("names a task chat by its task, not by the prompt that started it", () => {
+    expect(taskLabelBySession(s).get("c")).toBe("3. Task 3");
+    expect(taskLabelBySession(s).has("x")).toBe(false);
   });
 });
