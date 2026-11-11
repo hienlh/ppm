@@ -37,6 +37,7 @@ import { parseAssistantUiResult, type UiSummary } from "../../shared/assistant-u
 import { setDbApprovalChat, type DbApprovalEvent } from "../../services/db-ai-tools/db-approval-broker.ts";
 import { dbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
 import { ppmApprovals } from "./chat-ppm-approvals.ts";
+import { claimTurnOrigin, noteQueuedTurnOrigin, turnOriginAfterTurn, turnRunning, type ArrivingMessage } from "./chat-turn-origin.ts";
 import { setCollabApprovalChat } from "../../services/session-collab/collab-approval-broker.ts";
 import { collabWaits, setCollabIdleProbe } from "../../services/session-collab/collab-waits.ts";
 import { collabSessionRenamed, collabTurnEnded } from "../../services/session-collab/collab-turn-events.ts";
@@ -342,6 +343,8 @@ export interface SessionEntry {
    * takes it over. In a `watch` turn nothing is asked of the user — every approval is refused.
    */
   turnOrigin?: ChatMessageOrigin;
+  /** The owner of the turn a message queued behind the running one will open (`chat-turn-origin.ts`). */
+  nextTurnOrigin?: ChatMessageOrigin;
   /**
    * Messages other than a watch report that are on their way in and have not yet started or
    * joined a turn. A cold session's first message spends a while awaiting `resumeSession` with
@@ -1153,6 +1156,8 @@ function emitTurnEnded(
     sessionId, outcome, ...detail, ...(cancelledBy ? { cancelledBy } : {}),
     projectName: entry.projectName ?? "", providerId: entry.providerId,
   });
+  // A message queued behind the turn that ended opens the next one, as its sender's.
+  turnOriginAfterTurn(entry);
 }
 
 /**
@@ -1901,8 +1906,14 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
 
   // Whose turn this is from now on: the user typing into a watch turn makes it theirs, and the
   // approvals it then asks for are shown again. A scheduled script posting into a PPM Assistant
-  // session is PPM, not the user: that turn is unattended like a watch report's.
-  entry.turnOrigin = opts.traceOrigin && isAssistantSession(sessionId, entry.projectPath) ? "watch" : opts.origin;
+  // session is PPM, not the user: a turn it opens is unattended like a watch report's, but it
+  // never takes over a turn already running (`chat-turn-origin.ts`).
+  const arriving: ArrivingMessage = {
+    origin: opts.origin, scripted: !!opts.traceOrigin, assistant: !!opts.traceOrigin && isAssistantSession(sessionId, entry.projectPath),
+    priority: opts.priority ?? "next",
+  };
+  const wasRunning = turnRunning(entry);
+  claimTurnOrigin(entry, arriving);
   // What this device shows, for an Assistant session's turn. Validated and cleaned by
   // chatService, which ignores it for every other session; only an object is passed on.
   const rawSummary = opts.uiSummary as unknown;
@@ -1926,6 +1937,7 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
       ...(opts.wakeNews?.length ? { wakeNews: opts.wakeNews } : {}),
     },
   }));
+  if (result.ok) noteQueuedTurnOrigin(entry, arriving, result.delivered, wasRunning);
   return result.ok ? { ok: true, sessionId } : result;
 }
 
