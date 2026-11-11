@@ -1,7 +1,9 @@
 import { configService } from "./config.service.ts";
 import { getSessionProvider } from "./db.service.ts";
+import { feedKindForEvent } from "../shared/notification-feed.ts";
 import { resolveNotificationSettings, type NotificationEvent } from "../shared/notification-settings.ts";
 import { formatPushNotification, notificationPath } from "./notification-format.ts";
+import { notificationFeedService } from "./notification-feed.service.ts";
 import type { NtfyConfig } from "../types/config.ts";
 import { createLogger } from "./logger.ts";
 
@@ -16,6 +18,8 @@ export interface NotificationPayload {
   project: string;
   /** "" when the event belongs to no session. */
   sessionId: string;
+  /** Optional schedule identifier when the event comes from a scheduled run. */
+  scheduleId?: string;
   /** The session's provider, so a link opens it in the right kind of chat. Looked up when absent. */
   providerId?: string;
   sessionTitle?: string;
@@ -120,6 +124,20 @@ export class NotificationService {
     const tasks: Promise<unknown>[] = [];
     // What each channel did, logged as one line once all have answered — never the title or the body.
     const outcome = { push: "", telegram: "off", ntfy: "off" };
+    const kind = feedKindForEvent(type);
+
+    try {
+      notificationFeedService.record({
+        kind,
+        projectName: payload.project,
+        sessionId: payload.sessionId || undefined,
+        scheduleId: payload.scheduleId || undefined,
+        title: payload.title,
+        body: payload.body,
+      });
+    } catch (e) {
+      log.warn(`feed record failed: ${(e as Error).message}`);
+    }
 
     // PPM Cloud. Its connection lives in the supervisor, not in this process, so today this
     // only fills cloud-ws's bounded queue; kept so wiring Cloud up needs no change here.
@@ -155,6 +173,7 @@ export class NotificationService {
             project: payload.project,
             sessionId: payload.sessionId,
             providerId: payload.providerId ?? "",
+            kind,
             urgency: URGENT.has(type) ? "high" : "normal",
           });
         })
