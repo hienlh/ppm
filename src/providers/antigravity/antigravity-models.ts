@@ -1,10 +1,11 @@
 import type { ModelOption } from "../provider.interface.ts";
 import { discoverLanguageServerConnection } from "./antigravity-connection.ts";
 
-export const ANTIGRAVITY_DEFAULT_MODEL = "gemini-4-argon";
+export const ANTIGRAVITY_DEFAULT_MODEL = "gemini-4-carbon";
 export const ANTIGRAVITY_DEFAULT_EFFORT = "high";
 
 export const ANTIGRAVITY_FALLBACK_MODELS: ModelOption[] = [
+  { value: "gemini-4-carbon", label: "Gemini 4 Carbon" },
   { value: "gemini-4-argon", label: "Gemini 4 Argon" },
   { value: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
   { value: "claude-opus-5-5", label: "Claude Opus 5.5" },
@@ -44,7 +45,7 @@ export function toAntigravityBaseModelLabel(label: string): string {
 
 /**
  * Resolve `(model, effort)` into the concrete Antigravity `modelId` sent with `session/set_model`.
- * Example: `("gemini-4-argon", "high")` -> `"gemini-4-argon-high"`.
+ * Example: `("gemini-4-carbon", "high")` -> `"gemini-4-carbon-high"`.
  */
 export function resolveAntigravityModelId(model?: string | null, effort?: string | null): string {
   const rawModel = model && model !== "__default__" && model !== "pro" ? model.trim() : ANTIGRAVITY_DEFAULT_MODEL;
@@ -61,7 +62,7 @@ export function resolveAntigravityModelId(model?: string | null, effort?: string
 
 /**
  * Parse Antigravity's `GetCascadeModelConfigData` response into deduplicated base `ModelOption[]`
- * (e.g. `Gemini 4 Argon`, `Gemini 3.8 Flash`, `Claude Opus 5.5`, `Claude Sonnet 5.5`, `GPT-OSS 120B`),
+ * (e.g. `Gemini 4 Carbon`, `Gemini 4 Argon`, `Gemini 3.8 Flash`, `Claude Opus 5.5`, `Claude Sonnet 5.5`, `GPT-OSS 120B`),
  * since effort (`Low` / `Medium` / `High`) is selected in the Effort column of `ModelThinkingSelector`.
  */
 export function parseAntigravityModels(raw: GetCascadeModelConfigDataRaw | null | undefined): ModelOption[] {

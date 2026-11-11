@@ -9,6 +9,7 @@ describe("modelDisplayName", () => {
   });
 
   it("names Antigravity model ids before the model list loads", () => {
+    expect(modelDisplayName("gemini-4-carbon-high")).toBe("Gemini 4 Carbon");
     expect(modelDisplayName("gemini-4-argon")).toBe("Gemini 4 Argon");
     expect(modelDisplayName("gemini-4-argon-medium")).toBe("Gemini 4 Argon");
     expect(modelDisplayName("claude-opus-5-5-high")).toBe("Claude Opus 5.5");

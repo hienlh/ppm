@@ -353,7 +353,8 @@ describe("AntigravityProvider & ecosystem integration", () => {
       { value: "claude-opus-5-5", label: "Claude Opus 5.5" },
       { value: "gpt-oss-120b", label: "GPT-OSS 120B" },
     ]);
-    expect(ANTIGRAVITY_FALLBACK_MODELS.length).toBe(5);
+    expect(ANTIGRAVITY_FALLBACK_MODELS.length).toBe(6);
+    expect(ANTIGRAVITY_FALLBACK_MODELS[0]!.value).toBe("gemini-4-carbon");
     expect(resolveAntigravityModelId("gemini-4-argon", "low")).toBe("gemini-4-argon-low");
     expect(resolveAntigravityModelId("gemini-4-argon", "medium")).toBe("gemini-4-argon-medium");
     expect(resolveAntigravityModelId("gemini-4-argon", "high")).toBe("gemini-4-argon-high");
@@ -558,7 +559,7 @@ describe("AntigravityProvider & ecosystem integration", () => {
     sanitizeConfig(cfgCodex);
     expect(cfgCodex.ai.providers.codex?.type).toBe("cli");
     expect(cfgCodex.ai.providers.codex?.cli_command).toBe("codex");
-    expect(validateAIProviderConfig({ ...cfgCodex.ai.providers.codex, model: "gpt-6-sol" })).toEqual([]);
+    expect(validateAIProviderConfig({ ...cfgCodex.ai.providers.codex, model: "gpt-6.1-sol" })).toEqual([]);
 
     const cfgAgy = structuredClone(DEFAULT_CONFIG);
     cfgAgy.ai.default_provider = "antigravity";
@@ -566,8 +567,8 @@ describe("AntigravityProvider & ecosystem integration", () => {
     sanitizeConfig(cfgAgy);
     expect(cfgAgy.ai.providers.antigravity?.type).toBe("cli");
     expect(cfgAgy.ai.providers.antigravity?.cli_command).toBe("agy");
-    expect(cfgAgy.ai.providers.antigravity?.model).toBe("gemini-4-argon");
-    expect(validateAIProviderConfig({ ...cfgAgy.ai.providers.antigravity, model: "gemini-4-argon" })).toEqual([]);
+    expect(cfgAgy.ai.providers.antigravity?.model).toBe("gemini-4-carbon");
+    expect(validateAIProviderConfig({ ...cfgAgy.ai.providers.antigravity, model: "gemini-4-carbon" })).toEqual([]);
   });
 
   it("4.1: transcript parser emits text before tool_use, assigns subagent-<uuid> before emitting tool_use and skips parent sessionId, preserves pendingQueue on cursor resume, and sums token usage", async () => {

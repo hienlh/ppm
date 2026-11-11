@@ -232,7 +232,7 @@ export interface AIProviderConfig {
  * Changing it in Settings, or per session in the chat's model picker, overrides
  * this.
  */
-export const CODEX_DEFAULT_MODEL = "gpt-6-sol";
+export const CODEX_DEFAULT_MODEL = "gpt-6.1-sol";
 
 export const DEFAULT_CONFIG: PpmConfig = {
   device_name: "",
@@ -454,7 +454,7 @@ export function sanitizeConfig(config: PpmConfig): boolean {
         type: "cli",
         cli_command: "agy",
         permission_mode: "bypassPermissions",
-        model: "gemini-4-argon",
+        model: "gemini-4-carbon",
       };
     } else if (config.ai.default_provider === "cursor") {
       config.ai.providers.cursor = {
