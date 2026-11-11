@@ -34,7 +34,7 @@ describe("the cap", () => {
   it("allows exactly 4,000 characters in all and refuses the 4,001st", () => {
     fill(13, NOTE_MAX_CHARS);
     expect(notes.list().used).toBe(3900);
-    const last = notes.add("y".repeat(NOTEBOOK_CAP_CHARS - 3900), ATTENDED);
+    const last = notes.add("y".repeat(NOTEBOOK_CAP_CHARS - 3900), USER);
     expect(last.ok).toBe(true);
     expect(notes.list().used).toBe(NOTEBOOK_CAP_CHARS);
     const over = notes.add("z", USER);
@@ -44,10 +44,16 @@ describe("the cap", () => {
 
   it("refuses an edit that grows past the cap, and measures it without the line's old text", () => {
     fill(13, NOTE_MAX_CHARS);
-    const own = added("a".repeat(100), ATTENDED);
-    expect(notes.edit(own.id, "b".repeat(101), ATTENDED)).toMatchObject({ ok: false, code: "full" });
-    expect(notes.edit(own.id, "b".repeat(100), ATTENDED).ok).toBe(true);
+    const own = added("a".repeat(100), USER);
+    expect(notes.edit(own.id, "b".repeat(101), USER)).toMatchObject({ ok: false, code: "full" });
+    expect(notes.edit(own.id, "b".repeat(100), USER).ok).toBe(true);
     expect(notes.list().used).toBe(NOTEBOOK_CAP_CHARS);
+  });
+
+  it("keeps the last 1,000 characters for the user: the Assistant cannot fill them", () => {
+    fill(10, NOTE_MAX_CHARS);
+    expect(notes.add("one more fact", ATTENDED)).toMatchObject({ ok: false, code: "full" });
+    expect(notes.add("x".repeat(NOTE_MAX_CHARS), USER).ok).toBe(true);
   });
 
   it("holds one line to 300 characters, refuses empty text, and keeps a line on one line", () => {

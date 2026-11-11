@@ -50,3 +50,5 @@ export const CARD_REPLY_MAX_CHARS = 8000;
 export const NOTEBOOK_CAP_CHARS = 4000;
 /** One notebook line. */
 export const NOTE_MAX_CHARS = 300;
+/** Room in the notebook only the user may fill: the Assistant's writes stop this far short of the cap. */
+export const NOTEBOOK_USER_RESERVE_CHARS = 1000;

@@ -14,7 +14,7 @@
  */
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { createLogger } from "../logger.ts";
-import { NOTEBOOK_CAP_CHARS, NOTE_MAX_CHARS } from "../../shared/assistant-limits.ts";
+import { NOTEBOOK_CAP_CHARS, NOTEBOOK_USER_RESERVE_CHARS, NOTE_MAX_CHARS } from "../../shared/assistant-limits.ts";
 import type { AssistantNote, AssistantNotesView } from "../../shared/assistant-notes.ts";
 import {
   clearNoteUnverified, deleteNoteRow, getNoteRow, inNotesTransaction, insertNoteRow, listNoteRows, updateNoteRow,
@@ -53,14 +53,20 @@ export function normalizeNoteText(raw: unknown): string {
 
 const fail = (code: NoteErrorCode, error: string): NoteResult => ({ ok: false, code, error });
 
-/** Text a line may hold, or why not, given the characters every other line uses. */
-function checkText(text: string, usedByOthers: number): NoteResult | null {
+/**
+ * Text a line may hold, or why not, given the characters every other line uses. The Assistant
+ * stops {@link NOTEBOOK_USER_RESERVE_CHARS} short of the cap, so it can never fill the notebook to
+ * the point where the user has no room left to write a line of their own.
+ */
+function checkText(text: string, usedByOthers: number, writer: NoteWriter): NoteResult | null {
   if (!text) return fail("empty", "A note needs some text.");
   if (text.length > NOTE_MAX_CHARS) {
     return fail("too_long", `A note is at most ${NOTE_MAX_CHARS} characters; this one has ${text.length}. Shorten it.`);
   }
-  if (usedByOthers + text.length > NOTEBOOK_CAP_CHARS) {
-    return fail("full", `The notebook holds at most ${NOTEBOOK_CAP_CHARS} characters; ${usedByOthers} are used by other lines `
+  const cap = writer.by === "user" ? NOTEBOOK_CAP_CHARS : NOTEBOOK_CAP_CHARS - NOTEBOOK_USER_RESERVE_CHARS;
+  if (usedByOthers + text.length > cap) {
+    const whose = writer.by === "user" ? "" : " (the rest is kept for the user's own lines)";
+    return fail("full", `The notebook holds at most ${cap} characters of these lines${whose}; ${usedByOthers} are used by other lines `
       + `and this line has ${text.length}. Delete or shorten old lines first.`);
   }
   return null;
@@ -86,7 +92,7 @@ export function createAssistantNotes(env: AssistantNotesEnv = defaultEnv) {
     add(raw: unknown, writer: NoteWriter): NoteResult {
       const text = normalizeNoteText(raw);
       return change("added", () => {
-        const refused = checkText(text, usedNoteChars());
+        const refused = checkText(text, usedNoteChars(), writer);
         if (refused) return refused;
         const unverified = writer.by === "assistant" && writer.unattended;
         const id = insertNoteRow(text, writer.by, unverified, env.now());
@@ -100,7 +106,7 @@ export function createAssistantNotes(env: AssistantNotesEnv = defaultEnv) {
         const note = getNoteRow(id);
         if (!note) return fail("not_found", `No note #${id}.`);
         if (writer.by === "assistant" && note.source === "user") return fail("locked", NOTE_LOCKED);
-        const refused = checkText(text, usedNoteChars(id));
+        const refused = checkText(text, usedNoteChars(id), writer);
         if (refused) return refused;
         const fields = writer.by === "user"
           ? { text, source: "user" as const, unverified: false }
