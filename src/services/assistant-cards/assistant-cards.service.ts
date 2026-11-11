@@ -17,7 +17,7 @@ import {
   type AssistantCardsPage, type AssistantCardStatus, type AssistantWaiting,
 } from "../../shared/assistant-cards.ts";
 import {
-  casCardStatus, getCardRow, insertCardRow, listCardRows, listOpenCardRows, setCardWake, type CardRow, type CardWake,
+  casCardStatus, getCardRow, insertCardRow, listCardRows, listOpenCardRows, setAnsweredCardAnswer, setCardWake, type CardRow, type CardWake,
 } from "./assistant-cards-db.ts";
 import { cardOkOffered } from "./card-ok-rule.ts";
 
@@ -140,11 +140,19 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
      * Puts a card this caller just answered back to open: what the answer had to do (forward the
      * user's words) did not happen, so the card still waits. Only from `answered`, only once.
      */
-    reopen(id: string): boolean {
-      if (!casCardStatus(id, "answered", "open", null, env.now())) return false;
+    reopen(id: string, note?: string): boolean {
+      const at = env.now();
+      // An open card keeps a note only to say why it waits again ("did not reach the manager").
+      if (!casCardStatus(id, "answered", "open", note ? { by: "ppm", channel: "ppm", at, note } : null, at)) return false;
       const row = getCardRow(id);
       if (row) tell(row, "changed", isWaiting(row));
       return true;
+    },
+    /** Adds to the answer of a card still answered (how its words were delivered); false otherwise. */
+    amendAnswer(id: string, patch: Partial<AssistantCardAnswer>): boolean {
+      const row = getCardRow(id);
+      if (!row || row.status !== "answered" || !row.answer) return false;
+      return setAnsweredCardAnswer(id, { ...row.answer, ...patch }, env.now());
     },
     setWake(id: string, wake: CardWake): void {
       setCardWake(id, wake, env.now());

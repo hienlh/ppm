@@ -84,6 +84,12 @@ export function createCardOutbound(deps: CardOutboundDeps = realDeps) {
   }
 
   function onChanged(card: AssistantCard): void {
+    // Answered on the phone, then opened again because the words never arrived: the copy there has
+    // lost its buttons, so the card goes out once more, saying why.
+    if (card.status === "open" && card.answer?.note) {
+      if (deps.row(card.id)?.outbound === "sent" && sink?.ready()) sink.send([card]);
+      return;
+    }
     if (STILL_SHOWN.has(card.status)) return;
     if (deps.row(card.id)?.outbound === "sent") sink?.changed(card);
   }

@@ -105,6 +105,10 @@ export function CardShell({ card, look, children, actions, error, meta }: {
         <p className="px-3 pt-2 text-[11px] italic text-text-subtle" data-card-provenance="">{card.provenance}</p>
       )}
       {children && <div className="space-y-1.5 px-3 py-2 text-sm leading-relaxed text-text-primary">{children}</div>}
+      {/* Why a card that was answered waits again (the answer never reached the manager chat). */}
+      {card.status === "open" && card.answer?.note && (
+        <p className="px-3 pb-2 text-xs text-error" data-card-notice="">{card.answer.note}</p>
+      )}
       {status
         ? <p className="px-3 pb-2.5 text-xs text-text-subtle" data-card-status-line="">{status}</p>
         : actions && <div className="flex flex-col-reverse gap-2 px-3 pb-3 md:flex-row md:flex-wrap">{actions}</div>}

@@ -123,6 +123,18 @@ export function casCardStatus(id: string, from: AssistantCardStatus, to: Assista
     .run(to, answer ? JSON.stringify(answer) : null, at, id, from).changes > 0;
 }
 
+/** Rewrites the answer of a card that is still `answered`; false when it is not (reopened, say). */
+export function setAnsweredCardAnswer(id: string, answer: AssistantCardAnswer, at: number): boolean {
+  return getDb().query("UPDATE assistant_cards SET answer_json = ?, updated_at = ? WHERE id = ? AND status = 'answered'")
+    .run(JSON.stringify(answer), at, id).changes > 0;
+}
+
+/** Answered cards whose forwarded words have not reached their manager chat yet, oldest first. */
+export function listUndeliveredAnswerRows(): CardRow[] {
+  return (getDb().query(`SELECT ${COLUMNS} FROM assistant_cards
+    WHERE status = 'answered' AND json_extract(answer_json, '$.delivery') = 'pending' ORDER BY updated_at`).all() as Raw[]).map(toRow);
+}
+
 export function setCardWake(id: string, wake: CardWake, at: number): boolean {
   return getDb().query("UPDATE assistant_cards SET wake = ?, updated_at = ? WHERE id = ?").run(wake, at, id).changes > 0;
 }

@@ -47,6 +47,16 @@ export interface AssistantCardAnswer {
   note?: string;
   /** The user's OK on a needs-decision card, forwarded to its manager. */
   ok?: boolean;
+  /**
+   * The user's words forwarded to the manager chat: `pending` until the chat took them into a turn
+   * (they may wait behind an approval), `delivered` once it did. A card whose words never arrive
+   * is opened again with a note, so an answer is never lost while the card says it was given.
+   */
+  delivery?: "pending" | "delivered";
+  /** The id the forwarded words were sent under, which the turn they open is announced with. */
+  clientMessageId?: string;
+  /** The manager chat the words went to. */
+  deliveredTo?: string;
 }
 
 /** A draft message a manager asks the user to approve sending. */

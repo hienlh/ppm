@@ -18,6 +18,7 @@ import { assistantCards } from "./assistant-cards.service.ts";
 import { countSessionCardsSince, findOpenCardsBy, findOpenRequestCard } from "./assistant-cards-db.ts";
 import { budgetEventCard, rulesEventCard, type EventCardsDeps } from "./assistant-event-cards.ts";
 import { sweepGoneRequestCards } from "./assistant-card-actions.ts";
+import { startCardDelivery } from "./card-delivery.ts";
 import { createManagerSignals, type ManagerSignals } from "./manager-signals.ts";
 import { setManagerAskedHook } from "./manager-reply-expectations.ts";
 
@@ -73,6 +74,8 @@ export function startAssistantCards(): void {
       return kind === "done" && sources.length > 0 && !sources.includes("watch");
     }),
   ];
+  // An answer whose words never reached its manager chat opens its card again (now, for a restart).
+  stops.push(startCardDelivery());
   try {
     sweepGoneRequestCards({ cards: assistantCards, control: chatControl, now: () => assistantClock.now() });
   } catch (e) {

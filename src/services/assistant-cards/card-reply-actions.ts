@@ -10,7 +10,9 @@
  *   question card refuses that request, as typing in the manager chat would.
  *
  * The card is marked answered before the words leave, so a second surface cannot forward too; if
- * the forward fails, the card is opened again and the error said.
+ * the forward fails, the card is opened again and the error said. Until the manager chat has taken
+ * the words into a turn the answer stays `delivery: "pending"`: a restart, or a queue that dies
+ * with its turn, opens the card again rather than leaving it saying the answer was given.
  */
 import { assistantCards, type AssistantCards } from "./assistant-cards.service.ts";
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
@@ -20,6 +22,7 @@ import { OK_CARD_KINDS, type AssistantCard } from "../../shared/assistant-cards.
 import { cardOkOffered } from "./card-ok-rule.ts";
 import { forwardUserWords, repliesToManager, type CardActor, type ForwardHow, type ForwardResult } from "./forward-verbatim.ts";
 import { realForwardEnv } from "./forward-verbatim-env.ts";
+import { cardDelivery } from "./card-delivery.ts";
 
 export type CardReplyResult =
   | { ok: true; card: AssistantCard; to: "manager" | "assistant"; projectName?: string }
@@ -31,6 +34,8 @@ export interface CardReplyDeps {
   /** The user's time zone (Settings), for the times the user is told. */
   zone(): string | undefined;
   forward(card: AssistantCard, text: string, how: ForwardHow): Promise<ForwardResult>;
+  /** Whether a turn already opened with the words sent under this id (they were taken in). */
+  turnStarted?(clientMessageId: string): boolean;
 }
 
 const realDeps: CardReplyDeps = {
@@ -38,9 +43,25 @@ const realDeps: CardReplyDeps = {
   now: () => assistantClock.now(),
   zone: () => getAssistantSettings().timezone,
   forward: (card, text, how) => forwardUserWords(card, text, how, realForwardEnv),
+  turnStarted: (clientMessageId) => cardDelivery.turnStarted(clientMessageId),
 };
 
 const SHA256_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * How the words went in, on the card this caller answered. Words that started or joined a turn
+ * reached the model; words queued behind the running turn (a waiting approval) live only in that
+ * chat's queue until the next turn opens with them, so the card stays `pending` until the
+ * reconciler (`card-delivery.ts`) sees that turn start, or opens the card again if it never does.
+ */
+function recordDelivery(deps: CardReplyDeps, id: string, forwarded: Extract<ForwardResult, { ok: true }>): void {
+  if (forwarded.to === "manager" && forwarded.delivered === "queued" && forwarded.clientMessageId
+    && !(deps.turnStarted?.(forwarded.clientMessageId) ?? false)) {
+    deps.cards.amendAnswer(id, { delivery: "pending", clientMessageId: forwarded.clientMessageId, deliveredTo: forwarded.sessionId });
+    return;
+  }
+  deps.cards.amendAnswer(id, { delivery: "delivered", ...(forwarded.to === "manager" ? { deliveredTo: forwarded.sessionId } : {}) });
+}
 const where = (channel: string): string => (channel === "telegram" ? "on Telegram" : channel === "chat" ? "in the manager chat" : "in PPM");
 
 /** "14:02" today, "9 Nov 14:02" another day, in the user's zone. */
@@ -93,7 +114,9 @@ export async function okCard(id: string, body: unknown, actor: CardActor, deps: 
   }
   if (draft && !SHA256_RE.test(draft.sha256)) return { ok: false, status: 400, error: "This card's draft has no valid hash" };
   if (!repliesToManager(card)) return { ok: false, status: 400, error: "This card has no manager chat" };
-  const moved = deps.cards.transition(id, "answered", { by: "user", channel: actor.channel, at: deps.now(), ok: true, note: `OK given ${where(actor.channel)}` });
+  const moved = deps.cards.transition(id, "answered", {
+    by: "user", channel: actor.channel, at: deps.now(), ok: true, note: `OK given ${where(actor.channel)}`, delivery: "pending",
+  });
   if (!moved.ok) {
     const now = moved.card ?? card;
     return { ok: false, status: 409, error: "already_answered", card: now, question: alreadyAnsweredText(now, deps.now(), deps.zone()) };
@@ -105,6 +128,7 @@ export async function okCard(id: string, body: unknown, actor: CardActor, deps: 
     deps.cards.reopen(id);
     return { ok: false, status: 502, error: `Not sent: ${forwarded.error}`, ...(deps.cards.get(id) ? { card: deps.cards.get(id)! } : {}) };
   }
+  recordDelivery(deps, id, forwarded);
   return { ok: true, card: moved.card, to: forwarded.to, ...(forwarded.to === "manager" ? { projectName: forwarded.projectName } : {}) };
 }
 
@@ -123,7 +147,9 @@ export async function replyToCard(id: string, body: unknown, actor: CardActor, d
   // An open card is answered by the reply; one closed already is left as it was.
   let answered = false;
   if (card.status === "open") {
-    const moved = deps.cards.transition(id, "answered", { by: "user", channel: actor.channel, at: now, note: `You replied ${where(actor.channel)}` });
+    const moved = deps.cards.transition(id, "answered", {
+      by: "user", channel: actor.channel, at: now, note: `You replied ${where(actor.channel)}`, delivery: "pending",
+    });
     if (moved.ok) answered = true;
     else if (b.force !== true) {
       const current = moved.card ?? card;
@@ -136,6 +162,7 @@ export async function replyToCard(id: string, body: unknown, actor: CardActor, d
     if (answered) deps.cards.reopen(id);
     return { ok: false, status: 502, error: `Not sent: ${forwarded.error}` };
   }
+  if (answered) recordDelivery(deps, id, forwarded);
   return {
     ok: true, card: deps.cards.get(id) ?? card, to: forwarded.to,
     ...(forwarded.to === "manager" ? { projectName: forwarded.projectName } : {}),

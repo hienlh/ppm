@@ -94,7 +94,8 @@ export function telegramVisibleLength(html: string): number {
 }
 
 /** The parts of a card the Telegram copy is built from. */
-export type CardForTelegram = Pick<AssistantCard, "kind" | "projectName" | "provenance" | "title" | "body" | "payload" | "okOffered">;
+export type CardForTelegram = Pick<AssistantCard, "kind" | "projectName" | "provenance" | "title" | "body" | "payload" | "okOffered">
+  & Partial<Pick<AssistantCard, "status" | "answer">>;
 
 /**
  * A card's Telegram copy. A decision shown whole that would not fit in one message is sent as
@@ -144,6 +145,8 @@ function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boole
     if (card.payload.rulesHash) buttons.push({ text: "Revert", op: "revert" });
   }
   if (counter.hidden > 0) lines.push(`<i>🔒 ${counter.hidden} secret-looking value${counter.hidden === 1 ? "" : "s"} hidden.</i>`);
+  // PPM's own words: why a card that was answered waits again.
+  if (card.status === "open" && card.answer?.note) lines.push(`⚠️ <i>${escapeTelegramHtml(card.answer.note)}</i>`);
   return { html: lines.join("\n"), buttons };
 }
 

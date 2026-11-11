@@ -11,6 +11,8 @@ import { createAssistantCards } from "../../../src/services/assistant-cards/assi
 import { cardOkOffered } from "../../../src/services/assistant-cards/card-ok-rule.ts";
 import { okCard, replyToCard, type CardReplyDeps } from "../../../src/services/assistant-cards/card-reply-actions.ts";
 import type { ForwardHow, ForwardResult } from "../../../src/services/assistant-cards/forward-verbatim.ts";
+import { createCardDelivery, NOT_DELIVERED_NOTE } from "../../../src/services/assistant-cards/card-delivery.ts";
+import { listUndeliveredAnswerRows } from "../../../src/services/assistant-cards/assistant-cards-db.ts";
 import { STALE_REPLY_MS } from "../../../src/shared/assistant-limits.ts";
 import type { AssistantCard } from "../../../src/shared/assistant-cards.ts";
 
@@ -76,6 +78,57 @@ describe("OK", () => {
     const res = await okCard(card.id, { draftSha256: SHA }, web, deps);
     expect(res).toMatchObject({ ok: false, status: 502 });
     expect(cards.get(card.id)!.status).toBe("open");
+  });
+});
+
+describe("delivery of the words", () => {
+  const timers: Array<() => void> = [];
+  const delivery = () => createCardDelivery({
+    cards, undelivered: listUndeliveredAnswerRows, canonical: (id) => id,
+    clock: { setTimer: (fn) => { timers.push(fn); return () => {}; } },
+  });
+  const queuedDeps = (clientMessageId: string): CardReplyDeps => ({
+    ...deps,
+    forward: async (card, text, how) => {
+      forwards.push({ card, text, how });
+      return { ok: true, to: "manager", projectName: "nxsys", sessionId: "mgr", delivered: "queued", clientMessageId };
+    },
+  });
+
+  it("is settled at once for words that started or joined a turn", async () => {
+    const card = decision();
+    await okCard(card.id, { draftSha256: SHA }, web, deps);
+    expect(cards.get(card.id)!.answer).toMatchObject({ ok: true, delivery: "delivered" });
+  });
+
+  it("stays pending for words queued behind an approval until the turn opens with them", async () => {
+    const tracker = delivery();
+    const card = decision();
+    await okCard(card.id, { draftSha256: SHA }, phone, queuedDeps("card-1"));
+    expect(cards.get(card.id)!.answer).toMatchObject({ delivery: "pending", clientMessageId: "card-1", deliveredTo: "mgr" });
+    tracker.turnEnded("mgr");
+    tracker.turnBound("card-1");
+    expect(cards.get(card.id)!.answer?.delivery).toBe("delivered");
+    for (const fire of timers.splice(0)) fire();
+    expect(cards.get(card.id)!.status).toBe("answered");
+  });
+
+  it("opens the card again, saying so, when the queued words die with the turn they waited on", async () => {
+    const tracker = delivery();
+    const card = decision();
+    await replyToCard(card.id, { text: "send it after lunch" }, phone, queuedDeps("card-2"));
+    tracker.turnEnded("mgr");
+    for (const fire of timers.splice(0)) fire();
+    expect(cards.get(card.id)).toMatchObject({ status: "open", answer: { note: NOT_DELIVERED_NOTE } });
+    // Open again for real: a new OK goes through.
+    expect((await okCard(card.id, { draftSha256: SHA }, web, deps)).ok).toBe(true);
+  });
+
+  it("opens every card still pending at startup: a restart loses what was queued or never sent", () => {
+    const card = decision();
+    cards.transition(card.id, "answered", { by: "user", channel: "telegram", at: now, ok: true, delivery: "pending" });
+    delivery().sweep();
+    expect(cards.get(card.id)).toMatchObject({ status: "open", answer: { note: NOT_DELIVERED_NOTE } });
   });
 });
 

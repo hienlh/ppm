@@ -13,6 +13,7 @@
  */
 import { MANAGER_REPLY_CARD_KINDS, type AssistantCard } from "../../shared/assistant-cards.ts";
 import type { UserWordsReference } from "../../shared/user-words-block.ts";
+import type { SessionDelivery } from "../../shared/session-collab.ts";
 import type { DeliverUserWordsInput, DeliverUserWordsResult } from "../../server/ws/chat-user-words.ts";
 
 export interface ForwardTarget {
@@ -53,7 +54,11 @@ export interface ForwardEnv {
 }
 
 export type ForwardResult =
-  | { ok: true; to: "manager"; projectName: string; sessionId: string }
+  /**
+   * `delivered` is how the words went in (`queued`: behind the running turn, and only in that
+   * process's memory until the next turn opens with them, under `clientMessageId`).
+   */
+  | { ok: true; to: "manager"; projectName: string; sessionId: string; delivered?: SessionDelivery; clientMessageId?: string }
   | { ok: true; to: "assistant" }
   | { ok: false; error: string };
 
@@ -103,5 +108,8 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
     env.note(main, `The user ${what} the ${kindName(card)} card ${card.id} for ${target.projectName} ${where(actor.channel)}; `
       + "PPM forwarded it word for word to that project's manager chat.");
   }
-  return { ok: true, to: "manager", projectName: target.projectName, sessionId: delivered.sessionId };
+  return {
+    ok: true, to: "manager", projectName: target.projectName, sessionId: delivered.sessionId,
+    delivered: delivered.delivered, clientMessageId: delivered.clientMessageId,
+  };
 }

@@ -9,6 +9,7 @@
  */
 import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
 import type { UserWordsReference } from "../../shared/user-words-block.ts";
+import type { SessionDelivery } from "../../shared/session-collab.ts";
 import { getSessionDesignSlug, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
 import { chatLifecycle } from "../../services/chat-control/chat-lifecycle.ts";
@@ -33,7 +34,14 @@ export interface DeliverUserWordsInput {
   supersede: boolean;
 }
 
-export type DeliverUserWordsResult = { ok: true; content: string; sessionId: string } | { ok: false; error: string };
+/**
+ * `delivered` says how the words went in: a turn `started` with them or they were `inserted` into
+ * the running one, or they are `queued` behind it (a waiting approval) and reach the model only
+ * when the next turn opens — named by `clientMessageId` in that turn's `turn_started`.
+ */
+export type DeliverUserWordsResult =
+  | { ok: true; content: string; sessionId: string; delivered: SessionDelivery; clientMessageId: string }
+  | { ok: false; error: string };
 
 /** A leading `/` would run as a slash command the user never typed into that chat. */
 const defuseCommand = (text: string): string => (text.trimStart().startsWith("/") ? `${String.fromCharCode(0x200b)}${text}` : text);
@@ -75,6 +83,6 @@ export async function deliverUserWords(input: DeliverUserWordsInput): Promise<De
       sessionId: target, text: content, origin: "session", imageCount: 0,
       projectName: entry.projectName ?? input.projectName, providerId: entry.providerId,
     });
-    return { ok: true, content, sessionId: target };
+    return { ok: true, content, sessionId: target, delivered: result.delivered, clientMessageId };
   });
 }
