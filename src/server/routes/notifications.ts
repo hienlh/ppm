@@ -7,6 +7,7 @@
  */
 import { Hono } from "hono";
 import { configService } from "../../services/config.service.ts";
+import { FeedNotFoundError, notificationFeedService } from "../../services/notification-feed.service.ts";
 import { parsePushSubscription, webPushService } from "../../services/web-push/web-push.service.ts";
 import { notifyConnect, TelegramConnectError } from "../../services/telegram-connect.service.ts";
 import { getPPMBotBot, listNotifyChats, removeNotifyChat, sameBot } from "../../services/telegram-bots.ts";
@@ -187,6 +188,59 @@ notificationRoutes.post("/ntfy/test", async (c) => {
     return c.json(ok({ sent: true }));
   } catch (e) {
     if (e instanceof NtfyError) return c.json(err(e.message), e.status);
+    throw e;
+  }
+});
+
+notificationRoutes.get("/feed", (c) => {
+  const limitRaw = c.req.query("limit");
+  let limit: number | undefined;
+  if (limitRaw !== undefined && limitRaw !== "") {
+    limit = Number(limitRaw);
+    if (!Number.isInteger(limit) || limit < 1) {
+      return c.json(err("limit must be a positive integer"), 400);
+    }
+  }
+
+  const beforeRaw = c.req.query("before");
+  let before: number | undefined;
+  if (beforeRaw !== undefined && beforeRaw !== "") {
+    before = Number(beforeRaw);
+    if (!Number.isFinite(before)) {
+      return c.json(err("before must be a number"), 400);
+    }
+  }
+
+  return c.json(ok(notificationFeedService.list({ limit, before })));
+});
+
+notificationRoutes.post("/feed/read-all", (c) => {
+  notificationFeedService.readAll();
+  return c.json(ok({ readAll: true }));
+});
+
+notificationRoutes.post("/feed/:id/read", (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id < 1) {
+    return c.json(err("Invalid notification id"), 400);
+  }
+  try {
+    return c.json(ok(notificationFeedService.setRead(id, true)));
+  } catch (e) {
+    if (e instanceof FeedNotFoundError) return c.json(err(e.message), e.status);
+    throw e;
+  }
+});
+
+notificationRoutes.post("/feed/:id/unread", (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id < 1) {
+    return c.json(err("Invalid notification id"), 400);
+  }
+  try {
+    return c.json(ok(notificationFeedService.setRead(id, false)));
+  } catch (e) {
+    if (e instanceof FeedNotFoundError) return c.json(err(e.message), e.status);
     throw e;
   }
 });

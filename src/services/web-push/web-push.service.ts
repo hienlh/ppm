@@ -45,6 +45,7 @@ export interface PushMessage {
   sessionId: string;
   /** "" when unknown. */
   providerId: string;
+  kind?: WebPushPayload["kind"];
   urgency: "high" | "normal";
 }
 
@@ -194,6 +195,7 @@ class WebPushService {
         project: message.project,
         sessionId: message.sessionId,
         providerId: message.providerId,
+        kind: message.kind,
       } satisfies WebPushPayload));
       const body = await encryptPushPayload(payload, base64UrlDecode(sub.p256dh), base64UrlDecode(sub.auth));
       const res = await fetch(sub.endpoint, {
