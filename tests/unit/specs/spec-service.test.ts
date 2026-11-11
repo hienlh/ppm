@@ -118,6 +118,21 @@ describe("Standard", () => {
     expect(done.view.phases.tasks.status).toBe("approved");
     expect(done.view.tasks[0].done).toBe(true);
   });
+
+  it("lists each task's status and the chat running it", async () => {
+    await svc.createSpec(project, { title: "Sum", slug: "sum", sessionId: "chat-sum" });
+    writeFileSync(specFile("sum", "requirements.md"), REQ);
+    await svc.approvePhase(project, "sum", "requirements");
+    writeFileSync(specFile("sum", "design.md"), DESIGN);
+    await svc.approvePhase(project, "sum", "design");
+    writeFileSync(specFile("sum", "tasks.md"), TASKS);
+    await svc.approvePhase(project, "sum", "tasks");
+    expect((await svc.listSpecs(project))[0]!.tasks).toEqual([{ id: "1", status: "todo", optional: false, sessionId: null }]);
+    await svc.startTask(project, "sum", "1", { sessionId: "task-chat-1" });
+    expect((await svc.listSpecs(project))[0]!.tasks).toEqual([{ id: "1", status: "running", optional: false, sessionId: "task-chat-1" }]);
+    await svc.taskDone(project, "sum", "1", "added sum");
+    expect((await svc.listSpecs(project))[0]!.tasks[0]!.status).toBe("done");
+  });
 });
 
 describe("Thorough, with a real bun test", () => {
