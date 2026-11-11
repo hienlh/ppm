@@ -1416,9 +1416,11 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   );
   specTitleRef.current = sessionTitle ?? "";
   const specPane = specBinding && specPaneOpen ? (
+    // Beside the chat only when the tab is wide enough for both; a narrower tab (a tablet held
+    // upright, a split panel) puts it above the chat, which keeps the composer full width.
     <div className={isMobileLayout
       ? "absolute inset-0 z-30 flex flex-col bg-panel"
-      : "flex h-full w-[44%] min-w-[340px] max-w-[760px] shrink-0 flex-col border-l border-border"}>
+      : "order-first flex h-[45%] w-full shrink-0 flex-col border-b border-border @3xl/spec:order-none @3xl/spec:h-full @3xl/spec:w-[44%] @3xl/spec:min-w-[340px] @3xl/spec:max-w-[760px] @3xl/spec:border-b-0 @3xl/spec:border-l"}>
       <SpecPane projectName={projectName} slug={specBinding.slug} state={specState} onClose={() => setSpecPaneOpen(false)} />
     </div>
   ) : null;
@@ -1426,12 +1428,13 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
   return (
     <AgentSessionProvider value={agentSessionIdentity}>
     <SpecWorkflowContext.Provider value={specWorkflow}>
-    <div className="relative flex h-full min-h-0">
+    <div className="@container/spec h-full min-h-0">
+    <div className="relative flex h-full min-h-0 flex-col @3xl/spec:flex-row">
     <div
       data-onboarding="chat"
       // `@container/chat`: the bars and the composer compact on the chat's own width, which a
       // design window's chat column or a split panel decides — not on the viewport.
-      className="@container/chat flex flex-col h-full relative min-w-0 flex-1"
+      className="@container/chat flex flex-col h-full relative min-w-0 min-h-0 flex-1"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -1679,6 +1682,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter }
       </div>
     </div>
     {specPane}
+    </div>
     </div>
     </SpecWorkflowContext.Provider>
     </AgentSessionProvider>

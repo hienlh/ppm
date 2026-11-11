@@ -217,7 +217,8 @@ async function startChild(ctl: RunControl, v: SpecView, t: SpecTaskView): Promis
   if (!projectName) throw new Error("the project is no longer registered");
   const sessionId = await env!.createTaskSession({
     projectPath: ctl.projectPath, projectName, providerId: ctl.providerId,
-    title: `${v.title} · ${t.id}. ${t.title}`.slice(0, 120), permissionMode: ctl.permissionMode,
+    // The task first: the spec's own (often long) title would make every task chat's row read the same.
+    title: `Task ${t.id} · ${t.title}`.slice(0, 120), permissionMode: ctl.permissionMode,
     ...(v.sessionId ? { parentSessionId: v.sessionId } : {}),
   });
   bindSpecSession(sessionId, { projectPath: ctl.projectPath, slug: ctl.slug, taskId: t.id });

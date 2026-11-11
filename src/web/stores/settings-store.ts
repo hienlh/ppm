@@ -21,6 +21,8 @@ import {
 } from "@/components/remote-desktop/remote-desktop-view-style";
 
 export type GitStatusViewMode = "flat" | "tree";
+/** Chat History: every chat on its own row, or AI-opened chats folded under their creator. */
+export type ChatHistoryViewMode = "flat" | "tree";
 export type EditorTabStyle = "default" | "boxed" | "pill";
 /** Where the panel dock sits relative to the main content (VS Code-style). Per-user pref. */
 export type DockPosition = "left" | "bottom" | "right";
@@ -46,6 +48,7 @@ interface SettingsState {
   sidebarCollapsed: boolean;
   sidebarWidth: number;
   gitStatusViewMode: GitStatusViewMode;
+  chatHistoryViewMode: ChatHistoryViewMode;
   /** GitLens-style annotation after the cursor's line in the code editor. */
   inlineBlame: boolean;
   /**
@@ -185,6 +188,7 @@ interface SettingsState {
   toggleSidebar: () => void;
   setSidebarWidth: (width: number) => void;
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
+  setChatHistoryViewMode: (mode: ChatHistoryViewMode) => void;
   toggleInlineBlame: () => void;
   setDesignWindows: (enabled: boolean) => void;
   toggleWordWrap: () => void;
@@ -228,6 +232,7 @@ interface PersistedSettings {
   sidebarCollapsed?: boolean;
   sidebarWidth?: number;
   gitStatusViewMode?: GitStatusViewMode;
+  chatHistoryViewMode?: ChatHistoryViewMode;
   inlineBlame?: boolean;
   designWindows?: boolean;
   wordWrap?: boolean;
@@ -406,6 +411,9 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   if (data.gitStatusViewMode === "flat" || data.gitStatusViewMode === "tree") {
     patch.gitStatusViewMode = data.gitStatusViewMode;
   }
+  if (data.chatHistoryViewMode === "flat" || data.chatHistoryViewMode === "tree") {
+    patch.chatHistoryViewMode = data.chatHistoryViewMode;
+  }
   if (data.editorTabStyle === "default" || data.editorTabStyle === "boxed" || data.editorTabStyle === "pill") {
     patch.editorTabStyle = data.editorTabStyle;
   }
@@ -444,6 +452,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarCollapsed: _initial.sidebarCollapsed ?? false,
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
+  chatHistoryViewMode: _initial.chatHistoryViewMode === "flat" ? "flat" : "tree",
   inlineBlame: _initial.inlineBlame ?? false,
   minimalMode: false,
   designWindows: _initial.designWindows ?? true,
@@ -585,6 +594,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setGitStatusViewMode: (mode) => {
     persistUiPref({ gitStatusViewMode: mode });
     set({ gitStatusViewMode: mode });
+  },
+
+  setChatHistoryViewMode: (mode) => {
+    persistUiPref({ chatHistoryViewMode: mode });
+    set({ chatHistoryViewMode: mode });
   },
 
   toggleInlineBlame: () => {
