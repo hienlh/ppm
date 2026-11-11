@@ -11,10 +11,60 @@ import { useCompareStore } from "@/stores/compare-store";
 import { openSettings } from "@/components/settings/open-settings";
 import { basename } from "@/lib/utils";
 import { dispatchExtCommand } from "@/lib/ext-command-dispatch";
+import { getFocusedSelection } from "@/lib/open-editors-registry";
+import { nextMatch } from "@/lib/search/search-rows";
+import { searchClient } from "@/lib/search/search-client";
+import { getSearchState, useSearchStore } from "@/stores/search-store";
 
 /** Dispatch this event to open the command palette from anywhere, optionally with initial query */
 export function openCommandPalette(initialQuery?: string) {
   window.dispatchEvent(new CustomEvent("open-command-palette", { detail: initialQuery }));
+}
+
+/**
+ * The search shortcut: show the Search panel, and when the focused editor of the active project
+ * has text selected on one line, search for that text (6.4) — VS Code's seeding.
+ */
+function openSearchPanel() {
+  const settings = useSettingsStore.getState();
+  if (settings.sidebarCollapsed) settings.toggleSidebar();
+  settings.setSidebarActiveTab("search");
+  const project = useProjectStore.getState().activeProject?.name;
+  const selection = getFocusedSelection();
+  if (!project || !selection?.singleLine || selection.projectName !== project) return;
+  if (getSearchState(project).query === selection.text) return;
+  useSearchStore.getState().update(project, { query: selection.text });
+  searchClient.schedule(project);
+}
+
+/**
+ * F4 (`dir` 1) / Shift+F4 (`dir` -1): open the match after / before the focused one in the
+ * active project's results, wrapping, with the matched text selected (6.2). False when there
+ * is no match to open, so the key stays free for anything else bound to it.
+ */
+function openAdjacentSearchMatch(dir: 1 | -1): boolean {
+  const project = useProjectStore.getState().activeProject?.name;
+  if (!project) return false;
+  const state = getSearchState(project);
+  const viewMode = useSearchStore.getState().viewMode;
+  const target = nextMatch(state.response, { viewMode, dismissed: state.dismissed }, state.focusedRow, dir);
+  if (!target) return false;
+  useSearchStore.getState().update(project, { focusedRow: target.key });
+  const { file, match } = target;
+  // Match columns are 0-based; the editor's selection is 1-based, end exclusive (as Monaco counts).
+  const column = match.column + 1;
+  const metadata = {
+    filePath: file,
+    projectName: project,
+    lineNumber: match.line,
+    selection: { line: match.line, column, endColumn: column + match.length },
+    revealAt: Date.now(),
+  };
+  const id = useTabStore.getState().openTab({ type: "editor", title: basename(file), projectId: project, metadata, closable: true });
+  // A tab already open on this file is deduped and keeps its old metadata, so push the new
+  // target onto it for the editor's reveal effect to fire (as the command palette does).
+  if (id) useTabStore.getState().updateTab(id, { metadata });
+  return true;
 }
 
 /**
@@ -44,6 +94,23 @@ export function useGlobalKeybindings() {
       if (!dir) return false;
       e.preventDefault();
       window.dispatchEvent(new CustomEvent(`chat-nav-${dir}`));
+      return true;
+    }
+
+    /**
+     * The search shortcut and F4 / Shift+F4. They fire inside text fields too: the editor is a
+     * textarea, and it is where the selection to search for is made and where F4 is pressed
+     * from. Returns true when the event was consumed.
+     */
+    function dispatchSearchKeys(e: KeyboardEvent, m: (ev: KeyboardEvent, id: string) => boolean) {
+      if (m(e, "open-search")) {
+        e.preventDefault();
+        openSearchPanel();
+        return true;
+      }
+      const dir = m(e, "search-next-match") ? 1 : m(e, "search-prev-match") ? -1 : 0;
+      if (!dir || !openAdjacentSearchMatch(dir)) return false;
+      e.preventDefault();
       return true;
     }
 
@@ -156,6 +223,7 @@ export function useGlobalKeybindings() {
           e.preventDefault();
           usePanelStore.getState().toggleDock();
         }
+        if (dispatchSearchKeys(e, m)) return;
         // The composer holds focus for most of a chat session, so the transcript
         // jumps have to survive this early return or they are unreachable.
         dispatchChatNav(e, m);
@@ -278,14 +346,8 @@ export function useGlobalKeybindings() {
         return;
       }
 
-      // Open search (sidebar)
-      if (match(e, "open-search")) {
-        e.preventDefault();
-        const settings = useSettingsStore.getState();
-        if (settings.sidebarCollapsed) settings.toggleSidebar();
-        settings.setSidebarActiveTab("search");
-        return;
-      }
+      // Open search (sidebar), and F4 / Shift+F4 through its results
+      if (dispatchSearchKeys(e, match)) return;
 
       // Problems, in the dock — VS Code's Ctrl+Shift+M, and its placement.
       if (match(e, "open-problems")) {

@@ -1,5 +1,9 @@
-import { searchProjectContent, ProjectSearchError } from "../../services/project-content-search.service";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import {
+  getSearchHost, replacePayload, REPLACE_DEADLINE_MS, SearchHostError, type SearchHost, type SearchHostReply,
+} from "../../services/content-search/search-host-client.ts";
+import type { SearchRequest } from "../../services/content-search/search-options.ts";
 import { resolve, isAbsolute, sep } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { fileService, SecurityError, NotFoundError, ValidationError } from "../../services/file.service.ts";
@@ -389,19 +393,100 @@ fileRoutes.get("/resolve", (c) => {
   }
 });
 
-/** GET /files/search ? bounded, asynchronous project content search. */
+let searchHostOverride: SearchHost | null = null;
+
+/** Routes search and replace to `host` instead of the server's own search host; null restores it. */
+export function setSearchHostForTests(host: SearchHost | null): void {
+  searchHostOverride = host;
+}
+
+const searchHost = (): SearchHost => searchHostOverride ?? getSearchHost();
+
+/** "Files to include/exclude": comma-separated globs, where a comma inside `{…}` belongs to the glob. */
+function splitGlobs(value: string | undefined): string[] {
+  const globs: string[] = [];
+  let depth = 0;
+  let start = 0;
+  const text = value ?? "";
+  for (let i = 0; i <= text.length; i++) {
+    const ch = text[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") depth = Math.max(0, depth - 1);
+    else if (i === text.length || (ch === "," && depth === 0)) {
+      const glob = text.slice(start, i).trim();
+      if (glob) globs.push(glob);
+      start = i + 1;
+    }
+  }
+  return globs;
+}
+
+/** The host's reply bytes as they are: never parsed, decoded or re-compressed on the main thread. */
+function hostReply(reply: SearchHostReply): Response {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (reply.gzip) {
+    headers["Content-Encoding"] = "gzip";
+    headers["Vary"] = "Accept-Encoding";
+  }
+  return new Response(reply.body, { headers });
+}
+
+function hostError(c: Context, error: unknown): Response {
+  const status = error instanceof SearchHostError ? error.status : 500;
+  return c.json(err(error instanceof Error ? error.message : String(error)), status as ContentfulStatusCode);
+}
+
+/** Bun cuts a request that sends nothing for 10 s; `c.env` is the server `app.fetch(req, server)` passed. */
+function allowSeconds(c: { env: unknown; req: { raw: Request } }, seconds: number): void {
+  (c.env as { timeout?: (request: Request, seconds: number) => void } | undefined)?.timeout?.(c.req.raw, seconds);
+}
+
+/**
+ * GET /files/search?q&caseSensitive&wholeWord&regex&include&exclude&useIgnore&replace&preserveCase
+ * — run in the search host (`ppm __search__`). An empty `q` only starts the host, so the panel's
+ * first real query does not wait for it. Aborting the request cancels the host's search.
+ */
 fileRoutes.get("/search", async (c) => {
+  const query = c.req.query("q") ?? "";
+  if (query === "") {
+    searchHost().ensureStarted().catch(() => {}); // a host that cannot start is reported by the next search
+    return c.json(ok({ results: [], total: 0, files: 0, limitHit: false, engine: "rg" }));
+  }
+  // The host answers within TIME_LIMIT_MS (30 s) and is killed at 35 s; Bun must not cut it first.
+  allowSeconds(c, 40);
+  const replace = c.req.query("replace");
+  const request: SearchRequest = {
+    projectPath: c.get("projectPath"),
+    query,
+    caseSensitive: c.req.query("caseSensitive") === "true",
+    wholeWord: c.req.query("wholeWord") === "true",
+    regex: c.req.query("regex") === "true",
+    include: splitGlobs(c.req.query("include")),
+    exclude: splitGlobs(c.req.query("exclude")),
+    useIgnore: c.req.query("useIgnore") !== "false",
+    ...(replace !== undefined ? { replace, preserveCase: c.req.query("preserveCase") === "true" } : {}),
+    gzip: (c.req.header("Accept-Encoding") ?? "").includes("gzip"),
+  };
   try {
-    const result = await searchProjectContent(c.get("projectPath"), {
-      query: (c.req.query("q") ?? "").trim(),
-      caseSensitive: c.req.query("caseSensitive") === "true",
-      wholeWord: c.req.query("wholeWord") === "true",
-      regex: c.req.query("regex") === "true",
-      include: (c.req.query("include") ?? "").trim(),
-    });
-    return c.json(ok(result));
+    const reply = await searchHost().request("search", new TextEncoder().encode(JSON.stringify(request)),
+      { signal: c.req.raw.signal });
+    return hostReply(reply);
   } catch (error) {
-    return c.json(err((error as Error).message), error instanceof ProjectSearchError ? error.status : 500);
+    return hostError(c, error);
+  }
+});
+
+/**
+ * POST /files/replace — body `{ files: ReplaceRequest["files"] }`, handed to the search host as raw
+ * bytes behind the project path (`replacePayload`); the host checks, rewrites and writes each file.
+ */
+fileRoutes.post("/replace", async (c) => {
+  allowSeconds(c, REPLACE_DEADLINE_MS / 1000 + 10);
+  try {
+    const body = new Uint8Array(await c.req.arrayBuffer());
+    return hostReply(await searchHost().request("replace", replacePayload(c.get("projectPath"), body)));
+  } catch (error) {
+    return hostError(c, error);
   }
 });
 
