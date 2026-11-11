@@ -527,11 +527,13 @@ card. What stands in for the card:
   text and the from-session block (`src/shared/assistant-provenance.ts`): who started the
   Assistant's turn (`user_ppm`, `user_telegram` or `ppm`), the user's first 200 characters that
   turn, and whether text the user did not write reached it (`untrusted`, with the reasons: watch
-  `news`, a `forwarded` Telegram message, a `scheduled` script, a `read` through
-  `chat_read_messages`, `chat_search`, `ui_read_tab`, `chats_attention` or `db_query`, or a
-  session-tool result quoting another chat's last answer or reply). It covers that turn only, not
-  what earlier turns left in the model's context, and the header says so; tools of the user's own
-  MCP servers are invisible to PPM and do not set it. It is written by the server from
+  `news`, a `forwarded` Telegram message, a `scheduled` script, a `read` — any tool call that can
+  bring outside text, decided by an allowlist in `assistant-outside-text.ts`: only `projects_list`,
+  `ppm_cli_reference`, the notebook tools, `TodoWrite`, `ToolSearch` and `AskUserQuestion` leave
+  it clean, so Read, Glob, Grep, a shell command, the git, schedule and tunnel reads or any other
+  MCP server all set it — or a session-tool result quoting another chat's last answer or reply).
+  It covers that turn only, not what earlier turns left in the model's context, and the header
+  says so. It is written by the server from
   `assistant-turn-provenance.ts`, which follows the chat lifecycle (a turn runs from the message
   that opened it to `turn_ended`; one PPM began stays PPM's after the user types into it), never
   from the tool's input. The bubble shows it as one muted line ("Asked by PPM Assistant · started

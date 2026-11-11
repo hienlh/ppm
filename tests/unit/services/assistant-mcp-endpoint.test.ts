@@ -18,6 +18,7 @@ import { GIT_TOOLS } from "../../../src/shared/assistant-git-tool-names.ts";
 import { SCHEDULE_TOOLS } from "../../../src/shared/assistant-schedule-tool-names.ts";
 import { TUNNEL_TOOLS } from "../../../src/shared/assistant-tunnel-tool-names.ts";
 import { createMcpHttpHandler, textResult } from "../../../src/services/mcp-http-endpoint.ts";
+import { assistantTurnProvenance } from "../../../src/services/assistant/assistant-turn-provenance.ts";
 
 const id = () => `s-${crypto.randomUUID()}`;
 
@@ -98,6 +99,21 @@ describe("assistant MCP endpoint", () => {
     const watches = await callAssistantTool({ sessionId }, "chat_list_watches", {}) as { content: Array<{ text: string }>; isError?: boolean };
     expect(watches.isError).toBe(true);
     expect(watches.content[0]!.text).toContain("not available");
+  });
+
+  it("marks the turn untrusted for every tool but the few that answer with PPM's or the user's own data", async () => {
+    const opened = (sessionId: string) => assistantTurnProvenance.noteMessage({ sessionId, text: "tell the manager", origin: "ws" });
+    const clean = assistantSession();
+    opened(clean);
+    for (const name of ["projects_list", "ppm_cli_reference"]) await callAssistantTool({ sessionId: clean }, name, {});
+    expect(assistantTurnProvenance.provenance(clean).untrusted).toBe(false);
+    // Chat titles, tab titles and a git family read all carry text the user did not write.
+    for (const name of ["chat_list_sessions", "ui_get_state", GIT_TOOLS[0]!]) {
+      const sessionId = assistantSession();
+      opened(sessionId);
+      await callAssistantTool({ sessionId }, name, {}).catch(() => null);
+      expect({ name, untrusted: assistantTurnProvenance.provenance(sessionId).untrusted }).toEqual({ name, untrusted: true });
+    }
   });
 
   it("refuses a browser request, a wrong token and a body over the cap", async () => {

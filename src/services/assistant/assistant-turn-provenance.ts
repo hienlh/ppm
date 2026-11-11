@@ -7,7 +7,9 @@
  * fixed by that first message: the user in PPM, the user on Telegram, or PPM itself (a watch
  * report, a scheduled script) — and a turn PPM began keeps "PPM" even after the user types into
  * it. It is marked untrusted, with the reason, when it carried watch news, a forwarded Telegram
- * message or a scheduled script's text, or when the Assistant read another chat or a tab in it.
+ * message or a scheduled script's text, or when the Assistant ran a tool in it that can bring outside
+ * text — a file read or search, a shell command, a git, schedule or tunnel read, another chat or a
+ * tab (`assistant-outside-text.ts`: every tool but a short allowlist).
  */
 import { chatLifecycle } from "../chat-control/chat-lifecycle.ts";
 import { chatControl, type ChatMessageOrigin } from "../chat-control/chat-control.ts";
@@ -16,6 +18,7 @@ import { normalizeOpening, type AssistantProvenance, type ProvenanceStartedBy } 
 import type { TraceOrigin } from "../../shared/session-trace.ts";
 import { hasForwardedPart } from "../assistant-telegram/assistant-telegram-inbound-text.ts";
 import { isAssistantSession } from "./assistant-session.ts";
+import { toolUseBringsOutsideText } from "./assistant-outside-text.ts";
 
 export type UntrustedReason = "news" | "forwarded" | "read" | "scheduled" | "digest" | "late_reply" | "unknown";
 
@@ -47,6 +50,13 @@ export function createTurnProvenanceTracker(deps: TurnProvenanceDeps) {
     return rec;
   }
 
+  function markUntrusted(sessionId: string, reason: UntrustedReason): void {
+    if (!deps.isAssistant(sessionId)) return;
+    const rec = recordFor(sessionId);
+    rec.reasons.delete("unknown");
+    rec.reasons.add(reason);
+  }
+
   return {
     /** A message entered a chat: the opening one of an Assistant turn fixes who started it. */
     noteMessage(m: { sessionId: string; text: string; origin: ChatMessageOrigin; traceOrigin?: TraceOrigin }): void {
@@ -73,11 +83,17 @@ export function createTurnProvenanceTracker(deps: TurnProvenanceDeps) {
     },
 
     /** Text from outside the user reached the session's running turn. */
-    markUntrusted(sessionId: string, reason: UntrustedReason): void {
-      if (!deps.isAssistant(sessionId)) return;
-      const rec = recordFor(sessionId);
-      rec.reasons.delete("unknown");
-      rec.reasons.add(reason);
+    markUntrusted,
+
+    /**
+     * The provider is about to run a tool in the session's turn. A file read, a search, a shell
+     * command, a web fetch or a subagent can each bring outside text, so the turn is marked
+     * before the result comes back; PPM's own tools are judged by their endpoints instead.
+     */
+    noteToolUse(sessionId: string, event: unknown): void {
+      const e = event as { type?: unknown; tool?: unknown } | null;
+      if (!e || e.type !== "tool_use" || typeof e.tool !== "string") return;
+      if (toolUseBringsOutsideText(e.tool)) markUntrusted(sessionId, "read");
     },
 
     turnEnded(sessionId: string): void {
@@ -115,5 +131,6 @@ export const assistantTurnProvenance = createTurnProvenanceTracker({
 });
 
 chatLifecycle.on("user_message", (m) => assistantTurnProvenance.noteMessage(m));
+chatLifecycle.on("stream", (s) => assistantTurnProvenance.noteToolUse(s.sessionId, s.event));
 chatLifecycle.on("turn_ended", (e) => assistantTurnProvenance.turnEnded(e.sessionId));
 chatLifecycle.on("migrated", (e) => assistantTurnProvenance.migrated(e.oldSessionId, e.newSessionId));

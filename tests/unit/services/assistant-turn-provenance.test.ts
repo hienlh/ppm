@@ -50,6 +50,25 @@ describe("turn provenance", () => {
     expect(t.provenance(A)).toEqual({ startedBy: "user_ppm", opening: "now ask the manager", untrusted: false });
   });
 
+  it("is marked when the turn read a file, searched or ran any tool that can bring outside text", () => {
+    for (const tool of ["Read", "Grep", "Glob", "WebFetch", "Bash", "Task", "NotebookRead", "mcp__someone__get", "ppm_tunnels:list"]) {
+      const t = tracker();
+      t.noteMessage({ sessionId: A, text: "read docs/handover.md and tell its manager", origin: "ws" });
+      t.noteToolUse(A, { type: "tool_use", tool, input: {} });
+      expect({ tool, p: t.provenance(A) }).toMatchObject({ tool, p: { startedBy: "user_ppm", untrusted: true, reason: "read" } });
+    }
+  });
+
+  it("stays clean for tools that bring nothing from outside, and leaves PPM's own tools to their endpoints", () => {
+    const t = tracker();
+    t.noteMessage({ sessionId: A, text: "tell the manager to wait", origin: "ws" });
+    for (const tool of ["TodoWrite", "ToolSearch", "AskUserQuestion", "mcp__ppm-sessions__send_to_session", "mcp__ppm-assistant__projects_list", "ppm_sessions:send_to_session"]) {
+      t.noteToolUse(A, { type: "tool_use", tool, input: {} });
+    }
+    t.noteToolUse(A, { type: "text", content: "Read" });
+    expect(t.provenance(A)).toMatchObject({ untrusted: false });
+  });
+
   it("calls a turn it saw no message for untrusted, named from the live chat", () => {
     expect(tracker("telegram").provenance(A)).toEqual({ startedBy: "user_telegram", untrusted: true, reason: "unknown" });
     expect(tracker().provenance(A)).toMatchObject({ startedBy: "ppm", untrusted: true });
