@@ -102,9 +102,9 @@ describe("SessionHistoryList family tree", () => {
       slug: "search", title: "Search", kind: "feature", checks: "standard", current: "execution",
       tasksDone: 1, tasksTotal: 3, red: 0, running: 1, waitingForYou: false, sessionId: "spec", updatedAt: "2026-11-10T00:00:00Z",
       tasks: [
-        { id: "1", status: "done", optional: false, sessionId: "t1" },
-        { id: "2", status: "failed", optional: false, sessionId: "t2" },
-        { id: "3", status: "todo", optional: false, sessionId: null },
+        { id: "1", title: "Parse query", status: "done", optional: false, sessionId: "t1" },
+        { id: "2", title: "Search history", status: "failed", optional: false, sessionId: "t2" },
+        { id: "3", title: "E2e", status: "todo", optional: false, sessionId: null },
       ],
     }];
     view = await mount(<SessionHistoryList projectName="ppm" variant="sidebar" />);
@@ -115,7 +115,7 @@ describe("SessionHistoryList family tree", () => {
     expect(view.container.querySelectorAll(".bg-success, .bg-error, .bg-border").length).toBeGreaterThanOrEqual(3);
 
     await click(view.container.querySelector('button[aria-label="Show 2 task chats"]'));
-    expect(text().indexOf("Task 2")).toBeLessThan(text().indexOf("Task 1"));
+    expect(text().indexOf("2. Search history")).toBeLessThan(text().indexOf("1. Parse query"));
     expect(view.container.querySelector('[aria-label="Failed"]')).not.toBeNull();
     expect(view.container.querySelector('[aria-label="Done"]')).not.toBeNull();
   });

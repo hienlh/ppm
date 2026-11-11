@@ -29,6 +29,11 @@ export function taskCellBySession(spec: SpecSummary): Map<string, SpecBarCell> {
   return new Map(spec.tasks.filter((t) => t.sessionId).map((t) => [t.sessionId!, cellOf(t.status)]));
 }
 
+/** "23. Title" for each chat that ran a task: its own title only says "Run task 23 of the spec …". */
+export function taskLabelBySession(spec: SpecSummary): Map<string, string> {
+  return new Map(spec.tasks.filter((t) => t.sessionId).map((t) => [t.sessionId!, `${t.id}. ${t.title}`]));
+}
+
 const RANK: Record<SpecBarCell, number> = { running: 0, failed: 1, done: 2, todo: 2 };
 
 /** Running first, then failed, then the rest; otherwise the list's own order (newest first). */
