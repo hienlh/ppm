@@ -70,13 +70,14 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
   function toCard(row: CardRow, projects = env.projects()): AssistantCard {
     const { projectName: _stored, ...payload } = row.payload;
     const projectName = nameOf(row, projects);
-    return {
+    const card: AssistantCard = {
       id: row.id, kind: row.kind, projectName, projectKey: row.projectKey, sessionId: row.sessionId,
       title: row.title, body: row.body, payload, status: row.status, answer: row.answer,
       provenance: reportProvenanceLine(row.kind, projectName, payload.subagent === true, payload.detected === true),
-      ...(cardOkOffered(row) ? { okOffered: true } : {}),
       createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
+    // Judged on the card as shown (its project and provenance lines count towards what must fit).
+    return cardOkOffered(card) ? { ...card, okOffered: true } : card;
   }
 
   function waiting(): AssistantWaiting {

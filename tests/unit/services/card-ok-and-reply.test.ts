@@ -51,6 +51,14 @@ describe("the OK rule", () => {
     expect(decision("x".repeat(4000)).okOffered).toBeUndefined();
     expect(decision("key AKIAABCDEFGHIJKLMNOP for the bucket").okOffered).toBeUndefined();
   });
+
+  it("is not offered when the draft fits as written but not as Telegram would show it", () => {
+    // 500 hidden characters are 500 raw, and 4,500 once each is shown as ⟨U+200B⟩.
+    const draft = `Hi team,${"​".repeat(500)} the fix is in.`;
+    expect(draft.length).toBeLessThan(3500);
+    expect(decision(draft).okOffered).toBeUndefined();
+    expect(decision("<p>Q3 &amp; Q4 &lt;report&gt;</p>".repeat(90)).okOffered).toBe(true);
+  });
 });
 
 describe("OK", () => {

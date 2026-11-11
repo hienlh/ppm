@@ -54,6 +54,15 @@ function clean(text: string, counter: { hidden: number }): string {
 
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 
+/**
+ * The start of a text too long to show whole, measured as it will be shown: hidden characters are
+ * revealed first (each grows to `⟨U+XXXX⟩`), so a preview can never outgrow its room.
+ */
+function preview(text: string): string {
+  const shown = escapeHiddenCharacters(text);
+  return shown.length > PREVIEW_MAX ? `${shown.slice(0, PREVIEW_MAX).trimEnd()}\n…` : shown;
+}
+
 /** Room for the digest's sections under Telegram's 4096, leaving the head and the link. */
 const DIGEST_TELEGRAM_MAX = 3200;
 
@@ -117,11 +126,12 @@ function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boole
   const buttons: FormattedManagerCard["buttons"] = [];
   const full = detail === "full";
 
-  if (full && card.body) lines.push(clean(truncateText(card.body, BODY_MAX), counter));
+  // Cut as shown (hidden characters revealed first), so the cut body cannot outgrow its room.
+  if (full && card.body) lines.push(clean(truncateText(escapeHiddenCharacters(card.body), BODY_MAX), counter));
   if (card.kind === "needs_decision" || card.kind === "urgent") {
     const draft = card.payload.draft;
     if (full && draft) {
-      const text = card.okOffered ? draft.text : `${draft.text.slice(0, PREVIEW_MAX).trimEnd()}\n…`;
+      const text = card.okOffered ? draft.text : preview(draft.text);
       lines.push(`<b>To:</b> ${clean(oneLine(draft.to), counter)}`, `<pre>${clean(text, counter)}</pre>`);
       if (!card.okOffered) lines.push(`⚠️ ${escapeTelegramHtml(TOO_LONG_NOTE)}`);
     }
@@ -139,7 +149,7 @@ function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boole
     const diff = (card.payload.changes ?? []).map((c) => `${c.op === "remove" ? "-" : "+"} ${c.line}`).join("\n");
     const before = counter.hidden;
     const whole = offerWhole && card.payload.rulesComplete === true && diff.length <= REVIEW_FIT_MAX;
-    if (full && diff) lines.push(`<pre>${clean(whole ? diff : `${diff.slice(0, PREVIEW_MAX)}${diff.length > PREVIEW_MAX ? "\n…" : ""}`, counter)}</pre>`);
+    if (full && diff) lines.push(`<pre>${clean(whole ? diff : preview(diff), counter)}</pre>`);
     if (full && !whole) lines.push(`⚠️ ${escapeTelegramHtml(RULES_IN_PPM_NOTE)}`);
     if (full && whole && counter.hidden === before && card.payload.rulesHash) buttons.push({ text: "Approve change", op: "approve" });
     if (card.payload.rulesHash) buttons.push({ text: "Revert", op: "revert" });
