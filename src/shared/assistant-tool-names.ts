@@ -9,6 +9,7 @@ import { SCHEDULE_TOOLS } from "./assistant-schedule-tool-names.ts";
 import { TUNNEL_TOOLS } from "./assistant-tunnel-tool-names.ts";
 
 export const PROJECTS_LIST_TOOL = "projects_list";
+export const PROJECT_ADD_TOOL = "project_add";
 export const CHAT_LIST_SESSIONS_TOOL = "chat_list_sessions";
 export const CHAT_SEARCH_TOOL = "chat_search";
 export const CHAT_READ_MESSAGES_TOOL = "chat_read_messages";
@@ -39,7 +40,7 @@ export const NOTEBOOK_DELETE_TOOL = "notebook_delete";
  * chats is not here: the Assistant uses PPM's session tools (`ppm-sessions`) for that.
  */
 export const ASSISTANT_TOOLS = [
-  PROJECTS_LIST_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_SEARCH_TOOL, CHAT_READ_MESSAGES_TOOL,
+  PROJECTS_LIST_TOOL, PROJECT_ADD_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_SEARCH_TOOL, CHAT_READ_MESSAGES_TOOL,
   DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, UI_GET_STATE_TOOL,
   UI_OPEN_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_SWITCH_PROJECT_TOOL, UI_CLOSE_TAB_TOOL, UI_READ_TAB_TOOL,
   UI_LIST_COMMANDS_TOOL, UI_RUN_COMMAND_TOOL,

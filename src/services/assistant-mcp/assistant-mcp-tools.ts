@@ -1,6 +1,6 @@
 import {
   CHAT_ANSWER_APPROVAL_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL,
-  CHATS_ATTENTION_TOOL, DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, PPM_CLI_REFERENCE_TOOL, PROJECTS_LIST_TOOL,
+  CHATS_ATTENTION_TOOL, DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, PPM_CLI_REFERENCE_TOOL, PROJECT_ADD_TOOL, PROJECTS_LIST_TOOL,
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import { UI_TOOL_DEFINITIONS } from "./assistant-ui-tools.ts";
@@ -61,6 +61,19 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
     description: "List the projects registered in PPM, with their folders. Every other tool takes one of these names.",
     inputSchema: object({}),
     annotations: READ_ONLY,
+  },
+  {
+    name: PROJECT_ADD_TOOL,
+    title: "Add a PPM project",
+    description: "Register a folder on this machine as a PPM project, so chats, a manager chat and every other tool can "
+      + "work there. Always asks the user first, showing the folder. Refused, before asking, for a drive, the home folder "
+      + "or anything holding it, and PPM's own data folder: the user adds those themselves. Call projects_list first; "
+      + "a folder already registered is refused.",
+    inputSchema: object({
+      path: { type: "string", minLength: 1, description: "The folder's full path, e.g. D:\\Projects\\app or /home/me/app." },
+      name: { type: "string", minLength: 1, description: "The project's name in PPM (default: the folder's name)." },
+    }, ["path"]),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
   {
     name: CHAT_LIST_SESSIONS_TOOL,

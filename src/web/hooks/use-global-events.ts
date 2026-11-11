@@ -15,6 +15,8 @@ import { handleSessionCollabEvent } from "@/lib/session-collab-events";
 import { resyncManagerChats } from "./use-manager-chats";
 import { resyncAssistantCards } from "@/stores/assistant-cards-store";
 import { resyncAssistantWaiting } from "@/stores/assistant-waiting-store";
+import { useProjectStore } from "@/stores/project-store";
+import { PROJECTS_CHANGED_EVENT } from "../../shared/projects-events";
 
 /** How often the client pings — well under the server's own idle timeout, so a live but
  *  silent socket never gets reaped as dead. */
@@ -37,6 +39,8 @@ const IDLE_TIMEOUT_MS = 45_000;
  *   it had been serving, and the paths differ. Neither event fetches the index — on a large
  *   project that is a 22 MB download — unless something is showing it right now (the palette,
  *   a picker; see `openIndexReader`); otherwise it is refreshed when something opens to read it.
+ * - `projects:changed` → refetches the project list: the server added a project itself (the
+ *   Assistant's `project_add`).
  * - `session:unread_changed` → cross-device unread sync.
  * - `session:phase_changed` → keeps the tab-strip spinner and title indicator
  *   correct for sessions whose tab is not mounted, and — critically — clears them
@@ -157,6 +161,11 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         // reach no chat socket, so without this the list would show them only after the tab was
         // hidden and shown again, or the socket reconnected.
         if (typeof data.projectName === "string" && data.projectName) syncKnownProject(data.projectName);
+        return;
+      }
+
+      if (type === PROJECTS_CHANGED_EVENT) {
+        void useProjectStore.getState().fetchProjects();
         return;
       }
 

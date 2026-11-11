@@ -68,7 +68,8 @@ describe("assistant MCP endpoint", () => {
     // extension's among them, which may also reach outside.
     // Setting and stopping a watch changes only PPM's own record of what to report, like navigation.
     // So do the notebook's add and edit; deleting a line is the one change there that loses text.
-    const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab", "chat_watch", "chat_unwatch", "notebook_add", "notebook_edit"]);
+    // Adding a project asks first but takes nothing away, so it is not destructive either.
+    const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab", "chat_watch", "chat_unwatch", "notebook_add", "notebook_edit", "project_add"]);
     const writes = new Set(["db_query", "chat_answer_approval", "notebook_delete"]);
     const names = list.result.tools.map((t: { name: string }) => t.name);
     expect(names).toEqual(expect.arrayContaining(["chats_attention", "chat_answer_approval", "ppm_cli_reference"]));

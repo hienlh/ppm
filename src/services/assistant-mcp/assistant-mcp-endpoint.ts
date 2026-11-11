@@ -3,7 +3,7 @@ import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { resolveMigratedSession } from "../db.service.ts";
 import {
   CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CLAUDE_ASSISTANT_MCP_SERVER, DB_LIST_CONNECTIONS_TOOL,
-  DB_QUERY_TOOL, PROJECTS_LIST_TOOL, UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_GET_STATE_TOOL, UI_OPEN_TAB_TOOL,
+  DB_QUERY_TOOL, PROJECT_ADD_TOOL, PROJECTS_LIST_TOOL, UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_GET_STATE_TOOL, UI_OPEN_TAB_TOOL,
   UI_LIST_COMMANDS_TOOL, UI_READ_TAB_TOOL, UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
   CHATS_ATTENTION_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL, NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,
@@ -14,6 +14,9 @@ import { chatAnswerApproval, chatsAttentionTool, ppmCliReferenceTool } from "./a
 import { ASSISTANT_MCP_HOLD_OPEN_SECONDS, ASSISTANT_TOOL_DEFINITIONS } from "./assistant-mcp-tools.ts";
 import { assistantMcpTokens, type AssistantMcpTokenBinding } from "./assistant-mcp-tokens.ts";
 import { chatListSessions, chatReadMessages, chatSearch, projectsList } from "./assistant-read-tools.ts";
+import { projectAddTool } from "./assistant-project-add-tool.ts";
+import { PROJECTS_CHANGED_EVENT } from "../../shared/projects-events.ts";
+import { broadcastGlobalEvent } from "../../server/ws/global.ts";
 import { dbListConnections, dbQuery } from "./assistant-db-tools.ts";
 import { errorResult } from "./assistant-tool-output.ts";
 import { uiGetState } from "./assistant-ui-tools.ts";
@@ -69,6 +72,7 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, sig
   if (ownToolBringsOutsideText(name)) assistantTurnProvenance.markUntrusted(resolveMigratedSession(sessionId), "read");
   switch (name) {
     case PROJECTS_LIST_TOOL: return projectsList();
+    case PROJECT_ADD_TOOL: return projectAddTool(args, ask, { announce: () => broadcastGlobalEvent({ type: PROJECTS_CHANGED_EVENT }) });
     case CHAT_LIST_SESSIONS_TOOL: return chatListSessions(args);
     case CHAT_SEARCH_TOOL: return chatSearch(args);
     case CHAT_READ_MESSAGES_TOOL: return chatReadMessages(args);

@@ -344,6 +344,11 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
   file's rows from outside every registered project or from a credential store (below) — a file
   tab itself answers with its path, and reading the file is the provider's read tool's call.
   Every git, schedule and tunnel tool that changes something asks too, stage and fetch included.
+  `project_add` registers a folder as a project after a card naming it exactly
+  (`assistant-project-add-tool.ts`). A drive, the home folder or any folder holding it, and PPM's
+  own data folder are refused before anyone is asked, because a project is where the Assistant
+  reads without asking. The user adds those from the project switcher. Once one is added,
+  `projects:changed` on `/ws/global` makes every open PPM refetch its project list.
 
 Opening and messaging the user's chats is not on this server: an Assistant session also gets PPM's
 session tools (`ppm-sessions`, see [Running the user's chats](#running-the-users-chats)), under an
@@ -531,7 +536,7 @@ card. What stands in for the card:
   Assistant's turn (`user_ppm`, `user_telegram` or `ppm`), the user's first 200 characters that
   turn, and whether text the user did not write reached it (`untrusted`, with the reasons: watch
   `news`, a `forwarded` Telegram message, a `scheduled` script, a `read` — any tool call that can
-  bring outside text, decided by an allowlist in `assistant-outside-text.ts`: only `projects_list`,
+  bring outside text, decided by an allowlist in `assistant-outside-text.ts`: only `projects_list`, `project_add`,
   `ppm_cli_reference`, the notebook tools, `TodoWrite`, `ToolSearch` and `AskUserQuestion` leave
   it clean, so Read, Glob, Grep, a shell command, the git, schedule and tunnel reads or any other
   MCP server all set it — or a session-tool result quoting another chat's last answer or reply).
