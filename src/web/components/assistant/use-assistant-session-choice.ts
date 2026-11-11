@@ -5,15 +5,19 @@
  * provider and the server makes it the main one.
  *
  * Every switch is one metadata write and one remount of the chat, keyed on the tab's chat epoch.
+ * A branch taken from the main session (an edit, a fork, the version switcher) becomes the main one.
  */
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 import { currentTabMetadata, patchTabMetadata } from "@/lib/patch-tab-metadata";
+import { setMainSession } from "@/lib/assistant-settings-client";
 import { readChatPreparationSettings } from "@/lib/chat-preference-local-cache";
 import { getAssistantSettings } from "@/lib/assistant-settings-api";
 import { useAssistantMainSession } from "@/hooks/use-assistant-main-session";
 import { useAssistantProviders, useAssistantSessions } from "@/hooks/use-assistant-sessions";
 import { ASSISTANT_PERMISSION, nextAssistantChatEpoch } from "./open-assistant";
 import { ASSISTANT_PROJECT_NAME } from "../../../shared/assistant-project";
+import { branchTakesMain } from "@/lib/assistant-branch-main";
 
 const str = (v: unknown) => (typeof v === "string" && v ? v : null);
 
@@ -70,10 +74,26 @@ export function useAssistantSessionChoice(tabId: string, metadata: Record<string
     if (known || synced) patchTabMetadata(tabId, { providerId: known ?? "claude", ...ASSISTANT_PERMISSION });
   }, [sessionId, providerId, sessions, synced, tabId, main.sessionId, main.providerId]);
 
-  const oneOff = !!sessionId && !!main.sessionId && sessionId !== main.sessionId;
+  // Editing a message, forking, or stepping through versions while on the main session moves the
+  // main session along: the branch the user goes on with is the conversation, and Telegram follows
+  // it. Until the server's change arrives, the branch is not shown as a one-off.
+  const [promoting, setPromoting] = useState<string | null>(null);
+  const followBranch = useCallback((from: string | null, to: string) => {
+    if (!branchTakesMain(from, to, main.sessionId)) return;
+    setPromoting(to);
+    setMainSession(to).catch((e: unknown) => {
+      setPromoting((current) => (current === to ? null : current));
+      toast.error("This branch could not become the main Assistant session", { description: (e as Error)?.message });
+    });
+  }, [main.sessionId]);
+  useEffect(() => {
+    if (promoting && main.sessionId === promoting) setPromoting(null);
+  }, [promoting, main.sessionId]);
+
+  const oneOff = !!sessionId && !!main.sessionId && sessionId !== main.sessionId && sessionId !== promoting;
   const backToMain = useCallback(() => {
     if (main.sessionId) swap({ sessionId: main.sessionId, providerId: main.providerId ?? "claude" });
   }, [main.sessionId, main.providerId, swap]);
 
-  return { providers, error, sessionId, providerId, epoch, swap, oneOff, backToMain, mainSessionId: main.sessionId };
+  return { providers, error, sessionId, providerId, epoch, swap, oneOff, backToMain, followBranch, mainSessionId: main.sessionId };
 }

@@ -31,7 +31,7 @@ export function AssistantWindowBody({ tabId, metadata }: { tabId: string; metada
   const isMobile = useIsMobile();
   const inWindow = useInWindow(tabId);
   const choice = useAssistantSessionChoice(tabId, metadata);
-  const { providers, error, sessionId, providerId, epoch, swap, oneOff, backToMain } = choice;
+  const { providers, error, sessionId, providerId, epoch, swap, oneOff, backToMain, followBranch } = choice;
   const timeline = useAssistantStreamTimeline();
   const replying = useCardReplyStore((s) => s.target !== null);
   const closeReply = useCardReplyStore((s) => s.close);
@@ -40,9 +40,10 @@ export function AssistantWindowBody({ tabId, metadata }: { tabId: string; metada
   useEffect(() => { closeReply(); }, [sessionId, closeReply]);
 
   const handleClear = useCallback((clearedFrom?: string) => swap({ sessionId: undefined, clearedFrom }), [swap]);
-  const handleFork = useCallback((fork: ChatForkRequest) => swap({
-    sessionId: fork.sessionId, providerId: fork.providerId, pendingMessage: fork.pendingMessage,
-  }), [swap]);
+  const handleFork = useCallback((fork: ChatForkRequest) => {
+    swap({ sessionId: fork.sessionId, providerId: fork.providerId, pendingMessage: fork.pendingMessage });
+    followBranch(sessionId, fork.sessionId);
+  }, [swap, followBranch, sessionId]);
 
   let chat: React.ReactNode;
   if (providers && providers.length === 0) {
@@ -67,6 +68,7 @@ export function AssistantWindowBody({ tabId, metadata }: { tabId: string; metada
         metadata={metadata}
         onNewSession={handleClear}
         onFork={handleFork}
+        onBranchSwitch={followBranch}
         timeline={timeline}
         composerOverride={replying ? <CardReplyBar /> : undefined}
       />

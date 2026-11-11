@@ -75,6 +75,11 @@ interface ChatTabProps {
   onNewSession?: (clearedFrom?: string) => void;
   /** Replaces "open the fork in a new tab"; the host swaps the fork into itself. */
   onFork?: (fork: ChatForkRequest) => void;
+  /**
+   * Told when the tab moves to another version of its conversation — an edited message's fork,
+   * or the version switcher — after the tab already points at it.
+   */
+  onBranchSwitch?: (fromSessionId: string | null, toSessionId: string) => void;
   /** Lists only this design's sessions in the history picker. */
   historyFilter?: string;
   /** Items placed among the messages and rows hidden from view (the Assistant's cards and filter). */
@@ -104,7 +109,7 @@ export function ChatTab(props: ChatTabProps) {
   ) : <ChatTabContent {...props} />;
 }
 
-function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter, timeline, composerOverride }: ChatTabProps) {
+function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch, historyFilter, timeline, composerOverride }: ChatTabProps) {
   const minimalMode = useSettingsStore((s) => s.minimalMode);
   const preparation = useNewChatPreparation();
   const metadataRef = useRef(metadata);
@@ -982,6 +987,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter, 
         setStaleSwap(true);
         if (tabId) patchTabMetadata(tabId, { sessionId: forked.id });
         setSessionId(forked.id);
+        onBranchSwitch?.(sessionId, forked.id);
       } catch (e) {
         setEditForking(false);
         const msg = (e as Error)?.name === "TimeoutError"
@@ -996,7 +1002,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter, 
         restoreUnsentMessage(encodeMessageBlocks(fullContent, { replyTo: reply, turnRefs }), msg);
       }
     },
-    [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend, moveDraft, designSlug, restoreUnsentMessage],
+    [sessionId, projectName, providerId, permissionMode, tabId, queuePendingSend, moveDraft, designSlug, restoreUnsentMessage, onBranchSwitch],
   );
 
   /** Swap THIS tab to another version's session (version switcher prev/next) */
@@ -1012,8 +1018,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, historyFilter, 
       setStaleSwap(true);
       if (tabId) patchTabMetadata(tabId, { sessionId: targetSessionId });
       setSessionId(targetSessionId);
+      onBranchSwitch?.(sessionId, targetSessionId);
     },
-    [sessionId, tabId, abandonPendingSend],
+    [sessionId, tabId, abandonPendingSend, onBranchSwitch],
   );
 
   /** Build message content with file references and inline text snippets prepended */
