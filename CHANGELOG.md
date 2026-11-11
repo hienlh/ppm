@@ -6,6 +6,10 @@
 
 - **Antigravity chats.** Antigravity (Google's `agy` CLI) can be picked as a chat's provider: replies, thinking and tool calls stream as with Claude and Codex, with approvals, Stop, images, agy's own slash commands and skills, extra accounts with a sign-in of their own (Settings → Accounts), a quota panel, and PPM's tab and database tools. Each open chat runs one `agy acp` process. A slow command agy moves to the background no longer ends the chat halfway, and the quota is read from agy itself when the Antigravity app is closed. Needs agy installed and signed in.
 
+### Fixed
+
+- **Switching the public tunnel on or off restarted PPM's server and cut every running chat.** The switch is applied by reloading the tunnel, but that reload then went on to restart the server as well. It now only starts or stops the tunnel; `ppm restart` still restarts.
+
 ## [0.24.1] - 2026-11-12
 
 ### Fixed
