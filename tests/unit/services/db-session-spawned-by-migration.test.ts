@@ -69,7 +69,7 @@ describe("migration 60: who created a session", () => {
 
     runMigrations(db);
 
-    expect(CURRENT_SCHEMA_VERSION).toBe(60);
+    expect(CURRENT_SCHEMA_VERSION).toBe(61);
     expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: CURRENT_SCHEMA_VERSION });
     const columns = db.query("PRAGMA table_info(session_metadata)").all() as Column[];
     expect(columns.find((c) => c.name === "spawned_by")).toMatchObject({ notnull: 0, dflt_value: null });
@@ -97,7 +97,7 @@ describe("migration 60: who created a session", () => {
 
     runMigrations(db);
 
-    expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 60 });
+    expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 61 });
     expectScheduleSchema(db);
     expect(tableExists(db, "session_logs")).toBe(false);
     expect(db.query("SELECT spawned_by, spawn_depth FROM session_metadata").all()).toEqual([{ spawned_by: "parent-1", spawn_depth: 1 }]);
@@ -111,7 +111,7 @@ describe("migration 60: who created a session", () => {
 
     runMigrations(db);
 
-    expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 60 });
+    expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 61 });
     expectScheduleSchema(db);
     expect(tableExists(db, "session_logs")).toBe(false);
     expect((db.query("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_session_logs%'").all())).toEqual([]);

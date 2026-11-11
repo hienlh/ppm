@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 60;
+export const CURRENT_SCHEMA_VERSION = 61;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1396,6 +1396,25 @@ export function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN spawn_depth INTEGER NOT NULL DEFAULT 0"); } catch { /* column exists */ }
     try { database.exec("CREATE INDEX IF NOT EXISTS idx_session_metadata_spawned_by ON session_metadata(spawned_by)"); } catch { /* no table */ }
     database.exec(`PRAGMA user_version = 60;`);
+  }
+
+  if (current < 61) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS notification_feed (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind        TEXT NOT NULL,
+        project     TEXT NOT NULL DEFAULT '',
+        session_id  TEXT,
+        schedule_id TEXT,
+        title       TEXT NOT NULL,
+        body        TEXT NOT NULL DEFAULT '',
+        created_at  INTEGER NOT NULL,
+        read_at     INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS notification_feed_created ON notification_feed(created_at DESC);
+      CREATE INDEX IF NOT EXISTS notification_feed_session ON notification_feed(session_id) WHERE session_id IS NOT NULL;
+      PRAGMA user_version = 61;
+    `);
   }
 }
 
