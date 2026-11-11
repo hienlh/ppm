@@ -8,6 +8,10 @@
  * optionally a `-YYYYMMDD` snapshot). Anything else is shown as given.
  */
 const ANTIGRAVITY_MODEL_LABELS: Record<string, string> = {
+  "gemini-4-carbon": "Gemini 4 Carbon",
+  "gemini-4-carbon-medium": "Gemini 4 Carbon",
+  "gemini-4-carbon-high": "Gemini 4 Carbon",
+  "gemini-4-carbon-low": "Gemini 4 Carbon",
   "gemini-4-argon": "Gemini 4 Argon",
   "gemini-4-argon-medium": "Gemini 4 Argon",
   "gemini-4-argon-high": "Gemini 4 Argon",

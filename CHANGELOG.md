@@ -304,6 +304,10 @@
 - **The proxy auth key is shown redacted** unless you ask to reveal it.
 - **A secret answer to a question is no longer written in clear to the session trace.**
 
+### Changed
+
+- **New default models: Gemini 4 Carbon for Antigravity, GPT-6.1 Sol for Codex.** Both pickers already list every model the provider offers; this changes what a new install starts on, and Gemini 4 Carbon is in the list Antigravity falls back to when its app is closed.
+
 ## [0.24.1] - 2026-11-12
 
 ### Fixed

@@ -116,7 +116,7 @@ export function ModelThinkingSelector({
 
   const isAntigravity = providerId === "antigravity";
   const effectiveModel = isAntigravity
-    ? (!model || model === "pro" ? "gemini-4-argon" : model.replace(/-(low|medium|high)$/i, ""))
+    ? (!model || model === "pro" ? "gemini-4-carbon" : model.replace(/-(low|medium|high)$/i, ""))
     : model;
   const current = models.find((m) => m.value === effectiveModel);
   const modelDisplay = current
