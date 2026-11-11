@@ -1607,7 +1607,10 @@ not count as an edit.
   stops later tasks until `suite_check` passes.
 
 **UI: yes.** When the requirements say so, the AI calls `spec_open_design`, which creates a PPM
-Design and opens it, and draws the screens before design.md can be approved. The drawing is
+Design and opens it, and draws the screens before design.md can be approved. When the screens
+already exist in a design of the project, the AI passes its slug (`spec_open_design { design }`)
+and the spec is linked to that design instead; nothing is created or redrawn, and linking another
+design later changes the drawing's hash, so its approval opens again. The drawing is
 approved on its own and hashed like a document, so changing it reopens Design.
 
 **Running tasks.** The AI decides the order when it writes the plan: `_Deps:_` says what a task

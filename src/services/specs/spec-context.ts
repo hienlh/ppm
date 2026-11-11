@@ -58,7 +58,7 @@ function stepNow(v: SpecView, via: SpecContextOpts["via"]): string {
       default:
         if (v.current === "design" && v.needsDrawing && v.drawing !== "approved") {
           return v.drawing === "missing"
-            ? `Now: the requirements say UI: yes. Call ${call(via, "spec_open_design")} and draw the screens before design.md can be approved.`
+            ? `Now: the requirements say UI: yes. Call ${call(via, "spec_open_design")} and draw the screens before design.md can be approved (when a design of this project already has them, pass its slug as \`design\` and draw nothing).`
             : `Now: the drawing (designs/${v.designSlug}/) waits for the user's approval${v.drawing === "stale" ? " again — it changed after they approved it" : ""}. Write design.md meanwhile.`;
         }
         return note

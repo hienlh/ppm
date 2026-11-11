@@ -3,6 +3,7 @@ import { specMcpTokens, type SpecMcpBinding } from "./spec-mcp-tokens.ts";
 import { SPEC_TOOL_DEFINITIONS } from "./spec-mcp-tools.ts";
 import { formatSpecStatus } from "./spec-context.ts";
 import { createSpecDrawing } from "./spec-design-link.ts";
+import { getDesign } from "../design/design-store.service.ts";
 import { emitSpecEvent } from "./spec-events.ts";
 import { bindSpecSession, specForSession, SpecError, type SpecSessionBinding } from "./spec-store.ts";
 import {
@@ -92,6 +93,17 @@ export async function callSpecTool(deps: Pick<SpecToolDeps, "canonical" | "alias
       if (taskId) return textResult("A task chat does not open the drawing; the spec's own chat does.", true);
       let v = await getSpec(projectPath, slug);
       if (!v.needsDrawing) return textResult('The requirements do not say "UI: yes", so this spec has no drawing.', true);
+      if (args.design !== undefined) {
+        if (typeof args.design !== "string") return textResult("design must be the slug of a design in this project.", true);
+        try {
+          await getDesign(projectPath, args.design);
+        } catch {
+          return textResult(`There is no design "${args.design}" in this project (designs/<slug>/).`, true);
+        }
+        if (v.designSlug !== args.design) v = await setDesignSlug(projectPath, slug, args.design);
+        emitSpecEvent({ type: "spec:open-design", projectPath, slug, designSlug: args.design });
+        return textResult(`The spec's drawing is now the existing design designs/${args.design}/, open in PPM for the user. Do not redraw it; tell the user to approve the drawing in the Spec pane, and design.md waits for that.`);
+      }
       if (!v.designSlug) v = await setDesignSlug(projectPath, slug, await createSpecDrawing(projectPath, v.title));
       emitSpecEvent({ type: "spec:open-design", projectPath, slug, designSlug: v.designSlug! });
       return textResult(`The drawing is designs/${v.designSlug}/ and is open in PPM for the user. Draw the screens in designs/${v.designSlug}/index.html as one self-contained page (no network requests). When it is ready, tell the user: they approve the drawing in the Spec pane, and design.md waits for that.`);
