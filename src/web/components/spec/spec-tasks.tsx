@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import {
-  Check, CircleX, Clock, ExternalLink, FileText, FlaskConical, Loader2, Lock, Play, ShieldCheck, Square, X,
+  Check, CircleX, Clock, ExternalLink, FlaskConical, Loader2, Lock, Play, ShieldCheck, Square, X,
 } from "@/lib/icons";
 import { specsApi } from "@/lib/api-specs";
 import { openSpecChat } from "@/lib/open-spec-chat";
@@ -13,9 +13,8 @@ import type { SpecTaskView, SpecView } from "../../../shared/spec-view";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export function SpecTasks({ spec, projectName, onUpdate, onShowDoc }: {
-  spec: SpecView; projectName: string; onUpdate: (v: SpecView) => void; onShowDoc: () => void;
-}) {
+/** The act of a button: shows its spinner, applies the spec it answers, toasts what it says. */
+function useSpecAction(onUpdate: (v: SpecView) => void) {
   const [busy, setBusy] = useState<string | null>(null);
   const act = async (key: string, fn: () => Promise<{ spec?: SpecView; message?: string } | SpecView>) => {
     setBusy(key);
@@ -30,45 +29,52 @@ export function SpecTasks({ spec, projectName, onUpdate, onShowDoc }: {
       setBusy(null);
     }
   };
+  return { busy, act };
+}
 
+/** Run all / Stop and the running wave, on the pane's step row. */
+export function SpecRunControls({ spec, projectName, onUpdate }: { spec: SpecView; projectName: string; onUpdate: (v: SpecView) => void }) {
+  const { busy, act } = useSpecAction(onUpdate);
   const running = !!spec.run?.active && spec.runLive;
   const interrupted = !!spec.run?.active && !spec.runLive;
+  const allDone = spec.tasks.some((t) => !t.optional) && spec.tasks.every((t) => t.optional || t.done);
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 text-xs">
+      {running && spec.run && (
+        <span className="inline-flex h-7 items-center gap-1.5 rounded-md bg-accent-wash px-2.5 font-medium text-primary">
+          <Loader2 className="size-3.5 animate-spin" />Wave {spec.run.wave + 1} of {spec.waves.waves.length}
+        </span>
+      )}
+      {interrupted && <span className="whitespace-nowrap text-warning" title="A restart stopped the run; Stop clears it, then Run all starts it again">Interrupted</span>}
+      {running || interrupted ? (
+        <button type="button" disabled={busy !== null} onClick={() => void act("stop", () => specsApi.stop(projectName, spec.slug))} className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 font-medium text-text hover:bg-panel-2">
+          <Square className="size-3" />Stop
+        </button>
+      ) : !allDone && (
+        <button
+          type="button"
+          disabled={busy !== null}
+          onClick={() => void act("run", () => specsApi.runAll(projectName, spec.slug))}
+          className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2.5 font-medium text-primary-foreground disabled:opacity-50"
+          title="Each wave's tasks run side by side, each in a chat of its own (at most 3 at once)"
+        >
+          {busy === "run" ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}Run all
+        </button>
+      )}
+    </span>
+  );
+}
+
+export function SpecTasks({ spec, projectName, onUpdate }: {
+  spec: SpecView; projectName: string; onUpdate: (v: SpecView) => void;
+}) {
+  const { busy, act } = useSpecAction(onUpdate);
   const byId = new Map(spec.tasks.map((t) => [t.id, t]));
   const movedWhy = new Map(spec.waves.moved.map((m) => [m.id, m.reason]));
   const optional = spec.tasks.filter((t) => t.optional);
-  const required = spec.tasks.filter((t) => !t.optional);
-  const allDone = required.length > 0 && required.every((t) => t.done);
 
   return (
     <>
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-soft px-3 text-xs">
-        <button type="button" onClick={onShowDoc} className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-text-2 hover:bg-surface-hover">
-          <FileText className="size-3.5" />{spec.phases.tasks.file}
-        </button>
-        <span className="flex-1" />
-        {running && spec.run && (
-          <span className="inline-flex h-7 items-center gap-1.5 rounded-md bg-accent-wash px-2.5 font-medium text-primary">
-            <Loader2 className="size-3.5 animate-spin" />Wave {spec.run.wave + 1} of {spec.waves.waves.length}
-          </span>
-        )}
-        {interrupted && <span className="text-warning">The run was interrupted by a restart</span>}
-        {running || interrupted ? (
-          <button type="button" disabled={busy !== null} onClick={() => void act("stop", () => specsApi.stop(projectName, spec.slug))} className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 font-medium text-text hover:bg-panel-2">
-            <Square className="size-3" />Stop
-          </button>
-        ) : !allDone && (
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={() => void act("run", () => specsApi.runAll(projectName, spec.slug))}
-            className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2.5 font-medium text-primary-foreground disabled:opacity-50"
-            title="Each wave's tasks run side by side, each in a chat of its own (at most 3 at once)"
-          >
-            {busy === "run" ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}Run all
-          </button>
-        )}
-      </div>
-
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {spec.suite && spec.suite.newFailures.length > 0 && (
           <div className="mb-2 rounded-md border border-error/30 bg-error/10 p-2.5 text-xs">
@@ -91,7 +97,7 @@ export function SpecTasks({ spec, projectName, onUpdate, onShowDoc }: {
           const live = tasks.filter((t) => t.status === "running" || t.status === "red").length;
           return (
             <section key={w} className="mb-2">
-              <div className="flex items-center gap-2 px-1 py-1.5 text-[11px] font-medium uppercase tracking-wide text-text-3">
+              <div className="flex items-center gap-2 px-1 pt-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[.07em] text-text-3">
                 <span>Wave {w + 1}</span>
                 {doneAll ? <Pill tone="green"><Check className="size-3" />Done</Pill>
                   : live > 0 ? <Pill tone="accent"><Loader2 className="size-3 animate-spin" />{live} running</Pill>
@@ -107,7 +113,7 @@ export function SpecTasks({ spec, projectName, onUpdate, onShowDoc }: {
         })}
         {optional.length > 0 && (
           <section className="mb-2">
-            <div className="px-1 py-1.5 text-[11px] font-medium uppercase tracking-wide text-text-3">Optional · not in Run all</div>
+            <div className="px-1 pt-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[.07em] text-text-3">Optional · not in Run all</div>
             {optional.map((t) => (
               <TaskRow key={t.id} spec={spec} task={t} busy={busy} projectName={projectName}
                 onStart={() => void act(`start-${t.id}`, () => specsApi.runTask(projectName, spec.slug, t.id))}
@@ -144,11 +150,11 @@ function TaskRow({ spec, task: t, why, busy, projectName, onStart, onReset }: {
     t.files.length ? `Files: ${t.files.join(", ")}` : null,
   ].filter(Boolean).join(" · ");
   return (
-    <div className={`grid grid-cols-[20px_1fr_auto] items-start gap-2.5 rounded-lg px-2 py-2 ${active ? "bg-panel-2" : ""}`}>
+    <div className={`grid grid-cols-[20px_1fr_auto] items-start gap-2.5 rounded-[10px] border px-3 py-2.5 ${active || t.status === "failed" ? "border-border bg-panel-2" : "border-transparent"}`}>
       <StateDot task={t} thorough={spec.checks === "thorough"} />
       <div className="min-w-0">
         <div className={`text-[13px] ${t.done ? "text-text-2" : "font-medium text-text"}`}>{t.id}. {t.title}</div>
-        {refs && <div className="mt-0.5 truncate text-[11px] text-text-3" title={refs}>{refs}</div>}
+        {refs && <div className="mt-0.5 truncate font-mono text-[10.5px] text-text-3" title={refs}>{refs}</div>}
         {why && <div className="mt-0.5 text-[11px] text-info">Later wave: {why}</div>}
         {spec.checks === "thorough" && t.status === "red" && t.tests.length > 0 && (
           <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-text-2"><Lock className="size-3 text-text-3" /><span className="truncate font-mono">{t.tests.join(", ")}</span><span className="text-text-3">· locked since red</span></div>

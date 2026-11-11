@@ -16,7 +16,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { openDesignTab } from "@/lib/design/open-design-tab";
 import type { SpecView } from "../../../shared/spec-view";
 import type { SpecPhase } from "../../../shared/spec-types";
-import { SpecTasks } from "./spec-tasks";
+import { SpecRunControls, SpecTasks } from "./spec-tasks";
 
 const PHASE_LABEL: Record<SpecPhase, string> = { requirements: "Requirements", design: "Design", tasks: "Tasks" };
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -27,6 +27,21 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
  */
 export function withoutHtmlComments(markdown: string): string {
   return markdown.split(/(^```[\s\S]*?^```)/m).map((part, i) => (i % 2 ? part : part.replace(/<!--[\s\S]*?-->\n?/g, ""))).join("");
+}
+
+const EARS_KEYWORD = /(?<![\w*])(THE SYSTEM SHALL|WHEN|WHILE|WHERE|IF|THEN|SHALL)(?![\w*])/g;
+
+/**
+ * Bolds the EARS keywords of acceptance criteria (list items only, never in code), which the
+ * pane's `.spec-doc` styles colour, so "WHEN … THE SYSTEM SHALL …" reads at a glance.
+ */
+export function emphasizeEars(markdown: string): string {
+  let fenced = false;
+  return markdown.split("\n").map((line) => {
+    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; return line; }
+    if (fenced || !/^\s*(\d+[.)]|[-*+])\s/.test(line)) return line;
+    return line.split(/(`[^`]*`)/).map((part, i) => (i % 2 ? part : part.replace(EARS_KEYWORD, "**$1**"))).join("");
+  }).join("\n");
 }
 
 export function SpecPane({ projectName, slug, onClose, state }: {
@@ -59,14 +74,32 @@ export function SpecPane({ projectName, slug, onClose, state }: {
     );
   }
   const shown: SpecPhase | "tasks-list" = picked ?? (spec.current === "execution" ? "tasks-list" : spec.current);
+  const taskList = shown === "tasks-list" || (shown === "tasks" && spec.current === "execution");
+  const file = spec.phases[taskList ? "tasks" : (shown as SpecPhase)].file;
+  const openFile = () => useTabStore.getState().openTab({
+    type: "editor", title: file.split("/").pop() ?? file, projectId: projectName,
+    metadata: { projectName, filePath: file }, closable: true,
+  });
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-panel" data-spec-pane="">
+    <div className="@container/specpane flex h-full min-h-0 flex-col bg-panel" data-spec-pane="">
       <SpecHeader spec={spec} projectName={projectName} onUpdate={setSpec} onClose={onClose} />
-      <SpecStepper spec={spec} shown={shown} onPick={(p) => setPicked(p === picked ? null : p)} />
-      {shown === "tasks-list" || (shown === "tasks" && spec.current === "execution")
-        ? <SpecTasks spec={spec} projectName={projectName} onUpdate={setSpec} onShowDoc={() => setPicked("tasks")} />
-        : <SpecDocument spec={spec} phase={shown} projectName={projectName} onUpdate={setSpec} onBackToTasks={spec.current === "execution" ? () => setPicked(null) : undefined} />}
+      <SpecStepper
+        spec={spec}
+        shown={taskList ? "tasks" : shown}
+        onPick={(p) => setPicked(p === spec.current || (p === "tasks" && spec.current === "execution") ? null : p)}
+        right={(
+          <>
+            {taskList && <SpecRunControls spec={spec} projectName={projectName} onUpdate={setSpec} />}
+            <button type="button" onClick={openFile} title={`Open ${file} in the editor`} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-text-2 hover:bg-surface-hover">
+              <FileCode className="size-3.5" /><span className="@max-xl/specpane:hidden">{file.split("/").pop()}</span>
+            </button>
+          </>
+        )}
+      />
+      {taskList
+        ? <SpecTasks spec={spec} projectName={projectName} onUpdate={setSpec} />
+        : <SpecDocument spec={spec} phase={shown as SpecPhase} projectName={projectName} onUpdate={setSpec} />}
     </div>
   );
 }
@@ -86,13 +119,13 @@ function SpecHeader({ spec, projectName, onUpdate, onClose }: { spec: SpecView; 
   };
   const kind = spec.kind === "bugfix" ? "Bug fix" : spec.kind === "quick" ? "Quick spec" : "Feature";
   return (
-    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-soft px-3">
+    <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border-soft px-4">
       <ClipboardList className="size-4 shrink-0 text-primary" />
-      <span className="truncate text-sm font-semibold" title={spec.folder}>{spec.title}</span>
-      <span className="shrink-0 rounded-full bg-panel-2 px-2 py-0.5 text-[11px] text-text-3">{kind}</span>
+      <span className="truncate text-[15px] font-semibold" title={spec.folder}>{spec.title}</span>
+      <span className="shrink-0 rounded-full border border-border px-2 py-px text-[11px] text-text-3 @max-md/specpane:hidden">{kind}</span>
       <span className="min-w-0 flex-1" />
-      <span className="shrink-0 text-[11px] text-text-3 max-md:hidden">Task checks</span>
-      <div className="flex shrink-0 rounded-md border border-border p-0.5 text-xs" role="radiogroup" aria-label="Task checks">
+      <span className="shrink-0 text-[11px] text-text-3 @max-xl/specpane:hidden">Task checks</span>
+      <div className="flex shrink-0 rounded-[9px] border border-border-soft bg-panel-2 p-0.5 text-[11.5px]" role="radiogroup" aria-label="Task checks">
         {(["standard", "thorough"] as const).map((c) => (
           <button
             key={c}
@@ -102,7 +135,7 @@ function SpecHeader({ spec, projectName, onUpdate, onClose }: { spec: SpecView; 
             disabled={busy}
             onClick={() => void setChecks(c)}
             title={c === "thorough" ? "PPM runs the tests: each task must fail first, then pass. The AI cannot tick a task itself." : "The AI marks tasks done; PPM runs no tests."}
-            className={`inline-flex h-6 items-center gap-1 rounded px-2 ${spec.checks === c ? "bg-accent-wash text-primary" : "text-text-2 hover:bg-surface-hover"}`}
+            className={`inline-flex h-6 items-center gap-1 rounded-[7px] border px-2.5 ${spec.checks === c ? "border-border bg-panel text-text shadow-sm" : "border-transparent text-text-2 hover:text-text"}`}
           >
             {c === "thorough" && <FlaskConical className="size-3.5 text-success" />}
             {c === "standard" ? "Standard" : "Thorough"}
@@ -118,28 +151,30 @@ function SpecHeader({ spec, projectName, onUpdate, onClose }: { spec: SpecView; 
   );
 }
 
-function SpecStepper({ spec, shown, onPick }: { spec: SpecView; shown: string; onPick: (p: SpecPhase) => void }) {
+function SpecStepper({ spec, shown, onPick, right }: { spec: SpecView; shown: string; onPick: (p: SpecPhase) => void; right?: React.ReactNode }) {
   const done = spec.tasks.filter((t) => !t.optional && t.done).length;
   const total = spec.tasks.filter((t) => !t.optional).length;
   return (
-    <div className="flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b border-border-soft px-2">
+    <div className="flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b border-border-soft px-3 [scrollbar-width:none]">
       {spec.order.map((p, i) => {
         const ph = spec.phases[p];
         const approved = ph.status === "approved";
         const now = spec.current === p;
+        const on = shown === p;
         return (
           <span key={p} className="flex shrink-0 items-center">
             {i > 0 && <ChevronRight className="mx-0.5 size-3 text-text-3" />}
             <button
               type="button"
               onClick={() => onPick(p)}
-              className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs ${shown === p ? "bg-accent-wash text-primary" : now ? "text-text font-medium" : "text-text-2"} hover:bg-surface-hover`}
+              aria-current={on ? "step" : undefined}
+              className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs ${on ? "border-accent-wash-border bg-accent-wash font-medium text-text" : now ? "border-transparent font-medium text-text hover:bg-surface-hover" : "border-transparent text-text-2 hover:bg-surface-hover"}`}
               title={`${ph.file}: ${ph.submitted ? "waiting for your approval" : ph.status}`}
             >
               {approved
                 ? <CheckCircle2 className="size-4 text-success" />
-                : <span className={`flex size-4 items-center justify-center rounded-full text-[10px] ${now ? "bg-primary text-primary-foreground" : "bg-panel-2 text-text-3"}`}>{i + 1}</span>}
-              {PHASE_LABEL[p]}
+                : <span className={`flex size-4 items-center justify-center rounded-full border text-[10px] font-semibold ${on || now ? "border-primary bg-primary text-primary-foreground" : "border-border text-text-3"}`}>{i + 1}</span>}
+              <span className={on ? undefined : "@max-2xl/specpane:hidden"}>{PHASE_LABEL[p]}</span>
               {ph.status === "stale" && <span className="text-warning" title="Changed after it was approved">•</span>}
               {ph.submitted && <span className="size-1.5 rounded-full bg-warning" aria-label="waiting for you" />}
             </button>
@@ -147,23 +182,24 @@ function SpecStepper({ spec, shown, onPick }: { spec: SpecView; shown: string; o
         );
       })}
       {spec.needsDrawing && (
-        <span className={`ml-1 inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${spec.drawing === "approved" ? "bg-success/15 text-success" : "bg-info/15 text-info"}`} title="UI: yes — the design step includes a drawing">
-          <Palette className="size-3" />Drawing: {spec.drawing}
+        <span className={`ml-1 inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${spec.drawing === "approved" ? "bg-success/15 text-success" : "bg-info/15 text-info"}`} title={`Drawing: ${spec.drawing} (UI: yes — the design step includes a drawing)`}>
+          <Palette className="size-3" /><span className="@max-2xl/specpane:hidden">Drawing: {spec.drawing}</span>
         </span>
       )}
       <span className="min-w-2 flex-1" />
       {spec.current === "execution" && total > 0 && (
-        <span className="flex shrink-0 items-center gap-2 text-[11.5px] tabular-nums text-text-2">
-          {done} of {total} done
+        <span className="mr-1 flex shrink-0 items-center gap-2 text-[11.5px] tabular-nums text-text-2" title={`${done} of ${total} tasks done`}>
+          <span className="@max-xl/specpane:hidden">{done} of {total} done</span>
           <span className="h-1.5 w-16 overflow-hidden rounded-full bg-border"><span className="block h-full bg-success" style={{ width: `${Math.round((done / total) * 100)}%` }} /></span>
         </span>
       )}
+      {right}
     </div>
   );
 }
 
-function SpecDocument({ spec, phase, projectName, onUpdate, onBackToTasks }: {
-  spec: SpecView; phase: SpecPhase; projectName: string; onUpdate: (v: SpecView) => void; onBackToTasks?: () => void;
+function SpecDocument({ spec, phase, projectName, onUpdate }: {
+  spec: SpecView; phase: SpecPhase; projectName: string; onUpdate: (v: SpecView) => void;
 }) {
   const ph = spec.phases[phase];
   const [noteOpen, setNoteOpen] = useState(false);
@@ -172,10 +208,6 @@ function SpecDocument({ spec, phase, projectName, onUpdate, onBackToTasks }: {
   const errors = ph.issues.filter((i) => i.severity === "error");
   const warnings = ph.issues.filter((i) => i.severity === "warning");
   const canAct = ph.status === "draft" || ph.status === "stale";
-  const openFile = () => useTabStore.getState().openTab({
-    type: "editor", title: ph.file.split("/").pop() ?? ph.file, projectId: projectName,
-    metadata: { projectName, filePath: ph.file }, closable: true,
-  });
 
   const approve = async () => {
     setBusy(true);
@@ -206,14 +238,7 @@ function SpecDocument({ spec, phase, projectName, onUpdate, onBackToTasks }: {
 
   return (
     <>
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border-soft px-3 text-xs">
-        <button type="button" onClick={openFile} className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-text-2 hover:bg-surface-hover" title="Open in the editor">
-          <FileCode className="size-3.5" />{ph.file}
-        </button>
-        <span className="flex-1" />
-        {onBackToTasks && <button type="button" onClick={onBackToTasks} className="h-7 rounded-md px-2 text-primary hover:bg-surface-hover">Back to tasks</button>}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 @max-md/specpane:px-4">
         {(errors.length > 0 || warnings.length > 0) && (
           <div className="mb-3 space-y-1 rounded-md border border-border-soft bg-panel-2 p-2 text-xs">
             {errors.map((i, k) => <div key={`e${k}`} className="text-error">Line {i.line}: {i.message}</div>)}
@@ -222,7 +247,12 @@ function SpecDocument({ spec, phase, projectName, onUpdate, onBackToTasks }: {
         )}
         {ph.text === null
           ? <p className="text-sm text-text-subtle">Not written yet. The AI writes {ph.file} when it gets to this step.</p>
-          : <MarkdownRenderer content={withoutHtmlComments(ph.text)} projectName={projectName} rawHtml={false} />}
+          : <MarkdownRenderer
+              content={phase === "requirements" ? emphasizeEars(withoutHtmlComments(ph.text)) : withoutHtmlComments(ph.text)}
+              projectName={projectName}
+              rawHtml={false}
+              className="spec-doc"
+            />}
       </div>
       {noteOpen && (
         <div className="shrink-0 border-t border-border-soft p-3">

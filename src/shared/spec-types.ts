@@ -123,6 +123,8 @@ export interface SpecSummary {
   red: number;
   running: number;
   waitingForYou: boolean;
+  /** Every task in tasks.md order, for Chat History's progress bar and its task chats' marks. */
+  tasks: { id: string; status: TaskStatus; optional: boolean; sessionId: string | null }[];
   /** The chat that drives it, when it has one. */
   sessionId: string | null;
   updatedAt: string;
