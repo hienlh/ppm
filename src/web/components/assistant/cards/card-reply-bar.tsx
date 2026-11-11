@@ -1,6 +1,6 @@
 /**
  * The reply-to bar: while the user answers a card in their own words, it stands where the
- * Assistant's composer is and says where the words go ("Replying to: nxsys · Slack draft") and
+ * Assistant's composer is and says where the words go ("Replying to: api · Slack draft") and
  * that they go word for word. Sending posts them to the card's manager chat, not to the Assistant;
  * a card that stopped waiting or is a day old asks "send anyway?" first. Closed by its X, Esc, a
  * sent reply, a project switch, or the Assistant view going away; never stored, so a reload ends it.
