@@ -28,7 +28,7 @@ export function ShareReview({ info, code }: { info: DesignShareGuestInfo; code: 
   const [frame, setFrame] = useState<DeviceFrameId>(() => defaultFrameFor(info.kind));
   const [view, setView] = useState<PanelView>({ kind: "list" });
   const [panelOpen, setPanelOpen] = useState(() => !isMobile);
-  const canvas = useShareCanvas(code, info.slug, file);
+  const canvas = useShareCanvas(code, info.slug, file, setFile);
 
   const threads = useMemo(() => groupThreads(session.threads), [session.threads]);
   const numbers = useMemo(() => pinNumbers(threads.open), [threads.open]);
@@ -53,10 +53,11 @@ export function ShareReview({ info, code }: { info: DesignShareGuestInfo; code: 
 
   const openThread = useCallback((id: string) => {
     const thread = session.threads.find((t) => t.id === id);
-    if (thread && thread.file !== file && info.variants.some((v) => v.file === thread.file)) setFile(thread.file);
+    // Any page of the design: links in it reach pages that are no variant, and so do comments.
+    if (thread && thread.file !== file && /\.html?$/i.test(thread.file)) setFile(thread.file);
     setView({ kind: "thread", id });
     setPanelOpen(true);
-  }, [session.threads, file, info.variants]);
+  }, [session.threads, file]);
 
   const cancelCompose = useCallback(() => { clearPick(); setView({ kind: "list" }); }, [clearPick]);
   const compose = useCallback((el: PickedElement, body: string, name: string) =>

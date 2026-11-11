@@ -29,6 +29,8 @@ export function VariantPicker({ variants, file, onChange, compact }: {
       <span className={compact ? undefined : "sr-only"}>Variants</span>
       <select value={file} onChange={(e) => onChange(e.target.value)} aria-label="Variant"
         className={cx("bg-transparent text-sm text-text", compact && "absolute inset-0 opacity-0")}>
+        {/* A link in the design opened a page that is no variant: name it, so choosing any variant is a change. */}
+        {!variants.some((v) => v.file === file) && <option value={file} hidden>Linked page</option>}
         {variants.map((v, i) => <option key={v.file} value={v.file}>{variantLabel(v, i)}</option>)}
       </select>
     </label>
