@@ -127,11 +127,15 @@ describe("Standard", () => {
     await svc.approvePhase(project, "sum", "design");
     writeFileSync(specFile("sum", "tasks.md"), TASKS);
     await svc.approvePhase(project, "sum", "tasks");
-    expect((await svc.listSpecs(project))[0]!.tasks).toEqual([{ id: "1", status: "todo", optional: false, sessionId: null }]);
+    expect((await svc.listSpecs(project))[0]!.tasks).toEqual([{ id: "1", title: "Sum function", status: "todo", optional: false, sessionId: null }]);
     await svc.startTask(project, "sum", "1", { sessionId: "task-chat-1" });
-    expect((await svc.listSpecs(project))[0]!.tasks).toEqual([{ id: "1", status: "running", optional: false, sessionId: "task-chat-1" }]);
+    expect((await svc.listSpecs(project))[0]!.tasks).toEqual([{ id: "1", title: "Sum function", status: "running", optional: false, sessionId: "task-chat-1" }]);
     await svc.taskDone(project, "sum", "1", "added sum");
     expect((await svc.listSpecs(project))[0]!.tasks[0]!.status).toBe("done");
+    // A provider that restarts its chat (Antigravity) moves it to a new id: History lists that one.
+    const { setSessionMigratedTo } = await import("../../../src/services/db.service.ts");
+    setSessionMigratedTo("task-chat-1", "task-chat-1b");
+    expect((await svc.listSpecs(project))[0]!.tasks[0]!.sessionId).toBe("task-chat-1b");
   });
 });
 
