@@ -782,6 +782,19 @@ message being written.
   answers with each name's class and only the drawings those classes need, the light-theme ones
   rewritten to `:root[data-ppm-theme="light"]`. Its 5 s poll also reads `for-each-ref` and
   `stash list`, so a ref moved outside PPM triggers a full re-read.
+- **Change bars in the editor**: as in VS Code, the code editor marks lines that differ from the
+  file in the **index** (not HEAD): green bar added, blue bar modified, red wedge where lines were
+  deleted, the same marks in the scrollbar. Staging or committing a change clears its bar; an
+  untracked, binary, conflicted or > 5 MB file gets none. `GET /git/index-base?path=&known=`
+  (`src/services/git-index-base/`, shape in `src/shared/git-index-base.ts`) answers the index blob
+  through `git cat-file --filters`, so autocrlf and LFS files are compared as checked out; with
+  `known` still the index's blob it answers `same` after one `git ls-files`. The diff runs in the
+  browser against the live buffer (`src/web/lib/gutter-changes.ts`: common head and tail skipped,
+  then `diffArrays` with a 50 ms budget, past which the middle is one modified range), redrawn
+  150 ms after typing stops. `src/web/hooks/use-gutter-changes.ts` asks for the base on open, on
+  `git:changed`, on focus, on coming back into view and every 5 s while the editor is on screen —
+  which is what catches a `git add` or commit made outside PPM. An editor parked by `tab-pool`
+  asks for nothing.
 
 ---
 

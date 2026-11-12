@@ -128,6 +128,20 @@ describe("a container workspace", () => {
     expect(first.summary).toBe("backend: first commit");
   });
 
+  it("reads a file's index version, for the editor's change bars, from the chosen repository", async () => {
+    writeFileSync(join(backend, "main.go"), "one\nTWO\nthree\n");
+    const { status, body } = await get(`/git/index-base?repo=${encodeURIComponent(backend)}&path=main.go`);
+    expect(status).toBe(200);
+    expect(body.data).toMatchObject({ state: "ok", content: "one\ntwo\nthree\n" });
+
+    const again = await get(`/git/index-base?repo=${encodeURIComponent(backend)}&path=main.go&known=${body.data.oid}`);
+    expect(again.body.data).toEqual({ state: "same", oid: body.data.oid });
+
+    const bad = await get(`/git/index-base?repo=${encodeURIComponent(backend)}&path=${encodeURIComponent("../frontend/app.ts")}`);
+    expect(bad.status).toBe(400);
+    writeFileSync(join(backend, "main.go"), "one\ntwo\nthree\n");
+  });
+
   it("refuses a repository outside the project", async () => {
     // The parameter names a directory to run git in, so it is the one thing
     // here that has to be validated rather than trusted.
