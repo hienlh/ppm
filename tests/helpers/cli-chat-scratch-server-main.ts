@@ -6,7 +6,8 @@
  * runs until it is stopped — or, for a session marked stuck, ignores the stop.
  *
  * Test-only routes under `/api/__scratch/`: `config`, `events` (as the base server), and
- * `chat/start`, `chat/stuck`, `chat/state/:id`, `chat/rows/:id`, `trace/:id`.
+ * `chat/start`, `chat/stuck`, `chat/state/:id`, `chat/rows/:id`, `trace/:id`, and `review/seed`
+ * (two turns of file changes and the history naming their calls, `cli-chat-review-seed.ts`).
  */
 import { Hono } from "hono";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -29,9 +30,15 @@ configService.save();
 
 const { MockProvider } = await import("../../src/providers/mock-provider.ts");
 type ChatEvent = import("../../src/providers/provider.interface.ts").ChatEvent;
+type ChatMessage = import("../../src/types/chat.ts").ChatMessage;
 
 class ScratchClaude extends MockProvider {
   readonly stuck = new Set<string>();
+  /** A history a test wrote for a session, served in place of the mock's own. */
+  readonly scripted = new Map<string, ChatMessage[]>();
+  override async getMessages(sessionId: string): Promise<ChatMessage[]> {
+    return this.scripted.get(sessionId) ?? super.getMessages(sessionId);
+  }
   private readonly releases = new Map<string, () => void>();
   constructor() {
     super();
@@ -89,6 +96,7 @@ const { chatControl } = await import("../../src/services/chat-control/chat-contr
 const { traceWriter } = await import("../../src/services/session-trace/trace-writer.ts");
 const { readSessionTimeline } = await import("../../src/services/session-trace/session-trace-store.ts");
 const { getSessionTags } = await import("../../src/services/tag.service.ts");
+const { seedReview } = await import("./cli-chat-review-seed.ts");
 const { ok, err } = await import("../../src/types/api.ts");
 
 const events: unknown[] = [];
@@ -127,6 +135,12 @@ app.get("/api/__scratch/chat/rows/:id", (c) => {
 app.get("/api/__scratch/trace/:id", (c) => {
   traceWriter.flush();
   return c.json(ok(readSessionTimeline(c.req.param("id")).map((e) => ({ type: e.type, payload: e.payload }))));
+});
+app.post("/api/__scratch/review/seed", async (c) => {
+  const { sessionId, dir } = await c.req.json<{ sessionId: string; dir: string }>();
+  const seeded = await seedReview(sessionId, dir);
+  claude.scripted.set(sessionId, seeded.messages);
+  return c.json(ok(seeded.files));
 });
 
 type SocketData = ReturnType<typeof chatSocketData>;

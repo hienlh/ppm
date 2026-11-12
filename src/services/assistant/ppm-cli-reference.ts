@@ -57,7 +57,7 @@ export const TOOLS_INSTEAD_OF_CLI: readonly { area: string; tools: readonly stri
     tools: ["projects_list", "project_add", "project_update", "project_remove"],
   },
   {
-    area: "Chats (instead of `ppm chat` stop, rename, pin, tag, read, delete)",
+    area: "Chats (instead of `ppm chat` stop, rename, pin, tag, read, delete, changes, revert-turn)",
     tools: ["chat_stop", "chat_organize", "chat_delete", "chat_changes", "chat_changes_answer"],
   },
 ];
@@ -104,7 +104,9 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "- schedule run-now: prefer the schedule_run_now tool",
     "- projects add/rename/move/remove: prefer project_add, project_update and project_remove",
     "- chat stop/rename/pin/tag/read/delete: prefer chat_stop, chat_organize and chat_delete",
-    "- chat stop sends the stop PPM's Stop button sends; chat delete stops a running turn first and deletes nothing if it does not stop",    "",
+    "- chat stop sends the stop PPM's Stop button sends; chat delete stops a running turn first and deletes nothing if it does not stop",
+    "- chat changes/turns/revert-turn: prefer chat_changes and chat_changes_answer; revert-turn prints its preview and writes only with --yes",
+    "",
     "## Commands that write PPM's data directly",
     "The running server keeps much of this in memory: a change may not show until it restarts, and the",
     "server may write its own copy back over it. Prefer the Assistant's tools or the PPM screen where one exists.",
@@ -387,6 +389,45 @@ ppm chat cleanup
   --older-than <days> — Age in days (at least 1) (required)
   -p, --project <name> — Project name or path (default: the current folder's project)
   --provider <id> — Only this provider's chats (default: claude)
+
+ppm chat changes list <session-id>
+  List the files a chat changed: lines, open blocks, reviewed
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+  --json — Print the list as JSON
+
+ppm chat changes diff <session-id> <path>
+  Show one changed file's blocks (with their keys) as a diff
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat changes keep <session-id> [paths...]
+  Keep a chat's changes (every unreviewed file when no path is given)
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+  --block <keys...> — Only these blocks of the one file named (keys from \`ppm chat changes diff\`)
+
+ppm chat changes reopen <session-id> [paths...]
+  Open kept changes for review again (every kept or reviewed file when no path is given)
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+  --block <keys...> — Only these blocks of the one file named (keys from \`ppm chat changes diff\`)
+
+ppm chat changes revert <session-id> <paths...>
+  Put files back as they were before the chat changed them; undo is offered afterwards
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+  --block <keys...> — Only these blocks of the one file named (keys from \`ppm chat changes diff\`)
+
+ppm chat changes undo <session-id> <undo-id>
+  Undo an earlier keep, reopen or revert by the id it printed
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat turns <session-id>
+  List a chat's newest turns with their numbers and how many calls each made
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+  --json — Print the turns as JSON
+  --limit <n> — How many of the newest turns (at most 50) [default: 20]
+
+ppm chat revert-turn <session-id> <n>
+  Put back what one turn changed: prints the preview, and writes only with --yes
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+  --yes — Write the changes the preview shows
 \`\`\`
 ## ppm tags — Manage a project's chat tags
 \`\`\`

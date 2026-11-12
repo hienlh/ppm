@@ -2,6 +2,8 @@ import { Command } from "commander";
 import * as readline from "node:readline";
 import type { ChatEvent } from "../../types/chat.ts";
 import { registerChatManageCommands } from "./chat-cmd-manage.ts";
+import { registerChatReviewCommands } from "./chat-cmd-review.ts";
+import { registerChatTurnCommands } from "./chat-cmd-turns.ts";
 
 const C = {
   reset: "\x1b[0m",
@@ -229,4 +231,6 @@ export function registerChatCommands(program: Command): void {
     });
 
   registerChatManageCommands(chat);
+  registerChatReviewCommands(chat);
+  registerChatTurnCommands(chat);
 }
