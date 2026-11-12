@@ -19,7 +19,15 @@ const MAX_SCAN_DEPTH = 3;
  */
 function assertNotReservedName(name: string): void {
   if (isAssistantProject(name)) throw new Error(`"${ASSISTANT_PROJECT_NAME}" is reserved for the PPM Assistant`);
+  if (ROUTE_RESERVED_PROJECT_NAMES.includes(name)) throw new Error(`"${name}" is reserved by PPM's project routes; choose another name`);
 }
+
+/**
+ * Names the project routes already use for something else: `PATCH /api/projects/reorder` is
+ * matched before `PATCH /api/projects/:name`, so a project by that name could never be renamed or
+ * moved.
+ */
+export const ROUTE_RESERVED_PROJECT_NAMES: readonly string[] = ["reorder"];
 
 class ProjectService {
   /** List all registered projects with optional git info */

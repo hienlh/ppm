@@ -11,8 +11,12 @@ import { writeAvatar, deleteAvatar, avatarReadPath, isAvatarFilename } from "../
 import { ok, err } from "../../types/api.ts";
 import type { ProjectConfig } from "../../types/config.ts";
 import type { ProjectSettings } from "../../types/project.ts";
+import { announceProjectChanges } from "./projects-broadcast.ts";
 
 export const projectRoutes = new Hono();
+
+// Before every route: a handler that answers does not hand on to middleware registered after it.
+projectRoutes.use("*", announceProjectChanges);
 
 /** GET /api/projects — list all registered projects */
 projectRoutes.get("/", (c) => {
