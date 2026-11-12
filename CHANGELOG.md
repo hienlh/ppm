@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.24.1] - 2026-11-12
+
+### Fixed
+
+- **An HTML page that saves settings in `localStorage` no longer opens blank in Preview.** The preview now gives it a storage that lasts until the page is reloaded.
+
 ## [0.24.0] - 2026-11-10
 
 ### Added
