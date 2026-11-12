@@ -14,6 +14,8 @@
 
 - **Approving a spec document again sent nothing to its chat.** After the AI changed requirements or design and you approved it again, the chat got no message whenever the later documents were still approved, only a notification. Every approval now tells the chat what you approved, which later documents are still approved and may need updating, and what comes next.
 
+- **The Spec pane offered Approve and Request changes on a document that could not be approved yet.** A design whose UI drawing was not drawn, or a draft the AI was still writing, showed both buttons, and Approve then failed. They now appear once the AI has submitted the document (or it changed after you approved it) and nothing else holds it back; until then the status line says what it waits for.
+
 ## [0.26.12] - 2026-11-18
 
 ### Added

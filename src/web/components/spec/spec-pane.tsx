@@ -207,7 +207,11 @@ function SpecDocument({ spec, phase, projectName, onUpdate }: {
   const [busy, setBusy] = useState(false);
   const errors = ph.issues.filter((i) => i.severity === "error");
   const warnings = ph.issues.filter((i) => i.severity === "warning");
-  const canAct = ph.status === "draft" || ph.status === "stale";
+  // Approve and Request changes appear once there is something to review: a document the AI
+  // submitted (or one changed after its approval) that nothing else holds back — no drawing still
+  // to approve, no missing test command. Before that the status line says what it waits for.
+  const canAct = (ph.submitted || ph.status === "stale") && !ph.approveBlocked;
+  const statusText = specDocumentStatus(ph);
 
   const approve = async () => {
     setBusy(true);
@@ -272,8 +276,8 @@ function SpecDocument({ spec, phase, projectName, onUpdate }: {
         </div>
       )}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border-soft px-3 py-2.5">
-        <span className="min-w-0 flex-1 truncate text-[11.5px] text-text-3">
-          {ph.status === "approved" ? "Approved" : ph.status === "stale" ? "Changed after you approved it" : ph.submitted ? "Submitted by the AI · waiting for you" : ph.status === "invalid" ? "Has problems the AI must fix" : ph.status === "missing" ? "Not written yet" : "Draft · not submitted yet"}
+        <span className="min-w-0 flex-1 truncate text-[11.5px] text-text-3" title={statusText}>
+          {statusText}
         </span>
         {spec.needsDrawing && spec.designSlug && (phase === "design" || phase === "requirements") && (
           <button type="button" onClick={() => openDesignTab({ projectName, slug: spec.designSlug! })} className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium text-primary hover:bg-panel-2">
@@ -296,6 +300,15 @@ function SpecDocument({ spec, phase, projectName, onUpdate }: {
       </div>
     </>
   );
+}
+
+/** The Spec pane footer's status line: where the document stands, and what an approval waits for. */
+export function specDocumentStatus(ph: SpecView["phases"][SpecPhase]): string {
+  if (ph.status === "approved") return "Approved";
+  if (ph.status === "missing") return "Not written yet";
+  if (ph.status === "invalid") return "Has problems the AI must fix";
+  const base = ph.status === "stale" ? "Changed after you approved it" : ph.submitted ? "Submitted by the AI · waiting for you" : "Draft · the AI has not submitted it yet";
+  return ph.approveBlocked ? `${base} · ${ph.approveBlocked}` : base;
 }
 
 function ApproveDrawingButton({ spec, projectName, onUpdate }: { spec: SpecView; projectName: string; onUpdate: (v: SpecView) => void }) {
