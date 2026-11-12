@@ -12,6 +12,7 @@ import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { prepareMonacoTheme } from "@/theme/adapters/monaco-adapter";
 import { useInlineBlame } from "@/hooks/use-inline-blame";
+import { useGutterChanges } from "@/hooks/use-gutter-changes";
 import { applyBuiltinTypeScript } from "@/lib/lsp/monaco-builtin-typescript";
 import { useIsMobile, isMobileDevice } from "@/hooks/use-is-mobile";
 import { useIsTouchOnly } from "@/hooks/use-is-touch-only";
@@ -488,6 +489,17 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     projectName,
     filePath: canBlame ? filePath : undefined,
     enabled: inlineBlame && canBlame,
+  });
+
+  // Change bars in the gutter against the file in git's index, as VS Code
+  // draws them. Phones too: it is one cheap git call per file open, and a
+  // `git ls-files` every few seconds only while the editor is on screen.
+  useGutterChanges({
+    editor: mounted?.editor ?? null,
+    monaco: mounted?.monaco ?? null,
+    projectName,
+    filePath,
+    enabled: !minimalMode && !isUntitled && !isExternalFile && inlineContent == null && !!filePath && !!projectName,
   });
 
   // Real language intelligence, from a real language server on the host.

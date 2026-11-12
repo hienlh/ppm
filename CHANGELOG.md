@@ -5,6 +5,7 @@
 ### Added
 
 - **Antigravity chats.** Antigravity (Google's `agy` CLI) can be picked as a chat's provider: replies, thinking and tool calls stream as with Claude and Codex, with approvals, Stop, images, agy's own slash commands and skills, extra accounts with a sign-in of their own (Settings → Accounts), a quota panel, and PPM's tab and database tools. Each open chat runs one `agy acp` process. A slow command agy moves to the background no longer ends the chat halfway, and the quota is read from agy itself when the Antigravity app is closed. Needs agy installed and signed in.
+- **The editor marks changed lines in the gutter, as VS Code does.** Opening a file used to show nothing about what had changed in it. Lines that differ from the version in git's index now get a bar beside the line numbers: green for added, blue for modified, and a red wedge where lines were deleted, with the same marks in the scrollbar. The bars follow your typing and update by themselves when changes are staged, committed or discarded, also from a terminal or by the AI. Like VS Code, staged changes have no bar, and untracked files have none.
 
 ## [0.24.1] - 2026-11-12
 

@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { resolve } from "node:path";
 import { gitService, remoteForLog } from "../../services/git.service.ts";
-import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
+import { assertSafeFilePath, gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
+import { gitIndexBaseService } from "../../services/git-index-base/git-index-base.service.ts";
 import { assertSafeRev, gitBlameService } from "../../services/git-blame/git-blame.service.ts";
 import { branchDiff } from "../../services/git-branch-diff/branch-diff.service.ts";
 import { assertRef, assertCommitHash } from "../../services/git-branch-diff/branch-diff-parse.ts";
@@ -487,6 +488,27 @@ gitRoutes.get("/blame", async (c) => {
     const result = await gitBlameService.blameFile(projectPath, filePath, rev);
     // Untracked, or absent at that revision — not an error the UI should show.
     return c.json(ok(result ?? { lines: [], commits: {} }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * GET /git/index-base?path=&known= — the file as the index holds it, for the
+ * editor's change bars. `known` is the blob id the browser already has; while
+ * the index still names it the answer is `same`, without the content.
+ */
+gitRoutes.get("/index-base", async (c) => {
+  const filePath = c.req.query("path");
+  if (!filePath) return c.json(err("Missing: path"), 400);
+  try {
+    assertSafeFilePath(filePath);
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+  try {
+    const known = c.req.query("known") || undefined;
+    return c.json(ok(await gitIndexBaseService.read(c.get("projectPath"), filePath, known)));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
