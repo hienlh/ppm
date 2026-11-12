@@ -193,7 +193,10 @@ log from the base the blocks were cut against, the way `git blame` walks commits
 listing gives each block the `calls` that put its lines in or took them out. A change between
 one call's "after" and the next call's "before" — the user's own edit, a formatter on save —
 names no call. Replays are cached per file and base, so asking again costs only what the log
-gained since. The browser turns calls into turns (`src/web/lib/session-turns.ts`): a turn is a
+gained since. The browser turns calls into turns (`src/shared/session-turns.ts`, re-exported as
+`src/web/lib/session-turns.ts`; the server runs the same grouping for
+`GET …/file-changes/turns`, which the Assistant's review tools and `ppm chat revert-turn` name a
+turn by — the newest 20 only): a turn is a
 user message with the tool calls that answered it, sub-agent steps included, numbered from the
 last compaction ("Earlier turn" before it). The chat publishes its turns to
 `session-turns-store.ts` as it renders them; a Review tab with no chat open reads the transcript

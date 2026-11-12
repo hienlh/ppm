@@ -650,7 +650,7 @@ writes the database directly, so an open PPM never heard of the change.
 | Schedules | `schedules_list`, `schedule_get` | `schedule_save`, `schedule_delete`, `schedule_run_now` |
 | Tunnels | `tunnels_status` | `port_forward_start`, `port_forward_stop`, `public_link_set` |
 | Projects | (`projects_list`) | `project_update`, `project_remove` |
-| Chats | (`chat_list_sessions`, `chats_attention`) | `chat_stop`, `chat_delete`; `chat_organize` (see below) |
+| Chats | (`chat_list_sessions`, `chats_attention`), `chat_changes` | `chat_stop`, `chat_delete`; `chat_organize`, `chat_changes_answer` (see below) |
 
 The project family reaches only `GET /api/projects`, `PATCH /api/projects/:name`, its `/color` and
 `DELETE /api/projects/:name`; the internal app gates the rest of that router (clone, image upload,
@@ -658,7 +658,7 @@ settings, `reorder`), and the name `reorder` is reserved because its route is ma
 
 The chat family (`assistant-chat-*.ts`) reaches one chat session (`PATCH`, and `DELETE` with
 `stopRunning` and `providerId`), its `pin`, `tag`, `read` and `unread` marks, and the project's tag
-list. The internal app's project gate (`isProjectFamilyPath`) lets exactly those through beside
+list, plus its file-changes review (below). The internal app's project gate (`isProjectFamilyPath`) lets exactly those through beside
 `git/`: never the session list, a transcript, an upload or a draft. A chat must be proven to belong
 to the named project (`resolveAssistantSessionTarget`), and Assistant chats are never a target.
 - `chat_stop` asks, then stops through `chatControl().cancelTurn(…, "assistant")` — only if the
@@ -675,6 +675,18 @@ to the named project (`resolveAssistantSessionTarget`), and Assistant chats are 
   call. It is refused in a turn PPM started on its own, marking a chat read is refused while that
   chat shows a card, and a manager chat's title is left to the user. These refusals are advisory
   guards; the card and the routes are the controls.
+- `chat_changes` reads a chat's review as its Review tab does (`assistant-chat-review-*.ts`): the
+  turns route (`GET …/file-changes/turns`, the newest 20, with the paths the chat's calls name),
+  then the list with those paths; with `path`, one listed file's blocks and a diff of at most 400
+  lines. Its answer is outside text, so it marks the turn.
+- `chat_changes_answer` sends every answer at the versions it just read; the route answers a file
+  moved since as `stale`. `keep` follows the `chat_organize` rule (no card only in a clean turn, one
+  batched card otherwise); `reopen` needs no card; `revert`, `revert_turn` and `undo` always ask.
+  `revert_turn` previews (`revert-turn` without `apply`), shows that preview, and applies it at the
+  preview's versions, so a file touched in between makes the route write nothing. `undo`'s card names
+  the files from the answer's journal (`session-undo-record.ts`). Every action is refused in a turn
+  PPM started on its own. The project gate lets through `file-changes` and its `answer`, `undo`,
+  `revert-turn`, `diff` and `turns` only — never `reviewed` or `count`.
 
 Stage, unstage, fetch and pausing a schedule ask too: the rule is that every change of state, and
 everything that reaches the network, asks.

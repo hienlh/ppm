@@ -145,6 +145,15 @@ ppm chat stop <session-id>          # the same stop as the Stop button
 ppm chat delete <session-id>        # stops a running turn first; deletes nothing if it will not stop
 ppm chat cleanup --older-than 30 -p app   # keeps pinned, manager, branched and running chats
 
+# Reviewing the files a chat changed (the Review tab's answers)
+ppm chat changes list <session-id>          # lines, open blocks, reviewed
+ppm chat changes diff <session-id> src/a.ts # the blocks, with the keys --block takes
+ppm chat changes keep <session-id> [paths...] [--block <key>...]
+ppm chat changes revert <session-id> src/a.ts   # prints the undo command
+ppm chat changes undo <session-id> <undo-id>
+ppm chat turns <session-id>                 # the newest 20 turns, numbered as the chat numbers them
+ppm chat revert-turn <session-id> 3         # preview only; add --yes to write it
+
 # AI provider / model
 ppm config set ai.default_provider claude       # claude | codex | cursor
 # A provider's own settings (model, API key, command) are changed in Settings → AI Provider
