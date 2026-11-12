@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { emphasizeEars, withoutHtmlComments } from "../../../src/web/components/spec/spec-pane.tsx";
+import { emphasizeEars, specDocumentStatus, withoutHtmlComments } from "../../../src/web/components/spec/spec-pane.tsx";
 
 describe("withoutHtmlComments", () => {
   it("drops the templates' notes but keeps code blocks as written", () => {
@@ -28,5 +28,17 @@ describe("emphasizeEars", () => {
       "1. WHEN inside a fence",
       "```",
     ]);
+  });
+});
+
+describe("specDocumentStatus", () => {
+  const ph = (over: Partial<Parameters<typeof specDocumentStatus>[0]>) =>
+    ({ status: "draft", file: "specs/x/design.md", issues: [], text: "", submitted: false, approveBlocked: null, ...over }) as Parameters<typeof specDocumentStatus>[0];
+
+  it("says what an approval still waits for", () => {
+    expect(specDocumentStatus(ph({ approveBlocked: "Approve the UI drawing first (UI: yes)." })))
+      .toBe("Draft · the AI has not submitted it yet · Approve the UI drawing first (UI: yes).");
+    expect(specDocumentStatus(ph({ submitted: true }))).toBe("Submitted by the AI · waiting for you");
+    expect(specDocumentStatus(ph({ status: "approved" }))).toBe("Approved");
   });
 });
