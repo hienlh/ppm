@@ -10,6 +10,7 @@
 ### Fixed
 
 - **A spec could not use screens that were already drawn.** When the requirements said the feature has a UI, the AI always created a new, empty design for the spec, even when the screens were already in another design of the project, so it either drew them again or left a design that only pointed elsewhere. The AI can now link the spec to the existing design, and that design is what you approve.
+- **Approving a spec document again sent nothing to its chat.** After the AI changed requirements or design and you approved it again, the chat got no message whenever the later documents were still approved, only a notification. Every approval now tells the chat what you approved, which later documents are still approved and may need updating, and what comes next.
 
 ## [0.24.1] - 2026-11-12
 
