@@ -3,7 +3,6 @@ import { MockProvider } from "./mock-provider.ts";
 import { ClaudeAgentSdkProvider } from "./claude-agent-sdk.ts";
 import { configService } from "../services/config.service.ts";
 import { nextProbeDelayMs, type ProviderProbeStatus } from "./provider-probe.ts";
-import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
 import { createLogger } from "../services/logger.ts";
 import { registerMemoryGauge } from "../services/memory-diagnostics.ts";
 
@@ -104,13 +103,17 @@ export async function bootstrapProviders(): Promise<void> {
 
   try {
     const { AntigravityProvider } = await import("./antigravity/antigravity-provider.ts");
-    const { ANTIGRAVITY_DEFAULT_MODEL } = await import("./antigravity/antigravity-models.ts");
+    const { toAntigravityBaseModelId } = await import("./antigravity/antigravity-models.ts");
     const antigravity = new AntigravityProvider();
     if (await antigravity.isAvailable()) {
       providerRegistry.register(antigravity);
       const ai = configService.get("ai");
       const existing = ai.providers["antigravity"];
+      // No model is written: an absent one ("Auto") is agy's own pick. An old "pro" means that
+      // too, and a model saved with its effort (`-high`) keeps the model; effort is picked apart.
       if (!existing || existing.model === "pro" || /-(low|medium|high)$/i.test(existing.model ?? "")) {
+        const { model, ...rest } = existing ?? {};
+        const kept = model && model !== "pro" ? toAntigravityBaseModelId(model) : undefined;
         configService.set("ai", {
           ...ai,
           providers: {
@@ -119,8 +122,8 @@ export async function bootstrapProviders(): Promise<void> {
               type: "cli",
               cli_command: "agy",
               permission_mode: "bypassPermissions",
-              ...existing,
-              model: ANTIGRAVITY_DEFAULT_MODEL,
+              ...rest,
+              ...(kept ? { model: kept } : {}),
             },
           },
         });
@@ -157,8 +160,7 @@ export function retryProviderProbe(id: string): Promise<ProviderProbeStatus> {
  * Give codex a config entry, but only when it has never had one. An absent
  * `model` is a real choice — the settings picker writes it for "Auto (default)",
  * which hands model selection back to codex — so filling one in on every probe
- * would undo that choice. Existing installs are given the default once, by
- * migration.
+ * would undo that choice. A new entry has none: codex picks its own default.
  */
 function ensureCodexConfigEntry(): void {
   const ai = configService.get("ai");
@@ -171,7 +173,6 @@ function ensureCodexConfigEntry(): void {
         type: "cli",
         cli_command: "codex",
         permission_mode: "bypassPermissions",
-        model: CODEX_DEFAULT_MODEL,
       },
     },
   });

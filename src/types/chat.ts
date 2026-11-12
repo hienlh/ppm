@@ -147,6 +147,8 @@ export interface AIProvider {
 export interface ModelOption {
   value: string;
   label: string;
+  /** The model the provider itself picks when the user has not chosen one ("Auto"). */
+  isDefault?: boolean;
 }
 
 export interface Session {

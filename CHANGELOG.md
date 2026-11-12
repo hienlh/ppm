@@ -17,7 +17,7 @@
 
 ### Changed
 
-- **New default models: Gemini 4 Carbon for Antigravity, GPT-6.1 Sol for Codex.** Both pickers already list every model the provider offers; this changes what a new install starts on, and Gemini 4 Carbon is in the list Antigravity falls back to when its app is closed.
+- **Antigravity and Codex models are no longer written into PPM, so a new model shows up and becomes the default by itself.** Gemini 4 Carbon and GPT-6.1 Sol came out and PPM still started new chats on the older models it had been told about. Now: "Auto" (no model chosen) is the model the CLI itself picks, and the picker and Settings say which one ("Auto (Gemini 4 Carbon)"). With the Antigravity app closed, the list is the one agy reported when it last opened a chat, where PPM used to show a fixed list. A model you chose stays as it is.
 
 ## [0.24.1] - 2026-11-12
 
