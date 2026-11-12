@@ -1,8 +1,12 @@
 # Changelog
 
-## [0.24.1] - 2026-11-12
+## [Unreleased]
+
+### Added
 
 - **Antigravity chats.** Antigravity (Google's `agy` CLI) can be picked as a chat's provider: replies, thinking and tool calls stream as with Claude and Codex, with approvals, Stop, images, agy's own slash commands and skills, extra accounts with a sign-in of their own (Settings → Accounts), a quota panel, and PPM's tab and database tools. Each open chat runs one `agy acp` process. A slow command agy moves to the background no longer ends the chat halfway, and the quota is read from agy itself when the Antigravity app is closed. Needs agy installed and signed in.
+
+## [0.24.1] - 2026-11-12
 
 ### Fixed
 
@@ -577,7 +581,6 @@
 - **A Mac with 8 GB of swap in use said nothing about swap at all.** `node:os` carries no swap figure, so off Linux `swapTotalMB`/`swapUsedMB` were simply absent — and the memory page renders an absent field as an em dash, i.e. as the claim that this host's swap cannot be measured. On macOS it can: `vm.swapusage` is one sysctl, and on the M1 Max this was found on it read **8039 MB of 9216 MB in use**, matching what the collector now reports to the megabyte on the same sample. Swap that is genuinely off stays a real `0` rather than becoming an em dash, because the UI hides the graph on a zero total and dashes only on `undefined`, and those are different claims. The cost was measured rather than assumed, since this runs on every tick: **1.33 ms**, against the 1.7 ms `/proc/<pid>/io` already costs per tick on Linux — and Linux pays none of it, because the `/proc/meminfo` branch returns before the reader is ever called.
   - The *used* figure has since changed too — see "The System Monitor works on macOS" above. It was left alone here because it agreed with `top`'s `31G used`, but `top` counts the file cache as used and Activity Monitor does not; `memory_pressure` is still not the fix.
 
-
 - **The Details dialog told macOS users that running processes were dead.** Opening it on a Chrome renderer using 4.2% of the CPU — visible in the table behind the dialog — answered **“PID 72973 is no longer running”**. The reader was `/proc`-only and the service answered `null` for every other platform, which the route turned into a 404 carrying that sentence: correct on Linux, where a vanished `/proc/<pid>` really does mean the process exited, and simply false anywhere else. The two claims now travel separately — a host with no reader answers **501** saying so, and “no longer running” is said only when a process actually is.
   - And macOS has a reader now, because it turns out `ps` answers **ten of the eleven fields**: parent, state, nice, user, executable, start time, threads, working directory, command line and name. Two of them arrive more directly than on Linux — `lstart` is a real timestamp rather than jiffies to be added to `btime`, and `user` is already the login name, so no `/etc/passwd` lookup is needed and it works across users. Only `cgroup` has no macOS equivalent and stays an em dash, which is the honest answer rather than an invented one. Cost, measured on an M1 Max: 29.7 ms for the first `ps`, then three concurrent calls (`ps -o command=`, `ps -M`, `lsof -d cwd`) at 30–38 ms — on-demand when the dialog opens, never on the tick.
   - Two traps are pinned by tests rather than left to be rediscovered. The parse is **positional**, because macOS `ps` offers no delimiter and two fields contain spaces: `lstart` is always five tokens (a single-digit day pads with two, which a `\s+` split collapses) and `comm` must be last, since a path like `/Applications/Google Chrome.app/…/Google Chrome Helper (Renderer)` holds six spaces. And the state letters are **BSD's, not Linux's** — uninterruptible wait is `U` here where Linux writes `D`, and `Z` is not an edge case: this host had 126 zombies against 645 sleepers.
@@ -989,7 +992,6 @@
 - **The usage chip updates as soon as you switch account** — it used to sit at `--%` for up to two minutes beside a panel already showing the chosen account's quota.
 - **Spawned Codex subagents no longer appear as sessions of their own** — each one was listed as a top-level chat that opened with no prompt and never ended; their transcripts now fold into the parent's Agent card, and a session is titled by its opening prompt.
 - **A tooltip works wherever it is rendered** — Radix throws rather than warns without a provider above it, which made any component that gained a tooltip in 0.20.0 unrenderable outside the app shell.
-
 
 ## [0.20.1] - 2026-09-15
 
