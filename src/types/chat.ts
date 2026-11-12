@@ -71,7 +71,7 @@ export interface AIProvider {
    *  host a design session; anywhere else the instructions would be silently dropped. */
   supportsDesignInstructions?: boolean;
   /** Additional instruction/memory sources; never return credentials or transcripts. */
-  getSharedContextSources?(projectPath: string): Array<{ path: string; directory?: boolean }>;
+  getSharedContextSources?(projectPath: string): Array<{ path: string; directory?: boolean; indexOnly?: boolean }>;
 
   // Session lifecycle (required)
   createSession(config: SessionConfig): Promise<Session>;
@@ -268,6 +268,8 @@ export interface UsageInfo {
   resetCredits?: ResetCredits;
   activeAccountId?: string;
   activeAccountLabel?: string;
+  /** ISO time these limits were read from the provider. */
+  lastFetchedAt?: string;
 }
 
 /** A weekly limit that applies to one model only, named as the provider names it. */
@@ -336,6 +338,8 @@ export type ChatEvent =
   | { type: "account_retry"; reason: string; accountId?: string; accountLabel?: string }
   | { type: "status_update"; phase: "routing" | "refreshing" | "switching" | "retrying"; message: string; accountLabel?: string }
   | { type: "system"; subtype: string }
+  /** A provider asks for a turn it starts itself, with this as the user's message (Antigravity, after a background task). */
+  | { type: "provider_continue"; content: string }
   | { type: "team_detected"; teamName: string }
   | { type: "team_updated"; teamName: string; team: unknown }
   | { type: "team_inbox"; teamName: string; agent: string; messages: unknown[] }

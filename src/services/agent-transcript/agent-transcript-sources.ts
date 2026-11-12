@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { getCachedSubagentGroups } from "./agent-transcript-index-cache.ts";
 import { resolveMemberTranscript } from "../team-member-activity/member-activity.service.ts";
 import { findRolloutByThreadId, isCodexRolloutPath, readSessionMeta } from "../../providers/codex-app-server/codex-history.ts";
+import { extractSubagentIdsFromTranscript, findAntigravityTranscriptPath } from "../../providers/antigravity/antigravity-history.ts";
 import { claudeProjectsRoot } from "./claude-projects-root.ts";
 import { SESSION_ID_RE, pinClaudeSessionDir, realpathContained, type OwnedSession } from "./session-ownership.ts";
 
@@ -34,7 +35,7 @@ export type AgentTranscriptSource =
 export interface TranscriptFileRef {
   key: string;
   path: string;
-  provider: "claude" | "codex";
+  provider: "claude" | "codex" | "antigravity";
 }
 
 export type SourceErrorCode =
@@ -176,9 +177,67 @@ function resolveMember(owned: OwnedSession, teamName: string, memberName: string
   return [{ key: memberName, path: real, provider: "claude" }];
 }
 
+export function isAntigravityDescendant(
+  brainDirs: string[],
+  targetSubId: string,
+  rootTranscriptPath: string,
+  rootSessionId: string,
+): boolean {
+  const targetLower = targetSubId.toLowerCase();
+  if (targetLower === rootSessionId.toLowerCase()) return false;
+  const visited = new Set<string>([rootSessionId.toLowerCase()]);
+  let frontier: Array<{ sessionId: string; transcriptPath: string }> = [
+    { sessionId: rootSessionId, transcriptPath: rootTranscriptPath },
+  ];
+
+  for (let depth = 0; depth < MAX_CHAIN_DEPTH && frontier.length > 0; depth++) {
+    const nextFrontier: Array<{ sessionId: string; transcriptPath: string }> = [];
+    for (const node of frontier) {
+      const children = extractSubagentIdsFromTranscript(node.transcriptPath, node.sessionId);
+      for (const childId of children) {
+        const lower = childId.toLowerCase();
+        if (lower === targetLower) return true;
+        if (visited.has(lower)) continue;
+        visited.add(lower);
+        const childLoc = findAntigravityTranscriptPath(childId, brainDirs);
+        if (childLoc) {
+          nextFrontier.push({ sessionId: childId, transcriptPath: childLoc.transcriptPath });
+        }
+      }
+    }
+    frontier = nextFrontier;
+  }
+  return false;
+}
+
+export function resolveAntigravityDescendantFile(owned: OwnedSession, subId: string): TranscriptFileRef | null {
+  const agy = owned.antigravity;
+  if (!agy) return null;
+  const loc = findAntigravityTranscriptPath(subId, agy.brainDirs);
+  if (!loc) return null;
+  if (!isAntigravityDescendant(agy.brainDirs, subId, agy.transcriptPath, owned.sessionId)) return null;
+  const real = realpathContained(loc.transcriptPath, loc.brainDir);
+  if (!real) return null;
+  return { key: subId, path: real, provider: "antigravity" };
+}
+
+function resolveAntigravityCard(owned: OwnedSession, cardId: string): TranscriptFileRef[] | SourceError {
+  const m = CODEX_CARD_ID_RE.exec(cardId);
+  if (!m) return err("invalid_card_id");
+  const subId = m[1]!;
+  const ref = resolveAntigravityDescendantFile(owned, subId);
+  if (!ref) {
+    const loc = findAntigravityTranscriptPath(subId, owned.antigravity!.brainDirs);
+    return loc ? err("not_descendant") : err("card_not_found");
+  }
+  return [ref];
+}
+
 function computeSources(owned: OwnedSession, source: AgentTranscriptSource): TranscriptFileRef[] | SourceError {
   if (source.kind === "member") return resolveMember(owned, source.teamName, source.memberName);
-  return owned.providerId === "claude" ? resolveClaudeCard(owned, source.cardId) : resolveCodexCard(owned, source.cardId);
+  if (owned.providerId === "claude") return resolveClaudeCard(owned, source.cardId);
+  if (owned.providerId === "antigravity") return resolveAntigravityCard(owned, source.cardId);
+  return resolveCodexCard(owned, source.cardId);
 }
 
 export function resolveSources(owned: OwnedSession, source: AgentTranscriptSource): TranscriptFileRef[] | SourceError {

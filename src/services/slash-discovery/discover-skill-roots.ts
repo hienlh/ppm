@@ -11,6 +11,7 @@ const PROJECT_ECOSYSTEMS: Array<{ dir: string; source: DefinitionSource }> = [
   { dir: ".claw", source: "project-claw" },
   { dir: ".codex", source: "project-codex" },
   { dir: ".claude", source: "project-claude" },
+  { dir: ".agents", source: "project-agents" },
 ];
 
 /** User-global ecosystem roots (same prefixes, different source) */
@@ -19,6 +20,9 @@ const USER_ECOSYSTEMS: Array<{ dir: string; source: DefinitionSource }> = [
   { dir: ".claw", source: "user-claw" },
   { dir: ".codex", source: "user-codex" },
   { dir: ".claude", source: "user-claude" },
+  { dir: ".gemini/antigravity", source: "user-antigravity" },
+  { dir: ".gemini/antigravity/builtin", source: "user-antigravity" },
+  { dir: ".gemini/config", source: "user-antigravity" },
 ];
 
 const ORIGINS: ItemOrigin[] = ["skills", "commands", "agents"];
@@ -91,7 +95,7 @@ function checkEnvVars(roots: SkillRoot[], seen: Set<string>): void {
   }
 }
 
-/** Add user-global roots (~/.ppm, ~/.claw, ~/.codex, ~/.claude) */
+/** Add user-global roots (~/.ppm, ~/.claw, ~/.codex, ~/.claude, ~/.gemini/antigravity) */
 function addUserGlobalRoots(roots: SkillRoot[], seen: Set<string>): void {
   const home = homedir();
   for (const eco of USER_ECOSYSTEMS) {
@@ -190,7 +194,7 @@ function addBundledRoot(roots: SkillRoot[], seen: Set<string>): void {
  * Discover all skill/command roots for a project.
  * Returns ordered array (highest priority first).
  */
-export function discoverSkillRoots(projectPath: string): SkillRoot[] {
+export function discoverSkillRoots(projectPath: string, providerId?: string): SkillRoot[] {
   const roots: SkillRoot[] = [];
   const seen = new Set<string>();
 
@@ -200,5 +204,8 @@ export function discoverSkillRoots(projectPath: string): SkillRoot[] {
   addPluginRoots(roots, seen, projectPath);
   addBundledRoot(roots, seen);
 
+  if (providerId === "claude") {
+    return roots.filter((r) => r.source !== "project-agents" && r.source !== "user-antigravity");
+  }
   return roots;
 }

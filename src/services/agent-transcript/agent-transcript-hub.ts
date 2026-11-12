@@ -28,7 +28,7 @@ export function handleAgentTranscriptSubscribe(ws: AgentTranscriptWsLike, msg: A
   const { subId, projectName, providerId, sessionId, source, cursor } = msg;
   if (typeof subId !== "string" || !subId) return;
   if (
-    typeof projectName !== "string" || (providerId !== "claude" && providerId !== "codex") ||
+    typeof projectName !== "string" || (providerId !== "claude" && providerId !== "codex" && providerId !== "antigravity") ||
     typeof sessionId !== "string" || !source || typeof source !== "object" ||
     (source.kind !== "card" && source.kind !== "member")
   ) {
@@ -65,7 +65,7 @@ export function handleAgentTranscriptUnsubscribe(ws: AgentTranscriptWsLike, msg:
 export function handleAgentActivitySubscribe(ws: AgentTranscriptWsLike, msg: AgentActivitySubscribeMsg): void {
   const { subId, projectName, providerId, sessionId } = msg;
   if (typeof subId !== "string" || !subId) return;
-  if (typeof projectName !== "string" || (providerId !== "claude" && providerId !== "codex") || typeof sessionId !== "string") {
+  if (typeof projectName !== "string" || (providerId !== "claude" && providerId !== "codex" && providerId !== "antigravity") || typeof sessionId !== "string") {
     return sendError(ws, subId, "bad_request");
   }
   const projectPath = projectPathFor(projectName);

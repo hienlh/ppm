@@ -345,6 +345,8 @@ app.route("/api/db", databaseRoutes);
 app.route("/api/accounts", accountsRoutes);
 import { codexAccountsRoutes } from "./routes/codex-accounts.ts";
 app.route("/api/codex-accounts", codexAccountsRoutes);
+import { antigravityAccountsRoutes } from "./routes/antigravity-accounts.ts";
+app.route("/api/antigravity-accounts", antigravityAccountsRoutes);
 
 // Jira watcher
 import { jiraRoutes } from "./routes/jira.ts";

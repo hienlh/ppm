@@ -102,6 +102,37 @@ export async function bootstrapProviders(): Promise<void> {
     log.warn("Failed to load Cursor provider:", (e as Error).message);
   }
 
+  try {
+    const { AntigravityProvider } = await import("./antigravity/antigravity-provider.ts");
+    const { ANTIGRAVITY_DEFAULT_MODEL } = await import("./antigravity/antigravity-models.ts");
+    const antigravity = new AntigravityProvider();
+    if (await antigravity.isAvailable()) {
+      providerRegistry.register(antigravity);
+      const ai = configService.get("ai");
+      const existing = ai.providers["antigravity"];
+      if (!existing || existing.model === "pro" || /-(low|medium|high)$/i.test(existing.model ?? "")) {
+        configService.set("ai", {
+          ...ai,
+          providers: {
+            ...ai.providers,
+            antigravity: {
+              type: "cli",
+              cli_command: "agy",
+              permission_mode: "bypassPermissions",
+              ...existing,
+              model: ANTIGRAVITY_DEFAULT_MODEL,
+            },
+          },
+        });
+      }
+      log.info("Antigravity provider registered");
+    } else {
+      log.info("Antigravity provider skipped (not found)");
+    }
+  } catch (e) {
+    log.warn("Failed to load Antigravity provider:", (e as Error).message);
+  }
+
   await probeCodexProvider();
 }
 

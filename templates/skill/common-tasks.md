@@ -60,8 +60,8 @@ ppm db test staging
 
 Inside a PPM chat, use the `db_query` tool (and `db_execute` for a change, which the user
 approves). `ppm db query` refuses there and names the tool, because the CLI obeys neither the
-per-tool switch in Settings → Tools nor the approval. An Antigravity chat has no such tool and
-the CLI refuses there too: ask the user to run the query.
+per-tool switch in Settings → Tools nor the approval. Claude, Codex and Antigravity chats all have
+the tools.
 
 Outside PPM, the CLI runs. First check which connections the user has made available to an AI —
 the ones this hides are not yours to open — and ask before any write:

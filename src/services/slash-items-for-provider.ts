@@ -35,8 +35,17 @@ export async function listSlashItemsForProvider(
     const { getHostBuiltinSlashItems } = await import("./slash-discovery/builtin-commands.ts");
     return [...codexSkillsToSlashItems(await provider.listSkills(sessionId)), ...getHostBuiltinSlashItems()];
   }
+  if (providerId === "antigravity") {
+    // agy names what it can run only to an open chat, so this is the list it last gave; until
+    // agy has run once, the disk scan stands in.
+    const { agySlashItems } = await import("../providers/antigravity/antigravity-commands.ts");
+    const agyItems = agySlashItems(projectPath);
+    if (!agyItems) return listSlashItems(projectPath, "antigravity");
+    const { getHostBuiltinSlashItems } = await import("./slash-discovery/builtin-commands.ts");
+    return [...agyItems, ...getHostBuiltinSlashItems()];
+  }
   // Claude's own built-ins need a live SDK session to enumerate; cached 30 min,
   // so only the first request per project pays for the CLI spawn.
   await ensureSdkCommands(projectPath);
-  return listSlashItems(projectPath);
+  return listSlashItems(projectPath, providerId ?? "claude");
 }

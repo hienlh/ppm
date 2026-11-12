@@ -1674,11 +1674,20 @@ export function setSessionMigratedTo(oldSessionId: string, newSessionId: string)
     // Carry explicit choices with it before reconnect reads session_state.
     // Keep any choices already made on the destination (including thinking OFF).
     database.query(`
-      INSERT INTO session_metadata (session_id, project_name, project_path, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth)
-      SELECT ?, project_name, project_path, model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth FROM session_metadata WHERE session_id = ?
+      INSERT INTO session_metadata (
+        session_id, project_name, project_path, provider_id, account_id, codex_account_id,
+        model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth
+      )
+      SELECT
+        ?, project_name, project_path, provider_id, account_id, codex_account_id,
+        model, effort, thinking_budget, design_slug, permission_mode, spawned_by, spawn_depth
+      FROM session_metadata WHERE session_id = ?
       ON CONFLICT(session_id) DO UPDATE SET
         project_name = COALESCE(session_metadata.project_name, excluded.project_name),
         project_path = COALESCE(session_metadata.project_path, excluded.project_path),
+        provider_id = COALESCE(session_metadata.provider_id, excluded.provider_id),
+        account_id = COALESCE(session_metadata.account_id, excluded.account_id),
+        codex_account_id = COALESCE(session_metadata.codex_account_id, excluded.codex_account_id),
         model = COALESCE(session_metadata.model, excluded.model),
         effort = COALESCE(session_metadata.effort, excluded.effort),
         thinking_budget = COALESCE(session_metadata.thinking_budget, excluded.thinking_budget),

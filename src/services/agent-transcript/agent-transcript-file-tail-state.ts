@@ -18,8 +18,9 @@ import type { ChatEvent } from "../../types/chat.ts";
 import type { TranscriptFileRef } from "./agent-transcript-sources.ts";
 import { createAgentTranscriptLineParser } from "../subagent-transcript-merger.ts";
 import { createRolloutTailParser } from "../../providers/codex-app-server/codex-rollout-tail-parser.ts";
+import { createAntigravityTailParser } from "../../providers/antigravity/antigravity-transcript-parser.ts";
 import { makeEnvelope } from "./agent-transcript-envelope.ts";
-import { statMtimeSafe } from "./agent-transcript-fs-io.ts";
+import { agentTranscriptFsIo, statMtimeSafe } from "./agent-transcript-fs-io.ts";
 import type { AgentTranscriptEnvelope } from "../../shared/agent-transcript-protocol.ts";
 
 export interface FileTailState {
@@ -29,6 +30,7 @@ export interface FileTailState {
   lastGrowthAt: number;
   claudeParser?: ReturnType<typeof createAgentTranscriptLineParser>;
   codexParser?: ReturnType<typeof createRolloutTailParser>;
+  antigravityParser?: ReturnType<typeof createAntigravityTailParser>;
   /** Codex only: the `k` first issued for a toolUseId, so a later `replace`
    *  record for the same id reuses it instead of minting an unmatchable one
    *  (see `agent-transcript-file-tail-feed.ts`). */
@@ -42,6 +44,30 @@ function initialGrowthAt(path: string, now: number): number {
   return statMtimeSafe(path) ?? now;
 }
 
+function createWarmAntigravityParser(
+  ref: TranscriptFileRef,
+  startOffset: number,
+): ReturnType<typeof createAntigravityTailParser> {
+  const parser = createAntigravityTailParser({ parentSessionId: ref.key });
+  if (startOffset <= 0) return parser;
+  try {
+    const windowBytes = 64 * 1024;
+    const readFrom = Math.max(0, startOffset - windowBytes);
+    const toRead = startOffset - readFrom;
+    const buf = agentTranscriptFsIo.readRange(ref.path, readFrom, toRead);
+    const text = buf.toString("utf8");
+    const lines = text.split("\n");
+    const startIdx = readFrom > 0 ? 1 : 0;
+    for (let i = startIdx; i < lines.length; i++) {
+      const line = lines[i]?.trim();
+      if (line) parser.feed(line);
+    }
+  } catch {
+    // If prefix warmup fails, fall back to fresh parser
+  }
+  return parser;
+}
+
 export function createFileTailState(ref: TranscriptFileRef, startOffset: number, now: number): FileTailState {
   const midFile = startOffset > 0;
   return {
@@ -51,6 +77,7 @@ export function createFileTailState(ref: TranscriptFileRef, startOffset: number,
     lastGrowthAt: initialGrowthAt(ref.path, now),
     claudeParser: ref.provider === "claude" ? createAgentTranscriptLineParser({ midFile, maxEvents: Infinity }) : undefined,
     codexParser: ref.provider === "codex" ? createRolloutTailParser() : undefined,
+    antigravityParser: ref.provider === "antigravity" ? createWarmAntigravityParser(ref, startOffset) : undefined,
     toolUseKeyById: new Map(),
   };
 }
@@ -64,6 +91,7 @@ export function resetFileTailState(fstate: FileTailState, now: number): void {
   fstate.lastGrowthAt = now;
   fstate.claudeParser = fstate.ref.provider === "claude" ? createAgentTranscriptLineParser({ midFile: false, maxEvents: Infinity }) : undefined;
   fstate.codexParser = fstate.ref.provider === "codex" ? createRolloutTailParser() : undefined;
+  fstate.antigravityParser = fstate.ref.provider === "antigravity" ? createAntigravityTailParser({ parentSessionId: fstate.ref.key }) : undefined;
   fstate.toolUseKeyById = new Map();
 }
 

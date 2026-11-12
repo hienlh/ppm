@@ -1,5 +1,12 @@
 import { accountSelector } from "./account-selector.service.ts";
 import { getAllCodexUsages, codexUsageLevel, listCodexAccounts, selectCodexAccount } from "./codex-account.service.ts";
+import {
+  antigravityUsageLevel,
+  formatAntigravityAccountLabel,
+  getAllAntigravityUsages,
+  listAntigravityAccounts,
+  selectAntigravityAccount,
+} from "./antigravity-account.service.ts";
 import { settleWithinBudget } from "./chat-prepare/settle-within-budget.ts";
 
 export interface PickedAccount {
@@ -46,4 +53,15 @@ export async function pickCodexAccount(opts: CodexPickOptions = {}): Promise<Pic
   const picked = selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]) });
   if (!picked) return null;
   return { id: picked.id, label: picked.label };
+}
+
+export async function pickAntigravityAccount(opts: CodexPickOptions = {}): Promise<PickedAccount | null | "timeout"> {
+  if (listAntigravityAccounts().length === 0) return null;
+  const usages = opts.usageBudgetMs != null
+    ? await settleWithinBudget(getAllAntigravityUsages(), opts.usageBudgetMs, null, "antigravity usage")
+    : await getAllAntigravityUsages();
+  if (usages === null) return "timeout";
+  const picked = selectAntigravityAccount({ usageOf: (id) => antigravityUsageLevel(usages[id]) });
+  if (!picked) return null;
+  return { id: picked.id, label: formatAntigravityAccountLabel(picked) };
 }

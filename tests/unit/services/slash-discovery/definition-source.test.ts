@@ -13,11 +13,13 @@ describe("SOURCE_PRIORITY", () => {
       "project-claw",
       "project-codex",
       "project-claude",
+      "project-agents",
       "env-var",
       "user-ppm",
       "user-claw",
       "user-codex",
       "user-claude",
+      "user-antigravity",
       "user-plugin",
       "bundled",
     ];
@@ -32,34 +34,36 @@ describe("SOURCE_PRIORITY", () => {
     expect(SOURCE_PRIORITY["project-ppm"]).toBe(0);
   });
 
-  it("has bundled with lowest priority (10)", () => {
-    expect(SOURCE_PRIORITY["bundled"]).toBe(10);
+  it("has bundled with lowest priority (12)", () => {
+    expect(SOURCE_PRIORITY["bundled"]).toBe(12);
   });
 
-  it("priorities are sequential from 0 to 10", () => {
+  it("priorities are sequential from 0 to 12", () => {
     const priorities = Object.values(SOURCE_PRIORITY).sort((a, b) => a - b);
-    const expected = Array.from({ length: 11 }, (_, i) => i);
+    const expected = Array.from({ length: 13 }, (_, i) => i);
 
     expect(priorities).toEqual(expected);
   });
 
-  it("enforces project sources (0-3) > env-var (4) > user sources (5-8) > user-plugin (9) > bundled (10)", () => {
+  it("enforces project sources (0-4) > env-var (5) > user sources (6-10) > user-plugin (11) > bundled (12)", () => {
     const projectMax = Math.max(
       SOURCE_PRIORITY["project-ppm"],
       SOURCE_PRIORITY["project-claw"],
       SOURCE_PRIORITY["project-codex"],
       SOURCE_PRIORITY["project-claude"],
+      SOURCE_PRIORITY["project-agents"],
     );
     const userMin = Math.min(
       SOURCE_PRIORITY["user-ppm"],
       SOURCE_PRIORITY["user-claw"],
       SOURCE_PRIORITY["user-codex"],
       SOURCE_PRIORITY["user-claude"],
+      SOURCE_PRIORITY["user-antigravity"],
     );
 
     expect(projectMax).toBeLessThan(SOURCE_PRIORITY["env-var"]);
     expect(SOURCE_PRIORITY["env-var"]).toBeLessThan(userMin);
-    expect(SOURCE_PRIORITY["user-claude"]).toBeLessThan(SOURCE_PRIORITY["user-plugin"]);
+    expect(SOURCE_PRIORITY["user-antigravity"]).toBeLessThan(SOURCE_PRIORITY["user-plugin"]);
     expect(SOURCE_PRIORITY["user-plugin"]).toBeLessThan(SOURCE_PRIORITY["bundled"]);
   });
 });

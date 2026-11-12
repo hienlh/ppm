@@ -34,8 +34,10 @@ import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/trans
 import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
 import { listCodexAccounts } from "../../services/codex-account.service.ts";
 import { codexUsageSource } from "../../providers/codex-app-server/codex-usage-source.ts";
+import { antigravityUsageSource } from "../../providers/antigravity/antigravity-usage.ts";
 import { invalidateUsage, refreshUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
 import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-history.ts";
+import { antigravityTranscriptStamp, findAntigravityTranscriptPath, isAntigravitySessionInProject } from "../../providers/antigravity/antigravity-history.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
@@ -130,8 +132,14 @@ chatRoutes.get("/usage", async (c) => {
           const accounts = codexUsageSource.listAccountIds();
           const ids = accounts.length > 0 ? accounts : [""];
           await Promise.all(ids.map((id) => refreshUsage("codex", id)));
+        } else if (providerId === "antigravity") {
+          registerUsageSource(antigravityUsageSource);
+          const accounts = antigravityUsageSource.listAccountIds();
+          const ids = accounts.length > 0 ? accounts : [""];
+          await Promise.all(ids.map((id) => refreshUsage("antigravity", id)));
         } else {
           invalidateUsage(providerId);
+          await refreshUsage(providerId);
         }
       }
     } else {
@@ -339,6 +347,7 @@ function claudeTranscriptStamp(sessionId: string): string | null {
 
 /** What the parsed history depends on on disk; null when that cannot be told. */
 function historyStamp(providerId: string, id: string): string | null {
+  if (providerId === "antigravity") return antigravityTranscriptStamp(id);
   if (providerId !== "claude") return null;
   const own = claudeTranscriptStamp(id);
   if (!own) return null;
@@ -418,7 +427,16 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
     // owning no transcript. Follow the recorded move so a tab that still holds
     // the old id reads the conversation instead of an empty list.
     const id = resolveMigratedSession(requestedId);
-    const providerId = c.req.query("providerId") ?? "claude";
+    const providerId = c.req.query("providerId")
+      || getSessionProvider(id)
+      || (findAntigravityTranscriptPath(id) ? "antigravity" : "claude");
+    if (providerId === "antigravity") {
+      const projectPath = c.get("projectPath");
+      const loc = findAntigravityTranscriptPath(id);
+      if (projectPath && loc && !isAntigravitySessionInProject(id, loc.transcriptPath, projectPath)) {
+        return c.json(err("Session not found in project"), 404);
+      }
+    }
     const query = parseHistoryPageQuery((name) => c.req.query(name));
     const cacheKey = historyKey(providerId, id, c.get("projectPath"));
     const stamp = historyStamp(providerId, id);

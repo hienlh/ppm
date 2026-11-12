@@ -325,10 +325,15 @@ Modular discovery engine for slash commands and skills. Replaces monolithic `sla
 ### Key Features
 **Skill Discovery:**
 ```
-~/.claude/skills/ppm-guide/SKILL.md → Parse [ppm-guide] commands
-$CLAUDE_SKILLS_PATH/custom/ → Env-var roots
-assets/skills/bundled/ → Built-in (ppm-guide)
+<project>/.claude/skills/<name>/SKILL.md → Project skills (Claude/Codex/Antigravity)
+<project>/.agents/skills/<name>/SKILL.md → Project agent skills (Codex/Antigravity)
+~/.claude/skills/<name>/SKILL.md → User skills (Claude/Codex/Antigravity)
+~/.gemini/config/skills/<name>/SKILL.md → User Antigravity skills
+~/.gemini/antigravity/skills/<name>/SKILL.md → Legacy/builtin Antigravity skills
+assets/skills/ → Bundled with PPM (ppm)
 ```
+
+An Antigravity tab lists what agy itself reported it can run (its built-in commands and the skills it found), kept per project by `src/providers/antigravity/antigravity-commands.ts`; the scan above stands in only until agy has run once.
 
 **Shadowing Resolution:**
 - Project-level overrides user-level overrides bundled defaults

@@ -37,7 +37,7 @@ const BACKGROUND_WRITES: readonly RegExp[] = [
   /^\/api\/project\/[^/]+\/chat\/prewarm$/,
   /^\/api\/project\/[^/]+\/git\/commit-draft$/,
   /^\/api\/system\/resources\/stream\/[^/]+\/ping$/,
-  /^\/api\/(codex-)?accounts\/pick$/,
+  /^\/api\/(codex-|antigravity-)?accounts\/pick$/,
 ];
 
 /** Paths whose next segment is a bearer capability (a preview or export token, a WHEP ticket, a share code). */

@@ -72,6 +72,16 @@ function feedChunk(fstate: FileTailState, newChunk: Buffer, growthAt: number): F
       continue;
     }
 
+    if (fstate.ref.provider === "antigravity") {
+      const fedAgy = fstate.antigravityParser!.feed(line);
+      for (const item of fedAgy.events) {
+        envelopes.push(buildEnvelope(fstate.ref.key, chunkStartOffset, idx++, item.ev, item.ts));
+        consumedThrough.push(fileOffset);
+      }
+      links.push(...fedAgy.links);
+      continue;
+    }
+
     const fed = fstate.codexParser!.feed(`${line}\n`);
     if (fed.reset) {
       // A compaction/rollback record inside THIS SAME read means everything

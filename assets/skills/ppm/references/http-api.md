@@ -85,6 +85,19 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `POST   /api/android/avds/:avdId/wipe`
 - `DELETE /api/android/avds/:avdId`
 
+## /api/antigravity-accounts
+
+- `GET    /api/antigravity-accounts`
+- `GET    /api/antigravity-accounts/usage`
+- `POST   /api/antigravity-accounts/pick`
+- `PUT    /api/antigravity-accounts/strategy`
+- `PATCH  /api/antigravity-accounts/:id`
+- `DELETE /api/antigravity-accounts/:id`
+- `POST   /api/antigravity-accounts/login`
+- `POST   /api/antigravity-accounts/login/:id/callback`
+- `GET    /api/antigravity-accounts/login/:id/status`
+- `DELETE /api/antigravity-accounts/login/:id`
+
 ## /api/chat
 
 - `GET    /api/chat/sessions/running`
@@ -627,6 +640,7 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `POST   /api/settings/ai/providers/:id/probe`
 - `GET    /api/settings/ai/providers/:id/models`
 - `GET    /api/settings/ai/providers/:id/effort-status`
+- `GET    /api/settings/ai/providers/antigravity/account`
 - `GET    /api/settings/keybindings`
 - `PUT    /api/settings/keybindings`
 - `GET    /api/settings/telegram`

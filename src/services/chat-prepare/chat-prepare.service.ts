@@ -2,7 +2,7 @@ import { configService } from "../config.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { resolveNewChatProvider } from "../../shared/new-chat-provider.ts";
 import type { ChatPreparationSettings } from "../../shared/chat-preparation-settings.ts";
-import { pickClaudeAccount, pickCodexAccount, type PickedAccount } from "../account-pick.service.ts";
+import { pickAntigravityAccount, pickClaudeAccount, pickCodexAccount, type PickedAccount } from "../account-pick.service.ts";
 import { readUsageSnapshot, type ChatUsageSnapshot } from "../chat-usage-snapshot.service.ts";
 import { draftService, type DraftData } from "../draft.service.ts";
 import { getTagsByProject, getTagSessionCounts, getProjectDefaultTagId } from "../tag.service.ts";
@@ -126,6 +126,8 @@ async function pickAccountWithUsage(providerId: string): Promise<Pick<PrepareCha
   let pickedAccount: PickedAccount | null | "timeout";
   if (providerId === "codex") {
     pickedAccount = await pickCodexAccount({ usageBudgetMs: CODEX_USAGE_PICK_BUDGET_MS });
+  } else if (providerId === "antigravity") {
+    pickedAccount = await pickAntigravityAccount({ usageBudgetMs: CODEX_USAGE_PICK_BUDGET_MS });
   } else if (providerId === "claude") {
     pickedAccount = pickClaudeAccount();
   } else {

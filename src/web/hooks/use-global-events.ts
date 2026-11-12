@@ -142,11 +142,10 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
 
       if (type === "session:migrated") {
         // The server re-keyed the session, so every phase change from here on carries the new
-        // id and the old one's `idle` will never arrive. Drop it now rather than waiting for
-        // the next reconnect to reconcile it away — a socket that stays up for hours would
-        // hold the screen awake for just as long.
-        const d = data as unknown as { oldSessionId: string; newSessionId: string };
-        useStreamingStore.getState().dropSession(d.oldSessionId);
+        // id and the old one's `idle` will never arrive. Re-key the active streaming entry to
+        // the new id so the tab spinner stays active without leaving a stale old id behind.
+        const d = data as unknown as { oldSessionId: string; newSessionId: string; projectName?: string };
+        useStreamingStore.getState().migrateSession(d.oldSessionId, d.newSessionId, d.projectName);
         return;
       }
 

@@ -4,10 +4,10 @@ import { createLogger } from "./logger.ts";
 /**
  * The smallest MCP server that speaks Streamable HTTP with plain JSON responses
  * (`initialize`, `ping`, `tools/list`, `tools/call`), for the endpoints PPM serves to a chat
- * session's own agent (`/api/design-mcp`, `/api/tab-tools-mcp`). Claude and Codex both take
- * an HTTP MCP server by URL, so one endpoint serves both providers.
+ * session's own agent (`/api/design-mcp`, `/api/tab-tools-mcp`). Claude, Codex and Antigravity
+ * all take an HTTP MCP server by URL, so one endpoint serves every provider.
  *
- * Mounted before PPM's auth: the caller is a Claude or Codex subprocess with no PPM token.
+ * Mounted before PPM's auth: the caller is a Claude, Codex or agy subprocess with no PPM token.
  * Its credential is a per-session capability token in `Authorization: Bearer`. A request
  * that carries an `Origin` came from a browser, never from those subprocesses, and is refused.
  */

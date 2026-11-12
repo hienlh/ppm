@@ -34,8 +34,9 @@ interface ModelThinkingSelectorProps {
   onProviderChange?: (providerId: string) => void;
 }
 
-/** Strip the leading "Claude " so the chip stays compact: "Claude Opus 5" → "Opus 5" */
-function shortLabel(label: string): string {
+/** Strip the leading "Claude " on Claude provider so the chip stays compact: "Claude Opus 5" → "Opus 5" */
+function shortLabel(label: string, providerId?: string): string {
+  if (providerId && providerId !== "claude") return label;
   return label.replace(/^Claude\s+/i, "");
 }
 
@@ -113,10 +114,22 @@ export function ModelThinkingSelector({
     return () => doc.removeEventListener("mousedown", handler);
   }, [open, isMobile]);
 
-  const current = models.find((m) => m.value === model);
-  const modelDisplay = current ? shortLabel(current.label) : model ? modelDisplayName(model) : "Model";
-  const shown = shownEffort(effort, effortStatus);
+  const isAntigravity = providerId === "antigravity";
+  const effectiveModel = isAntigravity
+    ? (!model || model === "pro" ? "gemini-4-argon" : model.replace(/-(low|medium|high)$/i, ""))
+    : model;
+  const current = models.find((m) => m.value === effectiveModel);
+  const modelDisplay = current
+    ? shortLabel(current.label, providerId)
+    : effectiveModel
+      ? modelDisplayName(effectiveModel)
+      : "Model";
+  const suffixEffort = isAntigravity && model ? /-(low|medium|high)$/i.exec(model)?.[1]?.toLowerCase() : undefined;
+  const shown = shownEffort(effort ?? suffixEffort, effortStatus);
   const notice = effortNotice(shown, effortStatus, modelDisplay);
+  const effortOptions = isAntigravity
+    ? EFFORT_OPTIONS.filter((o) => o.value === "low" || o.value === "medium" || o.value === "high")
+    : EFFORT_OPTIONS;
   const showModelList = models.length > 0 || Boolean(modelStatus);
   // The effort the turns run at, which an override outside PPM can make differ from the pick.
   const chipText = chipLabel(modelDisplay, shown.level);
@@ -138,9 +151,9 @@ export function ModelThinkingSelector({
           <SectionLabel>Model</SectionLabel>
           {modelStatus && <div role="status" className="px-3 py-2 text-xs text-text-secondary">{modelStatus}</div>}
           {models.map((m) => (
-            <OptionRow key={m.value} active={m.value === model} onClick={() => pick(() => onModelChange(m.value))}>
-              <span className="flex-1 truncate">{shortLabel(m.label)}</span>
-              {m.value === model && <Check className="size-4 shrink-0 text-primary" />}
+            <OptionRow key={m.value} active={m.value === effectiveModel} onClick={() => pick(() => onModelChange(m.value))}>
+              <span className="flex-1 truncate">{shortLabel(m.label, providerId)}</span>
+              {m.value === effectiveModel && <Check className="size-4 shrink-0 text-primary" />}
             </OptionRow>
           ))}
         </div>
@@ -148,7 +161,7 @@ export function ModelThinkingSelector({
       {/* Right column: effort + thinking toggle */}
       <div className="flex-1 min-w-0 py-1">
         <SectionLabel>Effort</SectionLabel>
-        {EFFORT_OPTIONS.map((o) => (
+        {effortOptions.map((o) => (
           <OptionRow key={o.value} active={o.value === shown.pick} onClick={() => pick(() => onEffortChange(o.value))}>
             <span className="flex-1 truncate">
               {o.label}
@@ -158,20 +171,24 @@ export function ModelThinkingSelector({
             {o.value === shown.pick && <Check className="size-4 shrink-0 text-primary" />}
           </OptionRow>
         ))}
-        <Separator />
-        <button
-          type="button"
-          onClick={() => onThinkingChange(!thinking)}
-          className="w-full flex items-center gap-3 px-3 min-h-[44px] text-left text-sm hover:bg-surface-elevated"
-          role="switch"
-          aria-checked={thinking}
-        >
-          <Brain className="size-4 shrink-0" />
-          <span className="flex-1">Thinking</span>
-          <span className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${thinking ? "bg-primary" : "bg-border"}`}>
-            <span className={`h-4 w-4 rounded-full bg-white transition-transform ${thinking ? "translate-x-4" : "translate-x-0.5"}`} />
-          </span>
-        </button>
+        {!isAntigravity && (
+          <>
+            <Separator />
+            <button
+              type="button"
+              onClick={() => onThinkingChange(!thinking)}
+              className="w-full flex items-center gap-3 px-3 min-h-[44px] text-left text-sm hover:bg-surface-elevated"
+              role="switch"
+              aria-checked={thinking}
+            >
+              <Brain className="size-4 shrink-0" />
+              <span className="flex-1">Thinking</span>
+              <span className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${thinking ? "bg-primary" : "bg-border"}`}>
+                <span className={`h-4 w-4 rounded-full bg-white transition-transform ${thinking ? "translate-x-4" : "translate-x-0.5"}`} />
+              </span>
+            </button>
+          </>
+        )}
       </div>
     </div>
     </>
@@ -190,7 +207,7 @@ export function ModelThinkingSelector({
         }}
         data-model-chip=""
         className="inline-flex h-[30px] min-w-0 max-w-full items-center gap-1.5 whitespace-nowrap rounded-full px-[9px] text-[11.5px] text-primary @max-[420px]/chat:gap-1 @max-[420px]/chat:px-1.5 max-md:gap-1 max-md:px-1.5 transition-[background-color,transform] duration-150 motion-safe:active:scale-[0.97] can-hover:hover:bg-surface-hover disabled:cursor-default disabled:active:scale-100"
-        aria-label={`Model ${modelDisplay}, effort ${shown.level ? effortLabel(shown.level) : "none"}${notice ? ` (${notice.title})` : ""}${thinking ? ", thinking on" : ""}`}
+        aria-label={`Model ${modelDisplay}, effort ${shown.level ? effortLabel(shown.level) : "none"}${notice ? ` (${notice.title})` : ""}${!isAntigravity && thinking ? ", thinking on" : ""}`}
         title={disabled ? "Can't change while running" : notice ? `${providerName} · ${chipText}\n${notice.title}:${noticeText(notice.detail)}` : `${providerName} · ${chipText}`}
       >
         <ProviderIcon providerId={providerId} className="size-4" />
@@ -199,7 +216,7 @@ export function ModelThinkingSelector({
           {shown.level && <span className="@max-[420px]/chat:hidden max-md:hidden">{chipText.slice(modelDisplay.length)}</span>}
         </span>
         {notice && <TriangleAlert className="size-3 shrink-0 text-warning" />}
-        {thinking && <Brain className="size-3 shrink-0" />}
+        {!isAntigravity && thinking && <Brain className="size-3 shrink-0" />}
         {/* Narrow: the chevron gives its room to the model name; the chip still opens the picker. */}
         <ChevronDown className="size-3 shrink-0 text-text-3 @max-[420px]/chat:hidden max-md:hidden" />
       </button>
