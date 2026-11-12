@@ -22,6 +22,8 @@ import {
   Cpu,
   ScrollText,
   Bug,
+  Pin,
+  X,
 } from "@/lib/icons";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { openSettings } from "@/components/settings/open-settings";
@@ -41,6 +43,7 @@ import { useExtensionStore } from "@/stores/extension-store";
 import { extensionIcon } from "@/lib/extension-icons";
 import { useCompareStore } from "@/stores/compare-store";
 import { usePanelStore } from "@/stores/panel-store";
+import { togglePinActiveTab, bulkCloseInFocusedPanel } from "@/lib/tab-commands";
 import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { scoreFileSearchFast, compareScores, getFilename, type FileSearchScore } from "@/lib/score-file-search";
@@ -256,6 +259,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       { id: "new-db-connection", label: "New connection…", icon: Database, action: () => { openConnectionForm(); onClose(); }, keywords: "database connection postgres pg mysql mariadb sqlite add", group: "action" },
       { id: "voice-input", label: "Voice Input", icon: Mic, action: () => { window.dispatchEvent(new CustomEvent("toggle-voice-input")); onClose(); }, keywords: "speech microphone dictate voice", group: "action", shortcut: formatShortcut(getBinding("voice-input")) },
       { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action", shortcut: formatShortcut(getBinding("open-git-status")) },
+      { id: "toggle-pin-tab", label: "Pin / Unpin Tab", icon: Pin, action: () => { togglePinActiveTab(); onClose(); }, keywords: "pin unpin sticky keep tab", group: "action", shortcut: formatShortcut(getBinding("toggle-pin-tab")) },
+      { id: "close-saved-tabs", label: "Close Saved Tabs", icon: X, action: () => { bulkCloseInFocusedPanel("saved"); onClose(); }, keywords: "close saved tabs editors", group: "action", shortcut: formatShortcut(getBinding("close-saved-tabs")) },
+      { id: "close-all-tabs", label: "Close All Tabs", icon: X, action: () => { bulkCloseInFocusedPanel("all"); onClose(); }, keywords: "close all tabs editors", group: "action", shortcut: formatShortcut(getBinding("close-all-tabs")) },
       { id: "problems", label: "Problems", icon: CircleX, action: () => { usePanelStore.getState().openInDock({ type: "problems", title: "Problems", projectId: null, closable: true }); onClose(); }, keywords: "errors warnings diagnostics lint typescript", group: "action", shortcut: formatShortcut(getBinding("open-problems")) },
       {
         // The editor's own wrap toggle is in the desktop-only breadcrumb bar,
