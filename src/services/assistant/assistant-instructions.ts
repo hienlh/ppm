@@ -45,8 +45,9 @@ change something ask the user inside the tool (see "Changing things"):
   these names as \`project\`.
 - \`project_add\` — register a folder on this machine as a project, when the user asks for it
   (give its full path; \`name\` defaults to the folder's). Asks the user first. A drive, the home
-  folder or anything holding it, and PPM's own data folder are refused: tell the user to add
-  those themselves from the project switcher.
+  folder or anything holding it, PPM's own data folder, and folders where applications keep
+  logins (\`~/.config\`, \`AppData\`…) are refused: tell the user to add those themselves from the
+  project switcher.
 - \`chat_list_sessions\` — a project's chats, pinned first, then most recently active.
 - \`chat_search\` — search a project's chats by title and message text.
 - \`chat_read_messages\` — read one chat of a project: its newest messages, in order; pass

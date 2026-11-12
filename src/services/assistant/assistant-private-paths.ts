@@ -147,7 +147,7 @@ export function assistantPrivateScope(opts: {
  * a list of known stores to cover; a project of the user's own is never kept in them unless
  * they registered it there.
  */
-function isHomeStateEntry(name: string, platform: string): boolean {
+export function isHomeStateEntry(name: string, platform: string): boolean {
   if (name.startsWith(".")) return true;
   const folded = platform === "win32" || platform === "darwin" ? name.toLowerCase() : name;
   const library = platform === "win32" || platform === "darwin" ? "library" : "Library";

@@ -1,12 +1,12 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 import type { Json } from "../mcp-http-endpoint.ts";
 import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import { PROJECT_ADD_TOOL } from "../../shared/assistant-tool-names.ts";
-import { isCredentialPath } from "../fs-credential-path-guard.ts";
 import { getPpmDir } from "../ppm-dir.ts";
 import { projectService } from "../project.service.ts";
+import { projectFolderRefusal } from "../project-folder-refusal.ts";
 import { exactFact, fact } from "./assistant-approval-summary.ts";
 import type { AskApproval } from "./assistant-approval-broker.ts";
 import { errorResult, jsonResult } from "./assistant-tool-output.ts";
@@ -26,19 +26,6 @@ export interface ProjectAddDeps {
   announce?: () => void;
   home?: string;
   ppmDir?: string;
-}
-
-const inside = (child: string, parent: string): boolean => {
-  const rel = relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-};
-
-/** Why the Assistant must not register this folder, or null when it may ask to. */
-export function projectFolderRefusal(abs: string, home: string, ppmDir: string): string | null {
-  if (dirname(abs) === abs) return `${abs} is a whole drive.`;
-  if (inside(home, abs)) return `${abs} holds your whole home folder.`;
-  if (inside(ppmDir, abs) || inside(abs, ppmDir) || isCredentialPath(abs)) return `${abs} holds PPM's own data and credentials.`;
-  return null;
 }
 
 export function projectAddSummary(input: { name: string; path: string; git: boolean }): ApprovalSummary {

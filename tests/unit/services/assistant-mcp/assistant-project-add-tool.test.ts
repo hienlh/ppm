@@ -2,7 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse, resolve } from "node:path";
-import { projectAddTool, projectFolderRefusal } from "../../../../src/services/assistant-mcp/assistant-project-add-tool.ts";
+import { projectAddTool } from "../../../../src/services/assistant-mcp/assistant-project-add-tool.ts";
+import { projectFolderRefusal } from "../../../../src/services/project-folder-refusal.ts";
 import type { ApprovalAsk, ApprovalVerdict } from "../../../../src/services/assistant-mcp/assistant-approval-broker.ts";
 
 type Result = { content: Array<{ text: string }>; isError?: boolean };
