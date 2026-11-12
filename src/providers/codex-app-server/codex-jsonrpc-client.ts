@@ -4,6 +4,7 @@ import { resolveBunPath } from "../../services/autostart-generator.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import type { JsonRpcResponse, ServerRequest, JsonRpcNotification } from "./codex-protocol.ts";
 import { AI_CHAT_MARK } from "../../services/ai-chat-env.ts";
+import { ppmInstanceEnv } from "../../services/ppm-instance-env.ts";
 import { createLogger } from "../../services/logger.ts";
 
 const log = createLogger("codex");
@@ -21,6 +22,8 @@ const ENV_ALLOWLIST = [
   "SystemRoot", "SystemDrive", "windir", "ComSpec",
   "LANG", "LC_ALL", "TZ", "TERM",
   "SHELL", "USER", "LOGNAME",
+  // Which PPM a `ppm …` command reaches (`ppm-instance-env.ts`, `assistant-shell-env.ts`).
+  "PPM_PROFILE", "PPM_INSTANCE_ID", "PPM_ASSISTANT_DB",
 ];
 /** Prefixes kept (codex/XDG own their auth + config). */
 const ENV_PREFIX_ALLOWLIST = ["CODEX_", "XDG_", "RUST_"];
@@ -58,7 +61,7 @@ function buildSpawnEnv(): NodeJS.ProcessEnv {
       out[k] = v;
     }
   }
-  return { ...out, ...AI_CHAT_MARK };
+  return { ...out, ...AI_CHAT_MARK, ...ppmInstanceEnv() };
 }
 
 /**

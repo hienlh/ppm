@@ -64,6 +64,7 @@ import { resolve, dirname } from "node:path";
 import { existsSync, mkdirSync, readdirSync, unlinkSync, readFileSync, statSync } from "node:fs";
 import { homedir, totalmem } from "node:os";
 import { AI_CHAT_MARK } from "../services/ai-chat-env.ts";
+import { ppmInstanceEnv } from "../services/ppm-instance-env.ts";
 import { getPpmDir } from "../services/ppm-dir.ts";
 import { createLogger } from "../services/logger.ts";
 
@@ -504,7 +505,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // project. The value reaches the transcript verbatim; telemetry maps unknown ones to
     // "other", so naming ourselves beats borrowing another client's label.
     // AI_CHAT_MARK: `ppm db` run by the model then keeps to the connections available to the AI chat.
-    const base: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "ppm", ...AI_CHAT_MARK };
+    // ppmInstanceEnv: a `ppm …` command the model runs reaches this PPM's database and server.
+    const base: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "ppm", ...AI_CHAT_MARK, ...ppmInstanceEnv() };
     // The CLI's embedded ripgrep (Glob, Grep) reads a config file named by this variable, and
     // one holding `--follow` makes both tools walk through links out of a project. The
     // Assistant's read policy allows a search by the folder it names, so its CLI must never

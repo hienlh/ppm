@@ -1,6 +1,7 @@
 import type { Subprocess, Terminal as BunTerminal } from "bun";
 import { isUsableTerminalSize } from "../shared/terminal-size";
 import { withoutAiChatMark } from "./ai-chat-env.ts";
+import { ppmInstanceEnv } from "./ppm-instance-env.ts";
 import { createLogger } from "./logger.ts";
 import { registerMemoryGauge } from "./memory-diagnostics.ts";
 
@@ -47,7 +48,8 @@ function spawnBunNative(
   const proc: Subprocess = Bun.spawn([shell, "-l"], {
     cwd: projectPath,
     // A person types here: a PPM started from an AI chat must not pass that chat's mark on.
-    env: withoutAiChatMark({ ...process.env, TERM: "xterm-256color" }),
+    // ppmInstanceEnv: `ppm …` typed here reaches this PPM's database and server.
+    env: withoutAiChatMark({ ...process.env, TERM: "xterm-256color", ...ppmInstanceEnv() }),
     terminal: {
       cols,
       rows,
@@ -93,7 +95,7 @@ function spawnBunPty(
     cols,
     rows,
     cwd: projectPath,
-    env: withoutAiChatMark(process.env as Record<string, string>),
+    env: withoutAiChatMark({ ...(process.env as Record<string, string>), ...ppmInstanceEnv() }),
   });
 
   return bunPtyHandle(pty, onData, onExit);

@@ -11,6 +11,7 @@ import { parseNdjsonLines } from "../utils/ndjson-line-parser.ts";
 import { configService } from "../services/config.service.ts";
 import { withSharedContext } from "../shared/provider-context.ts";
 import { AI_CHAT_MARK } from "../services/ai-chat-env.ts";
+import { ppmInstanceEnv } from "../services/ppm-instance-env.ts";
 import { createLogger, type Logger } from "../services/logger.ts";
 
 /**
@@ -228,7 +229,8 @@ export abstract class CliProvider implements AIProvider {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       // AI_CHAT_MARK: `ppm db` run by the model then keeps to the connections available to the AI chat.
-      env: { ...process.env, ...AI_CHAT_MARK },
+      // ppmInstanceEnv: a `ppm …` command it runs reaches this PPM's database and server.
+      env: { ...process.env, ...AI_CHAT_MARK, ...ppmInstanceEnv() },
     });
     proc.stdin?.end();
 
