@@ -5,10 +5,14 @@ import {
   setProjectDefaultTag, getProjectDefaultTagId, getTagSessionCounts,
   seedDefaultTags,
 } from "../../services/tag.service.ts";
+import { announceChatListChanges } from "./chat-list-broadcast.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
 export const tagRoutes = new Hono<Env>();
+
+// A tag change re-colours or re-groups the project's chat list. Registered before every route.
+tagRoutes.use("*", announceChatListChanges);
 
 /** GET /tags — list all tags for the project with session counts */
 tagRoutes.get("/", (c) => {

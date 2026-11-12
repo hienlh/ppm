@@ -20,6 +20,7 @@ import { chatFileChangesRoutes } from "./chat-file-changes.ts";
 import { chatSessionTurnsRoutes } from "./chat-session-turns.ts";
 import { chatTurnWindowRoutes } from "./chat-turn-window.ts";
 import { chatSessionCollabRoutes } from "./session-collab.ts";
+import { announceChatListChanges, CHAT_LIST_WRITE_PATHS } from "./chat-list-broadcast.ts";
 import { applyTurnStamps, loadTurnLookup, stampSessionTurns } from "../../services/session-turns/stamp-message-turns.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
 import { upsertSlashRecent, getSlashRecents, listTurnUsage, getSessionProvider, getSessionDesignSlugs, copySessionForkSettings } from "../../services/db.service.ts";
@@ -53,6 +54,9 @@ const log = createLogger("chat");
 type Env = { Variables: { projectPath: string; projectName: string } };
 
 export const chatRoutes = new Hono<Env>();
+
+// Registered before every route so it wraps them all.
+for (const path of CHAT_LIST_WRITE_PATHS) chatRoutes.use(path, announceChatListChanges);
 
 chatRoutes.route("/prepare", chatPrepareRoutes);
 chatRoutes.route("/", chatFileChangesRoutes);
@@ -381,6 +385,27 @@ chatRoutes.delete("/sessions/:id", async (c) => {
   }
 });
 
+/**
+ * PATCH /chat/sessions/bulk-tag — assign tag to multiple sessions. Registered before the rename
+ * route below: routes match in the order they are added, and `/sessions/:id` would take it.
+ */
+chatRoutes.patch("/sessions/bulk-tag", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const { sessionIds, tagId } = await c.req.json<{ sessionIds: string[]; tagId: number | null }>();
+    if (!Array.isArray(sessionIds) || sessionIds.length === 0) return c.json(err("sessionIds array required"), 400);
+    if (sessionIds.length > 100) return c.json(err("Max 100 sessions per bulk operation"), 400);
+    if (tagId !== null) {
+      const tag = getTagById(tagId);
+      if (!tag || tag.projectPath !== projectPath) return c.json(err("Tag not found"), 404);
+    }
+    bulkSetSessionTag(sessionIds, tagId, projectPath);
+    return c.json(ok({ updated: sessionIds.length }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** PATCH /chat/sessions/:id — rename a session */
 chatRoutes.patch("/sessions/:id", async (c) => {
   try {
@@ -508,24 +533,6 @@ chatRoutes.post("/sessions/:id/unread", async (c) => {
     const { broadcastGlobalEvent } = await import("../ws/chat.ts");
     broadcastGlobalEvent({ type: "session:unread_changed", sessionId: id, unreadCount: 1, unreadType: "done", projectName, sessionTitle: title, manual: true });
     return c.json(ok({ id, unreadCount: 1 }));
-  } catch (e) {
-    return c.json(err((e as Error).message), 500);
-  }
-});
-
-/** PATCH /chat/sessions/bulk-tag — assign tag to multiple sessions (MUST be before /sessions/:id) */
-chatRoutes.patch("/sessions/bulk-tag", async (c) => {
-  try {
-    const projectPath = c.get("projectPath");
-    const { sessionIds, tagId } = await c.req.json<{ sessionIds: string[]; tagId: number | null }>();
-    if (!Array.isArray(sessionIds) || sessionIds.length === 0) return c.json(err("sessionIds array required"), 400);
-    if (sessionIds.length > 100) return c.json(err("Max 100 sessions per bulk operation"), 400);
-    if (tagId !== null) {
-      const tag = getTagById(tagId);
-      if (!tag || tag.projectPath !== projectPath) return c.json(err("Tag not found"), 404);
-    }
-    bulkSetSessionTag(sessionIds, tagId, projectPath);
-    return c.json(ok({ updated: sessionIds.length }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
