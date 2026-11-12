@@ -1,7 +1,10 @@
 import { Command } from "commander";
 import type { PpmConfig } from "../../types/config.ts";
 import { isSecretConfigKey, redactSecretConfigValue } from "../../services/config-secret-keys.ts";
-import { LOG_LEVELS, parseLogLevel } from "../../shared/log-levels.ts";
+import { configWriteRefusal, prepareConfigWrite } from "../../services/config-write-guard.ts";
+import { inAiChat } from "../../services/ai-chat-env.ts";
+import { flattenConfig, getNestedValue } from "../utils/config-key-path.ts";
+import { noteDirectWrite, serverRequest, ServerDownError } from "../utils/ppm-server-client.ts";
 
 const C = {
   reset: "\x1b[0m",
@@ -12,51 +15,36 @@ const C = {
   bold: "\x1b[1m",
 };
 
-type FlatConfig = Record<string, string | number | boolean>;
+const failWith = (msg: string): never => {
+  console.error(`${C.red}Error:${C.reset} ${msg}`);
+  process.exit(1);
+};
 
-function flattenConfig(obj: unknown, prefix = ""): FlatConfig {
-  const result: FlatConfig = {};
-  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-    const key = prefix ? `${prefix}.${k}` : k;
-    if (v !== null && typeof v === "object" && !Array.isArray(v)) {
-      Object.assign(result, flattenConfig(v, key));
-    } else {
-      result[key] = v as string | number | boolean;
-    }
+/**
+ * No server holds the database: the same checks the server's route makes, then the write. This is
+ * what keeps `ppm init` followed by `ppm config set port 8081` working before PPM ever started.
+ */
+async function setDirectly(key: string, value: string): Promise<void> {
+  const { configService } = await import("../../services/config.service.ts");
+  configService.load();
+  const all = configService.getAll() as unknown as Record<string, unknown>;
+  const prepared = prepareConfigWrite(key, value, all, { aiChat: inAiChat() });
+  if (!prepared.ok) return failWith(prepared.error);
+  await noteDirectWrite();
+  const topKey = prepared.topKey as keyof PpmConfig;
+  configService.set(topKey, prepared.topValue as PpmConfig[typeof topKey]);
+  configService.save();
+  console.log(`${C.green}Updated:${C.reset} ${key} = ${prepared.value}`);
+  console.log(`${C.cyan}Saved to:${C.reset} ${configService.getConfigPath()}`);
+  // The supervisor owns cloudflared and caches its own copy of the config, so a write alone
+  // would sit there until the next restart.
+  if (key === "tunnel.enabled") {
+    const { requestTunnelReload } = await import("../../services/supervisor-state.ts");
+    const reload = requestTunnelReload();
+    console.log(reload === "sent"
+      ? `${C.cyan}Applied:${C.reset} asked the running PPM to ${prepared.value ? "start" : "stop"} its tunnel`
+      : `${C.cyan}Note:${C.reset} no running supervisor to apply it to (${reload}) — takes effect on next start`);
   }
-  return result;
-}
-
-function setNestedValue(obj: Record<string, unknown>, keyPath: string, value: unknown): void {
-  const parts = keyPath.split(".");
-  let current = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i]!;
-    if (typeof current[part] !== "object" || current[part] === null) {
-      current[part] = {};
-    }
-    current = current[part] as Record<string, unknown>;
-  }
-  const last = parts[parts.length - 1]!;
-  // Coerce type based on existing value
-  const existing = current[last];
-  if (typeof existing === "number") {
-    current[last] = Number(value);
-  } else if (typeof existing === "boolean") {
-    current[last] = value === "true" || value === "1";
-  } else {
-    current[last] = value;
-  }
-}
-
-function getNestedValue(obj: unknown, keyPath: string): unknown {
-  const parts = keyPath.split(".");
-  let current: unknown = obj;
-  for (const part of parts) {
-    if (current === null || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
 }
 
 export function registerConfigCommands(program: Command): void {
@@ -101,52 +89,21 @@ export function registerConfigCommands(program: Command): void {
 
   config
     .command("set <key> <value>")
-    .description("Set a config value (e.g. port 9090)")
+    .description("Set a config value (e.g. port 9090), through the running PPM when one holds the database")
     .action(async (key: string, value: string) => {
+      // Refused before anything is looked up: a secret on a command line is already a leak.
+      const refusal = configWriteRefusal(key, { aiChat: inAiChat() });
+      if (refusal) return failWith(refusal);
       try {
-        const { configService } = await import("../../services/config.service.ts");
-        configService.load();
-        const all = configService.getAll() as unknown as Record<string, unknown>;
-
-        const existing = getNestedValue(all, key);
-        if (existing === undefined) {
-          console.error(`${C.red}Error:${C.reset} Config key "${key}" not found`);
-          process.exit(1);
-        }
-        // Stored anyway, an unknown level would quietly mean the default.
-        if (key === "log_level") {
-          const level = parseLogLevel(value);
-          if (level === null) {
-            console.error(`${C.red}Error:${C.reset} Unknown log level "${value}". Use one of: ${LOG_LEVELS.join(", ")}`);
-            process.exit(1);
-          }
-          value = level;
-        }
-
-        setNestedValue(all, key, value);
-
-        // Re-apply back to config service via top-level keys
-        const topKey = key.split(".")[0] as keyof PpmConfig;
-        configService.set(topKey, all[topKey] as PpmConfig[typeof topKey]);
-        configService.save();
-
-        console.log(`${C.green}Updated:${C.reset} ${key} = ${value}`);
-        console.log(`${C.cyan}Saved to:${C.reset} ${configService.getConfigPath()}`);
-
-        // The supervisor owns cloudflared and caches its own copy of the config,
-        // so a write alone would sit there until the next restart. Nudge it the
-        // same way the HTTP switch does; a machine with no supervisor running
-        // just keeps the persisted choice for its next start.
-        if (key === "tunnel.enabled") {
-          const { requestTunnelReload } = await import("../../services/supervisor-state.ts");
-          const reload = requestTunnelReload();
-          console.log(reload === "sent"
-            ? `${C.cyan}Applied:${C.reset} asked the running PPM to ${all.tunnel && (all.tunnel as { enabled?: boolean }).enabled ? "start" : "stop"} its tunnel`
-            : `${C.cyan}Note:${C.reset} no running supervisor to apply it to (${reload}) — takes effect on next start`);
-        }
+        const data = await serverRequest<{ key: string; value: unknown; note: string | null }>("PUT", "/settings/config-key", { key, value });
+        console.log(`${C.green}Updated:${C.reset} ${data.key} = ${String(data.value)}`);
+        if (data.note) console.log(`${C.cyan}Note:${C.reset} ${data.note}`);
       } catch (err) {
-        console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
-        process.exit(1);
+        if (err instanceof ServerDownError) {
+          try { await setDirectly(key, value); } catch (e) { failWith((e as Error).message); }
+          return;
+        }
+        failWith((err as Error).message);
       }
     });
 }

@@ -83,3 +83,17 @@ describe("ppm config get — secret masking", () => {
     expect(lines.join("\n")).toContain("quick");
   });
 });
+
+describe("ppm config set — refusals that need no server", () => {
+  it("refuses a secret key for every caller, before looking for a server", async () => {
+    await run("set", "auth.token", "x");
+    const out = lines.join("\n");
+    expect(out).toContain("is a secret");
+    expect(out).not.toContain("→ PPM");
+  });
+
+  it("sends a key with its own settings to them", async () => {
+    await run("set", "theme.mode", "dark");
+    expect(lines.join("\n")).toContain("has its own settings");
+  });
+});

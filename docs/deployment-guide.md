@@ -134,7 +134,13 @@ ppm projects remove my-project
 
 # AI provider / model
 ppm config set ai.default_provider claude       # claude | codex | cursor
-ppm config set ai.providers.claude.model claude-opus-5
+# A provider's own settings (model, API key, command) are changed in Settings → AI Provider
+
+# `config set` goes through the running PPM that holds the database; with none running it
+# writes the database directly and says so. Pick a dev profile (ppm.dev.db), or one server
+# when several share a database:
+ppm --profile dev config set log_level debug   # or PPM_PROFILE=dev
+ppm --instance <pid> config set log_level info
 
 # Auth
 ppm config set auth.enabled true
