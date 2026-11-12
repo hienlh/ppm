@@ -17,6 +17,8 @@ export const SECRET_CONFIG_KEYS: readonly string[] = [
   "ntfy.token",
   // Whole list: env and header values are secrets, and so may be a command's arguments.
   "assistant.mcp_servers",
+  // A provider's API key, whichever provider: `*` stands for one key segment.
+  "ai.providers.*.api_key",
 ];
 
 /** Marker shown in place of a redacted secret value. Never the empty string, so a caller can tell "masked" apart from "absent". */
@@ -27,7 +29,18 @@ const REDACTED = "[REDACTED]";
  * caller requesting `tunnel.namedTunnelToken.raw` would still be blocked).
  */
 export function isSecretConfigKey(key: string): boolean {
-  return SECRET_CONFIG_KEYS.some((entry) => key === entry || key.startsWith(`${entry}.`));
+  return SECRET_CONFIG_KEYS.some((entry) => configKeyHasPrefix(key, entry));
+}
+
+/**
+ * True when `key` is `pattern` or a dotted descendant of it; a `*` segment in the pattern matches
+ * any one segment of the key (`ai.providers.*.api_key` covers `ai.providers.codex.api_key`).
+ */
+export function configKeyHasPrefix(key: string, pattern: string): boolean {
+  const k = key.split(".");
+  const p = pattern.split(".");
+  if (k.length < p.length) return false;
+  return p.every((seg, i) => seg === "*" || seg === k[i]);
 }
 
 /**

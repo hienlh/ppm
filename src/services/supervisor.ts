@@ -2135,6 +2135,9 @@ export async function runSupervisor(opts: {
   const isUpgrade = prevStatus.state === "upgrading";
   writeStatus({
     supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null,
+    // Which database this supervisor's server runs on: the CLI's process commands and its
+    // discovery act on a supervisor only when it serves the profile they were given.
+    profile: opts.profile ?? null,
     minimalMode: !!opts.minimal,
     state: "running", pausedAt: null, pauseReason: null, lastCrashError: null,
     pid: null,

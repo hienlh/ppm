@@ -9,8 +9,11 @@ import { gzipJson } from "./middleware/gzip-json.ts";
 import { accessLog } from "./middleware/access-log.ts";
 import { corsHeaders } from "./middleware/cors-headers.ts";
 import { createLogger } from "../services/logger.ts";
+import { serverInstanceId } from "../services/server-instance-id.ts";
+import { cliHelloRoutes } from "./routes/cli-hello.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { settingsRoutes } from "./routes/settings.ts";
+import { settingsConfigKeyRoutes } from "./routes/settings-config-key.ts";
 import { settingsThemesRoutes } from "./routes/settings-themes.ts";
 import { tunnelRoutes } from "./routes/tunnel.ts";
 import { tunnelService } from "../services/tunnel.service.ts";
@@ -188,8 +191,10 @@ app.use("*", corsHeaders);
 // Public endpoints (before auth)
 // Per-boot id so a named-tunnel health probe can tell "my connector is dark"
 // from "someone else's connector answers my hostname" across a restart.
-const instanceId = crypto.randomUUID();
+const instanceId = serverInstanceId();
 app.get("/api/health", (c) => c.json(ok({ status: "running", instanceId })));
+// The `ppm` CLI's identity check, answered before it sends any token (`cli-hello.ts`).
+app.route("/api/cli", cliHelloRoutes);
 app.get("/api/info", (c) => c.json(ok({
   version: VERSION,
   minimal_mode: isMinimalMode(),
@@ -324,6 +329,7 @@ app.route("/api/loopback", loopbackRoutes);
 
 // API routes
 app.route("/api/settings", settingsRoutes);
+app.route("/api/settings", settingsConfigKeyRoutes);
 // The tour's "PPM has new features" questions, answered once for the whole install.
 import { featureIntroRoutes } from "./routes/feature-intros.ts";
 app.route("/api/feature-intros", featureIntroRoutes);
@@ -1367,6 +1373,14 @@ if (process.argv.includes("__serve__")) {
   // Child processes calling back into this server (the design MCP endpoint) need the
   // port actually bound, which is not the configured one under the supervisor (port 0).
   setServerListenAddress(Number(server.port), host);
+  // Where the `ppm` CLI finds this server, beside any other server on the same database.
+  try {
+    const { publishServerEndpoint } = await import("../services/server-endpoint-file.ts");
+    const { getDbPath } = await import("../services/db.service.ts");
+    publishServerEndpoint({ port: Number(server.port), host, dbFile: getDbPath(), version: VERSION, instanceId });
+  } catch (e) {
+    console.error(`[serve] Failed to publish the CLI endpoint file: ${e}`);
+  }
 
   // The tailnet address (Settings → Remote Access → Tailscale) proxies to the port people reach PPM on.
   // tailscaled keeps it across restarts; this only puts it back if it went missing.
