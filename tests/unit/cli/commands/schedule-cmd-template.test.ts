@@ -10,7 +10,11 @@ import { join } from "node:path";
 import { Command } from "commander";
 import { Hono } from "hono";
 import { configService } from "../../../../src/services/config.service.ts";
-import { openTestDb, setDb } from "../../../../src/services/db.service.ts";
+import { getDbPath, openTestDb, setDb } from "../../../../src/services/db.service.ts";
+import { cliHelloRoutes } from "../../../../src/server/routes/cli-hello.ts";
+import { publishServerEndpoint, removeServerEndpoint } from "../../../../src/services/server-endpoint-file.ts";
+import { serverInstanceId } from "../../../../src/services/server-instance-id.ts";
+import { _resetServerClient } from "../../../../src/cli/utils/ppm-server-client.ts";
 
 mock.module("../../../../src/services/scheduler.service.ts", () => ({
   schedulerService: { runJobNow: () => ({ runId: null, wasRunning: false }), rearm: () => {}, isRunning: () => false },
@@ -48,14 +52,19 @@ beforeAll(() => {
   writeFileSync(join(dir, "t.ppm-schedule.json"), JSON.stringify(template));
   writeFileSync(join(dir, "token.txt"), `${SECRET}\n`);
   writeFileSync(join(dir, "gh.txt"), `${GH_TOKEN}\n`);
-  const app = new Hono().route("/api/schedules", schedulesRoutes);
+  // The CLI reaches a server only through its endpoint file and identity check.
+  const app = new Hono().route("/api/cli", cliHelloRoutes).route("/api/schedules", schedulesRoutes);
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: app.fetch });
+  publishServerEndpoint({ port: server.port, host: "127.0.0.1", dbFile: getDbPath(), version: "test", instanceId: serverInstanceId() });
+  _resetServerClient();
   saved = { port: configService.get("port"), projects: configService.get("projects") ?? [] };
   configService.set("port", server.port as never);
   configService.set("projects", [{ name: "demo", path: dir }]);
 });
 afterAll(() => {
   server.stop(true);
+  removeServerEndpoint();
+  _resetServerClient();
   configService.set("port", saved.port);
   configService.set("projects", saved.projects);
   rmSync(dir, { recursive: true, force: true });

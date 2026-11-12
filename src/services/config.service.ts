@@ -90,6 +90,11 @@ class ConfigService {
    * config key and deletes every project row, which is exactly how a stray
    * bootstrap in a throwaway script once locked the user out of their instance.
    */
+  /** Whether load() has run: a caller that only reads can load once instead of re-reading over unsaved state. */
+  get isLoaded(): boolean {
+    return this.loaded;
+  }
+
   private assertLoaded(operation: string): void {
     if (this.loaded) return;
     throw new Error(

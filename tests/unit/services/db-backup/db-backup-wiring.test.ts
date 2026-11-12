@@ -74,7 +74,7 @@ describe("automatic snapshot call sites", () => {
     // Restoring under a running server would have it writing into a file being
     // replaced, so that has to be an explicit opt-in.
     expect(src).toMatch(/--force/);
-    const index = await read("index.ts");
-    expect(index).toMatch(/registerBackupCommands\(program\)/);
+    const groups = await read("cli/register-command-groups.ts");
+    expect(groups).toMatch(/registerBackupCommands\(program\)/);
   });
 });

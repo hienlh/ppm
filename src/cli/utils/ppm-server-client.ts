@@ -33,7 +33,7 @@ async function resolveTarget(): Promise<Target> {
   const { configService } = await import("../../services/config.service.ts");
   const { getDbPath, getDbProfile } = await import("../../services/db.service.ts");
   const { readStatus } = await import("../../services/supervisor-state.ts");
-  configService.load();
+  if (!configService.isLoaded) configService.load();
   const auth = configService.get("auth");
   const dbFile = getDbPath();
   const profile = getDbProfile();

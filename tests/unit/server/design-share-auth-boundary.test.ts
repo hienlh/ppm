@@ -26,6 +26,8 @@ const TOKEN = "share-guest-test";
 const PUBLIC_API_ROUTES = new Set([
   "GET /api/health",
   "GET /api/info",
+  // The `ppm` CLI's identity check: answers a proof of the token, never the token.
+  "GET /api/cli/hello",
   // Answers the authorization server's redirect, which carries no PPM token.
   "GET /api/mcp-auth/callback",
   // Per-session capability tokens of a chat's own subprocess.
