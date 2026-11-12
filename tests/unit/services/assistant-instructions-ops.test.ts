@@ -16,18 +16,23 @@ import { GIT_COMMIT_TOOL, GIT_TOOLS } from "../../../src/shared/assistant-git-to
 import { SCHEDULE_TOOLS } from "../../../src/shared/assistant-schedule-tool-names.ts";
 import { TUNNEL_TOOLS } from "../../../src/shared/assistant-tunnel-tool-names.ts";
 import { PROJECT_TOOLS } from "../../../src/shared/assistant-project-tool-names.ts";
+import { CHAT_TOOLS } from "../../../src/shared/assistant-chat-tool-names.ts";
 
 const OPS_TOOLS = TOOLS_INSTEAD_OF_CLI.flatMap((g) => g.tools);
 const count = (text: string, needle: string): number => text.split(needle).length - 1;
 
-describe("the git, schedule, tunnel and project tool names", () => {
-  it("are the twenty-four tools of the four groups, none twice", () => {
-    expect(OPS_TOOLS).toHaveLength(24);
-    expect(new Set(OPS_TOOLS).size).toBe(24);
+describe("the git, schedule, tunnel, project and chat tool names", () => {
+  it("are the twenty-seven tools of the five groups, none twice", () => {
+    expect(OPS_TOOLS).toHaveLength(27);
+    expect(new Set(OPS_TOOLS).size).toBe(27);
   });
 
   it("put the project family beside the project list and project_add", () => {
     expect([...TOOLS_INSTEAD_OF_CLI[3]!.tools].sort()).toEqual(["project_add", "projects_list", ...PROJECT_TOOLS].sort());
+  });
+
+  it("list the chat family as it is defined", () => {
+    expect([...TOOLS_INSTEAD_OF_CLI[4]!.tools]).toEqual([...CHAT_TOOLS]);
   });
 
   it("match each family's own list once that family is defined", () => {

@@ -71,13 +71,13 @@ export const modeLabel = (mode: string): string => MODE_LABELS[mode] ?? mode;
  * nothing for certain — a Codex chat's UUIDv7 id starts with its creation time, so two chats with
  * one title started in the same minute would read the same.
  */
-function chatFact(title: string | null, sessionId: string): ApprovalFact {
+export function chatFact(title: string | null, sessionId: string): ApprovalFact {
   if (!title) return exactFact("Chat", sessionId);
   const name = title.length > MAX_FACT_CHARS ? `${title.slice(0, MAX_FACT_CHARS)}…` : title;
   return exactFact("Chat", `${name} (${sessionId})`);
 }
 
-const providerLabel = (providerId: string): string => (providerId === "codex" ? "Codex" : "Claude");
+export const providerLabel = (providerId: string): string => (providerId === "codex" ? "Codex" : "Claude");
 
 const DECIDING_LABELS: Record<DecidingInput["kind"], string> = {
   command: "Command", web: "Request", write: "Content written", edit: "Changes", notebook: "New cell source",

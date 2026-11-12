@@ -56,6 +56,10 @@ export const TOOLS_INSTEAD_OF_CLI: readonly { area: string; tools: readonly stri
     area: "Projects (instead of `ppm projects` add, rename, move, color, remove)",
     tools: ["projects_list", "project_add", "project_update", "project_remove"],
   },
+  {
+    area: "Chats (instead of `ppm chat` stop, rename, pin, tag, read, delete)",
+    tools: ["chat_stop", "chat_organize", "chat_delete"],
+  },
 ];
 
 export interface ReferenceOptions {
@@ -99,6 +103,7 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     `- ${list(commandPathsWithRouting("server"))}`,
     "- schedule run-now: prefer the schedule_run_now tool",
     "- projects add/rename/move/remove: prefer project_add, project_update and project_remove",
+    "- chat stop/rename/pin/tag/read/delete: prefer chat_stop, chat_organize and chat_delete",
     "- chat stop sends the stop PPM's Stop button sends; chat delete stops a running turn first and deletes nothing if it does not stop",
     "",
     "## Commands that write PPM's data directly",

@@ -1,5 +1,5 @@
 /**
- * What the Assistant's git, schedule, tunnel and project tools are for, and the rules around them. Kept
+ * What the Assistant's git, schedule, tunnel, project and chat tools are for, and the rules around them. Kept
  * apart from `assistant-instructions.ts` so that file stays readable; added to the same turns as
  * the other tool sections (only when the session has the `ppm-assistant` endpoint), after
  * "Changing things", whose approval rules it relies on.
@@ -21,6 +21,8 @@ update at once. Reading never asks; every change shows the user a card PPM build
   \`public_link_set\` (PPM's own public address).
 - Projects: read with \`projects_list\`; change with \`project_add\`, \`project_update\` (rename, move,
   colour) and \`project_remove\` (PPM forgets it; its files stay).
+- Chats: change with \`chat_stop\` (a running turn), \`chat_organize\` (rename, pin, tag, mark read)
+  and \`chat_delete\` (cannot be undone; a running chat is stopped first).
 
 ### Read first, then change
 - No project named? Call \`projects_list\` before anything else. When exactly one project fits the
@@ -28,6 +30,8 @@ update at once. Reading never asks; every change shows the user a card PPM build
   project only when several genuinely fit.
 - Read the current state before changing it: the git status before any git change, the schedule
   before editing or deleting it, the tunnels before forwarding a port or touching the public link.
+- A chat is named by its session id from \`chat_list_sessions\` or \`chats_attention\`. A pinned chat
+  is one the user meant to keep: say so before deleting it.
 - A commit message the user gives is committed exactly as they wrote it: pass it to \`git_commit\`
   unchanged, adding no trailer (\`Co-Authored-By\`, \`Signed-off-by\`) and no other line unless
   they ask for one.

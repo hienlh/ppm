@@ -8,6 +8,7 @@ import { GIT_TOOLS } from "./assistant-git-tool-names.ts";
 import { SCHEDULE_TOOLS } from "./assistant-schedule-tool-names.ts";
 import { TUNNEL_TOOLS } from "./assistant-tunnel-tool-names.ts";
 import { PROJECT_TOOLS } from "./assistant-project-tool-names.ts";
+import { CHAT_TOOLS } from "./assistant-chat-tool-names.ts";
 
 export const PROJECTS_LIST_TOOL = "projects_list";
 export const PROJECT_ADD_TOOL = "project_add";
@@ -35,8 +36,8 @@ export const NOTEBOOK_EDIT_TOOL = "notebook_edit";
 export const NOTEBOOK_DELETE_TOOL = "notebook_delete";
 
 /**
- * Every tool the endpoint serves, in the order `tools/list` gives them. The git, schedule, tunnel
- * and project families keep their names in their own files and come last, in that order — the order
+ * Every tool the endpoint serves, in the order `tools/list` gives them. The git, schedule, tunnel,
+ * project and chat families keep their names in their own files and come last, in that order — the order
  * `ASSISTANT_TOOL_DEFINITIONS` spreads their definitions in. Opening and messaging the user's
  * chats is not here: the Assistant uses PPM's session tools (`ppm-sessions`) for that.
  */
@@ -48,7 +49,7 @@ export const ASSISTANT_TOOLS = [
   CHATS_ATTENTION_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
   NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,
-  ...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...PROJECT_TOOLS,
+  ...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...PROJECT_TOOLS, ...CHAT_TOOLS,
 ] as const;
 export type AssistantToolName = (typeof ASSISTANT_TOOLS)[number];
 

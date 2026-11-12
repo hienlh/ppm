@@ -18,6 +18,7 @@ import { GIT_TOOLS } from "../../../src/shared/assistant-git-tool-names.ts";
 import { SCHEDULE_TOOLS } from "../../../src/shared/assistant-schedule-tool-names.ts";
 import { TUNNEL_TOOLS } from "../../../src/shared/assistant-tunnel-tool-names.ts";
 import { PROJECT_TOOLS } from "../../../src/shared/assistant-project-tool-names.ts";
+import { CHAT_TOOLS } from "../../../src/shared/assistant-chat-tool-names.ts";
 import { createMcpHttpHandler, textResult } from "../../../src/services/mcp-http-endpoint.ts";
 import { assistantTurnProvenance } from "../../../src/services/assistant/assistant-turn-provenance.ts";
 
@@ -77,9 +78,9 @@ describe("assistant MCP endpoint", () => {
     // Opening and messaging chats is the session tools' job, never this server's.
     expect(names).not.toContain("chat_send_message");
     expect(names).not.toContain("chat_start");
-    // The git, schedule, tunnel and project families annotate their own tools, checked beside each family.
-    const familyTools = new Set<string>([...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...PROJECT_TOOLS]);
-    expect(names.slice(-PROJECT_TOOLS.length)).toEqual([...PROJECT_TOOLS]);
+    // The git, schedule, tunnel, project and chat families annotate their own tools, checked beside each family.
+    const familyTools = new Set<string>([...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...PROJECT_TOOLS, ...CHAT_TOOLS]);
+    expect(names.slice(-(PROJECT_TOOLS.length + CHAT_TOOLS.length))).toEqual([...PROJECT_TOOLS, ...CHAT_TOOLS]);
     for (const tool of list.result.tools) {
       if (familyTools.has(tool.name)) continue;
       if (navigation.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
@@ -119,6 +120,26 @@ describe("assistant MCP endpoint", () => {
       await callAssistantTool({ sessionId }, name, {}).catch(() => null);
       expect({ name, untrusted: assistantTurnProvenance.provenance(sessionId).untrusted }).toEqual({ name, untrusted: true });
     }
+  });
+
+  it("hands a family tool the turn's provenance as it stood before the call itself marked the turn", async () => {
+    const sessionId = assistantSession();
+    assistantTurnProvenance.noteMessage({ sessionId, text: "tidy my chats", origin: "ws" });
+    const original = assistantTurnProvenance.provenance;
+    const seen: Array<ReturnType<typeof original>> = [];
+    assistantTurnProvenance.provenance = (id: string) => {
+      const p = original(id);
+      seen.push(p);
+      return p;
+    };
+    try {
+      await callAssistantTool({ sessionId }, "chat_organize", { project: "no-such-project", changes: [{ sessionId: "abc", read: true }] });
+    } finally {
+      assistantTurnProvenance.provenance = original;
+    }
+    expect(seen[0]).toMatchObject({ startedBy: "user_ppm", untrusted: false });
+    // The call itself still counts: chat titles may come back from it.
+    expect(assistantTurnProvenance.provenance(sessionId).untrusted).toBe(true);
   });
 
   it("refuses a browser request, a wrong token and a body over the cap", async () => {

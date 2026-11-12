@@ -10,6 +10,7 @@ import { GIT_TOOL_DEFINITIONS } from "./assistant-git-tool-definitions.ts";
 import { SCHEDULE_TOOL_DEFINITIONS } from "./assistant-schedule-tool-definitions.ts";
 import { TUNNEL_TOOL_DEFINITIONS } from "./assistant-tunnel-tool-definitions.ts";
 import { PROJECT_TOOL_DEFINITIONS } from "./assistant-project-tool-definitions.ts";
+import { CHAT_TOOL_DEFINITIONS } from "./assistant-chat-tool-definitions.ts";
 import { NOTEBOOK_TOOL_DEFINITIONS } from "./assistant-notebook-tool-definitions.ts";
 
 /**
@@ -223,4 +224,5 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
   ...SCHEDULE_TOOL_DEFINITIONS,
   ...TUNNEL_TOOL_DEFINITIONS,
   ...PROJECT_TOOL_DEFINITIONS,
+  ...CHAT_TOOL_DEFINITIONS,
 ] as const;

@@ -650,10 +650,31 @@ writes the database directly, so an open PPM never heard of the change.
 | Schedules | `schedules_list`, `schedule_get` | `schedule_save`, `schedule_delete`, `schedule_run_now` |
 | Tunnels | `tunnels_status` | `port_forward_start`, `port_forward_stop`, `public_link_set` |
 | Projects | (`projects_list`) | `project_update`, `project_remove` |
+| Chats | (`chat_list_sessions`, `chats_attention`) | `chat_stop`, `chat_delete`; `chat_organize` (see below) |
 
 The project family reaches only `GET /api/projects`, `PATCH /api/projects/:name`, its `/color` and
 `DELETE /api/projects/:name`; the internal app gates the rest of that router (clone, image upload,
 settings, `reorder`), and the name `reorder` is reserved because its route is matched before `:name`.
+
+The chat family (`assistant-chat-*.ts`) reaches one chat session (`PATCH`, and `DELETE` with
+`stopRunning` and `providerId`), its `pin`, `tag`, `read` and `unread` marks, and the project's tag
+list. The internal app's project gate (`isProjectFamilyPath`) lets exactly those through beside
+`git/`: never the session list, a transcript, an upload or a draft. A chat must be proven to belong
+to the named project (`resolveAssistantSessionTarget`), and Assistant chats are never a target.
+- `chat_stop` asks, then stops through `chatControl().cancelTurn(…, "assistant")` — only if the
+  turn the card showed is still running (`LiveChatState.turnId` and `runningSince` unchanged).
+- `chat_delete` asks; a manager chat and a chat with branched versions are refused. The card says
+  "Pinned: Yes", or "Until <time> (unpinned by the Assistant)" when the Assistant took the pin off in
+  the last 24 hours (`assistant-recent-unpins.ts`, memory only), and "Running now" when the delete
+  will stop a turn first. After Allow it re-reads the chat (project, pin, manager, running) and calls
+  the delete route with `?stopRunning=1`, whose 409 it passes through.
+- `chat_organize` (rename, pin, tag, mark read or unread; up to 20 chats) runs without a card only in
+  a clean turn: started by the user in PPM or on Telegram, with no outside text recorded yet. The
+  endpoint reads the turn's provenance *before* the call marks it (`ToolContext.provenanceAtCall`),
+  so an earlier read in the turn — `chat_list_sessions` included — means one card for the whole
+  call. It is refused in a turn PPM started on its own, marking a chat read is refused while that
+  chat shows a card, and a manager chat's title is left to the user. These refusals are advisory
+  guards; the card and the routes are the controls.
 
 Stage, unstage, fetch and pausing a schedule ask too: the rule is that every change of state, and
 everything that reaches the network, asks.

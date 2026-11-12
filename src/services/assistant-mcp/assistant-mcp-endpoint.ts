@@ -66,10 +66,14 @@ export function createAssistantMcpHandler(deps: {
  */
 export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, signal) => {
   const ask = approvalAskerFor(sessionId, signal);
+  const turnSession = resolveMigratedSession(sessionId);
+  // Read before this call marks the turn: whether the turn was clean when the call arrived is
+  // what a tool that may skip its card decides on.
+  const provenanceAtCall = assistantTurnProvenance.provenance(turnSession);
   // Anything but the few tools that answer with PPM's or the user's own data can bring outside
   // text into this turn (chat titles, a tab, a commit message, a schedule's prompt, database
   // rows): its messages to manager chats then say so.
-  if (ownToolBringsOutsideText(name)) assistantTurnProvenance.markUntrusted(resolveMigratedSession(sessionId), "read");
+  if (ownToolBringsOutsideText(name)) assistantTurnProvenance.markUntrusted(turnSession, "read");
   switch (name) {
     case PROJECTS_LIST_TOOL: return projectsList();
     case PROJECT_ADD_TOOL: return projectAddTool(args, ask, { announce: () => broadcastGlobalEvent({ type: PROJECTS_CHANGED_EVENT }) });
@@ -99,7 +103,7 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, sig
     case NOTEBOOK_DELETE_TOOL: return notebookDeleteTool(sessionId, args);
     // The git, schedule and tunnel tools: each family dispatches its own, with a route caller
     // confined to the routes that family declared.
-    default: return callFamilyTool(name, { sessionId, ask, signal }, args) ?? errorResult(`Unknown tool: ${name.slice(0, 60)}`);
+    default: return callFamilyTool(name, { sessionId, ask, signal, provenanceAtCall }, args) ?? errorResult(`Unknown tool: ${name.slice(0, 60)}`);
   }
 };
 
