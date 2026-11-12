@@ -10,14 +10,15 @@ import { listTailscaleForwards, startTailscaleForward } from "../port-forward/ta
 import { localServerBaseUrl } from "../server-listen-address.ts";
 import { terminalService } from "../terminal.service.ts";
 import { createOpenUrlTool, type OpenUrlTool } from "./open-url-tool.ts";
+import { createBranchReviewTool } from "./branch-review-tool.ts";
 import { canonicalTabSession, deviceError, tabOpenBroker, type TabOpenOutcome } from "./tab-open-broker.ts";
 import {
   resolveTabTarget, type TabTarget, type TabTargetOptions, type TabTargetOutcome, type TabToolsBinding,
 } from "./tab-target.ts";
 import { tabToolsMcpTokens, type TabToolsTokenBinding } from "./tab-tools-mcp-tokens.ts";
 import {
-  OPEN_FILE_TOOL, OPEN_FILE_WAIT_MS, OPEN_PREVIEW_TOOL, OPEN_PREVIEW_WAIT_MS, OPEN_URL_TOOL, READ_TERMINAL_TOOL,
-  RUN_IN_TERMINAL_TOOL,
+  OPEN_BRANCH_REVIEW_TOOL, OPEN_FILE_TOOL, OPEN_FILE_WAIT_MS, OPEN_PREVIEW_TOOL, OPEN_PREVIEW_WAIT_MS, OPEN_URL_TOOL,
+  READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL,
 } from "./tab-tools-mcp-tool.ts";
 import { TAB_TOOLS_MCP_TOOL_DEFINITIONS } from "./tab-tools-mcp-tool-list.ts";
 import { createTerminalTools, type TerminalTools } from "./terminal-tools.ts";
@@ -29,7 +30,8 @@ import { browserToolsUnavailable } from "../web-browser/browser-tools-availabili
 /**
  * `/api/tab-tools-mcp` — serves the tab tools to one chat session's own agent (the MCP plumbing
  * is `mcp-http-endpoint.ts`): `open_file` and `open_preview` open a file the agent could already
- * read, `open_url` a web server on the host, and `run_in_terminal` a terminal with a command
+ * read, `open_url` a web server on the host, `open_branch_review` the Branch Review tab on two refs
+ * it checked first, and `run_in_terminal` a terminal with a command
  * typed in, all on that session's devices; `read_terminal` reads the terminals of the session's
  * project. Nothing a tab shows comes back except, for an HTML page, the check of how it rendered.
  * The session-history tools (`session-history-tools.ts`) search and read the project's other chats.
@@ -55,6 +57,8 @@ export function createTabToolsMcpHandler(deps: {
   enabled: (tool: string) => boolean;
   terminal: TerminalTools;
   openUrl: OpenUrlTool;
+  /** `open_branch_review`; built on `request` when not given. */
+  branchReview?: (binding: TabToolsBinding, args: Json) => Promise<Json>;
   /** `search_sessions`, `list_session_turns`, `read_session_turns`. */
   sessionHistory: SessionHistoryTools;
   resolveTarget?: (input: unknown, binding: TabToolsBinding, opts?: TabTargetOptions) => Promise<TabTargetOutcome>;
@@ -62,6 +66,7 @@ export function createTabToolsMcpHandler(deps: {
   browserUnavailable?: () => string | null;
 }) {
   const resolveTarget = deps.resolveTarget ?? resolveTabTarget;
+  const branchReview = deps.branchReview ?? createBranchReviewTool({ request: deps.request });
 
   async function openFile(binding: TabToolsBinding, target: TabTarget, args: Json): Promise<Json> {
     if (target.folder) return openFolder(binding, target);
@@ -128,6 +133,7 @@ export function createTabToolsMcpHandler(deps: {
       const binding: TabToolsBinding = { sessionId, ...(await deps.sessionProject(sessionId)) };
       const args = isObj(rawArgs) ? rawArgs : {};
       if (name === OPEN_URL_TOOL) return deps.openUrl(binding, args);
+      if (name === OPEN_BRANCH_REVIEW_TOOL) return branchReview(binding, args);
       if (name === READ_TERMINAL_TOOL) return deps.terminal.read(binding, args);
       if (name === RUN_IN_TERMINAL_TOOL) return deps.terminal.run(binding, args);
       if (isSessionHistoryTool(name)) return deps.sessionHistory.call(binding, name, args);

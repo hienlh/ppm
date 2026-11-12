@@ -61,8 +61,19 @@ export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
   const isMobile = useIsMobile();
 
   const [branches, setBranches] = useState<GitBranch[]>([]);
-  const [base, setBase] = useState("");
-  const [head, setHead] = useState("");
+  // The AI's `open_branch_review` names the pair in the metadata; a later call on a tab already
+  // open moves `aiOpenAt`, and the pair it names replaces whatever the pickers show.
+  const askedBase = typeof metadata?.base === "string" ? metadata.base : "";
+  const askedHead = typeof metadata?.head === "string" ? metadata.head : "";
+  const aiOpenAt = metadata?.aiOpenAt;
+  const [base, setBase] = useState(askedBase);
+  const [head, setHead] = useState(askedHead);
+  useEffect(() => {
+    if (askedBase) setBase(askedBase);
+    if (askedHead) setHead(askedHead);
+    // Only a new call moves the pickers, never the user's own picks re-rendering the tab.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiOpenAt]);
   const [diff, setDiff] = useState<BranchDiff | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [reviewed, setReviewed] = useState<ReviewState>({});
