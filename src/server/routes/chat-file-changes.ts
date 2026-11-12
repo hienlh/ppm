@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { resolve } from "node:path";
 import { ok, err } from "../../types/api.ts";
-import { getSessionProjectPath, resolveMigratedSession } from "../../services/db.service.ts";
+import { getSessionProjectPath, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import { countBaselines, isValidBaselineSessionId, keepsSessionWrites } from "../../services/session-file-baselines/session-file-baselines.service.ts";
 import {
   lineage,
@@ -12,6 +12,8 @@ import {
 } from "../../services/session-file-baselines/session-file-changes.service.ts";
 import { answerSessionChanges, undoSessionAnswer } from "../../services/session-file-baselines/session-review-actions.ts";
 import { MAX_TURN_CALLS, revertTurn } from "../../services/session-file-baselines/session-turn-revert.ts";
+import { turnLimitOf } from "../../services/session-file-baselines/session-turn-calls.ts";
+import { sessionTurnCalls } from "../../services/session-file-baselines/session-turn-calls-read.ts";
 import type { SessionAnswer, SessionAnswerFile } from "../../shared/session-file-changes.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -209,6 +211,26 @@ chatFileChangesRoutes.post("/sessions/:id/file-changes/revert-turn", async (c) =
     return c.json(ok(await revertTurn({ sessionId, calls, ...(apply ? { apply } : {}) })));
   } catch (e) {
     return failure(c, e);
+  }
+});
+
+/**
+ * GET /chat/sessions/:id/file-changes/turns?limit=&providerId=
+ *
+ * The session's newest turns (20 unless `limit` says, at most 50) with the calls each made, and
+ * the files its calls name: what the Assistant and `ppm chat revert-turn` name a turn by. The
+ * provider is the one stored for the session unless the caller names one.
+ */
+chatFileChangesRoutes.get("/sessions/:id/file-changes/turns", async (c) => {
+  const sessionId = sessionOf(c);
+  if (typeof sessionId !== "string") return sessionId;
+  const providerId = c.req.query("providerId") || getSessionProvider(sessionId) || "claude";
+  try {
+    return c.json(ok(await sessionTurnCalls({
+      providerId, sessionId, projectPath: c.get("projectPath"), limit: turnLimitOf(c.req.query("limit")),
+    })));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
   }
 });
 
