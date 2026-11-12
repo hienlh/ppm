@@ -326,6 +326,8 @@ export interface SessionEntry {
    * every greeting, so a device that joins later can still tell which turn its message became.
    */
   turnBindings?: TurnBinding[];
+  /** When the phase last left idle; cleared when it returns there. */
+  runningSince?: number;
   /** Pending release of the subprocess once its prompt cache lapses */
   cacheReleaseTimer?: ReturnType<typeof setTimeout>;
   /** The socket whose message opened the latest turn: where the AI's tab tools open a tab. */
@@ -1050,6 +1052,8 @@ async function rewriteProviderSkillSigil(
 function setPhase(sessionId: string, phase: SessionPhase, elapsed?: number): void {
   const entry = activeSessions.get(sessionId);
   if (!entry || entry.phase === phase) return;
+  if (phase === "idle") entry.runningSince = undefined;
+  else if (entry.phase === "idle" || entry.runningSince === undefined) entry.runningSince = Date.now();
   entry.phase = phase;
   broadcast(sessionId, { type: "phase_changed", phase, ...(elapsed != null ? { elapsed } : {}) });
   // Also announce app-wide: the tab strip and title indicator must reflect a
@@ -2139,6 +2143,8 @@ function liveChatState(entry: SessionEntry): LiveChatState {
     ...(entry.pendingApprovalEvent ? { card: liveApprovalCard(entry.pendingApprovalEvent) } : {}),
     queuedCards: entry.approvalQueue?.length ?? 0,
     ...(entry.turnOrigin ? { turnOrigin: entry.turnOrigin } : {}),
+    ...(entry.turnBindings?.length ? { turnId: entry.turnBindings[entry.turnBindings.length - 1]!.turnId } : {}),
+    ...(entry.phase !== "idle" && entry.runningSince !== undefined ? { runningSince: entry.runningSince } : {}),
   };
 }
 

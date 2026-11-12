@@ -120,6 +120,13 @@ export interface LiveChatState {
    * user to approve anything.
    */
   turnOrigin?: ChatMessageOrigin;
+  /**
+   * The id of the latest turn the chat opened (`turn_started`), kept past its end. A card that
+   * waited acts only on the turn it showed: a new turn has a new id.
+   */
+  turnId?: string;
+  /** When the running turn left idle (ms since the epoch); absent while idle. */
+  runningSince?: number;
 }
 
 export interface ChatControl {
