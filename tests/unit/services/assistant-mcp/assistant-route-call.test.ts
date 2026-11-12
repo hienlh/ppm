@@ -317,12 +317,17 @@ describe("the internal app", () => {
       "/api/project/:project/files/read", "/api/project/:project/chat/sessions", "/api/project/:project/git",
       "/api/project/:project/chat/upload", "/api/project/:project/chat/sessions/:id/messages",
       "/api/project/:project/chat/sessions/running", "/api/project/:project/tags/:id", "/api/project/:project/chat/drafts/:id",
+      "/api/project/:project/chat/sessions/:id/file-changes/reviewed", "/api/project/:project/chat/sessions/:id/file-changes/count",
+      "/api/project/:project/chat/sessions/:id/answer", "/api/project/:project/chat/sessions/:id/file-changes/diff/more",
     ]) {
       expect({ path, problem: ruleProblem(allowRoute("GET", path)) }).toMatchObject({ path, problem: expect.stringContaining("chat-session and tag routes") });
     }
     for (const path of [
       "/api/project/:project/chat/sessions/:id", "/api/project/:project/chat/sessions/:id/pin",
       "/api/project/:project/chat/sessions/:id/tag", "/api/project/:project/chat/sessions/:id/read", "/api/project/:project/tags",
+      "/api/project/:project/chat/sessions/:id/file-changes", "/api/project/:project/chat/sessions/:id/file-changes/answer",
+      "/api/project/:project/chat/sessions/:id/file-changes/undo", "/api/project/:project/chat/sessions/:id/file-changes/revert-turn",
+      "/api/project/:project/chat/sessions/:id/file-changes/diff", "/api/project/:project/chat/sessions/:id/file-changes/turns",
     ]) {
       expect({ path, problem: ruleProblem(allowRoute("GET", path)) }).toEqual({ path, problem: null });
     }
@@ -331,6 +336,7 @@ describe("the internal app", () => {
     for (const path of [
       "files/tree", "files/read?path=a.txt", "chat/sessions", "chat/upload", "chat/sessions/abc/messages", "chat/sessions/running",
       "chat/sessions/abc/debug", "workspace", "designs", "tags/1",
+      "chat/sessions/abc/file-changes/count", "chat/sessions/abc/file-changes/reviewed",
     ]) {
       const res = await app.request(`http://ppm.internal/api/project/route-call/${path}`, { method: "GET" });
       expect({ path, status: res.status }).toEqual({ path, status: 403 });

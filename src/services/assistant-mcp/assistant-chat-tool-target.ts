@@ -2,6 +2,7 @@ import type { ChatControl } from "../chat-control/chat-control.ts";
 import { unnamedChat } from "../assistant-watch/watched-chat-title.ts";
 import { resolveAssistantProject, type AssistantProject, type AssistantSessionTarget, type Scoped } from "./assistant-project-scope.ts";
 import type { RecentUnpins } from "./assistant-recent-unpins.ts";
+import type { UndoRecordSummary } from "../session-file-baselines/session-undo-record.ts";
 
 /**
  * What the chat tools know of one chat before they act on it: the project it is proven to belong
@@ -32,6 +33,8 @@ export interface ChatToolDeps {
   unattended(assistantSessionId: string): boolean;
   unpins: RecentUnpins;
   now(): number;
+  /** What a review answer's Undo would touch, from its journal; null when the chat has no such answer. */
+  undoRecord(sessionId: string, undoId: string): UndoRecordSummary | null;
 }
 
 export interface ChatTarget extends AssistantSessionTarget {

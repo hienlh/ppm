@@ -84,6 +84,7 @@ function harness(opts: { verdict?: ApprovalVerdict; onAsk?: (r: Records) => void
     unattended: () => unattended,
     unpins: createRecentUnpins(),
     now: () => clock,
+    undoRecord: () => null,
   };
   const h = {
     chats, live, writes, asks, cancelled, background, deps,

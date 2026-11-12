@@ -74,7 +74,7 @@ describe("assistant MCP endpoint", () => {
     const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab", "chat_watch", "chat_unwatch", "notebook_add", "notebook_edit", "project_add"]);
     const writes = new Set(["db_query", "chat_answer_approval", "notebook_delete"]);
     const names = list.result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["chats_attention", "chat_answer_approval", "ppm_cli_reference"]));
+    expect(names).toEqual(expect.arrayContaining(["chats_attention", "chat_answer_approval", "ppm_cli_reference", "chat_changes", "chat_changes_answer"]));
     // Opening and messaging chats is the session tools' job, never this server's.
     expect(names).not.toContain("chat_send_message");
     expect(names).not.toContain("chat_start");
@@ -113,8 +113,8 @@ describe("assistant MCP endpoint", () => {
     opened(clean);
     for (const name of ["projects_list", "ppm_cli_reference"]) await callAssistantTool({ sessionId: clean }, name, {});
     expect(assistantTurnProvenance.provenance(clean).untrusted).toBe(false);
-    // Chat titles, tab titles and a git family read all carry text the user did not write.
-    for (const name of ["chat_list_sessions", "ui_get_state", GIT_TOOLS[0]!]) {
+    // Chat titles, tab titles, a git family read and a chat's file changes all carry text the user did not write.
+    for (const name of ["chat_list_sessions", "ui_get_state", GIT_TOOLS[0]!, "chat_changes"]) {
       const sessionId = assistantSession();
       opened(sessionId);
       await callAssistantTool({ sessionId }, name, {}).catch(() => null);

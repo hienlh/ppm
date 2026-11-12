@@ -1,5 +1,9 @@
 import type { Json } from "../mcp-http-endpoint.ts";
-import { CHAT_DELETE_TOOL, CHAT_ORGANIZE_TOOL, CHAT_STOP_TOOL } from "../../shared/assistant-chat-tool-names.ts";
+import {
+  CHAT_CHANGES_ANSWER_TOOL, CHAT_CHANGES_TOOL, CHAT_DELETE_TOOL, CHAT_ORGANIZE_TOOL, CHAT_STOP_TOOL,
+} from "../../shared/assistant-chat-tool-names.ts";
+import { readUndoRecord } from "../session-file-baselines/session-undo-record.ts";
+import { chatChanges, chatChangesAnswer } from "./assistant-chat-review-tools.ts";
 import { chatControl, isUnattendedTurn } from "../chat-control/chat-control.ts";
 import { getPinnedSessionIds } from "../db.service.ts";
 import { projectService } from "../project.service.ts";
@@ -17,10 +21,12 @@ import { errorResult } from "./assistant-tool-output.ts";
 
 /**
  * The chat tools' handlers and the only routes they may call: one chat session's title, pin, tag
- * and read marks, its deletion, and the project's tag list — never its transcript, an upload or
- * a draft (`assistant-route-call.ts` gates the project router the same way). Stopping a turn
- * needs no route: it goes through `chatControl`, the code PPM's Stop button runs.
+ * and read marks, its deletion, the review of its file changes, and the project's tag list — never
+ * its transcript, an upload or a draft (`assistant-route-call.ts` gates the project router the same
+ * way). Stopping a turn needs no route: it goes through `chatControl`, the code PPM's Stop button runs.
  */
+const REVIEW = "/api/project/:project/chat/sessions/:id/file-changes";
+
 export const CHAT_ROUTES: readonly RouteRule[] = [
   allowRoute("PATCH", "/api/project/:project/chat/sessions/:id"),
   allowRoute("DELETE", "/api/project/:project/chat/sessions/:id", ["providerId", "stopRunning"]),
@@ -31,6 +37,12 @@ export const CHAT_ROUTES: readonly RouteRule[] = [
   allowRoute("POST", "/api/project/:project/chat/sessions/:id/read"),
   allowRoute("POST", "/api/project/:project/chat/sessions/:id/unread"),
   allowRoute("GET", "/api/project/:project/tags"),
+  allowRoute("POST", REVIEW),
+  allowRoute("POST", `${REVIEW}/answer`),
+  allowRoute("POST", `${REVIEW}/undo`),
+  allowRoute("POST", `${REVIEW}/revert-turn`),
+  allowRoute("GET", `${REVIEW}/diff`, ["path"]),
+  allowRoute("GET", `${REVIEW}/turns`, ["limit", "providerId"]),
 ];
 
 /** PPM's own records of a chat and its live state. */
@@ -54,6 +66,7 @@ export const realChatToolDeps: ChatToolDeps = {
   unattended: (sessionId) => isUnattendedTurn(sessionId),
   unpins: assistantRecentUnpins,
   now: () => Date.now(),
+  undoRecord: readUndoRecord,
 };
 
 type DepsHandler = (ctx: ToolContext, args: Record<string, unknown>, deps: ChatToolDeps) => Promise<Json>;
@@ -73,6 +86,8 @@ export function createChatToolHandlers(deps: ChatToolDeps = realChatToolDeps): F
     [CHAT_STOP_TOOL]: bind(chatStop, deps),
     [CHAT_ORGANIZE_TOOL]: bind(chatOrganize, deps),
     [CHAT_DELETE_TOOL]: bind(chatDelete, deps),
+    [CHAT_CHANGES_TOOL]: bind(chatChanges, deps),
+    [CHAT_CHANGES_ANSWER_TOOL]: bind(chatChangesAnswer, deps),
   };
 }
 

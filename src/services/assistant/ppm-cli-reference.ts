@@ -58,7 +58,7 @@ export const TOOLS_INSTEAD_OF_CLI: readonly { area: string; tools: readonly stri
   },
   {
     area: "Chats (instead of `ppm chat` stop, rename, pin, tag, read, delete)",
-    tools: ["chat_stop", "chat_organize", "chat_delete"],
+    tools: ["chat_stop", "chat_organize", "chat_delete", "chat_changes", "chat_changes_answer"],
   },
 ];
 
@@ -104,8 +104,7 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "- schedule run-now: prefer the schedule_run_now tool",
     "- projects add/rename/move/remove: prefer project_add, project_update and project_remove",
     "- chat stop/rename/pin/tag/read/delete: prefer chat_stop, chat_organize and chat_delete",
-    "- chat stop sends the stop PPM's Stop button sends; chat delete stops a running turn first and deletes nothing if it does not stop",
-    "",
+    "- chat stop sends the stop PPM's Stop button sends; chat delete stops a running turn first and deletes nothing if it does not stop",    "",
     "## Commands that write PPM's data directly",
     "The running server keeps much of this in memory: a change may not show until it restarts, and the",
     "server may write its own copy back over it. Prefer the Assistant's tools or the PPM screen where one exists.",

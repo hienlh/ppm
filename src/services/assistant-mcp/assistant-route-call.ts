@@ -59,8 +59,8 @@ export function internalRouteApp(): Promise<RouteApp> {
     const app = new Hono();
     // `projectScopedRouter` also carries the file, workspace, LSP and design routes and the rest
     // of the chat routes, and no tool needs any of them: past the project's name only `git/`, one
-    // chat session and its pin, tag and read marks, and the tag list are let through, so one wrong
-    // rule cannot reach a file read or write, a transcript or an upload.
+    // chat session with its pin, tag and read marks and its change review, and the tag list are let
+    // through, so one wrong rule cannot reach a file read or write, a transcript or an upload.
     app.use("/api/project/*", async (c, next) => {
       if (!isProjectFamilyPath(new URL(c.req.url).pathname)) {
         return c.json({ ok: false, error: "Only a project's git, chat-session and tag routes are reachable here", code: ROUTE_NOT_ALLOWED }, 403);
@@ -93,14 +93,19 @@ export function internalRouteApp(): Promise<RouteApp> {
 
 /** Literal paths of the chat router at the session id's place, which an id must never stand for. */
 const CHAT_SESSION_LITERALS: ReadonlySet<string> = new Set(["running", "unread", "bulk-tag"]);
-/** What may follow one chat session's id: its pin, tag and read marks, nothing else. */
-const CHAT_SESSION_MARKS: ReadonlySet<string> = new Set(["pin", "tag", "read", "unread"]);
+/** What may follow one chat session's id: its pin, tag and read marks, and the review of its file changes. */
+const CHAT_SESSION_MARKS: ReadonlySet<string> = new Set(["pin", "tag", "read", "unread", "file-changes"]);
+/**
+ * What may follow `file-changes`: the review's answers, its undo, a turn's revert, one file's diff
+ * and the session's turns — never the reviewed marks or the count, which no tool needs.
+ */
+const FILE_CHANGES_ROUTES: ReadonlySet<string> = new Set(["answer", "undo", "revert-turn", "diff", "turns"]);
 
 /**
  * The only project routes any tool family reaches:
  * - `/api/project/<name>/git/...`;
- * - `/api/project/<name>/chat/sessions/<id>` and its `pin`, `tag`, `read` and `unread` marks
- *   (never the list, the messages, an upload or a draft);
+ * - `/api/project/<name>/chat/sessions/<id>` and its `pin`, `tag`, `read` and `unread` marks, and
+ *   its `file-changes` review (never the list, the messages, an upload or a draft);
  * - `/api/project/<name>/tags`, the tag list.
  */
 export function isProjectFamilyPath(pathname: string): boolean {
@@ -111,6 +116,7 @@ export function isProjectFamilyPath(pathname: string): boolean {
   if (segments[4] !== "chat" || segments[5] !== "sessions") return false;
   const id = segments[6];
   if (!id || CHAT_SESSION_LITERALS.has(id)) return false;
+  if (segments.length === 9) return segments[7] === "file-changes" && FILE_CHANGES_ROUTES.has(segments[8]!);
   return segments.length === 7 || (segments.length === 8 && CHAT_SESSION_MARKS.has(segments[7]!));
 }
 

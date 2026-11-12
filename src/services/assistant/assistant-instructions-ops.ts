@@ -22,7 +22,8 @@ update at once. Reading never asks; every change shows the user a card PPM build
 - Projects: read with \`projects_list\`; change with \`project_add\`, \`project_update\` (rename, move,
   colour) and \`project_remove\` (PPM forgets it; its files stay).
 - Chats: change with \`chat_stop\` (a running turn), \`chat_organize\` (rename, pin, tag, mark read)
-  and \`chat_delete\` (cannot be undone; a running chat is stopped first).
+  and \`chat_delete\` (cannot be undone; a running chat is stopped first). Read the files a chat changed
+  with \`chat_changes\`, and keep, reopen, revert, revert a turn or undo with \`chat_changes_answer\`.
 
 ### Read first, then change
 - No project named? Call \`projects_list\` before anything else. When exactly one project fits the

@@ -22,9 +22,9 @@ const OPS_TOOLS = TOOLS_INSTEAD_OF_CLI.flatMap((g) => g.tools);
 const count = (text: string, needle: string): number => text.split(needle).length - 1;
 
 describe("the git, schedule, tunnel, project and chat tool names", () => {
-  it("are the twenty-seven tools of the five groups, none twice", () => {
-    expect(OPS_TOOLS).toHaveLength(27);
-    expect(new Set(OPS_TOOLS).size).toBe(27);
+  it("are the twenty-nine tools of the five groups, none twice", () => {
+    expect(OPS_TOOLS).toHaveLength(29);
+    expect(new Set(OPS_TOOLS).size).toBe(29);
   });
 
   it("put the project family beside the project list and project_add", () => {
