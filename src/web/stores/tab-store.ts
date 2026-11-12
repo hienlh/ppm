@@ -38,6 +38,8 @@ export interface Tab {
   projectId: string | null;
   metadata?: Record<string, unknown>;
   closable: boolean;
+  /** Pinned: kept at the start of the bar and skipped by Close Others/Right/Saved/All. */
+  pinned?: boolean;
 }
 
 // ---------------------------------------------------------------------------

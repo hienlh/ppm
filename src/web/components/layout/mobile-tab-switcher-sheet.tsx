@@ -5,7 +5,7 @@
  * buildTabSwitcherGroups helper; this file is presentation + wiring only.
  */
 import { useState, useRef, useCallback } from "react";
-import { Search, X, Plus, Columns2, MessageCircle } from "@/lib/icons";
+import { Search, X, Plus, Columns2, MessageCircle, Pin } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { usePanelStore } from "@/stores/panel-store";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
@@ -209,7 +209,18 @@ export function MobileTabSwitcherSheet({
                       <span role="img" aria-label="Unsaved" title="Unsaved" className="size-[7px] shrink-0 rounded-full bg-text-2" />
                     )}
                     {isActive && <span className="size-1.5 rounded-full bg-primary shrink-0" />}
-                    {tab.closable && (
+                    {tab.pinned ? (
+                      // Pinned: the pin stands where the × would be, and tapping it unpins (as on desktop).
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Unpin"
+                        onClick={(e) => { e.stopPropagation(); usePanelStore.getState().setTabPinned(tab.id, false); }}
+                        className="flex items-center justify-center size-8 rounded-lg text-text-subtle active:bg-surface-elevated shrink-0"
+                      >
+                        <Pin className="size-4" />
+                      </span>
+                    ) : tab.closable && (
                       <span
                         role="button"
                         tabIndex={0}

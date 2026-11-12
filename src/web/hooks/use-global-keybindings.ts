@@ -4,6 +4,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
 import { usePanelStore } from "@/stores/panel-store";
+import { togglePinActiveTab, bulkCloseInFocusedPanel } from "@/lib/tab-commands";
 import { useKeybindingsStore, parseCombo, eventMatchesCombo, matchesDockBacktick } from "@/stores/keybindings-store";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { useExtensionStore } from "@/stores/extension-store";
@@ -260,6 +261,10 @@ export function useGlobalKeybindings() {
         usePanelStore.getState().toggleDock();
         return;
       }
+
+      if (match(e, "toggle-pin-tab")) { e.preventDefault(); togglePinActiveTab(); return; }
+      if (match(e, "close-saved-tabs")) { e.preventDefault(); bulkCloseInFocusedPanel("saved"); return; }
+      if (match(e, "close-all-tabs")) { e.preventDefault(); bulkCloseInFocusedPanel("all"); return; }
 
       // Tab cycling
       if (match(e, "next-tab") || match(e, "prev-tab")) {
