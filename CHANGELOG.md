@@ -5,6 +5,7 @@
 ### Added
 
 - **Antigravity chats.** Antigravity (Google's `agy` CLI) can be picked as a chat's provider: replies, thinking and tool calls stream as with Claude and Codex, with approvals, Stop, images, agy's own slash commands and skills, extra accounts with a sign-in of their own (Settings → Accounts), a quota panel, and PPM's tab and database tools. Each open chat runs one `agy acp` process. A slow command agy moves to the background no longer ends the chat halfway, and the quota is read from agy itself when the Antigravity app is closed. Needs agy installed and signed in.
+- **Review changes and the diff tab can show a diff side by side or inline, as in VS Code.** A new button in both toolbars switches between them, and the choice is shared by the two tabs and follows you to other devices; a phone stays inline. Side by side, Review changes now shows the whole file in VS Code's diff editor, the version in the last commit on the left and the file on disk on the right, with unchanged parts folded and changed words highlighted. Each block's Stage, Discard, Unstage or Undo sits right above its lines, and J/K/Y/N work as before, also with the cursor in the code. Picking single lines (Lines… or L) opens the block list until the pick is done, and files with no lines to compare (binary files, renames, submodules) are shown in the block list. Before, Review changes was inline only and the diff tab was side by side only.
 
 ## [0.24.1] - 2026-11-12
 
