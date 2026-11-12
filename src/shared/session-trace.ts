@@ -27,6 +27,8 @@ export type TraceOrigin =
   | "telegram"
   /** The server reporting on a chat the PPM Assistant was asked to watch. */
   | "watch"
+  /** A chat's running turn stopped so that the chat could be deleted. */
+  | "delete"
   | "unknown";
 
 /** Most entries one `POST /api/trace` may carry; a larger batch is refused whole. */

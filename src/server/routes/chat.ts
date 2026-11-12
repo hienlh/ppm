@@ -6,7 +6,7 @@ import { countLines } from "../../services/file-lines.ts";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { createProjectChatSession } from "../../services/chat-session-create.ts";
-import { deleteChatSession, renameChatSession } from "../../services/chat-session-admin.ts";
+import { renameChatSession } from "../../services/chat-session-admin.ts";
 import { isValidDesignSlug } from "../../services/design/design-slug.ts";
 import { isAssistantProject } from "../../shared/assistant-project.ts";
 import { draftService } from "../../services/draft.service.ts";
@@ -20,7 +20,9 @@ import { chatFileChangesRoutes } from "./chat-file-changes.ts";
 import { chatSessionTurnsRoutes } from "./chat-session-turns.ts";
 import { chatTurnWindowRoutes } from "./chat-turn-window.ts";
 import { chatSessionCollabRoutes } from "./session-collab.ts";
+import { chatSessionDeleteRoutes } from "./chat-session-delete.ts";
 import { announceChatListChanges, CHAT_LIST_WRITE_PATHS } from "./chat-list-broadcast.ts";
+import { chatControl } from "../../services/chat-control/chat-control.ts";
 import { applyTurnStamps, loadTurnLookup, stampSessionTurns } from "../../services/session-turns/stamp-message-turns.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
 import { upsertSlashRecent, getSlashRecents, listTurnUsage, getSessionProvider, getSessionDesignSlugs, copySessionForkSettings } from "../../services/db.service.ts";
@@ -59,6 +61,7 @@ export const chatRoutes = new Hono<Env>();
 for (const path of CHAT_LIST_WRITE_PATHS) chatRoutes.use(path, announceChatListChanges);
 
 chatRoutes.route("/prepare", chatPrepareRoutes);
+chatRoutes.route("/", chatSessionDeleteRoutes);
 chatRoutes.route("/", chatFileChangesRoutes);
 chatRoutes.route("/", chatSessionTurnsRoutes);
 chatRoutes.route("/", chatTurnWindowRoutes);
@@ -329,9 +332,12 @@ chatRoutes.delete("/sessions", async (c) => {
     }
 
     const pinnedIds = getPinnedSessionIds();
+    // A chat with a turn in flight is in use, however old it is.
+    const runningIds = new Set((chatControl()?.listLive() ?? []).filter((s) => s.running).map((s) => s.sessionId));
     // Like a pinned chat, the project's manager is kept: a clean-up must not end its role.
     const toDelete = allSessions.filter((s) =>
-      new Date(s.createdAt) < cutoff && !pinnedIds.has(s.id) && !hasChildren(s.id) && !managerChats.isManagerChat(s.id),
+      new Date(s.createdAt) < cutoff && !pinnedIds.has(s.id) && !hasChildren(s.id) && !managerChats.isManagerChat(s.id)
+      && !runningIds.has(s.id),
     );
 
     let deleted = 0;
@@ -368,22 +374,7 @@ chatRoutes.delete("/sessions", async (c) => {
   }
 });
 
-/** DELETE /chat/sessions/:id — delete a session */
-chatRoutes.delete("/sessions/:id", async (c) => {
-  try {
-    const id = c.req.param("id");
-    const providerId = c.req.query("providerId") ?? "claude";
-    // Leaf-only: a session with edited versions branched from it cannot be
-    // deleted (would orphan its children). Reparenting is out of scope.
-    if (hasChildren(id)) {
-      return c.json(err("Cannot delete: this session has edited versions branched from it"), 409);
-    }
-    await deleteChatSession(providerId, id, c.get("projectPath"));
-    return c.json(ok({ deleted: id }));
-  } catch (e) {
-    return c.json(err((e as Error).message), 404);
-  }
-});
+// DELETE /chat/sessions/:id lives in `chat-session-delete.ts`.
 
 /**
  * PATCH /chat/sessions/bulk-tag — assign tag to multiple sessions. Registered before the rename

@@ -14,20 +14,23 @@ import type { WakeNewsNotice } from "../../shared/assistant-wake-news.ts";
  * held to hold here too: the first answer to a card wins, and a card is never answered by a
  * message that was not the user's.
  *
- * No HTTP route reaches this. Callers must carry a person's decision (a button the user pressed,
- * a message the user typed); nothing here decides on the user's behalf.
+ * One HTTP route reaches this, and only to stop a turn: deleting a chat with `?stopRunning=1`
+ * stops that same chat's turn first (origin `delete`). Callers must carry a person's decision (a
+ * button the user pressed, a message the user typed, a command the user ran); nothing here
+ * decides on the user's behalf.
  */
 
 /**
  * Who, inside the server, is acting on a chat. `assistant` only answers cards and stops turns: the
  * PPM Assistant's messages into chats go through the session tools, as origin `session`.
  * `assistant_card` is the user pressing a button on one of the Assistant's cards, which mirrors a
- * manager chat's own approval or question.
+ * manager chat's own approval or question. `delete` only stops a turn, as the first step of
+ * deleting that same chat (`DELETE /chat/sessions/:id?stopRunning=1`); it never sends or answers.
  */
-export type ServerOrigin = "telegram" | "watch" | "assistant" | "assistant_card";
+export type ServerOrigin = "telegram" | "watch" | "assistant" | "assistant_card" | "delete";
 
 /** The server origins that may send a chat a message (see {@link ChatControl.sendUserMessage}). */
-export type MessageServerOrigin = Exclude<ServerOrigin, "assistant" | "assistant_card">;
+export type MessageServerOrigin = Exclude<ServerOrigin, "assistant" | "assistant_card" | "delete">;
 
 /**
  * Where a message into a chat came from: a browser's socket, the server itself, or another
