@@ -263,18 +263,27 @@ describe("every editor resolves the language the same way", () => {
     "src/web/components/editor/conflict-editor.tsx",
   ];
 
+  // The diff tab takes its language from the diff editor it shares with Review changes.
+  const DIFF_LANGUAGE = "src/web/components/editor/monaco-diff-editor.tsx";
+  const languageSource = (file: string) => (file.endsWith("/diff-viewer.tsx") ? DIFF_LANGUAGE : file);
+
+  it("diff-viewer.tsx resolves its language through the shared diff editor", () => {
+    expect(read("src/web/components/editor/diff-viewer.tsx")).toMatch(/import \{[^}]*\bgetMonacoLanguage\b[^}]*\} from "\.\/monaco-diff-editor"/);
+  });
+
   for (const file of surfaces) {
     const src = read(file);
+    const languageSrc = read(languageSource(file));
 
     it(`${file.split("/").pop()} falls back to dotenv instead of plaintext`, () => {
-      expect(src).toMatch(/return map\[ext\] \?\? \(isDotenvFile\(filename\) \? DOTENV_LANGUAGE_ID : "plaintext"\)/);
+      expect(languageSrc).toMatch(/return map\[ext\] \?\? \(isDotenvFile\(filename\) \? DOTENV_LANGUAGE_ID : "plaintext"\)/);
     });
 
     it(`${file.split("/").pop()} asks the extension first`, () => {
       // `.env.example.md` matches the dotenv prefix test but is markdown, so
       // the extension map has to answer before the name test.
-      const call = src.indexOf("isDotenvFile(filename)");
-      expect(src.slice(0, call)).toContain("map[ext] ??");
+      const call = languageSrc.indexOf("isDotenvFile(filename)");
+      expect(languageSrc.slice(0, call)).toContain("map[ext] ??");
     });
 
     it(`${file.split("/").pop()} registers before mount, not on mount`, () => {

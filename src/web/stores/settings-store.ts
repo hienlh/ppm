@@ -51,6 +51,11 @@ interface SettingsState {
   /** GitLens-style annotation after the cursor's line in the code editor. */
   inlineBlame: boolean;
   /**
+   * Diffs side by side (VS Code's default) rather than inline: the diff tab, and the Review
+   * changes tab, whose side by side is the whole file. A phone is always inline.
+   */
+  diffSideBySide: boolean;
+  /**
    * Open a design in a floating window rather than a tab (desktop only; a phone always shows
    * it full screen). On by default.
    */
@@ -188,6 +193,7 @@ interface SettingsState {
   setSidebarWidth: (width: number) => void;
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
   toggleInlineBlame: () => void;
+  toggleDiffSideBySide: () => void;
   setDesignWindows: (enabled: boolean) => void;
   toggleWordWrap: () => void;
   toggleMobileWordWrap: () => void;
@@ -231,6 +237,7 @@ interface PersistedSettings {
   sidebarWidth?: number;
   gitStatusViewMode?: GitStatusViewMode;
   inlineBlame?: boolean;
+  diffSideBySide?: boolean;
   designWindows?: boolean;
   wordWrap?: boolean;
   mobileWordWrap?: boolean;
@@ -404,6 +411,7 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   const patch: Partial<PersistedSettings> = {};
   if (typeof data.wordWrap === "boolean") patch.wordWrap = data.wordWrap;
   if (typeof data.inlineBlame === "boolean") patch.inlineBlame = data.inlineBlame;
+  if (typeof data.diffSideBySide === "boolean") patch.diffSideBySide = data.diffSideBySide;
   if (typeof data.designWindows === "boolean") patch.designWindows = data.designWindows;
   if (typeof data.tabWrap === "boolean") patch.tabWrap = data.tabWrap;
   if (typeof data.sidebarCollapsed === "boolean") patch.sidebarCollapsed = data.sidebarCollapsed;
@@ -452,6 +460,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
   inlineBlame: _initial.inlineBlame ?? false,
+  diffSideBySide: _initial.diffSideBySide ?? true,
   minimalMode: false,
   designWindows: _initial.designWindows ?? true,
   wordWrap: _initial.wordWrap ?? false,
@@ -598,6 +607,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().inlineBlame;
     persistUiPref({ inlineBlame: next });
     set({ inlineBlame: next });
+  },
+
+  toggleDiffSideBySide: () => {
+    const next = !get().diffSideBySide;
+    persistUiPref({ diffSideBySide: next });
+    set({ diffSideBySide: next });
   },
 
   setDesignWindows: (enabled) => {

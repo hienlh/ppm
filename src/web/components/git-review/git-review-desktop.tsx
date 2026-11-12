@@ -10,8 +10,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { FileIcon } from "@/lib/file-icons";
-import { ArrowRight, Check, ChevronDown, ChevronUp, ExternalLink, FolderTree, GitBranch, Keyboard, Trash2 } from "@/lib/icons";
+import { ArrowRight, Check, ChevronDown, ChevronUp, Columns2, ExternalLink, FolderTree, GitBranch, Keyboard, Trash2 } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { useSettingsStore } from "@/stores/settings-store";
+import { sideBySideSupported } from "@/lib/git-review-side-by-side";
 import { changeLetter, discardSummary, splitPath } from "@/lib/git-changes-view";
 import { reviewLanguage } from "@/components/session-review/review-tokens";
 import { Kbd } from "@/components/session-review/review-code";
@@ -20,6 +22,7 @@ import { GitConfirm, type GitConfirmRequest } from "@/components/git/git-confirm
 import { LineCounts, StatusTile } from "@/components/git/git-change-parts";
 import { ReviewBlockCard, ReviewGap, type BlockActions } from "./git-review-block";
 import { ReviewEmpty, ReviewFileList, ReviewProgress, ReviewToastView, plural } from "./git-review-parts";
+import { ReviewSideBySide } from "./git-review-side-by-side";
 import type { GitReviewView } from "./git-review-tab";
 
 const toolButton = "inline-grid size-7 shrink-0 place-items-center rounded-md text-text-3 hover:bg-surface-hover hover:text-text aria-pressed:bg-surface-hover aria-pressed:text-text";
@@ -34,6 +37,12 @@ export function GitReviewDesktop({ view }: { view: GitReviewView }) {
   const [filesOpen, setFilesOpen] = useState(false);
   const [confirm, setConfirm] = useState<GitConfirmRequest | null>(null);
   const actions = useBlockActions(view);
+  // Inline is the block list; side by side is the whole file in the diff editor, the same
+  // choice as the diff tab's. A pick of single lines is the list's, and so is a file with no
+  // lines to put side by side (binary, a rename, …).
+  const sideBySide = useSettingsStore((s) => s.diffSideBySide);
+  const toggleSideBySide = useSettingsStore((s) => s.toggleDiffSideBySide);
+  const showSide = sideBySide && !review.pick && !!focused && sideBySideSupported(focused.review.blocks);
 
   // The keys stay with the tab when an answer takes away the button that had focus,
   // and when it opens from Source Control. Never away from somewhere to type.
@@ -41,14 +50,19 @@ export function GitReviewDesktop({ view }: { view: GitReviewView }) {
     const active = document.activeElement as HTMLElement | null;
     const lost = !active || active === document.body || active.getClientRects().length === 0;
     if (lost) root.current?.focus({ preventScroll: true });
-  }, [review.focus?.path, review.focus?.key]);
+    // A pick or a switch of view also takes the button that was pressed away with the view.
+  }, [review.focus?.path, review.focus?.key, showSide, !!review.pick]);
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
     // React bubbles a key press in a portal through here too: the Discard file… question
     // is one, and N typed in it must not discard the block behind it.
     if (!root.current?.contains(e.target as Node)) return;
-    if ((e.target as HTMLElement).closest("input, textarea, select, [contenteditable='true']")) return;
+    // The side-by-side code is a read-only editor whose own input takes the key first;
+    // its find box is somewhere to type.
+    const target = e.target as HTMLElement;
+    const inCode = !!target.closest("[data-review-diff]") && !target.closest(".find-widget, .monaco-inputbox");
+    if (!inCode && target.closest("input, textarea, select, [contenteditable='true']")) return;
     const key = e.key.toLowerCase();
     const block = focused?.block;
     const open = block?.state === "open";
@@ -151,6 +165,16 @@ export function GitReviewDesktop({ view }: { view: GitReviewView }) {
           <button
             type="button"
             className={toolButton}
+            aria-pressed={sideBySide}
+            title={sideBySide ? "Side by side — click for inline" : "Inline — click for side by side"}
+            aria-label="Side by side"
+            onClick={toggleSideBySide}
+          >
+            <Columns2 className="size-4" />
+          </button>
+          <button
+            type="button"
+            className={toolButton}
             aria-pressed={keys}
             title="Keyboard shortcuts"
             aria-label="Keyboard shortcuts"
@@ -193,7 +217,7 @@ export function GitReviewDesktop({ view }: { view: GitReviewView }) {
             <>
               <FileHeader view={view} />
               <div className="relative flex min-h-0 flex-1 flex-col">
-                <CodePane view={view} actions={actions} />
+                {showSide ? <ReviewSideBySide view={view} actions={actions} /> : <CodePane view={view} actions={actions} />}
                 {review.toast && <ReviewToastView toast={review.toast} mobile={false} onClose={review.dismissToast} />}
               </div>
               <BottomBar view={view} onDiscardFile={setConfirm} />
