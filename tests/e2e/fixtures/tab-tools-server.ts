@@ -53,7 +53,7 @@ type ChatMessage = import("../../../src/providers/provider.interface").ChatMessa
  * `wait` is how long the agent "thinks" before calling it.
  */
 type ScriptOp = {
-  tool: "open_file" | "open_preview" | "open_url" | "read_terminal" | "run_in_terminal";
+  tool: "open_file" | "open_preview" | "open_url" | "open_branch_review" | "read_terminal" | "run_in_terminal";
   args: Record<string, unknown>;
   as?: "claude" | "codex";
   wait?: number;

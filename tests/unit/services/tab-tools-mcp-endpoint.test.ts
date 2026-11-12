@@ -28,6 +28,7 @@ function otherTools(seen: Array<{ tool: string; binding: unknown; args: unknown 
   };
   return {
     terminal: { read: reply("read_terminal"), run: reply("run_in_terminal") }, openUrl: reply("open_url"),
+    branchReview: reply("open_branch_review"),
     sessionHistory: { call: async (binding: unknown, name: string, args: unknown) => reply(name)(binding, args) },
   };
 }
@@ -80,11 +81,13 @@ describe("tab tools MCP endpoint", () => {
     const list = await (await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
     const tools = list.result.tools as Array<{ name: string; inputSchema: { required?: string[] }; description: string }>;
     expect(tools.map((t) => [t.name, t.inputSchema.required])).toEqual([
-      ["open_file", ["path"]], ["open_preview", ["path"]], ["open_url", ["url"]], ["read_terminal", undefined], ["run_in_terminal", ["command"]],
+      ["open_file", ["path"]], ["open_preview", ["path"]], ["open_url", ["url"]], ["open_branch_review", undefined],
+      ["read_terminal", undefined], ["run_in_terminal", ["command"]],
       ["search_sessions", ["query"]], ["list_session_turns", ["session_id"]], ["read_session_turns", ["session_id"]],
     ]);
     expect(tools[1]!.description).toContain("cdn.jsdelivr.net");
-    expect(tools[4]!.description).toContain("Nothing runs until the user presses Enter");
+    expect(tools[3]!.description).toContain("commit your work first");
+    expect(tools[5]!.description).toContain("Nothing runs until the user presses Enter");
     const unknown = await (await rpc({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "Artifact", arguments: {} } })).json();
     expect(unknown.error.code).toBe(-32602);
   });
@@ -194,14 +197,16 @@ describe("tab tools MCP endpoint", () => {
     expect(off.targets).toEqual([]);
   });
 
-  it("hands open_url and the terminal tools the session's binding and their arguments, and never a path lookup", async () => {
+  it("hands open_url, open_branch_review and the terminal tools the session's binding and their arguments, and never a path lookup", async () => {
     const { call, others, targets } = setup();
     expect((await call("open_url", { url: "http://localhost:5173/" })).content[0].text).toBe("open_url answered");
+    await call("open_branch_review", { base: "main" });
     await call("read_terminal", { lines: 50 });
     await call("run_in_terminal", "not an object");
     const binding = { sessionId: "s1", projectPath: "/proj", projectName: "demo" };
     expect(others).toEqual([
       { tool: "open_url", binding, args: { url: "http://localhost:5173/" } },
+      { tool: "open_branch_review", binding, args: { base: "main" } },
       { tool: "read_terminal", binding, args: { lines: 50 } },
       { tool: "run_in_terminal", binding, args: {} },
     ]);

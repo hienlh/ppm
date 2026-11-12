@@ -1,5 +1,5 @@
 import {
-  CLAUDE_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_SERVER, MAX_TAB_LINE, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL,
+  CLAUDE_TAB_TOOLS_MCP_SERVER, CODEX_TAB_TOOLS_MCP_SERVER, MAX_TAB_LINE, OPEN_BRANCH_REVIEW_TOOL, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL,
   READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL, type TabTool,
 } from "../../shared/tab-open-protocol";
 import { isImagePlaceholderText } from "../../shared/tool-result-content";
@@ -27,11 +27,12 @@ const TOOL_NAME = new RegExp(
 /** The tab server's other tools, which take no file: their calls show in the generic card. */
 export type DeviceToolCall =
   | { tool: typeof OPEN_URL_TOOL; url: string }
+  | { tool: typeof OPEN_BRANCH_REVIEW_TOOL; base?: string; head?: string; repo?: string }
   | { tool: typeof READ_TERMINAL_TOOL; terminal?: string; lines?: number }
   | { tool: typeof RUN_IN_TERMINAL_TOOL; command: string; cwd?: string };
 
 const DEVICE_TOOL_NAME = new RegExp(
-  `^(?:mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__|${CODEX_TAB_TOOLS_MCP_SERVER}:)(${OPEN_URL_TOOL}|${READ_TERMINAL_TOOL}|${RUN_IN_TERMINAL_TOOL})$`,
+  `^(?:mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__|${CODEX_TAB_TOOLS_MCP_SERVER}:)(${OPEN_URL_TOOL}|${OPEN_BRANCH_REVIEW_TOOL}|${READ_TERMINAL_TOOL}|${RUN_IN_TERMINAL_TOOL})$`,
 );
 
 /** How Codex's events label an image block of a result (`mcpResultText`). */
@@ -50,12 +51,12 @@ export function tabToolCall(toolName: string, input: unknown): TabToolCall | nul
   return { tool, path: args.path, ...(validLine ? { line } : {}) };
 }
 
-/** The `open_url` / `read_terminal` / `run_in_terminal` tool a tool name is, under either provider's name, or null. */
+/** The `open_url` / `open_branch_review` / `read_terminal` / `run_in_terminal` tool a tool name is, under either provider's name, or null. */
 export function deviceToolOf(toolName: string): DeviceToolCall["tool"] | null {
   return (DEVICE_TOOL_NAME.exec(toolName)?.[1] as DeviceToolCall["tool"] | undefined) ?? null;
 }
 
-/** The `open_url` / `read_terminal` / `run_in_terminal` call an event is, under either provider's name, or null. */
+/** The `open_url` / `open_branch_review` / `read_terminal` / `run_in_terminal` call an event is, under either provider's name, or null. */
 export function deviceToolCall(toolName: string, input: unknown): DeviceToolCall | null {
   const tool = deviceToolOf(toolName);
   if (!tool || !isObj(input)) return null;
@@ -64,6 +65,12 @@ export function deviceToolCall(toolName: string, input: unknown): DeviceToolCall
   if (tool === OPEN_URL_TOOL) {
     const url = text(args.url);
     return url ? { tool, url } : null;
+  }
+  if (tool === OPEN_BRANCH_REVIEW_TOOL) {
+    const base = text(args.base);
+    const head = text(args.head);
+    const repo = text(args.repo);
+    return { tool, ...(base ? { base } : {}), ...(head ? { head } : {}), ...(repo ? { repo } : {}) };
   }
   if (tool === RUN_IN_TERMINAL_TOOL) {
     const command = text(args.command);
