@@ -46,9 +46,10 @@ describe("Session Delete — DB cleanup", () => {
     });
     const { data: session } = (await createRes.json()) as any;
 
-    // Simulate metadata (as SDK provider would create)
-    setSessionMetadata(session.id, "test-project", "/home/user/proj");
-    expect(getSessionProjectPath(session.id)).toBe("/home/user/proj");
+    // Simulate metadata (as SDK provider would create), under the project the route is reached
+    // through: a chat recorded under another project is not found there.
+    setSessionMetadata(session.id, "test", process.cwd());
+    expect(getSessionProjectPath(session.id)).toBe(process.cwd());
 
     // Delete
     const delRes = await req(`/chat/sessions/${session.id}?providerId=mock`, {
@@ -107,7 +108,7 @@ describe("Session Delete — DB cleanup", () => {
     const { data: session } = (await createRes.json()) as any;
 
     // Simulate all DB artifacts for a session
-    setSessionMetadata(session.id, "proj", "/path");
+    setSessionMetadata(session.id, "test", process.cwd());
     setSessionTitle(session.id, "Custom Title");
     pinSession(session.id);
 
@@ -119,6 +120,20 @@ describe("Session Delete — DB cleanup", () => {
     expect(getSessionProjectPath(session.id)).toBeNull();
     expect(getSessionTitle(session.id)).toBeNull();
     expect(getPinnedSessionIds().has(session.id)).toBe(false);
+  });
+
+  it("does not delete a chat recorded under another project", async () => {
+    const createRes = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock", title: "Elsewhere" }),
+    });
+    const { data: session } = (await createRes.json()) as any;
+    setSessionMetadata(session.id, "other", "/home/user/other-project");
+    setSessionTitle(session.id, "Theirs");
+
+    const delRes = await req(`/chat/sessions/${session.id}?providerId=mock`, { method: "DELETE" });
+    expect(delRes.status).toBe(404);
+    expect(getSessionTitle(session.id)).toBe("Theirs");
   });
 });
 
