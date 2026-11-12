@@ -57,12 +57,13 @@ export function internalRouteApp(): Promise<RouteApp> {
       import("../../server/routes/projects.ts"),
     ]);
     const app = new Hono();
-    // `projectScopedRouter` also carries the chat, file, workspace, LSP and design routes, and no
-    // tool needs any of them: past the project's name only `git/` is let through, so one wrong
-    // git rule cannot reach a file read or write.
+    // `projectScopedRouter` also carries the file, workspace, LSP and design routes and the rest
+    // of the chat routes, and no tool needs any of them: past the project's name only `git/`, one
+    // chat session and its pin, tag and read marks, and the tag list are let through, so one wrong
+    // rule cannot reach a file read or write, a transcript or an upload.
     app.use("/api/project/*", async (c, next) => {
-      if (!isProjectGitPath(new URL(c.req.url).pathname)) {
-        return c.json({ ok: false, error: "Only the git routes of a project are reachable here", code: ROUTE_NOT_ALLOWED }, 403);
+      if (!isProjectFamilyPath(new URL(c.req.url).pathname)) {
+        return c.json({ ok: false, error: "Only a project's git, chat-session and tag routes are reachable here", code: ROUTE_NOT_ALLOWED }, 403);
       }
       await next();
     });
@@ -90,10 +91,27 @@ export function internalRouteApp(): Promise<RouteApp> {
   return appPromise;
 }
 
-/** `/api/project/<name>/git/...`: the only project routes any tool family reaches. */
-export function isProjectGitPath(pathname: string): boolean {
+/** Literal paths of the chat router at the session id's place, which an id must never stand for. */
+const CHAT_SESSION_LITERALS: ReadonlySet<string> = new Set(["running", "unread", "bulk-tag"]);
+/** What may follow one chat session's id: its pin, tag and read marks, nothing else. */
+const CHAT_SESSION_MARKS: ReadonlySet<string> = new Set(["pin", "tag", "read", "unread"]);
+
+/**
+ * The only project routes any tool family reaches:
+ * - `/api/project/<name>/git/...`;
+ * - `/api/project/<name>/chat/sessions/<id>` and its `pin`, `tag`, `read` and `unread` marks
+ *   (never the list, the messages, an upload or a draft);
+ * - `/api/project/<name>/tags`, the tag list.
+ */
+export function isProjectFamilyPath(pathname: string): boolean {
   const segments = pathname.split("/");
-  return segments[1] === "api" && segments[2] === "project" && !!segments[3] && segments[4] === "git" && segments.length > 5;
+  if (segments[1] !== "api" || segments[2] !== "project" || !segments[3]) return false;
+  if (segments[4] === "git") return segments.length > 5;
+  if (segments[4] === "tags") return segments.length === 5;
+  if (segments[4] !== "chat" || segments[5] !== "sessions") return false;
+  const id = segments[6];
+  if (!id || CHAT_SESSION_LITERALS.has(id)) return false;
+  return segments.length === 7 || (segments.length === 8 && CHAT_SESSION_MARKS.has(segments[7]!));
 }
 
 /** The project list router's own literal paths, which a `:name` must never stand for. */
@@ -133,7 +151,7 @@ export function ruleProblem(rule: RouteRule): string | null {
     if (!LITERAL_SEGMENT.test(segment) && !PARAM_SEGMENT.test(segment)) return `bad segment "${segment}"`;
   }
   if (segments[1] === "project" && segments[2] !== ":project") return "a project route names its project with :project";
-  if (segments[1] === "project" && !isProjectGitPath(rule.path)) return "a project route may only reach the project's git routes";
+  if (segments[1] === "project" && !isProjectFamilyPath(rule.path)) return "a project route may only reach the project's git, chat-session and tag routes";
   if (segments[1] === "projects" && !isProjectListPath(rule.path)) return "a project list route may only reach the list, a project and its colour";
   const keys = new Set<string>();
   for (const key of rule.query) {

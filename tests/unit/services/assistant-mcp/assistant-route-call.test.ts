@@ -311,19 +311,34 @@ describe("the internal app", () => {
     }
   });
 
-  it("lets nothing but a project's git routes through the project router", async () => {
+  it("lets nothing but a project's git, chat-session and tag routes through the project router", async () => {
     // A rule for any other project route is dropped before it can be used…
-    for (const path of ["/api/project/:project/files/read", "/api/project/:project/chat/sessions", "/api/project/:project/git"]) {
-      expect(ruleProblem(allowRoute("GET", path))).toContain("git routes");
+    for (const path of [
+      "/api/project/:project/files/read", "/api/project/:project/chat/sessions", "/api/project/:project/git",
+      "/api/project/:project/chat/upload", "/api/project/:project/chat/sessions/:id/messages",
+      "/api/project/:project/chat/sessions/running", "/api/project/:project/tags/:id", "/api/project/:project/chat/drafts/:id",
+    ]) {
+      expect({ path, problem: ruleProblem(allowRoute("GET", path)) }).toMatchObject({ path, problem: expect.stringContaining("chat-session and tag routes") });
+    }
+    for (const path of [
+      "/api/project/:project/chat/sessions/:id", "/api/project/:project/chat/sessions/:id/pin",
+      "/api/project/:project/chat/sessions/:id/tag", "/api/project/:project/chat/sessions/:id/read", "/api/project/:project/tags",
+    ]) {
+      expect({ path, problem: ruleProblem(allowRoute("GET", path)) }).toEqual({ path, problem: null });
     }
     // …and the mounted app refuses one even when it is asked directly.
     const app = await internalRouteApp();
-    for (const path of ["files/tree", "chat/sessions", "workspace", "designs"]) {
+    for (const path of [
+      "files/tree", "files/read?path=a.txt", "chat/sessions", "chat/upload", "chat/sessions/abc/messages", "chat/sessions/running",
+      "chat/sessions/abc/debug", "workspace", "designs", "tags/1",
+    ]) {
       const res = await app.request(`http://ppm.internal/api/project/route-call/${path}`, { method: "GET" });
       expect({ path, status: res.status }).toEqual({ path, status: 403 });
     }
     const git = await app.request("http://ppm.internal/api/project/route-call/git/changes", { method: "GET" });
     expect(git.status).toBe(200);
+    const tags = await app.request("http://ppm.internal/api/project/route-call/tags", { method: "GET" });
+    expect(tags.status).toBe(200);
   });
 
   it("lets only the list, a project and its colour through the project list router", async () => {
