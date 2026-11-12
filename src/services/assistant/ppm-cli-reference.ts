@@ -1,7 +1,7 @@
 import { basename, join, resolve } from "node:path";
 import { getDbPath, getDbProfile } from "../db.service.ts";
 import { getPpmDir } from "../ppm-dir.ts";
-import { commandPathsWithRouting, DIRECT_SEEN_LIVE } from "./ppm-cli-routing.ts";
+import { commandPathsWithRouting } from "./ppm-cli-routing.ts";
 
 /**
  * What the Assistant's `ppm_cli_reference` tool answers: how to run the PPM CLI against *this*
@@ -52,6 +52,10 @@ export const TOOLS_INSTEAD_OF_CLI: readonly { area: string; tools: readonly stri
     area: "Port forwards and PPM's own public link",
     tools: ["tunnels_status", "port_forward_start", "port_forward_stop", "public_link_set"],
   },
+  {
+    area: "Projects (instead of `ppm projects` add, rename, move, color, remove)",
+    tools: ["projects_list", "project_add", "project_update", "project_remove"],
+  },
 ];
 
 export interface ReferenceOptions {
@@ -94,14 +98,12 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "the database directly and say so.",
     `- ${list(commandPathsWithRouting("server"))}`,
     "- schedule run-now: prefer the schedule_run_now tool",
-    "",
-    "## Commands that write PPM's data directly, and the running server picks up at once",
-    `- ${list(DIRECT_SEEN_LIVE)}`,
+    "- projects add/rename/move/remove: prefer project_add, project_update and project_remove",
     "",
     "## Commands that write PPM's data directly",
     "The running server keeps much of this in memory: a change may not show until it restarts, and the",
     "server may write its own copy back over it. Prefer the Assistant's tools or the PPM screen where one exists.",
-    `- ${list(commandPathsWithRouting("direct-pending").filter((p) => !DIRECT_SEEN_LIVE.includes(p)))}`,
+    `- ${list(commandPathsWithRouting("direct-pending"))}`,
     "",
     "## Commands that need no server",
     "Process control, setup, reading, and work outside PPM's live data (a repository, a backup, the cloud account).",
@@ -212,11 +214,38 @@ ppm projects list
   --json — Output as JSON
 
 ppm projects add <path>
-  Add a project to the registry
+  Add a project to the registry, through the running PPM when one holds the database
   -n, --name <name> — Project name (defaults to folder name)
 
 ppm projects remove <name>
-  Remove a project from the registry
+  Remove a project from the registry (by name or folder); its files stay on disk
+
+ppm projects rename <name> <newName>
+  Rename a project; its chats and settings stay with it
+
+ppm projects move <name> <path>
+  Point a project at another folder; the old folder is left as it is
+
+ppm projects color <name> <color>
+  Set a project's colour (#rrggbb), or \`none\` to clear it
+
+ppm projects icon <name> [file]
+  Set a project's icon from a PNG, JPEG, GIF or WebP file (2 MB at most), or --clear it
+  --clear — Remove the project's icon
+
+ppm projects reorder <names...>
+  Put projects in this order; projects not named keep their order after them
+
+ppm projects clone <url> <dir>
+  Clone a git repository into <dir>/<name> and register it as a project
+  -n, --name <name> — Folder and project name (defaults to the repository's name)
+
+ppm projects settings get <name>
+  Print a project's settings as JSON
+  --json — Print the JSON alone, with no banner
+
+ppm projects settings set <name> <key> <value>
+  Set one setting by its dotted key (e.g. files.useIgnoreFiles false, files.filesExclude '["dist"]')
 \`\`\`
 ## ppm config — Get or set PPM configuration
 \`\`\`

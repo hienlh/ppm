@@ -16,6 +16,8 @@ export type CliRouting = "server" | "direct-allowed" | "direct-pending";
 
 const SERVER = [
   "config set",
+  "projects add", "projects remove", "projects rename", "projects move", "projects color", "projects icon",
+  "projects reorder", "projects clone", "projects settings get", "projects settings set",
   "schedule run-now", "schedule export", "schedule import", "schedule state", "schedule set-state",
 ];
 
@@ -35,7 +37,6 @@ const DIRECT_ALLOWED = [
 ];
 
 const DIRECT_PENDING = [
-  "projects add", "projects remove",
   "chat delete",
   "git stage", "git unstage", "git commit", "git push", "git pull",
   "git branch create", "git branch checkout", "git branch delete", "git branch merge",
@@ -53,12 +54,6 @@ export const CLI_COMMAND_ROUTING: Readonly<Record<string, CliRouting>> = Object.
   ...Object.fromEntries(DIRECT_ALLOWED.map((p) => [p, "direct-allowed" as const])),
   ...Object.fromEntries(DIRECT_PENDING.map((p) => [p, "direct-pending" as const])),
 });
-
-/**
- * Direct writes the running server still picks up at once: it re-reads the projects table when
- * another process changed it, and its own saves apply only what it changed (`config-projects-sync.ts`).
- */
-export const DIRECT_SEEN_LIVE: readonly string[] = ["projects add", "projects remove"];
 
 export function commandPathsWithRouting(kind: CliRouting): string[] {
   return Object.entries(CLI_COMMAND_ROUTING).filter(([, k]) => k === kind).map(([p]) => p);

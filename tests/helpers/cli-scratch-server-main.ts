@@ -6,6 +6,8 @@
  *
  * `GET /api/__scratch/config` answers the server's in-memory config, so a test can tell a change
  * that reached the server from one written to the database behind its back.
+ * `GET /api/__scratch/events` answers what the server broadcast on `/ws/global`, recorded by a
+ * client registered the way a browser's is.
  */
 import { Hono } from "hono";
 import { assertIsolatedPpmHome } from "./assert-isolated-ppm-home.ts";
@@ -27,13 +29,20 @@ const { authMiddleware } = await import("../../src/server/middleware/auth.ts");
 const { setServerListenAddress } = await import("../../src/services/server-listen-address.ts");
 const { publishServerEndpoint } = await import("../../src/services/server-endpoint-file.ts");
 const { serverInstanceId } = await import("../../src/services/server-instance-id.ts");
+const { projectRoutes } = await import("../../src/server/routes/projects.ts");
+const { globalWebSocket } = await import("../../src/server/ws/global.ts");
 const { ok } = await import("../../src/types/api.ts");
+
+const events: unknown[] = [];
+globalWebSocket.open({ data: { type: "global" }, send: (json: string) => { events.push(JSON.parse(json)); return json.length; } });
 
 const app = new Hono();
 app.route("/api/cli", cliHelloRoutes);
 app.use("/api/*", authMiddleware);
 app.route("/api/settings", settingsConfigKeyRoutes);
+app.route("/api/projects", projectRoutes);
 app.get("/api/__scratch/config", (c) => c.json(ok(configService.getAll())));
+app.get("/api/__scratch/events", (c) => c.json(ok(events)));
 
 const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: app.fetch });
 setServerListenAddress(server.port, "127.0.0.1");

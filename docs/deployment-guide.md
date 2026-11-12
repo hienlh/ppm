@@ -127,10 +127,13 @@ Never build a `~/.ppm` path by hand in service code — import `getPpmDir()` fro
 ppm config set port 3000
 ppm start -p 3000                  # or per-start
 
-# Projects
-ppm projects add my-project /path/to/my-project
+# Projects (writes go through the running PPM, like `config set` below)
+ppm projects add /path/to/my-project -n my-project
 ppm projects list
-ppm projects remove my-project
+ppm projects rename my-project app
+ppm projects move app /new/path/to/app
+ppm projects color app "#3b82f6"     # or: none
+ppm projects remove app             # files stay on disk
 
 # AI provider / model
 ppm config set ai.default_provider claude       # claude | codex | cursor

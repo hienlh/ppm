@@ -1,70 +1,72 @@
 /**
  * `ppm projects add` run while a server holds the same database — what the PPM Assistant does
- * after the user approves it. The real CLI runs as its own process; this test process plays the
- * server, with the config service open on the CLI's database file.
+ * after the user approves it. The write goes through that server, so the server holds it at once
+ * and its own later saves keep it; `ppm projects list` reads the database. With no server holding
+ * the database, the same command writes it directly and says so.
  */
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
-import { applyDbPragmas, getProjects, openTestDb, runMigrations, setDb } from "../../src/services/db.service.ts";
-import { configService } from "../../src/services/config.service.ts";
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { runCli, scratchHome, startScratchServer, type ScratchServer } from "../helpers/cli-scratch-server.ts";
 
-const repoRoot = resolve(import.meta.dir, "..", "..");
 let home: string;
+let server: ScratchServer;
+const names = async () => ((await server.config()).projects as Array<{ name: string }>).map((p) => p.name);
 
-async function ppm(...args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn([process.execPath, join(repoRoot, "src", "index.ts"), ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, PPM_HOME: home, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited,
-  ]);
-  return { code, stdout, stderr };
-}
-
-beforeAll(() => {
-  home = mkdtempSync(join(tmpdir(), "ppm-cli-projects-"));
+beforeAll(async () => {
+  home = scratchHome();
   for (const name of ["alpha", "gamma"]) mkdirSync(join(home, name));
-  const server = new Database(join(home, "ppm.db"));
-  applyDbPragmas(server);
-  runMigrations(server);
-  setDb(server);
-  configService.load();
-  configService.set("projects", [{ path: join(home, "alpha"), name: "alpha" }]);
-});
+  server = await startScratchServer(home, null);
+  expect((await runCli(home, ["projects", "add", join(home, "alpha")])).code).toBe(0);
+}, 60_000);
 
-afterAll(() => {
-  setDb(openTestDb());
-  configService.load();
-  (configService as unknown as { config: { auth: unknown } }).config.auth = { enabled: false, token: "" };
+afterAll(async () => {
+  await server?.stop();
   try { rmSync(home, { recursive: true, force: true }); } catch { /* Windows may hold the WAL briefly */ }
 });
 
 describe("ppm projects beside a running server", () => {
-  it("a project the CLI adds is listed by the server and survives its next save", async () => {
-    const add = await ppm("projects", "add", join(home, "gamma"), "--name", "gamma");
-    expect(add.code).toBe(0);
+  it("a project the CLI adds is in the server's memory and survives its next save", async () => {
+    const add = await runCli(home, ["projects", "add", join(home, "gamma"), "--name", "gamma"]);
+    expect({ code: add.code, err: add.stderr }).toMatchObject({ code: 0 });
+    expect(add.stderr).toContain(`127.0.0.1:${server.port}`);
+    expect(await names()).toEqual(["alpha", "gamma"]);
 
-    expect(configService.get("projects").map((p) => p.name)).toEqual(["alpha", "gamma"]);
-    configService.set("theme", { style: "slate", mode: "dark" });
-    configService.save();
-    expect(getProjects().map((p) => p.name)).toEqual(["alpha", "gamma"]);
-  }, 30_000);
+    // The server saving the list again (a colour change) keeps both.
+    expect((await runCli(home, ["projects", "color", "alpha", "#123456"])).code).toBe(0);
+    expect(await names()).toEqual(["alpha", "gamma"]);
+  }, 60_000);
 
   it("ppm projects list shows what the database holds", async () => {
-    const list = await ppm("projects", "list", "--json");
+    const list = await runCli(home, ["projects", "list", "--json"]);
     expect(list.code).toBe(0);
-    // Every command prints the `PPM vX` banner to stdout before its own output.
-    const json = list.stdout.slice(list.stdout.indexOf("["));
-    expect(JSON.parse(json).map((p: { name: string }) => p.name)).toEqual(["alpha", "gamma"]);
+    expect(JSON.parse(list.stdout).map((p: { name: string }) => p.name)).toEqual(["alpha", "gamma"]);
 
-    const table = await ppm("projects", "list");
+    const table = await runCli(home, ["projects", "list"]);
     expect(table.stdout).not.toContain("No projects registered");
     expect(table.stdout).toContain("gamma");
-  }, 30_000);
+  }, 60_000);
+});
+
+describe("ppm projects with no server holding the database", () => {
+  it("writes the database directly and says so", async () => {
+    const solo = scratchHome();
+    try {
+      mkdirSync(join(solo, "delta"));
+      // A port nothing listens on, so "no server holds the database" is provable.
+      const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
+      const port = probe.port;
+      probe.stop(true);
+      expect((await runCli(solo, ["init", "-y", "-p", String(port), "--scan", solo])).code).toBe(0);
+      const add = await runCli(solo, ["projects", "add", join(solo, "delta")]);
+      expect({ code: add.code, err: add.stderr }).toMatchObject({ code: 0 });
+      expect(add.stderr).toContain("written directly");
+      const rename = await runCli(solo, ["projects", "rename", "delta", "epsilon"]);
+      expect(rename.code).toBe(0);
+      const list = await runCli(solo, ["projects", "list", "--json"]);
+      expect(JSON.parse(list.stdout).map((p: { name: string }) => p.name)).toEqual(["epsilon"]);
+    } finally {
+      try { rmSync(solo, { recursive: true, force: true }); } catch { /* as above */ }
+    }
+  }, 90_000);
 });

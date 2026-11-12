@@ -67,7 +67,10 @@ function printTarget(t: Target, baseUrl: string): void {
   console.error(`→ PPM ${t.profile ?? "default"} (${basename(t.dbFile)}) at ${baseUrl.replace(/^http:\/\//, "")}`);
 }
 
-/** `/api<path>` on the running PPM that holds this command's database. */
+/**
+ * `/api<path>` on the running PPM that holds this command's database. A `FormData` body is sent
+ * as a multipart form (an upload); anything else as JSON.
+ */
 export async function serverRequest<T>(method: string, path: string, body?: unknown, opts: { timeoutMs?: number } = {}): Promise<T> {
   const t = await currentTarget();
   if (method !== "GET") {
@@ -81,9 +84,11 @@ export async function serverRequest<T>(method: string, path: string, body?: unkn
   const headers: Record<string, string> = { "X-PPM-Request": "1", "User-Agent": `ppm-cli/${VERSION}` };
   if (t.authEnabled) headers.Authorization = `Bearer ${t.token}`;
   if (inAiChat()) headers["X-PPM-AI-Chat"] = "1";
-  // Every write carries a JSON body, so a route never meets a body-less POST.
-  const payload = method === "GET" ? undefined : JSON.stringify(body ?? {});
-  if (payload !== undefined) headers["Content-Type"] = "application/json";
+  // Every write carries a body, so a route never meets a body-less POST. fetch writes a form's
+  // own Content-Type, boundary included.
+  const form = body instanceof FormData ? body : undefined;
+  const payload = method === "GET" ? undefined : form ?? JSON.stringify(body ?? {});
+  if (typeof payload === "string") headers["Content-Type"] = "application/json";
   let res: Response;
   try {
     res = await fetch(`${baseUrl}/api${path}`, {

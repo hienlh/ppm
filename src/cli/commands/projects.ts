@@ -1,14 +1,7 @@
 import { Command } from "commander";
-
-const C = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  green: "\x1b[32m",
-  red: "\x1b[31m",
-  yellow: "\x1b[33m",
-  cyan: "\x1b[36m",
-  dim: "\x1b[2m",
-};
+import { resolve } from "node:path";
+import { C, fail, projectNameFor, projectSub, projectsRequest, refuseFolderFromAiChat } from "./projects-cmd-request.ts";
+import { registerProjectEditCommands } from "./projects-cmd-edit.ts";
 
 function printTable(headers: string[], rows: string[][]): void {
   const colWidths = headers.map((h, i) =>
@@ -79,34 +72,32 @@ export function registerProjectsCommands(program: Command): void {
 
   projects
     .command("add <path>")
-    .description("Add a project to the registry")
+    .description("Add a project to the registry, through the running PPM when one holds the database")
     .option("-n, --name <name>", "Project name (defaults to folder name)")
     .action(async (projectPath: string, options: { name?: string }) => {
+      // Resolved here: the server's working directory is not this shell's.
+      const abs = resolve(projectPath);
+      await refuseFolderFromAiChat(abs, "added");
       try {
-        const { projectService } = await import("../../services/project.service.ts");
-        const { configService } = await import("../../services/config.service.ts");
-        configService.load();
-        const entry = projectService.add(projectPath, options.name);
+        const entry = await projectsRequest<{ name: string; path: string }>("POST", "", { path: abs, ...(options.name ? { name: options.name } : {}) });
         console.log(`${C.green}Added project:${C.reset} ${entry.name} → ${entry.path}`);
       } catch (err) {
-        console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
-        process.exit(1);
+        fail((err as Error).message);
       }
     });
 
   projects
     .command("remove <name>")
-    .description("Remove a project from the registry")
+    .description("Remove a project from the registry (by name or folder); its files stay on disk")
     .action(async (nameOrPath: string) => {
       try {
-        const { projectService } = await import("../../services/project.service.ts");
-        const { configService } = await import("../../services/config.service.ts");
-        configService.load();
-        projectService.remove(nameOrPath);
-        console.log(`${C.green}Removed project:${C.reset} ${nameOrPath}`);
+        const name = await projectNameFor(nameOrPath);
+        await projectsRequest("DELETE", projectSub(name));
+        console.log(`${C.green}Removed project:${C.reset} ${name}`);
       } catch (err) {
-        console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
-        process.exit(1);
+        fail((err as Error).message);
       }
     });
+
+  registerProjectEditCommands(projects);
 }

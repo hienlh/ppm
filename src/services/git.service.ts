@@ -55,6 +55,12 @@ function insideProject(projectPath: string, filePath: string): string | null {
   return resolved;
 }
 
+/** The folder name `git clone <url>` would choose: SSH (`git@host:owner/repo.git`) or HTTPS. */
+export function repoNameFromCloneUrl(url: string): string | null {
+  const match = url.match(/[/:]([^/:]+?)(?:\.git)?\s*$/);
+  return match?.[1] ?? null;
+}
+
 class GitService {
   private git(projectPath: string): SimpleGit {
     return simpleGit(projectPath);
@@ -690,9 +696,7 @@ class GitService {
   }
 
   private parseRepoNameFromUrl(url: string): string | null {
-    // Handles SSH (git@host:owner/repo.git) and HTTPS (https://host/owner/repo.git)
-    const match = url.match(/[/:]([^/:]+?)(?:\.git)?\s*$/);
-    return match?.[1] ?? null;
+    return repoNameFromCloneUrl(url);
   }
 
   private parseRemoteUrl(

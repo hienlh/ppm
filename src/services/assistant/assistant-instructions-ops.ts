@@ -1,5 +1,5 @@
 /**
- * What the Assistant's git, schedule and tunnel tools are for, and the rules around them. Kept
+ * What the Assistant's git, schedule, tunnel and project tools are for, and the rules around them. Kept
  * apart from `assistant-instructions.ts` so that file stays readable; added to the same turns as
  * the other tool sections (only when the session has the `ppm-assistant` endpoint), after
  * "Changing things", whose approval rules it relies on.
@@ -19,6 +19,8 @@ update at once. Reading never asks; every change shows the user a card PPM build
   edit, pause), \`schedule_delete\`, \`schedule_run_now\`.
 - Tunnels: read with \`tunnels_status\`; change with \`port_forward_start\`, \`port_forward_stop\` and
   \`public_link_set\` (PPM's own public address).
+- Projects: read with \`projects_list\`; change with \`project_add\`, \`project_update\` (rename, move,
+  colour) and \`project_remove\` (PPM forgets it; its files stay).
 
 ### Read first, then change
 - No project named? Call \`projects_list\` before anything else. When exactly one project fits the

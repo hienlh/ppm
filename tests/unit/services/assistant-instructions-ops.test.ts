@@ -1,5 +1,5 @@
 /**
- * The Assistant is told to use its git, schedule and tunnel tools rather than the `ppm` CLI, to
+ * The Assistant is told to use its git, schedule, tunnel and project tools rather than the `ppm` CLI, to
  * read before it changes, and where those tools stop. Every tool name is listed exactly once, and
  * the lists here and in the CLI reference follow the tool families as they are defined.
  */
@@ -15,14 +15,19 @@ import { PPM_CLI_REFERENCE_TOOL } from "../../../src/shared/assistant-tool-names
 import { GIT_COMMIT_TOOL, GIT_TOOLS } from "../../../src/shared/assistant-git-tool-names.ts";
 import { SCHEDULE_TOOLS } from "../../../src/shared/assistant-schedule-tool-names.ts";
 import { TUNNEL_TOOLS } from "../../../src/shared/assistant-tunnel-tool-names.ts";
+import { PROJECT_TOOLS } from "../../../src/shared/assistant-project-tool-names.ts";
 
 const OPS_TOOLS = TOOLS_INSTEAD_OF_CLI.flatMap((g) => g.tools);
 const count = (text: string, needle: string): number => text.split(needle).length - 1;
 
-describe("the git, schedule and tunnel tool names", () => {
-  it("are the twenty tools of the three families, none twice", () => {
-    expect(OPS_TOOLS).toHaveLength(20);
-    expect(new Set(OPS_TOOLS).size).toBe(20);
+describe("the git, schedule, tunnel and project tool names", () => {
+  it("are the twenty-four tools of the four groups, none twice", () => {
+    expect(OPS_TOOLS).toHaveLength(24);
+    expect(new Set(OPS_TOOLS).size).toBe(24);
+  });
+
+  it("put the project family beside the project list and project_add", () => {
+    expect([...TOOLS_INSTEAD_OF_CLI[3]!.tools].sort()).toEqual(["project_add", "projects_list", ...PROJECT_TOOLS].sort());
   });
 
   it("match each family's own list once that family is defined", () => {

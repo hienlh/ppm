@@ -8,7 +8,7 @@ import "../../test-setup.ts";
 import {
   PPM_CLI_REFERENCE, TOOLS_INSTEAD_OF_CLI, cliReferenceSections, currentPpmInstance, ppmCliReference, ppmCliReferenceHeader,
 } from "../../../src/services/assistant/ppm-cli-reference.ts";
-import { CLI_COMMAND_ROUTING, DIRECT_SEEN_LIVE } from "../../../src/services/assistant/ppm-cli-routing.ts";
+import { CLI_COMMAND_ROUTING } from "../../../src/services/assistant/ppm-cli-routing.ts";
 import { cliCommandPaths, generatePpmCliReference } from "../../../scripts/generate-ppm-cli-reference.ts";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
 
@@ -35,11 +35,15 @@ describe("the routing table", () => {
     const paths = await cliCommandPaths();
     expect(paths.filter((p) => !(p in CLI_COMMAND_ROUTING))).toEqual([]);
     expect(Object.keys(CLI_COMMAND_ROUTING).filter((p) => !paths.includes(p))).toEqual([]);
-    for (const p of DIRECT_SEEN_LIVE) expect(CLI_COMMAND_ROUTING[p]).toBe("direct-pending");
   }, 30_000);
 
-  it("sends config set through the server and keeps the process commands direct", () => {
+  it("sends config set and every project write through the server and keeps the process commands direct", () => {
     expect(CLI_COMMAND_ROUTING["config set"]).toBe("server");
+    for (const p of ["projects add", "projects remove", "projects rename", "projects move", "projects color", "projects icon",
+      "projects reorder", "projects clone", "projects settings set"]) {
+      expect({ p, k: CLI_COMMAND_ROUTING[p] }).toEqual({ p, k: "server" });
+    }
+    expect(CLI_COMMAND_ROUTING["projects list"]).toBe("direct-allowed");
     for (const p of ["start", "init", "backup", "restore", "autostart enable", "upgrade", "export skill", "skills list", "cloud login"]) {
       expect({ p, k: CLI_COMMAND_ROUTING[p] }).toEqual({ p, k: "direct-allowed" });
     }
@@ -63,18 +67,18 @@ describe("the header", () => {
   it("sorts commands by how they reach PPM", () => {
     const header = ppmCliReferenceHeader(base);
     const server = header.indexOf("## Commands that go through the running server");
-    const live = header.indexOf("the running server picks up at once");
     const direct = header.indexOf("## Commands that write PPM's data directly\n");
     const none = header.indexOf("## Commands that need no server");
-    expect([server, live, direct, none].every((i) => i > -1)).toBe(true);
-    expect(header.slice(server, live)).toContain("ppm config set");
-    expect(header.slice(live, direct)).toContain("ppm projects add");
-    expect(header.slice(direct, none)).not.toContain("ppm projects add");
+    expect([server, direct, none].every((i) => i > -1)).toBe(true);
+    expect(header.slice(server, direct)).toContain("ppm config set");
+    expect(header.slice(server, direct)).toContain("ppm projects add");
+    expect(header.slice(server, direct)).toContain("ppm projects rename");
+    expect(header.slice(direct, none)).not.toContain("ppm projects");
     expect(header.slice(direct, none)).toContain("ppm db add");
     expect(header.slice(none)).toContain("ppm backup");
   });
 
-  it("sends git, schedules and tunnels to the Assistant's tools first, each tool listed once", () => {
+  it("sends git, schedules, tunnels and projects to the Assistant's tools first, each tool listed once", () => {
     const header = ppmCliReferenceHeader(base);
     const start = header.indexOf("## Use the Assistant's tools instead");
     const end = header.indexOf("## Commands that go through the running server");

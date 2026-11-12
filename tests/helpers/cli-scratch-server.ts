@@ -30,6 +30,8 @@ export interface ScratchServer {
   pid: number;
   token: string;
   config(): Promise<Record<string, unknown>>;
+  /** What the server broadcast on `/ws/global` so far, oldest first. */
+  events(): Promise<Array<{ type?: string }>>;
   stop(): Promise<void>;
 }
 
@@ -49,12 +51,14 @@ export async function startScratchServer(home: string, profile: string | null, t
   }
   reader.releaseLock();
   const port = Number(/READY (\d+)/.exec(out)![1]);
+  const read = async <T>(what: string): Promise<T> => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/__scratch/${what}`, { headers: { Authorization: `Bearer ${token}` } });
+    return ((await res.json()) as { data: T }).data;
+  };
   return {
     port, pid: proc.pid, token,
-    async config() {
-      const res = await fetch(`http://127.0.0.1:${port}/api/__scratch/config`, { headers: { Authorization: `Bearer ${token}` } });
-      return ((await res.json()) as { data: Record<string, unknown> }).data;
-    },
+    config: () => read<Record<string, unknown>>("config"),
+    events: () => read<Array<{ type?: string }>>("events"),
     async stop() {
       proc.kill();
       await proc.exited;
