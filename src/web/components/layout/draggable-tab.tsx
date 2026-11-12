@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { X, Download, MessageCircle } from "@/lib/icons";
+import { X, Download, MessageCircle, Pin, PinOff } from "@/lib/icons";
 import type { Tab, TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
 import { isDarkColor } from "@/lib/color-utils";
@@ -103,8 +103,9 @@ export function DraggableTab({
       // A middle press inside a strip that overflows starts Chrome's autoscroll (Windows, and
       // Linux with autoscroll on), and then no `auxclick` follows — so middle-click-to-close
       // worked only while every tab fitted. Cancelling the press keeps the `auxclick`.
-      onMouseDown={(e) => { if (e.button === 1 && tab.closable) e.preventDefault(); }}
-      onAuxClick={(e) => { if (e.button === 1 && tab.closable) { e.preventDefault(); onClose(); } }}
+      // A pinned tab is not closed by a middle click (VS Code's preventPinnedEditorClose); its menu's Close does.
+      onMouseDown={(e) => { if (e.button === 1 && tab.closable && !tab.pinned) e.preventDefault(); }}
+      onAuxClick={(e) => { if (e.button === 1 && tab.closable && !tab.pinned) { e.preventDefault(); onClose(); } }}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDragEnd={onDragEnd}
@@ -177,7 +178,21 @@ export function DraggableTab({
         // SQL typed, a table or rows changed since the tab opened live nowhere else: DBGate's unsaved dot.
         <span role="img" aria-label="Unsaved" title="Unsaved" className="size-[7px] shrink-0 rounded-full bg-text-2" />
       )}
-      {tab.closable && !editing && (
+      {tab.pinned && !editing ? (
+        // Always shown, where the × would be: the pin says why the tab has no ×, and clicking it unpins.
+        <span
+          role="button"
+          tabIndex={0}
+          aria-label="Unpin"
+          title="Unpin"
+          data-tab-pin
+          onClick={(e) => { e.stopPropagation(); onContextAction?.("unpin"); }}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onContextAction?.("unpin"); } }}
+          className="ml-1 rounded-sm hover:bg-surface-elevated p-0.5"
+        >
+          <Pin className="size-3" />
+        </span>
+      ) : tab.closable && !editing && (
         <span
           role="button"
           tabIndex={0}
@@ -233,6 +248,11 @@ export function DraggableTab({
               </>
             )}
             {extraMenuContent}
+            <ContextMenuItem onClick={() => onContextAction(tab.pinned ? "unpin" : "pin")}>
+              {tab.pinned ? <PinOff className="size-3.5 mr-2" /> : <Pin className="size-3.5 mr-2" />}
+              {tab.pinned ? "Unpin" : "Pin"}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
             {tab.closable && (
               <ContextMenuItem onClick={() => onContextAction("close")}>
                 Close
@@ -243,6 +263,12 @@ export function DraggableTab({
             </ContextMenuItem>
             <ContextMenuItem onClick={() => onContextAction("close-right")}>
               Close to the Right
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => onContextAction("close-saved")}>
+              Close Saved
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => onContextAction("close-all")}>
+              Close All
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
