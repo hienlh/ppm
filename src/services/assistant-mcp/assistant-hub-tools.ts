@@ -92,4 +92,10 @@ export async function chatAnswerApproval(args: Record<string, unknown>, ask: Ask
   return jsonResult({ answered: true, sessionId, requestId, decision, ...(shown ? { answers: shown } : {}) });
 }
 
-export const ppmCliReferenceTool = (): Json => textResult(ppmCliReference());
+/** `ppm_cli_reference`: the header plus one group's commands, or the index of groups. */
+export function ppmCliReferenceTool(args: Record<string, unknown>, provider: string | null): Json {
+  if (args.group !== undefined && (typeof args.group !== "string" || args.group.length > 40)) {
+    return errorResult("group must be a command group's name, such as \"config\" or \"core\"");
+  }
+  return textResult(ppmCliReference(undefined, { provider, group: args.group as string | undefined }));
+}

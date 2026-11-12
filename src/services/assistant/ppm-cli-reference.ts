@@ -1,18 +1,18 @@
 import { basename, join, resolve } from "node:path";
-import { getDbPath } from "../db.service.ts";
+import { getDbPath, getDbProfile } from "../db.service.ts";
 import { getPpmDir } from "../ppm-dir.ts";
+import { commandPathsWithRouting, DIRECT_SEEN_LIVE } from "./ppm-cli-routing.ts";
 
 /**
  * What the Assistant's `ppm_cli_reference` tool answers: how to run the PPM CLI against *this*
- * PPM, which commands go through the running server and which touch its data directly, then
- * the reference itself, generated from the CLI source (`bun scripts/generate-ppm-cli-reference.ts
- * --update` rewrites `PPM_CLI_REFERENCE` below; a test fails when it drifts).
+ * PPM and how each command reaches it, then the reference itself, generated from the command tree
+ * (`bun scripts/generate-ppm-cli-reference.ts --update` rewrites `PPM_CLI_REFERENCE` below; a
+ * test fails when it drifts). Asked for one `group`, it answers that group's commands; asked for
+ * none, the header and an index of the groups, which keeps the usual answer short.
  *
- * The header matters more than the reference. Almost every `ppm` command opens PPM's database
- * itself rather than asking the server, and only `start` can choose a database profile, so the
- * Assistant of a dev server (`ppm.dev.db`) running `ppm config set …` would write to `ppm.db` —
- * another instance's data. The shell does get `PPM_HOME` (`assistant-shell-env.ts`), which
- * fixes the folder but not the file.
+ * The Assistant's shell carries `PPM_PROFILE` and `PPM_INSTANCE_ID` (`assistant-shell-env.ts`),
+ * so a command reaches this server on this database, and every command that goes through a
+ * server prints the one it reached. The header tells the Assistant to check that line.
  */
 
 export interface PpmInstance {
@@ -27,12 +27,10 @@ export interface PpmInstance {
 const quote = (p: string): string => (/[\s"]/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p);
 
 export function currentPpmInstance(): PpmInstance {
-  const dbFile = getDbPath();
-  const profile = /^ppm\.(.+)\.db$/.exec(basename(dbFile))?.[1] ?? null;
   // A compiled binary is its own CLI; from source (or an npm install) the entry is src/index.ts.
   const compiled = import.meta.url.includes("$bunfs");
   const command = compiled ? quote(process.execPath) : `bun ${quote(join(resolve(import.meta.dir, "..", "..", ".."), "src", "index.ts"))}`;
-  return { ppmDir: getPpmDir(), dbFile, profile, command };
+  return { ppmDir: getPpmDir(), dbFile: getDbPath(), profile: getDbProfile(), command };
 }
 
 /**
@@ -56,30 +54,31 @@ export const TOOLS_INSTEAD_OF_CLI: readonly { area: string; tools: readonly stri
   },
 ];
 
-const VIA_SERVER = ["status", "restart", "stop", "open", "schedule run-now (prefer the schedule_run_now tool)"];
-/**
- * Written directly, but the server re-reads the projects table when another process changed it
- * and its own saves apply only what it changed itself (`config-projects-sync.ts`).
- */
-const DIRECT_SEEN_LIVE = ["projects"];
-const DIRECT = ["config", "db", "schedule (all but run-now; prefer the schedule tools)", "cloud", "ext", "jira", "backup",
-  "autostart", "chat (also runs an AI turn inside the command itself)"];
+export interface ReferenceOptions {
+  /** The provider of the session asking; `codex` runs its shell in a sandbox with no network. */
+  provider?: string | null;
+}
 
-export function ppmCliReferenceHeader(instance: PpmInstance): string {
+const list = (paths: readonly string[]) => paths.map((p) => `ppm ${p}`).join(", ");
+
+export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOptions = {}): string {
+  const target = `→ PPM ${instance.profile ?? "default"} (${basename(instance.dbFile)}) at 127.0.0.1:<port>`;
   const lines = [
     "# Running `ppm` from this Assistant",
     "",
-    `This PPM keeps its data in ${instance.ppmDir} (database ${basename(instance.dbFile)}). Your shell has`,
-    `PPM_HOME set to that folder. Invoke the CLI as: ${instance.command}`,
+    `This PPM keeps its data in ${instance.ppmDir} (database ${basename(instance.dbFile)}). Invoke the CLI as: ${instance.command}`,
+    "Your shell already names this PPM (PPM_HOME, PPM_PROFILE, PPM_INSTANCE_ID): do not pass --profile or --instance.",
     "Every shell command asks the user first; say what the command does when you ask.",
+    `A command that goes through the server prints the PPM it reached on stderr: \`${target}\`.`,
+    "If that line names another database, stop and tell the user. A command that would change another PPM's",
+    "database is refused from here.",
     "",
   ];
-  if (instance.profile) {
+  if (opts.provider === "codex") {
     lines.push(
-      `WARNING: this server runs on the "${instance.profile}" database profile (${basename(instance.dbFile)}).`,
-      "The CLI cannot choose a profile for any command but `start`: every command below that reads or",
-      "changes PPM's data opens ppm.db, which belongs to a different PPM instance. Do not run those",
-      "commands from here. Use the Assistant's own tools, or give the user the command to run themselves.",
+      "Your shell runs in a read-only sandbox with no network, so a `ppm` command cannot reach PPM from inside it.",
+      "Run every `ppm` command with escalated permissions (`sandbox_permissions: \"require_escalated\"` and a",
+      "one-line `justification`). The user still approves each one; with the sandbox, the command fails.",
       "",
     );
   }
@@ -91,26 +90,55 @@ export function ppmCliReferenceHeader(instance: PpmInstance): string {
     "Run `ppm git` only for what the git tools leave out (merging or deleting a branch, for instance).",
     "",
     "## Commands that go through the running server (prefer these)",
-    VIA_SERVER.map((c) => `- ppm ${c}`).join("\n"),
+    "They change the running PPM itself, with the checks PPM's screens make. With no PPM running they write",
+    "the database directly and say so.",
+    `- ${list(commandPathsWithRouting("server"))}`,
+    "- schedule run-now: prefer the schedule_run_now tool",
     "",
     "## Commands that write PPM's data directly, and the running server picks up at once",
-    "A project added or removed here shows in PPM without a restart, and the server keeps it.",
-    DIRECT_SEEN_LIVE.map((c) => `- ppm ${c}`).join("\n"),
+    `- ${list(DIRECT_SEEN_LIVE)}`,
     "",
-    "## Commands that read or write PPM's data directly",
+    "## Commands that write PPM's data directly",
     "The running server keeps much of this in memory: a change may not show until it restarts, and the",
     "server may write its own copy back over it. Prefer the Assistant's tools or the PPM screen where one exists.",
-    DIRECT.map((c) => `- ppm ${c}`).join("\n"),
+    `- ${list(commandPathsWithRouting("direct-pending").filter((p) => !DIRECT_SEEN_LIVE.includes(p)))}`,
     "",
-    "`ppm git` works on a project's repository, not on PPM's data.",
+    "## Commands that need no server",
+    "Process control, setup, reading, and work outside PPM's live data (a repository, a backup, the cloud account).",
+    `- ${list(commandPathsWithRouting("direct-allowed"))}`,
     "",
   );
   return lines.join("\n");
 }
 
-/** The tool's whole answer. */
-export function ppmCliReference(instance: PpmInstance = currentPpmInstance()): string {
-  return `${ppmCliReferenceHeader(instance)}\n${PPM_CLI_REFERENCE}`;
+/** The generated reference cut at its `## ` headings: `core` for the top-level commands, else the group's name. */
+export function cliReferenceSections(reference: string = PPM_CLI_REFERENCE): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const part of reference.split(/\n(?=## )/).slice(1)) {
+    const heading = part.slice(3, part.indexOf("\n") === -1 ? undefined : part.indexOf("\n"));
+    const name = heading.startsWith("Core Commands") ? "core" : heading.startsWith("ppm ") ? heading.slice(4).split(" ")[0]! : heading.toLowerCase();
+    out.set(name, part.trimEnd());
+  }
+  return out;
+}
+
+function groupIndex(sections: Map<string, string>): string {
+  const rows = [...sections.entries()].filter(([name]) => name !== "tips").map(([name, text]) => {
+    const heading = text.slice(3, text.indexOf("\n"));
+    const count = (text.match(/^ppm /gm) ?? []).length;
+    return `- ${name}: ${heading.includes(" — ") ? heading.split(" — ")[1] : heading} (${count} command${count === 1 ? "" : "s"})`;
+  });
+  return ["## Command groups", "Ask for one with `group` (for example `group: \"config\"`) to see its commands and options.", ...rows].join("\n");
+}
+
+/** The tool's whole answer: the header, then one group's commands, or the index of groups. */
+export function ppmCliReference(instance: PpmInstance = currentPpmInstance(), opts: ReferenceOptions & { group?: string } = {}): string {
+  const header = ppmCliReferenceHeader(instance, opts);
+  const sections = cliReferenceSections();
+  if (!opts.group) return `${header}\n${groupIndex(sections)}\n`;
+  const section = sections.get(opts.group.trim().toLowerCase());
+  if (!section) return `${header}\nNo command group "${opts.group}". ${groupIndex(sections)}\n`;
+  return `${header}\n${section}\n${sections.get("tips") ?? ""}\n`;
 }
 
 export const PPM_CLI_REFERENCE = `# PPM CLI Reference
@@ -121,6 +149,7 @@ ppm start
   --minimal — Minimal workspace: chat, files, editor and settings
   -p, --port <port> — Port to listen on
   -s, --share — (deprecated) Tunnel is now always enabled
+  --profile <name> — DB profile name (e.g. 'dev' → ppm.dev.db)
 
 ppm stop
   Stop the PPM server (supervisor stays alive)
@@ -164,6 +193,17 @@ ppm init
 
 ppm upgrade
   Check for and install PPM updates
+  --check — Only check for updates, don't install
+
+ppm backup
+  Snapshot the PPM config database now
+  --json — Output as JSON
+
+ppm restore [backup]
+  Restore the PPM config database from a snapshot
+  --list — List available snapshots and exit
+  --force — Restore even while PPM is running (stop it first when you can)
+  --json — Output as JSON
 \`\`\`
 ## ppm projects — Manage registered projects
 \`\`\`
@@ -178,13 +218,13 @@ ppm projects add <path>
 ppm projects remove <name>
   Remove a project from the registry
 \`\`\`
-## ppm config — Configuration management
+## ppm config — Get or set PPM configuration
 \`\`\`
 ppm config get <key>
   Get a config value (e.g. port, auth.enabled)
 
 ppm config set <key> <value>
-  Set a config value (e.g. port 9090)
+  Set a config value (e.g. port 9090), through the running PPM when one holds the database
 \`\`\`
 ## ppm git — Git operations for a project
 \`\`\`
@@ -244,7 +284,7 @@ ppm git branch merge <source>
   Merge a branch into current branch
   -p, --project <name> — Project name or path
 \`\`\`
-## ppm chat — AI chat sessions
+## ppm chat — Manage AI chat sessions
 \`\`\`
 ppm chat list
   List all chat sessions
@@ -266,7 +306,87 @@ ppm chat resume <session-id>
 ppm chat delete <session-id>
   Delete a chat session
 \`\`\`
-## ppm db — Database connections & queries
+## ppm autostart — Manage auto-start on boot (enable/disable/status)
+\`\`\`
+ppm autostart enable
+  Register PPM to start automatically on boot
+  -p, --port <port> — Override port
+  -s, --share — (deprecated) Tunnel is now always enabled
+  --profile <name> — DB profile name
+  --minimal — Start with chat, files, editor and settings
+
+ppm autostart disable
+  Remove PPM auto-start registration
+
+ppm autostart status
+  Show auto-start status
+  --json — Output as JSON
+\`\`\`
+## ppm cloud — PPM Cloud — device registry + tunnel URL sync
+\`\`\`
+ppm cloud login
+  Sign in with Google
+  --url <url> — Cloud URL override
+  --device-code — Force device code flow (for remote terminals)
+
+ppm cloud logout
+  Sign out from PPM Cloud
+
+ppm cloud status
+  Show PPM Cloud connection status
+  --json — Output as JSON
+
+ppm cloud devices
+  List all registered devices from cloud
+  --json — Output as JSON
+
+ppm cloud alias set <slug>
+  Set alias for this machine (e.g. ppm cloud alias set macbook)
+
+ppm cloud alias get
+  Show current alias for this machine
+
+ppm cloud alias remove
+  Remove alias for this machine
+\`\`\`
+## ppm skills — Manage and inspect discovered skills & commands
+\`\`\`
+ppm skills list
+  List all discovered skills and commands
+  --json — JSON output
+  --project <path> — Project path [default: the current directory]
+
+ppm skills search <query>
+  Fuzzy search skills and commands
+  --json — JSON output
+  --project <path> — Project path [default: the current directory]
+
+ppm skills info <name>
+  Show detailed info for a specific skill
+  --json — JSON output
+  --project <path> — Project path [default: the current directory]
+\`\`\`
+## ppm ext — Manage PPM extensions
+\`\`\`
+ppm ext install <name>
+  Install an extension from npm
+
+ppm ext remove <name>
+  Remove an installed extension
+
+ppm ext list
+  List installed extensions
+
+ppm ext enable <name>
+  Enable an extension
+
+ppm ext disable <name>
+  Disable an extension
+
+ppm ext dev <path>
+  Symlink a local extension for development
+\`\`\`
+## ppm db — Manage database connections and execute queries
 \`\`\`
 ppm db list
   List all saved database connections
@@ -322,74 +442,64 @@ ppm db driver remove <id>
 ppm db run <name> <file>
   Execute a SQL file against a saved connection
 \`\`\`
-## ppm autostart — Auto-start on boot
+## ppm jira — Jira watcher utilities
 \`\`\`
-ppm autostart enable
-  Register PPM to start automatically on boot
-  -p, --port <port> — Override port
-  -s, --share — (deprecated) Tunnel is now always enabled
-  --profile <name> — DB profile name
-  --minimal — Start with chat, files, editor and settings
+ppm jira config set <projectName>
+  Set Jira config for a project
+  --url <url> — Jira base URL (https://...) (required)
+  --email <email> — Jira account email (required)
+  --token <token> — API token (⚠ visible in shell history) (required)
 
-ppm autostart disable
-  Remove PPM auto-start registration
+ppm jira config show <projectName>
+  Show Jira config (token masked)
 
-ppm autostart status
-  Show auto-start status
-  --json — Output as JSON
+ppm jira config remove <projectName>
+  Remove Jira config (cascades watchers + results)
+
+ppm jira config test <projectName>
+  Test Jira connection
+
+ppm jira watch add
+  Create a new watcher
+  --config <id> — Jira config ID (required)
+  --name <name> — Watcher name (required)
+  --jql <jql> — JQL filter query (required)
+  --interval <ms> — Poll interval in ms [default: 120000]
+  --prompt <template> — Custom prompt template
+  --mode <mode> — debug or notify [default: debug]
+
+ppm jira watch list
+  List watchers
+  --config <id> — Filter by config ID
+
+ppm jira watch enable <id>
+  Enable watcher
+
+ppm jira watch disable <id>
+  Disable watcher
+
+ppm jira watch remove <id>
+  Delete watcher
+
+ppm jira watch test <id>
+  Dry-run poll (show matches without creating tasks)
+
+ppm jira watch pull [id]
+  Manual pull (one watcher or all enabled)
+
+ppm jira results delete <id>
+  Soft-delete result
+
+ppm jira track <issueKey>
+  Manually track a Jira issue
+  --config <id> — Jira config ID (required)
 \`\`\`
-## ppm cloud — PPM Cloud — device registry + tunnel
-\`\`\`
-ppm cloud login
-  Sign in with Google
-  --url <url> — Cloud URL override
-  --device-code — Force device code flow (for remote terminals)
-
-ppm cloud logout
-  Sign out from PPM Cloud
-
-ppm cloud status
-  Show PPM Cloud connection status
-  --json — Output as JSON
-
-ppm cloud devices
-  List all registered devices from cloud
-  --json — Output as JSON
-
-ppm cloud set <slug>
-  Set alias for this machine (e.g. ppm cloud alias set macbook)
-
-ppm cloud get
-  Show current alias for this machine
-
-ppm cloud remove
-  Remove alias for this machine
-\`\`\`
-## ppm ext — Manage PPM extensions
-\`\`\`
-ppm ext install <name>
-  Install an extension from npm
-
-ppm ext remove <name>
-  Remove an installed extension
-
-ppm ext list
-  List installed extensions
-
-ppm ext enable <name>
-  Enable an extension
-
-ppm ext disable <name>
-  Disable an extension
-
-ppm ext dev <path>
-  Symlink a local extension for development
-\`\`\`
-## ppm schedule — Scheduled agents (cron)
+## ppm schedule — Scheduled Claude agents (cron) and script schedules
 \`\`\`
 ppm schedule add
   Add a scheduled agent (--prompt) or a script schedule (--script). Cron uses local timezone. Do not embed secrets in --prompt.
   --name <name> — Schedule name (required)
+  --cron <expr> — Cron expression (local timezone, e.g. "0 7 * * *"; a script may add seconds first)
   --project <nameOrPath> — Project name or path (required)
   --prompt <text> — Prompt sent to the agent each run
   --script <file> — JavaScript module run each tick, or kept running (needs a running PPM server)
@@ -407,8 +517,11 @@ ppm schedule rm <id>
   Delete a schedule (cascades run history)
   -y, --yes — Skip confirmation
 
-ppm schedule \${action} <id>
-  \${action[0]!.toUpperCase()}\${action.slice(1)} a schedule
+ppm schedule enable <id>
+  Enable a schedule
+
+ppm schedule disable <id>
+  Disable a schedule
 
 ppm schedule run-now <id>
   Fire a schedule immediately (requires running PPM server)
@@ -416,6 +529,32 @@ ppm schedule run-now <id>
 ppm schedule runs <id>
   Show recent runs for a schedule
   --limit <n> — Max rows [default: 20]
+
+ppm schedule export <id>
+  Write a schedule as a shareable template — never its secrets, state or history
+  -o, --output <file> — Write to this file instead of standard output
+
+ppm schedule import <file>
+  Create a schedule from a template, turned off. Read its code before you trust it.
+  --project <name> — Project it runs in (required)
+  --set <key=value> — Value of an input (repeatable) [default: ]
+  --secret <key=value|key=@file> — Value of a secret input; @file reads it from a file (repeatable) [default: ]
+  --trust — I have read this code and trust it to run on this machine
+
+ppm schedule state <id>
+  Print a script schedule's state, secrets masked
+
+ppm schedule set-state <id> <file>
+  Replace a script schedule's state with a JSON file; the schedule must be off
+\`\`\`
+## ppm export — Export PPM metadata for external tools (AI agents, editors)
+\`\`\`
+ppm export skill
+  Export Claude Code skill for controlling PPM from external AI tools
+  --install — Install to target dir (default scope=user → ~/.claude/skills/ppm/)
+  --scope <scope> — Install scope: user | project [default: user]
+  --output <dir> — Custom output directory (overrides --scope)
+  --format <fmt> — Output format [default: claude-code]
 \`\`\`
 
 ## Tips

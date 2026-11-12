@@ -1,6 +1,6 @@
 import { createMcpHttpHandler, type Json } from "../mcp-http-endpoint.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
-import { resolveMigratedSession } from "../db.service.ts";
+import { getSessionProvider, resolveMigratedSession } from "../db.service.ts";
 import {
   CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CLAUDE_ASSISTANT_MCP_SERVER, DB_LIST_CONNECTIONS_TOOL,
   DB_QUERY_TOOL, PROJECT_ADD_TOOL, PROJECTS_LIST_TOOL, UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_GET_STATE_TOOL, UI_OPEN_TAB_TOOL,
@@ -89,7 +89,8 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, sig
     case UI_RUN_COMMAND_TOOL: return uiRunCommand(sessionId, args, ask);
     case CHATS_ATTENTION_TOOL: return chatsAttentionTool(args);
     case CHAT_ANSWER_APPROVAL_TOOL: return chatAnswerApproval(args, ask);
-    case PPM_CLI_REFERENCE_TOOL: return ppmCliReferenceTool();
+    case PPM_CLI_REFERENCE_TOOL:
+      return ppmCliReferenceTool(args, getSessionProvider(resolveMigratedSession(sessionId)) ?? getSessionProvider(sessionId));
     case CHAT_WATCH_TOOL: return chatWatchTool(sessionId, args);
     case CHAT_UNWATCH_TOOL: return chatUnwatchTool(sessionId, args);
     case CHAT_LIST_WATCHES_TOOL: return chatListWatchesTool(sessionId);

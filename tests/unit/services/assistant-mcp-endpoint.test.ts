@@ -90,7 +90,9 @@ describe("assistant MCP endpoint", () => {
   it("routes the chat-management tools to their handlers", async () => {
     const sessionId = assistantSession();
     const reference = await callAssistantTool({ sessionId }, "ppm_cli_reference", {}) as { content: Array<{ text: string }> };
-    expect(reference.content[0]!.text).toContain("# PPM CLI Reference");
+    expect(reference.content[0]!.text).toContain("## Command groups");
+    const configGroup = await callAssistantTool({ sessionId }, "ppm_cli_reference", { group: "config" }) as { content: Array<{ text: string }> };
+    expect(configGroup.content[0]!.text).toContain("ppm config set <key> <value>");
     const overview = await callAssistantTool({ sessionId }, "chats_attention", { since: "6h" }) as { content: Array<{ text: string }>; isError?: boolean };
     expect(overview.isError).toBeFalsy();
     expect(JSON.parse(overview.content[0]!.text)).toMatchObject({ needsDecision: [], running: [] });

@@ -170,11 +170,13 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
   {
     name: PPM_CLI_REFERENCE_TOOL,
     title: "PPM CLI reference",
-    description: "How to run the `ppm` command line against this PPM, which commands go through the running server and "
-      + "which change its data directly, and every command with its options. For what PPM's own tools do not cover "
-      + "(extensions, rarer git operations such as merging or deleting a branch); git, schedules and tunnels have "
-      + "tools of their own. Running a command is a shell call, which asks the user.",
-    inputSchema: object({}),
+    description: "How to run the `ppm` command line against this PPM and how each command reaches it. Without `group`, "
+      + "that plus an index of the command groups; with `group`, that group's commands and options. For what PPM's own "
+      + "tools do not cover (extensions, rarer git operations such as merging or deleting a branch); git, schedules and "
+      + "tunnels have tools of their own. Running a command is a shell call, which asks the user.",
+    inputSchema: object({
+      group: { type: "string", description: "A command group, such as \"config\", \"db\", \"ext\", or \"core\" for the top-level commands." },
+    }),
     annotations: READ_ONLY,
   },
   {
