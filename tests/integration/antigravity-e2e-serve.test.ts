@@ -272,7 +272,7 @@ afterAll(async () => {
 });
 
 describe("Antigravity E2E on a live spawned PPM server process", () => {
-  test("GET /chat/providers includes Antigravity and GET /models returns Gemini models", async () => {
+  test("GET /chat/providers includes Antigravity, and GET /models names no model before agy has", async () => {
     const provRes = await fetch(`${base}/api/project/${PROJECT_NAME}/chat/providers`, {
       headers: authHeaders(),
     });
@@ -287,8 +287,8 @@ describe("Antigravity E2E on a live spawned PPM server process", () => {
     expect(modRes.status).toBe(200);
     const modJson = (await modRes.json()) as { ok: boolean; data: Array<{ value: string; label: string }> };
     expect(modJson.ok).toBe(true);
-    expect(modJson.data.map((m) => m.value)).toContain("gemini-4-argon");
-    expect(modJson.data.map((m) => m.value)).toContain("gemini-3.8-flash");
+    // No app to ask and agy has opened no chat yet: PPM invents no model names.
+    expect(modJson.data).toEqual([]);
   });
 
   test("GET /chat/slash-items discovers .agents/skills and ~/.gemini/antigravity/skills", async () => {
@@ -419,5 +419,11 @@ describe("Antigravity E2E on a live spawned PPM server process", () => {
     expect(received.some((m) => m.type === "thinking" && m.content === "Greeting the user")).toBe(true);
     expect(received.filter((m) => m.type === "text").map((m) => m.content).join("")).toBe("Hello");
     expect(received.some((m) => m.type === "done" && m.sessionId === LIVE_TURN_CONV_ID)).toBe(true);
+
+    // The chat agy opened told PPM its models and its own pick; the picker now lists them.
+    const modRes = await fetch(`${base}/api/project/${PROJECT_NAME}/chat/providers/antigravity/models`, { headers: authHeaders() });
+    const models = ((await modRes.json()) as { data: Array<{ value: string; isDefault?: boolean }> }).data;
+    expect(models.map((m) => m.value)).toEqual(["gemini-4-argon", "gemini-3.8-flash"]);
+    expect(models.find((m) => m.isDefault)?.value).toBe("gemini-4-argon");
   });
 });

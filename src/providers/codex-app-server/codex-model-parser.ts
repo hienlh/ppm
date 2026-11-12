@@ -16,7 +16,7 @@ export function parseModelList(models: unknown): ModelOption[] {
     const value = typeof m.id === "string" ? m.id : undefined;
     if (!value) continue;
     const label = (typeof m.displayName === "string" && m.displayName) || value;
-    out.push({ value, label });
+    out.push({ value, label, ...(m.isDefault ? { isDefault: true } : {}) });
   }
   return out;
 }

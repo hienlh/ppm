@@ -219,21 +219,6 @@ export interface AIProviderConfig {
   model_auto_compact_token_limit?: number | null;
 }
 
-/**
- * Model a new codex session uses unless the picker says otherwise.
- *
- * Codex is registered at runtime rather than shipped in DEFAULT_CONFIG — it only
- * exists once `@openai/codex` is installed — so its default lives here, beside
- * Claude's, instead of being invisible inside the registration code.
- *
- * Deliberately not codex's own default, which is its most capable model and
- * bills accordingly; codex describes this one as its "workhorse model for
- * coding and everyday work", which is what a chat in an IDE mostly does.
- * Changing it in Settings, or per session in the chat's model picker, overrides
- * this.
- */
-export const CODEX_DEFAULT_MODEL = "gpt-6.1-sol";
-
 export const DEFAULT_CONFIG: PpmConfig = {
   device_name: "",
   port: 8080,
@@ -447,14 +432,12 @@ export function sanitizeConfig(config: PpmConfig): boolean {
         type: "cli",
         cli_command: "codex",
         permission_mode: "bypassPermissions",
-        model: CODEX_DEFAULT_MODEL,
       };
     } else if (config.ai.default_provider === "antigravity") {
       config.ai.providers.antigravity = {
         type: "cli",
         cli_command: "agy",
         permission_mode: "bypassPermissions",
-        model: "gemini-4-carbon",
       };
     } else if (config.ai.default_provider === "cursor") {
       config.ai.providers.cursor = {

@@ -301,7 +301,7 @@ export function createAntigravityTailParser(opts?: { parentSessionId?: string })
       flushDeferredInto(out);
       return out;
     },
-    getTurnUsage(model = "gemini-4-carbon"): TurnUsage | undefined {
+    getTurnUsage(model = "antigravity"): TurnUsage | undefined {
       if (!hasUsage) return undefined;
       return buildTurnUsage(
         {
