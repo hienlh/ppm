@@ -345,10 +345,15 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
   tab itself answers with its path, and reading the file is the provider's read tool's call.
   Every git, schedule and tunnel tool that changes something asks too, stage and fetch included.
   `project_add` registers a folder as a project after a card naming it exactly
-  (`assistant-project-add-tool.ts`). A drive, the home folder or any folder holding it, and PPM's
-  own data folder are refused before anyone is asked, because a project is where the Assistant
-  reads without asking. The user adds those from the project switcher. Once one is added,
-  `projects:changed` on `/ws/global` makes every open PPM refetch its project list.
+  (`assistant-project-add-tool.ts`). A drive, the home folder or any folder holding it, PPM's
+  own data folder, the home folder's application-state area (`~/.config`, `AppData`, `Library`…)
+  and any folder in or holding a private store are refused before anyone is asked
+  (`project-folder-refusal.ts`), because a project is where the Assistant reads without asking.
+  The user adds those from the project switcher. `project_update` (rename, move, colour) and
+  `project_remove` are a route family (`assistant-project-*.ts`) over `/api/projects`; a move runs
+  the same refusal. Every project route that writes announces `projects:changed` on `/ws/global`
+  (`projects-broadcast.ts`), so every open PPM refetches its project list — whoever wrote, the
+  `ppm projects` CLI included.
 
 Opening and messaging the user's chats is not on this server: an Assistant session also gets PPM's
 session tools (`ppm-sessions`, see [Running the user's chats](#running-the-users-chats)), under an
@@ -636,6 +641,11 @@ writes the database directly, so an open PPM never heard of the change.
 | Git | `git_status`, `git_log`, `git_diff`, `git_branches` | `git_stage`, `git_discard`, `git_undo`, `git_commit`, `git_sync`, `git_branch`, `git_stash` |
 | Schedules | `schedules_list`, `schedule_get` | `schedule_save`, `schedule_delete`, `schedule_run_now` |
 | Tunnels | `tunnels_status` | `port_forward_start`, `port_forward_stop`, `public_link_set` |
+| Projects | (`projects_list`) | `project_update`, `project_remove` |
+
+The project family reaches only `GET /api/projects`, `PATCH /api/projects/:name`, its `/color` and
+`DELETE /api/projects/:name`; the internal app gates the rest of that router (clone, image upload,
+settings, `reorder`), and the name `reorder` is reserved because its route is matched before `:name`.
 
 Stage, unstage, fetch and pausing a schedule ask too: the rule is that every change of state, and
 everything that reaches the network, asks.
@@ -644,7 +654,7 @@ everything that reaches the network, asks.
 and does not call the services behind the routes either, because what matters lives in the routes:
 the discard's Undo copy, clearing the shared commit message, the `?repo=` check that follows
 symlinks, `git:changed` after every git POST. `createRouteCaller` (`assistant-route-call.ts`) hands a
-`Request` to a Hono app that mounts only the six routers the families use, at the paths and in the
+`Request` to a Hono app that mounts only the seven routers the families use, at the paths and in the
 order `src/server/index.ts` mounts them, imported on first call (a static import closes a cycle
 through the chat routes while the server starts). That app has no `authMiddleware` — the caller
 already proved itself with the session's MCP token — so the allowlist is the whole boundary:

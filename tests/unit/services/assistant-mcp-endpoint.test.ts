@@ -17,6 +17,7 @@ import { ASSISTANT_TOOLS } from "../../../src/shared/assistant-tool-names.ts";
 import { GIT_TOOLS } from "../../../src/shared/assistant-git-tool-names.ts";
 import { SCHEDULE_TOOLS } from "../../../src/shared/assistant-schedule-tool-names.ts";
 import { TUNNEL_TOOLS } from "../../../src/shared/assistant-tunnel-tool-names.ts";
+import { PROJECT_TOOLS } from "../../../src/shared/assistant-project-tool-names.ts";
 import { createMcpHttpHandler, textResult } from "../../../src/services/mcp-http-endpoint.ts";
 import { assistantTurnProvenance } from "../../../src/services/assistant/assistant-turn-provenance.ts";
 
@@ -76,8 +77,9 @@ describe("assistant MCP endpoint", () => {
     // Opening and messaging chats is the session tools' job, never this server's.
     expect(names).not.toContain("chat_send_message");
     expect(names).not.toContain("chat_start");
-    // The git, schedule and tunnel families annotate their own tools, checked beside each family.
-    const familyTools = new Set<string>([...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS]);
+    // The git, schedule, tunnel and project families annotate their own tools, checked beside each family.
+    const familyTools = new Set<string>([...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...PROJECT_TOOLS]);
+    expect(names.slice(-PROJECT_TOOLS.length)).toEqual([...PROJECT_TOOLS]);
     for (const tool of list.result.tools) {
       if (familyTools.has(tool.name)) continue;
       if (navigation.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });

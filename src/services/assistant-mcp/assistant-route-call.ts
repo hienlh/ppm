@@ -47,13 +47,14 @@ let appPromise: Promise<RouteApp> | null = null;
  */
 export function internalRouteApp(): Promise<RouteApp> {
   appPromise ??= (async () => {
-    const [tunnels, tunnel, named, tailscale, scoped, schedules] = await Promise.all([
+    const [tunnels, tunnel, named, tailscale, scoped, schedules, projects] = await Promise.all([
       import("../../server/routes/tunnels.ts"),
       import("../../server/routes/tunnel.ts"),
       import("../../server/routes/named-tunnel.ts"),
       import("../../server/routes/tailscale.ts"),
       import("../../server/routes/project-scoped.ts"),
       import("../../server/routes/schedules.ts"),
+      import("../../server/routes/projects.ts"),
     ]);
     const app = new Hono();
     // `projectScopedRouter` also carries the chat, file, workspace, LSP and design routes, and no
@@ -65,6 +66,15 @@ export function internalRouteApp(): Promise<RouteApp> {
       }
       await next();
     });
+    // The project list router also clones repositories and takes uploads; only the list, one
+    // project and its colour are reachable here.
+    app.use("/api/projects/*", async (c, next) => {
+      if (!isProjectListPath(new URL(c.req.url).pathname)) {
+        return c.json({ ok: false, error: "Only the project list, a project and its colour are reachable here", code: ROUTE_NOT_ALLOWED }, 403);
+      }
+      await next();
+    });
+    app.route("/api/projects", projects.projectRoutes);
     app.route("/api/tunnels", tunnels.tunnelRegistryRoutes);
     app.route("/api/tunnel", tunnel.tunnelRoutes);
     app.route("/api/tunnel/named", named.namedTunnelRoutes);
@@ -84,6 +94,22 @@ export function internalRouteApp(): Promise<RouteApp> {
 export function isProjectGitPath(pathname: string): boolean {
   const segments = pathname.split("/");
   return segments[1] === "api" && segments[2] === "project" && !!segments[3] && segments[4] === "git" && segments.length > 5;
+}
+
+/** The project list router's own literal paths, which a `:name` must never stand for. */
+const PROJECT_LIST_LITERALS: ReadonlySet<string> = new Set(["reorder", "git", "suggest-dirs", "last-clone-dir"]);
+
+/**
+ * `/api/projects`, `/api/projects/<name>` and `/api/projects/<name>/color`: the only paths of the
+ * project list router any tool family reaches. Never a literal route (`reorder` is matched before
+ * `:name`), the clone, the image upload or the settings.
+ */
+export function isProjectListPath(pathname: string): boolean {
+  const segments = pathname.split("/");
+  if (segments[1] !== "api" || segments[2] !== "projects") return false;
+  if (segments.length === 3) return true;
+  if (!segments[3] || PROJECT_LIST_LITERALS.has(segments[3])) return false;
+  return segments.length === 4 || (segments.length === 5 && segments[4] === "color");
 }
 
 const LITERAL_SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
@@ -108,6 +134,7 @@ export function ruleProblem(rule: RouteRule): string | null {
   }
   if (segments[1] === "project" && segments[2] !== ":project") return "a project route names its project with :project";
   if (segments[1] === "project" && !isProjectGitPath(rule.path)) return "a project route may only reach the project's git routes";
+  if (segments[1] === "projects" && !isProjectListPath(rule.path)) return "a project list route may only reach the list, a project and its colour";
   const keys = new Set<string>();
   for (const key of rule.query) {
     if (!QUERY_KEY.test(key) || keys.has(key)) return `bad or repeated query key "${key}"`;

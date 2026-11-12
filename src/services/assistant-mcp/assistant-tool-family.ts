@@ -2,15 +2,17 @@ import type { Json } from "../mcp-http-endpoint.ts";
 import { GIT_TOOLS } from "../../shared/assistant-git-tool-names.ts";
 import { SCHEDULE_TOOLS } from "../../shared/assistant-schedule-tool-names.ts";
 import { TUNNEL_TOOLS } from "../../shared/assistant-tunnel-tool-names.ts";
+import { PROJECT_TOOLS } from "../../shared/assistant-project-tool-names.ts";
 import type { AskApproval } from "./assistant-approval-broker.ts";
 import { createRouteCaller } from "./assistant-route-call.ts";
 import type { CallPpmRoute, RouteRule } from "./assistant-route-rules.ts";
 import { GIT_ROUTES, GIT_TOOL_HANDLERS } from "./assistant-git-tools.ts";
 import { SCHEDULE_ROUTES, SCHEDULE_TOOL_HANDLERS } from "./assistant-schedule-tools.ts";
 import { TUNNEL_ROUTES, TUNNEL_TOOL_HANDLERS } from "./assistant-tunnel-tools.ts";
+import { PROJECT_ROUTES, PROJECT_TOOL_HANDLERS } from "./assistant-project-tools.ts";
 
 /**
- * The tool families that work through PPM's own routes — git, schedules, tunnels — and how the
+ * The tool families that work through PPM's own routes — git, schedules, tunnels, projects — and how the
  * endpoint reaches them. Each family owns its files (names, definitions, handlers and the routes
  * it may call), so they can grow side by side without editing a shared switch.
  *
@@ -21,7 +23,7 @@ import { TUNNEL_ROUTES, TUNNEL_TOOL_HANDLERS } from "./assistant-tunnel-tools.ts
  * import cycle with this dispatcher.
  */
 
-export type ToolFamily = "git" | "schedule" | "tunnel";
+export type ToolFamily = "git" | "schedule" | "tunnel" | "project";
 
 /** What one call of a family tool is handed. */
 export interface ToolContext {
@@ -68,6 +70,7 @@ export function toolFamilies(): readonly ToolFamilyEntry[] {
     { family: "git", tools: GIT_TOOLS, handlers: GIT_TOOL_HANDLERS, routes: GIT_ROUTES },
     { family: "schedule", tools: SCHEDULE_TOOLS, handlers: SCHEDULE_TOOL_HANDLERS, routes: SCHEDULE_ROUTES },
     { family: "tunnel", tools: TUNNEL_TOOLS, handlers: TUNNEL_TOOL_HANDLERS, routes: TUNNEL_ROUTES },
+    { family: "project", tools: PROJECT_TOOLS, handlers: PROJECT_TOOL_HANDLERS, routes: PROJECT_ROUTES },
   ];
   return families;
 }

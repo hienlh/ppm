@@ -325,4 +325,19 @@ describe("the internal app", () => {
     const git = await app.request("http://ppm.internal/api/project/route-call/git/changes", { method: "GET" });
     expect(git.status).toBe(200);
   });
+
+  it("lets only the list, a project and its colour through the project list router", async () => {
+    for (const path of ["/api/projects/git/clone", "/api/projects/:name/image", "/api/projects/:name/settings", "/api/projects/reorder"]) {
+      expect(ruleProblem(allowRoute("POST", path))).toContain("project list route");
+    }
+    const app = await internalRouteApp();
+    for (const [method, path] of [["POST", "git/clone"], ["PATCH", "reorder"], ["POST", "route-call/image"], ["GET", "route-call/settings"], ["GET", "suggest-dirs"]]) {
+      const res = await app.request(`http://ppm.internal/api/projects/${path}`, {
+        method, ...(method === "GET" ? {} : { headers: { "content-type": "application/json" }, body: "{}" }),
+      });
+      expect({ path, status: res.status }).toEqual({ path, status: 403 });
+    }
+    const list = await app.request("http://ppm.internal/api/projects", { method: "GET" });
+    expect(list.status).toBe(200);
+  });
 });
