@@ -1201,8 +1201,9 @@ file opens in a PPM tab on the device the user is chatting from: `open_file` (op
 `line`) for any file the user asks to see, `open_preview` for a page, chart, report or mockup
 the AI made, which also returns how the page rendered. Because PPM serves the page, it works
 wherever PPM is reached — LAN, tunnel, phone — and a script, stylesheet or font may come from
-the design CDNs. The same server carries three tools that take no file — `open_url` for a
-server running on the host, `read_terminal` and `run_in_terminal` for PPM's own terminals —
+the design CDNs. The same server carries four tools that take no file — `open_url` for a
+server running on the host, `open_branch_review` for a branch to review, `read_terminal` and
+`run_in_terminal` for PPM's own terminals —
 described in [Running apps and terminals](#running-apps-and-terminals).
 
 **The setting.** Settings → Tools, one switch per tool (`ai.ppm_tools`, see
@@ -1280,13 +1281,14 @@ show it; Open shows the live page.
 
 ### Running apps and terminals
 
-Three tools on the same server and token; none of them takes a file, so none goes through
-`tab-target.ts`. `open_url` and `run_in_terminal` reach the device over the same `tab_open`
-round trip; `read_terminal` answers from the server alone.
+Four tools on the same server and token; none of them takes a file, so none goes through
+`tab-target.ts`. `open_url`, `open_branch_review` and `run_in_terminal` reach the device over the
+same `tab_open` round trip; `read_terminal` answers from the server alone.
 
 | Tool | What it does | Runs anything |
 |---|---|---|
 | `open_url` | Opens a server running on the host — a dev server, typically — in a web-preview tab beside the chat | No |
+| `open_branch_review` | Opens Branch Review beside the chat on a branch and its base | No |
 | `read_terminal` | Reads what PPM's terminals printed, as the screen shows it | No |
 | `run_in_terminal` | Opens a new terminal in the dock with a command typed at the prompt | Only when the user presses Enter |
 
@@ -1345,8 +1347,25 @@ command, and the AI is told so. The answer gives the terminal's short id and, wh
 needs the user's password or eyes (`sudo`, a login, a migration); the AI's own shell remains
 the way to run anything else.
 
-The card for all three is `device-tool-card.tsx` (read by `deviceToolCall`): the address, the
-command in full, or the terminal read.
+**`open_branch_review`** (`branch-review-tool.ts`) is for the end of a piece of work: the AI
+hands the branch it finished to the user's review instead of summarising it in the chat. It takes
+`base`, `head` and `repo`, all optional: `head` defaults to the branch checked out, `base` to
+main, else master, as the tab's own pickers default, and `repo` is needed only when the project
+folder holds several repositories (`discoverGitRepos`, the same list `GET /git/repos` gives the
+pickers). Everything that could go wrong is found on the host before a tab opens, since the tab
+would otherwise show an error the AI never hears about: a ref `assertRef` refuses or that names no
+commit, a detached HEAD, a repository with no main or master, a project folder with several
+repositories (the answer lists them). The comparison is run once there too (`branchDiff`), so the
+answer says what the user is looking at (the pair, the merge base, the files and lines changed)
+and, when `head` is the branch checked out, how many files have changes not committed, which the
+review leaves out — the usual reason a review comes up short. The browser
+(`openAiBranchReviewTab`) reuses the project's one Branch Review tab or opens it beside the chat,
+with `base`, `head` and `aiOpenAt` in its metadata; the tab sets its pickers from them whenever
+`aiOpenAt` moves, so a second call moves a tab already open. In a container folder the repository
+the server named becomes the device's choice, as picking it in Source Control would.
+
+The card for all four is `device-tool-card.tsx` (read by `deviceToolCall`): the address, the
+pair reviewed, the command in full, or the terminal read.
 
 **A renamed session.** Codex renames a new chat to its thread id during the first turn, after
 the token was minted under PPM's id, and `ws/chat.ts` moves the chat's sockets to the new id.
@@ -1404,14 +1423,15 @@ a line in code view, the card's Open button, a tool switched off, and a chat wit
 a command typed into a dock terminal that runs only on the test's Enter and is read back, and a
 dev server opened from the host, reloaded in the same tab, and refused from a device that is not
 the host (full Chromium under `--host-resolver-rules`, since the headless shell ignores the flag
-that makes that origin secure). A stand-in `tailscale` first on the fixture's `PATH` keeps the
+that makes that origin secure); and Branch Review opened on a branch with an uncommitted edit,
+moved to a second pair in the same tab, and refused for a branch that does not exist. A stand-in `tailscale` first on the fixture's `PATH` keeps the
 real tailnet out of it. `PPM_TAB_TOOLS_WEB_DIR` reuses a scratch build. `tests/e2e/html-preview-cdn-check-e2e.mjs`
 covers the preview's CDN loads and its self-check on their own. Both need internet for the CDNs.
 
 ## PPM's tool switches
 
 Settings → Tools (`tools-settings-section.tsx`) turns each of PPM's own AI tools on or off —
-`open_file`, `open_preview`, `open_url`, `read_terminal`, `run_in_terminal`, `search_sessions`,
+`open_file`, `open_preview`, `open_url`, `open_branch_review`, `read_terminal`, `run_in_terminal`, `search_sessions`,
 `list_session_turns`, `read_session_turns`, `db_query`, `open_query`, `db_execute`,
 `create_session`, `send_to_session`, `session_status` and the nine [Spec mode](#spec-mode) tools, in the groups Tabs, Terminal, Session
 history, Database, Session collaboration and Spec mode (whose limits and "Ask before creating sessions" sit

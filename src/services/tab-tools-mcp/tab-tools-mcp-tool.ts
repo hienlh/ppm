@@ -1,6 +1,6 @@
 import { DESIGN_CDN_HOSTS } from "../../shared/design-cdn-hosts.ts";
 import {
-  OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL,
+  OPEN_BRANCH_REVIEW_TOOL, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL,
 } from "../../shared/tab-open-protocol.ts";
 
 /**
@@ -9,7 +9,7 @@ import {
  */
 
 export {
-  OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL,
+  OPEN_BRANCH_REVIEW_TOOL, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL,
   CLAUDE_TAB_TOOLS_MCP_SERVER, CLAUDE_OPEN_FILE_TOOL, CLAUDE_OPEN_PREVIEW_TOOL, CODEX_TAB_TOOLS_MCP_SERVER,
 } from "../../shared/tab-open-protocol.ts";
 /** Environment variable the Codex app-server reads the bearer token from. */
@@ -103,6 +103,31 @@ export const OPEN_URL_TOOL_DEFINITION = {
     additionalProperties: false,
   },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+};
+
+export const OPEN_BRANCH_REVIEW_TOOL_DEFINITION = {
+  name: OPEN_BRANCH_REVIEW_TOOL,
+  title: "Open Branch Review in PPM",
+  description:
+    "Open PPM's Branch Review tab on the device the user is chatting from: every file a branch changed against "
+    + "the branch it was cut from, one diff per file, each with a box the user ticks once reviewed. Call it when "
+    + "you finish work on a branch, so the user reviews it there. It shows commits only: commit your work first. "
+    + "The result says how many files changed, and how many still have uncommitted changes that the review leaves "
+    + "out. Without `head` it reviews the branch checked out; without `base`, main or master.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      base: { type: "string", description: "The branch the work is measured against (default main, else master)." },
+      head: { type: "string", description: "The branch to review (default the branch checked out)." },
+      repo: {
+        type: "string",
+        description: "The repository's folder, relative to the project folder or absolute. Needed only when the "
+          + "project folder holds several repositories.",
+      },
+    },
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: true, openWorldHint: false },
 };
 
 export const READ_TERMINAL_TOOL_DEFINITION = {

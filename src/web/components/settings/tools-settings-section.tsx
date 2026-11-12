@@ -27,6 +27,10 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Show pages",
     note: "Opens a page, chart or report it made in a PPM tab, and reads back its errors and a screenshot. While on, Claude's claude.ai Artifact tool is off.",
   },
+  open_branch_review: {
+    label: "Open Branch Review",
+    note: "Opens Branch Review on a branch it finished work on, so you review every changed file there. Changes nothing.",
+  },
   open_url: {
     label: "Show running apps",
     note: "Opens a web server running on this machine, such as a dev server, in a PPM tab. On another device it goes through a private Tailscale forward; it never makes a public link.",
@@ -114,7 +118,7 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
 };
 
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [
-  { title: "Tabs", intro: "On the device you are chatting from.", tools: ["open_file", "open_preview", "open_url"] },
+  { title: "Tabs", intro: "On the device you are chatting from.", tools: ["open_file", "open_preview", "open_url", "open_branch_review"] },
   { title: "Terminal", intro: "PPM's own terminals, on the machine PPM runs on.", tools: TERMINAL_TOOLS },
   {
     title: "Session history",

@@ -14,7 +14,7 @@ describe("PPM tool switches", () => {
   // The six session tools are introduced by the tour and stay off until the user answers; before
   // that they defaulted to on like the other tools, which is what these expectations used to say.
   it("defaults open_file and open_preview to the older single switch, the introduced session tools to off, and every other tool to on", () => {
-    const others = ["open_url", ...TERMINAL_TOOLS, ...DB_TOOLS, ...SPEC_MODE_TOOLS];
+    const others = ["open_url", "open_branch_review", ...TERMINAL_TOOLS, ...DB_TOOLS, ...SPEC_MODE_TOOLS];
     expect(onOf({})).toEqual(others);
     expect(onOf({ tab_tools: false })).toEqual(others);
     expect(onOf({ tab_tools: true })).toEqual(["open_file", "open_preview", ...others]);
@@ -22,7 +22,7 @@ describe("PPM tool switches", () => {
 
   it("takes a tool's own switch over its default, one tool at a time", () => {
     expect(onOf({ tab_tools: true, ppm_tools: { open_preview: false, read_terminal: false, db_execute: false, ...ALL_SESSION_ON } }))
-      .toEqual(["open_file", "open_url", "run_in_terminal", ...SESSION_HISTORY_TOOLS, "db_query", "open_query", ...SESSION_TOOLS, ...SPEC_MODE_TOOLS]);
+      .toEqual(["open_file", "open_url", "open_branch_review", "run_in_terminal", ...SESSION_HISTORY_TOOLS, "db_query", "open_query", ...SESSION_TOOLS, ...SPEC_MODE_TOOLS]);
     expect(onOf({ ppm_tools: { ...ALL_TAB_TOOLS_OFF, open_file: true } })).toEqual(["open_file", ...DB_TOOLS, ...SPEC_MODE_TOOLS]);
   });
 
@@ -30,7 +30,7 @@ describe("PPM tool switches", () => {
     expect(onOf({ ppm_tools: { search_sessions: true } })).toContain("create_session");
     expect(onOf({ ppm_tools: { search_sessions: false } }).filter((t) => SESSION_TOOLS_AND_HISTORY.includes(t))).toEqual([]);
     expect(onOf({ ppm_tools: { search_sessions: false, session_status: true } })).toEqual(
-      ["open_url", ...TERMINAL_TOOLS, "list_session_turns", "read_session_turns", ...DB_TOOLS, ...SESSION_TOOLS, ...SPEC_MODE_TOOLS]);
+      ["open_url", "open_branch_review", ...TERMINAL_TOOLS, "list_session_turns", "read_session_turns", ...DB_TOOLS, ...SESSION_TOOLS, ...SPEC_MODE_TOOLS]);
   });
 
   it("saves one introduced switch without flipping its siblings", () => {

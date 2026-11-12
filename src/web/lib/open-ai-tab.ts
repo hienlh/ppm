@@ -1,4 +1,5 @@
 import { usePanelStore } from "@/stores/panel-store";
+import { useGitRepoStore } from "@/stores/git-repo-store";
 import { useProjectStore } from "@/stores/project-store";
 import { absoluteProjectPath, relativeProjectPath } from "@/stores/file-store";
 import { fsApi } from "@/lib/fs-api";
@@ -8,13 +9,14 @@ import { chooseAiTabPlacement, isTabForFile, type AiTabPlacement, type Placement
 import { latestPreviewLoad, previewKey, waitForPreviewLoad } from "./html-preview-loads";
 import { nextQueryNumber, queryTabMetadata, targetFields } from "./db-tabs";
 import {
-  OPEN_URL_TOOL, RUN_IN_TERMINAL_TOOL, type TabOpenRequest, type TabOpenResult, type TabOpenTerminalRequest, type TabOpenUrlRequest,
+  OPEN_BRANCH_REVIEW_TOOL, OPEN_URL_TOOL, RUN_IN_TERMINAL_TOOL, type TabOpenBranchReviewRequest, type TabOpenRequest, type TabOpenResult, type TabOpenTerminalRequest, type TabOpenUrlRequest,
   type TabTool,
 } from "../../shared/tab-open-protocol";
 import { OPEN_QUERY_TOOL, type DbQueryTabOpen } from "../../shared/db-ai-tools";
 
 /**
- * Opens the tab the AI asked for with `open_file`, `open_preview`, `open_query` or `open_url`,
+ * Opens the tab the AI asked for with `open_file`, `open_preview`, `open_query`, `open_url` or
+ * `open_branch_review`,
  * beside the chat that asked (`ai-tab-placement.ts` decides where), or the terminal
  * `run_in_terminal` started, in the dock; and answers the server's `tab_open`. A tool card's
  * Open button goes through the same {@link openAiTab}, so a tab reopened from the chat's
@@ -203,6 +205,36 @@ export function openAiTerminal(req: Pick<TabOpenTerminalRequest, "terminalId" | 
 }
 
 /**
+ * Opens Branch Review beside the chat on the refs `open_branch_review` checked, or points the one
+ * already open there: a project has one Branch Review tab, and the tab takes `base`/`head` from its
+ * metadata whenever `aiOpenAt` moves. In a project folder holding several repositories the server
+ * named one, and it becomes this device's choice, as picking it in Source Control would.
+ */
+export function openAiBranchReviewTab(
+  req: Pick<TabOpenBranchReviewRequest, "projectName" | "repo" | "base" | "head">,
+  chat: AiTabChat,
+): string {
+  if (req.repo) useGitRepoStore.getState().choose(req.projectName, req.repo);
+  const placement = placeBesideChat(chat, (tab) => tab.type === "branch-review" && tab.metadata?.projectName === req.projectName);
+  const store = usePanelStore.getState();
+  const view = { base: req.base, head: req.head, aiOpenAt: Date.now() };
+  if (placement.kind === "open") {
+    const tabId = store.openTab(
+      { type: "branch-review", title: "Branch Review", projectId: req.projectName, closable: true, metadata: { projectName: req.projectName, ...view } },
+      placement.panelId,
+    );
+    if (!tabId) throw new Error("PPM could not open the tab");
+    if (placement.split) store.splitPanel("right", tabId, placement.panelId);
+    return tabId;
+  }
+  const fromPanelId = placement.kind === "focus" ? placement.panelId : placement.fromPanelId;
+  const tab = store.panels[fromPanelId]?.tabs.find((t) => t.id === placement.tabId);
+  store.updateTab(placement.tabId, { metadata: { ...tab?.metadata, ...view } });
+  showExistingTab(placement);
+  return placement.tabId;
+}
+
+/**
  * Answers the server's `tab_open`: opens the tab and, for a page the AI made, waits for it to
  * load and settle and returns the check of how it rendered. Every outcome is answered — a
  * silent device would leave the AI waiting for the server's timeout.
@@ -212,10 +244,11 @@ export async function answerTabOpen(req: TabOpenRequest, chat: AiTabChat, send: 
     const result: TabOpenResult = { type: "tab_open_result", requestId: req.requestId, ...answer };
     send(JSON.stringify(result));
   };
-  if (req.tool === OPEN_QUERY_TOOL || req.tool === OPEN_URL_TOOL || req.tool === RUN_IN_TERMINAL_TOOL) {
+  if (req.tool === OPEN_QUERY_TOOL || req.tool === OPEN_URL_TOOL || req.tool === RUN_IN_TERMINAL_TOOL || req.tool === OPEN_BRANCH_REVIEW_TOOL) {
     try {
       if (req.tool === OPEN_QUERY_TOOL) openAiQueryTab(req.query, chat);
       else if (req.tool === OPEN_URL_TOOL) openAiUrlTab(req, chat);
+      else if (req.tool === OPEN_BRANCH_REVIEW_TOOL) openAiBranchReviewTab(req, chat);
       else openAiTerminal(req, chat);
       reply({ opened: true });
     } catch (e) {
