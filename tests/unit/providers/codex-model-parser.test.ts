@@ -9,6 +9,10 @@ describe("parseModelList", () => {
   it("falls back to id when displayName missing", () => {
     expect(parseModelList([{ id: "o4" }])).toEqual([{ value: "o4", label: "o4" }]);
   });
+  it("marks the model codex picks when none is chosen", () => {
+    expect(parseModelList([{ id: "a" }, { id: "b", isDefault: true }]))
+      .toEqual([{ value: "a", label: "a" }, { value: "b", label: "b", isDefault: true }]);
+  });
   it("drops hidden models", () => {
     expect(parseModelList([{ id: "a", hidden: true }, { id: "b" }]))
       .toEqual([{ value: "b", label: "b" }]);

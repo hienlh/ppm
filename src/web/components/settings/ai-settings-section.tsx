@@ -19,7 +19,7 @@ import { openSettings } from "./open-settings";
 import { CodexContextSettings } from "./codex-context-settings";
 import { McpSignInList } from "@/components/mcp-auth/mcp-sign-in-list";
 import { effortNotice, noticeText, shownEffort } from "@/components/chat/model-thinking-selector-helpers";
-import { modelDisplayName } from "@/lib/model-display-name";
+import { autoModelLabel, modelDisplayName } from "@/lib/model-display-name";
 import type { EffortStatus } from "../../../shared/effort-status";
 import type { ModelOption } from "../../../types/chat";
 import { LOG_ONLY_IDLE_MINUTES, leftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../../../shared/leftover-processes";
@@ -181,7 +181,7 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
   // Model select options: use fetched models, with "auto" option for non-SDK providers
   const modelOptions = isSdkProvider
     ? models
-    : [{ value: "__default__", label: "Auto (default)" }, ...models];
+    : [{ value: "__default__", label: autoModelLabel(models) }, ...models];
 
   return (
     <div className={gapSize}>

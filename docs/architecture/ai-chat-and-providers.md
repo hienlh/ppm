@@ -208,6 +208,16 @@ a five-minute server memory cache, shares concurrent discovery requests, and
 serves its previous list while refreshing. The first uncached request still
 waits for Codex app-server initialization and model discovery.
 
+No Codex or Antigravity model name is written into PPM. An absent `model`
+("Auto") is the CLI's own pick, and each list marks that model `isDefault`
+(Codex's `model/list`; for Antigravity, the `currentModelId` agy reported), so
+the chip and Settings can name it. Antigravity's list comes from the app's
+language server while it runs, else from the config row `antigravity_models`:
+the `models` agy returned when it last opened a new chat. Asking agy for them
+without a chat is not done on purpose, since `session/new` leaves an empty
+conversation in its store. A model + effort is resolved against agy's list
+(`resolveAntigravityModelId`), so a model with fewer efforts gets one it has.
+
 ## Codex context settings
 
 **AI Settings → Codex** exposes **Context window (tokens)** and **Auto-compact

@@ -44,6 +44,7 @@ const opened = {
   models: {
     availableModels: [
       { modelId: "gemini-4-argon-medium", name: "Gemini 4 Argon (Medium)" },
+      { modelId: "gemini-4-argon-high", name: "Gemini 4 Argon (High)" },
       { modelId: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)" },
     ],
     currentModelId: "gemini-4-argon-medium",
