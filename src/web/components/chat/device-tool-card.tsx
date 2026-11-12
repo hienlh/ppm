@@ -1,9 +1,9 @@
 /**
- * Card surfaces for the tab server's tools that take no file: `open_url`, `read_terminal` and
- * `run_in_terminal`. Rendered by `tool-cards.tsx`; the call is read by `@/lib/tab-tool-call`.
+ * Card surfaces for the tab server's tools that take no file: `open_url`, `open_branch_review`,
+ * `read_terminal` and `run_in_terminal`. Rendered by `tool-cards.tsx`; the call is read by `@/lib/tab-tool-call`.
  * The command `run_in_terminal` typed is shown in full: it is what the user's Enter runs.
  */
-import { OPEN_URL_TOOL, RUN_IN_TERMINAL_TOOL } from "../../../shared/tab-open-protocol";
+import { OPEN_BRANCH_REVIEW_TOOL, OPEN_URL_TOOL, RUN_IN_TERMINAL_TOOL } from "../../../shared/tab-open-protocol";
 import type { DeviceToolCall } from "@/lib/tab-tool-call";
 
 const cap = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
@@ -12,6 +12,14 @@ const cap = (text: string, max: number) => (text.length > max ? `${text.slice(0,
 export function DeviceToolSummary({ call }: { call: DeviceToolCall }) {
   if (call.tool === OPEN_URL_TOOL) {
     return <>Open app <span className="font-mono text-text-subtle">{cap(call.url.replace(/^https?:\/\//, ""), 60)}</span></>;
+  }
+  if (call.tool === OPEN_BRANCH_REVIEW_TOOL) {
+    return (
+      <>
+        Branch Review{" "}
+        <span className="font-mono text-text-subtle">{cap(call.head ?? "current branch", 40)} ← {cap(call.base ?? "main", 40)}</span>
+      </>
+    );
   }
   if (call.tool === RUN_IN_TERMINAL_TOOL) {
     return <>Type in terminal <span className="font-mono text-text-subtle">{cap(call.command, 60)}</span></>;
@@ -25,9 +33,19 @@ export function DeviceToolSummary({ call }: { call: DeviceToolCall }) {
   );
 }
 
-/** Expanded body: the address, the terminal read, or the command typed and where. */
+/** Expanded body: the address, the refs reviewed, the terminal read, or the command typed and where. */
 export function DeviceToolDetails({ call }: { call: DeviceToolCall }) {
   if (call.tool === OPEN_URL_TOOL) return <p className="font-mono text-text-secondary break-all">{call.url}</p>;
+  if (call.tool === OPEN_BRANCH_REVIEW_TOOL) {
+    return (
+      <p className="text-text-subtle">
+        <span className="font-mono text-text-secondary break-all">{call.head ?? "The branch checked out"}</span>
+        {" against "}
+        <span className="font-mono text-text-secondary break-all">{call.base ?? "main or master"}</span>
+        {call.repo && <> in <span className="font-mono text-text-secondary break-all">{call.repo}</span></>}
+      </p>
+    );
+  }
   if (call.tool === RUN_IN_TERMINAL_TOOL) {
     return (
       <div className="space-y-1">

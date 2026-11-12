@@ -5,6 +5,7 @@
 ### Added
 
 - **Antigravity chats.** Antigravity (Google's `agy` CLI) can be picked as a chat's provider: replies, thinking and tool calls stream as with Claude and Codex, with approvals, Stop, images, agy's own slash commands and skills, extra accounts with a sign-in of their own (Settings → Accounts), a quota panel, and PPM's tab and database tools. Each open chat runs one `agy acp` process. A slow command agy moves to the background no longer ends the chat halfway, and the quota is read from agy itself when the Antigravity app is closed. Needs agy installed and signed in.
+- **The AI can open Branch Review for you when it finishes work on a branch.** A new tool, `open_branch_review`, opens the Branch Review tab beside the chat on the branch the AI worked on, against main (or master, or the branch it names), so you review every changed file there and tick each one off. If the tab is already open it switches to that pair. Before a tab opens, PPM checks that both branches exist and, in a folder holding several repositories, which one is meant. It then tells the AI how many files and lines the branch changed, and how many files still have uncommitted changes, which the review does not show. It is on by default and can be switched off in Settings → Tools → Tabs.
 
 ## [0.24.1] - 2026-11-12
 

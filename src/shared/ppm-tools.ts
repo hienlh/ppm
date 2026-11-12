@@ -4,7 +4,7 @@
  */
 import { DB_TOOLS } from "./db-ai-tools.ts";
 import {
-  OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL,
+  OPEN_BRANCH_REVIEW_TOOL, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL,
 } from "./tab-open-protocol.ts";
 import { SESSION_HISTORY_TOOLS } from "./session-history-tools.ts";
 import { SESSION_COLLAB_TOOLS } from "./session-collab.ts";
@@ -15,7 +15,9 @@ export const TERMINAL_TOOLS = [READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL] as cons
  * What `/api/tab-tools-mcp` serves: the tools that show or read something on the user's side, and
  * the session-history tools that read the project's other chats.
  */
-export const TAB_TOOLS = [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, ...TERMINAL_TOOLS, ...SESSION_HISTORY_TOOLS] as const;
+export const TAB_TOOLS = [
+  OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, OPEN_BRANCH_REVIEW_TOOL, ...TERMINAL_TOOLS, ...SESSION_HISTORY_TOOLS,
+] as const;
 /**
  * What `/api/sessions-mcp` serves: opening another PPM session and messaging the project's
  * sessions. Every session they create is an ordinary one the user sees, can open and can stop.
