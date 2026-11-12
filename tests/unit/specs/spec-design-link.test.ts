@@ -22,6 +22,9 @@ describe("the drawing", () => {
     expect(v.needsDrawing).toBe(true);
     expect(v.drawing).toBe("missing");
     expect((await svc.approvePhase(project, "export", "design")).message).toMatch(/drawing/i);
+    // The pane hides Approve and Request changes on this: the view says why it cannot be approved.
+    expect(v.phases.design.approveBlocked).toMatch(/drawing/i);
+    expect(v.phases.requirements.approveBlocked).toBeNull();
 
     const designSlug = await createSpecDrawing(project, "Export");
     v = await svc.setDesignSlug(project, "export", designSlug);

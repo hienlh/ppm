@@ -112,8 +112,10 @@ export function toView(ctx: SpecContext): SpecView {
   });
   const phases = {} as SpecView["phases"];
   for (const p of ["requirements", "design", "tasks"] as SpecPhase[]) {
+    const approvable = ev.canApprove(p);
     phases[p] = { status: ev.phases[p].status, file: `${SPECS_DIR}/${state.slug}/${phaseFileName(state.kind, p)}`, issues: ev.phases[p].issues, text: docs[p],
-      submitted: ev.phases[p].status === "draft" && !!ev.phases[p].hash && state.submitted?.[p] === ev.phases[p].hash };
+      submitted: ev.phases[p].status === "draft" && !!ev.phases[p].hash && state.submitted?.[p] === ev.phases[p].hash,
+      approveBlocked: approvable.ok ? null : approvable.reason };
   }
   const key = runKey(ctx.projectPath, state.slug);
   return {

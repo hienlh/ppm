@@ -42,7 +42,11 @@ export interface SpecView {
   folder: string;
   current: SpecPhase | "execution";
   order: SpecPhase[];
-  phases: Record<SpecPhase, { status: PhaseStatus; file: string; issues: SpecIssue[]; text: string | null; submitted: boolean }>;
+  phases: Record<SpecPhase, {
+    status: PhaseStatus; file: string; issues: SpecIssue[]; text: string | null; submitted: boolean;
+    /** Why this phase cannot be approved now (the drawing, the test command, an earlier phase…); null when it can. */
+    approveBlocked: string | null;
+  }>;
   needsDrawing: boolean;
   drawing: DrawingStatus;
   designSlug: string | null;
