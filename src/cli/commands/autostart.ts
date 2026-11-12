@@ -15,6 +15,17 @@ export function registerAutoStartCommands(program: Command): void {
     .option("--minimal", "Start with chat, files, editor and settings")
     .action(async (options) => {
       const { enableAutoStart } = await import("../../services/autostart-register.ts");
+      const { getDbProfile, setDbProfile } = await import("../../services/db.service.ts");
+      const { commandProfile } = await import("../utils/profile-argv.ts");
+      let profile: string | null;
+      try {
+        profile = commandProfile(options.profile, getDbProfile());
+      } catch (e) {
+        console.error(`  ✗  ${(e as Error).message}`);
+        process.exit(1);
+      }
+      // The port read below is the one this profile's server is configured with.
+      if (profile !== getDbProfile()) setDbProfile(profile);
 
       configService.load();
       const port = parseInt(options.port ?? String(configService.get("port")), 10);
@@ -24,7 +35,7 @@ export function registerAutoStartCommands(program: Command): void {
         port,
         host,
         share: !!options.share,
-        profile: options.profile,
+        profile: profile ?? undefined,
         minimal: !!options.minimal,
       };
 

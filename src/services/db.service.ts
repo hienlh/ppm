@@ -25,6 +25,11 @@ export function setDbProfile(profile: string | null): void {
   dbProfile = profile;
 }
 
+/** The database profile in force; null for the default `ppm.db`. */
+export function getDbProfile(): string | null {
+  return dbProfile;
+}
+
 /** Absolute path of the active database file, honouring the dev profile. */
 export function getDbPath(): string {
   if (dbProfile) return resolve(getPpmDir(), `ppm.${dbProfile}.db`);

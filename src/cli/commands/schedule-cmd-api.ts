@@ -1,5 +1,6 @@
 /** Shared by the `ppm schedule` commands: output helpers, and the running server's REST API. */
 import type { ScheduleStatusView } from "../../types/scheduler.ts";
+import { serverRequest } from "../utils/ppm-server-client.ts";
 
 export const C = {
   reset: "\x1b[0m",
@@ -16,41 +17,17 @@ export const fail = (msg: string): never => {
   process.exit(1);
 };
 
-/** No PPM server answered: the command can only go to the database, or not run at all. */
-export class ServerDownError extends Error {}
-
 /**
- * `/api<path>` on the PPM server of this CLI's config, signed in. Script schedules are changed
- * through it, because only the server can start or stop their processes. Call after
- * `configService.load()`.
+ * `/api<path>` on the running PPM that holds this command's database, signed in once it has proven
+ * who it is. Script schedules are changed through it, because only the server can start or stop
+ * their processes. A delete waits for the schedule's process to stop, within the client's 30 s.
  */
-export async function serverApi<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const { configService } = await import("../../services/config.service.ts");
-  const auth = configService.get("auth");
-  let res: Response;
-  try {
-    res = await fetch(`http://127.0.0.1:${configService.get("port")}/api${path}`, {
-      method,
-      headers: {
-        ...(auth.enabled && { Authorization: `Bearer ${auth.token}` }),
-        ...(body !== undefined && { "Content-Type": "application/json" }),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      // A delete waits for the schedule's process to stop.
-      signal: AbortSignal.timeout(30_000),
-    });
-  } catch {
-    throw new ServerDownError("PPM server not running — start with 'ppm start'");
-  }
-  const json = await res.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null;
-  if (!json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
-  return json.data as T;
-}
+export { serverRequest as serverApi, ServerDownError } from "../utils/ppm-server-client.ts";
 
 /** `serverApi`, failing the command on any error. */
 export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
   try {
-    return await serverApi<T>(method, path, body);
+    return await serverRequest<T>(method, path, body);
   } catch (e) {
     return fail((e as Error).message);
   }

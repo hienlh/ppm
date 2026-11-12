@@ -31,10 +31,19 @@ export async function buildProgram(): Promise<Command> {
     .option("-s, --share", "(deprecated) Tunnel is now always enabled")
     .option("--profile <name>", "DB profile name (e.g. 'dev' → ppm.dev.db)")
     .action(async (options) => {
-      const { setDbProfile } = await import("./services/db.service.ts");
-      if (options.profile) {
-        setDbProfile(options.profile);
+      const { getDbProfile, setDbProfile } = await import("./services/db.service.ts");
+      const { commandProfile } = await import("./cli/utils/profile-argv.ts");
+      // `start --profile dev`, or the profile chosen before the command (`ppm --profile dev start`,
+      // PPM_PROFILE); naming two different ones is an error.
+      let profile: string | null;
+      try {
+        profile = commandProfile(options.profile, getDbProfile());
+      } catch (e) {
+        console.error(`  ✗  ${(e as Error).message}`);
+        process.exit(1);
       }
+      if (profile !== getDbProfile()) setDbProfile(profile);
+      options.profile = profile ?? undefined;
       const { hasConfig, initProject } = await import("./cli/commands/init.ts");
       if (!hasConfig()) {
         await initProject();
@@ -49,6 +58,7 @@ export async function buildProgram(): Promise<Command> {
     .option("-a, --all", "Kill all PPM and cloudflared processes (including untracked)")
     .option("--kill", "Full shutdown (kills supervisor too)")
     .action(async (options) => {
+      if (!options.all) await (await import("./cli/utils/supervised-profile-check.ts")).exitUnlessSupervisedProfile();
       const { stopServer } = await import("./cli/commands/stop.ts");
       await stopServer(options);
     });
@@ -57,6 +67,7 @@ export async function buildProgram(): Promise<Command> {
     .command("down")
     .description("Fully shut down PPM (supervisor + server + tunnel)")
     .action(async () => {
+      await (await import("./cli/utils/supervised-profile-check.ts")).exitUnlessSupervisedProfile();
       const { stopServer } = await import("./cli/commands/stop.ts");
       await stopServer({ kill: true });
     });
@@ -66,6 +77,7 @@ export async function buildProgram(): Promise<Command> {
     .description("Restart the server (keeps tunnel alive)")
     .option("--force", "Force resume from paused state")
     .action(async (options) => {
+      await (await import("./cli/utils/supervised-profile-check.ts")).exitUnlessSupervisedProfile();
       const { restartServer } = await import("./cli/commands/restart.ts");
       await restartServer(options);
     });
@@ -123,17 +135,8 @@ export async function buildProgram(): Promise<Command> {
       await initProject(options);
     });
 
-  const { registerProjectsCommands } = await import("./cli/commands/projects.ts");
-  registerProjectsCommands(program);
-
-  const { registerConfigCommands } = await import("./cli/commands/config-cmd.ts");
-  registerConfigCommands(program);
-
-  const { registerGitCommands } = await import("./cli/commands/git-cmd.ts");
-  registerGitCommands(program);
-
-  const { registerChatCommands } = await import("./cli/commands/chat-cmd.ts");
-  registerChatCommands(program);
+  const { registerCommandGroups, registerLaterCommandGroups } = await import("./cli/register-command-groups.ts");
+  await registerCommandGroups(program);
 
   program
     .command("upgrade")
@@ -144,32 +147,7 @@ export async function buildProgram(): Promise<Command> {
       await upgradeCmd(options);
     });
 
-  const { registerAutoStartCommands } = await import("./cli/commands/autostart.ts");
-  registerAutoStartCommands(program);
-
-  const { registerCloudCommands } = await import("./cli/commands/cloud.ts");
-  registerCloudCommands(program);
-
-  const { registerSkillsCommands } = await import("./cli/commands/skills-cmd.ts");
-  registerSkillsCommands(program);
-
-  const { registerExtCommands } = await import("./cli/commands/ext-cmd.ts");
-  registerExtCommands(program);
-
-  const { registerDbCommands } = await import("./cli/commands/db-cmd.ts");
-  registerDbCommands(program);
-
-  const { registerBackupCommands } = await import("./cli/commands/backup-cmd.ts");
-  registerBackupCommands(program);
-
-  const { registerJiraCommands } = await import("./cli/commands/jira-cmd.ts");
-  await registerJiraCommands(program);
-
-  const { registerScheduleCommands } = await import("./cli/commands/schedule-cmd.ts");
-  registerScheduleCommands(program);
-
-  const { registerExportCommands } = await import("./cli/commands/export-cmd.ts");
-  registerExportCommands(program);
+  await registerLaterCommandGroups(program);
 
   return program;
 }
@@ -215,8 +193,11 @@ if (import.meta.main) {
       // A command's stdout is its output (`--json`, a pipe): log lines go to stderr.
       const { sendConsoleLogsToStderr } = await import("./services/logger.ts");
       sendConsoleLogsToStderr();
+      // Which database this command works on, set before anything opens one.
+      const { applyCliProfile } = await import("./cli/utils/apply-cli-profile.ts");
+      const argv = await applyCliProfile(process.argv);
       const program = await buildProgram();
-      program.parse();
+      program.parse(argv);
     }
   }
 }
