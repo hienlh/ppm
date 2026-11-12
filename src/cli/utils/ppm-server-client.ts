@@ -104,6 +104,24 @@ export async function serverRequest<T>(method: string, path: string, body?: unkn
 }
 
 /**
+ * The `ws://` URL of one of the running PPM's sockets (`/ws/...`), signed in the way a browser
+ * signs its sockets (`?token=`), after the same checks as a write: the server is found and
+ * proven, and an AI chat bound to another database is refused.
+ */
+export async function serverSocketUrl(path: string): Promise<string> {
+  const t = await currentTarget();
+  const refusal = aiChatWriteRefusal(t.dbFile);
+  if (refusal) throw new ServerRefusedError(refusal);
+  if (t.discovery.kind === "none") throw new ServerDownError(`No PPM is running on ${basename(t.dbFile)}`);
+  if (t.discovery.kind === "refused") throw new ServerRefusedError(t.discovery.reason);
+  const { baseUrl } = t.discovery.endpoint;
+  printTarget(t, baseUrl);
+  const url = new URL(path, baseUrl.replace(/^http:/, "ws:"));
+  if (t.authEnabled) url.searchParams.set("token", t.token);
+  return url.toString();
+}
+
+/**
  * Before writing the database directly because no server holds it: refuses from an AI chat
  * bound to another database, else prints the one-line notice and returns.
  */

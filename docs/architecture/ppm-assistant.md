@@ -353,7 +353,15 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
   `project_remove` are a route family (`assistant-project-*.ts`) over `/api/projects`; a move runs
   the same refusal. Every project route that writes announces `projects:changed` on `/ws/global`
   (`projects-broadcast.ts`), so every open PPM refetches its project list — whoever wrote, the
-  `ppm projects` CLI included.
+  `ppm projects` CLI included. The chat-list routes (create, rename, delete, bulk delete, pin,
+  tag, bulk tag, fork, account) and every tag route that writes announce `sessions:list_changed
+  {projectName}` the same way (`chat-list-broadcast.ts`), which is what lets `ppm chat` and
+  `ppm tags` go through the server. `DELETE /chat/sessions/:id` answers 404 for a chat recorded
+  under another project and uses the stored provider; with `?stopRunning=1` it stops a running
+  turn first (chat-control server origin `delete`, which never sends or answers), waits up to
+  10 s (`wait-turn-idle.ts`) and deletes nothing when the turn does not stop. `ppm chat stop` uses
+  no route at all: it opens the chat socket like a browser tab and sends `{ type: "cancel" }`.
+  No route sends a chat a message; `ppm chat send` still runs in the CLI's own process.
 
 Opening and messaging the user's chats is not on this server: an Assistant session also gets PPM's
 session tools (`ppm-sessions`, see [Running the user's chats](#running-the-users-chats)), under an

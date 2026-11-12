@@ -135,6 +135,16 @@ ppm projects move app /new/path/to/app
 ppm projects color app "#3b82f6"     # or: none
 ppm projects remove app             # files stay on disk
 
+# Chats and tags (writes go through the running PPM too; open screens update at once)
+ppm chat create -p app -t "Refactor"
+ppm chat rename <session-id> "New title"   # the start of an id, as `chat list` prints it, is enough
+ppm chat pin <session-id>
+ppm tags add work -p app
+ppm chat tag <session-id> work
+ppm chat stop <session-id>          # the same stop as the Stop button
+ppm chat delete <session-id>        # stops a running turn first; deletes nothing if it will not stop
+ppm chat cleanup --older-than 30 -p app   # keeps pinned, manager, branched and running chats
+
 # AI provider / model
 ppm config set ai.default_provider claude       # claude | codex | cursor
 # A provider's own settings (model, API key, command) are changed in Settings → AI Provider

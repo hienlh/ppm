@@ -1812,6 +1812,14 @@ export function getSessionProjectPath(sessionId: string): string | null {
   return legacySdk?.project_path ?? null;
 }
 
+/** Ids of the sessions PPM keeps a record of that start with `prefix` (at most `limit`). */
+export function findSessionIdsByPrefix(prefix: string, limit = 5): string[] {
+  const escaped = prefix.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+  const rows = getDb().query("SELECT session_id FROM session_metadata WHERE session_id LIKE ? ESCAPE '\\' LIMIT ?")
+    .all(`${escaped}%`, limit) as Array<{ session_id: string }>;
+  return rows.map((r) => r.session_id);
+}
+
 /** Store project metadata for a session */
 export function setSessionMetadata(sessionId: string, projectName?: string, projectPath?: string): void {
   getDb().query(

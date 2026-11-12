@@ -20,13 +20,14 @@ export const WAIT_TURN_IDLE_TIMEOUT_MS = 10_000;
 
 const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-export async function waitTurnIdle(isRunning: () => boolean, opts: WaitTurnIdleOptions = {}): Promise<boolean> {
+/** `isRunning` may ask synchronously (the server's own registry) or remotely (the CLI polling a route). */
+export async function waitTurnIdle(isRunning: () => boolean | Promise<boolean>, opts: WaitTurnIdleOptions = {}): Promise<boolean> {
   const intervalMs = opts.intervalMs ?? WAIT_TURN_IDLE_INTERVAL_MS;
   const timeoutMs = opts.timeoutMs ?? WAIT_TURN_IDLE_TIMEOUT_MS;
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? realSleep;
   const deadline = now() + timeoutMs;
-  while (isRunning()) {
+  while (await isRunning()) {
     if (now() >= deadline) return false;
     await sleep(intervalMs);
   }

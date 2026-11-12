@@ -19,6 +19,9 @@ const SERVER = [
   "projects add", "projects remove", "projects rename", "projects move", "projects color", "projects icon",
   "projects reorder", "projects clone", "projects settings get", "projects settings set",
   "schedule run-now", "schedule export", "schedule import", "schedule state", "schedule set-state",
+  "chat create", "chat rename", "chat pin", "chat unpin", "chat tag", "chat untag", "chat read", "chat unread",
+  "chat stop", "chat delete", "chat fork", "chat account", "chat cleanup",
+  "tags list", "tags add", "tags rename", "tags remove",
 ];
 
 const DIRECT_ALLOWED = [
@@ -28,7 +31,7 @@ const DIRECT_ALLOWED = [
   "skills list", "skills search", "skills info", "export skill",
   "backup", "restore",
   "config get", "projects list",
-  "chat list", "chat create", "chat send", "chat resume",
+  "chat list", "chat send", "chat resume",
   "git status", "git log", "git diff",
   "db list", "db test", "db tables", "db schema", "db data", "db query", "db driver list",
   "ext list",
@@ -37,7 +40,6 @@ const DIRECT_ALLOWED = [
 ];
 
 const DIRECT_PENDING = [
-  "chat delete",
   "git stage", "git unstage", "git commit", "git push", "git pull",
   "git branch create", "git branch checkout", "git branch delete", "git branch merge",
   "cloud alias set", "cloud alias remove",

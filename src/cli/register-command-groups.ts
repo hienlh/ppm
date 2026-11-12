@@ -17,6 +17,9 @@ export async function registerCommandGroups(program: Command): Promise<void> {
 
   const { registerChatCommands } = await import("./commands/chat-cmd.ts");
   registerChatCommands(program);
+
+  const { registerTagsCommands } = await import("./commands/tags-cmd.ts");
+  registerTagsCommands(program);
 }
 
 /** The groups `--help` lists after `upgrade`. */

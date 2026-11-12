@@ -141,9 +141,11 @@ ppm db run my-db ./migration.sql
 
 # Chat
 ppm chat list
-ppm chat create
+ppm chat create -p <project>
 ppm chat send <session-id> "message"
 ppm chat resume <session-id>
+ppm chat rename|pin|tag|stop|delete <session-id> …   # through the running PPM
+ppm tags list -p <project>
 
 # Scheduled agents
 ppm schedule add

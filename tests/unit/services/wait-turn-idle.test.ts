@@ -33,6 +33,13 @@ describe("waitTurnIdle", () => {
     expect(clock.slept.length).toBe(10);
   });
 
+  it("waits on a check that answers asynchronously, as a remote poll does", async () => {
+    const clock = fakeClock();
+    let checks = 0;
+    expect(await waitTurnIdle(async () => ++checks < 3, { ...clock, intervalMs: 250 })).toBe(true);
+    expect(clock.slept).toEqual([250, 250]);
+  });
+
   it("defaults to a 100 ms poll and a 10 s limit", async () => {
     const clock = fakeClock();
     expect(await waitTurnIdle(() => true, clock)).toBe(false);

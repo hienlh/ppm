@@ -31,13 +31,20 @@ export interface ScratchServer {
   token: string;
   config(): Promise<Record<string, unknown>>;
   /** What the server broadcast on `/ws/global` so far, oldest first. */
-  events(): Promise<Array<{ type?: string }>>;
+  events(): Promise<Array<{ type?: string; projectName?: string }>>;
+  /** Any other `/api/__scratch/<what>` route of the server, answered `data`. */
+  scratch<T>(what: string, body?: unknown): Promise<T>;
   stop(): Promise<void>;
 }
 
-/** Starts a scratch server on `home` for `profile` (null: the default `ppm.db`). */
-export async function startScratchServer(home: string, profile: string | null, token = `tok-${crypto.randomUUID()}`): Promise<ScratchServer> {
-  const proc = Bun.spawn([process.execPath, join(ROOT, "tests", "helpers", "cli-scratch-server-main.ts"), profile ?? "-", token], {
+/**
+ * Starts a scratch server on `home` for `profile` (null: the default `ppm.db`). `main` picks the
+ * server: the base one, or `cli-chat-scratch-server-main.ts` with the chat stack.
+ */
+export async function startScratchServer(
+  home: string, profile: string | null, token = `tok-${crypto.randomUUID()}`, main = "cli-scratch-server-main.ts",
+): Promise<ScratchServer> {
+  const proc = Bun.spawn([process.execPath, join(ROOT, "tests", "helpers", main), profile ?? "-", token], {
     cwd: ROOT, env: scratchEnv(home), stdout: "pipe", stderr: "pipe",
   });
   const reader = proc.stdout.getReader();
@@ -51,14 +58,21 @@ export async function startScratchServer(home: string, profile: string | null, t
   }
   reader.releaseLock();
   const port = Number(/READY (\d+)/.exec(out)![1]);
-  const read = async <T>(what: string): Promise<T> => {
-    const res = await fetch(`http://127.0.0.1:${port}/api/__scratch/${what}`, { headers: { Authorization: `Bearer ${token}` } });
-    return ((await res.json()) as { data: T }).data;
+  const read = async <T>(what: string, body?: unknown): Promise<T> => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/__scratch/${what}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const json = (await res.json()) as { ok?: boolean; data: T; error?: string };
+    if (json.ok === false) throw new Error(`scratch ${what}: ${json.error}`);
+    return json.data;
   };
   return {
     port, pid: proc.pid, token,
     config: () => read<Record<string, unknown>>("config"),
-    events: () => read<Array<{ type?: string }>>("events"),
+    events: () => read<Array<{ type?: string; projectName?: string }>>("events"),
+    scratch: read,
     async stop() {
       proc.kill();
       await proc.exited;

@@ -99,6 +99,7 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     `- ${list(commandPathsWithRouting("server"))}`,
     "- schedule run-now: prefer the schedule_run_now tool",
     "- projects add/rename/move/remove: prefer project_add, project_update and project_remove",
+    "- chat stop sends the stop PPM's Stop button sends; chat delete stops a running turn first and deletes nothing if it does not stop",
     "",
     "## Commands that write PPM's data directly",
     "The running server keeps much of this in memory: a change may not show until it restarts, and the",
@@ -320,9 +321,10 @@ ppm chat list
   -p, --project <name> — Filter by project name
 
 ppm chat create
-  Create a new chat session
-  -p, --project <name> — Project name or path
-  --provider <provider> — AI provider (default: claude)
+  Create a new chat session in a project
+  -p, --project <name> — Project name or path (default: the current folder's project)
+  --provider <provider> — AI provider (default: PPM's default provider)
+  -t, --title <title> — The chat's title
 
 ppm chat send <session-id> <message>
   Send a message and stream response to stdout
@@ -332,8 +334,75 @@ ppm chat resume <session-id>
   Resume an interactive chat session
   -p, --project <name> — Project name or path
 
+ppm chat rename <session-id> <title>
+  Rename a chat
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat pin <session-id>
+  Pin a chat to the top of its project's list
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat unpin <session-id>
+  Unpin a chat
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat tag <session-id> <tag>
+  Tag a chat with one of its project's tags (by name or number)
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat untag <session-id>
+  Remove a chat's tag
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat read <session-id>
+  Mark a chat as read
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat unread <session-id>
+  Mark a chat as unread
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat stop <session-id>
+  Stop the chat's running turn, as PPM's Stop button does
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
 ppm chat delete <session-id>
-  Delete a chat session
+  Delete a chat; a running turn is stopped first, and nothing is deleted if it does not stop
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat fork <session-id>
+  Start a new chat that carries this chat's title and settings
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat account <session-id> <account-id>
+  Move a chat onto another account of its provider
+  -p, --project <name> — The chat's project (default: the one PPM recorded for it)
+
+ppm chat cleanup
+  Delete a project's chats older than N days; pinned, manager, branched and running chats are kept
+  --older-than <days> — Age in days (at least 1) (required)
+  -p, --project <name> — Project name or path (default: the current folder's project)
+  --provider <id> — Only this provider's chats (default: claude)
+\`\`\`
+## ppm tags — Manage a project's chat tags
+\`\`\`
+ppm tags list
+  List a project's tags and how many chats carry each
+  -p, --project <name> — Project name or path (default: the current folder's project)
+  --json — Print JSON
+
+ppm tags add <name>
+  Create a tag
+  -p, --project <name> — Project name or path (default: the current folder's project)
+  --color <hex> — Colour as #rrggbb [default: #6b7280]
+
+ppm tags rename <tag> <newName>
+  Rename a tag
+  -p, --project <name> — Project name or path (default: the current folder's project)
+
+ppm tags remove <tag>
+  Delete a tag; its chats keep existing, untagged
+  -p, --project <name> — Project name or path (default: the current folder's project)
 \`\`\`
 ## ppm autostart — Manage auto-start on boot (enable/disable/status)
 \`\`\`

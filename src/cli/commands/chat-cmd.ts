@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import * as readline from "node:readline";
 import type { ChatEvent } from "../../types/chat.ts";
+import { registerChatManageCommands } from "./chat-cmd-manage.ts";
 
 const C = {
   reset: "\x1b[0m",
@@ -120,30 +121,22 @@ export function registerChatCommands(program: Command): void {
 
   chat
     .command("create")
-    .description("Create a new chat session")
-    .option("-p, --project <name>", "Project name or path")
-    .option("--provider <provider>", "AI provider (default: claude)")
-    .action(async (options: { project?: string; provider?: string }) => {
+    .description("Create a new chat session in a project")
+    .option("-p, --project <name>", "Project name or path (default: the current folder's project)")
+    .option("--provider <provider>", "AI provider (default: PPM's default provider)")
+    .option("-t, --title <title>", "The chat's title")
+    .action(async (options: { project?: string; provider?: string; title?: string }) => {
       try {
-        const { chatService } = await import("../../services/chat.service.ts");
-
-        let projectName: string | undefined;
-        let projectPath: string | undefined;
-        if (options.project) {
-          const { resolveProject } = await import("../utils/project-resolver.ts");
-          const proj = resolveProject(options);
-          projectName = proj.name;
-          projectPath = proj.path;
-        }
-
-        const session = await chatService.createSession(options.provider, {
-          projectName,
-          projectPath,
+        const { currentProjectName, projectRequest } = await import("./chat-cmd-request.ts");
+        const projectName = await currentProjectName(options.project);
+        const session = await projectRequest<{ id: string; providerId: string }>("POST", projectName, "/chat/sessions", {
+          ...(options.provider ? { providerId: options.provider } : {}),
+          ...(options.title ? { title: options.title } : {}),
         });
 
         console.log(`${C.green}Created session:${C.reset} ${C.cyan}${session.id}${C.reset}`);
         console.log(`Provider: ${session.providerId}`);
-        if (projectName) console.log(`Project: ${projectName}`);
+        console.log(`Project: ${projectName}`);
       } catch (err) {
         console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
         process.exit(1);
@@ -235,25 +228,5 @@ export function registerChatCommands(program: Command): void {
       }
     });
 
-  chat
-    .command("delete <session-id>")
-    .description("Delete a chat session")
-    .action(async (sessionId: string) => {
-      try {
-        const { chatService } = await import("../../services/chat.service.ts");
-
-        const sessions = await chatService.listSessions();
-        const session = sessions.find((s) => s.id === sessionId || s.id.startsWith(sessionId));
-        if (!session) {
-          console.error(`${C.red}Error:${C.reset} Session not found: ${sessionId}`);
-          process.exit(1);
-        }
-
-        await chatService.deleteSession(session.providerId, session.id);
-        console.log(`${C.green}Deleted session:${C.reset} ${session.id}`);
-      } catch (err) {
-        console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
-        process.exit(1);
-      }
-    });
+  registerChatManageCommands(chat);
 }

@@ -44,6 +44,12 @@ describe("the routing table", () => {
       expect({ p, k: CLI_COMMAND_ROUTING[p] }).toEqual({ p, k: "server" });
     }
     expect(CLI_COMMAND_ROUTING["projects list"]).toBe("direct-allowed");
+    for (const p of ["chat create", "chat rename", "chat pin", "chat unpin", "chat tag", "chat untag", "chat read", "chat unread",
+      "chat stop", "chat delete", "chat fork", "chat account", "chat cleanup", "tags list", "tags add", "tags rename", "tags remove"]) {
+      expect({ p, k: CLI_COMMAND_ROUTING[p] }).toEqual({ p, k: "server" });
+    }
+    // Sending a message stays in this process: no route sends a chat a message.
+    for (const p of ["chat list", "chat send", "chat resume"]) expect({ p, k: CLI_COMMAND_ROUTING[p] }).toEqual({ p, k: "direct-allowed" });
     for (const p of ["start", "init", "backup", "restore", "autostart enable", "upgrade", "export skill", "skills list", "cloud login"]) {
       expect({ p, k: CLI_COMMAND_ROUTING[p] }).toEqual({ p, k: "direct-allowed" });
     }
