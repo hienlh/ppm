@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useState, useMemo, useRef, type ComponentProps } from "react";
-import { DiffEditor as MonacoDiffEditor } from "@monaco-editor/react";
+import { useEffect, useState, useMemo, useRef } from "react";
+import { DiffEditor, getMonacoLanguage } from "./monaco-diff-editor";
 import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -8,9 +8,9 @@ import { prepareMonacoTheme } from "@/theme/adapters/monaco-adapter";
 import { EDITOR_FONT_FAMILY, EDITOR_FONT_LIGATURES, EDITOR_FONT_SIZE } from "@/lib/editor-font";
 import { useGitRepo } from "@/hooks/use-git-repo";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
-import { Loader2, FileCode, WrapText, UserRound } from "@/lib/icons";
+import { Loader2, FileCode, WrapText, UserRound, Columns2 } from "@/lib/icons";
 import { useInlineBlame } from "@/hooks/use-inline-blame";
-import { DOTENV_LANGUAGE_ID, isDotenvFile, registerDotenvLanguage } from "@/lib/monaco-dotenv-language";
+import { registerDotenvLanguage } from "@/lib/monaco-dotenv-language";
 import {
   BinaryDiffView,
   BinaryViewSwitcher,
@@ -19,51 +19,6 @@ import {
   type BinaryViewMode,
 } from "./binary-diff-view";
 import type { FileFullDiff } from "../../../types/git";
-
-/**
- * `@monaco-editor/react` 4.7 disposes the two models on unmount *before* the diff editor still
- * showing them, and Monaco 0.55 reports that as "TextModel got disposed before DiffEditorWidget
- * model got reset" — an uncaught error every time a diff closes, which a review stepping through
- * files does once per file. This wrapper is the library component's parent, and React runs a
- * removed subtree's cleanups parent before child, every layout one before any passive one — so
- * the models are detached and disposed here first and the library is left only the editor to
- * dispose. A layout effect is margin, not the fix: React 19.2 runs a removed subtree's passive
- * cleanups parent-first too, so a passive one here would also run before the library's.
- */
-function DiffEditor({ onMount, ...props }: ComponentProps<typeof MonacoDiffEditor>) {
-  const editorRef = useRef<Parameters<NonNullable<typeof onMount>>[0] | null>(null);
-  useLayoutEffect(() => () => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const model = editor.getModel();
-    editor.setModel(null);
-    model?.original.dispose();
-    model?.modified.dispose();
-  }, []);
-  return (
-    <MonacoDiffEditor
-      {...props}
-      onMount={(editor, monaco) => {
-        editorRef.current = editor;
-        onMount?.(editor, monaco);
-      }}
-    />
-  );
-}
-
-function getMonacoLanguage(filename: string): string {
-  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    js: "javascript", jsx: "javascript",
-    ts: "typescript", tsx: "typescript",
-    py: "python", html: "html",
-    css: "css", scss: "scss",
-    json: "json", md: "markdown", mdx: "markdown",
-    yaml: "yaml", yml: "yaml",
-    sh: "shell", bash: "shell",
-  };
-  return map[ext] ?? (isDotenvFile(filename) ? DOTENV_LANGUAGE_ID : "plaintext");
-}
 
 interface DiffViewerProps {
   metadata?: Record<string, unknown>;
@@ -268,8 +223,11 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     readOnly: true,
   });
 
-  // Force inline on mobile (<768px) since side-by-side is too narrow
-  const renderSideBySide = !isMobile;
+  // Inline or side by side is the user's choice, shared with the Review changes tab; a phone
+  // (<768px) is always inline, since two columns of code do not fit.
+  const diffSideBySide = useSettingsStore((s) => s.diffSideBySide);
+  const toggleDiffSideBySide = useSettingsStore((s) => s.toggleDiffSideBySide);
+  const renderSideBySide = !isMobile && diffSideBySide;
 
   // Sync word wrap on both sub-editors.
   // Monaco DiffEditor has a bug: during init when container width is 0,
@@ -386,6 +344,18 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
             }`}
           >
             <UserRound className="size-3.5" />
+          </button>
+        )}
+        {!isMobile && (
+          <button type="button" onClick={toggleDiffSideBySide}
+            aria-pressed={diffSideBySide}
+            title={diffSideBySide ? "Side by side — click for inline" : "Inline — click for side by side"}
+            aria-label="Side by side"
+            className={`flex items-center justify-center rounded hover:bg-muted active:scale-95 transition-colors p-1 ${
+              diffSideBySide ? "bg-muted text-foreground" : ""
+            }`}
+          >
+            <Columns2 className="size-3.5" />
           </button>
         )}
         <button type="button" onClick={toggleWrap}

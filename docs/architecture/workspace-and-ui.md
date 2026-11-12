@@ -765,6 +765,17 @@ message being written.
   `src/web/lib/open-git-review.ts`). `src/web/lib/git-review-model.ts` puts staged blocks, open
   blocks and the tab's own discards in one list by the one coordinate they share, the line in the
   index version of the file. Code lines reuse the session review's `review-tokens.tsx`.
+  **Inline or side by side** is one synced UI pref, `diffSideBySide` (default on), shared with
+  the diff tab (`diff-viewer.tsx`, where it is Monaco's `renderSideBySide`); a phone is always
+  inline. In this tab inline is the block list above, and side by side is
+  `git-review-side-by-side.tsx`: the focused file whole in Monaco's diff editor
+  (`/git/file-full-diff?ref=HEAD`, HEAD left so staged blocks stay visible, working tree right,
+  `hideUnchangedRegions` on), each block's bar (`ReviewBlockBar`, the list's own) rendered by
+  portal into a view zone above its first changed line on the right. Staged and discarded blocks
+  are numbered by the index, so `src/web/lib/git-review-side-by-side.ts` moves them into
+  working-tree lines through the open hunks. A line pick and a file with a whole-file block other
+  than a deletion (binary, rename, …) show the block list. The keys reach the tab from Monaco's
+  own input because the desktop exempts `[data-review-diff]` from its "somewhere to type" check.
 - **Git Graph** (`packages/ext-git-graph/`): the working tree, the blocks and the draft come from
   PPM's routes (`ppm-git.ts`), and so do the writes of the inspector and the toolbar: stage,
   unstage, discard and its Undo, commit and Undo last commit, Fetch, Pull, Push, Sync and Publish,

@@ -71,6 +71,64 @@ export const ReviewBlockCard = memo(function ReviewBlockCard({ name, oldPath, bl
   actions: { current: BlockActions };
 }) {
   const act = actions.current;
+  const staged = block.state === "staged";
+  const gone = block.state === "discarded";
+  const picking = !!pick && focused && block.state === "open";
+  const bar = <ReviewBlockBar block={block} index={index} total={total} focused={focused} pick={pick} compact={compact} busy={busy} actions={actions} />;
+
+  return (
+    <div
+      data-block-key={block.key}
+      data-state={block.state}
+      data-focused={focused || undefined}
+      onClick={(e) => {
+        if (!focused && !(e.target as HTMLElement).closest("button")) act.focus(block.key);
+      }}
+      className={cn(
+        "relative rounded-lg border bg-bg",
+        compact ? "mx-2 my-1.5" : "mr-3 ml-2 my-1.5",
+        staged ? "border-dashed border-primary/45" : gone ? "border-dashed border-border-soft" : "border-border-soft",
+        focused ? "border-primary/60 shadow-[0_0_0_3px_var(--accent-wash)]" : !compact && "cursor-pointer",
+      )}
+    >
+      <div
+        className={cn(
+          "relative flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-t-[7px] py-1 pr-1.5 pl-3 font-sans text-xs leading-[1.3] text-text-3",
+          staged || gone ? "min-h-8" : "min-h-[38px] border-b border-border-soft",
+          !staged && !gone && (focused ? "bg-[color-mix(in_srgb,var(--accent)_7%,var(--panel))]" : "bg-panel"),
+        )}
+      >
+        {bar}
+      </div>
+      <div
+        className={cn(
+          "overflow-hidden rounded-b-[7px] py-0.5",
+          staged && "shadow-[inset_2px_0_0_var(--accent)]",
+          gone && "shadow-[inset_2px_0_0_color-mix(in_srgb,var(--error)_60%,transparent)]",
+        )}
+      >
+        <BlockBody name={name} oldPath={oldPath} block={block} compact={compact} lang={lang} pick={picking ? pick : null} onToggle={act.togglePickLine} />
+      </div>
+    </div>
+  );
+});
+
+/**
+ * A block's bar: where it is and what is decided, with the answers on a desktop.
+ * Shared by the block list and the side-by-side view, which draws it above the
+ * block's lines in the whole file.
+ */
+export function ReviewBlockBar({ block, index, total, focused, pick, compact, busy, actions }: {
+  block: ReviewBlock;
+  index: number;
+  total: number;
+  focused: boolean;
+  pick: ReadonlySet<number> | null;
+  compact: boolean;
+  busy: boolean;
+  actions: { current: BlockActions };
+}) {
+  const act = actions.current;
   const range = rangeText(block);
   const counts = <LineCounts added={block.added} removed={block.removed} />;
   const staged = block.state === "staged";
@@ -164,42 +222,8 @@ export const ReviewBlockCard = memo(function ReviewBlockCard({ name, oldPath, bl
     );
   }
 
-  return (
-    <div
-      data-block-key={block.key}
-      data-state={block.state}
-      data-focused={focused || undefined}
-      onClick={(e) => {
-        if (!focused && !(e.target as HTMLElement).closest("button")) act.focus(block.key);
-      }}
-      className={cn(
-        "relative rounded-lg border bg-bg",
-        compact ? "mx-2 my-1.5" : "mr-3 ml-2 my-1.5",
-        staged ? "border-dashed border-primary/45" : gone ? "border-dashed border-border-soft" : "border-border-soft",
-        focused ? "border-primary/60 shadow-[0_0_0_3px_var(--accent-wash)]" : !compact && "cursor-pointer",
-      )}
-    >
-      <div
-        className={cn(
-          "relative flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-t-[7px] py-1 pr-1.5 pl-3 font-sans text-xs leading-[1.3] text-text-3",
-          staged || gone ? "min-h-8" : "min-h-[38px] border-b border-border-soft",
-          !staged && !gone && (focused ? "bg-[color-mix(in_srgb,var(--accent)_7%,var(--panel))]" : "bg-panel"),
-        )}
-      >
-        {bar}
-      </div>
-      <div
-        className={cn(
-          "overflow-hidden rounded-b-[7px] py-0.5",
-          staged && "shadow-[inset_2px_0_0_var(--accent)]",
-          gone && "shadow-[inset_2px_0_0_color-mix(in_srgb,var(--error)_60%,transparent)]",
-        )}
-      >
-        <BlockBody name={name} oldPath={oldPath} block={block} compact={compact} lang={lang} pick={picking ? pick : null} onToggle={act.togglePickLine} />
-      </div>
-    </div>
-  );
-});
+  return <>{bar}</>;
+}
 
 function BlockBody({ name, oldPath, block, compact, lang, pick, onToggle }: {
   name: string;
