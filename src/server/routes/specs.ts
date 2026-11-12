@@ -8,6 +8,7 @@ import {
 import { isSpecChecks, isSpecKind, isSpecPhase, isSpecWorkflow, phaseFileName, type SpecPhase } from "../../shared/spec-types.ts";
 import { startRun, stopRun } from "../../services/specs/spec-scheduler.ts";
 import { tellSpecChat } from "../ws/spec-run-env.ts";
+import { approvalMessage } from "../../services/specs/spec-approval-message.ts";
 import { resolve } from "node:path";
 import { getSessionProvider, sessionIdAliases } from "../../services/db.service.ts";
 import { specForSession } from "../../services/specs/spec-store.ts";
@@ -107,15 +108,6 @@ specRoutes.post("/:slug/submit/:phase", async (c) => {
   }
 });
 
-/** What the spec's chat is told after an approval, so the AI goes on; null when it should wait. */
-function afterApproval(view: Awaited<ReturnType<typeof getSpec>>, phase: SpecPhase | "drawing"): string | null {
-  if (phase === "drawing") return "I approved the UI drawing. Go on with design.md and submit it when it is ready.";
-  const file = phaseFileName(view.kind, phase);
-  if (view.current === "execution") return null; // the tasks wait for Start task or Run all
-  const next = view.phases[view.current];
-  return `I approved ${file}. Go on with ${next.file}${next.status === "missing" ? "" : " (its template is there)"}, and submit it when it is ready.`;
-}
-
 specRoutes.post("/:slug/approve/:phase", async (c) => {
   const phase = c.req.param("phase");
   if (!isSpecPhase(phase) && phase !== "drawing") return c.json(err("Unknown phase"), 400);
@@ -123,10 +115,7 @@ specRoutes.post("/:slug/approve/:phase", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const r = await approvePhase(projectPath, c.req.param("slug"), phase);
-    if (r.ok && body.continue === true) {
-      const text = afterApproval(r.view, phase);
-      if (text) void tellSpecChat(projectPath, r.view.sessionId, text);
-    }
+    if (r.ok && body.continue === true) void tellSpecChat(projectPath, r.view.sessionId, approvalMessage(r.view, phase));
     return gate(c, r);
   } catch (e) {
     return fail(c, e);
