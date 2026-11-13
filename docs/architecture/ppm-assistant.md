@@ -651,6 +651,23 @@ writes the database directly, so an open PPM never heard of the change.
 | Tunnels | `tunnels_status` | `port_forward_start`, `port_forward_stop`, `public_link_set` |
 | Projects | (`projects_list`) | `project_update`, `project_remove` |
 | Chats | (`chat_list_sessions`, `chats_attention`), `chat_changes` | `chat_stop`, `chat_delete`; `chat_organize`, `chat_changes_answer` (see below) |
+| Database connections | (`db_list_connections`), `db_connection_test` | `db_connection_save`, `db_connection_delete` |
+
+The connection family (`assistant-db-connection-*.ts`, names in
+`src/shared/assistant-db-connection-tool-names.ts`) reaches only the connection list, one
+connection, its password-free config, create, edit, delete and the saved connection's Test; the
+internal route app gates `/api/db/*` to exactly those (`isDbConnectionPath`: a numeric id, so never
+`export`, `import`, `folder` or `file`). `db_connection_save` refuses a URL holding a password
+(in the login or a `password` parameter, `src/shared/db-url-secret.ts`) before any card, judges a
+SQLite file by its real path (refusing what `sqlite-path-guard.ts` refuses for everyone, plus what
+the Assistant keeps private: its private roots and the home folder's application-state area unless a
+registered project holds the file), shows that real path on the card and saves it. It never sends
+`readonly` or `aiAccess`, so a new connection is read-only and available to the AI chat (the
+route's defaults); only the user makes one writable, in PPM. An edit sends the form's own settings
+back unchanged, refuses to point a connection with a saved secret at another server or login, and
+touches only connections available to the AI chat. `db_connection_test` runs unasked, at most 10 a
+minute per session, and answers the server (and SSH host) it went to. Through the shell the
+Assistant could still reach any route with `ppm db`; there the shell card is the control.
 
 `git_history` (`assistant-git-history-{plan,tool}.ts`, cards in
 `assistant-approval-summary-git-history.ts`) merges, cherry-picks, reverts, tags, and aborts or

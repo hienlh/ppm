@@ -143,6 +143,9 @@ CREATE TABLE connection_table_cache (
 - `StoredConnectionConfig` (`src/shared/db-connection-config.ts`) holds the URL or the host / port / user fields, `passwordMode` (`saved` or `ask`), `singleDatabase`, `allowedDatabases` (+ regex), `isolationLevel`, `queryTimeoutSec`, `ssh` and `ssl`.
 - **Ask for password**: the password is never stored. Database Log In holds the login in memory until **Disconnect**, which also closes the connection's pools.
 - **SSH tunnel**: password, key file or SSH agent. A host key is pinned on first use in PPM's own `known_hosts`. **SSL**: CA, client certificate and key files; `verify-full` checks the host name, an IP address included.
+- **SQLite files PPM refuses**: PPM's own folder, its database snapshots and `~/.cloudflared`, judged by the file's real path (a symlink to `ppm.db` is refused) at save, at import and again at every open (`src/services/database/sqlite-path-guard.ts`, called by the routes, `sqlite.service.ts` and the SQLite adapter's probe), for every caller.
+- **A moved endpoint drops its secrets**: an edit (or the form's Test of one) that points a connection at another host, port, socket, login, SSH host, SSH port, bastion or SSH login, and types no new secret, drops the saved password, SSH password and passphrase and SSL key password (`connection-endpoint-reset.ts`). `PUT` answers `secretsCleared` naming them. Another database on the same server keeps them.
+- Every connection write (create, edit, delete, import, folder, duplicate) announces `db:connections_changed` on `/ws/global` (`database-connections-broadcast.ts`); the browser re-reads its connection list.
 - Migration 55 rebuilt `connections` to accept `mysql` / `mariadb`. Dropping the old table would have cascade-deleted `connection_table_cache`, so it runs with `PRAGMA foreign_keys = OFF` — set outside the transaction, where that pragma takes effect.
 
 ### Drivers installed on demand
@@ -161,9 +164,10 @@ An AI chat reaches the saved connections with *Available to the AI chat* on thro
 
 ```bash
 ppm db list                           # connections (hides ai_access = 0 inside an AI chat)
-ppm db add -n <name> -t <type> -c <url> | -f <file>
-ppm db remove <name>
-ppm db test <name>
+ppm db add -n <name> -t <type> -c <url> | -f <file> [--password-mode save|ask|ask-user] [--ai on|off]
+ppm db edit <name> [--name] [-c <url>] [-f <file>] [-g <folder>] [--color] [--password-mode] [--ai]
+ppm db remove | test | duplicate <name>
+ppm db import <file>                  # an Export file; keeps its read-only and AI flags
 ppm db tables <name>
 ppm db schema <name> <table>
 ppm db data <name> <table>
@@ -172,7 +176,7 @@ ppm db run <name> <file>              # a multi-statement file
 ppm db driver list | install <id> | remove <id>
 ```
 
-The CLI goes through the same adapters as the web UI, so readonly, the audit log and "ask for password" (a hidden prompt on the terminal) behave the same.
+`add`, `edit`, `remove`, `test`, `duplicate` and `import` go through the running PPM's connection routes (in-process with a notice when no PPM holds the database), so the server's checks apply and the Database sidebar updates at once. Neither `add` nor `edit` sends `readonly`: a connection made from the CLI is read-only until the user switches that off in PPM. From an AI chat (advisory; the shell card is the control) a URL holding a password, `--ai on` and `import` are refused before any request. The data commands go through the same adapters as the web UI, so readonly, the audit log and "ask for password" (a hidden prompt on the terminal) behave the same.
 
 ---
 
