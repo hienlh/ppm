@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-settings";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 import { DB_TOOLS } from "../../../shared/db-ai-tools";
 import { patchPpmToolSwitches, ppmToolOn, TERMINAL_TOOLS, type PpmTool } from "../../../shared/ppm-tools";
 import { FEATURE_INTROS_CHANGED_EVENT } from "../../../shared/feature-intros";
@@ -118,6 +119,8 @@ export function ToolsSettingsSection() {
     window.addEventListener(FEATURE_INTROS_CHANGED_EVENT, reload);
     return () => window.removeEventListener(FEATURE_INTROS_CHANGED_EVENT, reload);
   }, [load]);
+  // The switches changed elsewhere (another device, `ppm ai set ppm_tools.<tool>`).
+  useSettingsChanged("ai", () => void load());
 
   // Shown at once, as the server will store it; a refused save reloads what the server has.
   const toggle = useCallback(async (tool: PpmTool, on: boolean) => {

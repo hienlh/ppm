@@ -18,6 +18,8 @@ import { resyncAssistantWaiting } from "@/stores/assistant-waiting-store";
 import { useProjectStore } from "@/stores/project-store";
 import { PROJECTS_CHANGED_EVENT } from "../../shared/projects-events";
 import { DB_CONNECTIONS_CHANGED_EVENT, DB_CONNECTIONS_CHANGED_WINDOW_EVENT } from "../../shared/db-connection-events";
+import { SETTINGS_CHANGED_EVENT, isSettingsSection } from "../../shared/settings-events";
+import { handleSettingsChanged } from "@/lib/settings-live-refresh";
 
 /** How often the client pings — well under the server's own idle timeout, so a live but
  *  silent socket never gets reaped as dead. */
@@ -43,6 +45,8 @@ const IDLE_TIMEOUT_MS = 45_000;
  * - `projects:changed` → refetches the project list: the server added a project itself (the
  *   Assistant's `project_add`).
  * - `db:connections_changed` → the Database sidebar and connection lists read theirs again.
+ * - `settings:changed {section}` → the theme is re-applied and imported themes or keybindings
+ *   reloaded (`settings-live-refresh.ts`); open Settings panes re-read via `useSettingsChanged`.
  * - `session:unread_changed` → cross-device unread sync.
  * - `session:phase_changed` → keeps the tab-strip spinner and title indicator
  *   correct for sessions whose tab is not mounted, and — critically — clears them
@@ -168,6 +172,12 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
 
       if (type === PROJECTS_CHANGED_EVENT) {
         void useProjectStore.getState().fetchProjects();
+        return;
+      }
+
+      if (type === SETTINGS_CHANGED_EVENT) {
+        // App-wide state (theme, keybindings) is refreshed here; open panes re-read on the window event.
+        if (isSettingsSection(data.section)) handleSettingsChanged(data.section);
         return;
       }
 

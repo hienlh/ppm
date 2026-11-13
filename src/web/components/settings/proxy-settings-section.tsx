@@ -1,12 +1,13 @@
-import { useState, useEffect } from "react";
-import { Copy, RefreshCw } from "@/lib/icons";
+import { useState, useEffect, useRef } from "react";
+import { Copy } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { getProxySettings, updateProxySettings, getAISettings, type ProxySettings } from "@/lib/api-settings";
 import { copyToClipboard } from "@/lib/clipboard";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 import { ProxyTestButton } from "./proxy-test-section";
+import { ProxyAuthKeyRow } from "./proxy-auth-key-row";
 import { proxyEndpoints } from "@/lib/proxy-endpoints";
 
 export function ProxySettingsSection() {
@@ -27,21 +28,27 @@ export function ProxySettingsSection() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  const load = () => {
+  // The whole key is fetched only once this device asked for it (Show, Copy, Generate).
+  const revealedRef = useRef(false);
+  revealedRef.current = !!settings?.authKeyRevealed;
+
+  const load = (reveal = revealedRef.current) => {
     setLoading(true);
-    getProxySettings()
+    getProxySettings(reveal)
       .then(setSettings)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  useEffect(() => load(false), []);
+  // Changed elsewhere (another device, `ppm proxy`): read again, revealing only if this pane had.
+  useSettingsChanged("proxy", () => load());
 
   const update = async (params: Parameters<typeof updateProxySettings>[0]) => {
     setSaving(true);
     setError(null);
     try {
-      const updated = await updateProxySettings(params);
+      const updated = await updateProxySettings(params, revealedRef.current || !!params.generateKey);
       setSettings(updated);
     } catch (e) {
       setError((e as Error).message);
@@ -50,10 +57,29 @@ export function ProxySettingsSection() {
     }
   };
 
+  /** The settings with the whole key, asking the server for it when this pane has not yet. */
+  const revealed = async (): Promise<ProxySettings | null> => {
+    if (settings?.authKeyRevealed) return settings;
+    try {
+      const full = await getProxySettings(true);
+      setSettings(full);
+      return full;
+    } catch (e) {
+      setError((e as Error).message);
+      return null;
+    }
+  };
+
   const handleCopy = (text: string, label: string) => {
     void copyToClipboard(text);
     setCopied(label);
     setTimeout(() => setCopied(null), 2000);
+  };
+
+  /** Copies what `text` builds from the whole key, revealing it first when needed. */
+  const copyWithKey = async (text: (key: string) => string, label: string) => {
+    const full = await revealed();
+    if (full?.authKey) handleCopy(text(full.authKey), label);
   };
 
   if (loading || !settings) {
@@ -76,8 +102,11 @@ export function ProxySettingsSection() {
   const ep = proxyEndpoints(hasTunnel ? settings.tunnelUrl! : localBaseUrl, provider);
   const anthropicEndpoint = ep.anthropicMessages;
   const openAiEndpoint = ep.openAiChatCompletions;
-  const anthropicEnv = `ANTHROPIC_BASE_URL=${ep.anthropicBase}\nANTHROPIC_API_KEY=${settings.authKey}`;
-  const openAiEnv = `OPENAI_BASE_URL=${ep.openAiBase}\nOPENAI_API_KEY=${settings.authKey}`;
+  const fullKey = settings.authKeyRevealed ? settings.authKey : null;
+  const anthropicEnvWith = (key: string) => `ANTHROPIC_BASE_URL=${ep.anthropicBase}\nANTHROPIC_API_KEY=${key}`;
+  const openAiEnvWith = (key: string) => `OPENAI_BASE_URL=${ep.openAiBase}\nOPENAI_API_KEY=${key}`;
+  const anthropicEnv = anthropicEnvWith(settings.authKey ?? "");
+  const openAiEnv = openAiEnvWith(settings.authKey ?? "");
 
   return (
     <div className="space-y-4">
@@ -105,56 +134,28 @@ export function ProxySettingsSection() {
         />
       </div>
 
-      {/* Auth Key */}
-      <div className="space-y-1.5">
-        <Label className="text-[11px]">Auth Key</Label>
-        {hasKey ? (
-          <div className="flex gap-1.5">
-            <Input
-              readOnly
-              value={settings.authKey!}
-              className="h-7 text-[11px] font-mono flex-1"
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 cursor-pointer shrink-0"
-              onClick={() => handleCopy(settings.authKey!, "key")}
-            >
-              {copied === "key" ? "Copied!" : <Copy className="size-3" />}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 cursor-pointer shrink-0"
-              onClick={() => update({ generateKey: true })}
-              disabled={saving}
-            >
-              <RefreshCw className="size-3" />
-            </Button>
-          </div>
-        ) : (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs cursor-pointer"
-            onClick={() => update({ generateKey: true })}
-            disabled={saving}
-          >
-            Generate Auth Key
-          </Button>
-        )}
-        <p className="text-[10px] text-muted-foreground">
-          Use as Bearer token or x-api-key when calling the proxy.
-        </p>
-      </div>
+      <ProxyAuthKeyRow
+        authKey={settings.authKey}
+        revealed={!!fullKey}
+        saving={saving}
+        copied={copied === "key"}
+        onShow={() => void revealed()}
+        onCopy={() => void copyWithKey((key) => key, "key")}
+        onGenerate={() => void update({ generateKey: true })}
+      />
 
       {/* Endpoint info */}
       {settings.enabled && hasKey && (
         <div className="space-y-2 rounded-md border p-3 bg-muted/30">
           <div className="flex items-center justify-between">
             <h4 className="text-[11px] font-medium">Connection Info</h4>
-            <ProxyTestButton authKey={settings.authKey!} baseUrl={window.location.origin} provider={provider} />
+            {fullKey ? (
+              <ProxyTestButton authKey={fullKey} baseUrl={window.location.origin} provider={provider} />
+            ) : (
+              <Button variant="outline" size="sm" className="h-6 text-[10px] cursor-pointer" onClick={() => void revealed()}>
+                Show key to test
+              </Button>
+            )}
           </div>
 
           {/* Target provider — the only thing that differs between the two
@@ -246,7 +247,7 @@ export function ProxySettingsSection() {
                 variant="ghost"
                 size="sm"
                 className="absolute top-1 right-1 h-5 px-1 cursor-pointer"
-                onClick={() => handleCopy(anthropicEnv, "anthropic-env")}
+                onClick={() => void copyWithKey(anthropicEnvWith, "anthropic-env")}
               >
                 {copied === "anthropic-env" ? "Copied!" : <Copy className="size-2.5" />}
               </Button>
@@ -261,7 +262,7 @@ export function ProxySettingsSection() {
                 variant="ghost"
                 size="sm"
                 className="absolute top-1 right-1 h-5 px-1 cursor-pointer"
-                onClick={() => handleCopy(openAiEnv, "openai-env")}
+                onClick={() => void copyWithKey(openAiEnvWith, "openai-env")}
               >
                 {copied === "openai-env" ? "Copied!" : <Copy className="size-2.5" />}
               </Button>

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Loader2, RefreshCw } from "@/lib/icons";
 import { getStorageOverview } from "@/lib/api-settings";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 import { formatBytes } from "@/lib/format-bytes";
 import { formatRelativeDate } from "@/lib/format-date";
 import { QueryAuditSection } from "./query-audit-section";
@@ -48,6 +49,8 @@ export function StorageSettingsSection() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  // Trace limits changed elsewhere (another device, `ppm settings trace set`).
+  useSettingsChanged("session-trace", () => void load());
 
   const onTraceSaved = useCallback((sessionTrace: StorageSessionTrace) => {
     setOverview((prev) => (prev ? { ...prev, sessionTrace } : prev));

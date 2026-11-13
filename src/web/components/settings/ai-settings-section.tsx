@@ -13,6 +13,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-settings";
 import { api } from "@/lib/api-client";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 import { ProviderBadge } from "@/components/chat/provider-selector";
 import { openSettings } from "./open-settings";
 import { CodexContextSettings } from "./codex-context-settings";
@@ -63,6 +64,12 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
       setActiveTab(s.default_provider ?? "claude");
     }).catch((e) => setError(e.message));
   }, []);
+
+  // Changed elsewhere (another device, `ppm ai set`): read again, keeping the open tab; the
+  // revision bump re-seeds the uncontrolled fields with what the server now holds.
+  useSettingsChanged("ai", () => {
+    getAISettings().then((s) => { setSettings(s); setRevision((r) => r + 1); }).catch(() => {});
+  });
 
   // A provider keeps its config entry — and so its tab — once it has ever been
   // configured, which says nothing about whether chat can reach it now. Keyed on

@@ -254,7 +254,9 @@ export function updateAISettings(settings: Partial<AISettings>): Promise<AISetti
 
 export interface ProxySettings {
   enabled: boolean;
+  /** Only its first characters unless asked for with `reveal` (`authKeyRevealed` then true). */
   authKey: string | null;
+  authKeyRevealed?: boolean;
   requestCount: number;
   localEndpoint: string;
   localOpenAiEndpoint: string;
@@ -263,12 +265,16 @@ export interface ProxySettings {
   openAiEndpoint: string | null;
 }
 
-export function getProxySettings(): Promise<ProxySettings> {
-  return api.get<ProxySettings>("/api/settings/proxy");
+/** `reveal`: the whole auth key, asked for when the user presses Show. */
+export function getProxySettings(reveal = false): Promise<ProxySettings> {
+  return api.get<ProxySettings>(`/api/settings/proxy${reveal ? "?reveal=1" : ""}`);
 }
 
-export function updateProxySettings(params: { enabled?: boolean; authKey?: string; generateKey?: boolean }): Promise<ProxySettings> {
-  return api.put<ProxySettings>("/api/settings/proxy", params);
+export function updateProxySettings(
+  params: { enabled?: boolean; authKey?: string; generateKey?: boolean },
+  reveal = false,
+): Promise<ProxySettings> {
+  return api.put<ProxySettings>(`/api/settings/proxy${reveal ? "?reveal=1" : ""}`, params);
 }
 
 export interface QueryAuditSettings {

@@ -19,6 +19,7 @@ import {
   type FileFilterSettings,
 } from "@/lib/api-files-settings";
 import { GlobListEditor } from "./glob-list-editor";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 
 type Scope = "global" | "project";
 
@@ -43,6 +44,9 @@ export function FilesSettingsSection() {
 
   // Abort controller for stale fetch cleanup
   const abortRef = useRef<AbortController | null>(null);
+  // The global filters changed elsewhere (another device, `ppm settings files set`): read again.
+  const [reloadTick, setReloadTick] = useState(0);
+  useSettingsChanged("files", () => { if (scope === "global") setReloadTick((n) => n + 1); });
 
   // Load settings when scope or activeProject changes
   useEffect(() => {
@@ -81,7 +85,7 @@ export function FilesSettingsSection() {
 
     loadSettings();
     return () => ac.abort();
-  }, [scope, activeProject?.name]);
+  }, [scope, activeProject?.name, reloadTick]);
 
   const handleSave = async () => {
     setSaving(true);

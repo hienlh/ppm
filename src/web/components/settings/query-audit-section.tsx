@@ -9,6 +9,7 @@ import {
   clearQueryAuditLogs,
   type QueryAuditSettings,
 } from "@/lib/api-settings";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -33,6 +34,8 @@ export function QueryAuditSection() {
       .then(apply)
       .catch((e: Error) => toast.error("Could not load audit settings", { description: e.message }));
   }, []);
+  // Changed or cleared elsewhere (another device, `ppm settings query-audit`).
+  useSettingsChanged("query-audit", () => { getQueryAuditSettings().then(apply).catch(() => {}); });
 
   async function save() {
     setSaving(true);
