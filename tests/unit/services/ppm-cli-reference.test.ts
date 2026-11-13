@@ -8,7 +8,14 @@ import "../../test-setup.ts";
 import {
   PPM_CLI_REFERENCE, TOOLS_INSTEAD_OF_CLI, cliReferenceSections, currentPpmInstance, ppmCliReference, ppmCliReferenceHeader,
 } from "../../../src/services/assistant/ppm-cli-reference.ts";
-import { CLI_COMMAND_ROUTING, commandPathsWithRouting } from "../../../src/services/assistant/ppm-cli-routing.ts";
+import { CLI_COMMAND_ROUTING, commandPathsWithRouting, duplicateRoutingPaths } from "../../../src/services/assistant/ppm-cli-routing.ts";
+import { GIT_TOOLS } from "../../../src/shared/assistant-git-tool-names.ts";
+import { SCHEDULE_TOOLS } from "../../../src/shared/assistant-schedule-tool-names.ts";
+import { TUNNEL_TOOLS } from "../../../src/shared/assistant-tunnel-tool-names.ts";
+import { PROJECT_TOOLS } from "../../../src/shared/assistant-project-tool-names.ts";
+import { CHAT_TOOLS } from "../../../src/shared/assistant-chat-tool-names.ts";
+import { DB_CONNECTION_TOOLS } from "../../../src/shared/assistant-db-connection-tool-names.ts";
+import { ASSISTANT_TOOLS, TERMINAL_TYPE_TOOL } from "../../../src/shared/assistant-tool-names.ts";
 import { cliCommandPaths, generatePpmCliReference } from "../../../scripts/generate-ppm-cli-reference.ts";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
 
@@ -56,7 +63,11 @@ describe("the routing table", () => {
   });
 
   it("leaves no command writing PPM's data behind a running server", () => {
-    expect(commandPathsWithRouting("direct-pending")).toEqual([]);
+    // Only two kinds exist: through the server, or needing none.
+    expect(Object.values(CLI_COMMAND_ROUTING).filter((k) => k !== "server" && k !== "direct-allowed")).toEqual([]);
+    expect(duplicateRoutingPaths()).toEqual([]);
+    expect(commandPathsWithRouting("server").length + commandPathsWithRouting("direct-allowed").length)
+      .toBe(Object.keys(CLI_COMMAND_ROUTING).length);
     for (const p of ["cloud alias set", "cloud alias remove", "cloud link", "cloud unlink", "forward start", "forward stop",
       "group-chat create", "group-chat delete", "teams delete"]) {
       expect({ p, k: CLI_COMMAND_ROUTING[p] }).toEqual({ p, k: "server" });
@@ -123,6 +134,32 @@ describe("the header", () => {
       "Settings → Remote Access → Tailscale", "the Share button → PPM Cloud"]) {
       expect(steps).toContain(pane);
     }
+  });
+
+  it("sends every family of the Assistant's write tools ahead of the CLI, naming only real tools", () => {
+    const named = TOOLS_INSTEAD_OF_CLI.flatMap((g) => g.tools);
+    const families = [...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...PROJECT_TOOLS, ...CHAT_TOOLS, ...DB_CONNECTION_TOOLS, TERMINAL_TYPE_TOOL];
+    expect(families.filter((t) => !named.includes(t))).toEqual([]);
+    expect(named.filter((t) => !(ASSISTANT_TOOLS as readonly string[]).includes(t))).toEqual([]);
+  });
+
+  it("says how a command finds its PPM, when it writes directly, what is advisory, and the secret rule", () => {
+    const header = ppmCliReferenceHeader(base);
+    const finds = header.slice(header.indexOf("## How a command finds its PPM"));
+    expect(finds).toContain("server-endpoint.<database file>.<pid>.json");
+    expect(finds).toContain("PPM_INSTANCE_ID");
+    expect(finds).toContain("PPM_PROFILE");
+    expect(finds).toContain("It never goes by `.server-port`");
+    expect(finds).toContain("Only when no server provably holds it does a command write the database itself");
+    const advisory = header.slice(header.indexOf("## Refusals from an AI chat are advice, not a lock"));
+    expect(advisory).toContain("PPM_AI_CHAT");
+    expect(advisory).toContain("the user's approval of each shell");
+    const secrets = header.slice(header.indexOf("## Secrets"));
+    expect(secrets).toContain("`ppm config set` refuses secret keys for everyone");
+    expect(secrets).toContain("--token-prompt");
+    // No claim that the AI mark itself stops anything.
+    expect(header).not.toMatch(/(AI|agent|model) cannot\b/i);
+    expect(header).not.toContain("writes PPM's data directly");
   });
 
   it("tells a Codex session to escalate ppm commands out of its sandbox, and nobody else", () => {

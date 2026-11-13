@@ -11,7 +11,7 @@ import {
 } from "../../../src/services/assistant/assistant-instructions.ts";
 import { TOOLS_INSTEAD_OF_CLI } from "../../../src/services/assistant/ppm-cli-reference.ts";
 import { ASSISTANT_TOOL_DEFINITIONS } from "../../../src/services/assistant-mcp/assistant-mcp-tools.ts";
-import { PPM_CLI_REFERENCE_TOOL } from "../../../src/shared/assistant-tool-names.ts";
+import { PPM_CLI_REFERENCE_TOOL, TERMINAL_TYPE_TOOL } from "../../../src/shared/assistant-tool-names.ts";
 import { GIT_COMMIT_TOOL, GIT_TOOLS } from "../../../src/shared/assistant-git-tool-names.ts";
 import { SCHEDULE_TOOLS } from "../../../src/shared/assistant-schedule-tool-names.ts";
 import { TUNNEL_TOOLS } from "../../../src/shared/assistant-tunnel-tool-names.ts";
@@ -23,9 +23,13 @@ const OPS_TOOLS = TOOLS_INSTEAD_OF_CLI.flatMap((g) => g.tools);
 const count = (text: string, needle: string): number => text.split(needle).length - 1;
 
 describe("the git, schedule, tunnel, project, chat and connection tool names", () => {
-  it("are the thirty-three tools of the six groups, none twice", () => {
-    expect(OPS_TOOLS).toHaveLength(33);
-    expect(new Set(OPS_TOOLS).size).toBe(33);
+  it("are the thirty-four tools of the seven groups, none twice", () => {
+    expect(OPS_TOOLS).toHaveLength(34);
+    expect(new Set(OPS_TOOLS).size).toBe(34);
+  });
+
+  it("end with terminal_type, the one tool of its group", () => {
+    expect([...TOOLS_INSTEAD_OF_CLI[6]!.tools]).toEqual([TERMINAL_TYPE_TOOL]);
   });
 
   it("list the connection family as it is defined", () => {
@@ -126,5 +130,8 @@ describe("the rest of the instructions", () => {
     const def = ASSISTANT_TOOL_DEFINITIONS.find((d) => d.name === PPM_CLI_REFERENCE_TOOL)!;
     expect(def.description).toContain("(extensions, rarer git operations");
     expect(def.description).not.toContain("(git, schedules, tunnels, extensions)");
+    // It says what the header covers, and does not oversell the AI-chat refusals.
+    expect(def.description).toContain("writes go through the running server");
+    expect(def.description).toContain("a refusal from an AI chat is advice, not a lock");
   });
 });

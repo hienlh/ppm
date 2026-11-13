@@ -6,13 +6,12 @@
  *   server holds the database, and says so.
  * - `direct-allowed`: needs no server — process control, setup, reading, or work on something
  *   other than PPM's live data (a repository, a backup file, the cloud account).
- * - `direct-pending`: still writes PPM's data itself. A running server may not see the change
- *   until it restarts, and may write its own copy back over it.
  *
- * A test walks the real command tree and fails when a command is missing here or an entry names
- * a command that no longer exists, so a new command has to be placed on purpose.
+ * There is no third kind: no command writes PPM's data behind a running server. A test walks the
+ * real command tree and fails when a command is missing here or an entry names a command that no
+ * longer exists, so a new command has to be placed on purpose, in one of these two lists.
  */
-export type CliRouting = "server" | "direct-allowed" | "direct-pending";
+export type CliRouting = "server" | "direct-allowed";
 
 const SERVER = [
   "config set",
@@ -77,14 +76,16 @@ const DIRECT_ALLOWED = [
   "schedule list", "schedule runs",
 ];
 
-/** Empty: every command that wrote PPM's data behind a running server now goes through it, and a test keeps it so. */
-const DIRECT_PENDING: string[] = [];
-
 export const CLI_COMMAND_ROUTING: Readonly<Record<string, CliRouting>> = Object.freeze({
   ...Object.fromEntries(SERVER.map((p) => [p, "server" as const])),
   ...Object.fromEntries(DIRECT_ALLOWED.map((p) => [p, "direct-allowed" as const])),
-  ...Object.fromEntries(DIRECT_PENDING.map((p) => [p, "direct-pending" as const])),
 });
+
+/** A path listed twice would be silently decided by whichever list spreads last. */
+export function duplicateRoutingPaths(): string[] {
+  const all = [...SERVER, ...DIRECT_ALLOWED];
+  return all.filter((p, i) => all.indexOf(p) !== i);
+}
 
 export function commandPathsWithRouting(kind: CliRouting): string[] {
   return Object.entries(CLI_COMMAND_ROUTING).filter(([, k]) => k === kind).map(([p]) => p);

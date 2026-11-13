@@ -174,10 +174,12 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
   {
     name: PPM_CLI_REFERENCE_TOOL,
     title: "PPM CLI reference",
-    description: "How to run the `ppm` command line against this PPM and how each command reaches it. Without `group`, "
-      + "that plus an index of the command groups; with `group`, that group's commands and options. For what PPM's own "
-      + "tools do not cover (extensions, rarer git operations such as worktrees); git, schedules and "
-      + "tunnels have tools of their own. Running a command is a shell call, which asks the user.",
+    description: "How to run the `ppm` command line against this PPM: how a command finds this PPM and prints the one it "
+      + "reached, that writes go through the running server, which commands need no server, which steps only the user "
+      + "takes, and the secret rule. Without `group`, that plus an index of the command groups; with `group`, that group's "
+      + "commands and options. For what the Assistant's own tools do not cover (extensions, rarer git operations "
+      + "such as worktrees, settings): projects, chats, git, schedules, forwards and database connections have tools of their own, "
+      + "with cards. Running a command is a shell call, which asks the user; a refusal from an AI chat is advice, not a lock.",
     inputSchema: object({
       group: { type: "string", description: "A command group, such as \"config\", \"db\", \"ext\", or \"core\" for the top-level commands." },
     }),

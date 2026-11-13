@@ -64,6 +64,10 @@ export const TOOLS_INSTEAD_OF_CLI: readonly { area: string; tools: readonly stri
     area: "Database connections (instead of `ppm db` add, edit, remove, test)",
     tools: ["db_connection_save", "db_connection_delete", "db_connection_test"],
   },
+  {
+    area: "A command for the user to run in a terminal they see (instead of running it in your own shell)",
+    tools: ["terminal_type"],
+  },
 ];
 
 export interface ReferenceOptions {
@@ -85,12 +89,33 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "If that line names another database, stop and tell the user. A command that would change another PPM's",
     "database is refused from here.",
     "",
+    "## How a command finds its PPM",
+    "- The database: PPM_HOME is the folder and PPM_PROFILE the profile (`ppm.db` by default, `ppm.<profile>.db` otherwise).",
+    "- The server: every running PPM writes `server-endpoint.<database file>.<pid>.json` into that folder. A command reads",
+    "  the live ones for its database, takes the one PPM_INSTANCE_ID names, and checks it is really that PPM (a hello it",
+    "  can only answer with the database's token) before it sends the token. It never goes by `.server-port`.",
+    "- Writes: while a server holds the database, every write goes through that server, which checks it as PPM's screens",
+    "  do and updates them at once. Only when no server provably holds it does a command write the database itself, and",
+    "  it says so first. A server that may be there but cannot be verified is a refusal, never a write underneath it.",
+    "",
+    "## Refusals from an AI chat are advice, not a lock",
+    "The commands below marked \"refused from an AI chat\" check a mark your shell carries (PPM_AI_CHAT). Anything that",
+    "runs a shell could remove it, so it is not what protects the user. What does is the user's approval of each shell",
+    "command, the card each of the Assistant's tools shows, and the running server's own rules for each route. When a",
+    "command is refused, do not work around it: tell the user what to do and which pane the refusal names.",
+    "",
+    "## Secrets",
+    "Never put a token, password or API key on a command line or in a message, and never ask the user to paste one to you.",
+    "`ppm config set` refuses secret keys for everyone. A command that needs a secret has the user type it at their own",
+    "terminal (`--token-prompt`) or leaves it to the pane; every command shows a stored secret redacted.",
+    "",
   ];
   if (opts.provider === "codex") {
     lines.push(
       "Your shell runs in a read-only sandbox with no network, so a `ppm` command cannot reach PPM from inside it.",
       "Run every `ppm` command with escalated permissions (`sandbox_permissions: \"require_escalated\"` and a",
-      "one-line `justification`). The user still approves each one; with the sandbox, the command fails.",
+      "one-line `justification`). The user still approves each one; with the sandbox, the command fails. Once",
+      "approved, the command runs outside the sandbox and reaches this PPM on 127.0.0.1 like any other.",
       "",
     );
   }
@@ -123,19 +148,10 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "- cloud link and cloud alias set: refused from an AI chat (a lasting public address for this machine)",
     "",
   );
-  const pending = commandPathsWithRouting("direct-pending");
-  if (pending.length) {
-    lines.push(
-      "## Commands that write PPM's data directly",
-      "The running server keeps much of this in memory: a change may not show until it restarts, and the",
-      "server may write its own copy back over it. Prefer the Assistant's tools or the PPM screen where one exists.",
-      `- ${list(pending)}`,
-      "",
-    );
-  }
   lines.push(
     "## Commands that need no server",
-    "Process control, setup, reading, and work outside PPM's live data (a repository, a backup, the cloud account).",
+    "Process control and setup (start, stop, init, autostart, upgrade), reading (list, get, status, logs), and work",
+    "outside PPM's live data: SQL on the user's own databases, a backup file, skills on disk, the PPM Cloud sign-in.",
     `- ${list(commandPathsWithRouting("direct-allowed"))}`,
     "- restore: refused from an AI chat (it replaces PPM's whole database); restore --list is not",
     "",
