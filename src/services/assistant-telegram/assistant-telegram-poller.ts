@@ -16,6 +16,31 @@ const log = createLogger("assistant-telegram");
 
 /** While an update waits it is not confirmed, so Telegram keeps returning it at once. */
 const WAIT_FOR_DELIVERY_MS = 250;
+/** After a failed poll Telegram named no wait for: a conflict, and anything else. */
+const CONFLICT_RETRY_MS = 5000;
+const RETRY_MS = 3000;
+/** The longest `retry_after` honoured. The client itself waits out one of up to 30 s. */
+const MAX_RETRY_AFTER_MS = 300_000;
+
+/** Waits `ms`, or until `signal` aborts, so `stop()` never sits out a back-off. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
+/** How long to wait before polling again after Telegram refused or could not be reached. */
+export function pollRetryDelayMs(errorCode: number | null, retryAfterS?: number): number {
+  if (retryAfterS !== undefined && retryAfterS > 0) return Math.min(retryAfterS * 1000, MAX_RETRY_AFTER_MS);
+  return errorCode === 409 ? CONFLICT_RETRY_MS : RETRY_MS;
+}
 
 export class AssistantTelegramPoller {
   private readonly seen = new Set<number>();
@@ -30,6 +55,8 @@ export class AssistantTelegramPoller {
     private readonly client: TelegramBotClient,
     private readonly state: BridgeStateStore,
     private readonly dispatch: (update: TelegramUpdate) => void,
+    /** Every wait between polls; a test passes its own. Resolves early once `signal` aborts. */
+    private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void> = pause,
   ) {
     this.nextOffset = state.offset;
   }
@@ -75,7 +102,7 @@ export class AssistantTelegramPoller {
         }
         if (res.errorCode !== 409 || !conflictLogged) log.warn(`Telegram getUpdates failed: ${res.errorCode ?? "network"} ${res.description}`);
         conflictLogged ||= res.errorCode === 409;
-        await Bun.sleep(res.errorCode === 409 ? 5000 : 3000);
+        await this.sleep(pollRetryDelayMs(res.errorCode, res.retryAfter), signal);
         continue;
       }
       this.lastError = null;
@@ -88,7 +115,7 @@ export class AssistantTelegramPoller {
         this.dispatch(update);
       }
       this.advance();
-      if (fresh === 0 && this.undelivered.size) await Bun.sleep(WAIT_FOR_DELIVERY_MS);
+      if (fresh === 0 && this.undelivered.size) await this.sleep(WAIT_FOR_DELIVERY_MS, signal);
     }
   }
 }
