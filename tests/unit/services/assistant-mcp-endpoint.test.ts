@@ -20,6 +20,7 @@ import { TUNNEL_TOOLS } from "../../../src/shared/assistant-tunnel-tool-names.ts
 import { PROJECT_TOOLS } from "../../../src/shared/assistant-project-tool-names.ts";
 import { CHAT_TOOLS } from "../../../src/shared/assistant-chat-tool-names.ts";
 import { DB_CONNECTION_TOOLS } from "../../../src/shared/assistant-db-connection-tool-names.ts";
+import { MANAGER_TOOLS } from "../../../src/shared/assistant-manager-tool-names.ts";
 import { createMcpHttpHandler, textResult } from "../../../src/services/mcp-http-endpoint.ts";
 import { assistantTurnProvenance } from "../../../src/services/assistant/assistant-turn-provenance.ts";
 
@@ -81,9 +82,9 @@ describe("assistant MCP endpoint", () => {
     expect(names).not.toContain("chat_send_message");
     expect(names).not.toContain("chat_start");
     // The git, schedule, tunnel, project, chat and connection families annotate their own tools, checked beside each family.
-    const familyTools = new Set<string>([...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...PROJECT_TOOLS, ...CHAT_TOOLS, ...DB_CONNECTION_TOOLS]);
-    expect(names.slice(-(PROJECT_TOOLS.length + CHAT_TOOLS.length + DB_CONNECTION_TOOLS.length + 1)))
-      .toEqual([...PROJECT_TOOLS, ...CHAT_TOOLS, ...DB_CONNECTION_TOOLS, "terminal_type"]);
+    const familyTools = new Set<string>([...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...PROJECT_TOOLS, ...CHAT_TOOLS, ...DB_CONNECTION_TOOLS, ...MANAGER_TOOLS]);
+    expect(names.slice(-(PROJECT_TOOLS.length + CHAT_TOOLS.length + DB_CONNECTION_TOOLS.length + MANAGER_TOOLS.length + 1)))
+      .toEqual([...PROJECT_TOOLS, ...CHAT_TOOLS, ...DB_CONNECTION_TOOLS, ...MANAGER_TOOLS, "terminal_type"]);
     // History changes and branch deletion can lose work, so both say so.
     const annotations = (name: string) => list.result.tools.find((t: { name: string }) => t.name === name)?.annotations;
     for (const name of ["git_history", "git_branch"]) {
@@ -94,6 +95,9 @@ describe("assistant MCP endpoint", () => {
     expect(annotations("db_connection_delete")).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
     expect(annotations("db_connection_test")).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: true });
     expect(annotations("terminal_type")).toEqual({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
+    // Giving a chat the manager role takes nothing away; taking it away does (the chat itself stays).
+    expect(annotations("manager_assign")).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    expect(annotations("manager_unassign")).toEqual({ readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false });
     for (const tool of list.result.tools) {
       if (familyTools.has(tool.name)) continue;
       if (navigation.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });

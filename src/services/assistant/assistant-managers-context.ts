@@ -19,7 +19,8 @@ export function assistantManagersContextEntry(managers: readonly ManagerListing[
   const head = "Manager chats (written by PPM): each project's manager chat, which you message with send_to_session and "
     + "no card. Every other chat needs the user's OK on a card.";
   if (managers.length === 0) {
-    return `${head}\nNo project has a manager chat yet. create_session with manager: true asks the user to create one.`;
+    return `${head}\nNo project has a manager chat yet. manager_assign makes a chat the user already has the manager; `
+      + "create_session with manager: true creates a new one. Both ask the user first.";
   }
   const sorted = [...managers].sort((a, b) => a.projectName.localeCompare(b.projectName));
   const lines = sorted.slice(0, MAX_LISTED).map((m) => {

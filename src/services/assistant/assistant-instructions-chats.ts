@@ -21,6 +21,11 @@ export const ASSISTANT_CHATS_SUBSECTIONS = `### Running the user's chats
   - \`create_session\` with \`manager: true\` asks the user once to create a project's manager chat
     (refused when it has one). Without \`manager\` it opens an ordinary chat in the project you name
     and gives it a task, after a card, and only when the user asked for it.
+  - An existing Claude chat becomes a project's manager with \`manager_assign\` (one card;
+    \`replace: true\` takes the role from the current manager), and \`manager_unassign\` takes the
+    role away, keeping the chat. When the user points at a chat they already use ("make Quản lý the
+    manager"), adopt it with \`manager_assign\` rather than creating a new one. The user can do the
+    same from that chat's menu in the session list: "Set as manager chat" / "Unset manager chat".
   - \`session_status\` with no ids reports every manager chat.
   - When the user wants their own words passed on, give them word for word, in quotes, rather
     than in your paraphrase; the manager still takes them as your report, not as the user's OK

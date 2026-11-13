@@ -15,10 +15,12 @@ import { CHAT_TOOLS } from "../../shared/assistant-chat-tool-names.ts";
 import { CHAT_ROUTES, CHAT_TOOL_HANDLERS } from "./assistant-chat-tools.ts";
 import { DB_CONNECTION_TOOLS } from "../../shared/assistant-db-connection-tool-names.ts";
 import { DB_CONNECTION_ROUTES, DB_CONNECTION_TOOL_HANDLERS } from "./assistant-db-connection-tools.ts";
+import { MANAGER_TOOLS } from "../../shared/assistant-manager-tool-names.ts";
+import { MANAGER_ROUTES, MANAGER_TOOL_HANDLERS } from "./assistant-manager-tools.ts";
 
 /**
  * The tool families that work through PPM's own routes — git, schedules, tunnels, projects, chats,
- * database connections — and how the
+ * database connections, manager chats — and how the
  * endpoint reaches them. Each family owns its files (names, definitions, handlers and the routes
  * it may call), so they can grow side by side without editing a shared switch.
  *
@@ -29,7 +31,7 @@ import { DB_CONNECTION_ROUTES, DB_CONNECTION_TOOL_HANDLERS } from "./assistant-d
  * import cycle with this dispatcher.
  */
 
-export type ToolFamily = "git" | "schedule" | "tunnel" | "project" | "chat" | "dbconn";
+export type ToolFamily = "git" | "schedule" | "tunnel" | "project" | "chat" | "dbconn" | "manager";
 
 /** What one call of a family tool is handed. */
 export interface ToolContext {
@@ -85,6 +87,7 @@ export function toolFamilies(): readonly ToolFamilyEntry[] {
     { family: "project", tools: PROJECT_TOOLS, handlers: PROJECT_TOOL_HANDLERS, routes: PROJECT_ROUTES },
     { family: "chat", tools: CHAT_TOOLS, handlers: CHAT_TOOL_HANDLERS, routes: CHAT_ROUTES },
     { family: "dbconn", tools: DB_CONNECTION_TOOLS, handlers: DB_CONNECTION_TOOL_HANDLERS, routes: DB_CONNECTION_ROUTES },
+    { family: "manager", tools: MANAGER_TOOLS, handlers: MANAGER_TOOL_HANDLERS, routes: MANAGER_ROUTES },
   ];
   return families;
 }
