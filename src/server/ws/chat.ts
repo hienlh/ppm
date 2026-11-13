@@ -56,6 +56,7 @@ import { setTurnRunningProbe } from "../../services/session-turns/session-turn-i
 import type { SubprocessCredential } from "../../providers/claude-agent-sdk.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import { pairCounter } from "../../services/session-collab/pair-counter.ts";
+import { applyQueueLifecycle, drainForDispatch, enqueueMessage, mergeEntries, queueState, sendQueuedNow, takeBackQueued, type QueuedEntry, type QueueDeps } from "./chat-message-queue.ts";
 
 const log = createLogger("chat");
 const bgShellLog = createLogger("bg-shell");
@@ -238,6 +239,8 @@ export interface SessionEntry {
   currentUserMessage?: string;
   /** The sending browser's own id for that message, so a reconnect replay keeps it bound to its turn. */
   currentClientMessageId?: string;
+  /** Messages a person sent while a turn ran, not yet read by the AI (`chat-message-queue.ts`). */
+  queue?: QueuedEntry[];
   streamPromise?: Promise<void>;
   permissionMode?: string;
   /** Per-session model override; falls back to provider default when undefined */
@@ -1210,6 +1213,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         if (entry.phase === "idle") void continueFromProvider(sessionId, String(ev.content ?? ""));
         continue;
       }
+      // The provider's own queue reporting on a message PPM queued with it.
+      if (evType === "queue_lifecycle") {
+        const started = applyQueueLifecycle(entry, ev.id, ev.state, { broadcast: (e) => broadcast(sessionId, e) });
+        if (started) queuedMessageStarted(sessionId, entry, started);
+        continue;
+      }
 
       // System events → transition connecting → thinking, forward compact events
       if (evType === "system") {
@@ -1570,6 +1579,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         setPhase(sessionId, "idle");
         // Waits on this session are judged, and a created session stops counting as starting.
         collabTurnEnded(sessionId);
+        // What PPM held for this turn goes out now; a provider's own queue starts by itself.
+        dispatchQueued(sessionId, entry, false);
         // A renewal that landed while this turn ran left its subprocess holding a revoked
         // token; restart it now rather than let the next message open with a 401. Deferred so
         // the drop does not close the query from inside the loop that is reading it.
@@ -1627,6 +1638,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     if (provider && "closeStreamingSession" in provider) {
       (provider as any).closeStreamingSession(sessionId);
     }
+    // Whatever was still queued went with the process; it is sent now as a turn of its own.
+    dispatchQueued(sessionId, entry, true);
     if (entry.clients.size === 0) {
       startCleanupTimer(sessionId);
     }
@@ -1745,6 +1758,10 @@ export interface SubmitToSessionOpts {
    * message no device drew itself. Never before: a refused delivery must not leave a bubble.
    */
   echoOnHandOff?: boolean;
+  /** The sender drew no bubble for it (it expected the message to queue), so the echo reaches it too. */
+  echoToSender?: boolean;
+  /** Queued mid-turn with Ctrl+Enter: the AI reads the queue at once (Claude Code's Send now). */
+  sendNow?: boolean;
 }
 
 export type SubmitResult = { ok: true; delivered: SessionDelivery } | { ok: false; error: string };
@@ -1839,10 +1856,90 @@ const STILL_STARTING = "The session is still starting; try again in a moment";
 
 const echoHandedOff = (entry: SessionEntry, content: string, opts: SubmitToSessionOpts): void =>
   echoUserMessage(entry, content, {
-    ...(opts.sender ? { except: opts.sender } : {}),
+    ...(opts.sender && !opts.echoToSender ? { except: opts.sender } : {}),
     ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
     imageCount: opts.images?.length ?? 0,
   });
+
+function queueDeps(sessionId: string, entry: SessionEntry): QueueDeps {
+  const providerId = entry.providerId ?? providerRegistry.getDefault().id;
+  return {
+    sessionId,
+    provider: providerRegistry.get(providerId),
+    broadcast: (event) => broadcast(sessionId, event),
+    push: (content, o) => {
+      const effort = getSessionEffort(sessionId) ?? undefined;
+      const thinkingBudget = getSessionThinking(sessionId);
+      return chatService.pushMessage(providerId, sessionId, content, {
+        origin: "ws",
+        priority: "next",
+        ...(o.images ? { images: o.images } : {}),
+        ...(o.imagePaths ? { imagePaths: o.imagePaths } : {}),
+        ...(o.clientMessageId ? { clientMessageId: o.clientMessageId } : {}),
+        ...(o.queueId ? { queueId: o.queueId } : {}),
+        ...(entry.model ? { model: entry.model } : {}),
+        ...(effort ? { effort } : {}),
+        ...(thinkingBudget != null ? { thinkingBudget } : {}),
+      });
+    },
+  };
+}
+
+/**
+ * The AI started on a queued message: it joins the conversation on every device, the sender's
+ * included (nothing was drawn for it when it was sent), and the turn's display starts again here.
+ */
+function queuedMessageStarted(sessionId: string, entry: SessionEntry, started: Pick<QueuedEntry, "content" | "clientMessageId" | "imageCount">): void {
+  entry.currentUserMessage = started.content;
+  entry.currentClientMessageId = started.clientMessageId;
+  entry.turnEvents = [];
+  echoUserMessage(entry, started.content, {
+    ...(started.clientMessageId ? { clientMessageId: started.clientMessageId } : {}),
+    imageCount: started.imageCount,
+  });
+  if (entry.phase === "idle") setPhase(sessionId, "thinking");
+}
+
+/** Send now: the AI reads the queue at once. Held entries go in as one message, shown now. */
+async function sendQueueNow(sessionId: string, entry: SessionEntry): Promise<void> {
+  if (!entry.queue?.length) return;
+  const sent = await sendQueuedNow(entry, queueDeps(sessionId, entry));
+  if (sent.length) queuedMessageStarted(sessionId, entry, { ...mergeEntries(sent), imageCount: sent.reduce((n, e) => n + e.imageCount, 0) });
+}
+
+/**
+ * What PPM itself must send from the queue goes out as one message: the entries it holds when a
+ * turn ends, or every entry once the stream is gone (Stop, a crash), since a provider's own queue
+ * went with its process — Claude Code sends what was queued right after an interrupt, too.
+ */
+function dispatchQueued(sessionId: string, entry: SessionEntry, all: boolean): void {
+  const out = drainForDispatch(entry, { broadcast: (event) => broadcast(sessionId, event) }, all);
+  if (!out.length) return;
+  const merged = mergeEntries(out);
+  // Never from inside the consumer that is ending: the message may need a consumer of its own.
+  setTimeout(() => {
+    if (activeSessions.get(sessionId) !== entry) {
+      log.warn(`session=${sessionId} ${out.length} queued message(s) dropped: the session closed`);
+      return;
+    }
+    void withSessionLock(sessionId, () => submitToSession(sessionId, entry, merged.content, {
+      origin: "ws",
+      ...(merged.clientMessageId ? { clientMessageId: merged.clientMessageId } : {}),
+      images: merged.images,
+      imagePaths: merged.imagePaths,
+      priority: "next",
+      receivedAt: Date.now(),
+      // Any approval it answered was answered when it was queued.
+      supersedePendingApproval: false,
+      echoOnHandOff: true,
+    })).then((result) => {
+      if (!result.ok) {
+        log.error(`session=${sessionId} queued message(s) not sent: ${result.error}`);
+        broadcast(sessionId, { type: "error", message: `Queued message not sent: ${result.error}` });
+      }
+    });
+  }, 0);
+}
 
 /**
  * Starts a turn with the message, or pushes it into the live stream. `stream_closed` when the
@@ -1851,6 +1948,18 @@ const echoHandedOff = (entry: SessionEntry, content: string, opts: SubmitToSessi
 async function handOffToSession(sessionId: string, entry: SessionEntry, content: string, opts: SubmitToSessionOpts): Promise<SubmitResult | "stream_closed"> {
   const providerId = entry.providerId ?? providerRegistry.getDefault().id;
   const provider = providerRegistry.get(providerId);
+
+  // A person writing while a turn runs: the message waits in the queue, shown under the
+  // conversation, and joins it when the AI starts reading it. Other senders keep going straight in.
+  if (opts.origin === "ws" && entry.isStreamingActive && entry.phase !== "idle") {
+    const queued = await enqueueMessage(entry, {
+      content, images: opts.images, imagePaths: opts.imagePaths, clientMessageId: opts.clientMessageId,
+    }, queueDeps(sessionId, entry));
+    if (queued === "stream_closed") return "stream_closed";
+    log.debug(`session=${sessionId} message queued id=${queued.id} native=${queued.native}`);
+    if (opts.sendNow) await sendQueueNow(sessionId, entry);
+    return { ok: true, delivered: "queued" };
+  }
 
   // Store user message for reconnect replay (turn_events includes only assistant events)
   entry.currentUserMessage = content;
@@ -1996,6 +2105,7 @@ export const chatWebSocket = {
         promptCache: promptCacheSnapshot(sessionId, existing),
         turnStop: existing.phase === "idle" ? lastTurnStop(sessionId) : null,
         turnBindings: existing.turnBindings ?? [],
+        queue: queueState(existing),
       }));
 
       // If actively streaming, send buffered turn events for reconnect sync
@@ -2298,7 +2408,9 @@ export const chatWebSocket = {
       // Echo the user message to OTHER connected clients (second device/tab).
       // The sender renders it optimistically; without this echo a live-connected
       // second device only sees the assistant stream for this turn.
-      if (entry.clients.size > 1) {
+      // A message sent while a turn ran drew no bubble anywhere: it is shown when it goes in.
+      const drewNothing = parsed.queued === true;
+      if (entry.clients.size > 1 && !drewNothing) {
         echoUserMessage(entry, parsed.content, { except: ws, clientMessageId, imageCount: parsed.images?.length ?? 0 });
       }
 
@@ -2339,6 +2451,8 @@ export const chatWebSocket = {
         sender: ws,
         receivedAt: messageReceivedAt,
         supersedePendingApproval: true,
+        ...(drewNothing ? { echoOnHandOff: true, echoToSender: true } : {}),
+        ...(drewNothing && parsed.sendNow === true ? { sendNow: true } : {}),
       }));
     } else if (parsed.type === "set_model") {
       // Persist per-session model override. If an idle subprocess is alive,
@@ -2432,6 +2546,15 @@ export const chatWebSocket = {
       // Stop covers this session only: its waits end, the sessions it waits for run on.
       collabWaits.cancelWaiter(sessionId);
       chatService.abortQuery(providerId, sessionId, "ws_cancel", ws.data.origin ?? "ws");
+    } else if (parsed.type === "queue_take_back") {
+      const id = typeof parsed.id === "string" ? parsed.id : "";
+      const taken = entry ? await takeBackQueued(entry, id, queueDeps(sessionId, entry)) : undefined;
+      // Only the asking device gets the text back for its composer; every device saw the queue change.
+      ws.send(JSON.stringify(taken
+        ? { type: "queue_taken_back", id, content: taken.content, imageCount: taken.imageCount }
+        : { type: "queue_taken_back", id, error: "The AI has already started reading it" }));
+    } else if (parsed.type === "queue_send_now") {
+      if (entry) await sendQueueNow(sessionId, entry);
     } else if (parsed.type === "kill_background_shell") {
       // Kill via the AI: enqueue an instruction so the model calls KillShell.
       // Cross-platform and safe (no OS-PID guessing). Runs when the AI is idle

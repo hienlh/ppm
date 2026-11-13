@@ -64,6 +64,7 @@ import { homedir, totalmem } from "node:os";
 import { AI_CHAT_MARK } from "../services/ai-chat-env.ts";
 import { getPpmDir } from "../services/ppm-dir.ts";
 import { createLogger } from "../services/logger.ts";
+import { QUEUE_LIFECYCLE_STATES } from "../shared/chat-queue.ts";
 
 const log = createLogger("sdk");
 const usageLog = createLogger("usage");
@@ -72,6 +73,8 @@ const mcpControlLog = createLogger("mcp-control");
 const CLAUDE_PROJECTS_DIR = resolve(homedir(), ".claude/projects");
 /** A running CLI answers `get_settings` in a few ms; this only bounds one that never does. */
 const EFFORT_READ_TIMEOUT_MS = 5_000;
+/** How long Send now waits for the CLI to read the queue after backgrounding, before interrupting. */
+const SEND_NOW_GRACE_MS = 1_500;
 
 /**
  * Resolve the Claude CLI the SDK should spawn.
@@ -243,6 +246,8 @@ interface StreamingSession {
   awaitingReply?: boolean;
   /** The sign-in this subprocess was started with — see `SubprocessCredential`. */
   credential: SubprocessCredential;
+  /** Send now interrupted the turn so the CLI reads the queue next: its error result is expected. */
+  interruptedForQueue?: boolean;
 }
 
 /**
@@ -297,6 +302,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   private forkSources = new Map<string, string>();
   /** Streaming sessions: persistent query + message channel per session */
   private streamingSessions = new Map<string, StreamingSession>();
+  /** Send now's waits for the CLI to start reading a queued message, per session. */
+  private queueStartWaiters = new Map<string, Set<() => void>>();
   /**
    * Why a session's subprocess was last torn down, kept until the next turn reports its
    * token split. A turn that resumes onto a fresh subprocess re-sends the whole transcript,
@@ -850,6 +857,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       parent_tool_use_id: null,
       session_id: sessionId,
       priority: opts?.priority ?? 'next',
+      // The CLI reports a uuid-tagged push as `command_lifecycle` frames and can take it back.
+      ...(opts?.queueId ? { uuid: opts.queueId } : {}),
     });
     this.turnBinder.register(sessionId, modelInput, opts?.clientMessageId);
     // Track latest message for retry paths (fixes stale firstMsg bug)
@@ -861,8 +870,67 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     return true;
   }
 
+  /**
+   * Takes back a message still in the CLI's queue (`cancel_async_message`, in `sdk.mjs` but not in
+   * `sdk.d.ts`). False once the CLI has dequeued it: it is being read.
+   */
+  async cancelQueuedMessage(sessionId: string, queueId: string): Promise<boolean> {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss) return false;
+    try {
+      return (await (ss.query as unknown as { cancelAsyncMessage(id: string): Promise<boolean> }).cancelAsyncMessage(queueId)) === true;
+    } catch (e) {
+      log.warn(`session=${sessionId} cancelAsyncMessage failed: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Claude Code's Send now: running Bash commands and subagents move to the background, so the
+   * turn reaches its next step at once and reads the queue there. With nothing to background the
+   * turn is interrupted; the CLI keeps what was queued and runs it next.
+   *
+   * `backgroundTasks()` answering true is not enough: a command younger than about 3 s is not yet
+   * a task the CLI can move (it registers one as `task_started` at that point), and the call still
+   * answers true while the command keeps the turn waiting (measured, CLI of SDK 0.3.280). So the
+   * turn is interrupted too unless the CLI starts reading the queue within a grace period.
+   */
+  async sendQueuedNow(sessionId: string): Promise<void> {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss) return;
+    const started = this.nextQueueStart(sessionId, SEND_NOW_GRACE_MS);
+    try {
+      if (await ss.query.backgroundTasks() && await started) return;
+    } catch (e) {
+      log.warn(`session=${sessionId} backgroundTasks failed: ${(e as Error).message}`);
+    }
+    ss.interruptedForQueue = true;
+    await ss.query.interrupt();
+  }
+
+  /** True once after Send now interrupted the session's turn. */
+  private takeQueueInterrupt(sessionId: string): boolean {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss?.interruptedForQueue) return false;
+    ss.interruptedForQueue = false;
+    return true;
+  }
+
+  /** Resolves true when the CLI starts reading a queued message within `ms`, false otherwise. */
+  private nextQueueStart(sessionId: string, ms: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const waiters = this.queueStartWaiters.get(sessionId) ?? new Set<() => void>();
+      this.queueStartWaiters.set(sessionId, waiters);
+      const done = (value: boolean) => { clearTimeout(timer); waiters.delete(onStart); resolve(value); };
+      const onStart = () => done(true);
+      const timer = setTimeout(() => done(false), ms);
+      waiters.add(onStart);
+    });
+  }
+
   /** Close a streaming session — generator + query cleanup */
   closeStreamingSession(sessionId: string): void {
+    this.queueStartWaiters.delete(sessionId);
     // Pushes the closed CLI never submitted will not open a turn (see `abortQuery`).
     this.turnBinder.forget(sessionId);
     const ss = this.streamingSessions.get(sessionId);
@@ -1752,6 +1820,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         // Yield any queued approval events
         yield* approvals.drain();
 
+        // A message pushed with a uuid: queued, started (read by the turn), completed, cancelled.
+        if ((msg as any).type === "command_lifecycle") {
+          const id = (msg as any).command_uuid, state = (msg as any).state;
+          if (typeof id === "string" && QUEUE_LIFECYCLE_STATES.includes(state)) {
+            if (state === "started") for (const wake of [...(this.queueStartWaiters.get(sessionId) ?? [])]) wake();
+            yield { type: "queue_lifecycle", id, state } as ChatEvent;
+          }
+          continue;
+        }
+
         // Log system events for debugging SDK lifecycle: the subtype only, never the message.
         // thinking_tokens and status=requesting arrive at token rate, so not even at DEBUG.
         if (msg.type === "system") {
@@ -2363,7 +2441,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           }
 
           const result = msg as any;
-          const subtype = result.subtype as string | undefined;
+          // Send now stopped this turn so the CLI reads the queue next: an ordinary end, not an error.
+          const queueInterrupt = result.subtype === "error_during_execution" && this.takeQueueInterrupt(sessionId);
+          if (queueInterrupt) log.info(`session=${sessionId} turn interrupted by Send now; the queue goes next`);
+          const subtype = queueInterrupt ? "success" : result.subtype as string | undefined;
 
           // The SDK closes out background deliveries with a result of their own —
           // notably the orphaned-task notifications it replays on resume. Those carry

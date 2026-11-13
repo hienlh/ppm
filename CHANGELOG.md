@@ -5,6 +5,7 @@
 ### Added
 
 - **Antigravity chats.** Antigravity (Google's `agy` CLI) can be picked as a chat's provider: replies, thinking and tool calls stream as with Claude and Codex, with approvals, Stop, images, agy's own slash commands and skills, extra accounts with a sign-in of their own (Settings → Accounts), a quota panel, and PPM's tab and database tools. Each open chat runs one `agy acp` process. A slow command agy moves to the background no longer ends the chat halfway, and the quota is read from agy itself when the Antigravity app is closed. Needs agy installed and signed in.
+- **Messages sent while the AI is working now wait in a queue above the message box, as in Claude Code.** Until the AI reads a queued message, it stays out of the conversation and is listed in a stack above the box, where you can **Send now** (or press Ctrl/Cmd+Enter), **Edit** it (it moves back into the box) or **Remove** it. Claude reads a queued message as soon as its running tool calls finish, without waiting for the end of the reply. Send now moves running commands and subagents to the background so Claude reads the message right away, and when nothing is running it stops the reply and sends the queue next. Other providers get the queue as one message when the reply ends, or right away with Send now. The queue is kept on the server, so every device shows the same stack, and Stop no longer loses what was queued. The Queue / Later / Interrupt chip is gone.
 
 ## [0.24.1] - 2026-11-12
 

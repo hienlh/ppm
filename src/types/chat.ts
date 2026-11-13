@@ -60,6 +60,12 @@ export interface SendMessageOpts {
    * Handed back on `turn_started` so the browser learns which turn that message opened.
    */
   clientMessageId?: string;
+  /**
+   * The id a message sent while a turn runs is queued under (`src/shared/chat-queue.ts`). A
+   * provider with {@link AIProvider.cancelQueuedMessage} tags the push with it and reports its
+   * progress as `queue_lifecycle` events.
+   */
+  queueId?: string;
 }
 
 export interface AIProvider {
@@ -117,6 +123,13 @@ export interface AIProvider {
   getUsage?(sessionId?: string, pickedAccountId?: string): Promise<UsageInfo>;
   /** True when a live streaming subprocess exists for this session */
   hasStreamingSession?(sessionId: string): boolean;
+  /**
+   * The provider queues a message pushed mid-turn itself and reads it at its next step (Claude).
+   * Takes a queued message back by its `queueId`; false when it was already being read.
+   */
+  cancelQueuedMessage?(sessionId: string, queueId: string): Promise<boolean>;
+  /** Have the AI read what is queued now rather than at its next step (Claude's Send now). */
+  sendQueuedNow?(sessionId: string): Promise<void>;
   /**
    * The effort the session's live subprocess sends and what overrides the pick there; null
    * when none is running or it cannot say. Only providers whose effort can be overridden
@@ -298,6 +311,7 @@ export type ResultSubtype =
   | "error_auth";
 
 export type ChatEvent =
+  | { type: "queue_lifecycle"; id: string; state: import("../shared/chat-queue").QueueLifecycleState }
   | { type: "text"; content: string; parentToolUseId?: string; arrivalSeq?: number }
   | { type: "thinking"; content: string; parentToolUseId?: string; arrivalSeq?: number }
   | {
