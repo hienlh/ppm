@@ -375,4 +375,30 @@ describe("the internal app", () => {
     const list = await app.request("http://ppm.internal/api/projects", { method: "GET" });
     expect(list.status).toBe(200);
   });
+
+  it("lets only the connection list, a connection, its config and its test through the database router", async () => {
+    for (const path of [
+      "/api/db/connections/export", "/api/db/ai-approvals/:requestId", "/api/db/connections/:id/query", "/api/db/connections/:id/cell",
+      "/api/db/connections/:id/row", "/api/db/connections/:id/login", "/api/db/connections/import", "/api/db/connections/folder",
+      "/api/db/connections/:id/duplicate", "/api/db/test", "/api/db/connections/file/tables",
+    ]) {
+      expect({ path, problem: ruleProblem(allowRoute("POST", path)) }).toMatchObject({ path, problem: expect.stringContaining("database route") });
+    }
+    for (const path of ["/api/db/connections", "/api/db/connections/:id", "/api/db/connections/:id/config", "/api/db/connections/:id/test"]) {
+      expect({ path, problem: ruleProblem(allowRoute("GET", path)) }).toEqual({ path, problem: null });
+    }
+    const app = await internalRouteApp();
+    for (const [method, path] of [
+      ["GET", "connections/export"], ["POST", "ai-approvals/abc"], ["POST", "connections/1/query"], ["PUT", "connections/1/cell"],
+      ["DELETE", "connections/1/row"], ["POST", "connections/1/login"], ["POST", "connections/import"], ["POST", "connections/folder"],
+      ["POST", "connections/1/duplicate"], ["POST", "test"], ["GET", "connections/file/tables"], ["GET", "connections/1/tables"],
+    ]) {
+      const res = await app.request(`http://ppm.internal/api/db/${path}`, {
+        method, ...(method === "GET" ? {} : { headers: { "content-type": "application/json" }, body: "{}" }),
+      });
+      expect({ path, status: res.status }).toEqual({ path, status: 403 });
+    }
+    const list = await app.request("http://ppm.internal/api/db/connections", { method: "GET" });
+    expect(list.status).toBe(200);
+  });
 });

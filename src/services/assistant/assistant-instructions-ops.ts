@@ -1,5 +1,5 @@
 /**
- * What the Assistant's git, schedule, tunnel, project and chat tools are for, and the rules around them. Kept
+ * What the Assistant's git, schedule, tunnel, project, chat and connection tools are for, and the rules around them. Kept
  * apart from `assistant-instructions.ts` so that file stays readable; added to the same turns as
  * the other tool sections (only when the session has the `ppm-assistant` endpoint), after
  * "Changing things", whose approval rules it relies on.
@@ -25,6 +25,9 @@ update at once. Reading never asks; every change shows the user a card PPM build
 - Chats: change with \`chat_stop\` (a running turn), \`chat_organize\` (rename, pin, tag, mark read)
   and \`chat_delete\` (cannot be undone; a running chat is stopped first). Read the files a chat changed
   with \`chat_changes\`, and keep, reopen, revert, revert a turn or undo with \`chat_changes_answer\`.
+- Database connections: add or change one with \`db_connection_save\`, delete with
+  \`db_connection_delete\`, check one opens with \`db_connection_test\`. A new connection is read-only;
+  only the user makes it writable, in PPM. Never put a password in a URL: the user types it in PPM.
 
 ### Read first, then change
 - No project named? Call \`projects_list\` before anything else. When exactly one project fits the

@@ -60,6 +60,10 @@ export const TOOLS_INSTEAD_OF_CLI: readonly { area: string; tools: readonly stri
     area: "Chats (instead of `ppm chat` stop, rename, pin, tag, read, delete, changes, revert-turn)",
     tools: ["chat_stop", "chat_organize", "chat_delete", "chat_changes", "chat_changes_answer"],
   },
+  {
+    area: "Database connections (instead of `ppm db` add, edit, remove, test)",
+    tools: ["db_connection_save", "db_connection_delete", "db_connection_test"],
+  },
 ];
 
 export interface ReferenceOptions {

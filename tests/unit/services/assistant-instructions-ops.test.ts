@@ -17,14 +17,19 @@ import { SCHEDULE_TOOLS } from "../../../src/shared/assistant-schedule-tool-name
 import { TUNNEL_TOOLS } from "../../../src/shared/assistant-tunnel-tool-names.ts";
 import { PROJECT_TOOLS } from "../../../src/shared/assistant-project-tool-names.ts";
 import { CHAT_TOOLS } from "../../../src/shared/assistant-chat-tool-names.ts";
+import { DB_CONNECTION_TOOLS } from "../../../src/shared/assistant-db-connection-tool-names.ts";
 
 const OPS_TOOLS = TOOLS_INSTEAD_OF_CLI.flatMap((g) => g.tools);
 const count = (text: string, needle: string): number => text.split(needle).length - 1;
 
-describe("the git, schedule, tunnel, project and chat tool names", () => {
-  it("are the thirty tools of the five groups, none twice", () => {
-    expect(OPS_TOOLS).toHaveLength(30);
-    expect(new Set(OPS_TOOLS).size).toBe(30);
+describe("the git, schedule, tunnel, project, chat and connection tool names", () => {
+  it("are the thirty-three tools of the six groups, none twice", () => {
+    expect(OPS_TOOLS).toHaveLength(33);
+    expect(new Set(OPS_TOOLS).size).toBe(33);
+  });
+
+  it("list the connection family as it is defined", () => {
+    expect([...TOOLS_INSTEAD_OF_CLI[5]!.tools]).toEqual([...DB_CONNECTION_TOOLS]);
   });
 
   it("put the project family beside the project list and project_add", () => {

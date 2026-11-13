@@ -148,6 +148,18 @@ export type EditableConnectionConfig =
     ssl?: EditableSslFileSettings;
   } & Omit<ServerConnectionSettings, "ssh" | "ssl">);
 
+/**
+ * What the form set beside the URL (password mode, allowed databases, timeouts…), as an edit sends
+ * it back so changing the URL does not reset the rest. The URL, the flags and the SSH and SSL tabs
+ * are left out: the route keeps the saved URL and tabs when they are not sent.
+ */
+export function editableFormSettings(config: EditableConnectionConfig): Record<string, unknown> {
+  if (config.type === "sqlite") return {};
+  const out: Record<string, unknown> = { ...config };
+  for (const key of ["type", "connectionString", "hasPassword", "ssh", "ssl"]) delete out[key];
+  return out;
+}
+
 /** One SSH server a tunnel went through, with the host key it showed. */
 export interface SshHop {
   /** `bastion.example.com:22`. */

@@ -47,7 +47,7 @@ let appPromise: Promise<RouteApp> | null = null;
  */
 export function internalRouteApp(): Promise<RouteApp> {
   appPromise ??= (async () => {
-    const [tunnels, tunnel, named, tailscale, scoped, schedules, projects] = await Promise.all([
+    const [tunnels, tunnel, named, tailscale, scoped, schedules, projects, database] = await Promise.all([
       import("../../server/routes/tunnels.ts"),
       import("../../server/routes/tunnel.ts"),
       import("../../server/routes/named-tunnel.ts"),
@@ -55,6 +55,7 @@ export function internalRouteApp(): Promise<RouteApp> {
       import("../../server/routes/project-scoped.ts"),
       import("../../server/routes/schedules.ts"),
       import("../../server/routes/projects.ts"),
+      import("../../server/routes/database.ts"),
     ]);
     const app = new Hono();
     // `projectScopedRouter` also carries the file, workspace, LSP and design routes and the rest
@@ -75,7 +76,17 @@ export function internalRouteApp(): Promise<RouteApp> {
       }
       await next();
     });
+    // The database router also exports every password, runs SQL, edits rows and answers the AI
+    // chat's write approvals; only the connection list, one connection, its password-free config
+    // and its Test are reachable here.
+    app.use("/api/db/*", async (c, next) => {
+      if (!isDbConnectionPath(new URL(c.req.url).pathname)) {
+        return c.json({ ok: false, error: "Only the connection list, a connection, its config and its test are reachable here", code: ROUTE_NOT_ALLOWED }, 403);
+      }
+      await next();
+    });
     app.route("/api/projects", projects.projectRoutes);
+    app.route("/api/db", database.databaseRoutes);
     app.route("/api/tunnels", tunnels.tunnelRegistryRoutes);
     app.route("/api/tunnel", tunnel.tunnelRoutes);
     app.route("/api/tunnel/named", named.namedTunnelRoutes);
@@ -136,6 +147,24 @@ export function isProjectListPath(pathname: string): boolean {
   return segments.length === 4 || (segments.length === 5 && segments[4] === "color");
 }
 
+/** What may follow one saved connection's id: its password-free config and its Test. */
+const DB_CONNECTION_ROUTES: ReadonlySet<string> = new Set(["config", "test"]);
+
+/**
+ * `/api/db/connections`, `/api/db/connections/<id>` and its `config` and `test`: the only paths of
+ * the database router any tool family reaches. The id is digits, so it can never stand for one of
+ * the router's literal paths (`export` with every password, `import`, `folder`, the request-named
+ * `file`). `template` lets a rule's `:id` placeholder through.
+ */
+export function isDbConnectionPath(pathname: string, template = false): boolean {
+  const segments = pathname.split("/");
+  if (segments[1] !== "api" || segments[2] !== "db" || segments[3] !== "connections") return false;
+  if (segments.length === 4) return true;
+  const id = segments[4] ?? "";
+  if (!/^\d+$/.test(id) && !(template && PARAM_SEGMENT.test(id))) return false;
+  return segments.length === 5 || (segments.length === 6 && DB_CONNECTION_ROUTES.has(segments[5]!));
+}
+
 const LITERAL_SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 const PARAM_SEGMENT = /^:[A-Za-z][A-Za-z0-9]*$/;
 const QUERY_KEY = /^[A-Za-z][A-Za-z0-9_]*$/;
@@ -159,6 +188,7 @@ export function ruleProblem(rule: RouteRule): string | null {
   if (segments[1] === "project" && segments[2] !== ":project") return "a project route names its project with :project";
   if (segments[1] === "project" && !isProjectFamilyPath(rule.path)) return "a project route may only reach the project's git, chat-session and tag routes";
   if (segments[1] === "projects" && !isProjectListPath(rule.path)) return "a project list route may only reach the list, a project and its colour";
+  if (segments[1] === "db" && !isDbConnectionPath(rule.path, true)) return "a database route may only reach the connection list, a connection, its config and its test";
   const keys = new Set<string>();
   for (const key of rule.query) {
     if (!QUERY_KEY.test(key) || keys.has(key)) return `bad or repeated query key "${key}"`;
