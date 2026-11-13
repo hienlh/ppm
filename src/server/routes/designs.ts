@@ -10,6 +10,7 @@ import { designExportRoutes } from "./design-export.ts";
 import { designCheckRoutes } from "./design-check.ts";
 import { designSystemRoutes } from "./design-systems.ts";
 import { designShareRoutes } from "./design-shares.ts";
+import { announceDesignListChanges } from "./designs-broadcast.ts";
 import { createDesign, deleteDesign, getDesign, listDesigns, renameDesign } from "../../services/design/design-store.service.ts";
 import { listDesignSystems } from "../../services/design/design-systems.service.ts";
 import { listSnapshots } from "../../services/design/design-snapshots.service.ts";
@@ -24,6 +25,10 @@ import { restoreSnapshot } from "../../services/design/design-restore.service.ts
  */
 
 export const designRoutes = new Hono<DesignRouteEnv>();
+
+// Registered first so it wraps every route below: a create, rename, delete or restore tells
+// every open PPM to read the project's design list again.
+designRoutes.use("*", announceDesignListChanges);
 
 designRoutes.get("/", async (c) => {
   try {

@@ -78,7 +78,8 @@ const IDLE_TIMEOUT_MS = 45_000;
  *   answered, put off or settled on some device, so the tour and Settings → Tools refetch.
  * - `design:*` → re-dispatched as window events (`design:history_changed`,
  *   `design:comments_changed`). A design's `.design/` folder is not watched, so these
- *   are the only signal that its snapshots or comments changed.
+ *   are the only signal that its snapshots or comments changed. `design:list_changed`
+ *   (a create, rename, delete or restore, from anywhere) makes the Designs sidebar refetch.
  *
  * - `agent-transcript:events` / `agent-transcript:error` / `agent-activity` → re-dispatched
  *   as window events for `useAgentSessionStream` and the running-agents bar. Several of

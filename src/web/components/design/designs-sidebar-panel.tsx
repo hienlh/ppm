@@ -13,6 +13,7 @@ import { RenameDesignDialog } from "./dialogs/rename-design-dialog";
 import { DeleteDesignDialog } from "./dialogs/delete-design-dialog";
 import { DesignSystemsSidebarGroup } from "./design-systems-sidebar-group";
 import type { DesignSummary } from "../../../shared/design-types";
+import { DESIGN_LIST_CHANGED_EVENT } from "../../../shared/design-events";
 
 const headerButton = "flex size-11 items-center justify-center rounded-md text-text-subtle hover:bg-surface-elevated hover:text-foreground md:size-7";
 
@@ -61,10 +62,13 @@ export function DesignsSidebarPanel({ onNavigate }: { onNavigate?: () => void })
     };
     window.addEventListener("file:changed", onFile);
     window.addEventListener(DESIGNS_CHANGED_EVENT, onChanged);
+    // A change made elsewhere (another device, the `ppm design` CLI), announced by the server.
+    window.addEventListener(DESIGN_LIST_CHANGED_EVENT, onChanged);
     return () => {
       if (timer) clearTimeout(timer);
       window.removeEventListener("file:changed", onFile);
       window.removeEventListener(DESIGNS_CHANGED_EVENT, onChanged);
+      window.removeEventListener(DESIGN_LIST_CHANGED_EVENT, onChanged);
     };
   }, [projectName, load]);
 
