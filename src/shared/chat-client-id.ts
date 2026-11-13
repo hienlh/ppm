@@ -16,6 +16,12 @@
 
 export const CHAT_CLIENT_ID_PARAM = "clientId";
 
+/**
+ * `?viewer=0`: a socket that belongs to no screen showing the chat — the `ppm` CLI connecting only
+ * to send a stop. It is never handed a request meant for the device the user is looking at.
+ */
+export const CHAT_NON_VIEWER_PARAM = "viewer";
+
 const VALID = /^[A-Za-z0-9-]{8,64}$/;
 
 /** The id when `raw` is a well-formed one; undefined for anything else, absent included. */

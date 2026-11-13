@@ -66,7 +66,7 @@ import { collabCardForListeners, settleCollabApprovalFromServer } from "./chat-c
 import { assistantProviderDefaults } from "../../services/assistant/assistant-settings.service.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
 import type { ReplyReference } from "../../shared/chat-reply.ts";
-import { CHAT_CLIENT_ID_PARAM, chatClientIdFrom } from "../../shared/chat-client-id.ts";
+import { CHAT_CLIENT_ID_PARAM, CHAT_NON_VIEWER_PARAM, chatClientIdFrom } from "../../shared/chat-client-id.ts";
 import {
   CHAT_BUSY, UNATTENDED_TURN_REFUSAL, setChatControl, type ApprovalAnswer, type ChatMessageOrigin, type DeliverResult,
   type LiveApprovalCard, type LiveChatState, type MessageServerOrigin,
@@ -230,7 +230,7 @@ export type ChatWsSocket = {
    * `origin` is set only by an in-process caller (a script schedule); a browser socket leaves it
    * unset, i.e. `ws`.
    */
-  data: { type: string; sessionId: string; projectName?: string; providerHint?: string; clientId?: string; origin?: TraceOrigin };
+  data: { type: string; sessionId: string; projectName?: string; providerHint?: string; clientId?: string; origin?: TraceOrigin; nonViewer?: boolean };
   send: (data: string) => void;
   ping?: (data?: string | ArrayBuffer) => void;
 };
@@ -251,6 +251,9 @@ export function chatSocketData(sessionId: string, projectName: string, query: UR
     providerHint: query.get("providerId") ?? undefined,
     // Which tab this is, so a reconnect is recognised; a routing hint, never a credential.
     clientId: chatClientIdFrom(query.get(CHAT_CLIENT_ID_PARAM)),
+    // A program connected only to act on the chat (the `ppm` CLI's stop), not a screen showing it:
+    // it is never handed a request meant for the device the user is looking at.
+    ...(query.get(CHAT_NON_VIEWER_PARAM) === "0" ? { nonViewer: true } : {}),
   };
 }
 
@@ -717,7 +720,8 @@ export function deliverToChattingDevice(sessionId: string, payload: object, opts
   const json = JSON.stringify(payload);
   const sendTo = (clients: Iterable<ChatWsSocket>): number => {
     let sent = 0;
-    for (const client of [...clients]) {
+    // A socket that shows nothing (the CLI stopping a turn) can neither open a tab nor answer.
+    for (const client of [...clients].filter((c) => !c.data.nonViewer)) {
       try { client.send(json); sent++; } catch { evictClient(entry, client); }
     }
     return sent;

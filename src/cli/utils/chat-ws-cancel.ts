@@ -7,11 +7,18 @@
  * Resolves once the frame has been sent and the socket is closed again; whether the turn really
  * ended is the caller's to check (it polls the server's running list).
  */
+import { CHAT_NON_VIEWER_PARAM } from "../../shared/chat-client-id.ts";
+
 const CONNECT_TIMEOUT_MS = 10_000;
 
+/**
+ * The chat's socket path, marked as no screen showing the chat (`?viewer=0`): the server then
+ * never hands this socket a request meant for the device the user is looking at, such as opening
+ * a tab, which it could neither do nor answer.
+ */
 export function chatSocketPath(projectName: string, sessionId: string, providerId?: string): string {
-  const query = providerId ? `?providerId=${encodeURIComponent(providerId)}` : "";
-  return `/ws/project/${encodeURIComponent(projectName)}/chat/${encodeURIComponent(sessionId)}${query}`;
+  const query = new URLSearchParams({ [CHAT_NON_VIEWER_PARAM]: "0", ...(providerId ? { providerId } : {}) });
+  return `/ws/project/${encodeURIComponent(projectName)}/chat/${encodeURIComponent(sessionId)}?${query}`;
 }
 
 export function sendChatCancel(socketUrl: string, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
