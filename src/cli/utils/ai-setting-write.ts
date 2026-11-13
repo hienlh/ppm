@@ -41,12 +41,22 @@ export type AiSettingWrite =
 /** `key` without a leading `ai.`, as `ppm ai set` and `ppm config get ai.…` both spell it. */
 export const aiKey = (key: string) => key.replace(/^ai\./, "");
 
+/**
+ * AI settings that outlast the chat that would change them: a provider's system prompt reaches
+ * every chat started after it, `inherit_claude_mcp` hands every chat the user's own MCP servers,
+ * and the session-collaboration limits decide what chats may start other chats. Refused from an
+ * AI chat like the exposure keys, and as advisory: the shell card is what really stands in the way.
+ */
+const AI_CHAT_PERSISTENCE_KEYS: readonly string[] = [
+  "ai.providers.*.system_prompt", "ai.providers.*.inherit_claude_mcp", "ai.session_collab",
+];
+
 /** Why this caller may not write `key` at all, decided before anything is read; null when it may. */
 export function aiSettingRefusal(rawKey: string, caller: { aiChat: boolean }): string | null {
   const key = aiKey(rawKey);
   const full = `ai.${key}`;
   if (isSecretConfigKey(full)) return `"${full}" is a secret and is never set on a command line: set it in PPM's Settings → AI Provider.`;
-  if (caller.aiChat && EXPOSURE_CONFIG_KEYS.some((p) => configKeyHasPrefix(full, p))) {
+  if (caller.aiChat && [...EXPOSURE_CONFIG_KEYS, ...AI_CHAT_PERSISTENCE_KEYS].some((p) => configKeyHasPrefix(full, p))) {
     return aiChatRefusalText(`"${full}"`, key.startsWith("providers.") ? "Settings → AI Provider" : "Settings → Tools");
   }
   return null;

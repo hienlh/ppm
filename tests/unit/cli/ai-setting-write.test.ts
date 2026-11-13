@@ -27,6 +27,9 @@ describe("aiSettingRefusal", () => {
     for (const key of [
       "providers.claude.cli_command", "providers.claude.base_url", "providers.claude.api_key_env",
       "providers.codex.permission_mode", "ppm_tools.open_url", "tab_tools",
+      // What outlasts the chat: every later chat's instructions, its tools, and who may start chats.
+      "providers.claude.system_prompt", "ai.providers.codex.system_prompt", "providers.claude.inherit_claude_mcp",
+      "session_collab.max_open_sessions", "ai.session_collab.enabled",
     ]) {
       expect({ key, refusal: aiSettingRefusal(key, aiChat) }).toEqual({ key, refusal: expect.stringContaining("refused here from an AI chat") });
       expect({ key, refusal: aiSettingRefusal(key, person) }).toEqual({ key, refusal: null });
