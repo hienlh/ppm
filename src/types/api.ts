@@ -48,6 +48,13 @@ export type ChatWsClientMessage =
   /** A device's answer to `assistant_ui`. */
   | AssistantUiResult;
 
+/**
+ * One chat turn's input as the WS `message` frame carries it, minus the frame type. Derived
+ * from the frame so a field added there (`imagePaths`, `replyTo`, ...) reaches the REST and
+ * extension doors without a second definition drifting from the first.
+ */
+export type ChatSendPayload = Omit<Extract<ChatWsClientMessage, { type: "message" }>, "type">;
+
 /** A background command (SDK Bash run_in_background) tracked for the current session. */
 export interface BackgroundShell {
   shellId: string;

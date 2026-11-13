@@ -182,11 +182,11 @@ export class MockProvider implements AIProvider {
   }
 
   /** The shape of `ClaudeAgentSdkProvider.completeOnce`, free: a script schedule's `ctx.ai.ask` in tests. */
-  async completeOnce(input: { prompt: string; jsonSchema?: Record<string, unknown> }): Promise<{ text: string; json?: unknown; costUsd: number; inputTokens: number; outputTokens: number }> {
+  async completeOnce(input: { prompt: string; jsonSchema?: Record<string, unknown> }): Promise<{ text: string; structured?: unknown; costUsd: number; inputTokens: number; outputTokens: number }> {
     await sleep(10);
     return {
       text: `Mock answer: ${input.prompt.slice(0, 80)}`,
-      ...(input.jsonSchema && { json: {} }),
+      ...(input.jsonSchema && { structured: {} }),
       costUsd: 0,
       inputTokens: 0,
       outputTokens: 0,

@@ -249,6 +249,15 @@ export function sessionCollabMcpEnv(access: SessionCollabMcpAccess | undefined):
 }
 
 /**
+ * A session's developer instructions: the design block first, then the line naming extension
+ * CLI commands. Undefined when both are empty, so an ordinary session with no extension
+ * commands sends exactly what it always has.
+ */
+export function joinDeveloperInstructions(design?: string, extensionCliHint?: string): string | undefined {
+  return [design, extensionCliHint].map((part) => part?.trim()).filter(Boolean).join("\n\n") || undefined;
+}
+
+/**
  * One builder for the params of every thread/start and thread/resume — the first connect
  * and the account-switch respawn used to assemble them separately, which is how a field
  * added to one silently goes missing from the other. `developerInstructions` is left out

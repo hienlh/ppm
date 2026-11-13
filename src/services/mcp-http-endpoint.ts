@@ -1,12 +1,14 @@
 import type { Context } from "hono";
 import { createLogger } from "./logger.ts";
 import { holdRequestOpen } from "../server/helpers/hold-request-open.ts";
+import { readCappedBody } from "./read-capped-body.ts";
 
 /**
  * The smallest MCP server that speaks Streamable HTTP with plain JSON responses
  * (`initialize`, `ping`, `tools/list`, `tools/call`), for the endpoints PPM serves to a chat
- * session's own agent (`/api/design-mcp`, `/api/tab-tools-mcp`). Claude, Codex and Antigravity
- * all take an HTTP MCP server by URL, so one endpoint serves every provider.
+ * session's own agent (`/api/design-mcp`, `/api/tab-tools-mcp`, `/api/db-tools-mcp`, `/api/ext-mcp`).
+ * Claude, Codex and Antigravity all take an HTTP MCP server by URL, so one endpoint serves every
+ * provider.
  *
  * Mounted before PPM's auth: the caller is a Claude, Codex or agy subprocess with no PPM token.
  * Its credential is a per-session capability token in `Authorization: Bearer`. A request
@@ -18,29 +20,6 @@ export type Json = Record<string, unknown>;
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY_BYTES = 64 * 1024;
 
-/**
- * The body as text, or null when it is over {@link MAX_BODY_BYTES}. Counted in bytes as it
- * arrives, so a body sent without a `Content-Length` (chunked) is refused without being read to
- * its end.
- */
-async function readCappedBody(req: Request): Promise<string | null> {
-  if (!req.body) return "";
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > MAX_BODY_BYTES) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  return new TextDecoder().decode(Buffer.concat(chunks));
-}
-
 const rpcResult = (id: unknown, result: unknown) => ({ jsonrpc: "2.0", id, result });
 const rpcError = (id: unknown, code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 
@@ -50,14 +29,23 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
   /** The 401 body's message when no valid token is presented. */
   tokenRequired: string;
   resolveToken: (token: string | null) => B | null;
-  /** The tools, or a function giving them as they are now (a description naming what exists). */
-  tools: readonly Json[] | (() => readonly Json[]);
+  /**
+   * The tools, or a function giving them as they are now for the token's binding (a description
+   * naming what exists, or a list that differs per session).
+   */
+  tools: readonly Json[] | ((binding: B) => readonly Json[]);
   /**
    * Why a tool in `tools` is off right now for the chat the token names, or null. An off tool is
    * left out of `tools/list`, and a chat that listed it before it went off gets this as the call's
    * error result.
    */
   unavailable?: (name: string, binding: B) => string | null;
+  /**
+   * Why a tool that is not in `tools` for this binding may still be called — one the chat
+   * listed before its list changed — answered as the call's error result; null leaves it an
+   * unknown tool.
+   */
+  unlisted?: (binding: B, name: string) => string | null;
   /**
    * A `tools/call` result for a tool named in `tools`. `signal` is the call's HTTP request: it
    * aborts when the provider gives up on the call, e.g. because the user stopped the turn.
@@ -70,7 +58,7 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
    */
   holdOpenSeconds?: number;
 }) {
-  const toolList = (): readonly Json[] => (typeof opts.tools === "function" ? opts.tools() : opts.tools);
+  const toolList = (binding: B): readonly Json[] => (typeof opts.tools === "function" ? opts.tools(binding) : opts.tools);
   const offReason = (name: string, binding: B): string | null => opts.unavailable?.(name, binding) ?? null;
   const log = createLogger(opts.serverName);
 
@@ -90,9 +78,11 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
       case "ping":
         return rpcResult(id, {});
       case "tools/list":
-        return rpcResult(id, { tools: toolList().filter((t) => !offReason(String(t.name), binding)) });
+        return rpcResult(id, { tools: toolList(binding).filter((t) => !offReason(String(t.name), binding)) });
       case "tools/call": {
-        if (typeof params.name !== "string" || !toolList().some((t) => t.name === params.name)) {
+        if (typeof params.name !== "string" || !toolList(binding).some((t) => t.name === params.name)) {
+          const gone = typeof params.name === "string" ? opts.unlisted?.(binding, params.name) ?? null : null;
+          if (gone) return rpcResult(id, textResult(gone, true));
           return rpcError(id, -32602, `Unknown tool: ${String(params.name).slice(0, 60)}`);
         }
         const off = offReason(params.name, binding);
@@ -114,7 +104,7 @@ export function createMcpHttpHandler<B extends { sessionId: string }>(opts: {
     if (Number(c.req.header("content-length") ?? "0") > MAX_BODY_BYTES) return c.json(rpcError(null, -32600, "Request too large"), 413);
     let msg: unknown;
     try {
-      const raw = await readCappedBody(c.req.raw);
+      const raw = await readCappedBody(c.req.raw, MAX_BODY_BYTES);
       if (raw === null) return c.json(rpcError(null, -32600, "Request too large"), 413);
       msg = JSON.parse(raw);
     } catch {

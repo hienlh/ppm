@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, jest } from "bun:test";
 import { RpcChannel } from "../../../src/services/extension-rpc.ts";
 import type { RpcMessage, RpcRequest, RpcResponse, RpcEvent } from "../../../src/types/extension.ts";
 
@@ -103,6 +103,70 @@ describe("RpcChannel", () => {
       const msg = sentMessages[1] as RpcRequest;
       expect(msg.id).toBe(2); // Should increment, not reuse ID 1
     }, { timeout: 20000 });
+  });
+
+  describe("sendRequestWithTimeout", () => {
+    // Fake timers make the 10s/600s waits instant instead of costing real wall-clock time.
+    // Every test below fully settles its own promise before returning so the pending-map
+    // entry (and its fake timer) never survives into the outer afterEach's real-timer world.
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("default sendRequest still rejects at the 10s default", async () => {
+      const promise = channel.sendRequest("method");
+      const caught = promise.catch((e: Error) => e);
+
+      jest.advanceTimersByTime(10_000);
+
+      const err = await caught;
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("RPC timeout");
+    });
+
+    it("a 600_000ms request is still pending at 11s, past the default", async () => {
+      const promise = channel.sendRequestWithTimeout("method", 600_000, []);
+      let settled = false;
+      promise.catch(() => {}).finally(() => { settled = true; });
+
+      jest.advanceTimersByTime(11_000);
+      await Promise.resolve(); // flush microtasks queued by the fake-timer tick
+
+      expect(settled).toBe(false);
+
+      // Resolve so nothing leaks past this test.
+      await channel.handleMessage({ type: "response", id: 1, result: "ok" });
+      expect(await promise).toBe("ok");
+    });
+
+    it("a response delivered after 10s still resolves a 600_000ms request", async () => {
+      const promise = channel.sendRequestWithTimeout("method", 600_000, []);
+
+      jest.advanceTimersByTime(10_000);
+      await channel.handleMessage({ type: "response", id: 1, result: "late" });
+
+      expect(await promise).toBe("late");
+    });
+
+    it("clears the timer on response so it never fires afterwards", async () => {
+      // Not-throwing proves nothing here — a stray fired timer would just call
+      // reject() on an already-resolved promise, which is silently a no-op. Spy on
+      // clearTimeout instead: it must fire exactly once, for the timer this
+      // response actually cleared, and never again once nothing is pending.
+      const clearSpy = jest.spyOn(globalThis, "clearTimeout");
+      const promise = channel.sendRequest("method");
+      await channel.handleMessage({ type: "response", id: 1, result: "ok" });
+      expect(await promise).toBe("ok");
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+
+      jest.advanceTimersByTime(20_000);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      clearSpy.mockRestore();
+    });
   });
 
   describe("sendEvent", () => {

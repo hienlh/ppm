@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import type { ExtensionManifest } from "../types/extension.ts";
@@ -45,30 +45,98 @@ export function readManifestAt(dir: string): ExtensionManifest | null {
   }
 }
 
-/** Scan extensions directory (node_modules) for all valid manifests */
+/** True when a manifest carries at least one of the three PPM markers. `engines.ppm` is
+ * decorative — stored but never version-checked — yet it still counts as a marker: an
+ * extension author who only fills that field should not be silently dropped. */
+export function hasPpmMarker(m: ExtensionManifest): boolean {
+  return !!m.ppm || !!m.contributes || !!m.engines?.ppm;
+}
+
+/**
+ * Discover user-installed extensions under `<extensionsDir>/node_modules`.
+ *
+ * The candidate id set is the union of:
+ *  - keys of `dependencies` in `<extensionsDir>/package.json` — packages `bun add` installed;
+ *  - symlinked entries directly under `node_modules`, including symlinks nested one level
+ *    under an `@scope` directory — dev-links (`devLinkExtension`) are never recorded in
+ *    `dependencies`, so they would otherwise be invisible here.
+ *
+ * A candidate only becomes a discovered extension once its manifest passes `hasPpmMarker` —
+ * without that check, any transitive dependency of a real extension (installed flat by `bun
+ * add`, see extension-installer.ts) would be registered and auto-activated as if it were an
+ * extension in its own right.
+ */
 export async function discoverManifests(extensionsDir: string): Promise<ExtensionManifest[]> {
-  const manifests: ExtensionManifest[] = [];
-  if (!existsSync(extensionsDir)) return manifests;
+  const nodeModulesDir = resolve(extensionsDir, "node_modules");
+  if (!existsSync(nodeModulesDir)) return [];
 
-  const entries = await readdir(extensionsDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-    if (entry.name === "node_modules" || entry.name === "package.json") continue;
+  const ids = new Set<string>();
 
-    // Handle scoped packages (@scope/name)
-    const entryPath = resolve(extensionsDir, entry.name);
-    if (entry.name.startsWith("@")) {
-      const scopedEntries = await readdir(entryPath, { withFileTypes: true });
-      for (const scoped of scopedEntries) {
-        const manifest = readManifestAt(resolve(entryPath, scoped.name));
-        if (manifest) manifests.push(manifest);
+  // Declared dependencies (npm-installed packages).
+  const pkgJsonPath = resolve(extensionsDir, "package.json");
+  if (existsSync(pkgJsonPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
+      const deps = pkg.dependencies as Record<string, unknown> | undefined;
+      if (deps && typeof deps === "object") {
+        for (const dep of Object.keys(deps)) ids.add(dep);
       }
+    } catch {
+      // Invalid package.json → treat as if there were no declared dependencies; symlink
+      // scanning below still finds dev-linked extensions.
+    }
+  }
+
+  // Symlinked entries under node_modules — dev-links, which never appear in `dependencies`.
+  const entries = await readdir(nodeModulesDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === ".bin") continue;
+
+    if (entry.name.startsWith("@")) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const scopeDir = resolve(nodeModulesDir, entry.name);
+      const scopedEntries = await readdir(scopeDir, { withFileTypes: true });
+      for (const scoped of scopedEntries) {
+        if (scoped.isSymbolicLink()) ids.add(`${entry.name}/${scoped.name}`);
+      }
+    } else if (entry.isSymbolicLink()) {
+      ids.add(entry.name);
+    }
+  }
+
+  const manifests: ExtensionManifest[] = [];
+  for (const id of ids) {
+    const manifest = readManifestAt(resolve(nodeModulesDir, id));
+    if (!manifest) continue;
+    if (hasPpmMarker(manifest)) {
+      manifests.push(manifest);
     } else {
-      const manifest = readManifestAt(entryPath);
-      if (manifest) manifests.push(manifest);
+      // A package the user installed or linked on purpose that is not an extension: say so,
+      // or it looks like PPM lost it.
+      log.warn(`Skipped ${id}: its package.json has no "ppm", "contributes" or "engines.ppm" field`);
     }
   }
   return manifests;
+}
+
+/**
+ * Where the bundled `packages/ext-*` extensions live on disk.
+ *
+ * They are loaded as source by the extension host, so they ship *beside* the install rather
+ * than inside it. Walking up from `import.meta.dir` finds them when PPM runs from source, but
+ * a compiled binary reports `/$bunfs/root` — its embedded filesystem — and the same walk lands
+ * on `/packages`, an absolute path at the filesystem root that cannot exist. Every bundled
+ * extension then vanished with no error and no log line: the panel simply said none were
+ * installed. Fall back to the directory holding the executable (`<install>/dist/ppm` →
+ * `<install>/packages`).
+ */
+export function bundledExtensionsDir(
+  moduleDir: string = import.meta.dir,
+  execPath: string = process.execPath,
+): string {
+  const fromSource = resolve(moduleDir, "../../packages");
+  if (existsSync(fromSource)) return fromSource;
+  return resolve(dirname(execPath), "../packages");
 }
 
 export type BundledManifest = ExtensionManifest & { _dir: string };

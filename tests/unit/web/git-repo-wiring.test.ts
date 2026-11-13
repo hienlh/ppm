@@ -71,11 +71,17 @@ describe("extension commands are dispatched with a resolved path", () => {
       const source = readFileSync(resolve(WEB, file), "utf8");
       return source.includes('new CustomEvent("ext:command:execute"');
     });
-    // Two more dispatch, but invent no path: `status-bar.tsx` sends no
-    // arguments at all, and `extension-tree-view.tsx` forwards the arguments
-    // the extension itself put on the tree item. Both are pre-existing
-    // behaviour and neither has a project path to get wrong.
-    const NO_PATH = ["components/layout/status-bar.tsx", "components/extensions/extension-tree-view.tsx"];
+    // Three more dispatch, but invent no path: `status-bar.tsx` sends no
+    // arguments at all, `extension-tree-dispatch.ts` forwards the arguments
+    // the extension itself put on the tree item, and
+    // `extension-deep-link-runner.ts` forwards the arguments a notification's
+    // link carried, which the extension chose. None has a project path to get
+    // wrong.
+    const NO_PATH = [
+      "components/layout/status-bar.tsx",
+      "components/extensions/extension-tree-dispatch.ts",
+      "lib/extension-deep-link-runner.ts",
+    ];
     expect(found.sort()).toEqual([...DISPATCHERS, ...NO_PATH].sort());
   });
 });

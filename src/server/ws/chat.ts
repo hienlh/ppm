@@ -12,6 +12,8 @@ import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 import type { TraceOrigin } from "../../shared/session-trace.ts";
+import { sessionBindingFor } from "../../services/extension-session-binding.service.ts";
+import { clampBoundPermissionMode } from "../../providers/extension-tool-policy.ts";
 // File watching and app-wide broadcasts are owned by the global WS (`./global.ts`)
 // — a chat socket is not guaranteed to exist now that chat tabs mount lazily.
 import { broadcastGlobalEvent } from "./global.ts";
@@ -244,9 +246,22 @@ const FINAL_TEXT_KEEP = 1_000;
  * the turn's own later events out of a reconnecting client's replay.
  */
 const MAX_NESTED_TURN_EVENTS = 2_000;
+/**
+ * How long an approval raised by an extension-started turn waits for a person when a
+ * browser is attached. Nobody asked for the turn from a screen, so an unanswered card must
+ * not hold the subprocess for good; with no browser attached it is denied at once.
+ */
+export const EXTENSION_APPROVAL_DEADLINE_MS = 120_000;
+let extensionApprovalDeadlineMs = EXTENSION_APPROVAL_DEADLINE_MS;
+/** Shorten the deadline for a test; `null` restores the real one. */
+export function setExtensionApprovalDeadlineMs(ms: number | null): void {
+  extensionApprovalDeadlineMs = ms ?? EXTENSION_APPROVAL_DEADLINE_MS;
+}
 const BUFFERABLE_TYPES = new Set([
   "text", "thinking", "tool_use", "tool_result",
-  "approval_request", "error", "done", "account_info", "account_retry",
+  // A denial is buffered right after the request an unattended extension turn raised, so a
+  // device replaying the turn later sees an answered card rather than a live question.
+  "approval_request", "approval_resolved", "error", "done", "account_info", "account_retry",
   "team_detected",
 ]);
 
@@ -394,6 +409,127 @@ export interface SessionEntry {
    * nothing would ever free its subprocess, since those run only when a browser socket leaves.
    */
   socketless?: boolean;
+  /** The extension whose turn is running (`turnOrigin === "extension"`), for the per-caller cap. */
+  extensionId?: string;
+  /** Whether the running extension turn may send the "Chat completed" push when it ends. */
+  notifyOnDone?: boolean;
+  /**
+   * An extension's message queued behind the running turn: what its own turn gets (caller,
+   * budget, push) once the provider starts it, which is when the running turn ends.
+   */
+  queuedExtensionTurn?: ExtensionTurnSpec;
+  /**
+   * One-shot callbacks fired when the running turn ends (`endTurn`). The consumer loop
+   * outlives turns, so anything scoped to one turn — a wall-clock budget — must hang off this
+   * rather than off the loop's own end.
+   */
+  onTurnEnd?: Set<() => void>;
+  /** The timers that deny an extension turn's approvals nobody answered, by request id. */
+  approvalDeadlines?: Map<string, ReturnType<typeof setTimeout>>;
+  /** The first error the running (or last) turn reported, for an extension polling `chat:state`. */
+  lastError?: string;
+  /** The extension that bound this chat changed what it bound; restart the subprocess when idle. */
+  bindingRestartPending?: boolean;
+}
+
+/** An extension's message refused because the next turn already belongs to someone else. */
+export const EXTENSION_QUEUE_TAKEN = "BUSY_QUEUED";
+
+/** What an extension's turn carries besides its message (see {@link deliverExtensionMessage}). */
+export interface ExtensionTurnSpec {
+  /** The extension behind the call; a REST caller shares one name. */
+  extensionId: string;
+  notifyOnDone: boolean;
+  /** Arms the turn's wall-clock budget once the turn is running; tied to that turn's end. */
+  onStart?: (entry: SessionEntry) => void;
+}
+
+/**
+ * Fire and clear the running turn's one-shot callbacks and its extension state. Called once per
+ * ended turn — from `emitTurnEnded` and from the consumer's teardown — so nothing scoped to a turn
+ * survives the turn that armed it. Idempotent.
+ */
+function endTurn(sessionId: string, entry: SessionEntry): void {
+  for (const timer of entry.approvalDeadlines?.values() ?? []) clearTimeout(timer);
+  entry.approvalDeadlines = undefined;
+  entry.extensionId = undefined;
+  entry.notifyOnDone = undefined;
+  const callbacks = entry.onTurnEnd;
+  entry.onTurnEnd = undefined;
+  if (!callbacks) return;
+  for (const cb of callbacks) {
+    try { cb(); } catch (e) { log.error(`session=${sessionId} onTurnEnd callback threw: ${(e as Error).message}`); }
+  }
+}
+
+/** The extension's turn is running now: its caller, its push and its budget apply. */
+function beginExtensionTurn(entry: SessionEntry, spec: ExtensionTurnSpec): void {
+  entry.extensionId = spec.extensionId;
+  entry.notifyOnDone = spec.notifyOnDone;
+  entry.lastError = undefined;
+  spec.onStart?.(entry);
+}
+
+/** An extension started the running turn and no browser is attached to answer for it. */
+function unattendedExtensionTurn(entry: SessionEntry): boolean {
+  return entry.turnOrigin === "extension" && entry.clients.size === 0;
+}
+
+/**
+ * A browser is attached to an extension's turn, so its approval is shown as usual — but only for
+ * `EXTENSION_APPROVAL_DEADLINE_MS`, after which it is denied the way an unattended one is,
+ * whether it is on screen by then or still queued behind another card.
+ */
+function armExtensionApprovalDeadline(sessionId: string, entry: SessionEntry, requestId: string): void {
+  if (entry.turnOrigin !== "extension") return;
+  const deadlines = (entry.approvalDeadlines ??= new Map());
+  const previous = deadlines.get(requestId);
+  if (previous) clearTimeout(previous);
+  deadlines.set(requestId, setTimeout(() => {
+    entry.approvalDeadlines?.delete(requestId);
+    if (activeSessions.get(sessionId) !== entry) return;
+    const event = [entry.pendingApprovalEvent, ...(entry.approvalQueue ?? [])].find((e) => e?.requestId === requestId);
+    if (!event) return;
+    log.info(`session=${sessionId} extension turn: approval ${requestId} unanswered after ${extensionApprovalDeadlineMs / 1000}s, denied`);
+    const reason = APPROVAL_END.extensionDeadline;
+    // PPM's own approval is settled through its broker, which takes the card off every device
+    // itself; a provider's is refused here, as the extension's door, and its card announced gone.
+    const ppm = isPpmApproval(event);
+    if (!ppm) chatService.resolveApproval(entry.providerId, sessionId, requestId, false, undefined, { reason: reason.code, origin: "extension" });
+    if (approvals.clear(sessionId, entry, requestId, reason, ppm ? { deny: true } : { announce: true })) {
+      broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
+    }
+  }, extensionApprovalDeadlineMs));
+}
+
+/**
+ * The registry's project path for a session — what a running turn actually uses, which can
+ * differ from the DB row for an entry made with no row at all.
+ */
+export function getActiveSessionProjectPath(sessionId: string): string | undefined {
+  return activeSessions.get(resolveMigratedSession(sessionId))?.projectPath;
+}
+
+/** Whose the session's running (or last) turn is; undefined with no entry. */
+export function getSessionTurnOrigin(sessionId: string): ChatMessageOrigin | undefined {
+  return activeSessions.get(resolveMigratedSession(sessionId))?.turnOrigin;
+}
+
+/** What an extension polling a session needs: whether a turn runs, its phase, its first error. */
+export function getSessionTurnState(sessionId: string): { running: boolean; phase: SessionPhase; lastError?: string } {
+  const entry = activeSessions.get(resolveMigratedSession(sessionId));
+  if (!entry) return { running: false, phase: "idle" };
+  return { running: entry.phase !== "idle", phase: entry.phase, ...(entry.lastError && { lastError: entry.lastError }) };
+}
+
+/** How many sessions other than `except` have a turn of `extensionId` in flight. */
+export function countExtensionTurnsInFlight(extensionId: string, except: string): number {
+  let n = 0;
+  for (const [id, entry] of activeSessions) {
+    if (id === except || entry.phase === "idle") continue;
+    if (entry.turnOrigin === "extension" && entry.extensionId === extensionId) n++;
+  }
+  return n;
 }
 
 /**
@@ -702,6 +838,31 @@ export function collabLiveState(sessionId: string): LiveSessionState | null {
 }
 setCollabIdleProbe((sessionId) => (entryOf(sessionId)?.phase ?? "idle") === "idle");
 
+/** When each pending approval took the session's slot. Keyed by the event, so it goes with it. */
+const approvalHeldAt = new WeakMap<object, number>();
+
+export interface SessionLiveState {
+  phase: SessionPhase;
+  providerId: string;
+  projectName?: string;
+  pending: { tool: string; requestId: string; since: number } | null;
+}
+
+/** Every session this process holds in memory: its phase and what it is waiting on, if anything. */
+export function listSessionLiveState(): Map<string, SessionLiveState> {
+  const live = new Map<string, SessionLiveState>();
+  for (const [sessionId, entry] of activeSessions) {
+    const ev = entry.pendingApprovalEvent;
+    live.set(sessionId, {
+      phase: entry.phase,
+      providerId: entry.providerId,
+      ...(entry.projectName ? { projectName: entry.projectName } : {}),
+      pending: ev ? { tool: ev.tool, requestId: ev.requestId, since: approvalHeldAt.get(ev) ?? Date.now() } : null,
+    });
+  }
+  return live;
+}
+
 /**
  * App-wide broadcasts live on the global bus (`/ws/global`), not on chat sockets:
  * chat tabs mount lazily, so a chat socket is not guaranteed to exist. Re-exported
@@ -795,6 +956,8 @@ const approvals: PendingApprovals = createPendingApprovals({
   show: (sessionId, ev) => {
     const entry = activeSessions.get(sessionId);
     if (!entry) return;
+    // How long the card has stood in front of the user, for the sessions' status (`listSessionLiveState`).
+    approvalHeldAt.set(ev, Date.now());
     if (isPpmApproval(ev)) {
       // Not buffered into the turn's replay: the tool call's own card already shows what is
       // asked, and a device that connects later reads the approval from `session_state`. Told to
@@ -880,7 +1043,11 @@ function ppmApprovalEvent(event: { requestId: string; tool: string; input: unkno
 function announcePpmApproval(sessionId: string, event: { type: string; requestId: string; tool: string; input: unknown }): boolean {
   const entry = activeSessions.get(sessionId);
   if (!entry) return false;
+  // An extension's turn with nobody watching: the broker settles it as unanswerable rather than
+  // holding a card for ten minutes that no device shows.
+  if (unattendedExtensionTurn(entry)) return false;
   approvals.offer(sessionId, entry, ppmApprovalEvent(event));
+  armExtensionApprovalDeadline(sessionId, entry, event.requestId);
   return true;
 }
 
@@ -895,10 +1062,14 @@ function ppmApprovalResolved(sessionId: string, requestId: string, approved: boo
   approvals.clear(sessionId, entry, requestId, answer === null ? APPROVAL_END.requestEnded : APPROVAL_END.answered, { approved });
   broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
 }
-setDbApprovalChat({
-  announce: (sessionId, event: DbApprovalEvent) => announcePpmApproval(sessionId, event),
-  resolved: (sessionId, requestId, approved) => ppmApprovalResolved(sessionId, requestId, approved),
-}, resolveMigratedSession);
+/** Hand `db_execute` approvals to this chat; again in a test that swapped in a chat of its own. */
+export function registerDbApprovalChat(): void {
+  setDbApprovalChat({
+    announce: (sessionId, event: DbApprovalEvent) => announcePpmApproval(sessionId, event),
+    resolved: (sessionId, requestId, approved) => ppmApprovalResolved(sessionId, requestId, approved),
+  }, resolveMigratedSession);
+}
+registerDbApprovalChat();
 
 /** A session tool's card appeared in, or left, a session: the tracking bar follows it app-wide. */
 function collabApprovalGlobal(sessionId: string, event: Omit<SessionCollabApprovalEvent, "type" | "projectName" | "sessionId">): void {
@@ -954,7 +1125,7 @@ function broadcast(sessionId: string, event: unknown): void {
 }
 
 /** Buffer event in turnEvents + broadcast to all clients */
-function bufferAndBroadcast(sessionId: string, event: unknown): void {
+export function bufferAndBroadcast(sessionId: string, event: unknown): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
   const evType = (event as any)?.type;
@@ -1184,15 +1355,29 @@ function emitTurnEnded(
   entry: SessionEntry,
   outcome: "done" | "stopped" | "failed",
   detail: { finalText?: string; stop?: TurnStop; error?: string },
+  how: { turnStillRunning?: boolean } = {},
 ): void {
+  if (how.turnStillRunning) {
+    // A PPM builtin answered inside a running turn: listeners hear it, the running turn is untouched.
+    chatLifecycle.emit("turn_ended", {
+      sessionId, outcome, ...detail, projectName: entry.projectName ?? "", providerId: entry.providerId,
+    });
+    return;
+  }
   const cancelledBy = entry.cancelledBy;
   entry.cancelledBy = undefined;
+  // What was armed for this turn (an extension's budget, its approval deadlines) ends with it.
+  endTurn(sessionId, entry);
   chatLifecycle.emit("turn_ended", {
     sessionId, outcome, ...detail, ...(cancelledBy ? { cancelledBy } : {}),
     projectName: entry.projectName ?? "", providerId: entry.providerId,
   });
   // A message queued behind the turn that ended opens the next one, as its sender's.
   turnOriginAfterTurn(entry);
+  // An extension's message was that one: its caller, push and budget apply from now.
+  const queued = entry.queuedExtensionTurn;
+  entry.queuedExtensionTurn = undefined;
+  if (queued && entry.turnOrigin === "extension") beginExtensionTurn(entry, queued);
 }
 
 /**
@@ -1279,6 +1464,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
   entry.turnEvents = [];
   entry.nestedBuffered = 0;
   entry.finalText = undefined;
+  entry.lastError = undefined;
   setPhase(sessionId, "connecting");
 
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -1560,6 +1746,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       } else if (evType === "error") {
         const errorDetail = ev.message ?? JSON.stringify(ev).slice(0, 500);
         log.error(`session=${sessionId} error: ${errorDetail}`);
+        entry.lastError ??= String(errorDetail).slice(0, 500);
       } else if (evType === "done") {
         // Turn complete — transition to idle, clear buffer for next turn
         if (ev.contextWindowPct != null) lastContextWindowPct = ev.contextWindowPct;
@@ -1623,6 +1810,11 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // being told elsewhere (the turn was answered on Telegram); the unread mark above stays.
         if (!stopped && isSpawned(sessionId)) {
           log.debug(`session=${sessionId} turn done: no notification for an AI-created session`);
+        } else if (entry.turnOrigin === "extension" && !entry.notifyOnDone) {
+          // An extension's turn pushes "Chat completed" only when asked: a push keyed on this
+          // session would replace the extension's own notification for it, and a night run has
+          // nobody to tell. The unread mark above stays.
+          log.debug(`session=${sessionId} turn done: no notification for an extension's turn`);
         } else if (!isNotificationSuppressed(sessionId, "done")) import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
@@ -1654,11 +1846,24 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           log.info(`session=${sessionId} approval for ${String(ev.tool).slice(0, 60)} refused without asking: ${UNATTENDED_TURN_REFUSAL}`);
           continue;
         }
+        // An extension's turn with no device showing the chat: nobody is there to answer, and the
+        // provider's wait has no timeout of its own, so it is denied at once — before the slot,
+        // the unread mark and the push would be set. The request and its denial are buffered
+        // together, so a device that replays the turn later sees an answered card.
+        if (unattendedExtensionTurn(entry)) {
+          const reason = APPROVAL_END.extensionUnattended;
+          chatService.resolveApproval(entry.providerId, sessionId, ev.requestId, false, undefined, { reason: reason.code, origin: "extension" });
+          log.info(`session=${sessionId} extension turn: ${String(ev.tool).slice(0, 60)} approval ${ev.requestId} denied, no device attached`);
+          bufferAndBroadcast(sessionId, { ...providerEvent, approved: false });
+          bufferAndBroadcast(sessionId, { type: "approval_resolved", requestId: ev.requestId, approved: false, answers: null });
+          continue;
+        }
         // A question card carries its questions normalized, so every surface answers it by id:
         // Codex sends them so (read from its own request); Claude's are read off the tool input.
         const questions = questionsFromWire(rawQuestions)
           ?? (ev.tool === "AskUserQuestion" ? normalizeClaudeQuestions(ev.input) : undefined);
         approvals.offer(sessionId, entry, { ...providerEvent, ...(questions ? { questions } : {}) } as PendingApprovalEvent);
+        armExtensionApprovalDeadline(sessionId, entry, ev.requestId);
         continue;
       } else if (evType === "turn_started") {
         rememberTurnBinding(entry, ev);
@@ -1738,6 +1943,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           broadcast(sessionId, { type: "compact_status", status: "done" });
         }
         setPhase(sessionId, "idle");
+        // A binding change waiting for this idle moment restarts the subprocess now; deferred so
+        // the drop does not close the query from inside the loop that is reading it.
+        if (entry.bindingRestartPending) setTimeout(() => restartForBindingIfIdle(sessionId), 0);
         // Waits on this session are judged, and a created session stops counting as starting.
         collabTurnEnded(sessionId);
         // A renewal that landed while this turn ran left its subprocess holding a revoked
@@ -1769,6 +1977,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
   } catch (e) {
     const errMsg = (e as Error).message;
     log.error(`session=${sessionId} provider=${providerId} consumer failed:`, e);
+    entry.lastError ??= String(errMsg).slice(0, 500);
     bufferAndBroadcast(sessionId, { type: "error", message: errMsg });
     // ChatService wrote `run_failed` and flushed the trace before the throw reached here.
     const turnStop = lastTurnStop(sessionId);
@@ -1800,6 +2009,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     collabTurnEnded(sessionId);
     if (failure) emitTurnEnded(sessionId, entry, "failed", failure);
     else if (endedMidTurn) emitTurnEnded(sessionId, entry, "stopped", {});
+    // The consumer is gone: nothing armed for a turn outlives it, and nothing queued behind the
+    // last turn will run on it.
+    endTurn(sessionId, entry);
+    entry.queuedExtensionTurn = undefined;
     // Cleanup bash output spies
     bashOutputSpy.stopAllForSession(sessionId);
     // SDK subprocess teardown kills its background children — reflect as stopped
@@ -1831,7 +2044,9 @@ interface DeliverOpts {
    * device either.
    * Another session's AI, the PPM Assistant included, comes in through `deliverToSession`.
    */
-  origin: "ws" | MessageServerOrigin;
+  origin: "ws" | MessageServerOrigin | "extension";
+  /** With `extension` only: the turn the message opens or waits to open (see `deliverExtensionMessage`). */
+  extension?: ExtensionTurnSpec;
   sender?: ChatWsSocket;
   /** The channel the user typed on, when it is not a PPM screen. */
   channel?: "telegram";
@@ -1868,7 +2083,10 @@ const busyForWatch = (entry: SessionEntry): boolean =>
  * to what will actually run, echoed to the session's other devices, then started as a turn or
  * pushed into the running one.
  */
-async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<DeliverResult> {
+/** A delivery as the server sees it: how the message went in, which the public answer leaves out. */
+type MessageDelivery = { ok: true; sessionId: string; delivered?: SessionDelivery; newConsumer?: boolean } | { ok: false; error: string };
+
+async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<MessageDelivery> {
   // Counted from before the first await until the message has started or joined a turn (or was
   // refused), so a watch report checking in between sees the chat as busy.
   if (opts.origin === "watch") return deliverMessage(sessionId, entry, text, opts);
@@ -1880,7 +2098,7 @@ async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: 
   }
 }
 
-async function deliverMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<DeliverResult> {
+async function deliverMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<MessageDelivery> {
   const providerId = entry.providerId;
   const parsed = { content: text };
   // Only the user's own messages (typed in PPM or on Telegram) may push a waiting card aside.
@@ -1957,8 +2175,9 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
       if (response) {
         broadcast(sessionId, { type: "text", content: response });
         broadcast(sessionId, { type: "done", resultSubtype: "builtin", numTurns: 0 });
-        // A listener waiting on the message's turn gets its end, though no provider turn ran.
-        emitTurnEnded(sessionId, entry, "done", { finalText: response.slice(0, FINAL_TEXT_KEEP) });
+        // A listener waiting on the message's turn gets its end, though no provider turn ran. Typed
+        // into a running turn, it ends nothing of that turn: its owner, budget and queue stay.
+        emitTurnEnded(sessionId, entry, "done", { finalText: response.slice(0, FINAL_TEXT_KEEP) }, { turnStillRunning: turnRunning(entry) });
         return { ok: true, sessionId };
       }
     }
@@ -1989,33 +2208,76 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
     origin: opts.origin, scripted: !!opts.traceOrigin, assistant: !!opts.traceOrigin && isAssistantSession(sessionId, entry.projectPath),
     priority: opts.priority ?? "next",
   };
-  const wasRunning = turnRunning(entry);
-  claimTurnOrigin(entry, arriving);
+  let wasRunning = turnRunning(entry);
+  // An extension's message is placed under the session lock instead, where the turn it would
+  // reach is known: a person's message still resuming the session counts as no turn out here.
+  const extension = opts.origin === "extension" ? opts.extension : undefined;
+  if (!extension) {
+    const ownerBefore = entry.turnOrigin;
+    claimTurnOrigin(entry, arriving);
+    // A person joined an extension's running turn and it is theirs now: the extension's budget
+    // and approval deadlines no longer apply to it.
+    if (ownerBefore === "extension" && entry.turnOrigin !== "extension" && turnRunning(entry)) endTurn(sessionId, entry);
+  }
   // What this device shows, for an Assistant session's turn. Validated and cleaned by
   // chatService, which ignores it for every other session; only an object is passed on.
   const rawSummary = opts.uiSummary as unknown;
   const uiSummary = rawSummary && typeof rawSummary === "object" && !Array.isArray(rawSummary) ? rawSummary as UiSummary : undefined;
 
-  const result = await withSessionLock(sessionId, () => submitToSession(sessionId, entry, parsed.content, {
-    origin: opts.traceOrigin ?? opts.origin,
-    ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
-    images: opts.images,
-    imagePaths: opts.imagePaths,
-    priority: opts.priority ?? "next",
-    ...(opts.sender ? { sender: opts.sender } : {}),
-    receivedAt: opts.receivedAt ?? Date.now(),
-    // Already done above, for the user's own messages only.
-    supersedePendingApproval: false,
-    ...(opts.permissionMode ? { permissionMode: opts.permissionMode } : {}),
-    turnContext: {
-      ...(uiSummary ? { uiSummary } : {}),
-      ...(opts.channel ? { channel: opts.channel } : {}),
-      ...(opts.watchEvents?.length ? { watchEvents: opts.watchEvents } : {}),
-      ...(opts.wakeNews?.length ? { wakeNews: opts.wakeNews } : {}),
-    },
-  }));
+  const result = await withSessionLock(sessionId, async () => {
+    let priority = opts.priority ?? "next";
+    let ownTurn = false;
+    if (extension) {
+      // It never steers or takes over a running turn that is not its own: behind one it waits
+      // as `later`, and owns only the turn it opens.
+      wasRunning = turnRunning(entry);
+      ownTurn = wasRunning && entry.turnOrigin === "extension" && entry.extensionId === extension.extensionId;
+      // The turn that opens after the running one has one owner. One already queued for someone
+      // else (a person's `later` message, another extension) keeps it: this message is refused
+      // rather than run in a turn whose approvals and budget belong to another.
+      // A second message behind a turn that is not its own is refused too: the turn it would join
+      // was set up for the first one.
+      const queuedForOther = (entry.nextTurnOrigin !== undefined && entry.nextTurnOrigin !== "extension")
+        || (!!entry.queuedExtensionTurn && (!ownTurn || entry.queuedExtensionTurn.extensionId !== extension.extensionId));
+      if (wasRunning && queuedForOther) return { ok: false as const, error: EXTENSION_QUEUE_TAKEN };
+      if (wasRunning && !ownTurn) priority = "later";
+      arriving.priority = priority;
+      claimTurnOrigin(entry, arriving);
+    }
+    const submitted = await submitToSession(sessionId, entry, parsed.content, {
+      origin: opts.traceOrigin ?? opts.origin,
+      ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
+      images: opts.images,
+      imagePaths: opts.imagePaths,
+      priority,
+      ...(opts.sender ? { sender: opts.sender } : {}),
+      receivedAt: opts.receivedAt ?? Date.now(),
+      // Already done above, for the user's own messages only.
+      supersedePendingApproval: false,
+      ...(opts.permissionMode ? { permissionMode: opts.permissionMode } : {}),
+      turnContext: {
+        ...(uiSummary ? { uiSummary } : {}),
+        ...(opts.channel ? { channel: opts.channel } : {}),
+        ...(opts.watchEvents?.length ? { watchEvents: opts.watchEvents } : {}),
+        ...(opts.wakeNews?.length ? { wakeNews: opts.wakeNews } : {}),
+      },
+    });
+    // Still under the lock, so the next message sees whose turn this is: an extension's turn it
+    // opened is running now; one queued behind another turn starts when that turn ends.
+    if (extension && submitted.ok) {
+      if (!wasRunning && submitted.delivered === "started") beginExtensionTurn(entry, extension);
+      else if (submitted.delivered === "queued") entry.queuedExtensionTurn = extension;
+    }
+    return submitted;
+  });
   if (result.ok) noteQueuedTurnOrigin(entry, arriving, result.delivered, wasRunning);
-  return result.ok ? { ok: true, sessionId } : result;
+  // A person's own message queued behind an extension's: the turn they both open is the person's,
+  // so its approvals are shown to them rather than denied, and no extension budget cuts it short.
+  if (result.ok && result.delivered === "queued" && fromUser && !opts.traceOrigin && entry.nextTurnOrigin === "extension") {
+    entry.nextTurnOrigin = arriving.origin;
+    entry.queuedExtensionTurn = undefined;
+  }
+  return result.ok ? { ok: true, sessionId, delivered: result.delivered, ...(result.newConsumer ? { newConsumer: true } : {}) } : result;
 }
 
 /** What the AI hears when the user sends a message instead of answering one of PPM's approvals. */
@@ -2191,7 +2453,7 @@ function answerApprovalCore(
  * Stops a session's running turn: its subprocess is torn down, so the next message resumes.
  * `traceOrigin` is the door an in-process caller of the chat socket named, when one did.
  */
-function cancelTurnCore(sessionId: string, entry: SessionEntry, origin: ChatMessageOrigin, traceOrigin?: TraceOrigin): void {
+function cancelTurnCore(sessionId: string, entry: SessionEntry, origin: ChatMessageOrigin, traceOrigin?: TraceOrigin, reason = `${origin}_cancel`): void {
   const phase = entry.phase ?? "unknown";
   const who = origin === "ws" ? "FE" : origin;
   log.info(`session=${sessionId} ${origin === "ws" ? "WS" : origin} cancel received from ${who} (phase=${phase})`);
@@ -2204,7 +2466,48 @@ function cancelTurnCore(sessionId: string, entry: SessionEntry, origin: ChatMess
   // An Assistant endpoint request is withdrawn here rather than left to the provider closing
   // its HTTP call: the card goes at once and its tool answers "not run".
   approvals.clearAll(sessionId, entry, APPROVAL_END.cancelled, { only: "endpoint" });
-  chatService.abortQuery(entry.providerId, sessionId, `${origin}_cancel`, traceOrigin ?? origin);
+  chatService.abortQuery(entry.providerId, sessionId, reason, traceOrigin ?? origin);
+}
+
+/**
+ * An extension's message into a chat it created, through the same door a typed message takes
+ * (`deliverUserMessage`: alias rewrite, skill sigil, echo, builtins, the consumer), under the
+ * origin `extension`. It never steers or takes over a running turn that is not its own: behind
+ * another turn it waits as `later`, and its caller, budget and push apply from the moment its own
+ * turn starts. It answers no waiting card either: only the user's own message does that.
+ */
+export async function deliverExtensionMessage(
+  sessionId: string,
+  entry: SessionEntry,
+  text: string,
+  spec: ExtensionTurnSpec & {
+    images?: Array<{ data: string; mediaType: string }>;
+    imagePaths?: string[];
+    replyTo?: ReplyReference;
+    priority?: "now" | "next" | "later";
+  },
+): Promise<MessageDelivery> {
+  const { images, imagePaths, replyTo, priority, ...turn } = spec;
+  return deliverUserMessage(sessionId, entry, text, {
+    origin: "extension",
+    extension: turn,
+    ...(images?.length ? { images } : {}),
+    ...(imagePaths?.length ? { imagePaths } : {}),
+    ...(replyTo ? { replyTo } : {}),
+    priority: priority === "later" ? "later" : "next",
+    receivedAt: Date.now(),
+  });
+}
+
+/**
+ * Stop the session's running turn on an extension's request: its `chat:cancel` (reason
+ * `extension_cancel`) or the REST cancel (`rest_cancel`), which the trace tells apart.
+ */
+export function cancelExtensionTurn(asked: string, providerId: string, reason: "extension_cancel" | "rest_cancel" = "extension_cancel"): void {
+  const sessionId = resolveMigratedSession(asked);
+  const entry = activeSessions.get(sessionId);
+  if (entry) cancelTurnCore(sessionId, entry, "extension", "extension", reason);
+  else chatService.abortQuery(providerId, sessionId, reason, "extension");
 }
 
 function liveChatState(entry: SessionEntry): LiveChatState {
@@ -2264,7 +2567,7 @@ setChatControl({
     });
     // Nobody is watching: the entry goes once it is idle (a running turn re-arms this when it ends).
     if (entry.clients.size === 0) startCleanupTimer(sessionId);
-    return result;
+    return result.ok ? { ok: true, sessionId: result.sessionId } : result;
   },
   answerApproval(asked, requestId, answer, origin) {
     const sessionId = resolveMigratedSession(asked);
@@ -2297,12 +2600,63 @@ setChatControl({
  * `defaultPermissionMode` is what a message carrying no mode runs in when nothing is stored —
  * the browser shows it but never sends it.
  */
-function greetingPermission(sessionId: string, providerId: string): { permissionMode: string | null; defaultPermissionMode: string } {
+function greetingPermission(sessionId: string, providerId: string): { permissionMode: string | null; defaultPermissionMode: string; boundPermissionMode: string | null } {
   let stored: string | null = null;
   try { stored = getSessionPermissionMode(sessionId); } catch (e) {
     log.warn(`session=${sessionId} could not read the stored permission mode: ${(e as Error).message}`);
   }
-  return { permissionMode: stored, defaultPermissionMode: providerDefaultMode(providerId) };
+  return {
+    permissionMode: stored, defaultPermissionMode: providerDefaultMode(providerId),
+    boundPermissionMode: boundPermissionModeFor(sessionId, stored ?? undefined),
+  };
+}
+
+/**
+ * The mode a chat an extension bound with a tool policy really runs in, which the picker does
+ * not show (bypass and plan are clamped); null for every other chat, and when the stored
+ * binding cannot be read — the turn itself refuses that one.
+ */
+function boundPermissionModeFor(sessionId: string, picked: string | undefined): string | null {
+  try {
+    if (!sessionBindingFor(sessionId)?.toolPolicy) return null;
+    return clampBoundPermissionMode(picked ?? getSessionPermissionMode(sessionId) ?? undefined);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Put a changed extension binding in force. A live subprocess keeps the system prompt, tools
+ * and policy it was started with, so it is restarted like a model switch restarts it: at once
+ * when the session is idle, otherwise at the first idle moment — the end of the running turn,
+ * or of a later one while background work is still running, since that is never killed for
+ * this. Until then the session runs under the binding it started with. Answers whether the
+ * restart is still to come.
+ */
+export function applyBindingChange(sessionId: string): { pendingRestart: boolean } {
+  const id = resolveMigratedSession(sessionId);
+  const entry = activeSessions.get(id);
+  // No entry means no subprocess of ours: dropping the entry is what ends one.
+  if (!entry) return { pendingRestart: false };
+  entry.bindingRestartPending = true;
+  restartForBindingIfIdle(id);
+  return { pendingRestart: entry.bindingRestartPending === true };
+}
+
+function restartForBindingIfIdle(sessionId: string): void {
+  const entry = activeSessions.get(sessionId);
+  if (!entry?.bindingRestartPending) return;
+  // A message on its way in, or queued behind the turn that just ended, would be lost with the
+  // subprocess; a waiting card would lose its question.
+  const busy = entry.phase !== "idle" || !!entry.pendingApprovalEvent || (entry.approvalQueue?.length ?? 0) > 0
+    || (entry.messagesArriving ?? 0) > 0 || entry.nextTurnOrigin !== undefined || hasBackgroundWork(sessionId);
+  if (busy) return;
+  entry.bindingRestartPending = false;
+  dropIdleSubprocess(
+    sessionId,
+    "extension_binding",
+    "Subprocess restarted: the extension that manages this chat changed its instructions, tools or policy, the next message starts under them",
+  );
 }
 
 /**
@@ -2422,7 +2776,8 @@ export interface SubmitToSessionOpts {
   turnContext?: TurnContext;
 }
 
-export type SubmitResult = { ok: true; delivered: SessionDelivery } | { ok: false; error: string };
+/** `newConsumer` when the message started the session's consumer rather than joining a live one. */
+export type SubmitResult = { ok: true; delivered: SessionDelivery; newConsumer?: boolean } | { ok: false; error: string };
 
 /**
  * What a follow-up handed to the live stream right now will do. Codex says for itself whether
@@ -2564,7 +2919,7 @@ async function handOffToSession(sessionId: string, entry: SessionEntry, content:
       }, 0);
     });
     await started;
-    return { ok: true, delivered: "started" };
+    return { ok: true, delivered: "started", newConsumer: true };
   }
 
   // Follow-up: push into existing generator via provider. A `later` message never joins the
@@ -2863,6 +3218,7 @@ export const chatWebSocket = {
         promptCache: promptCacheSnapshot(sessionId, entry),
         turnStop: entry.phase === "idle" ? lastTurnStop(sessionId) : null,
         turnBindings: entry.turnBindings ?? [],
+        boundPermissionMode: boundPermissionModeFor(sessionId, entry.permissionMode),
       }));
       if (entry.phase !== "idle") {
         sendTurnEvents(sessionId, ws);
@@ -2931,7 +3287,7 @@ export const chatWebSocket = {
       // The browser's own id for this message, handed back on the `turn_started` it opens.
       const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128
         ? parsed.clientMessageId : undefined;
-      await deliverUserMessage(sessionId, entry, parsed.content, {
+      const delivered = await deliverUserMessage(sessionId, entry, parsed.content, {
         origin: "ws",
         sender: ws,
         images: parsed.images,
@@ -2945,6 +3301,11 @@ export const chatWebSocket = {
         // An in-process caller (a script schedule) reaches this handler with `ws.data.origin` set.
         ...(ws.data.origin ? { traceOrigin: ws.data.origin } : {}),
       });
+      // A message the session could not take (a resume that failed, a chat closed because the
+      // extension that bound it was removed) says why on the device that sent it.
+      if (!delivered.ok) {
+        try { ws.send(JSON.stringify({ type: "error", message: delivered.error })); } catch { evictClient(entry, ws); }
+      }
     } else if (parsed.type === "set_model") {
       // Persist per-session model override. If an idle subprocess is alive,
       // abort it so the next message recreates the query with the new model

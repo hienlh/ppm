@@ -172,4 +172,8 @@ export const APPROVAL_END = {
   superseded: { code: "superseded_by_message", message: "The user sent another message instead of answering; not run." },
   cancelled: { code: "ws_cancel", message: "The user stopped the turn; not run." },
   sessionClosed: { code: "session_closed", message: "The chat was closed before the user answered; not run." },
+  /** An extension started the turn and no device was showing the chat to answer it. */
+  extensionUnattended: { code: "extension_turn_unattended", message: "An extension started this turn and nobody was there to answer; not run." },
+  /** An extension's turn asked a device that left the card unanswered past the deadline. */
+  extensionDeadline: { code: "extension_approval_deadline", message: "Nobody answered within the time an extension's turn allows; not run." },
 } satisfies Record<string, ApprovalEndReason>;

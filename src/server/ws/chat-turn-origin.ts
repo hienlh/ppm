@@ -36,9 +36,13 @@ export const ownerOf = (m: ArrivingMessage): ChatMessageOrigin => (m.scripted &&
 /** Whether the chat has a turn running that a message would reach rather than open. */
 export const turnRunning = (entry: TurnOriginEntry): boolean => !!entry.isStreamingActive && entry.phase !== "idle";
 
-/** Before the message is handed over: sets the owner when it opens a turn or the user joins one. */
+/**
+ * Before the message is handed over: sets the owner when it opens a turn or the user joins one.
+ * An extension's message never takes over a running turn — a person's above all keeps its owner,
+ * its approvals and its "done" push; it owns only a turn it opens.
+ */
 export function claimTurnOrigin(entry: TurnOriginEntry, m: ArrivingMessage): void {
-  const joinsAsUser = !m.scripted && m.priority !== "later";
+  const joinsAsUser = !m.scripted && m.priority !== "later" && m.origin !== "extension";
   if (!turnRunning(entry)) {
     entry.turnOrigin = ownerOf(m);
     // Nothing is queued behind a turn that is not running: an owner left from one is stale.

@@ -11,7 +11,6 @@ import { buildTurnLink } from "@/lib/turn-link";
 import { useComposerTurnRefs } from "@/hooks/use-composer-turn-refs";
 import { useChatJumpStore } from "@/stores/chat-jump-store";
 import { selectInlineImages } from "@/lib/image-resize-limits";
-import { splitAttachmentMarkers } from "@/lib/attachment-marker-split";
 import type { ChatAttemptEvent } from "@/lib/chat-attempt-lifecycle";
 import { useChat } from "@/hooks/use-chat";
 import { useChatPrewarm } from "@/hooks/use-chat-prewarm";
@@ -44,6 +43,7 @@ import { MessageInput, type ChatAttachment, type MessagePriority } from "./messa
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { ChatFooterTools } from "./chat-footer-tools";
+import { buildMessageWithAttachments } from "./build-message-with-attachments";
 import { NewChatProviderGate, useNewChatPreparation } from "./new-chat-provider-gate";
 import { UserBubble } from "./message-user-bubble";
 import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
@@ -503,6 +503,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     mcpNeedsAuth,
     turnStop,
     sessionPermission,
+    boundPermissionMode,
     statusMessage,
     sessionTitle,
     liveAccount,
@@ -1023,54 +1024,6 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     [sessionId, tabId, abandonPendingSend, onBranchSwitch],
   );
 
-  /** Build message content with file references and inline text snippets prepended */
-  const buildMessageWithAttachments = useCallback(
-    (
-      content: string,
-      attachments: ChatAttachment[],
-      inlineImages: Array<{ data: string; mediaType: string }> = [],
-    ): string => {
-      if (attachments.length === 0) return content;
-
-      const parts: string[] = [];
-
-      // Inline text snippets (e.g. terminal output)
-      for (const att of attachments) {
-        if (att.textContent) parts.push(att.textContent);
-      }
-
-      // Server-uploaded file references. An image keeps its path even when the payload rides
-      // along with the message, because the transcript is what the chat re-renders from and
-      // the path is the only thing in it a thumbnail can be drawn from.
-      //
-      // An image sent inline says so in the marker. A bare path in a user message reads as an
-      // invitation to open it, and a model that takes it pays for the same picture twice —
-      // once inline, once as a tool result, both replayed on every later turn.
-      //
-      // Which marker an image gets follows the payloads that are actually going out, not
-      // `imageData` alone: the per-message caps can leave one behind, and announcing that its
-      // contents are included would hand the model neither the picture nor a reason to open
-      // the file. `inlineImages` defaults to none, so a caller that sends no payloads at all
-      // (the edit-fork path takes only text) gets the plain markers throughout.
-      const { inlineImagePaths, pathOnlyPaths } = splitAttachmentMarkers(attachments, inlineImages);
-      for (const path of inlineImagePaths) {
-        parts.push(`[Attached image (contents included in this message): ${path}]`);
-      }
-      if (pathOnlyPaths.length > 0) {
-        const fileRefs = pathOnlyPaths.join("\n");
-        parts.push(
-          pathOnlyPaths.length === 1
-            ? `[Attached file: ${fileRefs}]`
-            : `[Attached files:\n${fileRefs}\n]`,
-        );
-      }
-
-      if (parts.length === 0) return content;
-      return parts.join("\n\n") + "\n\n" + content;
-    },
-    [],
-  );
-
   const handleSend = useCallback(
     async (content: string, attachments: ChatAttachment[] = [], priority?: MessagePriority, selectedReply?: ReplyReference | null, selectedRefs?: TurnReference[] | null) => {
       const turnRefs = selectedRefs?.length ? selectedRefs : null;
@@ -1160,7 +1113,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
       // Only now: the message is on (or queued for) a live session's socket.
       clearDraft();
     },
-    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug, assistant, moveDraft, preparation, ensureAccountClaim, tabId, permissionReplaceable],
+    [sessionId, providerId, projectName, sendMessage, permissionMode, metadata, queuePendingSend, restoreUnsentMessage, clearDraft, designSlug, assistant, moveDraft, preparation, ensureAccountClaim, tabId, permissionReplaceable],
   );
 
   // Read through a ref so handleInputSend keeps a stable identity — it is passed to
@@ -1223,7 +1176,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
       }
       void handleSend(content, attachments, priority, selectedReply, selectedRefs);
     },
-    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession, replyOwner, turnRefsRef, replaceTurnChips],
+    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, handleNewSession, replyOwner, turnRefsRef, replaceTurnChips],
   );
 
   // Past user messages for the composer's ArrowUp/Down recall. Read through a ref
@@ -1597,6 +1550,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
             onContentChange={handleContentChange}
             getUserHistory={getUserHistory}
             permissionMode={chipPermissionMode}
+            boundPermissionMode={boundPermissionMode}
             onModeChange={!preparation?.pending && !firstSendPending && !assistant ? handleModeChange : undefined}
             permissionLocked={assistant}
             fileMentions={!assistant}

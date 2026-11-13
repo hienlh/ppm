@@ -2,6 +2,7 @@
 // PPM CLI entry point — Bun runtime, Hono backend, React frontend, Claude Agent SDK for AI chat
 import { Command } from "commander";
 import { VERSION } from "./version.ts";
+import { isMachineFacing } from "./cli/utils/machine-facing-commands.ts";
 
 /**
  * Assemble the CLI program without parsing argv. Exported so build-time tools
@@ -18,8 +19,9 @@ export async function buildProgram(): Promise<Command> {
     .version(VERSION)
     .hook("preAction", (_program, actionCommand) => {
       // `--json` output is parsed (by scripts, by the Assistant, and by the AI agents the PPM
-      // skill points here), and one banner line in front makes the whole of it unparseable.
-      if (actionCommand.opts().json) return;
+      // skill points here), and one banner line in front makes the whole of it unparseable. The
+      // same holds for a command whose stdout is always data (`ppm ext run`, an extension alias).
+      if (actionCommand.opts().json || isMachineFacing(actionCommand)) return;
       console.log(`  PPM v${VERSION}\n`);
     });
 
@@ -199,6 +201,9 @@ if (import.meta.main) {
       const { applyCliProfile } = await import("./cli/utils/apply-cli-profile.ts");
       const argv = await applyCliProfile(process.argv);
       const program = await buildProgram();
+      // Extension-contributed `ppm <name>` commands; skipped for every built-in command.
+      const { shouldLoadAliases, registerExtensionCliAliases } = await import("./cli/commands/extension-cli-alias-cmd.ts");
+      if (shouldLoadAliases(argv)) await registerExtensionCliAliases(program);
       program.parse(argv);
     }
   }

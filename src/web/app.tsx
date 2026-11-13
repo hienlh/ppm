@@ -27,13 +27,14 @@ import { useUrlSync, parseUrlState, autoOpenFromUrl, openAssistantFromAddress, r
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { useWakeLock } from "@/hooks/use-wake-lock";
-import { WakeLockMobileBadge } from "@/components/layout/wake-lock-indicator";
 import { useTabPrefetch } from "@/hooks/use-tab-prefetch";
 import { useFileIndexInvalidation } from "@/hooks/use-file-index-invalidation";
 import { useUiPreload } from "@/hooks/use-ui-preload";
 import { useGlobalEvents } from "@/hooks/use-global-events";
+import { usePresenceHeartbeat } from "@/hooks/use-presence-heartbeat";
 import { useServerReload } from "@/hooks/use-server-reload";
 import { useNotificationClicks } from "@/hooks/use-notification-clicks";
+import { runExtensionDeepLink, takeDeepLinkFromLocation } from "@/lib/extension-deep-link-runner";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { ComparePicker } from "@/components/editor/compare-picker";
 import { DbLoginDialogHost } from "@/components/database/db-login/db-login-dialog";
@@ -48,6 +49,7 @@ import { BackgroundOutputPanel } from "@/components/chat/background-output-panel
 import { ConnectionLostOverlay } from "@/components/shared/connection-lost-overlay";
 import { ExtensionQuickPick } from "@/components/extensions/extension-quickpick";
 import { ExtensionInputBox } from "@/components/extensions/extension-inputbox";
+import { ExtensionComposer } from "@/components/extensions/extension-composer";
 import { useExtensionWs } from "@/hooks/use-extension-ws";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { UploadProgressPanel } from "@/components/os-explorer/upload/upload-progress-panel";
@@ -109,6 +111,9 @@ export function App() {
 
   // Capture URL state on mount — before any effect can overwrite it
   const initialUrlRef = useRef(parseUrlState());
+  // A notification's link to an extension command or panel; run once, after the boot project.
+  const [bootDeepLink] = useState(takeDeepLinkFromLocation);
+  const bootDeepLinkRanRef = useRef(false);
 
   // Fetch server info on mount (before auth — shown on login screen) and
   // again once authenticated: the pre-auth call has no token on a fresh
@@ -171,6 +176,10 @@ export function App() {
   // App-wide event bus — owns file watching + cross-cutting broadcasts so they do
   // not depend on a chat tab being mounted.
   useGlobalEvents(authState === "authenticated", activeProject?.name);
+
+  // Real input anywhere in this document counts toward core's presence tracker, throttled to
+  // one send per minute — a signal to pause/not-propose a run, never a permission to spend.
+  usePresenceHeartbeat(authState === "authenticated");
 
   // Warm a few recent chat tabs during idle time (desktop only). Tabs mount
   // lazily, so this trades a little background work for instant tab switching.
@@ -272,8 +281,13 @@ export function App() {
         url.searchParams.delete("openChat");
         window.history.replaceState(null, "", url.pathname);
       }
+    }).finally(() => {
+      // After the project is restored, so a panel opens in that project's layout, not __global__.
+      if (!bootDeepLink || bootDeepLinkRanRef.current) return;
+      bootDeepLinkRanRef.current = true;
+      void runExtensionDeepLink(bootDeepLink);
     });
-  }, [authState, fetchProjects]);
+  }, [authState, fetchProjects, bootDeepLink]);
 
   // Switch project tabs when active project changes.
   // If this browser has no local copy of the project's layout (opened on
@@ -361,9 +375,6 @@ export function App() {
             {deviceName}
           </div>
         )}
-
-        {/* Screen-awake pill — mobile only; the desktop equivalent lives in the status bar */}
-        <WakeLockMobileBadge />
 
         </>}
         {/* Main layout */}
@@ -471,8 +482,8 @@ export function App() {
         {/* Global background-command output panel */}
         <BackgroundOutputPanel />
 
-        {/* Extension modals (QuickPick, InputBox) */}
-        {!minimalMode && <><ExtensionQuickPick /><ExtensionInputBox /></>}
+        {/* Extension modals (QuickPick, InputBox, Composer) */}
+        {!minimalMode && <><ExtensionQuickPick /><ExtensionInputBox /><ExtensionComposer /></>}
 
         {/* Connection lost overlay — shown when API unreachable for >15s */}
         <ConnectionLostOverlay />

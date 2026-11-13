@@ -1,6 +1,9 @@
-import { lstatSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, resolve } from "node:path";
+import { canonicalPath, expandHome, isInside } from "../tool-path-scope.ts";
+
+// The design and Assistant policies, and the services that judge a path the way they do, import
+// these from here; the path checks themselves live in the module every tool policy shares.
+export { canonicalPath, expandHome, isInside, isWindowsNonDrivePath } from "../tool-path-scope.ts";
 
 /**
  * Permission policy for a design session in `acceptEdits` mode: file reads, searches,
@@ -54,14 +57,6 @@ export function designToolDecision(
   return isInside(resolved, root) ? "allow" : "ask";
 }
 
-/** `~` is expanded the way a shell would, so `~/.ssh` is judged as the home directory it
- *  names rather than as a folder called `~` inside the project. */
-export function expandHome(path: string): string {
-  if (path === "~") return homedir();
-  if (path.startsWith("~/") || path.startsWith("~\\")) return join(homedir(), path.slice(2));
-  return path;
-}
-
 /**
  * Whether a Glob pattern could match outside the folder it is rooted at: an absolute or
  * drive-qualified pattern, `~`, a `..` segment, or a brace expression that could spell one.
@@ -70,6 +65,9 @@ export function expandHome(path: string): string {
  * judged by what it holds: alternatives made only of name characters (`*.{ts,tsx}`) cannot
  * form a parent, a root or a home, so only a group holding a dot, a separator, `~` or `:` —
  * or one left unclosed, which a matcher may read either way — counts as leaving.
+ *
+ * The design and Assistant policies use this one; a chat an extension bound uses the stricter
+ * `patternLeavesRoot` in `tool-path-scope.ts`, which refuses a `..` anywhere in the text.
  */
 export function patternLeavesRoot(pattern: string): boolean {
   if (isAbsolute(pattern) || /^[a-zA-Z]:/.test(pattern) || pattern.startsWith("~")) return true;
@@ -96,61 +94,4 @@ function braceGroupCouldLeave(pattern: string): boolean {
     if (depth > 0) inside += ch;
   }
   return depth > 0;
-}
-
-/**
- * On Windows, a path that does not start with a drive letter — `\\server\share\…`, the
- * device namespaces `\\?\…` and `\\.\…`, or their forward-slash spellings. Decided from the
- * text alone: resolving such a path opens an SMB session to whatever host it names (sending
- * the user's NTLM credentials there) and blocks the event loop while Windows gives up, so no
- * policy may touch the disk to find out what it is. Never true on other platforms, where `//x`
- * is an ordinary local path.
- */
-export function isWindowsNonDrivePath(path: string, platform: string = process.platform): boolean {
-  return platform === "win32" && !/^[A-Za-z]:[\\/]/.test(path);
-}
-
-/**
- * Realpath of the path, or of its nearest existing ancestor with the missing tail
- * re-appended — a Write usually targets a file that does not exist yet, and its parent
- * directories may not either. Null when nothing along the chain resolves, and — without
- * touching the disk — for a Windows path that names no drive (see {@link isWindowsNonDrivePath}).
- */
-export function canonicalPath(path: string): string | null {
-  const tail: string[] = [];
-  let current = resolve(path);
-  if (isWindowsNonDrivePath(current)) return null;
-  for (;;) {
-    try {
-      const real = realpathSync.native(current);
-      return tail.length ? join(real, ...tail.reverse()) : real;
-    } catch {
-      // Something is there but cannot be resolved — typically a dangling symlink, which
-      // a Write would follow to wherever it points. Only a truly absent entry may be
-      // replaced by its parent.
-      if (entryExists(current)) return null;
-      const parent = dirname(current);
-      if (parent === current) return null;
-      tail.push(basename(current));
-      current = parent;
-    }
-  }
-}
-
-function entryExists(path: string): boolean {
-  try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function isInside(target: string, root: string): boolean {
-  const caseFold = process.platform === "win32" || process.platform === "darwin";
-  const a = caseFold ? target.toLowerCase() : target;
-  const b = caseFold ? root.toLowerCase() : root;
-  const rel = relative(b, a);
-  if (rel === "") return true;
-  return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
 }

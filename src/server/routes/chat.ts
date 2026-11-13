@@ -25,6 +25,7 @@ import { announceChatListChanges, CHAT_LIST_WRITE_PATHS, RENAMED_CHAT_VAR } from
 import type { RenamedChat } from "../../shared/chat-list-events.ts";
 import { chatControl } from "../../services/chat-control/chat-control.ts";
 import { applyTurnStamps, loadTurnLookup, stampSessionTurns } from "../../services/session-turns/stamp-message-turns.ts";
+import { chatHeadlessRoutes } from "./chat-headless.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
 import { upsertSlashRecent, getSlashRecents, listTurnUsage, getSessionProvider, getSessionDesignSlugs, copySessionForkSettings } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
@@ -52,6 +53,7 @@ import { ok, err } from "../../types/api.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { THINKING_ADAPTIVE, VALID_EFFORT_VALUES } from "../../providers/claude-agent-sdk-query-options.ts";
 import { createLogger } from "../../services/logger.ts";
+import { copyBindingToFork } from "../../services/extension-session-binding.service.ts";
 
 const log = createLogger("chat");
 
@@ -68,6 +70,7 @@ chatRoutes.route("/", chatFileChangesRoutes);
 chatRoutes.route("/", chatSessionTurnsRoutes);
 chatRoutes.route("/", chatTurnWindowRoutes);
 chatRoutes.route("/", chatSessionCollabRoutes);
+chatRoutes.route("/", chatHeadlessRoutes);
 
 /** GET /chat/slash-items — list available slash commands and skills for the project */
 chatRoutes.get("/slash-items", async (c) => {
@@ -570,6 +573,21 @@ chatRoutes.delete("/sessions/:id/tag", (c) => {
   }
 });
 
+/**
+ * A fork of a chat an extension bound keeps that binding, owner and creator mark included, so
+ * editing a message or forking can never yield a chat more open than its source. If that
+ * cannot be recorded the fork is deleted rather than left behind as an ordinary chat.
+ */
+async function carryBindingToFork(providerId: string, sourceId: string, forkId: string): Promise<void> {
+  try {
+    copyBindingToFork(sourceId, forkId);
+  } catch (e) {
+    await chatService.deleteSession(providerId, forkId)
+      .catch((deleteErr) => log.error(`fork ${forkId} of bound session ${sourceId} left unbound: ${(deleteErr as Error).message}`));
+    throw e;
+  }
+}
+
 /** POST /chat/sessions/:id/fork — fork session into a new one (for rewind/branch) */
 chatRoutes.post("/sessions/:id/fork", async (c) => {
   try {
@@ -602,8 +620,10 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         });
         // Register forked session with provider + DB so it's tracked in memory
         setSessionMetadata(result.sessionId, projectName, projectPath);
-        // Before the resume below: a fork of a design or Assistant chat must stay one.
+        // Before the resume below: a fork of a design or Assistant chat must stay one, and a
+        // fork of a chat an extension bound stays bound.
         copySessionForkSettings(sourceId, result.sessionId);
+        await carryBindingToFork(providerId, sourceId, result.sessionId);
         // Persist the inherited user-set title so the collapsed-tree head shows
         // it regardless of the SDK-derived summary.
         if (inheritedTitle) setSessionTitle(result.sessionId, inheritedTitle);
@@ -668,6 +688,7 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
       });
       if (inheritedTitle) setSessionTitle(session.id, inheritedTitle);
       copySessionForkSettings(sourceId, session.id);
+      await carryBindingToFork(providerId, sourceId, session.id);
       return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
     }
   } catch (e) {

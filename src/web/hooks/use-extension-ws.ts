@@ -5,6 +5,10 @@ import { useTabStore } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { getAuthToken } from "@/lib/api-client";
 import { openGitReview } from "@/lib/open-git-review";
+import { popOutExtensionTab } from "@/lib/extension-webview-window";
+import { openExtensionChatTab } from "@/lib/extension-chat-tab";
+import { openPlacedTab } from "@/lib/extension-tab-placement";
+import { createTimeZoneReporter } from "@/lib/client-timezone-reporter";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { toast } from "sonner";
 
@@ -82,8 +86,13 @@ export function useExtensionWs(enabled = true) {
     // Pass auth token as query param for WS auth
     const token = getAuthToken();
     const wsUrl = token ? `/ws/extensions?token=${encodeURIComponent(token)}` : "/ws/extensions";
-    const client = new WsClient(wsUrl);
+    // The device's zone goes out on every connect, so a restarted server learns it again.
+    const timeZoneReporter = createTimeZoneReporter((json) => client.send(json));
+    const client = new WsClient(wsUrl, { onConnectionChange: (c) => timeZoneReporter.onConnectionChange(c) });
     clientRef.current = client;
+    // The server's name for this socket, so a `tab:open` addressed to one browser can be
+    // told from one meant for every browser.
+    let ownClientId: string | null = null;
 
     client.onMessage((event) => {
       let msg: ExtServerMsg;
@@ -96,6 +105,10 @@ export function useExtensionWs(enabled = true) {
       const store = useExtensionStore.getState();
 
       switch (msg.type) {
+        case "client:hello":
+          ownClientId = msg.clientId;
+          break;
+
         case "contributions:update":
           store.setContributions(msg.contributions);
           if (msg.activationErrors) {
@@ -156,6 +169,7 @@ export function useExtensionWs(enabled = true) {
 
         case "quickpick:show":
           store.showQuickPick(
+            msg.requestId,
             msg.items,
             msg.options,
           ).then((selected) => {
@@ -168,13 +182,38 @@ export function useExtensionWs(enabled = true) {
           break;
 
         case "inputbox:show":
-          store.showInputBox(msg.options).then((value) => {
+          store.showInputBox(msg.requestId, msg.options).then((value) => {
             send({
               type: "inputbox:resolve",
               requestId: msg.requestId,
               value: value ?? null,
             });
           });
+          break;
+
+        case "composer:show":
+          store.showComposer(msg.requestId, msg.options).then((result) => {
+            // Only reached when THIS tab's dialog actually resolved (Send/Cancel) —
+            // a `composer:dismiss` broadcast closes it without ever settling this
+            // promise, so a losing tab never sends its own composer:resolve.
+            send({
+              type: "composer:resolve",
+              requestId: msg.requestId,
+              result: result ?? null,
+            });
+          });
+          break;
+
+        case "composer:dismiss":
+          store.dismissComposer(msg.requestId);
+          break;
+
+        case "quickpick:dismiss":
+          store.dismissQuickPick(msg.requestId);
+          break;
+
+        case "inputbox:dismiss":
+          store.dismissInputBox(msg.requestId);
           break;
 
         case "webview:create": {
@@ -228,13 +267,14 @@ export function useExtensionWs(enabled = true) {
             // broadcasts triggered by other browser tabs are ignored here
             const currentProject = useTabStore.getState().currentProject;
             const projectName = msg.projectName ?? currentProject ?? undefined;
-            useTabStore.getState().openTab({
+            const tabId = useTabStore.getState().openTab({
               type: "extension",
               title: msg.title,
               projectId: null,
               closable: true,
               metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId, ...(projectName && { projectName }) },
             });
+            if (msg.preferWindow && tabId) popOutExtensionTab(tabId);
           }
           break;
         }
@@ -254,10 +294,22 @@ export function useExtensionWs(enabled = true) {
           break;
 
         case "tab:open": {
+          // Addressed to the browser that ran the extension's command: every other one ignores it.
+          if (msg.clientId && msg.clientId !== ownClientId) break;
+          const meta = (msg as any).metadata as Record<string, unknown> | undefined;
+          const placement = msg.placement?.preferWindow === true ? msg.placement : undefined;
+          // A chat belongs to a project; it is opened there (see `openExtensionChatTab`).
+          if (msg.tabType === "chat" && typeof meta?.projectName === "string" && typeof meta.sessionId === "string") {
+            void openExtensionChatTab({
+              title: msg.title,
+              metadata: { projectName: meta.projectName, sessionId: meta.sessionId, ...(typeof meta.providerId === "string" ? { providerId: meta.providerId } : {}) },
+              ...(placement ? { placement, addressed: Boolean(msg.clientId) } : {}),
+            });
+            break;
+          }
           // The Review tab is one per project and is only focused by openTab,
           // so what it should show has to be written into it — the same path
           // Source Control takes.
-          const meta = (msg as any).metadata as Record<string, unknown> | undefined;
           if ((msg as any).tabType === "git-review" && typeof meta?.projectName === "string") {
             openGitReview(
               meta.projectName,
@@ -266,13 +318,13 @@ export function useExtensionWs(enabled = true) {
             );
             break;
           }
-          useTabStore.getState().openTab({
+          openPlacedTab(() => useTabStore.getState().openTab({
             type: (msg as any).tabType,
             title: (msg as any).title,
             projectId: (msg as any).projectId ?? null,
             closable: (msg as any).closable ?? true,
             metadata: (msg as any).metadata,
-          });
+          }), placement, Boolean(msg.clientId));
           break;
         }
 
@@ -340,6 +392,7 @@ export function useExtensionWs(enabled = true) {
       window.removeEventListener("ext:tree:expand", treeExpandHandler);
       window.removeEventListener("ext:command:execute", commandHandler);
       window.removeEventListener("ext:webview:close", webviewCloseHandler);
+      timeZoneReporter.dispose();
       client.disconnect();
       clientRef.current = null;
     };

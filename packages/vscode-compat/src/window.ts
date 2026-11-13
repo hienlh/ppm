@@ -3,8 +3,44 @@ import { EventEmitter } from "./event-emitter.ts";
 import type {
   RpcClient, StatusBarItem, StatusBarAlignment, QuickPickItem,
   QuickPickOptions, InputBoxOptions, OutputChannel, ViewColumn,
+  ComposerOptions, ComposerResult,
 } from "./types.ts";
 import { StatusBarAlignment as SBAlign } from "./types.ts";
+import { rememberWebviewPanelId, toWirePlacement, type TabPlacementOptions } from "./tab-placement.ts";
+
+/**
+ * How long a prompt call waits for its answer: the browser's own wait for the person
+ * (`BROWSER_PROMPT_TIMEOUT_MS` in `src/server/ws/extensions.ts`, 30 s) plus a margin for the
+ * reply to cross back. At the RPC default of 10 s, a click after 10 s was lost.
+ */
+export const PROMPT_REPLY_WAIT_MS = 35_000;
+
+/**
+ * A UI update nobody awaits (status bar, tree, webview html). Its promise must still be
+ * handled: all extensions share one worker, and an unhandled rejection there (an RPC timeout
+ * while the main thread is busy) ends the worker and every extension in it. A failed update is
+ * logged and the next one carries the current state anyway.
+ */
+function fireAndForget(rpc: RpcClient, method: string, ...params: unknown[]): void {
+  rpc.request(method, ...params).catch((e: unknown) => {
+    console.warn(`[vscode-compat] ${method} failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
+}
+
+/**
+ * A tree row's link, kept only when it is http(s). A worker cannot open a browser tab, so the
+ * row itself becomes the link; anything else (`javascript:`, `file:`) would run or reach
+ * something on the device that taps it. The renderer checks again.
+ */
+export function httpUrlOrUndefined(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** VSCode-compatible window namespace — all UI ops go through RPC to main→browser */
 export class WindowService {
@@ -85,7 +121,9 @@ export class WindowService {
         color: treeItem.color,
         badge: treeItem.badge,
         actions: treeItem.actions,
+        wrap: treeItem.wrap,
         contextValue: treeItem.contextValue,
+        url: httpUrlOrUndefined(treeItem.url),
       });
     }
     return results;
@@ -94,30 +132,72 @@ export class WindowService {
   // --- Messages ---
 
   async showInformationMessage(message: string, ...items: string[]): Promise<string | undefined> {
-    return this.rpc.request<string | undefined>("window:showMessage", "info", message, items);
+    return this.rpc.requestWithTimeout<string | undefined>("window:showMessage", PROMPT_REPLY_WAIT_MS, "info", message, items);
   }
 
   async showWarningMessage(message: string, ...items: string[]): Promise<string | undefined> {
-    return this.rpc.request<string | undefined>("window:showMessage", "warn", message, items);
+    return this.rpc.requestWithTimeout<string | undefined>("window:showMessage", PROMPT_REPLY_WAIT_MS, "warn", message, items);
   }
 
   async showErrorMessage(message: string, ...items: string[]): Promise<string | undefined> {
-    return this.rpc.request<string | undefined>("window:showMessage", "error", message, items);
+    return this.rpc.requestWithTimeout<string | undefined>("window:showMessage", PROMPT_REPLY_WAIT_MS, "error", message, items);
   }
 
-  // --- Quick Pick / Input ---
+  // --- Quick Pick / Input / Composer ---
+  //
+  // These three verbs wait on a human in the browser, so they use a 600s timeout instead of
+  // the RPC default (10s) — see sendRequestWithTimeout's ordering rule in extension-rpc.ts:
+  // this worker-side timeout must stay >= whatever browser-side timeout the server passes to
+  // requestFromBrowser for the same round trip.
 
+  /**
+   * VSCode contract: plain strings in → the chosen string out; objects in → the
+   * chosen object out; `canPickMany` → an array of them. The browser dialog only
+   * understands `{ label }` objects and always answers with an array, so both
+   * directions are translated here rather than crashing the picker on a string.
+   */
+  showQuickPick(items: string[], options: QuickPickOptions & { canPickMany: true }): Promise<string[] | undefined>;
+  showQuickPick<T extends QuickPickItem>(items: T[], options: QuickPickOptions & { canPickMany: true }): Promise<T[] | undefined>;
+  showQuickPick(items: string[], options?: QuickPickOptions & { canPickMany?: false }): Promise<string | undefined>;
+  showQuickPick<T extends QuickPickItem>(items: T[], options?: QuickPickOptions & { canPickMany?: false }): Promise<T | undefined>;
+  showQuickPick(items: string[] | QuickPickItem[], options?: QuickPickOptions): Promise<string | QuickPickItem | (string | QuickPickItem)[] | undefined>;
   async showQuickPick(
     items: string[] | QuickPickItem[],
     options?: QuickPickOptions,
-  ): Promise<string | QuickPickItem | undefined> {
-    return this.rpc.request("window:showQuickPick", items, options ?? {});
+  ): Promise<string | QuickPickItem | (string | QuickPickItem)[] | undefined> {
+    const asStrings = items.every((item) => typeof item === "string");
+    const wireItems: QuickPickItem[] = (items as (string | QuickPickItem)[]).map((item) =>
+      typeof item === "string" ? { label: item } : item,
+    );
+    const selected = await this.rpc.requestWithTimeout<QuickPickItem[] | null | undefined>(
+      "window:showQuickPick", 600_000, wireItems, options ?? {},
+    );
+    if (!selected || selected.length === 0) return undefined;
+
+    // Hand back the caller's own objects (they may carry extra fields the wire dropped).
+    const picked = selected.map((sel) => {
+      const original = (items as (string | QuickPickItem)[]).find((item) =>
+        typeof item === "string" ? item === sel.label : item.label === sel.label,
+      );
+      return original ?? (asStrings ? sel.label : sel);
+    });
+    return options?.canPickMany ? picked : picked[0];
   }
 
   async showInputBox(options?: InputBoxOptions): Promise<string | undefined> {
     // Remove non-serializable validateInput before sending over RPC
     const { validateInput, ...serializableOpts } = options ?? {};
-    return this.rpc.request<string | undefined>("window:showInputBox", serializableOpts);
+    return this.rpc.requestWithTimeout<string | undefined>("window:showInputBox", 600_000, serializableOpts);
+  }
+
+  /**
+   * Show the real chat composer (slash/file pickers, model, permission mode) and
+   * return what the user composed, or `undefined` on cancel/dismiss/timeout.
+   * Returns a message — it does not send one. Authors against the active
+   * project; fails fast when no browser client is connected.
+   */
+  async showComposer(options?: ComposerOptions): Promise<ComposerResult | undefined> {
+    return this.rpc.requestWithTimeout<ComposerResult | undefined>("window:showComposer", 600_000, options ?? {});
   }
 
   // --- Status Bar ---
@@ -134,14 +214,14 @@ export class WindowService {
       color: undefined,
       command: undefined,
       show() {
-        rpc.request("window:statusbar:update", {
+        fireAndForget(rpc, "window:statusbar:update", {
           id, text: item.text, tooltip: item.tooltip, command: item.command as string | undefined,
           alignment: item.alignment === SBAlign.Left ? "left" : "right",
           priority: item.priority ?? 0, extensionId: extId,
         });
       },
-      hide() { rpc.request("window:statusbar:remove", id); },
-      dispose() { rpc.request("window:statusbar:remove", id); },
+      hide() { fireAndForget(rpc, "window:statusbar:remove", id); },
+      dispose() { fireAndForget(rpc, "window:statusbar:remove", id); },
     };
     return item;
   }
@@ -176,30 +256,43 @@ export class WindowService {
     // Initial tree data push — serialize via getTreeItem
     if (provider.getChildren) {
       this._getTreeChildren(viewId).then((items) => {
-        rpc.request("window:tree:update", viewId, items);
+        fireAndForget(rpc, "window:tree:update", viewId, items);
       }).catch((e) => console.error(`[vscode-compat] tree init error (${viewId}):`, e));
     }
-    // Subscribe to onDidChangeTreeData — re-push entire tree on change
-    let changeUnsub: (() => void) | undefined;
+    // Subscribe to onDidChangeTreeData — re-push entire tree on change.
+    // `Event<T>` is documented (and implemented by `vscode.EventEmitter`) to return
+    // a `Disposable` object, not a bare unsubscribe function — a provider that
+    // builds its event off `vscode.EventEmitter` hands back `{ dispose() }`, so
+    // calling the result as a function throws at teardown. Accept either shape.
+    let changeUnsub: (() => void) | { dispose(): void } | undefined;
     if (provider.onDidChangeTreeData) {
       changeUnsub = provider.onDidChangeTreeData(() => {
         this._getTreeChildren(viewId).then((items) => {
-          rpc.request("window:tree:update", viewId, items);
+          fireAndForget(rpc, "window:tree:update", viewId, items);
         }).catch((e) => console.error(`[vscode-compat] tree refresh error (${viewId}):`, e));
       });
     }
     return new Disposable(() => {
-      if (changeUnsub) changeUnsub();
+      if (typeof changeUnsub === "function") changeUnsub();
+      else changeUnsub?.dispose();
       this._treeProviders.delete(viewId);
       this._treeElementCache.delete(viewId);
-      rpc.request("window:tree:refresh", viewId);
+      fireAndForget(rpc, "window:tree:refresh", viewId);
     });
   }
 
   // --- Open PPM Tab ---
 
-  async openTab(tabType: string, title: string, projectId: string | null, metadata?: Record<string, unknown>): Promise<void> {
-    await this.rpc.request("window:openTab", tabType, title, projectId, metadata);
+  /**
+   * Opens a tab in every connected browser. `options.preferWindow` asks a desktop for a
+   * floating window in front, placed beside the webview panel `options.beside`.
+   */
+  async openTab(tabType: string, title: string, projectId: string | null, metadata?: Record<string, unknown>, options?: TabPlacementOptions): Promise<void> {
+    const placement = toWirePlacement(options);
+    // A panel tab records the extension that opened it, always this one, so the app may reopen
+    // that panel on a reload; a tab that records no owner may only reopen a linkable panel.
+    const tabMetadata = tabType === "extension" ? { ...metadata, extensionId: this.extId } : metadata;
+    await this.rpc.request("window:openTab", tabType, title, projectId, tabMetadata, ...(placement ? [placement] : []));
   }
 
   async switchProject(projectName: string): Promise<void> {
@@ -208,11 +301,17 @@ export class WindowService {
 
   // --- Webview Panel ---
 
-  createWebviewPanel(viewType: string, title: string, showOptions: ViewColumn, options?: { projectPath?: string }): unknown {
+  /**
+   * `preferWindow`: open the panel in a floating window on a desktop browser. A phone, or a
+   * desktop already at its window limit, gets an ordinary tab. Only the browser tab that ran
+   * the command opening the panel moves it.
+   */
+  createWebviewPanel(viewType: string, title: string, showOptions: ViewColumn, options?: { projectPath?: string; preferWindow?: boolean }): unknown {
     const panelId = `${this.extId}-wv-${++this._idCounter}`;
     const rpc = this.rpc;
     const extId = this.extId;
-    rpc.request("window:webview:create", panelId, extId, viewType, title, options?.projectPath);
+    fireAndForget(rpc, "window:webview:create", panelId, extId, viewType, title, options?.projectPath,
+      ...(options?.preferWindow === true ? [true] : []));
 
     const onDidDispose = new EventEmitter<void>();
     const onDidReceiveMessage = new EventEmitter<unknown>();
@@ -224,7 +323,7 @@ export class WindowService {
       get html() { return currentHtml; },
       set html(value: string) {
         currentHtml = value;
-        rpc.request("window:webview:html", panelId, value);
+        fireAndForget(rpc, "window:webview:html", panelId, value);
       },
       options: {},
       async postMessage(message: unknown): Promise<boolean> {
@@ -235,7 +334,7 @@ export class WindowService {
       asWebviewUri: (uri: unknown) => uri,
     };
 
-    return {
+    const panel = {
       viewType, title, webview,
       onDidDispose: onDidDispose.event,
       onDidChangeViewState: new EventEmitter().event,
@@ -243,11 +342,14 @@ export class WindowService {
       dispose: () => {
         this._panelEmitters.delete(panelId);
         this._panelDisposeEmitters.delete(panelId);
-        rpc.request("window:webview:dispose", panelId);
+        fireAndForget(rpc, "window:webview:dispose", panelId);
         onDidDispose.fire();
         onDidDispose.dispose();
         onDidReceiveMessage.dispose();
       },
     };
+    // So `openTab(..., { beside: panel })` can name this panel without the panel exposing an id.
+    rememberWebviewPanelId(panel, panelId);
+    return panel;
   }
 }

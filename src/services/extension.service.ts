@@ -1,12 +1,22 @@
 import { resolve, dirname } from "node:path";
-import { existsSync } from "node:fs";
-import type { ExtensionManifest, ExtensionInfo, RpcMessage } from "../types/extension.ts";
-import { getExtensions, getExtensionById, insertExtension, updateExtension, deleteExtension, deleteExtensionStorage, getExtensionStorage, setExtensionStorageValue } from "./db.service.ts";
+import { existsSync, mkdirSync } from "node:fs";
+import type { ExtensionManifest, ExtensionInfo } from "../types/extension.ts";
+import { getExtensions, getExtensionById, insertExtension, updateExtension, deleteExtension, deleteExtensionStorage, getExtensionStorage, setExtensionStorageValue, getExtensionBoundSessionIds } from "./db.service.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
-import { RpcChannel } from "./extension-rpc.ts";
-import { parseManifest, discoverManifests, discoverBundledManifests } from "./extension-manifest.ts";
+import type { RpcChannel } from "./extension-rpc.ts";
+import { openWorkerChannel } from "./extension-worker-channel.ts";
+import { extensionCallRegistry } from "./extension-api/extension-call-registry.ts";
+import { extensionApiDeps } from "./extension-api/index.ts";
+import { extensionMcpRegistry } from "./extension-mcp/extension-mcp-registry.ts";
+import { revokeExtensionMcpTokens } from "./extension-mcp/extension-mcp-tokens.ts";
+import { extensionDataDir } from "./extension-data-dir.ts";
+import { parseManifest, discoverManifests, discoverBundledManifests, bundledExtensionsDir } from "./extension-manifest.ts";
 import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDir } from "./extension-installer.ts";
 import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
+import { executeExtensionCommand, type ExecuteOutcome, type WorkerCommandReply } from "./extension-command-executor.ts";
+import { invalidateExtensionCliHint } from "./extension-cli-hint.ts";
+import { lastClientTimeZone, type ClientTimeZoneReport } from "./client-timezone.ts";
+import { configService } from "./config.service.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { createLogger } from "./logger.ts";
@@ -16,25 +26,9 @@ const log = createLogger("ExtService");
  *  forwarded from that thread's console (see extension-host-worker.ts). */
 const extLog = createLogger("ext");
 
-/**
- * Where the bundled `packages/ext-*` extensions live on disk.
- *
- * They are loaded as source by the extension host, so they ship *beside* the install rather
- * than inside it. Walking up from `import.meta.dir` finds them when PPM runs from source, but
- * a compiled binary reports `/$bunfs/root` — its embedded filesystem — and the same walk lands
- * on `/packages`, an absolute path at the filesystem root that cannot exist. Every bundled
- * extension then vanished with no error and no log line: the panel simply said none were
- * installed. Fall back to the directory holding the executable (`<install>/dist/ppm` →
- * `<install>/packages`).
- */
-export function bundledExtensionsDir(
-  moduleDir: string = import.meta.dir,
-  execPath: string = process.execPath,
-): string {
-  const fromSource = resolve(moduleDir, "../../packages");
-  if (existsSync(fromSource)) return fromSource;
-  return resolve(dirname(execPath), "../packages");
-}
+// Lives with the manifest readers so the CLI can find bundled extensions without loading this
+// service and everything its RPC handlers reach.
+export { bundledExtensionsDir };
 
 /**
  * How to name the extension host worker so Bun will actually load it.
@@ -76,63 +70,144 @@ class ExtensionService {
   private installing = new Set<string>();
   private extensionPaths = new Map<string, string>();
   private bundledIds = new Set<string>();
+  /** Bumped for every worker started; long-running calls are tied to the one that asked. */
+  private generation = 0;
 
   // --- Worker lifecycle ---
 
   private ensureWorker(): { worker: Worker; rpc: RpcChannel } {
     if (this.worker && this.rpc) return { worker: this.worker, rpc: this.rpc };
 
-    this.worker = new Worker(extensionHostWorkerSpec(), { type: "module" });
-    const worker = this.worker;
-    this.rpc = new RpcChannel((msg) => this.worker!.postMessage(msg), createLogger("RPC"));
-    log.info("Extension host worker started");
+    const worker = new Worker(extensionHostWorkerSpec(), { type: "module" });
+    const generation = ++this.generation;
+    this.worker = worker;
+    const rpc = openWorkerChannel(worker, () => this.worker === worker, createLogger("RPC"));
+    this.rpc = rpc;
+    log.info(`Extension host worker started generation=${generation}`);
 
-    this.rpc.onRequest("storage:set", async (params) => {
+    rpc.onRequest("storage:set", async (params) => {
       const [extId, scope, key, value] = params as [string, string, string, string | null];
       setExtensionStorageValue(extId, scope, key, value);
       return { ok: true };
     });
 
     // Register vscode-compat API handlers (commands, window, workspace, fs)
-    registerVscodeCompatHandlers(this.rpc);
+    registerVscodeCompatHandlers(rpc, extensionApiDeps(generation));
 
-    this.rpc.onEvent("worker:ready", () => {
+    rpc.onEvent("worker:ready", () => {
       this.workerReady = true;
       log.debug("Extension host worker ready");
+      // A rebuilt host starts with no zone; give it the one a browser already reported.
+      const zone = lastClientTimeZone();
+      if (zone) this.notifyClientTimeZone(zone);
     });
 
-    this.rpc.onEvent("log", (data) => {
+    rpc.onEvent("log", (data) => {
       const { level, text } = (data ?? {}) as { level?: unknown; text?: unknown };
       if (typeof text !== "string") return;
       if (level === "debug" || level === "warn" || level === "error") extLog[level](text);
       else extLog.info(text);
     });
 
-    this.worker.addEventListener("message", (event: MessageEvent<RpcMessage>) => {
-      this.rpc!.handleMessage(event.data);
-    });
-    this.worker.addEventListener("error", (event) => {
+    worker.addEventListener("error", (event) => {
       log.error("Worker error:", event.message);
     });
     // The only sign the host thread is gone: an uncaught exception in any extension ends it
-    // (code 1), and `terminateWorker` is the one expected way out.
+    // (code 1), and `terminateWorker` is the one expected way out. Only the current worker
+    // dying triggers a rebuild: `terminateWorker` clears `this.worker` before terminating, so
+    // the close event it causes (including the one inside recovery) never re-enters it.
     worker.addEventListener("close", (event) => {
       const code = (event as Event & { code?: number }).code;
-      if (this.worker === worker) log.error(`Extension host worker exited code=${code} active=${this.activatedIds.size}`);
-      else log.debug(`Extension host worker stopped code=${code}`);
+      if (this.worker === worker) {
+        log.error(`Extension host worker exited code=${code} active=${this.activatedIds.size}`);
+        // Nothing will answer any more: fail calls in flight now rather than at their timeout,
+        // let callers see a host that is not ready instead of one that never replies, and rebuild.
+        this.workerReady = false;
+        rpc.dispose();
+        void this.recoverWorker("close");
+      } else {
+        log.debug(`Extension host worker stopped code=${code}`);
+      }
     });
 
-    return { worker: this.worker, rpc: this.rpc };
+    return { worker, rpc };
+  }
+
+  private recovering = false;
+  private recoveryTimes: number[] = [];
+  /** Set when the worker a rebuild just started dies too; the rebuild then goes again. */
+  private recoverAgain: string | null = null;
+
+  /**
+   * A terminated worker leaves `this.worker` non-null, so every later RPC waits
+   * the full timeout and fails. Rebuild the host and re-activate whatever was
+   * enabled; bounded so a crash-on-activate extension cannot restart-loop.
+   *
+   * A worker that dies while a rebuild is re-activating (the crash-on-activate case) is
+   * rebuilt by that same call and counts against the same bound, so the host is never
+   * left dead without a "giving up" line.
+   */
+  private async recoverWorker(reason: string): Promise<void> {
+    if (this.recovering) {
+      this.recoverAgain = reason;
+      return;
+    }
+    this.recovering = true;
+    try {
+      let next: string | null = reason;
+      while (next !== null) {
+        this.recoverAgain = null;
+        const now = Date.now();
+        this.recoveryTimes = this.recoveryTimes.filter((t) => now - t < 5 * 60_000);
+        if (this.recoveryTimes.length >= 3) {
+          log.error(`Worker ${next} again — 3 recoveries in 5 min, giving up until restart`);
+          // Drop the dead host, so an extension enabled later starts a fresh one instead of
+          // posting to a thread that no longer exists. The activation errors stay, so the
+          // extensions panel still says why each one is down.
+          const errors = new Map(this.activationErrors);
+          await this.terminateWorker();
+          for (const [id, message] of errors) this.activationErrors.set(id, message);
+          this.broadcastContributions();
+          return;
+        }
+        this.recoveryTimes.push(now);
+        await this.rebuildWorker(next);
+        next = this.recoverAgain;
+      }
+    } finally {
+      this.recovering = false;
+      this.recoverAgain = null;
+    }
+  }
+
+  private async rebuildWorker(reason: string): Promise<void> {
+    const toReactivate = getExtensions().filter((row) => row.enabled === 1).map((row) => row.id);
+    log.warn(`Worker ${reason} — rebuilding host and re-activating ${toReactivate.length} extension(s)`);
+    await this.terminateWorker();
+    for (const id of toReactivate) {
+      // The new host died as well: activating the rest against it would only fail.
+      if (this.recoverAgain !== null) break;
+      try { await this.activate(id); } catch (e) {
+        this.activationErrors.set(id, e instanceof Error ? e.message : String(e));
+        log.error(`Failed to re-activate ${id} after worker ${reason}:`, e);
+      }
+    }
   }
 
   private async terminateWorker(): Promise<void> {
+    // Before the next worker can start: its calls answer nobody once this one is gone.
+    const aborted = extensionCallRegistry.endGeneration(this.generation);
+    if (aborted > 0) log.info(`aborted ${aborted} extension call(s) of generation ${this.generation}`);
     if (this.rpc) { this.rpc.dispose(); this.rpc = null; }
     if (this.worker) { this.worker.terminate(); this.worker = null; }
     this.workerReady = false;
     this.activatedIds.clear();
     this.activationErrors.clear();
-    this.extensionPaths.clear();
-    this.bundledIds.clear();
+    // Every toolset was served by that worker; the next one's activations register them again.
+    extensionMcpRegistry.clear();
+    // `extensionPaths` and `bundledIds` describe what is on disk, not this worker: a rebuild
+    // keeps them, or a bundled extension is looked for under node_modules and cannot be
+    // re-activated. Only `shutdown` forgets them.
     contributionRegistry.clear();
   }
 
@@ -178,6 +253,7 @@ class ExtensionService {
       return await installExtension(name, resolve(getPpmDir(), "extensions"));
     } finally {
       this.installing.delete(name);
+      invalidateExtensionCliHint();
     }
   }
 
@@ -188,6 +264,9 @@ class ExtensionService {
     if (this.activatedIds.has(id)) await this.deactivate(id);
     await removeExtension(id, resolve(getPpmDir(), "extensions"));
     contributionRegistry.unregister(id);
+    // Its chats are closed; their agents' tokens to its tools go too.
+    revokeExtensionMcpTokens(getExtensionBoundSessionIds(id));
+    invalidateExtensionCliHint();
   }
 
   async activate(id: string): Promise<void> {
@@ -202,6 +281,10 @@ class ExtensionService {
       ?? resolve(resolve(getPpmDir(), "extensions"), "node_modules", id);
     const entryPath = resolve(extDir, manifest.main);
     if (!existsSync(entryPath)) throw new Error(`Entry point not found: ${entryPath}`);
+
+    // Created before activate() runs, so an extension can open files there straight away.
+    const dataDir = extensionDataDir(id);
+    if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
 
     const { rpc } = this.ensureWorker();
 
@@ -220,11 +303,18 @@ class ExtensionService {
     const authConfig = cfg.get("auth");
     const authToken = authConfig?.enabled ? authConfig.token : undefined;
 
+    // A toolset a lost race, a timed-out activation or an older worker left registered under
+    // this id would forward calls to a handler nobody runs; this activation gets a clean slate.
+    extensionMcpRegistry.unregisterExtension(id);
+
     log.debug(`activating ${id} (entry: ${entryPath})`);
     const result = await rpc.sendRequest<{ ok: boolean; error?: string }>(
-      "ext:activate", id, entryPath, extDir, storedState, baseUrl, authToken,
+      "ext:activate", id, entryPath, extDir, storedState, baseUrl, authToken, dataDir,
     );
     if (!result.ok) {
+      // Its activate() can keep running after this; ppm.mcp.ts refuses whatever it registers
+      // late, but the registry is cleared here too in case of a worker that predates that fix.
+      extensionMcpRegistry.unregisterExtension(id);
       this.activationErrors.set(id, result.error ?? "Unknown activation error");
       throw new Error(`Failed to activate ${id}: ${result.error}`);
     }
@@ -232,6 +322,7 @@ class ExtensionService {
     this.activationErrors.delete(id);
     this.activatedIds.add(id);
     if (manifest.contributes) contributionRegistry.register(id, manifest.contributes);
+    invalidateExtensionCliHint();
     this.broadcastContributions();
     log.info(`activated ${id} successfully`);
   }
@@ -249,7 +340,9 @@ class ExtensionService {
       }
     }
     this.activatedIds.delete(id);
+    extensionMcpRegistry.unregisterExtension(id);
     contributionRegistry.unregister(id);
+    invalidateExtensionCliHint();
     this.broadcastContributions();
     log.info(`Deactivated ${id}`);
   }
@@ -286,6 +379,7 @@ class ExtensionService {
     const row = getExtensionById(id);
     if (!row) throw new Error(`Extension ${id} not found`);
     updateExtension(id, { enabled: enabled ? 1 : 0 });
+    invalidateExtensionCliHint();
     log.info(`${enabled ? "Enabled" : "Disabled"} ${id}`);
     if (enabled && !this.activatedIds.has(id)) await this.activate(id);
     else if (!enabled && this.activatedIds.has(id)) await this.deactivate(id);
@@ -293,6 +387,8 @@ class ExtensionService {
 
   async devLink(localPath: string): Promise<ExtensionManifest> {
     const manifest = devLinkExtension(localPath, resolve(getPpmDir(), "extensions"));
+    // A re-link of an active extension may change its manifest without a new activation.
+    invalidateExtensionCliHint();
     // Auto-activate after dev-link (DB record is created with enabled=1)
     if (!this.activatedIds.has(manifest.id)) {
       try { await this.activate(manifest.id); } catch (e) {
@@ -342,6 +438,8 @@ class ExtensionService {
         log.error(`Failed to activate ${row.id} on startup:`, e);
       }
     }
+    // Manifests were synced from disk above, disabled ones included.
+    invalidateExtensionCliHint();
     const bundled = manifests.filter((m) => this.bundledIds.has(m.id)).length;
     log.info(`startup: bundled=${bundled} user=${manifests.length - bundled} activated=${this.activatedIds.size} failed=${failed}`);
   }
@@ -351,6 +449,49 @@ class ExtensionService {
       try { await this.deactivate(id); } catch {}
     }
     await this.terminateWorker();
+    this.extensionPaths.clear();
+    this.bundledIds.clear();
+  }
+
+  /**
+   * Tell the extension host which zone a browser reported (`vscode.env.clientTimeZone`). Sent as
+   * an event: the host fires `onDidChangeClientTimeZone` only when the zone actually changed.
+   */
+  notifyClientTimeZone(report: Pick<ClientTimeZoneReport, "timeZone" | "deviceId">): void {
+    this.rpc?.sendEvent("client:timezone", { timeZone: report.timeZone, deviceId: report.deviceId });
+  }
+
+  /**
+   * Extensions call PPM's own API with the token they were handed at activation
+   * (`__PPM_AUTH_TOKEN__`). When the token changes (Settings), every such call would answer 401
+   * until a restart, so the new one (or none, with auth off) is pushed to the running host.
+   */
+  constructor() {
+    configService.onChange((key) => {
+      if (key === "auth") this.pushAuthToken();
+    });
+  }
+
+  private pushAuthToken(): void {
+    const auth = configService.get("auth");
+    this.rpc?.sendEvent("host:auth-token", { token: auth?.enabled && auth.token ? auth.token : null });
+  }
+
+  /** The worker exists and has said it is listening; before that nothing can be routed to it. */
+  isHostReady(): boolean { return this.rpc !== null && this.workerReady; }
+
+  /** Run a declared command for a caller outside the browser (CLI). Never throws. */
+  executeCommand(command: string, args: unknown[], timeoutMs: number): Promise<ExecuteOutcome> {
+    return executeExtensionCommand({
+      isHostReady: () => this.isHostReady(),
+      activeCommands: () => contributionRegistry.getCommands(),
+      installedManifests: () => this.list(),
+      activationError: (id) => this.activationErrors.get(id),
+      send: (cmd, cmdArgs, ms) => {
+        if (!this.rpc) return Promise.reject(new Error("The extension host stopped"));
+        return this.rpc.sendRequestWithTimeout<WorkerCommandReply>("ext:command:execute", ms, [cmd, ...cmdArgs]);
+      },
+    }, command, args, timeoutMs);
   }
 
   isActivated(id: string): boolean { return this.activatedIds.has(id); }

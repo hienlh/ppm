@@ -50,6 +50,24 @@ export interface SendMessageOpts {
    */
   dbToolsMcp?: { url: string; token: string };
   /**
+   * Instructions an extension bound to this session, appended to the system prompt.
+   * Server-built by `chatService.prepareSendOptions` from the session's binding; a caller's
+   * copy is discarded.
+   */
+  extensionInstructions?: string;
+  /**
+   * The bound extension's tool policy: when present it decides every tool the chat may use,
+   * the session runs outside bypass mode, and it gets no tab, database or inherited MCP tools.
+   * Server-built like `extensionInstructions`.
+   */
+  extensionToolPolicy?: import("../shared/extension-session-binding.ts").ExtensionToolPolicy;
+  /**
+   * The extension toolsets' MCP endpoint (`ppm-ext`) for a session whose binding names toolsets:
+   * a URL on the port this server listens on and the session's capability token. Server-built
+   * like `extensionInstructions`; absent when the process serves no HTTP (the CLI).
+   */
+  extensionMcp?: { url: string; token: string };
+  /**
    * The session tools' MCP endpoint (`create_session`, `send_to_session`, `session_status`) for
    * this session, present while one of them is on in Settings → Tools, and never for a design
    * session. Server-built like `designMcp`.
@@ -103,6 +121,13 @@ export interface SendMessageOpts {
   watchEvents?: WatchEventNotice[];
   /** News from manager chats in a turn PPM started; rendered beside `watchEvents`, the same way. */
   wakeNews?: import("../shared/assistant-wake-news.ts").WakeNewsNotice[];
+  /**
+   * One line naming the `ppm <name>` commands enabled extensions contribute
+   * (`extension-cli-hint.ts`). Server-built by `chatService.prepareSendOptions`, which drops any
+   * caller value, so no client text reaches the instructions. Claude appends it to the system
+   * prompt after the design block, Codex joins it to `developerInstructions`.
+   */
+  extensionCliHint?: string;
 }
 
 /** How a watched chat's run ended, as the Assistant is told it. */
@@ -139,6 +164,9 @@ export interface AIProvider {
    *  policy when opts.assistantSession is set. Only such providers may run an Assistant
    *  session; anywhere else it would be an ordinary chat in the user's chosen mode. */
   supportsAssistantSessions?: boolean;
+  /** Delivers opts.extensionInstructions and enforces opts.extensionToolPolicy. Only such
+   *  providers may host a session an extension binds. */
+  supportsExtensionBinding?: boolean;
   /** Additional instruction/memory sources; never return credentials or transcripts. */
   getSharedContextSources?(projectPath: string): Array<{ path: string; directory?: boolean; indexOnly?: boolean }>;
 
@@ -158,6 +186,8 @@ export interface AIProvider {
   // Optional capabilities — providers implement what they support
   /** Start the process a chat about to be created will run on, ahead of its first message. */
   prewarm?(input: PrewarmInput): Promise<void>;
+  /** One prompt, one answer, with no chat session behind it and nothing in the chat list. */
+  completeOnce?(input: OneShotInput): Promise<OneShotResult>;
   resolveApproval?(requestId: string, approved: boolean, data?: unknown): void;
   onToolApproval?: (callback: ToolApprovalHandler) => void;
   abortQuery?(sessionId: string, source?: string): void;
@@ -225,6 +255,40 @@ export interface SessionConfig {
    * to boot one of its own.
    */
   adoptWarmSpare?: boolean;
+}
+
+/** What `completeOnce` is asked. Only the first four fields are required. */
+export interface OneShotInput {
+  prompt: string;
+  /** Replaces the provider's own system prompt; the provider's default when absent. */
+  systemPrompt?: string;
+  model: string;
+  /** Reasoning effort, where the provider takes one. */
+  effort?: "low" | "medium" | "high";
+  /** Wall-clock limit for the whole call. */
+  timeoutMs?: number;
+  /** Ask for an answer shaped by this JSON Schema, natively where the provider can. */
+  jsonSchema?: Record<string, unknown>;
+  /** Let the model search and read the web. */
+  webSearch?: boolean;
+  /** Run on this account instead of the provider's own pick (which may move its rotation). */
+  accountId?: string;
+  /** Aborting stops the provider call itself, not just the wait for it. */
+  signal?: AbortSignal;
+}
+
+export interface OneShotResult {
+  text: string;
+  /** The provider's native structured answer, when it gave one. */
+  structured?: unknown;
+  inputTokens: number;
+  outputTokens: number;
+  /** What the call cost, where the provider reports it. */
+  costUsd?: number;
+  /** Web searches the call ran, billed apart from tokens; absent when there were none. */
+  webSearches?: number;
+  /** The account that answered; absent when the provider's own sign-in did. */
+  accountId?: string;
 }
 
 /** What `prewarm` needs to start the CLI a new chat's first message will run on. */

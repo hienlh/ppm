@@ -26,6 +26,8 @@ import {
 } from "../services/session-collab/session-collab-tool.ts";
 import { SESSION_SERVER_TOOLS } from "../shared/session-collab.ts";
 import { EFFORT_LEVELS, type EffortLevel } from "../shared/effort-status.ts";
+import { EXTENSION_MCP_SERVER, EXTENSION_MCP_TOOL_PREFIX } from "../shared/extension-session-binding.ts";
+import { EXTENSION_TOOL_CALL_TIMEOUT_MS } from "../shared/extension-mcp.ts";
 
 export const VALID_EFFORT_VALUES = EFFORT_LEVELS;
 export type EffortValue = EffortLevel;
@@ -72,8 +74,11 @@ export function allowedToolsFor(p: {
   designPolicy?: boolean;
   designCheckTool?: string | null;
   assistantPolicy?: boolean;
+  /** A session an extension bound with a tool policy: only the extension's own MCP tools. */
+  extensionPolicy?: boolean;
 }): string[] {
   if (p.assistantPolicy) return [];
+  if (p.extensionPolicy) return [`${EXTENSION_MCP_TOOL_PREFIX}*`];
   if (p.designPolicy) return p.designCheckTool ? [p.designCheckTool] : [];
   const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
   const teamTools = p.agentTeams
@@ -144,10 +149,11 @@ export interface PresetSystemPromptOption {
 
 /**
  * Compose the SDK `systemPrompt` option from the provider's "Additional Instructions"
- * (`system_prompt`) and the session's own instruction block — a design session's or a PPM
- * Assistant session's, never both.
+ * (`system_prompt`), the session's own instruction block — a design session's or a PPM
+ * Assistant session's, never both — the instructions an extension bound to the session, and the
+ * line naming extension CLI commands, in that order.
  *
- * Both are appended to the preset, never used as a replacing `custom` prompt: the setting
+ * All are appended to the preset, never used as a replacing `custom` prompt: the setting
  * is labelled as *additional* instructions, and replacing Claude Code's prompt would drop
  * its tool-use guidance. Computed on every turn, so nothing depends on the SDK recording
  * the prompt on the session's first request.
@@ -155,8 +161,10 @@ export interface PresetSystemPromptOption {
 export function buildSystemPromptOption(
   additional?: string,
   session?: string,
+  extension?: string,
+  extensionCliHint?: string,
 ): PresetSystemPromptOption {
-  const parts = [additional, session]
+  const parts = [additional, session, extension, extensionCliHint]
     .map((part) => part?.trim())
     .filter((part): part is string => !!part);
   return parts.length
@@ -456,6 +464,24 @@ export function sessionCollabMcpServers(access: SessionCollabMcpAccess | null | 
       url: access.url,
       headers: { Authorization: `Bearer ${access.token}` },
       timeout: SESSION_COLLAB_TOOLS_TIMEOUT_MS,
+    },
+  };
+}
+
+/**
+ * The extension toolsets' MCP server (`ppm-ext`) as the SDK's `http` server config, for a
+ * session whose binding names toolsets; `{}` otherwise. The timeout outlasts the endpoint's own
+ * ten-minute ceiling on one call, so the endpoint is the one that answers. It is never part of a
+ * warm spare, and needs no masking for one: a bound session never matches a spare.
+ */
+export function extensionMcpServers(access: { url: string; token: string } | null | undefined): Record<string, McpHttpServerConfig> {
+  if (!access) return {};
+  return {
+    [EXTENSION_MCP_SERVER]: {
+      type: "http",
+      url: access.url,
+      headers: { Authorization: `Bearer ${access.token}` },
+      timeout: EXTENSION_TOOL_CALL_TIMEOUT_MS + 30_000,
     },
   };
 }

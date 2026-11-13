@@ -5,6 +5,8 @@
 import { contributionRegistry } from "../../services/contribution-registry.ts";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { createLogger } from "../../services/logger.ts";
+import { recordClientTimeZone } from "../../services/client-timezone.ts";
+import { ExtensionUiReplay } from "./extension-ui-replay.ts";
 
 const log = createLogger("ExtWS");
 
@@ -19,10 +21,36 @@ const clients = new Set<ExtWsSocket>();
 /** Pending request resolvers for quickpick/inputbox responses from browser */
 const pendingRequests = new Map<string, (value: unknown) => void>();
 
+/** Each socket's id, told to the browser on connect so a `tab:open` can be addressed to it. */
+const clientIds = new WeakMap<ExtWsSocket, string>();
+
+/** The browser that last ran each extension's command, so a tab the command opens lands there. */
+const lastCommandClients = new Map<string, { clientId: string; at: number }>();
+
+/** How long after a command its browser is still "the one that ran it". */
+export const COMMAND_CLIENT_TTL_MS = 10_000;
+
+/** The id of the browser that ran one of `extensionId`'s commands within the TTL, if any. */
+export function recentCommandClient(extensionId: string, now = Date.now()): string | null {
+  const last = lastCommandClients.get(extensionId);
+  if (!last || now - last.at > COMMAND_CLIENT_TTL_MS) return null;
+  return last.clientId;
+}
+
+function rememberCommandClient(ws: ExtWsSocket, command: string): void {
+  const owner = contributionRegistry.getCommandOwner(command);
+  const clientId = clientIds.get(ws);
+  if (owner && clientId) lastCommandClients.set(owner, { clientId, at: Date.now() });
+}
+
 // --- Public API for extension service to push UI updates ---
+
+/** Tree roots and status-bar items, replayed to each browser that connects later. */
+const uiReplay = new ExtensionUiReplay();
 
 /** Broadcast a message to all connected extension WS clients */
 export function broadcastExtMsg(msg: ExtServerMsg): void {
+  uiReplay.record(msg);
   const data = JSON.stringify(msg);
   for (const ws of clients) {
     try { ws.send(data); } catch {}
@@ -30,26 +58,55 @@ export function broadcastExtMsg(msg: ExtServerMsg): void {
 }
 
 /**
+ * How long a prompt (a toast with buttons, a quick pick, an input box) waits for the person.
+ * `PROMPT_REPLY_WAIT_MS` in `packages/vscode-compat/src/window.ts` must stay above it, or the
+ * extension gives up while the prompt is still on screen and a slow click is lost.
+ */
+export const BROWSER_PROMPT_TIMEOUT_MS = 30_000;
+
+/**
  * Send a request to browser and wait for response (quickpick, inputbox, notification).
  * The `trackingId` is the key used to match the response.
- * Returns the resolved value or undefined on timeout.
+ * Returns the resolved value, or undefined on timeout or once `signal` aborts (the extension
+ * host that asked was rebuilt, so nobody is left to read the answer).
  */
 export function requestFromBrowser<T = unknown>(
   msg: ExtServerMsg,
   trackingId: string,
-  timeoutMs = 30_000,
+  timeoutMs = BROWSER_PROMPT_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<T | undefined> {
+  if (signal?.aborted) return Promise.resolve(undefined);
   broadcastExtMsg(msg);
   return new Promise<T | undefined>((resolve) => {
-    const timer = setTimeout(() => {
-      pendingRequests.delete(trackingId);
-      resolve(undefined);
-    }, timeoutMs);
-    pendingRequests.set(trackingId, (value) => {
+    const settle = (value: T | undefined) => {
       clearTimeout(timer);
-      resolve(value as T);
-    });
+      signal?.removeEventListener("abort", onAbort);
+      pendingRequests.delete(trackingId);
+      resolve(value);
+    };
+    const onAbort = () => settle(undefined);
+    const timer = setTimeout(onAbort, timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    pendingRequests.set(trackingId, (value) => settle(value as T));
   });
+}
+
+/**
+ * How long a command a browser dispatched (a click on a tree row, a button, the status bar) may
+ * take. A command can itself wait on a prompt (a quick pick waits up to
+ * `PROMPT_REPLY_WAIT_MS`, 35 s, on the extension side) or on slow work such as a refresh, and at
+ * the RPC default of 10 s every such click ended in a false error while the command still ran.
+ */
+export const BROWSER_COMMAND_TIMEOUT_MS = 35_000;
+
+/**
+ * A command's failure, shown only to the browser that asked for it: the other devices did not
+ * click anything, and an error toast there is noise.
+ */
+function notifyClicker(ws: ExtWsSocket, message: string): void {
+  const msg: ExtServerMsg = { type: "notification", id: `cmd-error-${Date.now()}`, level: "error", message };
+  try { ws.send(JSON.stringify(msg)); } catch { /* the socket closed meanwhile */ }
 }
 
 /** Get the number of connected extension WS clients */
@@ -61,6 +118,7 @@ export function getExtClientCount(): number {
 
 function handleOpen(ws: ExtWsSocket): void {
   clients.add(ws);
+  clientIds.set(ws, crypto.randomUUID());
   log.debug(`Client connected (${clients.size} total)`);
 }
 
@@ -74,6 +132,9 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
 
   switch (msg.type) {
     case "ready": {
+      // The browser's name for itself here, ahead of everything else it is sent.
+      const clientId = clientIds.get(ws);
+      if (clientId) ws.send(JSON.stringify({ type: "client:hello", clientId } satisfies ExtServerMsg));
       // Send current contributions + any activation errors on connect
       const contributions = contributionRegistry.getAll();
       const { extensionService } = await import("../../services/extension.service.ts");
@@ -82,53 +143,58 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
         ? { type: "contributions:update", contributions, activationErrors }
         : { type: "contributions:update", contributions };
       ws.send(JSON.stringify(readyMsg));
+      // Then what the active extensions last pushed, which this browser missed.
+      const replay = uiReplay.messagesFor({
+        isActive: (id) => extensionService.isActivated(id),
+        viewOwner: (viewId) => contributionRegistry.getViews().find((v) => v.id === viewId)?.extId,
+      });
+      for (const update of replay) ws.send(JSON.stringify(update));
       break;
     }
 
     case "command:execute": {
+      rememberCommandClient(ws, msg.command);
       try {
         const { extensionService } = await import("../../services/extension.service.ts");
         if (extensionService["rpc"]) {
           log.debug(`command:execute "${msg.command}"`);
-          const result = await extensionService["rpc"].sendRequest<{ ok: boolean; error?: string }>(
-            "ext:command:execute", msg.command, ...(msg.args ?? []),
+          const result = await extensionService["rpc"].sendRequestWithTimeout<{ ok: boolean; error?: string }>(
+            "ext:command:execute", BROWSER_COMMAND_TIMEOUT_MS, [msg.command, ...(msg.args ?? [])],
           );
           if (!result?.ok) {
             log.error(`command:execute failed: ${result?.error ?? "unknown"}`);
-            broadcastExtMsg({
-              type: "notification",
-              id: `cmd-error-${Date.now()}`,
-              level: "error",
-              message: `Extension command failed: ${result?.error ?? "unknown error"}`,
-            });
+            notifyClicker(ws, `Extension command failed: ${result?.error ?? "unknown error"}`);
           }
         } else {
           log.error(`command:execute: extension host not ready`);
-          broadcastExtMsg({
-            type: "notification",
-            id: `cmd-error-${Date.now()}`,
-            level: "error",
-            message: `Extension host not ready. Try reloading the page.`,
-          });
+          notifyClicker(ws, "Extension host not ready. Try reloading the page.");
         }
       } catch (e) {
         log.error(`command:execute error:`, e);
-        broadcastExtMsg({
-          type: "notification",
-          id: `cmd-error-${Date.now()}`,
-          level: "error",
-          message: `Extension command error: ${e instanceof Error ? e.message : String(e)}`,
-        });
+        notifyClicker(ws, `Extension command error: ${e instanceof Error ? e.message : String(e)}`);
       }
+      break;
+    }
+
+    case "client:timezone": {
+      // Untrusted: a zone Intl does not know, or a malformed device id, is dropped.
+      const report = recordClientTimeZone(msg.timeZone, msg.deviceId);
+      if (!report) {
+        log.debug("client:timezone dropped: invalid zone or device id");
+        break;
+      }
+      const { extensionService } = await import("../../services/extension.service.ts");
+      extensionService.notifyClientTimeZone(report);
       break;
     }
 
     case "tree:click": {
       if (msg.command) {
+        rememberCommandClient(ws, msg.command);
         try {
           const { extensionService } = await import("../../services/extension.service.ts");
           if (extensionService["rpc"]) {
-            await extensionService["rpc"].sendRequest("ext:command:execute", msg.command);
+            await extensionService["rpc"].sendRequestWithTimeout("ext:command:execute", BROWSER_COMMAND_TIMEOUT_MS, [msg.command]);
           }
         } catch (e) {
           log.error(`tree:click command error:`, e);
@@ -151,6 +217,15 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
       if (resolver) {
         pendingRequests.delete(msg.requestId);
         resolver(msg.value);
+      }
+      break;
+    }
+
+    case "composer:resolve": {
+      const resolver = pendingRequests.get(msg.requestId);
+      if (resolver) {
+        pendingRequests.delete(msg.requestId);
+        resolver(msg.result);
       }
       break;
     }

@@ -34,6 +34,16 @@ interface RunState {
 /** Live runs by every id they answer to — the one they started under and any a provider migrated to. */
 const liveRuns = new Map<string, RunState>();
 
+/**
+ * Whether this process is running a turn of the session now, whoever started it: the chat
+ * socket, the scheduler, a Jira debug run, a bot. Only the socket's turns have a phase of their
+ * own, so this is how a status reader tells the others' turns from turns that died.
+ */
+export function isTurnRunning(id: string): boolean {
+  const state = liveRuns.get(id);
+  return !!state && (state.currentTurnId !== null || state.pendingTurnIds.length > 0);
+}
+
 let lastWarnAt = 0;
 function warn(message: string): void {
   // One broken disk must not print a line per streamed event.

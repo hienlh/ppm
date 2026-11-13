@@ -29,7 +29,7 @@ export interface AskResult {
 type CompleteOnce = (input: {
   prompt: string; model: string; systemPrompt?: string; effort?: AskOptions["effort"];
   jsonSchema?: Record<string, unknown>; timeoutMs?: number;
-}) => Promise<{ text: string; json?: unknown; costUsd: number }>;
+}) => Promise<{ text: string; structured?: unknown; costUsd?: number }>;
 
 export async function scheduleAsk(schedule: Pick<Schedule, "provider_id">, prompt: string, opts: AskOptions): Promise<AskResult> {
   const providerId = schedule.provider_id === "mock" ? "mock" : "claude";
@@ -48,7 +48,11 @@ export async function scheduleAsk(schedule: Pick<Schedule, "provider_id">, promp
       ...(opts.jsonSchema && { jsonSchema: opts.jsonSchema }),
       timeoutMs,
     });
-    return { ok: true, text: answer.text, ...(answer.json !== undefined && { json: answer.json }), costUsd: answer.costUsd };
+    // A script that asked for a shape gets that shape or an error, never prose to parse itself.
+    if (opts.jsonSchema && answer.structured === undefined) {
+      return { ok: false, text: answer.text, error: "Claude did not answer in the requested JSON shape", costUsd: answer.costUsd ?? 0 };
+    }
+    return { ok: true, text: answer.text, ...(answer.structured !== undefined && { json: answer.structured }), costUsd: answer.costUsd ?? 0 };
   } catch (e) {
     return {
       ok: false, text: "", error: (e as Error).message,

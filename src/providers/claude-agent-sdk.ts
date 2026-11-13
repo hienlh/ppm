@@ -8,12 +8,13 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { readSessionMessages } from "./claude-transcript-tail.ts";
 import { query } from "./claude-cli-process-group.ts";
-import { allowedToolsFor, assistantMcpServers, buildModelQueryOptions, CLAUDE_SETTING_SOURCES, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_SESSION_COLLAB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, fileWriteTarget, moveMcpServersToConfigFile, preToolUseDecision, READ_ONLY_TOOLS, sessionCollabMcpServers, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, assistantMcpServers, buildModelQueryOptions, CLAUDE_SETTING_SOURCES, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_SESSION_COLLAB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, extensionMcpServers, fileWriteTarget, moveMcpServersToConfigFile, preToolUseDecision, READ_ONLY_TOOLS, sessionCollabMcpServers, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
 import { SESSION_COLLAB_MCP_PATH, sessionCollabMcpAccessFor } from "../services/session-collab/session-collab-tokens.ts";
 import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { DB_TOOLS_MCP_PATH, dbToolsMcpAccessFor } from "../services/db-ai-tools/db-ai-tools-tokens.ts";
 import { aiConnections } from "../services/db-ai-tools/db-ai-connections.ts";
+import { extensionCliHint } from "../services/extension-cli-hint.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
 import { OPEN_PREVIEW_TOOL } from "../shared/tab-open-protocol.ts";
 import { anyPpmToolOn, ppmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
@@ -31,10 +32,15 @@ import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
 import { assistantToolDecision } from "../services/assistant/assistant-tool-policy.ts";
 import { assistantShellEnv } from "../services/assistant/assistant-shell-env.ts";
+import { clampBoundPermissionMode, extensionToolDecision } from "./extension-tool-policy.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
 import { isImageLimitRejection } from "./image-limit-detection.ts";
+import { claudeCompleteOnce } from "./claude-complete-once.ts";
+import { parseUsageLimitReset } from "./claude-usage-limit-reset.ts";
 import type {
   AIProvider,
+  OneShotInput,
+  OneShotResult,
   PrewarmInput,
   Session,
   SessionConfig,
@@ -194,36 +200,6 @@ function createMessageChannel(): {
   };
 }
 
-/**
- * Parse a hard usage/session-limit reset hint from SDK error text.
- * Returns the human-readable reset text and a best-effort absolute timestamp,
- * or null if no reset time is present (caller treats that as a transient rate limit).
- *
- * Examples it handles: "resets 10:10am", "resets at 3pm", "resets 10:10am (Asia/Saigon)".
- */
-function parseUsageLimitReset(text: string): { text?: string; atMs?: number } | null {
-  const m = /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(text);
-  if (!m) return null;
-  const rawText = m[0].replace(/^resets?\s+(?:at\s+)?/i, "").trim();
-
-  let hour = Number(m[1]);
-  const minute = m[2] ? Number(m[2]) : 0;
-  const ampm = m[3]?.toLowerCase();
-  if (Number.isNaN(hour) || hour > 23 || minute > 59) {
-    return { text: rawText || undefined };
-  }
-  if (ampm === "pm" && hour < 12) hour += 12;
-  if (ampm === "am" && hour === 12) hour = 0;
-
-  const now = new Date();
-  const reset = new Date(now);
-  reset.setHours(hour, minute, 0, 0);
-  // If the computed time already passed today, it must mean the next occurrence.
-  if (reset.getTime() <= now.getTime()) reset.setDate(reset.getDate() + 1);
-
-  return { text: rawText || undefined, atMs: reset.getTime() };
-}
-
 /** Build a MessageParam with optional image content blocks */
 export function buildMessageParam(
   text: string,
@@ -336,6 +312,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   readonly supportsSharedContext = true;
   readonly supportsDesignInstructions = true;
   readonly supportsAssistantSessions = true;
+  readonly supportsExtensionBinding = true;
   id = "claude";
   name = "Claude";
 
@@ -1053,80 +1030,19 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
   /**
-   * One prompt, one answer: no tools, no MCP server, no session on disk, no project. For PPM's
-   * own small jobs (sorting the log's errors, drafting a bug report) and a script schedule's
-   * `ctx.ai.ask`, not for chats. It runs on the account the router would pick next and
-   * authenticates exactly as a turn does (`buildQueryEnv`), in a directory of its own with
-   * `settingSources: []`, so no project's CLAUDE.md, settings or `.env` reaches it.
-   * With `jsonSchema` the answer is also `json`, through the SDK's structured output; that is
-   * a tool call of its own, so the one-turn cap is lifted for it.
+   * One prompt, one answer: no session on disk, no project. For PPM's own small jobs (sorting
+   * the log's errors, drafting a bug report) and extensions' one-shot calls, not for chats.
+   * Without `accountId` it runs on the account the router would pick next; with one, on that
+   * account and the rotation is left alone. The body lives in `claude-complete-once.ts`.
    */
-  async completeOnce(input: {
-    prompt: string;
-    systemPrompt?: string;
-    model: string;
-    timeoutMs?: number;
-    effort?: "low" | "medium" | "high";
-    jsonSchema?: Record<string, unknown>;
-  }): Promise<{ text: string; json?: unknown; costUsd: number; inputTokens: number; outputTokens: number }> {
-    let account: AccountWithTokens | null = null;
-    if (accountSelector.isEnabled()) {
-      const picked = accountSelector.next();
-      if (!picked) throw new Error("No Claude account can take a request right now");
-      account = await accountService.ensureFreshToken(picked.id);
-      if (!account) throw new Error("The Claude account's sign-in has expired");
-    }
+  async completeOnce(input: OneShotInput): Promise<OneShotResult> {
     const providerConfig = this.getProviderConfig();
     const cliExecutablePath = resolveCliExecutablePath((providerConfig as { cli_command?: string }).cli_command);
-    const cwd = resolve(getPpmDir(), "one-shot");
-    mkdirSync(cwd, { recursive: true });
-    const abortController = new AbortController();
-    const timer = setTimeout(() => abortController.abort(), input.timeoutMs ?? 90_000);
-    try {
-      const run = startQuery({
-        prompt: input.prompt,
-        options: {
-          ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" as const }),
-          ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
-          cwd,
-          model: input.model,
-          ...(input.systemPrompt !== undefined && { systemPrompt: input.systemPrompt }),
-          ...(input.effort && { effort: input.effort }),
-          ...(input.jsonSchema ? { outputFormat: { type: "json_schema" as const, schema: input.jsonSchema } } : { maxTurns: 1 }),
-          tools: [],
-          mcpServers: {},
-          strictMcpConfig: true,
-          settingSources: [],
-          persistSession: false,
-          env: this.buildQueryEnv(undefined, account),
-          abortController,
-        },
-      });
-      for await (const message of run) {
-        if (message.type !== "result") continue;
-        if (message.subtype !== "success" || message.is_error) {
-          const detail = message.subtype === "success" ? message.result : message.subtype;
-          throw new Error(`Claude did not answer: ${String(detail).slice(0, 200)}`);
-        }
-        if (input.jsonSchema && message.structured_output === undefined) {
-          throw new Error("Claude did not answer in the requested JSON shape");
-        }
-        if (account) accountSelector.onSuccess(account.id);
-        return {
-          text: message.result,
-          ...(input.jsonSchema && { json: message.structured_output }),
-          costUsd: message.total_cost_usd,
-          inputTokens: (message.usage.input_tokens ?? 0) + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0),
-          outputTokens: message.usage.output_tokens ?? 0,
-        };
-      }
-      throw new Error("Claude ended without an answer");
-    } catch (e) {
-      if (abortController.signal.aborted) throw new Error("Claude took too long to answer");
-      throw e;
-    } finally {
-      clearTimeout(timer);
-    }
+    return claudeCompleteOnce(input, {
+      buildEnv: (account) => this.buildQueryEnv(undefined, account),
+      cliExecutablePath,
+      useNode: needsNodeInterpreter(process.platform, cliExecutablePath),
+    });
   }
 
   /**
@@ -1167,7 +1083,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const sessionTools = sessionBase ? { url: `${sessionBase}${SESSION_COLLAB_MCP_PATH}`, token: "" } : null;
     const options = this.buildQueryOptions({
       cwd: projectPath,
-      systemPrompt: buildSystemPromptOption(providerConfig.system_prompt),
+      // The same hint the session's first turn will carry (`prepareSendOptions`): a prompt that
+      // differed would make the turn refuse this spare and boot a cold process instead.
+      systemPrompt: buildSystemPromptOption(providerConfig.system_prompt, undefined, undefined, extensionCliHint()),
       env: this.buildQueryEnv(projectPath, account),
       allowedTools: allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams }),
       mcpServers: {
@@ -1289,19 +1207,28 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // `default` here as well as in the chat service, because the policy lives in the
     // permission hook and bypass mode never installs that hook.
     const assistantPolicy = !!opts?.assistantSession;
+    // A session an extension bound with a tool policy: the policy decides every tool, so the
+    // session never runs in bypass, where the permission hook is not even installed. The chat
+    // service clamps the mode already; this holds for any caller that reaches the provider.
+    // An Assistant session is never bound: its own policy is the only one.
+    const extensionPolicy = assistantPolicy ? undefined : opts?.extensionToolPolicy;
     const permissionMode = assistantPolicy
       ? "default"
-      : opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
+      : extensionPolicy
+        ? clampBoundPermissionMode(opts?.permissionMode)
+        : opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
     const isBypass = permissionMode === "bypassPermissions";
     // The provider's "Additional Instructions" belong to ordinary chats: an Assistant session
     // carries its own instructions, the user's part included, and nothing else.
     const systemPromptOpt = assistantPolicy
       ? buildSystemPromptOption(undefined, opts?.assistantInstructions)
-      : buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions);
+      : buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions, opts?.extensionInstructions, opts?.extensionCliHint);
+    // Relative tool paths resolve against the directory the CLI runs in.
+    const policyCwd = meta.projectPath && existsSync(meta.projectPath) ? meta.projectPath : homedir();
     // A design session in acceptEdits auto-approves file tools only while they target the
     // project, and asks for everything else. Any other mode the user picks for a design
     // session behaves exactly as that mode does in an ordinary chat.
-    const designPolicy = !assistantPolicy && !!opts?.designSession && permissionMode === "acceptEdits";
+    const designPolicy = !assistantPolicy && !extensionPolicy && !!opts?.designSession && permissionMode === "acceptEdits";
     // No project root means nothing can be proven inside it, so every file tool asks.
     const designRoot = designPolicy && meta.projectPath && existsSync(meta.projectPath) ? meta.projectPath : undefined;
     /**
@@ -1322,13 +1249,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     });
 
     // `design_check` only reads the canvas, so a design session never asks before it runs.
-    const designCheckTool = !assistantPolicy && opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
+    const designCheckTool = !assistantPolicy && !extensionPolicy && opts?.designSession && opts.designMcp ? CLAUDE_DESIGN_CHECK_TOOL : null;
     // An Assistant session loads none of PPM's chat tool servers but the session tools: its own
-    // server replaces the rest, and it opens and messages chats through `ppm-sessions`.
-    const tabToolsMcp = opts?.designSession || assistantPolicy ? undefined : opts?.tabToolsMcp;
-    const dbToolsMcp = opts?.designSession || assistantPolicy ? undefined : opts?.dbToolsMcp;
-    const sessionCollabMcp = opts?.designSession ? undefined : opts?.sessionCollabMcp;
-    const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool, assistantPolicy });
+    // server replaces the rest, and it opens and messages chats through `ppm-sessions`. A policy
+    // session gets no tool its policy did not decide: no tab, database or session tools.
+    const tabToolsMcp = opts?.designSession || assistantPolicy || extensionPolicy ? undefined : opts?.tabToolsMcp;
+    const dbToolsMcp = opts?.designSession || assistantPolicy || extensionPolicy ? undefined : opts?.dbToolsMcp;
+    const sessionCollabMcp = opts?.designSession || extensionPolicy ? undefined : opts?.sessionCollabMcp;
+    const allowedTools = allowedToolsFor({
+      isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool, assistantPolicy, extensionPolicy: !!extensionPolicy,
+    });
 
     /** Approval requests from canUseTool and the PreToolUse hook, handed out by the main loop. */
     const approvals = new ApprovalQueue<ChatEvent>();
@@ -1352,6 +1282,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
      */
     const canUseTool = async (toolName: string, input: unknown) => {
       log.debug(`canUseTool called: tool=${toolName} permissionMode=${permissionMode}`);
+      // Ahead of the question branch: a bound session's policy denies questions too, because
+      // nobody may be there to answer one.
+      if (extensionPolicy) {
+        const verdict = extensionToolDecision(toolName, input, extensionPolicy, policyCwd);
+        return verdict.decision === "allow"
+          ? { behavior: "allow" as const, updatedInput: input }
+          : { behavior: "deny" as const, message: verdict.reason };
+      }
       if (toolName === "AskUserQuestion") {
         const result = await waitForApproval(toolName, input);
         if (result.approved && result.data) {
@@ -1385,6 +1323,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const toolName = hookInput?.tool_name as string | undefined;
       if (!toolName) return {};
       log.debug(`preToolUseHook: tool=${toolName} permissionMode=${permissionMode} isBypass=${isBypass}`);
+
+      // A bound session's policy is exhaustive: an explicit verdict for every tool, before
+      // the question pass-through and the tab/database allows below, so neither an approval
+      // card nor acceptEdits' own auto-approvals ever get a say.
+      if (extensionPolicy) {
+        const verdict = extensionToolDecision(toolName, hookInput?.tool_input, extensionPolicy, policyCwd);
+        return verdict.decision === "allow" ? preToolUseDecision("allow") : preToolUseDecision("deny", verdict.reason);
+      }
 
       // Bypass mode: allow everything
       if (isBypass) return {};
@@ -1615,15 +1561,22 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // sources (below), so the CLI loads no server PPM did not pass — not from `.mcp.json`,
       // user settings or a plugin. The Assistant policy allows `mcp__ppm-assistant__*` unasked,
       // and PPM's own entry is written last, so nothing else can answer to that name.
+      // A policy session inherits none of the user's MCP servers either (PPM's or Claude Code's):
+      // their tools would be denied anyway, and their mere presence is reach the policy did not
+      // grant. Its own extension's toolsets (`ppm-ext`) are the one server it does get.
+      const extensionMcp = extensionMcpServers(opts?.extensionMcp);
       const mcpServers = assistantPolicy
         ? assistantMcpServers(opts?.assistantMcp, opts?.assistantMcpServers, sessionCollabMcp)
-        : {
-          ...this.resolveMcpServers(effectiveCwd),
-          ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
-          ...tabToolsMcpServers(tabToolsMcp),
-          ...dbToolsMcpServers(dbToolsMcp),
-          ...sessionCollabMcpServers(sessionCollabMcp),
-        };
+        : extensionPolicy
+          ? extensionMcp
+          : {
+            ...this.resolveMcpServers(effectiveCwd),
+            ...designMcpServers(opts?.designSession ? opts.designMcp : undefined),
+            ...tabToolsMcpServers(tabToolsMcp),
+            ...dbToolsMcpServers(dbToolsMcp),
+            ...sessionCollabMcpServers(sessionCollabMcp),
+            ...extensionMcp,
+          };
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time
       let stderrBuffer = "";
@@ -1645,7 +1598,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         env: queryEnv,
         allowedTools,
         mcpServers,
-        strictMcpConfig: assistantPolicy,
+        strictMcpConfig: assistantPolicy || !!extensionPolicy,
         isolated: assistantPolicy,
         permissionMode,
         opts,

@@ -6,10 +6,15 @@
 import { resolve } from "node:path";
 import type { RpcChannel } from "./extension-rpc.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
-import { broadcastExtMsg, requestFromBrowser } from "../server/ws/extensions.ts";
+import { broadcastExtMsg, requestFromBrowser, getExtClientCount } from "../server/ws/extensions.ts";
 import { getProjects } from "./db.service.ts";
 import { isSecretConfigKey, redactSecretConfigValue } from "./config-secret-keys.ts";
+import type { ComposerOptionsMsg, ComposerResultMsg } from "../types/extension-messages.ts";
 import { createLogger } from "./logger.ts";
+import { extensionApiDeps, registerExtensionApiHandlers, type ExtensionApiDeps } from "./extension-api/index.ts";
+import { askBrowserDialog } from "./extension-browser-dialog.ts";
+import { ExtensionCallRegistry } from "./extension-api/extension-call-registry.ts";
+import { parseTabPlacement } from "./extension-api/extension-tab-placement.ts";
 
 /** Same scope as the extension host's own forwarded console: what an extension did or said. */
 const log = createLogger("ext");
@@ -34,8 +39,28 @@ function logRefusal(kind: string, message: string): void {
   log.warn(last?.suppressed ? `${message} (+${last.suppressed} more refused since the last one logged)` : message);
 }
 
-/** Register all vscode-compat RPC handlers on the given RPC channel */
-export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
+/** Longest an extension may let a spawned process run, whatever timeout it asks for. Mirrored
+ *  by `MAX_SPAWN_TIMEOUT_MS` in `packages/vscode-compat/src/process.ts`, which cannot import it. */
+export const MAX_SPAWN_TIMEOUT_MS = 15 * 60_000;
+const DEFAULT_SPAWN_TIMEOUT_MS = 30_000;
+
+/** The timeout a `process:spawn` actually runs with: the default when none or nonsense is
+ *  given, never above {@link MAX_SPAWN_TIMEOUT_MS}. */
+export function spawnTimeoutMs(requested: unknown): number {
+  if (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0) return DEFAULT_SPAWN_TIMEOUT_MS;
+  return Math.min(requested, MAX_SPAWN_TIMEOUT_MS);
+}
+
+/**
+ * Register all vscode-compat RPC handlers on the given RPC channel. `deps` ties long-running
+ * calls to the worker this channel serves; without it (tests) they get a registry of their own.
+ */
+export function registerVscodeCompatHandlers(
+  rpc: RpcChannel,
+  deps: ExtensionApiDeps = extensionApiDeps(0, new ExtensionCallRegistry()),
+): void {
+  registerExtensionApiHandlers(rpc, deps);
+
   // --- commands ---
   rpc.onRequest("commands:execute", async (params) => {
     const [command, ...args] = params as [string, ...unknown[]];
@@ -75,28 +100,47 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
   rpc.onRequest("window:showQuickPick", async (params) => {
     const [items, options] = params as [unknown[], unknown];
     const requestId = nextRequestId();
-    const selected = await requestFromBrowser<unknown[] | null>(
+    return askBrowserDialog<unknown[] | null>(
       {
         type: "quickpick:show", requestId,
         items: items as { label: string; description?: string; detail?: string; picked?: boolean }[],
-        options: (options ?? {}) as { placeholder?: string; canPickMany?: boolean },
+        options: normalizeDialogOptions(options) as { title?: string; placeholder?: string; canPickMany?: boolean },
       },
       requestId,
+      { type: "quickpick:dismiss", requestId },
+      deps,
     );
-    return selected;
   });
 
   rpc.onRequest("window:showInputBox", async (params) => {
     const [options] = params as [unknown];
     const requestId = nextRequestId();
-    const value = await requestFromBrowser<string | null>(
+    return askBrowserDialog<string | null>(
       {
         type: "inputbox:show", requestId,
-        options: (options ?? {}) as { prompt?: string; value?: string; placeholder?: string; password?: boolean },
+        options: normalizeDialogOptions(options) as { title?: string; prompt?: string; value?: string; placeholder?: string; password?: boolean },
       },
       requestId,
+      { type: "inputbox:dismiss", requestId },
+      deps,
     );
-    return value;
+  });
+
+  rpc.onRequest("window:showComposer", async (params) => {
+    const [options] = params as [ComposerOptionsMsg | undefined];
+    // No browser tab is connected to answer — fail fast instead of blocking the
+    // extension worker for the full 600s timeout it sets on this call.
+    if (getExtClientCount() === 0) return undefined;
+    const requestId = nextRequestId();
+    // A prompt authored in one browser tab must not linger open in the others: the dismiss
+    // goes out whether this settled by resolve, by timeout or by a rebuild of the host.
+    const result = await askBrowserDialog<ComposerResultMsg | null>(
+      { type: "composer:show", requestId, options: options ?? {} },
+      requestId,
+      { type: "composer:dismiss", requestId },
+      deps,
+    );
+    return result ?? undefined;
   });
 
   // --- status bar (forwarded to browser via WS bridge) ---
@@ -114,7 +158,7 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
 
   // --- webview panels (forwarded to browser via WS bridge) ---
   rpc.onRequest("window:webview:create", async (params) => {
-    const [panelId, extensionId, viewType, title, projectPath] = params as [string, string, string, string, string | undefined];
+    const [panelId, extensionId, viewType, title, projectPath, preferWindow] = params as [string, string, string, string, string | undefined, unknown];
     // Resolve project name so browser clients can scope the panel to the right project
     let projectName: string | undefined;
     if (projectPath) {
@@ -122,7 +166,10 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
       const target = normalize(projectPath);
       projectName = getProjects().find((p) => normalize(p.path) === target)?.name;
     }
-    broadcastExtMsg({ type: "webview:create", panelId, extensionId, viewType, title, projectPath, projectName });
+    broadcastExtMsg({
+      type: "webview:create", panelId, extensionId, viewType, title, projectPath, projectName,
+      ...(preferWindow === true ? { preferWindow: true } : {}),
+    });
     return { ok: true };
   });
 
@@ -146,10 +193,11 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
 
   // --- open PPM tab (generic, any extension can use) ---
   rpc.onRequest("window:openTab", async (params) => {
-    const [tabType, title, projectId, metadata] = params as [
-      string, string, string | null, Record<string, unknown> | undefined,
+    const [tabType, title, projectId, metadata, rawPlacement] = params as [
+      string, string, string | null, Record<string, unknown> | undefined, unknown,
     ];
-    broadcastExtMsg({ type: "tab:open", tabType, title, projectId, closable: true, metadata });
+    const placement = parseTabPlacement(rawPlacement);
+    broadcastExtMsg({ type: "tab:open", tabType, title, projectId, closable: true, metadata, ...(placement ? { placement } : {}) });
     return { ok: true };
   });
 
@@ -286,7 +334,8 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
 
   // --- process spawn (for extensions needing subprocess access) ---
 
-  const ALLOWED_SPAWN_COMMANDS = new Set(["git", "node", "bun", "npx", "sqlite3"]);
+  // `gh` runs under the host user's own GitHub login: the same trust as `git` with its credentials.
+  const ALLOWED_SPAWN_COMMANDS = new Set(["git", "gh", "node", "bun", "npx", "sqlite3"]);
   const BLOCKED_ENV_KEYS = new Set(["PATH", "HOME", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "LD_LIBRARY_PATH"]);
 
   rpc.onRequest("process:spawn", async (params) => {
@@ -310,14 +359,25 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
       }
     }
 
-    const timeout = options?.timeout ?? 30_000;
+    const timeout = spawnTimeoutMs(options?.timeout);
+    // Killed if the worker that asked is rebuilt: nobody would read the output.
+    const call = deps.beginCall();
+    if (call.signal.aborted) throw new Error("process:spawn: the extension host was rebuilt");
     const startedAt = Date.now();
-    const proc = Bun.spawn([cmd, ...args], {
-      cwd: safeCwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: safeEnv,
-    });
+    // Bun.spawn throws synchronously when the binary is not installed (`gh` often is not), so
+    // that throw is caught here and comes back in the same shape as any other spawn failure.
+    let proc: ReturnType<typeof spawnPiped>;
+    try {
+      proc = spawnPiped([cmd, ...args], safeCwd, safeEnv);
+    } catch (e) {
+      call.end();
+      throw new Error(`process:spawn failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const onAbort = () => {
+      log.info(`spawn killed: extension host rebuilt cmd=${baseName}`);
+      try { proc.kill(); } catch {}
+    };
+    call.signal.addEventListener("abort", onAbort, { once: true });
 
     // The binary's name only, never its arguments. A kill here otherwise reads as an
     // ordinary non-zero exit.
@@ -331,14 +391,32 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
         new Response(proc.stderr).text(),
       ]);
       const exitCode = await proc.exited;
-      clearTimeout(timer);
       log.debug(`spawn cmd=${baseName} exit=${exitCode} ms=${Date.now() - startedAt}`);
       return { stdout, stderr, exitCode };
     } catch (e) {
-      clearTimeout(timer);
       throw new Error(`process:spawn failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      clearTimeout(timer);
+      call.signal.removeEventListener("abort", onAbort);
+      call.end();
     }
   });
+}
+
+/** Named so the handler can type the process it holds without widening `stdout` to a union. */
+function spawnPiped(argv: string[], cwd: string, env: Record<string, string | undefined>) {
+  return Bun.spawn(argv, { cwd, stdout: "pipe", stderr: "pipe", env });
+}
+
+/**
+ * Extensions write VSCode-style options (`placeHolder`), the web dialogs read
+ * `placeholder`; without this bridge the hint silently never renders.
+ */
+function normalizeDialogOptions(options: unknown): Record<string, unknown> {
+  const o = (options ?? {}) as Record<string, unknown>;
+  const { placeHolder, ...rest } = o;
+  if (placeHolder !== undefined && rest.placeholder === undefined) rest.placeholder = placeHolder;
+  return rest;
 }
 
 /** Get a nested value from an object by dot-separated key */

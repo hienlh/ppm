@@ -15,7 +15,7 @@ import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { stepHistory } from "./message-history-recall";
 import { toComposerDraft } from "../../../shared/user-message-parse";
-import { ModeSelector, getModeLabel, getModeIcon, getModeShortLabel } from "./mode-selector";
+import { ModeSelector, getModeLabel, getModeIcon, getModeShortLabel, composerModeFor } from "./mode-selector";
 import { ModelThinkingSelector } from "./model-thinking-selector";
 import type { SlashItem } from "./slash-command-picker";
 import { fetchSlashItems, getCachedSlashItems, subscribeSlashItems, SLASH_ITEMS_TTL_MS } from "@/lib/slash-items-cache";
@@ -156,6 +156,11 @@ interface MessageInputProps {
   permissionLocked?: boolean;
   /** `@` opens the project-file picker. Off for a chat with no project files to mention. */
   fileMentions?: boolean;
+  /** The mode an extension-bound chat actually runs in ("default" or "acceptEdits"), from the
+   *  server's own session_state. When set, the chip/picker show this instead of `permissionMode`
+   *  and the picker offers only the modes a bound chat may run in — never bypass or plan, which
+   *  the server would silently clamp anyway. */
+  boundPermissionMode?: string | null;
   /** Current provider ID */
   providerId?: string;
   /** Live session id, when the tab has one. Scopes the slash list to the session's
@@ -221,6 +226,7 @@ export const MessageInput = memo(function MessageInput({
   onModeChange,
   permissionLocked = false,
   fileMentions = true,
+  boundPermissionMode,
   providerId,
   sessionId,
   onProviderChange,
@@ -235,6 +241,8 @@ export const MessageInput = memo(function MessageInput({
   offline = false,
   configurationPending = false,
 }: MessageInputProps) {
+  // A chat an extension bound runs in the mode the server clamped it to, and offers only those modes.
+  const { mode: boundAwareMode, allowedModeIds } = composerModeFor(permissionMode, boundPermissionMode);
   // Uncontrolled textarea: value lives in DOM + ref, not React state.
   // Only `hasText` state triggers re-renders (empty↔non-empty for send button).
   // This eliminates React re-render on every keystroke — critical for Chromium on iPad.
@@ -248,7 +256,7 @@ export const MessageInput = memo(function MessageInput({
   // A locked chat runs in "ask before edits" whatever its metadata says, so that is shown.
   // An unknown mode shows no chip rather than a guess: falling back to "Bypass permissions"
   // put that label on chats the server runs in "Ask before edits".
-  const chipMode = permissionLocked ? "default" : permissionMode;
+  const chipMode = permissionLocked ? "default" : boundAwareMode;
   const [pendingSend, setPendingSend] = useState(false);
   const [priority, setPriority] = useState<MessagePriority>('next');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -895,14 +903,14 @@ export const MessageInput = memo(function MessageInput({
       if (e.shiftKey && e.key === "Tab") {
         e.preventDefault();
         if (permissionLocked) return;
-        const modeIds = ["default", "acceptEdits", "plan", "bypassPermissions"];
+        const modeIds: readonly string[] = allowedModeIds ?? ["default", "acceptEdits", "plan", "bypassPermissions"];
         // An unknown mode starts the cycle at its first entry.
-        const idx = permissionMode ? modeIds.indexOf(permissionMode) : -1;
+        const idx = boundAwareMode ? modeIds.indexOf(boundAwareMode) : -1;
         const next = modeIds[(idx + 1) % modeIds.length]!;
         onModeChange?.(next);
       }
     },
-    [handleSend, permissionMode, onModeChange, permissionLocked, recallHistory, agentTag, turnChips],
+    [handleSend, boundAwareMode, allowedModeIds, onModeChange, permissionLocked, recallHistory, agentTag, turnChips],
   );
 
   const updatePickerState = useCallback(
@@ -1136,6 +1144,7 @@ export const MessageInput = memo(function MessageInput({
                 onChange={(m) => onModeChange?.(m)}
                 open={modeSelectorOpen && !permissionLocked}
                 onOpenChange={setModeSelectorOpen}
+                allowedModeIds={allowedModeIds}
               />
             </div>
           )}

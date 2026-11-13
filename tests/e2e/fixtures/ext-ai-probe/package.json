@@ -1,0 +1,22 @@
+{
+  "name": "ppm-ext-ai-probe",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Test fixture: exercises PPM's extension AI APIs for tests/e2e/extension-ai-core-e2e.mjs",
+  "main": "src/extension.ts",
+  "engines": { "ppm": ">=0.9.0" },
+  "activationEvents": ["*"],
+  "contributes": {
+    "commands": [
+      { "command": "probe.registered", "title": "Probe: toolset registration" },
+      { "command": "probe.storage", "title": "Probe: data folder" },
+      { "command": "probe.session", "title": "Probe: create and bind a session" },
+      { "command": "probe.turn", "title": "Probe: run a headless turn" },
+      { "command": "probe.calls", "title": "Probe: tool calls seen" },
+      { "command": "probe.ai", "title": "Probe: one-shot completion" },
+      { "command": "probe.aiCancel", "title": "Probe: cancelled one-shot" },
+      { "command": "probe.signals", "title": "Probe: usage and presence" }
+    ]
+  },
+  "ppm": { "displayName": "AI Probe" }
+}

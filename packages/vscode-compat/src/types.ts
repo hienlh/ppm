@@ -46,6 +46,30 @@ export interface TreeItem {
   collapsibleState?: TreeItemCollapsibleState;
   command?: { command: string; title: string; arguments?: unknown[] };
   contextValue?: string;
+  /** PPM extras, not part of the VSCode API. Inline row buttons (keep to two or fewer). */
+  actions?: TreeItemAction[];
+  /** Small count or label at the row end. */
+  badge?: string | number;
+  /** A CSS colour for the dot before the label. */
+  color?: string;
+  /** Arguments passed on row click; wins over `command.arguments`. */
+  commandArgs?: unknown[];
+  /** An http(s) page the row opens in a new browser tab on the device that taps it. */
+  url?: string;
+  /** Wrap the label instead of truncating — for sentence-like rows in a narrow sidebar. */
+  wrap?: boolean;
+}
+
+/**
+ * An inline button on a tree row. `icon` is a name the web UI knows (`check`, `clock`,
+ * `refresh`, `trash`, …: see `src/web/lib/extension-icons.ts`); an unknown name draws a
+ * refresh arrow, so stay within that list.
+ */
+export interface TreeItemAction {
+  icon: string;
+  tooltip: string;
+  command: string;
+  commandArgs?: unknown[];
 }
 
 export interface TreeDataProvider<T> {
@@ -163,5 +187,33 @@ export class ThemeIcon {
 
 export interface RpcClient {
   request<T = unknown>(method: string, ...params: unknown[]): Promise<T>;
+  /**
+   * Same as `request`, but with an explicit timeout instead of the RPC channel's default.
+   * Required (not optional) — an optional member here would let a caller silently fall back
+   * to the 10s default and cut off anything that legitimately runs longer.
+   */
+  requestWithTimeout<T = unknown>(method: string, timeoutMs: number, ...params: unknown[]): Promise<T>;
   notify(event: string, data: unknown): void;
+}
+
+// --- Composer (window.showComposer) ---
+
+/** Options accepted by window.showComposer(). No `projectName` — the composer always
+ * authors against the currently active project. */
+export interface ComposerOptions {
+  title?: string;
+  prompt?: string;
+  value?: string;
+  permissionMode?: string;
+  model?: string;
+}
+
+/** Result returned by window.showComposer() once the user sends a message, or `undefined`
+ * on cancel/dismiss/timeout. No `images` — attachments are already folded into `content`. */
+export interface ComposerResult {
+  content: string;
+  model?: string;
+  effort?: string;
+  thinking?: boolean;
+  permissionMode: string;
 }
