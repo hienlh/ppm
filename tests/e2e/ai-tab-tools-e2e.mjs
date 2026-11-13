@@ -6,7 +6,8 @@
 // tab that is already open, a line in code view, the card's Open button, a tool switched off
 // and a chat with no browser; a command typed into a new terminal that runs only on Enter and is
 // read back with read_terminal; and a dev server opened with open_url, from the host and from a
-// device that is not the host. A stand-in `tailscale` that is never running keeps the real
+// device that is not the host; and Branch Review opened on a branch with open_branch_review,
+// then pointed at another branch in the same tab. A stand-in `tailscale` that is never running keeps the real
 // tailnet out of it. Needs internet for the dashboard's CDNs. No live credentials, no real PPM
 // data.
 //
@@ -352,6 +353,56 @@ try {
   }
 
   {
+    // A branch the AI finished: two files committed on top of main, one edit left uncommitted.
+    const git = (...args) => command("git", ["-C", project, "-c", "user.name=E2E", "-c", "user.email=e2e@example.invalid", ...args]);
+    await git("symbolic-ref", "HEAD", "refs/heads/main");
+    await git("add", "-A");
+    await git("commit", "-qm", "base");
+    await git("checkout", "-qb", "feature/report");
+    await writeFile(join(project, "src/config.ts"), CONFIG.replace("export const line1 = 1;", "export const line1 = 100;"));
+    await writeFile(join(project, "src/report.ts"), "export const report = true;\n");
+    await git("add", "-A");
+    await git("commit", "-qm", "report");
+    await writeFile(join(project, "README.md"), "# Tab tools\n\nEdited, not committed.\n");
+    const isReview = (t) => t.type === "branch-review";
+
+    const [call] = await turn(page, [{ tool: "open_branch_review", args: {} }], "review my branch");
+    assert.equal(call.isError, false, call.text);
+    assert.match(call.text, /^Opened Branch Review on the user's device: feature\/report against main \(merge base [0-9a-f]{7}\)\.\n2 files changed, \+2 −1\.\n1 file in the working tree has changes not committed to feature\/report/);
+    let layout = await layoutOf(page);
+    assert.equal(panelOf(layout, isReview).tabs.filter(isReview).length, 1);
+    assert.notEqual(panelOf(layout, isReview).id, panelOf(layout, isChat(sessionId)).id, "the review opened beside the chat");
+    assert.equal(panelOf(layout, isChat(sessionId)).activeTabId, chatTab.id, "the chat is still on screen");
+    const head = page.locator('[data-testid="branch-review-head"]:visible');
+    const base = page.locator('[data-testid="branch-review-base"]:visible');
+    await until("the pickers show the pair", async () => (await head.innerText()).includes("feature/report") && (await base.innerText()).includes("main"));
+    await page.locator('[data-testid="branch-review-progress"]:visible', { hasText: "0/2 reviewed" }).waitFor({ timeout: 15000 });
+    await page.locator(".monaco-diff-editor:visible").first().waitFor({ timeout: 15000 });
+    const card = page.locator("[data-tool-ref]", { hasText: "Branch Review" }).first();
+    assert.match(await card.innerText(), /current branch ← main/);
+    await page.screenshot({ path: join(artifacts, "desktop-branch-review.png") });
+
+    // A second branch, named by the AI: the same tab follows it.
+    await git("checkout", "-qb", "feature/two");
+    await writeFile(join(project, "src/two.ts"), "export const two = 2;\n");
+    await git("add", "src/two.ts");
+    await git("commit", "-qm", "two");
+    await git("checkout", "-q", "feature/report");
+    const [again] = await turn(page, [{ tool: "open_branch_review", args: { head: "feature/two", base: "feature/report" } }], "now the other branch");
+    assert.equal(again.isError, false, again.text);
+    assert.match(again.text, /feature\/two against feature\/report .*\n1 file changed, \+1 −0\.$/);
+    await until("the open tab moved to the new pair", async () => (await head.innerText()).includes("feature/two") && (await base.innerText()).includes("feature/report"));
+    await page.locator('[data-testid="branch-review-progress"]:visible', { hasText: "0/1 reviewed" }).waitFor({ timeout: 15000 });
+    layout = await layoutOf(page);
+    assert.equal(Object.values(layout.panels).flatMap((p) => p.tabs).filter(isReview).length, 1, "the open tab was reused");
+
+    const [bad] = await turn(page, [{ tool: "open_branch_review", args: { head: "no-such-branch" } }], "review a branch that is not there");
+    assert.equal(bad.isError, true);
+    assert.equal(bad.text, "No branch or commit is named no-such-branch.");
+    record("open_branch_review: Branch Review opens beside the chat on the branch, says what is uncommitted, follows a second pair in the same tab, and refuses a missing branch", { text: call.text });
+  }
+
+  {
     // Settings → Tools, one switch per tool.
     const put = (ppm_tools) => fetch(`${web}/api/settings/ai`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ppm_tools }) });
     let res = await put({ open_preview: false });
@@ -360,13 +411,15 @@ try {
     assert.equal(one.handed, true, "open_file is still on, so the turn still has the tab tools");
     assert.equal(one.isError, true);
     assert.match(one.text, /turned off open_preview in PPM's settings \(Settings → Tools\)/);
-    res = await put({ open_file: false, open_url: false, read_terminal: false, run_in_terminal: false });
+    res = await put({ open_file: false, open_url: false, open_branch_review: false, read_terminal: false, run_in_terminal: false,
+      search_sessions: false, list_session_turns: false, read_session_turns: false });
     assert.ok(res.ok, await res.text());
     const [call] = await turn(page, [{ tool: "open_file", args: { path: "site/dashboard.html" } }], "every tab tool is off now");
     assert.equal(call.handed, false, "a turn started with every tab tool off is not given the tools");
     assert.equal(call.isError, true);
     assert.match(call.text, /turned off open_file in PPM's settings/);
-    const back = await put({ open_file: true, open_preview: true, open_url: true, read_terminal: true, run_in_terminal: true });
+    const back = await put({ open_file: true, open_preview: true, open_url: true, open_branch_review: true, read_terminal: true, run_in_terminal: true,
+      search_sessions: true, list_session_turns: true, read_session_turns: true });
     assert.ok(back.ok);
     record("a tool switched off is refused; with every one off the next turn has no tools, and a token kept from before is refused", { text: call.text });
   }

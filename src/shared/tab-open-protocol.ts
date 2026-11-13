@@ -2,7 +2,7 @@ import { CHECK_REQUEST_ID_RE, parseCanvasCheckReport, type CanvasCheckReport } f
 import type { DbQueryTabOpen, OPEN_QUERY_TOOL } from "./db-ai-tools";
 
 /**
- * How the AI's tab tools (`open_file`, `open_preview`, `open_url`, `run_in_terminal`) reach the
+ * How the AI's tab tools (`open_file`, `open_preview`, `open_url`, `run_in_terminal`, `open_branch_review`) reach the
  * user's device: over the chat WebSocket, the server sends `tab_open` to the device that sent the
  * turn's message (or, when that one is gone, to every device showing the chat), and the first
  * device to answer settles the call with `tab_open_result` on the same socket — once the tab is
@@ -22,6 +22,7 @@ export type TabTool = "open_file" | "open_preview";
 export const OPEN_FILE_TOOL = "open_file";
 export const OPEN_PREVIEW_TOOL = "open_preview";
 export const OPEN_URL_TOOL = "open_url";
+export const OPEN_BRANCH_REVIEW_TOOL = "open_branch_review";
 /** Served beside the tab tools, though it opens nothing: the server reads its own terminals. */
 export const READ_TERMINAL_TOOL = "read_terminal";
 export const RUN_IN_TERMINAL_TOOL = "run_in_terminal";
@@ -76,11 +77,29 @@ export interface TabOpenTerminalRequest {
   cwd: string;
 }
 
-export type TabOpenRequest = TabOpenFileRequest | TabOpenQueryRequest | TabOpenUrlRequest | TabOpenTerminalRequest;
+/** `open_branch_review`: the Branch Review tab on one pair of refs, checked on the host first. */
+export interface TabOpenBranchReviewRequest {
+  type: "tab_open";
+  requestId: string;
+  tool: typeof OPEN_BRANCH_REVIEW_TOOL;
+  projectName: string;
+  /**
+   * The repository's path as `GET /git/repos` names it, when the project folder is a container
+   * of checkouts; null when the project is the repository.
+   */
+  repo: string | null;
+  base: string;
+  head: string;
+}
+
+export type TabOpenRequest =
+  | TabOpenFileRequest | TabOpenQueryRequest | TabOpenUrlRequest | TabOpenTerminalRequest | TabOpenBranchReviewRequest;
 
 type Asked<T> = Omit<T, "type" | "requestId">;
 /** A request as a tool asks for it; the broker adds `type` and `requestId`. */
-export type TabOpenAsk = Asked<TabOpenFileRequest> | Asked<TabOpenQueryRequest> | Asked<TabOpenUrlRequest> | Asked<TabOpenTerminalRequest>;
+export type TabOpenAsk =
+  | Asked<TabOpenFileRequest> | Asked<TabOpenQueryRequest> | Asked<TabOpenUrlRequest> | Asked<TabOpenTerminalRequest>
+  | Asked<TabOpenBranchReviewRequest>;
 
 export interface TabOpenResult {
   type: "tab_open_result";
