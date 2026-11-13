@@ -1,92 +1,95 @@
-import { Command } from "commander";
+import { Option, type Command } from "commander";
+import { C, fail, projectNameOf, run } from "./chat-cmd-request.ts";
+import { ppmApiRequest, type PpmRequestOptions } from "../utils/settings-request.ts";
+import { promptSecret } from "../utils/secret-prompt.ts";
 
-const C = {
-  reset: "\x1b[0m", bold: "\x1b[1m", green: "\x1b[32m",
-  red: "\x1b[31m", yellow: "\x1b[33m", cyan: "\x1b[36m", dim: "\x1b[2m",
-};
+/**
+ * `ppm jira`: Jira configs, watchers and tracked tickets, through `/api/jira` on the running PPM —
+ * so its watchers start and stop at once and every open Jira panel refreshes
+ * (`jira:config_changed`, `jira:watchers_changed`). Only when no PPM holds the database do the
+ * routes run here, after the direct-write notice.
+ *
+ * The API token is typed at a terminal (`--token-prompt`), never passed as an argument, and never
+ * from an AI chat. A new site or email without a new token clears the saved one, in the route, for
+ * every caller: a token is not sent to a site it was not entered for.
+ */
+
+const WHERE = "the Jira panel → Credentials";
+
+interface JiraConfig { id: number; projectId: number; baseUrl: string; email: string; hasToken: boolean; tokenCleared?: boolean }
+
+/** `/api/jira<sub>`, through the server or here. */
+export function jiraRequest<T>(method: string, sub: string, body?: unknown, opts: PpmRequestOptions = {}): Promise<T> {
+  return ppmApiRequest<T>(method, `/jira${sub}`, body, opts);
+}
+
+/** The database id of the project a command names (by name or path), which Jira's routes key on. */
+async function projectIdOf(project: string): Promise<number> {
+  const name = await projectNameOf(project);
+  const rows = await jiraRequest<Array<{ id: number; name: string }>>("GET", "/config/projects");
+  const row = rows.find((p) => p.name === name);
+  return row ? row.id : fail(`Project "${name}" not found`);
+}
 
 export async function registerJiraCommands(program: Command): Promise<void> {
   const jira = program.command("jira").description("Jira watcher utilities");
   registerConfigCommands(jira);
-  await registerWatcherCommands(jira);
+  const { registerJiraWatcherCommands } = await import("./jira-watcher-cmd.ts");
+  registerJiraWatcherCommands(jira);
 }
-
-// ── Config commands ───────────────────────────────────────────────────
 
 function registerConfigCommands(jira: Command): void {
   const config = jira.command("config").description("Manage Jira configs");
 
   config
     .command("set <projectName>")
-    .description("Set Jira config for a project")
+    .description("Set a project's Jira site and email; a new site or email without a new token clears the saved token")
     .requiredOption("--url <url>", "Jira base URL (https://...)")
     .requiredOption("--email <email>", "Jira account email")
-    .requiredOption("--token <token>", "API token (⚠ visible in shell history)")
-    .action(async (projectName: string, opts: { url: string; email: string; token: string }) => {
-      try {
-        const { getDb } = await import("../../services/db.service.ts");
-        const project = getDb().query("SELECT id FROM projects WHERE name = ?").get(projectName) as { id: number } | null;
-        if (!project) { console.error(`${C.red}✗${C.reset} Project "${projectName}" not found`); process.exit(1); }
-        const { upsertConfig } = await import("../../services/jira-config.service.ts");
-        const cfg = upsertConfig(project.id, opts.url, opts.email, opts.token);
-        console.log(`${C.green}✓${C.reset} Jira config saved for "${projectName}" (id: ${cfg.id})`);
-      } catch (e: any) { console.error(`${C.red}✗${C.reset} ${e.message}`); process.exit(1); }
-    });
+    .option("--token-prompt", "Type the API token at the terminal (required for a new config)")
+    .addOption(new Option("--token <token>", "Refused: the token is typed with --token-prompt").hideHelp())
+    .action((projectName: string, opts: { url: string; email: string; tokenPrompt?: boolean; token?: string }) => run(async () => {
+      if (opts.token !== undefined) fail("The API token is never passed as an argument (it lands in shell history). Use --token-prompt.");
+      const projectId = await projectIdOf(projectName);
+      const token = opts.tokenPrompt ? await promptSecret("Jira API token: ", "The Jira API token", WHERE) : undefined;
+      if (opts.tokenPrompt && !token) fail("No token typed; nothing was changed.");
+      const saved = await jiraRequest<JiraConfig>("PUT", `/config/${projectId}`, { baseUrl: opts.url, email: opts.email, ...(token ? { token } : {}) });
+      console.log(`${C.green}✓${C.reset} Jira config saved for "${projectName}" (id: ${saved.id})`);
+      if (saved.tokenCleared) {
+        console.log(`${C.yellow}The site or email changed, so the saved API token was cleared. Enter the API token again:${C.reset}`);
+        console.log(`  ppm jira config set ${projectName} --url ${opts.url} --email ${opts.email} --token-prompt`);
+      } else if (!saved.hasToken) {
+        console.log(`${C.yellow}No API token is saved; enter it with --token-prompt.${C.reset}`);
+      }
+    })());
 
   config
     .command("show <projectName>")
     .description("Show Jira config (token masked)")
-    .action(async (projectName: string) => {
-      try {
-        const { getDb } = await import("../../services/db.service.ts");
-        const project = getDb().query("SELECT id FROM projects WHERE name = ?").get(projectName) as { id: number } | null;
-        if (!project) { console.error(`${C.red}✗${C.reset} Project not found`); process.exit(1); }
-        const { getConfigByProjectId } = await import("../../services/jira-config.service.ts");
-        const cfg = getConfigByProjectId(project.id);
-        if (!cfg) { console.log(`${C.yellow}No Jira config for "${projectName}"${C.reset}`); return; }
-        console.log(`  URL:   ${cfg.baseUrl}`);
-        console.log(`  Email: ${cfg.email}`);
-        console.log(`  Token: ${cfg.hasToken ? "****" : "(none)"}`);
-      } catch (e: any) { console.error(`${C.red}✗${C.reset} ${e.message}`); process.exit(1); }
-    });
+    .action((projectName: string) => run(async () => {
+      const projectId = await projectIdOf(projectName);
+      const configs = await jiraRequest<JiraConfig[]>("GET", "/config");
+      const cfg = configs.find((c) => c.projectId === projectId);
+      if (!cfg) return void console.log(`${C.yellow}No Jira config for "${projectName}"${C.reset}`);
+      console.log(`  ID:    ${cfg.id}`);
+      console.log(`  URL:   ${cfg.baseUrl}`);
+      console.log(`  Email: ${cfg.email}`);
+      console.log(`  Token: ${cfg.hasToken ? "****" : "(none — enter the API token again with --token-prompt)"}`);
+    })());
 
   config
     .command("remove <projectName>")
     .description("Remove Jira config (cascades watchers + results)")
-    .action(async (projectName: string) => {
-      try {
-        const { getDb } = await import("../../services/db.service.ts");
-        const project = getDb().query("SELECT id FROM projects WHERE name = ?").get(projectName) as { id: number } | null;
-        if (!project) { console.error(`${C.red}✗${C.reset} Project not found`); process.exit(1); }
-        const { deleteConfig } = await import("../../services/jira-config.service.ts");
-        deleteConfig(project.id);
-        console.log(`${C.green}✓${C.reset} Config removed for "${projectName}"`);
-      } catch (e: any) { console.error(`${C.red}✗${C.reset} ${e.message}`); process.exit(1); }
-    });
+    .action((projectName: string) => run(async () => {
+      await jiraRequest("DELETE", `/config/${await projectIdOf(projectName)}`);
+      console.log(`${C.green}✓${C.reset} Config removed for "${projectName}"`);
+    })());
 
   config
     .command("test <projectName>")
     .description("Test Jira connection")
-    .action(async (projectName: string) => {
-      try {
-        const { getDb } = await import("../../services/db.service.ts");
-        const project = getDb().query("SELECT id FROM projects WHERE name = ?").get(projectName) as { id: number } | null;
-        if (!project) { console.error(`${C.red}✗${C.reset} Project not found`); process.exit(1); }
-        const { getConfigByProjectId, getDecryptedCredentials } = await import("../../services/jira-config.service.ts");
-        const cfg = getConfigByProjectId(project.id);
-        if (!cfg) { console.error(`${C.red}✗${C.reset} No config found`); process.exit(1); }
-        const creds = getDecryptedCredentials(cfg.id);
-        if (!creds) { console.error(`${C.red}✗${C.reset} Failed to decrypt token`); process.exit(1); }
-        const { testConnection } = await import("../../services/jira-api-client.ts");
-        await testConnection(creds);
-        console.log(`${C.green}✓${C.reset} Connection successful`);
-      } catch (e: any) { console.error(`${C.red}✗${C.reset} ${e.message}`); process.exit(1); }
-    });
-}
-
-// ── Watcher + result + ticket commands ────────────────────────────────
-
-async function registerWatcherCommands(jira: Command): Promise<void> {
-  const { registerJiraWatcherCommands } = await import("./jira-watcher-cmd.ts");
-  registerJiraWatcherCommands(jira);
+    .action((projectName: string) => run(async () => {
+      await jiraRequest("POST", `/config/${await projectIdOf(projectName)}/test`, {}, { timeoutMs: 60_000 });
+      console.log(`${C.green}✓${C.reset} Connection successful`);
+    })());
 }

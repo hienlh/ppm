@@ -10,6 +10,8 @@
  * client registered the way a browser's is.
  * `GET /api/__scratch/connections` answers the saved database connections, config decrypted.
  * `POST /api/__scratch/seed-account` stores a Claude account with a token, never checked upstream.
+ * `POST /api/__scratch/seed-extension` records an installed extension without downloading one.
+ * The Jira, extensions, language-server and speech routers are the real ones; nothing here installs.
  * The settings, notifications, MCP and accounts routers are mounted behind the same
  * `settings:changed` middleware as the real server.
  */
@@ -68,6 +70,17 @@ app.route("/api/settings", settingsConfigKeyRoutes);
 app.route("/api/settings", settingsProxyRoutes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/db", databaseRoutes);
+app.route("/api/jira", (await import("../../src/server/routes/jira.ts")).jiraRoutes);
+app.route("/api/extensions", (await import("../../src/server/routes/extensions.ts")).extensionRoutes);
+app.route("/api/lsp", (await import("../../src/server/routes/lsp.ts")).lspGlobalRoutes);
+app.route("/api/speech", (await import("../../src/server/routes/speech.ts")).speechRoutes);
+// An installed extension's row, as the extension host records one; nothing is downloaded.
+app.post("/api/__scratch/seed-extension", async (c) => {
+  const { id } = await c.req.json<{ id: string }>();
+  const { insertExtension } = await import("../../src/services/db.service.ts");
+  insertExtension({ id, version: "1.0.0", display_name: id, description: null, icon: null, enabled: 1, manifest: JSON.stringify({ id, name: id, version: "1.0.0", main: "index.js" }) });
+  return c.json(ok({ id }));
+});
 app.get("/api/__scratch/config", (c) => c.json(ok(configService.getAll())));
 // The saved connections as the database holds them, config decrypted: what a test checks a write against.
 app.get("/api/__scratch/connections", (c) => c.json(ok(getConnections().map((row) => ({ ...row, connection_config: decryptConfig(row.connection_config) })))));

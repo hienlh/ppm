@@ -15,6 +15,7 @@ import { dialectNameOf, type DbType } from "../../shared/db-types.ts";
 import type { DbColumnInfo, DbPagedData, DbQueryResult, DbTableInfo } from "../../types/database.ts";
 import { redactUrl } from "../../shared/db-url-secret.ts";
 import { registerDbConnectionCommands } from "./db-cmd-connections.ts";
+import { registerDbDriverCommands } from "./db-cmd-drivers.ts";
 
 const C = {
   reset: "\x1b[0m",
@@ -516,73 +517,8 @@ export function registerDbCommands(program: Command): void {
       }
     });
 
-  // ── ppm db driver ───────────────────────────────────────────────────
-  const driver = db.command("driver").description("Install or remove the drivers some connections need (MySQL / MariaDB, SSH tunnels)");
-
-  driver.command("list")
-    .description("List database drivers and whether each is installed")
-    .option("--json", "Output as JSON")
-    .action(async (options: { json?: boolean }) => {
-      try {
-        const { listDbDrivers } = await import("../../services/database/drivers/db-driver-install.ts");
-        const drivers = listDbDrivers();
-        if (options.json) { console.log(JSON.stringify(drivers, null, 2)); return; }
-        printTable(
-          ["ID", "Driver", "For", "Package", "Status"],
-          drivers.map((d) => [
-            d.id, d.displayName, d.usedFor, `${d.package}@${d.version}`,
-            d.state === "installed" ? "installed"
-              : d.state === "outdated" ? `outdated (${d.installed?.version ?? "?"})`
-              : "not installed",
-          ]),
-        );
-      } catch (err) {
-        console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
-        process.exit(1);
-      }
-    });
-
-  driver.command("install <id>")
-    .description("Download and install a database driver (e.g. mysql)")
-    .action(async (id: string) => {
-      try {
-        const { DB_DRIVER_IDS, DB_DRIVERS, isDbDriverId } = await import("../../services/database/drivers/db-driver-catalog.ts");
-        if (!isDbDriverId(id)) {
-          console.error(`${C.red}Unknown driver:${C.reset} ${id} (available: ${DB_DRIVER_IDS.join(", ")})`);
-          process.exit(1);
-        }
-        const def = DB_DRIVERS[id];
-        console.log(`${C.cyan}Installing${C.reset} ${def.displayName} driver (${def.package}@${def.version}, ${def.license})...`);
-        const { installDbDriver } = await import("../../services/database/drivers/db-driver-install.ts");
-        const installed = await installDbDriver(id);
-        console.log(`${C.green}✓${C.reset} Installed ${def.package}@${installed.version} (${Math.round(installed.bytes / 1024)} KB)`);
-      } catch (err) {
-        console.error(`${C.red}✗${C.reset} Install failed:`, (err as Error).message);
-        process.exit(1);
-      }
-    });
-
-  driver.command("remove <id>")
-    .description("Remove an installed database driver")
-    .action(async (id: string) => {
-      try {
-        const { DB_DRIVER_IDS, DB_DRIVERS, isDbDriverId } = await import("../../services/database/drivers/db-driver-catalog.ts");
-        if (!isDbDriverId(id)) {
-          console.error(`${C.red}Unknown driver:${C.reset} ${id} (available: ${DB_DRIVER_IDS.join(", ")})`);
-          process.exit(1);
-        }
-        const { dbDriverStatus, uninstallDbDriver } = await import("../../services/database/drivers/db-driver-install.ts");
-        if (dbDriverStatus(id).state === "missing") {
-          console.log(`${C.dim}The ${DB_DRIVERS[id].displayName} driver is not installed.${C.reset}`);
-          return;
-        }
-        await uninstallDbDriver(id);
-        console.log(`${C.green}Removed${C.reset} the ${DB_DRIVERS[id].displayName} driver. A PPM server that already loaded it keeps using it until restarted.`);
-      } catch (err) {
-        console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
-        process.exit(1);
-      }
-    });
+  // ── ppm db driver (through the running PPM: db-cmd-drivers.ts) ──────
+  registerDbDriverCommands(db);
 
   // ── ppm db run ──────────────────────────────────────────────────────
   db.command("run <name> <file>")

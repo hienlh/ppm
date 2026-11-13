@@ -3,6 +3,7 @@ import { VERSION } from "../../version.ts";
 import { inAiChat } from "../../services/ai-chat-env.ts";
 import { discoverServer, type Discovery } from "./server-discovery.ts";
 import { INSTANCE_ENV } from "./profile-argv.ts";
+import { isTimeoutError, withProgress } from "./request-progress.ts";
 
 /**
  * How a `ppm` command reaches the running PPM that holds its database: find it, prove it
@@ -68,10 +69,17 @@ function printTarget(t: Target, baseUrl: string): void {
 }
 
 /**
+ * `timeoutMs` (30 s by default); `progress` prints a "still working" line while a long request
+ * waits; `timeoutHint` is added to the error when the time runs out (an install the server keeps
+ * running says where to look).
+ */
+export interface ServerRequestOptions { timeoutMs?: number; progress?: boolean; timeoutHint?: string }
+
+/**
  * `/api<path>` on the running PPM that holds this command's database. A `FormData` body is sent
  * as a multipart form (an upload); anything else as JSON.
  */
-export async function serverRequest<T>(method: string, path: string, body?: unknown, opts: { timeoutMs?: number } = {}): Promise<T> {
+export async function serverRequest<T>(method: string, path: string, body?: unknown, opts: ServerRequestOptions = {}): Promise<T> {
   const t = await currentTarget();
   if (method !== "GET") {
     const refusal = aiChatWriteRefusal(t.dbFile);
@@ -89,16 +97,21 @@ export async function serverRequest<T>(method: string, path: string, body?: unkn
   const form = body instanceof FormData ? body : undefined;
   const payload = method === "GET" ? undefined : form ?? JSON.stringify(body ?? {});
   if (typeof payload === "string") headers["Content-Type"] = "application/json";
-  let res: Response;
-  try {
-    res = await fetch(`${baseUrl}/api${path}`, {
-      method, headers, body: payload, redirect: "error",
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
-    });
-  } catch (e) {
-    throw new ServerRefusedError(`The PPM at ${baseUrl} did not answer (${(e as Error).message})`);
-  }
-  const json = await res.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null;
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const answer = await withProgress(async () => {
+    try {
+      const res = await fetch(`${baseUrl}/api${path}`, {
+        method, headers, body: payload, redirect: "error", signal: AbortSignal.timeout(timeoutMs),
+      });
+      return { res, json: await res.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null };
+    } catch (e) {
+      if (isTimeoutError(e)) {
+        throw new ServerRefusedError(`The PPM at ${baseUrl} did not answer within ${Math.round(timeoutMs / 1000)}s${opts.timeoutHint ? `. ${opts.timeoutHint}` : ""}`);
+      }
+      throw new ServerRefusedError(`The PPM at ${baseUrl} did not answer (${(e as Error).message})`);
+    }
+  }, opts.progress === true);
+  const { res, json } = answer;
   if (!json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
   return json.data as T;
 }

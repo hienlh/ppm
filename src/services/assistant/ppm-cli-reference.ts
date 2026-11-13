@@ -924,22 +924,49 @@ ppm skills info <name>
 ## ppm ext — Manage PPM extensions
 \`\`\`
 ppm ext install <name>
-  Install an extension from npm
+  Install an extension from npm (in the running PPM; may take minutes)
 
 ppm ext remove <name>
   Remove an installed extension
 
 ppm ext list
   List installed extensions
+  --json — Print JSON
 
 ppm ext enable <name>
-  Enable an extension
+  Enable an extension (its commands join every open palette)
 
 ppm ext disable <name>
-  Disable an extension
+  Disable an extension (its commands leave every open palette)
 
 ppm ext dev <path>
   Symlink a local extension for development
+\`\`\`
+## ppm lsp — Language servers for the editor: list, install, remove
+\`\`\`
+ppm lsp list
+  List the language servers PPM knows, and whether this machine has each
+  --json — Print JSON
+
+ppm lsp install <id>
+  Install a language server by its id (may take minutes)
+  -p, --project <name> — Install for this project (its toolchain), not machine-wide
+
+ppm lsp remove <id>
+  Remove a language server PPM installed (one on PATH or in a project is left alone)
+\`\`\`
+## ppm speech — Speech to text for the chat mic (Whisper on this machine)
+\`\`\`
+ppm speech status
+  Show whether Whisper is installed, which model, and any install in progress
+  --json — Print JSON
+
+ppm speech install
+  Download Whisper and a model (may take minutes); waits until it is done
+  --model <id> — Which model (see \`ppm speech status\`); PPM's default when left out
+
+ppm speech remove
+  Remove the Whisper build and models PPM installed
 \`\`\`
 ## ppm db — Manage database connections and execute queries
 \`\`\`
@@ -1018,10 +1045,10 @@ ppm db run <name> <file>
 ## ppm jira — Jira watcher utilities
 \`\`\`
 ppm jira config set <projectName>
-  Set Jira config for a project
+  Set a project's Jira site and email; a new site or email without a new token clears the saved token
   --url <url> — Jira base URL (https://...) (required)
   --email <email> — Jira account email (required)
-  --token <token> — API token (⚠ visible in shell history) (required)
+  --token-prompt — Type the API token at the terminal (required for a new config)
 
 ppm jira config show <projectName>
   Show Jira config (token masked)
@@ -1044,6 +1071,7 @@ ppm jira watch add
 ppm jira watch list
   List watchers
   --config <id> — Filter by config ID
+  --json — Print JSON
 
 ppm jira watch enable <id>
   Enable watcher

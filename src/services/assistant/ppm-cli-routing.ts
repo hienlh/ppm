@@ -44,6 +44,13 @@ const SERVER = [
   "mcp list", "mcp add", "mcp edit", "mcp remove", "mcp import",
   "accounts list", "accounts pick", "accounts verify", "accounts rename", "accounts enable", "accounts disable",
   "accounts remove", "accounts settings",
+  "ext list", "ext install", "ext remove", "ext enable", "ext disable", "ext dev",
+  "lsp list", "lsp install", "lsp remove",
+  "speech status", "speech install", "speech remove",
+  "db driver list", "db driver install", "db driver remove",
+  "jira config set", "jira config show", "jira config remove", "jira config test",
+  "jira watch add", "jira watch list", "jira watch enable", "jira watch disable", "jira watch remove",
+  "jira watch test", "jira watch pull", "jira results delete", "jira track",
 ];
 
 const DIRECT_ALLOWED = [
@@ -54,19 +61,13 @@ const DIRECT_ALLOWED = [
   "backup", "restore",
   "config get", "projects list", "accounts add",
   "chat list", "chat send", "chat resume",
-  "db list", "db tables", "db schema", "db data", "db query", "db driver list",
-  "ext list",
-  "jira config show", "jira config test", "jira watch list",
+  "db list", "db tables", "db schema", "db data", "db query",
   "schedule list", "schedule runs",
 ];
 
 const DIRECT_PENDING = [
   "cloud alias set", "cloud alias remove",
-  "ext install", "ext remove", "ext enable", "ext disable", "ext dev",
-  "db run", "db driver install", "db driver remove",
-  "jira config set", "jira config remove",
-  "jira watch add", "jira watch enable", "jira watch disable", "jira watch remove", "jira watch test", "jira watch pull",
-  "jira results delete", "jira track",
+  "db run",
   "schedule add", "schedule rm", "schedule enable", "schedule disable",
 ];
 

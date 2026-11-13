@@ -1,4 +1,5 @@
-import { noteDirectWrite, serverRequest, ServerDownError } from "./ppm-server-client.ts";
+import { noteDirectWrite, serverRequest, ServerDownError, type ServerRequestOptions } from "./ppm-server-client.ts";
+import { withProgress } from "./request-progress.ts";
 
 /**
  * How a `ppm` command reaches a project-scoped route: through the running PPM that holds the
@@ -24,18 +25,18 @@ export function projectApiPath(project: string, sub: string, query: ApiQuery = {
 }
 
 /** `/api<path>` on the server, or on the project routes here when no server holds the database. */
-export async function apiRequest<T>(method: string, path: string, body?: unknown, opts: { timeoutMs?: number } = {}): Promise<T> {
+export async function apiRequest<T>(method: string, path: string, body?: unknown, opts: ServerRequestOptions = {}): Promise<T> {
   try {
     return await serverRequest<T>(method, path, body, opts);
   } catch (e) {
     if (!(e instanceof ServerDownError)) throw e;
   }
   if (method !== "GET") await noteDirectWrite();
-  return runRouteHere<T>(method, path, body);
+  return withProgress(() => runRouteHere<T>(method, path, body), opts.progress === true);
 }
 
 /** `/api/project/<project><sub>`, through the server or here. */
-export function projectRequest<T>(method: string, project: string, sub: string, body?: unknown, opts: { timeoutMs?: number } = {}): Promise<T> {
+export function projectRequest<T>(method: string, project: string, sub: string, body?: unknown, opts: ServerRequestOptions = {}): Promise<T> {
   return apiRequest<T>(method, `/project/${encodeURIComponent(project)}${sub}`, body, opts);
 }
 
