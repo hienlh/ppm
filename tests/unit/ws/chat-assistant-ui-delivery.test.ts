@@ -4,6 +4,7 @@ import { chatService } from "../../../src/services/chat.service.ts";
 import { chatSocketData, chatWebSocket } from "../../../src/server/ws/chat.ts";
 import { assistantUiBroker, ASSISTANT_UI_NO_DEVICE_MESSAGE } from "../../../src/services/assistant-mcp/assistant-ui-tools.ts";
 import { tabOpenBroker } from "../../../src/services/tab-tools-mcp/tab-open-broker.ts";
+import { providerRegistry } from "../../../src/providers/registry.ts";
 
 const GET_STATE = { op: "get_state" as const, args: {} };
 
@@ -36,6 +37,7 @@ it("asks only the device that sent the latest message, and nobody once it has go
     await gate;
   });
   const { connect, answer, closeAll } = harness();
+  const restorePush = takesFollowUps();
   try {
     const phone = connect(session.id);
     const desktop = connect(session.id);
@@ -83,6 +85,7 @@ it("asks only the device that sent the latest message, and nobody once it has go
   } finally {
     release();
     send.mockRestore();
+    restorePush();
     closeAll();
   }
 });
@@ -155,6 +158,17 @@ function heldTurn(events: object[] = []) {
     await gate;
   });
   return { release: () => { release(); send.mockRestore(); } };
+}
+
+/**
+ * Gives the mock provider the mid-turn push every real chat provider has. The chat socket refuses
+ * a message sent mid-turn to a provider that cannot take one, so without it the next sender would
+ * never become the chatting device.
+ */
+function takesFollowUps(): () => void {
+  const mock = providerRegistry.get("mock") as unknown as { pushMessage?: () => boolean };
+  mock.pushMessage = () => true;
+  return () => { delete mock.pushMessage; };
 }
 
 const waitForText = async (device: { messages: any[] }) => {
@@ -242,6 +256,7 @@ it("forgets the previous tab when the next message comes from a tab that sends n
   const session = await chatService.createSession("mock", {});
   const turn = heldTurn();
   const { connect, closeAll } = harness();
+  const restorePush = takesFollowUps();
   try {
     const phone = connect(session.id, PHONE_TAB);
     const older = connect(session.id);
@@ -254,6 +269,7 @@ it("forgets the previous tab when the next message comes from a tab that sends n
     expect(phone.asks()).toHaveLength(0);
   } finally {
     turn.release();
+    restorePush();
     closeAll();
   }
 });
