@@ -14,8 +14,9 @@
  * default.
  */
 import {
-  Database, FileCode, FileDiff, GitBranch, GitCommitHorizontal, Globe, History, ListOrdered, Pencil,
-  Plus, RefreshCw, Search, Settings, Terminal, Trash2, Users,
+  Check, CircleHelp, Clock, Database, FileCode, FileDiff, GitBranch, GitCommitHorizontal, GitPullRequest, Globe,
+  History, ListOrdered, MessageSquare, Pencil, Plus, RefreshCw, Search, Settings, ShieldAlert, Square, Sun,
+  Tag, Terminal, Timer, Trash2, TriangleAlert, Users, XCircle,
 } from "@/lib/icons";
 import type { ElementType } from "react";
 import type { ExtensionContributes } from "../../types/extension.ts";
@@ -42,6 +43,21 @@ export const EXTENSION_ICONS: Record<string, ElementType> = {
   settings: Settings,
   "file-code": FileCode,
   globe: Globe,
+  // Row icons and row actions of a to-do style tree (done, snooze, why an item is listed).
+  check: Check,
+  clock: Clock,
+  question: CircleHelp,
+  shield: ShieldAlert,
+  stop: Square,
+  // Fluent has no hourglass; the timer reads as "waiting for a while" the same way.
+  hourglass: Timer,
+  "git-pull-request": GitPullRequest,
+  // Fluent has no ticket glyph; an issue key is a tag on the work.
+  ticket: Tag,
+  message: MessageSquare,
+  sun: Sun,
+  warning: TriangleAlert,
+  "x-circle": XCircle,
 };
 
 /** The glyph for a manifest icon name, or undefined for one nothing draws. */

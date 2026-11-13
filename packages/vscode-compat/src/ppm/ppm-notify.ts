@@ -28,7 +28,19 @@ export interface PpmNotifyRequest {
   providerId?: string;
   /** An in-app path instead of a project/session link, such as "/project/p/design/slug". */
   path?: string;
+  /**
+   * On tap, open one of this extension's own panels (`{ view }`: a panel's viewType equals the
+   * command that opens it) or run one of its commands (`{ command }`), on the device that was
+   * tapped. Either must be listed in `contributes.deepLinkCommands`; anything else is refused: a
+   * link can be opened by anyone who receives the notification, so only commands that open
+   * something may be listed. With `projectName`, that project opens first. At most one of
+   * `open`, `sessionId` or `path`.
+   */
+  open?: { command: string; args?: DeepLinkArg[] } | { view: string };
 }
+
+/** Deep-link arguments: at most 8 of them, 1 KB as JSON. */
+export type DeepLinkArg = string | number | boolean | null;
 
 export type PpmNotifyErrorCode = "BAD_REQUEST" | "RATE_LIMITED";
 

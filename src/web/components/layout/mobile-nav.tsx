@@ -6,6 +6,7 @@ import {
   Copy, Download, Pencil, Trash2, Columns2, Circle, Tag, Check, XSquare, ChevronsRight, ChevronUp,
 } from "@/lib/icons";
 import { usePanelStore } from "@/stores/panel-store";
+import { WakeLockMobileBadge } from "./wake-lock-indicator";
 import { closeTabsAsked } from "@/stores/tab-close-confirm-store";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
@@ -349,6 +350,9 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             <Plus className="size-4" /> New Tab
           </button>
         )}
+
+        {/* Screen kept awake while a turn runs; in the bar, so it covers no panel. */}
+        <WakeLockMobileBadge />
       </div>
 
       {/* Tab switcher sheet — replaces the old scrolling strip */}

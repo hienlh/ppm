@@ -211,6 +211,39 @@ context.subscriptions.push(tree);
 
 **viewId** must match the `contributes.views[].id` in package.json.
 
+**Row extras** (PPM additions to the VSCode tree item). Each row is one line, so put the full
+text in `tooltip`:
+
+```typescript
+getTreeItem(item: LooseEnd) {
+  return {
+    id: item.id,
+    label: item.title,                       // one line, truncated in the sidebar
+    tooltip: `${item.title}\n${item.reason} · ${item.project} · ${item.age}`, // line breaks kept
+    description: item.age,                   // small text after the label
+    iconPath: "git-pull-request",            // a name from the icon list below
+    badge: 3,                                // small count at the row end
+    url: item.url,                           // http(s) only: the label becomes a link
+    actions: [                               // inline buttons, two at most
+      { icon: "check", tooltip: "Done", command: "midday.done", commandArgs: [item.id] },
+      { icon: "clock", tooltip: "Snooze", command: "midday.snooze", commandArgs: [item.id] },
+    ],
+  };
+}
+```
+
+- **Tooltip** shows on hover. On a phone, a **long press** opens a sheet with the full label,
+  `description` and `tooltip` on top, then each action as a full-width button, then **Open**.
+  Right-clicking a row on a desktop shows the same menu. A tap still does what the row does.
+- **Actions** show on hover or keyboard focus with a mouse, and always on touch.
+- **url**: a worker cannot open a browser tab, so the row's label becomes a link that opens in a
+  new tab on the device that was tapped. Anything but `http:`/`https:` is dropped.
+- **Icon names** (row `iconPath` and action `icon`): `check`, `clock`, `question`, `shield`,
+  `stop`, `hourglass`, `git-pull-request`, `ticket`, `message`, `sun`, `warning`, `x-circle`,
+  `refresh`, `edit`, `trash`, `plus`, `search`, `git-branch`, `git-commit`, `git-compare`,
+  `history`, `users`, `list-ordered`, `database`, `terminal`, `settings`, `file-code`, `globe`.
+  An unknown action icon draws a refresh arrow, and an unknown row icon draws nothing.
+
 ### Webview Panel
 
 Sandboxed iframe for custom UI:
@@ -281,37 +314,57 @@ await context.workspaceState.update("project", "data");
 
 ### Process Spawning (Subprocess Execution)
 
-Extensions needing to run external commands use the RPC `process:spawn` handler. This is essential for extensions that interact with CLIs (git, docker, node, etc.).
-
-**Only `git`, `node`, `bun`, `npx` and `sqlite3` may be spawned.** Anything else — including
-coreutils like `test` or `cat` — makes the call *throw*, not return a non-zero exit code. That
-distinction matters: a `try/catch` around the call will swallow the failure and leave the feature
-silently doing nothing. Check existence with `workspace.fs.stat` rather than shelling out to `test`.
-
-`options.env` is merged over the host's environment, so `PATH` survives; `PATH`, `HOME`,
-`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES` and `LD_LIBRARY_PATH` cannot be overridden.
+Run a command-line tool on the host with `vscode.process.spawn` (the second argument of
+`activate`). The main thread runs it with `Bun.spawn` and an argument array, never through a
+shell, so arguments are passed as they are and nothing is ever interpreted by a shell.
 
 ```typescript
-// vscode.process.spawn(command, args, cwd, { timeout?, env? }) → { stdout, stderr, exitCode }
-try {
-  const { exitCode, stdout } = await vscode.process.spawn("git", ["log", "--oneline", "-n", "10"], projectPath, { timeout: 60_000 });
-  if (exitCode !== 0) await vscode.window.showErrorMessage("git log failed");
-  else render(stdout);
-} catch (e) {
-  // A command outside the allowlist or a cwd outside every project lands here.
-  await vscode.window.showErrorMessage(`Cannot run git: ${e}`);
-}
+const result = await vscode.process.spawn(
+  "gh",                                   // command: one of the allowlist below
+  ["pr", "list", "--json", "number,title"], // arguments, one string each
+  projectPath,                            // cwd (positional, required)
+  {                                       // options (optional)
+    timeout: 45_000,                      // kill the process after this long, in ms
+    env: { GH_PROMPT_DISABLED: "1", NO_COLOR: "1" },
+  },
+);
+// { stdout: string, stderr: string, exitCode: number }
+if (result.exitCode !== 0) console.warn(result.stderr);
 ```
 
-**Restrictions:**
-- The allowlist above (`ALLOWED_SPAWN_COMMANDS` in `extension-rpc-handlers.ts`) is the whole list
-- CWD limited to a registered project root (no path escaping)
-- 30-second timeout by default, at most 15 minutes; the process is killed past it, and when the
-  extension host restarts
-- Stdout/stderr captured as strings
-- A non-zero exit code is returned in `exitCode`, not thrown
+**Only `git`, `gh`, `node`, `bun`, `npx` and `sqlite3` may be spawned.** The command is matched
+by its base name. Anything else, including coreutils like `test` or `cat`, makes the call
+*throw*, not return a non-zero exit code. That matters: a `try/catch` around the call swallows
+the failure and leaves the feature silently doing nothing. Check for a file with
+`workspace.fs.stat` rather than shelling out to `test`. A command on the list that is not
+installed on the host (`gh` often is not) also throws, with `process:spawn failed: …`.
 
-`packages/ext-git-graph/` runs all its git commands this way.
+`gh` runs under the host user's own GitHub login, the same trust as `git` with its credentials.
+Pass `GH_PROMPT_DISABLED=1` so it never waits for an answer nobody can type.
+
+Rules:
+
+- **cwd** must be inside a registered project, PPM's working directory, or
+  `<ppm dir>/extensions`. Anything else throws `Path outside allowed scope`.
+- **env** is merged over the host's environment, so `PATH` survives. `PATH`, `HOME`,
+  `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES` and `LD_LIBRARY_PATH` cannot be overridden.
+- **timeout** defaults to 30 s and is capped at 15 minutes, whatever you ask for. A process past
+  its timeout is killed and reported with its exit code; it does not throw.
+- The call waits the process's own timeout plus 30 s for the main thread's answer, so a command
+  allowed to run for a minute is not cut off by the 10 s limit ordinary calls have.
+- stdout and stderr come back whole, as strings. Keep the output bounded (`--limit`, `-n`).
+
+**Example: listing commits**
+
+```typescript
+context.subscriptions.push(
+  vscode.commands.registerCommand("myext.log", async (projectPath: string) => {
+    const { stdout, exitCode, stderr } = await vscode.process.spawn("git", ["log", "--oneline", "-n", "10"], projectPath);
+    if (exitCode !== 0) return vscode.window.showErrorMessage(`git failed: ${stderr}`);
+    return stdout.split("\n").filter(Boolean);
+  }),
+);
+```
 
 ### Long RPC calls
 
@@ -336,10 +389,13 @@ PPM's own chat composer (slash and file pickers, model, permission mode) and res
 dismisses it. It sends nothing: the extension decides what to do with the message. It works on
 the active project and fails at once when no browser is connected.
 
-A tree item may carry PPM extras: `badge` (a short count or label at the row end), `actions`
-(at most two inline buttons, each `{ icon: "refresh" | "edit" | "trash" | "plus" | "search",
-tooltip, command, commandArgs? }`) and `commandArgs` (the arguments a row click passes, ahead
-of `command.arguments`).
+A tree item may carry PPM extras: `badge` (a short count or label at the row end), `color` (a
+CSS colour for the dot before the label), `actions` (at most two inline buttons, each
+`{ icon, tooltip, command, commandArgs? }`, where `icon` is a name in
+`src/web/lib/extension-icons.ts`; an unknown name draws a refresh arrow), `commandArgs` (the
+arguments a row click passes, ahead of `command.arguments`), `url` (an http(s) page the row
+opens in a new tab on the device that taps it) and `wrap` (the label wraps instead of being cut
+short, for a row whose text is a sentence: a setup step, a warning).
 
 ### Data directory
 
@@ -465,17 +521,140 @@ and `await registration.registered` (the exposed names, or why it was refused).
 - While the extension is down, chats still list its last registered tools and a call answers
   "starting"; a disabled extension's tools answer that it is off.
 
-**Notifications (`ppm.notify`).** `notify({ title, body, sessionId?, projectName?, path? })`
-goes out through PPM's own channels (push, Telegram, ntfy) under Settings → Notifications →
-Extensions, titled "<display name>: <title>". Title 1–120 characters, body up to 1,000; a tap
-opens the session, the project or an in-app `path`. 30 per hour per extension; refusals are
-`PpmNotifyError` (`BAD_REQUEST`, `RATE_LIMITED`). The call answers within ~2s — well inside the
-10s RPC limit — resolving `"sent" | "off" | "replaced" | "seen"` when that is already known, else
-`"queued"` while the real send (which can wait out PPM's own notification delay, 60s by default)
-keeps running in the background.
+**Notifications (`ppm.notify`)**: see [Notifications](#notifications-apippmnotify) below.
 
 `tests/e2e/extension-ai-core-e2e.mjs` drives most of this through a probe extension
 (`tests/e2e/fixtures/ext-ai-probe/`), a useful minimal example.
+
+### Notifications (`api.ppm.notify`)
+
+Tell the person something through PPM's own channels (push to their phone, Telegram, ntfy), under
+the **Extensions** switch in Settings → Notifications. `ppm` is a PPM addition to the API object
+your `activate(context, api)` receives; an older PPM has none, so feature-detect it:
+
+```typescript
+if (typeof api.ppm?.notify === "function") {
+  const outcome = await api.ppm.notify({
+    title: "Midday check-in",                 // 1–120 characters, shown as "<displayName>: <title>"
+    body: "3 things done this morning",       // at most 1,000 characters
+    projectName: "ppm",                       // optional: a registered project, opened first
+    open: { view: "midday.checkIn" },         // optional: what a tap opens (here, a panel)
+  });
+  // "sent" | "off" | "replaced" | "seen" | "queued"
+} else {
+  await vscode.window.showInformationMessage("3 things done this morning"); // a toast only
+}
+```
+
+- **What a tap opens**: give at most one of `open`, `sessionId` (a chat) or `path` (an in-app
+  path starting with `/`). `open` is `{ view }` or `{ command, args? }`, and either one must be
+  listed in **`contributes.deepLinkCommands`** (each entry must also be in `contributes.commands`).
+  - `{ view }` opens one of **your own** panels: a webview panel's viewType equals the command
+    that opens it, so `{ view: "midday.checkIn" }` opens that panel. A view is no exception to
+    the list, because the tab it opens runs the command of that name.
+  - `{ command, args? }` runs the command. `args` holds at most 8 strings, numbers, booleans or
+    nulls, 1 KB as JSON.
+  - Anything not listed is refused when you call `notify` (`BAD_REQUEST`), and the browser refuses
+    it again, even from a URL typed by hand. A tab saved in the layout from such a link never runs
+    its command on a reload either: a tab only reopens its panel when the extension that owns the
+    command recorded itself on the tab (any panel you open yourself, or `window.openTab` from your
+    extension) or when the command is in `deepLinkCommands`.
+  - The link is `/project/<projectName>?extCommand=<command>&extArgs=<base64url JSON>` (or
+    `extView=`), so it works the same from push, Telegram and ntfy. The app runs it on the device
+    that was tapped, once your extension is active (it waits up to 20 s), and removes it from the
+    address bar.
+- **List only commands that open something**: anyone who receives the notification, or types the
+  URL, can open it, and opening it twice runs it twice. Never list an action that changes data
+  (marking an item done, snoozing it): put that on a button inside the panel the link opens.
+
+  ```json
+  "contributes": {
+    "commands": [
+      { "command": "midday.checkIn", "title": "Midday: Check-in" },
+      { "command": "midday.showItem", "title": "Midday: Show item" },
+      { "command": "midday.done", "title": "Midday: Done" }
+    ],
+    "deepLinkCommands": ["midday.checkIn", "midday.showItem"]
+  }
+  ```
+- **Outcome**: the call answers within about 2 s. `queued` means PPM's notification delay
+  (Settings, 60 s by default) had not decided yet; the notification is still sent unless the
+  person saw the thing meanwhile. `off` means the Extensions switch is off.
+- **Limits**: 30 notifications an hour per extension. Beyond that, and for a bad request, the call
+  throws a `PpmNotifyError` whose `code` is `RATE_LIMITED` or `BAD_REQUEST`.
+
+### Commands from the CLI
+
+An extension command can be run from a terminal, by the user or by an AI agent through its shell.
+
+**`ppm ext run <command> [args…]`** runs any command your extension declares in
+`contributes.commands`, on the running server. Each token after the command is passed as its own
+argument, so the handler is called as `handler(...tokens)`. `--json` (print the result as one
+line of JSON) and `--timeout <ms>` (1,000 to 600,000; default 60,000) belong to `ext run`
+wherever they appear; put them after `--` to pass them through.
+
+**Your own top-level command**: declare it in the manifest and `ppm <name> …` forwards every
+token after the name, `--json` and `--help` included, as one array:
+
+```json
+"contributes": {
+  "commands": [{ "command": "midday.cli", "title": "Midday: CLI" }],
+  "cli": [{ "name": "midday", "description": "Loose ends, noon check-in and weekly review", "command": "midday.cli" }]
+}
+```
+
+```typescript
+vscode.commands.registerCommand("midday.cli", async (argv: string[]) => {
+  if (argv.includes("--help")) return "Usage: ppm midday list [--json] …";
+  const items = await cachedItems();
+  return argv.includes("--json") ? items : items.map((i) => `- ${i.title}`).join("\n");
+});
+```
+
+- `name` matches `^[a-z][a-z0-9-]{1,30}$` and can never be a built-in command (`start`, `stop`,
+  `projects`, `ext`, `help`, …). `command` must be declared in the same manifest. When two enabled
+  extensions claim one name, the extension id that sorts first keeps it. Only enabled extensions
+  count, and the CLI reads the manifests from disk without starting your extension.
+- **Output**: a string result is printed as it is, with a newline added; any other value as
+  indented JSON; `null`/`undefined` prints nothing. `ppm ext run --json` always prints one line of
+  JSON. Neither prints the `PPM vX` banner, so `--json` output can be piped.
+- **Exit codes**: 0 success; 1 the server is not running or refused the token; 2 the command
+  never ran (not declared, extension not active, host not ready); 3 it threw or timed out. The
+  error goes to stderr.
+- **Never open a dialog from a CLI handler** (`showQuickPick`, `showInputBox`): no browser is
+  waiting for it, and the call times out. **Answer within the timeout** (60 s for an alias): serve
+  from a cache and refresh in the background.
+- The handler's result crosses to the server by structured clone and then JSON, so return plain
+  data. A value that cannot be cloned (a function, a class with methods) fails the command.
+- Every chat's AI is told which `ppm <name>` commands enabled extensions provide, with your
+  `description`, so keep it short and plain.
+
+### The user's time zone (`vscode.env.clientTimeZone`)
+
+PPM often runs on a machine in another country from the person using it, so the host's own zone
+is the wrong one for anything shown or scheduled for them. The browser reports its IANA zone
+(`Europe/London`) each time it connects; read it as `vscode.env.clientTimeZone`, which is
+`undefined` until a browser connects after PPM starts:
+
+```typescript
+const zone = vscode.env.clientTimeZone;            // "Europe/London" | undefined
+context.subscriptions.push(
+  vscode.env.onDidChangeClientTimeZone(({ timeZone, deviceId }) => {
+    // Fires only when a browser reports a zone different from the last one.
+  }),
+);
+```
+
+Store the zone your extension uses in its own settings and ask before switching: a person opening
+PPM on a laptop still set to another zone should not move their reminders silently.
+
+### Restart survival
+
+Installed (`ppm ext install`) and dev-linked (`ppm ext dev`) extensions are rediscovered from
+`<ppm dir>/extensions/node_modules` on every start, and keep their `globalState` and
+`workspaceState`. Discovery only accepts a package whose `package.json` has a `ppm`,
+`contributes` or `engines.ppm` field, so a dependency of your extension is never registered as an
+extension itself; a package without any of the three is skipped with a warning in the log.
 
 ### Utilities
 
@@ -511,7 +690,9 @@ emitter.fire("event data");  // Notify listeners
 | **Webview Panel** | ✅ Supported | Sandboxed iframe, 2-way messaging |
 | **Workspace Config** | ✅ Supported | Read/write user & workspace settings |
 | **Workspace FS** | ⚠️ Partial | Read, write, stat, readDirectory (no watch) |
-| **Process Spawn** | ✅ Supported | Run external commands (git, npm, etc.) |
+| **Process Spawn** | ✅ Supported | `git`, `gh`, `node`, `bun`, `npx`, `sqlite3` only |
+| **Notifications** | ✅ PPM addition | `api.ppm.notify`, with a deep link to your own command or panel |
+| **CLI commands** | ✅ PPM addition | `ppm ext run`, `contributes.cli` aliases |
 | **Storage (Memento)** | ✅ Supported | Global & workspace state, auto-persisted |
 | **Data directory** | ✅ PPM | `context.globalStoragePath`, survives removal |
 | **Composer** | ✅ PPM | `window.showComposer` returns what the user wrote |
@@ -524,7 +705,7 @@ emitter.fire("event data");  // Notify listeners
 | **Uri** | ✅ Supported | File/webview URI utilities |
 | **EventEmitter** | ✅ Supported | Custom event streams |
 | **Disposable** | ✅ Supported | Cleanup & resource management |
-| **Environment** | ✅ Supported | App name, machine ID |
+| **Environment** | ✅ Supported | App name, machine ID, `clientTimeZone` (PPM addition) |
 | **Languages** | ❌ Not supported | Syntax highlighting, language services |
 | **Debug** | ❌ Not supported | Debugger integration |
 | **Tasks** | ❌ Not supported | Task provider, task execution |
@@ -788,7 +969,8 @@ Register your extension with PPM's extension registry (coming in v0.9). For now,
 | Command not found | Verify `contributes.commands[].command` id |
 | Tree view empty | Implement `getChildren()` and `getTreeItem()` in provider |
 | Webview blank | Check `panel.webview.html` is valid HTML; test in browser first |
-| RPC timeout | A call ran past the 10 s default; use `requestWithTimeout` (see Long RPC calls) |
+| RPC timeout | A call ran past its limit: 10 s for ordinary calls, the process timeout + 30 s for `process.spawn`. Use `requestWithTimeout` for a long call of your own (see Long RPC calls), raise `timeout` on a spawn, or answer from a cache |
+| `ppm <name>` says the command does not exist | The extension is disabled, its `cli` entry was refused (name taken by a built-in or another extension, `command` not declared): run `PPM_DEBUG=1 ppm --help` |
 | Storage not persisted | Use `Memento.update()`, not local variables |
 | Unsupported API error | Check API Support Matrix; file issue if critical |
 

@@ -24,6 +24,23 @@ export interface ExtensionContributes {
   configuration?: { properties?: Record<string, ConfigProperty> };
   menus?: Record<string, ContributedMenu[]>;
   keybindings?: ContributedKeybinding[];
+  /** `ppm <name> …` forwards to `command` on the running server (PPM extension, not VSCode). */
+  cli?: ContributedCliAlias[];
+  /**
+   * Commands and panels a notification's link may open (PPM extension, not VSCode). Each must
+   * also be in `commands`. A link to anything else, view or command, is refused when the
+   * notification is sent and again by the browser.
+   */
+  deepLinkCommands?: string[];
+}
+
+/** A top-level CLI command an extension adds: `ppm <name> [args…]` → `command(argv)`. */
+export interface ContributedCliAlias {
+  /** `/^[a-z][a-z0-9-]{1,30}$/`, and never a built-in command name. */
+  name: string;
+  description?: string;
+  /** Must also be declared in the same manifest's `contributes.commands`. */
+  command: string;
 }
 
 export interface ContributedCommand {

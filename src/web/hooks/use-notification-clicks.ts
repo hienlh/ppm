@@ -1,6 +1,27 @@
 import { useEffect, useRef } from "react";
 import { openSessionAnywhere } from "@/lib/open-session-anywhere";
+import { showProjectTab } from "@/lib/open-ppm-tab";
 import { OPEN_FROM_NOTIFICATION, type OpenFromNotificationMessage } from "../../shared/web-push-payload";
+import { parseExtensionDeepLink, type ParsedExtensionDeepLink } from "../../shared/extension-deep-link";
+import { runExtensionDeepLink } from "@/lib/extension-deep-link-runner";
+
+/**
+ * An extension's link (its own command or panel): open the project it is scoped to, if any,
+ * then run it here, so the panel gets a tab on the device that was tapped.
+ */
+async function openNotifiedExtensionLink(link: ParsedExtensionDeepLink): Promise<void> {
+  if (link.projectName && !(await showProjectTab(link.projectName, null, null))) return;
+  await runExtensionDeepLink(link);
+}
+
+function sameOriginDeepLink(url: string): ParsedExtensionDeepLink | null {
+  try {
+    const parsed = new URL(url, window.location.href);
+    return parsed.origin === window.location.origin ? parseExtensionDeepLink(parsed) : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * A click on a push notification, handed over by the service worker to this window
@@ -21,6 +42,11 @@ export function useNotificationClicks(authenticated: boolean): void {
       if (message?.type !== OPEN_FROM_NOTIFICATION || typeof message.url !== "string") return;
       if (!authenticatedRef.current) {
         if (new URL(message.url, window.location.href).origin === window.location.origin) window.location.assign(message.url);
+        return;
+      }
+      const link = sameOriginDeepLink(message.url);
+      if (link) {
+        void openNotifiedExtensionLink(link);
         return;
       }
       void openSessionAnywhere(message.project ?? "", message.sessionId ?? "", message.providerId ?? "", message.url);

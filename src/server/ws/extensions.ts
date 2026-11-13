@@ -5,6 +5,8 @@
 import { contributionRegistry } from "../../services/contribution-registry.ts";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { createLogger } from "../../services/logger.ts";
+import { recordClientTimeZone } from "../../services/client-timezone.ts";
+import { ExtensionUiReplay } from "./extension-ui-replay.ts";
 
 const log = createLogger("ExtWS");
 
@@ -43,13 +45,24 @@ function rememberCommandClient(ws: ExtWsSocket, command: string): void {
 
 // --- Public API for extension service to push UI updates ---
 
+/** Tree roots and status-bar items, replayed to each browser that connects later. */
+const uiReplay = new ExtensionUiReplay();
+
 /** Broadcast a message to all connected extension WS clients */
 export function broadcastExtMsg(msg: ExtServerMsg): void {
+  uiReplay.record(msg);
   const data = JSON.stringify(msg);
   for (const ws of clients) {
     try { ws.send(data); } catch {}
   }
 }
+
+/**
+ * How long a prompt (a toast with buttons, a quick pick, an input box) waits for the person.
+ * `PROMPT_REPLY_WAIT_MS` in `packages/vscode-compat/src/window.ts` must stay above it, or the
+ * extension gives up while the prompt is still on screen and a slow click is lost.
+ */
+export const BROWSER_PROMPT_TIMEOUT_MS = 30_000;
 
 /**
  * Send a request to browser and wait for response (quickpick, inputbox, notification).
@@ -60,7 +73,7 @@ export function broadcastExtMsg(msg: ExtServerMsg): void {
 export function requestFromBrowser<T = unknown>(
   msg: ExtServerMsg,
   trackingId: string,
-  timeoutMs = 30_000,
+  timeoutMs = BROWSER_PROMPT_TIMEOUT_MS,
   signal?: AbortSignal,
 ): Promise<T | undefined> {
   if (signal?.aborted) return Promise.resolve(undefined);
@@ -77,6 +90,23 @@ export function requestFromBrowser<T = unknown>(
     signal?.addEventListener("abort", onAbort, { once: true });
     pendingRequests.set(trackingId, (value) => settle(value as T));
   });
+}
+
+/**
+ * How long a command a browser dispatched (a click on a tree row, a button, the status bar) may
+ * take. A command can itself wait on a prompt (a quick pick waits up to
+ * `PROMPT_REPLY_WAIT_MS`, 35 s, on the extension side) or on slow work such as a refresh, and at
+ * the RPC default of 10 s every such click ended in a false error while the command still ran.
+ */
+export const BROWSER_COMMAND_TIMEOUT_MS = 35_000;
+
+/**
+ * A command's failure, shown only to the browser that asked for it: the other devices did not
+ * click anything, and an error toast there is noise.
+ */
+function notifyClicker(ws: ExtWsSocket, message: string): void {
+  const msg: ExtServerMsg = { type: "notification", id: `cmd-error-${Date.now()}`, level: "error", message };
+  try { ws.send(JSON.stringify(msg)); } catch { /* the socket closed meanwhile */ }
 }
 
 /** Get the number of connected extension WS clients */
@@ -113,6 +143,12 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
         ? { type: "contributions:update", contributions, activationErrors }
         : { type: "contributions:update", contributions };
       ws.send(JSON.stringify(readyMsg));
+      // Then what the active extensions last pushed, which this browser missed.
+      const replay = uiReplay.messagesFor({
+        isActive: (id) => extensionService.isActivated(id),
+        viewOwner: (viewId) => contributionRegistry.getViews().find((v) => v.id === viewId)?.extId,
+      });
+      for (const update of replay) ws.send(JSON.stringify(update));
       break;
     }
 
@@ -122,36 +158,33 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
         const { extensionService } = await import("../../services/extension.service.ts");
         if (extensionService["rpc"]) {
           log.debug(`command:execute "${msg.command}"`);
-          const result = await extensionService["rpc"].sendRequest<{ ok: boolean; error?: string }>(
-            "ext:command:execute", msg.command, ...(msg.args ?? []),
+          const result = await extensionService["rpc"].sendRequestWithTimeout<{ ok: boolean; error?: string }>(
+            "ext:command:execute", BROWSER_COMMAND_TIMEOUT_MS, [msg.command, ...(msg.args ?? [])],
           );
           if (!result?.ok) {
             log.error(`command:execute failed: ${result?.error ?? "unknown"}`);
-            broadcastExtMsg({
-              type: "notification",
-              id: `cmd-error-${Date.now()}`,
-              level: "error",
-              message: `Extension command failed: ${result?.error ?? "unknown error"}`,
-            });
+            notifyClicker(ws, `Extension command failed: ${result?.error ?? "unknown error"}`);
           }
         } else {
           log.error(`command:execute: extension host not ready`);
-          broadcastExtMsg({
-            type: "notification",
-            id: `cmd-error-${Date.now()}`,
-            level: "error",
-            message: `Extension host not ready. Try reloading the page.`,
-          });
+          notifyClicker(ws, "Extension host not ready. Try reloading the page.");
         }
       } catch (e) {
         log.error(`command:execute error:`, e);
-        broadcastExtMsg({
-          type: "notification",
-          id: `cmd-error-${Date.now()}`,
-          level: "error",
-          message: `Extension command error: ${e instanceof Error ? e.message : String(e)}`,
-        });
+        notifyClicker(ws, `Extension command error: ${e instanceof Error ? e.message : String(e)}`);
       }
+      break;
+    }
+
+    case "client:timezone": {
+      // Untrusted: a zone Intl does not know, or a malformed device id, is dropped.
+      const report = recordClientTimeZone(msg.timeZone, msg.deviceId);
+      if (!report) {
+        log.debug("client:timezone dropped: invalid zone or device id");
+        break;
+      }
+      const { extensionService } = await import("../../services/extension.service.ts");
+      extensionService.notifyClientTimeZone(report);
       break;
     }
 
@@ -161,7 +194,7 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
         try {
           const { extensionService } = await import("../../services/extension.service.ts");
           if (extensionService["rpc"]) {
-            await extensionService["rpc"].sendRequest("ext:command:execute", msg.command);
+            await extensionService["rpc"].sendRequestWithTimeout("ext:command:execute", BROWSER_COMMAND_TIMEOUT_MS, [msg.command]);
           }
         } catch (e) {
           log.error(`tree:click command error:`, e);

@@ -39,7 +39,8 @@ function logRefusal(kind: string, message: string): void {
   log.warn(last?.suppressed ? `${message} (+${last.suppressed} more refused since the last one logged)` : message);
 }
 
-/** Longest an extension may let a spawned process run, whatever timeout it asks for. */
+/** Longest an extension may let a spawned process run, whatever timeout it asks for. Mirrored
+ *  by `MAX_SPAWN_TIMEOUT_MS` in `packages/vscode-compat/src/process.ts`, which cannot import it. */
 export const MAX_SPAWN_TIMEOUT_MS = 15 * 60_000;
 const DEFAULT_SPAWN_TIMEOUT_MS = 30_000;
 
@@ -333,7 +334,8 @@ export function registerVscodeCompatHandlers(
 
   // --- process spawn (for extensions needing subprocess access) ---
 
-  const ALLOWED_SPAWN_COMMANDS = new Set(["git", "node", "bun", "npx", "sqlite3"]);
+  // `gh` runs under the host user's own GitHub login: the same trust as `git` with its credentials.
+  const ALLOWED_SPAWN_COMMANDS = new Set(["git", "gh", "node", "bun", "npx", "sqlite3"]);
   const BLOCKED_ENV_KEYS = new Set(["PATH", "HOME", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "LD_LIBRARY_PATH"]);
 
   rpc.onRequest("process:spawn", async (params) => {
@@ -362,6 +364,8 @@ export function registerVscodeCompatHandlers(
     const call = deps.beginCall();
     if (call.signal.aborted) throw new Error("process:spawn: the extension host was rebuilt");
     const startedAt = Date.now();
+    // Bun.spawn throws synchronously when the binary is not installed (`gh` often is not), so
+    // that throw is caught here and comes back in the same shape as any other spawn failure.
     let proc: ReturnType<typeof spawnPiped>;
     try {
       proc = spawnPiped([cmd, ...args], safeCwd, safeEnv);

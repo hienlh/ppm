@@ -48,17 +48,25 @@ export interface TreeItem {
   contextValue?: string;
   /** PPM extras, not part of the VSCode API. Inline row buttons (keep to two or fewer). */
   actions?: TreeItemAction[];
-  /** Small count/label rendered at the row end (e.g. unread count). */
+  /** Small count or label at the row end. */
   badge?: string | number;
+  /** A CSS colour for the dot before the label. */
+  color?: string;
   /** Arguments passed on row click; wins over `command.arguments`. */
   commandArgs?: unknown[];
+  /** An http(s) page the row opens in a new browser tab on the device that taps it. */
+  url?: string;
   /** Wrap the label instead of truncating — for sentence-like rows in a narrow sidebar. */
   wrap?: boolean;
 }
 
-/** Inline action rendered on a tree row; icon names are the fixed set the web UI knows. */
+/**
+ * An inline button on a tree row. `icon` is a name the web UI knows (`check`, `clock`,
+ * `refresh`, `trash`, …: see `src/web/lib/extension-icons.ts`); an unknown name draws a
+ * refresh arrow, so stay within that list.
+ */
 export interface TreeItemAction {
-  icon: "refresh" | "edit" | "trash" | "plus" | "search";
+  icon: string;
   tooltip: string;
   command: string;
   commandArgs?: unknown[];
@@ -182,7 +190,7 @@ export interface RpcClient {
   /**
    * Same as `request`, but with an explicit timeout instead of the RPC channel's default.
    * Required (not optional) — an optional member here would let a caller silently fall back
-   * to the 10s default and reintroduce the timeout bug on interactive verbs.
+   * to the 10s default and cut off anything that legitimately runs longer.
    */
   requestWithTimeout<T = unknown>(method: string, timeoutMs: number, ...params: unknown[]): Promise<T>;
   notify(event: string, data: unknown): void;

@@ -42,7 +42,7 @@ import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CHAT_INITIALIZE_TIMEOUT_MS, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
 import {
-  assistantMcpEnv, buildThreadParams, dbToolsMcpEnv, designMcpEnv, requestWithInstructionsFallback, RequiredInstructionsError,
+  assistantMcpEnv, buildThreadParams, dbToolsMcpEnv, designMcpEnv, joinDeveloperInstructions, requestWithInstructionsFallback, RequiredInstructionsError,
   sessionCollabMcpEnv, tabToolsMcpEnv, type CodexAssistantSession, type CodexThreadParams,
 } from "./codex-thread-params.ts";
 import { planAssistantCodexMcp } from "./codex-assistant-mcp-guard.ts";
@@ -1014,7 +1014,9 @@ export class CodexAppServerProvider implements AIProvider {
     const channel = createEventChannel();
     const live: LiveSession = {
       client, threadId: null, cwd, channel, permission, model,
-      developerInstructions: assistant ? opts?.assistantInstructions : opts?.designInstructions,
+      // The Assistant carries its own instructions only; any other session gets its design block
+      // and the line naming extension CLI commands.
+      developerInstructions: assistant ? opts?.assistantInstructions : joinDeveloperInstructions(opts?.designInstructions, opts?.extensionCliHint),
       requireInstructions: assistant,
       designMcp: opts?.designSession && !assistant ? opts.designMcp : undefined,
       // An Assistant session loads none of PPM's chat tool servers but the session tools: its own

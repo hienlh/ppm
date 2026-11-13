@@ -31,20 +31,24 @@ export const WakeLockStatusBarItem = memo(function WakeLockStatusBarItem() {
 });
 
 /**
- * Mobile: a pill at the top edge. Top-left and top-right are already taken by the device-name
- * badge and the BETA ribbon, so this sits centred between them.
+ * Mobile: a sun in the bottom nav, in the flow of the bar like the desktop entry is in the status
+ * bar. It used to be a pill fixed over the top edge of the page, where it covered the header of
+ * whatever panel was open (an extension panel's title and first controls) for as long as a turn
+ * ran. The label stays for screen readers and as the tooltip.
  */
 export const WakeLockMobileBadge = memo(function WakeLockMobileBadge() {
   const active = useWakeLockStore((s) => s.active);
   if (!active) return null;
 
   return (
-    <div
-      className="md:hidden fixed left-1/2 -translate-x-1/2 top-0 z-50 flex items-center gap-1 px-2 py-0.5 rounded-b bg-warning/85 text-white text-[10px] font-medium pointer-events-none"
+    <span
+      className="flex size-12 shrink-0 items-center justify-center text-warning"
       title={TITLE}
+      role="status"
+      aria-label={LABEL}
+      data-slot="wake-lock-mobile"
     >
-      <Sun className="size-3 shrink-0" />
-      <span>{LABEL}</span>
-    </div>
+      <Sun className="size-4" />
+    </span>
   );
 });

@@ -49,6 +49,7 @@ import { ensureAssistantWorkDir } from "./assistant/assistant-work-dir.ts";
 import { TraceRun, traceAbort, traceApproval, traceFollowUp } from "./session-trace/trace-recorder.ts";
 import type { TraceOrigin } from "../shared/session-trace.ts";
 import { stopChatSessionProcesses } from "./chat-session-processes/session-processes.service.ts";
+import { extensionCliHint } from "./extension-cli-hint.ts";
 import { createLogger } from "./logger.ts";
 import { wakeContextEntry } from "./assistant-wake/wake-news-text.ts";
 import { deleteAssistantWatchesFor } from "./assistant-hub/assistant-hub-db.ts";
@@ -483,7 +484,8 @@ class ChatService {
     // rebuilt from the session's binding below.
     const {
       uiSummary, channel, watchEvents, wakeNews,
-      extensionInstructions: _extInstructions, extensionToolPolicy: _extPolicy, extensionMcp: _extMcp, ...callerOpts
+      extensionInstructions: _extInstructions, extensionToolPolicy: _extPolicy, extensionMcp: _extMcp,
+      extensionCliHint: _extCliHint, ...callerOpts
     } = opts ?? {};
     // Like the design fields, the tab, database and session tools are only ever server-built. An
     // Assistant session is never also a design session: its policy replaces the design one outright.
@@ -511,6 +513,7 @@ class ChatService {
     // A design session checks its canvas with `design_check` instead. A server is attached while
     // one of its tools is on (Settings → Tools); it lists only those. An Assistant session gets no
     // tab or database tools: it loads its own server, the session tools and the ones connected for it.
+    const cliHint = extensionCliHint();
     const ai = configService.get("ai");
     const ppmTools = !isMinimalMode() && !design.designSession && !design.assistantSession && !policySession;
     const tabToolsMcp = ppmTools && anyPpmToolOn(ai, TAB_TOOLS) ? tabToolsMcpAccessFor(sessionId) : null;
@@ -597,7 +600,11 @@ class ChatService {
     return {
       opts: {
         ...design, ...bound, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
-        ...(sessionCollabMcp ? { sessionCollabMcp } : {}), ...(extensionMcp ? { extensionMcp } : {}), sharedContext,
+        ...(sessionCollabMcp ? { sessionCollabMcp } : {}), ...(extensionMcp ? { extensionMcp } : {}),
+        // The `ppm <name>` commands enabled extensions contribute; an Assistant session has its own
+        // instructions and nothing else.
+        ...(cliHint && !design.assistantSession ? { extensionCliHint: cliHint } : {}),
+        sharedContext,
       },
       sent: { shared, ui, manager: managerEntry, managers: managersEntry, notebook: notebookEntry },
     };

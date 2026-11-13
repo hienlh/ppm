@@ -8,6 +8,40 @@ import type {
 import { StatusBarAlignment as SBAlign } from "./types.ts";
 import { rememberWebviewPanelId, toWirePlacement, type TabPlacementOptions } from "./tab-placement.ts";
 
+/**
+ * How long a prompt call waits for its answer: the browser's own wait for the person
+ * (`BROWSER_PROMPT_TIMEOUT_MS` in `src/server/ws/extensions.ts`, 30 s) plus a margin for the
+ * reply to cross back. At the RPC default of 10 s, a click after 10 s was lost.
+ */
+export const PROMPT_REPLY_WAIT_MS = 35_000;
+
+/**
+ * A UI update nobody awaits (status bar, tree, webview html). Its promise must still be
+ * handled: all extensions share one worker, and an unhandled rejection there (an RPC timeout
+ * while the main thread is busy) ends the worker and every extension in it. A failed update is
+ * logged and the next one carries the current state anyway.
+ */
+function fireAndForget(rpc: RpcClient, method: string, ...params: unknown[]): void {
+  rpc.request(method, ...params).catch((e: unknown) => {
+    console.warn(`[vscode-compat] ${method} failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
+}
+
+/**
+ * A tree row's link, kept only when it is http(s). A worker cannot open a browser tab, so the
+ * row itself becomes the link; anything else (`javascript:`, `file:`) would run or reach
+ * something on the device that taps it. The renderer checks again.
+ */
+export function httpUrlOrUndefined(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** VSCode-compatible window namespace — all UI ops go through RPC to main→browser */
 export class WindowService {
   private rpc: RpcClient;
@@ -89,6 +123,7 @@ export class WindowService {
         actions: treeItem.actions,
         wrap: treeItem.wrap,
         contextValue: treeItem.contextValue,
+        url: httpUrlOrUndefined(treeItem.url),
       });
     }
     return results;
@@ -97,15 +132,15 @@ export class WindowService {
   // --- Messages ---
 
   async showInformationMessage(message: string, ...items: string[]): Promise<string | undefined> {
-    return this.rpc.request<string | undefined>("window:showMessage", "info", message, items);
+    return this.rpc.requestWithTimeout<string | undefined>("window:showMessage", PROMPT_REPLY_WAIT_MS, "info", message, items);
   }
 
   async showWarningMessage(message: string, ...items: string[]): Promise<string | undefined> {
-    return this.rpc.request<string | undefined>("window:showMessage", "warn", message, items);
+    return this.rpc.requestWithTimeout<string | undefined>("window:showMessage", PROMPT_REPLY_WAIT_MS, "warn", message, items);
   }
 
   async showErrorMessage(message: string, ...items: string[]): Promise<string | undefined> {
-    return this.rpc.request<string | undefined>("window:showMessage", "error", message, items);
+    return this.rpc.requestWithTimeout<string | undefined>("window:showMessage", PROMPT_REPLY_WAIT_MS, "error", message, items);
   }
 
   // --- Quick Pick / Input / Composer ---
@@ -174,14 +209,14 @@ export class WindowService {
       color: undefined,
       command: undefined,
       show() {
-        rpc.request("window:statusbar:update", {
+        fireAndForget(rpc, "window:statusbar:update", {
           id, text: item.text, tooltip: item.tooltip, command: item.command as string | undefined,
           alignment: item.alignment === SBAlign.Left ? "left" : "right",
           priority: item.priority ?? 0, extensionId: extId,
         });
       },
-      hide() { rpc.request("window:statusbar:remove", id); },
-      dispose() { rpc.request("window:statusbar:remove", id); },
+      hide() { fireAndForget(rpc, "window:statusbar:remove", id); },
+      dispose() { fireAndForget(rpc, "window:statusbar:remove", id); },
     };
     return item;
   }
@@ -215,8 +250,9 @@ export class WindowService {
     this._treeProviders.set(viewId, { provider });
     // Initial tree data push — serialize via getTreeItem
     if (provider.getChildren) {
-      this._getTreeChildren(viewId).then((items) => rpc.request("window:tree:update", viewId, items))
-        .catch((e) => console.error(`[vscode-compat] tree init error (${viewId}):`, e));
+      this._getTreeChildren(viewId).then((items) => {
+        fireAndForget(rpc, "window:tree:update", viewId, items);
+      }).catch((e) => console.error(`[vscode-compat] tree init error (${viewId}):`, e));
     }
     // Subscribe to onDidChangeTreeData — re-push entire tree on change.
     // `Event<T>` is documented (and implemented by `vscode.EventEmitter`) to return
@@ -226,8 +262,9 @@ export class WindowService {
     let changeUnsub: (() => void) | { dispose(): void } | undefined;
     if (provider.onDidChangeTreeData) {
       changeUnsub = provider.onDidChangeTreeData(() => {
-        this._getTreeChildren(viewId).then((items) => rpc.request("window:tree:update", viewId, items))
-          .catch((e) => console.error(`[vscode-compat] tree refresh error (${viewId}):`, e));
+        this._getTreeChildren(viewId).then((items) => {
+          fireAndForget(rpc, "window:tree:update", viewId, items);
+        }).catch((e) => console.error(`[vscode-compat] tree refresh error (${viewId}):`, e));
       });
     }
     return new Disposable(() => {
@@ -235,7 +272,7 @@ export class WindowService {
       else changeUnsub?.dispose();
       this._treeProviders.delete(viewId);
       this._treeElementCache.delete(viewId);
-      rpc.request("window:tree:refresh", viewId).catch(() => {});
+      fireAndForget(rpc, "window:tree:refresh", viewId);
     });
   }
 
@@ -247,7 +284,10 @@ export class WindowService {
    */
   async openTab(tabType: string, title: string, projectId: string | null, metadata?: Record<string, unknown>, options?: TabPlacementOptions): Promise<void> {
     const placement = toWirePlacement(options);
-    await this.rpc.request("window:openTab", tabType, title, projectId, metadata, ...(placement ? [placement] : []));
+    // A panel tab records the extension that opened it, always this one, so the app may reopen
+    // that panel on a reload; a tab that records no owner may only reopen a linkable panel.
+    const tabMetadata = tabType === "extension" ? { ...metadata, extensionId: this.extId } : metadata;
+    await this.rpc.request("window:openTab", tabType, title, projectId, tabMetadata, ...(placement ? [placement] : []));
   }
 
   async switchProject(projectName: string): Promise<void> {
@@ -265,7 +305,7 @@ export class WindowService {
     const panelId = `${this.extId}-wv-${++this._idCounter}`;
     const rpc = this.rpc;
     const extId = this.extId;
-    rpc.request("window:webview:create", panelId, extId, viewType, title, options?.projectPath,
+    fireAndForget(rpc, "window:webview:create", panelId, extId, viewType, title, options?.projectPath,
       ...(options?.preferWindow === true ? [true] : []));
 
     const onDidDispose = new EventEmitter<void>();
@@ -278,7 +318,7 @@ export class WindowService {
       get html() { return currentHtml; },
       set html(value: string) {
         currentHtml = value;
-        rpc.request("window:webview:html", panelId, value);
+        fireAndForget(rpc, "window:webview:html", panelId, value);
       },
       options: {},
       async postMessage(message: unknown): Promise<boolean> {
@@ -297,7 +337,7 @@ export class WindowService {
       dispose: () => {
         this._panelEmitters.delete(panelId);
         this._panelDisposeEmitters.delete(panelId);
-        rpc.request("window:webview:dispose", panelId);
+        fireAndForget(rpc, "window:webview:dispose", panelId);
         onDidDispose.fire();
         onDidDispose.dispose();
         onDidReceiveMessage.dispose();

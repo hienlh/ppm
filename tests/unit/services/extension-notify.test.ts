@@ -18,6 +18,12 @@ import { telegramService } from "../../../src/services/telegram-notification.ser
 import { ntfyService } from "../../../src/services/ntfy-notification.service.ts";
 import { openTestDb, setDb, setSessionProvider } from "../../../src/services/db.service.ts";
 import type { RpcMessage, RpcResponse } from "../../../src/types/extension.ts";
+import { parseExtensionDeepLink } from "../../../src/shared/extension-deep-link.ts";
+
+// This file reads and writes config, so it opens its own database rather than inheriting the
+// process-wide one: an earlier file that ends with `closeDb()` leaves none, and `getDb()` would
+// then reopen `ppm.db` under the test PPM_HOME, which other tests are free to overwrite.
+setDb(openTestDb());
 
 // Only the two tests that go through the real NotificationService touch these; patching the
 // singletons (not mock.module, which leaks across test files) matches notification-dispatch.test.ts.
@@ -44,6 +50,9 @@ function fakeDeps(overrides: Partial<ExtensionNotifyDeps> = {}) {
     displayNameOf: (id) => (id === "fg" ? "Future Graph" : id),
     resolveSessionProvider: (sessionId) => (sessionId === "s1" ? { sessionId: "s1", providerId: "codex" } : null),
     projectExists: (name) => name === "ppm",
+    linkTargetsOf: (id) => (id === "fg"
+      ? { commands: ["fg.checkIn", "fg.panel", "fg.done"], deepLinkCommands: ["fg.checkIn", "fg.panel"] }
+      : { commands: [], deepLinkCommands: [] }),
     broadcast: async (type, payload, opts) => {
       broadcasts.push({ type, payload, opts });
       return "sent";
@@ -88,13 +97,91 @@ describe("notify:send", () => {
     expect(opts.coalesceKey).toMatch(/^ext:fg:/);
   });
 
-  it("builds a bare project link with no session, and lets an explicit path win over both", async () => {
+  it("builds a bare project link with no session, and uses an explicit path as it is", async () => {
     const { deps, broadcasts } = fakeDeps();
     const { call } = channel(deps);
     await call({ ...base, projectName: "ppm" });
     expect(broadcasts[0]!.payload.path).toBe("/project/ppm");
-    await call({ ...base, projectName: "ppm", sessionId: "s1", path: "/project/ppm/design/landing" });
+    await call({ ...base, projectName: "ppm", path: "/project/ppm/design/landing" });
     expect(broadcasts[1]!.payload.path).toBe("/project/ppm/design/landing");
+  });
+
+  it("refuses a session and a path together: one destination per notification", async () => {
+    const { deps, broadcasts } = fakeDeps();
+    const { call } = channel(deps);
+    expect((await call({ ...base, projectName: "ppm", sessionId: "s1", path: "/project/ppm/design/landing" })).error.code).toBe("BAD_REQUEST");
+    expect(broadcasts).toHaveLength(0);
+  });
+
+  it("does not count a refused call against the hourly limit", async () => {
+    const { deps } = fakeDeps();
+    const { call } = channel(deps);
+    const realNow = extensionNotifyClock.now;
+    extensionNotifyClock.now = () => 2_000_000;
+    try {
+      for (let i = 0; i < 40; i++) expect((await call({ ...base, projectName: "no-such-project" })).error.code).toBe("BAD_REQUEST");
+      for (let i = 0; i < 30; i++) expect((await call(base)).ok).toBe(true);
+    } finally {
+      extensionNotifyClock.now = realNow;
+    }
+  });
+
+  it("links to the extension's own command, with its args and project, through the deep link", async () => {
+    const { deps, broadcasts } = fakeDeps();
+    const { call } = channel(deps);
+    expect((await call({ ...base, projectName: "ppm", open: { command: "fg.checkIn", args: ["today", 2] } })).ok).toBe(true);
+    const path = broadcasts[0]!.payload.path!;
+    expect(path.startsWith("/project/ppm?extCommand=fg.checkIn&extArgs=")).toBe(true);
+    expect(parseExtensionDeepLink(path)).toEqual({ kind: "command", command: "fg.checkIn", args: ["today", 2], projectName: "ppm" });
+    expect(broadcasts[0]!.payload.sessionId).toBe("");
+  });
+
+  it("links to a panel by its view type, and works without a project", async () => {
+    const { deps, broadcasts } = fakeDeps();
+    const { call } = channel(deps);
+    await call({ ...base, open: { view: "fg.panel" } });
+    expect(broadcasts[0]!.payload.path).toBe("/?extView=fg.panel");
+  });
+
+  it("refuses a link to its own command that is not in contributes.deepLinkCommands (an action, not an opener)", async () => {
+    const { deps, broadcasts } = fakeDeps();
+    const { call } = channel(deps);
+    const answer = await call({ ...base, projectName: "ppm", open: { command: "fg.done", args: ["item-1"] } });
+    expect(answer.error.code).toBe("BAD_REQUEST");
+    expect(answer.error.message).toContain("deepLinkCommands");
+    // A linkable panel still opens by its view type.
+    expect((await call({ ...base, open: { view: "fg.panel" } })).ok).toBe(true);
+    expect(broadcasts.map((b) => b.payload.path)).toEqual(["/?extView=fg.panel"]);
+  });
+
+  it("refuses a view link to an unlisted command: the tab it opens would run that command", async () => {
+    const { deps, broadcasts } = fakeDeps();
+    const { call } = channel(deps);
+    const answer = await call({ ...base, open: { view: "fg.done" } });
+    expect(answer.error.code).toBe("BAD_REQUEST");
+    expect(answer.error.message).toContain("open.view");
+    expect(answer.error.message).toContain("deepLinkCommands");
+    expect(broadcasts).toHaveLength(0);
+  });
+
+  it("refuses an open that names another extension's command, breaks the arg limits, or comes with sessionId or path", async () => {
+    const { deps, broadcasts } = fakeDeps();
+    const { call } = channel(deps);
+    const cases: Record<string, unknown>[] = [
+      { ...base, open: { command: "other.cmd" } },
+      { ...base, open: { view: "not.declared" } },
+      { ...base, open: { command: "fg.checkIn", view: "fg.panel" } },
+      { ...base, open: {} },
+      { ...base, open: "fg.checkIn" },
+      { ...base, open: { command: "fg.checkIn", args: Array(9).fill(1) } },
+      { ...base, open: { command: "fg.checkIn", args: [{ nested: true }] } },
+      { ...base, open: { command: "fg.checkIn", args: ["x".repeat(1100)] } },
+      { ...base, open: { view: "fg.panel", args: [1] } },
+      { ...base, sessionId: "s1", open: { command: "fg.checkIn" } },
+      { ...base, path: "/project/ppm", open: { command: "fg.checkIn" } },
+    ];
+    for (const request of cases) expect((await call(request)).error.code).toBe("BAD_REQUEST");
+    expect(broadcasts).toHaveLength(0);
   });
 
   it("two separate calls each mint their own coalesce key", async () => {

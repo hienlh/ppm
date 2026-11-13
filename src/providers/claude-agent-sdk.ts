@@ -14,6 +14,7 @@ import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { DB_TOOLS_MCP_PATH, dbToolsMcpAccessFor } from "../services/db-ai-tools/db-ai-tools-tokens.ts";
 import { aiConnections } from "../services/db-ai-tools/db-ai-connections.ts";
+import { extensionCliHint } from "../services/extension-cli-hint.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
 import { OPEN_PREVIEW_TOOL } from "../shared/tab-open-protocol.ts";
 import { anyPpmToolOn, ppmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
@@ -1082,7 +1083,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const sessionTools = sessionBase ? { url: `${sessionBase}${SESSION_COLLAB_MCP_PATH}`, token: "" } : null;
     const options = this.buildQueryOptions({
       cwd: projectPath,
-      systemPrompt: buildSystemPromptOption(providerConfig.system_prompt),
+      // The same hint the session's first turn will carry (`prepareSendOptions`): a prompt that
+      // differed would make the turn refuse this spare and boot a cold process instead.
+      systemPrompt: buildSystemPromptOption(providerConfig.system_prompt, undefined, undefined, extensionCliHint()),
       env: this.buildQueryEnv(projectPath, account),
       allowedTools: allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams }),
       mcpServers: {
@@ -1219,7 +1222,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // carries its own instructions, the user's part included, and nothing else.
     const systemPromptOpt = assistantPolicy
       ? buildSystemPromptOption(undefined, opts?.assistantInstructions)
-      : buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions, opts?.extensionInstructions);
+      : buildSystemPromptOption(providerConfig.system_prompt, opts?.designInstructions, opts?.extensionInstructions, opts?.extensionCliHint);
     // Relative tool paths resolve against the directory the CLI runs in.
     const policyCwd = meta.projectPath && existsSync(meta.projectPath) ? meta.projectPath : homedir();
     // A design session in acceptEdits auto-approves file tools only while they target the

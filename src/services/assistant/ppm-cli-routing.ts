@@ -44,7 +44,7 @@ const SERVER = [
   "mcp list", "mcp add", "mcp edit", "mcp remove", "mcp import",
   "accounts list", "accounts pick", "accounts verify", "accounts rename", "accounts enable", "accounts disable",
   "accounts remove", "accounts settings",
-  "ext list", "ext install", "ext remove", "ext enable", "ext disable", "ext dev",
+  "ext list", "ext install", "ext remove", "ext enable", "ext disable", "ext dev", "ext run",
   "lsp list", "lsp install", "lsp remove",
   "speech status", "speech install", "speech remove",
   "db driver list", "db driver install", "db driver remove",

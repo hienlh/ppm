@@ -3,8 +3,15 @@ import { extensionService } from "../../services/extension.service.ts";
 import { contributionRegistry } from "../../services/contribution-registry.ts";
 import { ok, err } from "../../types/api.ts";
 import { announceExtensionChanges } from "./extensions-broadcast.ts";
+import { createCommandExecuteHandler } from "./extension-command-execute-route.ts";
 
 export const extensionRoutes = new Hono();
+
+// POST /api/extensions/commands/execute — run a declared extension command (CLI). Declared
+// before the `/:id{.+}` routes so no id pattern can ever claim the path, and before the change
+// announcer: running a command changes no extension, so no browser should refetch the list.
+extensionRoutes.post("/commands/execute", createCommandExecuteHandler(extensionService));
+
 extensionRoutes.use("*", announceExtensionChanges);
 
 // GET /api/extensions — list all extensions

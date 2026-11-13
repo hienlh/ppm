@@ -69,6 +69,9 @@ function sameProjectRows(a: ProjectConfig[], b: ProjectConfig[]): boolean {
 
 class ConfigService {
   private config: PpmConfig = structuredClone(DEFAULT_CONFIG);
+  /** Told after `set()` changes a key, for state held elsewhere that copies a value (the
+   *  extension host's auth token). A listener's error is logged and never reaches the caller. */
+  private listeners = new Set<(key: keyof PpmConfig) => void>();
   /** Whether `config` reflects the database rather than the pristine defaults. */
   private loaded = false;
   /**
@@ -189,6 +192,15 @@ class ConfigService {
         if (paths.length > 0) log.info(`Changed ${paths.join(", ")}`);
       }
     }
+    for (const listener of this.listeners) {
+      try { listener(key); } catch (e) { log.warn(`config change listener failed for ${String(key)}: ${(e as Error)?.message ?? e}`); }
+    }
+  }
+
+  /** Call `listener` after each `set()`; returns the unsubscribe. */
+  onChange(listener: (key: keyof PpmConfig) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   /** Get the full config object */

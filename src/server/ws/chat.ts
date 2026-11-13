@@ -835,6 +835,31 @@ export function collabLiveState(sessionId: string): LiveSessionState | null {
 }
 setCollabIdleProbe((sessionId) => (entryOf(sessionId)?.phase ?? "idle") === "idle");
 
+/** When each pending approval took the session's slot. Keyed by the event, so it goes with it. */
+const approvalHeldAt = new WeakMap<object, number>();
+
+export interface SessionLiveState {
+  phase: SessionPhase;
+  providerId: string;
+  projectName?: string;
+  pending: { tool: string; requestId: string; since: number } | null;
+}
+
+/** Every session this process holds in memory: its phase and what it is waiting on, if anything. */
+export function listSessionLiveState(): Map<string, SessionLiveState> {
+  const live = new Map<string, SessionLiveState>();
+  for (const [sessionId, entry] of activeSessions) {
+    const ev = entry.pendingApprovalEvent;
+    live.set(sessionId, {
+      phase: entry.phase,
+      providerId: entry.providerId,
+      ...(entry.projectName ? { projectName: entry.projectName } : {}),
+      pending: ev ? { tool: ev.tool, requestId: ev.requestId, since: approvalHeldAt.get(ev) ?? Date.now() } : null,
+    });
+  }
+  return live;
+}
+
 /**
  * App-wide broadcasts live on the global bus (`/ws/global`), not on chat sockets:
  * chat tabs mount lazily, so a chat socket is not guaranteed to exist. Re-exported
@@ -928,6 +953,8 @@ const approvals: PendingApprovals = createPendingApprovals({
   show: (sessionId, ev) => {
     const entry = activeSessions.get(sessionId);
     if (!entry) return;
+    // How long the card has stood in front of the user, for the sessions' status (`listSessionLiveState`).
+    approvalHeldAt.set(ev, Date.now());
     if (isPpmApproval(ev)) {
       // Not buffered into the turn's replay: the tool call's own card already shows what is
       // asked, and a device that connects later reads the approval from `session_state`. Told to

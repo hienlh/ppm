@@ -20,7 +20,8 @@ export interface StatusBarItemMsg {
  * src/web/stores/extension-store.ts exactly; that FE type is the source of truth for what
  * ActionButton actually renders. */
 export interface TreeItemActionMsg {
-  icon: "refresh" | "edit" | "trash" | "plus" | "search";
+  /** A name the web UI knows (`src/web/lib/extension-icons.ts`); an unknown one draws a refresh arrow. */
+  icon: string;
   tooltip: string;
   command: string;
   commandArgs?: unknown[];
@@ -34,11 +35,15 @@ export interface TreeItemMsg {
   icon?: string;
   /** Label wraps instead of truncating — for rows whose text is the content. */
   wrap?: boolean;
-  badge?: string;
+  /** A CSS colour for the dot before the label. */
+  color?: string;
+  badge?: string | number;
   collapsibleState: "none" | "collapsed" | "expanded";
   command?: string;
   commandArgs?: unknown[];
   actions?: TreeItemActionMsg[];
+  /** http(s) only, checked by vscode-compat and again by the renderer. */
+  url?: string;
   children?: TreeItemMsg[];
   contextValue?: string;
 }
@@ -116,4 +121,6 @@ export type ExtClientMsg =
   | { type: "quickpick:resolve"; requestId: string; selected: QuickPickItemMsg[] | null }
   | { type: "inputbox:resolve"; requestId: string; value: string | null }
   | { type: "notification:action"; id: string; action: string | null }
-  | { type: "composer:resolve"; requestId: string; result: ComposerResultMsg | null };
+  | { type: "composer:resolve"; requestId: string; result: ComposerResultMsg | null }
+  /** The device's IANA zone, on every connect and whenever it changes (`vscode.env.clientTimeZone`). */
+  | { type: "client:timezone"; timeZone: string; deviceId: string };

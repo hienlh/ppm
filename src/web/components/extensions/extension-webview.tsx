@@ -12,6 +12,7 @@ import { useProjectFrameworkStore } from "@/stores/project-framework-store";
 import { commandRunsGit } from "@/lib/git-repo-scope";
 import { resolveGitRoot } from "@/stores/git-repo-store";
 import { Loader2 } from "@/lib/icons";
+import { mayRecoverPanel, panelCommandOf } from "@/lib/extension-panel-recovery";
 
 /** The icon rules by class, read once from the stylesheet the app's own trees load. */
 let iconRules: Promise<IconRuleIndex> | null = null;
@@ -117,9 +118,15 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   const prevProjectRef = useRef<string | null>(null);
 
   // On reload: resolve project path and dispatch command once.
+  // A tab from the saved layout may have come from a link: it may only run its panel's command
+  // when the owning extension recorded it, or the extension marked it linkable.
+  const extensionId = metadata?.extensionId as string | undefined;
+  const recoverable = useExtensionStore((s) => mayRecoverPanel({ viewType, extensionId }, s.contributions));
+  const refused = !panel && extensionsReady && !!viewType && !recoverable;
+
   // Wait for extensions to be activated (contributions received) before dispatching.
   useEffect(() => {
-    if (panel || !viewType || !extensionsReady) return;
+    if (panel || !viewType || !extensionsReady || !recoverable) return;
     // Already dispatched for this project — panel is just temporarily missing
     if (projectName && projectName === prevProjectRef.current) return;
     if (projectName) prevProjectRef.current = projectName;
@@ -140,10 +147,9 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
 
     dispatch();
     return () => { cancelled = true; };
-  }, [panel, viewType, projectName, extensionsReady]);
+  }, [panel, viewType, projectName, extensionsReady, recoverable]);
 
   // Check activation errors for this extension
-  const extensionId = metadata?.extensionId as string | undefined;
   const activationError = useExtensionStore((s) => {
     // Direct match by extensionId (most reliable)
     if (extensionId && s.activationErrors[extensionId]) return s.activationErrors[extensionId];
@@ -158,15 +164,15 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   // Retry handler — re-dispatches the command
   const handleRetry = useCallback(() => {
     setTimedOut(false);
-    if (!viewType) return;
-    const command = viewType.includes(".") ? viewType : `${viewType}.view`;
+    if (!viewType || !recoverable) return;
+    const command = panelCommandOf(viewType);
     (async () => {
       const path = projectName ? await resolveDispatchPath(projectName, command) : undefined;
       window.dispatchEvent(new CustomEvent("ext:command:execute", {
         detail: { command, args: path ? [path] : [], recovery: true },
       }));
     })();
-  }, [viewType, projectName]);
+  }, [viewType, projectName, recoverable]);
 
   // On unmount: notify server to dispose the panel so extension clears activePanel state
   const panelIdForCleanup = useRef<string | null>(null);
@@ -200,7 +206,7 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   // first command dispatch may be lost due to connection cycling.
   useEffect(() => {
     if (panel) { setTimedOut(false); return; }
-    if (!extensionsReady || !viewType) return;
+    if (!extensionsReady || !viewType || !recoverable) return;
     let retries = 0;
     const id = setInterval(() => {
       retries++;
@@ -212,7 +218,7 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
       handleRetry();
     }, 2_000);
     return () => clearInterval(id);
-  }, [panel, extensionsReady, viewType, handleRetry]);
+  }, [panel, extensionsReady, viewType, handleRetry, recoverable]);
 
   // Listen for postMessage from iframe → forward to extension via WS bridge
   useEffect(() => {
@@ -280,7 +286,12 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   if (!panel || !rawHtml) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-sm text-text-subtle">
-        {timedOut ? (
+        {refused ? (
+          <span className="max-w-md px-4 text-center">
+            This tab cannot reopen its panel: the extension does not allow it to be opened from a link.
+            Close the tab and open the panel from the extension.
+          </span>
+        ) : timedOut ? (
           <>
             <span className="text-destructive font-medium">Extension failed to load</span>
             {activationError && (

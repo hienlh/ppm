@@ -1,4 +1,5 @@
 import type { ExtensionContributes, ContributedCommand, ContributedView, ContributedMenu, ContributedKeybinding } from "../types/extension.ts";
+import { deepLinkableCommands } from "../shared/extension-deep-link.ts";
 
 /**
  * In-memory registry of all contribution points from enabled extensions.
@@ -10,8 +11,11 @@ class ContributionRegistry {
   private configs = new Map<string, Record<string, unknown>>();
   private menus = new Map<string, Array<ContributedMenu & { extId: string }>>();
   private keybindings: Array<ContributedKeybinding & { extId: string }> = [];
+  /** Commands a notification's link may run, by command id → owning extension. */
+  private deepLinkCommands = new Map<string, string>();
 
   register(extId: string, contributes: ExtensionContributes): void {
+    for (const command of deepLinkableCommands(contributes)) this.deepLinkCommands.set(command, extId);
     if (contributes.commands) {
       for (const cmd of contributes.commands) {
         this.commands.set(cmd.command, { ...cmd, extId });
@@ -59,6 +63,9 @@ class ContributionRegistry {
     }
     this.keybindings = this.keybindings.filter((kb) => kb.extId !== extId);
     this.configs.delete(extId);
+    for (const [command, owner] of this.deepLinkCommands) {
+      if (owner === extId) this.deepLinkCommands.delete(command);
+    }
   }
 
   getCommands(): Array<ContributedCommand & { extId: string }> {
@@ -113,10 +120,12 @@ class ContributionRegistry {
       menus: menusByLocation,
       keybindings: this.getKeybindings(),
       configuration: this.getConfiguration(),
+      deepLinkCommands: [...this.deepLinkCommands.keys()],
     };
   }
 
   clear(): void {
+    this.deepLinkCommands.clear();
     this.commands.clear();
     this.views.clear();
     this.configs.clear();

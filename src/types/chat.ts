@@ -121,6 +121,13 @@ export interface SendMessageOpts {
   watchEvents?: WatchEventNotice[];
   /** News from manager chats in a turn PPM started; rendered beside `watchEvents`, the same way. */
   wakeNews?: import("../shared/assistant-wake-news.ts").WakeNewsNotice[];
+  /**
+   * One line naming the `ppm <name>` commands enabled extensions contribute
+   * (`extension-cli-hint.ts`). Server-built by `chatService.prepareSendOptions`, which drops any
+   * caller value, so no client text reaches the instructions. Claude appends it to the system
+   * prompt after the design block, Codex joins it to `developerInstructions`.
+   */
+  extensionCliHint?: string;
 }
 
 /** How a watched chat's run ended, as the Assistant is told it. */

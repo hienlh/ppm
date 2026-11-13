@@ -150,8 +150,8 @@ export interface PresetSystemPromptOption {
 /**
  * Compose the SDK `systemPrompt` option from the provider's "Additional Instructions"
  * (`system_prompt`), the session's own instruction block — a design session's or a PPM
- * Assistant session's, never both — and the instructions an extension bound to the session, in
- * that order.
+ * Assistant session's, never both — the instructions an extension bound to the session, and the
+ * line naming extension CLI commands, in that order.
  *
  * All are appended to the preset, never used as a replacing `custom` prompt: the setting
  * is labelled as *additional* instructions, and replacing Claude Code's prompt would drop
@@ -162,8 +162,9 @@ export function buildSystemPromptOption(
   additional?: string,
   session?: string,
   extension?: string,
+  extensionCliHint?: string,
 ): PresetSystemPromptOption {
-  const parts = [additional, session, extension]
+  const parts = [additional, session, extension, extensionCliHint]
     .map((part) => part?.trim())
     .filter((part): part is string => !!part);
   return parts.length

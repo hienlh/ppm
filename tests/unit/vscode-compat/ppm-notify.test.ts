@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { createPpmNotify, PpmNotifyError } from "../../../packages/vscode-compat/src/ppm/ppm-notify.ts";
 import { createPpmNamespace } from "../../../packages/vscode-compat/src/ppm/index.ts";
+import { createVscodeCompat } from "../../../packages/vscode-compat/src/index.ts";
 import type { RpcClient } from "../../../packages/vscode-compat/src/types.ts";
 
 const request = { title: "Node merged", body: "Two nodes converged on the same outcome." };
@@ -38,6 +39,20 @@ describe("ppm.notify", () => {
     const full = { ...request, sessionId: "s1", projectName: "ppm", providerId: "codex", path: "/project/ppm/design/landing" };
     await createPpmNotify(rpc, "probe-ext")(full);
     expect(sent[0]!.params).toEqual({ ...full, extensionId: "probe-ext" });
+  });
+
+  it("passes open through untouched", async () => {
+    const { rpc, sent } = mockRpc(() => ({ ok: true, result: "queued" }));
+    const withOpen = { ...request, projectName: "ppm", open: { command: "midday.checkIn", args: ["today"] } };
+    expect(await createPpmNotify(rpc, "probe-ext")(withOpen)).toBe("queued");
+    expect(sent[0]!.params).toEqual({ ...withOpen, extensionId: "probe-ext" });
+  });
+
+  it("is reachable as api.ppm.notify on the object an extension's activate() receives", () => {
+    const api = createVscodeCompat({
+      extensionId: "probe-ext", extensionPath: "/x", storagePath: "/x/.storage", rpc: mockRpc(() => null).rpc,
+    });
+    expect(typeof api.ppm?.notify).toBe("function");
   });
 
   it("rejects with the main thread's code, name and message", async () => {

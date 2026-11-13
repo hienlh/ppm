@@ -17,6 +17,14 @@ import { isTimeoutError, withProgress } from "./request-progress.ts";
 export class ServerDownError extends Error {}
 /** A server may hold this database but could not be picked or verified. */
 export class ServerRefusedError extends Error {}
+/** The verified server took the request and did not answer before the command's own wait ran out. */
+export class ServerTimeoutError extends ServerRefusedError {}
+/** The server answered with an error: its HTTP status, and the route's own `code` when it sent one. */
+export class ServerHttpError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string) {
+    super(message);
+  }
+}
 
 /** The PPM to talk to, chosen once per process. */
 interface Target { discovery: Discovery; token: string; authEnabled: boolean; profile: string | null; dbFile: string }
@@ -113,17 +121,19 @@ export async function serverRequest<T>(
         method, headers, body: payload, redirect: "error", signal: AbortSignal.timeout(timeoutMs),
       });
       if (opts.raw && res.ok) return { res, json: null };
-      return { res, json: await res.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null };
+      return { res, json: await res.json().catch(() => null) as { ok?: boolean; data?: T; error?: string; code?: unknown } | null };
     } catch (e) {
       if (isTimeoutError(e)) {
-        throw new ServerRefusedError(`The PPM at ${baseUrl} did not answer within ${Math.round(timeoutMs / 1000)}s${opts.timeoutHint ? `. ${opts.timeoutHint}` : ""}`);
+        throw new ServerTimeoutError(`The PPM at ${baseUrl} did not answer within ${Math.round(timeoutMs / 1000)}s${opts.timeoutHint ? `. ${opts.timeoutHint}` : ""}`);
       }
       throw new ServerRefusedError(`The PPM at ${baseUrl} did not answer (${(e as Error).message})`);
     }
   }, opts.progress === true);
   const { res, json } = answer;
   if (opts.raw && res.ok) return res;
-  if (!json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
+  if (!json?.ok) {
+    throw new ServerHttpError(json?.error ?? `HTTP ${res.status}`, res.status, typeof json?.code === "string" ? json.code : undefined);
+  }
   return json.data as T;
 }
 

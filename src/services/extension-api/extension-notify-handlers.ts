@@ -16,10 +16,12 @@ import type { RpcChannel } from "../extension-rpc.ts";
 import { chatService } from "../chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { getExtensionById, getProjects, getSessionProjectPath, getSessionProvider, resolveMigratedSession } from "../db.service.ts";
-import { isExtensionId, loggableExtensionId } from "../extension-ai/extension-ai-request.ts";
+import { isExtensionId, loggableExtensionId } from "./extension-id.ts";
+import { checkNotifyOpen, linkableTargets, type LinkableTargets } from "./extension-notify-open.ts";
 import { createSlidingWindowLimiter } from "../sliding-window-limiter.ts";
 import { notificationService, type BroadcastOptions, type BroadcastOutcome, type NotificationPayload } from "../notification.service.ts";
 import { notificationPath } from "../notification-format.ts";
+import { buildExtensionDeepLink } from "../../shared/extension-deep-link.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("extension-notify");
@@ -71,6 +73,8 @@ export interface ExtensionNotifyDeps {
   /** The session's own provider, resolved past any migration; null when it names nothing. */
   resolveSessionProvider(sessionId: string): { sessionId: string; providerId: string } | null;
   projectExists(name: string): boolean;
+  /** What the extension's own manifest lets a link open (`extension-notify-open.ts`). */
+  linkTargetsOf(id: string): LinkableTargets;
   broadcast(type: "extension", payload: NotificationPayload, opts: BroadcastOptions): Promise<BroadcastOutcome>;
 }
 
@@ -85,6 +89,7 @@ const defaultDeps: ExtensionNotifyDeps = {
     return { sessionId: resolved, providerId };
   },
   projectExists: (name) => getProjects().some((row) => row.name === name),
+  linkTargetsOf: linkableTargets,
   broadcast: (type, payload, opts) => notificationService.broadcast(type, payload, opts),
 };
 
@@ -138,10 +143,9 @@ export function registerExtensionNotifyHandlers(rpc: RpcChannel, deps: Extension
       const extensionId = requireExtension(p, deps);
       const title = requireTitle(p);
       const body = requireBody(p);
-
-      if (limiter.take(extensionId, extensionNotifyClock.now())) {
-        log.warn(`notify.send refused: ${loggableExtensionId(extensionId)} is over ${RATE_LIMIT_MAX}/hour`);
-        throw new NotifySendError("RATE_LIMITED", `At most ${RATE_LIMIT_MAX} notifications an hour per extension`);
+      // One destination per notification: a link cannot open a chat, a path and a panel at once.
+      if ([p.open, p.sessionId, p.path].filter((v) => v !== undefined).length > 1) {
+        throw bad("Give at most one of open, sessionId or path");
       }
 
       let projectName: string | undefined;
@@ -165,6 +169,18 @@ export function registerExtensionNotifyHandlers(rpc: RpcChannel, deps: Extension
       if (p.path !== undefined) {
         if (typeof p.path !== "string" || !IN_APP_PATH.test(p.path)) throw bad('path must be an in-app path, such as "/project/name"');
         explicitPath = p.path;
+      }
+
+      if (p.open !== undefined) {
+        const checked = checkNotifyOpen(p.open, deps.linkTargetsOf(extensionId));
+        if (!checked.ok) throw bad(checked.message);
+        explicitPath = buildExtensionDeepLink({ projectName, open: checked.open });
+      }
+
+      // Counted only once the request is known to be good: a refused call sends nothing.
+      if (limiter.take(extensionId, extensionNotifyClock.now())) {
+        log.warn(`notify.send refused: ${loggableExtensionId(extensionId)} is over ${RATE_LIMIT_MAX}/hour`);
+        throw new NotifySendError("RATE_LIMITED", `At most ${RATE_LIMIT_MAX} notifications an hour per extension`);
       }
 
       const payload: NotificationPayload = {

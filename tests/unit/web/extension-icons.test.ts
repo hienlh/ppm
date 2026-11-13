@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 import { EXTENSION_ICONS, extensionIcon, viewTypeIcon } from "../../../src/web/lib/extension-icons.ts";
 import { getTabIcon } from "../../../src/web/lib/tab-type-icons.ts";
 import { useExtensionStore } from "../../../src/web/stores/extension-store.ts";
-import { GitBranch, History, Puzzle, Users } from "../../../src/web/lib/icons.ts";
+import { Check, Clock, GitBranch, GitMerge, GitPullRequest, History, Puzzle, RefreshCw, Users } from "../../../src/web/lib/icons.ts";
 import type { ExtensionContributes } from "../../../src/types/extension.ts";
 
 const PACKAGES = resolve(import.meta.dir, "../../../packages");
@@ -50,6 +50,19 @@ describe("extension icons: the names a manifest may use", () => {
     expect(extensionIcon("no-such-icon")).toBeUndefined();
     expect(extensionIcon(undefined)).toBeUndefined();
     expect(extensionIcon("")).toBeUndefined();
+  });
+
+  it("draws the row icons and row actions a to-do style tree uses, none of them the refresh fallback", () => {
+    const names = ["check", "clock", "question", "shield", "stop", "hourglass", "git-pull-request", "ticket", "message", "sun", "warning", "x-circle"];
+    for (const name of names) {
+      expect(extensionIcon(name)).toBeDefined();
+      expect(extensionIcon(name)).not.toBe(RefreshCw);
+    }
+    expect(extensionIcon("check")).toBe(Check);
+    expect(extensionIcon("clock")).toBe(Clock);
+    // A pull request draws the pull-request glyph, not the merge arrow it once borrowed.
+    expect(extensionIcon("git-pull-request")).toBe(GitPullRequest);
+    expect(extensionIcon("git-pull-request")).not.toBe(GitMerge);
   });
 
   it("names its entries the way a manifest writes them", () => {

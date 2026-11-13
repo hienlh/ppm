@@ -4,7 +4,7 @@
  * Communicates with the main process via typed RPC (postMessage).
  */
 import { RpcChannel } from "./extension-rpc.ts";
-import { createVscodeCompat } from "@ppm/vscode-compat";
+import { createVscodeCompat, ClientTimeZoneState } from "@ppm/vscode-compat";
 import type { WindowService } from "@ppm/vscode-compat/src/window.ts";
 import type { CommandService } from "@ppm/vscode-compat/src/commands.ts";
 import type { PpmMcpHost } from "@ppm/vscode-compat/src/ppm/ppm-mcp.ts";
@@ -30,6 +30,22 @@ function dropMcpHost(extId: string): void {
 }
 
 const rpc = new RpcChannel((msg) => postMessage(msg));
+
+// PPM's auth token changed (Settings): later API calls by every extension use the new one, or
+// none when auth was turned off. Read on each call through `__PPM_AUTH_TOKEN__`.
+rpc.onEvent("host:auth-token", (data) => {
+  const token = (data as { token?: unknown } | null)?.token;
+  if (typeof token === "string" && token) (globalThis as any).__PPM_AUTH_TOKEN__ = token;
+  else delete (globalThis as any).__PPM_AUTH_TOKEN__;
+});
+
+/** The user's device zone as browsers report it; one for the whole host (`vscode.env.clientTimeZone`). */
+const clientTimeZone = new ClientTimeZoneState();
+rpc.onEvent("client:timezone", (data) => {
+  const { timeZone, deviceId } = (data ?? {}) as { timeZone?: unknown; deviceId?: unknown };
+  // Validated on the main thread already; this only guards the shape it crossed in.
+  if (typeof timeZone === "string" && typeof deviceId === "string") clientTimeZone.report({ timeZone, deviceId });
+});
 
 /**
  * This thread has a console of its own, which the main thread's routing into ppm.log never
@@ -110,6 +126,7 @@ rpc.onRequest("ext:activate", async (params) => {
     // Computed on the main thread, which owns PPM's directory; this thread never guesses it.
     ...(typeof dataDir === "string" && dataDir ? { globalStoragePath: dataDir } : {}),
     rpc: rpcClient,
+    clientTimeZone,
     storedState: storedState as { global?: Record<string, string | null>; workspace?: Record<string, string | null> },
   });
 
@@ -180,6 +197,15 @@ rpc.onRequest("ext:command:execute", async (params) => {
       console.debug(`[ExtHost] routing "${command}" → ${extId}`);
       try {
         const result = await (ext.commands as any).executeCommand(command, ...args);
+        // The answer crosses to the main thread by structured clone and leaves PPM as JSON. A
+        // value that cannot make either trip (a function, a BigInt, a cycle) would fail inside
+        // postMessage or the route's encoder, where the caller sees only a timeout or a bare 500;
+        // refuse it here with a message that says why.
+        try { structuredClone(result); JSON.stringify(result); } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`[ExtHost] command "${command}" in ${extId} returned a value that cannot be sent:`, msg);
+          return { ok: false, error: `${command} returned a value that cannot be sent back: ${msg}` };
+        }
         return { ok: true, result };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -189,7 +215,8 @@ rpc.onRequest("ext:command:execute", async (params) => {
     }
   }
   console.warn(`[ExtHost] command not found: "${command}"`);
-  return { ok: false, error: `Command not found: ${command}` };
+  // The code tells a missing handler apart from a handler that threw.
+  return { ok: false, error: `Command not found: ${command}`, code: "NOT_FOUND" };
 });
 
 // Browser closed a webview panel tab → fire onDidDispose in the extension

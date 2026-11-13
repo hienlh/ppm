@@ -14,7 +14,7 @@ export { Uri } from "./uri.ts";
 export {
   TreeItemCollapsibleState, ViewColumn, StatusBarAlignment,
   ConfigurationTarget, DiagnosticSeverity, ThemeIcon,
-  type TreeItem, type TreeDataProvider, type WebviewPanel,
+  type TreeItem, type TreeItemAction, type TreeDataProvider, type WebviewPanel,
   type Webview, type WebviewOptions, type StatusBarItem,
   type QuickPickItem, type QuickPickOptions, type InputBoxOptions,
   type OutputChannel, type WorkspaceFolder, type WorkspaceConfiguration,
@@ -42,8 +42,10 @@ export {
   type PpmMcp, type PpmMcpToolset, type PpmMcpToolDefinition, type PpmMcpCallContext, type PpmMcpToolResult,
   type PpmMcpToolHandler, type PpmMcpRegistration, type PpmMcpHost,
 } from "./ppm/ppm-mcp.ts";
+export { ClientTimeZoneState, type ClientTimeZoneChange, type ClientTimeZoneSource } from "./client-timezone.ts";
 export {
   PpmNotifyError, type PpmNotify, type PpmNotifyRequest, type PpmNotifyOutcome, type PpmNotifyErrorCode,
+  type DeepLinkArg,
 } from "./ppm/ppm-notify.ts";
 
 // Service imports
@@ -55,6 +57,7 @@ import { createExtensionContext, type ExtensionContext } from "./context.ts";
 import { createEnvNamespace } from "./env.ts";
 import { createPpmNamespace } from "./ppm/index.ts";
 import { createPpmMcp } from "./ppm/ppm-mcp.ts";
+import type { ClientTimeZoneSource } from "./client-timezone.ts";
 import { createNotSupported } from "./not-supported.ts";
 import { Uri } from "./uri.ts";
 import { Disposable } from "./disposable.ts";
@@ -74,6 +77,8 @@ export interface CreateVscodeCompatOptions {
   rpc: RpcClient;
   appName?: string;
   machineId?: string;
+  /** Shared by every extension in the host; without it `env.clientTimeZone` stays undefined. */
+  clientTimeZone?: ClientTimeZoneSource;
   storedState?: { global?: Record<string, string | null>; workspace?: Record<string, string | null> };
 }
 
@@ -94,7 +99,7 @@ export function createVscodeCompat(options: CreateVscodeCompatOptions) {
     window,
     workspace,
     process,
-    env: createEnvNamespace(options.appName ?? "PPM", options.machineId ?? "ppm-local"),
+    env: createEnvNamespace(options.appName ?? "PPM", options.machineId ?? "ppm-local", options.clientTimeZone),
     /** PPM's own API, beyond what VSCode offers. */
     ppm: createPpmNamespace(rpc, extensionId, mcp.api),
 

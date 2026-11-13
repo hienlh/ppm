@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { RpcChannel } from "../../../src/services/extension-rpc.ts";
-import { registerVscodeCompatHandlers } from "../../../src/services/extension-rpc-handlers.ts";
+import { registerVscodeCompatHandlers, spawnTimeoutMs, MAX_SPAWN_TIMEOUT_MS } from "../../../src/services/extension-rpc-handlers.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { extensionWebSocket } from "../../../src/server/ws/extensions.ts";
@@ -116,5 +116,42 @@ describe("window:showComposer", () => {
     } finally {
       extensionWebSocket.close(ws as any);
     }
+  });
+});
+
+/** One request through a real channel; answers with the response instead of throwing. */
+async function rpcCall(method: string, params: unknown[]): Promise<RpcResponse> {
+  const sent: RpcMessage[] = [];
+  const channel = new RpcChannel((msg) => sent.push(msg));
+  registerVscodeCompatHandlers(channel);
+  await channel.handleMessage({ type: "request", id: 1, method, params });
+  return sent[0] as RpcResponse;
+}
+
+describe("process:spawn allowlist", () => {
+  it("lets gh past the allowlist: a run or a spawn failure, never a refusal", async () => {
+    // Whether gh is installed on this machine or not, the refusal must not be the answer.
+    const response = await rpcCall("process:spawn", ["gh", ["--version"], process.cwd(), { timeout: 5_000 }]);
+    expect(response.error ?? "").not.toContain("not allowed");
+    if (response.error) expect(response.error).toContain("process:spawn failed");
+  });
+
+  it("still refuses a binary that is not on the list", async () => {
+    const response = await rpcCall("process:spawn", ["curl", ["https://example.com"], process.cwd()]);
+    expect(response.error).toContain("not allowed");
+  });
+});
+
+describe("spawnTimeoutMs", () => {
+  it("defaults to 30 s for missing or nonsense values", () => {
+    for (const v of [undefined, 0, -5, Number.NaN, Number.POSITIVE_INFINITY, "60000"]) {
+      expect(spawnTimeoutMs(v)).toBe(30_000);
+    }
+  });
+
+  it("keeps a reasonable value and caps a huge one at 15 minutes", () => {
+    expect(spawnTimeoutMs(45_000)).toBe(45_000);
+    expect(spawnTimeoutMs(10 * 60 * 60_000)).toBe(MAX_SPAWN_TIMEOUT_MS);
+    expect(MAX_SPAWN_TIMEOUT_MS).toBe(900_000);
   });
 });

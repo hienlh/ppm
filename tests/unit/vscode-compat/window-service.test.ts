@@ -79,6 +79,32 @@ describe("WindowService", () => {
       const items = await (window as any)._getTreeChildren("nonexistent");
       expect(items).toEqual([]);
     });
+
+    it("passes tooltip, actions and an http(s) url through, and drops any other url", async () => {
+      const urls: Record<string, unknown> = {
+        pr: "https://github.com/o/r/pull/1",
+        js: "javascript:alert(1)",
+        file: "file:///etc/passwd",
+        junk: "not a url",
+        none: undefined,
+      };
+      const provider = {
+        getChildren: () => Object.keys(urls),
+        getTreeItem: (el: string) => ({
+          id: el, label: el, tooltip: `why ${el}`, url: urls[el],
+          actions: [{ icon: "check", tooltip: "Done", command: "x.done", commandArgs: [el] }],
+        }),
+      };
+      window.createTreeView("url-view", { treeDataProvider: provider });
+      await new Promise((r) => setTimeout(r, 50));
+
+      const items = await (window as any)._getTreeChildren("url-view");
+      const byId = Object.fromEntries(items.map((i: any) => [i.id, i]));
+      expect(byId.pr.url).toBe("https://github.com/o/r/pull/1");
+      expect(byId.pr.tooltip).toBe("why pr");
+      expect(byId.pr.actions).toEqual([{ icon: "check", tooltip: "Done", command: "x.done", commandArgs: ["pr"] }]);
+      for (const id of ["js", "file", "junk", "none"]) expect(byId[id].url).toBeUndefined();
+    });
   });
 
   describe("createTreeView disposal", () => {
@@ -141,6 +167,17 @@ describe("WindowService", () => {
 
       const result = (window as any)._deliverWebviewMessage(panelId, {});
       expect(result).toBe(false);
+    });
+  });
+
+  describe("openTab", () => {
+    it("records this extension on a panel tab it opens, whatever metadata it passed", async () => {
+      await window.openTab("extension", "Graph", null, { viewType: "git-graph", extensionId: "someone-else" });
+      await window.openTab("editor", "File", null, { filePath: "a.ts" });
+      expect(rpc.requests).toEqual([
+        { method: "window:openTab", params: ["extension", "Graph", null, { viewType: "git-graph", extensionId: "test-ext" }] },
+        { method: "window:openTab", params: ["editor", "File", null, { filePath: "a.ts" }] },
+      ]);
     });
   });
 
