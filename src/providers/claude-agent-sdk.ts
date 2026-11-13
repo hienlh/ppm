@@ -292,6 +292,33 @@ function credentialOf(env: Record<string, string | undefined>, accountId: string
 }
 
 /**
+ * The environment Claude's CLI starts from, and so what every shell command its Bash tool runs
+ * inherits, before the account and settings overrides `buildQueryEnv` adds. Exported so a test
+ * can run an approved `ppm …` command with exactly what the model's shell would have.
+ */
+export function claudeChildBaseEnv(opts?: { assistantSession?: boolean }): Record<string, string | undefined> {
+  // Terminal `/resume` and the IDE session pickers list with includeProgrammatic: false,
+  // which drops every transcript whose entrypoint is sdk-cli/sdk-ts/sdk-py — and sdk-ts is
+  // what the SDK stamps when the environment names no entrypoint. That is why sessions
+  // started here were invisible to the CLI and the VS Code extension even in the same
+  // project. The value reaches the transcript verbatim; telemetry maps unknown ones to
+  // "other", so naming ourselves beats borrowing another client's label.
+  // AI_CHAT_MARK: `ppm db` run by the model then keeps to the connections available to the AI chat.
+  // ppmInstanceEnv: a `ppm …` command the model runs reaches this PPM's database and server.
+  const base: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "ppm", ...AI_CHAT_MARK, ...ppmInstanceEnv() };
+  // The CLI's embedded ripgrep (Glob, Grep) reads a config file named by this variable, and
+  // one holding `--follow` makes both tools walk through links out of a project. The
+  // Assistant's read policy allows a search by the folder it names, so its CLI must never
+  // be handed such a file; ordinary chats keep the user's ripgrep setup.
+  if (opts?.assistantSession) {
+    delete base.RIPGREP_CONFIG_PATH;
+    // A `ppm …` command the user approves must reach this instance, not the default folder.
+    Object.assign(base, assistantShellEnv());
+  }
+  return base;
+}
+
+/**
  * Pending approval: canUseTool callback creates a promise,
  * yields an approval_request event, then awaits resolution from FE.
  */
@@ -498,24 +525,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     account: { id: string; accessToken: string } | null,
     opts?: { assistantSession?: boolean },
   ): Record<string, string | undefined> {
-    // Terminal `/resume` and the IDE session pickers list with includeProgrammatic: false,
-    // which drops every transcript whose entrypoint is sdk-cli/sdk-ts/sdk-py — and sdk-ts is
-    // what the SDK stamps when the environment names no entrypoint. That is why sessions
-    // started here were invisible to the CLI and the VS Code extension even in the same
-    // project. The value reaches the transcript verbatim; telemetry maps unknown ones to
-    // "other", so naming ourselves beats borrowing another client's label.
-    // AI_CHAT_MARK: `ppm db` run by the model then keeps to the connections available to the AI chat.
-    // ppmInstanceEnv: a `ppm …` command the model runs reaches this PPM's database and server.
-    const base: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "ppm", ...AI_CHAT_MARK, ...ppmInstanceEnv() };
-    // The CLI's embedded ripgrep (Glob, Grep) reads a config file named by this variable, and
-    // one holding `--follow` makes both tools walk through links out of a project. The
-    // Assistant's read policy allows a search by the folder it names, so its CLI must never
-    // be handed such a file; ordinary chats keep the user's ripgrep setup.
-    if (opts?.assistantSession) {
-      delete base.RIPGREP_CONFIG_PATH;
-      // A `ppm …` command the user approves must reach this instance, not the default folder.
-      Object.assign(base, assistantShellEnv());
-    }
+    const base = claudeChildBaseEnv(opts);
 
     // Settings base_url has highest priority
     const providerConfig = this.getProviderConfig();

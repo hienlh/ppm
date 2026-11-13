@@ -19,7 +19,10 @@
  *    questions with their own ids, answered by id;
  *  - `session`: call one of PPM's session tools (`ppm-sessions`: `create_session`,
  *    `send_to_session`, `session_status`, `report_to_assistant`) with the turn's own token;
- *  - `writeFile`: leave a file on disk inside the chat's project, as the model's Write would.
+ *  - `writeFile`: leave a file on disk inside the chat's project, as the model's Write would;
+ *  - `shell`: ask to run this PPM's own CLI with the op's arguments (a Bash card, decided as
+ *    `builtin` is) and, once approved, really run it with the provider's environment
+ *    (`assistant-shell-op.ts`). The record's `shell` holds the line, exit code and both streams.
  * A builtin may be any tool (Write, Edit, AskUserQuestion…); AskUserQuestion always asks, and the
  * answer the provider receives is recorded. A posted script runs on the session it names, on the
  * first turn whose message contains its `match`, or on whichever turn comes next.
@@ -107,6 +110,7 @@ const { decodeMessageBlocks } = await import("../../../src/shared/chat-message-b
 const { NEWS_OPENER } = await import("../../../src/services/assistant-wake/wake-news-text");
 const { NO_REPLY_TEXT } = await import("../../../src/shared/assistant-cards");
 const { CLAUDE_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_SERVER } = await import("../../../src/shared/session-collab");
+const shellOp = await import("./assistant-shell-op");
 type SendOpts = import("../../../src/providers/provider.interface").SendMessageOpts;
 type ChatEvent = import("../../../src/providers/provider.interface").ChatEvent;
 type ChatMessage = import("../../../src/providers/provider.interface").ChatMessage;
@@ -123,7 +127,8 @@ type ScriptOp =
   | { codexPatch: { files: string[]; reason?: string } }
   | { codexQuestion: { questions: Array<Record<string, unknown>> } }
   | { session: string; args?: Record<string, unknown> }
-  | { writeFile: { path: string; text: string } };
+  | { writeFile: { path: string; text: string } }
+  | { shell: { args: string[] } };
 /**
  * One posted script: the ops of one turn. `match` is looked for in the message and in what PPM put
  * in the shared-context block (a wake turn's news is only there); `sessionId` with `match` keeps
@@ -150,6 +155,8 @@ interface CallRecord {
   /** What the provider was handed with the answer (a question card's answers, in its own shape). */
   answer?: unknown;
   done?: boolean;
+  /** For a `shell` op that ran: the line, its exit code and both streams (not its environment). */
+  shell?: { line: string; code: number; stdout: string; stderr: string; envKeys: string[] };
 }
 
 interface StoredSession extends Session { messages: ChatMessage[] }
@@ -376,6 +383,10 @@ class ScriptedProvider {
         yield* this.builtin(record, op, toolUseId, run, s, opts, emit);
         continue;
       }
+      if ("shell" in op) {
+        yield* this.shell(record, op, toolUseId, run, s, opts, emit);
+        continue;
+      }
       if ("codexPatch" in op || "codexQuestion" in op) {
         yield* this.codexCard(record, op, run);
         continue;
@@ -469,6 +480,50 @@ class ScriptedProvider {
     record.text = approved ? `${op.builtin} ran` : "User denied tool execution";
     record.done = true;
     yield emit({ type: "tool_result", output: record.text, isError: !approved, toolUseId } as ChatEvent);
+  }
+
+  /**
+   * A shell call running this PPM's CLI. Claude's card is its Bash tool's, decided by the Assistant
+   * policy as a builtin is; Codex's is a command approval (`command`, `reason`), which an escalated
+   * command always asks for. Approved, the line really runs with the provider's environment.
+   */
+  private async *shell(
+    record: CallRecord, op: Extract<ScriptOp, { shell: unknown }>, toolUseId: string, run: LiveRun,
+    s: StoredSession, opts: SendOpts | undefined, emit: (ev: ChatEvent) => ChatEvent,
+  ): AsyncIterable<ChatEvent> {
+    const line = shellOp.ppmCommandLine(op.shell.args);
+    const input = this.id === "codex"
+      ? { command: line, reason: "Run ppm against this PPM (escalated out of the sandbox)" }
+      : { command: line, description: `ppm ${op.shell.args.join(" ")}` };
+    yield emit({ type: "tool_use", tool: "Bash", input, toolUseId } as ChatEvent);
+    const decision = this.id === "codex" ? "ask" : opts?.assistantSession
+      ? assistantToolDecision("Bash", input, { cwd: s.projectPath, projectRoots: configService.get("projects").map((p) => p.path) })
+      : "ask";
+    record.decision = decision;
+    let approved = decision === "allow";
+    if (decision === "ask") {
+      const requestId = crypto.randomUUID();
+      run.cards.add(requestId);
+      const answer = new Promise<{ approved: boolean; data?: unknown }>((settle) => pendingApprovals.set(requestId, settle));
+      yield { type: "approval_request", requestId, tool: "Bash", input } as ChatEvent;
+      approved = (await answer).approved;
+      run.cards.delete(requestId);
+      record.approved = approved;
+    }
+    if (!approved) {
+      record.isError = true;
+      record.text = "User denied tool execution";
+      record.done = true;
+      yield emit({ type: "tool_result", output: record.text, isError: true, toolUseId } as ChatEvent);
+      return;
+    }
+    const env = shellOp.providerShellEnv(this.id, opts?.assistantSession === true);
+    const ran = await shellOp.runShellLine(line, env, s.projectPath && existsSync(s.projectPath) ? s.projectPath : process.cwd());
+    record.shell = { line: ran.line, code: ran.code, stdout: ran.stdout, stderr: ran.stderr, envKeys: Object.keys(env).sort() };
+    record.isError = ran.code !== 0;
+    record.text = `${ran.stdout}${ran.stderr}`;
+    record.done = true;
+    yield emit({ type: "tool_result", output: record.text, isError: record.isError, toolUseId } as ChatEvent);
   }
 
   /** One of PPM's session tools (`ppm-sessions`), called the way the CLIs call it, with the turn's own token. */
@@ -604,6 +659,19 @@ async function testRoute(req: Request, path: string): Promise<Response> {
   }
   if (telegram && path.startsWith("/__assistant-test/tg/")) {
     return (await telegram.route(req, path.slice("/__assistant-test/tg/".length))) ?? json({ error: "unknown test route" }, 404);
+  }
+  // Starts a turn in a project's chat as a message typed elsewhere would (the chat's script decides
+  // what the turn does), and reads a chat's live state: what `chat_stop` acts on.
+  if (path === "/__assistant-test/chat-send" && req.method === "POST") {
+    const { sessionId, projectName, providerId, message } = await req.json() as { sessionId: string; projectName: string; providerId: string; message: string };
+    const { chatControl } = await import("../../../src/services/chat-control/chat-control");
+    const control = chatControl();
+    if (!control) return json({ error: "no chat control" }, 500);
+    return json({ result: await control.sendUserMessage(sessionId, message, { origin: "telegram", projectName, providerId }) });
+  }
+  if (path.startsWith("/__assistant-test/chat-live/")) {
+    const { chatControl } = await import("../../../src/services/chat-control/chat-control");
+    return json({ state: chatControl()?.liveState(decodeURIComponent(path.slice("/__assistant-test/chat-live/".length))) ?? null });
   }
   // Shortens or restores the approval wait through the broker's own environment override; the
   // broker reads it each time it asks.
