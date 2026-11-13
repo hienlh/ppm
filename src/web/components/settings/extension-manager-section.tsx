@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
+import { EXTENSIONS_CHANGED_EVENT } from "../../../shared/extensions-events";
 
 interface ExtensionInfo {
   id: string;
@@ -38,6 +39,13 @@ export function ExtensionManagerSection() {
   }, []);
 
   useEffect(() => { fetchExtensions(); }, [fetchExtensions]);
+
+  // Installed, removed or switched elsewhere (another device, `ppm ext`, the Assistant).
+  useEffect(() => {
+    const onChanged = () => { void fetchExtensions(); };
+    window.addEventListener(EXTENSIONS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(EXTENSIONS_CHANGED_EVENT, onChanged);
+  }, [fetchExtensions]);
 
   const handleInstall = async () => {
     const name = installName.trim();

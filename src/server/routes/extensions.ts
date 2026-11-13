@@ -2,12 +2,14 @@ import { Hono } from "hono";
 import { extensionService } from "../../services/extension.service.ts";
 import { contributionRegistry } from "../../services/contribution-registry.ts";
 import { ok, err } from "../../types/api.ts";
+import { announceExtensionChanges } from "./extensions-broadcast.ts";
 
 export const extensionRoutes = new Hono();
+extensionRoutes.use("*", announceExtensionChanges);
 
 // GET /api/extensions — list all extensions
 extensionRoutes.get("/", (c) => {
-  const extensions = extensionService.list();
+  const extensions = extensionService.list().map((e) => ({ ...e, bundled: extensionService.isBundled(e.id) }));
   return c.json(ok(extensions));
 });
 

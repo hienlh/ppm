@@ -19,6 +19,8 @@ import { useProjectStore } from "@/stores/project-store";
 import { PROJECTS_CHANGED_EVENT } from "../../shared/projects-events";
 import { DB_CONNECTIONS_CHANGED_EVENT, DB_CONNECTIONS_CHANGED_WINDOW_EVENT } from "../../shared/db-connection-events";
 import { SETTINGS_CHANGED_EVENT, isSettingsSection } from "../../shared/settings-events";
+import { EXTENSIONS_CHANGED_EVENT } from "../../shared/extensions-events";
+import { handleExtensionsChanged } from "@/lib/extensions-live-refresh";
 import { handleSettingsChanged } from "@/lib/settings-live-refresh";
 
 /** How often the client pings — well under the server's own idle timeout, so a live but
@@ -45,6 +47,8 @@ const IDLE_TIMEOUT_MS = 45_000;
  * - `projects:changed` → refetches the project list: the server added a project itself (the
  *   Assistant's `project_add`).
  * - `db:connections_changed` → the Database sidebar and connection lists read theirs again.
+ * - `extensions:changed` → the extension contributions are read again (palette, keybindings,
+ *   views), then re-dispatched as a window event for Settings → Extensions.
  * - `settings:changed {section}` → the theme is re-applied and imported themes or keybindings
  *   reloaded (`settings-live-refresh.ts`); open Settings panes re-read via `useSettingsChanged`.
  * - `session:unread_changed` → cross-device unread sync.
@@ -178,6 +182,12 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
       if (type === SETTINGS_CHANGED_EVENT) {
         // App-wide state (theme, keybindings) is refreshed here; open panes re-read on the window event.
         if (isSettingsSection(data.section)) handleSettingsChanged(data.section);
+        return;
+      }
+
+      if (type === EXTENSIONS_CHANGED_EVENT) {
+        // Contributions are read again here; Settings → Extensions re-reads on the window event.
+        void handleExtensionsChanged();
         return;
       }
 
