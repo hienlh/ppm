@@ -93,8 +93,9 @@ const branch = (ctx: ToolContext, args: Record<string, unknown>) => GIT_TOOL_HAN
 
 /** Each action, the state it needs, the write route it must reach and the body it must send. */
 const ACTIONS: Array<[Record<string, unknown>, Record<string, Answer>, string, Record<string, unknown>]> = [
-  [{ action: "merge", source: "dev" }, {}, "merge", { source: "dev" }],
-  [{ action: "merge", source: "origin/feature" }, {}, "merge", { source: "origin/feature" }],
+  // By full ref, so a tag spelled like the branch cannot be the one merged.
+  [{ action: "merge", source: "dev" }, {}, "merge", { source: "refs/heads/dev" }],
+  [{ action: "merge", source: "origin/feature" }, {}, "merge", { source: "refs/remotes/origin/feature" }],
   [{ action: "cherry_pick", hash: "1234567" }, {}, "cherry-pick", { hash: PICK }],
   [{ action: "revert", hash: PICK.toUpperCase() }, {}, "revert", { hash: PICK }],
   [{ action: "tag", name: "v2" }, {}, "tag", { name: "v2", hash: OID }],

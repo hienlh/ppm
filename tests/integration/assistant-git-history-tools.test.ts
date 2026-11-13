@@ -3,7 +3,9 @@
  * UI calls (in-process, by `createRouteCaller(GIT_ROUTES)`): a merge whose `.husky` hook really
  * runs and is named on the card, cherry-pick, revert, tag, a merge stopped on a conflict that is
  * aborted and one that is resolved and continued, a branch delete, and a stale card that writes
- * nothing. Each approved call reaches exactly one write route (one `git:changed`).
+ * nothing. Each approved call reaches exactly one write route (one `git:changed`). A merge takes
+ * the branch even beside a tag spelled the same, and the card names the hooks an incoming commit
+ * adds to the tracked hooks folder.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import "../test-setup.ts";
@@ -155,6 +157,55 @@ describe("git_history on a real repository", () => {
     const out = await GIT_TOOL_HANDLERS.git_history!(approve, { project: "hist", action: "merge", source: "late" });
     expect(JSON.parse((out.content as Array<{ text: string }>)[0]!.text).outcome).toBe("stale");
     expect(existsSync(join(repo, "late.txt"))).toBe(false);
+    expect(events).toHaveLength(0);
+  });
+
+  it("merges the branch the card showed, not a tag spelled the same", async () => {
+    git(repo, ["checkout", "-q", "-b", "rel"]);
+    commitFile("rel.txt", "branch\n", "the branch");
+    git(repo, ["checkout", "-q", "main"]);
+    git(repo, ["checkout", "-q", "-b", "elsewhere"]);
+    commitFile("tagged.txt", "tag\n", "the tag");
+    git(repo, ["tag", "rel"]);
+    git(repo, ["checkout", "-q", "main"]);
+    const out = await history({ action: "merge", source: "rel" });
+    expect(out).toMatchObject({ done: true, source: "rel" });
+    expect(existsSync(join(repo, "rel.txt"))).toBe(true);
+    expect(existsSync(join(repo, "tagged.txt"))).toBe(false);
+  });
+
+  it("names the hooks the incoming commit adds to the tracked hooks folder, before anything runs", async () => {
+    const deny: ToolContext = { sessionId: "s-1", callRoute: call, ask: async (a) => { asked.push(a); return { verdict: "denied", reason: "test" }; } };
+    const hook = "#!/bin/sh\nexit 0\n";
+    const incoming = () => asked.at(-1)!.summary.facts.find((f) => f.label === "Incoming hooks")?.value;
+    // A merge whose source branch brings a commit-msg hook.
+    git(repo, ["checkout", "-q", "-b", "hooky"]);
+    writeFileSync(join(repo, ".husky", "commit-msg"), hook, { mode: 0o755 });
+    git(repo, ["add", ".husky/commit-msg"]);
+    git(repo, ["commit", "-q", "--no-verify", "-m", "add a hook"]);
+    git(repo, ["checkout", "-q", "main"]);
+    expect(existsSync(join(repo, ".husky", "commit-msg"))).toBe(false);
+    await GIT_TOOL_HANDLERS.git_history!(deny, { project: "hist", action: "merge", source: "hooky" });
+    expect(incoming()).toBe("Added by the incoming commit, then run: commit-msg (.husky)");
+    // A picked commit bringing a post-commit hook.
+    git(repo, ["checkout", "-q", "-b", "pickme"]);
+    writeFileSync(join(repo, ".husky", "post-commit"), hook, { mode: 0o755 });
+    git(repo, ["add", ".husky/post-commit"]);
+    git(repo, ["commit", "-q", "--no-verify", "-m", "add another hook"]);
+    const picked = head();
+    git(repo, ["checkout", "-q", "main"]);
+    await GIT_TOOL_HANDLERS.git_history!(deny, { project: "hist", action: "cherry_pick", hash: picked });
+    expect(incoming()).toBe("Added by the incoming commit, then run: post-commit (.husky)");
+    // A revert of a commit that removed a hook brings it back from the parent's tree.
+    writeFileSync(join(repo, ".husky", "pre-commit"), hook, { mode: 0o755 });
+    git(repo, ["add", ".husky/pre-commit"]);
+    git(repo, ["commit", "-q", "--no-verify", "-m", "add pre-commit"]);
+    git(repo, ["rm", "-q", ".husky/pre-commit"]);
+    git(repo, ["commit", "-q", "--no-verify", "-m", "drop pre-commit"]);
+    await GIT_TOOL_HANDLERS.git_history!(deny, { project: "hist", action: "revert", hash: head() });
+    expect(incoming()).toBe("Added by the incoming commit, then run: pre-commit (.husky)");
+    // The working tree itself holds none of a revert's hooks: only the incoming one is named.
+    expect(asked.at(-1)!.summary.facts.find((f) => f.label === "Hooks")).toBeUndefined();
     expect(events).toHaveLength(0);
   });
 });

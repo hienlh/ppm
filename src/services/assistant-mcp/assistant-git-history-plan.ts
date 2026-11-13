@@ -107,7 +107,9 @@ export async function planHistory(ctx: ToolContext, scope: GitRepoScope, action:
     if (!refs.ok) return refs;
     const ref = mergeSource(refs.refs, source.value);
     if (!ref) return refuse(`There is no branch named ${source.value}, locally or as a remote branch like origin/${source.value}. See git_branches.`);
-    return { ok: true, plan: { card: { action, source: ref.name, sourceTip: ref.hash }, body: { source: ref.name }, sourceTip: ref.hash } };
+    // Merged by its full ref: by short name, git would take a tag spelled the same before the branch.
+    const fullRef = `${ref.type === "branch" ? "refs/heads" : "refs/remotes"}/${ref.name}`;
+    return { ok: true, plan: { card: { action, source: ref.name, sourceTip: ref.hash }, body: { source: fullRef }, sourceTip: ref.hash } };
   }
 
   if (action === "cherry_pick" || action === "revert") {

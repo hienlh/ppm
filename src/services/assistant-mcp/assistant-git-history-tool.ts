@@ -1,10 +1,10 @@
 import type { Json } from "../mcp-http-endpoint.ts";
 import type { GitChanges } from "../../shared/git-changes.ts";
 import type { GitRef } from "../../types/git.ts";
-import { gitHooksPresent } from "../git-workflow/git-hooks-present.ts";
+import { gitHooksPresent, hooksInCommits, type PresentHooks } from "../git-workflow/git-hooks-present.ts";
 import { GIT_HISTORY_TOOL } from "../../shared/assistant-git-tool-names.ts";
 import { gitHistorySummary } from "./assistant-approval-summary-git-history.ts";
-import { actionOf, mergeSource, planHistory, strayArgument, type HistoryAction } from "./assistant-git-history-plan.ts";
+import { actionOf, mergeSource, planHistory, strayArgument, type HistoryAction, type HistoryPlan } from "./assistant-git-history-plan.ts";
 import type { GitRepoScope } from "./assistant-git-repo-scope.ts";
 import {
   askFirst, cardTarget, gitRoute, hideRemoteUrls, readChanges, repoLabel, routeErrorMessage, scopeOrError, staleResult,
@@ -53,6 +53,28 @@ function stateOf(changes: GitChanges) {
   };
 }
 
+/**
+ * The commits whose tree git writes before it runs the hooks: a merge's source tip, a picked
+ * commit, and for a revert both the commit and its parent (a revert brings back what the commit
+ * removed, from the parent's tree).
+ */
+function incomingCommits(plan: HistoryPlan): string[] {
+  const { card } = plan;
+  if (card.action === "merge") return plan.sourceTip ? [plan.sourceTip] : [];
+  if (card.action === "cherry_pick") return [card.commit.hash];
+  if (card.action === "revert") return [card.commit.hash, `${card.commit.hash}^`];
+  return [];
+}
+
+/** The hooks present now, plus those the incoming commit adds to a tracked hooks folder. */
+async function hooksWithIncoming(repoPath: string, action: HistoryAction, plan: HistoryPlan): Promise<PresentHooks | null> {
+  const hooks = await gitHooksPresent(repoPath, HOOKS[action]);
+  const commits = incomingCommits(plan);
+  if (!hooks || !commits.length) return hooks;
+  const inCommits = await hooksInCommits(repoPath, commits, HOOKS[action], hooks.where);
+  return { ...hooks, incoming: inCommits && inCommits.filter((name) => !hooks.hooks.includes(name)) };
+}
+
 async function sourceMoved(ctx: ToolContext, scope: GitRepoScope, source: string, tip: string): Promise<boolean> {
   const res = await ctx.callRoute<GitRef[]>("GET", gitRoute(scope, "refs"));
   return !res.ok || !res.data || mergeSource(res.data, source)?.hash !== tip;
@@ -72,7 +94,7 @@ export async function gitHistory(ctx: ToolContext, args: Record<string, unknown>
   if (!planned.ok) return planned.result;
   const { plan } = planned;
 
-  const hooks = await gitHooksPresent(scope.path, HOOKS[action]);
+  const hooks = await hooksWithIncoming(scope.path, action, plan);
   const input = { ...repoLabel(scope), action, ...plan.body };
   const refused = await askFirst(ctx, GIT_HISTORY_TOOL, input, gitHistorySummary({ target: cardTarget(scope, read.changes), card: plan.card, hooks }));
   if (refused) return refused;
@@ -100,5 +122,7 @@ export async function gitHistory(ctx: ToolContext, args: Record<string, unknown>
     }
     return errorResult(`${routeErrorMessage(`The ${action.replace("_", "-")} failed`, res)}\nNow: ${JSON.stringify(state)}`);
   }
-  return jsonResult({ ...repoLabel(scope), action, done: true, ...plan.body, ...state });
+  // A merge's source is answered as the card named it, not as the full ref sent to git.
+  const named = plan.card.action === "merge" ? { source: plan.card.source } : {};
+  return jsonResult({ ...repoLabel(scope), action, done: true, ...plan.body, ...named, ...state });
 }

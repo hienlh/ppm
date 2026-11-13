@@ -32,8 +32,14 @@ const quoted = (subject: string): string => {
 /** The hooks fact: the ones found, or, when git could not say where hooks live, that they may run. */
 export function hooksFacts(hooks: PresentHooks | null): ApprovalFact[] {
   if (!hooks) return [fact("Hooks", "Could not tell where this repository keeps its git hooks; any it has will run.", "warning")];
-  if (!hooks.hooks.length) return [];
-  return [exactFact("Hooks", `Runs this repository's git hooks: ${hooks.hooks.join(", ")} (${hooks.where})`, "warning")];
+  const facts: ApprovalFact[] = [];
+  if (hooks.hooks.length) facts.push(exactFact("Hooks", `Runs this repository's git hooks: ${hooks.hooks.join(", ")} (${hooks.where})`, "warning"));
+  if (hooks.incoming === null) {
+    facts.push(fact("Incoming hooks", "Could not tell which git hooks the incoming commit adds; any it adds will run.", "warning"));
+  } else if (hooks.incoming?.length) {
+    facts.push(exactFact("Incoming hooks", `Added by the incoming commit, then run: ${hooks.incoming.join(", ")} (${hooks.where})`, "warning"));
+  }
+  return facts;
 }
 
 const operationLabel = (op: GitOperation): string => {

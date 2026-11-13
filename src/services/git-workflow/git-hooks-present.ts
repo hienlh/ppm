@@ -14,6 +14,12 @@ export interface PresentHooks {
   hooks: string[];
   /** Where they live: relative to the repository when inside it (`.husky`, `.git/hooks`), else absolute. */
   where: string;
+  /**
+   * Hooks the commit coming in (a merge's source, a picked or reverted commit) keeps in that
+   * folder and the working tree does not have yet: git writes them while it updates the tree, then
+   * runs them. Null when git could not list that commit's folder.
+   */
+  incoming?: string[] | null;
 }
 
 const isFile = (path: string): boolean => {
@@ -60,4 +66,25 @@ export async function gitHooksPresent(repoPath: string, names: readonly string[]
   const rel = relative(resolve(repoPath), real);
   const where = rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel.split("\\").join("/") : real;
   return { hooks: hooksIn(dir, names), where };
+}
+
+/**
+ * Of `names`, the hooks any of `commits` holds in the tracked hooks folder `where` (repository-
+ * relative, as `gitHooksPresent` gives it), read from the commits' trees with `git ls-tree`, not
+ * from the working tree. An absolute `where` is outside the repository, so no commit can bring a
+ * hook there: none. Null when git could not list a commit's folder.
+ */
+export async function hooksInCommits(repoPath: string, commits: readonly string[], names: readonly string[], where: string): Promise<string[] | null> {
+  // Outside the repository, or inside its `.git` folder: never part of a commit.
+  if (!where || isAbsolute(where) || where.startsWith("..") || where === ".git" || where.startsWith(".git/")) return [];
+  const found = new Set<string>();
+  for (const commit of commits) {
+    const res = await runGit(repoPath, ["ls-tree", "--name-only", commit, "--", `${where}/`], { env: { GIT_LITERAL_PATHSPECS: "1" } }).catch(() => null);
+    if (!res || res.exitCode !== 0) return null;
+    for (const line of toDisplay(res.stdout).split("\n")) {
+      const name = line.trim().split("/").pop();
+      if (name) found.add(name);
+    }
+  }
+  return names.filter((name) => found.has(name));
 }
