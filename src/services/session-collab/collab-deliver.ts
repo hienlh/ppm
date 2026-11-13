@@ -11,7 +11,8 @@ import type { WaitHandle } from "./collab-waits.ts";
  */
 
 export type DeliverOutcome =
-  | { ok: true; delivered: SessionDelivery; clientMessageId: string; reply?: SessionWaitOutcome }
+  /** `taken`: a turn of the target took the message before the wait ended (known only for a wait). */
+  | { ok: true; delivered: SessionDelivery; clientMessageId: string; reply?: SessionWaitOutcome; taken?: boolean }
   | { ok: false; message: string };
 
 /** The sender as the from-session block names it; the PPM Assistant is marked as such. */
@@ -71,11 +72,14 @@ export async function deliverAndWait(env: CollabEnv, input: {
   if (!delivered.turnBinding) env.unread.add(caller.sessionId, target.sessionId, delivered.clientMessageId, delivered.delivered);
   if (!handle) return { ok: true, delivered: delivered.delivered, clientMessageId: delivered.clientMessageId };
   // A target already in front of the user (a question, an approval) cannot answer until the user
-  // does: the wait ends now, naming the card, instead of running out its timeout in silence.
+  // does: the wait ends now, naming the card, instead of running out its timeout in silence —
+  // unless the card is the target's own request to message this caller, which the reply is behind.
   const live = env.live(target.sessionId);
-  handle.attach(delivered.clientMessageId, delivered.delivered, !!delivered.turnBinding, live?.waitingFor ? live.waitingCard ?? fallbackCard(live.waitingFor) : null);
+  const towardsCaller = !!live?.waitingCardFor && env.canonical(live.waitingCardFor) === env.canonical(caller.sessionId);
+  const blocking = live?.waitingFor && !towardsCaller ? live.waitingCard ?? fallbackCard(live.waitingFor) : null;
+  handle.attach(delivered.clientMessageId, delivered.delivered, !!delivered.turnBinding, blocking);
   const reply = await handle.outcome;
-  return { ok: true, delivered: delivered.delivered, clientMessageId: delivered.clientMessageId, reply };
+  return { ok: true, delivered: delivered.delivered, clientMessageId: delivered.clientMessageId, reply, taken: handle.taken() };
 }
 
 /** A card the registry reported without its title. */

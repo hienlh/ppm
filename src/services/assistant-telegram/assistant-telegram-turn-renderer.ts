@@ -124,8 +124,18 @@ export class TurnRenderer {
   private pages(final: boolean): string[] {
     let html = this.md.trim() ? markdownToTelegramHtml(redactForTelegram(this.md.trim())) : "";
     if (this.footer) html += `${html ? "\n\n" : ""}${this.footer}`;
-    if (!final && this.status) html += `${html ? "\n\n" : ""}⏳ <i>${escapeTelegramHtml(this.status)}</i>`;
     const pages = html ? splitTelegramHtml(html, PAGE_MAX) : [];
+    // The waiting line only ever edits the last page: one that would not fit is left out rather
+    // than opening a page (a new message) of its own.
+    if (!final && this.status) {
+      const line = `⏳ <i>${escapeTelegramHtml(this.status)}</i>`;
+      const last = pages.length ? pages[pages.length - 1]! : "";
+      const withLine = `${last}${last ? "\n\n" : ""}${line}`;
+      if (withLine.length + PLACEHOLDER.length + 1 <= PAGE_MAX) {
+        if (pages.length) pages[pages.length - 1] = withLine;
+        else pages.push(withLine);
+      }
+    }
     if (final) return pages.length ? pages : [EMPTY_ANSWER];
     if (!pages.length) return [PLACEHOLDER];
     pages[pages.length - 1] += ` ${escapeTelegramHtml(PLACEHOLDER)}`;

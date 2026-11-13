@@ -30,6 +30,8 @@ export interface LiveSessionState {
   waitingFor: "approval" | "question" | null;
   /** The card behind `waitingFor`, when there is one. */
   waitingCard?: WaitingCard;
+  /** The session that card was raised to message, when it is a session tool's card (see `collab-waits.ts`). */
+  waitingCardFor?: string;
   /** The last turn's answer, as the "Chat completed" notification quotes it. */
   lastAnswer?: string;
   /** Epoch ms of the last activity seen. */

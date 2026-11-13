@@ -120,8 +120,9 @@ async function deliverChecked(
   // Assistant later, as news in a turn PPM starts.
   const claimed = out.reply && (out.reply.replied || out.reply.reason === "turn_ended_without_reply");
   // After a wait that timed out, the turn running now is the one that took the message. A wait
-  // that ended on a card ended at once: the message is where an unwaited one would be.
-  const unwaited = !out.reply || (!out.reply.replied && out.reply.reason === "waiting_for_user");
+  // that ended on a card before any turn took the message left it where an unwaited one would be;
+  // one that ended on a card in the very turn that took it leaves that turn's end as the answer.
+  const unwaited = !out.reply || (!out.reply.replied && out.reply.reason === "waiting_for_user" && !out.taken);
   if (manager && !claimed) env.managerAsked?.(caller.sessionId, target.sessionId, target.projectName, out.delivered === "queued" && unwaited);
   const result: SendToSessionResult & { project?: string } = {
     delivered: out.delivered,

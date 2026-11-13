@@ -66,6 +66,45 @@ describe("a waiting session tool on Telegram", () => {
     expect(texts(fake, t.chat).join("\n")).not.toContain("Waiting for");
   });
 
+  it("reads a Codex call, whose arguments come wrapped", async () => {
+    const t = setup();
+    t.r.start();
+    t.notes.toolStarted("asst", {
+      tool: "ppm_sessions:send_to_session", toolUseId: "tu-codex",
+      input: { server: "ppm_sessions", tool: "send_to_session", arguments: { session_id: "mgr", message: "x", wait: true } },
+    });
+    t.fire();
+    await t.queue.whenIdle();
+    expect(texts(fake, t.chat)[0]).toContain("Waiting for the chat “Manager” in Nxsys to answer…");
+  });
+
+  it("keeps the line while another wait of the turn still runs", async () => {
+    const t = setup();
+    t.r.start();
+    t.notes.toolStarted("asst", send(true, "tu-a"));
+    t.notes.toolStarted("asst", { tool: "create_session", input: { title: "C", task: "x", wait: true }, toolUseId: "tu-b" });
+    t.fire();
+    t.notes.toolEnded("tu-b");
+    await t.queue.whenIdle();
+    expect(texts(fake, t.chat)[0]).toContain("Waiting for the chat “Manager” in Nxsys");
+    t.notes.toolEnded("tu-a");
+    await t.queue.whenIdle();
+    expect(texts(fake, t.chat)[0]).not.toContain("Waiting for");
+  });
+
+  it("never opens a message of its own for the line: a full draft goes without it", async () => {
+    const t = setup();
+    t.r.start();
+    t.r.text("x".repeat(3990));
+    await t.queue.whenIdle();
+    const before = fake.sent(Number(t.chat)).length;
+    t.notes.toolStarted("asst", send(true, "tu-full"));
+    t.fire();
+    await t.queue.whenIdle();
+    expect(fake.sent(Number(t.chat)).length).toBe(before);
+    expect(texts(fake, t.chat).join("\n")).not.toContain("Waiting for");
+  });
+
   it("names no chat it does not know", async () => {
     const t = setup();
     t.r.start();

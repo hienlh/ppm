@@ -51,7 +51,8 @@ const realTimer = (fn: () => void, ms: number) => {
 interface Pending {
   sessionId: string;
   cancel: () => void;
-  shown: boolean;
+  /** The line shown for it, once its timer fired. */
+  note: string | null;
 }
 
 export class AssistantTelegramWaitNotes {
@@ -65,28 +66,31 @@ export class AssistantTelegramWaitNotes {
     if (!ev.toolUseId || this.pending.has(ev.toolUseId)) return;
     const name = shortToolName(ev.tool);
     if (name !== SEND_TO_SESSION_TOOL && name !== CREATE_SESSION_TOOL) return;
-    const input = (ev.input ?? {}) as { wait?: unknown; session_id?: unknown };
+    // Claude hands the tool its arguments as the input; Codex wraps them (`{ server, tool, arguments }`).
+    const raw = (ev.input ?? {}) as { arguments?: unknown };
+    const input = (raw.arguments && typeof raw.arguments === "object" ? raw.arguments : raw) as { wait?: unknown; session_id?: unknown };
     if (input.wait !== true) return;
     const target = name === SEND_TO_SESSION_TOOL && typeof input.session_id === "string" ? input.session_id : null;
     const id = ev.toolUseId;
-    const entry: Pending = { sessionId, shown: false, cancel: () => {} };
+    const entry: Pending = { sessionId, note: null, cancel: () => {} };
     entry.cancel = (this.deps.setTimer ?? realTimer)(() => {
       if (this.pending.get(id) !== entry) return;
-      const note = this.noteFor(target);
-      entry.shown = true;
-      for (const r of this.deps.renderers(sessionId)) r.waiting(note);
+      entry.note = this.noteFor(target);
+      for (const r of this.deps.renderers(entry.sessionId)) r.waiting(entry.note);
     }, this.deps.afterMs ?? WAIT_NOTE_AFTER_MS);
     this.pending.set(id, entry);
   }
 
-  /** A tool call returned: its note, if shown, goes. */
+  /** A tool call returned: its note goes, or gives way to that of another wait still running. */
   toolEnded(toolUseId: string | undefined): void {
     if (!toolUseId) return;
     const entry = this.pending.get(toolUseId);
     if (!entry) return;
     this.pending.delete(toolUseId);
     entry.cancel();
-    if (entry.shown) for (const r of this.deps.renderers(entry.sessionId)) r.waiting(null);
+    if (entry.note === null) return;
+    const other = [...this.pending.values()].reverse().find((e) => e.sessionId === entry.sessionId && e.note !== null);
+    for (const r of this.deps.renderers(entry.sessionId)) r.waiting(other?.note ?? null);
   }
 
   /** The turn is over: nothing of it is timed any more (its renderers finish without the note). */

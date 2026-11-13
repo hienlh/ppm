@@ -20,7 +20,9 @@ import type { SessionDelivery, SessionWaitOutcome, WaitingCard } from "../../sha
  * message nor answer until the user does, which may be never: the wait ends at once as
  * `waiting_for_user`, naming the card, so the waiting AI can tell its user what is in the way
  * instead of sitting out the timeout in silence. A card already showing when the message is
- * delivered counts too ({@link WaitHandle.attach} is told of it).
+ * delivered counts too ({@link WaitHandle.attach} is told what the target shows then). A session
+ * tool's card the target raised to message the waiter itself does not: it stands between the wait
+ * and its reply, which, once the user allows it, is the wait's result.
  */
 
 export interface WaitReply {
@@ -48,7 +50,9 @@ export interface WaitHandle {
    * The message was delivered under `clientMessageId`; `bound` when its turn is already named,
    * `waitingCard` when the target was showing the user a card as the delivery returned.
    */
-  attach(clientMessageId: string, delivered: SessionDelivery, bound: boolean, waitingCard?: WaitingCard | null): void;
+  attach(clientMessageId: string, delivered: SessionDelivery, bound: boolean, waitingCard: WaitingCard | null): void;
+  /** Whether a turn of the target has taken the message (it was named), as far as is known now. */
+  taken(): boolean;
   /** The message was never delivered: the wait ends without anyone hearing of it. */
   abandon(): void;
 }
@@ -62,8 +66,6 @@ interface Wait {
   bound: boolean;
   /** The order of the target's last turn end seen before `attach`, if any. */
   endedBeforeAttach: number | null;
-  /** A card the target showed before `attach`; judged there, against what the target shows then. */
-  cardBeforeAttach: WaitingCard | null;
   settle: (outcome: SessionWaitOutcome) => void;
 }
 
@@ -97,7 +99,7 @@ export function createCollabWaits(deps: {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const onAbort = () => wait.settle({ replied: false, reason: "cancelled" });
       wait = {
-        waiter: input.waiter, target: input.target, clientMessageId: null, bound: false, endedBeforeAttach: null, cardBeforeAttach: null,
+        waiter: input.waiter, target: input.target, clientMessageId: null, bound: false, endedBeforeAttach: null,
         settle: (result) => {
           if (!waits.delete(wait)) return;
           if (timer) clearTimeout(timer);
@@ -124,11 +126,11 @@ export function createCollabWaits(deps: {
             wait.settle({ replied: false, reason: "turn_ended_without_reply" });
             return;
           }
-          // The target is in front of the user now. A card it showed during the delivery only
-          // counts while it still shows one: answered meanwhile, the target is free to reply.
-          const card = waitingCard === undefined ? wait.cardBeforeAttach : waitingCard;
-          if (card) wait.settle({ replied: false, reason: "waiting_for_user", card });
+          // A card the target showed during the delivery counts only while it still shows one:
+          // answered meanwhile, the target is free to reply.
+          if (waitingCard) wait.settle({ replied: false, reason: "waiting_for_user", card: waitingCard });
         },
+        taken: () => wait.bound,
         abandon: () => wait.settle({ replied: false, reason: "cancelled" }),
       },
     };
@@ -205,16 +207,14 @@ export function createCollabWaits(deps: {
 
   /**
    * `sessionId` put a card in front of the user: every wait on it ends now with that card (see the
-   * header). A wait whose delivery has not returned yet keeps the card for `attach` to judge.
+   * header), except the wait of `raisedFor`, the session the card was raised to message. A wait
+   * whose delivery has not returned yet is judged by `attach`, against what the target shows then.
    */
-  function targetWaitingForUser(sessionId: string, card: WaitingCard): number {
+  function targetWaitingForUser(sessionId: string, card: WaitingCard, raisedFor: string | null = null): number {
     let n = 0;
     for (const w of [...waits]) {
-      if (!same(w.target, sessionId)) continue;
-      if (w.clientMessageId === null) {
-        w.cardBeforeAttach = card;
-        continue;
-      }
+      if (!same(w.target, sessionId) || w.clientMessageId === null) continue;
+      if (raisedFor !== null && same(w.waiter, raisedFor)) continue;
       w.settle({ replied: false, reason: "waiting_for_user", card });
       n++;
     }

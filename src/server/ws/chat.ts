@@ -44,7 +44,7 @@ import { claimTurnOrigin, noteQueuedTurnOrigin, turnOriginAfterTurn, turnRunning
 import { setCollabApprovalChat } from "../../services/session-collab/collab-approval-broker.ts";
 import { collabWaits, setCollabIdleProbe } from "../../services/session-collab/collab-waits.ts";
 import { collabSessionRenamed, collabTargetWaitingForUser, collabTurnEnded } from "../../services/session-collab/collab-turn-events.ts";
-import { waitingCardOf } from "../../services/session-collab/collab-waiting-card.ts";
+import { cardRaisedFor, waitingCardOf } from "../../services/session-collab/collab-waiting-card.ts";
 import { isSpawned } from "../../services/session-collab/session-links.service.ts";
 import type { LiveSessionState } from "../../services/session-collab/collab-context.ts";
 import { collabApprovalTitle } from "../../services/notification-format.ts";
@@ -863,6 +863,7 @@ export function collabLiveState(sessionId: string): LiveSessionState | null {
     ...(entry.model ? { model: entry.model } : {}),
     waitingFor: !pending ? null : pending.tool === "AskUserQuestion" ? "question" : "approval",
     ...(pending ? { waitingCard: waitingCardOf(pending) } : {}),
+    ...(pending && cardRaisedFor(pending) ? { waitingCardFor: cardRaisedFor(pending)! } : {}),
     ...(entry.lastAnswer ? { lastAnswer: entry.lastAnswer } : {}),
     updatedAt: entry.phase !== "idle" ? Date.now() : entry.lastTurnEndedAt ?? entry.turnRequestedAt?.at,
     ...(entry.turnBindings?.length ? { currentTurnId: entry.turnBindings[entry.turnBindings.length - 1]!.turnId } : {}),

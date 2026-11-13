@@ -248,13 +248,10 @@ export interface WaitingCard {
 
 export const WAITING_CARD_TITLE_MAX = 160;
 
-/** How a wait that got no reply ended. `waiting_for_user`: the session put a card in front of the user. */
-export type SessionWaitEndReason = "turn_ended_without_reply" | "timeout" | "cancelled" | "waiting_for_user";
-
 /**
  * How a `wait: true` call ended. A session showing the user a card cannot read the message or
  * answer until the user does, so the wait ends at once with that card (`card`) rather than
- * sitting out its timeout; the message stays where it was delivered.
+ * sitting out its timeout; the message is not lost, the session goes on with it once answered.
  */
 export type SessionWaitOutcome =
   | { replied: true; text: string; turnId?: string; sentAt: string }

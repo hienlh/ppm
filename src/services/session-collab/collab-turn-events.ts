@@ -1,7 +1,7 @@
 import { resolveMigratedSession } from "../db.service.ts";
 import { collabWaits } from "./collab-waits.ts";
 import { collabUnread } from "./collab-unread.ts";
-import { waitingCardOf, type PendingCardLike } from "./collab-waiting-card.ts";
+import { cardRaisedFor, waitingCardOf, type PendingCardLike } from "./collab-waiting-card.ts";
 
 /**
  * What the chat registry tells the session tools about turns, kept in a module that imports
@@ -79,7 +79,7 @@ export function collabTurnEnded(sessionId: string): void {
  * waits on it end at once, naming the card (see `collab-waits.ts`).
  */
 export function collabTargetWaitingForUser(sessionId: string, card: PendingCardLike): void {
-  collabWaits.targetWaitingForUser(sessionId, waitingCardOf(card));
+  collabWaits.targetWaitingForUser(sessionId, waitingCardOf(card), cardRaisedFor(card));
 }
 
 /** A provider renamed a session: a starting mark follows it. */

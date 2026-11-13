@@ -63,7 +63,8 @@ const WAIT = {
     + "session's status. Without it the call returns at once, and a later reply arrives as a new message. "
     + "A session showing the user a card (a question or an approval) cannot read your message or answer until "
     + "the user does, so the wait ends at once with reply.reason \"waiting_for_user\" and reply.card naming that "
-    + "card; your message stays queued there. Tell the user which card in which session is waiting for them.",
+    + "card. Your message is not lost: that session goes on with it once the user has answered, so do not send it "
+    + "again. Tell the user which card in which session is waiting for them.",
 };
 
 export function sessionCollabToolDefinitions() {

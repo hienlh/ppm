@@ -18,7 +18,7 @@ describe("collab waits", () => {
   it("returns the target's reply, once, and says so to the sender so it is not delivered again", async () => {
     const waits = setup();
     const wait = begin(waits);
-    wait.attach("session-1", "started", false);
+    wait.attach("session-1", "started", false, null);
     expect(waits.claimReply("B", "A", reply)).toBe(true);
     expect(await wait.outcome).toEqual({ replied: true, text: "done", sentAt: reply.sentAt });
     // A second message from B finds no wait: the caller delivers it as a new message.
@@ -37,14 +37,14 @@ describe("collab waits", () => {
     const waits = setup();
     const wait = begin(waits);
     expect(waits.claimReply("B", "A", reply)).toBe(true);
-    wait.attach("session-1", "inserted", false);
+    wait.attach("session-1", "inserted", false, null);
     expect((await wait.outcome).replied).toBe(true);
   });
 
   it("ends without a reply once the turn that took the message ends", async () => {
     const waits = setup();
     const wait = begin(waits);
-    wait.attach("session-1", "queued", false);
+    wait.attach("session-1", "queued", false, null);
     waits.turnBound("session-1");
     waits.turnEnded("B");
     expect(await wait.outcome).toEqual({ replied: false, reason: "turn_ended_without_reply" });
@@ -55,7 +55,7 @@ describe("collab waits", () => {
     const wait = begin(waits, { timeoutMs: 40 });
     waits.turnEnded("B");
     await sleep(20);
-    wait.attach("session-1", "started", false);
+    wait.attach("session-1", "started", false, null);
     expect(await wait.outcome).toEqual({ replied: false, reason: "timeout" });
   });
 
@@ -64,7 +64,7 @@ describe("collab waits", () => {
     const quick = begin(waits);
     waits.turnBound("session-1");
     waits.turnEnded("B");
-    quick.attach("session-1", "started", false);
+    quick.attach("session-1", "started", false, null);
     expect(await quick.outcome).toEqual({ replied: false, reason: "turn_ended_without_reply" });
 
     // An end before the message's turn was named was the target's previous turn: the wait goes on.
@@ -72,7 +72,7 @@ describe("collab waits", () => {
     if (!queued.ok) throw new Error(queued.message);
     waits.turnEnded("B");
     waits.turnBound("session-2");
-    queued.wait.attach("session-2", "queued", false);
+    queued.wait.attach("session-2", "queued", false, null);
     expect(await queued.wait.outcome).toEqual({ replied: false, reason: "timeout" });
   });
 
@@ -80,7 +80,7 @@ describe("collab waits", () => {
     const idle: Record<string, boolean> = { B: false };
     const waits = setup(idle);
     const wait = begin(waits, { timeoutMs: 80 });
-    wait.attach("session-1", "queued", false);
+    wait.attach("session-1", "queued", false, null);
     waits.turnEnded("B"); // the turn the message was queued behind; a new one started at once
     await sleep(25);
     expect(waits.size()).toBe(1);
@@ -92,7 +92,7 @@ describe("collab waits", () => {
   it("times out", async () => {
     const waits = setup();
     const wait = begin(waits, { timeoutMs: 5 });
-    wait.attach("session-1", "started", true);
+    wait.attach("session-1", "started", true, null);
     expect(await wait.outcome).toEqual({ replied: false, reason: "timeout" });
     // The reply after the timeout is the caller's to deliver as a new message.
     expect(waits.claimReply("B", "A", reply)).toBe(false);
@@ -117,7 +117,7 @@ describe("collab waits", () => {
   it("settles once: whatever comes first wins and the rest find nothing", async () => {
     const waits = setup();
     const wait = begin(waits);
-    wait.attach("session-1", "started", true);
+    wait.attach("session-1", "started", true, null);
     waits.cancelWaiter("A");
     expect(waits.claimReply("B", "A", reply)).toBe(false);
     waits.turnEnded("B");
@@ -147,19 +147,34 @@ describe("collab waits", () => {
       expect(waits.claimReply("B", "A", reply)).toBe(false);
     });
 
-    it("judges a card shown during the delivery against what the target shows when it returns", async () => {
-      const shown = setup();
-      const a = begin(shown);
-      expect(shown.targetWaitingForUser("B", card)).toBe(0);
-      a.attach("session-1", "queued", false);
-      expect(await a.outcome).toEqual({ replied: false, reason: "waiting_for_user", card });
-
+    it("leaves a card shown during the delivery to what the target shows when the delivery returns", async () => {
       // Answered before the delivery returned: the target is free again and the wait goes on.
-      const answered = setup();
-      const b = begin(answered, { timeoutMs: 30 });
-      answered.targetWaitingForUser("B", card);
-      b.attach("session-1", "queued", false, null);
-      expect(await b.outcome).toEqual({ replied: false, reason: "timeout" });
+      const waits = setup();
+      const wait = begin(waits, { timeoutMs: 30 });
+      expect(waits.targetWaitingForUser("B", card)).toBe(0);
+      wait.attach("session-1", "queued", false, null);
+      expect(await wait.outcome).toEqual({ replied: false, reason: "timeout" });
+    });
+
+    it("does not end the wait of the session the card was raised to message: the reply is behind it", async () => {
+      const waits = setup();
+      const wait = begin(waits, { timeoutMs: 60_000 });
+      wait.attach("session-1", "inserted", true, null);
+      // B asks the user before it may answer A (a pair limit, say): A's wait stays for that reply.
+      expect(waits.targetWaitingForUser("B", { kind: "approval", title: "Sessions reached their message limit (5/5)" }, "old-A")).toBe(0);
+      expect(waits.isWaiting("A", "B")).toBe(true);
+      expect(waits.claimReply("B", "A", reply)).toBe(true);
+      expect((await wait.outcome).replied).toBe(true);
+    });
+
+    it("says whether a turn of the target took the message", () => {
+      const waits = setup();
+      const a = begin(waits);
+      a.attach("session-1", "queued", false, null);
+      expect(a.taken()).toBe(false);
+      waits.turnBound("session-1");
+      expect(a.taken()).toBe(true);
+      waits.cancelWaiter("A");
     });
 
     it("leaves waits on other sessions alone", async () => {

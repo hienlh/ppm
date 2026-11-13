@@ -139,7 +139,7 @@ export function sessionCollabToolResult(output: string): SessionCollabToolResult
 /** Why a wait ended without a reply, in words. */
 export function waitEndedText(reply: Extract<SessionWaitOutcome, { replied: false }>): string {
   if (reply.reason === "waiting_for_user") {
-    return `It is waiting for the user to answer ${reply.card.kind === "question" ? "a question" : "an approval"}: “${reply.card.title}”. The message waits until then.`;
+    return `It is waiting for the user to answer ${reply.card.kind === "question" ? "a question" : "an approval"}: “${reply.card.title}”. It goes on with the message once they have.`;
   }
   const reason = reply.reason;
   if (reason === "turn_ended_without_reply") return "It finished its turn without replying.";
