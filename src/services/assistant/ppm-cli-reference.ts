@@ -139,6 +139,7 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "- chat stop/rename/pin/tag/read/delete: prefer chat_stop, chat_organize and chat_delete",
     "- chat stop sends the stop PPM's Stop button sends; chat delete stops a running turn first and deletes nothing if it does not stop",
     "- chat changes/turns/revert-turn: prefer chat_changes and chat_changes_answer; revert-turn prints its preview and writes only with --yes",
+    "- manager assign/unassign: refused from an AI chat; use manager_assign and manager_unassign (the user sees a card). They need a running PPM",
     "- git: prefer the git tools; every git command takes -p <project> and --repo <path> (a repository inside the project)",
     "- db add/edit/remove/test: prefer db_connection_save, db_connection_delete and db_connection_test. Neither path sends",
     "  read-only: a new connection is read-only, and the tools cannot make one writable. A shell command can reach any of",
@@ -681,6 +682,21 @@ ppm tags rename <tag> <newName>
 
 ppm tags remove <tag>
   Delete a tag; its chats keep existing, untagged
+  -p, --project <name> — Project name or path (default: the current folder's project)
+\`\`\`
+## ppm manager — Each project's manager chat: the chat PPM Assistant messages without asking
+\`\`\`
+ppm manager list
+  List every project's manager chat
+  --json — Print JSON
+
+ppm manager assign <session>
+  Make an existing Claude chat its project's manager chat. Refused from an AI chat (use manager_assign)
+  -p, --project <name> — Project name or path (default: the project PPM recorded for the chat)
+  --replace — Take the role from the project's current manager chat
+
+ppm manager unassign
+  Stop a project's manager chat being the manager; the chat is kept. Refused from an AI chat (use manager_unassign)
   -p, --project <name> — Project name or path (default: the current folder's project)
 \`\`\`
 ## ppm theme — Show, pick, import or remove PPM's themes

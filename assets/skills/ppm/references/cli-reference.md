@@ -1512,6 +1512,36 @@ Remove a language server PPM installed (one on PATH or in a project is left alon
 
 **Usage:** `ppm lsp remove [options] <id>`
 
+## `ppm manager`
+
+Each project's manager chat: the chat PPM Assistant messages without asking
+
+**Usage:** `ppm manager [options] [command]`
+
+### `ppm manager list`
+
+List every project's manager chat
+
+**Options:**
+- `--json` — Print JSON
+
+### `ppm manager assign`
+
+Make an existing Claude chat its project's manager chat. Refused from an AI chat (use manager_assign)
+
+**Options:**
+- `-p, --project <name>` — Project name or path (default: the project PPM recorded for the chat)
+- `--replace` — Take the role from the project's current manager chat
+
+**Usage:** `ppm manager assign [options] <session>`
+
+### `ppm manager unassign`
+
+Stop a project's manager chat being the manager; the chat is kept. Refused from an AI chat (use manager_unassign)
+
+**Options:**
+- `-p, --project <name>` — Project name or path (default: the current folder's project)
+
 ## `ppm mcp`
 
 The MCP servers every chat starts with

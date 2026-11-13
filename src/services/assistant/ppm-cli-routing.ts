@@ -23,6 +23,7 @@ const SERVER = [
   "chat changes list", "chat changes diff", "chat changes keep", "chat changes reopen", "chat changes revert",
   "chat changes undo", "chat turns", "chat revert-turn",
   "tags list", "tags add", "tags rename", "tags remove",
+  "manager list", "manager assign", "manager unassign",
   "git status", "git log", "git diff", "git stage", "git unstage", "git discard", "git commit",
   "git undo discard", "git undo commit", "git fetch", "git pull", "git push", "git publish",
   "git branch create", "git branch checkout", "git branch delete", "git branch merge",

@@ -21,6 +21,9 @@ export async function registerCommandGroups(program: Command): Promise<void> {
   const { registerTagsCommands } = await import("./commands/tags-cmd.ts");
   registerTagsCommands(program);
 
+  const { registerManagerCommands } = await import("./commands/manager-cmd.ts");
+  registerManagerCommands(program);
+
   const { registerThemeCommands } = await import("./commands/settings-theme-cmd.ts");
   registerThemeCommands(program);
 

@@ -1,7 +1,7 @@
 /**
  * A scratch PPM server for the chat CLI tests, run as its own process like
  * `cli-scratch-server-main.ts` (same arguments, same `READY <port>`), with the real chat stack:
- * the project-scoped chat and tag routes, the real chat socket (`ws/chat.ts`) and its chat
+ * the project-scoped chat and tag routes, the manager-chat routes, the real chat socket (`ws/chat.ts`) and its chat
  * control, and the session trace. The only provider is a scripted stand-in for Claude whose turn
  * runs until it is stopped — or, for a session marked stuck, ignores the stop.
  *
@@ -108,6 +108,8 @@ app.route("/api/cli", cliHelloRoutes);
 app.use("/api/*", authMiddleware);
 app.route("/api/projects", projectRoutes);
 app.route("/api/project/:projectName", projectScopedRouter);
+// The manager-chat routes the session list's "Set as manager chat" calls, mounted where the server mounts them.
+app.route("/api/assistant", (await import("../../src/server/routes/assistant-managers.ts")).assistantManagerRoutes);
 app.get("/api/__scratch/config", (c) => c.json(ok(configService.getAll())));
 app.get("/api/__scratch/events", (c) => c.json(ok(events)));
 app.post("/api/__scratch/chat/start", async (c) => {
