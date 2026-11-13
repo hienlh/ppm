@@ -211,7 +211,7 @@ rebuilds it and re-activates every enabled extension, at most 3 times in 5 minut
 |---|---|---|
 | `chat:listProjects` / `chat:createSession` | projects / `{ sessionId, providerId, projectName, title }` | `bindable` (Claude only) records the creator |
 | `chat:send` / `chat:cancel` | `{ sessionId, queued }` / `{ cancelled }` | creator only; 150 s RPC wait; `startHeadlessTurn` |
-| `chat:state` / `chat:lastAssistantText` | `{ running, phase, lastError? }` / text | read-only |
+| `chat:state` / `chat:lastAssistantText` | `{ running, phase, lastError? }` / text | read-only; creator only |
 | `chat:openTab` | `{ opened }` | `tab:open` addressed to the browser that ran a command in the last 10 s |
 | `chat:bind` / `chat:unbind` / `chat:getBinding` | binding + `pendingRestart` | owner only |
 | `ai:complete` / `ai:cancel` / `ai:listModels` | `{ ok, result }` or `{ ok, error: { code } }` | `extension-ai/`; call id is a worker-made UUID |
@@ -276,14 +276,15 @@ seventh parameter. It is kept when the extension is removed, and `workspace.fs` 
 `process:spawn` cannot reach it (they are limited to project roots).
 
 **Chat binding tables** (migrations 58–60, `CURRENT_SCHEMA_VERSION = 60`):
-- `session_metadata.created_by_extension` (58): the extension that created a session; only it
+- `session_metadata.created_by_extension` (69): the extension that created a session; only it
   may `chat:send` / `chat:cancel` / bind it. Moves with a migrated session id.
-- `extension_session_bindings` (59): instructions, toolsets and tool policy per session; copied
+- `extension_session_bindings` (70): instructions, toolsets and tool policy per session; copied
   to a fork, moved on session-id migration, deleted with the session.
-  `extension_removed_at` (60) is the tombstone `deleteExtension` sets instead of deleting, which
-  closes the removed extension's chats.
-- `extension_mcp_toolsets` (59): each toolset's last registered definitions, deleted with the
-  extension.
+  `extension_removed_at` (71) is the tombstone `deleteExtension` sets when the user removes the
+  extension, which closes its chats. The startup sweep, which only finds a folder missing,
+  drops the extension's record with `forgetMissingExtension` and leaves its chats bound and open.
+- `extension_mcp_toolsets` (70): each toolset's last registered definitions, deleted when the
+  user removes the extension.
 
 ### WebSocket Bridge (Extension ↔ Browser)
 

@@ -120,14 +120,18 @@ export function registerExtensionChatHandlers(rpc: RpcChannel): void {
     return { cancelled: true };
   });
 
+  // Reading a chat is confined like driving one: an extension sees the chats it created, never a
+  // person's own.
   rpc.onRequest("chat:state", async (params) => {
-    const { sessionId } = resolveSession(requireString(paramsOf(params), "sessionId"));
+    const p = paramsOf(params);
+    const { sessionId } = resolveOwnSession(requireString(p, "sessionId"), requireString(p, "extensionId"));
     const { getSessionTurnState } = await chatSocket();
     return getSessionTurnState(sessionId);
   });
 
   rpc.onRequest("chat:lastAssistantText", async (params) => {
-    const { sessionId, providerId } = resolveSession(requireString(paramsOf(params), "sessionId"));
+    const p = paramsOf(params);
+    const { sessionId, providerId } = resolveOwnSession(requireString(p, "sessionId"), requireString(p, "extensionId"));
     const provider = providerRegistry.get(providerId);
     if (!provider?.getMessages) return null;
     const messages = await provider.getMessages(sessionId);
