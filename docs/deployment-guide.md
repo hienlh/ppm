@@ -214,6 +214,18 @@ ppm jira watch add --config <id> --name bugs --jql "project = BUG"
 # A new site or email saved without a new token clears the saved token, for every caller (the
 # panel, the CLI, the Assistant): enter it again. `jira watch pull` needs the running PPM.
 
+# Designs (the Designs sidebar refreshes at once, on every open PPM)
+ppm design list -p <project>
+ppm design create "Landing page" -p <project> --kind page
+ppm design delete <slug> -p <project>          # only says what would go; add --yes to delete
+ppm design export <slug> -p <project> --zip -o landing.zip     # or --html -o landing.html
+
+# Schedules (an open Settings → Schedules refreshes at once)
+ppm schedule add --name Morning --cron "0 7 * * *" --project <project> --prompt "…"
+ppm schedule edit <id> --cron "0 8 * * *"      # only the options given change
+# add, edit and enable are refused from an AI chat (advisory): a schedule runs turns nobody
+# started, so the Assistant uses its schedule_save tool, which shows the user a card.
+
 # `config set` goes through the running PPM that holds the database; with none running it
 # writes the database directly and says so. Pick a dev profile (ppm.dev.db), or one server
 # when several share a database:
@@ -284,6 +296,13 @@ ppm config set log_level debug   # write DEBUG lines too; a running server picks
 ppm config set log_level info    # back to the default
 PPM_LOG_LEVEL=debug bun dev:server   # pins the level for that process, over the config
 ppm logs --clear
+
+# The Logs window's Issues tab, from the running PPM
+ppm logs issues                    # --dismissed shows hidden ones, --json for scripts
+ppm logs issues analyze            # sort what no issue covers yet, and wait for the result
+ppm logs issues auto off           # or on
+ppm logs issues dismiss <id>       # undismiss <id>, or undismiss --all
+ppm logs report draft <id> [<id>…] # prints an AI draft of a bug report; you post it on GitHub
 ```
 
 Every HTTP request is logged once (`[http]`, with method, path, status and duration — a change at
