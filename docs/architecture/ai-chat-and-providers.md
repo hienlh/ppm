@@ -1009,7 +1009,8 @@ Three tools, served by PPM itself as the MCP server `ppm-db` (`ppm_db` for Codex
 
 **Which connections.** Every saved connection with *Available to the AI chat* on
 (`connections.ai_access`, on by default) — the same set `ppm db` shows inside a chat
-(`db-ai-connections.ts`). The tools' descriptions end with that list (name, engine, folder,
+(`db-ai-connections.ts`; there it is a convenience keyed on the AI-chat mark, not a control —
+see [Assistant → CLI through the server](#assistant--cli-through-the-server)). The tools' descriptions end with that list (name, engine, folder,
 readonly), so the AI can name one without a call; a connection is named by its name, exact
 first and then ignoring case. A chat is given the tools only while at least one such connection
 exists and one of the three is on in Settings → Tools (each has its own switch, all on by
@@ -1118,3 +1119,78 @@ chat** the Assistant messages without a card, guided by a rules file PPM guards
 (`.ppm/manager.md`); managers report through `report_to_assistant`, and PPM turns reports into
 cards, a morning digest and quiet-hours-aware Telegram messages. Full design, limitations and
 verification: [PPM Assistant](ppm-assistant.md).
+
+## Assistant → CLI through the server
+
+What happens when the Assistant (or any AI chat) runs `ppm …` in its shell, and what actually
+protects the user while it does. Written down after the security review of the change, so it says
+what holds and what does not.
+
+**The honest model.** The `ppm` CLI signs in with the database's own token, so a command the AI
+runs acts *as the user*: whatever the user could do from their terminal, one approved shell line
+can do. Codex can read `ppm.db` in its working sandbox without asking at all, token included.
+The controls that hold are therefore not in the CLI:
+- the **shell card** — Claude's Bash tool and Codex's command approval ask before every command,
+  and Codex's sandbox has no network, so a `ppm` command must be escalated
+  (`sandbox_permissions: "require_escalated"`), which asks too (checked live: approved, it reaches
+  `127.0.0.1`);
+- the **cards of the Assistant's own tools** (`project_update`, `chat_stop`, `db_connection_save`
+  …), which PPM builds from its own records and re-checks after the answer;
+- the **route rules** on the server — what a route accepts at all, for every caller (secret
+  keys through `config set`, a forward PPM did not start, a SQLite file in a credential store).
+
+Everything keyed on the AI-chat mark (`PPM_AI_CHAT`, set by `AI_CHAT_MARK` in every provider's
+environment and in terminals `run_in_terminal` opens) is **advisory**: the CLI's "refused from an
+AI chat" (`ai-chat-refusal.ts`), the `X-PPM-AI-Chat` header, the filtered `ppm db` connection list.
+Anything that runs a shell can drop the mark, so neither the docs nor the reference
+(`ppm_cli_reference`'s header) claims the AI *cannot* do something because of it. What the mark
+buys is that a well-behaved agent is pointed at the tool with a card instead of a bare command.
+
+**Discovery and the hello.** Every server writes `server-endpoint.<database file>.<pid>.json`
+(0600, temp file + rename, removed on exit; `server-endpoint-file.ts`) into its PPM folder. A
+command picks the live ones for its database (`server-discovery.ts`), takes the one
+`PPM_INSTANCE_ID` names when several share a database, and asks the public `GET /api/cli/hello`
+with a fresh nonce; only a process holding the database's token can answer with its HMAC
+(`cli-hello-proof.ts`), and only then is the token sent (`ppm-server-client.ts`: loopback URLs only,
+`redirect: "error"`). `.server-port` is never consulted. A command that reaches a server prints
+`→ PPM <profile> (<db file>) at 127.0.0.1:<port>` on stderr before anything else of its own; an AI
+chat's command aimed at another database than its chat's (`PPM_ASSISTANT_DB`) is refused.
+`PPM_HOME`, `PPM_PROFILE`, `PPM_INSTANCE_ID` and `PPM_ASSISTANT_DB` come from
+`assistantShellEnv()` / `ppmInstanceEnv()`, in Claude's base environment (`claudeChildBaseEnv`) and
+in Codex's allowlisted one (`buildSpawnEnv`).
+
+**When a command writes directly.** While a server provably holds the database, every write goes
+through it, with the checks and live updates PPM's screens get. Only when none does (no live
+endpoint file, no supervisor of that profile, nothing on the port) does a command write the
+database itself, after printing that it does. A server that may be there but cannot be verified is
+a refusal, never a write underneath it. The routing table (`ppm-cli-routing.ts`) has two kinds
+only — `server` and `direct-allowed` (process control, setup, reading, SQL on the user's own
+databases, backups, skills, the cloud sign-in) — and a test fails on a command placed in neither.
+
+**Config tiers** (`config-write-guard.ts`), for `ppm config set` and `PUT /api/settings/config-key`:
+- *secret* (`SECRET_CONFIG_KEYS`, `ai.providers.*.api_key`) — refused for every caller; secrets are
+  typed in their pane or at the user's own terminal (`--token-prompt`), and shown redacted;
+- *exposure and persistence* (`auth.*`, `host`, `port`, `tunnel.*`, provider commands and URLs,
+  `assistant.*`, the tool switches …) — refused from an AI chat (advisory);
+- *allowed* — an explicit list; anything else, and any key with a dedicated command, is refused.
+
+**Credentials follow their endpoint.** An edit that points a saved secret somewhere else drops the
+secret in the route, for every caller: a database connection's host, port, login or SSH hop
+(`connection-endpoint-reset.ts`), Jira's base URL or email (`jira-config-routes.ts`), a different
+ntfy server. Otherwise the next Test would send the old password to the new address.
+
+**The SQLite path guard.** A SQLite connection is opened with no further question (`db_query`
+reads one unasked), so `sqlite-path-guard.ts` judges the file by its real path at save, import and
+every open, for every caller: PPM's folder, its backups and `~/.cloudflared` are refused, and the
+Assistant's tools also refuse what it keeps private. The card shows the real path.
+
+**Shared audit.** `query-audit.db` sits in the PPM folder with no profile in its name
+(`query-audit-db.ts`), so queries a `dev` profile's CLI runs are logged beside the default
+profile's.
+
+**Verification.** `tests/e2e/assistant-cli-through-server-e2e.mjs` runs the approved command for
+real: the fixture's `shell` op (`tests/e2e/fixtures/assistant-shell-op.ts`) spawns this PPM's CLI
+through a shell with Claude's and then Codex's environment, against a scratch server on the `dev`
+profile that publishes its endpoint file (`assistant-cli-server.ts`). Each run asserts the target
+line, the rename reaching the open page with no reload, no `ppm.db` created, and `chat_stop`
+stopping a running chat once its card is approved.

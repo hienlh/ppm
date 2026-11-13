@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`ppm` commands go through the running PPM**: a write reaches the server that holds its database (found through its endpoint file and proven before the token is sent), shows up on open screens at once, and prints which PPM it reached; with no server running it writes directly and says so. `--profile` picks the database.
+- **The CLI covers every area of the app**: projects, chats and AI change review, git, database connections, settings (theme, AI, keys, proxy, notifications, Telegram, MCP, accounts), extensions and installs, Jira, processes and services, designs, logs, schedules, group chats, teams, PPM Cloud and port forwards.
+- **The Assistant gains carded tools** for projects, chats (stop, organize, delete, review changes), git history and branch deletion, database connections and typing into a terminal; its CLI reference says how commands reach PPM and which steps only you can take.
+
+### Security
+
+- **Secrets never go on a command line**: `ppm config set` refuses secret keys, commands ask for tokens at your terminal, saved credentials are dropped when their endpoint changes, and a SQLite connection may not open PPM's own or private files.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed
