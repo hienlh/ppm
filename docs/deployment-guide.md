@@ -162,9 +162,23 @@ ppm git branch merge feature -p app         # refs that look like options are re
 ppm git stash pop 0 --expect <hash> -p app  # refused if stash 0 is no longer that stash
 # Staging single blocks of a file stays in Source Control
 
-# AI provider / model
-ppm config set ai.default_provider claude       # claude | codex | cursor
-# A provider's own settings (model, API key, command) are changed in Settings → AI Provider
+# AI provider / model (through the running PPM; an open Settings pane refreshes at once)
+ppm ai get                                      # secrets show as [REDACTED]
+ppm ai set default_provider claude              # claude | codex | cursor
+ppm ai set providers.claude.effort high
+ppm ai providers                                # which providers chat can use now, and why not
+# A provider's API key is never set on a command line: Settings → AI Provider
+
+# Appearance, shortcuts, proxy and storage limits (same routes as Settings)
+ppm theme set slate --mode dark                 # every open PPM re-themes
+ppm theme import ./my-theme.json                # or a URL to a JSON or .vsix theme
+ppm keybindings set open-chat Mod+Shift+L
+ppm proxy get                                   # the auth key only as its first characters; --reveal for all of it
+ppm settings query-audit set --retention-days 30
+# From an AI chat, `ppm ai set` refuses the settings that decide what PPM runs (a provider's
+# command, base URL, key variable, permission mode; the tool switches), and keybindings, the
+# proxy, `--reveal`, clearing the audit log and the trace limits are refused too. That check is
+# advisory: the chat's shell card is the real control.
 
 # `config set` goes through the running PPM that holds the database; with none running it
 # writes the database directly and says so. Pick a dev profile (ppm.dev.db), or one server
