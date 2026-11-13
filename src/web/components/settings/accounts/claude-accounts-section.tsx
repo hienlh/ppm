@@ -24,6 +24,7 @@ import { AccountProfilePanel } from "./account-profile-panel";
 import { AccountDeleteConfirm } from "./account-delete-confirm";
 import { AccountRenameDialog } from "./account-rename-dialog";
 import { AccountCard } from "./account-card";
+import { ClaudeLimitResetsButton } from "./claude-limit-resets-button";
 import { AddAccountDialog } from "./account-add-dialog";
 import { ExportAccountsDialog } from "./account-export-dialog";
 import { ImportAccountsDialog } from "./account-import-dialog";
@@ -154,6 +155,13 @@ export function ClaudeAccountsSection() {
                 onViewProfile={(profile, accountId) => setProfileView({ profile, accountId })}
                 onReauth={() => { setSignInAgainFor({ id: entry.accountId, label: entry.accountLabel ?? entry.accountId.slice(0, 8) }); setDialog("add"); }}
                 flash={flashIds.has(entry.accountId)}
+                resetCreditAction={(
+                  <ClaudeLimitResetsButton
+                    account={{ id: entry.accountId, label: entry.accountLabel ?? entry.accountId.slice(0, 8) }}
+                    resets={entry.usage.limitResets}
+                    onDone={(m) => { setMessage(m); void reload(); }}
+                  />
+                )}
               />
             ))}
           </AccountCardRow>

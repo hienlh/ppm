@@ -5,6 +5,7 @@
 ### Added
 
 - **Antigravity chats.** Antigravity (Google's `agy` CLI) can be picked as a chat's provider: replies, thinking and tool calls stream as with Claude and Codex, with approvals, Stop, images, agy's own slash commands and skills, extra accounts with a sign-in of their own (Settings → Accounts), a quota panel, and PPM's tab and database tools. Each open chat runs one `agy acp` process. A slow command agy moves to the background no longer ends the chat halfway, and the quota is read from agy itself when the Antigravity app is closed. Needs agy installed and signed in.
+- **Use Claude's free limit resets from PPM, as on claude.ai.** A Claude account holding resets now shows "N resets" on its card in Settings → Accounts. It opens the list claude.ai shows under Limit resets: each kind (Full reset, Fable reset, …) with how many are left, when they expire, what one refills, and **Reset for free**. A reset Anthropic would not accept right now is greyed out with the reason, such as "usable once you reach a limit it refills". PPM asks before spending one, and says how much of the window is still left when no limit has been reached. Using a reset does not move your weekly reset day. PPM checks with Anthropic again right before spending, and an account that was parked for hitting its limit goes back into rotation. Anthropic lists resets only to claude.ai and Claude Code, so PPM now reads usage and spends a reset with Claude Code's own request headers.
 
 ## [0.24.1] - 2026-11-12
 

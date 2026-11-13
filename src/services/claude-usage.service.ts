@@ -16,7 +16,9 @@ import { refreshUsage as refreshProviderUsage } from "./provider-usage/usage-reg
 import { claudeUsageSource } from "./claude-usage-source.ts";
 import { resetUsageRuntimeState } from "./provider-usage/index.ts";
 import { deserializeUsageExtra, parseClaudeScopedLimits, scopedBucket } from "../shared/usage-extra.ts";
-import type { ScopedLimitBucket } from "../types/chat.ts";
+import { parseClaudeLimitResets } from "../shared/claude-limit-resets.ts";
+import { claudeCliHeaders } from "./claude-cli-identity.ts";
+import type { ClaudeLimitResets, ScopedLimitBucket } from "../types/chat.ts";
 
 export interface LimitBucket {
   utilization: number;
@@ -34,6 +36,8 @@ export interface ClaudeUsage {
   weeklySonnet?: LimitBucket;
   /** Per-model weekly limits ("Fable", …) — see `shared/usage-extra.ts`. */
   weeklyScoped?: ScopedLimitBucket[];
+  /** Free limit resets the account holds — see `shared/claude-limit-resets.ts`. */
+  limitResets?: ClaudeLimitResets;
   totalCostUsd?: number;
 }
 
@@ -46,6 +50,11 @@ export interface AccountUsageEntry {
 }
 
 const API_URL = "https://api.anthropic.com/api/oauth/usage";
+/**
+ * The usage read with the account's free limit resets in it, as Claude Code asks for it. Sent
+ * as Claude Code (`claude-cli-identity.ts`): to anything else Anthropic lists no grant.
+ */
+const USAGE_WITH_RESETS_URL = `${API_URL}?cedar_ember=1&skip_spend=1`;
 const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 /**
  * The cheapest model there is. Reading usage from response headers is a real request billed to
@@ -103,8 +112,9 @@ function snapshotToUsage(row: LimitSnapshotRow): ClaudeUsage {
   if (row.weekly_util != null) result.weekly = dbBucketToLimitBucket(row.weekly_util, row.weekly_resets_at ?? "", 168);
   if (row.weekly_opus_util != null) result.weeklyOpus = dbBucketToLimitBucket(row.weekly_opus_util, row.weekly_opus_resets_at ?? "", 168);
   if (row.weekly_sonnet_util != null) result.weeklySonnet = dbBucketToLimitBucket(row.weekly_sonnet_util, row.weekly_sonnet_resets_at ?? "", 168);
-  const { weeklyScoped } = deserializeUsageExtra(row.extra_json);
+  const { weeklyScoped, limitResets } = deserializeUsageExtra(row.extra_json);
   if (weeklyScoped) result.weeklyScoped = weeklyScoped;
+  if (limitResets) result.limitResets = limitResets;
   return result;
 }
 
@@ -167,12 +177,12 @@ async function fetchUsageFromRateLimitHeaders(token: string): Promise<ClaudeUsag
 }
 
 async function fetchUsageForToken(token: string): Promise<ClaudeUsage> {
-  const res = await fetch(API_URL, {
+  const res = await fetch(USAGE_WITH_RESETS_URL, {
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
       "anthropic-beta": API_BETA,
-      "User-Agent": USER_AGENT,
+      ...claudeCliHeaders(),
     },
     signal: AbortSignal.timeout(FETCH_TIMEOUT),
   });
@@ -194,6 +204,8 @@ async function fetchUsageForToken(token: string): Promise<ClaudeUsage> {
     .filter((s) => !(data.weeklyOpus && /^opus\b/i.test(s.label)) && !(data.weeklySonnet && /^sonnet\b/i.test(s.label)))
     .map(scopedBucket);
   if (scoped.length) data.weeklyScoped = scoped;
+  const resets = parseClaudeLimitResets(raw);
+  if (resets) data.limitResets = resets;
   return data;
 }
 

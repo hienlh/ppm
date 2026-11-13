@@ -266,6 +266,8 @@ export interface UsageInfo {
   weeklyScoped?: ScopedLimitBucket[];
   /** Codex's free rate-limit resets still available to this account. */
   resetCredits?: ResetCredits;
+  /** Claude's free limit resets ("Reset for free" on claude.ai) held by this account. */
+  limitResets?: ClaudeLimitResets;
   activeAccountId?: string;
   activeAccountLabel?: string;
   /** ISO time these limits were read from the provider. */
@@ -287,6 +289,48 @@ export interface ResetCredits {
   title?: string;
   /** Codex's opaque id of that soonest-expiring credit — the one "Use reset" spends. */
   nextCreditId?: string;
+}
+
+/**
+ * One grant of Claude's free limit resets (Anthropic's `cedar_ember` program), as the usage
+ * read reports it. Limit names (`clears`, `blocking`, `percentUsed` keys) are Anthropic's:
+ * `five_hour`, `seven_day`, `seven_day_overage_included` (what Fable used of the week), …
+ */
+export interface ClaudeLimitResetGrant {
+  id: string;
+  /** Anthropic's own description ("One full limit reset (November 2026)"). */
+  label: string;
+  /** What kind of reset this is, as Claude Code groups them. */
+  kind: "session" | "weekly" | "full" | "fable";
+  resetsLeft: number;
+  resetsTotal: number;
+  /** ISO time it lapses, when it does. */
+  endsAt?: string;
+  clears: string[];
+  /** Also gives back what Fable used of the weekly limit. */
+  givesBackWeekly: boolean;
+  paused: boolean;
+  /** Anthropic would accept it right now. */
+  usableNow: boolean;
+  /** Usable only once a limit it refills is reached. */
+  useRequiresLimit: boolean;
+  /** Limits that, while reached, keep this one from being used. */
+  blocking: string[];
+  /** 0–100 per limit it clears. */
+  percentUsed: Record<string, number>;
+  unavailableReason?: string;
+}
+
+export interface ClaudeLimitResets {
+  grants: ClaudeLimitResetGrant[];
+  /** The account is at a limit right now. */
+  atLimit: boolean;
+  /** The limits it is at. */
+  exhausted: string[];
+  /** A reset was used moments ago; none until this ISO time. */
+  cooldownUntil?: string;
+  /** When the weekly limit resets — a Claude reset does not move it. */
+  weeklyResetsAt?: string;
 }
 
 /** Result subtype from SDK ResultMessage */
