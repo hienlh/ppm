@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { useJiraStore } from "@/stores/jira-store";
+import { useJiraLiveRefresh } from "@/hooks/use-jira-live-refresh";
 import { JiraConfigForm } from "./jira-config-form";
 import { JiraWatcherList } from "./jira-watcher-list";
 import { JiraResultsPanel } from "./jira-results-panel";
@@ -19,6 +20,8 @@ export function JiraSettingsSection() {
   useEffect(() => {
     if (selectedConfig) loadWatchers(selectedConfig.id);
   }, [selectedConfig?.id]);
+
+  useJiraLiveRefresh(selectedConfig?.id);
 
   return (
     <div className="space-y-4">

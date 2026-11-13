@@ -26,13 +26,15 @@ export function JiraConfigForm({ projectId, existing }: Props) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
+  const [tokenCleared, setTokenCleared] = useState(false);
 
   const handleSave = async (e: FormEvent) => {
     e.preventDefault();
     if (!baseUrl || !email || (!token && !existing?.hasToken)) return;
     setSaving(true);
     try {
-      await saveConfig(projectId, { baseUrl, email, ...(token ? { token } : {}) });
+      const saved = await saveConfig(projectId, { baseUrl, email, ...(token ? { token } : {}) });
+      setTokenCleared(saved.tokenCleared);
       setToken("");
     } catch {}
     setSaving(false);
@@ -103,6 +105,12 @@ export function JiraConfigForm({ projectId, existing }: Props) {
       </div>
       {testError && (
         <p className="text-xs text-error break-all">{testError}</p>
+      )}
+      {existing && !existing.hasToken && (
+        <p className="text-xs text-warning">
+          {tokenCleared ? "The site or email changed, so the saved API token was cleared. " : "No API token is saved. "}
+          Enter the API token again.
+        </p>
       )}
     </form>
   );

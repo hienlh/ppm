@@ -1,5 +1,5 @@
 import { searchIssues, JiraApiError, getRateLimitState } from "./jira-api-client.ts";
-import { getDecryptedCredentials } from "./jira-config.service.ts";
+import { credentialsProblem, getDecryptedCredentials } from "./jira-config.service.ts";
 import { getAllEnabledWatchers, insertResult } from "./jira-watcher-db.service.ts";
 import { jiraDebugService } from "./jira-debug-session.service.ts";
 import { getDb } from "./db.service.ts";
@@ -60,7 +60,7 @@ class JiraWatcherService {
 
     const creds = getDecryptedCredentials(watcher.jira_config_id);
     if (!creds) {
-      this.pollFailed(watcher.id, new Error(`No credentials for config ${watcher.jira_config_id}`), watcher.name);
+      this.pollFailed(watcher.id, new Error(`${credentialsProblem(watcher.jira_config_id)} (config ${watcher.jira_config_id})`), watcher.name);
       return 0;
     }
 

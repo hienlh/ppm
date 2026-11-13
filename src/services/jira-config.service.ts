@@ -43,13 +43,32 @@ export function getAllConfigs(): JiraConfig[] {
   return rows.map(rowToConfig);
 }
 
+/** What a test, a watcher or a ticket read says when the config's token was cleared. */
+export const JIRA_NO_TOKEN_MESSAGE = "This Jira config has no API token: enter the API token again";
+
+/** Why a config's credentials cannot be used: no config, or one whose token was cleared. */
+export function credentialsProblem(configId: number): string {
+  const row = getConfigById(configId);
+  if (!row) return "Invalid config";
+  return row.api_token_encrypted ? "Failed to decrypt the API token" : JIRA_NO_TOKEN_MESSAGE;
+}
+
+/**
+ * `plainToken`: a new token replaces the saved one; `undefined` keeps it; `null` clears it, which
+ * the route does when the site or the email changes without a new token, so a token is never sent
+ * to an endpoint it was not entered for.
+ */
 export function upsertConfig(
   projectId: number,
   baseUrl: string,
   email: string,
-  plainToken?: string,
+  plainToken?: string | null,
 ): JiraConfig {
-  if (plainToken) {
+  if (plainToken === null) {
+    getDb().query(`
+      UPDATE jira_config SET base_url = ?, email = ?, api_token_encrypted = '' WHERE project_id = ?
+    `).run(baseUrl, email, projectId);
+  } else if (plainToken) {
     // Full upsert with new token
     const encrypted = encrypt(plainToken);
     getDb().query(`
@@ -78,7 +97,8 @@ export function deleteConfig(projectId: number): boolean {
 
 export function getDecryptedCredentials(configId: number): JiraCredentials | null {
   const row = getConfigById(configId);
-  if (!row) return null;
+  // A cleared token is not a decryption failure: there is nothing to send until one is entered.
+  if (!row?.api_token_encrypted) return null;
   try {
     const token = decrypt(row.api_token_encrypted);
     undecryptable.delete(configId);

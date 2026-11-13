@@ -20,7 +20,8 @@ interface JiraStore {
   configs: JiraConfig[];
   selectedProjectId: number | null;
   loadConfigs: () => Promise<void>;
-  saveConfig: (projectId: number, data: { baseUrl: string; email: string; token?: string }) => Promise<void>;
+  /** `tokenCleared`: the site or email changed without a new token, so the saved one was cleared. */
+  saveConfig: (projectId: number, data: { baseUrl: string; email: string; token?: string }) => Promise<{ tokenCleared: boolean }>;
   deleteConfig: (projectId: number) => Promise<void>;
   testConnection: (projectId: number) => Promise<boolean>;
   setSelectedProjectId: (id: number | null) => void;
@@ -70,8 +71,9 @@ export const useJiraStore = create<JiraStore>((set, get) => ({
   },
 
   saveConfig: async (projectId, data) => {
-    await api.put(`/api/jira/config/${projectId}`, data);
+    const saved = await api.put<JiraConfig & { tokenCleared?: boolean }>(`/api/jira/config/${projectId}`, data);
     await get().loadConfigs();
+    return { tokenCleared: saved?.tokenCleared === true };
   },
 
   deleteConfig: async (projectId) => {

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useProjectStore } from "@/stores/project-store";
 import { useJiraStore } from "@/stores/jira-store";
+import { useJiraLiveRefresh } from "@/hooks/use-jira-live-refresh";
 import { useTabStore } from "@/stores/tab-store";
 import { JiraTicketCard } from "./jira-ticket-card";
 import { JiraWatcherList } from "./jira-watcher-list";
@@ -49,6 +50,9 @@ export function JiraPanel() {
   }, [loadResults]);
 
   useEffect(() => { refresh(); loadUnreadCount(); }, [config?.id]);
+
+  // Configs and watchers changed elsewhere (another device, the CLI, the Assistant).
+  useJiraLiveRefresh(config?.id);
 
   // WS events for live status updates
   useEffect(() => {

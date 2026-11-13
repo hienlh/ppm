@@ -7,7 +7,7 @@ import {
 } from "../../services/jira-watcher-db.service.ts";
 import { jiraWatcherService, clampInterval } from "../../services/jira-watcher.service.ts";
 import { jiraDebugService } from "../../services/jira-debug-session.service.ts";
-import { getDecryptedCredentials } from "../../services/jira-config.service.ts";
+import { credentialsProblem, getDecryptedCredentials } from "../../services/jira-config.service.ts";
 import {
   getIssue, updateIssue, getTransitions, transitionIssue,
   searchText, searchIssues, getProjects, getFieldOptions, getAssignableUsers,
@@ -29,6 +29,12 @@ jiraWatcherRoutes.get("/watchers", (c) => {
   const configId = c.req.query("configId");
   if (!configId) return c.json(err("configId query param required"), 400);
   return c.json(ok(getWatchersByConfigId(parseInt(configId, 10))));
+});
+
+jiraWatcherRoutes.get("/watchers/:id{[0-9]+}", (c) => {
+  const watcher = getWatcherById(parseInt(c.req.param("id"), 10));
+  if (!watcher) return c.json(err("Watcher not found"), 404);
+  return c.json(ok(watcher));
 });
 
 jiraWatcherRoutes.post("/watchers", async (c) => {
@@ -85,7 +91,7 @@ jiraWatcherRoutes.post("/watchers/test-jql", async (c) => {
   const body = await c.req.json<{ configId: number; jql: string }>();
   if (!body.configId || !body.jql) return c.json(err("configId and jql required"), 400);
   const creds = getDecryptedCredentials(body.configId);
-  if (!creds) return c.json(err("Invalid config"), 404);
+  if (!creds) return c.json(err(credentialsProblem(body.configId)), 404);
   try {
     const response = await searchIssues(creds, body.jql, undefined, 20);
     return c.json(ok({ issues: response.issues, total: response.total }));
@@ -208,7 +214,7 @@ jiraWatcherRoutes.post("/results/manual", async (c) => {
   if (!body.configId || !body.issueKey) return c.json(err("configId and issueKey required"), 400);
   if (!ISSUE_KEY_RE.test(body.issueKey)) return c.json(err("Invalid issueKey format"), 400);
   const creds = getDecryptedCredentials(body.configId);
-  if (!creds) return c.json(err("Invalid config"), 404);
+  if (!creds) return c.json(err(credentialsProblem(body.configId)), 404);
   try {
     const issue = await getIssue(creds, body.issueKey);
     const { inserted, resultId } = insertResult(
@@ -228,7 +234,7 @@ jiraWatcherRoutes.get("/search/:configId", async (c) => {
   const q = c.req.query("q") ?? "";
   if (!q) return c.json(err("q query param required"), 400);
   const creds = getDecryptedCredentials(configId);
-  if (!creds) return c.json(err("Invalid config"), 404);
+  if (!creds) return c.json(err(credentialsProblem(configId)), 404);
   try {
     const results = await searchText(creds, q);
     return c.json(ok(results));
@@ -243,7 +249,7 @@ jiraWatcherRoutes.get("/ticket/:configId/:issueKey", async (c) => {
   const issueKey = c.req.param("issueKey");
   if (!ISSUE_KEY_RE.test(issueKey)) return c.json(err("Invalid issueKey format"), 400);
   const creds = getDecryptedCredentials(parseInt(c.req.param("configId"), 10));
-  if (!creds) return c.json(err("Invalid config"), 404);
+  if (!creds) return c.json(err(credentialsProblem(parseInt(c.req.param("configId"), 10))), 404);
   try {
     const issue = await getIssue(creds, issueKey);
     return c.json(ok(issue));
@@ -256,7 +262,7 @@ jiraWatcherRoutes.put("/ticket/:configId/:issueKey", async (c) => {
   const issueKey = c.req.param("issueKey");
   if (!ISSUE_KEY_RE.test(issueKey)) return c.json(err("Invalid issueKey format"), 400);
   const creds = getDecryptedCredentials(parseInt(c.req.param("configId"), 10));
-  if (!creds) return c.json(err("Invalid config"), 404);
+  if (!creds) return c.json(err(credentialsProblem(parseInt(c.req.param("configId"), 10))), 404);
   const body = await c.req.json<{ fields: Record<string, unknown> }>();
   try {
     await updateIssue(creds, issueKey, body.fields ?? body);
@@ -270,7 +276,7 @@ jiraWatcherRoutes.get("/ticket/:configId/:issueKey/transitions", async (c) => {
   const issueKey = c.req.param("issueKey");
   if (!ISSUE_KEY_RE.test(issueKey)) return c.json(err("Invalid issueKey format"), 400);
   const creds = getDecryptedCredentials(parseInt(c.req.param("configId"), 10));
-  if (!creds) return c.json(err("Invalid config"), 404);
+  if (!creds) return c.json(err(credentialsProblem(parseInt(c.req.param("configId"), 10))), 404);
   try {
     const transitions = await getTransitions(creds, issueKey);
     return c.json(ok(transitions));
@@ -283,7 +289,7 @@ jiraWatcherRoutes.post("/ticket/:configId/:issueKey/transition", async (c) => {
   const issueKey = c.req.param("issueKey");
   if (!ISSUE_KEY_RE.test(issueKey)) return c.json(err("Invalid issueKey format"), 400);
   const creds = getDecryptedCredentials(parseInt(c.req.param("configId"), 10));
-  if (!creds) return c.json(err("Invalid config"), 404);
+  if (!creds) return c.json(err(credentialsProblem(parseInt(c.req.param("configId"), 10))), 404);
   const body = await c.req.json<{ transitionId: string }>();
   if (!body.transitionId) return c.json(err("transitionId required"), 400);
   try {
@@ -298,21 +304,21 @@ jiraWatcherRoutes.post("/ticket/:configId/:issueKey/transition", async (c) => {
 
 jiraWatcherRoutes.get("/metadata/:configId/projects", async (c) => {
   const creds = getDecryptedCredentials(parseInt(c.req.param("configId"), 10));
-  if (!creds) return c.json(err("Invalid config"), 404);
+  if (!creds) return c.json(err(credentialsProblem(parseInt(c.req.param("configId"), 10))), 404);
   try { return c.json(ok(await getProjects(creds))); }
   catch (e: any) { return c.json(err(e.message), 502); }
 });
 
 jiraWatcherRoutes.get("/metadata/:configId/assignees", async (c) => {
   const creds = getDecryptedCredentials(parseInt(c.req.param("configId"), 10));
-  if (!creds) return c.json(err("Invalid config"), 404);
+  if (!creds) return c.json(err(credentialsProblem(parseInt(c.req.param("configId"), 10))), 404);
   try { return c.json(ok(await getAssignableUsers(creds))); }
   catch (e: any) { return c.json(err(e.message), 502); }
 });
 
 jiraWatcherRoutes.get("/metadata/:configId/:field", async (c) => {
   const creds = getDecryptedCredentials(parseInt(c.req.param("configId"), 10));
-  if (!creds) return c.json(err("Invalid config"), 404);
+  if (!creds) return c.json(err(credentialsProblem(parseInt(c.req.param("configId"), 10))), 404);
   const field = c.req.param("field") as "issuetype" | "priority" | "status";
   if (!["issuetype", "priority", "status"].includes(field)) {
     return c.json(err("Invalid field"), 400);
