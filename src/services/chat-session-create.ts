@@ -3,6 +3,8 @@ import { setSessionClearedFrom, setSessionDesignSlug } from "./db.service.ts";
 import { bindPickedAccount } from "./picked-account-binding.ts";
 import { getProjectDefaultTagId, setSessionTag } from "./tag.service.ts";
 import { isValidDesignSlug } from "./design/design-slug.ts";
+import { BINDING_CLAUDE_ONLY, copyBindingToFork, isBoundSession, providerSupportsBinding } from "./extension-session-binding.service.ts";
+import { providerRegistry } from "../providers/registry.ts";
 import type { Session } from "../types/chat.ts";
 
 /**
@@ -26,13 +28,30 @@ export interface CreateProjectChatInput {
 }
 
 export async function createProjectChatSession(input: CreateProjectChatInput): Promise<Session> {
+  // `/clear` in a chat an extension bound clears the context, not the binding: the new chat is
+  // the same extension's, with the same instructions and tool limits. A provider that cannot hold
+  // a binding is refused rather than given an unbound chat with every tool.
+  const clearsBound = !!input.clearedFrom && isBoundSession(input.clearedFrom);
+  if (clearsBound && !providerSupportsBinding(input.providerId ?? providerRegistry.getDefault().id)) {
+    throw new Error(`This chat is managed by an extension, and only Claude can run it (${BINDING_CLAUDE_ONLY})`);
+  }
   const session = await chatService.createSession(input.providerId, {
     projectName: input.projectName,
     projectPath: input.projectPath,
     title: input.title,
-    adoptWarmSpare: input.adoptWarmSpare,
+    // A bound chat never adopts a spare: the spare was started without the binding.
+    adoptWarmSpare: input.adoptWarmSpare && !clearsBound,
   });
   if (input.clearedFrom) setSessionClearedFrom(session.id, input.clearedFrom);
+  if (clearsBound) {
+    try {
+      copyBindingToFork(input.clearedFrom!, session.id);
+    } catch (e) {
+      // A chat that should be bound and is not would run with every tool: it goes instead.
+      await chatService.deleteSession(session.providerId, session.id).catch(() => {});
+      throw e;
+    }
+  }
   if (input.designSlug && isValidDesignSlug(input.designSlug)) setSessionDesignSlug(session.id, input.designSlug);
   // The tab claimed an account when it opened and showed its name; honour that here so the
   // first message runs on the account the user was actually looking at. Advisory, never

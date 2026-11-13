@@ -464,8 +464,10 @@ creator: `bind(sessionId, { instructions?, toolsets?, toolPolicy? })` (a field l
 its value, `null` clears it), `unbind`, `getBinding`. Instructions (≤ 64 KB) are appended to
 the system prompt. The binding applies from the next provider session: an idle chat is
 restarted at once, a busy one when it is next idle (`pendingRestart: true`). Bind before the
-first `send`. A fork of a bound chat stays bound; removing the extension **closes** its chats
-(every later turn is refused with the reason).
+first `send`. A fork of a bound chat stays bound, and so does the new chat `/clear` starts: it
+clears the context, not the binding, and is refused on a provider that cannot hold one.
+Removing the extension **closes** its chats (every later turn is refused with the reason); a
+folder PPM merely did not find at startup closes nothing.
 
 A `toolPolicy` makes the chat's tools **exhaustive** — every call is allowed or denied, none
 waits on an approval card:
