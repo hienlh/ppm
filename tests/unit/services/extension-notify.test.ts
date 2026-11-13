@@ -20,6 +20,11 @@ import { openTestDb, setDb, setSessionProvider } from "../../../src/services/db.
 import type { RpcMessage, RpcResponse } from "../../../src/types/extension.ts";
 import { parseExtensionDeepLink } from "../../../src/shared/extension-deep-link.ts";
 
+// This file reads and writes config, so it opens its own database rather than inheriting the
+// process-wide one: an earlier file that ends with `closeDb()` leaves none, and `getDb()` would
+// then reopen `ppm.db` under the test PPM_HOME, which other tests are free to overwrite.
+setDb(openTestDb());
+
 // Only the two tests that go through the real NotificationService touch these; patching the
 // singletons (not mock.module, which leaks across test files) matches notification-dispatch.test.ts.
 const originals = { push: webPushService.send, telegram: telegramService.send, ntfy: ntfyService.send, settings: configService.get("notifications") };
