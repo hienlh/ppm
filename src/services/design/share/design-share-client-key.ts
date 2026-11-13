@@ -34,7 +34,8 @@ export interface ClientKeyInput {
   cfConnectingIp: string | undefined;
 }
 
-function peerAddress(env: unknown, req: Request): string | null {
+/** The TCP peer's address, from the server Hono runs under; null when there is none to ask. */
+export function peerAddress(env: unknown, req: Request): string | null {
   const source = env as PeerSource | null | undefined;
   if (!source || typeof source.requestIP !== "function") return null;
   try {

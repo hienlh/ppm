@@ -9,7 +9,9 @@ import { rmSync, writeFileSync } from "node:fs";
 import { Hono } from "hono";
 import { configService } from "../../../src/services/config.service.ts";
 import { getDbPath } from "../../../src/services/db.service.ts";
-import { cliHelloRoutes } from "../../../src/server/routes/cli-hello.ts";
+import { cliHelloRoutes, cliHelloRoutesFor } from "../../../src/server/routes/cli-hello.ts";
+import { _resetEdgeForwardedPorts, markEdgeForwardedPort } from "../../../src/server/routes/cli-hello-request-guard.ts";
+import { corsHeaders } from "../../../src/server/middleware/cors-headers.ts";
 import { helloProof, helloProofMatches } from "../../../src/services/cli-hello-proof.ts";
 import { serverInstanceId } from "../../../src/services/server-instance-id.ts";
 import { endpointFilePath, type ServerEndpoint } from "../../../src/services/server-endpoint-file.ts";
@@ -30,7 +32,7 @@ function recordingServer(instanceId: string, token: string): string {
       if (url.pathname === "/api/health") return Response.json({ ok: true, data: { status: "running", instanceId } });
       if (url.pathname === "/api/cli/hello") {
         const nonce = url.searchParams.get("nonce") ?? "";
-        return Response.json({ ok: true, data: { instanceId, dbFile: "ppm.db", proof: helloProof(token, nonce, instanceId) } });
+        return Response.json({ ok: true, data: { instanceId, dbFile: "ppm.db", proof: helloProof(token, nonce, instanceId, Number(url.port)) } });
       }
       return Response.json({ ok: true, data: { done: true } });
     },
@@ -56,22 +58,61 @@ afterEach(() => {
   delete process.env.PPM_AI_CHAT;
 });
 
+/** What `Bun.serve` hands Hono as `c.env`: the port the request came in on, and its peer. */
+const serverEnv = (address = "127.0.0.1", port = 4321) => ({ port, requestIP: () => ({ address, family: "IPv4", port: 50000 }) });
+const hello = (headers: Record<string, string> = {}, env: unknown = serverEnv(), routes = cliHelloRoutes) =>
+  new Hono().use("*", corsHeaders).route("/api/cli", routes).request(`/api/cli/hello?nonce=${NONCE}`, { headers }, env);
+
 describe("GET /api/cli/hello", () => {
-  it("answers this server's id and database file with a proof only the token's holder can make", async () => {
-    const app = new Hono().route("/api/cli", cliHelloRoutes);
-    const res = await app.request(`/api/cli/hello?nonce=${NONCE}`);
+  afterEach(() => _resetEdgeForwardedPorts());
+
+  it("answers a direct loopback request with a proof only the token's holder can make, for the port it came in on", async () => {
+    const res = await hello();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBe("null");
     const { data } = await res.json() as { data: { instanceId: string; dbFile: string; proof: string } };
     expect(data.instanceId).toBe(serverInstanceId());
     expect(data.dbFile).toBe("ppm.db");
     expect(JSON.stringify(data)).not.toContain(TOKEN);
-    expect(helloProofMatches(TOKEN, NONCE, data.instanceId, data.proof)).toBe(true);
-    expect(helloProofMatches("other", NONCE, data.instanceId, data.proof)).toBe(false);
+    expect(helloProofMatches(TOKEN, NONCE, data.instanceId, 4321, data.proof)).toBe(true);
+    expect(helloProofMatches("other", NONCE, data.instanceId, 4321, data.proof)).toBe(false);
+    // Relayed through a port of someone else's, the proof names the real one and fails there.
+    expect(helloProofMatches(TOKEN, NONCE, data.instanceId, 4322, data.proof)).toBe(false);
+  });
+
+  it("refuses a page in a browser, a tunnel, a proxy and a peer off this machine, and says nothing a page can read", async () => {
+    const refused: Array<[string, Record<string, string>, unknown]> = [
+      ["origin", { Origin: "https://evil.example" }, serverEnv()],
+      ["null origin", { Origin: "null" }, serverEnv()],
+      ["fetch metadata", { "Sec-Fetch-Site": "cross-site" }, serverEnv()],
+      ["cloudflared", { "CF-Connecting-IP": "203.0.113.9", "CF-Ray": "8a-SIN" }, serverEnv()],
+      ["forwarded for", { "X-Forwarded-For": "203.0.113.9" }, serverEnv()],
+      ["forwarded", { Forwarded: "for=203.0.113.9" }, serverEnv()],
+      ["tailscale", { "Tailscale-User-Login": "someone@example.com" }, serverEnv()],
+      ["lan peer", {}, serverEnv("192.168.1.20")],
+      // A server that cannot say who is asking (no `requestIP`): not a request known to be local.
+      ["unknown peer", {}, { port: 4321 }],
+    ];
+    for (const [label, headers, env] of refused) {
+      const res = await hello(headers, env);
+      const body = await res.text();
+      expect({ label, status: res.status, proof: body.includes("proof") }).toEqual({ label, status: 403, proof: false });
+      expect(res.headers.get("access-control-allow-origin")).toBe("null");
+    }
+  });
+
+  it("refuses on the port the edge forwarder relays the network to, and answers on its own listener for that port", async () => {
+    markEdgeForwardedPort(4321);
+    expect((await hello()).status).toBe(403);
+    const own = await hello({}, serverEnv("127.0.0.1", 5555), cliHelloRoutesFor(4321));
+    const { data } = await own.json() as { data: { instanceId: string; proof: string } };
+    expect(helloProofMatches(TOKEN, NONCE, data.instanceId, 4321, data.proof)).toBe(true);
   });
 
   it("refuses a missing or malformed nonce", async () => {
     const app = new Hono().route("/api/cli", cliHelloRoutes);
-    expect((await app.request("/api/cli/hello")).status).toBe(400);
-    expect((await app.request("/api/cli/hello?nonce=short")).status).toBe(400);
+    expect((await app.request("/api/cli/hello", {}, serverEnv())).status).toBe(400);
+    expect((await app.request("/api/cli/hello?nonce=short", {}, serverEnv())).status).toBe(400);
   });
 });
 

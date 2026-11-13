@@ -1149,10 +1149,19 @@ buys is that a well-behaved agent is pointed at the tool with a card instead of 
 **Discovery and the hello.** Every server writes `server-endpoint.<database file>.<pid>.json`
 (0600, temp file + rename, removed on exit; `server-endpoint-file.ts`) into its PPM folder. A
 command picks the live ones for its database (`server-discovery.ts`), takes the one
-`PPM_INSTANCE_ID` names when several share a database, and asks the public `GET /api/cli/hello`
-with a fresh nonce; only a process holding the database's token can answer with its HMAC
-(`cli-hello-proof.ts`), and only then is the token sent (`ppm-server-client.ts`: loopback URLs only,
-`redirect: "error"`). `.server-port` is never consulted. A command that reaches a server prints
+`PPM_INSTANCE_ID` names when several share a database, and asks `GET /api/cli/hello` (mounted
+before auth) with a fresh nonce; only a process holding the database's token can answer with its
+HMAC over the nonce, the instance id and the port the token will go to (`cli-hello-proof.ts`), and
+only then is the token sent (`ppm-server-client.ts`: loopback URLs only, `redirect: "error"`).
+`.server-port` is never consulted. Because the token can be a short password the user chose, one
+proof is enough to guess it offline, so the hello is answered only to a direct request from this
+machine (`cli-hello-request-guard.ts`): a loopback peer, no `Origin` or `Sec-Fetch-*`, no proxy or
+tunnel header (`X-Forwarded-*`, `Forwarded`, `Via`, `CF-*`, `Tailscale-*`), and with its own
+`Access-Control-Allow-Origin: null`. The edge forwarder relays the network to a supervised
+server's port as raw TCP from loopback, adding nothing, so that port refuses the hello and the
+server answers it on a second loopback listener (`cli-hello-listener.ts`) named as `helloPort` in
+the endpoint file. A live pid whose file names a port that refuses connections (a server killed,
+its pid reused) is a stale file: removed, and discovery goes on as if it were never there. A command that reaches a server prints
 `→ PPM <profile> (<db file>) at 127.0.0.1:<port>` on stderr before anything else of its own; an AI
 chat's command aimed at another database than its chat's (`PPM_ASSISTANT_DB`) is refused.
 `PPM_HOME`, `PPM_PROFILE`, `PPM_INSTANCE_ID` and `PPM_ASSISTANT_DB` come from

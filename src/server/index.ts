@@ -1379,11 +1379,16 @@ if (process.argv.includes("__serve__")) {
   // Child processes calling back into this server (the design MCP endpoint) need the
   // port actually bound, which is not the configured one under the supervisor (port 0).
   setServerListenAddress(Number(server.port), host);
-  // Where the `ppm` CLI finds this server, beside any other server on the same database.
+  // Where the `ppm` CLI finds this server, beside any other server on the same database. Under
+  // the supervisor (port 0) the edge relays the network to this port, so the CLI's identity
+  // check is answered on a loopback listener of its own (`cli-hello-listener.ts`).
   try {
     const { publishServerEndpoint } = await import("../services/server-endpoint-file.ts");
     const { getDbPath } = await import("../services/db.service.ts");
-    publishServerEndpoint({ port: Number(server.port), host, dbFile: getDbPath(), version: VERSION, instanceId });
+    const helloPort = port === 0 ? (await import("./cli-hello-listener.ts")).startCliHelloListener(Number(server.port)) : null;
+    publishServerEndpoint({
+      port: Number(server.port), host, dbFile: getDbPath(), version: VERSION, instanceId, ...(helloPort ? { helloPort } : {}),
+    });
   } catch (e) {
     console.error(`[serve] Failed to publish the CLI endpoint file: ${e}`);
   }

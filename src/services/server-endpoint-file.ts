@@ -20,6 +20,11 @@ export interface ServerEndpoint {
   dbFile: string;
   version: string;
   startedAt: string;
+  /**
+   * The loopback port that answers the CLI's identity check, when it is not the server's own: a
+   * supervised server's own port is the one the edge relays the network to (`cli-hello-listener.ts`).
+   */
+  helloPort?: number;
 }
 
 const PREFIX = "server-endpoint.";
@@ -49,7 +54,7 @@ function state(): State {
 }
 
 /** Write this server's endpoint file (tmp + rename, owner-only), and remove it on exit. */
-export function publishServerEndpoint(info: { port: number; host: string; dbFile: string; version: string; instanceId: string }): string {
+export function publishServerEndpoint(info: { port: number; host: string; dbFile: string; version: string; instanceId: string; helloPort?: number }): string {
   const dir = getPpmDir();
   removeStaleEndpoints(info.dbFile, dir);
   const file = endpointFilePath(info.dbFile, process.pid, dir);
@@ -60,6 +65,7 @@ export function publishServerEndpoint(info: { port: number; host: string; dbFile
     dbFile: basename(info.dbFile),
     version: info.version,
     startedAt: new Date().toISOString(),
+    ...(validPort(info.helloPort) ? { helloPort: info.helloPort } : {}),
   };
   const tmp = `${file}.tmp`;
   writeFileSync(tmp, JSON.stringify(body), { mode: 0o600 });
@@ -100,13 +106,16 @@ export function readServerEndpoints(dbFile: string, dir: string = getPpmDir()): 
   return out;
 }
 
+const validPort = (p: unknown): p is number => typeof p === "number" && Number.isInteger(p) && p > 0 && p <= 65535;
+
 function parseEndpoint(file: string): ServerEndpoint | null {
   try {
     const v = JSON.parse(readFileSync(file, "utf-8")) as Partial<ServerEndpoint>;
     if (typeof v.pid !== "number" || typeof v.baseUrl !== "string" || typeof v.instanceId !== "string"
       || typeof v.dbFile !== "string") return null;
     return { pid: v.pid, baseUrl: v.baseUrl, instanceId: v.instanceId, dbFile: v.dbFile,
-      version: typeof v.version === "string" ? v.version : "", startedAt: typeof v.startedAt === "string" ? v.startedAt : "" };
+      version: typeof v.version === "string" ? v.version : "", startedAt: typeof v.startedAt === "string" ? v.startedAt : "",
+      ...(validPort(v.helloPort) ? { helloPort: v.helloPort } : {}) };
   } catch {
     return null;
   }

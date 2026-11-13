@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { discoverServer, loopbackUrl } from "../../../src/cli/utils/server-discovery.ts";
@@ -18,21 +18,34 @@ const DB = "/x/ppm.dev.db";
 let dir: string;
 const servers: ReturnType<typeof Bun.serve>[] = [];
 
-/** A server answering the identity check the way a PPM holding `token` would. */
-function helloServer(instanceId: string, token = TOKEN): number {
+/**
+ * A server answering the identity check the way a PPM holding `token` would: for the port it is
+ * reached on, or for `proofPort` (a supervised server's own listener answers for its main port).
+ */
+function helloServer(instanceId: string, token = TOKEN, proofPort?: number): number {
   const s = Bun.serve({
     port: 0, hostname: "127.0.0.1",
     fetch(req) {
-      const nonce = new URL(req.url).searchParams.get("nonce") ?? "";
-      return Response.json({ ok: true, data: { instanceId, dbFile: "ppm.dev.db", proof: helloProof(token, nonce, instanceId) } });
+      const url = new URL(req.url);
+      const nonce = url.searchParams.get("nonce") ?? "";
+      const proof = helloProof(token, nonce, instanceId, proofPort ?? Number(url.port));
+      return Response.json({ ok: true, data: { instanceId, dbFile: "ppm.dev.db", proof } });
     },
   });
   servers.push(s);
   return s.port;
 }
 
-function writeEndpoint(pid: number, instanceId: string, baseUrl: string): void {
-  const e: ServerEndpoint = { pid, baseUrl, instanceId, dbFile: "ppm.dev.db", version: "t", startedAt: "" };
+/** A port nothing listens on any more. */
+function closedPort(): number {
+  const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
+  const port = s.port;
+  s.stop(true);
+  return port;
+}
+
+function writeEndpoint(pid: number, instanceId: string, baseUrl: string, helloPort?: number): void {
+  const e: ServerEndpoint = { pid, baseUrl, instanceId, dbFile: "ppm.dev.db", version: "t", startedAt: "", ...(helloPort ? { helloPort } : {}) };
   writeFileSync(endpointFilePath(DB, pid, dir), JSON.stringify(e));
 }
 
@@ -84,6 +97,35 @@ describe("discoverServer", () => {
     expect((await discoverServer(input())).kind).toBe("none");
     const busy = await discoverServer(input({ portAnswers: async () => true }));
     expect(busy.kind === "refused" && busy.reason).toContain("Something is listening on port 1");
+  });
+
+  it("treats a live pid's file whose port refuses connections as stale: removed, and the database found free", async () => {
+    // A server killed without removing its file, its pid since reused by an unrelated process.
+    writeEndpoint(process.pid, "gone", `http://127.0.0.1:${closedPort()}`);
+    expect((await discoverServer(input())).kind).toBe("none");
+    expect(existsSync(endpointFilePath(DB, process.pid, dir))).toBe(false);
+    writeEndpoint(process.pid, "gone", `http://127.0.0.1:${closedPort()}`);
+    const busy = await discoverServer(input({ portAnswers: async () => true }));
+    expect(busy.kind === "refused" && busy.reason).toContain("Something is listening on port 1");
+  });
+
+  it("moves past a stale file to the one live server beside it", async () => {
+    writeEndpoint(process.pid, "gone", `http://127.0.0.1:${closedPort()}`);
+    writeEndpoint(process.ppid, "b", `http://127.0.0.1:${helloServer("b")}`);
+    const d = await discoverServer(input());
+    expect(d.kind === "server" && d.endpoint.instanceId).toBe("b");
+  });
+
+  it("asks a supervised server on its identity-check port, for the main port the token goes to", async () => {
+    const main = closedPort();
+    writeEndpoint(process.pid, "a", `http://127.0.0.1:${main}`, helloServer("a", TOKEN, main));
+    const d = await discoverServer(input());
+    expect(d.kind === "server" && d.endpoint.baseUrl).toBe(`http://127.0.0.1:${main}`);
+    // A proof made for any other port (here the listener's own) is not one for the main port.
+    rmSync(endpointFilePath(DB, process.pid, dir));
+    writeEndpoint(process.pid, "a", `http://127.0.0.1:${main}`, helloServer("a"));
+    const relayed = await discoverServer(input());
+    expect(relayed.kind === "refused" && relayed.reason).toContain("did not prove");
   });
 
   it("does not count the database free while a supervisor of the same profile is alive", async () => {
