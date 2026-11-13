@@ -289,6 +289,8 @@ export interface ResetCredits {
   title?: string;
   /** Codex's opaque id of that soonest-expiring credit — the one "Use reset" spends. */
   nextCreditId?: string;
+  /** Every credit still available, soonest to lapse first. */
+  credits?: Array<{ id: string; title?: string; expiresAt?: string }>;
 }
 
 /**

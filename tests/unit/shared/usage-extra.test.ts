@@ -67,6 +67,13 @@ describe("codex reset credits", () => {
     expect(parseCodexResetCredits(CODEX_RATE_LIMITS)!.nextCreditId).toBe("b");
   });
 
+  it("lists every available credit with its own expiry, soonest first", () => {
+    expect(parseCodexResetCredits(CODEX_RATE_LIMITS)!.credits).toEqual([
+      { id: "b", title: "Full reset", expiresAt: new Date(future * 1000).toISOString() },
+      { id: "a", title: "Full reset (Weekly + 5 hr)", expiresAt: new Date((future + 100) * 1000).toISOString() },
+    ]);
+  });
+
   it("tells 'none reported' apart from 'zero left'", () => {
     expect(parseCodexResetCredits({})).toBeUndefined();
     expect(parseCodexResetCredits({ rateLimitResetCredits: { credits: [] } })).toEqual({ available: 0 });

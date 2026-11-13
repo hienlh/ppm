@@ -89,6 +89,15 @@ export function parseCodexResetCredits(raw: unknown): ResetCredits | undefined {
     ...(typeof next?.expiresAt === "number" ? { nextExpiresAt: new Date(next.expiresAt * 1000).toISOString() } : {}),
     ...(typeof next?.title === "string" ? { title: next.title } : {}),
     ...(typeof next?.id === "string" ? { nextCreditId: next.id } : {}),
+    ...(available.some((c) => typeof c.id === "string")
+      ? {
+        credits: available.filter((c) => typeof c.id === "string").map((c) => ({
+          id: c.id as string,
+          ...(typeof c.title === "string" ? { title: c.title } : {}),
+          ...(typeof c.expiresAt === "number" ? { expiresAt: new Date(c.expiresAt * 1000).toISOString() } : {}),
+        })),
+      }
+      : {}),
   };
 }
 

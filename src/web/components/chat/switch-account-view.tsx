@@ -7,23 +7,27 @@
  * picked; with five or more accounts those are folded under "Out of usage · N", a search box
  * appears, and the list scrolls inside a header and footer that stay put.
  *
+ * Under the bars, how many free resets the account holds and when the nearest expires; a tap
+ * there opens Settings on that account rather than picking it.
+ *
  * Picking is refused here first (the person pressed something and is owed the reason), then by the
  * server, whose refusal is shown in the same strip. A signed-out card is not dead: a tap on it
  * starts signing it in again.
  */
 import { useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronLeft, Loader2, Lock, Plus, Search, Settings, X } from "@/lib/icons";
+import { CheckCircle2, ChevronDown, ChevronLeft, Loader2, Lock, Plus, RotateCcw, Search, Settings, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { matchesAccountQuery, orderSwitchAccounts, type SwitchAccount } from "@/lib/chat-account-switch";
 import { UsageTrack } from "./usage-meters";
 import { formatResetLine } from "@/components/settings/accounts/account-usage-format";
+import { resetDay } from "@/components/settings/accounts/account-resets";
 import { FooterButton, FooterPopoverFooter, FooterPopoverHeader } from "./footer-popover";
 
 /** From this many accounts on, the view searches and folds the unusable ones away. */
 export const MANY_ACCOUNTS = 5;
 
 export function SwitchAccountView({
-  accounts, loading, currentId, providerName, onBack, onPick, onPicked, onReauth, onAddAccount, onManage,
+  accounts, loading, currentId, providerName, onBack, onPick, onPicked, onReauth, onAddAccount, onManage, onOpenResets,
 }: {
   accounts: SwitchAccount[];
   loading: boolean;
@@ -38,6 +42,8 @@ export function SwitchAccountView({
   onReauth?: (account: SwitchAccount) => void;
   onAddAccount: () => void;
   onManage: () => void;
+  /** Show this account's free resets in Settings, where they are spent. */
+  onOpenResets?: (account: SwitchAccount) => void;
 }) {
   const [query, setQuery] = useState("");
   const [foldOpen, setFoldOpen] = useState(false);
@@ -71,7 +77,14 @@ export function SwitchAccountView({
   };
 
   const card = (a: SwitchAccount) => (
-    <AccountCard key={a.id} account={a} active={a.id === currentId} picking={pickingId === a.id} onPick={() => void pick(a)} />
+    <AccountCard
+      key={a.id}
+      account={a}
+      active={a.id === currentId}
+      picking={pickingId === a.id}
+      onPick={() => void pick(a)}
+      onOpenResets={onOpenResets ? () => onOpenResets(a) : undefined}
+    />
   );
 
   return (
@@ -180,49 +193,89 @@ export function FoldGroup({ open, children }: { open: boolean; children: React.R
   );
 }
 
-function AccountCard({ account: a, active, picking, onPick }: {
+function AccountCard({ account: a, active, picking, onPick, onOpenResets }: {
   account: SwitchAccount;
   active: boolean;
   picking: boolean;
   onPick: () => void;
+  onOpenResets?: () => void;
 }) {
   const blocked = !!a.refusal;
+  // The resets line is a button of its own, so the card is a box holding two buttons rather than
+  // one button (a button inside a button is invalid and would pick the account on every tap).
+  return (
+    <div
+      className={cn(
+        "flex w-full flex-col rounded-[10px] border transition-[background-color,border-color] duration-150",
+        active ? "border-accent-wash-border bg-accent-wash" : "border-border-soft bg-panel can-hover:hover:border-border",
+      )}
+    >
+      <button
+        type="button"
+        onClick={onPick}
+        aria-disabled={blocked && !a.signedOut ? true : undefined}
+        aria-current={active ? "true" : undefined}
+        data-account-row={a.id}
+        title={a.signedOut ? `${a.label} — sign in again` : a.refusal ? `${a.label} — ${a.refusal}` : a.label}
+        className={cn(
+          "flex w-full flex-col gap-2 rounded-[10px] p-2.5 text-left transition-transform duration-150",
+          blocked && !a.signedOut ? "cursor-not-allowed" : "motion-safe:active:scale-[0.97]",
+          "max-md:min-h-11",
+        )}
+      >
+        <span className="flex items-center gap-2">
+          <span className={cn("min-w-0 truncate text-[13px] font-medium", blocked ? "text-text-3" : "text-text")}>{a.label}</span>
+          {a.plan && (
+            <span className="shrink-0 rounded-full border border-border-soft bg-panel-2 px-1.5 py-px text-[10px] font-semibold text-text-2">{a.plan}</span>
+          )}
+          <span className={cn(
+            "ml-auto inline-flex shrink-0 text-primary transition-[opacity,transform] duration-200 motion-reduce:transition-none",
+            active || picking ? "scale-100 opacity-100" : "scale-[0.6] opacity-0",
+          )}>
+            {picking ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+          </span>
+        </span>
+        {a.refusal && (
+          <span className={cn("-mt-1 whitespace-nowrap text-[11px] text-error", a.signedOut && "underline decoration-error/40 underline-offset-2")}>{a.refusal}</span>
+        )}
+        {!a.signedOut && (
+          <span className="grid grid-cols-2 items-start gap-2.5">
+            <Meter label="5h" pct={a.fiveHourPct} resetsAt={a.fiveHourResetsAt} dim={blocked} />
+            <Meter label="Week" pct={a.weekPct} resetsAt={a.weekResetsAt} dim={blocked} />
+          </span>
+        )}
+      </button>
+      {a.resets && <ResetsLine resets={a.resets} onOpen={onOpenResets} />}
+    </div>
+  );
+}
+
+/**
+ * "⟲ 3 resets · next expires Dec 11" under the bars. Drawn on every card, "No free resets"
+ * included, so the cards stay one height. A tap opens Settings on this account, where the resets
+ * are listed one by one and spent; nothing is spent from the chat.
+ */
+function ResetsLine({ resets, onOpen }: { resets: NonNullable<SwitchAccount["resets"]>; onOpen?: () => void }) {
+  const box = "-mt-1 mx-1 mb-1 flex min-h-6 items-center gap-1 self-start rounded-md px-1.5 text-[11px] max-md:min-h-11";
+  if (resets.count === 0 || !onOpen) {
+    return (
+      <span data-account-resets="" className={cn(box, "text-text-3")}>
+        <RotateCcw className="size-3 shrink-0" aria-hidden />
+        {resets.count === 0 ? "No free resets" : `${resets.count} reset${resets.count === 1 ? "" : "s"}`}
+      </span>
+    );
+  }
   return (
     <button
       type="button"
-      onClick={onPick}
-      aria-disabled={blocked && !a.signedOut ? true : undefined}
-      aria-current={active ? "true" : undefined}
-      data-account-row={a.id}
-      title={a.signedOut ? `${a.label} — sign in again` : a.refusal ? `${a.label} — ${a.refusal}` : a.label}
-      className={cn(
-        "flex w-full flex-col gap-2 rounded-[10px] border p-2.5 text-left transition-[background-color,border-color,transform] duration-150",
-        active ? "border-accent-wash-border bg-accent-wash" : "border-border-soft bg-panel can-hover:hover:border-border",
-        blocked && !a.signedOut ? "cursor-not-allowed" : "motion-safe:active:scale-[0.97]",
-        "max-md:min-h-11",
-      )}
+      data-account-resets=""
+      onClick={onOpen}
+      title="See them in Settings"
+      className={cn(box, "text-text-3 can-hover:hover:bg-surface-hover")}
     >
-      <span className="flex items-center gap-2">
-        <span className={cn("min-w-0 truncate text-[13px] font-medium", blocked ? "text-text-3" : "text-text")}>{a.label}</span>
-        {a.plan && (
-          <span className="shrink-0 rounded-full border border-border-soft bg-panel-2 px-1.5 py-px text-[10px] font-semibold text-text-2">{a.plan}</span>
-        )}
-        <span className={cn(
-          "ml-auto inline-flex shrink-0 text-primary transition-[opacity,transform] duration-200 motion-reduce:transition-none",
-          active || picking ? "scale-100 opacity-100" : "scale-[0.6] opacity-0",
-        )}>
-          {picking ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
-        </span>
-      </span>
-      {a.refusal && (
-        <span className={cn("-mt-1 whitespace-nowrap text-[11px] text-error", a.signedOut && "underline decoration-error/40 underline-offset-2")}>{a.refusal}</span>
-      )}
-      {!a.signedOut && (
-        <span className="grid grid-cols-2 items-start gap-2.5">
-          <Meter label="5h" pct={a.fiveHourPct} resetsAt={a.fiveHourResetsAt} dim={blocked} />
-          <Meter label="Week" pct={a.weekPct} resetsAt={a.weekResetsAt} dim={blocked} />
-        </span>
-      )}
+      <RotateCcw className="size-3 shrink-0 text-primary" aria-hidden />
+      <span className="text-primary">{resets.count} reset{resets.count === 1 ? "" : "s"}</span>
+      {resets.nextExpiresAt && <span>· next expires {resetDay(resets.nextExpiresAt)}</span>}
     </button>
   );
 }
