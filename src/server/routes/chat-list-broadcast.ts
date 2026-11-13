@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono";
+import { SESSIONS_LIST_CHANGED_EVENT, type RenamedChat } from "../../shared/chat-list-events.ts";
 
 /**
  * Tells every open PPM that a project's chat list changed, after a chat-list route that writes
@@ -7,6 +8,10 @@ import type { MiddlewareHandler } from "hono";
  * re-syncing it, so a rename, a pin, a tag or a deleted chat shows at once on every device. A
  * refused write (4xx/5xx) changed nothing and announces nothing; a read never announces.
  *
+ * A rename also says which chat and what it is called now (`renamed`, set by the route as the
+ * `renamedChat` variable): an open tab keeps its own title, so the list alone would leave it on
+ * the old one until somebody clicked into it.
+ *
  * The announcement goes out through `c.env.announceChatListChanged` when the caller passes one
  * (the CLI running a route in its own process when no server holds the database, where nobody
  * listens; tests), else on `/ws/global`, loaded on first use so the routers stay importable
@@ -14,13 +19,20 @@ import type { MiddlewareHandler } from "hono";
  */
 export const ANNOUNCE_CHAT_LIST_ENV_KEY = "announceChatListChanged";
 
-export const SESSIONS_LIST_CHANGED_EVENT = "sessions:list_changed";
+export { SESSIONS_LIST_CHANGED_EVENT };
 
-type Announce = (projectName: string) => void;
+/** The route variable a rename sets so the announcement can carry the chat and its new title. */
+export const RENAMED_CHAT_VAR = "renamedChat";
 
-const broadcastOnGlobalSocket: Announce = (projectName) => {
+export type ChatListEnv = { Variables: { projectName: string; renamedChat?: RenamedChat } };
+
+type Announce = (projectName: string, renamed?: RenamedChat) => void;
+
+const broadcastOnGlobalSocket: Announce = (projectName, renamed) => {
   void import("../ws/global.ts")
-    .then(({ broadcastGlobalEvent }) => broadcastGlobalEvent({ type: SESSIONS_LIST_CHANGED_EVENT, projectName }))
+    .then(({ broadcastGlobalEvent }) => broadcastGlobalEvent({
+      type: SESSIONS_LIST_CHANGED_EVENT, projectName, ...(renamed ? { renamed } : {}),
+    }))
     .catch(() => { /* no socket layer in this process: nobody to tell */ });
 };
 
@@ -29,12 +41,12 @@ function announcerFor(env: unknown): Announce {
   return typeof own === "function" ? (own as Announce) : broadcastOnGlobalSocket;
 }
 
-export const announceChatListChanges: MiddlewareHandler<{ Variables: { projectName: string } }> = async (c, next) => {
+export const announceChatListChanges: MiddlewareHandler<ChatListEnv> = async (c, next) => {
   await next();
   if (c.req.method === "GET" || c.req.method === "HEAD" || c.req.method === "OPTIONS") return;
   if (c.res.status < 200 || c.res.status >= 300) return;
   const projectName = c.get("projectName");
-  if (projectName) announcerFor(c.env)(projectName);
+  if (projectName) announcerFor(c.env)(projectName, c.get(RENAMED_CHAT_VAR));
 };
 
 /**

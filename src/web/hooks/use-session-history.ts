@@ -6,6 +6,7 @@ import { projectCacheId } from "@/lib/browser-cache/cache-keys";
 import { useSessionListStore, EMPTY_SESSIONS, commitOptimistic } from "@/stores/session-list-store";
 import { projectRefForName, useProjectRef } from "@/stores/session-list-sync-triggers";
 import { sortSessions, removeSession, renameSession, setPinned, setSessionTag } from "@/lib/session-list-merge";
+import { useSessionTitleChanges } from "@/lib/session-title-live";
 import type { SessionInfo, SessionListResponse } from "../../types/chat";
 
 const PAGE_SIZE = 50;
@@ -62,6 +63,13 @@ export function useSessionHistory({
   const [pageHasMore, setPageHasMore] = useState<boolean | null>(null);
   const [searchFirstPage, setSearchFirstPage] = useState<SessionInfo[] | null>(null);
   const searchRequestRef = useRef(0);
+
+  // The store's page follows a rename made elsewhere; these two local pages need telling.
+  useSessionTitleChanges(({ projectName: renamedIn, sessionId: sid, title }) => {
+    if (renamedIn !== projectName) return;
+    setPagedExtra((prev) => renameSession(prev, sid, title));
+    setSearchFirstPage((prev) => prev ? renameSession(prev, sid, title) : prev);
+  });
 
   const basePage = debouncedSearch ? (searchFirstPage ?? []) : storeSessions;
   const sessions = sortSessions([...basePage, ...pagedExtra]);

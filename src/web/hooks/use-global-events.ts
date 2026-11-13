@@ -17,6 +17,8 @@ import { resyncAssistantCards } from "@/stores/assistant-cards-store";
 import { resyncAssistantWaiting } from "@/stores/assistant-waiting-store";
 import { useProjectStore } from "@/stores/project-store";
 import { PROJECTS_CHANGED_EVENT } from "../../shared/projects-events";
+import { SESSIONS_LIST_CHANGED_EVENT, parseRenamedChat } from "../../shared/chat-list-events";
+import { applySessionTitleChange } from "@/lib/session-title-live";
 import { DB_CONNECTIONS_CHANGED_EVENT, DB_CONNECTIONS_CHANGED_WINDOW_EVENT } from "../../shared/db-connection-events";
 import { SETTINGS_CHANGED_EVENT, isSettingsSection, settingsClientIdFrom } from "../../shared/settings-events";
 import { EXTENSIONS_CHANGED_EVENT } from "../../shared/extensions-events";
@@ -60,6 +62,8 @@ const IDLE_TIMEOUT_MS = 45_000;
  *   never delivered and would otherwise stick until a full reload.
  * - `sessions:list_changed` → re-syncs that project's session list, when this browser holds one.
  *   The server sends it for sessions no browser asked for (the Assistant's tools, Telegram).
+ *   A rename carries `renamed {sessionId, title}`, which retitles that chat's open tabs at once
+ *   (`session-title-live.ts`).
  * - `assistant:*` → re-dispatched as window events (`assistant:telegram_binding_changed`,
  *   which moves the "Telegram" label in the Assistant's session list).
  * - `session:created` / `session:link_changed` / `session:collab_approval` → sessions reaching
@@ -167,11 +171,15 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         return;
       }
 
-      if (type === "sessions:list_changed") {
+      if (type === SESSIONS_LIST_CHANGED_EVENT) {
         // Sessions created on the server's own initiative (an Assistant tool, a Telegram `/new`)
         // reach no chat socket, so without this the list would show them only after the tab was
         // hidden and shown again, or the socket reconnected.
-        if (typeof data.projectName === "string" && data.projectName) syncKnownProject(data.projectName);
+        if (typeof data.projectName !== "string" || !data.projectName) return;
+        // A rename retitles the chat's open tabs too, which a list re-sync never reaches.
+        const renamed = parseRenamedChat(data.renamed);
+        if (renamed) applySessionTitleChange({ ...renamed, projectName: data.projectName });
+        syncKnownProject(data.projectName);
         return;
       }
 

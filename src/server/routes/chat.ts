@@ -21,7 +21,8 @@ import { chatSessionTurnsRoutes } from "./chat-session-turns.ts";
 import { chatTurnWindowRoutes } from "./chat-turn-window.ts";
 import { chatSessionCollabRoutes } from "./session-collab.ts";
 import { chatSessionDeleteRoutes } from "./chat-session-delete.ts";
-import { announceChatListChanges, CHAT_LIST_WRITE_PATHS } from "./chat-list-broadcast.ts";
+import { announceChatListChanges, CHAT_LIST_WRITE_PATHS, RENAMED_CHAT_VAR } from "./chat-list-broadcast.ts";
+import type { RenamedChat } from "../../shared/chat-list-events.ts";
 import { chatControl } from "../../services/chat-control/chat-control.ts";
 import { applyTurnStamps, loadTurnLookup, stampSessionTurns } from "../../services/session-turns/stamp-message-turns.ts";
 import { deleteSessionBaselines } from "../../services/session-file-baselines/session-file-baselines.service.ts";
@@ -53,7 +54,7 @@ import { createLogger } from "../../services/logger.ts";
 
 const log = createLogger("chat");
 
-type Env = { Variables: { projectPath: string; projectName: string } };
+type Env = { Variables: { projectPath: string; projectName: string; renamedChat?: RenamedChat } };
 
 export const chatRoutes = new Hono<Env>();
 
@@ -405,6 +406,8 @@ chatRoutes.patch("/sessions/:id", async (c) => {
     if (!body.title?.trim()) return c.json(err("title is required"), 400);
     const title = body.title.trim();
     await renameChatSession(id, title, c.get("projectPath"));
+    // The list announcement carries it, so open tabs of this chat are retitled on every device.
+    c.set(RENAMED_CHAT_VAR, { sessionId: id, title });
     return c.json(ok({ id, title }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

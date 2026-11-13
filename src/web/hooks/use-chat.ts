@@ -32,6 +32,7 @@ import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup }
 import { useBackgroundOutputStore } from "../stores/background-output-store";
 import { useSessionListStore } from "@/stores/session-list-store";
 import { projectRefForName } from "@/stores/session-list-sync-triggers";
+import { useSessionTitleChanges } from "@/lib/session-title-live";
 import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary";
 import { getChatClientId } from "@/lib/chat-client-id";
 import { CHAT_CLIENT_ID_PARAM } from "../../shared/chat-client-id";
@@ -354,6 +355,11 @@ export function useChat(
   const initialHistoryPendingRef = useRef(false);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+  // A rename announced app-wide (another device, the Assistant, the CLI) never reaches this
+  // chat's socket, so the title it shows would stay old until the next connect.
+  useSessionTitleChanges((change) => {
+    if (change.sessionId === sessionIdRef.current) setSessionTitle(change.title);
+  });
   // Held in a ref so the socket handler always calls the latest callback without
   // the socket effect having to re-run (and reconnect) when it changes identity.
   const onSessionMigratedRef = useRef(onSessionMigrated);

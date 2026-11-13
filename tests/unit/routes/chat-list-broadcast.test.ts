@@ -31,7 +31,10 @@ function app() {
   return hono;
 }
 
-const env = { [ANNOUNCE_CHAT_LIST_ENV_KEY]: (name: string) => { announced.push(name); } };
+let renames: unknown[] = [];
+const env = {
+  [ANNOUNCE_CHAT_LIST_ENV_KEY]: (name: string, renamed?: unknown) => { announced.push(name); renames.push(renamed); },
+};
 const call = (path: string, method = "GET", body?: unknown) => app().request(path, {
   method,
   ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
@@ -40,6 +43,7 @@ const call = (path: string, method = "GET", body?: unknown) => app().request(pat
 beforeEach(() => {
   setDb(openTestDb());
   announced = [];
+  renames = [];
   // A Codex chat: renaming it touches PPM's title table only, never Claude's SDK.
   setSessionMetadata("s1", "alpha", PROJ);
   setSessionProvider("s1", "codex");
@@ -63,6 +67,13 @@ describe("sessions:list_changed from the chat routes", () => {
     expect((await call("/chat/sessions/bulk-tag", "PATCH", { sessionIds: ["s1"], tagId: tag.id })).status).toBe(200);
     expect((await call("/chat/sessions/s1/fork?providerId=claude", "POST")).status).toBe(201);
     expect(announced).toEqual(Array(7).fill("alpha"));
+    // Only the rename names the chat and its new title, which open tabs of it take at once.
+    expect(renames).toEqual([{ sessionId: "s1", title: "Renamed" }, ...Array(6).fill(undefined)]);
+  });
+
+  it("a rename's announcement carries the trimmed title the chat now has", async () => {
+    expect((await call("/chat/sessions/s1", "PATCH", { title: "  Spaced  " })).status).toBe(200);
+    expect(renames).toEqual([{ sessionId: "s1", title: "Spaced" }]);
   });
 
   it("a read announces nothing", async () => {
