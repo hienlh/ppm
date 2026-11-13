@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import "../test-setup.ts"; // disable auth + isolated PPM_HOME
 import { app } from "../../src/server/index.ts";
-import { chatWebSocket, listRunningSessions, getOrCreateEntry, getActiveSessionProjectPath, getSessionTurnOrigin } from "../../src/server/ws/chat.ts";
+import { chatWebSocket, listRunningSessions, ensureSessionEntry, getActiveSessionProjectPath, getSessionTurnOrigin } from "../../src/server/ws/chat.ts";
 import { chatService } from "../../src/services/chat.service.ts";
 import { providerRegistry } from "../../src/providers/registry.ts";
 import { configService } from "../../src/services/config.service.ts";
@@ -319,7 +319,7 @@ describe("POST /chat/sessions/:id/messages — validation", () => {
 
   it("400s when only the in-memory WS registry entry points at another project", async () => {
     const session = await createSession();
-    getOrCreateEntry(session.id, testProvider.id, OTHER_PROJECT, OTHER_PROJECT_PATH);
+    ensureSessionEntry(session.id, testProvider.id, OTHER_PROJECT_PATH, OTHER_PROJECT);
     const { status, json } = await postMessage(session.id, { content: "hi" }, TEST_PROJECT);
     expect(status).toBe(400);
     expect(json.error).toContain("different project");
@@ -411,7 +411,7 @@ describe("POST /chat/sessions/:id/messages — unattended AskUserQuestion", () =
     const { status } = await postMessage(session.id, { content: "ask-question-hold" });
     expect(status).toBe(202);
 
-    const entry = getOrCreateEntry(session.id, testProvider.id);
+    const entry = ensureSessionEntry(session.id, testProvider.id);
     await waitUntil(() => entry.turnEvents.some((e) => (e as any).type === "approval_request"));
     const at = entry.turnEvents.findIndex((e) => (e as any).type === "approval_request");
     expect(entry.turnEvents[at]).toMatchObject({ approved: false });
@@ -499,7 +499,7 @@ describe("POST /chat/sessions/:id/messages — turn-scoped state", () => {
     const ws = await connectWs(PORT, session.id);
     await postMessage(session.id, { content: "ask-question" });
     await waitUntil(() => running(session.id));
-    await waitUntil(() => getOrCreateEntry(session.id, testProvider.id).pendingApprovalEvent != null);
+    await waitUntil(() => ensureSessionEntry(session.id, testProvider.id).pendingApprovalEvent != null);
 
     const followUp = await postMessage(session.id, { content: "carry on" });
     expect(followUp.json.data.queued).toBe(true);

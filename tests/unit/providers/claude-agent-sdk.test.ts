@@ -766,7 +766,7 @@ describe("ClaudeAgentSdkProvider", () => {
           const session = await provider.createSession({ projectPath: root });
           for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) { /* consume */ }
           const plain = mockQueryFn.mock.calls[0]![0].options;
-          expect(plain.mcpServers?.github).toBeDefined();
+          expect(passedMcpServers(plain)?.github).toBeDefined();
           expect(plain.strictMcpConfig).toBeUndefined();
         } finally {
           list.mockRestore();
@@ -778,8 +778,10 @@ describe("ClaudeAgentSdkProvider", () => {
         const list = spyOn(mcpConfigService, "list").mockReturnValue({ github: { type: "http", url: "http://127.0.0.1:1/mcp" } } as never);
         try {
           const opts = await boundTurn({ extensionMcp });
-          expect(Object.keys(opts.mcpServers)).toEqual(["ppm-ext"]);
-          expect(opts.mcpServers["ppm-ext"]).toMatchObject({ type: "http", url: extensionMcp.url, headers: { Authorization: "Bearer tok-ext" } });
+          // Handed over in a file, as every server is: never on the CLI's command line.
+          expect(Object.keys(passedMcpServers(opts)!)).toEqual(["ppm-ext"]);
+          expect(passedMcpServers(opts)!["ppm-ext"]).toMatchObject({ type: "http", url: extensionMcp.url, headers: { Authorization: "Bearer tok-ext" } });
+          expect(JSON.stringify(opts)).not.toContain("tok-ext");
           expect(opts.strictMcpConfig).toBe(true);
           expect(await permissionHook(opts)({ tool_name: "mcp__ppm-ext__fg_overview", tool_input: {}, hook_event_name: "PreToolUse" })).toEqual(allow);
           // A chat bound with toolsets but no policy keeps its other servers beside it.
@@ -788,7 +790,8 @@ describe("ClaudeAgentSdkProvider", () => {
           const session = await provider.createSession({ projectPath: root });
           for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "default", extensionMcp })) { /* consume */ }
           const plain = mockQueryFn.mock.calls[0]![0].options;
-          expect(Object.keys(plain.mcpServers).sort()).toEqual(["github", "ppm-ext"]);
+          // The host's own Claude settings may add servers of their own; these two must be there.
+          expect(Object.keys(passedMcpServers(plain)!)).toEqual(expect.arrayContaining(["github", "ppm-ext"]));
         } finally {
           list.mockRestore();
         }
@@ -1965,7 +1968,7 @@ describe("ClaudeAgentSdkProvider", () => {
       mockQueryFn.mockReturnValue(createMockQueryIterator([result()], 0));
       const answer = await provider.completeOnce({ prompt: "hi", model: "haiku" });
       expect(answer).toMatchObject({ text: "fine", costUsd: 0.0123 });
-      expect(answer.json).toBeUndefined();
+      expect(answer.structured).toBeUndefined();
       const { options } = mockQueryFn.mock.calls[0]![0];
       expect(options).toMatchObject({ model: "haiku", tools: [], mcpServers: {}, strictMcpConfig: true, settingSources: [], persistSession: false, maxTurns: 1 });
       expect(options.cwd).toEndWith("one-shot");
@@ -1978,17 +1981,20 @@ describe("ClaudeAgentSdkProvider", () => {
       const schema = { type: "object", properties: { ask: { type: "boolean" } }, required: ["ask"] };
       mockQueryFn.mockReturnValue(createMockQueryIterator([result({ structured_output: { ask: true } })], 0));
       const answer = await provider.completeOnce({ prompt: "hi", model: "sonnet", systemPrompt: "Judge.", effort: "low", jsonSchema: schema });
-      expect(answer).toMatchObject({ text: "fine", json: { ask: true }, costUsd: 0.0123 });
+      expect(answer).toMatchObject({ text: "fine", structured: { ask: true }, costUsd: 0.0123 });
       const { options } = mockQueryFn.mock.calls[0]![0];
       expect(options).toMatchObject({ systemPrompt: "Judge.", effort: "low", outputFormat: { type: "json_schema", schema } });
       // The structured answer is a tool call: a one-turn cap would end the run before it.
-      expect("maxTurns" in options).toBe(false);
+      expect(options.maxTurns).toBe(3);
     });
 
-    it("fails when a schema was asked for and no structured output came back", async () => {
+    // The caller decides what an answer without the asked-for shape means: `ctx.ai.ask` refuses it
+    // (schedule-script tests), an extension's `ppm.ai.complete` validates the text instead.
+    it("answers with the text alone when a schema was asked for and no structured output came back", async () => {
       mockQueryFn.mockReturnValue(createMockQueryIterator([result()], 0));
-      await expect(provider.completeOnce({ prompt: "hi", model: "haiku", jsonSchema: { type: "object" } }))
-        .rejects.toThrow("Claude did not answer in the requested JSON shape");
+      const answer = await provider.completeOnce({ prompt: "hi", model: "haiku", jsonSchema: { type: "object" } });
+      expect(answer.text).toBe("fine");
+      expect(answer.structured).toBeUndefined();
     });
   });
 });

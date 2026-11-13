@@ -56,7 +56,7 @@ describe("schema", () => {
     expect(tables).toContain("extension_session_bindings");
     expect(tables).toContain("extension_mcp_toolsets");
     expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: CURRENT_SCHEMA_VERSION });
-    expect(CURRENT_SCHEMA_VERSION).toBe(60);
+    expect(CURRENT_SCHEMA_VERSION).toBe(71);
     const columns = (db.query("PRAGMA table_info(extension_session_bindings)").all() as { name: string }[]).map((c) => c.name);
     expect(columns).toContain("extension_removed_at");
   });

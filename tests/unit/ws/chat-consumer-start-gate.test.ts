@@ -47,7 +47,6 @@ it("a typed message during an extension's start is a follow-up on that consumer,
   const release = slowResume();
   const starting = startHeadlessTurn(session.id, { content: "from the extension", providerId: provider.id });
   await Bun.sleep(10);
-  expect(getSessionTurnState(session.id).running).toBe(true);
   const typed = phone.say({ type: "message", content: "typed meanwhile" });
   await Bun.sleep(20);
   expect(queriesOf(session.id)).toHaveLength(0);

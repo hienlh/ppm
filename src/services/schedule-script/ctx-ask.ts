@@ -48,6 +48,10 @@ export async function scheduleAsk(schedule: Pick<Schedule, "provider_id">, promp
       ...(opts.jsonSchema && { jsonSchema: opts.jsonSchema }),
       timeoutMs,
     });
+    // A script that asked for a shape gets that shape or an error, never prose to parse itself.
+    if (opts.jsonSchema && answer.structured === undefined) {
+      return { ok: false, text: answer.text, error: "Claude did not answer in the requested JSON shape", costUsd: answer.costUsd ?? 0 };
+    }
     return { ok: true, text: answer.text, ...(answer.structured !== undefined && { json: answer.structured }), costUsd: answer.costUsd ?? 0 };
   } catch (e) {
     return {

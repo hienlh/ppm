@@ -484,9 +484,16 @@ function armExtensionApprovalDeadline(sessionId: string, entry: SessionEntry, re
   if (previous) clearTimeout(previous);
   deadlines.set(requestId, setTimeout(() => {
     entry.approvalDeadlines?.delete(requestId);
-    if (activeSessions.get(sessionId) !== entry || !approvals.has(entry, requestId)) return;
+    if (activeSessions.get(sessionId) !== entry) return;
+    const event = [entry.pendingApprovalEvent, ...(entry.approvalQueue ?? [])].find((e) => e?.requestId === requestId);
+    if (!event) return;
     log.info(`session=${sessionId} extension turn: approval ${requestId} unanswered after ${extensionApprovalDeadlineMs / 1000}s, denied`);
-    if (approvals.clear(sessionId, entry, requestId, APPROVAL_END.extensionDeadline, { deny: true, announce: true })) {
+    const reason = APPROVAL_END.extensionDeadline;
+    // PPM's own approval is settled through its broker, which takes the card off every device
+    // itself; a provider's is refused here, as the extension's door, and its card announced gone.
+    const ppm = isPpmApproval(event);
+    if (!ppm) chatService.resolveApproval(entry.providerId, sessionId, requestId, false, undefined, { reason: reason.code, origin: "extension" });
+    if (approvals.clear(sessionId, entry, requestId, reason, ppm ? { deny: true } : { announce: true })) {
       broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
     }
   }, extensionApprovalDeadlineMs));
@@ -1025,10 +1032,14 @@ function ppmApprovalResolved(sessionId: string, requestId: string, approved: boo
   approvals.clear(sessionId, entry, requestId, answer === null ? APPROVAL_END.requestEnded : APPROVAL_END.answered, { approved });
   broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
 }
-setDbApprovalChat({
-  announce: (sessionId, event: DbApprovalEvent) => announcePpmApproval(sessionId, event),
-  resolved: (sessionId, requestId, approved) => ppmApprovalResolved(sessionId, requestId, approved),
-}, resolveMigratedSession);
+/** Hand `db_execute` approvals to this chat; again in a test that swapped in a chat of its own. */
+export function registerDbApprovalChat(): void {
+  setDbApprovalChat({
+    announce: (sessionId, event: DbApprovalEvent) => announcePpmApproval(sessionId, event),
+    resolved: (sessionId, requestId, approved) => ppmApprovalResolved(sessionId, requestId, approved),
+  }, resolveMigratedSession);
+}
+registerDbApprovalChat();
 
 /** A session tool's card appeared in, or left, a session: the tracking bar follows it app-wide. */
 function collabApprovalGlobal(sessionId: string, event: Omit<SessionCollabApprovalEvent, "type" | "projectName" | "sessionId">): void {
@@ -1996,6 +2007,8 @@ interface DeliverOpts {
    * Another session's AI, the PPM Assistant included, comes in through `deliverToSession`.
    */
   origin: "ws" | MessageServerOrigin | "extension";
+  /** With `extension` only: the turn the message opens or waits to open (see `deliverExtensionMessage`). */
+  extension?: ExtensionTurnSpec;
   sender?: ChatWsSocket;
   /** The channel the user typed on, when it is not a PPM screen. */
   channel?: "telegram";
@@ -2032,7 +2045,10 @@ const busyForWatch = (entry: SessionEntry): boolean =>
  * to what will actually run, echoed to the session's other devices, then started as a turn or
  * pushed into the running one.
  */
-async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<DeliverResult> {
+/** A delivery as the server sees it: how the message went in, which the public answer leaves out. */
+type MessageDelivery = { ok: true; sessionId: string; delivered?: SessionDelivery; newConsumer?: boolean } | { ok: false; error: string };
+
+async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<MessageDelivery> {
   // Counted from before the first await until the message has started or joined a turn (or was
   // refused), so a watch report checking in between sees the chat as busy.
   if (opts.origin === "watch") return deliverMessage(sessionId, entry, text, opts);
@@ -2044,7 +2060,7 @@ async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: 
   }
 }
 
-async function deliverMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<DeliverResult> {
+async function deliverMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<MessageDelivery> {
   const providerId = entry.providerId;
   const parsed = { content: text };
   // Only the user's own messages (typed in PPM or on Telegram) may push a waiting card aside.
@@ -2153,33 +2169,56 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
     origin: opts.origin, scripted: !!opts.traceOrigin, assistant: !!opts.traceOrigin && isAssistantSession(sessionId, entry.projectPath),
     priority: opts.priority ?? "next",
   };
-  const wasRunning = turnRunning(entry);
-  claimTurnOrigin(entry, arriving);
+  let wasRunning = turnRunning(entry);
+  // An extension's message is placed under the session lock instead, where the turn it would
+  // reach is known: a person's message still resuming the session counts as no turn out here.
+  const extension = opts.origin === "extension" ? opts.extension : undefined;
+  if (!extension) claimTurnOrigin(entry, arriving);
   // What this device shows, for an Assistant session's turn. Validated and cleaned by
   // chatService, which ignores it for every other session; only an object is passed on.
   const rawSummary = opts.uiSummary as unknown;
   const uiSummary = rawSummary && typeof rawSummary === "object" && !Array.isArray(rawSummary) ? rawSummary as UiSummary : undefined;
 
-  const result = await withSessionLock(sessionId, () => submitToSession(sessionId, entry, parsed.content, {
-    origin: opts.traceOrigin ?? opts.origin,
-    ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
-    images: opts.images,
-    imagePaths: opts.imagePaths,
-    priority: opts.priority ?? "next",
-    ...(opts.sender ? { sender: opts.sender } : {}),
-    receivedAt: opts.receivedAt ?? Date.now(),
-    // Already done above, for the user's own messages only.
-    supersedePendingApproval: false,
-    ...(opts.permissionMode ? { permissionMode: opts.permissionMode } : {}),
-    turnContext: {
-      ...(uiSummary ? { uiSummary } : {}),
-      ...(opts.channel ? { channel: opts.channel } : {}),
-      ...(opts.watchEvents?.length ? { watchEvents: opts.watchEvents } : {}),
-      ...(opts.wakeNews?.length ? { wakeNews: opts.wakeNews } : {}),
-    },
-  }));
+  const result = await withSessionLock(sessionId, async () => {
+    let priority = opts.priority ?? "next";
+    let ownTurn = false;
+    if (extension) {
+      // It never steers or takes over a running turn that is not its own: behind one it waits
+      // as `later`, and owns only the turn it opens.
+      wasRunning = turnRunning(entry);
+      ownTurn = wasRunning && entry.turnOrigin === "extension" && entry.extensionId === extension.extensionId;
+      if (wasRunning && !ownTurn) priority = "later";
+      arriving.priority = priority;
+      claimTurnOrigin(entry, arriving);
+    }
+    const submitted = await submitToSession(sessionId, entry, parsed.content, {
+      origin: opts.traceOrigin ?? opts.origin,
+      ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
+      images: opts.images,
+      imagePaths: opts.imagePaths,
+      priority,
+      ...(opts.sender ? { sender: opts.sender } : {}),
+      receivedAt: opts.receivedAt ?? Date.now(),
+      // Already done above, for the user's own messages only.
+      supersedePendingApproval: false,
+      ...(opts.permissionMode ? { permissionMode: opts.permissionMode } : {}),
+      turnContext: {
+        ...(uiSummary ? { uiSummary } : {}),
+        ...(opts.channel ? { channel: opts.channel } : {}),
+        ...(opts.watchEvents?.length ? { watchEvents: opts.watchEvents } : {}),
+        ...(opts.wakeNews?.length ? { wakeNews: opts.wakeNews } : {}),
+      },
+    });
+    // Still under the lock, so the next message sees whose turn this is: an extension's turn it
+    // opened is running now; one queued behind another turn starts when that turn ends.
+    if (extension && submitted.ok) {
+      if (!wasRunning && submitted.delivered === "started") beginExtensionTurn(entry, extension);
+      else if (!ownTurn && submitted.delivered === "queued") entry.queuedExtensionTurn = extension;
+    }
+    return submitted;
+  });
   if (result.ok) noteQueuedTurnOrigin(entry, arriving, result.delivered, wasRunning);
-  return result.ok ? { ok: true, sessionId, delivered: result.delivered } : result;
+  return result.ok ? { ok: true, sessionId, delivered: result.delivered, ...(result.newConsumer ? { newConsumer: true } : {}) } : result;
 }
 
 /** What the AI hears when the user sends a message instead of answering one of PPM's approvals. */
@@ -2388,26 +2427,17 @@ export async function deliverExtensionMessage(
     replyTo?: ReplyReference;
     priority?: "now" | "next" | "later";
   },
-): Promise<DeliverResult> {
-  const running = turnRunning(entry);
-  const ownTurn = running && entry.turnOrigin === "extension" && entry.extensionId === spec.extensionId;
-  const priority = running && !ownTurn ? "later" : spec.priority === "later" ? "later" : "next";
-  const result = await deliverUserMessage(sessionId, entry, text, {
+): Promise<MessageDelivery> {
+  const { images, imagePaths, replyTo, priority, ...turn } = spec;
+  return deliverUserMessage(sessionId, entry, text, {
     origin: "extension",
-    images: spec.images,
-    imagePaths: spec.imagePaths,
-    ...(spec.replyTo ? { replyTo: spec.replyTo } : {}),
-    priority,
+    extension: turn,
+    ...(images?.length ? { images } : {}),
+    ...(imagePaths?.length ? { imagePaths } : {}),
+    ...(replyTo ? { replyTo } : {}),
+    priority: priority === "later" ? "later" : "next",
     receivedAt: Date.now(),
   });
-  if (!result.ok) return result;
-  if (result.delivered === "started") {
-    // A builtin answered at once, or the turn already ended: nothing to arm then.
-    if (entry.phase !== "idle" && entry.turnOrigin === "extension") beginExtensionTurn(entry, spec);
-  } else if (!ownTurn && result.delivered === "queued") {
-    entry.queuedExtensionTurn = spec;
-  }
-  return result;
 }
 
 /** Stop the session's running turn on an extension's request (its `chat:cancel`, the REST cancel). */
@@ -2475,7 +2505,7 @@ setChatControl({
     });
     // Nobody is watching: the entry goes once it is idle (a running turn re-arms this when it ends).
     if (entry.clients.size === 0) startCleanupTimer(sessionId);
-    return result;
+    return result.ok ? { ok: true, sessionId: result.sessionId } : result;
   },
   answerApproval(asked, requestId, answer, origin) {
     const sessionId = resolveMigratedSession(asked);
@@ -2684,7 +2714,8 @@ export interface SubmitToSessionOpts {
   turnContext?: TurnContext;
 }
 
-export type SubmitResult = { ok: true; delivered: SessionDelivery } | { ok: false; error: string };
+/** `newConsumer` when the message started the session's consumer rather than joining a live one. */
+export type SubmitResult = { ok: true; delivered: SessionDelivery; newConsumer?: boolean } | { ok: false; error: string };
 
 /**
  * What a follow-up handed to the live stream right now will do. Codex says for itself whether
@@ -2826,7 +2857,7 @@ async function handOffToSession(sessionId: string, entry: SessionEntry, content:
       }, 0);
     });
     await started;
-    return { ok: true, delivered: "started" };
+    return { ok: true, delivered: "started", newConsumer: true };
   }
 
   // Follow-up: push into existing generator via provider. A `later` message never joins the
@@ -3194,7 +3225,7 @@ export const chatWebSocket = {
       // The browser's own id for this message, handed back on the `turn_started` it opens.
       const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128
         ? parsed.clientMessageId : undefined;
-      await deliverUserMessage(sessionId, entry, parsed.content, {
+      const delivered = await deliverUserMessage(sessionId, entry, parsed.content, {
         origin: "ws",
         sender: ws,
         images: parsed.images,
@@ -3208,6 +3239,11 @@ export const chatWebSocket = {
         // An in-process caller (a script schedule) reaches this handler with `ws.data.origin` set.
         ...(ws.data.origin ? { traceOrigin: ws.data.origin } : {}),
       });
+      // A message the session could not take (a resume that failed, a chat closed because the
+      // extension that bound it was removed) says why on the device that sent it.
+      if (!delivered.ok) {
+        try { ws.send(JSON.stringify({ type: "error", message: delivered.error })); } catch { evictClient(entry, ws); }
+      }
     } else if (parsed.type === "set_model") {
       // Persist per-session model override. If an idle subprocess is alive,
       // abort it so the next message recreates the query with the new model

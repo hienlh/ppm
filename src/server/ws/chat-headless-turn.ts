@@ -10,6 +10,7 @@ import {
   dropIdleSubprocess,
   ensureSessionEntry,
   hasBackgroundWork,
+  startCleanupTimer,
   type SessionEntry,
 } from "./chat.ts";
 import {
@@ -86,11 +87,15 @@ export async function startHeadlessTurn(requestedId: string, opts: HeadlessTurnO
     ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
     ...(opts.priority ? { priority: opts.priority } : {}),
   });
+  // Nobody is watching: the entry goes once it is idle (a running turn re-arms this when it ends).
+  if (entry.clients.size === 0) startCleanupTimer(sessionId);
   if (!result.ok) {
     const starting = /still starting/i.test(result.error);
     throw new HeadlessTurnError(starting ? BUSY_STARTING : result.error, starting ? 503 : 409);
   }
-  return { queued: result.delivered !== undefined && result.delivered !== "started" };
+  // Queued: it joined a live session rather than starting its consumer (a PPM builtin answered
+  // at once and joined nothing).
+  return { queued: result.delivered !== undefined && !result.newConsumer };
 }
 
 /**
