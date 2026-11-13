@@ -24,6 +24,12 @@ const SERVER = [
   "chat changes list", "chat changes diff", "chat changes keep", "chat changes reopen", "chat changes revert",
   "chat changes undo", "chat turns", "chat revert-turn",
   "tags list", "tags add", "tags rename", "tags remove",
+  "git status", "git log", "git diff", "git stage", "git unstage", "git discard", "git commit",
+  "git undo discard", "git undo commit", "git fetch", "git pull", "git push", "git publish",
+  "git branch create", "git branch checkout", "git branch delete", "git branch merge",
+  "git cherry-pick", "git revert", "git tag", "git abort", "git continue",
+  "git stash save", "git stash list", "git stash apply", "git stash pop", "git stash drop",
+  "git worktree list", "git worktree add", "git worktree remove", "git worktree prune",
 ];
 
 const DIRECT_ALLOWED = [
@@ -34,7 +40,6 @@ const DIRECT_ALLOWED = [
   "backup", "restore",
   "config get", "projects list",
   "chat list", "chat send", "chat resume",
-  "git status", "git log", "git diff",
   "db list", "db test", "db tables", "db schema", "db data", "db query", "db driver list",
   "ext list",
   "jira config show", "jira config test", "jira watch list",
@@ -42,8 +47,6 @@ const DIRECT_ALLOWED = [
 ];
 
 const DIRECT_PENDING = [
-  "git stage", "git unstage", "git commit", "git push", "git pull",
-  "git branch create", "git branch checkout", "git branch delete", "git branch merge",
   "cloud alias set", "cloud alias remove",
   "ext install", "ext remove", "ext enable", "ext disable", "ext dev",
   "db add", "db remove", "db run", "db driver install", "db driver remove",

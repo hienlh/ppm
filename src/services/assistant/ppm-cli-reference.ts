@@ -96,6 +96,7 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "screens at once, and show the user a card that says what will change. Use them, not the commands below:",
     ...TOOLS_INSTEAD_OF_CLI.map(({ area, tools }) => `- ${area}: ${tools.join(", ")}`),
     "Run `ppm git` only for what the git tools leave out (merging or deleting a branch, for instance).",
+    "`ppm git` stages, unstages and discards whole files; staging single blocks of a file is done in PPM's Source Control.",
     "",
     "## Commands that go through the running server (prefer these)",
     "They change the running PPM itself, with the checks PPM's screens make. With no PPM running they write",
@@ -106,6 +107,7 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "- chat stop/rename/pin/tag/read/delete: prefer chat_stop, chat_organize and chat_delete",
     "- chat stop sends the stop PPM's Stop button sends; chat delete stops a running turn first and deletes nothing if it does not stop",
     "- chat changes/turns/revert-turn: prefer chat_changes and chat_changes_answer; revert-turn prints its preview and writes only with --yes",
+    "- git: prefer the git tools; every git command takes -p <project> and --repo <path> (a repository inside the project)",
     "",
     "## Commands that write PPM's data directly",
     "The running server keeps much of this in memory: a change may not show until it restarts, and the",
@@ -262,63 +264,215 @@ ppm config get <key>
 ppm config set <key> <value>
   Set a config value (e.g. port 9090), through the running PPM when one holds the database
 \`\`\`
-## ppm git — Git operations for a project
+## ppm git — Git operations for a project, through the running PPM
 \`\`\`
 ppm git status
-  Show working tree status
-  -p, --project <name> — Project name or path
+  Show the branch and every changed file, as Source Control does
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
 
 ppm git log
   Show recent commits
-  -p, --project <name> — Project name or path
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
   -n, --count <n> — Number of commits to show [default: 20]
 
 ppm git diff [ref1] [ref2]
-  Show diff between refs or working tree
-  -p, --project <name> — Project name or path
+  Show the diff between two refs, or of the working tree
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
 
 ppm git stage <files...>
   Stage files (use "." to stage all)
-  -p, --project <name> — Project name or path
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
 
 ppm git unstage <files...>
   Unstage files
-  -p, --project <name> — Project name or path
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+
+ppm git discard <files...>
+  Throw away the files' unstaged changes; PPM keeps a copy to undo it
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
 
 ppm git commit
-  Commit staged changes
-  -p, --project <name> — Project name or path
-  -m, --message <msg> — Commit message (required)
+  Commit the staged changes
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  -m, --message <msg> — Commit message (required unless --amend)
+  --amend — Replace the last commit
+  --signoff — Add a Signed-off-by line
 
-ppm git push
-  Push to remote
-  -p, --project <name> — Project name or path
-  --remote <remote> — Remote name [default: origin]
-  --branch <branch> — Branch name
+ppm git undo discard <id>
+  Put back what a discard threw away (the id 'ppm git discard' printed)
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+
+ppm git undo commit <hash>
+  Undo the last commit, keeping its changes staged; refused if it was pushed
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+
+ppm git fetch
+  Fetch from every remote, or one
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  --remote <name> — Only this remote
+  --prune — Drop remote-tracking branches the remote no longer has
 
 ppm git pull
-  Pull from remote
-  -p, --project <name> — Project name or path
-  --remote <remote> — Remote name
-  --branch <branch> — Branch name
+  Pull the current branch from its upstream
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  --rebase — Rebase instead of merging
+
+ppm git push
+  Push the current branch, or a branch to a named remote
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  --remote <name> — A remote the repository has (default: the branch's own)
+  --branch <name> — The branch to push (needs --remote)
+
+ppm git publish
+  Push a branch with no upstream and make the remote branch its upstream
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
 
 ppm git branch create <name>
-  Create and checkout a new branch
-  -p, --project <name> — Project name or path
+  Create a branch and check it out
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
   --from <ref> — Base ref (commit/branch/tag)
 
 ppm git branch checkout <name>
-  Switch to a branch
-  -p, --project <name> — Project name or path
+  Switch to a branch, tag or commit
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  --detach — Check out the commit itself, on no branch
+  --track — For a remote branch: create the local branch that follows it
 
 ppm git branch delete <name>
   Delete a branch
-  -p, --project <name> — Project name or path
-  -f, --force — Force delete
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  -f, --force — Delete it even when it is not merged
 
 ppm git branch merge <source>
-  Merge a branch into current branch
-  -p, --project <name> — Project name or path
+  Merge a branch into the current branch
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+
+ppm git cherry-pick <hash>
+  Apply one commit's change on the current branch
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+
+ppm git revert <hash>
+  Make a commit that undoes another
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+
+ppm git tag <name>
+  Tag the current commit, or another
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  --at <hash> — The commit to tag (default: HEAD)
+
+ppm git abort
+  Abandon the merge, rebase, cherry-pick or revert that stopped part way
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+
+ppm git continue
+  Finish the merge, rebase, cherry-pick or revert that stopped part way
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+
+ppm git stash save
+  Stash the working tree's changes
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  -m, --message <msg> — A message for the stash
+  -u, --include-untracked — Stash untracked files too
+
+ppm git stash list
+  List the stashes
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+
+ppm git stash apply <index>
+  Restore stash@{index}
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  --expect <hash> — Act only if the stash at that index is still this one (its full hash, as 'stash list' prints)
+
+ppm git stash pop <index>
+  Restore and delete stash@{index}
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  --expect <hash> — Act only if the stash at that index is still this one (its full hash, as 'stash list' prints)
+
+ppm git stash drop <index>
+  Delete stash@{index}
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  --expect <hash> — Act only if the stash at that index is still this one (its full hash, as 'stash list' prints)
+
+ppm git worktree list
+  List the repository's worktrees
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+
+ppm git worktree add <path>
+  Add a worktree beside the repository
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  --branch <ref> — An existing branch to check out in it
+  -b, --new-branch <name> — Create this branch for it
+
+ppm git worktree remove <path>
+  Remove a linked worktree
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
+  -f, --force — Remove it even with uncommitted changes
+
+ppm git worktree prune
+  Forget worktrees whose folders are gone
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --repo <path> — A repository inside the project, when the project folder holds several
+  --json — Print the route's answer as JSON
 \`\`\`
 ## ppm chat — Manage AI chat sessions
 \`\`\`
