@@ -132,19 +132,28 @@ describe("DELETE /fs/delete", () => {
     assertIsolatedPpmHome();
     const secret = join(getPpmDir(), "ppm.db");
     writeFileSync(secret, "secret");
-    const res = await del("/fs/delete", { path: secret, permanent: true });
-    expect(res.status).toBe(403);
-    expect((await res.json()).code).toBe("EPROTECTED");
-    expect(existsSync(secret)).toBe(true);
+    try {
+      const res = await del("/fs/delete", { path: secret, permanent: true });
+      expect(res.status).toBe(403);
+      expect((await res.json()).code).toBe("EPROTECTED");
+      expect(existsSync(secret)).toBe(true);
+    } finally {
+      // The run's shared PPM_HOME: a later file that reopens its database must not find this.
+      rmSync(secret, { force: true });
+    }
   });
 
   it("refuses to move a file inside the PPM directory to the trash", async () => {
     assertIsolatedPpmHome();
     const secret = join(getPpmDir(), "ppm.db");
     writeFileSync(secret, "secret");
-    const res = await del("/fs/delete", { path: secret });
-    expect(res.status).toBe(403);
-    expect(existsSync(secret)).toBe(true);
+    try {
+      const res = await del("/fs/delete", { path: secret });
+      expect(res.status).toBe(403);
+      expect(existsSync(secret)).toBe(true);
+    } finally {
+      rmSync(secret, { force: true });
+    }
   });
 
   it("refuses a drive or filesystem root", async () => {
