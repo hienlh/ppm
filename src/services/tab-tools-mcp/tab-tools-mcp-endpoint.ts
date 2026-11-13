@@ -22,6 +22,10 @@ import { createTerminalTools, type TerminalTools } from "./terminal-tools.ts";
 import { SESSION_HISTORY_TOOL_DEFINITIONS } from "./session-history-tool-definitions.ts";
 import { createSessionHistoryTools, type SessionHistoryTools } from "./session-history-tools.ts";
 import { isSessionHistoryTool } from "../../shared/session-history-tools.ts";
+import { MEMORY_TOOL_DEFINITIONS } from "./memory-tool-definitions.ts";
+import type { MemoryTools } from "./memory-tools.ts";
+import { memoryHostTools } from "../memory/memory-host-client.ts";
+import { isMemoryTool } from "../../shared/memory-tools.ts";
 
 /**
  * `/api/tab-tools-mcp` — serves the tab tools to one chat session's own agent (the MCP plumbing
@@ -29,7 +33,8 @@ import { isSessionHistoryTool } from "../../shared/session-history-tools.ts";
  * read, `open_url` a web server on the host, and `run_in_terminal` a terminal with a command
  * typed in, all on that session's devices; `read_terminal` reads the terminals of the session's
  * project. Nothing a tab shows comes back except, for an HTML page, the check of how it rendered.
- * The session-history tools (`session-history-tools.ts`) search and read the project's other chats.
+ * The session-history tools (`session-history-tools.ts`) search and read the project's other chats,
+ * and the memory tools (`memory-tools.ts`) search, read, write and forget PPM's shared memories.
  */
 
 type Request = (sessionId: string, req: TabOpenAsk, waitMs: number) => Promise<TabOpenOutcome>;
@@ -54,6 +59,8 @@ export function createTabToolsMcpHandler(deps: {
   openUrl: OpenUrlTool;
   /** `search_sessions`, `list_session_turns`, `read_session_turns`. */
   sessionHistory: SessionHistoryTools;
+  /** `memory_search`, `memory_read`, `memory_write`, `memory_forget`; listed only when given. */
+  memory?: MemoryTools;
   resolveTarget?: (input: unknown, binding: TabToolsBinding) => Promise<TabTargetOutcome>;
 }) {
   const resolveTarget = deps.resolveTarget ?? resolveTabTarget;
@@ -99,6 +106,7 @@ export function createTabToolsMcpHandler(deps: {
     tools: [
       OPEN_FILE_TOOL_DEFINITION, OPEN_PREVIEW_TOOL_DEFINITION, OPEN_URL_TOOL_DEFINITION,
       READ_TERMINAL_TOOL_DEFINITION, RUN_IN_TERMINAL_TOOL_DEFINITION, ...SESSION_HISTORY_TOOL_DEFINITIONS,
+      ...(deps.memory ? MEMORY_TOOL_DEFINITIONS : []),
     ],
     unavailable: (name) => (deps.enabled(name) ? null : ppmToolOffMessage(name)),
     callTool: async ({ sessionId }, name, rawArgs) => {
@@ -108,6 +116,7 @@ export function createTabToolsMcpHandler(deps: {
       if (name === READ_TERMINAL_TOOL) return deps.terminal.read(binding, args);
       if (name === RUN_IN_TERMINAL_TOOL) return deps.terminal.run(binding, args);
       if (isSessionHistoryTool(name)) return deps.sessionHistory.call(binding, name, args);
+      if (isMemoryTool(name) && deps.memory) return deps.memory.call(binding, name, args);
       const resolved = await resolveTarget(args.path, binding);
       if (!resolved.ok) return textResult(resolved.error, true);
       if (name === OPEN_FILE_TOOL) return openFile(binding, resolved.target, args);
@@ -172,4 +181,5 @@ export const tabToolsMcpHandler = createTabToolsMcpHandler({
     startPrivateForward: async (port) => (await startTailscaleForward(port)).url,
   }),
   sessionHistory: createSessionHistoryTools({ canonical: canonicalTabSession }),
+  memory: memoryHostTools(),
 });

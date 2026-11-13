@@ -17,6 +17,8 @@ const otherIntrosAnswered = () =>
 const SIX = ["search_sessions", "list_session_turns", "read_session_turns", "create_session", "send_to_session", "session_status", "design_screenshot"];
 const ai = () => configService.get("ai");
 const onTools = () => PPM_TOOLS.filter((tool) => ppmToolOn(ai(), tool));
+/** The view narrowed to the intro under test: other features are introduced beside it. */
+const pendingOfIntro = () => featureIntrosView().pending.filter((i) => i.id === INTRO.id);
 let savedProjects: ProjectConfig[];
 
 beforeEach(() => {
@@ -36,7 +38,7 @@ afterEach(() => {
 describe("feature introductions", () => {
   it("introduces the six session tools, and they are off on every server path until answered", () => {
     expect([...INTRO.tools]).toEqual(SIX);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id]);
+    expect(pendingOfIntro().map((i) => i.id)).toEqual([INTRO.id]);
     for (const tool of SIX) expect(onTools()).not.toContain(tool);
   });
 
@@ -46,7 +48,7 @@ describe("feature introductions", () => {
     expect(ai().ppm_tools).toEqual(Object.fromEntries(SIX.map((t) => [t, true])));
     expect(ai().session_collab).toEqual({ askBeforeCreate: false });
     for (const tool of SIX) expect(onTools()).toContain(tool);
-    expect(featureIntrosView().pending).toEqual([]);
+    expect(pendingOfIntro()).toEqual([]);
   });
 
   it("ignores a second answer: the first one, or a choice made in Settings since, stands", () => {
@@ -71,12 +73,12 @@ describe("feature introductions", () => {
     const day = (n: number) => new Date(Date.UTC(2026, 10, 1 + n, 9));
     for (let n = 1; n < MAX_FEATURE_INTRO_SKIPS; n++) {
       expect(skipFeatureIntro(INTRO.id, day(n))).toMatchObject({ ok: true, changed: true, state: { answer: null, skips: n } });
-      expect(featureIntrosView().pending).toHaveLength(1);
+      expect(pendingOfIntro()).toHaveLength(1);
     }
     expect(skipFeatureIntro(INTRO.id, day(MAX_FEATURE_INTRO_SKIPS)))
       .toMatchObject({ ok: true, state: { answer: "off", skips: MAX_FEATURE_INTRO_SKIPS, via: "skips" } });
     const view = featureIntrosView();
-    expect(view.pending).toEqual([]);
+    expect(view.pending.filter((i) => i.id === INTRO.id)).toEqual([]);
     expect(view.newInSettings).toEqual([INTRO.id]);
     for (const tool of SIX) expect(onTools()).not.toContain(tool);
     // A skip after the question ended changes nothing.
@@ -87,7 +89,7 @@ describe("feature introductions", () => {
 
   it("counts a switch already set in Settings as the answer, on if any set one is on", () => {
     configService.set("ai", { ...ai(), ppm_tools: { read_session_turns: false } });
-    expect(featureIntrosView().pending).toEqual([]);
+    expect(pendingOfIntro()).toEqual([]);
     expect(readFeatureIntroStates()[INTRO.id]).toMatchObject({ answer: "off", via: "settings" });
     for (const tool of SIX) expect(onTools()).not.toContain(tool);
 
@@ -133,7 +135,9 @@ describe("scheduled prompts in a chat", () => {
   const THREE = ["session_schedule_create", "session_schedule_list", "session_schedule_delete"];
 
   it("is a question of its own: turning the session tools on leaves the schedule tools off and still asked", () => {
-    configService.set("feature_intros", {});
+    // Only these two are asked here: the features introduced after them are already answered.
+    const later = FEATURE_INTROS.slice(FEATURE_INTROS.indexOf(SCHEDULES) + 1);
+    configService.set("feature_intros", Object.fromEntries(later.map((i) => [i.id, { answer: "off" as const, skips: 0, via: "tour" as const }])));
     expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id]);
     answerFeatureIntro(INTRO.id, "on");
     for (const tool of THREE) expect(onTools()).not.toContain(tool);
