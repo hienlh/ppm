@@ -1,12 +1,13 @@
 /**
  * A SQLite connection is opened with no further question, so its file is judged by where it really
  * is — at save time and at every open, for every caller: PPM's own database (directly or through a
- * symlink), its snapshots and the Cloudflare login are refused. The Assistant's tools are also
+ * symlink or a hard link), its snapshots and the Cloudflare login are refused, and so is a Windows
+ * spelling that names no drive. The Assistant's tools are also
  * refused what it keeps private, such as a browser profile's cookie store.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { _resetPpmDir, getPpmDir } from "../../../../src/services/ppm-dir.ts";
@@ -48,6 +49,34 @@ afterAll(() => {
 });
 
 describe("sqlitePathRefusal", () => {
+  it("refuses a Windows spelling that names no drive: a device path, a \\\\.\\ path or a share", () => {
+    for (const file of ["\\\\?\\C:\\Users\\me\\.ppm\\ppm.db", "\\\\.\\C:\\Users\\me\\.ppm\\ppm.db", "\\\\localhost\\C$\\Users\\me\\.ppm\\ppm.db"]) {
+      expect({ file, refusal: sqlitePathRefusal(file, { platform: "win32" }) }).toMatchObject({ file, refusal: expect.stringContaining("not a path on a local drive") });
+    }
+    // Elsewhere a path starting with two slashes is an ordinary local one.
+    expect(sqlitePathRefusal(join(root, "app.db"), { platform: "linux" })).toBeNull();
+  });
+
+  it("refuses a hard link to ppm.db or to a snapshot, at save and at every open, by file identity", async () => {
+    const ppmDb = sqliteFile(join(getPpmDir(), "ppm.db"));
+    mkdirSync(getBackupsDir(), { recursive: true });
+    const snapshot = sqliteFile(join(getBackupsDir(), "ppm-20260101T000000Z-hourly.db"));
+    const project = join(root, "project");
+    mkdirSync(project);
+    for (const [target, name] of [[ppmDb, "copy.db"], [snapshot, "snap.db"]] as const) {
+      const link = join(project, name);
+      linkSync(target, link);
+      expect({ name, refusal: sqlitePathRefusal(link) }).toMatchObject({ name, refusal: expect.stringContaining("hard link") });
+      expect(() => assertSqlitePathAllowed(link)).toThrow(SqlitePathRefusedError);
+      expect(() => sqliteService.getTables(link, link)).toThrow("hard link");
+      expect(await sqliteAdapter.testConnection({ type: "sqlite", path: link })).toMatchObject({ ok: false, error: expect.stringContaining("hard link") });
+    }
+    // An ordinary file with a second name of its own is not a protected one.
+    const own = sqliteFile(join(project, "own.db"));
+    linkSync(own, join(project, "own-again.db"));
+    expect(sqlitePathRefusal(join(project, "own-again.db"))).toBeNull();
+  });
+
   it("refuses PPM's own database, a snapshot of it and the Cloudflare login", () => {
     const ppmDb = sqliteFile(join(getPpmDir(), "ppm.db"));
     mkdirSync(getBackupsDir(), { recursive: true });
