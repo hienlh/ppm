@@ -13,6 +13,7 @@ import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { scoreFileSearchFast, compareScores, getFilename, type FileSearchScore } from "@/lib/score-file-search";
 import { splitSourceLocation, type SourceLine } from "@/lib/source-location";
+import { pathQueryFileFilter, rankPathQueryMatches } from "@/lib/path-query-matches";
 import { CommandPaletteFilterChips } from "@/components/layout/command-palette-filter-chips";
 import { fileIconElement } from "@/lib/file-icons";
 import { composeCommands, type CommandContext } from "@/lib/commands/command-registry";
@@ -267,16 +268,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   }, [allCommands]);
 
   const filtered = useMemo(() => {
-    // Path mode — search filesystem results using filename portion only
+    // Path mode — match the directory's entries by the name typed after the last separator
     if (isPathQuery(searchPath)) {
-      const lastSlash = searchPath.lastIndexOf("/");
-      const fileFilter = lastSlash >= 0 ? searchPath.slice(lastSlash + 1).toLowerCase() : "";
-      if (!fileFilter) return fsCommands.slice(0, 50);
-      return fsCommands.filter((c) => {
-        const name = c.label.toLowerCase();
-        const path = (c.keywords ?? "").toLowerCase();
-        return name.includes(fileFilter) || path.includes(fileFilter);
-      }).slice(0, 50);
+      return rankPathQueryMatches(fsCommands, pathQueryFileFilter(searchPath), (c) => c.label).slice(0, 50);
     }
 
     // Normal mode
