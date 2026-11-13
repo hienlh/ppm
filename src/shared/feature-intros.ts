@@ -16,6 +16,7 @@
 import type { PpmTool, PpmToolSwitches } from "./ppm-tools.ts";
 import { SESSION_HISTORY_TOOLS } from "./session-history-tools.ts";
 import { SESSION_COLLAB_TOOLS } from "./session-collab.ts";
+import { MEMORY_TOOLS } from "./memory-tools.ts";
 
 export interface FeatureIntro {
   /** Stable for the life of the install: the answer is stored under it. */
@@ -37,6 +38,15 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
       + "and message any session of the project. Everything it does shows up in PPM, where you can open or stop it. "
       + "It stays off until you choose.",
     tools: [...SESSION_HISTORY_TOOLS, ...SESSION_COLLAB_TOOLS],
+    since: "2026-11",
+  },
+  {
+    id: "ppm-memory-2026-11",
+    title: "One memory for every provider",
+    body: "PPM keeps one memory for Claude, Codex and Antigravity, filled from what each already remembers. "
+      + "The AI can search, read, write and forget memories, so what one chat learns is there for the next. "
+      + "It stays off until you choose.",
+    tools: MEMORY_TOOLS,
     since: "2026-11",
   },
 ];

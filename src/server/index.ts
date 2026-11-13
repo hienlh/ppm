@@ -38,6 +38,7 @@ import { androidWebSocket } from "./ws/android.ts";
 import { lspManager } from "../services/lsp/lsp-manager.ts";
 import { stopCommandScopesSync } from "../services/chat-session-processes/session-processes.service.ts";
 import { stopSearchHost } from "../services/content-search/search-host-client.ts";
+import { stopMemoryHost } from "../services/memory/memory-host-client.ts";
 import { isRemoteDesktopEnabled } from "../services/remote-desktop/remote-desktop-flag.ts";
 import { isAndroidEmulatorEnabled } from "../services/android/android-flag.ts";
 import { ok, err } from "../types/api.ts";
@@ -332,6 +333,10 @@ app.route("/api/settings", settingsRoutes);
 // The tour's "PPM has new features" questions, answered once for the whole install.
 import { featureIntroRoutes } from "./routes/feature-intros.ts";
 app.route("/api/feature-intros", featureIntroRoutes);
+// PPM's shared memory in Settings; its changes and the local model's install go out on /ws/global.
+import { memoryRoutes, wireMemoryEvents } from "./routes/memory.ts";
+app.route("/api/memory", memoryRoutes);
+wireMemoryEvents();
 import { notificationRoutes } from "./routes/notifications.ts";
 app.route("/api/notifications", notificationRoutes);
 app.route("/api/settings/mcp", mcpRoutes);
@@ -1356,6 +1361,7 @@ if (process.argv.includes("__serve__")) {
     try { stopCommandScopesSync(); } catch {}
     // The content search host would exit on stdin EOF anyway; a hung one would not.
     try { stopSearchHost(); } catch {}
+    try { stopMemoryHost(); } catch {}
     try { server.stop(true); } catch {}
     process.exit(0);
   };

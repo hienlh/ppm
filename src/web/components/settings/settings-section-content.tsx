@@ -21,6 +21,7 @@ export const SECTIONS: Record<SettingsCategoryId, PreloadableComponent<object>> 
   "database-drivers": lazyWithPreload(() => import("./database-drivers-section").then((m) => ({ default: m.DatabaseDriversSection }))),
   "ai-provider": lazyWithPreload(() => import("./ai-settings-section").then((m) => ({ default: m.AISettingsSection }))),
   tools: lazyWithPreload(() => import("./tools-settings-section").then((m) => ({ default: m.ToolsSettingsSection }))),
+  memory: lazyWithPreload(() => import("./memory-settings-section").then((m) => ({ default: m.MemorySettingsSection }))),
   accounts: lazyWithPreload(() => import("./accounts/accounts-settings-section").then((m) => ({ default: m.AccountsSettingsSection }))),
   design: lazyWithPreload(() => import("./design-settings-section").then((m) => ({ default: m.DesignSettingsSection }))),
   voice: lazyWithPreload(() => import("./voice-settings-section").then((m) => ({ default: m.VoiceSettingsSection }))),

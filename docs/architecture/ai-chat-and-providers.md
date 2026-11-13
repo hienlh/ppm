@@ -299,6 +299,59 @@ a prefixed prompt automatically. Keep titles based on raw user text and use
 `stripSharedContext` when importing native transcripts. Claude, Codex and Cursor
 already implement this separation.
 
+### PPM memory
+
+When **Settings → Memory → PPM memory** is on (`ai.memory.enabled`; unset, it
+follows the four memory tools' switches, which the "PPM has new features" step
+introduces as off), PPM keeps a memory store of its own and the shared context
+above stops carrying excerpts of the providers' memory indexes. Rule and
+instruction files are still shared as before. Code: `src/services/memory/`
+(map and gotchas in its `CLAUDE.md`); spec `specs/ppm-shared-memory/`.
+
+- **Store.** One Markdown file per memory, flat frontmatter (`name`,
+  `description`, `type`, `source`, `created`, `updated`, `archived`, `origin`,
+  `origin_hash`), under `<ppm dir>/memory/projects/<key>/` or
+  `<ppm dir>/memory/global/`. `index.db` beside them (FTS5 + vectors) is
+  rebuilt from the files when missing or corrupt. Every write goes through
+  `memory-store.ts`, which blanks credentials first.
+- **Sync, one way.** Before each project-chat message, `memorySync.ensureSynced`
+  compares a metadata-only fingerprint of the sources and, when it moved, copies
+  in Claude's topic files for that exact project path, Codex's per-thread
+  `stage1_outputs` for that `cwd` (plus `memory_summary.md` as a global memory),
+  and every Antigravity knowledge item (global). Native folders and databases
+  are only read. A source item that disappears archives its copy; a provider
+  that reports an error keeps its copies.
+- **What a chat gets.** A `<ppm_memory>` list of ids, names and descriptions
+  (project then global, newest first, 6,000 characters, the recipient's own
+  provider left out because it loads those itself), and `memory_search`,
+  `memory_read`, `memory_write`, `memory_forget` on the `ppm-tabs` MCP server.
+  A tool may change only memories whose `source` is `ppm`; updates need the
+  current revision.
+- **Search.** Full text (bm25, `đ` folded to `d`) fused with cosine similarity
+  when an embedding source is set: a local model (`multilingual-e5-small`,
+  installed into `<ppm dir>/memory-embed/` and run as a `bun` child that exits
+  after 10 idle minutes) or an OpenAI-compatible API. Without one, or when it
+  fails, search is full text and says so. The fused score only ranks; whether
+  a result answers the query is a separate label: strong when it holds enough
+  of the query's words weighted by rarity, or its similarity stands far above
+  the rest of the store's. `memory_search` lists only strong results, and when
+  there are none says that nothing matches clearly and shows the three closest
+  as probably unrelated.
+- **Memory host.** All of the above that reads a file, the index or an
+  embedder runs in a process of its own, `ppm __memory__`
+  (`memory-host.ts`), never on the server's main thread: the sync, the list,
+  the four tools, the status counts and the embedding queue, whose local model
+  is the host's child. The server (`memory-host-client.ts`) only sends JSON
+  lines and reads the answers; it sends the settings, the Codex homes and the
+  project list with each change, because the host opens neither the config nor
+  the database. A host that dies is replaced on the next request, one that
+  misses three deadlines in a row is killed; while none answers, a chat goes
+  out without its list, a tool answers an error and Settings a 503.
+- **API.** `/api/memory` (`status`, `sync`, `settings`, `embedding/install`,
+  `embedding/test`); events `memory:changed` and `memory:embed-install` on
+  `/ws/global`. The API key (`ai.memory.embedding.api_key`) is a secret config
+  key and never reaches the browser.
+
 **Component:** Provider interface + implementations
 
 **Responsibilities:**

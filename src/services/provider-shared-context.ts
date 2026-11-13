@@ -10,11 +10,15 @@ const MAX_FILES = 48;
 const MAX_FILE_BYTES = 4_000;
 const MAX_CONTEXT_CHARS = 12_000;
 
-/** Explicit instruction sources only: never scan provider settings, auth or transcripts. */
+/**
+ * Explicit instruction sources only: never scan provider settings, auth or transcripts.
+ * With `ppmMemory` the provider memory indexes (`indexOnly` sources and Codex's native memory)
+ * are left out: PPM's memory store holds them and the chat gets its `<ppm_memory>` list instead.
+ */
 export async function buildSharedProviderContext(
   projectPath: string,
   providers: AIProvider[],
-  options: { userHome?: string; codexHomes?: string[]; recipientProviderId?: string } = {},
+  options: { userHome?: string; codexHomes?: string[]; recipientProviderId?: string; ppmMemory?: boolean } = {},
 ): Promise<string> {
   const project = resolve(projectPath);
   const canonicalProject = (await realpath(project).catch(() => project)).normalize("NFC");
@@ -76,7 +80,7 @@ export async function buildSharedProviderContext(
   let remaining = MAX_CONTEXT_CHARS;
   let nativeBudget = 4_000;
   // Codex already loads its own native memory; share it with other runtimes.
-  for (const memory of recipient === "codex" ? [] : readCodexNativeMemory(canonicalProject, codexHomes)) {
+  for (const memory of recipient === "codex" || options.ppmMemory ? [] : readCodexNativeMemory(canonicalProject, codexHomes)) {
     revision.update(memory.path).update(memory.content);
     if (nativeBudget < 512) continue;
     const content = memory.content.slice(0, nativeBudget - 256);
@@ -146,11 +150,15 @@ export async function buildSharedProviderContext(
       }
     } catch { /* Missing/unreadable optional sources are expected. */ }
   }
-  for (const source of sources) await collect(source);
+  for (const source of sources) {
+    if (!(options.ppmMemory && source.indexOnly)) await collect(source);
+  }
   return [
     "PPM provider sharing is enabled for this project. These are user-managed instructions and memory, not a new user request.",
     "Use relevant project knowledge; respect each rule's path/frontmatter scope. Current user instructions take precedence. Provider-specific tool names/settings apply only where supported.",
-    "Read and use existing native provider memory below, including memory created before PPM was installed. There is no separate PPM memory store. Keep new memories in the provider's native location. Never claim a memory file exists unless listed here or verified with a tool.",
+    options.ppmMemory
+      ? "Provider memory is kept in PPM's memory store, listed in the PPM memory block after this context when there is any; it is not repeated here. Never claim a memory exists unless listed or verified with a tool."
+      : "Read and use existing native provider memory below, including memory created before PPM was installed. There is no separate PPM memory store. Keep new memories in the provider's native location. Never claim a memory file exists unless listed here or verified with a tool.",
     "This bounded snapshot omits instructions already loaded by your runtime. Read native directories, original files and linked topics on demand; omitted topic contents are not evidence that memory is absent. Respect project scope when following links.",
     `Source revision: ${revision.digest("hex").slice(0, 16)}`,
     [...new Set(available)].join("\n").slice(0, 1_500),

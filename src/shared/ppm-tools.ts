@@ -7,6 +7,7 @@ import {
   OPEN_BRANCH_REVIEW_TOOL, OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL,
 } from "./tab-open-protocol.ts";
 import { SESSION_HISTORY_TOOLS } from "./session-history-tools.ts";
+import { MEMORY_TOOLS } from "./memory-tools.ts";
 import { SESSION_COLLAB_TOOLS } from "./session-collab.ts";
 import { SPEC_TOOLS } from "./spec-tools.ts";
 import { answerFromSwitches, featureIntroOfTool } from "./feature-intros.ts";
@@ -14,10 +15,10 @@ import { answerFromSwitches, featureIntroOfTool } from "./feature-intros.ts";
 export const TERMINAL_TOOLS = [READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL] as const;
 /**
  * What `/api/tab-tools-mcp` serves: the tools that show or read something on the user's side, and
- * the session-history tools that read the project's other chats.
+ * the session-history tools that read the project's other chats, and the memory tools.
  */
 export const TAB_TOOLS = [
-  OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, OPEN_BRANCH_REVIEW_TOOL, ...TERMINAL_TOOLS, ...SESSION_HISTORY_TOOLS,
+  OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, OPEN_BRANCH_REVIEW_TOOL, ...TERMINAL_TOOLS, ...SESSION_HISTORY_TOOLS, ...MEMORY_TOOLS,
 ] as const;
 /**
  * What `/api/sessions-mcp` serves: opening another PPM session and messaging the project's

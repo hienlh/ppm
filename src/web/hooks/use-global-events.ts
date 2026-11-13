@@ -53,6 +53,9 @@ const IDLE_TIMEOUT_MS = 45_000;
  *   just changed, for the changes bar of that session (`useSessionFileChanges`).
  * - `feature-intros:changed` → re-dispatched as a window event: a new-feature question was
  *   answered, put off or settled on some device, so the tour and Settings → Tools refetch.
+ * - `memory:*` → re-dispatched as window events (`memory:changed` when the memory store, its
+ *   settings or its embedding progress changed; `memory:embed-install` for the local model's
+ *   install), so Settings → Memory refetches.
  * - `design:*` → re-dispatched as window events (`design:history_changed`,
  *   `design:comments_changed`). A design's `.design/` folder is not watched, so these
  *   are the only signal that its snapshots or comments changed.
@@ -165,6 +168,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         || type.startsWith("agent-transcript:")
         || type.startsWith("logs:")
         || type.startsWith("feature-intros:")
+        || type.startsWith("memory:")
         || type === "agent-activity"
         || type === SESSION_FILE_CHANGES_PUSH
       ) {

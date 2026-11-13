@@ -3,6 +3,8 @@ import { providerRegistry } from "../providers/registry.ts";
 import { configService } from "./config.service.ts";
 import { createHash } from "node:crypto";
 import { buildSharedProviderContext } from "./provider-shared-context.ts";
+import { memoryEnabled } from "./memory/memory-settings.ts";
+import { memoryHost } from "./memory/memory-host-client.ts";
 import { stripSharedContext, withSharedContext } from "../shared/provider-context.ts";
 import { neutralizeBlockMarkers } from "../shared/chat-message-blocks.ts";
 import { deleteTurnGrants } from "./session-turns/turn-grant-ledger.ts";
@@ -407,7 +409,18 @@ class ChatService {
           const item = providerRegistry.get(id);
           return item ? [item] : [];
         });
-        sharedContext = await buildSharedProviderContext(projectPath, providers, { recipientProviderId: providerId });
+        // PPM memory rides on the shared context: the memory host syncs the providers' stores into
+        // it, then answers its list, sent in place of their indexes. Neither may stop the message.
+        const ppmMemory = memoryEnabled(ai);
+        const memoryList = ppmMemory
+          ? memoryHost().prepareChat(projectPath, providerId).catch((e: unknown) => {
+            log.warn(`session=${sessionId} memory unavailable, sending without it: ${(e as Error).message}`);
+            return "";
+          })
+          : null;
+        sharedContext = await buildSharedProviderContext(projectPath, providers, { recipientProviderId: providerId, ppmMemory });
+        const list = await memoryList;
+        if (list) sharedContext = `${sharedContext}\n\n${list}`;
         const hash = createHash("sha256").update(sharedContext).digest("hex");
         if (this.sharedSnapshots.get(`${providerId}:${sessionId}`) === hash) sharedContext = undefined;
       }

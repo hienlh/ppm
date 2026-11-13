@@ -12,6 +12,7 @@ import { useNewFeatureTools } from "./use-new-feature-tools";
 import { SESSION_HISTORY_TOOLS } from "../../../shared/session-history-tools";
 import { SESSION_COLLAB_TOOLS } from "../../../shared/session-collab";
 import { SPEC_TOOLS } from "../../../shared/spec-tools";
+import { MEMORY_TOOLS } from "../../../shared/memory-tools";
 import type { SessionCollabSettings } from "../../../shared/session-collab-settings";
 import { SectionHeader, SwitchRow } from "./settings-rows";
 import { SessionCollabSettingsControls } from "./session-collab-settings-controls";
@@ -115,6 +116,22 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Check the suite",
     note: "Thorough checks: runs the whole test suite again after fixing failures it reported.",
   },
+  memory_search: {
+    label: "Search memory",
+    note: "Finds memories by words and meaning; answers names and one-line descriptions only.",
+  },
+  memory_read: {
+    label: "Read memory",
+    note: "Reads one memory in full.",
+  },
+  memory_write: {
+    label: "Save memory",
+    note: "Creates or updates a PPM memory. A memory copied from a provider cannot be changed here.",
+  },
+  memory_forget: {
+    label: "Forget memory",
+    note: "Archives a PPM memory. The file is kept.",
+  },
 };
 
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [
@@ -140,6 +157,7 @@ const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }>
     intro: "Requirements, design and tasks you approve step by step. Thorough checks run the tests the design names, in the project folder.",
     tools: SPEC_TOOLS,
   },
+  { title: "Memory", intro: "PPM's memory store, shared by Claude, Codex and Antigravity.", tools: MEMORY_TOOLS },
 ];
 
 export function ToolsSettingsSection() {

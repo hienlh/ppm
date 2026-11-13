@@ -160,6 +160,12 @@ export interface AIConfig {
   /** Share project rules and memory between providers. Unset defaults to true. */
   share_provider_context?: boolean;
   /**
+   * PPM's shared memory store. Read through `src/services/memory/memory-settings.ts`: an unset
+   * `enabled` follows the memory tools' switches, and memory is off whenever
+   * `share_provider_context` is.
+   */
+  memory?: MemoryConfig;
+  /**
    * The one switch the tab tools had before `ppm_tools`: `open_file` and `open_preview` follow it
    * until the user switches either in Settings → Tools. Unset defaults to false.
    */
@@ -182,7 +188,23 @@ export interface AIConfig {
   providers: Record<string, AIProviderConfig>;
 }
 
-export const VALID_PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"] as const;
+export type MemoryEmbeddingSource = "off" | "local" | "api";
+
+/** Where memory vectors come from. `api_key` is a secret (`SECRET_CONFIG_KEYS`) and never reaches a browser. */
+export interface MemoryEmbeddingConfig {
+  source: MemoryEmbeddingSource;
+  /** Base URL of an OpenAI-compatible API, e.g. `https://api.openai.com/v1`. */
+  api_url?: string;
+  api_model?: string;
+  api_key?: string;
+}
+
+export interface MemoryConfig {
+  enabled?: boolean;
+  embedding?: MemoryEmbeddingConfig;
+}
+
+export const VALID_PERMISSION_MODES =["default", "acceptEdits", "plan", "bypassPermissions"] as const;
 export type PermissionMode = typeof VALID_PERMISSION_MODES[number];
 
 export interface AIProviderConfig {
