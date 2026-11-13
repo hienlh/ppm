@@ -154,6 +154,14 @@ ppm chat changes undo <session-id> <undo-id>
 ppm chat turns <session-id>                 # the newest 20 turns, numbered as the chat numbers them
 ppm chat revert-turn <session-id> 3         # preview only; add --yes to write it
 
+# Git (through the project's git routes: Source Control, Review and Git Graph refresh at once)
+ppm git status -p app                       # --repo <path> for a repository inside the project
+ppm git stage src/a.ts -p app && ppm git commit -m "Fix" -p app
+ppm git discard src/a.ts -p app             # prints the undo command (ppm git undo discard <id>)
+ppm git branch merge feature -p app         # refs that look like options are refused
+ppm git stash pop 0 --expect <hash> -p app  # refused if stash 0 is no longer that stash
+# Staging single blocks of a file stays in Source Control
+
 # AI provider / model
 ppm config set ai.default_provider claude       # claude | codex | cursor
 # A provider's own settings (model, API key, command) are changed in Settings → AI Provider

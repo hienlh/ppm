@@ -132,6 +132,7 @@ ppm git status
 ppm git log
 ppm git commit -m "message"
 ppm git push
+ppm git stash list                     # also: branch, tag, cherry-pick, revert, worktree, undo
 
 # Database
 ppm db list                            # Configured connections
