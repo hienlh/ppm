@@ -209,6 +209,9 @@ ppm init
   --share — Pre-install cloudflared for sharing
   -y, --yes — Non-interactive mode (use defaults + flags)
 
+ppm device-name <name>
+  Name this machine, as PPM's title and PPM Cloud show it ("" clears it)
+
 ppm upgrade
   Check for and install PPM updates
   --check — Only check for updates, don't install
@@ -609,6 +612,105 @@ ppm tags rename <tag> <newName>
 ppm tags remove <tag>
   Delete a tag; its chats keep existing, untagged
   -p, --project <name> — Project name or path (default: the current folder's project)
+\`\`\`
+## ppm theme — Show, pick, import or remove PPM's themes
+\`\`\`
+ppm theme get
+  Show the theme in use
+  --json — Print JSON
+
+ppm theme set <theme>
+  Use a theme: aurora, slate, precision, or an imported theme's id or name
+  --mode <mode> — light, dark or system (default: keep the current one)
+
+ppm theme list
+  List the built-in styles and the imported themes
+  --json — Print JSON
+
+ppm theme import <fileOrUrl>
+  Import a VS Code color theme from a JSON file, or from a URL (JSON or .vsix)
+  --name <name> — Name to show it under
+
+ppm theme remove <id>
+  Delete an imported theme
+
+ppm theme rename <id> <name>
+  Rename an imported theme
+\`\`\`
+## ppm ai — Show or change the AI provider settings
+\`\`\`
+ppm ai get [key]
+  Show the AI settings, or one of them (e.g. default_provider, providers.claude.model); secrets are never shown
+  --json — Print JSON
+
+ppm ai set <key> <value>
+  Change one AI setting (e.g. default_provider codex, providers.claude.effort high, ppm_tools.open_url false)
+
+ppm ai providers
+  Which providers chat can use now, and why one cannot
+  --json — Print JSON
+
+ppm ai probe <provider>
+  Check a provider again now, ahead of its next scheduled try
+
+ppm ai models <provider>
+  List the models a provider offers
+  --json — Print JSON
+\`\`\`
+## ppm keybindings — List or change PPM's keyboard shortcuts
+\`\`\`
+ppm keybindings list
+  List the shortcuts changed from their defaults
+  --json — Print JSON
+
+ppm keybindings set <command> <keys>
+  Bind a command to keys, e.g. open-chat Mod+Shift+L (Mod is Ctrl, or Cmd on a Mac)
+
+ppm keybindings reset [command]
+  Put one shortcut, or every one, back to its default
+\`\`\`
+## ppm proxy — Show or change the API proxy that lends your accounts to other tools
+\`\`\`
+ppm proxy get
+  Show the proxy's state and endpoints; the auth key only as its first characters
+  --reveal — Print the whole auth key
+  --json — Print JSON
+
+ppm proxy set <setting> <value>
+  Switch the proxy on or off: set enabled true|false
+
+ppm proxy key generate
+  Replace the auth key with a new random one; the old key stops working
+\`\`\`
+## ppm settings — PPM's file filters and how long it keeps its logs
+\`\`\`
+ppm settings files get
+  Show the global file filters
+  --json — Print JSON
+
+ppm settings files set
+  Replace the global file filters; a list option replaces that whole list ("" empties it)
+  --exclude <globs...> — Globs hidden from the file tree
+  --search-exclude <globs...> — Globs left out of search
+  --use-ignore-files <bool> — Honour .gitignore: true or false
+
+ppm settings query-audit get
+  Show how long the log is kept and what it holds
+  --json — Print JSON
+
+ppm settings query-audit set
+  Change how long the log is kept
+  --retention-days <n> — Days to keep a statement (at least 1)
+  --max-size-mb <n> — Size the log is cut back to (at least 10)
+
+ppm settings query-audit clear
+  Delete every recorded statement (cannot be undone)
+  --yes — Confirm the deletion
+
+ppm settings trace set
+  Change how long the session trace is kept
+  --retention-days <n> — Days to keep a session's trace
+  --max-size-mb <n> — Size the trace is cut back to
 \`\`\`
 ## ppm autostart — Manage auto-start on boot (enable/disable/status)
 \`\`\`

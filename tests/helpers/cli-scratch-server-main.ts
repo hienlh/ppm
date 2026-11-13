@@ -9,6 +9,7 @@
  * `GET /api/__scratch/events` answers what the server broadcast on `/ws/global`, recorded by a
  * client registered the way a browser's is.
  * `GET /api/__scratch/connections` answers the saved database connections, config decrypted.
+ * The settings routers are mounted behind the same `settings:changed` middleware as the real server.
  */
 import { Hono } from "hono";
 import { assertIsolatedPpmHome } from "./assert-isolated-ppm-home.ts";
@@ -26,6 +27,10 @@ configService.save();
 
 const { cliHelloRoutes } = await import("../../src/server/routes/cli-hello.ts");
 const { settingsConfigKeyRoutes } = await import("../../src/server/routes/settings-config-key.ts");
+const { settingsRoutes } = await import("../../src/server/routes/settings.ts");
+const { settingsProxyRoutes } = await import("../../src/server/routes/settings-proxy.ts");
+const { settingsThemesRoutes } = await import("../../src/server/routes/settings-themes.ts");
+const { announceSettingsChanges } = await import("../../src/server/routes/settings-broadcast.ts");
 const { authMiddleware } = await import("../../src/server/middleware/auth.ts");
 const { setServerListenAddress } = await import("../../src/services/server-listen-address.ts");
 const { publishServerEndpoint } = await import("../../src/services/server-endpoint-file.ts");
@@ -44,7 +49,11 @@ globalWebSocket.open({ data: { type: "global" }, send: (json: string) => { event
 const app = new Hono();
 app.route("/api/cli", cliHelloRoutes);
 app.use("/api/*", authMiddleware);
+app.use("/api/settings/*", announceSettingsChanges);
+app.route("/api/settings/themes", settingsThemesRoutes);
+app.route("/api/settings", settingsRoutes);
 app.route("/api/settings", settingsConfigKeyRoutes);
+app.route("/api/settings", settingsProxyRoutes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/db", databaseRoutes);
 app.get("/api/__scratch/config", (c) => c.json(ok(configService.getAll())));

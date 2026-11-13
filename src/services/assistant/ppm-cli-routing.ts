@@ -31,6 +31,12 @@ const SERVER = [
   "git stash save", "git stash list", "git stash apply", "git stash pop", "git stash drop",
   "git worktree list", "git worktree add", "git worktree remove", "git worktree prune",
   "db add", "db edit", "db remove", "db test", "db duplicate", "db import",
+  "theme get", "theme set", "theme list", "theme import", "theme remove", "theme rename",
+  "ai get", "ai set", "ai providers", "ai probe", "ai models",
+  "keybindings list", "keybindings set", "keybindings reset",
+  "proxy get", "proxy set", "proxy key generate", "device-name",
+  "settings files get", "settings files set",
+  "settings query-audit get", "settings query-audit set", "settings query-audit clear", "settings trace set",
 ];
 
 const DIRECT_ALLOWED = [

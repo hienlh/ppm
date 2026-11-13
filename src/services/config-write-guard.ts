@@ -21,8 +21,8 @@ import { isValidLeftoverIdleMinutes, MAX_LEFTOVER_IDLE_MINUTES } from "../shared
 export type ConfigKeyTier = "secret" | "dedicated" | "exposure" | "allowed" | "unknown";
 
 const DEDICATED: readonly { pattern: string; where: string }[] = [
-  { pattern: "theme", where: "PPM's Settings → Appearance" },
-  { pattern: "ai.providers", where: "PPM's Settings → AI Provider" },
+  { pattern: "theme", where: "`ppm theme set` (or PPM's Settings → Appearance)" },
+  { pattern: "ai.providers", where: "`ppm ai set providers.<id>.<setting>` (or PPM's Settings → AI Provider)" },
   { pattern: "ntfy", where: "PPM's Settings → Notifications (changing the server there drops the stored token)" },
   { pattern: "telegram", where: "PPM's Settings → Notifications" },
   { pattern: "notifications", where: "PPM's Settings → Notifications" },

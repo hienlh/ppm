@@ -20,6 +20,20 @@ export async function registerCommandGroups(program: Command): Promise<void> {
 
   const { registerTagsCommands } = await import("./commands/tags-cmd.ts");
   registerTagsCommands(program);
+
+  const { registerThemeCommands } = await import("./commands/settings-theme-cmd.ts");
+  registerThemeCommands(program);
+
+  const { registerAiCommands } = await import("./commands/settings-ai-cmd.ts");
+  registerAiCommands(program);
+
+  const { registerKeybindingCommands, registerProxyCommands, registerDeviceNameCommand } = await import("./commands/settings-misc-cmd.ts");
+  registerKeybindingCommands(program);
+  registerProxyCommands(program);
+  registerDeviceNameCommand(program);
+
+  const { registerSettingsCommands } = await import("./commands/settings-storage-cmd.ts");
+  registerSettingsCommands(program);
 }
 
 /** The groups `--help` lists after `upgrade`. */
