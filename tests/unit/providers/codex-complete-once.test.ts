@@ -248,7 +248,10 @@ describe("the user's own MCP servers", () => {
   it("refuse the call when the config cannot be read, and start no thread", async () => {
     const server = new FakeAppServer(["answer"]);
     server.userMcpServers = null;
-    await expect(run(server)).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    const refused = await run(server).catch((e) => e);
+    expect(refused).toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(refused.message).toContain("your own MCP servers could not be kept out of this call");
+    expect(refused.message).not.toContain("Assistant");
     expect(server.methods()).not.toContain("thread/start");
   });
 });
