@@ -39,6 +39,7 @@ import { invalidateUsage, refreshUsage, registerUsageSource } from "../../servic
 import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-history.ts";
 import { antigravityTranscriptStamp, findAntigravityTranscriptPath, isAntigravitySessionInProject } from "../../providers/antigravity/antigravity-history.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
+import { markSessionRead } from "../../services/notification-feed.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
 import { searchProjectChats } from "../../services/session-turns/session-search.ts";
@@ -719,6 +720,9 @@ chatRoutes.post("/sessions/:id/read", async (c) => {
   try {
     const id = c.req.param("id");
     clearSessionUnread(id);
+    markSessionRead(id);
+    const canonical = resolveMigratedSession(id);
+    if (canonical !== id) markSessionRead(canonical);
     // Broadcast to all WS clients so other tabs/devices sync
     const { broadcastGlobalEvent } = await import("../ws/chat.ts");
     broadcastGlobalEvent({ type: "session:unread_changed", sessionId: id, unreadCount: 0, unreadType: null, projectName: "" });
