@@ -69,10 +69,20 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/android/avds/:avdId/wipe`
 - `DELETE /api/android/avds/:avdId`
 
+## /api/assistant
+
+- `GET    /api/assistant/settings`
+- `PUT    /api/assistant/settings`
+
 ## /api/chat
 
 - `GET    /api/chat/sessions/running`
 - `POST   /api/chat/sessions/read`
+
+## /api/cli
+
+- `GET    /api/cli/hello`
+- `GET    /api/cli/auth`
 
 ## /api/cloud
 
@@ -279,6 +289,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/projects/:name/image`
 - `GET    /api/projects/projects`
 - `GET    /api/projects/file`
+- `GET    /api/projects/projects`
 - `DELETE /api/projects/:name/image`
 - `GET    /api/projects/projects`
 - `GET    /api/projects/:name/image`
@@ -288,6 +299,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `PATCH  /api/projects/:name/settings`
 - `GET    /api/projects/projects`
 - `PATCH  /api/projects/:name`
+- `GET    /api/projects/projects`
 - `DELETE /api/projects/:name`
 
 ## /api/remote-desktop
@@ -349,9 +361,6 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/settings/telegram`
 - `PUT    /api/settings/auth/password`
 - `GET    /api/settings/auth`
-- `GET    /api/settings/port`
-- `GET    /api/settings/proxy`
-- `PUT    /api/settings/proxy`
 - `GET    /api/settings/query_audit`
 - `GET    /api/settings/query-audit`
 - `PUT    /api/settings/query-audit`
@@ -361,20 +370,20 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `PUT    /api/settings/session-trace`
 - `GET    /api/settings/session_trace`
 - `GET    /api/settings/clawbot`
-- `GET    /api/settings/clawbot`
 - `PUT    /api/settings/clawbot`
-- `GET    /api/settings/clawbot`
 - `GET    /api/settings/clawbot/paired`
 - `DELETE /api/settings/clawbot/paired/:chatId`
 - `GET    /api/settings/clawbot/telegram`
 - `GET    /api/settings/telegram`
-- `GET    /api/settings/clawbot`
 - `PUT    /api/settings/clawbot/telegram`
-- `GET    /api/settings/clawbot`
 - `POST   /api/settings/clawbot/telegram/connect`
 - `DELETE /api/settings/clawbot/telegram/connect`
 - `GET    /api/settings/files`
 - `PATCH  /api/settings/files`
+- `PUT    /api/settings/config-key`
+- `GET    /api/settings/port`
+- `GET    /api/settings/proxy`
+- `PUT    /api/settings/proxy`
 
 ## /api/settings/design
 
