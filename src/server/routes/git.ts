@@ -5,6 +5,7 @@ import { gitHunksService, type HunkRequest, type HunkScope } from "../../service
 import { assertSafeRev, gitBlameService } from "../../services/git-blame/git-blame.service.ts";
 import { branchDiff } from "../../services/git-branch-diff/branch-diff.service.ts";
 import { assertRef } from "../../services/git-branch-diff/branch-diff-parse.ts";
+import { hashProblem, pushBranchProblem, refProblem, remoteProblem } from "./git-route-args.ts";
 import { discoverGitRepos, isGitRepo } from "../../services/git-repos/git-repo-discovery.ts";
 import { gitChangesService } from "../../services/git-changes/git-changes.service.ts";
 import { gitDiscardJournal } from "../../services/git-discard-journal/git-discard-journal.service.ts";
@@ -632,6 +633,18 @@ gitRoutes.post("/push", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const { remote, branch } = await c.req.json<{ remote?: string; branch?: string }>();
+    // Both reach `git push` as positional words: a remote of `--force` or `--mirror` is an option,
+    // and a branch of `:main` or `+main` deletes or force-pushes the remote branch. A branch with
+    // no remote would itself be read as the remote.
+    if (remote !== undefined) {
+      const bad = remoteProblem(remote, await gitService.remoteNames(projectPath));
+      if (bad) return c.json(err(bad), 400);
+    }
+    if (branch !== undefined) {
+      if (remote === undefined) return c.json(err("Invalid branch: a branch is pushed to a named remote"), 400);
+      const bad = pushBranchProblem(branch);
+      if (bad) return c.json(err(bad), 400);
+    }
     const started = performance.now();
     await gitService.push(projectPath, remote, branch);
     log.info(`pushed ${branch ?? "the current branch"} to ${remote ? remoteForLog(remote) : "its default remote"} in ${projectPath} (${Math.round(performance.now() - started)} ms)`);
@@ -793,6 +806,8 @@ gitRoutes.post("/branch/delete", async (c) => {
     const projectPath = c.get("projectPath");
     const { name, force } = await c.req.json<{ name: string; force?: boolean }>();
     if (!name) return c.json(err("Missing: name"), 400);
+    const bad = refProblem(name, "name");
+    if (bad) return c.json(err(bad), 400);
     await gitService.deleteBranch(projectPath, name, force);
     log.info(`deleted branch ${name} force=${!!force} in ${projectPath}`);
     return c.json(ok({ deleted: name }));
@@ -807,6 +822,8 @@ gitRoutes.post("/merge", async (c) => {
     const projectPath = c.get("projectPath");
     const { source } = await c.req.json<{ source: string }>();
     if (!source) return c.json(err("Missing: source"), 400);
+    const bad = refProblem(source, "source");
+    if (bad) return c.json(err(bad), 400);
     await gitService.merge(projectPath, source);
     log.info(`merged ${source} into HEAD in ${projectPath}`);
     return c.json(ok({ merged: source }));
@@ -821,6 +838,8 @@ gitRoutes.post("/cherry-pick", async (c) => {
     const projectPath = c.get("projectPath");
     const { hash } = await c.req.json<{ hash: string }>();
     if (!hash) return c.json(err("Missing: hash"), 400);
+    const bad = hashProblem(hash, "hash");
+    if (bad) return c.json(err(bad), 400);
     await gitService.cherryPick(projectPath, hash);
     return c.json(ok({ cherryPicked: hash }));
   } catch (e) {
@@ -834,6 +853,8 @@ gitRoutes.post("/revert", async (c) => {
     const projectPath = c.get("projectPath");
     const { hash } = await c.req.json<{ hash: string }>();
     if (!hash) return c.json(err("Missing: hash"), 400);
+    const bad = hashProblem(hash, "hash");
+    if (bad) return c.json(err(bad), 400);
     await gitService.revert(projectPath, hash);
     return c.json(ok({ reverted: hash }));
   } catch (e) {
@@ -847,6 +868,8 @@ gitRoutes.post("/tag", async (c) => {
     const projectPath = c.get("projectPath");
     const { name, hash } = await c.req.json<{ name: string; hash?: string }>();
     if (!name) return c.json(err("Missing: name"), 400);
+    const bad = refProblem(name, "name") ?? (hash ? hashProblem(hash, "hash") : null);
+    if (bad) return c.json(err(bad), 400);
     await gitService.createTag(projectPath, name, hash);
     return c.json(ok({ tagged: name }));
   } catch (e) {
@@ -879,6 +902,9 @@ gitRoutes.post("/worktree/add", async (c) => {
       newBranch?: string;
     }>();
     if (!targetPath) return c.json(err("Missing: path"), 400);
+    // Each lands after the path or after `-b` as its own word, so neither may be an option.
+    const bad = (branch ? refProblem(branch, "branch") : null) ?? (newBranch ? refProblem(newBranch, "newBranch") : null);
+    if (bad) return c.json(err(bad), 400);
     await gitService.addWorktree(projectPath, targetPath, { branch, newBranch });
     return c.json(ok({ added: targetPath }));
   } catch (e) {
@@ -892,6 +918,11 @@ gitRoutes.post("/worktree/remove", async (c) => {
     const projectPath = c.get("projectPath");
     const { path: targetPath, force } = await c.req.json<{ path: string; force?: boolean }>();
     if (!targetPath) return c.json(err("Missing: path"), 400);
+    // Only a worktree this repository lists, and never its main one: anything else is either an
+    // option (`--force`) or a folder git was never asked to manage.
+    if (typeof targetPath !== "string" || !(await gitService.linkedWorktreePath(projectPath, targetPath))) {
+      return c.json(err(`Invalid path: "${String(targetPath)}" is not a linked worktree of this repository`), 400);
+    }
     await gitService.removeWorktree(projectPath, targetPath, force);
     return c.json(ok({ removed: targetPath }));
   } catch (e) {

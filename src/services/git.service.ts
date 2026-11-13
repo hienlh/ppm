@@ -330,6 +330,11 @@ class GitService {
     await this.git(projectPath).push(args);
   }
 
+  /** The names of the remotes this repository has configured. */
+  async remoteNames(projectPath: string): Promise<string[]> {
+    return (await this.git(projectPath).getRemotes()).map((r) => r.name);
+  }
+
   async pull(
     projectPath: string,
     remote?: string,
@@ -661,7 +666,9 @@ class GitService {
     if (opts.newBranch) {
       args.push("-b", opts.newBranch);
     }
-    args.push(targetPath);
+    // The resolved path, the one just validated: absolute, so never an option, and never read
+    // relative to the repository when it was checked relative to this process.
+    args.push(path.resolve(targetPath));
     if (opts.branch) {
       args.push(opts.branch);
     }
@@ -669,11 +676,27 @@ class GitService {
     gitLog.info(`worktree added ${targetPath} (branch=${opts.branch ?? "-"}, new=${opts.newBranch ?? "-"}) in ${projectPath}`);
   }
 
-  /** Remove a worktree. Pass force=true to remove even with uncommitted changes. */
+  /**
+   * The path git lists for the linked worktree `targetPath` names, or null when it names none —
+   * the main worktree included. Compared resolved, and case-blind on Windows.
+   */
+  async linkedWorktreePath(projectPath: string, targetPath: string): Promise<string | null> {
+    const norm = (p: string) => (process.platform === "win32" ? path.resolve(p).toLowerCase() : path.resolve(p));
+    const wanted = norm(targetPath);
+    const match = (await this.listWorktrees(projectPath)).find((w) => !w.isMain && norm(w.path) === wanted);
+    return match?.path ?? null;
+  }
+
+  /**
+   * Remove a linked worktree. Pass force=true to remove even with uncommitted changes. git is
+   * handed the path it listed itself, which is absolute and so can never be read as an option.
+   */
   async removeWorktree(projectPath: string, targetPath: string, force = false): Promise<void> {
+    const listed = await this.linkedWorktreePath(projectPath, targetPath);
+    if (!listed) throw new Error(`Not a linked worktree of this repository: ${targetPath}`);
     const args = ["worktree", "remove"];
     if (force) args.push("-f");
-    args.push(targetPath);
+    args.push(listed);
     await this.git(projectPath).raw(args);
     gitLog.info(`worktree removed ${targetPath} force=${force} in ${projectPath}`);
   }
