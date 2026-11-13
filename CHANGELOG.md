@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.1] - 2026-11-14
+
+### Added
+
+- **The Assistant can make an existing chat a project's manager chat** (`manager_assign`), or stop it being one (`manager_unassign`), after a card. It prefers adopting a chat you point at over creating a new one.
+- **`ppm manager list | assign | unassign`** does the same from a terminal, through the running PPM.
+
 ## [0.25.0] - 2026-11-13
 
 ### Added
