@@ -2242,16 +2242,14 @@ export async function runSupervisor(opts: {
         // In `shared` mode the share host rides on this tunnel: hand it over to (or take it
         // back from) PPM's connector, which the branch above has just restarted or stopped.
         void reconcileShareHost({ ppmRestarting: tunnelSharingEnabled });
-        // Deliberate fall-through (no return): a bare `ppm restart` sends a
-        // bare SIGUSR2 with no command file of its own, and a `retunnel` that
-        // happens to still be unclaimed at that instant must not silently
-        // swallow the user's restart intent. Retunneling first costs nothing
-        // extra — it's a fast no-op when the tunnel is already correct — and
-        // this still restarts the server exactly like a plain SIGUSR2 would.
+        // No fall-through to the restart below: that restarted the server on every flip of
+        // the public-tunnel switch and cut every running chat. A bare `ppm restart` racing an
+        // unclaimed `retunnel` still restarts: the retunnel's own SIGUSR2 then finds no file.
+        return;
       }
     }
 
-    // Default: restart server (existing behavior, and retunnel's fall-through target)
+    // Default: restart server
     if (getState() === "paused") {
       log("INFO", "SIGUSR2 received while paused, resuming server");
       triggerResume();

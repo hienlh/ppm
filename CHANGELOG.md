@@ -65,6 +65,10 @@
 - **The proxy auth key is shown redacted** unless you ask to reveal it.
 - **A secret answer to a question is no longer written in clear to the session trace.**
 
+### Fixed
+
+- **Switching the public tunnel on or off restarted PPM's server and cut every running chat.** The switch is applied by reloading the tunnel, but that reload then went on to restart the server as well. It now only starts or stops the tunnel; `ppm restart` still restarts.
+
 ## [0.24.1] - 2026-11-12
 
 ### Fixed
