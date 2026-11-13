@@ -15,11 +15,13 @@
 .ppm-bot__antenna { transform-origin: 50% 100%; }
 .ppm-bot__head { transform-origin: 50% 90%; }
 
-/* Idle: breathe, blink, glance, sway. */
-.ppm-bot__body { animation: ppm-bot-breathe 3.7s ease-in-out infinite; }
-.ppm-bot__eye { animation: ppm-bot-blink 5.3s ease-in-out infinite; }
-.ppm-bot__eyes { animation: ppm-bot-glance 11.3s ease-in-out infinite; }
-.ppm-bot__antenna { animation: ppm-bot-sway 4.6s ease-in-out infinite; }
+/* Idle: breathe, blink, glance, sway, and every few seconds a little head tilt, as if saying hi.
+   The icon is drawn at 16px, so every movement is a pixel or more to be seen at all. */
+.ppm-bot__body { animation: ppm-bot-breathe 3.2s ease-in-out infinite; }
+.ppm-bot__head { animation: ppm-bot-hello 7.9s ease-in-out infinite; }
+.ppm-bot__eye { animation: ppm-bot-blink 4.7s ease-in-out infinite; }
+.ppm-bot__eyes { animation: ppm-bot-glance 9.1s ease-in-out infinite; }
+.ppm-bot__antenna { animation: ppm-bot-sway 3.4s ease-in-out infinite; }
 
 /* Thinking: eyes dart, the light pulses, the antenna twitches. */
 .ppm-bot[data-mood="thinking"] .ppm-bot__eyes { animation: ppm-bot-dart 1.6s ease-in-out infinite; }
@@ -40,8 +42,16 @@
 .group:hover .ppm-bot__head { animation: ppm-bot-tilt 0.7s ease-in-out; }
 
 @keyframes ppm-bot-breathe {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-0.6px); }
+  0%, 100% { transform: translateY(0.4px); }
+  50% { transform: translateY(-1.1px); }
+}
+/* Mostly still, then a quick tilt one way and back, then the other: a nod of greeting. */
+@keyframes ppm-bot-hello {
+  0%, 70%, 100% { transform: rotate(0deg); }
+  75% { transform: rotate(-14deg); }
+  81% { transform: rotate(10deg); }
+  87% { transform: rotate(-5deg); }
+  92% { transform: rotate(0deg); }
 }
 /* Two closes per cycle, the second only some of the time: a single blink, then later a double. */
 @keyframes ppm-bot-blink {
@@ -51,32 +61,33 @@
   92.5% { transform: scaleY(0.1); }
 }
 @keyframes ppm-bot-glance {
-  0%, 30%, 42%, 70%, 80%, 100% { transform: translateX(0); }
-  34%, 38% { transform: translateX(-0.9px); }
-  74%, 77% { transform: translate(0.9px, -0.3px); }
+  0%, 26%, 40%, 64%, 78%, 100% { transform: translateX(0); }
+  30%, 36% { transform: translateX(-1.6px); }
+  68%, 74% { transform: translate(1.6px, -0.6px); }
 }
 @keyframes ppm-bot-sway {
   0%, 100% { transform: rotate(0deg); }
-  25% { transform: rotate(9deg); }
-  75% { transform: rotate(-9deg); }
+  25% { transform: rotate(18deg); }
+  75% { transform: rotate(-18deg); }
 }
 @keyframes ppm-bot-dart {
-  0%, 100% { transform: translate(-0.8px, -0.4px); }
-  50% { transform: translate(0.8px, -0.4px); }
+  0%, 100% { transform: translate(-1.5px, -0.6px); }
+  50% { transform: translate(1.5px, -0.6px); }
 }
 @keyframes ppm-bot-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.35; transform: scale(0.75); }
+  0%, 100% { opacity: 1; transform: scale(1.15); }
+  50% { opacity: 0.25; transform: scale(0.6); }
 }
 @keyframes ppm-bot-hop {
-  0%, 60%, 100% { transform: translateY(0); }
-  20% { transform: translateY(-1.6px); }
-  40% { transform: translateY(0.2px); }
+  0%, 55%, 100% { transform: translateY(0.4px); }
+  18% { transform: translateY(-3px); }
+  34% { transform: translateY(0.8px); }
+  44% { transform: translateY(-0.8px); }
 }
 @keyframes ppm-bot-tilt {
   0%, 100% { transform: rotate(0deg); }
-  30% { transform: rotate(-12deg); }
-  65% { transform: rotate(8deg); }
+  30% { transform: rotate(-18deg); }
+  65% { transform: rotate(12deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
