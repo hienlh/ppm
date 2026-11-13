@@ -19,7 +19,7 @@ import { accountsRoutes } from "../../../src/server/routes/accounts.ts";
 import {
   ANNOUNCE_SETTINGS_ENV_KEY, SETTINGS_BROADCAST_MOUNTS, announceSettingsChanges, settingsSectionOf, settingsSectionOfConfigKey,
 } from "../../../src/server/routes/settings-broadcast.ts";
-import { SETTINGS_EVENT_SECTIONS } from "../../../src/shared/settings-events.ts";
+import { SETTINGS_CLIENT_HEADER, SETTINGS_EVENT_SECTIONS } from "../../../src/shared/settings-events.ts";
 
 const announced: string[] = [];
 const app = new Hono();
@@ -57,6 +57,18 @@ describe("settings:changed through the real routes", () => {
   it("announces a theme change once, with its section", async () => {
     expect(await call("PUT", "/theme", { style: "slate", mode: "dark" })).toBe(200);
     expect(announced).toEqual(["theme"]);
+  });
+
+  it("names the page that made the change when it said, so that page can skip its own echo", async () => {
+    const withClient: Array<[string, string | undefined]> = [];
+    const announce = (section: string, clientId?: string) => withClient.push([section, clientId]);
+    const put = (headers: Record<string, string>) => app.request("/api/settings/theme", {
+      method: "PUT", body: JSON.stringify({ style: "slate", mode: "dark" }), headers: { "Content-Type": "application/json", ...headers },
+    }, { [ANNOUNCE_SETTINGS_ENV_KEY]: announce });
+    expect((await put({ [SETTINGS_CLIENT_HEADER]: "page-1234-abcd" })).status).toBe(200);
+    expect((await put({ [SETTINGS_CLIENT_HEADER]: "../../not an id" })).status).toBe(200);
+    expect((await put({})).status).toBe(200);
+    expect(withClient).toEqual([["theme", "page-1234-abcd"], ["theme", undefined], ["theme", undefined]]);
   });
 
   it("announces nothing for UI preferences, however often they are written", async () => {

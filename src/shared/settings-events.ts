@@ -20,6 +20,19 @@ export type SettingsSection = typeof SETTINGS_EVENT_SECTIONS[number];
 export interface SettingsChangedEvent {
   type: typeof SETTINGS_CHANGED_EVENT;
   section: SettingsSection;
+  /**
+   * The page that made the change, when it said (`SETTINGS_CLIENT_HEADER`): that page already
+   * shows it, and reading it back while its next change is in flight would undo that one.
+   */
+  clientId?: string;
+}
+
+/** The header a page sends with a settings write, naming itself so it can skip its own echo. */
+export const SETTINGS_CLIENT_HEADER = "x-ppm-settings-client";
+
+/** A page id as sent in that header, or undefined when it is missing or malformed. A hint, never a credential. */
+export function settingsClientIdFrom(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z0-9-]{8,64}$/.test(value) ? value : undefined;
 }
 
 export function isSettingsSection(value: unknown): value is SettingsSection {

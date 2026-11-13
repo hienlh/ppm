@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { SETTINGS_CHANGED_EVENT, type SettingsSection } from "../../shared/settings-events.ts";
+import { SETTINGS_CHANGED_EVENT, SETTINGS_CLIENT_HEADER, settingsClientIdFrom, type SettingsSection } from "../../shared/settings-events.ts";
 
 /**
  * Tells every open PPM that a settings section changed, after a write to one of the routes below
@@ -22,7 +22,7 @@ export const ANNOUNCE_SETTINGS_ENV_KEY = "announceSettingsChanged";
 /** The route prefixes the middleware is registered on (each as `<prefix>/*`). */
 export const SETTINGS_BROADCAST_MOUNTS = ["/api/settings", "/api/notifications", "/api/accounts", "/api/codex-accounts"] as const;
 
-type Announce = (section: SettingsSection) => void;
+type Announce = (section: SettingsSection, clientId?: string) => void;
 
 /** Method, full path, and the section a 2xx answer to it changed. */
 const WRITES: ReadonlyArray<{ method: string; path: RegExp; section: SettingsSection }> = [
@@ -87,21 +87,24 @@ export function settingsSectionOfConfigKey(key: string): SettingsSection | null 
   return null;
 }
 
-const broadcastOnGlobalSocket: Announce = (section) => {
+const broadcastOnGlobalSocket: Announce = (section, clientId) => {
   void import("../ws/global.ts")
-    .then(({ broadcastGlobalEvent }) => broadcastGlobalEvent({ type: SETTINGS_CHANGED_EVENT, section }))
+    .then(({ broadcastGlobalEvent }) => broadcastGlobalEvent({ type: SETTINGS_CHANGED_EVENT, section, ...(clientId ? { clientId } : {}) }))
     .catch(() => { /* no socket layer in this process: nobody to tell */ });
 };
 
-/** Announces `section` through the caller's announcer when it passed one, else on `/ws/global`. */
-export function announceSettingsSection(env: unknown, section: SettingsSection): void {
+/**
+ * Announces `section` through the caller's announcer when it passed one, else on `/ws/global`.
+ * `clientId`: the page that made the change, so it can skip the echo of its own write.
+ */
+export function announceSettingsSection(env: unknown, section: SettingsSection, clientId?: string): void {
   const own = env && typeof env === "object" ? (env as Record<string, unknown>)[ANNOUNCE_SETTINGS_ENV_KEY] : undefined;
-  (typeof own === "function" ? (own as Announce) : broadcastOnGlobalSocket)(section);
+  (typeof own === "function" ? (own as Announce) : broadcastOnGlobalSocket)(section, clientId);
 }
 
 export const announceSettingsChanges: MiddlewareHandler = async (c, next) => {
   await next();
   if (c.res.status < 200 || c.res.status >= 300) return;
   const section = settingsSectionOf(c.req.method, c.req.path);
-  if (section) announceSettingsSection(c.env, section);
+  if (section) announceSettingsSection(c.env, section, settingsClientIdFrom(c.req.header(SETTINGS_CLIENT_HEADER)));
 };

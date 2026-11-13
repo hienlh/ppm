@@ -18,7 +18,7 @@ import { resyncAssistantWaiting } from "@/stores/assistant-waiting-store";
 import { useProjectStore } from "@/stores/project-store";
 import { PROJECTS_CHANGED_EVENT } from "../../shared/projects-events";
 import { DB_CONNECTIONS_CHANGED_EVENT, DB_CONNECTIONS_CHANGED_WINDOW_EVENT } from "../../shared/db-connection-events";
-import { SETTINGS_CHANGED_EVENT, isSettingsSection } from "../../shared/settings-events";
+import { SETTINGS_CHANGED_EVENT, isSettingsSection, settingsClientIdFrom } from "../../shared/settings-events";
 import { EXTENSIONS_CHANGED_EVENT } from "../../shared/extensions-events";
 import { handleExtensionsChanged } from "@/lib/extensions-live-refresh";
 import { handleSettingsChanged } from "@/lib/settings-live-refresh";
@@ -182,7 +182,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
 
       if (type === SETTINGS_CHANGED_EVENT) {
         // App-wide state (theme, keybindings) is refreshed here; open panes re-read on the window event.
-        if (isSettingsSection(data.section)) handleSettingsChanged(data.section);
+        if (isSettingsSection(data.section)) handleSettingsChanged(data.section, settingsClientIdFrom(data.clientId));
         return;
       }
 

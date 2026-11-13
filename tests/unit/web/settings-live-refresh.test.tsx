@@ -13,6 +13,8 @@ const { useSettingsChanged } = await import("../../../src/web/hooks/use-settings
 const { useSettingsStore } = await import("../../../src/web/stores/settings-store.ts");
 const { useKeybindingsStore } = await import("../../../src/web/stores/keybindings-store.ts");
 const { act } = await import("react");
+const { SETTINGS_CLIENT_ID } = await import("../../../src/web/lib/settings-client-id.ts");
+const { SETTINGS_CLIENT_HEADER } = await import("../../../src/shared/settings-events.ts");
 
 // The stores are module singletons shared with every later file in the run: the reloaded
 // "open-chat" binding otherwise reaches the command palette's tests as its shortcut.
@@ -55,6 +57,29 @@ describe("settings live refresh", () => {
     await settle();
     expect(useSettingsStore.getState().themeStyle).toBe("slate");
     expect(useSettingsStore.getState().themeMode).toBe("dark");
+  });
+
+  it("skips the echo of this page's own theme change, so a change in flight is not undone", async () => {
+    useSettingsStore.getState().setThemeFromPayload({ style: "aurora", mode: "light" });
+    handleSettingsChanged("theme", SETTINGS_CLIENT_ID);
+    await settle();
+    expect(requests.filter((u) => u.endsWith("/api/settings/theme"))).toEqual([]);
+    expect(useSettingsStore.getState().themeStyle).toBe("aurora");
+    // Another page's change is applied as before.
+    handleSettingsChanged("theme", "another-page-0000");
+    await settle();
+    expect(useSettingsStore.getState().themeStyle).toBe("slate");
+  });
+
+  it("names this page in its own theme write", async () => {
+    const seen: Array<Record<string, string>> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(Object.fromEntries(new Headers(init?.headers).entries()));
+      return new Response(JSON.stringify({ ok: true, data: {} }), { headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    useSettingsStore.getState().setThemeMode("dark");
+    await settle();
+    expect(seen.some((h) => h[SETTINGS_CLIENT_HEADER] === SETTINGS_CLIENT_ID)).toBe(true);
   });
 
   it("reloads keybindings", async () => {

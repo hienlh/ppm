@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { getAuthToken } from "@/lib/api-client";
+import { SETTINGS_CLIENT_ID } from "@/lib/settings-client-id";
+import { SETTINGS_CLIENT_HEADER } from "../../shared/settings-events";
 import type { PpmTheme, PpmThemeMode, PpmThemeStyle } from "@/theme/types";
 import { parseQualityChoice, type QualityChoice } from "../../shared/remote-desktop-quality";
 import { isUnlinkMap, updateUnlinks, type UnlinkMap } from "../../shared/linked-session-unlinks";
@@ -385,7 +387,12 @@ function pushThemeToServer(
   const token = getAuthToken();
   return fetch("/api/settings/theme", {
     method: "PUT",
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: {
+      "Content-Type": "application/json",
+      // Names this page in the `settings:changed` that follows, so it does not read its own theme back.
+      [SETTINGS_CLIENT_HEADER]: SETTINGS_CLIENT_ID,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ style, mode, ...(customThemeId ? { customThemeId } : {}) }),
   })
     .then(() => {})

@@ -1,5 +1,6 @@
 import { api } from "./api-client";
 import { clearChatPreparationCache } from "./chat-preparation-cache";
+import { SETTINGS_CLIENT_ID } from "./settings-client-id";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useKeybindingsStore } from "@/stores/keybindings-store";
 import type { PpmThemeMode } from "@/theme/types";
@@ -26,7 +27,13 @@ export async function refreshAppWideSettings(section: SettingsSection): Promise<
   }
 }
 
-export function handleSettingsChanged(section: SettingsSection): void {
+/**
+ * `clientId`: the page that made the change, when it said. This page skips its own echo: it
+ * already shows the change, and a theme read back while its next change is still in flight
+ * would flip the theme to the one before it.
+ */
+export function handleSettingsChanged(section: SettingsSection, clientId?: string): void {
+  if (clientId && clientId === SETTINGS_CLIENT_ID) return;
   void refreshAppWideSettings(section)
     .catch(() => { /* the next reload or reconnect reads it anyway */ })
     .finally(() => window.dispatchEvent(new CustomEvent(SETTINGS_CHANGED_EVENT, { detail: { section } })));
