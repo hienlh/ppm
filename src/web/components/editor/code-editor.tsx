@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo, memo, lazy, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, memo, lazy, Suspense, useId } from "react";
 import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
 import { api, projectUrl } from "@/lib/api-client";
@@ -43,6 +43,7 @@ import { AUDIO_EXTS, IMAGE_EXTS, SQLITE_EXTS, VIDEO_EXTS } from "@/components/os
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import { DOTENV_LANGUAGE_ID, isDotenvFile, registerDotenvLanguage } from "@/lib/monaco-dotenv-language";
 import { reserveLightbulbGutter } from "@/lib/monaco-lightbulb-gutter";
+import { applyEditorSelection, clearEditor, parseSelectionTarget, setEditorUnsaved, setFocusedEditor } from "@/lib/open-editors-registry";
 
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
@@ -476,6 +477,24 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     if (ownTab.title !== newTitle) updateTab(ownTab.id, { title: newTitle });
   }, [unsaved]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Tell the search panel which project files hold unsaved edits (Replace skips them) and
+  // which editor was focused last (the search shortcut seeds its query with its selection).
+  const registryId = useId();
+  const tracksProjectFile = !!projectName && !!filePath && !isUntitled && inlineContent == null && !isExternalFile;
+  useEffect(() => {
+    if (!tracksProjectFile) return;
+    setEditorUnsaved(registryId, projectName!, filePath!, unsaved);
+  }, [registryId, tracksProjectFile, projectName, filePath, unsaved]);
+  useEffect(() => {
+    const editor = mounted?.editor;
+    if (!editor) return;
+    const report = () => setFocusedEditor(registryId, { tabId, projectName, filePath, editor });
+    if (editor.hasTextFocus()) report();
+    const sub = editor.onDidFocusEditorText(report);
+    return () => sub.dispose();
+  }, [registryId, mounted, tabId, projectName, filePath]);
+  useEffect(() => () => clearEditor(registryId), [registryId]);
+
   // GitLens-style annotation on the cursor's line. Off unless the pref is on,
   // and never for an untitled buffer or inline (read-only preview) content —
   // neither has a path git could blame.
@@ -584,12 +603,22 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const lineNumber = metadata?.lineNumber as number | undefined;
   const endLine = metadata?.endLine as number | undefined;
   const revealAt = metadata?.revealAt as number | undefined;
+  // A search result: the matched text itself, selected (1-based UTF-16 columns, end exclusive).
+  const selection = parseSelectionTarget(metadata?.selection);
+  const selLine = selection?.line;
+  const selColumn = selection?.column;
+  const selEndColumn = selection?.endColumn;
 
   // Reveal/select the target line(s). Re-runs on revealAt change so an already-open
   // tab jumps to a newly-clicked line; selects the full range when endLine is set.
   const revealTarget = useCallback(() => {
     const editor = editorRef.current;
-    if (!editor || !lineNumber || lineNumber <= 0) return;
+    if (!editor) return;
+    if (selLine && selColumn && selEndColumn) {
+      applyEditorSelection(editor, { line: selLine, column: selColumn, endColumn: selEndColumn });
+      return;
+    }
+    if (!lineNumber || lineNumber <= 0) return;
     editor.revealLineInCenter(lineNumber);
     editor.setPosition({ lineNumber, column: 1 });
     if (endLine && endLine >= lineNumber) {
@@ -600,7 +629,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       editor.setSelection({ startLineNumber: lineNumber, startColumn: 1, endLineNumber: selEnd, endColumn });
     }
     editor.focus();
-  }, [lineNumber, endLine]);
+  }, [lineNumber, endLine, selLine, selColumn, selEndColumn]);
   // The mount handler below is memoised on `isSql` alone, so it reads the target through this.
   const revealTargetRef = useRef(revealTarget);
   revealTargetRef.current = revealTarget;

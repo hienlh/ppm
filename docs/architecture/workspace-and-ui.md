@@ -425,6 +425,36 @@ projects.settings = JSON.stringify({
 
 ---
 
+## Search panel (find and replace in files)
+
+The sidebar Search panel follows VS Code's Search view. Search and replace run in a process of their own, the **search host** (`ppm __search__`), so nothing about them runs on the server's main thread beyond handing a request over and sending the reply back.
+
+```
+Browser                         Server main thread                 Search host (ppm __search__)
+search-store (per project)
+  GET /files/search ──────────▶ small JSON request ──── frame ───▶ rg --json (or grep), parse,
+                                                                    limit, sort, preview, gzip
+                    ◀────────── reply chunks → Blob ◀── frame ───
+  POST /files/replace ────────▶ raw body bytes, unparsed ─ frame ─▶ verify each match, rewrite, write
+  abort (new query, Clear) ───▶ request.signal ──── cancel ──────▶ kill that rg
+```
+
+**Server** (`src/services/content-search/`, gotchas in its `CLAUDE.md`):
+- `search-host-client.ts` (main thread) spawns the host lazily — `<bin> __search__` from a compiled binary, `bun run src/index.ts __search__` from a checkout, so `src/index.ts` installs the Windows spawn handle guard first — and talks to it over stdin/stdout in `[u8 kind][u32 id][u32 length][payload]` frames (`frame-codec.ts`). The main thread only collects reply chunks into a `Blob`: no `JSON.parse`, no decoding, no file access. Opening the panel sends an empty search to warm the host.
+- No fallback: a host that cannot start or send `ready` within 5 s answers 503 with one `WARN`; a host that dies fails its pending requests with 500 and the next request spawns a fresh one. The host stops its tool at 30 s and answers what it found; the client SIGKILLs a host that has not answered 5 s later.
+- `search-run.ts` runs ripgrep with `--json --hidden --no-config --engine auto` (PCRE2 for look-around and back-references), every match of every line with its column range, up to 20,000 matches (`limitHit`) or 30 s (`incomplete: "timeout"`), at most 4 at once. Regex errors come back as a 400 in the engine's own words. Without ripgrep, GNU grep runs over a file list (`git ls-files` or a pruned walk) and `grep-matches.ts` computes columns and replacements in JS; the panel says so.
+- "Use Exclude Settings and Ignore Files" (on by default) honours `.gitignore`/`.ignore`/`.rgignore` and skips `DEFAULT_EXCLUDED_DIRS`/`_FILES` (`search-args.ts`). Globs follow VS Code: no `/` matches at any depth, a folder matches everything under it. While ignore files are on, "Files to include" is not passed to rg as `-g` (which would bring ignored files back): each include's folder prefix becomes a search path and `runSearch` filters the rest.
+- Replacements are ripgrep's own (`-r`, so `$1`/`$&`/`$0` expand exactly as matched), with Preserve Case applied in the host (`preserve-case.ts`). `replace-run.ts` is stateless: the browser sends the matches on screen (file, line, column, text, replacement); the host checks the real path stays in the project and is not a credential path, verifies every match is still where it was, rewrites from the end and writes. A file whose matches moved is skipped as `changed`, a write error is `failed`, other files are still replaced.
+- Routes in `src/server/routes/files.ts`: `GET /files/search?q&caseSensitive&wholeWord&regex&include&exclude&useIgnore&replace&preserveCase` (gzipped in the host when the browser accepts it, `server.timeout(req, 40)` against Bun's 10 s idle cut) and `POST /files/replace`.
+
+**Browser:**
+- `src/web/stores/search-store.ts` holds each project's query, options, filters, replace text, results, dismissed matches and collapsed files outside the component, so switching panels or closing the mobile drawer loses nothing; View as Tree/List and 20 queries of history per project live in `localStorage`. `src/web/lib/search/search-client.ts` debounces (300 ms), aborts the previous search and calls both routes.
+- `src/web/lib/search/search-rows.ts` is the pure model: list/tree rows, counts without dismissed matches, F4/Shift+F4 with wrap, arrow-key focus, and the replace request for one match, one file or everything left. `search-results.tsx` virtualises the rows (`@tanstack/react-virtual`, 22 px, 44 px on a phone where row actions are always shown) and highlights exactly the server's column ranges; `search-result-row.tsx` shows the line cut around the match, and the old text struck through beside the new one.
+- `search-panel.tsx`: toolbar (Refresh, Clear, Collapse/Expand All, View as Tree/List), Alt+C/W/R/P for Match Case, Whole Word, Regex and Preserve Case, Alt+↑/↓ (↑/↓ on an empty field) for history, ↓ into the results, banners for the limit, the timeout, grep and errors with Retry. `replace-all-dialog.tsx` asks with the match and file counts, then reports replaced, skipped (unsaved in an editor, changed on disk) and failed files. Files with unsaved editor changes (`src/web/lib/open-editors-registry.ts`) are never sent.
+- Opening a match passes `metadata.selection` to `code-editor.tsx`, which selects the matched text. `open-search` (Mod+Shift+F) seeds the query with a one-line editor selection; `search-next-match`/`search-prev-match` (F4/Shift+F4) are in `keybindings-store.ts`.
+
+---
+
 ## Project Workspace Management
 
 ### Keep-Alive Pattern (v2.0+)
