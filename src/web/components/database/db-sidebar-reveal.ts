@@ -10,9 +10,13 @@
 import { create } from "zustand";
 import { useSettingsStore } from "@/stores/settings-store";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
+import { DB_CONNECTIONS_CHANGED_WINDOW_EVENT } from "../../../shared/db-connection-events";
 
-/** Window event: the saved connections changed. `detail` is `DbConnectionsChangedDetail`. */
-export const DB_CONNECTIONS_CHANGED = "ppm:db-connections-changed";
+/**
+ * Window event: the saved connections changed. `detail` is `DbConnectionsChangedDetail`. Also
+ * dispatched, with no detail, when the server announces a change made elsewhere.
+ */
+export const DB_CONNECTIONS_CHANGED = DB_CONNECTIONS_CHANGED_WINDOW_EVENT;
 
 export interface DbConnectionsChangedDetail {
   connectionId?: number;

@@ -1,7 +1,7 @@
 import { Database, type Statement } from "bun:sqlite";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
-import { isPpmDirPath } from "./fs-path-guard.service.ts";
+import { assertSqlitePathAllowed } from "./database/sqlite-path-guard.ts";
 import { assertNoAttachStatement } from "./fs-ops/sql-statement-guard.ts";
 import { readRows } from "./fs-ops/sql-row-reader.ts";
 
@@ -199,9 +199,11 @@ class SqliteService {
     const abs = isAbsolute ? dbRelPath : resolve(projectPath, dbRelPath);
     if (!isAbsolute && !abs.startsWith(projectPath)) throw new Error("Access denied: path outside project");
     // The PPM directory holds the config database with provider credentials and
-    // the auth token. Absolute paths are accepted here, so this door has to
-    // refuse it explicitly or a viewer could read the whole secret store.
-    if (isPpmDirPath(resolve(abs))) throw new Error("Access denied: PPM directory is not browsable");
+    // the auth token, the snapshot folder holds copies of it, and `~/.cloudflared`
+    // the Cloudflare login. Absolute paths are accepted here, so this door refuses
+    // them explicitly — by the real path too, at every open, so a symlink to
+    // `ppm.db` saved as a connection (or swapped in after saving) is refused.
+    assertSqlitePathAllowed(abs);
     if (!isAbsolute && !existsSync(abs)) throw new Error(`Database not found: ${dbRelPath}`);
     return abs;
   }

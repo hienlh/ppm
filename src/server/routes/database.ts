@@ -48,8 +48,24 @@ import { databaseImpExpRoutes, impExpJobRoutes } from "./database-impexp.ts";
 import { databaseQueryRoutes } from "./database-query.ts";
 import { dbApprovalBroker } from "../../services/db-ai-tools/db-approval-broker.ts";
 import type { DbApprovalAnswer } from "../../shared/db-ai-tools.ts";
+import { sqlitePathRefusal } from "../../services/database/sqlite-path-guard.ts";
+import { dropCarriedSecrets } from "../../services/database/connection-endpoint-reset.ts";
+import { DB_CONNECTION_WRITE_PATHS, announceDbConnectionChanges } from "./database-connections-broadcast.ts";
 
 export const databaseRoutes = new Hono();
+
+// Before every route, so it wraps the connection writes; it announces only a 2xx write.
+for (const path of DB_CONNECTION_WRITE_PATHS) databaseRoutes.use(path, announceDbConnectionChanges);
+
+/**
+ * A 403 for a SQLite connection whose file is a credential store, naming the field; null for any
+ * other config. Checked again at every open (`sqlite.service.ts`), since the file can change.
+ */
+function protectedFile(c: Context, config: { type: string; path?: unknown }): Response | null {
+  if (config.type !== "sqlite" || typeof config.path !== "string") return null;
+  const refusal = sqlitePathRefusal(config.path);
+  return refusal ? c.json({ ...err(refusal), field: "path" }, 403) : null;
+}
 
 databaseRoutes.route("/drivers", databaseDriverRoutes);
 
@@ -271,6 +287,12 @@ databaseRoutes.post("/connections/import", async (c) => {
           errors.push(`Skipped "${entry.name}": invalid connection_config JSON`);
           continue;
         }
+        const pathRefusal = config && typeof (config as { path?: unknown }).path === "string"
+          ? sqlitePathRefusal((config as { path: string }).path) : null;
+        if (pathRefusal) {
+          errors.push(`Skipped "${entry.name}": ${pathRefusal}`);
+          continue;
+        }
 
         // Deduplicate name
         let name = entry.name;
@@ -384,6 +406,8 @@ databaseRoutes.post("/connections", async (c) => {
     if (!name) return c.json({ ...err("Give the connection a name"), field: "name" }, 400);
     if (nameTaken(name)) return c.json({ ...err(`A connection named "${name}" already exists`), field: "name" }, 409);
     const config = normalizeConnectionConfig(body.type, body.connectionConfig);
+    const refused = protectedFile(c, config);
+    if (refused) return refused;
     const conn = insertConnection(body.type, name, config, body.groupName, body.color);
     // Both columns default to on (readonly, available to the AI chat); only a form that unticked one says otherwise.
     updateConnection(conn.id, { readonly: flag(body.readonly), aiAccess: flag(body.aiAccess) });
@@ -418,11 +442,18 @@ databaseRoutes.put("/connections/:id", async (c) => {
       if (!name) return c.json({ ...err("Give the connection a name"), field: "name" }, 400);
       if (nameTaken(name, conn.id)) return c.json({ ...err(`A connection named "${name}" already exists`), field: "name" }, 409);
     }
-    // A config sent with no URL keeps the saved one; `keepPassword` keeps the saved password.
+    // A config sent with no URL keeps the saved one; `keepPassword` keeps the saved password —
+    // unless the edit points the connection somewhere else, which drops every saved secret the
+    // request did not type again (`dropCarriedSecrets`), for every caller.
     const before = decryptConfig(conn.connection_config);
-    const config = body.connectionConfig === undefined
+    const reset = body.connectionConfig === undefined
       ? undefined
-      : normalizeConnectionConfig(conn.type, body.connectionConfig, before);
+      : dropCarriedSecrets(before, normalizeConnectionConfig(conn.type, body.connectionConfig, before), body.connectionConfig);
+    const config = reset?.config;
+    if (config) {
+      const refused = protectedFile(c, config);
+      if (refused) return refused;
+    }
     // A held login belongs to the config it was typed for; pools and a tunnel opened with
     // settings that changed are no use to anyone.
     if (config) {
@@ -439,7 +470,9 @@ databaseRoutes.put("/connections/:id", async (c) => {
       aiAccess: flag(body.aiAccess),
     });
     const updated = getConnectionById(conn.id);
-    return c.json(ok(updated ? sanitizeConn(updated) : null));
+    // `secretsCleared` names what the edit dropped, so whoever made it can say what to type again.
+    const cleared = reset?.cleared.length ? { secretsCleared: reset.cleared } : {};
+    return c.json(ok(updated ? { ...sanitizeConn(updated), ...cleared } : null));
   } catch (e) {
     if (e instanceof ConnectionConfigError) return configError(c, e);
     return c.json(err((e as Error).message), 500);
@@ -484,6 +517,8 @@ databaseRoutes.post("/test", async (c) => {
     }
     const previous = saved ? decryptConfig(saved.connection_config) : null;
     let config = normalizeConnectionConfig(body.type, body.connectionConfig, previous);
+    // Testing an edit that points somewhere else does not send the saved secrets there either.
+    if (previous) config = dropCarriedSecrets(previous, config, body.connectionConfig).config;
 
     if (asksForLogin(config)) {
       if (!isLogin(body.login)) {

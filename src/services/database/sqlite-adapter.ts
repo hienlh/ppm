@@ -3,6 +3,7 @@ import { readonlySqliteService, sqliteService } from "../sqlite.service.ts";
 import { existsSync } from "node:fs";
 import { Database } from "bun:sqlite";
 import { throwIfAborted } from "./query-stop.ts";
+import { assertSqlitePathAllowed } from "./sqlite-path-guard.ts";
 
 /** A readonly connection opens the file read-only, so SQLite itself refuses writes. */
 function service(config: DbConnectionConfig) {
@@ -30,6 +31,8 @@ export const sqliteAdapter: DatabaseAdapter = {
 
   async probe(config) {
     const file = path(config);
+    // The connection form's Test opens the file here rather than through the service.
+    assertSqlitePathAllowed(file);
     if (!existsSync(file)) throw new Error(`File not found: ${file}`);
     const db = new Database(file, { readonly: true });
     try {

@@ -83,8 +83,11 @@ describe("creating and editing a connection", () => {
 
   it("keeps the saved password for an empty field, and changes it for a typed one", async () => {
     const id = await create({ type: "mysql", name: "crm", connectionConfig: { type: "mysql", connectionString: `mysql://root:${SECRET}@h/crm` } });
+    await call("PUT", `/db/connections/${id}`, { connectionConfig: { type: "mysql", connectionString: "mysql://root@h/crm2", keepPassword: true } });
+    expect(stored(id)).toMatchObject({ connectionString: `mysql://root:${SECRET}@h/crm2` });
+    // Another port is another place: the saved password is not carried there.
     await call("PUT", `/db/connections/${id}`, { connectionConfig: { type: "mysql", connectionString: "mysql://root@h:3307/crm", keepPassword: true } });
-    expect(stored(id)).toMatchObject({ connectionString: `mysql://root:${SECRET}@h:3307/crm` });
+    expect(stored(id)).toMatchObject({ connectionString: "mysql://root@h:3307/crm" });
     await call("PUT", `/db/connections/${id}`, { connectionConfig: { type: "mysql", connectionString: "mysql://root:new@h:3307/crm", keepPassword: true } });
     expect(stored(id)).toMatchObject({ connectionString: "mysql://root:new@h:3307/crm" });
   });
@@ -138,7 +141,10 @@ describe("creating and editing a connection", () => {
 
 describe("POST /db/test", () => {
   it("tests a SQLite file nobody has saved", async () => {
-    const file = join(temps.at(-1)!, "app.db");
+    // Outside PPM_HOME: a file in PPM's own folder is refused (`sqlite-path-guard.ts`).
+    const dir = mkdtempSync(join(tmpdir(), "ppm-db-form-file-"));
+    temps.push(dir);
+    const file = join(dir, "app.db");
     const db = new Database(file);
     db.exec("CREATE TABLE t (id INTEGER)");
     db.close();
