@@ -5,6 +5,7 @@
 ### Added
 
 - **Antigravity chats.** Antigravity (Google's `agy` CLI) can be picked as a chat's provider: replies, thinking and tool calls stream as with Claude and Codex, with approvals, Stop, images, agy's own slash commands and skills, extra accounts with a sign-in of their own (Settings → Accounts), a quota panel, and PPM's tab and database tools. Each open chat runs one `agy acp` process. A slow command agy moves to the background no longer ends the chat halfway, and the quota is read from agy itself when the Antigravity app is closed. Needs agy installed and signed in.
+- **Pin tabs and close them in bulk, as in VS Code.** A tab's menu (right-click, or long-press on a phone) now has **Pin**: a pinned tab moves to the start of its tab bar, shows a pin where the × was (click it to unpin), is not closed by a middle click, and stays pinned after a reload. **Close Others**, **Close to the Right** and the new **Close Saved** and **Close All** leave pinned tabs open; Close Saved also keeps tabs with unsaved work, and the others still ask before closing it. Pin / Unpin Tab, Close Saved Tabs and Close All Tabs are in the command palette and can be given a shortcut in Settings → Keyboard Shortcuts (none by default: VS Code's are two-step chords, which PPM does not support).
 
 ## [0.24.1] - 2026-11-12
 

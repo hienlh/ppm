@@ -17,7 +17,8 @@ import {
 } from "@/lib/icons";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
-import { closeTabsAsked } from "@/stores/tab-close-confirm-store";
+import { closeTabsAsked, tabHoldsUnsavedWork } from "@/stores/tab-close-confirm-store";
+import { bulkCloseIds, BULK_CLOSE } from "@/lib/tab-pins";
 import { DOCK_PANEL_ID, visibleTabs } from "@/stores/panel-utils";
 import { PanelBottom, Grid2x2 } from "@/lib/icons";
 import { useProjectStore } from "@/stores/project-store";
@@ -246,14 +247,16 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
         if (target) panelState.moveTab(tab.id, DOCK_PANEL_ID, target);
         break;
       }
+      case "pin":
+      case "unpin":
+        panelState.setTabPinned(tab.id, action === "pin");
+        break;
       case "close-others":
-        void closeTabsAsked(pTabs.filter((t) => t.id !== tab.id && t.closable).map((t) => t.id), effectivePanelId);
+      case "close-right":
+      case "close-saved":
+      case "close-all":
+        void closeTabsAsked(bulkCloseIds(pTabs, tab.id, BULK_CLOSE[action]!, tabHoldsUnsavedWork), effectivePanelId);
         break;
-      case "close-right": {
-        const idx = pTabs.findIndex((t) => t.id === tab.id);
-        void closeTabsAsked(pTabs.slice(idx + 1).filter((t) => t.closable).map((t) => t.id), effectivePanelId);
-        break;
-      }
       case "copy-path": {
         const filePath = tab.metadata?.filePath as string | undefined;
         if (filePath) void copyToClipboard(filePath);

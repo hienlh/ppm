@@ -3,10 +3,11 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useState, useCallback, useMemo } from "react";
 import {
   Terminal, Menu, X, Layers, Plus,
-  Copy, Download, Pencil, Trash2, Columns2, Circle, Tag, Check, XSquare, ChevronsRight, ChevronUp,
+  Copy, Download, Pencil, Trash2, Columns2, Circle, Tag, Check, XSquare, ChevronsRight, ChevronUp, Pin, PinOff,
 } from "@/lib/icons";
 import { usePanelStore } from "@/stores/panel-store";
-import { closeTabsAsked } from "@/stores/tab-close-confirm-store";
+import { closeTabsAsked, tabHoldsUnsavedWork } from "@/stores/tab-close-confirm-store";
+import { bulkCloseIds, type BulkClose } from "@/lib/tab-pins";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
@@ -113,7 +114,6 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const menuTab = menuTabId ? tabs.find((t) => t.id === menuTabId) : null;
   const menuTabPanelId = menuTabId ? tabPanelMap[menuTabId] ?? focusedPanelId : focusedPanelId;
   const menuTabPanelTabs = (panels[menuTabPanelId]?.tabs ?? []).filter((tab) => !minimalMode || isMinimalTab(tab.type));
-  const menuTabIdx = menuTabId ? menuTabPanelTabs.findIndex((t) => t.id === menuTabId) : -1;
 
   // Chat-session context for the long-press menu (Mark as unread / Set Tag)
   const menuSessionId = tabSessionId(menuTab);
@@ -144,17 +144,15 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
     setRenameTabId(null);
   }
 
-  function closeOthers(tabId: string) {
+  /** Close Others / to the Right / Saved / All: never a pinned tab (`bulkCloseIds`). */
+  function bulkClose(tabId: string, kind: BulkClose) {
     const pid = tabPanelMap[tabId] ?? focusedPanelId;
-    const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
-    void closeTabsAsked(pTabs.filter((t) => t.id !== tabId && t.closable && (!minimalMode || isMinimalTab(t.type))).map((t) => t.id), pid);
+    const pTabs = (usePanelStore.getState().panels[pid]?.tabs ?? []).filter((t) => !minimalMode || isMinimalTab(t.type));
+    void closeTabsAsked(bulkCloseIds(pTabs, tabId, kind, tabHoldsUnsavedWork), pid);
     setMenuTabId(null);
   }
-  function closeRight(tabId: string) {
-    const pid = tabPanelMap[tabId] ?? focusedPanelId;
-    const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
-    const idx = pTabs.findIndex((t) => t.id === tabId);
-    void closeTabsAsked(pTabs.slice(idx + 1).filter((t) => t.closable && (!minimalMode || isMinimalTab(t.type))).map((t) => t.id), pid);
+  function togglePin(tab: Tab) {
+    usePanelStore.getState().setTabPinned(tab.id, !tab.pinned);
     setMenuTabId(null);
   }
 
@@ -440,23 +438,44 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             <div className="h-px bg-border mx-2" />
           </>
         )}
+        {menuTab && (
+          <>
+            <button onClick={() => togglePin(menuTab)}
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+              {menuTab.pinned ? <><PinOff className="size-4" /> Unpin</> : <><Pin className="size-4" /> Pin</>}
+            </button>
+            <div className="h-px bg-border mx-2" />
+          </>
+        )}
         {menuTab?.closable && (
           <button onClick={() => { void closeTabsAsked([menuTabId!]); setMenuTabId(null); }}
             className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
             <X className="size-4" /> Close
           </button>
         )}
-        {menuTabPanelTabs.some((t) => t.id !== menuTabId && t.closable) && (
-          <button onClick={() => closeOthers(menuTabId!)}
+        {menuTabId && bulkCloseIds(menuTabPanelTabs, menuTabId, "others", () => false).length > 0 && (
+          <button onClick={() => bulkClose(menuTabId, "others")}
             className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
             <XSquare className="size-4" /> Close Others
           </button>
         )}
-        {menuTabIdx >= 0 && menuTabIdx < menuTabPanelTabs.length - 1 && (
-          <button onClick={() => closeRight(menuTabId!)}
+        {menuTabId && bulkCloseIds(menuTabPanelTabs, menuTabId, "right", () => false).length > 0 && (
+          <button onClick={() => bulkClose(menuTabId, "right")}
             className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
             <ChevronsRight className="size-4" /> Close to the Right
           </button>
+        )}
+        {menuTabId && bulkCloseIds(menuTabPanelTabs, menuTabId, "all", () => false).length > 0 && (
+          <>
+            <button onClick={() => bulkClose(menuTabId, "saved")}
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+              <XSquare className="size-4" /> Close Saved
+            </button>
+            <button onClick={() => bulkClose(menuTabId, "all")}
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+              <XSquare className="size-4" /> Close All
+            </button>
+          </>
         )}
       </BottomSheet>
 
