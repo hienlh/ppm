@@ -16,7 +16,36 @@ export function frameUrl(code: string, slug: string, file: string): string {
   return `${shareBase(code)}/f/${encodeURIComponent(slug)}/${file.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-export function useShareCanvas(code: string, slug: string, file: string) {
+/**
+ * The page of the shared design a link in the frame points at, as a path inside the design
+ * folder, or null when it leaves the design (another link, another design, another origin,
+ * not an HTML page).
+ *
+ * The bridge's nav guard cancels every link out of the frame's document and reports it as
+ * `navigate-blocked`, so a design made of several pages has its links followed here instead.
+ */
+export function sharePageFor(href: string, origin: string, code: string, slug: string): string | null {
+  let target: URL;
+  try {
+    target = new URL(href);
+  } catch {
+    return null;
+  }
+  const prefix = frameUrl(code, slug, "");
+  if (target.origin !== origin || !target.pathname.startsWith(prefix)) return null;
+  let page: string[];
+  try {
+    page = target.pathname.slice(prefix.length).split("/").map(decodeURIComponent);
+  } catch {
+    return null;
+  }
+  // A dot-folder (`.design/`) is PPM's own; an encoded slash would load another path than linked.
+  if (page.some((s) => s === "" || s.startsWith(".") || /[/\\]/.test(s))) return null;
+  const path = page.join("/");
+  return /\.html?$/i.test(path) ? path : null;
+}
+
+export function useShareCanvas(code: string, slug: string, file: string, onPage: (file: string) => void) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [nonce, setNonce] = useState(() => newBridgeNonce());
   const [dead, setDead] = useState(false);
@@ -38,6 +67,11 @@ export function useShareCanvas(code: string, slug: string, file: string) {
   }, [file]);
 
   useEffect(() => bridge.on("ready", () => { recovering.current = false; setDead(false); }), [bridge.on]);
+
+  useEffect(() => bridge.on("navigate-blocked", (m) => {
+    const page = sharePageFor(m.href, window.location.origin, code, slug);
+    if (page) onPage(page);
+  }), [bridge.on, code, slug, onPage]);
 
   const reload = useCallback(() => {
     recovering.current = false;
