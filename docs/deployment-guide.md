@@ -704,6 +704,28 @@ different figures on two pages of one window. The scope is part of the key becau
 alone is ambiguous — `dbus-broker.service` commonly exists in both scopes — and a user unit
 belonging to another uid is deliberately dropped, since it is not on this page at all.
 
+The same pages from a terminal, through the running PPM's routes (there is no fallback without a
+server):
+```bash
+ppm system resources                      # CPU, memory, swap (light tier; measures CPU over two ticks)
+ppm system processes --sort mem -n 20     # --sort cpu waits for a second sample, so CPU means something
+ppm system process 4242                   # command line, folder, user, state (not on Windows yet)
+ppm system kill 4242 --expect-name node   # TERM, then KILL; --force sends KILL at once; --tree
+ppm system signal 4242 STOP --expect-name node
+ppm system services --user --filter docker
+ppm system service docker.service --log   # details; `ppm system service restart docker.service`
+```
+Each command subscribes to the metrics stream only for as long as it reads one sample, and ends
+that subscription on the server before it prints. `kill` and `signal` send the start time they just
+read, so a pid reused since is refused (409). `--expect-name` is compared with the live name (case
+and `.exe` ignored) for every caller, and a mismatch ends nothing; from an AI chat the CLI requires
+it, so the approved command line says what it ends. A request from an AI chat (`X-PPM-AI-Chat: 1`)
+may not end or signal a chat's AI provider process — the Claude CLI or `codex app-server` — and is
+told to use `chat_stop`. That refusal is advisory (the header is the chat's own claim) and does not
+apply to the Task Manager. On Windows the SDK starts the Claude CLI itself and never hands PPM its
+pid, so there a provider is recognised as a direct child of the server named `claude`/`codex` or
+running the SDK's `cli.js`; one found by neither rule is not protected.
+
 ### Daemon state
 ```bash
 ppm status --json      # pid, port, host, shareUrl, tunnel state
