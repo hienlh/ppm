@@ -646,11 +646,26 @@ writes the database directly, so an open PPM never heard of the change.
 
 | Family | Read, never ask | Ask first |
 |---|---|---|
-| Git | `git_status`, `git_log`, `git_diff`, `git_branches` | `git_stage`, `git_discard`, `git_undo`, `git_commit`, `git_sync`, `git_branch`, `git_stash` |
+| Git | `git_status`, `git_log`, `git_diff`, `git_branches` | `git_stage`, `git_discard`, `git_undo`, `git_commit`, `git_sync`, `git_branch`, `git_stash`, `git_history` |
 | Schedules | `schedules_list`, `schedule_get` | `schedule_save`, `schedule_delete`, `schedule_run_now` |
 | Tunnels | `tunnels_status` | `port_forward_start`, `port_forward_stop`, `public_link_set` |
 | Projects | (`projects_list`) | `project_update`, `project_remove` |
 | Chats | (`chat_list_sessions`, `chats_attention`), `chat_changes` | `chat_stop`, `chat_delete`; `chat_organize`, `chat_changes_answer` (see below) |
+
+`git_history` (`assistant-git-history-{plan,tool}.ts`, cards in
+`assistant-approval-summary-git-history.ts`) merges, cherry-picks, reverts, tags, and aborts or
+continues an operation that stopped part way, one action per call. It names a commit only as the
+history route lists it (the newest 1000 of every branch; a merge commit is refused), a merge
+source only as the refs route lists it, and refuses a dirty tree, a conflict, or an operation
+already under way. After Allow, HEAD's branch and commit, the operation and a merge source's tip
+must be what the card showed. A merge, pick or revert that stops on a conflict answers with the
+conflicted files rather than an error. The card names the repository's own hooks the action can
+run (`src/services/git-workflow/git-hooks-present.ts`: `git rev-parse --git-path hooks`, which
+follows `core.hooksPath`, read through Husky 9's `.husky/_` stubs): they run inside PPM, and a
+tracked `.husky` folder means the branch being merged can bring its own. They are disclosed, not
+switched off, because commits from Source Control run them too. `git_branch` `delete` takes a local
+branch other than the current one, shows its last commit, re-checks it after Allow, and answers with
+it so the branch can be made again.
 
 The project family reaches only `GET /api/projects`, `PATCH /api/projects/:name`, its `/color` and
 `DELETE /api/projects/:name`; the internal app gates the rest of that router (clone, image upload,
@@ -1298,9 +1313,10 @@ and runs in bypass mode:
   takes only typed text is answered in PPM. One program may read a bot at a time: a second reader
   of the same bot (another PPM, another tool) breaks one of them.
 - **A Codex secret answer** is kept out of PPM's session trace but stays in Codex's own rollout.
-- **Git, schedules and tunnels do less here than in PPM.** No merge, rebase, cherry-pick, revert,
-  tags, worktrees, branch deletion, block-level staging or aborting an operation, and never a force
-  push; the Tailscale Service and the named tunnel are read only. Those stay in Source Control, the
+- **Git, schedules and tunnels do less here than in PPM.** No rebase (other than a pull's),
+  worktrees, block-level staging, pushing tags, picking or reverting a merge commit, or naming a
+  commit older than the newest 1000, and never a force push; the Tailscale Service and the named
+  tunnel are read only. Those stay in Source Control, the
   Git Graph and Settings → Remote Access, or `ppm …` in the shell behind a card. In a working tree
   too large for `/git/changes` to list whole, commit and stash save are refused.
 - **`schedules:changed` misses CLI writes.** `ppm schedule …` writes the database directly, so
