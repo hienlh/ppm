@@ -20,6 +20,7 @@ import { codexOneShotThreadParams, codexOneShotTurnParams, CodexOneShotCollector
 import { codexAccountProblemError, recordCodexAccountAnswered, recordCodexAccountProblem } from "./codex-one-shot-account-health.ts";
 import { isCodexUsageLimit } from "./codex-usage-limit.ts";
 import { redactTruncate } from "./codex-redact.ts";
+import { planAssistantCodexMcp } from "./codex-assistant-mcp-guard.ts";
 import { killProcessTree } from "../../services/windows-process-tree.ts";
 import { OneShotError } from "../one-shot-error.ts";
 import type { OneShotInput, OneShotResult } from "../../types/chat.ts";
@@ -82,9 +83,13 @@ export async function codexCompleteOnce(input: OneShotInput, ctx: CodexOneShotCo
     fail(codexAccountProblemError(problem, usage()));
   };
 
+  // The user's own MCP servers from their config.toml, switched off for the call the way a PPM
+  // Assistant session switches them off: nothing in a one-shot may reach them, and a config that
+  // cannot be read refuses the call rather than run with them.
+  let disableMcpServers: string[] = [];
   const startThread = async (): Promise<string> => {
     const thread = await race(client.request<{ thread?: { id?: string } }>(
-      "thread/start", codexOneShotThreadParams({ ...input, cwd: ctx.cwd }), CONTROL_REQUEST_TIMEOUT_MS,
+      "thread/start", codexOneShotThreadParams({ ...input, cwd: ctx.cwd, disableMcpServers }), CONTROL_REQUEST_TIMEOUT_MS,
     ));
     const id = typeof thread?.thread?.id === "string" ? thread.thread.id : null;
     if (!id) throw new OneShotError("PROVIDER_ERROR", "Codex started no thread");
@@ -113,6 +118,12 @@ export async function codexCompleteOnce(input: OneShotInput, ctx: CodexOneShotCo
     client.start({ cwd: ctx.cwd, ...(ctx.codexHome ? { codexHome: ctx.codexHome } : {}), purpose: "control" });
     await race(client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS));
     client.notify("initialized");
+    try {
+      disableMcpServers = await race(planAssistantCodexMcp(client, ctx.cwd, { ownServer: false, privateNames: [] }));
+    } catch (e) {
+      if (e instanceof OneShotError) throw e;
+      throw new OneShotError("PROVIDER_ERROR", (e as Error).message, { usage: usage() });
+    }
     threadId = await startThread();
 
     let end = await runTurn(input.jsonSchema);
