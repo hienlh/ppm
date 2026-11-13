@@ -4,7 +4,7 @@ import {
 } from "../../shared/assistant-tunnel-tool-names.ts";
 import { forwardStartSummary, forwardStopSummary, publicLinkSummary } from "./assistant-approval-summary-tunnel.ts";
 import type { ToolContext } from "./assistant-tool-family.ts";
-import type { OwnForward, TunnelHost } from "./assistant-tunnel-host.ts";
+import { pickOwnForward, type TunnelHost } from "./assistant-tunnel-host.ts";
 import { readForwardOverTailscale, readPublicLink, readTailscale, shareableTailnetName } from "./assistant-tunnel-read-tools.ts";
 import { errorResult, jsonResult, notApprovedResult } from "./assistant-tool-output.ts";
 
@@ -70,24 +70,6 @@ export async function portForwardStart(ctx: ToolContext, args: Record<string, un
     reachableBy: via === "tailscale" ? "devices on the user's tailnet" : "anyone with the address (no PPM login)",
     note: "It runs until stopped with port_forward_stop or until PPM restarts.",
   });
-}
-
-/** The one forward of this PPM that `args` names, or why there is none. */
-function pickOwnForward(own: OwnForward[], args: Record<string, unknown>): OwnForward | string {
-  const hasPort = args.port !== undefined && args.port !== null;
-  const hasPid = args.pid !== undefined && args.pid !== null;
-  if (hasPort === hasPid) return "Give exactly one of `port` or `pid`.";
-  if (hasPid) {
-    const pid = args.pid;
-    if (typeof pid !== "number" || !Number.isInteger(pid) || pid < 1) return "`pid` must be a positive whole number.";
-    return own.find((f) => f.pid === pid)
-      ?? `PID ${pid} is not a forward this PPM started. PPM's own public link, other PPMs' forwards and other programs' cloudflared are never stopped from here; stop it where it was started.`;
-  }
-  if (!isPort(args.port)) return "`port` must be a whole number from 1 to 65535.";
-  const port = args.port;
-  const matches = own.filter((f) => f.port === port);
-  if (matches.length > 1) return `Port ${port} is forwarded ${matches.length} ways (pids ${matches.map((f) => `${f.pid} via ${f.via}`).join(", ")}); give the \`pid\` of the one to stop.`;
-  return matches[0] ?? `This PPM does not forward port ${port}. Forwards it did not start are never stopped from here; tunnels_status lists what runs.`;
 }
 
 export async function portForwardStop(ctx: ToolContext, args: Record<string, unknown>, host: TunnelHost): Promise<Json> {
