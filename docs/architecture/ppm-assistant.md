@@ -174,6 +174,13 @@ stream starts, so a chat made a manager while its stream is live gets the server
 the project's manager, in the mode Settings → PPM Assistant gives new manager chats
 (`manager_default_mode`), with the rules files below. No card: a person pressed the button.
 
+The Assistant adopts an existing chat with `manager_assign` and takes the role away with
+`manager_unassign` (both under "Running the user's chats"); `ppm manager list | assign <session>
+[-p project] [--replace] | unassign [-p project]` does the same from a terminal through
+`/api/assistant/managers` on the running PPM (`src/cli/commands/manager-cmd.ts`, server only:
+with no PPM running it stops and says so). `assign` and `unassign` are refused from an AI chat
+(advisory, keyed on the AI-chat mark) and point to the two tools.
+
 ### Manager rules
 
 A manager chat works by `<project>/.ppm/manager.md` (`src/services/assistant-managers/manager-rules-*.ts`).
@@ -598,6 +605,25 @@ the user. `session_status` with
 no ids lists every manager chat, and each Assistant turn's shared context carries the list (project
 → session id, title; `assistant-managers-context.ts`), re-sent when it changes.
 
+An existing chat becomes the manager through **`manager_assign`** (`project`, `sessionId`, optional
+`providerId`, `replace`), and stops being it through **`manager_unassign`** (`project`); the
+instructions tell the Assistant to adopt a chat the user points at rather than create a new one.
+Both are the `manager` tool family (`assistant-manager-{tools,write-tools,tool-definitions}.ts`,
+names in `src/shared/assistant-manager-tool-names.ts`, card in
+`assistant-approval-summary-manager.ts`). They reach no route: they call `managerChats`, the
+service behind the session row's *Set as manager chat* / *Unset manager chat*, so the rules files,
+`assistant:managers_changed` and the badges are the screen's; the row is written with
+`assigned_by: "assistant"`. Refused before any card: an unattended turn, a chat that is not this
+project's (missing, another project's, an Assistant chat — `resolveAssistantSessionTarget`), a
+Codex chat, a design chat (the service's own `checkAssign`), the chat already being the manager,
+and a project that already has one unless `replace: true`. The card shows the project, the chat
+(title and whole id), its provider, its last activity (the transcript's mtime), its mode (which
+assigning leaves as it is, flagged in bypass), the chat that stops being the manager when replacing,
+and the consequence in the dialog's words plus the rules-file note. After the answer both tools read
+the chat and the project's manager again and change nothing if either moved; an assignment with
+nothing to replace is still compare-and-set (`onlyIfNone`). A running turn does not block either:
+the route does not require it, and a live stream simply gets the manager tools at its next start.
+
 
 - **`chats_attention`** (`src/services/assistant-hub/chat-attention.service.ts`) answers "which
   chats need me": chats waiting on a card or question, running, whose card was lost (an unread
@@ -656,6 +682,7 @@ writes the database directly, so an open PPM never heard of the change.
 | Projects | (`projects_list`) | `project_update`, `project_remove` |
 | Chats | (`chat_list_sessions`, `chats_attention`), `chat_changes` | `chat_stop`, `chat_delete`; `chat_organize`, `chat_changes_answer` (see below) |
 | Database connections | (`db_list_connections`), `db_connection_test` | `db_connection_save`, `db_connection_delete` |
+| Manager chats | (`session_status`, the shared context) | `manager_assign`, `manager_unassign` (see "Running the user's chats") |
 
 The connection family (`assistant-db-connection-*.ts`, names in
 `src/shared/assistant-db-connection-tool-names.ts`) reaches only the connection list, one
@@ -1264,7 +1291,9 @@ and runs in bypass mode:
    connected if the phone should get cards.
 2. *Digest & quiet hours*: the digest time and quiet hours, saved from a browser in the user's zone.
 3. In the project, right-click (long-press) the chat → *Set as manager chat*. Its mode stays what it
-   was; in bypass mode the dialog says "This chat runs without approval prompts."
+   was; in bypass mode the dialog says "This chat runs without approval prompts." Asking the
+   Assistant ("make Quản lý the Nxsys manager") does the same through `manager_assign` and a card,
+   and `ppm manager assign <session> -p <project>` from a terminal.
 4. *Manager chats* → the project's row → *Edit* in its Rules column. Keep two things in `.ppm/manager.md`: a pointer
    ("read and follow `<path to the guide>`") and the safety rules **inline** — only what is inline is
    guarded; the guide stays the manager's own working file.
