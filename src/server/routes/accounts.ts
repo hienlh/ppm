@@ -8,6 +8,7 @@ import { getAllAccountUsages, getUsageForAccount, refreshUsageForAccount, refres
 import { ok, err } from "../../types/api.ts";
 import { createLogger } from "../../services/logger.ts";
 import { checkPpmPassword } from "../../services/ppm-password.ts";
+import { LimitResetRefusedError, spendClaudeLimitReset } from "../../services/claude-limit-reset.service.ts";
 
 const log = createLogger("accounts");
 
@@ -247,6 +248,20 @@ accountsRoutes.get("/:id/usage-history", (c) => {
   const hours = Math.min(parseInt(c.req.query("hours") ?? "168", 10) || 168, 168);
   const snapshots = getSnapshotHistory(id, hours);
   return c.json(ok(snapshots));
+});
+
+/**
+ * POST /api/accounts/:id/limit-reset — { grantId } — spend one of the account's free limit
+ * resets. Refused with 409 unless Anthropic lists that grant as usable right now (read live).
+ */
+accountsRoutes.post("/:id/limit-reset", async (c) => {
+  const body = await c.req.json<{ grantId?: unknown }>().catch(() => ({} as { grantId?: unknown }));
+  try {
+    return c.json(ok(await spendClaudeLimitReset(c.req.param("id"), body.grantId)));
+  } catch (e) {
+    if (e instanceof LimitResetRefusedError) return c.json(err(e.message), e.status);
+    return c.json(err((e as Error).message), 502);
+  }
 });
 
 /** POST /api/accounts/:id/verify — re-verify token & refresh profile */

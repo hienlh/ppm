@@ -26,7 +26,8 @@ import {
 const KEY_PATH = resolve(tmpdir(), `ppm-test-usage-poll-${Date.now()}.key`);
 const OAUTH_TOKEN_1 = "sk-ant-oat01-test-poll-account1-abcdef";
 const OAUTH_TOKEN_2 = "sk-ant-oat01-test-poll-account2-ghijkl";
-const API_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+/** The read Claude Code makes, with the account's free limit resets in it. */
+const API_USAGE_URL = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1";
 
 const originalFetch = globalThis.fetch;
 let ensureSpy: ReturnType<typeof spyOn>;
@@ -125,6 +126,27 @@ describe("fetch + parse API response", () => {
     expect(usage.weeklySonnet?.utilization).toBeCloseTo(0.02, 2);
     expect(usage.session?.windowHours).toBe(5);
     expect(usage.weekly?.windowHours).toBe(168);
+  });
+
+  it("reads as Claude Code, which is the only app Anthropic lists free limit resets to, and keeps them", async () => {
+    const id = addOAuthAccount("resets", OAUTH_TOKEN_1);
+    const headers: Array<Record<string, string>> = [];
+    globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+      headers.push(init?.headers as Record<string, string>);
+      return Promise.resolve(new Response(JSON.stringify({
+        ...USAGE_RESPONSE,
+        cedar_ember: {
+          eligible: true, at_limit: false, exhausted: [],
+          grants: [{ id: "full-reset-2611", label: "One full limit reset", resets_total: 1, resets_left: 1, clears: ["five_hour", "seven_day"], usable_now: true, use_requires_limit: false, paused: false, blocking: [], percent_used: {}, type: "full", gives_back_weekly: false }],
+        },
+      }), { status: 200 }));
+    }) as any;
+
+    await refreshUsageNow();
+
+    expect(headers[0]?.["x-app"]).toBe("cli");
+    expect(headers[0]?.["User-Agent"]).toStartWith("claude-cli/");
+    expect(getUsageForAccount(id).limitResets?.grants.map((g) => [g.id, g.kind, g.usableNow])).toEqual([["full-reset-2611", "full", true]]);
   });
 
   it("handles partial response (only five_hour)", async () => {
