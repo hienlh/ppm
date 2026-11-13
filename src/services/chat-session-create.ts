@@ -1,6 +1,7 @@
 import { chatService } from "./chat.service.ts";
 import { getSessionProjectPath, resolveMigratedSession, setSessionClearedFrom, setSessionDesignSlug } from "./db.service.ts";
 import { isAssistantProject } from "../shared/assistant-project.ts";
+import { projectKey } from "./project-name-for-path.ts";
 import { bindPickedAccount } from "./picked-account-binding.ts";
 import { getProjectDefaultTagId, setSessionTag } from "./tag.service.ts";
 import { isValidDesignSlug } from "./design/design-slug.ts";
@@ -45,7 +46,7 @@ export async function createProjectChatSession(input: CreateProjectChatInput): P
   const sourceProject = input.clearedFrom ? clearedFromProjectPath(input.clearedFrom) : null;
   const clearsBound = !!input.clearedFrom && isBoundSession(input.clearedFrom)
     && !input.designSlug && !isAssistantProject(input.projectName)
-    && (!sourceProject || sourceProject === input.projectPath);
+    && (!sourceProject || projectKey(sourceProject) === projectKey(input.projectPath));
   if (clearsBound && !providerSupportsBinding(input.providerId ?? providerRegistry.getDefault().id)) {
     throw new Error(`This chat is managed by an extension, and only Claude can run it (${BINDING_CLAUDE_ONLY})`);
   }

@@ -84,6 +84,14 @@ describe("/clear in a chat an extension bound", () => {
     expect(getExtensionSessionBinding(design.id)).toBeNull();
   });
 
+  it("treats the same project spelled another way as the same project", async () => {
+    const source = await boundChat("clear-ext-4");
+    const cleared = await createProjectChatSession({
+      ...PROJECT, projectPath: `${PROJECT.projectPath}/sub/..`, providerId: BINDING.id, adoptWarmSpare: false, clearedFrom: source,
+    });
+    expect(getExtensionSessionBinding(cleared.id)).toMatchObject({ extension_id: "clear-ext-4" });
+  });
+
   it("leaves an ordinary chat's /clear an ordinary chat", async () => {
     const source = await createProjectChatSession({ ...PROJECT, providerId: BINDING.id, adoptWarmSpare: false });
     const cleared = await createProjectChatSession({ ...PROJECT, providerId: BINDING.id, adoptWarmSpare: false, clearedFrom: source.id });
