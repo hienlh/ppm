@@ -1,17 +1,62 @@
 # Changelog
 
-## [Unreleased]
+## [0.25.0] - 2026-11-13
 
 ### Added
 
-- **`ppm` commands go through the running PPM**: a write reaches the server that holds its database (found through its endpoint file and proven before the token is sent), shows up on open screens at once, and prints which PPM it reached; with no server running it writes directly and says so. `--profile` picks the database.
-- **The CLI covers every area of the app**: projects, chats and AI change review, git, database connections, settings (theme, AI, keys, proxy, notifications, Telegram, MCP, accounts), extensions and installs, Jira, processes and services, designs, logs, schedules, group chats, teams, PPM Cloud and port forwards.
-- **The Assistant gains carded tools** for projects, chats (stop, organize, delete, review changes), git history and branch deletion, database connections and typing into a terminal; its CLI reference says how commands reach PPM and which steps only you can take.
-- **Antigravity chats.** Antigravity (Google's `agy` CLI) can be picked as a chat's provider: replies, thinking and tool calls stream as with Claude and Codex, with approvals, Stop, images, agy's own slash commands and skills, extra accounts with a sign-in of their own (Settings → Accounts), a quota panel, and PPM's tab and database tools. Each open chat runs one `agy acp` process. A slow command agy moves to the background no longer ends the chat halfway, and the quota is read from agy itself when the Antigravity app is closed. Needs agy installed and signed in.
+- **PPM Assistant: an AI chat (Claude or Codex) that works on PPM itself.** It reads your projects, chats, databases and the screen you chat from, opens, moves and closes tabs, and runs palette commands; anything that changes data asks with a card first. A window on a desktop, a tab on a phone.
+- **The Assistant runs your chats**: it lists the chats waiting on you, opens and messages chats, answers their approval cards after showing them word for word, and reports when a watched chat finishes.
+- **Assistant tools with cards** for git (commit, push, sync, stash, merge, cherry-pick, revert, tag, branch delete), schedules, port forwards and the public link, projects (add, rename, move, remove), database connections, chats (stop, organize, delete, review and revert their changes) and typing a command into a terminal. Git cards name the repository hooks that will run.
+- **Manager chats**: each project can name one chat the Assistant may message without a card, within limits, guided by a guarded `.ppm/manager.md` rules file. Its reports and decisions show as cards above the Assistant chat, with OK, Edit and replies.
+- **Morning digest, quiet hours and an Assistant notebook** for notes it keeps between turns (your own lines stay yours).
+- **PPM Assistant on Telegram**: a connected chat continues the main Assistant session, with cards, buttons, photos and `/new`, `/sessions`, `/status`, `/stop`.
+- **Settings → PPM Assistant** with General, Sessions & Telegram, Digest & quiet hours, Manager chats and Notebook tabs.
+- **`ppm` commands go through the running PPM**: a write reaches the server that holds its database, shows up on open screens at once, and prints which PPM it reached; with no server running it writes directly and says so. `--profile` picks the database.
+- **The CLI covers every area of the app**: projects, chats and change review, git (incl. worktrees, stash, cherry-pick, tags), database connections, settings, notifications, Telegram, MCP, accounts, extensions, language servers, Jira, processes and services, designs, logs, schedules, group chats, teams, PPM Cloud and port forwards.
+- **Open screens follow changes made elsewhere**: projects, chat lists and titles, theme and settings panes, extensions, Jira, designs, schedules and database connections refresh when the CLI, the Assistant or another device changes them.
+- **Antigravity chats**: pick Antigravity (Google's `agy` CLI) as a chat's provider, with streaming, approvals, Stop, images, its slash commands and skills, extra accounts, a quota panel and PPM's tab and database tools. Needs agy installed and signed in.
+- **Open a tab straight into a new floating window.**
+- **A terminal an AI typed into keeps its AI-chat mark**, shown on its tab.
+
+### Changed
+
+- **Breaking: PPMBot's coordinator, task delegation and the `ppm bot` CLI are gone**; the PPM Assistant replaces them. Your bot, connected chats and settings are kept under Settings → PPM Assistant → Sessions & Telegram.
+- **Breaking CLI changes:**
+  - `ppm config set` refuses secret keys and keys that have their own command (use `ppm theme`, `ppm ai`, `ppm proxy` and so on).
+  - `ppm jira config set --token` is replaced by `--token-prompt`, which asks at the terminal.
+  - `ppm git pull` takes `--rebase` instead of `--remote`/`--branch`; `ppm git push` defaults to the branch's own remote and `--branch` needs `--remote`.
+  - `ppm chat create` always creates the chat in a project (`-p`, or the current folder's).
+  - After upgrading, restart an already running PPM once so CLI writes can reach it.
+- **Approval cards are clearer**: no second tool card, a denied call shows as denied, and Codex command cards show the command, folder and reason.
+- **Every chat remembers its permission mode on the server.**
+
+### Fixed
+
+- **A config save no longer wipes projects another process added**, nor their Jira and per-project settings.
+- **A project's avatar is kept across restarts.**
+- **A chat whose first turn never reached the CLI starts on the next message** instead of failing with "No conversation found".
+- **A provider's approval stays answerable after its turn ends**, e.g. from a background agent.
+- **A renamed chat's open tabs are retitled at once on every device.**
+- **A chat created on the server shows its stored permission mode**, and two Codex messages in one turn no longer run together.
+- **Codex question cards show their questions and choices** instead of an empty form.
+- **A Claude turn that ends in an API error is reported as failed**, not as done.
+- **A slow Codex start no longer fails after 15 seconds.**
+- **A fresh port forward no longer vanishes from the panel** when the process scan is slow.
+- **Floating windows**: a titlebar button on a window behind another works on the first click, a window dragged left draws over the sidebar, and a tab inside one keeps its state after a reload.
+- **Middle-click closes a tab again** when the tab strip overflows.
+- **`ppm` finds the current folder's project on Windows** whatever the case or separator.
+- **A Telegram reply containing `<` or `&` is no longer refused**, and long replies split cleanly.
+- **The page no longer loads Google Fonts.**
 
 ### Security
 
-- **Secrets never go on a command line**: `ppm config set` refuses secret keys, commands ask for tokens at your terminal, saved credentials are dropped when their endpoint changes, and a SQLite connection may not open PPM's own or private files.
+- **Secrets never go on a command line**: `ppm config set` refuses secret keys, commands ask for tokens at your terminal, MCP secrets reach Claude through a private file, and saved credentials (database, Jira) are dropped when their endpoint changes.
+- **A SQLite connection may not open PPM's own databases, their snapshots or the Cloudflare login**, by any path spelling or hard link.
+- **Git write routes refuse option-shaped refs, remotes and worktree paths**, so a push branch like `+main` or `:main` can no longer force-push or delete a remote branch.
+- **The CLI checks a server's identity before sending it the token**, and the proof is only given to direct local requests.
+- **Kill and signal check the expected process name**, and an AI chat cannot end another chat's provider process.
+- **The proxy auth key is shown redacted** unless you ask to reveal it.
+- **A secret answer to a question is no longer written in clear to the session trace.**
 
 ## [0.24.1] - 2026-11-12
 
@@ -49,6 +94,7 @@
 - **`--json` output could not be parsed.** Every command printed the version banner on stdout first; it is now left out when `--json` is given.
 - **Opening a long Claude chat could take up to 45 seconds, and past 30 the chat opened empty until Reload messages.** To show the messages after the last compaction, the history was read from the first byte of the transcript every time, because every compaction in current Claude Code keeps a few earlier messages and that switched off the shortcut that skips the rest. A week-long session had a 1.77 GB transcript, so each open read 1.77 GB (8.5 s and 5.7 GB of RAM) to show 31 messages, and with the session still running the result could never be reused. PPM now reads the transcript backward from its end to the last compaction and the messages it keeps (1 MB for that session), so the history loads in about 40 ms. The answer is the same: on the 60 largest transcripts on the test machine it matched the old read byte for byte. The same read now serves the tool-result check during a turn.
 - **An idle account's five-hour usage bar said "Resets now".** Claude sends no reset time for a window nothing has started, and the absence was read as "zero minutes from now"; the bars, the ··· menu and the rings' tooltip now say nothing when the provider said nothing.
+
 ## [0.23.37] - 2026-11-10
 
 ### Changed
@@ -273,39 +319,6 @@
 - **Remote Desktop on Wayland no longer needs gst-plugins-bad, and notices GStreamer packages installed while PPM runs.** A host with the software encoder but not that package passed the checklist and then lost every session at start to `no element "h264parse"`; PPM no longer uses that element. And PPM looked for GStreamer elements once per run, so a GPU encoder installed afterwards was ignored until PPM restarted, although the checklist says it re-checks automatically. It now looks again until nothing is missing, and at the start of every session. Once the host is ready, the Remote Desktop window also stops re-checking it; it used to re-check every two seconds for as long as a session lasted.
 
 - **Login with Claude could refuse the code you pasted, and then refuse every retry.** The code Claude shows ends in `#` and the id of the sign-in link it came from. PPM dropped that part and paired the code with the newest link the dialog had opened, so a code from an earlier tab (a second Login with Claude, or a tab left open) failed with "Code challenge failed", and the link it had used was then spent, so every Connect after that said "Invalid or expired OAuth state". The code is now matched to its own link, a refused code no longer spends the link, and a link PPM no longer holds (older than 10 minutes, or from before a restart) takes the dialog back to Login with Claude with a message saying so. Signing in again from an account's card no longer reports a plain success when Claude signs in a different account: that account is kept, and the message names the one that is still signed out.
-
-### Added
-
-- **PPM Assistant: an AI chat that works on PPM itself**, on Claude or Codex. Open it from the command palette (a window on a desktop, a tab on a phone). It finds and reads your chats, projects, databases and the screen you chat from, opens and closes tabs, switches project, runs palette commands, and sends messages into your chats.
-  - It asks before anything that changes data or could leave the machine, whatever mode the composer shows. Reads run unasked only inside your registered projects. A SQL query runs unasked only after PPM proves it only reads.
-  - It has its own settings in **Settings → PPM Assistant**: provider, model and effort, extra instructions, and its own MCP servers. None of your own Claude or Codex setup, hooks, skills or `AGENTS.md` load into it.
-  - An approved UPDATE or DELETE shows the rows as they were before it ran (up to 200).
-- **The Assistant runs your chats for you.** It can tell you which chats are waiting on you (chats that are not open count too), start a new chat in a project, and answer another chat's approval card after showing you that card word for word.
-- **"Tell me when that chat is done."** The Assistant watches a chat and reports in the conversation when it finishes or stops, even across a PPM restart. If a report cannot get through, a push notification names the chat.
-- **PPM Assistant on Telegram.** A connected private chat continues one Assistant conversation, and messages, answers and approval cards show up in both places. The bot has `/new`, `/sessions`, `/status`, `/stop` and `/help`, and you can send it photos. Allow is offered only when the whole request fits on the card.
-- **Settings → PPM Assistant → Telegram** holds the bot, the connected chats and the Connect link. The Assistant's session list marks the conversation that is on Telegram and has *Use on Telegram*. `/assistant?session=…` links open that conversation.
-- **The Assistant handles git, schedules and port forwarding with tools of its own** instead of `ppm` shell commands: it reads without asking, and every change (commit, push, discard with Undo, a schedule, a forward, the public link) asks with a card showing exactly what will happen. It never force-pushes.
-- **Settings → Schedules updates live** when a schedule is created, changed or deleted anywhere, including by the Assistant.
-
-### Changed
-
-- **Approval cards are clearer.** An approval no longer adds a second tool card, and a denied call shows as denied, both live and after a reload. Codex command cards show the command, folder and reason, and a Windows command is labelled PowerShell.
-- **Every chat now remembers its permission mode on the server.**
-
-### Removed
-
-- **Breaking: PPMBot's coordinator and the `ppm bot` CLI are gone**, along with task delegation and the hidden `/restart`. The PPM Assistant takes their place. Your bot, connected chats and settings are kept, and the settings moved to **Settings → PPM Assistant → Telegram**. PPMBot's system prompt is copied once into the Assistant's instructions. Its old memories are listed under Settings → PPM Assistant → General so you can copy them by hand.
-
-### Fixed
-
-- **A project's avatar is kept across restarts.** Two projects sharing a picture no longer lose it together when one is removed.
-- **Codex question cards on the web now show their questions and choices.** Before, the form was empty.
-- **A Telegram reply that contains `<` or `&` is no longer refused,** and long replies split without breaking their formatting.
-- **A Claude turn that ends in an API error is now reported as failed,** not as done.
-- **Middle-click closes a tab again** when the tab strip overflows.
-- **A tab inside a floating window keeps its state after a reload.**
-- **The page no longer loads Google Fonts.**
-- **A secret answer to a question is no longer written in clear to the session trace.**
 
 ## [0.23.14] - 2026-10-08
 
