@@ -75,3 +75,15 @@ it("a person joining an extension's turn takes it over, budget and all", async (
   provider.release(session.id);
   await until(() => !getSessionTurnState(session.id).running, "the turn to end");
 });
+
+it("refuses a second message from the same extension queued behind a person's turn", async () => {
+  const session = await chatService.createSession(provider.id, {});
+  const phone = connect(session.id);
+  await phone.say({ type: "message", content: "hold:one" });
+  await until(() => getSessionTurnState(session.id).running, "the person's turn to run");
+
+  expect(await startHeadlessTurn(session.id, { content: "two", providerId: provider.id, timeoutMs: 5_000 })).toEqual({ queued: true });
+  await expect(startHeadlessTurn(session.id, { content: "three", providerId: provider.id })).rejects.toThrow("BUSY_QUEUED");
+  provider.release(session.id);
+  await until(() => !getSessionTurnState(session.id).running, "the turns to end");
+});

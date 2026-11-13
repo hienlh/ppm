@@ -2235,8 +2235,10 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
       // The turn that opens after the running one has one owner. One already queued for someone
       // else (a person's `later` message, another extension) keeps it: this message is refused
       // rather than run in a turn whose approvals and budget belong to another.
+      // A second message behind a turn that is not its own is refused too: the turn it would join
+      // was set up for the first one.
       const queuedForOther = (entry.nextTurnOrigin !== undefined && entry.nextTurnOrigin !== "extension")
-        || (!!entry.queuedExtensionTurn && entry.queuedExtensionTurn.extensionId !== extension.extensionId);
+        || (!!entry.queuedExtensionTurn && (!ownTurn || entry.queuedExtensionTurn.extensionId !== extension.extensionId));
       if (wasRunning && queuedForOther) return { ok: false as const, error: EXTENSION_QUEUE_TAKEN };
       if (wasRunning && !ownTurn) priority = "later";
       arriving.priority = priority;
@@ -2451,7 +2453,7 @@ function answerApprovalCore(
  * Stops a session's running turn: its subprocess is torn down, so the next message resumes.
  * `traceOrigin` is the door an in-process caller of the chat socket named, when one did.
  */
-function cancelTurnCore(sessionId: string, entry: SessionEntry, origin: ChatMessageOrigin, traceOrigin?: TraceOrigin): void {
+function cancelTurnCore(sessionId: string, entry: SessionEntry, origin: ChatMessageOrigin, traceOrigin?: TraceOrigin, reason = `${origin}_cancel`): void {
   const phase = entry.phase ?? "unknown";
   const who = origin === "ws" ? "FE" : origin;
   log.info(`session=${sessionId} ${origin === "ws" ? "WS" : origin} cancel received from ${who} (phase=${phase})`);
@@ -2464,7 +2466,7 @@ function cancelTurnCore(sessionId: string, entry: SessionEntry, origin: ChatMess
   // An Assistant endpoint request is withdrawn here rather than left to the provider closing
   // its HTTP call: the card goes at once and its tool answers "not run".
   approvals.clearAll(sessionId, entry, APPROVAL_END.cancelled, { only: "endpoint" });
-  chatService.abortQuery(entry.providerId, sessionId, `${origin}_cancel`, traceOrigin ?? origin);
+  chatService.abortQuery(entry.providerId, sessionId, reason, traceOrigin ?? origin);
 }
 
 /**
@@ -2497,12 +2499,15 @@ export async function deliverExtensionMessage(
   });
 }
 
-/** Stop the session's running turn on an extension's request (its `chat:cancel`, the REST cancel). */
-export function cancelExtensionTurn(asked: string, providerId: string): void {
+/**
+ * Stop the session's running turn on an extension's request: its `chat:cancel` (reason
+ * `extension_cancel`) or the REST cancel (`rest_cancel`), which the trace tells apart.
+ */
+export function cancelExtensionTurn(asked: string, providerId: string, reason: "extension_cancel" | "rest_cancel" = "extension_cancel"): void {
   const sessionId = resolveMigratedSession(asked);
   const entry = activeSessions.get(sessionId);
-  if (entry) cancelTurnCore(sessionId, entry, "extension", "extension");
-  else chatService.abortQuery(providerId, sessionId, "extension_cancel", "extension");
+  if (entry) cancelTurnCore(sessionId, entry, "extension", "extension", reason);
+  else chatService.abortQuery(providerId, sessionId, reason, "extension");
 }
 
 function liveChatState(entry: SessionEntry): LiveChatState {

@@ -85,7 +85,7 @@ chatHeadlessRoutes.post("/sessions/:id/cancel", async (c) => {
     if (await crossProjectMismatch(id, projectPath)) return c.json(err("Session belongs to a different project"), 400);
     // The same stop a person's Stop runs: PPM's own approvals settled, the turn marked stopped.
     const { cancelExtensionTurn } = await import("../ws/chat.ts");
-    cancelExtensionTurn(id, providerOf(id));
+    cancelExtensionTurn(id, providerOf(id), "rest_cancel");
     return c.json(ok({ cancelled: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

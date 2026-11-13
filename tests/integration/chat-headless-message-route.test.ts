@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import "../test-setup.ts"; // disable auth + isolated PPM_HOME
 import { app } from "../../src/server/index.ts";
-import { chatWebSocket, listRunningSessions, ensureSessionEntry, getActiveSessionProjectPath, getSessionTurnOrigin } from "../../src/server/ws/chat.ts";
+import { chatWebSocket, listRunningSessions, ensureSessionEntry, getActiveSessionProjectPath, getSessionTurnOrigin, setExtensionApprovalDeadlineMs } from "../../src/server/ws/chat.ts";
 import { chatService } from "../../src/services/chat.service.ts";
 import { providerRegistry } from "../../src/providers/registry.ts";
 import { configService } from "../../src/services/config.service.ts";
@@ -493,17 +493,27 @@ describe("POST /chat/sessions/:id/messages — turn-scoped state", () => {
     ws.close();
   });
 
-  it("a headless follow-up unblocks a pending approval instead of dropping it", async () => {
+  // Only the person's own message answers a card: an extension's follow-up waits behind it, and
+  // the card ends by the person's answer or the extension turn's deadline.
+  it("a headless follow-up waits behind a pending approval, which the deadline then denies", async () => {
+    setExtensionApprovalDeadlineMs(800);
     const session = await createSession();
     // A browser is attached, so the question is shown rather than denied at once.
     const ws = await connectWs(PORT, session.id);
-    await postMessage(session.id, { content: "ask-question" });
-    await waitUntil(() => running(session.id));
-    await waitUntil(() => ensureSessionEntry(session.id, testProvider.id).pendingApprovalEvent != null);
+    try {
+      await postMessage(session.id, { content: "ask-question" });
+      await waitUntil(() => running(session.id));
+      await waitUntil(() => ensureSessionEntry(session.id, testProvider.id).pendingApprovalEvent != null);
 
-    const followUp = await postMessage(session.id, { content: "carry on" });
-    expect(followUp.json.data.queued).toBe(true);
-    await waitUntil(() => testProvider.resolveApprovalCalls.some((c) => c.approved === false));
+      const denialsBefore = testProvider.resolveApprovalCalls.filter((c) => c.approved === false).length;
+      const followUp = await postMessage(session.id, { content: "carry on" });
+      expect(followUp.json.data.queued).toBe(true);
+      await Bun.sleep(100);
+      expect(testProvider.resolveApprovalCalls.filter((c) => c.approved === false)).toHaveLength(denialsBefore);
+      await waitUntil(() => testProvider.resolveApprovalCalls.filter((c) => c.approved === false).length > denialsBefore);
+    } finally {
+      setExtensionApprovalDeadlineMs(null);
+    }
     await waitUntil(() => testProvider.pushMessageCalls.some((c) => c.sessionId === session.id && c.content === "carry on"));
     await waitUntil(() => !running(session.id));
     ws.close();
