@@ -1812,6 +1812,12 @@ export function getSessionProjectPath(sessionId: string): string | null {
   return legacySdk?.project_path ?? null;
 }
 
+/** The project name PPM recorded for a session, or null when it recorded none. */
+export function getSessionProjectName(sessionId: string): string | null {
+  const row = getDb().query("SELECT project_name FROM session_metadata WHERE session_id = ?").get(sessionId) as { project_name: string | null } | null;
+  return row?.project_name ?? null;
+}
+
 /** Ids of the sessions PPM keeps a record of that start with `prefix` (at most `limit`). */
 export function findSessionIdsByPrefix(prefix: string, limit = 5): string[] {
   const escaped = prefix.replace(/[\\%_]/g, (ch) => `\\${ch}`);

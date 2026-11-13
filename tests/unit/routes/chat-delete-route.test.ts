@@ -1,5 +1,6 @@
 /**
- * `DELETE /chat/sessions/:id`: a chat recorded under another project is not found, the stored
+ * `DELETE /chat/sessions/:id`: a chat recorded under another project is not found (one recorded
+ * under this project's old folder, or another spelling of its folder, is), the stored
  * provider is used when none is named, and `?stopRunning=1` stops a running turn before deleting
  * — or deletes nothing when the turn does not stop. Run against the real chat routes, with a fake
  * chat control standing in for the chat socket layer.
@@ -9,7 +10,10 @@ import "../../test-setup.ts";
 import { Hono } from "hono";
 import { openTestDb, setDb, setSessionMetadata, setSessionProvider, setSessionTitle, getSessionTitle, pinSession, getPinnedSessionIds } from "../../../src/services/db.service.ts";
 import { chatRoutes } from "../../../src/server/routes/chat.ts";
-import { CHAT_DELETE_WAIT_ENV_KEY } from "../../../src/server/routes/chat-session-delete.ts";
+import { CHAT_DELETE_WAIT_ENV_KEY, samePath } from "../../../src/server/routes/chat-session-delete.ts";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ANNOUNCE_CHAT_LIST_ENV_KEY } from "../../../src/server/routes/chat-list-broadcast.ts";
 import { chatService } from "../../../src/services/chat.service.ts";
 import { managerChats } from "../../../src/services/assistant-managers/manager-chats.service.ts";
@@ -90,6 +94,28 @@ describe("DELETE /chat/sessions/:id", () => {
     expect(deleted).toEqual([]);
     expect(getSessionTitle("s-other")).toBe("Theirs");
     expect(announced).toEqual([]);
+  });
+
+  it("deletes a chat of this project recorded under the folder it had before it was moved", async () => {
+    setSessionMetadata("s-moved", "alpha", "/proj/alpha-before-the-move");
+    expect((await del("s-moved")).status).toBe(200);
+    expect(deleted).toEqual([{ providerId: "claude", id: "s-moved" }]);
+  });
+
+  it("compares folders by real path, case-blind on Windows and macOS only", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ppm-chat-delete-"));
+    try {
+      const project = join(dir, "Alpha");
+      mkdirSync(project);
+      const link = join(dir, "alpha-link");
+      symlinkSync(project, link, "dir");
+      expect(samePath(link, project)).toBe(true);
+      expect(samePath(join(dir, "ALPHA"), project, "win32")).toBe(true);
+      expect(samePath(join(dir, "ALPHA"), project, "darwin")).toBe(true);
+      expect(samePath(join(dir, "ALPHA-elsewhere"), project, "linux")).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("uses the chat's stored provider when none is named, and drops PPM's rows", async () => {

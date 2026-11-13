@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { resolve } from "node:path";
 import { deleteChatSession } from "../../services/chat-session-admin.ts";
-import { getSessionProjectPath, getSessionProvider } from "../../services/db.service.ts";
+import { getSessionProjectName, getSessionProjectPath, getSessionProvider } from "../../services/db.service.ts";
+import { realPathOrSelfSync } from "../../services/fs-ops/fs-real-path.ts";
 import { hasChildren } from "../../services/session-branch.service.ts";
 import { managerChats } from "../../services/assistant-managers/manager-chats.service.ts";
 import { chatControl } from "../../services/chat-control/chat-control.ts";
@@ -28,10 +29,24 @@ export const CHAT_DELETE_WAIT_ENV_KEY = "chatDeleteWait";
 
 export const chatSessionDeleteRoutes = new Hono<Env>();
 
-/** Paths compared the way the file system does: case-blind on Windows. */
-function samePath(a: string, b: string): boolean {
-  const [x, y] = [resolve(a), resolve(b)];
-  return process.platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
+/**
+ * Paths compared the way the project lookup compares them: by real path (a junction, a symlink
+ * or another spelling of the same folder is the same project), case-blind on Windows and macOS.
+ */
+export function samePath(a: string, b: string, platform: string = process.platform): boolean {
+  const [x, y] = [realPathOrSelfSync(resolve(a)), realPathOrSelfSync(resolve(b))];
+  return platform === "win32" || platform === "darwin" ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+/**
+ * Whether the chat belongs to the project the route was reached through: recorded under its
+ * folder, or under its name. A moved project keeps its name while its chats keep the folder they
+ * were recorded under, which no longer matches.
+ */
+function heldByProject(id: string, projectPath: string, projectName: string): boolean {
+  const recorded = getSessionProjectPath(id);
+  if (!recorded || samePath(recorded, projectPath)) return true;
+  return getSessionProjectName(id) === projectName;
 }
 
 function waitOptions(env: unknown): WaitTurnIdleOptions {
@@ -42,8 +57,7 @@ function waitOptions(env: unknown): WaitTurnIdleOptions {
 chatSessionDeleteRoutes.delete("/sessions/:id", async (c) => {
   const id = c.req.param("id");
   try {
-    const recorded = getSessionProjectPath(id);
-    if (recorded && !samePath(recorded, c.get("projectPath"))) return c.json(err("Session not found"), 404);
+    if (!heldByProject(id, c.get("projectPath"), c.get("projectName"))) return c.json(err("Session not found"), 404);
     const providerId = c.req.query("providerId") || getSessionProvider(id) || "claude";
     // Leaf-only: a session with edited versions branched from it cannot be
     // deleted (would orphan its children). Reparenting is out of scope.
