@@ -805,7 +805,7 @@ ppm notify get
   --json — Print JSON
 
 ppm notify set <event> <state>
-  Switch an event (done, approval_request, question, collab_approval, schedule, jira, design_review) or a channel (telegram, ntfy) on or off
+  Switch an event (done, approval_request, question, collab_approval, schedule, jira, design_review, extension) or a channel (telegram, ntfy) on or off
 
 ppm notify delay <seconds>
   Wait this long, and send only if nobody has looked by then (0 sends at once; at most 3600)
@@ -1048,6 +1048,11 @@ ppm ext enable <name>
 
 ppm ext disable <name>
   Disable an extension (its commands leave every open palette)
+
+ppm ext run [command] [args...]
+  Run a command an extension declared, on the running server
+  --json — print the result as one line of JSON
+  --timeout [ms] — how long to wait for the command, in ms (1000 to 600000)
 
 ppm ext dev <path>
   Symlink a local extension for development

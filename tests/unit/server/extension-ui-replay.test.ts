@@ -75,8 +75,9 @@ describe("/ws/extensions on ready", () => {
     await extensionWebSocket.message(ws, JSON.stringify({ type: "ready" }));
     extensionWebSocket.close(ws);
 
-    expect(sent.map((m) => m.type)).toEqual(["contributions:update", "statusbar:update", "tree:update"]);
-    expect(sent[1]).toEqual({ type: "statusbar:update", item: item("replay-sb-1", "ext-replay", "9 loose ends") });
-    expect(sent[2]).toEqual({ type: "tree:update", viewId: "replay.tree", items: [row("Unfinished chats (3)")] });
+    // `client:hello` (the browser's own id, for `chat:openTab` addressing) comes first, then the replay.
+    expect(sent.map((m) => m.type)).toEqual(["client:hello", "contributions:update", "statusbar:update", "tree:update"]);
+    expect(sent[2]).toEqual({ type: "statusbar:update", item: item("replay-sb-1", "ext-replay", "9 loose ends") });
+    expect(sent[3]).toEqual({ type: "tree:update", viewId: "replay.tree", items: [row("Unfinished chats (3)")] });
   });
 });

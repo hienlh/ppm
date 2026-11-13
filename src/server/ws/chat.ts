@@ -432,6 +432,9 @@ export interface SessionEntry {
   bindingRestartPending?: boolean;
 }
 
+/** An extension's message refused because the next turn already belongs to someone else. */
+export const EXTENSION_QUEUE_TAKEN = "BUSY_QUEUED";
+
 /** What an extension's turn carries besides its message (see {@link deliverExtensionMessage}). */
 export interface ExtensionTurnSpec {
   /** The extension behind the call; a REST caller shares one name. */
@@ -1352,7 +1355,15 @@ function emitTurnEnded(
   entry: SessionEntry,
   outcome: "done" | "stopped" | "failed",
   detail: { finalText?: string; stop?: TurnStop; error?: string },
+  how: { turnStillRunning?: boolean } = {},
 ): void {
+  if (how.turnStillRunning) {
+    // A PPM builtin answered inside a running turn: listeners hear it, the running turn is untouched.
+    chatLifecycle.emit("turn_ended", {
+      sessionId, outcome, ...detail, projectName: entry.projectName ?? "", providerId: entry.providerId,
+    });
+    return;
+  }
   const cancelledBy = entry.cancelledBy;
   entry.cancelledBy = undefined;
   // What was armed for this turn (an extension's budget, its approval deadlines) ends with it.
@@ -2164,8 +2175,9 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
       if (response) {
         broadcast(sessionId, { type: "text", content: response });
         broadcast(sessionId, { type: "done", resultSubtype: "builtin", numTurns: 0 });
-        // A listener waiting on the message's turn gets its end, though no provider turn ran.
-        emitTurnEnded(sessionId, entry, "done", { finalText: response.slice(0, FINAL_TEXT_KEEP) });
+        // A listener waiting on the message's turn gets its end, though no provider turn ran. Typed
+        // into a running turn, it ends nothing of that turn: its owner, budget and queue stay.
+        emitTurnEnded(sessionId, entry, "done", { finalText: response.slice(0, FINAL_TEXT_KEEP) }, { turnStillRunning: turnRunning(entry) });
         return { ok: true, sessionId };
       }
     }
@@ -2200,7 +2212,13 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   // An extension's message is placed under the session lock instead, where the turn it would
   // reach is known: a person's message still resuming the session counts as no turn out here.
   const extension = opts.origin === "extension" ? opts.extension : undefined;
-  if (!extension) claimTurnOrigin(entry, arriving);
+  if (!extension) {
+    const ownerBefore = entry.turnOrigin;
+    claimTurnOrigin(entry, arriving);
+    // A person joined an extension's running turn and it is theirs now: the extension's budget
+    // and approval deadlines no longer apply to it.
+    if (ownerBefore === "extension" && entry.turnOrigin !== "extension" && turnRunning(entry)) endTurn(sessionId, entry);
+  }
   // What this device shows, for an Assistant session's turn. Validated and cleaned by
   // chatService, which ignores it for every other session; only an object is passed on.
   const rawSummary = opts.uiSummary as unknown;
@@ -2214,6 +2232,12 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
       // as `later`, and owns only the turn it opens.
       wasRunning = turnRunning(entry);
       ownTurn = wasRunning && entry.turnOrigin === "extension" && entry.extensionId === extension.extensionId;
+      // The turn that opens after the running one has one owner. One already queued for someone
+      // else (a person's `later` message, another extension) keeps it: this message is refused
+      // rather than run in a turn whose approvals and budget belong to another.
+      const queuedForOther = (entry.nextTurnOrigin !== undefined && entry.nextTurnOrigin !== "extension")
+        || (!!entry.queuedExtensionTurn && entry.queuedExtensionTurn.extensionId !== extension.extensionId);
+      if (wasRunning && queuedForOther) return { ok: false as const, error: EXTENSION_QUEUE_TAKEN };
       if (wasRunning && !ownTurn) priority = "later";
       arriving.priority = priority;
       claimTurnOrigin(entry, arriving);
@@ -2240,11 +2264,17 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
     // opened is running now; one queued behind another turn starts when that turn ends.
     if (extension && submitted.ok) {
       if (!wasRunning && submitted.delivered === "started") beginExtensionTurn(entry, extension);
-      else if (!ownTurn && submitted.delivered === "queued") entry.queuedExtensionTurn = extension;
+      else if (submitted.delivered === "queued") entry.queuedExtensionTurn = extension;
     }
     return submitted;
   });
   if (result.ok) noteQueuedTurnOrigin(entry, arriving, result.delivered, wasRunning);
+  // A person's own message queued behind an extension's: the turn they both open is the person's,
+  // so its approvals are shown to them rather than denied, and no extension budget cuts it short.
+  if (result.ok && result.delivered === "queued" && fromUser && !opts.traceOrigin && entry.nextTurnOrigin === "extension") {
+    entry.nextTurnOrigin = arriving.origin;
+    entry.queuedExtensionTurn = undefined;
+  }
   return result.ok ? { ok: true, sessionId, delivered: result.delivered, ...(result.newConsumer ? { newConsumer: true } : {}) } : result;
 }
 

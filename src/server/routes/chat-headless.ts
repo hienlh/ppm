@@ -60,7 +60,10 @@ chatHeadlessRoutes.post("/sessions/:id/messages", async (c) => {
 
     const { HeadlessTurnError, startHeadlessTurn } = await import("../ws/chat-headless-turn.ts");
     try {
-      const { queued } = await startHeadlessTurn(id, { ...body, providerId: providerOf(id), projectName, projectPath });
+      // A REST caller is no extension: it may not name one, which would put it in that
+      // extension's cap and give its turn that extension's name.
+      const { extensionId: _named, ...payload } = body as typeof body & { extensionId?: unknown };
+      const { queued } = await startHeadlessTurn(id, { ...payload, providerId: providerOf(id), projectName, projectPath });
       return c.json(ok({ sessionId: id, queued }), 202);
     } catch (e) {
       // A refusal carries its own status (409 busy, 429 over the cap, 503 still starting,

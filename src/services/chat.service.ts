@@ -603,7 +603,8 @@ class ChatService {
         ...(sessionCollabMcp ? { sessionCollabMcp } : {}), ...(extensionMcp ? { extensionMcp } : {}),
         // The `ppm <name>` commands enabled extensions contribute; an Assistant session has its own
         // instructions and nothing else.
-        ...(cliHint && !design.assistantSession ? { extensionCliHint: cliHint } : {}),
+        // A policy session cannot run a shell, so it is not told about commands it cannot run.
+        ...(cliHint && !design.assistantSession && !policySession ? { extensionCliHint: cliHint } : {}),
         sharedContext,
       },
       sent: { shared, ui, manager: managerEntry, managers: managersEntry, notebook: notebookEntry },

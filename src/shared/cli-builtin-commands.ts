@@ -7,8 +7,10 @@
  */
 export const BUILTIN_CLI_COMMANDS: readonly string[] = [
   "start", "stop", "down", "restart", "status", "open", "logs", "report", "init",
-  "projects", "config", "git", "chat", "upgrade", "autostart", "cloud", "skills", "ext",
-  "db", "backup", "restore", "bot", "jira", "schedule", "export",
+  "projects", "config", "git", "chat", "tags", "manager", "theme", "ai", "keybindings", "proxy",
+  "device-name", "settings", "notify", "telegram-bot", "ppmbot", "mcp", "accounts", "upgrade",
+  "autostart", "cloud", "forward", "skills", "ext", "lsp", "speech", "db", "backup", "restore",
+  "jira", "system", "design", "group-chat", "teams", "schedule", "export",
 ];
 
 /** Names Commander answers itself, on top of the registered commands. */
