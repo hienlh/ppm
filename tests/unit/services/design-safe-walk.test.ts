@@ -62,9 +62,14 @@ describe("safeWalkDesignTree", () => {
     if (!posix) return;
     const db = join(getPpmDir(), "ppm.db");
     writeFileSync(db, "credentials");
-    symlinkSync(db, join(root, "ppm.db"));
-    const entries = await collect(root);
-    expect(entries.map((e) => e.rel)).not.toContain("ppm.db");
+    try {
+      symlinkSync(db, join(root, "ppm.db"));
+      const entries = await collect(root);
+      expect(entries.map((e) => e.rel)).not.toContain("ppm.db");
+    } finally {
+      // The run's shared PPM_HOME: a later file that reopens its database must not find this.
+      rmSync(db, { force: true });
+    }
   });
 
   it("skips a FIFO instead of hanging on it", async () => {

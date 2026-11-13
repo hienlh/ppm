@@ -72,8 +72,13 @@ describe("browse", () => {
   it("still lists the PPM directory so the sidebar is not confused", async () => {
     assertIsolatedPpmHome();
     writeFileSync(join(getPpmDir(), "ppm.db"), "secret");
-    const result = await browse(getPpmDir());
-    expect(result.entries.some((e) => e.name === "ppm.db")).toBe(true);
+    try {
+      const result = await browse(getPpmDir());
+      expect(result.entries.some((e) => e.name === "ppm.db")).toBe(true);
+    } finally {
+      // The run's shared PPM_HOME: a later file that reopens its database must not find this.
+      rmSync(join(getPpmDir(), "ppm.db"), { force: true });
+    }
   });
 
   it("fails with 404 for a missing directory", async () => {
