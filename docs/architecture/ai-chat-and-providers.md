@@ -1215,3 +1215,58 @@ through a shell with Claude's and then Codex's environment, against a scratch se
 profile that publishes its endpoint file (`assistant-cli-server.ts`). Each run asserts the target
 line, the rename reaching the open page with no reload, no `ppm.db` created, and `chat_stop`
 stopping a running chat once its card is approved.
+## Extension-driven chats
+
+What `api.ppm.chat`, `ppm.mcp` and `ppm.ai` do on the chat side. The extension-facing contract is
+in `docs/extension-development-guide.md`; the RPC verbs in [extensions.md](extensions.md).
+
+**Headless turns.** `startHeadlessTurn` (`src/server/ws/chat-headless-turn.ts`) is the one door
+for `chat:send` and `POST /chat/sessions/:id/messages`, and it runs the same consumer a tab's turn
+does (`getOrCreateEntry`, `prepareTurn`, `startSessionConsumer(..., origin)`). Each turn carries
+its origin (`TraceOrigin` `"extension"` in the session trace). `entry.consumerStart` is claimed
+synchronously by whichever door starts the consumer, so a typed message and an extension's
+message in the same tick end up as one query and its follow-up. A message pushed behind a
+running turn is queued in `entry.nextTurns` and gets its origin, budget and "done" push only when
+the provider starts that turn: an extension never steers or relabels a person's turn. Limits: 4
+sessions per caller with a turn in flight (429), a wall-clock budget per turn (default 30 min,
+`chat-headless-turn-budget.ts`), and a Claude session asked for another model/effort/thinking is
+refused while busy and restarted while idle (409 also when background work would die). Only the
+creating extension (`session_metadata.created_by_extension`) may send or cancel.
+
+**Approvals with nobody there.** In the consumer's `approval_request` branch, before
+`holdApprovalRequest`: an extension turn with no client attached is denied at once
+(`denyExtensionApproval`, reason `extension_turn_unattended`), stamped answered and followed by a
+buffered `approval_resolved`, so a later replay shows the card resolved; with a client attached
+the approval is held as usual and denied after `EXTENSION_APPROVAL_DEADLINE_MS` (120 s). A
+`db_execute` in such a turn settles through the broker's `no-chat` path. The "Chat completed" push
+is skipped for extension turns unless `notifyOnDone`; the unread mark is not.
+
+**Bound sessions.** `chatService.prepareSendOptions` strips any caller-supplied
+`extensionInstructions` / `extensionToolPolicy` / `extensionMcp` and rebuilds them from
+`boundTurnOptions` (`extension-session-binding.service.ts`); a provider without
+`supportsExtensionBinding` (all but Claude) makes a bound turn fail rather than run unbound. With a
+policy, the Claude provider clamps the mode to `default`/`acceptEdits`, gives `strictMcpConfig:
+true` with only `ppm-ext`, drops the tab, database and design tools, and runs
+`extensionToolDecision` (`extension-tool-policy.ts`) first in both `canUseTool` and the
+PreToolUse hook, so every tool gets an explicit verdict through `preToolUseDecision`. A binding
+change restarts an idle subprocess (`applyBindingChange` in `ws/chat.ts`), or the next idle one.
+
+**`ppm-ext`.** A bound session with toolsets gets `extensionMcp` (`{ url, token }`) on every
+turn, registered or not; Claude adds the `http` server `ppm-ext` with the token in
+`Authorization` and a 630 s timeout, above the endpoint's 600 s per call. It is not given to the
+warm spare, so a bound session never adopts one. See [extensions.md](extensions.md) → Extension
+MCP tools.
+
+**One-shot completions.** `completeOnce` on both providers backs `ppm.ai.complete`:
+`claude-complete-once.ts` (`outputFormat` for a schema, `tools: ["WebSearch"]` with 12 turns for
+web search, an explicit account through `ensureFreshToken`) and `codex-complete-once.ts` (one
+app-server per call on the account's `CODEX_HOME`: `ephemeral`, `read-only`, `approvalPolicy:
+"never"`, shell, subagents, image generation, apps and plugins off; the process tree is killed
+when the call ends). Neither moves the chats' account rotation. Account health is recorded as in
+chats (`*-one-shot-account-health.ts`). `features.unified_exec=false` is not honoured by
+codex-cli 0.163, so web research stays Claude-only in practice until a real call shows Codex
+offers no exec tool.
+
+`bun tests/e2e/extension-ai-core-e2e.mjs` drives a bound session's headless turn through
+`/api/ext-mcp`, a refused out-of-root read, the unattended approval, and `ppm.ai.complete` with a
+schema and a cancel, against a scripted provider (`tests/e2e/fixtures/extension-ai-server.ts`).

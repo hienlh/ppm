@@ -132,7 +132,7 @@ export class NotificationService {
             project: payload.project,
             sessionId: payload.sessionId,
             sessionTitle: payload.sessionTitle,
-            notificationType: type === "schedule" || type === "jira" || type === "design_review" ? "done"
+            notificationType: type === "schedule" || type === "jira" || type === "design_review" || type === "extension" ? "done"
               : type === "collab_approval" ? "approval_request" : type,
           });
         })

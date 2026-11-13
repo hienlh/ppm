@@ -10,6 +10,12 @@ function createMockRpc(): RpcClient & { requests: { method: string; params: unkn
       mock.requests.push({ method, params });
       return undefined as T;
     },
+    // CommandService never calls this — present only so the mock satisfies the RpcClient
+    // interface, which requires requestWithTimeout on every implementer.
+    async requestWithTimeout<T = unknown>(method: string, _timeoutMs: number, ...params: unknown[]): Promise<T> {
+      mock.requests.push({ method, params });
+      return undefined as T;
+    },
     notify(event: string, data: unknown): void {
       mock.notifications.push({ event, data });
     },

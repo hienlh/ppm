@@ -33,13 +33,14 @@ export type ServerOrigin = "telegram" | "watch" | "assistant" | "assistant_card"
 export type MessageServerOrigin = Exclude<ServerOrigin, "assistant" | "assistant_card" | "delete">;
 
 /**
- * Where a message into a chat came from: a browser's socket, the server itself, or another
- * session's AI through the session tools (`session`, the PPM Assistant included).
+ * Where a message into a chat came from: a browser's socket, the server itself, another
+ * session's AI through the session tools (`session`, the PPM Assistant included), or an
+ * extension driving a chat it created (`extension`, `src/server/ws/chat-headless-turn.ts`).
  */
-export type ChatMessageOrigin = "ws" | ServerOrigin | "session";
+export type ChatMessageOrigin = "ws" | ServerOrigin | "session" | "extension";
 
 /** How a message the server sends into a chat went. */
-export type DeliverResult = { ok: true; sessionId: string } | { ok: false; error: string };
+export type DeliverResult = { ok: true; sessionId: string; delivered?: import("../../shared/session-collab.ts").SessionDelivery } | { ok: false; error: string };
 
 /**
  * The error a `watch` message gets when the chat is not quiet: a waiting approval card would be

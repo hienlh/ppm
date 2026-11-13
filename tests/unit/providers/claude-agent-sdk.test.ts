@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll, afterEach, mock, spyOn } from "bun:test";
-import { appendFileSync, mkdirSync, rmSync, existsSync as fsExists } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, existsSync as fsExists } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { mcpConfigService } from "../../../src/services/mcp-config.service.ts";
 import type { ChatEvent } from "../../../src/types/chat.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
@@ -718,6 +721,112 @@ describe("ClaudeAgentSdkProvider", () => {
         const opts = mockQueryFn.mock.calls[0]![0].options;
         expect(opts.allowedTools).toContain("Bash");
         expect(opts.systemPrompt.append).toBe("# Design mode");
+      });
+    });
+
+    describe("session bound by an extension with a tool policy", () => {
+      let root: string;
+      let policy: { readRoots: string[]; writeRoots: string[] };
+      const tabToolsMcp = { url: "http://127.0.0.1:8080/api/tab-tools-mcp", token: "tok-tabs" };
+      const dbToolsMcp = { url: "http://127.0.0.1:8080/api/db-tools-mcp", token: "tok-db" };
+      const allow = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } };
+      const deny = (reason: string) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
+
+      beforeAll(() => {
+        root = realpathSync(mkdtempSync(join(tmpdir(), "bound-session-")));
+        mkdirSync(join(root, "src"), { recursive: true });
+        writeFileSync(join(root, "src", "a.ts"), "a");
+        policy = { readRoots: [root], writeRoots: [join(root, ".proposals")] };
+      });
+      afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+      async function boundTurn(extra: Record<string, unknown> = {}) {
+        mockQueryFn.mockClear();
+        mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+        const session = await provider.createSession({ projectPath: root });
+        for await (const _ of provider.sendMessage(session.id, "hi", {
+          extensionToolPolicy: policy, extensionInstructions: "# Manager", permissionMode: "bypassPermissions", tabToolsMcp, dbToolsMcp, ...extra,
+        })) { /* consume */ }
+        return mockQueryFn.mock.calls[0]![0].options;
+      }
+
+      it("runs outside bypass with the instructions appended, only its own MCP tools pre-approved and no inherited servers", async () => {
+        const list = spyOn(mcpConfigService, "list").mockReturnValue({ github: { type: "http", url: "http://127.0.0.1:1/mcp" } } as never);
+        try {
+          const opts = await boundTurn();
+          expect(opts.permissionMode).toBe("acceptEdits");
+          expect(opts.allowDangerouslySkipPermissions).toBe(false);
+          expect(opts.systemPrompt).toEqual({ type: "preset", preset: "claude_code", append: "# Manager" });
+          expect(opts.allowedTools).toEqual(["mcp__ppm-ext__*"]);
+          expect(opts.mcpServers).toBeUndefined();
+          expect(opts.strictMcpConfig).toBe(true);
+          // The same server reaches an ordinary chat, so its absence above is the policy's doing.
+          mockQueryFn.mockClear();
+          mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+          const session = await provider.createSession({ projectPath: root });
+          for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "default" })) { /* consume */ }
+          const plain = mockQueryFn.mock.calls[0]![0].options;
+          expect(plain.mcpServers?.github).toBeDefined();
+          expect(plain.strictMcpConfig).toBeUndefined();
+        } finally {
+          list.mockRestore();
+        }
+      });
+
+      it("gets its extension's ppm-ext server, and only that one, with the session's bearer token", async () => {
+        const extensionMcp = { url: "http://127.0.0.1:8080/api/ext-mcp", token: "tok-ext" };
+        const list = spyOn(mcpConfigService, "list").mockReturnValue({ github: { type: "http", url: "http://127.0.0.1:1/mcp" } } as never);
+        try {
+          const opts = await boundTurn({ extensionMcp });
+          expect(Object.keys(opts.mcpServers)).toEqual(["ppm-ext"]);
+          expect(opts.mcpServers["ppm-ext"]).toMatchObject({ type: "http", url: extensionMcp.url, headers: { Authorization: "Bearer tok-ext" } });
+          expect(opts.strictMcpConfig).toBe(true);
+          expect(await permissionHook(opts)({ tool_name: "mcp__ppm-ext__fg_overview", tool_input: {}, hook_event_name: "PreToolUse" })).toEqual(allow);
+          // A chat bound with toolsets but no policy keeps its other servers beside it.
+          mockQueryFn.mockClear();
+          mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+          const session = await provider.createSession({ projectPath: root });
+          for await (const _ of provider.sendMessage(session.id, "hi", { permissionMode: "default", extensionMcp })) { /* consume */ }
+          const plain = mockQueryFn.mock.calls[0]![0].options;
+          expect(Object.keys(plain.mcpServers).sort()).toEqual(["github", "ppm-ext"]);
+        } finally {
+          list.mockRestore();
+        }
+      });
+
+      it("answers every tool through the real hook with a verdict the CLI honours", async () => {
+        const hook = permissionHook(await boundTurn());
+        const pending = (provider as any).pendingApprovals as Map<string, unknown>;
+        const before = pending.size;
+        const verdict = (tool_name: string, tool_input: unknown) => hook({ tool_name, tool_input, hook_event_name: "PreToolUse" });
+        expect(await verdict("Write", { file_path: join(root, ".proposals", "1", "a.ts") })).toEqual(allow);
+        expect(await verdict("Write", { file_path: join(root, ".proposals", "1", "package.json") }))
+          .toEqual(deny(`${join(root, ".proposals", "1", "package.json")} is protected and cannot be written`));
+        expect(await verdict("Write", { file_path: join(root, "src", "a.ts") }))
+          .toEqual(deny(`${join(root, "src", "a.ts")} is outside the folders this chat may write`));
+        expect(await verdict("Read", { file_path: join(root, "src", "a.ts") })).toEqual(allow);
+        expect(await verdict("Read", { file_path: "~/.ssh/id_ed25519" })).toEqual(deny("~/.ssh/id_ed25519 holds credentials and is off limits"));
+        expect(await verdict("Bash", { command: "ls" })).toEqual(deny("Bash is not available in this chat"));
+        expect(await verdict("WebFetch", { url: "https://example.com" })).toEqual(deny("WebFetch is not available in this chat"));
+        expect(await verdict("AskUserQuestion", { questions: [] })).toEqual(deny("Ask the question as an ordinary message in the chat instead"));
+        expect(await verdict("mcp__ppm-tabs__open_file", { path: "a.ts" })).toEqual(deny("mcp__ppm-tabs__open_file is not available in this chat"));
+        expect(await verdict("mcp__ppm-db__db_query", {})).toEqual(deny("mcp__ppm-db__db_query is not available in this chat"));
+        expect(await verdict("mcp__ppm-ext__fg_notebook_read", {})).toEqual(allow);
+        // Nothing ever waited on a person.
+        expect(pending.size).toBe(before);
+      });
+
+      it("denies through canUseTool as well, without ever asking", async () => {
+        const opts = await boundTurn({ permissionMode: "default" });
+        expect(opts.permissionMode).toBe("default");
+        const pending = (provider as any).pendingApprovals as Map<string, unknown>;
+        const before = pending.size;
+        expect(await opts.canUseTool("AskUserQuestion", { questions: [] }))
+          .toEqual({ behavior: "deny", message: "Ask the question as an ordinary message in the chat instead" });
+        expect(await opts.canUseTool("Bash", { command: "ls" })).toEqual({ behavior: "deny", message: "Bash is not available in this chat" });
+        const input = { file_path: join(root, "src", "a.ts") };
+        expect(await opts.canUseTool("Read", input)).toEqual({ behavior: "allow", updatedInput: input });
+        expect(pending.size).toBe(before);
       });
     });
 

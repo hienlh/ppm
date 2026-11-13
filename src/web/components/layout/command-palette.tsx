@@ -251,10 +251,15 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   /**
    * Precomputed lowercase search index — avoids re-allocating thousands of
    * lowercased strings per keystroke. Recomputed only when allCommands changes.
+   *
+   * `keywords` is extra search text (an id, a category, synonyms), never a replacement for the
+   * command's own displayed title: a command with `keywords` used to be searched by keywords
+   * ALONE, so an extension command (`keywords: "extension <id> <category>"`) could not be found
+   * by typing its title at all — only its id or category. The label is always folded in.
    */
   const searchIndex = useMemo(() => {
     return allCommands.map((cmd) => {
-      const path = cmd.keywords ?? cmd.label;
+      const path = cmd.keywords ? `${cmd.label} ${cmd.keywords}` : cmd.label;
       const pathLower = path.toLowerCase();
       return {
         cmd,

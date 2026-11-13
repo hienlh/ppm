@@ -266,6 +266,10 @@ app.all(DB_TOOLS_MCP_PATH, dbToolsMcpHandler);
 import { sessionCollabMcpHandler } from "../services/session-collab/session-collab-endpoint.ts";
 import { SESSION_COLLAB_MCP_PATH } from "../services/session-collab/session-collab-tokens.ts";
 app.all(SESSION_COLLAB_MCP_PATH, sessionCollabMcpHandler);
+// Extension toolsets (`ppm-ext`): the same, for a chat an extension bound with toolsets.
+import { extensionMcpHandler } from "../services/extension-mcp/extension-mcp-endpoint.ts";
+import { EXTENSION_MCP_PATH } from "../services/extension-mcp/extension-mcp-tokens.ts";
+app.all(EXTENSION_MCP_PATH, extensionMcpHandler);
 
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);

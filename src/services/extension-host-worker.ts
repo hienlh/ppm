@@ -7,6 +7,7 @@ import { RpcChannel } from "./extension-rpc.ts";
 import { createVscodeCompat } from "@ppm/vscode-compat";
 import type { WindowService } from "@ppm/vscode-compat/src/window.ts";
 import type { CommandService } from "@ppm/vscode-compat/src/commands.ts";
+import type { PpmMcpHost } from "@ppm/vscode-compat/src/ppm/ppm-mcp.ts";
 import type { Disposable, RpcMessage } from "../types/extension.ts";
 
 // Active extension instances: id → { module, context, deactivate, services }
@@ -16,6 +17,17 @@ const activeExtensions = new Map<string, {
   window?: WindowService;
   commands?: CommandService;
 }>();
+
+/**
+ * Each extension's MCP tool handlers, by extension id. Set before `activate()` runs, since an
+ * extension registers its toolsets there and a chat may call one before activation returns.
+ */
+const mcpHosts = new Map<string, PpmMcpHost>();
+
+function dropMcpHost(extId: string): void {
+  mcpHosts.get(extId)?.dispose();
+  mcpHosts.delete(extId);
+}
 
 const rpc = new RpcChannel((msg) => postMessage(msg));
 
@@ -58,10 +70,23 @@ self.addEventListener("message", (event: MessageEvent<RpcMessage>) => {
   rpc.handleMessage(event.data);
 });
 
+// All extensions share this one worker. Without these guards a single forgotten `.catch()`
+// in any of them terminates the worker and takes every other extension down with it — log
+// and keep serving instead. These have to be the process-level handlers: Bun 1.3.13 ends the
+// worker after an uncaught exception even when the `error` event's `preventDefault()` is
+// called (and reports a rejection through that same event, never `unhandledrejection`), so
+// listeners on `self` log the crash without preventing it.
+process.on("uncaughtException", (error: unknown) => {
+  console.error("[ExtHost] uncaught error (swallowed to keep the host alive):", error);
+});
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("[ExtHost] unhandled rejection (swallowed to keep the host alive):", reason);
+});
+
 // --- RPC handlers ---
 
 rpc.onRequest("ext:activate", async (params) => {
-  const [extId, entryPath, extensionPath, storedState, baseUrl, authToken] = params as [string, string, string, Record<string, Record<string, string | null>>?, string?, string?];
+  const [extId, entryPath, extensionPath, storedState, baseUrl, authToken, dataDir] = params as [string, string, string, Record<string, Record<string, string | null>>?, string?, string?, string?];
   console.debug(`[ExtHost] activating ${extId} from ${entryPath}`);
   if (activeExtensions.has(extId)) return { ok: true, already: true };
 
@@ -72,6 +97,8 @@ rpc.onRequest("ext:activate", async (params) => {
   // Create RpcClient adapter for vscode-compat (Worker's RPC → vscode-compat interface)
   const rpcClient = {
     request: <T = unknown>(method: string, ...p: unknown[]) => rpc.sendRequest<T>(method, ...p),
+    requestWithTimeout: <T = unknown>(method: string, timeoutMs: number, ...p: unknown[]) =>
+      rpc.sendRequestWithTimeout<T>(method, timeoutMs, p),
     notify: (event: string, data: unknown) => rpc.sendEvent(event, data),
   };
 
@@ -80,11 +107,14 @@ rpc.onRequest("ext:activate", async (params) => {
     extensionId: extId,
     extensionPath,
     storagePath: `${extensionPath}/.storage`,
+    // Computed on the main thread, which owns PPM's directory; this thread never guesses it.
+    ...(typeof dataDir === "string" && dataDir ? { globalStoragePath: dataDir } : {}),
     rpc: rpcClient,
     storedState: storedState as { global?: Record<string, string | null>; workspace?: Record<string, string | null> },
   });
 
   const context = api._createContext();
+  mcpHosts.set(extId, api._mcpHost);
 
   try {
     const mod = await import(entryPath);
@@ -109,6 +139,7 @@ rpc.onRequest("ext:activate", async (params) => {
     const msg = e instanceof Error ? e.message : String(e);
     // The main thread reports the failure with this same message.
     console.debug(`[ExtHost] Failed to activate ${extId}:`, msg);
+    dropMcpHost(extId);
     return { ok: false, error: msg };
   }
 });
@@ -127,12 +158,14 @@ rpc.onRequest("ext:deactivate", async (params) => {
       try { (sub as Disposable).dispose(); } catch {}
     }
     activeExtensions.delete(extId);
+    dropMcpHost(extId);
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     // The main thread reports the failure with this same message.
     console.debug(`[ExtHost] Failed to deactivate ${extId}:`, msg);
     activeExtensions.delete(extId);
+    dropMcpHost(extId);
     return { ok: false, error: msg };
   }
 });
@@ -203,6 +236,21 @@ rpc.onRequest("ext:tree:expand", async (params) => {
     }
   }
   return { ok: true, items: [] };
+});
+
+// A chat's agent called an extension's tool: routed by the extension id the main thread
+// recorded at registration, to the handlers that extension's own `ppm.mcp` holds.
+rpc.onRequest("ext:mcp:call", async (params) => {
+  const request = params[0] as { extensionId?: unknown } | undefined;
+  const host = typeof request?.extensionId === "string" ? mcpHosts.get(request.extensionId) : undefined;
+  if (!host) return { text: "The extension that provides this tool is not running.", isError: true };
+  return host.call(request);
+});
+
+rpc.onRequest("ext:mcp:cancel", async (params) => {
+  const request = params[0] as { extensionId?: unknown; callId?: unknown } | undefined;
+  const host = typeof request?.extensionId === "string" ? mcpHosts.get(request.extensionId) : undefined;
+  return { cancelled: host?.cancel(request?.callId) ?? false };
 });
 
 rpc.onRequest("ext:list-active", () => {

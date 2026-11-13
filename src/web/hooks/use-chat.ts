@@ -147,6 +147,13 @@ interface UseChatReturn {
    * the transcript, so every history reload would otherwise wipe it.
    */
   turnStop: TurnStop | null;
+  /**
+   * The mode an extension-bound chat really runs in ("default" or "acceptEdits" — the server
+   * clamps out bypass and plan), from the server's own `session_state`. Null for every other
+   * chat. The composer must show this instead of whatever permission mode is locally selected,
+   * and must not offer bypass when it is set.
+   */
+  boundPermissionMode: string | null;
   statusMessage: string | null;
   sessionTitle: string | null;
   /**
@@ -280,6 +287,7 @@ export function useChat(
   const [sessionPermission, setSessionPermission] = useState<SessionPermissionState | null>(null);
   // A ref, not state: nothing draws it, and every `turn_started` would redraw the whole chat tab.
   const currentTurnIdRef = useRef<string | null>(null);
+  const [boundPermissionMode, setBoundPermissionMode] = useState<string | null>(null);
   const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
   const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -1278,6 +1286,10 @@ export function useChat(
         setSessionPermission(sessionPermissionFromGreeting(state, (data as any).sessionId ?? sessionIdRef.current));
       }
       setMcpNeedsAuth(Array.isArray(state.mcpNeedsAuth) ? state.mcpNeedsAuth : []);
+      // Likewise: a chat an extension bound with a policy runs in a clamped mode, said on connect.
+      if ("boundPermissionMode" in state) {
+        setBoundPermissionMode(typeof state.boundPermissionMode === "string" ? state.boundPermissionMode : null);
+      }
       // If idle, refetch history (completed turns) and hide overlay.
       // Skip when nothing could have changed: the phase was already idle locally
       // and the full transcript finished loading moments ago — on boot the WS
@@ -1948,6 +1960,7 @@ export function useChat(
     mcpNeedsAuth,
     turnStop,
     sessionPermission,
+    boundPermissionMode,
     statusMessage,
     sessionTitle,
     /** Account the server last reported for this session — beats the polled usage label. */

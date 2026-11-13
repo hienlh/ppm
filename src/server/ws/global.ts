@@ -27,6 +27,7 @@ import { onSessionFileChanges } from "../../services/session-file-baselines/sess
 import { SESSION_FILE_CHANGES_PUSH } from "../../shared/session-file-changes.ts";
 import { subscribeLogs, unsubscribeLogs } from "../../services/logs/log-live.ts";
 import { tokenStillValid } from "../../services/agent-transcript/agent-transcript-hub-registry.ts";
+import { presenceTracker } from "../../services/presence-tracker.ts";
 import { onIssuesChanged } from "../../services/logs/log-issues.ts";
 import { LOGS_ISSUES_CHANGED, LOGS_SUBSCRIBE, LOGS_UNSUBSCRIBE } from "../../shared/logs-api.ts";
 import { projectNameForPath } from "../../services/project-name-for-path.ts";
@@ -151,6 +152,13 @@ export const globalWebSocket = {
     // Minimal mode refuses `/api/logs`, and so this half of it too, even for a stale full-mode tab.
     if (msg.type === LOGS_SUBSCRIBE) return isMinimalMode() ? undefined : subscribeLogs(ws, () => tokenStillValid(ws));
     if (msg.type === LOGS_UNSUBSCRIBE) return unsubscribeLogs(ws);
+    // A person just touched some PPM tab's document. Checked explicitly (unlike the broadcasts
+    // above, which only ever originate server-side): this is the one message on this socket a
+    // client chooses to send, and presence must not be gameable by an unauthenticated one.
+    if (msg.type === "presence:input") {
+      if (tokenStillValid(ws)) presenceTracker.noteUserInput();
+      return;
+    }
   },
 
   close(ws: GlobalWsSocket) {

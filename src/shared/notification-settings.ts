@@ -8,10 +8,10 @@
  * topic — can be paused without being forgotten.
  */
 
-export type NotificationEvent = "done" | "approval_request" | "question" | "collab_approval" | "schedule" | "jira" | "design_review";
+export type NotificationEvent = "done" | "approval_request" | "question" | "collab_approval" | "schedule" | "jira" | "design_review" | "extension";
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
-  "done", "approval_request", "question", "collab_approval", "schedule", "jira", "design_review",
+  "done", "approval_request", "question", "collab_approval", "schedule", "jira", "design_review", "extension",
 ];
 
 export interface NotificationSettings {
@@ -27,7 +27,7 @@ export interface NotificationSettings {
 }
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
-  events: { done: true, approval_request: true, question: true, collab_approval: true, schedule: true, jira: true, design_review: true },
+  events: { done: true, approval_request: true, question: true, collab_approval: true, schedule: true, jira: true, design_review: true, extension: true },
   delay_seconds: 60,
   telegram: true,
   ntfy: true,
@@ -51,6 +51,7 @@ export const NOTIFICATION_EVENT_COPY: Record<NotificationEvent, { label: string;
   schedule: { label: "Scheduled run finished", note: "A schedule completed or failed." },
   jira: { label: "Jira", note: "A watcher found new issues, or a debug run finished." },
   design_review: { label: "Reviewer comments", note: "Someone commented on a design you shared." },
+  extension: { label: "Extensions", note: "An extension asked to tell you something." },
 };
 
 function isValidDelay(value: unknown): value is number {

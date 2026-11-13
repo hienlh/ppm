@@ -20,6 +20,8 @@ export type TraceOrigin =
   | "session"
   /** The provider asked for a turn of its own (`provider_continue`). */
   | "provider"
+  /** A turn an extension started over RPC or the headless REST route. */
+  | "extension"
   | "browser"
   /** A message the PPM Assistant sent into a chat, with the user's approval. */
   | "assistant"

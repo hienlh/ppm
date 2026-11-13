@@ -1,12 +1,21 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { WindowService } from "../../../packages/vscode-compat/src/window.ts";
+import { EventEmitter } from "../../../packages/vscode-compat/src/event-emitter.ts";
 import type { RpcClient } from "../../../packages/vscode-compat/src/types.ts";
 
-function createMockRpc(): RpcClient & { requests: { method: string; params: unknown[] }[] } {
+function createMockRpc(): RpcClient & {
+  requests: { method: string; params: unknown[] }[];
+  timedRequests: { method: string; timeoutMs: number; params: unknown[] }[];
+} {
   const mock = {
     requests: [] as { method: string; params: unknown[] }[],
+    timedRequests: [] as { method: string; timeoutMs: number; params: unknown[] }[],
     async request<T = unknown>(method: string, ...params: unknown[]): Promise<T> {
       mock.requests.push({ method, params });
+      return undefined as T;
+    },
+    async requestWithTimeout<T = unknown>(method: string, timeoutMs: number, ...params: unknown[]): Promise<T> {
+      mock.timedRequests.push({ method, timeoutMs, params });
       return undefined as T;
     },
     notify(_event: string, _data: unknown): void {},
@@ -69,6 +78,36 @@ describe("WindowService", () => {
     it("returns empty for unknown viewId", async () => {
       const items = await (window as any)._getTreeChildren("nonexistent");
       expect(items).toEqual([]);
+    });
+  });
+
+  describe("createTreeView disposal", () => {
+    it("disposes cleanly when the provider's onDidChangeTreeData is backed by vscode.EventEmitter", () => {
+      // EventEmitter.event returns a Disposable object ({ dispose() }), not a bare
+      // unsubscribe function. Before the fix, dispose() called it as a function and
+      // threw "changeUnsub is not a function" for any provider built this way.
+      const emitter = new EventEmitter<void>();
+      const provider = {
+        getChildren: () => [],
+        getTreeItem: (el: unknown) => el,
+        onDidChangeTreeData: emitter.event,
+      };
+
+      const view = window.createTreeView("emitter-view", { treeDataProvider: provider });
+
+      expect(() => view.dispose()).not.toThrow();
+    });
+
+    it("still disposes cleanly when onDidChangeTreeData returns a bare unsubscribe function", () => {
+      const provider = {
+        getChildren: () => [],
+        getTreeItem: (el: unknown) => el,
+        onDidChangeTreeData: (_listener: () => void) => () => {},
+      };
+
+      const view = window.createTreeView("fn-view", { treeDataProvider: provider });
+
+      expect(() => view.dispose()).not.toThrow();
     });
   });
 
@@ -145,6 +184,62 @@ describe("WindowService", () => {
       const call = rpc.requests.find((r) => r.method === "window:webview:html");
       expect(call).toBeTruthy();
       expect(call!.params[1]).toBe("<h1>Hello</h1>");
+    });
+  });
+
+  // Interactive verbs wait on a human in the browser, so they use requestWithTimeout(600_000)
+  // instead of the RPC channel's 10s default — see the ordering-rule comment in window.ts.
+  describe("interactive verbs use the 600s timeout", () => {
+    it("showInputBox calls requestWithTimeout with 600000", async () => {
+      await window.showInputBox({ prompt: "test" });
+
+      expect(rpc.timedRequests.length).toBe(1);
+      expect(rpc.timedRequests[0]!.method).toBe("window:showInputBox");
+      expect(rpc.timedRequests[0]!.timeoutMs).toBe(600_000);
+    });
+
+    it("showQuickPick calls requestWithTimeout with 600000", async () => {
+      await window.showQuickPick(["a", "b"]);
+
+      expect(rpc.timedRequests.length).toBe(1);
+      expect(rpc.timedRequests[0]!.method).toBe("window:showQuickPick");
+      expect(rpc.timedRequests[0]!.timeoutMs).toBe(600_000);
+    });
+
+    it("showQuickPick sends plain strings as { label } objects — the browser dialog has no other shape", async () => {
+      await window.showQuickPick(["dm", "off"]);
+      expect(rpc.timedRequests[0]!.params[0]).toEqual([{ label: "dm" }, { label: "off" }]);
+    });
+
+    it("showQuickPick unwraps the browser's array: string in → string out, object in → the same object out", async () => {
+      const answering = createMockRpc();
+      answering.requestWithTimeout = async <T,>(_m: string, _t: number, ...params: unknown[]) => {
+        const items = params[0] as { label: string }[];
+        return [items[1]] as T; // the browser always answers with an array
+      };
+      const w = new WindowService(answering, "test-ext");
+
+      expect(await w.showQuickPick(["dm", "off"])).toBe("off");
+
+      const objects = [{ label: "Me", description: "acc-1" }, { label: "Thang", description: "acc-2" }];
+      expect(await w.showQuickPick(objects)).toBe(objects[1]);
+
+      expect(await w.showQuickPick(["dm", "off"], { canPickMany: true })).toEqual(["off"]);
+    });
+
+    it("showQuickPick returns undefined when the dialog is cancelled", async () => {
+      const cancelling = createMockRpc();
+      cancelling.requestWithTimeout = async <T,>() => null as T;
+      const w = new WindowService(cancelling, "test-ext");
+      expect(await w.showQuickPick(["dm", "off"])).toBeUndefined();
+    });
+
+    it("showComposer calls requestWithTimeout with 600000", async () => {
+      await window.showComposer({ prompt: "test" });
+
+      expect(rpc.timedRequests.length).toBe(1);
+      expect(rpc.timedRequests[0]!.method).toBe("window:showComposer");
+      expect(rpc.timedRequests[0]!.timeoutMs).toBe(600_000);
     });
   });
 });

@@ -6,6 +6,8 @@ import type {
   ChatEvent,
   ChatMessage,
   ModelOption,
+  OneShotInput,
+  OneShotResult,
   SendMessageOpts,
   UsageInfo,
 } from "../provider.interface.ts";
@@ -54,6 +56,7 @@ import type { DbToolsMcpAccess } from "../../services/db-ai-tools/db-ai-tools-to
 import { mapCodexEvent, newCodexTurnText, parseTokenUsage, type CodexTurnText } from "./codex-event-mapper.ts";
 import { recordFileChangeBaselines } from "./codex-file-baselines.ts";
 import { subagentCardId } from "./codex-subagent-thread.ts";
+import { threadIdFromNotification } from "./codex-notification-thread.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
 import { parseModelList } from "./codex-model-parser.ts";
 import { getOrFetchUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
@@ -66,6 +69,10 @@ import { assistantShellEnv } from "../../services/assistant/assistant-shell-env.
 import { approvalInput, approvalToolLabel } from "./codex-approval-input.ts";
 import { localizeRollout } from "./codex-rollout-transfer.ts";
 import { getRolloutMessagesAsync } from "./codex-history-async.ts";
+import { codexCompleteOnce } from "./codex-complete-once.ts";
+import { OneShotError } from "../one-shot-error.ts";
+import { getPpmDir } from "../../services/ppm-dir.ts";
+import { mkdirSync } from "node:fs";
 import {
   listCodexRollouts,
   findRolloutByThreadId,
@@ -312,20 +319,7 @@ function createEventChannel(): EventChannel {
   };
 }
 
-/** The app-server puts the owner thread on every item notification.  An
- * `agentThreadId` inside a SubAgentActivity is the newly spawned child, so it
- * must never be used here: that would nest the launch card inside itself. */
-export function threadIdFromNotification(params: unknown): string | null {
-  if (!params || typeof params !== "object") return null;
-  const p = params as Record<string, unknown>;
-  const direct = p.threadId ?? p.thread_id;
-  if (typeof direct === "string" && direct) return direct;
-  const thread = p.thread;
-  if (thread && typeof thread === "object" && typeof (thread as Record<string, unknown>).id === "string") {
-    return (thread as Record<string, unknown>).id as string;
-  }
-  return null;
-}
+export { threadIdFromNotification };
 
 /**
  * Drop a model id that isn't a codex model. PPM's per-session model can fall back
@@ -1545,6 +1539,20 @@ export class CodexAppServerProvider implements AIProvider {
 
   async isAvailable(): Promise<boolean> {
     return (await this.probe()).ok;
+  }
+
+  /**
+   * One prompt, one answer on a short-lived app-server of its own, in `<ppm dir>/one-shot`,
+   * on an ephemeral thread, so nothing reaches the chat list. Without `accountId` it runs on
+   * the machine's own ~/.codex login; callers that rotate accounts name one.
+   */
+  async completeOnce(input: OneShotInput): Promise<OneShotResult> {
+    const account = input.accountId ? getCodexAccount(input.accountId) : null;
+    if (input.accountId && !account) throw new OneShotError("NO_ACCOUNT", "That Codex account no longer exists");
+    const cwd = join(getPpmDir(), "one-shot");
+    mkdirSync(cwd, { recursive: true });
+    const result = await codexCompleteOnce(input, { cwd, ...(account ? { codexHome: account.home, accountId: account.id } : {}) });
+    return account ? { ...result, accountId: account.id } : result;
   }
 
   async listModels(): Promise<ModelOption[]> {

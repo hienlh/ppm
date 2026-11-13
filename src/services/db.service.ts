@@ -14,7 +14,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 68;
+export const CURRENT_SCHEMA_VERSION = 71;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1499,6 +1499,56 @@ export function runMigrations(database: Database): void {
     addColumnIfMissing(database, "assistant_cards", "outbound_error", "TEXT");
     database.exec(`PRAGMA user_version = 68;`);
   }
+
+  if (current < 69) {
+    // Builds of the extension AI core numbered their migrations 58-60, the numbers the script
+    // schedules, the `session_logs` drop and the session-tool columns took on main. A database such
+    // a build opened at 60 skipped all three, so they are applied again here; each is idempotent.
+    applyScheduleScriptSchema(database);
+    dropSessionLogs(database);
+    addColumnIfMissing(database, "session_metadata", "spawned_by", "TEXT");
+    addColumnIfMissing(database, "session_metadata", "spawn_depth", "INTEGER NOT NULL DEFAULT 0");
+    try { database.exec("CREATE INDEX IF NOT EXISTS idx_session_metadata_spawned_by ON session_metadata(spawned_by)"); } catch { /* no table */ }
+    // Which extension created a session, so its headless sends and cancels are confined to
+    // the sessions it made — across restarts, as the extension's own sessions are long-lived.
+    addColumnIfMissing(database, "session_metadata", "created_by_extension", "TEXT");
+    database.exec(`PRAGMA user_version = 69;`);
+  }
+
+  if (current < 70) {
+    // What an extension attached to a chat session it created (instructions, toolsets, tool
+    // policy), and the last tool definitions each extension toolset registered, so a query
+    // started before the extension is back still knows its tools' names. One statement per
+    // `exec`: bun:sqlite reports only the last statement's error.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS extension_session_bindings (
+        session_id TEXT PRIMARY KEY,
+        extension_id TEXT NOT NULL,
+        instructions TEXT,
+        toolsets_json TEXT NOT NULL DEFAULT '[]',
+        tool_policy_json TEXT,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    database.exec(`CREATE INDEX IF NOT EXISTS idx_extension_session_bindings_ext ON extension_session_bindings(extension_id)`);
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS extension_mcp_toolsets (
+        extension_id TEXT NOT NULL,
+        toolset_id TEXT NOT NULL,
+        tools_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (extension_id, toolset_id)
+      )
+    `);
+    database.exec(`PRAGMA user_version = 70;`);
+  }
+
+  if (current < 71) {
+    // When the extension that owned a binding was removed. The row is kept as the record
+    // that its chat is closed: deleting it would turn the chat into an ordinary one.
+    addColumnIfMissing(database, "extension_session_bindings", "extension_removed_at", "TEXT");
+    database.exec(`PRAGMA user_version = 71;`);
+  }
 }
 
 /** Design share links (see migration 57). Idempotent: every statement is `IF NOT EXISTS`. */
@@ -1833,6 +1883,18 @@ export function setSessionMetadata(sessionId: string, projectName?: string, proj
   ).run(sessionId, projectName ?? null, projectPath ?? null);
 }
 
+/** The extension that created a session over `chat:createSession`; null for every other session. */
+export function getSessionCreatedByExtension(sessionId: string): string | null {
+  const row = getDb().query("SELECT created_by_extension FROM session_metadata WHERE session_id = ?").get(sessionId) as { created_by_extension: string | null } | null;
+  return row?.created_by_extension ?? null;
+}
+
+export function setSessionCreatedByExtension(sessionId: string, extensionId: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, created_by_extension) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET created_by_extension = excluded.created_by_extension",
+  ).run(sessionId, extensionId);
+}
+
 /** Record which session a /clear started from */
 export function setSessionClearedFrom(sessionId: string, sourceSessionId: string): void {
   getDb().query(
@@ -1896,6 +1958,16 @@ export function setSessionMigratedTo(oldSessionId: string, newSessionId: string)
       "INSERT INTO session_metadata (session_id, migrated_to) VALUES (?, ?) " +
       "ON CONFLICT(session_id) DO UPDATE SET migrated_to = excluded.migrated_to",
     ).run(oldSessionId, newSessionId);
+    // The extension that created the session, and what it bound to it, follow the session:
+    // left on the old id, an extension could neither drive its session nor keep its policy.
+    database.query(`
+      UPDATE session_metadata SET created_by_extension = (SELECT created_by_extension FROM session_metadata WHERE session_id = ?)
+      WHERE session_id = ? AND created_by_extension IS NULL
+    `).run(oldSessionId, newSessionId);
+    database.query(
+      "UPDATE OR IGNORE extension_session_bindings SET session_id = ? WHERE session_id = ?",
+    ).run(newSessionId, oldSessionId);
+    database.query("DELETE FROM extension_session_bindings WHERE session_id = ?").run(oldSessionId);
   })();
 }
 
@@ -2861,7 +2933,16 @@ export function updateExtension(id: string, updates: Partial<Pick<ExtensionRow, 
 }
 
 export function deleteExtension(id: string): void {
-  getDb().query("DELETE FROM extensions WHERE id = ?").run(id);
+  const database = getDb();
+  database.transaction(() => {
+    database.query("DELETE FROM extensions WHERE id = ?").run(id);
+    // Its toolsets go with it. Its bound chats stay bound and become closed: dropping the
+    // binding would hand each of them every tool the next time someone typed into it.
+    database.query(
+      "UPDATE extension_session_bindings SET extension_removed_at = ? WHERE extension_id = ? AND extension_removed_at IS NULL",
+    ).run(new Date().toISOString(), id);
+    database.query("DELETE FROM extension_mcp_toolsets WHERE extension_id = ?").run(id);
+  })();
 }
 
 export function getExtensionStorage(extId: string, scope: string): ExtensionStorageRow[] {
@@ -2878,6 +2959,83 @@ export function setExtensionStorageValue(extId: string, scope: string, key: stri
 
 export function deleteExtensionStorage(extId: string): void {
   getDb().query("DELETE FROM extension_storage WHERE ext_id = ?").run(extId);
+}
+
+/** What an extension attached to a chat session it created; JSON columns are parsed by the binding service. */
+export interface ExtensionSessionBindingRow {
+  session_id: string;
+  extension_id: string;
+  instructions: string | null;
+  toolsets_json: string;
+  tool_policy_json: string | null;
+  updated_at: string;
+  /** Set once the owning extension is removed: the chat is closed for good. */
+  extension_removed_at: string | null;
+}
+
+export function getExtensionSessionBinding(sessionId: string): ExtensionSessionBindingRow | null {
+  return getDb().query("SELECT * FROM extension_session_bindings WHERE session_id = ?").get(sessionId) as ExtensionSessionBindingRow | null;
+}
+
+/** The row an extension owns from the moment it creates a bindable session; nothing bound yet. */
+export function insertExtensionSessionBinding(sessionId: string, extensionId: string): void {
+  getDb().query(
+    "INSERT INTO extension_session_bindings (session_id, extension_id, updated_at) VALUES (?, ?, ?)",
+  ).run(sessionId, extensionId, new Date().toISOString());
+}
+
+export function updateExtensionSessionBinding(
+  sessionId: string,
+  fields: { instructions: string | null; toolsetsJson: string; toolPolicyJson: string | null },
+): void {
+  getDb().query(
+    "UPDATE extension_session_bindings SET instructions = ?, toolsets_json = ?, tool_policy_json = ?, updated_at = ? WHERE session_id = ?",
+  ).run(fields.instructions, fields.toolsetsJson, fields.toolPolicyJson, new Date().toISOString(), sessionId);
+}
+
+/**
+ * Give a fork the binding of the chat it came from, owner and creator mark included, in one
+ * transaction — closed if the source is closed.
+ */
+export function copyExtensionSessionBinding(sourceSessionId: string, targetSessionId: string): void {
+  const database = getDb();
+  database.transaction(() => {
+    database.query(`
+      INSERT OR REPLACE INTO extension_session_bindings
+        (session_id, extension_id, instructions, toolsets_json, tool_policy_json, updated_at, extension_removed_at)
+      SELECT ?, extension_id, instructions, toolsets_json, tool_policy_json, ?, extension_removed_at
+      FROM extension_session_bindings WHERE session_id = ?
+    `).run(targetSessionId, new Date().toISOString(), sourceSessionId);
+    database.query(`
+      INSERT INTO session_metadata (session_id, created_by_extension)
+      SELECT ?, extension_id FROM extension_session_bindings WHERE session_id = ?
+      ON CONFLICT(session_id) DO UPDATE SET created_by_extension = excluded.created_by_extension
+    `).run(targetSessionId, sourceSessionId);
+  })();
+}
+
+export function deleteExtensionSessionBinding(sessionId: string): void {
+  getDb().query("DELETE FROM extension_session_bindings WHERE session_id = ?").run(sessionId);
+}
+
+/** Every session an extension bound or created as bindable, closed ones included. */
+export function getExtensionBoundSessionIds(extensionId: string): string[] {
+  return (getDb().query("SELECT session_id FROM extension_session_bindings WHERE extension_id = ?").all(extensionId) as Array<{ session_id: string }>)
+    .map((row) => row.session_id);
+}
+
+/** The tool definitions a toolset last registered, as JSON; null when it never registered. */
+export function getExtensionMcpToolsetJson(extensionId: string, toolsetId: string): string | null {
+  const row = getDb().query("SELECT tools_json FROM extension_mcp_toolsets WHERE extension_id = ? AND toolset_id = ?")
+    .get(extensionId, toolsetId) as { tools_json: string } | null;
+  return row?.tools_json ?? null;
+}
+
+export function saveExtensionMcpToolsetJson(extensionId: string, toolsetId: string, toolsJson: string): void {
+  getDb().query(
+    `INSERT INTO extension_mcp_toolsets (extension_id, toolset_id, tools_json, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(extension_id, toolset_id) DO UPDATE SET tools_json = excluded.tools_json, updated_at = excluded.updated_at`,
+  ).run(extensionId, toolsetId, toolsJson, new Date().toISOString());
 }
 
 // ---------------------------------------------------------------------------

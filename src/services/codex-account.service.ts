@@ -173,7 +173,7 @@ function servableAccounts(): CodexAccount[] {
  * login — usually absent or stale on a machine that manages accounts — and the turn fails
  * with an error that names neither account.
  */
-function assertSomeAccountSignedIn(): void {
+export function assertSomeAccountSignedIn(): void {
   const enabled = listCodexAccounts().filter((a) => a.status !== "disabled");
   if (enabled.length === 0 || enabled.some((a) => !isCodexAccountAuthFailed(a.id))) return;
   throw new CodexSignedOutError(enabled.length === 1
@@ -323,6 +323,17 @@ export function peekCodexAccount(): CodexAccount | null {
   return getCodexStrategy() === "fill-first" ? accts[0]! : null;
 }
 
+/** The accounts among `accounts` whose daily guard holds them back right now. */
+export function dailyGuardBlockedIds(accounts: CodexAccount[], usages: Record<string, UsageInfo | undefined>): string[] {
+  return accounts.filter((a) => a.dailyGuardEnabled).flatMap((a) => {
+    // Pacing is for plans that only expose the weekly bucket. A Plus account's separate
+    // five-hour window is already the useful short-term control and must not gain this row.
+    const usage = usages[a.id];
+    const state = usage?.session == null ? dailyGuardState(usage?.weekly) : null;
+    return state?.blocked ? [a.id] : [];
+  });
+}
+
 /** Sticky account for a session → else strategy pick → else null (default ~/.codex). */
 export async function resolveCodexAccountForSession(sessionId?: string): Promise<CodexAccount | null> {
   // Session-less callers (the model list) have nothing sticky to honour and fall
@@ -346,13 +357,7 @@ export async function resolveCodexAccountForSession(sessionId?: string): Promise
   const guarded = usable.filter((a) => a.dailyGuardEnabled);
   if (guarded.length > 0) {
     const usages = await getAllCodexUsages();
-    const blocked = guarded.flatMap((a) => {
-      // Pacing is for plans that only expose the weekly bucket. A Plus account's separate
-      // five-hour window is already the useful short-term control and must not gain this row.
-      const usage = usages[a.id];
-      const state = usage?.session == null ? dailyGuardState(usage?.weekly) : null;
-      return state?.blocked ? [a.id] : [];
-    });
+    const blocked = dailyGuardBlockedIds(guarded, usages);
     if (blocked.length > 0) {
       const stickyAccount = sticky ? getCodexAccount(sticky) : null;
       if (keepable(stickyAccount) && !blocked.includes(stickyAccount.id)) return stickyAccount;

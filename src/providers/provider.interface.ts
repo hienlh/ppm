@@ -10,5 +10,7 @@ export type {
   LimitBucket,
   SendMessageOpts,
   PrewarmInput,
+  OneShotInput,
+  OneShotResult,
   ModelOption,
 } from "../types/chat.ts";

@@ -3,11 +3,14 @@
  * report. Claude Haiku, on the person's own Claude account, with no tools and no project
  * (`ClaudeAgentSdkProvider.completeOnce`). Callers redact what they send.
  */
+import type { OneShotInput, OneShotResult } from "../../types/chat.ts";
+
 export const LOGS_AI_MODEL = "claude-haiku-4-5";
 export const LOGS_AI_MODEL_NAME = "Claude Haiku 4.5";
 
+/** The provider's one-shot. This caller names no account, so it runs on the router's next pick. */
 interface OneShotProvider {
-  completeOnce(input: { prompt: string; systemPrompt: string; model: string; timeoutMs?: number }): Promise<{ text: string; inputTokens: number; outputTokens: number }>;
+  completeOnce(input: OneShotInput): Promise<OneShotResult>;
 }
 
 /** Imported on first use, so loading the Logs modules (and their tests) does not load every provider. */

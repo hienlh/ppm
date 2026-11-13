@@ -27,7 +27,7 @@ function QuickPickModal({
   onCancel,
 }: {
   items: QuickPickItemUI[];
-  options: { placeholder?: string; canPickMany?: boolean };
+  options: { title?: string; placeholder?: string; canPickMany?: boolean };
   onSelect: (selected: QuickPickItemUI[]) => void;
   onCancel: () => void;
 }) {
@@ -52,7 +52,9 @@ function QuickPickModal({
     return items
       .map((item, i) => ({ item, originalIdx: i }))
       .filter(({ item }) =>
-        item.label.toLowerCase().includes(q) ||
+        // Defensive: a label is required by the type but a stray non-object item
+        // must degrade to "no match", not take the whole dialog down mid-wizard.
+        (item.label ?? "").toLowerCase().includes(q) ||
         item.description?.toLowerCase().includes(q) ||
         item.detail?.toLowerCase().includes(q),
       );
@@ -118,6 +120,11 @@ function QuickPickModal({
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
+        {/* Title — tells the user what they are picking; the search box alone does not */}
+        {options.title && (
+          <div className="px-3 pt-3 pb-1 text-sm font-medium text-text-primary">{options.title}</div>
+        )}
+
         {/* Search input */}
         <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
           <Search className="size-4 text-text-subtle shrink-0" />

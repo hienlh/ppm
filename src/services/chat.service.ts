@@ -29,6 +29,7 @@ import { designMcpTokens } from "./design/mcp/design-mcp-tokens.ts";
 import { tabToolsMcpAccessFor, tabToolsMcpTokens } from "./tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { forgetSessionInDeviceBrokers } from "./tab-tools-mcp/tab-open-broker.ts";
 import { dbToolsMcpAccessFor, dbToolsMcpTokens } from "./db-ai-tools/db-ai-tools-tokens.ts";
+import { extensionMcpAccessFor, extensionMcpTokens } from "./extension-mcp/extension-mcp-tokens.ts";
 import { dbApprovalBroker } from "./db-ai-tools/db-approval-broker.ts";
 import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
@@ -292,6 +293,7 @@ class ChatService {
     deleteTurnGrants(sessionId);
     pairCounter.forgetSession(sessionId);
     dbToolsMcpTokens.revoke(sessionId);
+    extensionMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
     sessionCollabMcpTokens.revoke(sessionId);
     collabApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing was done.");
@@ -300,6 +302,8 @@ class ChatService {
     // The provider ends the chat's turn and closes its CLI first. Only then is everything the
     // chat's commands started stopped, running or not: the one stop that does not wait for idle.
     // With no limit set it is only logged, as the idle sweep's stops are.
+    const { deleteSessionBinding } = await import("./extension-session-binding.service.ts");
+    deleteSessionBinding(sessionId);
     try {
       await provider.deleteSession(sessionId);
     } finally {
@@ -475,7 +479,12 @@ class ChatService {
     opts?: SendMessageOpts,
   ): Promise<{ opts: SendMessageOpts; sent: SentContext }> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
-    const { uiSummary, channel, watchEvents, wakeNews, ...callerOpts } = opts ?? {};
+    // An extension's binding is only ever server-built too: a caller's copy is dropped here and
+    // rebuilt from the session's binding below.
+    const {
+      uiSummary, channel, watchEvents, wakeNews,
+      extensionInstructions: _extInstructions, extensionToolPolicy: _extPolicy, extensionMcp: _extMcp, ...callerOpts
+    } = opts ?? {};
     // Like the design fields, the tab, database and session tools are only ever server-built. An
     // Assistant session is never also a design session: its policy replaces the design one outright.
     const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, sessionCollabMcp: _sessionTools, ...design } =
@@ -489,11 +498,21 @@ class ChatService {
       const stored = getStoredPermissionModeAnyAlias(sessionId);
       if (stored) design.permissionMode = stored;
     }
+    // A session an extension bound carries its instructions and, with a policy, runs outside
+    // bypass with no tool the policy did not decide — hence none of the tab, database or session
+    // tools. Its extension's toolsets come whether or not they are registered yet: the query lists
+    // its MCP servers once, and the endpoint answers from the last-known tools until they are back.
+    // An Assistant session is never bound: an extension creates its chats in a registered project.
+    const { boundTurnOptions, sessionBindingFor } = await import("./extension-session-binding.service.ts");
+    const bound = design.assistantSession ? null : boundTurnOptions(providerId, sessionId, design.permissionMode);
+    const policySession = !!bound?.extensionToolPolicy;
+    const binding = bound ? sessionBindingFor(sessionId) : null;
+    const extensionMcp = binding && binding.toolsets.length > 0 ? extensionMcpAccessFor(sessionId, binding.extensionId) : null;
     // A design session checks its canvas with `design_check` instead. A server is attached while
     // one of its tools is on (Settings → Tools); it lists only those. An Assistant session gets no
     // tab or database tools: it loads its own server, the session tools and the ones connected for it.
     const ai = configService.get("ai");
-    const ppmTools = !isMinimalMode() && !design.designSession && !design.assistantSession;
+    const ppmTools = !isMinimalMode() && !design.designSession && !design.assistantSession && !policySession;
     const tabToolsMcp = ppmTools && anyPpmToolOn(ai, TAB_TOOLS) ? tabToolsMcpAccessFor(sessionId) : null;
     const dbToolsMcp = ppmTools && anyPpmToolOn(ai, DB_TOOLS) && aiConnections().length > 0
       ? dbToolsMcpAccessFor(sessionId) : null;
@@ -577,8 +596,8 @@ class ChatService {
     const sharedContext = joinSharedContextEntries(managerEntry, shared, ui, channelEntry, managersEntry, notebookEntry, cardNotes);
     return {
       opts: {
-        ...design, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
-        ...(sessionCollabMcp ? { sessionCollabMcp } : {}), sharedContext,
+        ...design, ...bound, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
+        ...(sessionCollabMcp ? { sessionCollabMcp } : {}), ...(extensionMcp ? { extensionMcp } : {}), sharedContext,
       },
       sent: { shared, ui, manager: managerEntry, managers: managersEntry, notebook: notebookEntry },
     };

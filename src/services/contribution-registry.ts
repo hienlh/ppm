@@ -65,6 +65,11 @@ class ContributionRegistry {
     return [...this.commands.values()];
   }
 
+  /** The extension that contributed `command`, if any did. */
+  getCommandOwner(command: string): string | undefined {
+    return this.commands.get(command)?.extId;
+  }
+
   getViews(location?: string): Array<ContributedView & { extId: string }> {
     if (location) {
       return [...(this.views.get(location)?.values() ?? [])];

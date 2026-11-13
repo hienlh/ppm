@@ -32,6 +32,7 @@ import { useTabPrefetch } from "@/hooks/use-tab-prefetch";
 import { useFileIndexInvalidation } from "@/hooks/use-file-index-invalidation";
 import { useUiPreload } from "@/hooks/use-ui-preload";
 import { useGlobalEvents } from "@/hooks/use-global-events";
+import { usePresenceHeartbeat } from "@/hooks/use-presence-heartbeat";
 import { useServerReload } from "@/hooks/use-server-reload";
 import { useNotificationClicks } from "@/hooks/use-notification-clicks";
 import { CommandPalette } from "@/components/layout/command-palette";
@@ -48,6 +49,7 @@ import { BackgroundOutputPanel } from "@/components/chat/background-output-panel
 import { ConnectionLostOverlay } from "@/components/shared/connection-lost-overlay";
 import { ExtensionQuickPick } from "@/components/extensions/extension-quickpick";
 import { ExtensionInputBox } from "@/components/extensions/extension-inputbox";
+import { ExtensionComposer } from "@/components/extensions/extension-composer";
 import { useExtensionWs } from "@/hooks/use-extension-ws";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { UploadProgressPanel } from "@/components/os-explorer/upload/upload-progress-panel";
@@ -171,6 +173,10 @@ export function App() {
   // App-wide event bus — owns file watching + cross-cutting broadcasts so they do
   // not depend on a chat tab being mounted.
   useGlobalEvents(authState === "authenticated", activeProject?.name);
+
+  // Real input anywhere in this document counts toward core's presence tracker, throttled to
+  // one send per minute — a signal to pause/not-propose a run, never a permission to spend.
+  usePresenceHeartbeat(authState === "authenticated");
 
   // Warm a few recent chat tabs during idle time (desktop only). Tabs mount
   // lazily, so this trades a little background work for instant tab switching.
@@ -471,8 +477,8 @@ export function App() {
         {/* Global background-command output panel */}
         <BackgroundOutputPanel />
 
-        {/* Extension modals (QuickPick, InputBox) */}
-        {!minimalMode && <><ExtensionQuickPick /><ExtensionInputBox /></>}
+        {/* Extension modals (QuickPick, InputBox, Composer) */}
+        {!minimalMode && <><ExtensionQuickPick /><ExtensionInputBox /><ExtensionComposer /></>}
 
         {/* Connection lost overlay — shown when API unreachable for >15s */}
         <ConnectionLostOverlay />

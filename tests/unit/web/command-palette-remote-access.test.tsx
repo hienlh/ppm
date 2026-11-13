@@ -1,8 +1,9 @@
 /**
  * Remote Access (Settings) and Forward a Port (the sidebar's Port Forwarding panel) in the
- * palette, on a desktop and on a phone. The palette searches `keywords` alone when an entry has
- * them, so an entry's own label has to lead its keywords or a neighbour that happens to list the
- * word ("PPM Cloud & Share" lists "remote") ranks above it.
+ * palette, on a desktop and on a phone. The palette searches an entry's label and its `keywords`
+ * together, label first, so "Remote Access" still beats a neighbour that merely lists the word
+ * among its keywords ("PPM Cloud & Share" lists "remote") by matching at the very start of its
+ * own title rather than partway into a keyword list.
  */
 import { afterAll, afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { installDom, uninstallDom, mount, click } from "../../helpers/react-dom";
