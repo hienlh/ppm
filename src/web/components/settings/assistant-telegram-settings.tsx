@@ -25,6 +25,7 @@ import type { PPMBotTelegramStatus } from "../../../shared/ppmbot-telegram";
 import { SectionHeader, SwitchRow } from "./settings-rows";
 import { ConnectCard, TelegramChatList, useTelegramConnect } from "./telegram-connect";
 import { TelegramBotTokenField } from "./telegram-bot-token-field";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 
 /** The bridge options the server keeps under `clawbot`. */
 export interface AssistantTelegramOptions {
@@ -74,6 +75,10 @@ export function AssistantTelegramSettings({ embedded = false }: { embedded?: boo
     }
   }, []);
 
+  // `reloads` counts the changes announced from elsewhere (`ppm ppmbot`, another device).
+  const [reloads, setReloads] = useState(0);
+  useSettingsChanged(["clawbot", "telegram"], () => setReloads((n) => n + 1));
+
   useEffect(() => {
     void load();
     let active = true;
@@ -85,7 +90,7 @@ export function AssistantTelegramSettings({ embedded = false }: { embedded?: boo
       })
       .catch((e) => { if (active) setLoadError(errorText(e)); });
     return () => { active = false; };
-  }, [load]);
+  }, [load, reloads]);
 
   const { link, starting, connect, cancel } = useTelegramConnect("/api/settings/clawbot/telegram/connect", status, load);
 

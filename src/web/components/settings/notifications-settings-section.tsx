@@ -38,6 +38,7 @@ import { NtfyServerForm } from "./ntfy-server-form";
 import { IconButton, SectionHeader, SwitchRow } from "./settings-rows";
 import { ConnectCard, TelegramChatList, useTelegramConnect } from "./telegram-connect";
 import { TelegramBotTokenField } from "./telegram-bot-token-field";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const ago = (ms: number) => formatRelativeDate(new Date(ms).toISOString());
@@ -58,6 +59,7 @@ export function NotificationsSettingsSection() {
   useEffect(() => {
     void load();
   }, [load]);
+  useSettingsChanged("notifications", () => void load());
 
   // Shown at once; a refused save reloads what the server actually has.
   const update = useCallback(async (patch: NotificationSettingsPatch) => {
@@ -166,6 +168,7 @@ function PushSection() {
   useEffect(() => {
     void load();
   }, [load]);
+  useSettingsChanged("notifications", () => void load());
 
   // On only when the browser's subscription is one the server knows and can still sign for.
   const thisDevice = subscription && status && subscribedWithKey(subscription, status.publicKey)
@@ -319,6 +322,8 @@ function TelegramSection({ settings, update }: {
   useEffect(() => {
     void load();
   }, [load]);
+  // The notification bot's token, its chats and its connect link (`clawbot`: whether it is shared with the Assistant's).
+  useSettingsChanged(["telegram", "clawbot"], () => void load());
 
   const { link, starting, connect, cancel } = useTelegramConnect("/api/notifications/telegram/connect", status, load);
 
@@ -422,6 +427,7 @@ function NtfySection({ settings, update }: {
   useEffect(() => {
     void load();
   }, [load]);
+  useSettingsChanged("notifications", () => void load());
 
   const test = async () => {
     setTesting(true);

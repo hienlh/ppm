@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getAuthToken } from "@/lib/api-client";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 import type { LimitBucket, ResetCredits } from "../../../../types/chat";
 import type { CodexStrategy } from "./codex-rotation-dialog";
 
@@ -79,6 +80,8 @@ export function useCodexAccounts(onDone: () => void) {
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+  // An account switched, removed or the rotation changed elsewhere (`ppm accounts`, another device).
+  useSettingsChanged("accounts", () => { void load().catch(() => {}); });
 
   const addApiKey = async () => {
     if (!apiKey.trim() || addingRef.current || startingRef.current || pendingLoginRef.current) return;

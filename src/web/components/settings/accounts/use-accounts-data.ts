@@ -16,6 +16,7 @@ import {
   getAccounts, getActiveAccount, getAllAccountUsages, patchAccount,
   type AccountInfo, type AccountUsageEntry,
 } from "../../../lib/api-settings";
+import { useSettingsChanged } from "@/hooks/use-settings-changed";
 
 export interface AccountsData {
   usages: AccountUsageEntry[];
@@ -131,6 +132,8 @@ export function useAccountsData(enabled = true): AccountsData {
     if (enabled) void reload();
     return () => clearTimeout(flashTimer.current);
   }, [enabled, reload]);
+  // An account renamed, switched, re-checked or removed elsewhere (`ppm accounts`, another device).
+  useSettingsChanged("accounts", () => { if (enabled) void reload(); });
 
   return { usages, accounts, activeAccountId, initialLoading, refreshing, flashIds, reload, toggle, togglingId };
 }
