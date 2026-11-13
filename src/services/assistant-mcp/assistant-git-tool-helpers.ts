@@ -1,5 +1,6 @@
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import { hideRemoteUrls } from "../../shared/hide-remote-urls.ts";
+import { assertRef } from "../git-branch-diff/branch-diff-parse.ts";
 import type { GitChanges } from "../../shared/git-changes.ts";
 import type { GitCardTarget } from "./assistant-approval-summary-git.ts";
 import { projectRoute, type CallPpmRoute, type RouteCallResult, type RouteQuery } from "./assistant-route-rules.ts";
@@ -87,6 +88,20 @@ export function optionalString(value: unknown, name: string, max = 500): { ok: t
   if (typeof value !== "string" || !value.trim()) return { ok: false, error: `\`${name}\` must be a non-empty string.` };
   if (value.length > max) return { ok: false, error: `\`${name}\` is longer than ${max} characters.` };
   return { ok: true, value };
+}
+
+/**
+ * `name` as git takes a branch or tag name, or why not: no dash first, no range, nothing git
+ * forbids, and no leading `+`, which a later push would read as a forced refspec (`assertRef`
+ * refuses it). The route checks it again.
+ */
+export function refArg(value: unknown, label: string): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof value !== "string" || value.length > 250) return { ok: false, error: `\`${label}\` must be a branch name.` };
+  try {
+    return { ok: true, value: assertRef(value, label) };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
 }
 
 export function optionalBoolean(value: unknown, name: string): { ok: true; value: boolean } | { ok: false; error: string } {

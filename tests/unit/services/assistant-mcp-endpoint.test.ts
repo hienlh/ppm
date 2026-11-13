@@ -81,6 +81,11 @@ describe("assistant MCP endpoint", () => {
     // The git, schedule, tunnel, project and chat families annotate their own tools, checked beside each family.
     const familyTools = new Set<string>([...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...PROJECT_TOOLS, ...CHAT_TOOLS]);
     expect(names.slice(-(PROJECT_TOOLS.length + CHAT_TOOLS.length))).toEqual([...PROJECT_TOOLS, ...CHAT_TOOLS]);
+    // History changes and branch deletion can lose work, so both say so.
+    const annotations = (name: string) => list.result.tools.find((t: { name: string }) => t.name === name)?.annotations;
+    for (const name of ["git_history", "git_branch"]) {
+      expect({ name, annotations: annotations(name) }).toEqual({ name, annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false } });
+    }
     for (const tool of list.result.tools) {
       if (familyTools.has(tool.name)) continue;
       if (navigation.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });

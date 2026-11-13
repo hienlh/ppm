@@ -14,8 +14,10 @@ export const GIT_COMMIT_TOOL = "git_commit";
 export const GIT_SYNC_TOOL = "git_sync";
 export const GIT_BRANCH_TOOL = "git_branch";
 export const GIT_STASH_TOOL = "git_stash";
+export const GIT_HISTORY_TOOL = "git_history";
 
 export const GIT_TOOLS = [
   GIT_STATUS_TOOL, GIT_LOG_TOOL, GIT_DIFF_TOOL, GIT_BRANCHES_TOOL,
   GIT_STAGE_TOOL, GIT_DISCARD_TOOL, GIT_UNDO_TOOL, GIT_COMMIT_TOOL, GIT_SYNC_TOOL, GIT_BRANCH_TOOL, GIT_STASH_TOOL,
+  GIT_HISTORY_TOOL,
 ] as const;

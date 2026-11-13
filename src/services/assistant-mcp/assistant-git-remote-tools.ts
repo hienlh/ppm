@@ -1,7 +1,6 @@
 import type { Json } from "../mcp-http-endpoint.ts";
 import type { GitChanges, StashEntry } from "../../shared/git-changes.ts";
 import type { GitBranch } from "../../types/git.ts";
-import { assertRef } from "../git-branch-diff/branch-diff-parse.ts";
 import { gitWorkflowService, type PushTarget } from "../git-workflow/git-workflow.service.ts";
 import { GIT_BRANCH_TOOL, GIT_STASH_TOOL, GIT_SYNC_TOOL } from "../../shared/assistant-git-tool-names.ts";
 import {
@@ -9,16 +8,17 @@ import {
 } from "./assistant-approval-summary-git.ts";
 import type { GitRepoScope } from "./assistant-git-repo-scope.ts";
 import {
-  askFirst, cardTarget, gitRoute, optionalBoolean, optionalString, readChanges, repoLabel, routeErrorMessage, routeErrorResult, scopeOrError,
-  staleResult,
+  askFirst, cardTarget, gitRoute, optionalBoolean, optionalString, readChanges, refArg, repoLabel, routeErrorMessage, routeErrorResult,
+  scopeOrError, staleResult,
 } from "./assistant-git-tool-helpers.ts";
+import { gitBranchDelete } from "./assistant-git-branch-delete-tool.ts";
 import { errorResult, intArg, jsonResult } from "./assistant-tool-output.ts";
 import type { ToolContext } from "./assistant-tool-family.ts";
 
 /**
  * The git tools that reach a remote or move HEAD: sync (fetch, pull, push), branch (create,
- * switch) and stash. Never a force push, a merge, a rebase other than pull's, or a branch
- * deletion — those stay in PPM's UI. Remotes are named, never shown by URL.
+ * switch, and delete through `assistant-git-branch-delete-tool.ts`) and stash. Never a force
+ * push or a rebase other than pull's. Remotes are named, never shown by URL.
  */
 
 /** What a pull or push leaves behind, read back so the agent hears about a conflict or a new state. */
@@ -70,7 +70,7 @@ export async function gitSync(ctx: ToolContext, args: Record<string, unknown>): 
   }
 
   if (!branch.head) return errorResult("HEAD is detached; switch to a branch first (git_branch).");
-  if (changes.operation) return errorResult(`A ${changes.operation.kind} is under way; finish or abort it in PPM first.`);
+  if (changes.operation) return errorResult(`A ${changes.operation.kind} is under way; finish or abort it first (git_history continue or abort).`);
 
   if (action === "pull") {
     if (!branch.upstream) return errorResult(`${branch.head} has no upstream to pull from.`);
@@ -115,27 +115,16 @@ export async function gitSync(ctx: ToolContext, args: Record<string, unknown>): 
   return jsonResult({ ...repoLabel(scope), pushed: true, ...(publish ? { published: res.data } : {}), ...(await afterState(ctx, scope)) });
 }
 
-/**
- * `name` as git checks it out, or why not: no dash first, no range, nothing git forbids, and no
- * leading `+`, which a later push would read as a forced refspec (`assertRef` refuses it).
- */
-function refArg(value: unknown, label: string): { ok: true; value: string } | { ok: false; error: string } {
-  if (typeof value !== "string" || value.length > 250) return { ok: false, error: `\`${label}\` must be a branch name.` };
-  try {
-    return { ok: true, value: assertRef(value, label) };
-  } catch (e) {
-    return { ok: false, error: (e as Error).message };
-  }
-}
-
 export async function gitBranch(ctx: ToolContext, args: Record<string, unknown>): Promise<Json> {
   const action = args.action;
-  if (action !== "create" && action !== "switch") return errorResult("`action` must be \"create\" or \"switch\".");
+  if (action !== "create" && action !== "switch" && action !== "delete") return errorResult("`action` must be \"create\", \"switch\" or \"delete\".");
   const name = refArg(args.name, "name");
   if (!name.ok) return errorResult(name.error);
   const from = args.from === undefined || args.from === null ? null : refArg(args.from, "from");
   if (from && !from.ok) return errorResult(from.error);
   if (from && action !== "create") return errorResult("`from` applies to create only.");
+  if (args.force !== undefined && args.force !== null && action !== "delete") return errorResult("`force` applies to delete only.");
+  if (action === "delete") return gitBranchDelete(ctx, args, name.value);
   const got = await scopeOrError(ctx, args);
   if ("result" in got) return got.result;
   const { scope } = got;

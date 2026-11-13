@@ -1,18 +1,19 @@
 import { allowRoute, type RouteRule } from "./assistant-route-rules.ts";
 import type { FamilyHandlers } from "./assistant-tool-family.ts";
 import {
-  GIT_BRANCH_TOOL, GIT_BRANCHES_TOOL, GIT_COMMIT_TOOL, GIT_DIFF_TOOL, GIT_DISCARD_TOOL, GIT_LOG_TOOL, GIT_STAGE_TOOL,
-  GIT_STASH_TOOL, GIT_STATUS_TOOL, GIT_SYNC_TOOL, GIT_UNDO_TOOL,
+  GIT_BRANCH_TOOL, GIT_BRANCHES_TOOL, GIT_COMMIT_TOOL, GIT_DIFF_TOOL, GIT_DISCARD_TOOL, GIT_HISTORY_TOOL, GIT_LOG_TOOL,
+  GIT_STAGE_TOOL, GIT_STASH_TOOL, GIT_STATUS_TOOL, GIT_SYNC_TOOL, GIT_UNDO_TOOL,
 } from "../../shared/assistant-git-tool-names.ts";
 import { gitBranches, gitDiff, gitLog, gitStatus } from "./assistant-git-read-tools.ts";
 import { gitCommit, gitDiscard, gitStage, gitUndo } from "./assistant-git-change-tools.ts";
 import { gitBranch, gitStash, gitSync } from "./assistant-git-remote-tools.ts";
+import { gitHistory } from "./assistant-git-history-tool.ts";
 
 /**
  * The git tools' handlers and the only routes they may call. `GIT_ROUTES` is this family's whole
  * reach into PPM's routes (see `assistant-route-call.ts`): exactly the routes the tools call, each
- * with the query keys it is sent. Nothing for merge, rebase, cherry-pick, revert, tags, worktrees,
- * branch deletion, block-level staging or aborting an operation — those stay in PPM's UI.
+ * with the query keys it is sent. Nothing for rebase, worktrees, block-level staging or pushing
+ * tags — those stay in PPM's UI.
  */
 
 const git = (method: "GET" | "POST", sub: string, query: string[] = []): RouteRule =>
@@ -45,6 +46,15 @@ export const GIT_ROUTES: readonly RouteRule[] = [
   git("POST", "stash/apply"),
   git("POST", "stash/pop"),
   git("POST", "stash/drop"),
+  git("GET", "refs"),
+  git("POST", "branch/delete"),
+  git("POST", "merge"),
+  git("POST", "cherry-pick"),
+  git("POST", "revert"),
+  git("POST", "tag"),
+  // The route is `operation/:action{abort|continue}`; each of its two values is its own literal rule.
+  git("POST", "operation/abort"),
+  git("POST", "operation/continue"),
 ];
 
 export const GIT_TOOL_HANDLERS: FamilyHandlers = {
@@ -59,4 +69,5 @@ export const GIT_TOOL_HANDLERS: FamilyHandlers = {
   [GIT_SYNC_TOOL]: gitSync,
   [GIT_BRANCH_TOOL]: gitBranch,
   [GIT_STASH_TOOL]: gitStash,
+  [GIT_HISTORY_TOOL]: gitHistory,
 };

@@ -19,7 +19,7 @@ import { allowRoute, projectRoute, withQuery, type RouteRule } from "../../../..
 import {
   callFamilyTool, familyToolHandler, routeCallerFor, toolFamilies, type FamilyHandler, type ToolFamily,
 } from "../../../../src/services/assistant-mcp/assistant-tool-family.ts";
-import { GIT_TOOL_HANDLERS } from "../../../../src/services/assistant-mcp/assistant-git-tools.ts";
+import { GIT_ROUTES, GIT_TOOL_HANDLERS } from "../../../../src/services/assistant-mcp/assistant-git-tools.ts";
 import { ASSISTANT_TOOL_DEFINITIONS } from "../../../../src/services/assistant-mcp/assistant-mcp-tools.ts";
 import { ASSISTANT_TOOLS } from "../../../../src/shared/assistant-tool-names.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../../../src/shared/assistant-project.ts";
@@ -228,6 +228,20 @@ describe("the family dispatcher", () => {
     }
     expect(routeCallerFor("git")).not.toBe(routeCallerFor("schedule"));
     expect(routeCallerFor("schedule")).not.toBe(routeCallerFor("tunnel"));
+  });
+
+  it("lets the git family reach its history and branch-delete routes, and still never a worktree", async () => {
+    const { seen, app } = recordingApp();
+    const call = createRouteCaller(GIT_ROUTES, { app, isProject: () => null });
+    const allowed = ["merge", "cherry-pick", "revert", "tag", "branch/delete", "operation/abort", "operation/continue"];
+    for (const sub of allowed) {
+      expect({ sub, ok: (await call("POST", projectRoute("p", `git/${sub}`, { repo: "/r" }), {})).ok }).toEqual({ sub, ok: true });
+    }
+    expect((await call("GET", projectRoute("p", "git/refs", { repo: "/r" }))).ok).toBe(true);
+    for (const sub of ["worktree/add", "worktree/remove", "worktree/prune", "operation/skip", "operation/:action", "rebase", "stage-hunks"]) {
+      expect({ sub, code: (await call("POST", projectRoute("p", `git/${sub}`), {})).code }).toEqual({ sub, code: ROUTE_NOT_ALLOWED });
+    }
+    expect(seen).toHaveLength(allowed.length + 1);
   });
 
   it("keeps every family's names, definitions, handlers and routes consistent", () => {

@@ -14,7 +14,8 @@ update at once. Reading never asks; every change shows the user a card PPM build
 "Changing things"), so say in your reply what you are about to do before you call.
 - Git: read with \`git_status\`, \`git_log\`, \`git_diff\`, \`git_branches\`; change with \`git_stage\`
   (unstaging too), \`git_discard\`, \`git_undo\`, \`git_commit\`, \`git_sync\` (fetch, pull, push),
-  \`git_branch\` (create, switch) and \`git_stash\`.
+  \`git_branch\` (create, switch, delete), \`git_stash\` and \`git_history\` (merge, cherry-pick,
+  revert, tag, and abort or continue one that stopped on a conflict).
 - Schedules: read with \`schedules_list\`, \`schedule_get\`; change with \`schedule_save\` (create,
   edit, pause), \`schedule_delete\`, \`schedule_run_now\`.
 - Tunnels: read with \`tunnels_status\`; change with \`port_forward_start\`, \`port_forward_stop\` and
@@ -40,13 +41,15 @@ update at once. Reading never asks; every change shows the user a card PPM build
   lists for the one you mean.
 - Stage, discard or stash only files the git status listed, never a guessed path. Nothing is ever
   forced: a push behind its upstream will be refused, so pull first.
-- The tools leave out merging, rebasing, deleting branches, tags, worktrees, Tailscale and named
+- A merge, cherry-pick or revert that stops on a conflict: report the conflicted files. Resolve
+  them only if the user asks; otherwise offer \`continue\` after they resolve it, or \`abort\`.
+- The tools leave out rebasing (other than a pull's), pushing tags, worktrees, Tailscale and named
   tunnel setup. Send the user to PPM's screens (Source Control, Git Graph, Settings → Remote
   Access) for those, or use \`ppm\` in the shell after reading \`ppm_cli_reference\`; it asks too.
 
 ### After a change
-- Report enough to reverse it: the commit hash, the discard id, the schedule's id and what it
-  held, the port and its address. A discard is kept for a day and comes back with \`git_undo\`
+- Report enough to reverse it: the commit hash, a deleted branch's last commit, the discard id,
+  the schedule's id and what it held, the port and its address. A discard is kept for a day and comes back with \`git_undo\`
   (\`kind: "discard"\`) or Source Control's Undo; a commit not yet pushed comes back with
   \`kind: "commit"\`.
 - An answer saying the state changed while the card waited means nothing ran. Read again and tell

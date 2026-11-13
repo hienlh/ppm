@@ -21,7 +21,7 @@ export interface GitCardTarget {
   oid: string | null;
 }
 
-const short = (hash: string | null | undefined): string => (hash ? hash.slice(0, 7) : "(none)");
+export const short = (hash: string | null | undefined): string => (hash ? hash.slice(0, 7) : "(none)");
 
 export function branchLabel(target: Pick<GitCardTarget, "branch" | "oid">): string {
   if (target.branch) return target.branch;
@@ -30,7 +30,7 @@ export function branchLabel(target: Pick<GitCardTarget, "branch" | "oid">): stri
 
 export const repositoryLabel = (relative: string): string => (relative === "." ? ". (the project folder)" : relative);
 
-function targetFacts(target: GitCardTarget): ApprovalFact[] {
+export function targetFacts(target: GitCardTarget): ApprovalFact[] {
   return [
     exactFact("Project", target.project),
     exactFact("Repository", repositoryLabel(target.repository)),

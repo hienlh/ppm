@@ -1,7 +1,7 @@
 import type { AssistantToolDefinition } from "./assistant-tool-family.ts";
 import {
-  GIT_BRANCH_TOOL, GIT_BRANCHES_TOOL, GIT_COMMIT_TOOL, GIT_DIFF_TOOL, GIT_DISCARD_TOOL, GIT_LOG_TOOL, GIT_STAGE_TOOL,
-  GIT_STASH_TOOL, GIT_STATUS_TOOL, GIT_SYNC_TOOL, GIT_UNDO_TOOL,
+  GIT_BRANCH_TOOL, GIT_BRANCHES_TOOL, GIT_COMMIT_TOOL, GIT_DIFF_TOOL, GIT_DISCARD_TOOL, GIT_HISTORY_TOOL, GIT_LOG_TOOL,
+  GIT_STAGE_TOOL, GIT_STASH_TOOL, GIT_STATUS_TOOL, GIT_SYNC_TOOL, GIT_UNDO_TOOL,
 } from "../../shared/assistant-git-tool-names.ts";
 
 /**
@@ -118,15 +118,18 @@ export const GIT_TOOL_DEFINITIONS: readonly AssistantToolDefinition[] = [
   },
   {
     name: GIT_BRANCH_TOOL,
-    title: "Create or switch branch",
+    title: "Create, switch or delete a branch",
     description: "`create` a branch (from `from`, default HEAD) and switch to it, or `switch` to a branch; one only on a "
-      + `remote gets a local branch following it. Uncommitted changes come along.${ASKS}`,
+      + "remote gets a local branch following it. Uncommitted changes come along. `delete` a local branch other than the "
+      + "current one; git refuses one that is not merged unless `force` is set, and the answer gives its last commit so "
+      + `it can be made again.${ASKS}`,
     inputSchema: object({
-      action: { type: "string", enum: ["create", "switch"] },
+      action: { type: "string", enum: ["create", "switch", "delete"] },
       name: { type: "string", description: "The branch name." },
       from: { type: "string", description: "Where a new branch starts (create only)." },
+      force: { type: "boolean", description: "Delete even if not merged (delete only). Only when the user asks for it." },
     }, ["action", "name"]),
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   },
   {
     name: GIT_STASH_TOOL,
@@ -138,6 +141,27 @@ export const GIT_TOOL_DEFINITIONS: readonly AssistantToolDefinition[] = [
       message: { type: "string", description: "The stash's message (save)." },
       includeUntracked: { type: "boolean", description: "Also stash untracked files (save)." },
       index: { type: "integer", minimum: 0, description: "The stash's index (apply, pop, drop)." },
+    }, ["action"]),
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  },
+  {
+    name: GIT_HISTORY_TOOL,
+    title: "Merge, cherry-pick, revert, tag, abort or continue",
+    description: "One history change on the current branch; the repository's git hooks run, and the card lists them. "
+      + "Merge, cherry-pick and revert need a clean tree (commit or stash first). A conflict stops them part way: the "
+      + "answer lists the files; resolve them, stage them with git_stage, then `continue`, or `abort`. A commit is named "
+      + `by its hash from git_log.${ASKS}`,
+    inputSchema: object({
+      action: {
+        type: "string", enum: ["merge", "cherry_pick", "revert", "tag", "abort", "continue"],
+        description: "merge: merge branch `source` into the current branch. cherry_pick: copy commit `hash` onto it. "
+          + "revert: add a commit undoing `hash`. tag: tag commit `at` (default HEAD) as `name`. abort: drop the merge, "
+          + "rebase, cherry-pick or revert under way. continue: finish it once every conflict is resolved and staged.",
+      },
+      source: { type: "string", description: "The branch merged in (merge): a local branch, or a remote one as origin/name." },
+      hash: { type: "string", description: "The commit's hash, 7 to 40 characters (cherry_pick, revert)." },
+      name: { type: "string", description: "The new tag's name (tag)." },
+      at: { type: "string", description: "The commit tagged, by hash (tag; default HEAD)." },
     }, ["action"]),
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   },

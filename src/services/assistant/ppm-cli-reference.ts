@@ -42,7 +42,7 @@ export const TOOLS_INSTEAD_OF_CLI: readonly { area: string; tools: readonly stri
   {
     area: "Git (instead of `ppm git`)",
     tools: ["git_status", "git_log", "git_diff", "git_branches", "git_stage", "git_discard", "git_undo",
-      "git_commit", "git_sync", "git_branch", "git_stash"],
+      "git_commit", "git_sync", "git_branch", "git_stash", "git_history"],
   },
   {
     area: "Schedules (instead of `ppm schedule`)",
@@ -95,7 +95,7 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "These areas have tools of their own. They go through the running server's own checks, update PPM's",
     "screens at once, and show the user a card that says what will change. Use them, not the commands below:",
     ...TOOLS_INSTEAD_OF_CLI.map(({ area, tools }) => `- ${area}: ${tools.join(", ")}`),
-    "Run `ppm git` only for what the git tools leave out (merging or deleting a branch, for instance).",
+    "Run `ppm git` only for what the git tools leave out (worktrees, for instance).",
     "`ppm git` stages, unstages and discards whole files; staging single blocks of a file is done in PPM's Source Control.",
     "",
     "## Commands that go through the running server (prefer these)",

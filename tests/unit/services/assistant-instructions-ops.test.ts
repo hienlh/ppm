@@ -22,9 +22,9 @@ const OPS_TOOLS = TOOLS_INSTEAD_OF_CLI.flatMap((g) => g.tools);
 const count = (text: string, needle: string): number => text.split(needle).length - 1;
 
 describe("the git, schedule, tunnel, project and chat tool names", () => {
-  it("are the twenty-nine tools of the five groups, none twice", () => {
-    expect(OPS_TOOLS).toHaveLength(29);
-    expect(new Set(OPS_TOOLS).size).toBe(29);
+  it("are the thirty tools of the five groups, none twice", () => {
+    expect(OPS_TOOLS).toHaveLength(30);
+    expect(new Set(OPS_TOOLS).size).toBe(30);
   });
 
   it("put the project family beside the project list and project_add", () => {
@@ -75,7 +75,7 @@ describe("ASSISTANT_OPS_SECTION", () => {
   });
 
   it("states where the tools stop and where to go instead", () => {
-    for (const s of ["merging", "rebasing", "deleting branches", "Tailscale", "Settings → Remote", "`ppm_cli_reference`"]) {
+    for (const s of ["rebasing", "pushing tags", "worktrees", "Tailscale", "Settings → Remote", "`ppm_cli_reference`"]) {
       expect(ASSISTANT_OPS_SECTION).toContain(s);
     }
   });
@@ -106,7 +106,10 @@ describe("the rest of the instructions", () => {
 
   it("no longer send git, schedules or tunnels to the command line", () => {
     expect(all).not.toContain("git, schedules, tunnels, extensions");
-    expect(ASSISTANT_APPROVAL_SECTION).toContain("the git operations your tools leave out (merge, rebase, deleting branches");
+    expect(ASSISTANT_APPROVAL_SECTION).toContain("the git operations your tools leave out (rebase, pushing tags, worktrees)");
+    // Merging, cherry-picking, reverting, tagging and deleting a branch have tools now.
+    expect(ASSISTANT_OPS_SECTION).toContain("`git_history` (merge, cherry-pick");
+    expect(ASSISTANT_OPS_SECTION).toContain("`git_branch` (create, switch, delete)");
   });
 
   it("point from the read tools and the approval rules to the new section", () => {
