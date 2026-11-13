@@ -231,6 +231,8 @@ describe("a reply on Telegram", () => {
   it("to an approval card refuses that request, and the words arrive", async () => {
     await ctl().sendUserMessage(manager, "ASK-BASH now", { origin: "telegram", projectName: "tgcards", providerId: "claude" });
     const shown = await until(() => lastWith("npm publish"));
+    // Read among the Assistant's answers, the card has to say the manager chat is stopped on it.
+    expect(shown.text.split("\n")[0]).toMatch(/^🔐 Manager chat “.+” in tgcards is stopped, waiting for your decision$/);
     const before = toManager().length;
     replyTo(shown.message_id, "Not yet: run the tests first");
     await until(() => toManager().length > before);

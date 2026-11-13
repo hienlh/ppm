@@ -124,6 +124,54 @@ describe("collab waits", () => {
     expect(await wait.outcome).toEqual({ replied: false, reason: "cancelled" });
   });
 
+  describe("a target waiting on the user", () => {
+    const card = { kind: "question" as const, title: "Which branch first?" };
+
+    it("ends at once when the target already shows a card as the delivery returns", async () => {
+      const waits = setup();
+      const wait = begin(waits);
+      wait.attach("session-1", "queued", false, card);
+      expect(await wait.outcome).toEqual({ replied: false, reason: "waiting_for_user", card });
+      expect(waits.size()).toBe(0);
+    });
+
+    it("ends at once when the target shows a card in the middle of the wait", async () => {
+      const waits = setup();
+      const wait = begin(waits, { timeoutMs: 60_000 });
+      wait.attach("session-1", "inserted", true, null);
+      await sleep(5);
+      expect(waits.isWaiting("A", "B")).toBe(true);
+      expect(waits.targetWaitingForUser("old-B", card)).toBe(1);
+      expect(await wait.outcome).toEqual({ replied: false, reason: "waiting_for_user", card });
+      // A reply sent later finds no wait: it is a new message, never dropped.
+      expect(waits.claimReply("B", "A", reply)).toBe(false);
+    });
+
+    it("judges a card shown during the delivery against what the target shows when it returns", async () => {
+      const shown = setup();
+      const a = begin(shown);
+      expect(shown.targetWaitingForUser("B", card)).toBe(0);
+      a.attach("session-1", "queued", false);
+      expect(await a.outcome).toEqual({ replied: false, reason: "waiting_for_user", card });
+
+      // Answered before the delivery returned: the target is free again and the wait goes on.
+      const answered = setup();
+      const b = begin(answered, { timeoutMs: 30 });
+      answered.targetWaitingForUser("B", card);
+      b.attach("session-1", "queued", false, null);
+      expect(await b.outcome).toEqual({ replied: false, reason: "timeout" });
+    });
+
+    it("leaves waits on other sessions alone", async () => {
+      const waits = setup();
+      const wait = begin(waits, { timeoutMs: 30 });
+      wait.attach("session-1", "inserted", false, null);
+      expect(waits.targetWaitingForUser("C", card)).toBe(0);
+      expect(waits.targetWaitingForUser("A", card)).toBe(0);
+      expect(await wait.outcome).toEqual({ replied: false, reason: "timeout" });
+    });
+  });
+
   it("allows one wait per pair at a time", () => {
     const waits = setup();
     begin(waits);

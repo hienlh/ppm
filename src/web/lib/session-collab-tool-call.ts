@@ -9,6 +9,7 @@
 import {
   CLAUDE_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_SERVER, CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL,
   SESSION_STATUS_TOOL, type SessionCollabTool, type SessionStatus, type SessionWaitOutcome, type SessionDelivery,
+  type WaitingCard,
 } from "../../shared/session-collab";
 import { tabToolResultText } from "./tab-tool-call";
 import type { LinkedSessionStatus } from "./linked-sessions";
@@ -85,11 +86,20 @@ function readStatus(v: unknown): SessionStatus | undefined {
 
 const WAIT_REASONS = new Set(["turn_ended_without_reply", "timeout", "cancelled"]);
 
+function readWaitingCard(v: unknown): WaitingCard | null {
+  if (!isObj(v) || (v.kind !== "approval" && v.kind !== "question") || typeof v.title !== "string") return null;
+  return { kind: v.kind, title: v.title };
+}
+
 function readReply(v: unknown): SessionWaitOutcome | undefined {
   if (!isObj(v)) return undefined;
   if (v.replied === true && typeof v.text === "string") {
     return { replied: true, text: v.text, sentAt: typeof v.sentAt === "string" ? v.sentAt : "",
       ...(typeof v.turnId === "string" ? { turnId: v.turnId } : {}) };
+  }
+  if (v.replied === false && v.reason === "waiting_for_user") {
+    const card = readWaitingCard(v.card);
+    return card ? { replied: false, reason: "waiting_for_user", card } : undefined;
   }
   if (v.replied === false && typeof v.reason === "string" && WAIT_REASONS.has(v.reason)) {
     return { replied: false, reason: v.reason as "turn_ended_without_reply" | "timeout" | "cancelled" };
@@ -127,7 +137,11 @@ export function sessionCollabToolResult(output: string): SessionCollabToolResult
 }
 
 /** Why a wait ended without a reply, in words. */
-export function waitEndedText(reason: "turn_ended_without_reply" | "timeout" | "cancelled"): string {
+export function waitEndedText(reply: Extract<SessionWaitOutcome, { replied: false }>): string {
+  if (reply.reason === "waiting_for_user") {
+    return `It is waiting for the user to answer ${reply.card.kind === "question" ? "a question" : "an approval"}: “${reply.card.title}”. The message waits until then.`;
+  }
+  const reason = reply.reason;
   if (reason === "turn_ended_without_reply") return "It finished its turn without replying.";
   if (reason === "timeout") return "No reply before the wait timed out.";
   return "The wait was cancelled.";

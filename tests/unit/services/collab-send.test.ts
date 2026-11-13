@@ -149,6 +149,30 @@ describe("send_to_session", () => {
     expect(w.deliveries).toHaveLength(1);
   });
 
+  it("does not wait on a target that is waiting for the user: it returns at once, naming the card", async () => {
+    const card = { kind: "question" as const, title: "Which branch first?" };
+    const w = world({ live: { phase: "thinking", waitingFor: "question", waitingCard: card } }, { delivered: "queued" });
+    const started = Date.now();
+    const body = JSON.parse(textOf(await sendToSessionTool(w.env, w.caller, { session_id: B, message: "check", wait: true }, signal())));
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(body).toMatchObject({ delivered: "queued", status: { waitingFor: "question" } });
+    expect(body.reply).toEqual({ replied: false, reason: "waiting_for_user", card });
+    // The message itself was delivered and stays queued there.
+    expect(w.deliveries).toHaveLength(1);
+    expect(w.env.waits.size()).toBe(0);
+  });
+
+  it("stops waiting the moment the target puts a card in front of the user mid-wait", async () => {
+    const w = world({ live: { phase: "thinking" } }, { delivered: "inserted" });
+    const pending = sendToSessionTool(w.env, w.caller, { session_id: B, message: "check", wait: true }, signal());
+    await new Promise((r) => setTimeout(r, 5));
+    expect(w.env.waits.isWaiting(A, B)).toBe(true);
+    const card = { kind: "approval" as const, title: "Bash" };
+    w.env.waits.targetWaitingForUser(B, card);
+    const body = JSON.parse(textOf(await pending));
+    expect(body.reply).toEqual({ replied: false, reason: "waiting_for_user", card });
+  });
+
   it("waits for a reply, and reports the target's status when its turn ends without one", async () => {
     const w = world();
     const pending = sendToSessionTool(w.env, w.caller, { session_id: B, message: "check", wait: true }, signal());

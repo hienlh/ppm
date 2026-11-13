@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import type { SessionPhase } from "../../types/api.ts";
 import type { SessionCollabSettings } from "../../shared/session-collab-settings.ts";
 import type {
-  SessionCollabApprovalInput, SessionCollabModeSource, SessionCollabRefusal, SessionCreatedEvent,
+  SessionCollabApprovalInput, SessionCollabModeSource, SessionCollabRefusal, SessionCreatedEvent, WaitingCard,
 } from "../../shared/session-collab.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
@@ -28,6 +28,8 @@ export interface LiveSessionState {
   permissionMode?: string;
   model?: string;
   waitingFor: "approval" | "question" | null;
+  /** The card behind `waitingFor`, when there is one. */
+  waitingCard?: WaitingCard;
   /** The last turn's answer, as the "Chat completed" notification quotes it. */
   lastAnswer?: string;
   /** Epoch ms of the last activity seen. */

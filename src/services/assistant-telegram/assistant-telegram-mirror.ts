@@ -18,6 +18,7 @@ import { canSendTo } from "./assistant-telegram-access.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { BridgeStateStore } from "./assistant-telegram-state.ts";
 import { TurnRenderer } from "./assistant-telegram-turn-renderer.ts";
+import { AssistantTelegramWaitNotes, type WaitNotesDeps } from "./assistant-telegram-wait-notes.ts";
 import { WakeTurnGate } from "./assistant-telegram-wake-gate.ts";
 import { NEWS_OPENER } from "../assistant-wake/wake-news-text.ts";
 
@@ -41,6 +42,8 @@ export interface MirrorDeps {
   onTurnDelivered: (sessionId: string) => void;
   cards?: MirrorCardSink;
   now?: () => number;
+  /** How long-waiting session tools are said in the draft (tests shorten the delay). */
+  waitNotes?: Omit<WaitNotesDeps, "renderers">;
 }
 
 export class AssistantTelegramMirror {
@@ -49,8 +52,11 @@ export class AssistantTelegramMirror {
   private offs: Array<() => void> = [];
   private readonly bound = new Map<string, { at: number; chats: string[] }>();
   private readonly wakeGate = new WakeTurnGate();
+  private readonly waitNotes: AssistantTelegramWaitNotes;
 
-  constructor(private readonly deps: MirrorDeps) {}
+  constructor(private readonly deps: MirrorDeps) {
+    this.waitNotes = new AssistantTelegramWaitNotes({ ...deps.waitNotes, renderers: (sessionId) => this.live(sessionId) });
+  }
 
   attach(): void {
     if (this.offs.length) return;
@@ -67,6 +73,7 @@ export class AssistantTelegramMirror {
   detach(): void {
     for (const off of this.offs.splice(0)) off();
     this.turns.clear();
+    this.waitNotes.clear();
   }
 
   /** Stops writing to a chat: its live turns are abandoned (its lane is emptied by the caller). */
@@ -154,7 +161,12 @@ export class AssistantTelegramMirror {
       // A chat bound while a turn was already running joins it from here.
       for (const chatId of this.chatsFor(p.sessionId)) this.renderer(p.sessionId, chatId, "ws").text(ev.content);
     } else if (ev.type === "tool_use" && typeof ev.tool === "string") {
-      for (const r of this.live(p.sessionId)) r.tool(ev.tool);
+      const live = this.live(p.sessionId);
+      for (const r of live) r.tool(ev.tool);
+      // A session tool told to wait can sit for minutes with nothing streaming: the draft says so.
+      if (live.length) this.waitNotes.toolStarted(p.sessionId, ev as { tool: string; input?: unknown; toolUseId?: string });
+    } else if (ev.type === "tool_result") {
+      this.waitNotes.toolEnded((ev as { toolUseId?: string }).toolUseId);
     }
     // An error is not echoed here: the one that ends a turn closes the answer (`turnFooter`),
     // and repeating it would say it twice.
@@ -178,6 +190,7 @@ export class AssistantTelegramMirror {
   }
 
   private onTurnEnded(p: ChatLifecycleEvents["turn_ended"]): void {
+    this.waitNotes.turnEnded(p.sessionId);
     const held = this.wakeGate.end(p.sessionId, p.outcome);
     if (held) this.releaseWake(p.sessionId, held);
     const footer = turnFooter(p);
@@ -187,6 +200,7 @@ export class AssistantTelegramMirror {
 
   private onMigrated(p: ChatLifecycleEvents["migrated"]): void {
     this.wakeGate.rename(p.oldSessionId, p.newSessionId);
+    this.waitNotes.renamed(p.oldSessionId, p.newSessionId);
     const byChat = this.turns.get(p.oldSessionId);
     if (!byChat) return;
     this.turns.delete(p.oldSessionId);

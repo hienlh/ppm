@@ -858,7 +858,12 @@ warm-process cap and the idle release still apply to it.
 **Waits** (`collab-waits.ts`). With `wait: true` the call blocks until the target calls
 `send_to_session` back to the caller, the target's turn that read the message ends without a reply,
 the wait times out (Settings, 10 minutes by default, 1–60), or it is cancelled (the caller is
-stopped, the user writes in the waiting session, the session is deleted). A wait is registered
+stopped, the user writes in the waiting session, the session is deleted). A target that shows the
+user a card (an approval or a question, of any origin) can neither read the message nor answer
+until the user does, so the wait ends at once as `waiting_for_user` with `reply.card` (`{ kind,
+title }`, built by `collab-waiting-card.ts`): when the card is already there as the delivery
+returns, or the moment one appears mid-wait (`collabTargetWaitingForUser`, called from the
+approval slot's `show`). The message stays where it was delivered. A wait is registered
 before delivery, the first of these settles it atomically, and "ended without a reply" counts only
 the turn that read the message (`turn_started` with the delivered message's client id, or after a
 3 s grace when no provider named one). A reply to a waiting sender is that wait's result and is not

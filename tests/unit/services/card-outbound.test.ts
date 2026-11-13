@@ -4,15 +4,17 @@
  * cards that stopped waiting. Also the window's end across midnight and a clock change, and the
  * (chat, message) pairs a reply is matched on.
  */
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
 import { getDb } from "../../../src/services/db.service.ts";
 import { createAssistantCards } from "../../../src/services/assistant-cards/assistant-cards.service.ts";
 import { getCardRow } from "../../../src/services/assistant-cards/assistant-cards-db.ts";
 import {
-  addCardTelegramRef, findCardByTelegramRef, listHeldCardRows, setCardOutbound,
+  addCardTelegramRef, findCardByTelegramRef, listHeldCardRows, listUnsentWaitingCardRows, setCardOutbound,
 } from "../../../src/services/assistant-cards/assistant-cards-outbound-db.ts";
-import { awayHeader, createCardOutbound, type CardOutboundSink } from "../../../src/services/assistant-cards/card-outbound.ts";
+import {
+  awayHeader, createCardOutbound, stillWaitingHeader, type CardOutboundSink,
+} from "../../../src/services/assistant-cards/card-outbound.ts";
 import { quietWindowEnd } from "../../../src/services/assistant-wake/wake-quiet-hours.ts";
 import type { AssistantCard } from "../../../src/shared/assistant-cards.ts";
 
@@ -88,6 +90,69 @@ describe("the outbound gate", () => {
   it("skips a card no chat can see", () => {
     ready = false;
     expect(outbound(card("done", "x").id)).toBe("skipped");
+  });
+});
+
+describe("a chat's card made before any chat could be reached", () => {
+  const catching = createCardOutbound({
+    cards,
+    clock: { now: () => now, setTimer: (fn, ms) => { const t = { at: now + ms, fn, live: true }; timers.push(t); return () => { t.live = false; }; } },
+    quietEnd: () => (quietUntil !== null && now < quietUntil ? quietUntil : null),
+    held: listHeldCardRows,
+    unsentWaiting: listUnsentWaitingCardRows,
+    row: getCardRow,
+    setOutbound: (id, o, at) => { setCardOutbound(id, o, at); },
+  });
+  const question = (requestId: string) =>
+    cards.create({ kind: "question", projectName: "api", projectPath: "/p/api", sessionId: "mgr", title: "Which first?", payload: { requestId } });
+
+  beforeEach(() => {
+    gate.detach();
+    catching.detach();
+  });
+  afterEach(() => catching.detach());
+
+  it("goes out once a chat can be reached, while it still waits, under one header — and only once", () => {
+    // Made while the bridge was not running: nothing carried it, so it stayed `pending`.
+    const waiting = question("r-wait");
+    const answered = question("r-answered");
+    cards.transition(answered.id, "resolved", { by: "user", channel: "chat", at: now });
+    const news = card("done", "Nightly done");
+    expect([waiting, answered, news].map((c) => outbound(c.id))).toEqual(["pending", "pending", "pending"]);
+
+    // The bridge runs, but no chat is connected yet: still nothing to send to.
+    ready = false;
+    catching.attach(sink);
+    expect(sent).toEqual([]);
+
+    // A chat connects: the waiting question goes; the answered one and other kinds stay in PPM.
+    ready = true;
+    catching.catchUp();
+    expect(sent).toEqual([{ ids: [waiting.id], header: stillWaitingHeader(1) }]);
+    expect(outbound(waiting.id)).toBe("sent");
+    expect(outbound(news.id)).toBe("pending");
+    catching.catchUp();
+    expect(sent).toHaveLength(1);
+  });
+
+  it("covers a card skipped because no chat was connected when it was made", () => {
+    ready = false;
+    catching.attach(sink);
+    const skipped = question("r-skip");
+    expect(outbound(skipped.id)).toBe("skipped");
+    ready = true;
+    catching.catchUp();
+    expect(sent).toEqual([{ ids: [skipped.id], header: stillWaitingHeader(1) }]);
+  });
+
+  it("is held for the end of quiet hours like any card made then", () => {
+    const waiting = question("r-quiet");
+    quietUntil = now + 60 * 60_000;
+    catching.attach(sink);
+    expect(sent).toEqual([]);
+    expect(outbound(waiting.id)).toBe("held");
+    advance(61 * 60_000);
+    expect(sent).toEqual([{ ids: [waiting.id], header: awayHeader(1) }]);
   });
 });
 

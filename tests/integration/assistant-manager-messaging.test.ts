@@ -16,6 +16,7 @@ import { chatWebSocket, ensureSessionEntry } from "../../src/server/ws/chat.ts";
 import { sessionCollabMcpHandler } from "../../src/services/session-collab/session-collab-endpoint.ts";
 import { sessionCollabMcpTokens } from "../../src/services/session-collab/session-collab-tokens.ts";
 import { collabApprovalBroker } from "../../src/services/session-collab/collab-approval-broker.ts";
+import { collabWaits } from "../../src/services/session-collab/collab-waits.ts";
 import { sessionCollabRoutes } from "../../src/server/routes/session-collab.ts";
 import { setSessionAssistant, setSessionMetadata, setSessionProvider, setSessionTitle } from "../../src/services/db.service.ts";
 import { UNATTENDED_TURN_REFUSAL, type ChatMessageOrigin } from "../../src/services/chat-control/chat-control.ts";
@@ -47,7 +48,8 @@ class ScriptedClaude {
   sessions = new Map<string, Session>();
   received: Array<{ sessionId: string; message: string; priority?: string }> = [];
   private streams = new Map<string, { queue: Item[]; wake?: () => void; closed: boolean }>();
-  private gates: Array<() => void> = [];
+  private gates: Array<(next?: "ask") => void> = [];
+  private askGates: Array<() => void> = [];
 
   async createSession(): Promise<Session> {
     const session: Session = { id: crypto.randomUUID(), providerId: this.id, title: "Scripted", createdAt: new Date().toISOString() };
@@ -68,7 +70,9 @@ class ScriptedClaude {
     if (s) { s.closed = true; s.wake?.(); }
   }
   release(): void { for (const g of this.gates.splice(0)) g(); }
-  resolveApproval(): void {}
+  /** A held turn puts a question card in front of the user and waits for the answer. */
+  askFromHeld(): void { for (const g of this.gates.splice(0)) g("ask"); }
+  resolveApproval(): void { for (const g of this.askGates.splice(0)) g(); }
   pushMessage(sessionId: string, content: string, opts?: { clientMessageId?: string; priority?: string }): void {
     const s = this.streams.get(sessionId);
     if (!s) return;
@@ -87,7 +91,16 @@ class ScriptedClaude {
         const item = stream.queue.shift()!;
         yield { type: "turn_started", turnId: `turn-${crypto.randomUUID()}`, ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}) } as ChatEvent;
         yield { type: "text", content: "working" } as ChatEvent;
-        if (item.content.includes("HOLD")) await new Promise<void>((r) => this.gates.push(r));
+        if (item.content.includes("HOLD")) {
+          const next = await new Promise<"ask" | undefined>((r) => this.gates.push(r));
+          if (next === "ask") {
+            yield {
+              type: "approval_request", requestId: `q-${crypto.randomUUID()}`, tool: "AskUserQuestion",
+              input: { questions: [{ question: "Which branch first?", header: "Branch", options: [{ label: "A" }, { label: "B" }], multiSelect: false }] },
+            } as ChatEvent;
+            await new Promise<void>((r) => this.askGates.push(r));
+          }
+        }
         yield { type: "done", sessionId } as ChatEvent;
       }
     } finally {
@@ -99,7 +112,7 @@ class ScriptedClaude {
 const claude = new ScriptedClaude();
 let original: AIProvider | undefined;
 const home = process.env.PPM_HOME!;
-const paths = { b: join(home, "mgr-proj-b"), c: join(home, "mgr-proj-c"), assistant: join(home, "mgr-assistant-work") };
+const paths = { b: join(home, "mgr-proj-b"), c: join(home, "mgr-proj-c"), d: join(home, "mgr-proj-d"), assistant: join(home, "mgr-assistant-work") };
 const app = new Hono();
 app.all("/mcp", sessionCollabMcpHandler);
 app.route("/api/sessions-collab", sessionCollabRoutes);
@@ -114,7 +127,7 @@ beforeAll(async () => {
   original = providerRegistry.get("claude");
   providerRegistry.register(claude as never);
   projectsBefore = [...configService.get("projects")];
-  configService.set("projects", [...projectsBefore, { name: "mgr-b", path: paths.b }, { name: "mgr-c", path: paths.c }]);
+  configService.set("projects", [...projectsBefore, { name: "mgr-b", path: paths.b }, { name: "mgr-c", path: paths.c }, { name: "mgr-d", path: paths.d }]);
   configService.set("ai", { ...configService.get("ai"), ppm_tools: { ...configService.get("ai").ppm_tools, ...switchesForAnswer(FEATURE_INTROS[0]!, "on") } });
   manager = await chatOf("mgr-b", paths.b, "Manager");
   await managerChats.assign("mgr-b", manager, "user");
@@ -124,6 +137,7 @@ afterAll(() => {
   setAssistantClock(null);
   managerChats.unassign("mgr-b");
   if (managerChats.managerFor(paths.c)) managerChats.unassign("mgr-c");
+  if (managerChats.managerFor(paths.d)) managerChats.unassign("mgr-d");
   const { ppm_tools: _answered, ...ai } = configService.get("ai");
   configService.set("ai", ai);
   configService.set("projects", projectsBefore);
@@ -187,12 +201,12 @@ const lastTo = (sessionId: string) => claude.received.filter((r) => r.sessionId 
 const decoded = (sessionId: string) => decodeMessageBlocks(stripSharedContext(lastTo(sessionId).message));
 
 /** Keeps the manager in a running turn, as a busy manager is. */
-async function busyManager(): Promise<void> {
-  const socket = { data: { type: "chat", sessionId: manager, projectName: "mgr-b" }, send: () => {} };
+async function busyManager(sessionId = manager, projectName = "mgr-b"): Promise<void> {
+  const socket = { data: { type: "chat", sessionId, projectName }, send: () => {} };
   sockets.push(socket);
   chatWebSocket.open(socket as never);
   await chatWebSocket.message(socket as never, JSON.stringify({ type: "message", content: "work HOLD", clientMessageId: `c-${crypto.randomUUID()}` }));
-  await until(() => claude.hasStreamingSession(manager), "the manager's turn");
+  await until(() => claude.hasStreamingSession(sessionId), "the manager's turn");
 }
 
 describe("PPM Assistant → manager chat", () => {
@@ -347,6 +361,37 @@ describe("PPM Assistant → manager chat", () => {
     // A second create for the same project is refused before any card.
     const again = await call(assistant, "create_session", { title: "Manager", project: "mgr-c", manager: true });
     expect(again.text).toContain("already has a manager chat");
+    turnEnds(assistant);
+  });
+});
+
+describe("a manager chat waiting on the user", () => {
+  it("ends the Assistant's wait at once, naming the card, whether it appears mid-wait or was already there", async () => {
+    const mgr = await chatOf("mgr-d", paths.d, "Manager D");
+    await managerChats.assign("mgr-d", mgr, "user");
+    await busyManager(mgr, "mgr-d");
+    const assistant = await assistantSession();
+    enters(assistant, "telegram", "tell the mgr-d manager to update the board");
+    const card = { kind: "question", title: "Which branch first?" };
+
+    // The manager is working: the wait runs, until the manager stops on a question for the user.
+    const waiting = call(assistant, "send_to_session", { session_id: mgr, message: "Please update the board.", wait: true });
+    await until(() => collabWaits.isWaiting(assistant, mgr), "the wait");
+    claude.askFromHeld();
+    const first = await waiting;
+    expect(first.isError).toBe(false);
+    expect(first.json.reply).toEqual({ replied: false, reason: "waiting_for_user", card });
+    expect(first.json.status).toMatchObject({ waitingFor: "question" });
+
+    // The card is still there: the next wait does not begin at all, and the message is queued behind it.
+    const started = Date.now();
+    const second = await call(assistant, "send_to_session", { session_id: mgr, message: "Also close the sprint.", wait: true });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(second.json).toMatchObject({ delivered: "queued", reply: { replied: false, reason: "waiting_for_user", card } });
+    expect(collabWaits.isWaiting(assistant, mgr)).toBe(false);
+
+    claude.resolveApproval();
+    claude.release();
     turnEnds(assistant);
   });
 });

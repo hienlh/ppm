@@ -150,7 +150,7 @@ export function reportToolDefinition() {
     title: "Report to the user through PPM Assistant",
     description:
       "Only for a project's manager chat. Puts a card in front of the user (in PPM and on their phone), built by PPM "
-      + "from these fields. Use it for what needs the user: needs_decision (a choice only they can make; add `draft` "
+      + "from these fields. Use it for what needs the user: needs_decision (a choice only they can make, or a step only they can take; add `draft` "
       + "when the answer is a message you would send), urgent (it cannot wait until they next look; quiet hours limit "
       + "it), done and failed (work they asked about finished or broke), and digest (only when PPM asks for the morning "
       + "digest: your `items` go on the one digest card PPM puts together). Do not report what the user does not need to "

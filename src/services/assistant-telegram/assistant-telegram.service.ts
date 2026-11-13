@@ -167,7 +167,8 @@ export class AssistantTelegramBridge {
     });
     poller = new AssistantTelegramPoller(client, state, (update) => inbound.dispatch(update));
     const offs = [
-      onBindingChanged(() => mirror.invalidate()),
+      // A chat just connected or bound: a manager chat's card made before it could be reached goes now.
+      onBindingChanged(() => { mirror.invalidate(); cardOutbound.catchUp(); }),
       addNotificationSuppressor((sessionId) => mirror.telling(sessionId) || recentlyTold(queue, sessionId)),
       // A manager chat's approval or question is on the phone as a card already (unless quiet
       // hours hold it): its push would say the same thing twice. Nothing else is held back.

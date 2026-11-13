@@ -60,7 +60,10 @@ const WAIT = {
   description:
     "Block until the other session calls send_to_session back to you, its turn ends without replying, or the "
     + "wait times out (the user's setting, 10 minutes unless changed). The result carries the reply and the "
-    + "session's status. Without it the call returns at once, and a later reply arrives as a new message.",
+    + "session's status. Without it the call returns at once, and a later reply arrives as a new message. "
+    + "A session showing the user a card (a question or an approval) cannot read your message or answer until "
+    + "the user does, so the wait ends at once with reply.reason \"waiting_for_user\" and reply.card naming that "
+    + "card; your message stays queued there. Tell the user which card in which session is waiting for them.",
 };
 
 export function sessionCollabToolDefinitions() {

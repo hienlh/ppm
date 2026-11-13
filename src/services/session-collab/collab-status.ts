@@ -41,7 +41,9 @@ export function statusOf(env: CollabEnv, sessionId: string, providerId: string, 
  */
 export function noteAiTextRead(env: CollabEnv, caller: CollabCaller, statuses: readonly SessionStatus[], reply?: SessionWaitOutcome): void {
   if (caller.kind !== "assistant") return;
-  if (reply?.replied || statuses.some((s) => !!s.lastAssistantText)) env.markUntrusted?.(caller.sessionId, "read");
+  // A card's title is the other session's words as much as a reply is.
+  const aiText = !!reply && (reply.replied || reply.reason === "waiting_for_user");
+  if (aiText || statuses.some((s) => !!s.lastAssistantText)) env.markUntrusted?.(caller.sessionId, "read");
 }
 
 /** The tools' JSON answer: the shapes in `src/shared/session-collab.ts`, as the chat card reads them. */

@@ -47,6 +47,12 @@ export interface RelayedCard {
   titleOnly?: string;
   /** Called with the message id once the card is on the phone (replies to it are matched by it). */
   onSent?: (messageId: number) => void;
+  /**
+   * A project's manager chat: its turn is stopped on this card, so the headline says the chat is
+   * waiting for the user rather than merely asking — read in a stream of answers, "asks" looked
+   * like one more line of the conversation.
+   */
+  manager?: boolean;
 }
 
 /** What a card is, whoever's it is. */
@@ -110,8 +116,13 @@ export class AssistantTelegramCards implements BridgeCards {
   relayed(chatId: string, p: RelayedCard): void {
     const where = `“${titleForCard(p.targetTitle)}” in ${titleForCard(p.targetProject)}`;
     this.showSafely(chatId, { sessionId: p.targetSessionId, providerId: p.targetProvider, card: p.card }, {
-      approvalHeadline: `Chat ${where} needs your decision`,
-      questionHeadline: `Chat ${where} asks`,
+      ...(p.manager ? {
+        approvalHeadline: `Manager chat ${where} is stopped, waiting for your decision`,
+        questionHeadline: `Manager chat ${where} is stopped, waiting for your answer`,
+      } : {
+        approvalHeadline: `Chat ${where} needs your decision`,
+        questionHeadline: `Chat ${where} asks`,
+      }),
       link: () => this.deps.chatLink(p.targetProject, p.targetProvider, p.targetSessionId),
       ...(p.titleOnly !== undefined ? { titleOnly: p.titleOnly } : {}),
       ...(p.onSent ? { onSent: p.onSent } : {}),

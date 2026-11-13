@@ -108,7 +108,18 @@ describe("SessionCollabToolCard", () => {
   it("says why no reply came", async () => {
     const output = JSON.stringify({ delivered: "inserted", status, reply: { replied: false, reason: "timeout" } });
     view = await mount(<SessionCollabToolCard call={send} output={output} isError={false} done projectName="ppm" />);
-    expect(view.container.querySelector('[data-collab-no-reply="timeout"]')?.textContent).toBe(waitEndedText("timeout"));
+    expect(view.container.querySelector('[data-collab-no-reply="timeout"]')?.textContent).toBe(waitEndedText({ replied: false, reason: "timeout" }));
+  });
+
+  it("names the card the other session is waiting on the user for", async () => {
+    const reply = { replied: false, reason: "waiting_for_user", card: { kind: "question", title: "Which branch first?" } };
+    const output = JSON.stringify({ delivered: "queued", status, reply });
+    view = await mount(<SessionCollabToolCard call={send} output={output} isError={false} done projectName="ppm" />);
+    const line = view.container.querySelector('[data-collab-no-reply="waiting_for_user"]');
+    expect(line?.textContent).toContain("Which branch first?");
+    expect(line?.textContent).toContain("waiting for the user to answer a question");
+    // A malformed card is not shown as a reason at all rather than as a half-read one.
+    expect(sessionCollabToolResult(JSON.stringify({ delivered: "queued", status, reply: { replied: false, reason: "waiting_for_user" } }))?.reply).toBeUndefined();
   });
 
   it("says the wait was cancelled, not done, when the turn ended with no result (Stop)", async () => {

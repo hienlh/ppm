@@ -54,6 +54,8 @@ export class TurnRenderer {
   private md = "";
   /** Already-HTML line closing the answer (how the turn stopped). */
   private footer = "";
+  /** What the turn is waiting on right now, shown under the draft only (plain text). */
+  private status: string | null = null;
   /** The draft messages, in page order, and the HTML each shows (null once deleted). */
   private readonly ids: number[] = [];
   private readonly shown: Array<string | null> = [];
@@ -91,6 +93,16 @@ export class TurnRenderer {
     this.draft();
   }
 
+  /**
+   * A line under the draft saying what the turn waits on (plain text), or null to take it away.
+   * Never part of the final answer.
+   */
+  waiting(note: string | null): void {
+    if (this.finished || this.status === note) return;
+    this.status = note;
+    this.draft();
+  }
+
   /** Ends the turn; `footerHtml` is already escaped (and redacted). */
   finish(footerHtml = ""): void {
     if (this.finished) return;
@@ -112,6 +124,7 @@ export class TurnRenderer {
   private pages(final: boolean): string[] {
     let html = this.md.trim() ? markdownToTelegramHtml(redactForTelegram(this.md.trim())) : "";
     if (this.footer) html += `${html ? "\n\n" : ""}${this.footer}`;
+    if (!final && this.status) html += `${html ? "\n\n" : ""}⏳ <i>${escapeTelegramHtml(this.status)}</i>`;
     const pages = html ? splitTelegramHtml(html, PAGE_MAX) : [];
     if (final) return pages.length ? pages : [EMPTY_ANSWER];
     if (!pages.length) return [PLACEHOLDER];

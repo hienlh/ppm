@@ -955,7 +955,17 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   `FAILED_CARD_GRACE_MS` (a stop the user asked for, a rate limit or an overloaded provider is
   skipped). Rules events become `rules_note` / `rules_change` cards, and the Assistant pausing its
   own messages a `budget` card (`assistant-event-cards.ts`). A child chat's approvals are not
-  carded: the manager relays them.
+  carded: the manager relays them. A turn another chat or PPM opened is one the user did not
+  watch, so the block PPM puts in every manager turn (`MANAGER_USER_ACTION_RULE` in
+  `manager-context-entry.ts`) tells the manager to report anything that turn leaves the user to do
+  or decide; nothing detects such a turn on its own, since every turn a child's progress message
+  opens would then make a card.
+- **Never-sent waiting cards.** An approval or question card made while nothing could carry it
+  (`pending`: the bridge was not running; `skipped`: no chat connected) goes out under one "Still
+  waiting for you" header once a chat can be reached — at bridge start and on every binding change
+  (`cardOutbound.catchUp`) — if it still waits; in quiet hours it is held like any card. A manager
+  chat's card on Telegram is headed "Manager chat “…” in … is stopped, waiting for your answer"
+  (or decision), so it is not read as one more line of the conversation.
 - **Who may report.** The tool is listed by the session tools' endpoint for a project's current
   manager chat only, whatever Settings → Tools says, and every call checks the live table again.
   Any other chat, the Assistant included, is refused.
@@ -1075,6 +1085,10 @@ editing one message, shows a message typed in PPM as `🖥 (PPM) …` and a watc
 and hands cards to the card module; tool names appear only when `clawbot.show_tool_calls` is on,
 and tool input and output are never sent. Telegram does not notify on an edit, so a turn longer
 than `LONG_TURN_MS`, and every watch turn, ends with a **new** message and the draft is deleted.
+A `send_to_session` or `create_session` call with `wait: true` that runs past `WAIT_NOTE_AFTER_MS`
+(30 s) adds "⏳ Waiting for the chat “…” in … to answer…" under the draft until it returns
+(`assistant-telegram-wait-notes.ts`): an edit, never a new message, so it notifies nobody in quiet
+hours and spends no send budget.
 Each chat has its own send lane: it honours `retry_after` without holding up other chats, never
 drops a final answer, splits long answers before Telegram's limit, and re-sends without its URL
 button when Telegram refuses the button. After a restart, drafts that were being written say the
