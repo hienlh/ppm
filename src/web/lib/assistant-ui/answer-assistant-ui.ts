@@ -5,6 +5,7 @@ import type { AssistantUiOp, AssistantUiRequest, AssistantUiResult, UiSummary } 
 import { buildUiStateSnapshot, type UiStateSnapshot } from "./ui-state-snapshot";
 import { buildUiSummary } from "./ui-summary";
 import { closeAssistantTab, focusAssistantTab, openAssistantTab, switchAssistantProject } from "./assistant-ui-actions";
+import { moveAssistantTab } from "./assistant-move-tab";
 import { describeTab } from "./describe-tab";
 import { listAssistantCommands, runAssistantCommand } from "./assistant-commands";
 
@@ -58,6 +59,7 @@ const HANDLERS: Partial<Record<AssistantUiOp, Handler>> = {
   focus_tab: (args) => focusAssistantTab(args),
   switch_project: (args) => switchAssistantProject(args),
   close_tab: (args) => closeAssistantTab(args),
+  move_tab: (args) => moveAssistantTab(args),
   describe_tab: (args) => describeTab(args),
   list_commands: (args) => listAssistantCommands(args),
   run_command: (args) => runAssistantCommand(args),

@@ -1,8 +1,11 @@
 import {
-  UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_LIST_COMMANDS_TOOL, UI_OPEN_TAB_TOOL, UI_READ_TAB_TOOL, UI_RUN_COMMAND_TOOL,
-  UI_SWITCH_PROJECT_TOOL,
+  UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_LIST_COMMANDS_TOOL, UI_MOVE_TAB_TOOL, UI_OPEN_TAB_TOOL, UI_READ_TAB_TOOL,
+  UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
 } from "../../shared/assistant-tool-names.ts";
-import { ASSISTANT_TAB_KINDS, MAX_ASSISTANT_COMMAND_ID_CHARS, MAX_ASSISTANT_COMMANDS_LISTED } from "../../shared/assistant-ui-protocol.ts";
+import {
+  ASSISTANT_MOVE_TAB_DESTINATIONS, ASSISTANT_SPLIT_DIRECTIONS, ASSISTANT_TAB_KINDS, MAX_ASSISTANT_COMMAND_ID_CHARS,
+  MAX_ASSISTANT_COMMANDS_LISTED,
+} from "../../shared/assistant-ui-protocol.ts";
 import {
   READ_TAB_CHAT_MESSAGES, READ_TAB_DB_ROWS, READ_TAB_MAX_LINES, READ_TAB_TERMINAL_LINES,
 } from "../../shared/assistant-tab-content.ts";
@@ -78,6 +81,25 @@ export const UI_NAV_TOOL_DEFINITIONS = [
       + "unsaved SQL or table edits, a terminal and whatever runs in it — is closed only once the user approves the "
       + "card this shows them. Answers what was closed, enough to open it again.",
     inputSchema: object({ tabId: TAB_ID }, ["tabId"]),
+    annotations: { ...NAV, idempotentHint: false },
+  },
+  {
+    name: UI_MOVE_TAB_TOOL,
+    title: "Move a tab",
+    description: "Move an open tab to another panel on the chatting device, as dragging it would. `to`: \"panel\" — into "
+      + "the open panel `panelId` (a grid panel, or the dock for a terminal), at `index` or at the end; \"split\" — into "
+      + "a new panel beside `panelId` (the tab's own panel when left out), to the `direction` \"right\" (the default) "
+      + "or \"down\"; \"window\" — into a new floating window. Panel ids come from ui_get_state. A desktop only: a "
+      + "phone has no split panels or windows and refuses. Answers where the tab is `now` and where it was "
+      + "(`previous`); to move it back, move it to `previous.panelId` at `previous.index`, or, when "
+      + "`previousPanelClosed` says that panel went away, split beside its neighbour or back into a window.",
+    inputSchema: object({
+      tabId: TAB_ID,
+      to: { type: "string", enum: [...ASSISTANT_MOVE_TAB_DESTINATIONS] },
+      panelId: { type: "string", description: "A panel id from ui_get_state." },
+      direction: { type: "string", enum: [...ASSISTANT_SPLIT_DIRECTIONS] },
+      index: { type: "integer", minimum: 0, description: "Position among the panel's tabs, 0 first." },
+    }, ["tabId", "to"]),
     annotations: { ...NAV, idempotentHint: false },
   },
 ] as const;

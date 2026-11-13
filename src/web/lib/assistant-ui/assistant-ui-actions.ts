@@ -139,7 +139,7 @@ function owningProject(panelId: string, tab: { projectId: string | null }): stri
   return projectOwningPanel(store.projectGrids, panelId);
 }
 
-function findTab(tabId: unknown) {
+export function findTab(tabId: unknown) {
   if (typeof tabId !== "string" || !tabId) throw new Error("`tabId` is required: an id from ui_get_state.");
   const panel = usePanelStore.getState().getPanelForTab(tabId);
   const tab = panel?.tabs.find((t) => t.id === tabId);

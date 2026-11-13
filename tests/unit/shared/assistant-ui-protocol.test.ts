@@ -8,7 +8,7 @@ const ID = "AbCdEfGhIjKlMnOp";
 describe("assistant UI protocol", () => {
   it("names every operation the device may be asked for", () => {
     expect([...ASSISTANT_UI_OPS]).toEqual([
-      "get_state", "open_tab", "focus_tab", "close_tab", "switch_project", "describe_tab", "list_commands", "run_command",
+      "get_state", "open_tab", "focus_tab", "close_tab", "move_tab", "switch_project", "describe_tab", "list_commands", "run_command",
     ]);
     expect(isAssistantUiOp("get_state")).toBe(true);
     expect(isAssistantUiOp("eval")).toBe(false);

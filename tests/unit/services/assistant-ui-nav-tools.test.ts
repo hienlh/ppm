@@ -13,7 +13,7 @@ import { configService } from "../../../src/services/config.service.ts";
 import { insertConnection, updateConnection } from "../../../src/services/db.service.ts";
 import { ASSISTANT_TOOL_DEFINITIONS } from "../../../src/services/assistant-mcp/assistant-mcp-tools.ts";
 import {
-  UI_NAV_WAIT_MS, uiCloseTab, uiFocusTab, uiOpenTab, uiSwitchProject,
+  UI_NAV_WAIT_MS, uiCloseTab, uiFocusTab, uiMoveTab, uiOpenTab, uiSwitchProject,
 } from "../../../src/services/assistant-mcp/assistant-ui-nav-tools.ts";
 import { UI_NAV_TOOL_DEFINITIONS } from "../../../src/services/assistant-mcp/assistant-ui-tool-definitions.ts";
 import { ASSISTANT_UI_NO_DEVICE_MESSAGE, type AssistantUiBody, type AssistantUiOutcome } from "../../../src/services/assistant-mcp/assistant-ui-tools.ts";
@@ -49,8 +49,8 @@ afterAll(() => {
 describe("the navigation tools", () => {
   it("are served after ui_get_state and change nothing but the screen", () => {
     const names = ASSISTANT_TOOL_DEFINITIONS.map((d) => d.name);
-    expect(names.slice(names.indexOf("ui_get_state") + 1, names.indexOf("ui_get_state") + 5))
-      .toEqual(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab"]);
+    expect(names.slice(names.indexOf("ui_get_state") + 1, names.indexOf("ui_get_state") + 6))
+      .toEqual(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab", "ui_move_tab"]);
     for (const def of UI_NAV_TOOL_DEFINITIONS) expect(def.annotations).toMatchObject({ destructiveHint: false, openWorldHint: false });
   });
 });
@@ -131,6 +131,62 @@ describe("ui_focus_tab and ui_switch_project", () => {
     expect(text(await uiFocusTab("s1", { tabId: "a\nb" }, d.request))).toContain("`tabId` is required");
     expect(text(await uiSwitchProject("s1", { project: "web" }, d.request))).toContain("No registered project");
     expect(d.asked).toHaveLength(0);
+  });
+});
+
+describe("ui_move_tab", () => {
+  const moved = {
+    tabId: "editor:a", project: "api",
+    now: { panelId: "p2", area: "grid", index: 0, position: { row: 0, col: 1 } },
+    previous: { panelId: "p1", area: "grid", index: 2, position: { row: 0, col: 0 } },
+    previousPanelClosed: false,
+    extra: "dropped",
+  };
+
+  it("asks the device with only what the destination uses, and answers where the tab was", async () => {
+    const d = device(moved);
+    const body = JSON.parse(text(await uiMoveTab("s1", { tabId: "editor:a", to: "split", panelId: "p1", direction: "down", index: 3 }, d.request)));
+    expect(d.asked).toEqual([{ sessionId: "s1", waitMs: UI_NAV_WAIT_MS, body: { op: "move_tab", args: { tabId: "editor:a", to: "split", panelId: "p1", direction: "down" } } }]);
+    expect(body).toEqual({
+      tabId: "editor:a", project: "api", previousPanelClosed: false,
+      now: { panelId: "p2", area: "grid", index: 0, position: { row: 0, col: 1 } },
+      previous: { panelId: "p1", area: "grid", index: 2, position: { row: 0, col: 0 } },
+    });
+    const w = device({ ...moved, now: { panelId: "__win__:w9", area: "window", index: 0 }, window: "w9" });
+    expect(JSON.parse(text(await uiMoveTab("s1", { tabId: "editor:a", to: "window", panelId: "p1" }, w.request))).window).toBe("w9");
+    expect(w.asked[0]!.body.args).toEqual({ tabId: "editor:a", to: "window" });
+    const p = device(moved);
+    await uiMoveTab("s1", { tabId: "editor:a", to: "panel", panelId: "p2", index: 0 }, p.request);
+    expect(p.asked[0]!.body.args).toEqual({ tabId: "editor:a", to: "panel", panelId: "p2", index: 0 });
+  });
+
+  it("refuses malformed arguments without asking the device", async () => {
+    const d = device(moved);
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ to: "panel", panelId: "p2" }, "`tabId` is required"],
+      [{ tabId: "editor:a" }, "`to` must be"],
+      [{ tabId: "editor:a", to: "tab" }, "`to` must be"],
+      [{ tabId: "editor:a", to: "panel" }, "`panelId` is required"],
+      [{ tabId: "editor:a", to: "panel", panelId: "a\nb" }, "`panelId` must be"],
+      [{ tabId: "editor:a", to: "split", direction: "left" }, "`direction` must be"],
+      [{ tabId: "editor:a", to: "panel", panelId: "p2", index: -1 }, "`index` must be"],
+      [{ tabId: "editor:a", to: "panel", panelId: "p2", index: 1.5 }, "`index` must be"],
+    ];
+    for (const [args, message] of cases) {
+      const result = await uiMoveTab("s1", args, d.request);
+      expect((result as any).isError).toBe(true);
+      expect(text(result)).toContain(message);
+    }
+    expect(d.asked).toHaveLength(0);
+  });
+
+  it("passes on a phone's refusal and an answer it cannot read", async () => {
+    const refused = await uiMoveTab("s1", { tabId: "editor:a", to: "window" },
+      async () => ({ ok: true, result: { type: "assistant_ui_result", requestId: "r", ok: false, error: "This device is a phone: it shows one panel at a time." } }));
+    expect((refused as any).isError).toBe(true);
+    expect(text(refused)).toContain("could not move the tab: This device is a phone");
+    const garbled = await uiMoveTab("s1", { tabId: "editor:a", to: "window" }, device({ now: "here" }).request);
+    expect(text(garbled)).toContain("not with a result PPM understands");
   });
 });
 

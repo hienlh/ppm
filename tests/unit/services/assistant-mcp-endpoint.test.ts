@@ -73,7 +73,7 @@ describe("assistant MCP endpoint", () => {
     // So do the notebook's add and edit; deleting a line is the one change there that loses text.
     // Adding a project asks first but takes nothing away, so it is not destructive either.
     // Typing a line into a new terminal runs nothing until the user presses Enter, so it takes nothing away.
-    const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab", "chat_watch", "chat_unwatch", "notebook_add", "notebook_edit", "project_add", "terminal_type"]);
+    const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab", "ui_move_tab", "chat_watch", "chat_unwatch", "notebook_add", "notebook_edit", "project_add", "terminal_type"]);
     const writes = new Set(["db_query", "chat_answer_approval", "notebook_delete"]);
     const names = list.result.tools.map((t: { name: string }) => t.name);
     expect(names).toEqual(expect.arrayContaining(["chats_attention", "chat_answer_approval", "ppm_cli_reference", "chat_changes", "chat_changes_answer"]));

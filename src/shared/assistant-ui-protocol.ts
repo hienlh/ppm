@@ -16,6 +16,7 @@ export const ASSISTANT_UI_OPS = [
   "open_tab",
   "focus_tab",
   "close_tab",
+  "move_tab",
   "switch_project",
   "describe_tab",
   "list_commands",
@@ -129,6 +130,51 @@ export interface AssistantClosedTab {
 export type AssistantCloseTabResult =
   | { closed: true; tabId: string; closedTab: AssistantClosedTab; project: string | null }
   | { closed: false; tabId: string; needsApproval: { reason: string; tab?: Pick<AssistantClosedTab, "type" | "title" | "project"> } };
+
+/**
+ * `move_tab`: where to put an open tab, the way the user's own drag and drop does it. `panel` moves
+ * it into an open panel (a grid panel, or the dock for a tab the dock takes) at `index`, or at the
+ * end; `split` opens a new panel beside `panelId` — the tab's own panel when absent — to the right
+ * or below; `window` detaches it into a new floating window. A desktop only: a phone shows one
+ * panel and no windows, and refuses.
+ */
+export const ASSISTANT_MOVE_TAB_DESTINATIONS = ["panel", "split", "window"] as const;
+export type AssistantMoveTabDestination = (typeof ASSISTANT_MOVE_TAB_DESTINATIONS)[number];
+export const ASSISTANT_SPLIT_DIRECTIONS = ["right", "down"] as const;
+export type AssistantSplitDirection = (typeof ASSISTANT_SPLIT_DIRECTIONS)[number];
+
+export interface AssistantMoveTabArgs {
+  tabId: string;
+  to: AssistantMoveTabDestination;
+  panelId?: string;
+  direction?: AssistantSplitDirection;
+  index?: number;
+}
+
+/** Where a tab sat, or sits now: enough to move it back. */
+export interface AssistantTabPlace {
+  panelId: string;
+  area: "grid" | "dock" | "window";
+  /** Its position among that panel's tabs. */
+  index: number;
+  /** Row and column in the grid; grid panels only. */
+  position?: { row: number; col: number };
+}
+
+/**
+ * `move_tab`'s answer. `previous` is where the tab was; when moving it emptied that panel, the
+ * panel is gone (`previousPanelClosed`) and moving back means a split beside a neighbour, or a new
+ * window for a tab that was in one.
+ */
+export interface AssistantMoveTabResult {
+  tabId: string;
+  project: string | null;
+  now: AssistantTabPlace;
+  previous: AssistantTabPlace;
+  previousPanelClosed: boolean;
+  /** The floating window the tab moved into. */
+  window?: string;
+}
 
 /**
  * One of PPM's commands as the device lists it for `list_commands`: the id `run_command` takes,

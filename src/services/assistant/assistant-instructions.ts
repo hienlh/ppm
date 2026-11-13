@@ -92,8 +92,11 @@ export const ASSISTANT_UI_SECTION = `## The user's screen
 ### Moving around the screen
 - \`ui_open_tab\` opens a chat, terminal, database tab, file, git view or Settings in a named
   project; \`ui_focus_tab\` brings an open tab forward; \`ui_switch_project\` shows another
-  project; \`ui_close_tab\` closes a tab. They only change what the screen shows, so they need
-  no confirmation, and they act on the same device \`ui_get_state\` reads.
+  project; \`ui_move_tab\` moves a tab into another panel, a new split beside one (right or
+  down) or a floating window; \`ui_close_tab\` closes a tab. They only change what the screen
+  shows, so they need no confirmation, and they act on the same device \`ui_get_state\` reads.
+- \`ui_move_tab\` works on a desktop only; a phone has no split panels or windows and refuses.
+  Its answer says where the tab was (\`previous\`): to undo, move it back there.
 - Opening or focusing a tab of another project switches the screen to that project first.
   Every answer carries \`previousProject\`: when the user asks to go back, switch to it with
   \`ui_switch_project\`. Say which project you moved the screen to.

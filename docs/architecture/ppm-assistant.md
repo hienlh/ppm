@@ -332,9 +332,13 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
   setting a reminder (see [Watches](#watches)); `notebook_add`, `notebook_edit` and
   `notebook_delete`, which only touch the Assistant's own notebook (see [Notebook](#notebook)).
 - **Navigate the chatting device, never ask**: `ui_open_tab`, `ui_focus_tab`,
-  `ui_switch_project`, and `ui_close_tab` for a tab that loses nothing. Each answers
-  `previousProject` or enough to reopen what it closed, so the agent can undo — there is no
-  Undo of PPM's own. A database table tab opens only for a relation `db_query` could read
+  `ui_switch_project`, `ui_move_tab`, and `ui_close_tab` for a tab that loses nothing. Each answers
+  `previousProject`, the place a moved tab came from, or enough to reopen what it closed, so the
+  agent can undo — there is no Undo of PPM's own. `ui_move_tab` (`assistant-move-tab.ts` on the
+  device) moves a tab into an open panel, a new split beside one (right or down) or a new floating
+  window through the store actions the user's own drag and drop and tab menu use (`moveTab`,
+  `splitPanel`, `redockTab`, `popOutTab`), never layout logic of its own; a phone, which has no
+  splits or windows, refuses, and so does the Assistant's own tab. A database table tab opens only for a relation `db_query` could read
   unasked (see Databases below); a view that does more than read is refused, not opened.
 - **Ask first**: `db_query` for anything not proven to read, `chat_answer_approval` (always — even
   to deny, since a denial changes what that chat does next),
