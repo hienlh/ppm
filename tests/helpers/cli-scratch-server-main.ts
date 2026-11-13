@@ -9,7 +9,9 @@
  * `GET /api/__scratch/events` answers what the server broadcast on `/ws/global`, recorded by a
  * client registered the way a browser's is.
  * `GET /api/__scratch/connections` answers the saved database connections, config decrypted.
- * The settings routers are mounted behind the same `settings:changed` middleware as the real server.
+ * `POST /api/__scratch/seed-account` stores a Claude account with a token, never checked upstream.
+ * The settings, notifications, MCP and accounts routers are mounted behind the same
+ * `settings:changed` middleware as the real server.
  */
 import { Hono } from "hono";
 import { assertIsolatedPpmHome } from "./assert-isolated-ppm-home.ts";
@@ -30,7 +32,13 @@ const { settingsConfigKeyRoutes } = await import("../../src/server/routes/settin
 const { settingsRoutes } = await import("../../src/server/routes/settings.ts");
 const { settingsProxyRoutes } = await import("../../src/server/routes/settings-proxy.ts");
 const { settingsThemesRoutes } = await import("../../src/server/routes/settings-themes.ts");
-const { announceSettingsChanges } = await import("../../src/server/routes/settings-broadcast.ts");
+const { announceSettingsChanges, SETTINGS_BROADCAST_MOUNTS } = await import("../../src/server/routes/settings-broadcast.ts");
+const { notificationRoutes } = await import("../../src/server/routes/notifications.ts");
+const { mcpRoutes } = await import("../../src/server/routes/mcp.ts");
+const { accountsRoutes } = await import("../../src/server/routes/accounts.ts");
+const { codexAccountsRoutes } = await import("../../src/server/routes/codex-accounts.ts");
+const { insertAccount } = await import("../../src/services/db.service.ts");
+const { encrypt } = await import("../../src/lib/account-crypto.ts");
 const { authMiddleware } = await import("../../src/server/middleware/auth.ts");
 const { setServerListenAddress } = await import("../../src/services/server-listen-address.ts");
 const { publishServerEndpoint } = await import("../../src/services/server-endpoint-file.ts");
@@ -49,8 +57,12 @@ globalWebSocket.open({ data: { type: "global" }, send: (json: string) => { event
 const app = new Hono();
 app.route("/api/cli", cliHelloRoutes);
 app.use("/api/*", authMiddleware);
-app.use("/api/settings/*", announceSettingsChanges);
+for (const mount of SETTINGS_BROADCAST_MOUNTS) app.use(`${mount}/*`, announceSettingsChanges);
 app.route("/api/settings/themes", settingsThemesRoutes);
+app.route("/api/settings/mcp", mcpRoutes);
+app.route("/api/notifications", notificationRoutes);
+app.route("/api/accounts", accountsRoutes);
+app.route("/api/codex-accounts", codexAccountsRoutes);
 app.route("/api/settings", settingsRoutes);
 app.route("/api/settings", settingsConfigKeyRoutes);
 app.route("/api/settings", settingsProxyRoutes);
@@ -60,6 +72,16 @@ app.get("/api/__scratch/config", (c) => c.json(ok(configService.getAll())));
 // The saved connections as the database holds them, config decrypted: what a test checks a write against.
 app.get("/api/__scratch/connections", (c) => c.json(ok(getConnections().map((row) => ({ ...row, connection_config: decryptConfig(row.connection_config) })))));
 app.get("/api/__scratch/events", (c) => c.json(ok(events)));
+// A Claude account with a real-looking stored token, inserted without asking Anthropic about it.
+app.post("/api/__scratch/seed-account", async (c) => {
+  const { id, label, email, token } = await c.req.json<{ id: string; label: string; email: string; token: string }>();
+  insertAccount({
+    id, label, email, access_token: encrypt(token), refresh_token: encrypt(`${token}-refresh`), expires_at: null,
+    status: "active", cooldown_until: null, priority: 0, total_requests: 0, last_used_at: null, profile_json: null,
+    granted_at: null, refresh_expires_at: null, reauth_required: 0, last_refresh_attempt_at: null,
+  });
+  return c.json(ok({ id }));
+});
 
 const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: app.fetch });
 setServerListenAddress(server.port, "127.0.0.1");

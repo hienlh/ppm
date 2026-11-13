@@ -34,6 +34,21 @@ export async function registerCommandGroups(program: Command): Promise<void> {
 
   const { registerSettingsCommands } = await import("./commands/settings-storage-cmd.ts");
   registerSettingsCommands(program);
+
+  const { registerNotifyCommands } = await import("./commands/settings-notify-cmd.ts");
+  registerNotifyCommands(program);
+
+  const { registerTelegramBotCommands } = await import("./commands/settings-telegram-bot-cmd.ts");
+  registerTelegramBotCommands(program);
+
+  const { registerPpmbotCommands } = await import("./commands/settings-ppmbot-cmd.ts");
+  registerPpmbotCommands(program);
+
+  const { registerMcpCommands } = await import("./commands/settings-mcp-cmd.ts");
+  registerMcpCommands(program);
+
+  const { registerAccountsCommands } = await import("./commands/accounts-cmd.ts");
+  registerAccountsCommands(program);
 }
 
 /** The groups `--help` lists after `upgrade`. */

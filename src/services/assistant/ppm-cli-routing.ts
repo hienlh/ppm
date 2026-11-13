@@ -37,6 +37,13 @@ const SERVER = [
   "proxy get", "proxy set", "proxy key generate", "device-name",
   "settings files get", "settings files set",
   "settings query-audit get", "settings query-audit set", "settings query-audit clear", "settings trace set",
+  "notify get", "notify set", "notify delay", "notify ntfy set", "notify ntfy remove", "notify ntfy test",
+  "notify telegram chats", "notify telegram remove", "notify telegram connect", "notify push test",
+  "telegram-bot get", "telegram-bot set", "telegram-bot remove", "telegram-bot test",
+  "ppmbot get", "ppmbot set", "ppmbot token", "ppmbot chats", "ppmbot revoke", "ppmbot connect",
+  "mcp list", "mcp add", "mcp edit", "mcp remove", "mcp import",
+  "accounts list", "accounts pick", "accounts verify", "accounts rename", "accounts enable", "accounts disable",
+  "accounts remove", "accounts settings",
 ];
 
 const DIRECT_ALLOWED = [
@@ -45,7 +52,7 @@ const DIRECT_ALLOWED = [
   "cloud login", "cloud logout", "cloud status", "cloud devices", "cloud alias get",
   "skills list", "skills search", "skills info", "export skill",
   "backup", "restore",
-  "config get", "projects list",
+  "config get", "projects list", "accounts add",
   "chat list", "chat send", "chat resume",
   "db list", "db tables", "db schema", "db data", "db query", "db driver list",
   "ext list",

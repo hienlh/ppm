@@ -23,10 +23,10 @@ export type ConfigKeyTier = "secret" | "dedicated" | "exposure" | "allowed" | "u
 const DEDICATED: readonly { pattern: string; where: string }[] = [
   { pattern: "theme", where: "`ppm theme set` (or PPM's Settings → Appearance)" },
   { pattern: "ai.providers", where: "`ppm ai set providers.<id>.<setting>` (or PPM's Settings → AI Provider)" },
-  { pattern: "ntfy", where: "PPM's Settings → Notifications (changing the server there drops the stored token)" },
-  { pattern: "telegram", where: "PPM's Settings → Notifications" },
-  { pattern: "notifications", where: "PPM's Settings → Notifications" },
-  { pattern: "clawbot", where: "PPM's Settings → PPMBot" },
+  { pattern: "ntfy", where: "`ppm notify ntfy set` (or PPM's Settings → Notifications); a new server drops the stored token" },
+  { pattern: "telegram", where: "`ppm telegram-bot set --token-prompt` (or PPM's Settings → Notifications → Telegram)" },
+  { pattern: "notifications", where: "`ppm notify set` and `ppm notify delay` (or PPM's Settings → Notifications)" },
+  { pattern: "clawbot", where: "`ppm ppmbot set` (or PPM's Settings → PPM Assistant → Telegram)" },
   { pattern: "projects", where: "`ppm projects`" },
 ];
 

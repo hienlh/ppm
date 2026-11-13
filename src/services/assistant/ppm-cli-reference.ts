@@ -712,6 +712,155 @@ ppm settings trace set
   --retention-days <n> — Days to keep a session's trace
   --max-size-mb <n> — Size the trace is cut back to
 \`\`\`
+## ppm notify — What PPM notifies you about, and through which channels
+\`\`\`
+ppm notify get
+  Show the events, the delay and the channels
+  --json — Print JSON
+
+ppm notify set <event> <state>
+  Switch an event (done, approval_request, question, collab_approval, schedule, jira, design_review) or a channel (telegram, ntfy) on or off
+
+ppm notify delay <seconds>
+  Wait this long, and send only if nobody has looked by then (0 sends at once; at most 3600)
+
+ppm notify ntfy set
+  Set the server and topic; the server is checked first. A new server drops the old server's token
+  --server <url> — e.g. https://ntfy.sh (default: the current one)
+  --topic <topic> — 1 to 64 letters, digits, - or _ (default: the current one)
+  --token-prompt — Type an access token at the terminal
+
+ppm notify ntfy remove
+  Stop publishing to ntfy and forget the server, topic and token
+
+ppm notify ntfy test
+  Publish a test notification
+
+ppm notify telegram chats
+  List the chats receiving notifications
+  --json — Print JSON
+
+ppm notify telegram remove <chatId>
+  Stop sending notifications to a chat
+
+ppm notify telegram connect
+  Make a one-time link: the chat that opens it receives notifications
+  --cancel — Withdraw the open link
+
+ppm notify push test
+  Send a test push to every subscribed browser, or one
+  --device <id> — Only this browser (see \`ppm notify get --json\`)
+\`\`\`
+## ppm telegram-bot — The Telegram bot notifications are sent through
+\`\`\`
+ppm telegram-bot get
+  Show the bot (its token only as the first characters)
+  --json — Print JSON
+
+ppm telegram-bot set
+  Replace the bot's token, typed at the terminal; Telegram is asked whether it is real first
+  --token-prompt — Type the token from @BotFather at the terminal (required)
+
+ppm telegram-bot remove
+  Forget the bot; no Telegram notification is sent until another is set
+
+ppm telegram-bot test
+  Send a test notification to every connected chat
+\`\`\`
+## ppm ppmbot — PPM Assistant on Telegram: its switch, bot and connected chats
+\`\`\`
+ppm ppmbot get
+  Show the switch, the bot and whether the bridge is running
+  --json — Print JSON
+
+ppm ppmbot set <setting> <value>
+  enabled true|false, show-tool-calls true|false, or debounce <0-30000 ms>
+
+ppm ppmbot token
+  Set the Assistant's bot token (typed at the terminal) or remove it
+  --token-prompt — Type the token from @BotFather at the terminal
+  --remove — Remove the bot; the bridge stops
+
+ppm ppmbot chats
+  List the chats that may talk to the Assistant
+  --json — Print JSON
+
+ppm ppmbot revoke <chatId>
+  Disconnect a chat: not one more message from it reaches the Assistant
+
+ppm ppmbot connect
+  Make a one-time link: the chat that opens it may talk to the Assistant
+  --cancel — Withdraw the open link
+\`\`\`
+## ppm mcp — The MCP servers every chat starts with
+\`\`\`
+ppm mcp list
+  List the servers; env and header values are never shown
+  --json — Print JSON (values redacted)
+
+ppm mcp add <name>
+  Add a server: --command (with --arg) or --url
+  --command <cmd> — A local server: the program to run
+  --arg <value> — An argument for --command (repeat for each) [default: ]
+  --url <url> — A remote server's address
+  --type <type> — http or sse, for --url (default http)
+  --env <name> — Set an environment variable; its value is typed at the terminal (repeat) [default: ]
+  --header <name> — Set a header; its value is typed at the terminal (repeat) [default: ]
+
+ppm mcp edit <name>
+  Change a server; what is not given is kept
+  --command <cmd> — A local server: the program to run
+  --arg <value> — An argument for --command (repeat for each) [default: ]
+  --url <url> — A remote server's address
+  --type <type> — http or sse, for --url (default http)
+  --env <name> — Set an environment variable; its value is typed at the terminal (repeat) [default: ]
+  --header <name> — Set a header; its value is typed at the terminal (repeat) [default: ]
+  --unset-env <name> — Remove an environment variable (repeat) [default: ]
+  --unset-header <name> — Remove a header (repeat) [default: ]
+
+ppm mcp remove <name>
+  Remove a server; chats started after this do not get it
+
+ppm mcp import [file]
+  Add the servers from ~/.claude.json, or from a JSON file (\`{ mcpServers: {...} }\`); existing names are kept
+\`\`\`
+## ppm accounts — The Claude and Codex accounts chats rotate across
+\`\`\`
+ppm accounts list
+  List the accounts (no credential is ever shown)
+  --provider <provider> — claude or codex
+  --json — Print JSON
+
+ppm accounts add
+  How to add an account
+
+ppm accounts pick
+  Claim the account the next new chat runs on (moves the rotation on)
+  --provider <provider> — claude or codex [default: claude]
+
+ppm accounts verify <id>
+  Check a Claude account's sign-in again and refresh its profile
+
+ppm accounts rename <id> <label>
+  Rename a Claude account
+
+ppm accounts enable <id>
+  Put an account back in the rotation (a Claude sign-in is proved first)
+
+ppm accounts disable <id>
+  Take an account out of the rotation
+
+ppm accounts remove <id>
+  Remove an account and its stored sign-in (cannot be undone)
+  --yes — Confirm the removal
+
+ppm accounts settings
+  Show or change how chats rotate across the accounts
+  --provider <provider> — claude or codex [default: claude]
+  --strategy <strategy> — round-robin, fill-first, lowest-usage
+  --max-retry <n> — Claude: how many other accounts a failed turn tries
+  --cooldown <on|off> — Claude: rest an account that hit its limit
+\`\`\`
 ## ppm autostart — Manage auto-start on boot (enable/disable/status)
 \`\`\`
 ppm autostart enable

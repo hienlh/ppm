@@ -51,6 +51,13 @@ describe("configWriteRefusal", () => {
     expect(configWriteRefusal("theme.mode", person)).toContain("Appearance");
   });
 
+  it("points notification, Telegram and PPMBot keys at their own commands", () => {
+    expect(configWriteRefusal("ntfy.server", person)).toContain("ppm notify ntfy set");
+    expect(configWriteRefusal("notifications.delay_seconds", person)).toContain("ppm notify delay");
+    expect(configWriteRefusal("telegram.bot_username", person)).toContain("ppm telegram-bot set --token-prompt");
+    expect(configWriteRefusal("clawbot.enabled", person)).toContain("ppm ppmbot set");
+  });
+
   it("refuses an exposure key only from an AI chat", () => {
     expect(configWriteRefusal("host", person)).toBeNull();
     expect(configWriteRefusal("host", ai)).toContain("not changed from an AI chat");
