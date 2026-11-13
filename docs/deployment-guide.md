@@ -198,6 +198,22 @@ ppm accounts list                               # no token is ever printed; sign
 # server's command, arguments or address, and `mcp import`. Signing in to an MCP server or an
 # account, and subscribing a browser to push, stay in PPM's screens.
 
+# Extensions, language servers, speech to text, database drivers (installed by the running PPM,
+# so it uses them at once; an install may take minutes and prints "still working" lines)
+ppm ext install <npm-name>                      # or: ext dev <folder>, enable/disable/remove <id>
+ppm ext disable <id>                            # its commands leave every open palette
+ppm lsp list                                    # then: lsp install <id> [-p <project>], lsp remove <id>
+ppm speech install --model <id>                 # waits for the download; `ppm speech status` shows progress
+ppm db driver install mysql
+# A command gives up waiting after ten minutes; PPM keeps installing, and the list command shows it.
+
+# Jira (the Jira panel refreshes at once)
+ppm jira config set <project> --url https://site.atlassian.net --email you@example.com --token-prompt
+ppm jira watch add --config <id> --name bugs --jql "project = BUG"
+# The API token is typed at the terminal, never passed as an argument, never from an AI chat.
+# A new site or email saved without a new token clears the saved token, for every caller (the
+# panel, the CLI, the Assistant): enter it again. `jira watch pull` needs the running PPM.
+
 # `config set` goes through the running PPM that holds the database; with none running it
 # writes the database directly and says so. Pick a dev profile (ppm.dev.db), or one server
 # when several share a database:
