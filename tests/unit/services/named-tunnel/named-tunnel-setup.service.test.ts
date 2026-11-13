@@ -8,6 +8,11 @@ import { configService } from "../../../../src/services/config.service.ts";
 import { STATUS_FILE, CMD_FILE } from "../../../../src/services/supervisor-state.ts";
 import { globalWebSocket } from "../../../../src/server/ws/global.ts";
 
+// The status file below names this process as the supervisor, so runSetup's requestTunnelReload
+// sends SIGUSR2 to it, whose default disposition ends the run. A no-op handler keeps it alive,
+// whether or not another file in the run installed one first.
+process.on("SIGUSR2", () => {});
+
 // Synthetic fixtures only — never the real ~/.cloudflared/cert.pem on this host.
 const FAKE_ZONE_ID = "a".repeat(32);
 const FAKE_ACCOUNT_ID = "b".repeat(32);
