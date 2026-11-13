@@ -25,7 +25,7 @@ setDb(openTestDb());
 
 // Bring the config service up against that throwaway database. It refuses to persist until
 // load() has run, because writing pristine defaults over a live instance once blanked the auth
-// token and deleted every project â€” but here PPM_HOME is a fresh temp dir and the database is
+// token and deleted every project — but here PPM_HOME is a fresh temp dir and the database is
 // in-memory, so there is nothing to protect and fixtures write config legitimately.
 configService.load();
 
