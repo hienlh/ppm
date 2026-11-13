@@ -5,6 +5,7 @@ import { query as sdkQuery, type SpawnedProcess, type SpawnOptions } from "@anth
 import { chatSessionCliEnv } from "../services/chat-session-processes/session-processes.service.ts";
 import { chatSessionIdOf } from "../services/chat-session-processes/session-slice.ts";
 import { createLogger } from "../services/logger.ts";
+import { registerChatProviderPid } from "../services/system-metrics/chat-provider-pids.ts";
 
 /**
  * The Claude CLI as the leader of a process group of its own, and that group ended when the CLI
@@ -94,6 +95,8 @@ export function spawnCliInOwnGroup(
     stdio: ["pipe", "pipe", "pipe"],
     detached: true,
   });
+  // So the Task Manager's kill route can tell an AI chat to use chat_stop instead of ending this.
+  child.once("exit", registerChatProviderPid(child.pid, "claude"));
   child.once("exit", (code, signal) => {
     const pid = child.pid;
     if (!pid || !signalGroup(pid, 0)) return;

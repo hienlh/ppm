@@ -6,6 +6,7 @@ import type { JsonRpcResponse, ServerRequest, JsonRpcNotification } from "./code
 import { AI_CHAT_MARK } from "../../services/ai-chat-env.ts";
 import { ppmInstanceEnv } from "../../services/ppm-instance-env.ts";
 import { createLogger } from "../../services/logger.ts";
+import { registerChatProviderPid } from "../../services/system-metrics/chat-provider-pids.ts";
 
 const log = createLogger("codex");
 
@@ -118,6 +119,8 @@ export class CodexJsonRpcClient {
       windowsHide: true,
     });
     this.purpose = opts?.purpose ?? "control";
+    // So the Task Manager's kill route can tell an AI chat to use chat_stop instead of ending this.
+    this.proc.once("close", registerChatProviderPid(this.proc.pid, "codex"));
     // CODEX_HOME is <ppm dir>/codex-accounts/<account id>, so its name is the account id.
     this.lifecycleLog(
       `app-server started pid=${this.proc.pid ?? "?"}${opts?.cwd ? ` cwd=${opts.cwd}` : ""} ` +
