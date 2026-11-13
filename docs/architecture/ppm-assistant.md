@@ -669,6 +669,18 @@ touches only connections available to the AI chat. `db_connection_test` runs una
 minute per session, and answers the server (and SSH host) it went to. Through the shell the
 Assistant could still reach any route with `ppm db`; there the shell card is the control.
 
+`terminal_type` (`assistant-terminal-type-tool.ts`, definition in
+`assistant-terminal-type-tool-definition.ts`) types one line, at most 400 characters, into a new
+terminal for the user to run, through the ordinary chats' `run_in_terminal` machinery (see
+`ai-tab-tools.md`). There is no card: nothing runs before the user presses Enter, and the line is
+checked to be exactly what they see. Instead it is gated: it follows the user's `run_in_terminal`
+switch (Settings → Tools), and is refused in an unattended turn, in a turn whose provenance at the
+call is unknown, untrusted (any reason) or not started by the user in PPM — a Telegram-started
+turn would open the terminal on every device showing the chat. The project must be a registered
+one (never the Assistant's own) and `cwd` a folder inside it. The terminal keeps the AI-chat mark
+and docks in the project the device shows; the answer names that project and the shell's. Its
+answer holds only PPM's words, so the call does not mark the turn untrusted.
+
 `git_history` (`assistant-git-history-{plan,tool}.ts`, cards in
 `assistant-approval-summary-git-history.ts`) merges, cherry-picks, reverts, tags, and aborts or
 continues an operation that stopped part way, one action per call. It names a commit only as the

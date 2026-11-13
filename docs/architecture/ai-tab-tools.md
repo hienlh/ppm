@@ -151,6 +151,22 @@ command, and the AI is told so. The answer gives the terminal's short id and, wh
 needs the user's password or eyes (`sudo`, a login, a migration); the AI's own shell remains
 the way to run anything else.
 
+**The AI-chat mark stays.** Every other PPM terminal drops `PPM_AI_CHAT` (a person types there,
+even in a PPM that was itself started from a chat). A terminal `run_in_terminal` starts keeps it
+for its whole life (`terminalService.create(dir, { aiMark: true })`, `terminalEnv` in
+`terminal.service.ts`): the line waiting there is the AI's, so a `ppm` command the user runs from
+it still meets the rules PPM applies to an AI chat. Those rules are advisory, like the mark itself.
+The terminal socket's `session` message carries `aiMark`, the tab mirrors it into its metadata,
+and the dock chip shows an **AI** badge (`terminal-ai-mark-badge.tsx`); the terminal's own status
+bar spells the reason out, so a phone needs no hover. A terminal the user opens is unmarked.
+
+The PPM Assistant reaches the same `run` through `terminal_type` (`terminalTools`, exported by
+`tab-tools-mcp-endpoint.ts`) with three options: a 400-character cap, its own read hint (it reads
+a terminal through `ui_read_tab`), and `dock: "current"`. That request docks the terminal in the
+project the device shows, without switching to the chat's workspace (the Assistant's own project
+is none), and the device answers `shownProject`, so the reply names both that project and the one
+the shell started in. It is the one `tab_open` an Assistant chat's device accepts.
+
 The card for all three is `device-tool-card.tsx` (read by `deviceToolCall`): the address, the
 command in full, or the terminal read.
 
