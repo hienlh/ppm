@@ -1095,6 +1095,47 @@ ppm jira track <issueKey>
   Manually track a Jira issue
   --config <id> — Jira config ID (required)
 \`\`\`
+## ppm system — This machine's processes and services, through PPM's Task Manager
+\`\`\`
+ppm system processes
+  List running processes (CPU is measured between two samples, so --sort cpu takes a few seconds)
+  --sort <key> — cpu or mem [default: mem]
+  -n, --limit <count> — How many rows [default: 20]
+  --filter <text> — Only processes whose pid, name or command line matches
+  --json — Print JSON
+
+ppm system process <pid>
+  Show one process: command line, folder, user, state
+  --json — Print JSON
+
+ppm system kill <pid>
+  End a process: TERM, then KILL after a grace period (--force: KILL at once)
+  --force — Send KILL straight away
+  --tree — End its child processes too
+  --expect-name <name> — Refuse unless the process has this name (required from an AI chat)
+
+ppm system signal <pid> <signal>
+  Send a signal to a process: TERM, KILL, STOP, CONT, HUP, INT, USR1, USR2 (Windows: TERM, KILL)
+  --tree — Signal its child processes too
+  --expect-name <name> — Refuse unless the process has this name (required from an AI chat)
+
+ppm system resources
+  CPU, memory and swap of this machine right now (takes a few seconds to measure CPU)
+  --json — Print JSON
+
+ppm system services
+  List services (systemd units, launchd jobs, Windows services)
+  --user — Only the user's own
+  --system — Only the machine's
+  --filter <text> — Only names or descriptions containing this
+  --json — Print JSON
+
+ppm system service <nameOrAction> [name]
+  Show a service, or run start|stop|restart|enable|disable on it: \`service <name>\`, \`service stop <name>\`
+  --user — The user's own service rather than the machine's
+  --log — Print its recent log lines too
+  --json — Print JSON
+\`\`\`
 ## ppm schedule — Scheduled Claude agents (cron) and script schedules
 \`\`\`
 ppm schedule add

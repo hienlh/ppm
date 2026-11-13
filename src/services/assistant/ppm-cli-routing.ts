@@ -51,6 +51,8 @@ const SERVER = [
   "jira config set", "jira config show", "jira config remove", "jira config test",
   "jira watch add", "jira watch list", "jira watch enable", "jira watch disable", "jira watch remove",
   "jira watch test", "jira watch pull", "jira results delete", "jira track",
+  "system processes", "system process", "system kill", "system signal", "system resources",
+  "system services", "system service",
 ];
 
 const DIRECT_ALLOWED = [

@@ -89,9 +89,7 @@ export async function serverRequest<T>(method: string, path: string, body?: unkn
   if (t.discovery.kind === "refused") throw new ServerRefusedError(t.discovery.reason);
   const { baseUrl } = t.discovery.endpoint;
   printTarget(t, baseUrl);
-  const headers: Record<string, string> = { "X-PPM-Request": "1", "User-Agent": `ppm-cli/${VERSION}` };
-  if (t.authEnabled) headers.Authorization = `Bearer ${t.token}`;
-  if (inAiChat()) headers["X-PPM-AI-Chat"] = "1";
+  const headers = requestHeaders(t);
   // Every write carries a body, so a route never meets a body-less POST. fetch writes a form's
   // own Content-Type, boundary included.
   const form = body instanceof FormData ? body : undefined;
@@ -114,6 +112,30 @@ export async function serverRequest<T>(method: string, path: string, body?: unkn
   const { res, json } = answer;
   if (!json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
   return json.data as T;
+}
+
+function requestHeaders(t: Target): Record<string, string> {
+  const headers: Record<string, string> = { "X-PPM-Request": "1", "User-Agent": `ppm-cli/${VERSION}` };
+  if (t.authEnabled) headers.Authorization = `Bearer ${t.token}`;
+  if (inAiChat()) headers["X-PPM-AI-Chat"] = "1";
+  return headers;
+}
+
+/**
+ * `GET /api<path>` on the running PPM, answered as the raw response — for a stream (server-sent
+ * events) the caller reads and ends itself through `signal`. Never falls back to this process.
+ */
+export async function serverStream(path: string, signal: AbortSignal): Promise<Response> {
+  const t = await currentTarget();
+  if (t.discovery.kind === "none") throw new ServerDownError(`No PPM is running on ${basename(t.dbFile)} — start it with 'ppm start'`);
+  if (t.discovery.kind === "refused") throw new ServerRefusedError(t.discovery.reason);
+  const { baseUrl } = t.discovery.endpoint;
+  printTarget(t, baseUrl);
+  try {
+    return await fetch(`${baseUrl}/api${path}`, { headers: requestHeaders(t), redirect: "error", signal });
+  } catch (e) {
+    throw new ServerRefusedError(`The PPM at ${baseUrl} did not answer (${(e as Error).message})`);
+  }
 }
 
 /**

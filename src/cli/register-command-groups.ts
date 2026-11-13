@@ -80,6 +80,9 @@ export async function registerLaterCommandGroups(program: Command): Promise<void
   const { registerJiraCommands } = await import("./commands/jira-cmd.ts");
   await registerJiraCommands(program);
 
+  const { registerSystemCommands } = await import("./commands/system-cmd.ts");
+  registerSystemCommands(program);
+
   const { registerScheduleCommands } = await import("./commands/schedule-cmd.ts");
   registerScheduleCommands(program);
 
