@@ -156,6 +156,11 @@ export class WindowService {
    * understands `{ label }` objects and always answers with an array, so both
    * directions are translated here rather than crashing the picker on a string.
    */
+  showQuickPick(items: string[], options: QuickPickOptions & { canPickMany: true }): Promise<string[] | undefined>;
+  showQuickPick<T extends QuickPickItem>(items: T[], options: QuickPickOptions & { canPickMany: true }): Promise<T[] | undefined>;
+  showQuickPick(items: string[], options?: QuickPickOptions & { canPickMany?: false }): Promise<string | undefined>;
+  showQuickPick<T extends QuickPickItem>(items: T[], options?: QuickPickOptions & { canPickMany?: false }): Promise<T | undefined>;
+  showQuickPick(items: string[] | QuickPickItem[], options?: QuickPickOptions): Promise<string | QuickPickItem | (string | QuickPickItem)[] | undefined>;
   async showQuickPick(
     items: string[] | QuickPickItem[],
     options?: QuickPickOptions,
