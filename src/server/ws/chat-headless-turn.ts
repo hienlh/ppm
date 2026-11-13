@@ -5,7 +5,7 @@ import { createLogger } from "../../services/logger.ts";
 import type { ChatSendPayload } from "../../types/api.ts";
 import { validateChatImages } from "../../shared/validate-chat-images.ts";
 import {
-  countExtensionTurnsInFlight,
+  reserveExtensionTurn,
   deliverExtensionMessage,
   dropIdleSubprocess,
   ensureSessionEntry,
@@ -66,27 +66,33 @@ export async function startHeadlessTurn(requestedId: string, opts: HeadlessTurnO
   if (imageError) throw new HeadlessTurnError(imageError, 400);
   const entry = ensureSessionEntry(sessionId, opts.providerId, opts.projectPath, opts.projectName);
   const caller = opts.extensionId ?? REST_CALLER;
-  // A looping extension must not open a subprocess per iteration until the host runs dry.
-  if (countExtensionTurnsInFlight(caller, sessionId) >= MAX_HEADLESS_TURNS_PER_CALLER) {
-    throw new HeadlessTurnError(TOO_MANY_HEADLESS_TURNS, 429);
-  }
-  // A Claude subprocess keeps the model, effort and thinking it was built with — a pushed
-  // message cannot change them. A turn running on other picks than this message asks for is
-  // refused at once rather than run on the wrong model; between turns the idle subprocess is
-  // released, the way a model switch releases it, and the message opens a fresh one.
-  if (entry.providerId === "claude" && overridesDiffer(entry, sessionId, opts)) {
-    if (entry.phase !== "idle") throw new HeadlessTurnError(BUSY_DIFFERENT_MODEL, 409);
-    if (entry.isStreamingActive) await releaseForNewPicks(entry, sessionId);
-  }
-  persistHeadlessTurnOverrides(entry, sessionId, opts);
+  // A looping extension must not open a subprocess per iteration until the host runs dry. Its
+  // place is taken before the first await and held until the message is delivered, when the turn
+  // counts by itself, so calls arriving together cannot all pass the check.
+  const release = reserveExtensionTurn(caller, sessionId, MAX_HEADLESS_TURNS_PER_CALLER);
+  if (!release) throw new HeadlessTurnError(TOO_MANY_HEADLESS_TURNS, 429);
+  let result: Awaited<ReturnType<typeof deliverExtensionMessage>>;
+  try {
+    // A Claude subprocess keeps the model, effort and thinking it was built with — a pushed
+    // message cannot change them. A turn running on other picks than this message asks for is
+    // refused at once rather than run on the wrong model; between turns the idle subprocess is
+    // released, the way a model switch releases it, and the message opens a fresh one.
+    if (entry.providerId === "claude" && overridesDiffer(entry, sessionId, opts)) {
+      if (entry.phase !== "idle") throw new HeadlessTurnError(BUSY_DIFFERENT_MODEL, 409);
+      if (entry.isStreamingActive) await releaseForNewPicks(entry, sessionId);
+    }
+    persistHeadlessTurnOverrides(entry, sessionId, opts);
 
-  const result = await deliverExtensionMessage(sessionId, entry, opts.content ?? "", {
-    ...extensionTurn(sessionId, opts),
-    ...(opts.images?.length ? { images: opts.images } : {}),
-    ...(opts.imagePaths?.length ? { imagePaths: opts.imagePaths } : {}),
-    ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
-    ...(opts.priority ? { priority: opts.priority } : {}),
-  });
+    result = await deliverExtensionMessage(sessionId, entry, opts.content ?? "", {
+      ...extensionTurn(sessionId, opts),
+      ...(opts.images?.length ? { images: opts.images } : {}),
+      ...(opts.imagePaths?.length ? { imagePaths: opts.imagePaths } : {}),
+      ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
+      ...(opts.priority ? { priority: opts.priority } : {}),
+    });
+  } finally {
+    release();
+  }
   // Nobody is watching: the entry goes once it is idle (a running turn re-arms this when it ends).
   if (entry.clients.size === 0) startCleanupTimer(sessionId);
   if (!result.ok) {

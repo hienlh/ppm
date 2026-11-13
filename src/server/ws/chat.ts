@@ -522,14 +522,44 @@ export function getSessionTurnState(sessionId: string): { running: boolean; phas
   return { running: entry.phase !== "idle", phase: entry.phase, ...(entry.lastError && { lastError: entry.lastError }) };
 }
 
-/** How many sessions other than `except` have a turn of `extensionId` in flight. */
+/** Sessions a call of each extension is delivering to right now: extension id → session id → calls. */
+const extensionTurnReservations = new Map<string, Map<string, number>>();
+
+/**
+ * How many sessions other than `except` have a turn of `extensionId` in flight: running, queued
+ * behind another turn, or still being delivered by a call that has reserved its place.
+ */
 export function countExtensionTurnsInFlight(extensionId: string, except: string): number {
-  let n = 0;
+  const sessions = new Set<string>();
   for (const [id, entry] of activeSessions) {
-    if (id === except || entry.phase === "idle") continue;
-    if (entry.turnOrigin === "extension" && entry.extensionId === extensionId) n++;
+    if (id === except) continue;
+    const running = entry.phase !== "idle" && entry.turnOrigin === "extension" && entry.extensionId === extensionId;
+    if (running || entry.queuedExtensionTurn?.extensionId === extensionId) sessions.add(id);
   }
-  return n;
+  for (const id of extensionTurnReservations.get(extensionId)?.keys() ?? []) if (id !== except) sessions.add(id);
+  return sessions.size;
+}
+
+/**
+ * Take one of the extension's `max` places for a turn in `sessionId`, or null when they are all in
+ * use. Checked and taken in one synchronous step, so calls arriving together for different sessions
+ * — each behind its own session lock — cannot all pass the check before any of them has started.
+ * The caller releases the place once the message is delivered, when the turn counts by itself.
+ */
+export function reserveExtensionTurn(extensionId: string, sessionId: string, max: number): (() => void) | null {
+  if (countExtensionTurnsInFlight(extensionId, sessionId) >= max) return null;
+  const held = extensionTurnReservations.get(extensionId) ?? new Map<string, number>();
+  extensionTurnReservations.set(extensionId, held);
+  held.set(sessionId, (held.get(sessionId) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (held.get(sessionId) ?? 1) - 1;
+    if (left > 0) held.set(sessionId, left);
+    else held.delete(sessionId);
+    if (held.size === 0 && extensionTurnReservations.get(extensionId) === held) extensionTurnReservations.delete(extensionId);
+  };
 }
 
 /**

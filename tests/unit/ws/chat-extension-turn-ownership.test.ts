@@ -87,3 +87,40 @@ it("refuses a second message from the same extension queued behind a person's tu
   provider.release(session.id);
   await until(() => !getSessionTurnState(session.id).running, "the turns to end");
 });
+
+it("lets an extension hold at most four turns at once, even when its calls arrive together", async () => {
+  const sessions = await Promise.all([1, 2, 3, 4, 5].map(() => chatService.createSession(provider.id, {})));
+  const calls = await Promise.allSettled(sessions.map((s) => startHeadlessTurn(s.id, {
+    content: "hold:cap", providerId: provider.id, extensionId: "cap-ext",
+  })));
+  const refused = calls.filter((c) => c.status === "rejected");
+  expect(refused).toHaveLength(1);
+  expect(String((refused[0] as PromiseRejectedResult).reason)).toContain("TOO_MANY_HEADLESS_TURNS");
+  await until(() => sessions.filter((s) => getSessionTurnState(s.id).running).length === 4, "the four turns to run");
+  await Bun.sleep(50);
+  for (const s of sessions) provider.release(s.id);
+  await until(() => sessions.every((s) => !getSessionTurnState(s.id).running), "the turns to end");
+});
+
+it("counts a message queued behind a person's turn among the extension's four", async () => {
+  const personal = await chatService.createSession(provider.id, {});
+  const phone = connect(personal.id);
+  await phone.say({ type: "message", content: "hold:person" });
+  await until(() => getSessionTurnState(personal.id).running, "the person's turn to run");
+  expect(await startHeadlessTurn(personal.id, { content: "queued", providerId: provider.id, extensionId: "cap-ext-2" })).toEqual({ queued: true });
+
+  const others = await Promise.all([1, 2, 3, 4].map(() => chatService.createSession(provider.id, {})));
+  const calls = await Promise.allSettled(others.map((s) => startHeadlessTurn(s.id, {
+    content: "hold:cap2", providerId: provider.id, extensionId: "cap-ext-2",
+  })));
+  expect(calls.filter((c) => c.status === "rejected")).toHaveLength(1);
+  await until(() => others.filter((s) => getSessionTurnState(s.id).running).length === 3, "the three turns to run");
+  await Bun.sleep(50);
+  for (const s of others) provider.release(s.id);
+  provider.release(personal.id);
+  // The queued message opens its own turn, which holds too.
+  await until(() => provider.pushes.some((p) => p.sessionId === personal.id && p.content.includes("queued")), "the queued message");
+  await Bun.sleep(100);
+  provider.release(personal.id);
+  await until(() => [personal, ...others].every((s) => !getSessionTurnState(s.id).running), "the turns to end");
+});
