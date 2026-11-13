@@ -68,6 +68,16 @@ export interface ComposerResultMsg {
   permissionMode: string;
 }
 
+/**
+ * Where a tab an extension opens should appear on a desktop: in a floating window brought to
+ * the front, placed beside the window of the webview panel `besidePanelId` names (the panel
+ * the request came from). A phone ignores it and opens an ordinary tab.
+ */
+export interface ExtTabPlacement {
+  preferWindow: true;
+  besidePanelId?: string;
+}
+
 // --- Server → Client messages ---
 
 export type ExtServerMsg =
@@ -85,7 +95,7 @@ export type ExtServerMsg =
   /** This socket's id, sent once on connect; a `tab:open` may be addressed to one client by it. */
   | { type: "client:hello"; clientId: string }
   /** `clientId` set: only that browser opens the tab; every other one ignores the message. */
-  | { type: "tab:open"; tabType: string; title: string; projectId: string | null; closable?: boolean; metadata?: Record<string, unknown>; clientId?: string }
+  | { type: "tab:open"; tabType: string; title: string; projectId: string | null; closable?: boolean; metadata?: Record<string, unknown>; clientId?: string; placement?: ExtTabPlacement }
   | { type: "project:switch"; projectName: string }
   | { type: "contributions:update"; contributions: ExtensionContributes; activationErrors?: Record<string, string> }
   | { type: "composer:show"; requestId: string; options: ComposerOptionsMsg }

@@ -7,6 +7,7 @@ import { getAuthToken } from "@/lib/api-client";
 import { openGitReview } from "@/lib/open-git-review";
 import { popOutExtensionTab } from "@/lib/extension-webview-window";
 import { openExtensionChatTab } from "@/lib/extension-chat-tab";
+import { openPlacedTab } from "@/lib/extension-tab-placement";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { toast } from "sonner";
 
@@ -293,11 +294,13 @@ export function useExtensionWs(enabled = true) {
           // Addressed to the browser that ran the extension's command: every other one ignores it.
           if (msg.clientId && msg.clientId !== ownClientId) break;
           const meta = (msg as any).metadata as Record<string, unknown> | undefined;
+          const placement = msg.placement?.preferWindow === true ? msg.placement : undefined;
           // A chat belongs to a project; it is opened there (see `openExtensionChatTab`).
           if (msg.tabType === "chat" && typeof meta?.projectName === "string" && typeof meta.sessionId === "string") {
             void openExtensionChatTab({
               title: msg.title,
               metadata: { projectName: meta.projectName, sessionId: meta.sessionId, ...(typeof meta.providerId === "string" ? { providerId: meta.providerId } : {}) },
+              ...(placement ? { placement, addressed: Boolean(msg.clientId) } : {}),
             });
             break;
           }
@@ -312,13 +315,13 @@ export function useExtensionWs(enabled = true) {
             );
             break;
           }
-          useTabStore.getState().openTab({
+          openPlacedTab(() => useTabStore.getState().openTab({
             type: (msg as any).tabType,
             title: (msg as any).title,
             projectId: (msg as any).projectId ?? null,
             closable: (msg as any).closable ?? true,
             metadata: (msg as any).metadata,
-          });
+          }), placement, Boolean(msg.clientId));
           break;
         }
 

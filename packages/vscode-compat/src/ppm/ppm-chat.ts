@@ -1,4 +1,5 @@
 import type { RpcClient } from "../types.ts";
+import { toWirePlacement, type TabPlacementOptions } from "../tab-placement.ts";
 
 /**
  * `api.ppm.chat` — chat sessions an extension drives with nobody watching. Each call is one
@@ -107,6 +108,9 @@ export interface PpmChatState {
   lastError?: string;
 }
 
+/** `{ preferWindow: true, beside: panel }`: a floating window beside the panel the request came from. */
+export type PpmChatOpenTabOptions = TabPlacementOptions;
+
 export interface PpmChatWaitOptions {
   /** How often `state` is asked. Default 2 s. */
   pollMs?: number;
@@ -121,8 +125,11 @@ export interface PpmChat {
   cancel(sessionId: string): Promise<void>;
   state(sessionId: string): Promise<PpmChatState>;
   lastAssistantText(sessionId: string): Promise<string | null>;
-  /** Opens the chat in the browser that ran this extension's command in the last 10 s. */
-  openTab(sessionId: string): Promise<{ opened: boolean }>;
+  /**
+   * Opens the chat in the browser that ran this extension's command in the last 10 s. With
+   * `preferWindow`, a desktop shows it in a floating window in front, beside `beside`'s window.
+   */
+  openTab(sessionId: string, options?: PpmChatOpenTabOptions): Promise<{ opened: boolean }>;
   /** Resolves with the final state once no turn runs; rejects when `timeoutMs` passes first. */
   waitForIdle(sessionId: string, options?: PpmChatWaitOptions): Promise<PpmChatState>;
   /** Only a session this extension created with `bindable: true`. */
@@ -152,7 +159,10 @@ export function createPpmChat(rpc: RpcClient, extensionId: string): PpmChat {
     cancel: async (sessionId) => { await rpc.request("chat:cancel", { sessionId, extensionId }); },
     state,
     lastAssistantText: (sessionId) => rpc.request<string | null>("chat:lastAssistantText", { sessionId }),
-    openTab: (sessionId) => rpc.request<{ opened: boolean }>("chat:openTab", { sessionId, extensionId }),
+    openTab: (sessionId, options) => {
+      const placement = toWirePlacement(options);
+      return rpc.request<{ opened: boolean }>("chat:openTab", { sessionId, extensionId, ...(placement ? { placement } : {}) });
+    },
     bind: (sessionId, options) => rpc.request<PpmChatBindResult>("chat:bind", { sessionId, extensionId, binding: options }),
     unbind: async (sessionId) => {
       const { pendingRestart } = await rpc.request<{ pendingRestart: boolean }>("chat:unbind", { sessionId, extensionId });

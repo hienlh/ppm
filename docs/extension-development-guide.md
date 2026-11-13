@@ -356,6 +356,18 @@ one connection per worker life and set `busy_timeout` first. `workspace.fs` and
 floating window on a desktop browser. A phone, or a desktop at its window limit, gets an
 ordinary tab, and only the browser that ran the command moves it.
 
+A tab such a panel opens would otherwise land in the tab strip *behind* the panel's window.
+`ppm.chat.openTab(sessionId, { preferWindow: true, beside: panel })` and
+`window.openTab(tabType, title, projectId, metadata, { preferWindow: true, beside: panel })`
+(`panel` is the object `createWebviewPanel` returned) ask a desktop for a floating window in
+front instead, placed to the right of the panel's window when there is room, else to its left,
+else over its right edge a titlebar lower. A tab already in a window has that window brought
+forward (out of the dock if minimised); a docked tab moves into a window and goes back to its
+place when the window is closed, while a tab opened just now closes with its window. Without
+the option nothing changes. A phone keeps an ordinary tab. `window.openTab` reaches every
+browser: one that does not show `beside` keeps an ordinary tab. A PPM without the option
+ignores it and opens a tab as before.
+
 ### PPM's own API (`vscode.ppm`)
 
 Beyond the VSCode API, the second argument of `activate` carries `ppm` (types exported from
@@ -379,8 +391,10 @@ queued; poll `state()` or `waitForIdle()`, then read `lastAssistantText()`. Rule
   once** with no browser showing the chat, and after 120 s with one.
 - The turn marks the chat unread; PPM's "Chat completed" push is sent only with
   `notifyOnDone: true`.
-- `openTab(sessionId)` opens the chat only in the browser that ran one of the extension's
-  commands in the last 10 s, and answers `{ opened: false }` otherwise.
+- `openTab(sessionId, options?)` opens the chat only in the browser that ran one of the
+  extension's commands in the last 10 s, and answers `{ opened: false }` otherwise.
+  `{ preferWindow: true, beside: panel }` puts it in a floating window beside that panel's (see
+  "Opening a panel as a window").
 
 The same turn is available over REST for callers outside the extension host:
 `POST /api/project/:name/chat/sessions/:id/messages` (202; 409 busy, 429 over the cap) and

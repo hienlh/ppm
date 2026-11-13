@@ -14,6 +14,7 @@ import { createLogger } from "./logger.ts";
 import { extensionApiDeps, registerExtensionApiHandlers, type ExtensionApiDeps } from "./extension-api/index.ts";
 import { askBrowserDialog } from "./extension-browser-dialog.ts";
 import { ExtensionCallRegistry } from "./extension-api/extension-call-registry.ts";
+import { parseTabPlacement } from "./extension-api/extension-tab-placement.ts";
 
 /** Same scope as the extension host's own forwarded console: what an extension did or said. */
 const log = createLogger("ext");
@@ -191,10 +192,11 @@ export function registerVscodeCompatHandlers(
 
   // --- open PPM tab (generic, any extension can use) ---
   rpc.onRequest("window:openTab", async (params) => {
-    const [tabType, title, projectId, metadata] = params as [
-      string, string, string | null, Record<string, unknown> | undefined,
+    const [tabType, title, projectId, metadata, rawPlacement] = params as [
+      string, string, string | null, Record<string, unknown> | undefined, unknown,
     ];
-    broadcastExtMsg({ type: "tab:open", tabType, title, projectId, closable: true, metadata });
+    const placement = parseTabPlacement(rawPlacement);
+    broadcastExtMsg({ type: "tab:open", tabType, title, projectId, closable: true, metadata, ...(placement ? { placement } : {}) });
     return { ok: true };
   });
 

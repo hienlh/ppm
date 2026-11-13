@@ -27,7 +27,9 @@ export {
   type PpmChat, type PpmChatProject, type PpmChatCreateSessionOptions, type PpmChatSession,
   type PpmChatSendOptions, type PpmChatSendResult, type PpmChatState, type PpmChatWaitOptions,
   type PpmChatToolPolicy, type PpmChatBindOptions, type PpmChatBinding, type PpmChatBindResult,
+  type PpmChatOpenTabOptions,
 } from "./ppm/ppm-chat.ts";
+export { type TabPlacementOptions } from "./tab-placement.ts";
 export {
   PpmAiError, type PpmAi, type PpmAiProvider, type PpmAiCompleteRequest, type PpmAiCompleteResult,
   type PpmAiErrorCode,

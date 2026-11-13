@@ -13,6 +13,7 @@ import { BINDING_CLAUDE_ONLY, createBindableSession, providerSupportsBinding } f
 import { dbApprovalBroker } from "../db-ai-tools/db-approval-broker.ts";
 import { broadcastExtMsg, recentCommandClient } from "../../server/ws/extensions.ts";
 import { validateHeadlessSend } from "../../server/ws/chat-headless-turn-helpers.ts";
+import { parseTabPlacement } from "./extension-tab-placement.ts";
 import type { ChatSendPayload } from "../../types/api.ts";
 
 // The socket module is loaded on use, as the chat routes load it, so registering these
@@ -139,6 +140,7 @@ export function registerExtensionChatHandlers(rpc: RpcChannel): void {
 
   // The tab opens only in the browser that ran this extension's command just now: every
   // browser hears the broadcast, and a chat opened on each device at once was the bug.
+  // `placement` asks a desktop for a floating window beside the calling panel's.
   rpc.onRequest("chat:openTab", async (params) => {
     const p = paramsOf(params);
     const extensionId = requireString(p, "extensionId");
@@ -148,9 +150,11 @@ export function registerExtensionChatHandlers(rpc: RpcChannel): void {
     const clientId = recentCommandClient(extensionId);
     if (!clientId) return { opened: false };
     const title = chatService.getSession(sessionId)?.title || "Chat";
+    const placement = parseTabPlacement(p.placement);
     broadcastExtMsg({
       type: "tab:open", tabType: "chat", title, projectId: projectName, closable: true, clientId,
       metadata: { projectName, sessionId, providerId },
+      ...(placement ? { placement } : {}),
     });
     return { opened: true };
   });

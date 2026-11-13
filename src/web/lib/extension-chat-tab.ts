@@ -1,10 +1,16 @@
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { hydrateWorkspaceFromServer } from "@/stores/panel-utils";
+import type { ExtTabPlacement } from "../../types/extension-messages.ts";
+import { openPlacedTab } from "./extension-tab-placement";
 
 export interface ExtensionChatTabRequest {
   title: string;
   metadata: { projectName: string; sessionId: string; providerId?: string };
+  /** A floating window in front, beside the calling panel's (desktop only). */
+  placement?: ExtTabPlacement;
+  /** The server addressed this browser alone (`chat:openTab`), not every browser. */
+  addressed?: boolean;
 }
 
 /**
@@ -23,12 +29,13 @@ export async function openExtensionChatTab(request: ExtensionChatTabRequest): Pr
     useProjectStore.getState().setActiveProject(target);
     useTabStore.getState().switchProject(target.name);
   }
-  useTabStore.getState().openTab({
+  // Placed after the switch: the tabs the switch restores are not this request's to own.
+  openPlacedTab(() => useTabStore.getState().openTab({
     type: "chat",
     title: request.title || "Chat",
     projectId: target.name,
     closable: true,
     metadata: { projectName: target.name, sessionId, ...(providerId ? { providerId } : {}) },
-  });
+  }), request.placement, request.addressed ?? false);
   return true;
 }

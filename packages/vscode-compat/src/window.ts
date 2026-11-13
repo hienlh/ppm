@@ -6,6 +6,7 @@ import type {
   ComposerOptions, ComposerResult,
 } from "./types.ts";
 import { StatusBarAlignment as SBAlign } from "./types.ts";
+import { rememberWebviewPanelId, toWirePlacement, type TabPlacementOptions } from "./tab-placement.ts";
 
 /** VSCode-compatible window namespace — all UI ops go through RPC to main→browser */
 export class WindowService {
@@ -239,8 +240,13 @@ export class WindowService {
 
   // --- Open PPM Tab ---
 
-  async openTab(tabType: string, title: string, projectId: string | null, metadata?: Record<string, unknown>): Promise<void> {
-    await this.rpc.request("window:openTab", tabType, title, projectId, metadata);
+  /**
+   * Opens a tab in every connected browser. `options.preferWindow` asks a desktop for a
+   * floating window in front, placed beside the webview panel `options.beside`.
+   */
+  async openTab(tabType: string, title: string, projectId: string | null, metadata?: Record<string, unknown>, options?: TabPlacementOptions): Promise<void> {
+    const placement = toWirePlacement(options);
+    await this.rpc.request("window:openTab", tabType, title, projectId, metadata, ...(placement ? [placement] : []));
   }
 
   async switchProject(projectName: string): Promise<void> {
@@ -282,7 +288,7 @@ export class WindowService {
       asWebviewUri: (uri: unknown) => uri,
     };
 
-    return {
+    const panel = {
       viewType, title, webview,
       onDidDispose: onDidDispose.event,
       onDidChangeViewState: new EventEmitter().event,
@@ -296,5 +302,8 @@ export class WindowService {
         onDidReceiveMessage.dispose();
       },
     };
+    // So `openTab(..., { beside: panel })` can name this panel without the panel exposing an id.
+    rememberWebviewPanelId(panel, panelId);
+    return panel;
   }
 }

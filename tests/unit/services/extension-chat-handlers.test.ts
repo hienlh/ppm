@@ -199,4 +199,24 @@ describe("chat:openTab", () => {
       contributionRegistry.unregister(EXT);
     }
   });
+
+  it("carries a window placement beside the calling panel, and none unless asked", async () => {
+    contributionRegistry.register(EXT, { commands: [{ command: "probe.run", title: "Run" }] } as never);
+    const runner = fakeWs();
+    extensionWebSocket.open(runner as never);
+    try {
+      await extensionWebSocket.message(runner as never, JSON.stringify({ type: "ready" }));
+      await extensionWebSocket.message(runner as never, JSON.stringify({ type: "command:execute", command: "probe.run" }));
+      const { sessionId } = await call<{ sessionId: string }>("chat:createSession", { extensionId: EXT, projectName: PROJECT, providerId: "mock" });
+
+      await call("chat:openTab", { sessionId, extensionId: EXT, placement: { preferWindow: true, besidePanelId: "probe-wv-1" } });
+      await call("chat:openTab", { sessionId, extensionId: EXT, placement: { preferWindow: 1 } });
+      const opens = runner.messages.filter((m) => m.type === "tab:open");
+      expect(opens[0].placement).toEqual({ preferWindow: true, besidePanelId: "probe-wv-1" });
+      expect("placement" in opens[1]).toBe(false);
+    } finally {
+      extensionWebSocket.close(runner as never);
+      contributionRegistry.unregister(EXT);
+    }
+  });
 });
