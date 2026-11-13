@@ -10,6 +10,8 @@ import type { ProcessCollector } from "./process-collector-types.ts";
 import { identityMatches, resolveLiveProcess } from "./kill-identity-resolver.ts";
 import { checkKillAllowed } from "./kill-guard.ts";
 import type { ProtectedPids } from "./ppm-protected-pids.ts";
+import { callerRefusal, parseExpectName, type KillCaller } from "./kill-caller-checks.ts";
+import type { GuardMaps } from "./kill-identity-resolver.ts";
 import type { Logger } from "../logger.ts";
 
 export interface KillHandlerDeps {
@@ -20,6 +22,10 @@ export interface KillHandlerDeps {
   /** Audit line: pid + name + result ONLY. `~/.ppm/ppm.log` is read back into
    *  bug reports, so a command line must never land here. */
   log: Logger;
+  /** Who asked (an AI chat may not end a chat's provider). Absent: a person. */
+  caller?: KillCaller;
+  /** Chat provider pids among the live rows; the real registry when absent. */
+  providerPids?: (maps: GuardMaps) => Set<number>;
 }
 
 export type KillStatus = 200 | 400 | 403 | 404 | 409 | 500;
@@ -37,18 +43,25 @@ export function parseKillRequest(body: unknown): KillProcessRequest | null {
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
   if (typeof startedAt !== "number" || !Number.isFinite(startedAt) || startedAt < 0) return null;
   if (b.tree !== undefined && typeof b.tree !== "boolean") return null;
-  return { pid, startedAt, tree: b.tree === true };
+  const expect = parseExpectName(b.expectName);
+  if (!expect.ok) return null;
+  return { pid, startedAt, tree: b.tree === true, ...(expect.name !== undefined && { expectName: expect.name }) };
 }
 
 export async function handleKillRequest(body: unknown, deps: KillHandlerDeps): Promise<KillOutcome> {
   const req = parseKillRequest(body);
-  if (!req) return { status: 400, body: err("Body must be {pid: positive integer, startedAt: epoch ms, tree?: boolean}") };
+  if (!req) return { status: 400, body: err("Body must be {pid: positive integer, startedAt: epoch ms, tree?: boolean, expectName?: string}") };
   const tree = req.tree === true;
 
   const { live, maps } = await resolveLiveProcess(req.pid, deps.collector);
   if (!live) return { status: 404, body: err(`PID ${req.pid} is no longer running`) };
   if (!identityMatches(req.startedAt, live.startedAt)) {
     return { status: 409, body: err(`PID ${req.pid} was recycled — refresh and try again`) };
+  }
+  const refused = callerRefusal(live, req.expectName, tree, maps, deps.caller ?? {}, deps.providerPids);
+  if (refused) {
+    deps.log.warn(`kill pid=${live.pid} name=${live.name} tree=${tree} → refused: ${refused.reason}`);
+    return { status: refused.status, body: err(refused.message) };
   }
 
   const protectedPids = deps.resolveProtected(

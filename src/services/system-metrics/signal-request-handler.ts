@@ -17,6 +17,8 @@ import type { ProcessCollector } from "./process-collector-types.ts";
 import { identityMatches, resolveLiveProcess } from "./kill-identity-resolver.ts";
 import { checkKillAllowed } from "./kill-guard.ts";
 import type { ProtectedPids } from "./ppm-protected-pids.ts";
+import { callerRefusal, parseExpectName, type KillCaller } from "./kill-caller-checks.ts";
+import type { GuardMaps } from "./kill-identity-resolver.ts";
 import type { Logger } from "../logger.ts";
 
 export interface SignalHandlerDeps {
@@ -29,6 +31,10 @@ export interface SignalHandlerDeps {
   /** Audit line: pid + name + signal + result ONLY. `~/.ppm/ppm.log` is read
    *  back into bug reports, so no command line here. */
   log: Logger;
+  /** Who asked (an AI chat may not signal a chat's provider). Absent: a person. */
+  caller?: KillCaller;
+  /** Chat provider pids among the live rows; the real registry when absent. */
+  providerPids?: (maps: GuardMaps) => Set<number>;
 }
 
 export type SignalStatus = 200 | 400 | 403 | 404 | 409 | 500;
@@ -45,13 +51,18 @@ export function parseSignalRequest(body: unknown): SignalProcessRequest | null {
   if (typeof b.startedAt !== "number" || !Number.isFinite(b.startedAt) || b.startedAt < 0) return null;
   if (b.tree !== undefined && typeof b.tree !== "boolean") return null;
   if (typeof b.signal !== "string" || !PROCESS_SIGNALS.includes(b.signal as ProcessSignal)) return null;
-  return { pid: b.pid, startedAt: b.startedAt, signal: b.signal as ProcessSignal, tree: b.tree === true };
+  const expect = parseExpectName(b.expectName);
+  if (!expect.ok) return null;
+  return {
+    pid: b.pid, startedAt: b.startedAt, signal: b.signal as ProcessSignal, tree: b.tree === true,
+    ...(expect.name !== undefined && { expectName: expect.name }),
+  };
 }
 
 export async function handleSignalRequest(body: unknown, deps: SignalHandlerDeps): Promise<SignalOutcome> {
   const req = parseSignalRequest(body);
   if (!req) {
-    return { status: 400, body: err(`Body must be {pid, startedAt, signal: one of ${PROCESS_SIGNALS.join("|")}, tree?}`) };
+    return { status: 400, body: err(`Body must be {pid, startedAt, signal: one of ${PROCESS_SIGNALS.join("|")}, tree?, expectName?}`) };
   }
   if (!deps.supported.includes(req.signal)) {
     return { status: 400, body: err(`This host cannot deliver SIG${req.signal}`) };
@@ -62,6 +73,11 @@ export async function handleSignalRequest(body: unknown, deps: SignalHandlerDeps
   if (!live) return { status: 404, body: err(`PID ${req.pid} is no longer running`) };
   if (!identityMatches(req.startedAt, live.startedAt)) {
     return { status: 409, body: err(`PID ${req.pid} was recycled — refresh and try again`) };
+  }
+  const refused = callerRefusal(live, req.expectName, tree, maps, deps.caller ?? {}, deps.providerPids);
+  if (refused) {
+    deps.log.warn(`signal=${req.signal} pid=${live.pid} name=${live.name} tree=${tree} → refused: ${refused.reason}`);
+    return { status: refused.status, body: err(refused.message) };
   }
 
   const protectedPids = deps.resolveProtected(

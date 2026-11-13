@@ -357,6 +357,10 @@ export interface KillProcessRequest {
   startedAt: number;
   /** Kill descendants too (`taskkill /T` on Windows, collected tree on POSIX). */
   tree?: boolean;
+  /** The name the caller believes the pid has. When sent, the server compares it
+   *  with the re-queried name (case and `.exe` ignored) and ends nothing on a
+   *  mismatch, so an approved `ppm system kill` line says WHAT it ends. */
+  expectName?: string;
 }
 
 export interface KillProcessResult {
@@ -384,6 +388,8 @@ export interface SignalProcessRequest {
   /** Deliver to the whole collected tree as well. Suspending an app means
    *  suspending its helpers, which signalling the root alone does not do. */
   tree?: boolean;
+  /** As for a kill: the name the caller believes the pid has; a mismatch signals nothing. */
+  expectName?: string;
 }
 
 export interface SignalProcessResult {

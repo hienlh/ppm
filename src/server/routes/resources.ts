@@ -6,11 +6,14 @@
  *   GET    /resources/stream?processes=0|1   SSE: `session` frame, then `snapshot` frames
  *   POST   /resources/stream/:sid/ping       renew the subscriber lease
  *   DELETE /resources/stream/:sid            drop the subscriber
- *   POST   /resources/kill                   guarded kill (JSON + X-PPM-Request header)
- *   POST   /resources/signal                 guarded signal, same guard as a kill
+ *   POST   /resources/kill                   guarded kill (JSON + X-PPM-Request header);
+ *                                            `expectName` must match, and an AI caller may
+ *                                            not end a chat's provider process
+ *   POST   /resources/signal                 guarded signal, same checks as a kill
  *   GET    /resources/process/:pid           on-demand facts for the Details dialog
  */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import type { KillCaller } from "../../services/system-metrics/kill-caller-checks.ts";
 import type { MetricsSnapshot, MetricsTier } from "../../types/system-metrics.ts";
 import type { HardwareInventory } from "../../types/system-hardware.ts";
 import { ok, err } from "../../types/api.ts";
@@ -29,6 +32,10 @@ import { crossOriginRefusal } from "./cross-origin-guard.ts";
 export const MAX_DROPPED_FRAMES = 10;
 
 const tierOf = (raw: string | undefined): MetricsTier => (raw === "1" || raw === "true" ? "full" : "light");
+
+/** `X-PPM-AI-Chat: 1` is what `ppm` sends from an AI chat's shell: the request's own claim, so
+ *  what it unlocks is only a refusal (a chat's provider process), never a permission. */
+const callerOf = (c: Context): KillCaller => ({ aiChat: c.req.header("X-PPM-AI-Chat") === "1" });
 
 
 export function createResourceRoutes(
@@ -163,7 +170,7 @@ export function createResourceRoutes(
       return c.json(err("Invalid JSON body"), 400);
     }
     try {
-      const outcome = await service.signal(body);
+      const outcome = await service.signal(body, callerOf(c));
       return c.json(outcome.body, outcome.status);
     } catch (e) {
       console.error("[SystemMetrics] signal re-query failed:", (e as Error)?.message ?? e);
@@ -181,7 +188,7 @@ export function createResourceRoutes(
       return c.json(err("Invalid JSON body"), 400);
     }
     try {
-      const outcome = await service.kill(body);
+      const outcome = await service.kill(body, callerOf(c));
       return c.json(outcome.body, outcome.status);
     } catch (e) {
       // The live re-query itself failed (collector down, session restarting);

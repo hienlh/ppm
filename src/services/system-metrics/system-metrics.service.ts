@@ -21,6 +21,8 @@ import { resolveProtectedPidsLive } from "./ppm-protected-pids.ts";
 import { SubscriberRegistry, type MetricsSubscriber } from "./metrics-subscriber-registry.ts";
 import { PollScheduler, installProcessExitHooks } from "./metrics-poll-scheduler.ts";
 import { handleKillRequest, type KillOutcome } from "./kill-request-handler.ts";
+import type { KillCaller } from "./kill-caller-checks.ts";
+import type { GuardMaps } from "./kill-identity-resolver.ts";
 import { executeKill } from "./kill-executor.ts";
 import { handleSignalRequest, type SignalOutcome } from "./signal-request-handler.ts";
 import { executeSignal, supportedSignals } from "./signal-executor.ts";
@@ -44,6 +46,8 @@ export interface SystemMetricsServiceOptions {
   resolveProtected?: TickDeps["resolveProtected"];
   execute?: (pid: number, tree: boolean) => Promise<KillProcessResult>;
   executeSignal?: (pid: number, signal: ProcessSignal, tree: boolean) => Promise<SignalProcessResult>;
+  /** Which live pids are a chat's AI provider (refused to an AI caller); the real registry by default. */
+  providerPids?: (maps: GuardMaps) => Set<number>;
   /** Injected in tests so a unit test never reads the real /proc. Explicit
    *  `null` models a host with no reader for this at all. */
   details?: DetailsReader | null;
@@ -78,6 +82,7 @@ export class SystemMetricsService {
   private readonly tickDeps: TickDeps;
   private readonly execute: NonNullable<SystemMetricsServiceOptions["execute"]>;
   private readonly signalExecutor: NonNullable<SystemMetricsServiceOptions["executeSignal"]>;
+  private readonly providerPids: SystemMetricsServiceOptions["providerPids"];
   private readonly details: DetailsReader | null;
   private readonly log: Logger;
   private readonly exitHooks: boolean;
@@ -99,6 +104,7 @@ export class SystemMetricsService {
     this.now = opts.now ?? Date.now;
     this.execute = opts.execute ?? executeKill;
     this.signalExecutor = opts.executeSignal ?? executeSignal;
+    this.providerPids = opts.providerPids;
     this.details = opts.details !== undefined ? opts.details : detailsReaderFor(this.collectors.platform);
     this.log = opts.log ?? createLogger("SystemMetrics");
     this.exitHooks = opts.exitHooks ?? true;
@@ -173,7 +179,7 @@ export class SystemMetricsService {
    * kill waits for an in-flight tick, and ticks skip while a kill holds the
    * collector, instead of one of them failing with "request already in flight".
    */
-  async kill(body: unknown): Promise<KillOutcome> {
+  async kill(body: unknown, caller: KillCaller = {}): Promise<KillOutcome> {
     this.ensureExitHooks();
     try {
       return await this.collectorLock.runExclusive(() => handleKillRequest(body, {
@@ -182,6 +188,8 @@ export class SystemMetricsService {
         resolveProtected: this.tickDeps.resolveProtected,
         execute: this.execute,
         log: this.log,
+        caller,
+        providerPids: this.providerPids,
       }));
     } finally {
       // The re-query may have started the PowerShell child with no window open.
@@ -194,7 +202,7 @@ export class SystemMetricsService {
    * collector lock, because it re-collects the process table to authorise
    * against a FRESH name and the PowerShell session takes one request at a time.
    */
-  async signal(body: unknown): Promise<SignalOutcome> {
+  async signal(body: unknown, caller: KillCaller = {}): Promise<SignalOutcome> {
     this.ensureExitHooks();
     try {
       return await this.collectorLock.runExclusive(() => handleSignalRequest(body, {
@@ -204,6 +212,8 @@ export class SystemMetricsService {
         execute: this.signalExecutor,
         supported: this.signalMenu(),
         log: this.log,
+        caller,
+        providerPids: this.providerPids,
       }));
     } finally {
       // The re-query may have started the PowerShell child with no window open.
