@@ -93,6 +93,7 @@ describe("AntigravityProvider over agy acp", () => {
     const init = calls("initialize")[0]!;
     expect(init.params.clientCapabilities).toEqual({ fs: { readTextFile: false, writeTextFile: false }, terminal: false });
     expect(calls("session/new")[0]!.params).toEqual({ cwd: projectDir, mcpServers: [] });
+    // No model chosen: agy's own pick (the fake's Argon), at PPM's default effort.
     expect(calls("session/set_model").map((m) => m.params.modelId)).toEqual(["gemini-4-argon-high"]);
 
     // The generator outlives the turn; a follow-up runs on the same process, under either id.

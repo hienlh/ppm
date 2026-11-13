@@ -5,7 +5,6 @@ import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { assertProdDbAccessAllowed } from "./prod-db-guard.ts";
 import { backupDbSync } from "./db-backup/db-backup-sync.ts";
-import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
 import type { DbType } from "../shared/db-types.ts";
 import type { StoredConnectionConfig } from "../shared/db-connection-config.ts";
 import { createLogger } from "./logger.ts";
@@ -1147,31 +1146,10 @@ export function runMigrations(database: Database): void {
   }
 
   if (current < 45) {
-    // Codex was registered without a model, and PPM sends no model when none is
-    // configured, so codex fell back to its own default — its most capable and
-    // most expensive model — for every chat.
-    //
-    // Applied once, here, rather than on each startup: the settings picker
-    // stores "Auto (default)" as an absent model, so a startup check could not
-    // tell that choice apart from never having chosen and would reimpose this
-    // value at every restart.
-    try {
-      const row = database.query("SELECT value FROM config WHERE key = 'ai'").get() as { value: string } | null;
-      if (row?.value) {
-        const ai = JSON.parse(row.value) as {
-          providers?: Record<string, Record<string, unknown> | undefined>;
-        };
-        const codex = ai.providers?.["codex"];
-        if (codex && codex.model == null) {
-          codex.model = CODEX_DEFAULT_MODEL;
-          database.query("UPDATE config SET value = ? WHERE key = 'ai'").run(JSON.stringify(ai));
-        }
-      }
-    } catch {
-      // A config that cannot be read or parsed is not worth failing the upgrade
-      // over; codex keeps choosing for itself, exactly as before.
-    }
-
+    // This once gave a codex provider with no model a fixed one, because codex's own default was
+    // its most capable and most expensive model. Codex's default is now its workhorse model, and
+    // an absent model ("Auto") follows it, so nothing is written: a model name kept here went
+    // stale with every codex release.
     database.exec(`PRAGMA user_version = 45;`);
   }
 

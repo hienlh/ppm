@@ -11,6 +11,8 @@ import { ProviderChoiceRow, ProviderIcon } from "./provider-selector";
 interface ModelOption {
   value: string;
   label: string;
+  /** The provider's own pick, what "Auto" (no model chosen) runs on. */
+  isDefault?: boolean;
 }
 
 // Shared by chat tabs; keep successful lists visible while refreshing an old entry.
@@ -115,9 +117,9 @@ export function ModelThinkingSelector({
   }, [open, isMobile]);
 
   const isAntigravity = providerId === "antigravity";
-  const effectiveModel = isAntigravity
-    ? (!model || model === "pro" ? "gemini-4-argon" : model.replace(/-(low|medium|high)$/i, ""))
-    : model;
+  // No model chosen ("Auto") is the provider's own pick, which its list marks.
+  const chosenModel = isAntigravity && model ? (model === "pro" ? undefined : model.replace(/-(low|medium|high)$/i, "")) : model;
+  const effectiveModel = chosenModel || models.find((m) => m.isDefault)?.value;
   const current = models.find((m) => m.value === effectiveModel);
   const modelDisplay = current
     ? shortLabel(current.label, providerId)
