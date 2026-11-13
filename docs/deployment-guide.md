@@ -180,6 +180,24 @@ ppm settings query-audit set --retention-days 30
 # proxy, `--reveal`, clearing the audit log and the trace limits are refused too. That check is
 # advisory: the chat's shell card is the real control.
 
+# Notifications, Telegram, the Assistant on Telegram, MCP servers, accounts
+ppm notify get                                  # events, delay, Telegram / ntfy / push at a glance
+ppm notify set done off                         # an event, or the telegram / ntfy channel
+ppm notify ntfy set --server https://ntfy.sh --topic my-ppm --token-prompt
+ppm telegram-bot set --token-prompt             # the notification bot; Telegram checks the token first
+ppm notify telegram connect                     # a one-time link for the chat that should get alerts
+ppm ppmbot set debounce 1500                    # the Assistant's bridge (needs the running PPM)
+ppm ppmbot connect                              # a one-time link that lets a chat use the Assistant
+ppm mcp add files --command npx --arg -y --arg @scope/server-files --env API_TOKEN
+ppm mcp list                                    # env and header values are never shown, only names
+ppm accounts list                               # no token is ever printed; sign in from Settings → Accounts
+# Tokens and env/header values are typed at the terminal (hidden), never passed as arguments; with
+# no terminal the command refuses. A new ntfy server drops the old server's token in the route,
+# for every caller. From an AI chat these are refused (advisory): switching a notification off or
+# removing a channel or chat, any connect link, `ppmbot set enabled true`, any token, an MCP
+# server's command, arguments or address, and `mcp import`. Signing in to an MCP server or an
+# account, and subscribing a browser to push, stay in PPM's screens.
+
 # `config set` goes through the running PPM that holds the database; with none running it
 # writes the database directly and says so. Pick a dev profile (ppm.dev.db), or one server
 # when several share a database:
