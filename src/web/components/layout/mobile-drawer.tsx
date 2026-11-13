@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from "react";
-import { X, Bot, Cloud, FolderTree, MonitorSmartphone, ScrollText, Settings, Smartphone } from "@/lib/icons";
+import { X, Cloud, FolderTree, MonitorSmartphone, ScrollText, Settings, Smartphone } from "@/lib/icons";
+import { AssistantBotIcon } from "@/components/assistant/assistant-bot-icon";
 import { openAssistant } from "@/components/assistant/open-assistant";
 import { useAssistantWaitingTotal } from "@/stores/assistant-waiting-store";
 import { useShallow } from "zustand/react/shallow";
@@ -148,7 +149,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
     // Also not a sidebar tab — settings open as their own tab here, window on desktop.
     { icon: Settings, label: "Settings", onClick: () => { onClose(); openSettings(); } },
     // The Assistant as a full-screen tab; the red count is what waits on the user.
-    { icon: Bot, label: "Assistant", badge: "assistant", alert: assistantWaiting, alertLabel: "waiting", onClick: () => { onClose(); openAssistant(); } },
+    { icon: AssistantBotIcon, label: "Assistant", badge: "assistant", alert: assistantWaiting, alertLabel: "waiting", onClick: () => { onClose(); openAssistant(); } },
     // Replaces Report Bug: a report is now made from the lines it is about.
     { icon: ScrollText, label: "Logs", alert: likelyBugs, alertLabel: likelyBugs === 1 ? "likely bug" : "likely bugs", onClick: () => { onClose(); openLogs(); } },
   ];

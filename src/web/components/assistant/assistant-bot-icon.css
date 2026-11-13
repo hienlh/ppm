@@ -1,0 +1,85 @@
+/* The Assistant's living rail icon (assistant-bot-icon.tsx). Every part moves on its own cycle,
+   and the cycles are deliberately unequal lengths so the motion never visibly repeats in step. */
+
+.ppm-bot { overflow: visible; }
+.ppm-bot__body,
+.ppm-bot__head,
+.ppm-bot__eyes,
+.ppm-bot__eye,
+.ppm-bot__mouth,
+.ppm-bot__antenna,
+.ppm-bot__light {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.ppm-bot__antenna { transform-origin: 50% 100%; }
+.ppm-bot__head { transform-origin: 50% 90%; }
+
+/* Idle: breathe, blink, glance, sway. */
+.ppm-bot__body { animation: ppm-bot-breathe 3.7s ease-in-out infinite; }
+.ppm-bot__eye { animation: ppm-bot-blink 5.3s ease-in-out infinite; }
+.ppm-bot__eyes { animation: ppm-bot-glance 11.3s ease-in-out infinite; }
+.ppm-bot__antenna { animation: ppm-bot-sway 4.6s ease-in-out infinite; }
+
+/* Thinking: eyes dart, the light pulses, the antenna twitches. */
+.ppm-bot[data-mood="thinking"] .ppm-bot__eyes { animation: ppm-bot-dart 1.6s ease-in-out infinite; }
+.ppm-bot[data-mood="thinking"] .ppm-bot__light { animation: ppm-bot-pulse 0.9s ease-in-out infinite; }
+.ppm-bot[data-mood="thinking"] .ppm-bot__antenna { animation: ppm-bot-sway 1.3s ease-in-out infinite; }
+
+/* Waiting on the user: hop and look up, eyes wide. */
+.ppm-bot[data-mood="waiting"] .ppm-bot__body { animation: ppm-bot-hop 1.5s ease-in-out infinite; }
+.ppm-bot[data-mood="waiting"] .ppm-bot__eyes { animation: none; transform: translateY(-0.5px); }
+.ppm-bot[data-mood="waiting"] .ppm-bot__eye { animation: ppm-bot-blink 3.1s ease-in-out infinite; }
+.ppm-bot[data-mood="waiting"] .ppm-bot__light { animation: ppm-bot-pulse 0.75s ease-in-out infinite; }
+
+/* Happy (its window is open): squinting eyes and a wider smile. */
+.ppm-bot[data-mood="happy"] .ppm-bot__eye { animation: none; transform: scaleY(0.45); }
+.ppm-bot[data-mood="happy"] .ppm-bot__mouth { transform: scale(1.25, 1.6); }
+
+/* Hover: a curious head tilt, once per hover. */
+.group:hover .ppm-bot__head { animation: ppm-bot-tilt 0.7s ease-in-out; }
+
+@keyframes ppm-bot-breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-0.6px); }
+}
+/* Two closes per cycle, the second only some of the time: a single blink, then later a double. */
+@keyframes ppm-bot-blink {
+  0%, 44%, 50%, 88%, 91%, 94%, 100% { transform: scaleY(1); }
+  47% { transform: scaleY(0.1); }
+  89.5% { transform: scaleY(0.1); }
+  92.5% { transform: scaleY(0.1); }
+}
+@keyframes ppm-bot-glance {
+  0%, 30%, 42%, 70%, 80%, 100% { transform: translateX(0); }
+  34%, 38% { transform: translateX(-0.9px); }
+  74%, 77% { transform: translate(0.9px, -0.3px); }
+}
+@keyframes ppm-bot-sway {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(9deg); }
+  75% { transform: rotate(-9deg); }
+}
+@keyframes ppm-bot-dart {
+  0%, 100% { transform: translate(-0.8px, -0.4px); }
+  50% { transform: translate(0.8px, -0.4px); }
+}
+@keyframes ppm-bot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.75); }
+}
+@keyframes ppm-bot-hop {
+  0%, 60%, 100% { transform: translateY(0); }
+  20% { transform: translateY(-1.6px); }
+  40% { transform: translateY(0.2px); }
+}
+@keyframes ppm-bot-tilt {
+  0%, 100% { transform: rotate(0deg); }
+  30% { transform: rotate(-12deg); }
+  65% { transform: rotate(8deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ppm-bot *,
+  .group:hover .ppm-bot__head { animation: none !important; }
+}

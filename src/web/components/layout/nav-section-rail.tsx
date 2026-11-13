@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
-import { Bot, Settings, Cloud, FolderTree, MonitorSmartphone, ScrollText, Smartphone } from "@/lib/icons";
+import { Settings, Cloud, FolderTree, MonitorSmartphone, ScrollText, Smartphone } from "@/lib/icons";
+import { AssistantBotIcon } from "@/components/assistant/assistant-bot-icon";
 import { toggleAssistant } from "@/components/assistant/open-assistant";
 import { useAssistantWindowShown } from "@/components/assistant/use-assistant-window-shown";
 import { useAssistantWaitingTotal } from "@/stores/assistant-waiting-store";
@@ -254,7 +255,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
         )}
         {/* The Assistant's window; the red count is what waits on the user, open or not. */}
         <FooterUtil
-          icon={Bot}
+          icon={AssistantBotIcon}
           label={assistantWaiting ? `PPM Assistant · ${assistantWaiting} waiting` : "PPM Assistant"}
           alert={assistantWaiting}
           featureBadge="assistant"
