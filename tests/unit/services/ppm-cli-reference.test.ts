@@ -8,7 +8,7 @@ import "../../test-setup.ts";
 import {
   PPM_CLI_REFERENCE, TOOLS_INSTEAD_OF_CLI, cliReferenceSections, currentPpmInstance, ppmCliReference, ppmCliReferenceHeader,
 } from "../../../src/services/assistant/ppm-cli-reference.ts";
-import { CLI_COMMAND_ROUTING } from "../../../src/services/assistant/ppm-cli-routing.ts";
+import { CLI_COMMAND_ROUTING, commandPathsWithRouting } from "../../../src/services/assistant/ppm-cli-routing.ts";
 import { cliCommandPaths, generatePpmCliReference } from "../../../scripts/generate-ppm-cli-reference.ts";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
 
@@ -54,6 +54,16 @@ describe("the routing table", () => {
       expect({ p, k: CLI_COMMAND_ROUTING[p] }).toEqual({ p, k: "direct-allowed" });
     }
   });
+
+  it("leaves no command writing PPM's data behind a running server", () => {
+    expect(commandPathsWithRouting("direct-pending")).toEqual([]);
+    for (const p of ["cloud alias set", "cloud alias remove", "cloud link", "cloud unlink", "forward start", "forward stop",
+      "group-chat create", "group-chat delete", "teams delete"]) {
+      expect({ p, k: CLI_COMMAND_ROUTING[p] }).toEqual({ p, k: "server" });
+    }
+    // SQL on the user's own database, like db query.
+    expect(CLI_COMMAND_ROUTING["db run"]).toBe("direct-allowed");
+  });
 });
 
 describe("the header", () => {
@@ -73,17 +83,17 @@ describe("the header", () => {
   it("sorts commands by how they reach PPM", () => {
     const header = ppmCliReferenceHeader(base);
     const server = header.indexOf("## Commands that go through the running server");
-    const direct = header.indexOf("## Commands that write PPM's data directly\n");
     const none = header.indexOf("## Commands that need no server");
-    expect([server, direct, none].every((i) => i > -1)).toBe(true);
-    expect(header.slice(server, direct)).toContain("ppm config set");
-    expect(header.slice(server, direct)).toContain("ppm projects add");
-    expect(header.slice(server, direct)).toContain("ppm projects rename");
-    expect(header.slice(direct, none)).not.toContain("ppm projects");
-    expect(header.slice(direct, none)).toContain("ppm db run");
+    expect([server, none].every((i) => i > -1)).toBe(true);
+    // Nothing writes PPM's data behind a running server any more, so the header has no such section.
+    expect(header).not.toContain("## Commands that write PPM's data directly");
+    expect(header.slice(server, none)).toContain("ppm config set");
+    expect(header.slice(server, none)).toContain("ppm projects add");
+    expect(header.slice(server, none)).toContain("ppm projects rename");
+    expect(header.slice(none)).toContain("ppm db run");
     for (const path of ["db add", "db edit", "db remove", "db test", "db duplicate", "db import"]) {
-      expect(header.slice(server, direct)).toContain(`ppm ${path}`);
-      expect(header.slice(direct)).not.toContain(`ppm ${path},`);
+      expect(header.slice(server, none)).toContain(`ppm ${path}`);
+      expect(header.slice(none)).not.toContain(`ppm ${path},`);
     }
     // The tools cannot make a connection writable; a shell command is controlled by its card, and the header says which is which.
     expect(header).toContain("a new connection is read-only, and the tools cannot make one writable");
@@ -100,6 +110,19 @@ describe("the header", () => {
       expect({ name, n: instead.match(new RegExp(`\\b${name}\\b`, "g"))?.length ?? 0 }).toEqual({ name, n: 1 });
     }
     expect(header).toContain("- schedule run-now: prefer the schedule_run_now tool");
+  });
+
+  it("says what an AI chat may not run, and names the pane for each step only the user takes", () => {
+    const header = ppmCliReferenceHeader(base);
+    expect(header).toContain("- forward start: refused from an AI chat; use port_forward_start");
+    expect(header).toContain("group-chat create, members add, message and resume: refused from an AI chat");
+    expect(header).toContain("cloud link and cloud alias set: refused from an AI chat");
+    expect(header).toContain("- restore: refused from an AI chat");
+    const steps = header.slice(header.indexOf("## Steps only the user takes"));
+    for (const pane of ["Settings → Remote Desktop", "the Android tab", "Settings → Notifications", "Settings → Remote Access → Public link",
+      "Settings → Remote Access → Tailscale", "the Share button → PPM Cloud"]) {
+      expect(steps).toContain(pane);
+    }
   });
 
   it("tells a Codex session to escalate ppm commands out of its sandbox, and nobody else", () => {

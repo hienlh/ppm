@@ -59,6 +59,9 @@ export async function registerLaterCommandGroups(program: Command): Promise<void
   const { registerCloudCommands } = await import("./commands/cloud.ts");
   registerCloudCommands(program);
 
+  const { registerForwardCommands } = await import("./commands/forward-cmd.ts");
+  registerForwardCommands(program);
+
   const { registerSkillsCommands } = await import("./commands/skills-cmd.ts");
   registerSkillsCommands(program);
 
@@ -85,6 +88,12 @@ export async function registerLaterCommandGroups(program: Command): Promise<void
 
   const { registerDesignCommands } = await import("./commands/design-cmd.ts");
   registerDesignCommands(program);
+
+  const { registerGroupChatCommands } = await import("./commands/group-chat-cmd.ts");
+  registerGroupChatCommands(program);
+
+  const { registerTeamsCommands } = await import("./commands/teams-cmd.ts");
+  registerTeamsCommands(program);
 
   const { registerScheduleCommands } = await import("./commands/schedule-cmd.ts");
   registerScheduleCommands(program);

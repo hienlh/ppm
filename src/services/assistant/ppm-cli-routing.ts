@@ -56,6 +56,12 @@ const SERVER = [
   "design list", "design create", "design rename", "design delete", "design history", "design restore", "design export",
   "logs issues", "logs issues analyze", "logs issues auto", "logs issues dismiss", "logs issues undismiss", "logs report draft",
   "schedule add", "schedule edit", "schedule rm", "schedule enable", "schedule disable",
+  "group-chat list", "group-chat show", "group-chat create", "group-chat set",
+  "group-chat members add", "group-chat members edit", "group-chat members remove",
+  "group-chat message", "group-chat stop", "group-chat resume", "group-chat delete",
+  "teams list", "teams delete",
+  "cloud link", "cloud unlink", "cloud alias set", "cloud alias remove",
+  "forward list", "forward start", "forward stop",
 ];
 
 const DIRECT_ALLOWED = [
@@ -66,14 +72,13 @@ const DIRECT_ALLOWED = [
   "backup", "restore",
   "config get", "projects list", "accounts add",
   "chat list", "chat send", "chat resume",
-  "db list", "db tables", "db schema", "db data", "db query",
+  // `db run` and `db query` run SQL on the user's own database, not PPM's data.
+  "db list", "db tables", "db schema", "db data", "db query", "db run",
   "schedule list", "schedule runs",
 ];
 
-const DIRECT_PENDING = [
-  "cloud alias set", "cloud alias remove",
-  "db run",
-];
+/** Empty: every command that wrote PPM's data behind a running server now goes through it, and a test keeps it so. */
+const DIRECT_PENDING: string[] = [];
 
 export const CLI_COMMAND_ROUTING: Readonly<Record<string, CliRouting>> = Object.freeze({
   ...Object.fromEntries(SERVER.map((p) => [p, "server" as const])),

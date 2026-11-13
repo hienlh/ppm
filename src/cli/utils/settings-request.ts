@@ -85,6 +85,8 @@ async function mountRoutersFor(app: import("hono").Hono, path: string): Promise<
   }
   if (under("/lsp")) app.route("/api/lsp", (await import("../../server/routes/lsp.ts")).lspGlobalRoutes);
   if (under("/speech")) app.route("/api/speech", (await import("../../server/routes/speech.ts")).speechRoutes);
+  if (under("/group-chat")) app.route("/api/group-chat", (await import("../../server/routes/group-chat.ts")).groupChatRoutes);
+  if (under("/teams")) app.route("/api/teams", (await import("../../server/routes/teams.ts")).teamRoutes);
   if (under("/db/drivers")) app.route("/api/db/drivers", (await import("../../server/routes/database-drivers.ts")).databaseDriverRoutes);
   if (under("/jira")) {
     app.route("/api/jira", (await import("../../server/routes/jira.ts")).jiraRoutes);

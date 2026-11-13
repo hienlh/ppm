@@ -49,7 +49,7 @@ export const TOOLS_INSTEAD_OF_CLI: readonly { area: string; tools: readonly stri
     tools: ["schedules_list", "schedule_get", "schedule_save", "schedule_delete", "schedule_run_now"],
   },
   {
-    area: "Port forwards and PPM's own public link",
+    area: "Port forwards and PPM's own public link (instead of `ppm forward`)",
     tools: ["tunnels_status", "port_forward_start", "port_forward_stop", "public_link_set"],
   },
   {
@@ -118,19 +118,44 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "- db add/edit/remove/test: prefer db_connection_save, db_connection_delete and db_connection_test. Neither path sends",
     "  read-only: a new connection is read-only, and the tools cannot make one writable. A shell command can reach any of",
     "  PPM's routes, so there the user's approval of the command is the control. db import is refused from an AI chat",
+    "- forward start: refused from an AI chat; use port_forward_start. forward stop stops only a forward this PPM started",
+    "- group-chat create, members add, message and resume: refused from an AI chat (they start AI-to-AI turns nobody started)",
+    "- cloud link and cloud alias set: refused from an AI chat (a lasting public address for this machine)",
     "",
-    "## Commands that write PPM's data directly",
-    "The running server keeps much of this in memory: a change may not show until it restarts, and the",
-    "server may write its own copy back over it. Prefer the Assistant's tools or the PPM screen where one exists.",
-    `- ${list(commandPathsWithRouting("direct-pending"))}`,
-    "",
+  );
+  const pending = commandPathsWithRouting("direct-pending");
+  if (pending.length) {
+    lines.push(
+      "## Commands that write PPM's data directly",
+      "The running server keeps much of this in memory: a change may not show until it restarts, and the",
+      "server may write its own copy back over it. Prefer the Assistant's tools or the PPM screen where one exists.",
+      `- ${list(pending)}`,
+      "",
+    );
+  }
+  lines.push(
     "## Commands that need no server",
     "Process control, setup, reading, and work outside PPM's live data (a repository, a backup, the cloud account).",
     `- ${list(commandPathsWithRouting("direct-allowed"))}`,
+    "- restore: refused from an AI chat (it replaces PPM's whole database); restore --list is not",
+    "",
+    "## Steps only the user takes (no command)",
+    "Each needs the person at a screen or their own sign-in. Say which pane to open; do not try to do it:",
+    ...USER_ONLY_STEPS.map(({ step, where }) => `- ${step}: ${where}`),
     "",
   );
   return lines.join("\n");
 }
+
+/** What no command and no tool does, with the place in PPM the user does it. */
+export const USER_ONLY_STEPS: readonly { step: string; where: string }[] = [
+  { step: "Remote desktop consent (screen sharing and input permissions on the host)", where: "the Remote Desktop window, and Settings → Remote Desktop" },
+  { step: "Pairing an Android device", where: "the Android tab" },
+  { step: "Allowing push notifications on a device", where: "Settings → Notifications, on that device" },
+  { step: "Signing in to Cloudflare for PPM's own domain", where: "Settings → Remote Access → Public link" },
+  { step: "Signing in to Tailscale", where: "Settings → Remote Access → Tailscale" },
+  { step: "Signing in to or out of PPM Cloud", where: "the Share button → PPM Cloud, or `ppm cloud login` / `ppm cloud logout` at the user's own terminal" },
+];
 
 /** The generated reference cut at its `## ` headings: `core` for the top-level commands, else the group's name. */
 export function cliReferenceSections(reference: string = PPM_CLI_REFERENCE): Map<string, string> {
@@ -217,7 +242,7 @@ ppm backup
   --json — Output as JSON
 
 ppm restore [backup]
-  Restore the PPM config database from a snapshot
+  Restore the PPM config database from a snapshot (refused from an AI chat; --list is not)
   --list — List available snapshots and exit
   --force — Restore even while PPM is running (stop it first when you can)
   --json — Output as JSON
@@ -924,14 +949,34 @@ ppm cloud devices
   List all registered devices from cloud
   --json — Output as JSON
 
+ppm cloud link
+  Register this machine in PPM Cloud (needs \`ppm cloud login\`). Refused from an AI chat
+  --name <name> — The name PPM Cloud shows (default: this machine's device name)
+
+ppm cloud unlink
+  Remove this machine from PPM Cloud (its permanent link stops working)
+
 ppm cloud alias set <slug>
-  Set alias for this machine (e.g. ppm cloud alias set macbook)
+  Set alias for this machine (e.g. ppm cloud alias set macbook), through the running PPM. Refused from an AI chat
 
 ppm cloud alias get
   Show current alias for this machine
 
 ppm cloud alias remove
-  Remove alias for this machine
+  Remove alias for this machine, through the running PPM
+\`\`\`
+## ppm forward — Forward a localhost port, as the Port Forwarding panel does
+\`\`\`
+ppm forward list
+  List the forwards and the other cloudflared on this machine; \`stop\` takes only this PPM's
+  --json — Print JSON
+
+ppm forward start <port>
+  Forward a localhost port: a public quick tunnel, or --via tailscale for your tailnet only. Refused from an AI chat (use port_forward_start)
+  --via <transport> — cloudflare or tailscale [default: cloudflare]
+
+ppm forward stop <pid>
+  Stop a forward this PPM started (never PPM's public link or another program's tunnel)
 \`\`\`
 ## ppm skills — Manage and inspect discovered skills & commands
 \`\`\`
@@ -1216,6 +1261,68 @@ ppm design export <slug>
   --zip — The design's folder as a zip
   --html — One self-contained HTML file of its entry page
   -o, --output <file> — Where to save it (required)
+\`\`\`
+## ppm group-chat — Group chats: AI agents talking with each other in one thread
+\`\`\`
+ppm group-chat list
+  List a project's group chats
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --json — Print JSON
+
+ppm group-chat show <id>
+  Show a group chat and its members (with the member ids \`members edit\` takes)
+  --json — Print JSON
+
+ppm group-chat create <name>
+  Create a group chat with a leader and members. Refused from an AI chat
+  --leader <name> — The leader's name (required)
+  --member <name> — A member's name (repeat for each) [default: ]
+  --max-turns <n> — Replies one message may set off (1-50)
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --json — Print JSON
+
+ppm group-chat set <id>
+  Change a group chat's settings
+  --max-turns <n> — Replies one message may set off (1-50) (required)
+
+ppm group-chat members add <id> <name>
+  Add a member to a group chat. Refused from an AI chat
+  --persona <text> — Who the member is, in a sentence or two
+  --model <model> — The model it runs on (default: the provider's)
+  --color <hex> — Its colour in the feed (#rrggbb)
+  --leader — Make it the leader (the current leader becomes a member)
+
+ppm group-chat members edit <id> <memberId>
+  Change a member; what is not given is kept ("" clears persona, model or colour)
+  --persona <text> — Who the member is, in a sentence or two
+  --model <model> — The model it runs on (default: the provider's)
+  --color <hex> — Its colour in the feed (#rrggbb)
+  --name <name> — A new name
+  --leader — Make it the leader (the current leader becomes a member)
+
+ppm group-chat members remove <id> <memberId>
+  Remove a member (not the leader); its transcript is archived first
+
+ppm group-chat message <id> <text>
+  Post a message to a group chat; its agents reply in the running PPM. Refused from an AI chat
+
+ppm group-chat stop <id>
+  Stop a group chat's running replies (it is paused)
+
+ppm group-chat resume <id>
+  Answer the last unanswered message of a paused group chat. Refused from an AI chat
+
+ppm group-chat delete <id>
+  Delete a group chat; its members' transcripts are archived first
+\`\`\`
+## ppm teams — Claude agent teams: list or delete them
+\`\`\`
+ppm teams list
+  List the agent teams on this machine
+  --json — Print JSON
+
+ppm teams delete <name>
+  Delete an agent team's folder (its config and inboxes)
 \`\`\`
 ## ppm schedule — Scheduled Claude agents (cron) and script schedules
 \`\`\`

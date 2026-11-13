@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { cloudAliasRemove, cloudAliasSet, registerCloudLinkCommands } from "./cloud-cmd-link.ts";
 
 export function registerCloudCommands(program: Command): void {
   const cmd = program
@@ -201,24 +202,16 @@ export function registerCloudCommands(program: Command): void {
       }
     });
 
+  // link / unlink, through the running PPM
+  registerCloudLinkCommands(cmd);
+
   // ── alias subcommand group ────────────────────────────────────────────
   const alias = cmd.command("alias").description("Manage machine alias (vanity URL slug)");
 
   alias
     .command("set <slug>")
-    .description("Set alias for this machine (e.g. ppm cloud alias set macbook)")
-    .action(async (slug: string) => {
-      try {
-        const { setAlias, getCloudDevice } = await import("../../services/cloud.service.ts");
-        const device = getCloudDevice();
-        if (!device) { console.error("Not linked. Run: ppm cloud link"); process.exit(1); }
-        const result = await setAlias(slug);
-        console.log(`Alias set: ${device.cloud_url}/${result.slug}`);
-      } catch (err: unknown) {
-        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+    .description("Set alias for this machine (e.g. ppm cloud alias set macbook), through the running PPM. Refused from an AI chat")
+    .action(cloudAliasSet);
 
   alias
     .command("get")
@@ -242,15 +235,6 @@ export function registerCloudCommands(program: Command): void {
 
   alias
     .command("remove")
-    .description("Remove alias for this machine")
-    .action(async () => {
-      try {
-        const { removeAlias } = await import("../../services/cloud.service.ts");
-        await removeAlias();
-        console.log("Alias removed.");
-      } catch (err: unknown) {
-        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(1);
-      }
-    });
+    .description("Remove alias for this machine, through the running PPM")
+    .action(cloudAliasRemove);
 }

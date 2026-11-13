@@ -60,12 +60,20 @@ export function registerBackupCommands(program: Command): void {
 
   program
     .command("restore")
-    .description("Restore the PPM config database from a snapshot")
+    .description("Restore the PPM config database from a snapshot (refused from an AI chat; --list is not)")
     .argument("[backup]", "Snapshot filename or path (default: the newest one)")
     .option("--list", "List available snapshots and exit")
     .option("--force", "Restore even while PPM is running (stop it first when you can)")
     .option("--json", "Output as JSON")
     .action(async (backupArg: string | undefined, options: { list?: boolean; force?: boolean; json?: boolean }) => {
+      // Advisory, like every check keyed on the AI-chat mark (the shell's card is the control):
+      // a restore replaces every project, chat record, setting and credential PPM keeps, and
+      // with --force it does so under a running server. A person runs it.
+      if (!options.list && (await import("../../services/ai-chat-env.ts")).inAiChat()) {
+        console.error(`${C.red}Restore refused:${C.reset} ppm restore replaces PPM's whole database, so it is refused here from an AI chat. `
+          + "Give the user the command to run at their own terminal (`ppm restore --list` shows the snapshots).");
+        process.exit(1);
+      }
       try {
         const { listBackups, activeDbStem } = await import("../../services/db-backup/db-backup.service.ts");
         const { getBackupsDir } = await import("../../services/db-backup/db-backup-paths.ts");

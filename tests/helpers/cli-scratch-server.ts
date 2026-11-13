@@ -39,13 +39,15 @@ export interface ScratchServer {
 
 /**
  * Starts a scratch server on `home` for `profile` (null: the default `ppm.db`). `main` picks the
- * server: the base one, or `cli-chat-scratch-server-main.ts` with the chat stack.
+ * server: the base one, or `cli-chat-scratch-server-main.ts` with the chat stack. `env` is added
+ * to the allowlisted environment (a scratch `HOME`, for a server that reads the user's home).
  */
 export async function startScratchServer(
   home: string, profile: string | null, token = `tok-${crypto.randomUUID()}`, main = "cli-scratch-server-main.ts",
+  env: Record<string, string> = {},
 ): Promise<ScratchServer> {
   const proc = Bun.spawn([process.execPath, join(ROOT, "tests", "helpers", main), profile ?? "-", token], {
-    cwd: ROOT, env: scratchEnv(home), stdout: "pipe", stderr: "pipe",
+    cwd: ROOT, env: scratchEnv(home, env), stdout: "pipe", stderr: "pipe",
   });
   const reader = proc.stdout.getReader();
   let out = "";
