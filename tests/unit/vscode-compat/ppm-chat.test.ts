@@ -52,6 +52,8 @@ describe("ppm.chat", () => {
     expect(requests[2]!.timeoutMs).toBe(CHAT_SEND_RPC_TIMEOUT_MS);
     expect(CHAT_SEND_RPC_TIMEOUT_MS).toBeGreaterThanOrEqual(130_000);
     expect(requests[3]!.params).toEqual([{ sessionId: "s1", extensionId: "probe-ext" }]);
+    // Reading a chat names the extension too: it may read only the chats it created.
+    expect(requests[4]!.params).toEqual([{ sessionId: "s1", extensionId: "probe-ext" }]);
     expect(requests[5]!.params).toEqual([{ sessionId: "s1", extensionId: "probe-ext" }]);
   });
 
@@ -64,6 +66,7 @@ describe("ppm.chat", () => {
     const state = await chat.waitForIdle("s1", { pollMs: 1 });
     expect(state).toEqual({ running: false, phase: "idle" });
     expect(requests.filter((r) => r.method === "chat:state")).toHaveLength(3);
+    expect(requests[0]!.params).toEqual([{ sessionId: "s1", extensionId: "probe-ext" }]);
   });
 
   it("waitForIdle gives up after timeoutMs while the turn keeps running", async () => {

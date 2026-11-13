@@ -18,10 +18,16 @@ import type { AIProvider } from "../../../src/types/chat.ts";
 const POLICY = { readRoots: ["/r"], writeRoots: ["/r/.proposals"] };
 const PROJECT = { projectName: "clear-bound", projectPath: "/tmp/clear-bound" };
 
-function stubProvider(id: string, supportsExtensionBinding: boolean): AIProvider {
+function stubProvider(id: string, supportsExtensionBinding: boolean): AIProvider & { sessions: Map<string, unknown> } {
+  // `sessions` is where `chatService.getSession` looks a live session up, project path included.
+  const sessions = new Map<string, unknown>();
   return {
-    id, name: id, supportsExtensionBinding,
-    async createSession() { return { id: crypto.randomUUID(), providerId: id, title: "", createdAt: "" }; },
+    id, name: id, supportsExtensionBinding, sessions,
+    async createSession(config?: { projectPath?: string }) {
+      const session = { id: crypto.randomUUID(), providerId: id, title: "", createdAt: "", ...(config?.projectPath ? { projectPath: config.projectPath } : {}) };
+      sessions.set(session.id, session);
+      return session;
+    },
     async resumeSession(sessionId: string) { return { id: sessionId, providerId: id, title: "", createdAt: "" }; },
     async listSessions() { return []; },
     async deleteSession() {},
@@ -65,6 +71,17 @@ describe("/clear in a chat an extension bound", () => {
     const source = await boundChat("clear-ext-2");
     await expect(createProjectChatSession({ ...PROJECT, providerId: PLAIN.id, adoptWarmSpare: false, clearedFrom: source }))
       .rejects.toThrow("managed by an extension");
+  });
+
+  it("binds nothing from a chat of another project, nor into a design chat", async () => {
+    const source = await boundChat("clear-ext-3");
+    const elsewhere = await createProjectChatSession({
+      projectName: "other-project", projectPath: "/tmp/other-project", providerId: BINDING.id, adoptWarmSpare: false, clearedFrom: source,
+    });
+    expect(getExtensionSessionBinding(elsewhere.id)).toBeNull();
+    expect(getSessionCreatedByExtension(elsewhere.id)).toBeNull();
+    const design = await createProjectChatSession({ ...PROJECT, providerId: BINDING.id, adoptWarmSpare: false, clearedFrom: source, designSlug: "landing" });
+    expect(getExtensionSessionBinding(design.id)).toBeNull();
   });
 
   it("leaves an ordinary chat's /clear an ordinary chat", async () => {

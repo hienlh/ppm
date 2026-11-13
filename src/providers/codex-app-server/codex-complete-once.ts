@@ -122,7 +122,12 @@ export async function codexCompleteOnce(input: OneShotInput, ctx: CodexOneShotCo
       disableMcpServers = await race(planAssistantCodexMcp(client, ctx.cwd, { ownServer: false, privateNames: [] }));
     } catch (e) {
       if (e instanceof OneShotError) throw e;
-      throw new OneShotError("PROVIDER_ERROR", (e as Error).message, { usage: usage() });
+      throw new OneShotError(
+        "PROVIDER_ERROR",
+        "Codex could not report its MCP configuration, so your own MCP servers could not be kept out of this call. "
+          + "Update Codex (npm i -g @openai/codex) and try again.",
+        { usage: usage() },
+      );
     }
     threadId = await startThread();
 

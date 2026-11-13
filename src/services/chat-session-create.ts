@@ -1,5 +1,6 @@
 import { chatService } from "./chat.service.ts";
-import { setSessionClearedFrom, setSessionDesignSlug } from "./db.service.ts";
+import { getSessionProjectPath, resolveMigratedSession, setSessionClearedFrom, setSessionDesignSlug } from "./db.service.ts";
+import { isAssistantProject } from "../shared/assistant-project.ts";
 import { bindPickedAccount } from "./picked-account-binding.ts";
 import { getProjectDefaultTagId, setSessionTag } from "./tag.service.ts";
 import { isValidDesignSlug } from "./design/design-slug.ts";
@@ -27,11 +28,24 @@ export interface CreateProjectChatInput {
   accountId?: string;
 }
 
+/** The project the cleared chat belongs to: the live session's, else the one recorded for it. */
+function clearedFromProjectPath(clearedFrom: string): string | null {
+  const id = resolveMigratedSession(clearedFrom);
+  return chatService.getSession(id)?.projectPath ?? getSessionProjectPath(id);
+}
+
 export async function createProjectChatSession(input: CreateProjectChatInput): Promise<Session> {
   // `/clear` in a chat an extension bound clears the context, not the binding: the new chat is
   // the same extension's, with the same instructions and tool limits. A provider that cannot hold
   // a binding is refused rather than given an unbound chat with every tool.
-  const clearsBound = !!input.clearedFrom && isBoundSession(input.clearedFrom);
+  // Only an ordinary chat continues one: `clearedFrom` comes from the client, and an Assistant or
+  // design chat, or a chat of a project the cleared one is known not to belong to, is never an
+  // extension's. A cleared chat whose project PPM no longer knows (no live session, nothing
+  // recorded) still passes its binding on, so the new chat keeps the limits rather than lose them.
+  const sourceProject = input.clearedFrom ? clearedFromProjectPath(input.clearedFrom) : null;
+  const clearsBound = !!input.clearedFrom && isBoundSession(input.clearedFrom)
+    && !input.designSlug && !isAssistantProject(input.projectName)
+    && (!sourceProject || sourceProject === input.projectPath);
   if (clearsBound && !providerSupportsBinding(input.providerId ?? providerRegistry.getDefault().id)) {
     throw new Error(`This chat is managed by an extension, and only Claude can run it (${BINDING_CLAUDE_ONLY})`);
   }
