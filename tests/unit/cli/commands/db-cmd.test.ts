@@ -27,7 +27,8 @@ describe("registerDbCommands", () => {
     expect(subNames).toContain("query");
     expect(subNames).toContain("run");
     expect(subNames).toContain("driver");
-    expect(subNames).toHaveLength(10);
+    for (const name of ["edit", "duplicate", "import"]) expect(subNames).toContain(name);
+    expect(subNames).toHaveLength(13);
 
     const driverCmd = dbCmd!.commands.find((c) => c.name() === "driver")!;
     expect(driverCmd.commands.map((c) => c.name())).toEqual(["list", "install", "remove"]);
@@ -46,6 +47,9 @@ describe("registerDbCommands", () => {
     expect(optNames).toContain("--file");
     expect(optNames).toContain("--group");
     expect(optNames).toContain("--color");
+    // A connection made here is read-only: nothing can ask for a writable one.
+    expect(optNames).not.toContain("--readonly");
+    expect(optNames).toEqual(expect.arrayContaining(["--password-mode", "--ai"]));
   });
 
   it("'data' command has pagination options", () => {

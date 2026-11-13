@@ -11,8 +11,10 @@ import { inAiChat } from "../../services/ai-chat-env.ts";
 import { DB_EXECUTE_TOOL, DB_QUERY_TOOL } from "../../shared/db-ai-tools.ts";
 import { ppmToolOn, type PpmToolSwitches } from "../../shared/ppm-tools.ts";
 import { defaultSchemaFor } from "../../services/database/grid.service.ts";
-import { DB_TYPES, dialectNameOf, isDbType, type DbType } from "../../shared/db-types.ts";
+import { dialectNameOf, type DbType } from "../../shared/db-types.ts";
 import type { DbColumnInfo, DbPagedData, DbQueryResult, DbTableInfo } from "../../types/database.ts";
+import { redactUrl } from "../../shared/db-url-secret.ts";
+import { registerDbConnectionCommands } from "./db-cmd-connections.ts";
 
 const C = {
   reset: "\x1b[0m",
@@ -166,11 +168,6 @@ function assertNotHandedToTool(command: DataCommand): void {
   if (message) throw new Error(message);
 }
 
-/** Mask password in postgres connection string: postgresql://user:pass@host → postgresql://user:***@host */
-function maskPassword(connectionString: string): string {
-  return connectionString.replace(/(:\/\/[^:]+:)[^@]+(@)/, "$1***$2");
-}
-
 /** What the commands below use, which Postgres and MySQL both serve from a connection string. */
 interface ServerDbService {
   testConnection(connectionString: string): Promise<{ ok: boolean; error?: string }>;
@@ -249,7 +246,7 @@ export function registerDbCommands(program: Command): void {
           const data = conns.map((c) => {
             const cfg = parseConfig(c);
             let target = cfg.connectionString ?? cfg.path ?? null;
-            if (cfg.connectionString) target = maskPassword(target!);
+            if (cfg.connectionString) target = redactUrl(target!);
             return { id: c.id, name: c.name, type: c.type, group: c.group_name ?? null, readonly: !!c.readonly, connection: target };
           });
           console.log(JSON.stringify(data, null, 2));
@@ -259,8 +256,7 @@ export function registerDbCommands(program: Command): void {
         const rows = conns.map((c) => {
           const cfg = parseConfig(c);
           let target = cfg.connectionString ?? cfg.path ?? "-";
-          // Mask password in postgres connection strings
-          if (cfg.connectionString) target = maskPassword(target);
+          if (cfg.connectionString) target = redactUrl(target);
           const display = target.length > 70 ? target.slice(0, 67) + "..." : target;
           const ro = c.readonly ? `${C.yellow}RO${C.reset}` : `${C.green}RW${C.reset}`;
           return [String(c.id), c.name, c.type, c.group_name ?? "-", ro, display];
@@ -273,120 +269,8 @@ export function registerDbCommands(program: Command): void {
       }
     });
 
-  // ── ppm db add ───────────────────────────────────────────────────────
-  db.command("add")
-    .description("Add a new database connection")
-    .requiredOption("-n, --name <name>", "Connection name (unique)")
-    .requiredOption("-t, --type <type>", "Database type: postgres | mysql | mariadb | sqlite")
-    .option("-c, --connection-string <url>", "Connection string (postgres://…, mysql://…, mariadb://…)")
-    .option("-f, --file <path>", "SQLite file path (absolute)")
-    .option("-g, --group <group>", "Group name")
-    .option("--color <color>", "Tab color (hex, e.g. #3b82f6)")
-    .action(async (options) => {
-      try {
-        const { insertConnection } = await import("../../services/db.service.ts");
-        const type: unknown = options.type;
-
-        if (!isDbType(type)) {
-          console.error(`${C.red}Error:${C.reset} --type must be one of: ${DB_TYPES.join(", ")}`);
-          process.exit(1);
-        }
-
-        let config: import("../../services/db.service.ts").ConnectionConfig;
-        if (type !== "sqlite") {
-          if (!options.connectionString) {
-            console.error(`${C.red}Error:${C.reset} ${type} requires --connection-string`);
-            process.exit(1);
-          }
-          config = { type, connectionString: options.connectionString };
-        } else {
-          if (!options.file) {
-            console.error(`${C.red}Error:${C.reset} SQLite requires --file (absolute path)`);
-            process.exit(1);
-          }
-          const { resolve } = await import("node:path");
-          config = { type: "sqlite", path: resolve(options.file) };
-        }
-
-        const conn = insertConnection(type, options.name, config, options.group, options.color);
-        console.log(`${C.green}Added connection:${C.reset} ${conn.name} (${conn.type}) #${conn.id}`);
-        const { driverForEngine } = await import("../../services/database/drivers/db-driver-catalog.ts");
-        const driver = driverForEngine(type);
-        if (driver) {
-          const { dbDriverStatus } = await import("../../services/database/drivers/db-driver-install.ts");
-          if (dbDriverStatus(driver.id).state !== "installed") {
-            console.log(`${C.yellow}The ${driver.displayName} driver is not installed yet.${C.reset} Run: ppm db driver install ${driver.id}`);
-          }
-        }
-      } catch (err) {
-        console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
-        process.exit(1);
-      }
-    });
-
-  // ── ppm db remove ────────────────────────────────────────────────────
-  db.command("remove <name>")
-    .description("Remove a saved connection (by name or ID)")
-    .action(async (nameOrId: string) => {
-      try {
-        const { deleteConnection, resolveConnection } = await import("../../services/db.service.ts");
-        const conn = resolveConnection(nameOrId);
-        if (conn) assertAvailable(conn);
-        if (deleteConnection(nameOrId)) {
-          console.log(`${C.green}Removed connection:${C.reset} ${nameOrId}`);
-        } else {
-          console.error(`${C.red}Connection not found:${C.reset} ${nameOrId}`);
-          process.exit(1);
-        }
-      } catch (err) {
-        console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
-        process.exit(1);
-      }
-    });
-
-  // ── ppm db test ──────────────────────────────────────────────────────
-  db.command("test <name>")
-    .description("Test a saved connection")
-    .action(async (nameOrId: string) => {
-      try {
-        const { resolveConnection } = await import("../../services/db.service.ts");
-        const conn = resolveConnection(nameOrId);
-        if (!conn) {
-          console.error(`${C.red}Connection not found:${C.reset} ${nameOrId}`);
-          process.exit(1);
-        }
-        assertAvailable(conn);
-        const cfg = parseConfig(conn);
-
-        if (conn.type !== "sqlite") {
-          const url = await openConnectionString(conn);
-          const service = await serverService(conn.type, !!conn.readonly);
-          const result = await service.testConnection(url);
-          await service.closeAll();
-          if (result.ok) {
-            console.log(`${C.green}✓${C.reset} Connection successful: ${conn.name}`);
-          } else {
-            console.error(`${C.red}✗${C.reset} Connection failed: ${result.error}`);
-            process.exit(1);
-          }
-        } else {
-          const { existsSync } = await import("node:fs");
-          if (existsSync(cfg.path!)) {
-            // Try opening the file
-            const { sqliteService } = await import("../../services/sqlite.service.ts");
-            sqliteService.getTables(cfg.path!, cfg.path!);
-            sqliteService.closeAll();
-            console.log(`${C.green}✓${C.reset} SQLite file accessible: ${conn.name}`);
-          } else {
-            console.error(`${C.red}✗${C.reset} File not found: ${cfg.path}`);
-            process.exit(1);
-          }
-        }
-      } catch (err) {
-        console.error(`${C.red}✗${C.reset} Test failed:`, (err as Error).message);
-        process.exit(1);
-      }
-    });
+  // add, edit, remove, test, duplicate and import go through the connection routes.
+  registerDbConnectionCommands(db);
 
   // ── ppm db tables ────────────────────────────────────────────────────
   db.command("tables <name>")

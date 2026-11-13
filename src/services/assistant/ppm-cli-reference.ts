@@ -112,6 +112,9 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "- chat stop sends the stop PPM's Stop button sends; chat delete stops a running turn first and deletes nothing if it does not stop",
     "- chat changes/turns/revert-turn: prefer chat_changes and chat_changes_answer; revert-turn prints its preview and writes only with --yes",
     "- git: prefer the git tools; every git command takes -p <project> and --repo <path> (a repository inside the project)",
+    "- db add/edit/remove/test: prefer db_connection_save, db_connection_delete and db_connection_test. Neither path sends",
+    "  read-only: a new connection is read-only, and the tools cannot make one writable. A shell command can reach any of",
+    "  PPM's routes, so there the user's approval of the command is the control. db import is refused from an AI chat",
     "",
     "## Commands that write PPM's data directly",
     "The running server keeps much of this in memory: a change may not show until it restarts, and the",
@@ -694,19 +697,37 @@ ppm db list
   --json — Output as JSON
 
 ppm db add
-  Add a new database connection
+  Add a database connection (read-only; make it writable in PPM)
   -n, --name <name> — Connection name (unique) (required)
   -t, --type <type> — Database type: postgres | mysql | mariadb | sqlite (required)
   -c, --connection-string <url> — Connection string (postgres://…, mysql://…, mariadb://…)
-  -f, --file <path> — SQLite file path (absolute)
-  -g, --group <group> — Group name
-  --color <color> — Tab color (hex, e.g. #3b82f6)
+  -f, --file <path> — SQLite file path
+  -g, --group <group> — Folder it is listed in
+  --color <color> — Colour (hex, e.g. #3b82f6)
+  --password-mode <mode> — save (default) | ask (PPM asks for it each time) | ask-user (asks for login and password)
+  --ai <on|off> — Available to the AI chat (default on)
+
+ppm db edit <name>
+  Change a saved connection (by name or ID); give only what changes
+  --name <name> — New name
+  -c, --connection-string <url> — New connection string (a new server or login drops the saved password)
+  -f, --file <path> — New SQLite file
+  -g, --group <group> — Folder it is listed in ("" for none)
+  --color <color> — Colour (hex; "none" clears it)
+  --password-mode <mode> — save | ask | ask-user
+  --ai <on|off> — Available to the AI chat
 
 ppm db remove <name>
   Remove a saved connection (by name or ID)
 
 ppm db test <name>
-  Test a saved connection
+  Test a saved connection from the PPM host (by name or ID)
+
+ppm db duplicate <name>
+  Copy a saved connection, password included (by name or ID)
+
+ppm db import <file>
+  Import connections from an export file (each keeps the file's read-only and AI settings)
 
 ppm db tables <name>
   List tables in a database connection

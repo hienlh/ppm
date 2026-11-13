@@ -80,7 +80,13 @@ describe("the header", () => {
     expect(header.slice(server, direct)).toContain("ppm projects add");
     expect(header.slice(server, direct)).toContain("ppm projects rename");
     expect(header.slice(direct, none)).not.toContain("ppm projects");
-    expect(header.slice(direct, none)).toContain("ppm db add");
+    expect(header.slice(direct, none)).toContain("ppm db run");
+    for (const path of ["db add", "db edit", "db remove", "db test", "db duplicate", "db import"]) {
+      expect(header.slice(server, direct)).toContain(`ppm ${path}`);
+      expect(header.slice(direct)).not.toContain(`ppm ${path},`);
+    }
+    // The tools cannot make a connection writable; a shell command is controlled by its card, and the header says which is which.
+    expect(header).toContain("a new connection is read-only, and the tools cannot make one writable");
     expect(header.slice(none)).toContain("ppm backup");
   });
 

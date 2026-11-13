@@ -30,6 +30,7 @@ const SERVER = [
   "git cherry-pick", "git revert", "git tag", "git abort", "git continue",
   "git stash save", "git stash list", "git stash apply", "git stash pop", "git stash drop",
   "git worktree list", "git worktree add", "git worktree remove", "git worktree prune",
+  "db add", "db edit", "db remove", "db test", "db duplicate", "db import",
 ];
 
 const DIRECT_ALLOWED = [
@@ -40,7 +41,7 @@ const DIRECT_ALLOWED = [
   "backup", "restore",
   "config get", "projects list",
   "chat list", "chat send", "chat resume",
-  "db list", "db test", "db tables", "db schema", "db data", "db query", "db driver list",
+  "db list", "db tables", "db schema", "db data", "db query", "db driver list",
   "ext list",
   "jira config show", "jira config test", "jira watch list",
   "schedule list", "schedule runs",
@@ -49,7 +50,7 @@ const DIRECT_ALLOWED = [
 const DIRECT_PENDING = [
   "cloud alias set", "cloud alias remove",
   "ext install", "ext remove", "ext enable", "ext disable", "ext dev",
-  "db add", "db remove", "db run", "db driver install", "db driver remove",
+  "db run", "db driver install", "db driver remove",
   "jira config set", "jira config remove",
   "jira watch add", "jira watch enable", "jira watch disable", "jira watch remove", "jira watch test", "jira watch pull",
   "jira results delete", "jira track",
