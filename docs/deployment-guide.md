@@ -226,6 +226,26 @@ ppm schedule edit <id> --cron "0 8 * * *"      # only the options given change
 # add, edit and enable are refused from an AI chat (advisory): a schedule runs turns nobody
 # started, so the Assistant uses its schedule_save tool, which shows the user a card.
 
+# Port forwards (need the running PPM: a forward is a child of the server that starts it)
+ppm forward list                               # every tunnel on the machine; "this PPM" marks what stop takes
+ppm forward start 3000 --via tailscale         # or a public quick tunnel by default
+ppm forward stop <pid>                         # only a forward this PPM started, never another program's
+# forward start is refused from an AI chat; the Assistant's port_forward_start shows a card.
+
+# Group chats and agent teams
+ppm group-chat create Crew --leader Lead --member Dev -p <project>
+ppm group-chat show <id>                       # members and their ids
+ppm group-chat message <id> "Plan the release" # needs the running PPM, where the agents reply
+ppm teams list                                 # then: teams delete <name>
+# create, members add, message and resume are refused from an AI chat: they start AI-to-AI turns.
+
+# PPM Cloud link and alias (through the running PPM, which starts its heartbeat at once)
+ppm cloud link                                 # after `ppm cloud login`; then: cloud unlink
+ppm cloud alias set macbook                    # or: cloud alias remove
+# link and alias set are refused from an AI chat: each makes a lasting public address.
+
+# Backups: `ppm restore` (with or without --force) is refused from an AI chat; `restore --list` is not.
+
 # `config set` goes through the running PPM that holds the database; with none running it
 # writes the database directly and says so. Pick a dev profile (ppm.dev.db), or one server
 # when several share a database:
