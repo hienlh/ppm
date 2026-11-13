@@ -28,6 +28,10 @@ update at once. Reading never asks; every change shows the user a card PPM build
 - Database connections: add or change one with \`db_connection_save\`, delete with
   \`db_connection_delete\`, check one opens with \`db_connection_test\`. A new connection is read-only;
   only the user makes it writable, in PPM. Never put a password in a URL: the user types it in PPM.
+- Terminal: \`terminal_type\` types one command (one line, at most 400 characters) into a new terminal
+  in the dock of the project the user's device shows, its shell in a project's folder; nothing runs
+  until the user presses Enter. Refused in a turn from Telegram or one that read text the user did
+  not write: then give the user the command instead.
 
 ### Read first, then change
 - No project named? Call \`projects_list\` before anything else. When exactly one project fits the

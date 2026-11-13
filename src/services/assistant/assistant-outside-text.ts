@@ -9,18 +9,20 @@
  */
 import {
   CLAUDE_ASSISTANT_MCP_PREFIX, CODEX_ASSISTANT_MCP_SERVER, NOTEBOOK_ADD_TOOL, NOTEBOOK_DELETE_TOOL, NOTEBOOK_EDIT_TOOL,
-  PPM_CLI_REFERENCE_TOOL, PROJECT_ADD_TOOL, PROJECTS_LIST_TOOL,
+  PPM_CLI_REFERENCE_TOOL, PROJECT_ADD_TOOL, PROJECTS_LIST_TOOL, TERMINAL_TYPE_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import { CLAUDE_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_SERVER } from "../../shared/session-collab.ts";
 
 /**
  * The Assistant's own tools that answer only with PPM's own data or the user's: the project list
  * (names the user registered), adding a project (it answers with the folder and name the user just
- * approved), PPM's fixed CLI reference, and the notebook (whose lines are already in every turn's
- * context, marked by who wrote them).
+ * approved), PPM's fixed CLI reference, the notebook (whose lines are already in every turn's
+ * context, marked by who wrote them), and typing into a terminal (it answers with PPM's own words,
+ * the project and folder, never what the shell printed).
  */
 const OWN_TOOLS_WITHOUT_OUTSIDE_TEXT: ReadonlySet<string> = new Set([
   PROJECTS_LIST_TOOL, PROJECT_ADD_TOOL, PPM_CLI_REFERENCE_TOOL, NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,
+  TERMINAL_TYPE_TOOL,
 ]);
 
 /**

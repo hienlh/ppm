@@ -72,7 +72,8 @@ describe("assistant MCP endpoint", () => {
     // Setting and stopping a watch changes only PPM's own record of what to report, like navigation.
     // So do the notebook's add and edit; deleting a line is the one change there that loses text.
     // Adding a project asks first but takes nothing away, so it is not destructive either.
-    const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab", "chat_watch", "chat_unwatch", "notebook_add", "notebook_edit", "project_add"]);
+    // Typing a line into a new terminal runs nothing until the user presses Enter, so it takes nothing away.
+    const navigation = new Set(["ui_open_tab", "ui_focus_tab", "ui_switch_project", "ui_close_tab", "chat_watch", "chat_unwatch", "notebook_add", "notebook_edit", "project_add", "terminal_type"]);
     const writes = new Set(["db_query", "chat_answer_approval", "notebook_delete"]);
     const names = list.result.tools.map((t: { name: string }) => t.name);
     expect(names).toEqual(expect.arrayContaining(["chats_attention", "chat_answer_approval", "ppm_cli_reference", "chat_changes", "chat_changes_answer"]));
@@ -81,8 +82,8 @@ describe("assistant MCP endpoint", () => {
     expect(names).not.toContain("chat_start");
     // The git, schedule, tunnel, project, chat and connection families annotate their own tools, checked beside each family.
     const familyTools = new Set<string>([...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...PROJECT_TOOLS, ...CHAT_TOOLS, ...DB_CONNECTION_TOOLS]);
-    expect(names.slice(-(PROJECT_TOOLS.length + CHAT_TOOLS.length + DB_CONNECTION_TOOLS.length)))
-      .toEqual([...PROJECT_TOOLS, ...CHAT_TOOLS, ...DB_CONNECTION_TOOLS]);
+    expect(names.slice(-(PROJECT_TOOLS.length + CHAT_TOOLS.length + DB_CONNECTION_TOOLS.length + 1)))
+      .toEqual([...PROJECT_TOOLS, ...CHAT_TOOLS, ...DB_CONNECTION_TOOLS, "terminal_type"]);
     // History changes and branch deletion can lose work, so both say so.
     const annotations = (name: string) => list.result.tools.find((t: { name: string }) => t.name === name)?.annotations;
     for (const name of ["git_history", "git_branch"]) {
@@ -92,6 +93,7 @@ describe("assistant MCP endpoint", () => {
     expect(annotations("db_connection_save")).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
     expect(annotations("db_connection_delete")).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
     expect(annotations("db_connection_test")).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: true });
+    expect(annotations("terminal_type")).toEqual({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
     for (const tool of list.result.tools) {
       if (familyTools.has(tool.name)) continue;
       if (navigation.has(tool.name)) expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
@@ -122,7 +124,8 @@ describe("assistant MCP endpoint", () => {
     const opened = (sessionId: string) => assistantTurnProvenance.noteMessage({ sessionId, text: "tell the manager", origin: "ws" });
     const clean = assistantSession();
     opened(clean);
-    for (const name of ["projects_list", "ppm_cli_reference"]) await callAssistantTool({ sessionId: clean }, name, {});
+    // Typing into a terminal answers with PPM's own words, never what the shell printed.
+    for (const name of ["projects_list", "ppm_cli_reference", "terminal_type"]) await callAssistantTool({ sessionId: clean }, name, {});
     expect(assistantTurnProvenance.provenance(clean).untrusted).toBe(false);
     // Chat titles, tab titles, a git family read and a chat's file changes all carry text the user did not write.
     for (const name of ["chat_list_sessions", "ui_get_state", GIT_TOOLS[0]!, "chat_changes"]) {

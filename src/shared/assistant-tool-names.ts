@@ -35,11 +35,13 @@ export const CHAT_LIST_WATCHES_TOOL = "chat_list_watches";
 export const NOTEBOOK_ADD_TOOL = "notebook_add";
 export const NOTEBOOK_EDIT_TOOL = "notebook_edit";
 export const NOTEBOOK_DELETE_TOOL = "notebook_delete";
+/** Types one line into a new terminal for the user to run; follows `run_in_terminal`'s switch. */
+export const TERMINAL_TYPE_TOOL = "terminal_type";
 
 /**
  * Every tool the endpoint serves, in the order `tools/list` gives them. The git, schedule, tunnel,
- * project, chat and database-connection families keep their names in their own files and come last, in that order — the order
- * `ASSISTANT_TOOL_DEFINITIONS` spreads their definitions in. Opening and messaging the user's
+ * project, chat and database-connection families keep their names in their own files and come next, in that order — the order
+ * `ASSISTANT_TOOL_DEFINITIONS` spreads their definitions in — and `terminal_type` comes last. Opening and messaging the user's
  * chats is not here: the Assistant uses PPM's session tools (`ppm-sessions`) for that.
  */
 export const ASSISTANT_TOOLS = [
@@ -51,6 +53,7 @@ export const ASSISTANT_TOOLS = [
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
   NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,
   ...GIT_TOOLS, ...SCHEDULE_TOOLS, ...TUNNEL_TOOLS, ...PROJECT_TOOLS, ...CHAT_TOOLS, ...DB_CONNECTION_TOOLS,
+  TERMINAL_TYPE_TOOL,
 ] as const;
 export type AssistantToolName = (typeof ASSISTANT_TOOLS)[number];
 

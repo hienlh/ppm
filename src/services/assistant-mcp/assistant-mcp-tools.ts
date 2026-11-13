@@ -13,6 +13,7 @@ import { PROJECT_TOOL_DEFINITIONS } from "./assistant-project-tool-definitions.t
 import { CHAT_TOOL_DEFINITIONS } from "./assistant-chat-tool-definitions.ts";
 import { DB_CONNECTION_TOOL_DEFINITIONS } from "./assistant-db-connection-tool-definitions.ts";
 import { NOTEBOOK_TOOL_DEFINITIONS } from "./assistant-notebook-tool-definitions.ts";
+import { TERMINAL_TYPE_TOOL_DEFINITION } from "./assistant-terminal-type-tool-definition.ts";
 
 /**
  * The tools the Assistant's MCP endpoint serves, and how long a call may take. The names each
@@ -227,4 +228,5 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
   ...PROJECT_TOOL_DEFINITIONS,
   ...CHAT_TOOL_DEFINITIONS,
   ...DB_CONNECTION_TOOL_DEFINITIONS,
+  TERMINAL_TYPE_TOOL_DEFINITION,
 ] as const;
