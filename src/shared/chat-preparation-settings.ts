@@ -10,6 +10,9 @@
  */
 export interface ChatPreparationProviderSettings {
   permission_mode?: string;
+  /** The model and effort a new chat runs at until one is picked, shown on its chip before the session exists. */
+  model?: string;
+  effort?: string;
 }
 
 export interface ChatPreparationSettings {
