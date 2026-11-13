@@ -83,6 +83,9 @@ export async function registerLaterCommandGroups(program: Command): Promise<void
   const { registerSystemCommands } = await import("./commands/system-cmd.ts");
   registerSystemCommands(program);
 
+  const { registerDesignCommands } = await import("./commands/design-cmd.ts");
+  registerDesignCommands(program);
+
   const { registerScheduleCommands } = await import("./commands/schedule-cmd.ts");
   registerScheduleCommands(program);
 

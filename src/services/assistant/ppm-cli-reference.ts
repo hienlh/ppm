@@ -107,6 +107,9 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "the database directly and say so.",
     `- ${list(commandPathsWithRouting("server"))}`,
     "- schedule run-now: prefer the schedule_run_now tool",
+    "- schedule add/edit/enable: refused from an AI chat; use schedule_save (the user sees a card). rm and disable: prefer schedule_delete and schedule_save",
+    "- design delete only says what would go unless given --yes; design export saves a file with -o",
+    "- logs report draft prints a draft; posting it on GitHub stays with the user",
     "- projects add/rename/move/remove: prefer project_add, project_update and project_remove",
     "- chat stop/rename/pin/tag/read/delete: prefer chat_stop, chat_organize and chat_delete",
     "- chat stop sends the stop PPM's Stop button sends; chat delete stops a running turn first and deletes nothing if it does not stop",
@@ -189,13 +192,6 @@ ppm status
 ppm open
   Open PPM in browser
 
-ppm logs
-  View PPM daemon logs
-  -n, --tail <lines> — Number of lines to show [default: 50]
-  -f, --follow — Follow log output
-  -l, --level <level> — Only this level and above: debug, info, warn, error, fatal
-  --clear — Clear log file
-
 ppm report
   Report a bug on GitHub (pre-fills env info + logs)
 
@@ -225,6 +221,39 @@ ppm restore [backup]
   --list — List available snapshots and exit
   --force — Restore even while PPM is running (stop it first when you can)
   --json — Output as JSON
+\`\`\`
+## ppm logs — View PPM daemon logs
+\`\`\`
+ppm logs
+  View PPM daemon logs
+  -n, --tail <lines> — Number of lines to show [default: 50]
+  -f, --follow — Follow log output
+  -l, --level <level> — Only this level and above: debug, info, warn, error, fatal
+  --clear — Clear log file
+
+ppm logs issues
+  The errors and warnings of the last 24 hours, sorted into issues by AI (as the Logs window shows them)
+  --dismissed — Include dismissed issues
+  --json — Print JSON
+
+ppm logs issues analyze
+  Sort the errors and warnings no issue covers yet, and wait for the result
+  --full — Sort every pattern in the window again from scratch
+
+ppm logs issues auto <state>
+  Turn automatic sorting on or off
+
+ppm logs issues dismiss <id>
+  Hide an issue; a later sort keeps it hidden
+
+ppm logs issues undismiss [id]
+  Bring a dismissed issue back, or every one with --all
+  --all — Bring back every dismissed issue
+
+ppm logs report draft <ids...>
+  Draft a GitHub bug report from issues' lines with AI, and print it (nothing is posted)
+  --note <text> — What you saw, for the draft to use
+  --json — Print JSON
 \`\`\`
 ## ppm projects — Manage registered projects
 \`\`\`
@@ -906,6 +935,10 @@ ppm cloud alias remove
 \`\`\`
 ## ppm skills — Manage and inspect discovered skills & commands
 \`\`\`
+ppm skills
+  Manage and inspect discovered skills & commands
+  --project <path> — Project path [default: the current directory]
+
 ppm skills list
   List all discovered skills and commands
   --json — JSON output
@@ -1088,6 +1121,11 @@ ppm jira watch test <id>
 ppm jira watch pull [id]
   Manual pull (one watcher or all enabled)
 
+ppm jira results
+  View Jira watch results
+  --watcher <id> — Filter by watcher ID
+  --status <status> — Filter by status
+
 ppm jira results delete <id>
   Soft-delete result
 
@@ -1136,20 +1174,76 @@ ppm system service <nameOrAction> [name]
   --log — Print its recent log lines too
   --json — Print JSON
 \`\`\`
+## ppm design — A project's designs: list, create, rename, delete, history, restore, export
+\`\`\`
+ppm design list
+  List the project's designs, newest first
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --json — Print the route's answer as JSON
+
+ppm design create <title>
+  Create an empty design (the AI fills it from a design chat)
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --json — Print the route's answer as JSON
+  --kind <kind> — page or slides [default: page]
+  --system <id> — The app it belongs to (default: the project's default app)
+
+ppm design rename <slug> <title>
+  Change a design's title (its folder keeps its slug)
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --json — Print the route's answer as JSON
+
+ppm design delete <slug>
+  Delete a design's folder and its history; without --yes, only says what would go
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --json — Print the route's answer as JSON
+  -y, --yes — Delete it
+
+ppm design history <slug>
+  List a design's snapshots, newest first
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --json — Print the route's answer as JSON
+
+ppm design restore <slug> <snapshotId>
+  Put a design back to a snapshot (the current state is kept as a snapshot first)
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --json — Print the route's answer as JSON
+
+ppm design export <slug>
+  Save a design as a zip of its folder, or as one self-contained HTML file
+  -p, --project <name> — Project name or path (default: the project the current folder is in)
+  --json — Print the route's answer as JSON
+  --zip — The design's folder as a zip
+  --html — One self-contained HTML file of its entry page
+  -o, --output <file> — Where to save it (required)
+\`\`\`
 ## ppm schedule — Scheduled Claude agents (cron) and script schedules
 \`\`\`
 ppm schedule add
-  Add a scheduled agent (--prompt) or a script schedule (--script). Cron uses local timezone. Do not embed secrets in --prompt.
+  Add a scheduled agent (--prompt) or a script schedule (--script). Cron uses local timezone. Do not embed secrets in --prompt. Refused from an AI chat (use schedule_save).
   --name <name> — Schedule name (required)
   --cron <expr> — Cron expression (local timezone, e.g. "0 7 * * *"; a script may add seconds first)
   --project <nameOrPath> — Project name or path (required)
   --prompt <text> — Prompt sent to the agent each run
-  --script <file> — JavaScript module run each tick, or kept running (needs a running PPM server)
+  --script <file> — JavaScript module run each tick, or kept running
   --mode <mode> — Script mode: tick (on the cron) or always-on [default: tick]
   --permission-mode <mode> — Permission mode [default: bypassPermissions]
   --max-turns <n> — Max turns per run (prompt only)
   --timeout <ms> — Timeout per run in ms (default 1800000 for a prompt, 300000 for a script tick)
   --disabled — Create disabled
+
+ppm schedule edit <id>
+  Change a schedule: only the options given change. Refused from an AI chat (use schedule_save).
+  --name <name> — Schedule name
+  --description <text> — Description
+  --cron <expr> — Cron expression (local timezone)
+  --project <nameOrPath> — Project name or path
+  --prompt <text> — Prompt sent to the agent each run (prompt schedules)
+  --script <file> — The script to run from now on (script schedules)
+  --mode <mode> — Script mode: tick or always-on
+  --permission-mode <mode> — Permission mode
+  --max-turns <n> — Max turns per run (prompt only)
+  --timeout <ms> — Timeout per run in ms
 
 ppm schedule list
   List schedules
@@ -1160,7 +1254,7 @@ ppm schedule rm <id>
   -y, --yes — Skip confirmation
 
 ppm schedule enable <id>
-  Enable a schedule
+  Enable a schedule. Refused from an AI chat (use schedule_save).
 
 ppm schedule disable <id>
   Disable a schedule

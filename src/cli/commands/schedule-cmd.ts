@@ -1,90 +1,25 @@
-/** `ppm schedule` CLI — manage scheduled Claude agents (cron) and script schedules. */
-import { readFileSync } from "node:fs";
+/**
+ * `ppm schedule` CLI — manage scheduled Claude agents (cron) and script schedules. Every write goes
+ * through the running PPM's `/api/schedules` (`schedule-cmd-write.ts`); reads come from the
+ * database, with what a process is doing asked of the server.
+ */
 import { Command } from "commander";
 import type { ScheduleView } from "../../types/scheduler.ts";
-import { api, C, fail, serverApi, ServerDownError, statusText } from "./schedule-cmd-api.ts";
+import { api, C, fail, serverApi, statusText } from "./schedule-cmd-api.ts";
 import { registerScheduleTemplateCommands } from "./schedule-cmd-template.ts";
+import { refuseScheduleWriteInAiChat, registerScheduleWriteCommands, scheduleWrite } from "./schedule-cmd-write.ts";
 
 async function loadDeps() {
   const { configService } = await import("../../services/config.service.ts");
-  configService.load();
+  if (!configService.isLoaded) configService.load();
   const db = await import("../../services/scheduler-db.service.ts");
   return { configService, db };
-}
-
-/**
- * A script schedule's process is the server's: a change to one goes through the server, which
- * starts or stops it. With no server running there is no process, and the database will do.
- */
-async function viaServer(kind: string, method: string, path: string, body?: unknown): Promise<boolean> {
-  if (kind !== "script") return false;
-  try {
-    await serverApi(method, path, body);
-    return true;
-  } catch (e) {
-    if (e instanceof ServerDownError) return false;
-    return fail((e as Error).message);
-  }
 }
 
 export function registerScheduleCommands(program: Command): void {
   const schedule = program.command("schedule").description("Scheduled Claude agents (cron) and script schedules");
 
-  schedule
-    .command("add")
-    .description("Add a scheduled agent (--prompt) or a script schedule (--script). Cron uses local timezone. Do not embed secrets in --prompt.")
-    .requiredOption("--name <name>", "Schedule name")
-    .option("--cron <expr>", "Cron expression (local timezone, e.g. \"0 7 * * *\"; a script may add seconds first)")
-    .requiredOption("--project <nameOrPath>", "Project name or path")
-    .option("--prompt <text>", "Prompt sent to the agent each run")
-    .option("--script <file>", "JavaScript module run each tick, or kept running (needs a running PPM server)")
-    .option("--mode <mode>", "Script mode: tick (on the cron) or always-on", "tick")
-    .option("--permission-mode <mode>", "Permission mode", "bypassPermissions")
-    .option("--max-turns <n>", "Max turns per run (prompt only)")
-    .option("--timeout <ms>", "Timeout per run in ms (default 1800000 for a prompt, 300000 for a script tick)")
-    .option("--disabled", "Create disabled")
-    .action(async (opts) => {
-      try {
-        const { configService, db } = await loadDeps();
-        const { getProjects } = await import("../../services/db.service.ts");
-        const project = getProjects().find((p) => p.name === opts.project || p.path === opts.project);
-        if (!project) fail(`Project not found: ${opts.project}`);
-
-        if (opts.script) {
-          if (opts.prompt || opts.maxTurns) fail("--prompt and --max-turns are for a prompt schedule, not --script");
-          let script = "";
-          try { script = readFileSync(opts.script, "utf8"); } catch { fail(`Cannot read ${opts.script}`); }
-          const created = await api<ScheduleView>("POST", "/schedules", {
-            name: opts.name, kind: "script", mode: opts.mode, project_path: project!.path, script,
-            permission_mode: opts.permissionMode, enabled: !opts.disabled,
-            ...(opts.cron && { cron_expr: opts.cron }),
-            ...(opts.timeout && { timeout_ms: Number(opts.timeout) }),
-          });
-          console.log(`${C.green}✓${C.reset} Schedule ${C.bold}#${created.id}${C.reset} created (${opts.mode}${created.next_fire_at ? `, next fire: ${created.next_fire_at}` : ""})`);
-          return;
-        }
-        if (!opts.prompt || !opts.cron) fail("--prompt and --cron are required (or --script for a script schedule)");
-        if (opts.mode !== "tick") fail("A prompt schedule runs on its cron; --mode is for --script");
-        const { Cron } = await import("croner");
-        try { new Cron(opts.cron); } catch (e) { fail(`Invalid cron: ${(e as Error).message}`); }
-
-        const id = db.insertSchedule({
-          name: opts.name,
-          cron_expr: opts.cron,
-          provider_id: configService.get("ai").default_provider,
-          project_path: project!.path,
-          prompt: opts.prompt,
-          permission_mode: opts.permissionMode,
-          max_turns: opts.maxTurns ? Number(opts.maxTurns) : null,
-          timeout_ms: Number(opts.timeout) || 1_800_000,
-          enabled: !opts.disabled,
-          next_fire_at: new Cron(opts.cron).nextRun()?.toISOString() ?? null,
-        });
-        console.log(`${C.green}✓${C.reset} Schedule ${C.bold}#${id}${C.reset} created (next fire: ${db.getSchedule(id)?.next_fire_at ?? "—"})`);
-      } catch (e) {
-        fail(e instanceof Error ? e.message : String(e));
-      }
-    });
+  registerScheduleWriteCommands(schedule, loadDeps);
 
   schedule
     .command("list")
@@ -120,30 +55,28 @@ export function registerScheduleCommands(program: Command): void {
         const { confirm } = await import("@inquirer/prompts");
         if (!(await confirm({ message: `Delete schedule #${id} "${s!.name}" and its run history?` }))) return;
       }
-      if (!(await viaServer(s!.kind, "DELETE", `/schedules/${id}`))) {
+      await scheduleWrite("DELETE", `/schedules/${id}`, undefined, async () => {
         db.deleteSchedule(Number(id));
         if (s!.kind === "script") (await import("../../services/schedule-script/script-files.ts")).removeRunDir(Number(id));
-      }
+      });
       console.log(`${C.green}✓${C.reset} Schedule #${id} deleted`);
     });
 
   for (const action of ["enable", "disable"] as const) {
     schedule
       .command(`${action} <id>`)
-      .description(`${action[0]!.toUpperCase()}${action.slice(1)} a schedule`)
+      .description(action === "enable" ? "Enable a schedule. Refused from an AI chat (use schedule_save)." : "Disable a schedule")
       .action(async (id: string) => {
+        const enabling = action === "enable";
+        if (enabling) refuseScheduleWriteInAiChat("enable");
         const { db } = await loadDeps();
         const s = db.getSchedule(Number(id));
         if (!s) fail(`Schedule not found: ${id}`);
-        const enabling = action === "enable";
-        if (!(await viaServer(s!.kind, "PATCH", `/schedules/${id}`, { enabled: enabling }))) {
-          const { Cron } = await import("croner");
-          db.updateSchedule(Number(id), {
-            enabled: enabling ? 1 : 0,
-            // Recompute on enable so it doesn't fire immediately off a stale timestamp
-            ...(enabling && s!.mode === "tick" && { next_fire_at: new Cron(s!.cron_expr).nextRun()?.toISOString() ?? null }),
-          });
-        }
+        await scheduleWrite("PATCH", `/schedules/${id}`, { enabled: enabling }, async () => {
+          // The route's rules: turning one on works out its next fire, and refuses a script missing inputs.
+          const { scheduleChangesFrom } = await import("../../services/scheduler-edit.ts");
+          db.updateSchedule(Number(id), scheduleChangesFrom(s!, { enabled: enabling }));
+        });
         console.log(`${C.green}✓${C.reset} Schedule #${id} ${action}d`);
       });
   }

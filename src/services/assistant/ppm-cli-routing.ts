@@ -50,16 +50,19 @@ const SERVER = [
   "db driver list", "db driver install", "db driver remove",
   "jira config set", "jira config show", "jira config remove", "jira config test",
   "jira watch add", "jira watch list", "jira watch enable", "jira watch disable", "jira watch remove",
-  "jira watch test", "jira watch pull", "jira results delete", "jira track",
+  "jira watch test", "jira watch pull", "jira results", "jira results delete", "jira track",
   "system processes", "system process", "system kill", "system signal", "system resources",
   "system services", "system service",
+  "design list", "design create", "design rename", "design delete", "design history", "design restore", "design export",
+  "logs issues", "logs issues analyze", "logs issues auto", "logs issues dismiss", "logs issues undismiss", "logs report draft",
+  "schedule add", "schedule edit", "schedule rm", "schedule enable", "schedule disable",
 ];
 
 const DIRECT_ALLOWED = [
   "start", "stop", "down", "restart", "status", "open", "logs", "report", "init", "upgrade",
   "autostart enable", "autostart disable", "autostart status",
   "cloud login", "cloud logout", "cloud status", "cloud devices", "cloud alias get",
-  "skills list", "skills search", "skills info", "export skill",
+  "skills", "skills list", "skills search", "skills info", "export skill",
   "backup", "restore",
   "config get", "projects list", "accounts add",
   "chat list", "chat send", "chat resume",
@@ -70,7 +73,6 @@ const DIRECT_ALLOWED = [
 const DIRECT_PENDING = [
   "cloud alias set", "cloud alias remove",
   "db run",
-  "schedule add", "schedule rm", "schedule enable", "schedule disable",
 ];
 
 export const CLI_COMMAND_ROUTING: Readonly<Record<string, CliRouting>> = Object.freeze({

@@ -76,10 +76,21 @@ function printTarget(t: Target, baseUrl: string): void {
 export interface ServerRequestOptions { timeoutMs?: number; progress?: boolean; timeoutHint?: string }
 
 /**
+ * `raw` answers a successful response as it arrived, body unread — a download the caller saves
+ * with `Bun.write(file, response)`, never through `.stream()`. A refusal is still read as the
+ * route's JSON error and thrown. The time limit covers reading the body too.
+ */
+export interface RawRequestOptions extends ServerRequestOptions { raw: true }
+
+/**
  * `/api<path>` on the running PPM that holds this command's database. A `FormData` body is sent
  * as a multipart form (an upload); anything else as JSON.
  */
-export async function serverRequest<T>(method: string, path: string, body?: unknown, opts: ServerRequestOptions = {}): Promise<T> {
+export async function serverRequest(method: string, path: string, body: unknown, opts: RawRequestOptions): Promise<Response>;
+export async function serverRequest<T>(method: string, path: string, body?: unknown, opts?: ServerRequestOptions): Promise<T>;
+export async function serverRequest<T>(
+  method: string, path: string, body?: unknown, opts: ServerRequestOptions & { raw?: boolean } = {},
+): Promise<T | Response> {
   const t = await currentTarget();
   if (method !== "GET") {
     const refusal = aiChatWriteRefusal(t.dbFile);
@@ -101,6 +112,7 @@ export async function serverRequest<T>(method: string, path: string, body?: unkn
       const res = await fetch(`${baseUrl}/api${path}`, {
         method, headers, body: payload, redirect: "error", signal: AbortSignal.timeout(timeoutMs),
       });
+      if (opts.raw && res.ok) return { res, json: null };
       return { res, json: await res.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null };
     } catch (e) {
       if (isTimeoutError(e)) {
@@ -110,6 +122,7 @@ export async function serverRequest<T>(method: string, path: string, body?: unkn
     }
   }, opts.progress === true);
   const { res, json } = answer;
+  if (opts.raw && res.ok) return res;
   if (!json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
   return json.data as T;
 }

@@ -40,12 +40,36 @@ export function projectRequest<T>(method: string, project: string, sub: string, 
   return apiRequest<T>(method, `/project/${encodeURIComponent(project)}${sub}`, body, opts);
 }
 
+/**
+ * `GET /api<path>` answered as a download: the server's response, body unread, or the same route's
+ * here when no server holds the database. The caller saves it with `Bun.write(file, response)`.
+ */
+export async function apiDownload(path: string, opts: ServerRequestOptions = {}): Promise<Response> {
+  try {
+    return await serverRequest("GET", path, undefined, { ...opts, raw: true });
+  } catch (e) {
+    if (!(e instanceof ServerDownError)) throw e;
+  }
+  const res = await routeResponseHere("GET", path, undefined);
+  if (res.ok) return res;
+  const json = await res.json().catch(() => null) as { error?: string } | null;
+  throw new Error(json?.error ?? `HTTP ${res.status}`);
+}
+
 async function runRouteHere<T>(method: string, path: string, body: unknown): Promise<T> {
+  const res = await routeResponseHere(method, path, body);
+  const json = await res.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null;
+  if (!json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
+  return json.data as T;
+}
+
+async function routeResponseHere(method: string, path: string, body: unknown): Promise<Response> {
   const { configService } = await import("../../services/config.service.ts");
   if (!configService.isLoaded) configService.load();
   const { Hono } = await import("hono");
   const { projectScopedRouter } = await import("../../server/routes/project-scoped.ts");
   const { ANNOUNCE_CHAT_LIST_ENV_KEY } = await import("../../server/routes/chat-list-broadcast.ts");
+  const { ANNOUNCE_DESIGN_LIST_ENV_KEY } = await import("../../server/routes/designs-broadcast.ts");
   const app = new Hono();
   app.route("/api/project/:projectName", projectScopedRouter);
   const init: RequestInit = { method };
@@ -54,8 +78,6 @@ async function runRouteHere<T>(method: string, path: string, body: unknown): Pro
     init.headers = { "Content-Type": "application/json" };
   }
   // No PPM runs to show the change, so there is nobody to announce it to.
-  const res = await app.request(`http://ppm.local/api${path}`, init, { [ANNOUNCE_CHAT_LIST_ENV_KEY]: () => {} });
-  const json = await res.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null;
-  if (!json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
-  return json.data as T;
+  const silent = () => {};
+  return app.request(`http://ppm.local/api${path}`, init, { [ANNOUNCE_CHAT_LIST_ENV_KEY]: silent, [ANNOUNCE_DESIGN_LIST_ENV_KEY]: silent });
 }

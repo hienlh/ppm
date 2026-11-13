@@ -20,6 +20,8 @@ const ROOT = resolve(import.meta.dir, "..");
 
 const isHidden = (c: Command) => (c as unknown as { _hidden?: boolean })._hidden === true;
 const visible = (c: Command) => c.commands.filter((s) => !isHidden(s));
+/** A group that also runs by itself (`ppm logs` beside `ppm logs issues`) is a command of its own too. */
+const runsItself = (c: Command) => (c as unknown as { _actionHandler?: unknown })._actionHandler != null;
 
 function formatArg(a: Argument): string {
   const name = `${a.name()}${a.variadic ? "..." : ""}`;
@@ -48,7 +50,8 @@ function formatCommand(prefix: string, cmd: Command): string {
 function leaves(cmd: Command, prefix: string): string[] {
   const subs = visible(cmd);
   if (!subs.length) return [formatCommand(prefix, cmd)];
-  return subs.flatMap((s) => leaves(s, `${prefix} ${s.name()}`));
+  const own = runsItself(cmd) ? [formatCommand(prefix, cmd)] : [];
+  return [...own, ...subs.flatMap((s) => leaves(s, `${prefix} ${s.name()}`))];
 }
 
 /** Every runnable command's path (`db driver install`), for the routing table's test. */
@@ -56,7 +59,8 @@ export async function cliCommandPaths(): Promise<string[]> {
   const { buildProgram } = await import("../src/index.ts");
   const walk = (c: Command, path: string[]): string[] => {
     const subs = visible(c);
-    return subs.length ? subs.flatMap((s) => walk(s, [...path, s.name()])) : [path.join(" ")];
+    if (!subs.length) return [path.join(" ")];
+    return [...(runsItself(c) ? [path.join(" ")] : []), ...subs.flatMap((s) => walk(s, [...path, s.name()]))];
   };
   return visible(await buildProgram()).flatMap((s) => walk(s, [s.name()]));
 }

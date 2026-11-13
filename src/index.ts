@@ -100,7 +100,7 @@ export async function buildProgram(): Promise<Command> {
       await openBrowser();
     });
 
-  program
+  const logs = program
     .command("logs")
     .description("View PPM daemon logs")
     .option("-n, --tail <lines>", "Number of lines to show", "50")
@@ -111,6 +111,8 @@ export async function buildProgram(): Promise<Command> {
       const { showLogs } = await import("./cli/commands/logs.ts");
       await showLogs(options);
     });
+  const { registerLogsSubcommands } = await import("./cli/commands/logs-issues-cmd.ts");
+  registerLogsSubcommands(logs);
 
   program
     .command("report")
