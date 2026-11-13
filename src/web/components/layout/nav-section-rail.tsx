@@ -245,7 +245,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
           document.body,
         )}
         {/* Not sidebar tabs — these open their own floating windows. */}
-        <FooterUtil icon={FolderTree} label="File Explorer" featureBadge="os-explorer" onClick={() => void openExplorer()} />
+        <FooterUtil icon={FolderTree} label="File Explorer" onClick={() => void openExplorer()} />
         {remoteDesktopAvailable && (
           <FooterUtil icon={MonitorSmartphone} label="Remote Desktop" featureBadge="remote-desktop" onClick={openRemoteDesktop} />
         )}
@@ -257,6 +257,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
           icon={Bot}
           label={assistantWaiting ? `PPM Assistant · ${assistantWaiting} waiting` : "PPM Assistant"}
           alert={assistantWaiting}
+          featureBadge="assistant"
           active={assistantShown}
           onClick={toggleAssistant}
         />

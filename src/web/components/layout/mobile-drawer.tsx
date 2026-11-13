@@ -137,7 +137,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
   // line by itself — one lonely icon under four, which is what a "grid" costs here.
   const footerTiles: FooterTileDef[] = [
     // Not a sidebar tab — the explorer opens as its own full-screen sheet.
-    { icon: FolderTree, label: "Files", badge: "os-explorer", onClick: () => { onClose(); void openExplorer(); } },
+    { icon: FolderTree, label: "Files", onClick: () => { onClose(); void openExplorer(); } },
     ...(remoteDesktopAvailable
       ? [{ icon: MonitorSmartphone, label: "Remote", badge: "remote-desktop", onClick: () => { onClose(); openRemoteDesktop(); } } satisfies FooterTileDef]
       : []),
@@ -148,7 +148,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
     // Also not a sidebar tab — settings open as their own tab here, window on desktop.
     { icon: Settings, label: "Settings", onClick: () => { onClose(); openSettings(); } },
     // The Assistant as a full-screen tab; the red count is what waits on the user.
-    { icon: Bot, label: "Assistant", alert: assistantWaiting, alertLabel: "waiting", onClick: () => { onClose(); openAssistant(); } },
+    { icon: Bot, label: "Assistant", badge: "assistant", alert: assistantWaiting, alertLabel: "waiting", onClick: () => { onClose(); openAssistant(); } },
     // Replaces Report Bug: a report is now made from the lines it is about.
     { icon: ScrollText, label: "Logs", alert: likelyBugs, alertLabel: likelyBugs === 1 ? "likely bug" : "likely bugs", onClick: () => { onClose(); openLogs(); } },
   ];

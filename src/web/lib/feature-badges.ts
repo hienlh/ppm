@@ -10,8 +10,8 @@ export type FeatureBadgeKind = "new" | "beta";
 export const FEATURE_BADGES = {
   /** Multi-agent group chat (Teams sidebar tab). */
   teams: "beta",
-  /** Floating OS-style file explorer window / mobile sheet, shipped in 0.18.0. */
-  "os-explorer": "new",
+  /** PPM Assistant — the global chat that runs each project's manager chat. */
+  assistant: "new",
   /** Remote Desktop — stream + control the host desktop in a floating window. */
   "remote-desktop": "beta",
   /** Design mode (Designs sidebar tab): design chat beside a live canvas, shipped in 0.23.0. */
