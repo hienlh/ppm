@@ -328,10 +328,10 @@ import { loopbackRoutes } from "./routes/oauth-loopback.ts";
 app.route("/api/loopback", loopbackRoutes);
 
 // API routes
-// Registered before every settings router, so it wraps them: a 2xx write to an allowlisted
-// section announces `settings:changed` and every open PPM refreshes that section.
-import { announceSettingsChanges } from "./routes/settings-broadcast.ts";
-app.use("/api/settings/*", announceSettingsChanges);
+// Registered before every settings, notifications and accounts router, so it wraps them: a 2xx
+// write to an allowlisted section announces `settings:changed` and every open PPM refreshes it.
+import { announceSettingsChanges, SETTINGS_BROADCAST_MOUNTS } from "./routes/settings-broadcast.ts";
+for (const mount of SETTINGS_BROADCAST_MOUNTS) app.use(`${mount}/*`, announceSettingsChanges);
 app.route("/api/settings", settingsRoutes);
 app.route("/api/settings", settingsConfigKeyRoutes);
 import { settingsProxyRoutes } from "./routes/settings-proxy.ts";

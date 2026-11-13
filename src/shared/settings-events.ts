@@ -10,6 +10,9 @@ export const SETTINGS_CHANGED_EVENT = "settings:changed";
 
 export const SETTINGS_EVENT_SECTIONS = [
   "theme", "themes", "ai", "keybindings", "proxy", "query-audit", "session-trace", "files",
+  // Notifications (what and when, ntfy, push devices), the notification bot and its chats,
+  // the Assistant's Telegram bot (`clawbot`), MCP servers, and the Claude and Codex accounts.
+  "notifications", "telegram", "clawbot", "mcp", "accounts",
 ] as const;
 
 export type SettingsSection = typeof SETTINGS_EVENT_SECTIONS[number];

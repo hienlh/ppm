@@ -13,21 +13,28 @@ import { settingsRoutes } from "../../../src/server/routes/settings.ts";
 import { settingsConfigKeyRoutes } from "../../../src/server/routes/settings-config-key.ts";
 import { settingsProxyRoutes } from "../../../src/server/routes/settings-proxy.ts";
 import { settingsThemesRoutes } from "../../../src/server/routes/settings-themes.ts";
+import { notificationRoutes } from "../../../src/server/routes/notifications.ts";
+import { mcpRoutes } from "../../../src/server/routes/mcp.ts";
+import { accountsRoutes } from "../../../src/server/routes/accounts.ts";
 import {
-  ANNOUNCE_SETTINGS_ENV_KEY, announceSettingsChanges, settingsSectionOf, settingsSectionOfConfigKey,
+  ANNOUNCE_SETTINGS_ENV_KEY, SETTINGS_BROADCAST_MOUNTS, announceSettingsChanges, settingsSectionOf, settingsSectionOfConfigKey,
 } from "../../../src/server/routes/settings-broadcast.ts";
 import { SETTINGS_EVENT_SECTIONS } from "../../../src/shared/settings-events.ts";
 
 const announced: string[] = [];
 const app = new Hono();
-app.use("/api/settings/*", announceSettingsChanges);
+for (const mount of SETTINGS_BROADCAST_MOUNTS) app.use(`${mount}/*`, announceSettingsChanges);
 app.route("/api/settings/themes", settingsThemesRoutes);
+app.route("/api/settings/mcp", mcpRoutes);
 app.route("/api/settings", settingsRoutes);
 app.route("/api/settings", settingsConfigKeyRoutes);
 app.route("/api/settings", settingsProxyRoutes);
+app.route("/api/notifications", notificationRoutes);
+app.route("/api/accounts", accountsRoutes);
 
+/** `path` under `/api/settings`, or a full `/api/...` path for the other routers. */
 async function call(method: string, path: string, body?: unknown): Promise<number> {
-  const res = await app.request(`/api/settings${path}`, {
+  const res = await app.request(path.startsWith("/api/") ? path : `/api/settings${path}`, {
     method,
     ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { "Content-Type": "application/json" } }),
   }, { [ANNOUNCE_SETTINGS_ENV_KEY]: (section: string) => announced.push(section) });
@@ -78,6 +85,22 @@ describe("settings:changed through the real routes", () => {
     expect(await call("PUT", "/config-key", { key: "device_name", value: "box" })).toBe(200);
     expect(announced).toEqual(["ai"]);
   });
+
+  it("announces notifications, MCP servers and account rotation, the bare list path included", async () => {
+    expect(await call("PUT", "/api/notifications/settings", { delay_seconds: 30 })).toBe(200);
+    expect(await call("POST", "/mcp", { name: "files", config: { command: "npx", args: ["x"] } })).toBe(201);
+    expect(await call("PUT", "/mcp/files", { command: "bunx" })).toBe(200);
+    expect(await call("DELETE", "/mcp/files")).toBe(200);
+    expect(await call("PUT", "/api/accounts/settings", { strategy: "fill-first" })).toBe(200);
+    expect(announced).toEqual(["notifications", "mcp", "mcp", "mcp", "accounts"]);
+  });
+
+  it("announces nothing for a removal that found nothing or an account pick", async () => {
+    expect(await call("DELETE", "/api/notifications/telegram/chats/12345")).toBe(404);
+    expect(await call("DELETE", "/mcp/missing")).toBe(404);
+    expect(await call("POST", "/api/accounts/pick")).toBe(200);
+    expect(announced).toEqual([]);
+  });
 });
 
 describe("settingsSectionOf", () => {
@@ -86,7 +109,10 @@ describe("settingsSectionOf", () => {
     expect(settingsSectionOf("GET", "/api/settings/ai/providers/status")).toBeNull();
     expect(settingsSectionOf("PUT", "/api/settings/ui-prefs")).toBeNull();
     expect(settingsSectionOf("PUT", "/api/settings/device-name")).toBeNull();
-    expect(settingsSectionOf("PUT", "/api/settings/mcp/x")).toBeNull();
+    expect(settingsSectionOf("GET", "/api/settings/mcp")).toBeNull();
+    expect(settingsSectionOf("POST", "/api/accounts/pick")).toBeNull();
+    expect(settingsSectionOf("POST", "/api/notifications/push/test")).toBeNull();
+    expect(settingsSectionOf("POST", "/api/settings/telegram/test")).toBeNull();
   });
 
   it("covers every section the event can name", () => {
@@ -94,8 +120,13 @@ describe("settingsSectionOf", () => {
       ["PUT", "/theme"], ["POST", "/themes"], ["PATCH", "/themes/custom-1"], ["DELETE", "/themes/custom-1"],
       ["PUT", "/ai"], ["PUT", "/keybindings"], ["PUT", "/proxy"], ["PUT", "/query-audit"],
       ["DELETE", "/query-audit/logs"], ["PUT", "/session-trace"], ["PATCH", "/files"],
-    ];
-    const seen = new Set(writes.map(([m, p]) => settingsSectionOf(m, `/api/settings${p}`)));
+      ["PUT", "/telegram"], ["PUT", "/clawbot"], ["DELETE", "/clawbot/paired/42"], ["PUT", "/mcp/x"],
+    ].map(([m, p]) => [m!, `/api/settings${p}`] as [string, string]);
+    writes.push(
+      ["PUT", "/api/notifications/ntfy"], ["DELETE", "/api/notifications/telegram/chats/42"],
+      ["DELETE", "/api/accounts/abc"], ["PUT", "/api/codex-accounts/strategy"],
+    );
+    const seen = new Set(writes.map(([m, p]) => settingsSectionOf(m, p)));
     expect([...seen].sort()).toEqual([...SETTINGS_EVENT_SECTIONS].sort());
   });
 

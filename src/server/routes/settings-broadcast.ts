@@ -4,12 +4,14 @@ import { SETTINGS_CHANGED_EVENT, type SettingsSection } from "../../shared/setti
 /**
  * Tells every open PPM that a settings section changed, after a write to one of the routes below
  * answers with a 2xx — whoever called it: a screen, the `ppm` CLI or another device. Registered on
- * `/api/settings/*` ahead of the settings routers.
+ * `/api/settings/*`, `/api/notifications/*`, `/api/accounts/*` and `/api/codex-accounts/*` ahead
+ * of the routers it wraps (`SETTINGS_BROADCAST_MOUNTS`).
  *
- * Only the writes listed in `WRITES` announce, each with its section. Everything else under
- * `/api/settings` stays quiet on purpose: `PUT /ui-prefs` is written on every sidebar drag and tab
- * switch, and a provider probe changes no setting, so announcing either would make every open
- * PPM refetch for nothing. A refused write changed nothing and announces nothing; a read never does.
+ * Only the writes listed in `WRITES` announce, each with its section. Everything else stays quiet
+ * on purpose: `PUT /ui-prefs` is written on every sidebar drag and tab switch, a provider probe
+ * changes no setting, and an account pick only moves the rotation, so announcing any of them
+ * would make every open PPM refetch for nothing. A refused write changed nothing and announces
+ * nothing; a read never does.
  *
  * The announcement goes out through `c.env.announceSettingsChanged` when the caller passes one
  * (the CLI running a route in its own process with no server to tell; tests), else on
@@ -17,29 +19,63 @@ import { SETTINGS_CHANGED_EVENT, type SettingsSection } from "../../shared/setti
  */
 export const ANNOUNCE_SETTINGS_ENV_KEY = "announceSettingsChanged";
 
+/** The route prefixes the middleware is registered on (each as `<prefix>/*`). */
+export const SETTINGS_BROADCAST_MOUNTS = ["/api/settings", "/api/notifications", "/api/accounts", "/api/codex-accounts"] as const;
+
 type Announce = (section: SettingsSection) => void;
 
-/** Method, path under `/api/settings`, and the section a 2xx answer to it changed. */
+/** Method, full path, and the section a 2xx answer to it changed. */
 const WRITES: ReadonlyArray<{ method: string; path: RegExp; section: SettingsSection }> = [
-  { method: "PUT", path: /^\/theme$/, section: "theme" },
-  { method: "POST", path: /^\/themes\/?$/, section: "themes" },
-  { method: "PATCH", path: /^\/themes\/[^/]+$/, section: "themes" },
-  { method: "DELETE", path: /^\/themes\/[^/]+$/, section: "themes" },
-  { method: "PUT", path: /^\/ai$/, section: "ai" },
-  { method: "PUT", path: /^\/keybindings$/, section: "keybindings" },
-  { method: "PUT", path: /^\/proxy$/, section: "proxy" },
-  { method: "PUT", path: /^\/query-audit$/, section: "query-audit" },
-  { method: "DELETE", path: /^\/query-audit\/logs$/, section: "query-audit" },
-  { method: "PUT", path: /^\/session-trace$/, section: "session-trace" },
-  { method: "PATCH", path: /^\/files$/, section: "files" },
+  { method: "PUT", path: /^\/api\/settings\/theme$/, section: "theme" },
+  { method: "POST", path: /^\/api\/settings\/themes\/?$/, section: "themes" },
+  { method: "PATCH", path: /^\/api\/settings\/themes\/[^/]+$/, section: "themes" },
+  { method: "DELETE", path: /^\/api\/settings\/themes\/[^/]+$/, section: "themes" },
+  { method: "PUT", path: /^\/api\/settings\/ai$/, section: "ai" },
+  { method: "PUT", path: /^\/api\/settings\/keybindings$/, section: "keybindings" },
+  { method: "PUT", path: /^\/api\/settings\/proxy$/, section: "proxy" },
+  { method: "PUT", path: /^\/api\/settings\/query-audit$/, section: "query-audit" },
+  { method: "DELETE", path: /^\/api\/settings\/query-audit\/logs$/, section: "query-audit" },
+  { method: "PUT", path: /^\/api\/settings\/session-trace$/, section: "session-trace" },
+  { method: "PATCH", path: /^\/api\/settings\/files$/, section: "files" },
+  // Notifications: what and when, the ntfy topic, the browsers receiving push.
+  { method: "PUT", path: /^\/api\/notifications\/settings$/, section: "notifications" },
+  { method: "PUT", path: /^\/api\/notifications\/ntfy$/, section: "notifications" },
+  { method: "DELETE", path: /^\/api\/notifications\/ntfy$/, section: "notifications" },
+  { method: "POST", path: /^\/api\/notifications\/push\/(subscribe|unsubscribe)$/, section: "notifications" },
+  // The notification bot: its token, its chats and its connect link.
+  { method: "PUT", path: /^\/api\/settings\/telegram$/, section: "telegram" },
+  { method: "POST", path: /^\/api\/notifications\/telegram\/connect$/, section: "telegram" },
+  { method: "DELETE", path: /^\/api\/notifications\/telegram\/connect$/, section: "telegram" },
+  { method: "DELETE", path: /^\/api\/notifications\/telegram\/chats\/[^/]+$/, section: "telegram" },
+  // The Assistant on Telegram, under PPMBot's `clawbot` routes.
+  { method: "PUT", path: /^\/api\/settings\/clawbot$/, section: "clawbot" },
+  { method: "DELETE", path: /^\/api\/settings\/clawbot\/paired\/[^/]+$/, section: "clawbot" },
+  { method: "PUT", path: /^\/api\/settings\/clawbot\/telegram$/, section: "clawbot" },
+  { method: "POST", path: /^\/api\/settings\/clawbot\/telegram\/connect$/, section: "clawbot" },
+  { method: "DELETE", path: /^\/api\/settings\/clawbot\/telegram\/connect$/, section: "clawbot" },
+  // MCP servers (the list's own auto-import on first read is a write inside a read: not announced).
+  { method: "POST", path: /^\/api\/settings\/mcp\/?$/, section: "mcp" },
+  { method: "POST", path: /^\/api\/settings\/mcp\/import$/, section: "mcp" },
+  { method: "PUT", path: /^\/api\/settings\/mcp\/[^/]+$/, section: "mcp" },
+  { method: "DELETE", path: /^\/api\/settings\/mcp\/[^/]+$/, section: "mcp" },
+  // Claude accounts: rotation settings, a rename or switch, a re-check, an add, a removal.
+  { method: "PUT", path: /^\/api\/accounts\/settings$/, section: "accounts" },
+  { method: "POST", path: /^\/api\/accounts\/?$/, section: "accounts" },
+  { method: "POST", path: /^\/api\/accounts\/(import|oauth\/exchange)$/, section: "accounts" },
+  { method: "POST", path: /^\/api\/accounts\/[^/]+\/verify$/, section: "accounts" },
+  { method: "PATCH", path: /^\/api\/accounts\/[^/]+$/, section: "accounts" },
+  { method: "DELETE", path: /^\/api\/accounts\/[^/]+$/, section: "accounts" },
+  // Codex accounts.
+  { method: "PUT", path: /^\/api\/codex-accounts\/strategy$/, section: "accounts" },
+  { method: "POST", path: /^\/api\/codex-accounts\/(api-key|import)$/, section: "accounts" },
+  { method: "PATCH", path: /^\/api\/codex-accounts\/[^/]+$/, section: "accounts" },
+  { method: "DELETE", path: /^\/api\/codex-accounts\/[^/]+$/, section: "accounts" },
 ];
 
-/** The section a write to `/api/settings<sub>` announces, or null when it announces nothing. */
+/** The section a write to `fullPath` (`/api/...`) announces, or null when it announces nothing. */
 export function settingsSectionOf(method: string, fullPath: string): SettingsSection | null {
-  const match = /^\/api\/settings(\/.*)?$/.exec(fullPath);
-  if (!match) return null;
-  const sub = match[1] ?? "/";
-  return WRITES.find((w) => w.method === method.toUpperCase() && w.path.test(sub))?.section ?? null;
+  const m = method.toUpperCase();
+  return WRITES.find((w) => w.method === m && w.path.test(fullPath))?.section ?? null;
 }
 
 /** The section a `config-key` write of `key` changed, for the few keys a settings pane shows. */
