@@ -15,12 +15,17 @@
 
 import { accountSelector } from "./account-selector.service.ts";
 import { getCodexAccount } from "./codex-account.service.ts";
+import { getAntigravityAccount } from "./antigravity-account.service.ts";
 import { setSessionAccount, setSessionCodexAccount, getSessionProvider, setSessionProvider } from "./db.service.ts";
 
 /** Whether this provider/account pair is one the server would route to on its own. */
 export function canBindAccount(providerId: string, accountId: string): boolean {
   if (providerId === "codex") {
     const acc = getCodexAccount(accountId);
+    return acc !== null && acc.status !== "disabled";
+  }
+  if (providerId === "antigravity") {
+    const acc = getAntigravityAccount(accountId);
     return acc !== null && acc.status !== "disabled";
   }
   return accountSelector.canServe(accountId);
@@ -36,6 +41,11 @@ export function canBindAccount(providerId: string, accountId: string): boolean {
 export function bindRefusalReason(providerId: string, accountId: string): string {
   if (providerId === "codex") {
     const acc = getCodexAccount(accountId);
+    if (!acc) return "That account no longer exists.";
+    return acc.status === "disabled" ? "That account is switched off." : "That account cannot serve this session.";
+  }
+  if (providerId === "antigravity") {
+    const acc = getAntigravityAccount(accountId);
     if (!acc) return "That account no longer exists.";
     return acc.status === "disabled" ? "That account is switched off." : "That account cannot serve this session.";
   }

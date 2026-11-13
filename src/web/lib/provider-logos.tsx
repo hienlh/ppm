@@ -131,6 +131,48 @@ export function GeminiLogo(props: ProviderLogoProps) {
   );
 }
 
+const ANTIGRAVITY_PATH =
+  "M12.0 2.8C10.1 2.8 8.95 4.1 8.2 6.0C7.25 8.4 6.5 11.8 5.25 15.3C4.55 17.25 3.45 18.95 2.2 20.15C1.85 20.5 1.95 21.05 2.45 21.18C2.95 21.3 3.7 20.95 4.45 20.4C6.05 19.05 7.25 17.15 8.55 15.0C9.5 13.45 10.65 12.75 12.0 12.75C13.35 12.75 14.5 13.45 15.45 15.0C16.75 17.15 17.95 19.05 19.55 20.4C20.3 20.95 21.05 21.3 21.55 21.18C22.05 21.05 22.15 20.5 21.8 20.15C20.55 18.95 19.45 17.25 18.75 15.3C17.5 11.8 16.75 8.4 15.8 6.0C15.05 4.1 13.9 2.8 12.0 2.8Z";
+
+export function AntigravityLogo(props: ProviderLogoProps) {
+  const id = useId();
+  // Google Antigravity "A" arch mark: a blue base with green-yellow (top-left),
+  // red-orange (top-right), and peach-gold (apex) radial washes.
+  const fills = [
+    `url(#${id}base)`,
+    `url(#${id}tl)`,
+    `url(#${id}tr)`,
+    `url(#${id}apex)`,
+  ];
+  return (
+    <Logo name="antigravity" {...props}>
+      <defs>
+        <linearGradient id={`${id}base`} gradientUnits="userSpaceOnUse" x1="12" x2="12" y1="9" y2="21.2">
+          <stop stopColor="#3186FF" />
+          <stop offset="1" stopColor="#4D9AF9" />
+        </linearGradient>
+        <radialGradient id={`${id}tl`} cx="8.6" cy="5.0" gradientUnits="userSpaceOnUse" r="7.5">
+          <stop stopColor="#FABC12" />
+          <stop offset="0.45" stopColor="#4BC76E" />
+          <stop offset="1" stopColor="#3FA3BD" stopOpacity="0" />
+        </radialGradient>
+        <radialGradient id={`${id}tr`} cx="15.2" cy="4.8" gradientUnits="userSpaceOnUse" r="7.5">
+          <stop stopColor="#F9543F" />
+          <stop offset="0.5" stopColor="#EB6E55" stopOpacity="0.75" />
+          <stop offset="1" stopColor="#808ADB" stopOpacity="0" />
+        </radialGradient>
+        <radialGradient id={`${id}apex`} cx="12" cy="3.0" gradientUnits="userSpaceOnUse" r="3.2">
+          <stop stopColor="#FBBE94" />
+          <stop offset="1" stopColor="#FBBE94" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      {fills.map((fill) => (
+        <path key={fill} d={ANTIGRAVITY_PATH} fill={fill} />
+      ))}
+    </Logo>
+  );
+}
+
 /**
  * Provider id → logo. An id absent here has no artwork and callers fall back:
  * the tab strip to its generic chat glyph, the pickers to a lettered tile.
@@ -140,4 +182,5 @@ export const PROVIDER_LOGOS: Record<string, ProviderLogo> = {
   codex: CodexLogo,
   cursor: CursorLogo,
   gemini: GeminiLogo,
+  antigravity: AntigravityLogo,
 };

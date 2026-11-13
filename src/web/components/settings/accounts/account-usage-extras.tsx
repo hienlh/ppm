@@ -16,7 +16,17 @@ import { AccountHint } from "./account-hint";
 
 export function ScopedBucketRows({ buckets }: { buckets?: ScopedLimitBucket[] }) {
   if (!buckets?.length) return null;
-  return <>{buckets.map((b) => <AccountBucketRow key={b.label} label={`Weekly (${b.label})`} bucket={b} />)}</>;
+  return (
+    <>
+      {buckets.map((b) => {
+        const label =
+          b.label.includes("·") || /\b(weekly|hour|session)\b/i.test(b.label)
+            ? b.label
+            : `Weekly (${b.label})`;
+        return <AccountBucketRow key={b.label} label={label} bucket={b} />;
+      })}
+    </>
+  );
 }
 
 /** "3 Nov" — the expiry is weeks out, so the time of day is noise. */

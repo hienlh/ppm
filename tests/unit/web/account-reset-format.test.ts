@@ -59,4 +59,15 @@ describe("bucketResetsAt", () => {
     expect(bucketResetsAt({ ...base, resetsAt: "", resetsInMinutes: null, resetsInHours: null }, NOW)).toBeNull();
     expect(bucketResetsAt(undefined, NOW)).toBeNull();
   });
+
+  /**
+   * The shape the Claude paths build when the provider sent no `resets_at` — an idle account's
+   * five-hour window, a third of the stored readings. Zero there means "nothing was said", so
+   * the bars say nothing rather than "Resets now".
+   */
+  it("reads a zero countdown as no reset time at all", () => {
+    expect(bucketResetsAt({ ...base, resetsAt: "", resetsInMinutes: 0, resetsInHours: null }, NOW)).toBeNull();
+    expect(bucketResetsAt({ ...base, resetsAt: "", resetsInMinutes: null, resetsInHours: 0, windowHours: 168 }, NOW)).toBeNull();
+    expect(formatResetLine(bucketResetsAt({ ...base, resetsAt: "", resetsInMinutes: 0, resetsInHours: null }, NOW), NOW)).toBeNull();
+  });
 });

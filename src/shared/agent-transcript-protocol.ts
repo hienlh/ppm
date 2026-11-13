@@ -15,7 +15,7 @@
  */
 import type { ChatEvent } from "../types/chat.ts";
 
-export type AgentTranscriptProviderId = "claude" | "codex";
+export type AgentTranscriptProviderId = "claude" | "codex" | "antigravity";
 
 export type AgentTranscriptSourceKind =
   | { kind: "card"; cardId: string }

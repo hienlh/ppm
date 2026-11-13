@@ -16,10 +16,10 @@ export async function buildProgram(): Promise<Command> {
     .name("ppm")
     .description("Personal Project Manager — mobile-first web IDE")
     .version(VERSION)
-    .hook("preAction", (_program, action) => {
-      // A `--json` command's stdout is read by a program (the Assistant among others), and one
-      // banner line in front makes the whole of it unparseable.
-      if (action.opts().json) return;
+    .hook("preAction", (_program, actionCommand) => {
+      // `--json` output is parsed (by scripts, by the Assistant, and by the AI agents the PPM
+      // skill points here), and one banner line in front makes the whole of it unparseable.
+      if (actionCommand.opts().json) return;
       console.log(`  PPM v${VERSION}\n`);
     });
 

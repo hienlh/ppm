@@ -70,12 +70,18 @@ export function formatResetAt(resetsAt?: string | null): string | null {
 /**
  * When a bucket resets, as an ISO timestamp, whichever of the three shapes the server sent.
  * A countdown is turned into a moment once, here, so it keeps counting down after it arrived.
+ *
+ * Zero is "no reset time", not "right now": every producer derives the relative fields from
+ * `resetsAt` and clamps a missing or past one to 0, so a window the provider said nothing about —
+ * an idle account's five-hour window, which Claude sends with no `resets_at` at all — arrives as
+ * `resetsInMinutes: 0` and would otherwise read "Resets now". Nothing is lost by refusing it: a
+ * real imminent reset always carries the moment above.
  */
 export function bucketResetsAt(bucket?: LimitBucket | null, now = Date.now()): string | null {
   if (!bucket) return null;
   if (bucket.resetsAt && Number.isFinite(new Date(bucket.resetsAt).getTime())) return bucket.resetsAt;
-  if (bucket.resetsInMinutes != null) return new Date(now + bucket.resetsInMinutes * 60_000).toISOString();
-  if (bucket.resetsInHours != null) return new Date(now + bucket.resetsInHours * 3_600_000).toISOString();
+  if (bucket.resetsInMinutes) return new Date(now + bucket.resetsInMinutes * 60_000).toISOString();
+  if (bucket.resetsInHours) return new Date(now + bucket.resetsInHours * 3_600_000).toISOString();
   return null;
 }
 

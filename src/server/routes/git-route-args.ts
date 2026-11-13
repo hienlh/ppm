@@ -1,4 +1,4 @@
-import { assertRef } from "../../services/git-branch-diff/branch-diff-parse.ts";
+import { assertCommitHash, assertRef } from "../../services/git-branch-diff/branch-diff-parse.ts";
 
 /**
  * The checks the git write routes make on the values they hand git as positional arguments.
@@ -22,12 +22,18 @@ export function refProblem(value: unknown, field: string): string | null {
   }
 }
 
-const HASH = /^[0-9a-f]{7,64}$/i;
-
-/** A commit named by its hash, full or abbreviated: nothing else reaches cherry-pick, revert or tag. */
+/**
+ * A commit named by its hash, full or abbreviated (4 to 64 hex digits, surrounding spaces allowed):
+ * nothing else reaches cherry-pick, revert or tag. The route hands git the trimmed value.
+ */
 export function hashProblem(value: unknown, field: string): string | null {
-  if (typeof value === "string" && HASH.test(value)) return null;
-  return `Invalid ${field}: "${String(value)}" (a commit hash is 7 to 64 hexadecimal digits)`;
+  if (typeof value !== "string") return `Invalid commit hash for ${field}: expected a hash`;
+  try {
+    assertCommitHash(value, field);
+    return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
 }
 
 const HEADS = "refs/heads/";

@@ -75,5 +75,7 @@ export function _computeRunningAgentsCallCountForTest(): number {
 
 export async function computeRunningAgents(owned: OwnedSession, now: number): Promise<AgentTranscriptRunningEntry[]> {
   callCountForTest++;
-  return owned.providerId === "claude" ? claudeActivity(owned, now) : codexActivity(owned, now);
+  if (owned.providerId === "claude") return claudeActivity(owned, now);
+  if (owned.providerId === "codex") return codexActivity(owned, now);
+  return [];
 }

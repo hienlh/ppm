@@ -8,6 +8,13 @@ describe("modelDisplayName", () => {
     expect(modelDisplayName("claude-haiku-4-5-20251001")).toBe("Haiku 4.5");
   });
 
+  it("names Antigravity model ids before the model list loads", () => {
+    expect(modelDisplayName("gemini-4-argon")).toBe("Gemini 4 Argon");
+    expect(modelDisplayName("gemini-4-argon-medium")).toBe("Gemini 4 Argon");
+    expect(modelDisplayName("claude-opus-5-5-high")).toBe("Claude Opus 5.5");
+    expect(modelDisplayName("gpt-oss-120b")).toBe("GPT-OSS 120B");
+  });
+
   it("leaves anything else as given", () => {
     for (const id of ["gpt-5.2-codex", "claude-opus-5-5[1m]", "o4-mini", "claude"]) expect(modelDisplayName(id)).toBe(id);
   });

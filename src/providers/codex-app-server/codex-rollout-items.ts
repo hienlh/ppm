@@ -4,6 +4,7 @@ import { codexAsyncQuestionEvent } from "./codex-user-input.ts";
 import { parseSubagentActivity, type SubagentActivity } from "./codex-subagent-thread.ts";
 import { changeToToolUse, rolloutFileChanges } from "./codex-patch.ts";
 import { DECLINED_COMMAND_OUTPUT, itemStatusIsDeclined, itemStatusIsError, shellToolName } from "./codex-event-mapper.ts";
+import { stripSharedContext } from "../../shared/provider-context.ts";
 
 /**
  * Rollout `item_completed` records → PPM chat events.
@@ -52,7 +53,7 @@ function textFrom(content: unknown): string {
 }
 
 /** `file:///C:/Users/...` → a path a person recognises. */
-function plainCwd(cwd: unknown): string | undefined {
+export function plainCodexPath(cwd: unknown): string | undefined {
   if (typeof cwd !== "string" || !cwd) return undefined;
   if (!cwd.startsWith("file://")) return cwd;
   try {
@@ -88,7 +89,7 @@ function commandExecutionEvents(item: Item): ChatEvent[] {
   // Same rule as the live stream (`itemToToolResult`), so a reload shows what the chat showed.
   const output = redactTruncate(item.aggregated_output ?? item.stdout ?? "");
   return [
-    { type: "tool_use", tool, input: { command: commandText(item), cwd: plainCwd(item.cwd) }, toolUseId },
+    { type: "tool_use", tool, input: { command: commandText(item), cwd: plainCodexPath(item.cwd) }, toolUseId },
     {
       type: "tool_result",
       output: !output && itemStatusIsDeclined(item.status) ? DECLINED_COMMAND_OUTPUT : output,
@@ -159,7 +160,16 @@ export function mapRolloutItem(item: unknown): RolloutItemMapping {
   const subagent = parseSubagentActivity(it);
   if (subagent) return { kind: "subagent", activity: subagent };
   if (type === "UserMessage") {
-    const text = textFrom(it.content);
+    let text = stripSharedContext(textFrom(it.content));
+    // Native Codex attachments have no PPM text marker. Preserve their paths so
+    // reopening a session can draw thumbnails, including image-only messages.
+    const paths = new Set<string>();
+    for (const part of Array.isArray(it.content) ? it.content : []) {
+      if (part?.type !== "local_image" && part?.type !== "localImage") continue;
+      const path = plainCodexPath(part.path);
+      if (path && !text.includes(`: ${path}]`) && !text.includes(`\n${path}\n`)) paths.add(path);
+    }
+    if (paths.size) text = [...paths].map((path) => `[Attached image (contents included in this message): ${path}]`).join("\n\n") + (text ? `\n\n${text}` : "");
     return text ? { kind: "user", text } : { kind: "ignore" };
   }
   if (type === "AgentMessage") {
@@ -169,6 +179,14 @@ export function mapRolloutItem(item: unknown): RolloutItemMapping {
     return text ? { kind: "assistant", text } : { kind: "ignore" };
   }
   if (type === "CommandExecution") return { kind: "events", events: commandExecutionEvents(it) };
+  if (type === "ImageView") {
+    const path = plainCodexPath(it.path);
+    const toolUseId = typeof it.id === "string" ? it.id : undefined;
+    return { kind: "events", events: [
+      { type: "tool_use", tool: "Read", input: { file_path: path }, toolUseId },
+      { type: "tool_result", output: path ?? "", isError: false, toolUseId },
+    ] };
+  }
   if (type === "FileChange") return { kind: "events", events: fileChangeEvents(it) };
   if (type === "Extension") {
     // `kind` names the extension; image generation is the one PPM renders specially.

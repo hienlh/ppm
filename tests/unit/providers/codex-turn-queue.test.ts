@@ -184,6 +184,28 @@ describe("codex follow-up queue", () => {
     // on one — otherwise every later message queues forever.
     expect(turnStarts(sent)).toEqual(["first", "second"]);
     expect(pushed.some((e) => e.type === "error")).toBe(true);
+    expect(pushed.filter((e) => e.type === "done")).toEqual([
+      { type: "done", sessionId: "s5", resultSubtype: "error_during_execution" },
+    ]);
+    p.cleanupAll();
+  });
+
+  it("finishes a rejected turn without waiting for a completion notification", async () => {
+    const p: any = new CodexAppServerProvider();
+    const { live, pushed } = makeLive(p, "s-rejected");
+    live.client.request = () => Promise.reject(new Error("unsupported reasoning effort"));
+
+    await p.startTurn(live, "hello");
+    await tick();
+
+    // The subprocess remains available, but the consumer needs a terminal event
+    // to clear the streaming UI. Codex never sends turn/completed for this case.
+    expect(live.client.isClosed).toBe(false);
+    expect(live.turnInFlight).toBe(false);
+    expect(pushed).toEqual([
+      { type: "error", message: "unsupported reasoning effort" },
+      { type: "done", sessionId: "s-rejected", resultSubtype: "error_during_execution" },
+    ]);
     p.cleanupAll();
   });
 });

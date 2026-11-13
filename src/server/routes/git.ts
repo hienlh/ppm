@@ -808,9 +808,10 @@ gitRoutes.post("/branch/delete", async (c) => {
     if (!name) return c.json(err("Missing: name"), 400);
     const bad = refProblem(name, "name");
     if (bad) return c.json(err(bad), 400);
-    await gitService.deleteBranch(projectPath, name, force);
-    log.info(`deleted branch ${name} force=${!!force} in ${projectPath}`);
-    return c.json(ok({ deleted: name }));
+    const ref = name.trim();
+    await gitService.deleteBranch(projectPath, ref, force);
+    log.info(`deleted branch ${ref} force=${!!force} in ${projectPath}`);
+    return c.json(ok({ deleted: ref }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -824,9 +825,10 @@ gitRoutes.post("/merge", async (c) => {
     if (!source) return c.json(err("Missing: source"), 400);
     const bad = refProblem(source, "source");
     if (bad) return c.json(err(bad), 400);
-    await gitService.merge(projectPath, source);
-    log.info(`merged ${source} into HEAD in ${projectPath}`);
-    return c.json(ok({ merged: source }));
+    const ref = source.trim();
+    await gitService.merge(projectPath, ref);
+    log.info(`merged ${ref} into HEAD in ${projectPath}`);
+    return c.json(ok({ merged: ref }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -840,8 +842,9 @@ gitRoutes.post("/cherry-pick", async (c) => {
     if (!hash) return c.json(err("Missing: hash"), 400);
     const bad = hashProblem(hash, "hash");
     if (bad) return c.json(err(bad), 400);
-    await gitService.cherryPick(projectPath, hash);
-    return c.json(ok({ cherryPicked: hash }));
+    const commit = hash.trim();
+    await gitService.cherryPick(projectPath, commit);
+    return c.json(ok({ cherryPicked: commit }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -855,8 +858,9 @@ gitRoutes.post("/revert", async (c) => {
     if (!hash) return c.json(err("Missing: hash"), 400);
     const bad = hashProblem(hash, "hash");
     if (bad) return c.json(err(bad), 400);
-    await gitService.revert(projectPath, hash);
-    return c.json(ok({ reverted: hash }));
+    const commit = hash.trim();
+    await gitService.revert(projectPath, commit);
+    return c.json(ok({ reverted: commit }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -870,8 +874,9 @@ gitRoutes.post("/tag", async (c) => {
     if (!name) return c.json(err("Missing: name"), 400);
     const bad = refProblem(name, "name") ?? (hash ? hashProblem(hash, "hash") : null);
     if (bad) return c.json(err(bad), 400);
-    await gitService.createTag(projectPath, name, hash);
-    return c.json(ok({ tagged: name }));
+    const tag = name.trim();
+    await gitService.createTag(projectPath, tag, hash ? hash.trim() : undefined);
+    return c.json(ok({ tagged: tag }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

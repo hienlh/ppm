@@ -18,8 +18,8 @@ export type { SlashItem, SlashItemWithSource, ShadowedItem, DiscoveryResult, Ski
  * Full discovery pipeline: roots → load → resolve overrides → prepend builtins.
  * Returns active items, shadowed items, and discovered roots.
  */
-export function listSlashItemsDetailed(projectPath: string): DiscoveryResult {
-  const roots = discoverSkillRoots(projectPath);
+export function listSlashItemsDetailed(projectPath: string, providerId?: string): DiscoveryResult {
+  const roots = discoverSkillRoots(projectPath, providerId);
   const rawItems = loadItemsFromRoots(roots);
   const result = resolveOverrides(rawItems, roots);
 
@@ -46,12 +46,12 @@ export function listSlashItemsDetailed(projectPath: string): DiscoveryResult {
  * Backward-compatible: returns flat list of active items (no source metadata).
  * Uses in-memory cache (5 min TTL) to avoid repeated filesystem scans.
  */
-export function listSlashItems(projectPath: string): SlashItem[] {
-  const cached = getCached(projectPath);
+export function listSlashItems(projectPath: string, providerId = "claude"): SlashItem[] {
+  const cached = getCached(projectPath, providerId);
   if (cached) return cached;
 
-  const { active } = listSlashItemsDetailed(projectPath);
+  const { active } = listSlashItemsDetailed(projectPath, providerId);
   const items = active.map(({ source, rootPath, filePath, ...item }) => item);
-  setCache(projectPath, items);
+  setCache(projectPath, items, providerId);
   return items;
 }

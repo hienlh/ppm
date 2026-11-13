@@ -18,6 +18,7 @@ import { describe, it, expect } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   PROVIDER_LOGOS,
+  AntigravityLogo,
   ClaudeLogo,
   CodexLogo,
   CursorLogo,
@@ -31,7 +32,7 @@ function svgs(html: string): string[] {
 }
 
 describe("a gradient id belongs to exactly one instance", () => {
-  for (const [name, Logo] of [["codex", CodexLogo], ["gemini", GeminiLogo]] as const) {
+  for (const [name, Logo] of [["codex", CodexLogo], ["gemini", GeminiLogo], ["antigravity", AntigravityLogo]] as const) {
     it(`${name}: two copies on a page share no id`, () => {
       const copies = svgs(renderToStaticMarkup(<><Logo /><Logo /></>));
       expect(copies).toHaveLength(2);
@@ -70,6 +71,7 @@ describe("a chat tab is labelled with the provider running it", () => {
   it("uses that provider's logo", () => {
     expect(getTabIcon(chat("codex"))).toBe(CodexLogo);
     expect(getTabIcon(chat("cursor"))).toBe(CursorLogo);
+    expect(getTabIcon(chat("antigravity"))).toBe(AntigravityLogo);
   });
 
   it("draws a chat carrying no provider as Claude, which is what it would run", () => {
@@ -83,6 +85,6 @@ describe("a chat tab is labelled with the provider running it", () => {
   });
 
   it("covers every provider the registry can hand out", () => {
-    for (const id of ["claude", "codex", "cursor"]) expect(PROVIDER_LOGOS[id]).toBeDefined();
+    for (const id of ["claude", "codex", "cursor", "antigravity"]) expect(PROVIDER_LOGOS[id]).toBeDefined();
   });
 });

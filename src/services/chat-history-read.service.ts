@@ -1,7 +1,8 @@
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { chatService } from "./chat.service.ts";
-import { getSessionProjectPath, resolveMigratedSession } from "./db.service.ts";
+import { getSessionProjectPath, getSessionProvider, resolveMigratedSession } from "./db.service.ts";
+import { antigravityTranscriptStamp, findAntigravityTranscriptPath, isAntigravitySessionInProject } from "../providers/antigravity/antigravity-history.ts";
 import { resolveSessionDir } from "./subagent-transcript-merger.ts";
 import { getRootId, resolveVersionMap } from "./session-branch.service.ts";
 import { pageHistory, type HistoryPageQuery } from "../server/routes/chat-history-page.ts";
@@ -81,6 +82,7 @@ function claudeTranscriptStamp(sessionId: string): string | null {
 
 /** What the parsed history depends on on disk; null when that cannot be told. */
 function historyStamp(providerId: string, id: string): string | null {
+  if (providerId === "antigravity") return antigravityTranscriptStamp(id);
   if (providerId !== "claude") return null;
   const own = claudeTranscriptStamp(id);
   if (!own) return null;
@@ -151,6 +153,26 @@ async function parseFullHistory(providerId: string, id: string, projectPath: str
     }
   }
   return { messages, complete: !turns?.failed || messages.length === 0 };
+}
+
+/**
+ * Which provider a session's history is read as: the caller's word, else the provider recorded
+ * for the session, else Antigravity when an Antigravity transcript carries its id, else Claude.
+ */
+export function historyProviderFor(requestedId: string, requested?: string | null): string {
+  const id = resolveMigratedSession(requestedId);
+  return requested || getSessionProvider(id) || (findAntigravityTranscriptPath(id) ? "antigravity" : "claude");
+}
+
+/**
+ * True when an Antigravity session's transcript belongs to a project other than `projectPath`:
+ * Antigravity keeps every project's transcripts in one place, so the id alone does not scope it.
+ */
+export function antigravitySessionOutsideProject(requestedId: string, projectPath?: string | null): boolean {
+  if (!projectPath) return false;
+  const id = resolveMigratedSession(requestedId);
+  const loc = findAntigravityTranscriptPath(id);
+  return !!loc && !isAntigravitySessionInProject(id, loc.transcriptPath, projectPath);
 }
 
 /**

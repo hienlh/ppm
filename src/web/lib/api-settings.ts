@@ -93,8 +93,15 @@ export interface PickedAccount {
  * round-robin for a chat that never runs on a Claude account.
  */
 export function pickAccountForTab(providerId: string, signal?: AbortSignal): Promise<PickedAccount | null> {
-  if (providerId !== "claude" && providerId !== "codex") return Promise.resolve(null);
-  const path = providerId === "codex" ? "/api/codex-accounts/pick" : "/api/accounts/pick";
+  if (providerId !== "claude" && providerId !== "codex" && providerId !== "antigravity") {
+    return Promise.resolve(null);
+  }
+  const path =
+    providerId === "codex"
+      ? "/api/codex-accounts/pick"
+      : providerId === "antigravity"
+        ? "/api/antigravity-accounts/pick"
+        : "/api/accounts/pick";
   return api.post<PickedAccount | null>(path, undefined, { signal });
 }
 

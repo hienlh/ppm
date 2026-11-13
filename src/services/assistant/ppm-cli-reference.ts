@@ -1409,11 +1409,11 @@ ppm schedule set-state <id> <file>
 ## ppm export — Export PPM metadata for external tools (AI agents, editors)
 \`\`\`
 ppm export skill
-  Export Claude Code skill for controlling PPM from external AI tools
-  --install — Install to target dir (default scope=user → ~/.claude/skills/ppm/)
+  Export skill for controlling PPM from AI agents (Claude Code, Codex, Antigravity)
+  --install — Install to target dir (default scope=user → ~/.claude/skills/ppm/, ~/.agents/skills/ppm/ or ~/.gemini/config/skills/ppm/)
   --scope <scope> — Install scope: user | project [default: user]
   --output <dir> — Custom output directory (overrides --scope)
-  --format <fmt> — Output format [default: claude-code]
+  --format <fmt> — Output format: claude-code | codex | antigravity [default: claude-code]
 \`\`\`
 
 ## Tips

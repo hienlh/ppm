@@ -38,6 +38,7 @@ import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/trans
 import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
 import { listCodexAccounts } from "../../services/codex-account.service.ts";
 import { codexUsageSource } from "../../providers/codex-app-server/codex-usage-source.ts";
+import { antigravityUsageSource } from "../../providers/antigravity/antigravity-usage.ts";
 import { invalidateUsage, refreshUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
 import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-history.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
@@ -45,7 +46,7 @@ import { setSessionTag, bulkSetSessionTag, getTagById } from "../../services/tag
 import { recordBranch, resolveVersionGroup, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
 import { listProjectSessions, searchProjectChats } from "../../services/chat-session-queries.service.ts";
 import { managerChats } from "../../services/assistant-managers/manager-chats.service.ts";
-import { readSessionHistory } from "../../services/chat-history-read.service.ts";
+import { antigravitySessionOutsideProject, historyProviderFor, readSessionHistory } from "../../services/chat-history-read.service.ts";
 import { parseHistoryPageQuery } from "./chat-history-page.ts";
 import { ok, err } from "../../types/api.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
@@ -139,8 +140,14 @@ chatRoutes.get("/usage", async (c) => {
           const accounts = codexUsageSource.listAccountIds();
           const ids = accounts.length > 0 ? accounts : [""];
           await Promise.all(ids.map((id) => refreshUsage("codex", id)));
+        } else if (providerId === "antigravity") {
+          registerUsageSource(antigravityUsageSource);
+          const accounts = antigravityUsageSource.listAccountIds();
+          const ids = accounts.length > 0 ? accounts : [""];
+          await Promise.all(ids.map((id) => refreshUsage("antigravity", id)));
         } else {
           invalidateUsage(providerId);
+          await refreshUsage(providerId);
         }
       }
     } else {
@@ -232,9 +239,13 @@ chatRoutes.get("/sessions/:id/design", (c) => {
 /** GET /chat/sessions/:id/messages — one page of a session's message history */
 chatRoutes.get("/sessions/:id/messages", async (c) => {
   try {
-    const providerId = c.req.query("providerId") ?? "claude";
+    const requestedId = c.req.param("id");
+    const providerId = historyProviderFor(requestedId, c.req.query("providerId"));
+    if (providerId === "antigravity" && antigravitySessionOutsideProject(requestedId, c.get("projectPath"))) {
+      return c.json(err("Session not found in project"), 404);
+    }
     const query = parseHistoryPageQuery((name) => c.req.query(name));
-    return c.json(ok(await readSessionHistory(providerId, c.req.param("id"), query, c.get("projectPath"))));
+    return c.json(ok(await readSessionHistory(providerId, requestedId, query, c.get("projectPath"))));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

@@ -290,7 +290,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
 
   // Usage runs independently — auto-refreshes on interval. Scoped to this session so the
   // account shown is the one bound to it, not whichever session ran most recently.
-  const { usageInfo, reloadUsage } =
+  const { usageInfo, usageLoading, lastFetchedAt, refreshUsage, reloadUsage } =
     useUsage(projectName, providerId, sessionId ?? undefined,
       metadata?.pickedAccountProvider === providerId ? metadata?.pickedAccountId as string | undefined : undefined,
       !preparation?.pending, tabId);
@@ -1491,6 +1491,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
             tabId={tabId}
             projectName={projectName}
             usageInfo={usageInfo}
+            usageLoading={usageLoading}
+            lastFetchedAt={lastFetchedAt}
+            onRefreshUsage={refreshUsage}
             sessionId={sessionId}
             providerId={providerId}
             pickedAccountLabel={servingAccount?.label ?? (claimMatchesProvider ? pickedAccountLabel : null)}

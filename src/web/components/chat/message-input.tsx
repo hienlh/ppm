@@ -800,7 +800,10 @@ export const MessageInput = memo(function MessageInput({
       if (att?.serverPath) void discardUpload(att.serverPath);
       return prev.filter((a) => a.id !== id);
     });
-  }, [discardUpload]);
+    // Saved as the draft too: otherwise a reload restores a chip whose file was just deleted,
+    // and the next message goes out naming it.
+    onContentChange?.(valueRef.current, attachments.filter((a) => a.id !== id && a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
+  }, [discardUpload, onContentChange, attachments]);
 
   /** Execute the actual send (called directly or after uploads complete) */
   const executeSend = useCallback(() => {
@@ -1020,25 +1023,6 @@ export const MessageInput = memo(function MessageInput({
     [processFiles, onTurnLinksPasted, writeTextareas, onContentChange, attachments, scheduleResize],
   );
 
-  /** Handle drop directly on textarea */
-  const handleDrop = useCallback(
-    (e: DragEvent<HTMLTextAreaElement>) => {
-      e.preventDefault();
-      // Check for internal file tree drag first
-      const ppmPath = e.dataTransfer.getData("application/x-ppm-path");
-      if (ppmPath) {
-        const cur = valueRef.current;
-        const sep = cur.length > 0 && !cur.endsWith(" ") ? " " : "";
-        writeTextareas(cur + sep + `@${ppmPath} `);
-        getVisibleTextarea()?.focus();
-        return;
-      }
-      const files = Array.from(e.dataTransfer.files);
-      if (files.length > 0) processFiles(files);
-    },
-    [processFiles, writeTextareas, getVisibleTextarea],
-  );
-
   const handleDragOver = useCallback((e: DragEvent<HTMLTextAreaElement>) => {
     e.preventDefault();
   }, []);
@@ -1106,7 +1090,6 @@ export const MessageInput = memo(function MessageInput({
           onChange={handleTextareaChange}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          onDrop={handleDrop}
           onDragOver={handleDragOver}
           placeholder={placeholder}
           disabled={disabled}
@@ -1120,7 +1103,6 @@ export const MessageInput = memo(function MessageInput({
           onChange={handleTextareaChange}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          onDrop={handleDrop}
           onDragOver={handleDragOver}
           placeholder={placeholder}
           disabled={disabled}

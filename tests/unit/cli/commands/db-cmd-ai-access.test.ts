@@ -41,8 +41,8 @@ async function ppmDb(args: string[], chat: boolean): Promise<{ code: number; out
   return { code, out, err };
 }
 
-/** The JSON a `--json` command printed, past the version banner every command starts with. */
-const json = (out: string) => JSON.parse(out.slice(out.search(/^[[{]/m)));
+/** The JSON a `--json` command printed. */
+const json = (out: string) => JSON.parse(out);
 const names = (out: string) => (json(out) as { name: string }[]).map((c) => c.name);
 
 beforeAll(() => {

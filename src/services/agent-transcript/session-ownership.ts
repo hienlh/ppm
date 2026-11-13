@@ -19,6 +19,8 @@ import { dirname, join, resolve, sep } from "node:path";
 import { getSessionProjectPath } from "../db.service.ts";
 import { codexSessionsDirs as realCodexSessionsDirs } from "../../providers/codex-app-server/codex-provider.ts";
 import { findRolloutByThreadId, isCodexRolloutPath } from "../../providers/codex-app-server/codex-history.ts";
+import { findAntigravityTranscriptPath, isAntigravitySessionInProject } from "../../providers/antigravity/antigravity-history.ts";
+import { resolveAntigravityPaths } from "../../providers/antigravity/antigravity-connection.ts";
 import { claudeProjectsRoot } from "./claude-projects-root.ts";
 
 import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
@@ -38,7 +40,7 @@ export interface OwnershipError {
 
 export interface OwnedSession {
   ok: true;
-  providerId: "claude" | "codex";
+  providerId: "claude" | "codex" | "antigravity";
   sessionId: string;
   projectPath: string;
   /** Claude only: the session's own directory, `<claudeRoot>/<slug>/<sessionId>`. */
@@ -46,6 +48,8 @@ export interface OwnedSession {
   /** Codex only: where the root rollout was found, plus every dir it was searched in
    *  (reused by agent-transcript-sources so a descendant lookup need not re-derive it). */
   codex?: { path: string; sessionsDir: string; dirs: string[] };
+  /** Antigravity only: the root conversation's transcript.jsonl and brain dirs. */
+  antigravity?: { transcriptPath: string; brainDir: string; brainDirs: string[] };
 }
 
 export interface AssertSessionParams {
@@ -54,6 +58,8 @@ export interface AssertSessionParams {
   projectPath: string;
   /** Test-only: override which directories Codex rollouts are searched under. */
   codexSessionsDirs?: (sessionId?: string) => string[];
+  /** Test-only: override which directories Antigravity brain transcripts are searched under. */
+  antigravityBrainDirs?: string[];
 }
 
 /**
@@ -142,6 +148,27 @@ function assertCodexSession(
   return { ok: false, code: "session_not_found" };
 }
 
+function assertAntigravitySession(
+  sessionId: string,
+  projectPath: string,
+  brainDirs: string[],
+): OwnedSession | OwnershipError {
+  const loc = findAntigravityTranscriptPath(sessionId, brainDirs);
+  if (!loc) return { ok: false, code: "session_not_found" };
+  const real = realpathContained(loc.transcriptPath, loc.brainDir);
+  if (!real) return { ok: false, code: "session_not_found" };
+  if (!isAntigravitySessionInProject(sessionId, real, projectPath)) {
+    return { ok: false, code: "session_not_found" };
+  }
+  return {
+    ok: true,
+    providerId: "antigravity",
+    sessionId,
+    projectPath,
+    antigravity: { transcriptPath: real, brainDir: loc.brainDir, brainDirs },
+  };
+}
+
 export function assertSessionInProject(params: AssertSessionParams): OwnedSession | OwnershipError {
   const { providerId, sessionId, projectPath } = params;
   if (!SESSION_ID_RE.test(sessionId)) return { ok: false, code: "invalid_session_id" };
@@ -149,6 +176,9 @@ export function assertSessionInProject(params: AssertSessionParams): OwnedSessio
   if (providerId === "claude") return assertClaudeSession(sessionId, projectPath);
   if (providerId === "codex") {
     return assertCodexSession(sessionId, projectPath, params.codexSessionsDirs ?? testCodexSessionsDirsOverride ?? realCodexSessionsDirs);
+  }
+  if (providerId === "antigravity") {
+    return assertAntigravitySession(sessionId, projectPath, params.antigravityBrainDirs ?? resolveAntigravityPaths().brainDirs);
   }
   return { ok: false, code: "invalid_provider" };
 }

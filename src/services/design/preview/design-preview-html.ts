@@ -20,6 +20,16 @@ export const INSTRUMENT_MAX_BYTES = 5 * 1024 * 1024;
 /** Local stylesheets whose gen travels with `ready`; more than this is not a real design. */
 const MAX_LINKED_STYLESHEETS = 32;
 
+/**
+ * Sent after the bridge to every page the canvas or a reviewer views. A kit copied from an
+ * app shell keeps `html, body { overscroll-behavior: none }` (PPM's own does), and a design
+ * that lets its long page grow sets `body { overflow: auto }`. Body is then a scroll
+ * container that cannot scroll and, under `none`, passes no wheel on, so Chrome scrolls
+ * nothing under a wheel or trackpad while the scrollbar still drags. Only how a scroll
+ * chains changes, nothing drawn.
+ */
+export const SCROLL_CHAIN_STYLE = `<style data-ppm-scroll="1">body{overscroll-behavior:auto!important}</style>`;
+
 export interface RenderedDesignHtml {
   body: string;
   gen: string;
@@ -97,7 +107,7 @@ export async function renderDesignHtml(
   if (!opts.withBridge) return { body: opts.inject ? injectPlain(text, opts.inject) : text, gen, instrumented: false };
 
   const tag = (instrumented: boolean, cssGens: Record<string, string>): string =>
-    bridgeTag({ nonce: opts.nonce, gen, cssGens, file: asset.rel, instrumented }, opts.bridgeScript);
+    bridgeTag({ nonce: opts.nonce, gen, cssGens, file: asset.rel, instrumented }, opts.bridgeScript) + SCROLL_CHAIN_STYLE;
   if (utf8 && bytes.byteLength <= INSTRUMENT_MAX_BYTES) {
     try {
       const analysis = analyzeHtml(text);

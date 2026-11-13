@@ -6,13 +6,15 @@ export const SOURCE_PRIORITY: Record<DefinitionSource, number> = {
   "project-claw": 1,
   "project-codex": 2,
   "project-claude": 3,
-  "env-var": 4,
-  "user-ppm": 5,
-  "user-claw": 6,
-  "user-codex": 7,
-  "user-claude": 8,
-  "user-plugin": 9,
-  "bundled": 10,
+  "project-agents": 4,
+  "env-var": 5,
+  "user-ppm": 6,
+  "user-claw": 7,
+  "user-codex": 8,
+  "user-claude": 9,
+  "user-antigravity": 10,
+  "user-plugin": 11,
+  "bundled": 12,
 };
 
 /** Compare two sources by priority (for sorting highest-priority first) */

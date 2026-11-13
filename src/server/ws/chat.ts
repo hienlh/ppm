@@ -30,6 +30,7 @@ import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.t
 import { refreshEffortStatus, sessionEffortStatus } from "./chat-effort-status.ts";
 import type { EffortStatus } from "../../shared/effort-status.ts";
 import { claudeTranscriptExists } from "../../services/claude-transcript-exists.ts";
+import { extractAntigravitySessionTitle, findAntigravityTranscriptPath } from "../../providers/antigravity/antigravity-history.ts";
 import { registerMemoryGauge } from "../../services/memory-diagnostics.ts";
 import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/tab-open-broker.ts";
 import { assistantUiBroker, setAssistantUiDelivery } from "../../services/assistant-mcp/assistant-ui-tools.ts";
@@ -149,6 +150,10 @@ function resolveStoredProvider(sessionId: string): string | undefined {
     try { setSessionProvider(sessionId, "claude"); } catch { /* non-fatal */ }
     return "claude";
   }
+  if (findAntigravityTranscriptPath(sessionId)) {
+    try { setSessionProvider(sessionId, "antigravity"); } catch { /* non-fatal */ }
+    return "antigravity";
+  }
   return chatService.getSession(sessionId)?.providerId;
 }
 
@@ -186,6 +191,27 @@ function resolveSessionThinkingEnabled(sessionId: string): boolean {
     getSessionThinking(sessionId),
     sessionProviderConfig(sessionId)?.thinking_budget_tokens,
   );
+}
+
+const GENERIC_SESSION_TITLES = new Set(["Chat", "Resumed Chat"]);
+
+function isGenericSessionTitle(title: string | undefined | null, providerId?: string): boolean {
+  if (!title) return true;
+  if (GENERIC_SESSION_TITLES.has(title)) return true;
+  if (providerId === "antigravity" && title === "New Chat") return true;
+  return false;
+}
+
+/** Resolve a real display title without leaking placeholder titles like "Resumed Chat". */
+function resolveDisplaySessionTitle(sessionId: string, providerId?: string, inMemoryTitle?: string): string | null {
+  const dbTitle = getSessionTitle(sessionId);
+  if (dbTitle && !isGenericSessionTitle(dbTitle, providerId)) return dbTitle;
+  if (inMemoryTitle && !isGenericSessionTitle(inMemoryTitle, providerId)) return inMemoryTitle;
+  if (providerId === "antigravity") {
+    const agyTitle = extractAntigravitySessionTitle(sessionId);
+    if (agyTitle) return agyTitle;
+  }
+  return null;
 }
 
 const PING_INTERVAL_MS = 5_000; // Detect an active stream gap promptly through a tunnel.
@@ -1034,6 +1060,7 @@ async function rewriteProviderSkillSigil(
 ): Promise<void> {
   const content = parsed.content.trimStart();
   if (!content.startsWith("/")) return;
+  if (providerId === "antigravity") return;
   const provider = providerRegistry.get(providerId);
   if (!provider?.listSkills) return;
 
@@ -1212,6 +1239,24 @@ setTurnRunningProbe((sessionId) => chatService.turnActivity(sessionId).running
   || (activeSessions.get(sessionId)?.phase ?? "idle") !== "idle");
 
 /**
+ * A turn the provider asked for (`provider_continue`), sent the way another session's message is:
+ * every device draws it once the provider has it, and it never answers a pending approval.
+ */
+async function continueFromProvider(sessionId: string, content: string): Promise<void> {
+  const entry = activeSessions.get(sessionId);
+  if (!entry || entry.phase !== "idle" || !content) return;
+  const result = await withSessionLock(sessionId, async () => entry.phase !== "idle" ? null
+    : submitToSession(sessionId, entry, content, {
+      origin: "provider",
+      priority: "next",
+      receivedAt: Date.now(),
+      supersedePendingApproval: false,
+      echoOnHandOff: true,
+    }));
+  if (result && !result.ok) log.error(`session=${sessionId} provider continuation failed: ${result.error}`);
+}
+
+/**
  * Persistent event consumer — runs for the entire session lifetime.
  * First message creates the query; follow-ups push into the provider's
  * message channel. Events from ALL turns flow through this single loop.
@@ -1305,6 +1350,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         broadcast(sessionId, event);
         continue;
       }
+      // A provider asking for a turn of its own: a follow-up like one the user sends, shown as
+      // their message. Ignored while a turn runs, which reaches the provider anyway.
+      if (evType === "provider_continue") {
+        if (entry.phase === "idle") void continueFromProvider(sessionId, String(ev.content ?? ""));
+        continue;
+      }
 
       // System events → transition connecting → thinking, forward compact events
       if (evType === "system") {
@@ -1384,7 +1435,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       // First content event — stop heartbeat, transition phase
       // status_update is PPM's pre-flight account selection — not actual SDK content
       // `turn_started` arrives before the model has said anything: the turn has an id, not content.
-      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update" || evType === "turn_started";
+      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update" || evType === "turn_started" || evType === "session_migrated";
       if (!firstEventReceived && !isMetadataEvent) {
         firstEventReceived = true;
         const requested = entry.turnRequestedAt;
@@ -1527,23 +1578,33 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         if (entry.clients.size === 0) scheduleSubprocessRelease(sessionId);
 
         // Fire-and-forget: fetch updated session title (DB title takes priority) + notification
-        sdkListSessions({ dir: entry.projectPath, limit: 50 }).then((sessions) => {
-          const found = sessions.find((s) => s.sessionId === sessionId || s.sessionId === ev.sessionId);
-          const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
-          const title = dbTitle ?? found?.customTitle ?? found?.summary;
+        if (entry.providerId === "antigravity") {
+          const title = resolveDisplaySessionTitle(sessionId, entry.providerId, chatService.getSession(sessionId)?.title);
           if (title) {
             broadcast(sessionId, { type: "title_updated", title });
             const session = chatService.getSession(sessionId);
             if (session) session.title = title;
           }
-        }).catch(() => {});
+        } else {
+          sdkListSessions({ dir: entry.projectPath, limit: 50 }).then((sessions) => {
+            const found = sessions.find((s) => s.sessionId === sessionId || s.sessionId === ev.sessionId);
+            const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
+            const title = dbTitle ?? found?.customTitle ?? found?.summary;
+            if (title) {
+              broadcast(sessionId, { type: "title_updated", title });
+              const session = chatService.getSession(sessionId);
+              if (session) session.title = title;
+            }
+          }).catch(() => {});
+        }
         // Persist unread to DB + broadcast to all tabs/devices
         const doneSession = chatService.getSession(sessionId);
+        const doneTitle = resolveDisplaySessionTitle(sessionId, entry.providerId, doneSession?.title) ?? undefined;
         // The project comes from the connection, not from a separate write on open: a
         // session PPM did not create has no metadata row until this runs, and this is the
         // one place that knows both the session and its project.
-        incrementSessionUnread(sessionId, "done", doneSession?.title, entry.projectName || null);
-        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: "done", projectName: entry.projectName || "", sessionTitle: doneSession?.title || null });
+        incrementSessionUnread(sessionId, "done", doneTitle, entry.projectName || null);
+        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: "done", projectName: entry.projectName || "", sessionTitle: doneTitle || null });
 
         // The trace already holds this `done`: ChatService records an event before yielding it.
         // Sent ahead of the `done` itself, so the bar is there the moment the turn goes idle.
@@ -1636,6 +1697,14 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
             newSessionId: newId,
             projectName: oldEntry?.projectName ?? "",
           });
+          if (oldEntry && oldEntry.phase !== "idle") {
+            broadcastGlobalEvent({
+              type: "session:phase_changed",
+              sessionId: newId,
+              phase: oldEntry.phase,
+              projectName: oldEntry.projectName ?? "",
+            });
+          }
           // The consumer must target the new id for every subsequent broadcast —
           // including this session_migrated event — since the entry moved. Without
           // this, a provider that always migrates (e.g. codex: threadId ≠ ppm id)
@@ -1827,7 +1896,7 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   const typedContent = parsed.content.trimStart();
   if (typedContent.startsWith("/")) {
     const { listSlashItems, rewriteSlashAlias } = await import("../../services/slash-discovery/index.ts");
-    const canonical = rewriteSlashAlias(typedContent, listSlashItems(entry.projectPath ?? ""));
+    const canonical = rewriteSlashAlias(typedContent, listSlashItems(entry.projectPath ?? "", providerId));
     if (canonical !== typedContent) parsed.content = canonical;
   }
 
@@ -2395,8 +2464,6 @@ async function awaitLiveStreamOrNone(sessionId: string, entry: SessionEntry): Pr
  * and a server-originated one share; callers hold `withSessionLock`.
  */
 export async function submitToSession(sessionId: string, entry: SessionEntry, content: string, opts: SubmitToSessionOpts): Promise<SubmitResult> {
-  const providerId = entry.providerId ?? providerRegistry.getDefault().id;
-
   // User sent a message instead of answering a pending question/approval.
   // The SDK generator is blocked inside canUseTool awaiting that approval, so
   // it can't consume the pushed message — resolve the approval as skipped to
@@ -2589,7 +2656,7 @@ export const chatWebSocket = {
         sessionId,
         phase: existing.phase,
         pendingApproval: existing.pendingApprovalEvent ?? null,
-        sessionTitle: session?.title || null,
+        sessionTitle: resolveDisplaySessionTitle(sessionId, existing.providerId, session?.title),
         compactStatus: existing.compactStatus ?? null,
         mcpNeedsAuth: existing.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
@@ -2616,16 +2683,24 @@ export const chatWebSocket = {
       void detectImplicitTeam(sessionId);
 
       // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)
-      if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
-        sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
-          const found = sessions.find((s) => s.sessionId === sessionId);
-          const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
-          const title = dbTitle ?? found?.customTitle ?? found?.summary;
+      if (isGenericSessionTitle(session?.title, existing.providerId)) {
+        if (existing.providerId === "antigravity") {
+          const title = resolveDisplaySessionTitle(sessionId, existing.providerId, session?.title);
           if (title) {
             broadcast(sessionId, { type: "title_updated", title });
             if (session) session.title = title;
           }
-        }).catch(() => {});
+        } else {
+          sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
+            const found = sessions.find((s) => s.sessionId === sessionId);
+            const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
+            const title = dbTitle ?? found?.customTitle ?? found?.summary;
+            if (title) {
+              broadcast(sessionId, { type: "title_updated", title });
+              if (session) session.title = title;
+            }
+          }).catch(() => {});
+        }
       }
       log.debug(`session=${sessionId} FE reconnected (phase=${existing.phase}, clients=${existing.clients.size})`);
       return;
@@ -2643,7 +2718,7 @@ export const chatWebSocket = {
       sessionId,
       phase: "idle",
       pendingApproval: null,
-      sessionTitle: session?.title || null,
+      sessionTitle: resolveDisplaySessionTitle(sessionId, providerId, session?.title),
       compactStatus: null,
       model: resolveSessionModel(sessionId),
       turnStop: lastTurnStop(sessionId),
@@ -2651,16 +2726,24 @@ export const chatWebSocket = {
     }));
 
     // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)
-    if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
-      sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
-        const found = sessions.find((s) => s.sessionId === sessionId);
-        const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
-        const title = dbTitle ?? found?.customTitle ?? found?.summary;
+    if (isGenericSessionTitle(session?.title, providerId)) {
+      if (providerId === "antigravity") {
+        const title = resolveDisplaySessionTitle(sessionId, providerId, session?.title);
         if (title) {
           broadcast(sessionId, { type: "title_updated", title });
           if (session) session.title = title;
         }
-      }).catch(() => {});
+      } else {
+        sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
+          const found = sessions.find((s) => s.sessionId === sessionId);
+          const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
+          const title = dbTitle ?? found?.customTitle ?? found?.summary;
+          if (title) {
+            broadcast(sessionId, { type: "title_updated", title });
+            if (session) session.title = title;
+          }
+        }).catch(() => {});
+      }
     }
   },
 
@@ -2770,7 +2853,7 @@ export const chatWebSocket = {
         sessionId,
         phase: entry.phase,
         pendingApproval: entry.pendingApprovalEvent ?? null,
-        sessionTitle: chatService.getSession(sessionId)?.title || null,
+        sessionTitle: resolveDisplaySessionTitle(sessionId, entry.providerId, chatService.getSession(sessionId)?.title),
         compactStatus: entry.compactStatus ?? null,
         mcpNeedsAuth: entry.mcpNeedsAuth ?? [],
         model: resolveSessionModel(sessionId),
@@ -2807,6 +2890,18 @@ export const chatWebSocket = {
         ws.send(JSON.stringify({ type: "error", message: imageError }));
         return;
       }
+      const provider = providerRegistry.get(providerId);
+      // A provider that cannot take a message mid-turn would drop it, so the sender is told
+      // instead. The message still answers a pending approval, as it does for every provider.
+      if (entry.isStreamingActive && !(provider && "pushMessage" in provider)) {
+        supersedeApprovals(sessionId, entry);
+        ws.send(JSON.stringify({
+          type: "error",
+          message: "This provider can't take a message while it's working. Wait for the reply, or press Stop.",
+        }));
+        return;
+      }
+
       // Store permission mode — sticky for this session
       if (parsed.permissionMode) {
         entry.permissionMode = parsed.permissionMode;

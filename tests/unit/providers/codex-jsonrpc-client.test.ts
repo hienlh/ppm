@@ -9,6 +9,18 @@ function feed(stream: EventEmitter, s: string) {
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 describe("CodexJsonRpcClient framing", () => {
+  it("preserves Unicode deltas when stdout splits a UTF-8 character", () => {
+    const c = new CodexJsonRpcClient();
+    const stdout = new EventEmitter();
+    const seen: unknown[] = [];
+    c.onNotification((n) => seen.push(n.params));
+    c.attach(stdout as any);
+    const delta = "Đã xong — ảnh 🖼️";
+    const bytes = Buffer.from(JSON.stringify({ method: "item/agentMessage/delta", params: { delta } }) + "\n");
+    for (const byte of bytes) stdout.emit("data", Buffer.from([byte]));
+    expect(seen).toEqual([{ delta }]);
+  });
+
   it("buffers a partial trailing line until the newline arrives", () => {
     const c = new CodexJsonRpcClient();
     const stdout = new EventEmitter();

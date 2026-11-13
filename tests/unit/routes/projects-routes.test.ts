@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
 import { Hono } from "hono";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { getDb, openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { projectRoutes } from "../../../src/server/routes/projects.ts";
 import { configService } from "../../../src/services/config.service.ts";
@@ -17,6 +17,14 @@ function createApp() {
 function storedImage(name: string): string | null | undefined {
   return (getDb().query("SELECT image FROM projects WHERE name = ?").get(name) as { image: string | null } | null)?.image;
 }
+
+// Real folders rather than /tmp and /var: Windows has no /var, and answers /tmp as C:\tmp.
+const DIR_A = mkdtempSync(join(tmpdir(), "ppm-proj-a-"));
+const DIR_B = mkdtempSync(join(tmpdir(), "ppm-proj-b-"));
+afterAll(() => {
+  rmSync(DIR_A, { recursive: true, force: true });
+  rmSync(DIR_B, { recursive: true, force: true });
+});
 
 beforeEach(() => {
   setDb(openTestDb());
@@ -42,7 +50,7 @@ describe("GET /projects", () => {
     await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/tmp", name: "my-project" }),
+      body: JSON.stringify({ path: DIR_A, name: "my-project" }),
     });
 
     // List projects
@@ -51,7 +59,7 @@ describe("GET /projects", () => {
     expect(json.ok).toBe(true);
     expect(json.data.length).toBe(1);
     expect(json.data[0].name).toBe("my-project");
-    expect(json.data[0].path).toBe("/tmp");
+    expect(json.data[0].path).toBe(DIR_A);
   });
 });
 
@@ -61,7 +69,7 @@ describe("POST /projects", () => {
     const res = await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/tmp", name: "test-proj" }),
+      body: JSON.stringify({ path: DIR_A, name: "test-proj" }),
     });
 
     expect(res.status).toBe(201);
@@ -76,13 +84,13 @@ describe("POST /projects", () => {
     const res = await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/tmp" }),
+      body: JSON.stringify({ path: DIR_A }),
     });
 
     expect(res.status).toBe(201);
     const json = await res.json() as any;
     expect(json.ok).toBe(true);
-    expect(json.data.name).toBe("tmp");
+    expect(json.data.name).toBe(basename(DIR_A));
   });
 
   it("rejects missing path with 400", async () => {
@@ -119,14 +127,14 @@ describe("POST /projects", () => {
     await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/tmp", name: "dup" }),
+      body: JSON.stringify({ path: DIR_A, name: "dup" }),
     });
 
     // Try to add duplicate
     const res = await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/var", name: "dup" }),
+      body: JSON.stringify({ path: DIR_B, name: "dup" }),
     });
 
     expect(res.status).toBe(400);
@@ -143,12 +151,12 @@ describe("PATCH /projects/reorder", () => {
     await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/tmp", name: "proj-a" }),
+      body: JSON.stringify({ path: DIR_A, name: "proj-a" }),
     });
     await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/var", name: "proj-b" }),
+      body: JSON.stringify({ path: DIR_B, name: "proj-b" }),
     });
 
     // Reorder
@@ -200,7 +208,7 @@ describe("PATCH /projects/:name/color", () => {
     await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/tmp", name: "proj" }),
+      body: JSON.stringify({ path: DIR_A, name: "proj" }),
     });
 
     // Set color
@@ -223,7 +231,7 @@ describe("PATCH /projects/:name/color", () => {
     await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/tmp", name: "proj", color: "#ff0000" }),
+      body: JSON.stringify({ path: DIR_A, name: "proj", color: "#ff0000" }),
     });
 
     // Clear color
@@ -260,7 +268,7 @@ describe("PATCH /projects/:name", () => {
     await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/tmp", name: "old-name" }),
+      body: JSON.stringify({ path: DIR_A, name: "old-name" }),
     });
 
     // Update name
@@ -283,14 +291,14 @@ describe("PATCH /projects/:name", () => {
     await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/tmp", name: "proj" }),
+      body: JSON.stringify({ path: DIR_A, name: "proj" }),
     });
 
     // Update path
     const res = await app.request("/projects/proj", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/var" }),
+      body: JSON.stringify({ path: DIR_B }),
     });
 
     expect(res.status).toBe(200);
@@ -321,7 +329,7 @@ describe("DELETE /projects/:name", () => {
     await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/tmp", name: "to-delete" }),
+      body: JSON.stringify({ path: DIR_A, name: "to-delete" }),
     });
 
     // Delete
@@ -374,7 +382,7 @@ describe("project image (upload / serve / delete)", () => {
     await app.request("/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "/tmp", name }),
+      body: JSON.stringify({ path: DIR_A, name }),
     });
   }
 
@@ -555,5 +563,41 @@ describe("project image (upload / serve / delete)", () => {
       await app.request("/projects/a/image", { method: "DELETE" });
       expect(existsSync(avatarPath(up.data.image))).toBe(true);
     });
+  });
+});
+
+describe("POST /projects/git/clone", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "ppm-clone-route-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("turns off Bun's 10 s idle timeout so a slow clone is not cut off mid-flight", async () => {
+    const origin = join(tmpDir, "origin");
+    const dest = join(tmpDir, "dest");
+    Bun.spawnSync(["git", "init", "--bare", origin]);
+
+    const timeouts: { request: Request; seconds: number }[] = [];
+    const server = { timeout: (request: Request, seconds: number) => { timeouts.push({ request, seconds }); } };
+    const app = createApp();
+
+    const res = await app.request(
+      "/projects/git/clone",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: origin, targetDir: dest, name: "cloned-proj" }),
+      },
+      server,
+    );
+
+    expect(res.status).toBe(201);
+    expect(timeouts.map((t) => t.seconds)).toEqual([0]);
+    expect(new URL(timeouts[0]!.request.url).pathname).toBe("/projects/git/clone");
   });
 });

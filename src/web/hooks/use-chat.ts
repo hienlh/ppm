@@ -1225,7 +1225,14 @@ export function useChat(
       phaseRef.current = p;
       // Turns opened before this socket joined: what a Copy turn link on those messages needs.
       bindAll(state.turnBindings);
-      if (state.sessionTitle) setSessionTitle(state.sessionTitle);
+      if (
+        state.sessionTitle &&
+        state.sessionTitle !== "Resumed Chat" &&
+        state.sessionTitle !== "Chat" &&
+        !(providerId === "antigravity" && state.sessionTitle === "New Chat")
+      ) {
+        setSessionTitle(state.sessionTitle);
+      }
       if (state.model) {
         if (pendingModelRef.current && state.model !== pendingModelRef.current) {
           // Server reported a model that predates the user's unconfirmed pick
@@ -1401,6 +1408,9 @@ export function useChat(
       // One session's account must not label another's. Only on a real session-to-session
       // switch: the draft→real transition (null → id) keeps serving the same conversation.
       setLiveAccount(null);
+      setSessionTitle(null);
+    } else if (!sessionId) {
+      setSessionTitle(null);
     }
     prevSessionIdRef.current = sessionId ?? null;
     pendingSendsRef.current = [];

@@ -48,3 +48,26 @@ test("minimal settings preloading also skips disabled panes", async () => {
     expect(spies.get("extensions")).not.toHaveBeenCalled();
   } finally { for (const spy of spies.values()) spy.mockRestore(); }
 });
+
+test("minimal Remote Access preserves public access controls but never mounts restored review hosting", async () => {
+  useSettingsStore.setState({ minimalMode: true });
+  const { RemoteAccessSettingsSection } = await import("../../../src/web/components/settings/remote-access/remote-access-settings-section");
+  const { useRemoteAccessTab } = await import("../../../src/web/components/settings/remote-access/remote-access-tab-store");
+  useRemoteAccessTab.setState({ tab: "review-links" });
+  const requests: string[] = [];
+  installGlobal("fetch", async (url: string) => {
+    requests.push(String(url));
+    return new Response(JSON.stringify({ ok: false, error: "test unavailable" }), { status: 503 });
+  });
+  const rendered = await mount(<RemoteAccessSettingsSection />);
+  try {
+    expect(rendered.container.querySelector('[data-testid="remote-access-tab-review-links"]')).toBeNull();
+    expect(rendered.container.querySelector('[data-testid="remote-access-tab-public-link"]')).not.toBeNull();
+    expect(rendered.container.querySelector('[data-testid="remote-access"]')?.getAttribute("data-tab")).toBe("tailscale");
+    expect(useRemoteAccessTab.getState().tab).toBe("review-links");
+    expect(requests.some((url) => url.includes("share-host"))).toBe(false);
+  } finally {
+    await rendered.unmount();
+    useRemoteAccessTab.setState({ tab: "tailscale" });
+  }
+});

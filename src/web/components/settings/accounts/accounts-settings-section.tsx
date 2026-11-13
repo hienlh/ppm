@@ -18,11 +18,13 @@ import { ProviderBadge } from "@/components/chat/provider-selector";
 import { getAISettings } from "../../../lib/api-settings";
 import { ClaudeAccountsSection } from "./claude-accounts-section";
 import { CodexAccountsSection } from "./codex-accounts-section";
+import { AntigravityAccountsSection } from "./antigravity-accounts-section";
 
 /** Providers with an account manager, in tab order. Others have no credentials to manage. */
 const PROVIDER_TABS = [
   { id: "claude", label: "Claude" },
   { id: "codex", label: "Codex" },
+  { id: "antigravity", label: "Antigravity" },
 ] as const;
 
 type ProviderTabId = (typeof PROVIDER_TABS)[number]["id"];
@@ -74,7 +76,13 @@ export function AccountsSettingsSection() {
         </div>
       )}
 
-      {active === "claude" ? <ClaudeAccountsSection /> : <CodexAccountsSection />}
+      {active === "claude" ? (
+        <ClaudeAccountsSection />
+      ) : active === "codex" ? (
+        <CodexAccountsSection />
+      ) : (
+        <AntigravityAccountsSection />
+      )}
     </div>
   );
 }

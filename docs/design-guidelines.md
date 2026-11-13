@@ -39,6 +39,15 @@ These rules MUST be followed when creating or modifying any UI component. PPM is
 - Prefer `py-3 px-4` over `py-1 px-2` for buttons on mobile
 - Icon-only buttons: minimum `size-10` (40px) with padding
 
+**Exception — icon buttons packed into one group.** Three or more icon buttons sharing a single
+pill (the chat footer's right-hand cluster: usage, History, `···`) cannot each claim 44px
+sideways: the invisible `::after` press areas would overlap, and the button later in the DOM
+takes a press meant for its neighbour. Such a group keeps the full **44px vertically** and
+narrows only across — 30px for the footer cluster, whose drawn buttons are 22px. The group is
+deliberately small on a phone; widening it to satisfy this rule is a regression, not a fix. See
+`FOOTER_GHOST` in `src/web/components/chat/footer-chip.ts`, which spells out the arithmetic, and
+`tests/e2e/chat-footer-e2e.mjs`, which measures the vertical reach.
+
 ### 4. Context Menus → Long-Press or Inline Actions
 - **NEVER** use right-click context menus as the only way to access actions on mobile
 - Use long-press (400ms) with `select-none` to prevent text selection

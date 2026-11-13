@@ -1,6 +1,7 @@
 import { registerUsageSource } from "./usage-registry.ts";
 import { claudeUsageSource } from "../claude-usage-source.ts";
 import { codexUsageSource } from "../../providers/codex-app-server/codex-usage-source.ts";
+import { antigravityUsageSource } from "../../providers/antigravity/antigravity-usage.ts";
 
 /**
  * Wires the concrete providers into the shared usage layer.
@@ -15,4 +16,5 @@ import { codexUsageSource } from "../../providers/codex-app-server/codex-usage-s
 export function registerAllUsageSources(): void {
   registerUsageSource(claudeUsageSource);
   registerUsageSource(codexUsageSource);
+  registerUsageSource(antigravityUsageSource);
 }

@@ -5,8 +5,8 @@ import {
   type Query,
   listSessions as sdkListSessions,
   getSessionInfo as sdkGetSessionInfo,
-  getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
+import { readSessionMessages } from "./claude-transcript-tail.ts";
 import { query } from "./claude-cli-process-group.ts";
 import { allowedToolsFor, assistantMcpServers, buildModelQueryOptions, CLAUDE_SETTING_SOURCES, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_SESSION_COLLAB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, fileWriteTarget, moveMcpServersToConfigFile, preToolUseDecision, READ_ONLY_TOOLS, sessionCollabMcpServers, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
 import { SESSION_COLLAB_MCP_PATH, sessionCollabMcpAccessFor } from "../services/session-collab/session-collab-tokens.ts";
@@ -2016,7 +2016,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           : (msg.type === "assistant" || (msg as any).type === "partial") && (msg as any).message?.id !== pendingToolsMessageId;
         if (pendingToolCount > 0 && !parentId && startsResponse) {
           try {
-            const sessionMsgs = await getSessionMessages(sessionId);
+            const sessionMsgs = (await latestSessionMessages(sessionId)).messages;
             // Find the last user message — it contains tool_result blocks
             const lastUserMsg = [...sessionMsgs].reverse().find(
               (m: any) => m.type === "user",
@@ -2468,7 +2468,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // Flush any remaining pending tool_results before finishing
           if (pendingToolCount > 0) {
             try {
-              const sessionMsgs = await getSessionMessages(sessionId);
+              const sessionMsgs = (await latestSessionMessages(sessionId)).messages;
               const lastUserMsg = [...sessionMsgs].reverse().find(
                 (m: any) => m.type === "user",
               );
@@ -2957,7 +2957,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   async getMessages(sessionId: string): Promise<ChatMessage[]> {
     try {
-      const messages = await getSessionMessages(sessionId);
+      const sessionDir = resolveSessionDir(sessionId, getSessionProjectPath(sessionId));
+      const { messages, fromByte } = await readSessionMessages(sessionId, sessionDir ? `${sessionDir}.jsonl` : null);
       const parsed = messages.map((msg) => parseSessionMessage(msg));
 
       const merged = mergeToolResultMessages(parsed);
@@ -2969,13 +2970,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       // Newer CLIs store each subagent's transcript in <session>/subagents/
       // instead of inline sidechain lines — merge them back as card children.
-      const sessionDir = resolveSessionDir(sessionId, getSessionProjectPath(sessionId));
       if (sessionDir) mergeSubagentChildren(sessionDir, merged);
 
       // The SDK walk stops at the `compact_boundary` record and never yields it, so what
-      // each compaction cost has to come from the file the walk read.
+      // each compaction cost has to come from the file the walk read — the same range of it.
       if (sessionDir) {
-        applyCompactions(merged, await readCompactions(`${sessionDir}.jsonl`).catch(() => new Map()));
+        applyCompactions(merged, await readCompactions(`${sessionDir}.jsonl`, { fromByte }).catch(() => new Map()));
       }
 
       // A backgrounded Agent's tool result is only a launch ack; its real outcome arrives
@@ -2992,6 +2992,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       return [];
     }
   }
+}
+
+/** The SDK's `getSessionMessages`, reading only the end of a long transcript (`claude-transcript-tail.ts`). */
+function latestSessionMessages(sessionId: string) {
+  const sessionDir = resolveSessionDir(sessionId, getSessionProjectPath(sessionId));
+  return readSessionMessages(sessionId, sessionDir ? `${sessionDir}.jsonl` : null);
 }
 
 const SDK_SESSION_PAGE = 200;

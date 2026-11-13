@@ -182,7 +182,10 @@ its forwards and reads its own terminals under either id.
 **Limits and trust.** The token acts for its own session only: it opens tabs on that session's
 devices (a file the agent could already read, or a server on the host), reads the terminals the
 chat may read, and types — never runs — one checked line into a terminal it opened. It is held
-in memory only, looked up by its SHA-256 (`mcp-session-tokens.ts`, shared with `/api/design-mcp`). Deleting the chat
+in memory only, looked up by its SHA-256 (`mcp-session-tokens.ts`, shared with `/api/design-mcp`). PPM
+keeps it there, and so do Claude and Codex; agy does not: it writes an Antigravity chat's MCP server
+list, `Authorization` header included, into `<store>/conversations/<id>.db` (mode 600), so that
+chat's token is on disk until it is revoked. Deleting the chat
 revokes it and a restart revokes every one; the token a Codex chat was given under PPM's id,
 before the rename, outlives the chat's deletion until that restart. The
 endpoint (`mcp-http-endpoint.ts`, also shared) refuses a request carrying an `Origin` and caps

@@ -47,7 +47,10 @@ function renderCommand(cmd: Command, depth: number): string {
     parts.push("**Options:**");
     for (const o of opts) {
       const d = o.description || "_(no description)_";
-      const def = o.defaultValue !== undefined ? ` (default: \`${JSON.stringify(o.defaultValue)}\`)` : "";
+      // A `process.cwd()` default is the generating machine's directory, which says nothing about the reader's.
+      const def = o.defaultValue === undefined ? ""
+        : o.defaultValue === process.cwd() ? " (default: current directory)"
+        : ` (default: \`${JSON.stringify(o.defaultValue)}\`)`;
       parts.push(`- \`${o.flags}\` — ${d}${def}`);
     }
   }

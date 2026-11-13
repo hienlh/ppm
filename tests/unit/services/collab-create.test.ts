@@ -99,8 +99,8 @@ describe("create_session", () => {
     expect(big.created).toHaveLength(0);
   });
 
-  it("never falls back to bypass: a parent whose mode is unknown creates nothing", async () => {
-    const w = world({ mode: null }, { settings: { askBeforeCreate: false } });
+  it("a parent whose mode is unknown creates nothing", async () => {
+    const w = world({ mode: "notAMode" }, { settings: { askBeforeCreate: false } });
     const result = await createSessionTool(w.env, w.caller, { title: "One", task: "a" }, signal());
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("permission mode");
@@ -110,6 +110,15 @@ describe("create_session", () => {
     const configured = world({ mode: null }, { settings: { askBeforeCreate: false }, providerDefaultMode: "plan" });
     await createSessionTool(configured.env, configured.caller, { title: "One", task: "a" }, signal());
     expect(configured.deliveries[0]!.permissionMode).toBe("plan");
+  });
+
+  it("a parent given no mode at all runs what its provider falls back to, bypass, and so does the child", async () => {
+    for (const providerId of ["claude", "codex"] as const) {
+      const w = world({ mode: null, providerId }, { settings: { askBeforeCreate: false } });
+      const result = await createSessionTool(w.env, w.caller, { title: "One", task: "a" }, signal());
+      expect(result.isError).toBeUndefined();
+      expect(w.deliveries[0]!.permissionMode).toBe("bypassPermissions");
+    }
   });
 
   it("creates in the caller's own project only, and checks its arguments", async () => {
