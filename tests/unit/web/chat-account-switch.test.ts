@@ -3,7 +3,7 @@
  * current first (even if out of usage), usable by most headroom, refused folded away.
  */
 import { describe, expect, it } from "bun:test";
-import { orderSwitchAccounts, matchesAccountQuery, usageTone, claudeSwitchAccount, codexSwitchAccount, highestPct } from "../../../src/web/lib/chat-account-switch";
+import { orderSwitchAccounts, matchesAccountQuery, usageTone, claudeSwitchAccount, codexSwitchAccount, highestPct, claudeResetsSummary, codexResetsSummary } from "../../../src/web/lib/chat-account-switch";
 import type { SwitchAccount } from "../../../src/web/lib/chat-account-switch";
 
 describe("orderSwitchAccounts", () => {
@@ -155,5 +155,21 @@ describe("highestPct", () => {
 
   it("returns null when both are null", () => {
     expect(highestPct({ fiveHourPct: null, weekPct: null })).toBeNull();
+  });
+});
+
+describe("resets summaries", () => {
+  it("counts every reset a Claude account holds and names the nearest expiry", () => {
+    const grant = (id: string, resetsLeft: number, endsAt?: string) => ({ id, resetsLeft, endsAt }) as never;
+    expect(claudeResetsSummary({ grants: [grant("f", 2, "2099-03-09T00:00:00Z"), grant("u", 1, "2099-01-05T00:00:00Z"), grant("x", 0, "2098-01-01T00:00:00Z")] } as never))
+      .toEqual({ count: 3, nextExpiresAt: "2099-01-05T00:00:00Z" });
+    expect(claudeResetsSummary(undefined)).toEqual({ count: 0, nextExpiresAt: null });
+  });
+
+  it("reads Codex's count and soonest credit, an older reading included", () => {
+    expect(codexResetsSummary({ available: 2, credits: [{ id: "b", expiresAt: "2099-02-01T00:00:00Z" }, { id: "a", expiresAt: "2099-01-01T00:00:00Z" }] }))
+      .toEqual({ count: 2, nextExpiresAt: "2099-01-01T00:00:00Z" });
+    expect(codexResetsSummary({ available: 1, nextExpiresAt: "2099-04-01T00:00:00Z" })).toEqual({ count: 1, nextExpiresAt: "2099-04-01T00:00:00Z" });
+    expect(codexResetsSummary({ available: 0 })).toEqual({ count: 0, nextExpiresAt: null });
   });
 });

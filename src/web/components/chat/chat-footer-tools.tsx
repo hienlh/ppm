@@ -35,6 +35,7 @@ import { TeamActivityPanel } from "./team-activity-panel";
 import { ChatHistoryPanel } from "./chat-history-panel";
 import { ChatMoreMenu } from "./chat-more-menu";
 import { SwitchAccountView } from "./switch-account-view";
+import { requestAccountFocus } from "@/components/settings/accounts/account-focus";
 import { FooterPopover, FooterPopoverHeader } from "./footer-popover";
 import { FOOTER_CLUSTER, FOOTER_GHOST } from "./footer-chip";
 import { UsageWindow } from "./usage-meters";
@@ -232,6 +233,7 @@ export function ChatFooterTools({
             onReauth={(a) => (isCodex ? setCodexReauth({ id: a.id, label: a.label }) : setAddAccount({ id: a.id, label: a.label }))}
             onAddAccount={() => { if (isCodex) { close(); openSettings("accounts"); } else setAddAccount(true); }}
             onManage={() => { close(); openSettings("accounts"); }}
+            onOpenResets={(a) => { close(); requestAccountFocus({ provider: isCodex ? "codex" : "claude", accountId: a.id }); openSettings("accounts"); }}
           />
         ) : (
           <div className={cn("flex min-h-0 flex-col", returned && "footer-from-left")} data-more-main="">
