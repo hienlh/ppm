@@ -27,6 +27,10 @@ import { renderTerminal } from "./terminal-text.ts";
  * characters and no space but the plain one either, so the user reads exactly what Enter runs.
  * A shell that settled on a question of its own (an update's `[Y/n]`) gets nothing typed: its
  * first key would answer it.
+ *
+ * Every terminal it starts keeps the AI-chat mark (`PPM_AI_CHAT=1`) for its whole life: the line
+ * waiting there is the AI's, so a `ppm` command the user runs from it still meets the rules PPM
+ * applies to an AI chat, and the tab says an AI typed into it.
  */
 
 export const RUN_IN_TERMINAL_MAX_CHARS = 4_000;
@@ -73,7 +77,23 @@ export interface TerminalToolsDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/** How one `run` call differs from `run_in_terminal`'s own. */
+export interface TerminalRunOptions {
+  /** The longest command it types (default {@link RUN_IN_TERMINAL_MAX_CHARS}). */
+  maxChars?: number;
+  /**
+   * How the answer says to read the terminal later, given its short id; null for nothing. By
+   * default, `read_terminal` while the user has it on.
+   */
+  readHint?: (terminal: string) => string | null;
+  /** Open the tab in the dock of the project the device shows, not the chat's own. */
+  dock?: "current";
+}
+
 export const shortTerminalId = (id: string): string => id.slice(0, 8);
+
+/** A project name as a device reported it: one line, quoted, short. */
+const deviceProject = (name: string): string => JSON.stringify(deviceError(name).slice(0, 100));
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 
@@ -86,12 +106,14 @@ function ago(ms: number): string {
   return `${Math.round(s / 86_400)} days ago`;
 }
 
-/** Where a terminal started, as the chat sees it. */
-function place(dir: string, projectPath: string | null): string {
+/** Where a terminal started, as the chat sees it; `name` names the project when the chat has none of its own. */
+function place(dir: string, projectPath: string | null, name?: string | null): string {
   if (projectPath && isInsideDir(resolve(dir), resolve(projectPath))) {
     // One spelling on every OS; `cwd` takes it back as written.
     const rel = relative(resolve(projectPath), resolve(dir)).split(sep).join("/");
-    return rel ? `started in ${rel} (inside the project)` : "started in the project folder";
+    const project = name ? `project ${JSON.stringify(name)}` : "the project";
+    if (rel) return `started in ${rel} (inside ${project})`;
+    return name ? `started in the folder of ${project}` : "started in the project folder";
   }
   const home = homedir();
   return `started in ${isInsideDir(dir, home) ? `~${dir.slice(home.length)}` : dir}`;
@@ -194,10 +216,10 @@ export function createTerminalTools(deps: TerminalToolsDeps) {
     );
   }
 
-  function commandError(command: unknown): string | null {
+  function commandError(command: unknown, maxChars: number): string | null {
     if (typeof command !== "string" || !command.trim()) return "`command` is required: the shell command to type.";
-    if (command.length > RUN_IN_TERMINAL_MAX_CHARS) {
-      return `\`command\` is longer than ${RUN_IN_TERMINAL_MAX_CHARS} characters; write it to a script file and type the command that runs it.`;
+    if (command.trim().length > maxChars) {
+      return `\`command\` is longer than ${maxChars.toLocaleString("en-US")} characters; write it to a script file and type the command that runs it.`;
     }
     if (CONTROL.test(command.trim())) {
       return "`command` must be one line with no control characters (no newline, tab or escape): join steps with && or ;, or put them in a script file.";
@@ -240,8 +262,12 @@ export function createTerminalTools(deps: TerminalToolsDeps) {
     }
   }
 
-  async function run(binding: TabToolsBinding, args: Record<string, unknown>): Promise<Json> {
-    const invalid = commandError(args.command);
+  const defaultReadHint = (terminal: string): string | null =>
+    deps.enabled(READ_TERMINAL_TOOL) ? `read_terminal (\`terminal\` "${terminal}")` : null;
+
+  async function run(binding: TabToolsBinding, args: Record<string, unknown>, opts: TerminalRunOptions = {}): Promise<Json> {
+    const readHint = opts.readHint ?? defaultReadHint;
+    const invalid = commandError(args.command, opts.maxChars ?? RUN_IN_TERMINAL_MAX_CHARS);
     if (invalid) return textResult(invalid, true);
     const command = (args.command as string).trim();
     const start = startDir(args.cwd, binding);
@@ -249,13 +275,14 @@ export function createTerminalTools(deps: TerminalToolsDeps) {
 
     let id: string;
     try {
-      id = deps.terminals.create(start.dir);
+      id = deps.terminals.create(start.dir, { aiMark: true });
     } catch (e) {
       return textResult(`PPM could not start a shell in ${start.dir}: ${(e as Error).message}`, true);
     }
     const settled = shellSettled(id);
     const outcome = await deps.request(binding.sessionId, {
       tool: RUN_IN_TERMINAL_TOOL, terminalId: id, projectName: binding.projectName, cwd: start.dir,
+      ...(opts.dock ? { dock: opts.dock } : {}),
     }, RUN_IN_TERMINAL_WAIT_MS);
     // A device that did not answer in time may still show it; any other failure shows nothing.
     if ((!outcome.ok && outcome.reason !== "timeout") || (outcome.ok && !outcome.result.opened)) {
@@ -270,24 +297,27 @@ export function createTerminalTools(deps: TerminalToolsDeps) {
     remember(binding.sessionId, id);
     const terminal = shortTerminalId(id);
     const { lines } = await screen(id);
+    const hint = readHint(terminal);
     if (STARTUP_QUESTION.test(lines.at(-1) ?? "")) {
-      const look = deps.enabled(READ_TERMINAL_TOOL) ? ` read_terminal with \`terminal\` "${terminal}" shows it.` : "";
       return textResult(
         `The new terminal (${terminal}) is waiting on a question its shell asked as it started, so nothing was typed: `
-        + `the command's first key would have answered it. Ask the user to answer it there, then give them the command to run.${look}`,
+        + `the command's first key would have answered it. Ask the user to answer it there, then give them the command to run.`
+        + `${hint ? ` ${hint} shows it.` : ""}`,
         true,
       );
     }
     deps.terminals.write(id, command);
-    const where = outcome.ok
-      ? "in the dock of the user's device"
-      : `for the user's device, which did not confirm within ${Math.round(RUN_IN_TERMINAL_WAIT_MS / 1000)} s that it shows it`;
-    const next = deps.enabled(READ_TERMINAL_TOOL)
-      ? ` Once they have run it, read what it printed with read_terminal, \`terminal\` "${terminal}".`
-      : "";
+    const shown = outcome.ok ? outcome.result.shownProject : undefined;
+    const where = !outcome.ok
+      ? `for the user's device, which did not confirm within ${Math.round(RUN_IN_TERMINAL_WAIT_MS / 1000)} s that it shows it`
+      : opts.dock === "current"
+        ? `in the dock of the user's device, ${shown ? `under the project it shows (${deviceProject(shown)})` : "which shows no project"}`
+        : "in the dock of the user's device";
+    const named = opts.dock === "current" ? binding.projectName : null;
     return textResult(
-      `Typed the command into a new terminal (${terminal}, ${place(start.dir, binding.projectPath)}) ${where}. `
-      + `Nothing runs until the user presses Enter there, so tell them it is waiting for them.${next}`,
+      `Typed the command into a new terminal (${terminal}, ${place(start.dir, binding.projectPath, named)}) ${where}. `
+      + `Nothing runs until the user presses Enter there, so tell them it is waiting for them.`
+      + `${hint ? ` Once they have run it, read what it printed with ${hint}.` : ""}`,
     );
   }
 

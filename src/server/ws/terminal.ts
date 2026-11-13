@@ -78,8 +78,9 @@ export const terminalWebSocket = {
     // Mark connected
     terminalService.setConnected(sessionId, ws);
 
-    // Send session info
-    ws.send(JSON.stringify({ type: "session", id: sessionId }));
+    // Send session info. `aiMark`: an AI typed the line waiting here, and the shell carries the
+    // AI-chat mark, so the tab says so.
+    ws.send(JSON.stringify({ type: "session", id: sessionId, ...(session.aiMark ? { aiMark: true } : {}) }));
 
     // Send buffered output for reconnect
     const buffer = terminalService.getBuffer(sessionId);

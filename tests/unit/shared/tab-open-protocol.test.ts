@@ -22,4 +22,13 @@ describe("tab open results", () => {
     expect(result!.error!.length).toBe(MAX_TAB_OPEN_ERROR_CHARS);
     expect(result!.report).toBeUndefined();
   });
+
+  it("keeps the project a terminal was docked in, capped, and drops one that is not text", () => {
+    const docked = parseTabOpenResult({ type: "tab_open_result", requestId: ID, opened: true, shownProject: "web" });
+    expect(docked).toEqual({ type: "tab_open_result", requestId: ID, opened: true, shownProject: "web" });
+    expect(parseTabOpenResult({ type: "tab_open_result", requestId: ID, opened: true, shownProject: "p".repeat(500) })!.shownProject!.length).toBe(200);
+    for (const shownProject of [42, "", null]) {
+      expect(parseTabOpenResult({ type: "tab_open_result", requestId: ID, opened: true, shownProject })).not.toHaveProperty("shownProject");
+    }
+  });
 });

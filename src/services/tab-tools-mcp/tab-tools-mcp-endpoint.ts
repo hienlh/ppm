@@ -148,14 +148,21 @@ export function existingForwardFor(
 }
 
 const request: Request = (sessionId, req, waitMs) => tabOpenBroker.request(sessionId, req, waitMs);
-const enabled = (tool: string): boolean => isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool);
+/** Whether the user has this tool on (Settings → Tools). */
+export const tabToolEnabled = (tool: string): boolean => isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool);
+
+/**
+ * The one terminal-tools instance: it remembers which chat opened which terminal, so the PPM
+ * Assistant's `terminal_type` types through it too.
+ */
+export const terminalTools = createTerminalTools({ terminals: terminalService, request, enabled: tabToolEnabled, canonical: canonicalTabSession });
 
 export const tabToolsMcpHandler = createTabToolsMcpHandler({
   resolveToken: (token) => tabToolsMcpTokens.resolve(token),
   sessionProject,
   request,
-  enabled,
-  terminal: createTerminalTools({ terminals: terminalService, request, enabled, canonical: canonicalTabSession }),
+  enabled: tabToolEnabled,
+  terminal: terminalTools,
   openUrl: createOpenUrlTool({
     request,
     canonical: canonicalTabSession,

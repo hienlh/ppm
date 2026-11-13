@@ -1,6 +1,6 @@
 import type { Subprocess, Terminal as BunTerminal } from "bun";
 import { isUsableTerminalSize } from "../shared/terminal-size";
-import { withoutAiChatMark } from "./ai-chat-env.ts";
+import { AI_CHAT_MARK, withoutAiChatMark } from "./ai-chat-env.ts";
 import { ppmInstanceEnv } from "./ppm-instance-env.ts";
 import { createLogger } from "./logger.ts";
 import { registerMemoryGauge } from "./memory-diagnostics.ts";
@@ -35,21 +35,31 @@ export interface PtyHandle {
 /** How a shell ended: an exit code, or the signal that ended it. */
 type ExitHandler = (code: number | null, signal: string | null) => void;
 
+/**
+ * A terminal's environment. A person types here, so a PPM started from an AI chat does not pass
+ * that chat's mark on — unless an AI typed the line the person will run (`aiMark`): that terminal
+ * keeps the mark for its whole life, so `ppm` run there still applies the AI-chat rules.
+ * ppmInstanceEnv: `ppm …` typed here reaches this PPM's database and server.
+ */
+export function terminalEnv(base: Record<string, string | undefined>, aiMark: boolean): Record<string, string> {
+  const env = withoutAiChatMark({ ...base, ...ppmInstanceEnv() });
+  return (aiMark ? { ...env, ...AI_CHAT_MARK } : env) as Record<string, string>;
+}
+
 /** Bun native PTY wrapper (macOS/Linux) */
 function spawnBunNative(
   shell: string,
   projectPath: string,
   cols: number,
   rows: number,
+  aiMark: boolean,
   onData: (text: string) => void,
   onExit: ExitHandler,
 ): PtyHandle {
   const decoder = new TextDecoder();
   const proc: Subprocess = Bun.spawn([shell, "-l"], {
     cwd: projectPath,
-    // A person types here: a PPM started from an AI chat must not pass that chat's mark on.
-    // ppmInstanceEnv: `ppm …` typed here reaches this PPM's database and server.
-    env: withoutAiChatMark({ ...process.env, TERM: "xterm-256color", ...ppmInstanceEnv() }),
+    env: terminalEnv({ ...process.env, TERM: "xterm-256color" }, aiMark),
     terminal: {
       cols,
       rows,
@@ -85,6 +95,7 @@ function spawnBunPty(
   projectPath: string,
   cols: number,
   rows: number,
+  aiMark: boolean,
   onData: (text: string) => void,
   onExit: ExitHandler,
 ): PtyHandle {
@@ -95,7 +106,7 @@ function spawnBunPty(
     cols,
     rows,
     cwd: projectPath,
-    env: withoutAiChatMark({ ...(process.env as Record<string, string>), ...ppmInstanceEnv() }),
+    env: terminalEnv(process.env, aiMark),
   });
 
   return bunPtyHandle(pty, onData, onExit);
@@ -153,6 +164,8 @@ export interface TerminalSession {
   rows: number;
   /** When the shell last printed anything (ms since the epoch), null before it has. */
   lastOutputAt: number | null;
+  /** The shell carries the AI-chat mark: an AI typed the line waiting in it. */
+  aiMark: boolean;
   /** Connected WebSocket (if any) */
   ws: unknown | null;
   /** Timeout to kill session after WS disconnect */
@@ -170,6 +183,14 @@ export interface TerminalSessionInfo {
   createdAt: string;
   connected: boolean;
   lastOutputAt: number | null;
+  aiMark: boolean;
+}
+
+export interface TerminalCreateOptions {
+  cols?: number;
+  rows?: number;
+  /** Keep the AI-chat mark in the shell's environment: an AI is about to type into it. */
+  aiMark?: boolean;
 }
 
 type OutputCallback = (sessionId: string, data: string) => void;
@@ -180,7 +201,9 @@ export class TerminalService {
   private outputListeners = new Map<string, OutputCallback>();
 
   /** Create a new terminal session — auto-selects Bun native or bun-pty */
-  create(projectPath: string, cols = 80, rows = 24): string {
+  create(projectPath: string, opts: TerminalCreateOptions = {}): string {
+    const { cols = 80, rows = 24 } = opts;
+    const aiMark = opts.aiMark === true;
     const id = crypto.randomUUID();
     const shell = getDefaultShell();
     const createdAt = new Date();
@@ -209,9 +232,9 @@ export class TerminalService {
     };
 
     const pty = isWindows
-      ? spawnBunPty(shell, projectPath, cols, rows, onData, onExit)
-      : spawnBunNative(shell, projectPath, cols, rows, onData, onExit);
-    log.info(`session=${id} spawned pid=${pty.pid ?? "?"} shell=${shell} cwd=${projectPath} ${cols}x${rows}`);
+      ? spawnBunPty(shell, projectPath, cols, rows, aiMark, onData, onExit)
+      : spawnBunNative(shell, projectPath, cols, rows, aiMark, onData, onExit);
+    log.info(`session=${id} spawned pid=${pty.pid ?? "?"} shell=${shell} cwd=${projectPath} ${cols}x${rows}${aiMark ? " ai-mark" : ""}`);
 
     const session: TerminalSession = {
       id,
@@ -221,6 +244,7 @@ export class TerminalService {
       cols,
       rows,
       lastOutputAt: null,
+      aiMark,
       ws: null,
       disconnectTimer: null,
       idleTimer: this.createIdleTimer(id),
@@ -249,6 +273,7 @@ export class TerminalService {
       cols: 80,
       rows: 24,
       lastOutputAt: null,
+      aiMark: false,
       ws: null,
       disconnectTimer: null,
       idleTimer: this.createIdleTimer(id),
@@ -306,6 +331,7 @@ export class TerminalService {
         createdAt: session.createdAt.toISOString(),
         connected: session.ws !== null,
         lastOutputAt: session.lastOutputAt,
+        aiMark: session.aiMark,
       });
     }
     return result;

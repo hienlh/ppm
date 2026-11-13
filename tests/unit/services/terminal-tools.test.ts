@@ -24,6 +24,8 @@ interface FakeTerminal {
   written: string[];
   /** The clock when each write landed. */
   writtenAt: number[];
+  /** What `create` was asked for. */
+  createOpts?: { aiMark?: boolean };
 }
 
 const OPENED: TabOpenOutcome = { ok: true, result: { type: "tab_open_result", requestId: "r".repeat(16), opened: true } };
@@ -56,8 +58,8 @@ function setup(opts: {
         return t && ({ cols: 80, rows: 24, lastOutputAt: t.lastOutputAt, pty: { closed: t.closed } } as any);
       },
       getBuffer: (id: string) => terms.get(id)?.buffer ?? "",
-      create: (dir: string) => {
-        const t = add({ projectPath: dir, connected: false, buffer: "$ " });
+      create: (dir: string, createOpts?: { aiMark?: boolean }) => {
+        const t = add({ projectPath: dir, connected: false, buffer: "$ ", createOpts });
         opts.onCreate?.(t);
         return t.id;
       },
@@ -174,12 +176,31 @@ describe("run_in_terminal", () => {
     }]);
     // Typed with no newline: it waits for the user's Enter.
     expect(t!.written).toEqual(["sudo apt install ffmpeg"]);
+    // The line is the AI's, so the shell keeps the AI-chat mark for as long as it lives.
+    expect(t!.createOpts).toEqual({ aiMark: true });
     expect(result.isError).toBeUndefined();
     expect(text(result)).toBe(
       "Typed the command into a new terminal (00000001, started in the project folder) in the dock of the user's device. "
       + "Nothing runs until the user presses Enter there, so tell them it is waiting for them. "
-      + 'Once they have run it, read what it printed with read_terminal, `terminal` "00000001".',
+      + 'Once they have run it, read what it printed with read_terminal (`terminal` "00000001").',
     );
+  });
+
+  it("takes a shorter cap, its own read hint and the device's own dock when a caller asks", async () => {
+    const shown: TabOpenOutcome = { ok: true, result: { type: "tab_open_result", requestId: "r".repeat(16), opened: true, shownProject: "web\n```x" } };
+    const { tools, terms, requests, binding, text } = setup({ outcome: shown });
+    const opts = { maxChars: 10, dock: "current" as const, readHint: (id: string) => `look at ${id}` };
+    const long = await tools.run(binding, { command: "x".repeat(11) }, opts);
+    expect(text(long)).toContain("longer than 10 characters; write it to a script file");
+    expect(terms.size).toBe(0);
+    const answer = text(await tools.run(binding, { command: "make", cwd: "packages/api" }, opts));
+    expect(requests[0]!.req).toMatchObject({ tool: "run_in_terminal", dock: "current", projectName: "demo" });
+    // Both projects are named: where the shell starts, and the dock the device put it in.
+    expect(answer).toContain('(00000001, started in packages/api (inside project "demo")) in the dock of the user\'s device, under the project it shows ("web');
+    expect(answer).not.toContain("```");
+    expect(answer).toContain("Once they have run it, read what it printed with look at 00000001.");
+    // Without a caller's dock, the device's project is not part of the answer.
+    expect(text(await tools.run(binding, { command: "ls" }))).not.toContain("under the project it shows");
   });
 
   it("leaves read_terminal out of the answer while it is off", async () => {
@@ -283,7 +304,7 @@ describe("run_in_terminal", () => {
       expect(text(result)).toBe(
         "The new terminal (00000001) is waiting on a question its shell asked as it started, so nothing was typed: "
         + "the command's first key would have answered it. Ask the user to answer it there, then give them the command to run. "
-        + 'read_terminal with `terminal` "00000001" shows it.',
+        + 'read_terminal (`terminal` "00000001") shows it.',
       );
       expect(shell!.written).toEqual([]);
       // Still open, and this chat's to read although it started outside the project.

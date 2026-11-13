@@ -49,6 +49,8 @@ interface UseTerminalReturn {
   /** URLs present in the scrollback, most recent first. */
   getBufferUrls: () => string[];
   restart: () => void;
+  /** Whether the server says an AI typed into this shell, which carries the AI-chat mark; null until it has said. */
+  aiMark: boolean | null;
 }
 
 /** Trailing punctuation that ends a sentence rather than the URL itself. */
@@ -90,6 +92,7 @@ export function useTerminal(
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [exited, setExited] = useState(false);
+  const [aiMark, setAiMark] = useState<boolean | null>(null);
   /** A brand-new shell needs to finish booting before it accepts injected input. */
   const [shellReady, setShellReady] = useState(false);
   const readyQuietTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -283,6 +286,7 @@ export function useTerminal(
             if (msg.type) {
               if (msg.type === "session" && msg.id) {
                 actualSessionId.current = msg.id;
+                setAiMark(msg.aiMark === true);
                 if (storageKey) {
                   try { localStorage.setItem(storageKey, msg.id); } catch { /* */ }
                 }
@@ -542,5 +546,5 @@ export function useTerminal(
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { connected, reconnecting, exited, shellReady, sendData, getSelection, terminal, getLastCommandOutput, getLastCommand, getBufferUrls, restart };
+  return { connected, reconnecting, exited, shellReady, sendData, getSelection, terminal, getLastCommandOutput, getLastCommand, getBufferUrls, restart, aiMark };
 }

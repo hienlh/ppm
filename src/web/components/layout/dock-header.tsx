@@ -10,6 +10,7 @@ import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type DockPosition } from "@/stores/settings-store";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 import { getTabIcon } from "@/lib/tab-type-icons";
+import { isAiMarkedTerminalTab, TerminalAiMarkBadge } from "@/components/terminal/terminal-ai-mark-badge";
 import { resolveDockPills } from "./dock-pills";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
@@ -79,6 +80,7 @@ export function DockHeader() {
             >
               <Icon className="size-3" />
               {showLabel && <span className="text-[11px] font-medium max-w-[120px] truncate">{tab.title}</span>}
+              {isAiMarkedTerminalTab(tab) && <TerminalAiMarkBadge />}
               {showLabel && tab.closable && (
                 <span
                   role="button"

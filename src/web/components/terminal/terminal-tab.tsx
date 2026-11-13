@@ -9,7 +9,9 @@ import { RotateCcw, MessageSquare } from "@/lib/icons";
 import "@xterm/xterm/css/xterm.css";
 import { toast } from "sonner";
 import { useTabStore } from "@/stores/tab-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { emitOnboardingEvidence } from "@/lib/onboarding/onboarding-types";
+import { TERMINAL_AI_MARK_EXPLANATION, TerminalAiMarkBadge } from "./terminal-ai-mark-badge";
 
 import { TerminalMobileToolbar } from "./terminal-mobile-toolbar";
 import { TerminalLinksSheet } from "./terminal-links-sheet";
@@ -26,7 +28,15 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
   const cwd = metadata?.cwd as string | undefined;
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { connected, reconnecting, exited, shellReady, sendData, getSelection, terminal, getLastCommandOutput, getLastCommand, getBufferUrls, restart } = useTerminal({ sessionId, projectName, cwd, containerRef, tabId });
+  const { connected, reconnecting, exited, shellReady, sendData, getSelection, terminal, getLastCommandOutput, getLastCommand, getBufferUrls, restart, aiMark } = useTerminal({ sessionId, projectName, cwd, containerRef, tabId });
+  // The tab chip reads the mark from the tab's metadata; the shell the server attached is what decides it.
+  const markedInTab = metadata?.aiMark === true;
+  const aiMarked = aiMark ?? markedInTab;
+  useEffect(() => {
+    if (aiMark === null || !tabId || aiMark === markedInTab) return;
+    const { aiMark: _old, ...rest } = metadata ?? {};
+    usePanelStore.getState().updateTab(tabId, { metadata: aiMark ? { ...rest, aiMark: true } : rest });
+  }, [aiMark, markedInTab, tabId, metadata]);
   const [ctrlMode, setCtrlMode] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
@@ -158,6 +168,12 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
                 ? "Reconnecting..."
                 : "Disconnected"}
         </span>
+        {aiMarked && (
+          <span className="flex min-w-0 items-center gap-1 text-text-secondary" title={TERMINAL_AI_MARK_EXPLANATION}>
+            <TerminalAiMarkBadge />
+            <span className="truncate">Typed by AI · runs as an AI chat</span>
+          </span>
+        )}
         {exited && (
           <button
             onClick={restart}

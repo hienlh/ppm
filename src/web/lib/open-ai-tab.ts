@@ -186,22 +186,35 @@ export function openAiUrlTab(req: Pick<TabOpenUrlRequest, "url" | "port" | "via"
 }
 
 /**
- * Shows the terminal `run_in_terminal` started, in the dock, with the AI's command already typed
- * at its prompt by the server. The tab attaches to that terminal rather than starting a shell.
+ * Shows the terminal `run_in_terminal` (or the Assistant's `terminal_type`) started, in the dock,
+ * with the AI's command already typed at its prompt by the server. The tab attaches to that
+ * terminal rather than starting a shell, and is marked as one an AI typed into. `dock: "current"`
+ * keeps the project the device shows and docks the terminal there; otherwise the chat's workspace
+ * is brought up first. Answers the project whose dock it went to.
  */
-export function openAiTerminal(req: Pick<TabOpenTerminalRequest, "terminalId" | "projectName" | "cwd">, chat: AiTabChat): string {
-  showChatWorkspace(chat.projectName);
-  const tabId = usePanelStore.getState().openInDock({
+export function openAiTerminal(
+  req: Pick<TabOpenTerminalRequest, "terminalId" | "projectName" | "cwd" | "dock">,
+  chat: AiTabChat,
+): { tabId: string; dockProject: string | null } {
+  if (req.dock !== "current") showChatWorkspace(chat.projectName);
+  const store = usePanelStore.getState();
+  const dockProject = req.dock === "current" ? store.currentProject ?? null : req.projectName;
+  const tabId = store.openInDock({
     type: "terminal",
     title: basename(req.cwd) || req.cwd,
-    projectId: req.projectName,
+    projectId: dockProject,
     closable: true,
-    metadata: { sessionId: req.terminalId, cwd: req.cwd, ...(req.projectName ? { projectName: req.projectName } : {}) },
+    metadata: {
+      sessionId: req.terminalId, cwd: req.cwd, aiMark: true, ...(req.projectName ? { projectName: req.projectName } : {}),
+    },
   });
   // A terminal tab reattaches to the session its id last had before it reads its metadata.
   try { localStorage.setItem(`ppm:terminal-session:${tabId}`, req.terminalId); } catch { /* storage blocked */ }
-  return tabId;
+  return { tabId, dockProject };
 }
+
+/** A `tab_open` an Assistant chat's device takes: a terminal its own `terminal_type` docks where the user is. */
+const isAssistantTerminal = (req: TabOpenRequest): boolean => req.tool === RUN_IN_TERMINAL_TOOL && req.dock === "current";
 
 /**
  * Answers the server's `tab_open`: opens the tab and, for a page the AI made, waits for it to
@@ -215,8 +228,9 @@ export async function answerTabOpen(req: TabOpenRequest, chat: AiTabChat, send: 
   };
   // The tab tools belong to ordinary chats; an Assistant session drives the screen through its
   // own UI tools, which ask first. A `tab_open` that reached an Assistant chat's socket, however
-  // it got there, opens nothing.
-  if (isAssistantProject(chat.projectName)) {
+  // it got there, opens nothing — except the terminal of the Assistant's own `terminal_type`,
+  // which only ever types a line the user still has to run.
+  if (isAssistantProject(chat.projectName) && !isAssistantTerminal(req)) {
     reply({ opened: false, error: "This chat is a PPM Assistant session; its device does not take tab tool requests." });
     return;
   }
@@ -224,7 +238,13 @@ export async function answerTabOpen(req: TabOpenRequest, chat: AiTabChat, send: 
     try {
       if (req.tool === OPEN_QUERY_TOOL) openAiQueryTab(req.query, chat);
       else if (req.tool === OPEN_URL_TOOL) openAiUrlTab(req, chat);
-      else openAiTerminal(req, chat);
+      else {
+        const { dockProject } = openAiTerminal(req, chat);
+        if (req.dock === "current") {
+          reply({ opened: true, ...(dockProject ? { shownProject: dockProject } : {}) });
+          return;
+        }
+      }
       reply({ opened: true });
     } catch (e) {
       reply({ opened: false, error: errorText(e) });

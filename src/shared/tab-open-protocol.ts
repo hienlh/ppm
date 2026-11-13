@@ -74,6 +74,11 @@ export interface TabOpenTerminalRequest {
   projectName: string | null;
   /** Where the shell started. */
   cwd: string;
+  /**
+   * `current`: dock it in the project the device shows rather than the chat's own workspace. The
+   * PPM Assistant floats over whatever project the user is in, and its own is no workspace.
+   */
+  dock?: "current";
 }
 
 export type TabOpenRequest = TabOpenFileRequest | TabOpenQueryRequest | TabOpenUrlRequest | TabOpenTerminalRequest;
@@ -90,9 +95,12 @@ export interface TabOpenResult {
   /** Why the tab could not open, or why a check that was asked for did not run. */
   error?: string;
   report?: CanvasCheckReport;
+  /** For a terminal docked with `dock: "current"`: the project whose dock it opened in. */
+  shownProject?: string;
 }
 
 export const MAX_TAB_OPEN_ERROR_CHARS = 300;
+const MAX_SHOWN_PROJECT_CHARS = 200;
 export const MAX_TAB_LINE = 10_000_000;
 
 /**
@@ -106,6 +114,7 @@ export function parseTabOpenResult(raw: unknown): TabOpenResult | null {
   if (typeof r.opened !== "boolean") return null;
   const result: TabOpenResult = { type: "tab_open_result", requestId: r.requestId, opened: r.opened };
   if (typeof r.error === "string" && r.error) result.error = r.error.slice(0, MAX_TAB_OPEN_ERROR_CHARS);
+  if (typeof r.shownProject === "string" && r.shownProject) result.shownProject = r.shownProject.slice(0, MAX_SHOWN_PROJECT_CHARS);
   if (r.report !== undefined) {
     const report = parseCanvasCheckReport(r.report);
     if (report) result.report = report;

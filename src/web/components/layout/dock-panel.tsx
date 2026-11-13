@@ -15,6 +15,7 @@ import { useProjectStore } from "@/stores/project-store";
 import { registerPanelSlot } from "./tab-pool";
 import { DockHeader } from "./dock-header";
 import { getTabIcon } from "@/lib/tab-type-icons";
+import { isAiMarkedTerminalTab, TerminalAiMarkBadge } from "@/components/terminal/terminal-ai-mark-badge";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -154,6 +155,7 @@ function MobileDockHeader() {
               >
                 <Icon className="size-[13px] shrink-0" />
                 <span className="max-w-[96px] truncate text-xs font-medium">{tab.title}</span>
+                {isAiMarkedTerminalTab(tab) && <TerminalAiMarkBadge />}
               </button>
               {tab.closable && (
                 <button
