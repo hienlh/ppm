@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { noteDirectWrite, serverRequest, ServerDownError } from "../utils/ppm-server-client.ts";
+import { projectRequest } from "../utils/project-route.ts";
 
 /**
  * How every `ppm chat` and `ppm tags` command that writes reaches PPM: through the running PPM
@@ -27,37 +27,7 @@ export const run = (work: () => Promise<void>) => async () => {
   try { await work(); } catch (e) { fail((e as Error).message); }
 };
 
-/** `/api/project/<project><sub>` on the server, or on the project routes here when no server holds the database. */
-export async function projectRequest<T>(method: string, project: string, sub: string, body?: unknown, opts: { timeoutMs?: number } = {}): Promise<T> {
-  const path = `/project/${encodeURIComponent(project)}${sub}`;
-  try {
-    return await serverRequest<T>(method, path, body, opts);
-  } catch (e) {
-    if (!(e instanceof ServerDownError)) throw e;
-  }
-  if (method !== "GET") await noteDirectWrite();
-  return runRouteHere<T>(method, path, body);
-}
-
-async function runRouteHere<T>(method: string, path: string, body: unknown): Promise<T> {
-  const { configService } = await import("../../services/config.service.ts");
-  if (!configService.isLoaded) configService.load();
-  const { Hono } = await import("hono");
-  const { projectScopedRouter } = await import("../../server/routes/project-scoped.ts");
-  const { ANNOUNCE_CHAT_LIST_ENV_KEY } = await import("../../server/routes/chat-list-broadcast.ts");
-  const app = new Hono();
-  app.route("/api/project/:projectName", projectScopedRouter);
-  const init: RequestInit = { method };
-  if (method !== "GET") {
-    init.body = JSON.stringify(body ?? {});
-    init.headers = { "Content-Type": "application/json" };
-  }
-  // No PPM runs to show the change, so there is nobody to announce it to.
-  const res = await app.request(`http://ppm.local/api${path}`, init, { [ANNOUNCE_CHAT_LIST_ENV_KEY]: () => {} });
-  const json = await res.json().catch(() => null) as { ok?: boolean; data?: T; error?: string } | null;
-  if (!json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
-  return json.data as T;
-}
+export { projectRequest };
 
 /** A chat as a command names it: its full id, the project it lives in, its stored provider. */
 export interface ChatTarget { id: string; project: string; providerId: string | null }
