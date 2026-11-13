@@ -15,6 +15,8 @@ import {
   CODEX_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_TOKEN_ENV, SESSION_COLLAB_TOOLS, SESSION_COLLAB_TOOLS_TIMEOUT_MS,
   type SessionCollabMcpAccess,
 } from "../../services/session-collab/session-collab-tool.ts";
+import { CODEX_SPEC_MCP_SERVER, SPEC_TOOLS } from "../../shared/spec-tools.ts";
+import { CODEX_SPEC_MCP_TOKEN_ENV, SPEC_TOOLS_TIMEOUT_MS, type SpecMcpAccess } from "../../services/specs/spec-mcp-tokens.ts";
 
 /** Config overrides, keyed like `-c key=value` on codex's command line (dotted paths). */
 export type CodexConfigOverrides = Record<string, unknown>;
@@ -37,6 +39,8 @@ export interface ThreadParamsInput {
   dbToolsMcp?: DbToolsMcpAccess;
   /** The session tools (`create_session`, `send_to_session`, `session_status`); likewise. */
   sessionCollabMcp?: SessionCollabMcpAccess;
+  /** Spec mode's tools; likewise. */
+  specMcp?: SpecMcpAccess;
 }
 
 /**
@@ -138,6 +142,29 @@ export function sessionCollabMcpEnv(access: SessionCollabMcpAccess | undefined):
 }
 
 /**
+ * Spec mode's MCP server, shaped like {@link sessionCollabMcpConfig} and approved up front: no
+ * spec tool approves anything, and the tests it runs are the command the user approved.
+ */
+export function specMcpConfig(access: SpecMcpAccess | undefined): CodexConfigOverrides {
+  if (!access) return {};
+  return {
+    [`mcp_servers.${CODEX_SPEC_MCP_SERVER}`]: {
+      url: access.url,
+      bearer_token_env_var: CODEX_SPEC_MCP_TOKEN_ENV,
+      enabled_tools: [...SPEC_TOOLS],
+      default_tools_approval_mode: "approve",
+      startup_timeout_sec: 10,
+      tool_timeout_sec: Math.ceil(SPEC_TOOLS_TIMEOUT_MS / 1000),
+    },
+  };
+}
+
+/** The environment the app-server needs for {@link specMcpConfig}; `{}` without the tools. */
+export function specMcpEnv(access: SpecMcpAccess | undefined): Record<string, string> {
+  return access ? { [CODEX_SPEC_MCP_TOKEN_ENV]: access.token } : {};
+}
+
+/**
  * One builder for the params of every thread/start and thread/resume — the first connect
  * and the account-switch respawn used to assemble them separately, which is how a field
  * added to one silently goes missing from the other. `developerInstructions` is left out
@@ -152,6 +179,7 @@ export function buildThreadParams(input: ThreadParamsInput): CodexThreadParams {
     ...tabToolsMcpConfig(input.tabToolsMcp),
     ...dbToolsMcpConfig(input.dbToolsMcp),
     ...sessionCollabMcpConfig(input.sessionCollabMcp),
+    ...specMcpConfig(input.specMcp),
   };
   return {
     ...(Object.keys(config).length ? { config } : {}),

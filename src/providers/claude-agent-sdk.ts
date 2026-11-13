@@ -8,15 +8,16 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { readSessionMessages } from "./claude-transcript-tail.ts";
 import { query } from "./claude-cli-process-group.ts";
-import { allowedToolsFor, buildModelQueryOptions, CLAUDE_SETTING_SOURCES, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_SESSION_COLLAB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, sessionCollabMcpServers, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, buildModelQueryOptions, CLAUDE_SETTING_SOURCES, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_SESSION_COLLAB_TOOLS, CLAUDE_SPEC_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, fileWriteTarget, preToolUseDecision, READ_ONLY_TOOLS, sessionCollabMcpServers, shellHookCall, specMcpServers, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
 import { SESSION_COLLAB_MCP_PATH, sessionCollabMcpAccessFor } from "../services/session-collab/session-collab-tokens.ts";
+import { SPEC_MCP_PATH, specMcpAccessFor } from "../services/specs/spec-mcp-tokens.ts";
 import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
 import { DB_TOOLS_MCP_PATH, dbToolsMcpAccessFor } from "../services/db-ai-tools/db-ai-tools-tokens.ts";
 import { aiConnections } from "../services/db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
 import { OPEN_PREVIEW_TOOL } from "../shared/tab-open-protocol.ts";
-import { anyPpmToolOn, ppmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { anyPpmToolOn, ppmToolOn, SESSION_TOOLS, SPEC_MODE_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { captureBaseline } from "../services/session-file-baselines/session-file-baselines.service.ts";
 import { observeFile } from "../services/session-file-baselines/session-file-history.ts";
 import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../services/session-file-baselines/shell-change-tracker.ts";
@@ -1100,6 +1101,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // them besides minimal mode, which runs no PPM tools at all.
     const sessionBase = !isMinimalMode() && anyPpmToolOn(ai, SESSION_TOOLS) ? localServerBaseUrl() : null;
     const sessionTools = sessionBase ? { url: `${sessionBase}${SESSION_COLLAB_MCP_PATH}`, token: "" } : null;
+    // And Spec mode's tools, which every non-design chat carries so it can start a spec mid-way.
+    const specBase = !isMinimalMode() && anyPpmToolOn(ai, SPEC_MODE_TOOLS) ? localServerBaseUrl() : null;
+    const specTools = specBase ? { url: `${specBase}${SPEC_MCP_PATH}`, token: "" } : null;
     const options = this.buildQueryOptions({
       cwd: projectPath,
       systemPrompt: buildSystemPromptOption(providerConfig.system_prompt),
@@ -1107,7 +1111,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       allowedTools: allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams }),
       mcpServers: {
         ...this.resolveMcpServers(projectPath), ...tabToolsMcpServers(tabTools), ...dbToolsMcpServers(dbTools),
-        ...sessionCollabMcpServers(sessionTools),
+        ...sessionCollabMcpServers(sessionTools), ...specMcpServers(specTools),
       },
       permissionMode,
       opts,
@@ -1119,13 +1123,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const access = tabTools ? tabToolsMcpAccessFor(sessionId) : null;
       const dbAccess = dbTools ? dbToolsMcpAccessFor(sessionId) : null;
       const sessionAccess = sessionTools ? sessionCollabMcpAccessFor(sessionId) : null;
+      const specAccess = specTools ? specMcpAccessFor(sessionId) : null;
       const q = query({
         prompt: generator,
         options: {
           ...options,
-          ...((access || dbAccess || sessionAccess) && {
+          ...((access || dbAccess || sessionAccess || specAccess) && {
             mcpServers: {
               ...options.mcpServers, ...tabToolsMcpServers(access), ...dbToolsMcpServers(dbAccess), ...sessionCollabMcpServers(sessionAccess),
+              ...specMcpServers(specAccess),
             },
           }),
           sessionId,
@@ -1235,6 +1241,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const tabToolsMcp = opts?.designSession ? undefined : opts?.tabToolsMcp;
     const dbToolsMcp = opts?.designSession ? undefined : opts?.dbToolsMcp;
     const sessionCollabMcp = opts?.designSession ? undefined : opts?.sessionCollabMcp;
+    const specMcp = opts?.designSession ? undefined : opts?.specMcp;
     const allowedTools = allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool });
 
     /** Approval requests from canUseTool and the PreToolUse hook, handed out by the main loop. */
@@ -1298,6 +1305,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       if (tabToolsMcp && CLAUDE_TAB_TOOLS.includes(toolName)) return preToolUseDecision("allow");
       if (dbToolsMcp && CLAUDE_DB_TOOLS.includes(toolName)) return preToolUseDecision("allow");
       if (sessionCollabMcp && CLAUDE_SESSION_COLLAB_TOOLS.includes(toolName)) return preToolUseDecision("allow");
+      if (specMcp && CLAUDE_SPEC_TOOLS.includes(toolName)) return preToolUseDecision("allow");
 
       // Design policy: project-scoped file tools pass, everything else falls through to
       // the approval prompt below. The decision is explicit so the SDK's own acceptEdits
@@ -1500,6 +1508,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         ...tabToolsMcpServers(tabToolsMcp),
         ...dbToolsMcpServers(dbToolsMcp),
         ...sessionCollabMcpServers(sessionCollabMcp),
+        ...specMcpServers(specMcp),
       };
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time

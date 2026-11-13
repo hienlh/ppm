@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, type KeyboardEvent } from "react";
+import { useRef, useEffect, useCallback, type KeyboardEvent, type ReactNode } from "react";
 import { Hand, Code, ClipboardList, ShieldOff, Check } from "@/lib/icons";
 
 const MODES = [
@@ -30,9 +30,11 @@ interface ModeSelectorProps {
   onChange: (mode: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Below the modes: the chat's workflow (Spec mode), a choice made alongside the mode, not instead of it. */
+  footer?: ReactNode;
 }
 
-export function ModeSelector({ value, onChange, open, onOpenChange }: ModeSelectorProps) {
+export function ModeSelector({ value, onChange, open, onOpenChange, footer }: ModeSelectorProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const focusedRef = useRef(0);
 
@@ -88,7 +90,7 @@ export function ModeSelector({ value, onChange, open, onOpenChange }: ModeSelect
       onKeyDown={handleKeyDown}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
-      className="absolute bottom-full left-0 mb-1 z-50 w-72 md:w-80 rounded-lg border border-border popover-solid shadow-[var(--shadow-panel)]"
+      className="absolute bottom-full left-0 mb-1 z-50 w-72 md:w-80 max-h-[75dvh] overflow-y-auto rounded-lg border border-border popover-solid shadow-[var(--shadow-panel)]"
     >
       <div className="flex items-center justify-between px-3 py-2 border-b border-border">
         <span className="text-xs font-medium text-text-secondary">Modes</span>
@@ -120,6 +122,7 @@ export function ModeSelector({ value, onChange, open, onOpenChange }: ModeSelect
           );
         })}
       </div>
+      {footer}
     </div>
   );
 }

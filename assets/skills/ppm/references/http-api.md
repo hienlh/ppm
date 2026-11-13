@@ -565,6 +565,22 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `GET    /api/project/:projectName/lsp/status`
 - `POST   /api/project/:projectName/lsp/install`
 
+## /api/project/:projectName/specs
+
+- `GET    /api/project/:projectName/specs`
+- `POST   /api/project/:projectName/specs`
+- `GET    /api/project/:projectName/specs/by-session/:sessionId`
+- `GET    /api/project/:projectName/specs/:slug`
+- `PUT    /api/project/:projectName/specs/:slug/checks`
+- `POST   /api/project/:projectName/specs/:slug/session`
+- `POST   /api/project/:projectName/specs/:slug/submit/:phase`
+- `POST   /api/project/:projectName/specs/:slug/approve/:phase`
+- `POST   /api/project/:projectName/specs/:slug/request-changes/:phase`
+- `POST   /api/project/:projectName/specs/:slug/tasks/:id/:action`
+- `POST   /api/project/:projectName/specs/:slug/suite/check`
+- `POST   /api/project/:projectName/specs/:slug/run`
+- `POST   /api/project/:projectName/specs/:slug/stop`
+
 ## /api/project/:projectName/tags
 
 - `GET    /api/project/:projectName/tags`

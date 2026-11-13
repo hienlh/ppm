@@ -875,6 +875,84 @@ Show detailed info for a specific skill
 
 **Usage:** `ppm skills info [options] <name>`
 
+## `ppm spec`
+
+Spec mode: requirements → design → tasks, approved step by step
+
+**Usage:** `ppm spec [options] [command]`
+
+### `ppm spec list`
+
+Specs of a project
+
+**Options:**
+- `--project <name>` — Project name (default: the one holding the current directory)
+
+### `ppm spec status`
+
+Documents, tasks and waves of one spec
+
+**Options:**
+- `--project <name>` — Project name
+
+**Usage:** `ppm spec status [options] <slug>`
+
+### `ppm spec new`
+
+Start a spec (its chat is the one you open on it in PPM)
+
+**Options:**
+- `--project <name>` — Project name
+- `--kind <kind>` — feature | bugfix | quick (default: `"feature"`)
+- `--checks <checks>` — standard | thorough (default: `"standard"`)
+- `--design-first` — Write design.md before requirements.md
+
+**Usage:** `ppm spec new [options] <title>`
+
+### `ppm spec approve`
+
+Approve requirements, design, tasks or drawing
+
+**Options:**
+- `--project <name>` — Project name
+- `--quiet` — Do not tell the spec's chat to go on
+
+**Usage:** `ppm spec approve [options] <slug> <phase>`
+
+### `ppm spec checks`
+
+Switch between standard and thorough checks
+
+**Options:**
+- `--project <name>` — Project name
+
+**Usage:** `ppm spec checks [options] <slug> <level>`
+
+### `ppm spec run`
+
+Run every open task, wave by wave, each in a chat of its own
+
+**Options:**
+- `--project <name>` — Project name
+- `--provider <id>` — Provider for the task chats (default: the spec chat's)
+
+**Usage:** `ppm spec run [options] <slug>`
+
+### `ppm spec stop`
+
+Stop a run; running tasks go back to not started
+
+**Options:**
+- `--project <name>` — Project name
+
+**Usage:** `ppm spec stop [options] <slug>`
+
+### `ppm spec call`
+
+For an AI chat without MCP: call a spec tool (spec_status, spec_submit, task_start, task_done, task_red, task_green, suite_check)
+
+**Usage:** `ppm spec call [options] <tool> [json]`
+
 ## `ppm start`
 
 Start the PPM server (background by default)

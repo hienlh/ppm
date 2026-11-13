@@ -1,0 +1,21 @@
+FAIL src/x.test.js
+  math
+    ✕ adds (2 ms)
+    ✓ other (1 ms)
+
+  ● math › adds
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 3
+    Received: 0
+
+      3 | test("adds", () => {
+    > 4 |   expect(add(1, 2)).toBe(3);
+        |                     ^
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 passed, 2 total
+Snapshots:   0 total
+Time:        0.4 s
+exit=1

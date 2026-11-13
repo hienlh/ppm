@@ -1,0 +1,6 @@
+--- FAIL: TestAdd (0.00s)
+    x_test.go:3: Add(1,2) = 0, want 3
+FAIL
+FAIL	example.com/x	0.004s
+FAIL
+exit=1

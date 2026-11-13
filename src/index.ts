@@ -171,6 +171,9 @@ export async function buildProgram(): Promise<Command> {
   const { registerScheduleCommands } = await import("./cli/commands/schedule-cmd.ts");
   registerScheduleCommands(program);
 
+  const { registerSpecCommands } = await import("./cli/commands/spec-cmd.ts");
+  registerSpecCommands(program);
+
   const { registerExportCommands } = await import("./cli/commands/export-cmd.ts");
   registerExportCommands(program);
 

@@ -21,6 +21,8 @@ import {
 } from "@/components/remote-desktop/remote-desktop-view-style";
 
 export type GitStatusViewMode = "flat" | "tree";
+/** Chat History: every chat on its own row, or AI-opened chats folded under their creator. */
+export type ChatHistoryViewMode = "flat" | "tree";
 export type EditorTabStyle = "default" | "boxed" | "pill";
 /** Where the panel dock sits relative to the main content (VS Code-style). Per-user pref. */
 export type DockPosition = "left" | "bottom" | "right";
@@ -30,7 +32,7 @@ export type ExplorerSkinPref = "auto" | "windows" | "macos";
 export type VoiceEngine = "browser" | "whisper";
 /** Settings is deliberately absent: it opens as its own floating window (or a tab on mobile),
  *  never as a sidebar panel. See `settings/use-open-settings.ts`. */
-export type SidebarActiveTab = "explorer" | "git" | "database" | "search" | "jira" | "ai-resources" | "history" | "tunnels" | "teams" | "designs" | `ext:${string}`;
+export type SidebarActiveTab = "explorer" | "git" | "database" | "search" | "jira" | "ai-resources" | "history" | "tunnels" | "teams" | "designs" | "specs" | `ext:${string}`;
 
 const STORAGE_KEY = "ppm-settings";
 
@@ -46,6 +48,7 @@ interface SettingsState {
   sidebarCollapsed: boolean;
   sidebarWidth: number;
   gitStatusViewMode: GitStatusViewMode;
+  chatHistoryViewMode: ChatHistoryViewMode;
   /** GitLens-style annotation after the cursor's line in the code editor. */
   inlineBlame: boolean;
   /**
@@ -185,6 +188,7 @@ interface SettingsState {
   toggleSidebar: () => void;
   setSidebarWidth: (width: number) => void;
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
+  setChatHistoryViewMode: (mode: ChatHistoryViewMode) => void;
   toggleInlineBlame: () => void;
   setDesignWindows: (enabled: boolean) => void;
   toggleWordWrap: () => void;
@@ -228,6 +232,7 @@ interface PersistedSettings {
   sidebarCollapsed?: boolean;
   sidebarWidth?: number;
   gitStatusViewMode?: GitStatusViewMode;
+  chatHistoryViewMode?: ChatHistoryViewMode;
   inlineBlame?: boolean;
   designWindows?: boolean;
   wordWrap?: boolean;
@@ -295,7 +300,7 @@ function initialTheme(p: PersistedSettings): { style: PpmThemeStyle; mode: PpmTh
 
 function isValidSidebarTab(tab: unknown): tab is SidebarActiveTab {
   if (typeof tab !== "string") return false;
-  return ["explorer", "git", "database", "search", "jira", "ai-resources", "history", "tunnels", "teams", "designs"].includes(tab) || tab.startsWith("ext:");
+  return ["explorer", "git", "database", "search", "jira", "ai-resources", "history", "tunnels", "teams", "designs", "specs"].includes(tab) || tab.startsWith("ext:");
 }
 
 /** Keep only valid, de-duplicated tab ids — guards against garbage in persisted/server data. */
@@ -406,6 +411,9 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   if (data.gitStatusViewMode === "flat" || data.gitStatusViewMode === "tree") {
     patch.gitStatusViewMode = data.gitStatusViewMode;
   }
+  if (data.chatHistoryViewMode === "flat" || data.chatHistoryViewMode === "tree") {
+    patch.chatHistoryViewMode = data.chatHistoryViewMode;
+  }
   if (data.editorTabStyle === "default" || data.editorTabStyle === "boxed" || data.editorTabStyle === "pill") {
     patch.editorTabStyle = data.editorTabStyle;
   }
@@ -444,6 +452,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarCollapsed: _initial.sidebarCollapsed ?? false,
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
+  chatHistoryViewMode: _initial.chatHistoryViewMode === "flat" ? "flat" : "tree",
   inlineBlame: _initial.inlineBlame ?? false,
   minimalMode: false,
   designWindows: _initial.designWindows ?? true,
@@ -585,6 +594,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setGitStatusViewMode: (mode) => {
     persistUiPref({ gitStatusViewMode: mode });
     set({ gitStatusViewMode: mode });
+  },
+
+  setChatHistoryViewMode: (mode) => {
+    persistUiPref({ chatHistoryViewMode: mode });
+    set({ chatHistoryViewMode: mode });
   },
 
   toggleInlineBlame: () => {
