@@ -18,6 +18,8 @@ export interface CodexOneShotParamsInput {
   model: string;
   systemPrompt?: string;
   webSearch?: boolean;
+  /** The user's own MCP servers (`planAssistantCodexMcp`), each switched off for the call. */
+  disableMcpServers?: readonly string[];
 }
 
 /**
@@ -44,7 +46,11 @@ export function codexOneShotThreadParams(input: CodexOneShotParamsInput): Record
     approvalPolicy: "never",
     ephemeral: true,
     ...(input.systemPrompt?.trim() ? { developerInstructions: input.systemPrompt } : {}),
-    config: { web_search: input.webSearch ? "live" : "disabled", ...CODEX_ONE_SHOT_FEATURES_OFF },
+    config: {
+      web_search: input.webSearch ? "live" : "disabled",
+      ...CODEX_ONE_SHOT_FEATURES_OFF,
+      ...Object.fromEntries((input.disableMcpServers ?? []).map((name) => [`mcp_servers.${name}.enabled`, false])),
+    },
   };
 }
 

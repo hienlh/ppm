@@ -2945,6 +2945,16 @@ export function deleteExtension(id: string): void {
   })();
 }
 
+/**
+ * Drop the record of an extension the startup sweep did not find on disk, and nothing else. Unlike
+ * {@link deleteExtension} (the user removing it), its bound chats stay bound and open, and its last
+ * toolsets stay listed: a folder missing at boot — a dev-link to an unmounted drive — may be back
+ * at the next start, and the chats it manages must still be its own then.
+ */
+export function forgetMissingExtension(id: string): void {
+  getDb().query("DELETE FROM extensions WHERE id = ?").run(id);
+}
+
 export function getExtensionStorage(extId: string, scope: string): ExtensionStorageRow[] {
   return getDb().query("SELECT * FROM extension_storage WHERE ext_id = ? AND scope = ?").all(extId, scope) as ExtensionStorageRow[];
 }

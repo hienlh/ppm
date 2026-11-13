@@ -96,14 +96,14 @@ describe("chat:send / chat:state / chat:lastAssistantText / chat:cancel", () => 
 
     const started = await call<{ sessionId: string; queued: boolean }>("chat:send", { extensionId: EXT, sessionId, content: "go", timeoutMs: 5_000 });
     expect(started).toEqual({ sessionId, queued: false });
-    let state = await call<{ running: boolean; phase: string }>("chat:state", { sessionId });
+    let state = await call<{ running: boolean; phase: string }>("chat:state", { extensionId: EXT, sessionId });
     expect(state.running).toBe(true);
     await until(() => {
-      void call<{ running: boolean; phase: string }>("chat:state", { sessionId }).then((s) => { state = s; });
+      void call<{ running: boolean; phase: string }>("chat:state", { extensionId: EXT, sessionId }).then((s) => { state = s; });
       return !state.running;
     }, "the turn to end");
     expect(state).toEqual({ running: false, phase: "idle" });
-    expect(await call("chat:lastAssistantText", { sessionId })).toBe("all done");
+    expect(await call("chat:lastAssistantText", { extensionId: EXT, sessionId })).toBe("all done");
   });
 
   it("refuses what the REST route refuses, before anything starts", async () => {
@@ -111,7 +111,17 @@ describe("chat:send / chat:state / chat:lastAssistantText / chat:cancel", () => 
     await expect(call("chat:send", { extensionId: EXT, sessionId, content: "   " })).rejects.toThrow("content is required");
     await expect(call("chat:send", { extensionId: EXT, sessionId, content: "hi", timeoutMs: 10 })).rejects.toThrow("timeoutMs");
     await expect(call("chat:send", { extensionId: EXT, sessionId: crypto.randomUUID(), content: "hi" })).rejects.toThrow("Session not found");
-    await expect(call("chat:state", { sessionId: crypto.randomUUID() })).rejects.toThrow("Session not found");
+    await expect(call("chat:state", { extensionId: EXT, sessionId: crypto.randomUUID() })).rejects.toThrow("Session not found");
+  });
+
+  it("reads only the chats the extension created: not another extension's, not a person's", async () => {
+    const { sessionId } = await call<{ sessionId: string }>("chat:createSession", { extensionId: EXT, projectName: PROJECT, providerId: "mock" });
+    await expect(call("chat:state", { extensionId: "other-ext", sessionId })).rejects.toThrow("not created by this extension");
+    await expect(call("chat:lastAssistantText", { extensionId: "other-ext", sessionId })).rejects.toThrow("not created by this extension");
+    const person = await chatService.createSession("mock", { projectPath: PROJECT_PATH });
+    await expect(call("chat:state", { extensionId: EXT, sessionId: person.id })).rejects.toThrow("not created by this extension");
+    await expect(call("chat:lastAssistantText", { extensionId: EXT, sessionId: person.id })).rejects.toThrow("not created by this extension");
+    await expect(call("chat:state", { sessionId })).rejects.toThrow("extensionId is required");
   });
 
   it("cancel stops the turn through the chat service under the extension origin", async () => {

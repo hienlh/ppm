@@ -51,6 +51,11 @@ function findRow(sessionId: string): ExtensionSessionBindingRow | null {
   return getExtensionSessionBinding(current) ?? (current === sessionId ? null : getExtensionSessionBinding(sessionId));
 }
 
+/** Whether an extension bound this session, under any id it has been known by (a closed one included). */
+export function isBoundSession(sessionId: string): boolean {
+  return findRow(sessionId) !== null;
+}
+
 function ownedRow(sessionId: string, extensionId: string): ExtensionSessionBindingRow {
   const row = findRow(sessionId);
   if (row && row.extension_id === extensionId && !row.extension_removed_at) return row;

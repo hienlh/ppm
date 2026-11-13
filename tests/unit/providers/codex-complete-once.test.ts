@@ -21,6 +21,8 @@ class FakeAppServer implements OneShotRpcClient {
   closed = false;
   /** Holds `initialize` or `thread/start` open until the test lets it go. */
   holdMethod: string | null = null;
+  /** The user's `config.toml` MCP servers `config/read` reports; `null` makes the read fail. */
+  userMcpServers: Record<string, unknown> | null = {};
   private threads = 0;
   private notify_: (n: JsonRpcNotification) => void = () => {};
   private onClose_: (code: number | null) => void = () => {};
@@ -53,6 +55,10 @@ class FakeAppServer implements OneShotRpcClient {
     this.requests.push({ method, params });
     if (method === this.holdMethod) return new Promise<T>(() => {});
     if (method === "initialize") return {} as T;
+    if (method === "config/read") {
+      if (!this.userMcpServers) throw new Error("unknown method config/read");
+      return { config: { mcp_servers: this.userMcpServers } } as T;
+    }
     if (method === "thread/start") return { thread: { id: `t${++this.threads}` } } as T;
     if (method === "turn/interrupt") return {} as T;
     if (method !== "turn/start") throw new Error(`unexpected ${method}`);
@@ -111,12 +117,12 @@ describe("codexCompleteOnce", () => {
     expect(await run(server, { jsonSchema: SCHEMA })).toEqual({ text: "{\"a\": 1}", inputTokens: 120, outputTokens: 9 });
     expect(server.closed).toBe(true);
     expect(server.started).toEqual({ cwd: "/ppm/one-shot", codexHome: "/ppm/codex-accounts/a1", purpose: "control" } as any);
-    expect(server.methods()).toEqual(["initialize", "thread/start", "turn/start"]);
-    expect(server.requests[1]!.params).toEqual({
+    expect(server.methods()).toEqual(["initialize", "config/read", "thread/start", "turn/start"]);
+    expect(server.requests[2]!.params).toEqual({
       cwd: "/ppm/one-shot", model: "gpt-6-mini", sandbox: "read-only", approvalPolicy: "never", ephemeral: true,
       developerInstructions: "S", config: { web_search: "disabled", ...FEATURES_OFF },
     });
-    expect(server.requests[2]!.params).toEqual({
+    expect(server.requests[3]!.params).toEqual({
       threadId: "t1", input: [{ type: "text", text: "Q", text_elements: [] }], model: "gpt-6-mini", outputSchema: SCHEMA,
     });
   });
@@ -124,8 +130,8 @@ describe("codexCompleteOnce", () => {
   it("turns web search on for the thread, keeps the shell off, and counts the searches", async () => {
     const server = new FakeAppServer(["web"]);
     const result = await run(server, { webSearch: true });
-    expect(server.requests[1]!.params.config).toEqual({ web_search: "live", ...FEATURES_OFF });
-    expect(server.requests[2]!.params.outputSchema).toBeUndefined();
+    expect(server.requests[2]!.params.config).toEqual({ web_search: "live", ...FEATURES_OFF });
+    expect(server.requests[3]!.params.outputSchema).toBeUndefined();
     expect(result.webSearches).toBe(2);
   });
 
@@ -225,5 +231,24 @@ describe("codexCompleteOnce", () => {
     markCodexAccountAuthFailed("acc-back", "401 Unauthorized");
     await run(new FakeAppServer(["answer"]), {}, "acc-back");
     expect(isCodexAccountAuthFailed("acc-back")).toBe(false);
+  });
+});
+
+describe("the user's own MCP servers", () => {
+  it("are switched off for the call, one by one, from what config/read reports", async () => {
+    const server = new FakeAppServer(["answer"]);
+    server.userMcpServers = { github: { command: "gh-mcp" }, "slack-mcp": { url: "http://x" } };
+    await run(server);
+    const thread = server.requests.find((r) => r.method === "thread/start")!.params;
+    expect(thread.config["mcp_servers.github.enabled"]).toBe(false);
+    expect(thread.config["mcp_servers.slack-mcp.enabled"]).toBe(false);
+    expect(server.methods().indexOf("config/read")).toBeLessThan(server.methods().indexOf("thread/start"));
+  });
+
+  it("refuse the call when the config cannot be read, and start no thread", async () => {
+    const server = new FakeAppServer(["answer"]);
+    server.userMcpServers = null;
+    await expect(run(server)).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(server.methods()).not.toContain("thread/start");
   });
 });

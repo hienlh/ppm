@@ -149,7 +149,7 @@ const DEFAULT_POLL_MS = 2_000;
 export const CHAT_SEND_RPC_TIMEOUT_MS = 150_000;
 
 export function createPpmChat(rpc: RpcClient, extensionId: string): PpmChat {
-  const state = (sessionId: string) => rpc.request<PpmChatState>("chat:state", { sessionId });
+  const state = (sessionId: string) => rpc.request<PpmChatState>("chat:state", { sessionId, extensionId });
   return {
     listProjects: () => rpc.request<PpmChatProject[]>("chat:listProjects", {}),
     // The extension's id travels with the calls that create and drive sessions: a session
@@ -158,7 +158,7 @@ export function createPpmChat(rpc: RpcClient, extensionId: string): PpmChat {
     send: (sessionId, options) => rpc.requestWithTimeout<PpmChatSendResult>("chat:send", CHAT_SEND_RPC_TIMEOUT_MS, { ...options, sessionId, extensionId }),
     cancel: async (sessionId) => { await rpc.request("chat:cancel", { sessionId, extensionId }); },
     state,
-    lastAssistantText: (sessionId) => rpc.request<string | null>("chat:lastAssistantText", { sessionId }),
+    lastAssistantText: (sessionId) => rpc.request<string | null>("chat:lastAssistantText", { sessionId, extensionId }),
     openTab: (sessionId, options) => {
       const placement = toWirePlacement(options);
       return rpc.request<{ opened: boolean }>("chat:openTab", { sessionId, extensionId, ...(placement ? { placement } : {}) });

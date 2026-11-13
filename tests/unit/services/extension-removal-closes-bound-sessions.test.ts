@@ -1,8 +1,8 @@
 /**
  * The chats an extension bound outlive the extension — in the history, in an open tab — and
- * must not turn into ordinary chats with every tool when it goes. Whether the user removed it
- * or the startup sweep dropped a record whose folder is gone, its bound chats stay closed:
- * every turn is refused, and a fork of one is closed too.
+ * must not turn into ordinary chats with every tool when it goes. When the user removes it, its
+ * bound chats stay closed: every turn is refused, and a fork of one is closed too. When the startup
+ * sweep only finds its folder missing, they stay bound and open, tool limits included.
  */
 import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import "../../test-setup.ts";
@@ -65,7 +65,7 @@ describe("removing an extension", () => {
     await expect(turn("closed-fork")).rejects.toThrow("was removed");
   });
 
-  it("closes them when the startup sweep drops a record whose folder is gone", async () => {
+  it("keeps them bound and open when the startup sweep drops a record whose folder is gone", async () => {
     insertExtension({ id: "unmounted-ext", version: "1.0.0", display_name: null, description: null, icon: null, enabled: 1, manifest: "{}" });
     boundSession("swept", "unmounted-ext");
     expect((await turn("swept")).permissionMode).toBe("acceptEdits");
@@ -80,6 +80,10 @@ describe("removing an extension", () => {
       activate.mockRestore();
     }
     expect(getExtensionById("unmounted-ext")).toBeNull();
-    await expect(turn("swept")).rejects.toThrow("The extension that managed this chat (unmounted-ext) was removed");
+    // Still the extension's chat, policy and all: no every-tool ordinary chat, and not closed.
+    const opts = await turn("swept");
+    expect(opts.permissionMode).toBe("acceptEdits");
+    expect(opts.extensionToolPolicy).toEqual(POLICY);
+    expect(getExtensionSessionBinding("swept")).toMatchObject({ extension_id: "unmounted-ext", extension_removed_at: null });
   });
 });

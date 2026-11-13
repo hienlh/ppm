@@ -437,10 +437,13 @@ model?, bindable? })` starts a chat in a registered project. `send(sessionId, { 
 model?, effort?, thinking?, permissionMode?, images?, timeoutMs?, notifyOnDone? })` starts a turn with nobody watching and answers as soon as it is
 queued; poll `state()` or `waitForIdle()`, then read `lastAssistantText()`. Rules:
 
-- An extension may send to and cancel only sessions it created.
+- An extension may send to, cancel and read (`state()`, `lastAssistantText()`) only sessions it
+  created.
 - At most 4 sessions per extension with a turn running or queued (`TOO_MANY_HEADLESS_TURNS`).
 - A message sent while a turn runs is queued as a turn of its own; it never changes the
-  running one, a person's included. A Claude session asked for another model, effort or
+  running one, a person's included, and never answers an approval waiting there. Only one
+  message may wait for the next turn: when that turn already belongs to a person's queued
+  message or another extension's, the call is refused (`BUSY_QUEUED`). A Claude session asked for another model, effort or
   thinking while busy is refused (`BUSY_DIFFERENT_MODEL`).
 - The turn is aborted past `timeoutMs` (default 30 min, 1 s to 24 h).
 - Nobody may be there to approve a tool: an approval in an extension's turn is **denied at
@@ -461,8 +464,10 @@ creator: `bind(sessionId, { instructions?, toolsets?, toolPolicy? })` (a field l
 its value, `null` clears it), `unbind`, `getBinding`. Instructions (≤ 64 KB) are appended to
 the system prompt. The binding applies from the next provider session: an idle chat is
 restarted at once, a busy one when it is next idle (`pendingRestart: true`). Bind before the
-first `send`. A fork of a bound chat stays bound; removing the extension **closes** its chats
-(every later turn is refused with the reason).
+first `send`. A fork of a bound chat stays bound, and so does the new chat `/clear` starts: it
+clears the context, not the binding, and is refused on a provider that cannot hold one.
+Removing the extension **closes** its chats (every later turn is refused with the reason); a
+folder PPM merely did not find at startup closes nothing.
 
 A `toolPolicy` makes the chat's tools **exhaustive** — every call is allowed or denied, none
 waits on an approval card:

@@ -1,7 +1,7 @@
 import { resolve, dirname } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import type { ExtensionManifest, ExtensionInfo } from "../types/extension.ts";
-import { getExtensions, getExtensionById, insertExtension, updateExtension, deleteExtension, deleteExtensionStorage, getExtensionStorage, setExtensionStorageValue, getExtensionBoundSessionIds } from "./db.service.ts";
+import { getExtensions, getExtensionById, insertExtension, updateExtension, deleteExtension, forgetMissingExtension, deleteExtensionStorage, getExtensionStorage, setExtensionStorageValue, getExtensionBoundSessionIds } from "./db.service.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
 import type { RpcChannel } from "./extension-rpc.ts";
 import { openWorkerChannel } from "./extension-worker-channel.ts";
@@ -425,9 +425,11 @@ class ExtensionService {
     let failed = 0;
     for (const row of getExtensions()) {
       if (!discoveredIds.has(row.id)) {
+        // Only the user removing an extension closes the chats it bound: a folder missing at boot
+        // may come back, and its chats stay bound (and keep their tool limits) until it does.
         log.info(`startup: removing stale DB record for ${row.id}`);
         deleteExtensionStorage(row.id);
-        deleteExtension(row.id);
+        forgetMissingExtension(row.id);
         continue;
       }
       if (row.enabled !== 1) continue;
