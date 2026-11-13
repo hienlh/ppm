@@ -143,4 +143,21 @@ describe("SwitchAccountView", () => {
     expect(resets("s")[0].className).toContain("text-error");
     expect(row("s").textContent).not.toContain("resets in");
   });
+
+  it("shows each account's resets on a line of its own, which opens Settings rather than picking", async () => {
+    const opened: string[] = [];
+    const accounts = [
+      { ...acc("v2", "Victor 2 (Nxsys)", 47, 52), resets: { count: 3, nextExpiresAt: "2099-12-11T05:00:00Z" } },
+      { ...acc("v", "Victor", 12, 30), resets: { count: 0, nextExpiresAt: null } },
+    ];
+    const calls = await render(accounts, { onOpenResets: (a) => opened.push(a.id) });
+    const lines = [...view!.container.querySelectorAll<HTMLElement>("[data-account-resets]")];
+    expect(lines.map((l) => l.textContent)).toEqual(["3 resets· next expires Dec 11, 2099", "No free resets"]);
+    // The empty one is drawn too, so both cards are one height; it is not a button.
+    expect(lines.map((l) => l.tagName)).toEqual(["BUTTON", "SPAN"]);
+    expect(row("v2").contains(lines[0]!)).toBe(false);
+    await click(lines[0]!);
+    expect(opened).toEqual(["v2"]);
+    expect(calls.picked).toEqual([]);
+  });
 });

@@ -27,7 +27,6 @@ import { CodexRotationDialog } from "./codex-rotation-dialog";
 import { CodexUsageRows } from "./codex-usage-rows";
 import { CODEX_SIGNED_OUT_HINT, useCodexAccounts, type CodexAccount } from "./use-codex-accounts";
 import { CodexSignInAgainDialog } from "./codex-sign-in-again-dialog";
-import { ResetCreditsChip } from "./account-usage-extras";
 import { CodexResetCreditButton } from "./codex-reset-credit-button";
 import { AccountHint } from "./account-hint";
 import { codexPlanLabel } from "../../../../shared/codex-plan-label.ts";
@@ -94,7 +93,7 @@ export function CodexAccountsSection() {
                   key={a.id}
                   dense
                   // Matches the Claude card that also carries a control beside the name.
-                  className={`min-w-[300px] shrink-0 snap-start${a.signedOut ? " opacity-60" : ""}`}
+                  className={`flex flex-col min-w-[300px] shrink-0 snap-start${a.signedOut ? " opacity-60" : ""}`}
                   data-testid="account-card"
                   data-account-id={a.id}
                 >
@@ -137,12 +136,6 @@ export function CodexAccountsSection() {
                     </Tooltip>
                   </div>
                   <CodexUsageRows usage={u} />
-                  {u.resetCredits && (
-                    <div className="flex items-center gap-2 flex-wrap text-[10px] text-text-subtle">
-                      <ResetCreditsChip credits={u.resetCredits} />
-                      <CodexResetCreditButton account={a} usage={u} onDone={(m) => { c.setMsg(m); void c.load(); }} />
-                    </div>
-                  )}
                   {u.session == null && (() => {
                     const guard = dailyGuardState(u.weekly);
                     return guard ? (
@@ -182,6 +175,10 @@ export function CodexAccountsSection() {
                       </div>
                     ) : null;
                   })()}
+                  {/* Last and pushed down, so the sections of cards side by side line up. */}
+                  <div className="mt-auto">
+                    <CodexResetCreditButton account={a} usage={u} onDone={(m) => { c.setMsg(m); void c.load(); }} />
+                  </div>
                 </AccountCardShell>
               );
             })}

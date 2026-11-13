@@ -62,10 +62,13 @@ codexAccountsRoutes.patch("/:id", async (c) => {
 /**
  * POST /api/codex-accounts/:id/reset-credit — spend one free rate-limit reset.
  * Refused with 409 unless a limit is reached right now (checked live) and a credit is left.
+ * Body `{ creditId? }` picks the credit; without one the soonest to lapse is spent.
  */
 codexAccountsRoutes.post("/:id/reset-credit", async (c) => {
+  const body = await c.req.json<{ creditId?: unknown }>().catch(() => ({} as { creditId?: unknown }));
+  const creditId = typeof body.creditId === "string" && body.creditId ? body.creditId : undefined;
   try {
-    return c.json(ok(await spendCodexResetCredit(c.req.param("id"))));
+    return c.json(ok(await spendCodexResetCredit(c.req.param("id"), undefined, creditId)));
   } catch (e) {
     if (e instanceof ResetCreditRefusedError) return c.json(err(e.message), e.status);
     return c.json(err((e as Error).message), 502);

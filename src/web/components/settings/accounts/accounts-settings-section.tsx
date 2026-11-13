@@ -12,13 +12,14 @@
  * user never set up.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "@/lib/icons";
 import { ProviderBadge } from "@/components/chat/provider-selector";
 import { getAISettings } from "../../../lib/api-settings";
 import { ClaudeAccountsSection } from "./claude-accounts-section";
 import { CodexAccountsSection } from "./codex-accounts-section";
 import { AntigravityAccountsSection } from "./antigravity-accounts-section";
+import { ACCOUNT_FOCUS_EVENT, revealAccountCard, takeAccountFocus, type AccountFocus } from "./account-focus";
 
 /** Providers with an account manager, in tab order. Others have no credentials to manage. */
 const PROVIDER_TABS = [
@@ -33,7 +34,24 @@ export function AccountsSettingsSection() {
   // Claude is always present, so it is a safe first paint while the provider list loads —
   // no spinner for the common case, and no tab bar flash when Codex turns out to be absent.
   const [configured, setConfigured] = useState<Set<string> | null>(null);
-  const [active, setActive] = useState<ProviderTabId>("claude");
+  // An account the chat asked to be shown: its provider's tab opens on it.
+  const [focus, setFocus] = useState<AccountFocus | null>(() => takeAccountFocus());
+  const [active, setActive] = useState<ProviderTabId>(focus?.provider ?? "claude");
+  const paneRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onFocus = () => {
+      const f = takeAccountFocus();
+      if (f) { setActive(f.provider); setFocus(f); }
+    };
+    window.addEventListener(ACCOUNT_FOCUS_EVENT, onFocus);
+    return () => window.removeEventListener(ACCOUNT_FOCUS_EVENT, onFocus);
+  }, []);
+
+  useEffect(() => {
+    if (!focus) return;
+    return revealAccountCard(() => paneRef.current, focus.accountId);
+  }, [focus]);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,7 +66,7 @@ export function AccountsSettingsSection() {
   const showTabBar = tabs.length > 1;
 
   return (
-    <div className="space-y-4" data-testid="accounts-pane" data-provider={active}>
+    <div ref={paneRef} className="space-y-4" data-testid="accounts-pane" data-provider={active}>
       {showTabBar && (
         <div className="flex gap-1 border-b border-border/50">
           {tabs.map((tab) => (

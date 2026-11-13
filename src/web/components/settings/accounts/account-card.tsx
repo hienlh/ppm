@@ -76,7 +76,7 @@ export interface AccountCardProps {
   onReauth?: (id: string) => void;
   /** Codex's free rate-limit resets for this account, shown in the footer. */
   resetCredits?: ResetCredits;
-  /** Control beside the reset count — Codex's "Use reset", which renders only at a limit. */
+  /** The account's free resets, a section of their own at the bottom of the card. */
   resetCreditAction?: ReactNode;
   /** Who the usage is read from, named in the last-read hint. */
   usageSourceName?: string;
@@ -141,7 +141,9 @@ export function AccountCard({
     : layout === "grid"
       // The cell owns the height, so the card spreads its rows into it.
       ? "flex flex-col justify-evenly overflow-hidden min-h-0"
-      : `shrink-0 snap-start ${hasActions ? STRIP_WIDTH.withActions : STRIP_WIDTH.readOnly}`;
+      // A column, so the resets section can sit at the bottom: cards side by side then line up
+      // whether or not they hold a reset.
+      : `flex flex-col shrink-0 snap-start ${hasActions ? STRIP_WIDTH.withActions : STRIP_WIDTH.readOnly}`;
 
   return (
     <AccountCardShell
@@ -345,9 +347,10 @@ export function AccountCard({
         </div>
       )}
 
+      {resetCreditAction && <div className="mt-auto">{resetCreditAction}</div>}
+
       <div className="flex items-center gap-2 text-[10px] text-text-subtle flex-wrap">
         <ResetCreditsChip credits={resetCredits} />
-        {resetCreditAction}
         {usage.lastFetchedAt && (
           <AccountHint
             className={["inline-flex items-center gap-1", staleUsageHint ? "text-warning" : ""].filter(Boolean).join(" ")}

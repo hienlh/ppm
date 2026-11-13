@@ -56,53 +56,65 @@ function grant(id: string, over: Record<string, unknown> = {}) {
 const resets = (grants: unknown[]) => parseClaudeLimitResets({ cedar_ember: { eligible: true, at_limit: false, exhausted: [], grants } })!;
 
 describe("ClaudeLimitResetsButton", () => {
-  it("shows nothing when the account holds no reset", async () => {
+  it("keeps the section when the account holds no reset, so cards side by side line up", async () => {
     view = await mount(<ClaudeLimitResetsButton account={{ id: "a1", label: "Work" }} resets={undefined} onDone={() => {}} />);
-    expect(document.body.textContent).toBe("");
+    expect(document.body.querySelector('[data-testid="resets-section"]')!.textContent).toBe("Free resets · 0None right now");
+    expect(document.body.querySelector('[data-testid="resets-use"]')).toBeNull();
   });
 
-  it("puts one button per kind of reset on the card, and spends one only after a confirmation", async () => {
+  it("shows only the count and the nearest expiry on the card, and each reset with its own expiry in the sheet", async () => {
     const messages: string[] = [];
     view = await mount(
       <ClaudeLimitResetsButton
         account={{ id: "a1", label: "Work" }}
-        resets={resets([grant("f1"), grant("f2"), grant("full-1", { gives_back_weekly: false, clears: ["five_hour", "seven_day"], usable_now: false, use_requires_limit: true })])}
+        resets={resets([
+          grant("f1", { ends_at: "2099-03-09T07:59:00Z" }),
+          grant("f2", { resets_left: 2, ends_at: "2099-03-10T07:59:00Z" }),
+          grant("full-1", { gives_back_weekly: false, clears: ["five_hour", "seven_day"], usable_now: false, use_requires_limit: true, ends_at: "2099-01-05T00:00:00Z" }),
+        ])}
         onDone={(m) => messages.push(m)}
       />,
     );
-    const buttons = [...document.body.querySelectorAll("button")].map((b) => b.textContent?.trim());
-    expect(buttons).toEqual(["Full reset", "Fable reset×2"]);
+    // The card: no reset button, each kind with its expiry, soonest first.
+    const section = document.body.querySelector('[data-testid="resets-section"]')!;
+    expect(section.textContent).toContain("Free resets · 4");
+    const lines = [...section.querySelectorAll('[data-testid="reset-line"]')].map((l) => l.textContent);
+    expect(lines[0]).toMatch(/^Full reset.*Jan 5, 2099 · \d+ days$/);
+    expect(lines[2]).toMatch(/^Fable reset ×2.*Mar 10, 2099/);
+    expect([...document.body.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Reset for free");
 
-    // A kind Anthropic would not accept now says why, and offers no way to spend it.
-    await click(document.body.querySelector<HTMLButtonElement>('[data-testid="claude-reset-full"]')!);
-    let sheet = document.body.querySelector('[data-testid="claude-limit-reset-confirm"]')!;
-    expect(sheet.textContent).toContain("Work's full reset can't be used right now: usable once you reach a limit it refills.");
-    expect(sheet.textContent).toContain("Refills your 5-hour and weekly limits.");
-    expect(sheet.textContent).not.toContain("Yes, use");
-    await click(button("Close"));
+    await click(document.body.querySelector<HTMLButtonElement>('[data-testid="resets-use"]')!);
+    const full = document.body.querySelector('[data-testid="claude-reset-full-1"]')!;
+    expect(full.textContent).toContain("Expires Jan 5, 2099");
+    expect(full.textContent).toContain("Can't use it now: usable once you reach a limit it refills.");
+    expect(button("Reset for free", full).disabled).toBe(true);
+    const f2 = document.body.querySelector('[data-testid="claude-reset-f2"]')!;
+    expect(f2.textContent).toContain("Fable reset ×2");
+    expect(f2.textContent).toContain("Expires Mar 10, 2099");
+    expect(f2.textContent).toContain("gives back what Fable used of your weekly limit");
 
-    await click(document.body.querySelector<HTMLButtonElement>('[data-testid="claude-reset-fable"]')!);
-    sheet = document.body.querySelector('[data-testid="claude-limit-reset-confirm"]')!;
-    expect(sheet.textContent).toContain("gives back what Fable used of your weekly limit");
-    expect(sheet.textContent).toContain("2 left, all expire");
+    await click(button("Reset for free", f2));
+    const sheet = document.body.querySelector('[data-testid="claude-limit-reset-confirm"]')!;
     expect(sheet.textContent).toContain("You still have 84% of your 5-hour limit left. Use your Fable reset anyway?");
+    expect(sheet.textContent).toContain("2 of this kind left, use by Mar 10, 2099");
     expect(requests).toEqual([]);
     await click(button("Yes, use my Fable reset"));
     await settle();
-    expect(requests).toEqual([{ url: "/api/accounts/a1/limit-reset", method: "POST", body: { grantId: "f1" } }]);
+    expect(requests).toEqual([{ url: "/api/accounts/a1/limit-reset", method: "POST", body: { grantId: "f2" } }]);
     expect(messages).toEqual(["Work: Fable reset used. What Fable used is back in your weekly limit. 1 Fable reset left."]);
   });
 
   it("keeps the reset when the confirmation is declined, and shows the server's refusal", async () => {
     const messages: string[] = [];
     view = await mount(<ClaudeLimitResetsButton account={{ id: "a1", label: "Work" }} resets={resets([grant("f1")])} onDone={(m) => messages.push(m)} />);
-    await click(button("Fable reset"));
+    await click(document.body.querySelector<HTMLButtonElement>('[data-testid="resets-use"]')!);
+    await click(button("Reset for free"));
     await click(button("Keep it"));
     expect(requests).toEqual([]);
-    expect(document.body.querySelector('[data-testid="claude-limit-reset-confirm"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="claude-limit-resets"]')).not.toBeNull();
 
     answer = { ok: false, error: "Work no longer has that reset. The list has been refreshed." };
-    await click(button("Fable reset"));
+    await click(button("Reset for free"));
     await click(button("Yes, use my Fable reset"));
     await settle();
     expect(messages).toEqual(["Work no longer has that reset. The list has been refreshed."]);

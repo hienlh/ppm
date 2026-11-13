@@ -9,7 +9,7 @@
  * own function and everything after that is shared.
  */
 import type { AccountInfo, AccountUsageEntry, OAuthProfileData } from "./api-settings";
-import type { LimitBucket } from "../../types/chat";
+import type { ClaudeLimitResets, LimitBucket, ResetCredits } from "../../types/chat";
 import { bucketResetsAt } from "@/components/settings/accounts/account-usage-format";
 
 export interface SwitchAccount {
@@ -26,6 +26,23 @@ export interface SwitchAccount {
   refusal: string | null;
   /** The login was refused: signing in again is the way back, and the row offers it. */
   signedOut: boolean;
+  /** Free limit resets the account holds and when the nearest expires; 0 when it holds none. */
+  resets?: { count: number; nextExpiresAt: string | null };
+}
+
+/** Earliest of these ISO times. */
+function earliest(times: Array<string | null | undefined>): string | null {
+  return times.filter((t): t is string => !!t).sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null;
+}
+
+export function claudeResetsSummary(r: ClaudeLimitResets | undefined): { count: number; nextExpiresAt: string | null } {
+  const grants = (r?.grants ?? []).filter((g) => g.resetsLeft > 0);
+  return { count: grants.reduce((n, g) => n + g.resetsLeft, 0), nextExpiresAt: earliest(grants.map((g) => g.endsAt)) };
+}
+
+export function codexResetsSummary(c: ResetCredits | undefined): { count: number; nextExpiresAt: string | null } {
+  if (!c?.available) return { count: 0, nextExpiresAt: null };
+  return { count: c.available, nextExpiresAt: earliest([...(c.credits ?? []).map((x) => x.expiresAt), c.nextExpiresAt]) };
 }
 
 /** Whole percent of a 0–1 utilisation, the figure the bars and the ring show. */
@@ -77,6 +94,7 @@ export function claudeSwitchAccount(entry: AccountUsageEntry, info?: AccountInfo
     weekResetsAt: bucketResetsAt(entry.usage.weekly),
     refusal,
     signedOut,
+    resets: claudeResetsSummary(entry.usage.limitResets),
   };
 }
 
@@ -92,6 +110,7 @@ export interface CodexUsageLike {
   sevenDay?: number;
   session?: LimitBucket;
   weekly?: LimitBucket;
+  resetCredits?: ResetCredits;
 }
 
 /** A Codex account. A plan may have only one of the two windows, and whichever it has refuses. */
@@ -114,6 +133,7 @@ export function codexSwitchAccount(account: CodexAccountLike, usage: CodexUsageL
     weekResetsAt: bucketResetsAt(usage.weekly),
     refusal,
     signedOut,
+    resets: codexResetsSummary(usage.resetCredits),
   };
 }
 

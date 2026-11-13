@@ -52,7 +52,15 @@ const LIVE_PORTS: ResetCreditCodexPorts = {
   refresh: (accountId) => refreshUsage("codex", accountId),
 };
 
-export async function spendCodexResetCredit(accountId: string, ports: ResetCreditCodexPorts = LIVE_PORTS): Promise<ResetCreditResult> {
+/**
+ * @param creditId the credit the user picked; omitted spends the one that lapses first. Either
+ *   way it must be one the live read still lists as available.
+ */
+export async function spendCodexResetCredit(
+  accountId: string,
+  ports: ResetCreditCodexPorts = LIVE_PORTS,
+  creditId?: string,
+): Promise<ResetCreditResult> {
   const account = getCodexAccount(accountId);
   if (!account) throw new ResetCreditRefusedError("Account not found", 404);
   if (inFlight.has(accountId)) throw new ResetCreditRefusedError("A reset for this account is already in progress.", 409);
@@ -72,8 +80,12 @@ export async function spendCodexResetCredit(accountId: string, ports: ResetCredi
     if ((live.resetCredits?.available ?? 0) === 0) {
       throw new ResetCreditRefusedError(`${account.label} has no free reset left.`, 409);
     }
-    // The soonest-expiring credit first: the others outlive it.
-    const outcome = await ports.consume(account.home, randomUUID(), live.resetCredits?.nextCreditId);
+    const listed = live.resetCredits?.credits;
+    if (creditId && listed && !listed.some((c) => c.id === creditId)) {
+      throw new ResetCreditRefusedError(`${account.label} no longer has that reset. The list has been refreshed.`, 409);
+    }
+    // Unless one was picked, the soonest-expiring credit: the others outlive it.
+    const outcome = await ports.consume(account.home, randomUUID(), creditId ?? live.resetCredits?.nextCreditId);
     if (outcome === "reset") clearCodexAccountUsageLimit(accountId);
     console.log(`[codex] account ${accountId} reset credit → ${outcome}`);
     return { outcome, usage: await ports.refresh(accountId) };
