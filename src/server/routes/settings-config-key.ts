@@ -3,6 +3,7 @@ import { configService } from "../../services/config.service.ts";
 import { prepareConfigWrite } from "../../services/config-write-guard.ts";
 import { ok, err } from "../../types/api.ts";
 import type { PpmConfig } from "../../types/config.ts";
+import { announceSettingsSection, settingsSectionOfConfigKey } from "./settings-broadcast.ts";
 
 /**
  * `PUT /api/settings/config-key` `{ key, value }`: what `ppm config set` calls when a server holds
@@ -28,6 +29,9 @@ settingsConfigKeyRoutes.put("/config-key", async (c) => {
   const topKey = prepared.topKey as keyof PpmConfig;
   configService.set(topKey, prepared.topValue as PpmConfig[typeof topKey]);
   configService.save();
+  // A key a settings pane shows (an AI default, an audit or trace limit) refreshes that pane.
+  const section = settingsSectionOfConfigKey(key);
+  if (section) announceSettingsSection(c.env, section);
   let note: string | null = null;
   if (key === "tunnel.enabled") {
     const { requestTunnelReload } = await import("../../services/supervisor-state.ts");

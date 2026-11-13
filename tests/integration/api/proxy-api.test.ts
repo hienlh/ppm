@@ -270,13 +270,21 @@ describe("GET /api/settings/proxy", () => {
     expect(json.data.proxyEndpoint).toBeNull();
   });
 
-  it("reflects enabled state and auth key", async () => {
+  it("reflects enabled state, and the auth key only as its first characters", async () => {
     proxyService.setEnabled(true);
     proxyService.setAuthKey("my-key-abc");
     const res = await req("/api/settings/proxy");
     const json = await res.json() as any;
     expect(json.data.enabled).toBe(true);
+    expect(json.data.authKey).toBe("my-k…");
+    expect(json.data.authKeyRevealed).toBe(false);
+  });
+
+  it("answers the whole key when asked to reveal it", async () => {
+    proxyService.setAuthKey("my-key-abc");
+    const json = await (await req("/api/settings/proxy?reveal=1")).json() as any;
     expect(json.data.authKey).toBe("my-key-abc");
+    expect(json.data.authKeyRevealed).toBe(true);
   });
 });
 
@@ -302,15 +310,19 @@ describe("PUT /api/settings/proxy", () => {
     expect(json.data.enabled).toBe(false);
   });
 
-  it("generates auth key", async () => {
+  it("generates auth key, answering it redacted unless asked to reveal it", async () => {
     const res = await req("/api/settings/proxy", {
       method: "PUT",
       body: JSON.stringify({ generateKey: true }),
     });
     const json = await res.json() as any;
-    expect(json.data.authKey).toBeTruthy();
-    expect(json.data.authKey).toStartWith("ppm-proxy-");
-    expect(json.data.authKey.length).toBeGreaterThan(20);
+    expect(json.data.authKey).toBe("ppm-…");
+    const key = proxyService.getAuthKey()!;
+    expect(key).toStartWith("ppm-proxy-");
+    expect(key.length).toBeGreaterThan(20);
+    const revealed = await (await req("/api/settings/proxy?reveal=1", { method: "PUT", body: JSON.stringify({ generateKey: true }) })).json() as any;
+    expect(revealed.data.authKey).toBe(proxyService.getAuthKey());
+    expect(revealed.data.authKey).not.toBe(key);
   });
 
   it("sets custom auth key", async () => {
@@ -319,7 +331,8 @@ describe("PUT /api/settings/proxy", () => {
       body: JSON.stringify({ authKey: "custom-secret-key" }),
     });
     const json = await res.json() as any;
-    expect(json.data.authKey).toBe("custom-secret-key");
+    expect(json.data.authKey).toBe("cust…");
+    expect(proxyService.getAuthKey()).toBe("custom-secret-key");
   });
 
   it("regenerates key (replaces old key)", async () => {
@@ -328,8 +341,8 @@ describe("PUT /api/settings/proxy", () => {
       method: "PUT",
       body: JSON.stringify({ generateKey: true }),
     });
-    const json = await res.json() as any;
-    expect(json.data.authKey).not.toBe("old-key");
-    expect(json.data.authKey).toStartWith("ppm-proxy-");
+    expect(res.status).toBe(200);
+    expect(proxyService.getAuthKey()).not.toBe("old-key");
+    expect(proxyService.getAuthKey()).toStartWith("ppm-proxy-");
   });
 });

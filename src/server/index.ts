@@ -328,8 +328,14 @@ import { loopbackRoutes } from "./routes/oauth-loopback.ts";
 app.route("/api/loopback", loopbackRoutes);
 
 // API routes
+// Registered before every settings router, so it wraps them: a 2xx write to an allowlisted
+// section announces `settings:changed` and every open PPM refreshes that section.
+import { announceSettingsChanges } from "./routes/settings-broadcast.ts";
+app.use("/api/settings/*", announceSettingsChanges);
 app.route("/api/settings", settingsRoutes);
 app.route("/api/settings", settingsConfigKeyRoutes);
+import { settingsProxyRoutes } from "./routes/settings-proxy.ts";
+app.route("/api/settings", settingsProxyRoutes);
 // The tour's "PPM has new features" questions, answered once for the whole install.
 import { featureIntroRoutes } from "./routes/feature-intros.ts";
 app.route("/api/feature-intros", featureIntroRoutes);

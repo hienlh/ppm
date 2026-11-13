@@ -24,7 +24,6 @@ import {
   type SessionTraceLimitsInput,
 } from "../../shared/storage-settings.ts";
 import type { PPMBotTelegramStatus } from "../../shared/ppmbot-telegram.ts";
-import { proxyService } from "../../services/proxy.service.ts";
 import { clearIndexCache } from "../../services/file-list-index.service.ts";
 import { providerRegistry, providerProbeStatuses, retryProviderProbe } from "../../providers/registry.ts";
 import { createLogger } from "../../services/logger.ts";
@@ -499,43 +498,7 @@ settingsRoutes.put("/auth/password", async (c) => {
   }
 });
 
-// ── Proxy ────────────────────────────────────────────────────────────
-
-/** Build proxy settings response with correct local/tunnel endpoints */
-async function buildProxyResponse() {
-  const { tunnelService } = await import("../../services/tunnel.service.ts");
-  const tunnelUrl = tunnelService.getTunnelUrl();
-  const port = configService.get("port");
-  const localOrigin = `http://localhost:${port}`;
-  return {
-    enabled: proxyService.isEnabled(),
-    authKey: proxyService.getAuthKey() ?? null,
-    requestCount: proxyService.getRequestCount(),
-    localEndpoint: `${localOrigin}/proxy/v1/messages`,
-    localOpenAiEndpoint: `${localOrigin}/proxy/v1/chat/completions`,
-    tunnelUrl: tunnelUrl ?? null,
-    proxyEndpoint: tunnelUrl ? `${tunnelUrl}/proxy/v1/messages` : null,
-    openAiEndpoint: tunnelUrl ? `${tunnelUrl}/proxy/v1/chat/completions` : null,
-  };
-}
-
-/** GET /settings/proxy — proxy status */
-settingsRoutes.get("/proxy", async (c) => {
-  return c.json(ok(await buildProxyResponse()));
-});
-
-/** PUT /settings/proxy — update proxy settings */
-settingsRoutes.put("/proxy", async (c) => {
-  try {
-    const body = await c.req.json<{ enabled?: boolean; authKey?: string; generateKey?: boolean }>();
-    if (body.enabled !== undefined) proxyService.setEnabled(body.enabled);
-    if (body.generateKey) proxyService.generateAuthKey();
-    else if (body.authKey !== undefined) proxyService.setAuthKey(body.authKey);
-    return c.json(ok(await buildProxyResponse()));
-  } catch (e) {
-    return c.json(err((e as Error).message), 400);
-  }
-});
+// ── Proxy: `settings-proxy.ts` (the auth key is redacted there) ──────
 
 // ── Query audit log ────────────────────────────────────────────
 
