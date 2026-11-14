@@ -6,28 +6,50 @@
  * result never arrived. Typing into the terminal will not help either — the CLI
  * is holding it open, waiting. The server shares a host with the CLI, so it
  * makes the call on the browser's behalf.
+ *
+ * The phone's links sheet and the desktop terminal's login bar both use this.
+ * Whatever is pasted is cleaned up first (a phone's copy has no `http://`, a
+ * note's has quotes or a trailing full stop) by the same function the server
+ * runs, so what the field accepts is what the server accepts.
  */
 import { useState } from "react";
 import { Loader2, LogIn } from "@/lib/icons";
 import { api } from "@/lib/api-client";
-import { isDeliverableCallback } from "@/lib/oauth-loopback-url";
+import { normalizeLoopbackCallback } from "@/lib/oauth-loopback-url";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface TerminalFinishLoginProps {
   onDone: () => void;
+  /** Desktop size: a pointer needs no 44px target, and the bar sits over the terminal. */
+  compact?: boolean;
+  autoFocus?: boolean;
 }
 
-export function TerminalFinishLogin({ onDone }: TerminalFinishLoginProps) {
+/** What the field shows under the input for the current text: nothing, the URL to be sent, or why not. */
+export function describeCallbackInput(text: string):
+  | { kind: "empty" }
+  | { kind: "ready"; url: string; rewritten: boolean }
+  | { kind: "invalid"; reason: string } {
+  const trimmed = text.trim();
+  if (!trimmed) return { kind: "empty" };
+  const checked = normalizeLoopbackCallback(trimmed);
+  if (!checked.ok) return { kind: "invalid", reason: checked.reason };
+  return { kind: "ready", url: checked.url, rewritten: checked.url !== trimmed };
+}
+
+export function TerminalFinishLogin({ onDone, compact = false, autoFocus = false }: TerminalFinishLoginProps) {
   const [url, setUrl] = useState("");
   const [sending, setSending] = useState(false);
 
-  const trimmed = url.trim();
-  const ready = !sending && isDeliverableCallback(trimmed);
+  const state = describeCallbackInput(url);
+  const ready = !sending && state.kind === "ready";
 
   const send = async () => {
+    if (state.kind !== "ready") return;
     setSending(true);
     try {
-      await api.post("/api/loopback/callback", { url: trimmed });
+      await api.post("/api/loopback/callback", { url: state.url });
       toast.success("Sent to the waiting command", { duration: 2000 });
       setUrl("");
       onDone();
@@ -39,35 +61,53 @@ export function TerminalFinishLogin({ onDone }: TerminalFinishLoginProps) {
   };
 
   return (
-    <div className="shrink-0 border-t border-border px-3 py-3">
+    <div className={cn("shrink-0", compact ? "px-3 py-2" : "border-t border-border px-3 py-3")}>
       <p className="pb-2 text-[11px] leading-snug text-text-secondary">
         Finished signing in and landed on a page that would not load? Paste that address here —
-        the machine will deliver it to the command still waiting.
+        the machine running PPM will deliver it to the command still waiting.
       </p>
-      <div className="flex items-center gap-2">
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (ready) void send();
+        }}
+      >
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
+          autoFocus={autoFocus}
           inputMode="url"
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          placeholder="http://127.0.0.1:54132/oauth/callback?code=…"
+          placeholder="127.0.0.1:54132/oauth/callback?code=…"
           aria-label="Callback address"
-          className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 font-mono text-xs text-foreground placeholder:text-text-subtle"
+          className={cn(
+            "min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 font-mono text-xs text-foreground placeholder:text-text-subtle",
+            compact ? "h-8" : "h-11",
+          )}
         />
         <button
-          onClick={() => void send()}
+          type="submit"
           disabled={!ready}
           aria-label="Finish login"
-          className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground disabled:opacity-40 active:opacity-80 transition-opacity"
+          title="Finish login"
+          className={cn(
+            "flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 active:opacity-80 transition-opacity",
+            compact ? "h-8 px-3 text-xs" : "size-11",
+          )}
         >
           {sending ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+          {compact && <span>Finish login</span>}
         </button>
-      </div>
-      {trimmed !== "" && !isDeliverableCallback(trimmed) && (
-        <p className="pt-1.5 text-[11px] text-error">
-          Needs to be the http://127.0.0.1:… address the sign-in redirected to.
+      </form>
+      {state.kind === "invalid" && (
+        <p className="pt-1.5 text-[11px] text-error">{state.reason}</p>
+      )}
+      {state.kind === "ready" && state.rewritten && (
+        <p className="pt-1.5 text-[11px] text-text-secondary">
+          Will send <span className="break-all font-mono text-foreground">{state.url}</span>
         </p>
       )}
     </div>

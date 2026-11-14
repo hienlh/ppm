@@ -13,47 +13,41 @@
  */
 import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
+import { normalizeLoopbackCallback } from "../../shared/loopback-callback-url.ts";
 
 export const loopbackRoutes = new Hono();
 
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "::1"]);
 /** A stalled CLI answers instantly; anything slower is not the listener we want. */
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_BODY_CHARS = 2000;
-
-/** Whether a hostname addresses this machine. Covers all of 127.0.0.0/8. */
-export function isLoopbackHostname(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (LOOPBACK_HOSTNAMES.has(host)) return true;
-  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
-}
+/** A callback with its code is a few hundred characters; this is far past any real one. */
+const MAX_URL_CHARS = 8192;
 
 /**
  * POST /api/loopback/callback — { url } → GET that URL from this machine.
+ *
+ * The URL is cleaned up the way the browser's field cleans it (no scheme on a
+ * phone's copy, quotes and stray punctuation around it) and then held to the
+ * loopback rule here, on the server, whatever the browser decided: this is the
+ * one place a request actually leaves PPM.
  *
  * Redirects are not followed: the callback's whole purpose is to hand the code
  * to the listener, and a redirect would point somewhere this endpoint has not
  * vetted.
  */
 loopbackRoutes.post("/callback", async (c) => {
-  let target: URL;
+  let raw: unknown;
   try {
-    const body = await c.req.json<{ url?: string }>();
-    if (!body.url) return c.json(err("Missing required field: url"), 400);
-    target = new URL(body.url);
+    raw = (await c.req.json<{ url?: unknown }>()).url;
   } catch {
     return c.json(err("Not a valid URL"), 400);
   }
+  if (typeof raw !== "string" || !raw.trim()) return c.json(err("Missing required field: url"), 400);
+  if (raw.length > MAX_URL_CHARS) return c.json(err("That address is too long to be a login callback"), 400);
 
-  if (target.protocol !== "http:" && target.protocol !== "https:") {
-    return c.json(err(`Unsupported protocol: ${target.protocol}`), 400);
-  }
-  if (!isLoopbackHostname(target.hostname)) {
-    return c.json(
-      err(`Only loopback addresses are allowed, got "${target.hostname}"`),
-      400,
-    );
-  }
+  const checked = normalizeLoopbackCallback(raw);
+  if (!checked.ok) return c.json(err(checked.reason), 400);
+  const target = new URL(checked.url);
 
   try {
     const res = await fetch(target, {
@@ -68,7 +62,7 @@ loopbackRoutes.post("/callback", async (c) => {
     // Nothing listening is the common case — the CLI already gave up, or the
     // port in the URL belongs to an older attempt.
     const reason = (e as Error).name === "TimeoutError"
-      ? `Nothing answered on port ${target.port} within ${FETCH_TIMEOUT_MS / 1000}s`
+      ? `Nothing answered on port ${target.port || (target.protocol === "https:" ? "443" : "80")} within ${FETCH_TIMEOUT_MS / 1000}s`
       : `Could not reach ${target.host} — the login may have already timed out`;
     return c.json(err(reason), 502);
   }

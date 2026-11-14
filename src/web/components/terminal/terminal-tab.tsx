@@ -5,7 +5,7 @@ import { useTerminalCommandQueue } from "@/hooks/use-terminal-command-queue";
 import { sendToChat } from "@/lib/send-to-chat";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
-import { RotateCcw, MessageSquare } from "@/lib/icons";
+import { RotateCcw, MessageSquare, LogIn } from "@/lib/icons";
 import "@xterm/xterm/css/xterm.css";
 import { toast } from "sonner";
 import { useTabStore } from "@/stores/tab-store";
@@ -16,6 +16,7 @@ import { TERMINAL_AI_MARK_EXPLANATION, TerminalAiMarkBadge } from "./terminal-ai
 import { TerminalMobileToolbar } from "./terminal-mobile-toolbar";
 import { TerminalLinksSheet } from "./terminal-links-sheet";
 import { TerminalSelectionChat } from "./terminal-selection-chat";
+import { TerminalLoginCallbackBar } from "./terminal-login-callback-bar";
 
 interface TerminalTabProps {
   metadata?: Record<string, unknown>;
@@ -40,6 +41,7 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
   const [ctrlMode, setCtrlMode] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
+  const [loginBarOpen, setLoginBarOpen] = useState(false);
   const activeTabId = useTabStore((s) => s.activeTabId);
   const [onboardingRefresh, setOnboardingRefresh] = useState(0);
   useEffect(() => {
@@ -183,10 +185,24 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
             Restart
           </button>
         )}
+        {!isMobile && (
+          <button
+            onClick={() => setLoginBarOpen((open) => !open)}
+            title="Finish a login whose browser redirect to 127.0.0.1 could not reach this machine"
+            aria-pressed={loginBarOpen}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-surface-elevated text-text-primary hover:bg-primary hover:text-primary-foreground active:bg-primary active:text-primary-foreground transition-colors ml-auto"
+          >
+            <LogIn size={10} />
+            Login callback
+          </button>
+        )}
         <button
           onClick={handleSendToChat}
           title="Send to Chat"
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-surface-elevated text-text-primary hover:bg-primary hover:text-primary-foreground active:bg-primary active:text-primary-foreground transition-colors ml-auto"
+          className={cn(
+            "flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-surface-elevated text-text-primary hover:bg-primary hover:text-primary-foreground active:bg-primary active:text-primary-foreground transition-colors",
+            isMobile && "ml-auto",
+          )}
         >
           <MessageSquare size={10} />
           Chat
@@ -205,6 +221,15 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
         />
         <TerminalSelectionChat terminal={terminal} projectName={projectName} touch={isMobile} />
       </div>
+
+      {!isMobile && (
+        <TerminalLoginCallbackBar
+          terminal={terminal}
+          getBufferUrls={getBufferUrls}
+          requested={loginBarOpen}
+          onRequestedChange={setLoginBarOpen}
+        />
+      )}
 
       {isMobile && (
         <>
