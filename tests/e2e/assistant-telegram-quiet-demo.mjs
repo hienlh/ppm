@@ -22,7 +22,7 @@ const QUIET_MS = 20_000;
 const OWNER = 1001;
 const out = resolve(process.env.PPM_QUIET_DEMO_OUT ?? "plans/reports/screenshots-261114-telegram-quiet");
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-tg-quiet-demo-"));
-const logs = join(sandbox, "logs"), ppm = join(sandbox, "ppm"), home = join(sandbox, "home"), alpha = join(sandbox, "alpha");
+const logs = resolve(process.env.PPM_QUIET_DEMO_LOGS ?? join(sandbox, "logs")), ppm = join(sandbox, "ppm"), home = join(sandbox, "home"), alpha = join(sandbox, "alpha");
 await Promise.all([out, logs, ppm, home, alpha].map((p) => mkdir(p, { recursive: true })));
 await writeFile(join(alpha, "README.md"), "# Alpha\n");
 const webDir = resolve(process.env.PPM_ASSISTANT_WEB_DIR ?? "dist/web");
@@ -59,6 +59,19 @@ async function step(tg, title, fn) {
   return sends;
 }
 
+/** The titlebar (or head) around the bell, wide enough to see the title and the gear beside it. */
+async function closeup(dev, locator, file) {
+  const box = await locator.boundingBox();
+  const vp = dev.page.viewportSize();
+  const width = Math.min(420, vp.width), height = 56;
+  const x = Math.max(0, Math.min(vp.width - width, box.x + box.width + 60 - width));
+  const y = Math.max(0, box.y + box.height / 2 - height / 2);
+  await dev.page.screenshot({ path: join(out, file), clip: { x, y, width, height } });
+}
+
+/** Telegram HTML as the phone shows it. */
+const plain = (html) => html.replace(/<[^>]+>/g, "").replace(/&quot;/g, "\"").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+
 const pass = (name, detail = {}) => { results.push({ name, passed: true, ...detail }); console.log(`PASS ${name}`); };
 
 try {
@@ -71,6 +84,7 @@ try {
     ...process.env, PPM_HOME: ppm, HOME: home, USERPROFILE: home, PPM_HTML_TEST_REAL_HOME: homedir(),
     PPM_HTML_TEST_PORT: String(port), PPM_ASSISTANT_WEB_DIR: webDir,
     PPM_ASSISTANT_FIXTURE_STATE: join(sandbox, "scripted-provider-state.json"),
+    PPM_ASSISTANT_APPROVAL_TIMEOUT_MS: "180000",
     PPM_ASSISTANT_FAKE_TELEGRAM: "1",
     PPM_TELEGRAM_API_BASE: fakeInfo.api,
     PPM_ASSISTANT_FAKE_TELEGRAM_TOKEN: fakeInfo.token,
@@ -118,7 +132,7 @@ try {
   await bell(desk).waitFor({ timeout: 20000 });
   assert.equal(await bell(desk).getAttribute("aria-pressed"), "true");
   await kit.shot(desk, "01-assistant-window-bell-on");
-  await bell(desk).screenshot({ path: join(out, "desktop-01b-bell-on-closeup.png") });
+  await closeup(desk, bell(desk), "desktop-01b-bell-on-closeup.png");
   await kit.openLink(mobile, link);
   await bell(mobile).waitFor({ timeout: 20000 });
   await kit.shot(mobile, "01-assistant-head-bell-on");
@@ -174,7 +188,7 @@ try {
   });
   await until("desktop bell off", async () => (await bell(desk).getAttribute("aria-pressed")) === "false", 15000);
   await kit.shot(desk, "05-bell-off-after-quiet-off");
-  await bell(desk).screenshot({ path: join(out, "desktop-05b-bell-off-closeup.png") });
+  await closeup(desk, bell(desk), "desktop-05b-bell-off-closeup.png");
   pass("/quiet off from the phone: the desktop bell follows without a reload");
   await fx.script("demo-off", [{ text: "Công tắc tắt: tin này có chuông." }], { match: "gõ khi đã tắt" });
   sends = await step(tg, "6. Switch off: typed in PPM rings as before", async () => {
@@ -221,7 +235,7 @@ try {
   for (const s of steps) {
     lines.push(`## ${s.title}`, `   started ${s.startedAt}`);
     for (const m of s.sends) {
-      lines.push(`   ${m.silent ? "🔕 silent" : "🔔 rings "}${m.replyTo ? `  (reply to #${m.replyTo})` : ""}  ${m.text.split("\n")[0].slice(0, 110)}`);
+      lines.push(`   ${m.silent ? "🔕 silent" : "🔔 rings "}${m.replyTo ? `  (reply to #${m.replyTo})` : ""}  ${plain(m.text).split("\n")[0].slice(0, 110)}`);
     }
     lines.push("");
   }
