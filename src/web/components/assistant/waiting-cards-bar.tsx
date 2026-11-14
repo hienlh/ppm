@@ -85,8 +85,16 @@ function Title({ label, count }: { label: string; count: number }) {
 export function WaitingCardsBar({ cards, label, focus, onCard, children, note, slotHeight = ASSISTANT_SLOT_HEIGHT }: Props) {
   const phone = useIsMobile();
   const [currentId, setCurrentId] = useState<string | null>(cards[0]?.id ?? null);
-  // Unfolded under the header on a desktop; on a phone, whether the full-screen sheet is up.
-  const [open, setOpen] = useState(!phone);
+  // Unfolded under the header on a desktop; on a phone, whether the full-screen sheet is up. Kept
+  // with the layout it was set in: crossing the md width (a tablet rotating, a split view) starts
+  // the other layout at rest in the same render, so a desktop's unfolded box never flashes up as a
+  // sheet nobody opened.
+  const [openIn, setOpenIn] = useState({ phone, open: !phone });
+  const open = openIn.phone === phone ? openIn.open : !phone;
+  const setOpen = (next: boolean) => setOpenIn({ phone, open: next });
+  // Set when the sheet closes because the user went elsewhere (a reply, another screen): focus
+  // then stays where they went instead of coming back to the row.
+  const leaving = useRef(false);
   const [flash, setFlash] = useState(0);
   const lastIndex = useRef(0);
   const known = useRef<Set<string> | null>(null);
@@ -105,15 +113,6 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
     if (opening) setOpen(true);
     setFlash((n) => n + 1);
   };
-
-  // Crossing the md width (a tablet rotating, a split view): each layout starts in its own resting
-  // state, so a desktop's unfolded box never turns into a sheet nobody opened.
-  const wasPhone = useRef(phone);
-  useEffect(() => {
-    if (wasPhone.current === phone) return;
-    wasPhone.current = phone;
-    setOpen(!phone);
-  }, [phone]);
 
   // A card that was not there before: the bar moves to it. A desktop unfolds; a phone's screen
   // is not taken over by a card nobody asked to see, so there only the row names it.
@@ -141,20 +140,25 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
   useEffect(() => {
     if (!phone) return;
     return useCardReplyStore.subscribe((s, before) => {
-      if (s.target && s.target !== before.target) setOpen(false);
+      if (s.target && s.target !== before.target) { leaving.current = true; setOpenIn({ phone: true, open: false }); }
     });
   }, [phone]);
 
   // Leaving the Assistant: the sheet lives in the app's root, so a hidden tab would leave it
   // over whatever comes next. It closes when a manager chat opens and when the bar stops being
-  // laid out (its tab hidden: the row measures 0).
+  // laid out: its tab hidden (`display: none`, no box at all) or parked by the tab pool (a 0×0,
+  // invisible box) — either way the row measures nothing.
   useEffect(() => {
     if (!phone || !open) return;
-    const close = () => setOpen(false);
+    const close = () => { leaving.current = true; setOpenIn({ phone: true, open: false }); };
     window.addEventListener(MANAGER_CHAT_OPENING_EVENT, close);
     const el = root.current;
+    const gone = (node: HTMLElement) => {
+      const r = node.getBoundingClientRect();
+      return r.width === 0 || r.height === 0 || (node.checkVisibility?.({ visibilityProperty: true }) === false);
+    };
     const watcher = el && typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver(() => { if (el.getClientRects().length === 0) close(); })
+      ? new ResizeObserver(() => { if (gone(el)) close(); })
       : null;
     if (el) watcher?.observe(el);
     return () => { window.removeEventListener(MANAGER_CHAT_OPENING_EVENT, close); watcher?.disconnect(); };
@@ -163,10 +167,11 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
   // The sheet is a dialog: focus moves into it, Escape closes it, and focus comes back to the row.
   const sheetWasOpen = useRef(false);
   useEffect(() => {
-    if (!phone) return;
+    if (!phone) { sheetWasOpen.current = false; return; }
     if (open) closeButton.current?.focus({ preventScroll: true });
-    else if (sheetWasOpen.current) row.current?.focus({ preventScroll: true });
+    else if (sheetWasOpen.current && !leaving.current) row.current?.focus({ preventScroll: true });
     sheetWasOpen.current = open;
+    leaving.current = false;
   }, [phone, open]);
 
   const [lit, setLit] = useState(false);
@@ -264,7 +269,7 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
       <div className="flex items-center gap-1 pl-3 pr-1.5">
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => setOpen(!open)}
           aria-expanded={open}
           className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left md:min-h-10"
           data-waiting-toggle=""
@@ -279,7 +284,7 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
         <Pager index={index} count={cards.length} step={step} />
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => setOpen(!open)}
           aria-label={open ? "Fold the waiting cards" : "Show the waiting cards"}
           className={NAV}
         >
