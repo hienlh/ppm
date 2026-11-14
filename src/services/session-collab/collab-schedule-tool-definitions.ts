@@ -22,7 +22,10 @@ export function sessionScheduleToolDefinitions() {
         + "durable or not) for anything that must still happen after a restart. It is delivered only while the chat "
         + "is idle: a running turn finishes first, and fires missed while waiting (or while PPM was off) arrive once, "
         + "not as a queue. When the user presses Stop in this chat, a fire waiting for it is held until the chat's next "
-        + "turn ends or the schedule's next fire, so it does not start the moment the user stopped. "
+        + "turn ends or the schedule's next fire, so it does not start the moment the user stopped. A prompt that starts "
+        + "with a slash command (\"/review-pr 42\") runs that command or skill in a Claude chat; PPM's note saying this is "
+        + "a scheduled run then follows it and reaches the command as part of its arguments, so write the arguments so "
+        + "that trailing text does not change what they mean. "
         + `A chat holds at most ${MAX_SCHEDULES_PER_SESSION} schedules; the user sees and can delete `
         + "them in PPM. The result gives the schedule's id and its next fire time.",
       inputSchema: {

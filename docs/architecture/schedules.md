@@ -107,7 +107,11 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   turn in that chat that was not itself stopped (a user turn or any other), or a fire of one of
   the chat's schedules coming due (its next cron time, which coalesces into the pending fire, or
   Run now). The hold lives in the deliverer's memory, so a restart of PPM releases it and the
-  stored pending fire goes at start. A Stop with nothing pending holds nothing.
+  stored pending fire goes at start. A Stop with nothing pending holds nothing. A held schedule
+  says so: the REST view carries `held_after_stop` (asked of the deliverer through
+  `session-schedule-due.ts`), the chip and Settings read "Held after Stop", the AI's
+  `session_schedule_list` gives the same reason, and holding or releasing broadcasts
+  `schedules:changed`.
 - **Nothing it misses holds a chat forever.** A message in flight is checked against the chat's
   live state every minute (`session-schedule-flight-watch.ts`): a started turn whose chat is idle
   ended unheard and its run is closed as an error; a queued message an idle chat no longer holds
@@ -163,8 +167,11 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   needs no approval, so each one sends a `schedule_created` notification ("AI scheduled a prompt",
   on by default, switched in Settings → Notifications): its name, the chat and project, when it
   runs (cron in words, time zone, next run) and the prompt on one line cut to 120 characters,
-  linked to the chat (`collab-schedule-created-notice.ts`). Schedules saved from Settings, REST
-  or the CLI send none.
+  linked to the chat (`collab-schedule-created-notice.ts`). It is sent only if the schedule still
+  exists when the notification delay ends, and a chat sends at most five an hour
+  (`collab-schedule-notice-limit.ts`): past that it sends one notice saying further ones are muted
+  and until when, and the rest are only logged, so an AI looping on create and delete cannot flood
+  the user. Schedules saved from Settings, REST or the CLI send none.
 - **Open PPMs follow along.** Whatever delivery changes on its own — a fire coming due, a turn
   taking it, a run ending, a one-shot going, a pause, a renamed or deleted chat — broadcasts
   `schedules:changed` on `/ws/global` (`broadcastSchedulesChanged`, coalesced over 50 ms), so the
@@ -180,7 +187,21 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   `scheduleRunPlacement`), and like any slash command it gets no shared-context prefix. Claude
   Code records the command as `<command-name>`/`<command-args>` tags with the block inside the
   args, which the bubble's parser reads back (`decodeScheduleRunInCommandArgs`), so the run line
-  still shows `/skill args` after a reload. Codex runs no slash commands from a message (its own
+  still shows `/skill args` after a reload. It reads them only from the message exactly as
+  stored, and only when the message starts with Claude's own `<command-message>`/`<command-name>`
+  tags: the display strips other tags (`<local-command-stdout>` among them) first, and a sentinel
+  typed in two halves around such a tag would join up after stripping. A literal
+  `</command-args>` in the prompt is broken with a zero-width space when the message is built,
+  since Claude Code writes the args verbatim and would otherwise end them there.
+  The block therefore **is part of the command's arguments**: the CLI cuts the name at the first
+  whitespace and passes the rest, so a command or skill reads `42`, a blank line and PPM's note as
+  its `$ARGUMENTS` (the note alone for a command sent with none). A command that expects one
+  strict value (a PR number, a model name) may need to ignore what follows the first line. A
+  PPM builtin (`/skills`, `/version`…) scheduled in a Claude chat is answered by PPM as when typed,
+  and its run still recorded; in a Codex chat the same prompt reaches the model as text. Anything
+  that starts with a slash and a non-slash counts as a command, a path such as `/tmp/x.log check
+  this` included: the block goes after it and the CLI, finding no such command, passes it on as
+  text, so only the header's "command above" wording is off. Codex runs no slash commands from a message (its own
   `/…` commands belong to its terminal UI): PPM rewrites a known skill to its `$name` mention,
   which Codex finds anywhere in the message, so there the block stays in front as for any prompt,
   and any other `/…` (PPM's own `/compact` included) reaches Codex as plain text.
