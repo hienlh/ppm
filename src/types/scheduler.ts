@@ -2,8 +2,11 @@
 
 export type RunStatus = "running" | "done" | "error" | "skipped";
 
-/** `prompt`: a message sent to the schedule's own chat. `script`: JavaScript run in a child process. */
-export type ScheduleKind = "prompt" | "script";
+/**
+ * `prompt`: a message sent to the schedule's own chat. `script`: JavaScript run in a child process.
+ * `session`: a message delivered into an existing chat, on that chat's own settings, once it is idle.
+ */
+export type ScheduleKind = "prompt" | "script" | "session";
 /** `tick`: one short run per cron fire. `always-on`: a daemon PPM keeps alive. A prompt is always `tick`. */
 export type ScheduleMode = "tick" | "always-on";
 export type ScheduleInputType = "text" | "number" | "boolean" | "secret";
@@ -49,6 +52,16 @@ export interface Schedule {
   secrets_enc: string | null;
   /** The script's `ctx.state`, as JSON. */
   state_json: string | null;
+  /** The chat a session schedule delivers into; null for the other kinds. */
+  target_session_id: string | null;
+  /** IANA time zone the cron is read in; null is the machine's own. */
+  timezone: string | null;
+  /** 0: fires once, at the first match, and is deleted once that fire is delivered. */
+  recurring: number;
+  /** When a session schedule came due and is still waiting to be delivered (ISO). */
+  pending_since: string | null;
+  /** Why a session schedule stopped firing (its chat is gone, say); null while it can fire. */
+  paused_reason: string | null;
 }
 
 /**
@@ -77,6 +90,13 @@ export interface ScheduleView extends Omit<Schedule, "secrets_enc" | "state_json
   /** Which secret inputs have a value saved. */
   secretsSet: string[];
   status: ScheduleStatusView;
+  /** A session schedule's chat as the user knows it; null when it has no title (or is not a session schedule). */
+  target_title?: string | null;
+  /**
+   * A session schedule's pending fire held because the user stopped a turn in its chat: it goes once
+   * that chat's next turn ends or the schedule's next fire comes due. Absent for other kinds.
+   */
+  held_after_stop?: boolean;
 }
 
 export interface ScheduleRun {
@@ -111,6 +131,9 @@ export interface NewSchedule {
   inputs_json?: string;
   input_values_json?: string;
   secrets_enc?: string | null;
+  target_session_id?: string | null;
+  timezone?: string | null;
+  recurring?: boolean;
 }
 
 /** Result of one schedule execution (returned by scheduler-runner). */

@@ -212,6 +212,7 @@ settingsRoutes.put("/ai", async (c) => {
       share_provider_context?: boolean;
       tab_tools?: boolean;
       ppm_tools?: PpmToolSwitches;
+      hide_builtin_cron?: boolean;
       leftover_processes_idle_minutes?: number;
       session_collab?: unknown;
       providers?: Record<string, Partial<AIProviderConfig>>;
@@ -231,6 +232,9 @@ settingsRoutes.put("/ai", async (c) => {
     }
     if ("tab_tools" in body && typeof body.tab_tools !== "boolean") {
       return c.json(err("tab_tools must be a boolean"), 400);
+    }
+    if ("hide_builtin_cron" in body && typeof body.hide_builtin_cron !== "boolean") {
+      return c.json(err("hide_builtin_cron must be a boolean"), 400);
     }
     if ("leftover_processes_idle_minutes" in body && !isValidLeftoverIdleMinutes(body.leftover_processes_idle_minutes)) {
       return c.json(err(`leftover_processes_idle_minutes must be a whole number from 0 to ${MAX_LEFTOVER_IDLE_MINUTES}, 0 for never`), 400);
@@ -273,6 +277,7 @@ settingsRoutes.put("/ai", async (c) => {
       new_chat_provider_mode: body.new_chat_provider_mode ?? currentAi.new_chat_provider_mode ?? "default",
       share_provider_context: body.share_provider_context ?? currentAi.share_provider_context ?? true,
       ...(typeof body.tab_tools === "boolean" && { tab_tools: body.tab_tools }),
+      ...(typeof body.hide_builtin_cron === "boolean" && { hide_builtin_cron: body.hide_builtin_cron }),
       ...(body.leftover_processes_idle_minutes !== undefined && { leftover_processes_idle_minutes: body.leftover_processes_idle_minutes }),
       // One switch at a time: the tools the body does not name keep theirs, and the other tools of
       // an introduced feature are written at the state they showed (see `patchPpmToolSwitches`).

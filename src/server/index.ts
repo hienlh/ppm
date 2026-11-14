@@ -1335,11 +1335,21 @@ if (process.argv.includes("__serve__")) {
         console.error("[jira] Watcher service failed to load:", e);
       });
 
-    // Start scheduled-agents cron scheduler
-    import("../services/scheduler.service.ts")
-      .then(({ schedulerService }) => {
+    // Start scheduled-agents cron scheduler. Session-schedule delivery goes first: the scheduler
+    // hands over fires still pending from before a restart as it starts, and they need a taker.
+    import("../services/session-schedules/session-schedule-delivery.ts")
+      .then(({ startSessionScheduleDelivery }) => startSessionScheduleDelivery())
+      .catch((e) => {
+        console.error("[scheduler] Session-schedule delivery failed to start:", e);
+        return null;
+      })
+      .then(async (stopDelivery) => {
+        const { schedulerService } = await import("../services/scheduler.service.ts");
         schedulerService.start();
-        schedulerStop = () => schedulerService.stop();
+        schedulerStop = () => {
+          schedulerService.stop();
+          stopDelivery?.();
+        };
       })
       .catch((e) => {
         console.error("[scheduler] Startup error:", e);

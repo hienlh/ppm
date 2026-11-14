@@ -60,6 +60,11 @@ export class PromptTurnBinder {
     return { turnId: promptId, ...(match.clientMessageId ? { clientMessageId: match.clientMessageId } : {}) };
   }
 
+  /** Whether the push sent under `clientMessageId` still waits for the CLI to submit it. */
+  has(sessionId: string, clientMessageId: string): boolean {
+    return this.pending.get(sessionId)?.some((p) => p.clientMessageId === clientMessageId) ?? false;
+  }
+
   forget(sessionId: string): void {
     this.pending.delete(sessionId);
   }

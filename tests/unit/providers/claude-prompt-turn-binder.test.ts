@@ -14,6 +14,18 @@ describe("PromptTurnBinder", () => {
     expect(b.bind("s", P(2), "queued behind it")).toEqual({ turnId: P(2), clientMessageId: "c2" });
   });
 
+  it("says a push is queued until the CLI submits it or is stopped with it", () => {
+    const b = new PromptTurnBinder();
+    b.register("s", "first", "c1");
+    b.register("s", "queued behind it", "c2");
+    expect(b.has("s", "c2")).toBe(true);
+    b.bind("s", P(1), "first");
+    expect(b.has("s", "c1")).toBe(false);
+    expect(b.has("s", "c2")).toBe(true);
+    b.forget("s");
+    expect(b.has("s", "c2")).toBe(false);
+  });
+
   it("a queued message gets its own turn even when a later one is submitted first", () => {
     const b = new PromptTurnBinder();
     b.register("s", "later", "c1");

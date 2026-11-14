@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
-import type { ScheduleView } from "../../types/scheduler.ts";
+import type { Schedule, ScheduleView } from "../../types/scheduler.ts";
 import { inAiChat } from "../../services/ai-chat-env.ts";
 import { noteDirectWrite } from "../utils/ppm-server-client.ts";
 import { C, fail, serverApi, ServerDownError } from "./schedule-cmd-api.ts";
@@ -10,7 +10,8 @@ import { C, fail, serverApi, ServerDownError } from "./schedule-cmd-api.ts";
  * that holds the database — the route Settings → Schedules and the Assistant's tools call, so its
  * checks apply, its scheduler re-arms, and every open Schedules panel refreshes on
  * `schedules:changed` — and, only when no PPM holds it, to the database after the notice, with the
- * route's own rules (`scheduler-edit.ts`).
+ * route's own rules (`scheduler-edit.ts`; `session-schedule-save.ts` for one delivered into a chat,
+ * whose per-chat cap and checks hold here too).
  *
  * `add`, `edit` and `enable` are refused from an AI chat: a schedule runs prompts or scripts in
  * turns nobody started, and the Assistant's `schedule_save` shows the user a card for exactly
@@ -22,7 +23,8 @@ type Deps = { configService: typeof import("../../services/config.service.ts").c
 export function refuseScheduleWriteInAiChat(command: string): void {
   if (!inAiChat()) return;
   fail(`ppm schedule ${command} is refused here from an AI chat: a schedule runs prompts or scripts in turns nobody started. `
-    + "Use the Assistant's schedule_save tool (it shows the user a card), or give the user the command.");
+    + "Use the Assistant's schedule_save tool (it shows the user a card), session_schedule_create to schedule a prompt "
+    + "into your own chat, or give the user the command.");
 }
 
 /** The route's write, or `direct` after the notice when no PPM holds the database. Any other failure ends the command. */
@@ -68,13 +70,78 @@ export function editBody(opts: EditOpts, projectPath?: string): Record<string, u
   return Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined));
 }
 
+/** `edit` flags a schedule delivered into a chat has no use for: it runs on that chat's settings. */
+const NOT_FOR_SESSION: ReadonlyArray<[keyof EditOpts, string, string]> = [
+  ["project", "--project", "project_path"],
+  ["permissionMode", "--permission-mode", "permission_mode"],
+  ["maxTurns", "--max-turns", "max_turns"],
+  ["timeout", "--timeout", "timeout_ms"],
+];
+
+/**
+ * The `edit` body for a schedule delivered into a chat, without the flags that do not apply to
+ * one, and those flags by name so the command can say it did not use them.
+ */
+export function sessionEditBody(opts: EditOpts, body: Record<string, unknown>): { body: Record<string, unknown>; ignored: string[] } {
+  const kept = { ...body };
+  const ignored: string[] = [];
+  for (const [opt, flag, field] of NOT_FOR_SESSION) {
+    if (opts[opt] === undefined) continue;
+    ignored.push(flag);
+    delete kept[field];
+  }
+  return { body: kept, ignored };
+}
+
+interface SessionAddOpts {
+  session: string; name?: string; cron?: string; prompt?: string; tz?: string; once?: boolean; disabled?: boolean;
+  project?: string; script?: string; maxTurns?: string; timeout?: string;
+}
+
+/** The POST body of `add --session`: the chat decides the project, provider and mode. */
+export function sessionAddBody(opts: SessionAddOpts): Record<string, unknown> {
+  if (opts.project || opts.script || opts.maxTurns || opts.timeout) {
+    fail("--project, --script, --max-turns and --timeout do not apply with --session: the schedule runs in that chat, on its settings");
+  }
+  if (!opts.prompt || !opts.cron) fail("--prompt and --cron are required with --session");
+  return {
+    kind: "session", target_session_id: opts.session, cron_expr: opts.cron, prompt: opts.prompt, recurring: !opts.once,
+    enabled: !opts.disabled, ...(opts.name && { name: opts.name }), ...(opts.tz && { timezone: opts.tz }),
+  };
+}
+
+/** `add --session`: checked by the server, or with no server by the same rules here (`session-schedule-save.ts`). */
+async function addSessionSchedule(opts: SessionAddOpts, db: Deps["db"]): Promise<void> {
+  const body = sessionAddBody(opts);
+  const created = await scheduleWrite<Pick<ScheduleView, "id" | "target_session_id" | "next_fire_at">>("POST", "/schedules", body, async () => {
+    const { createSessionSchedule } = await import("../../services/session-schedules/session-schedule-save.ts");
+    return db.getSchedule(createSessionSchedule(body).id)!;
+  });
+  const next = created.next_fire_at ? `, next fire: ${created.next_fire_at}` : "";
+  console.log(`${C.green}✓${C.reset} Schedule ${C.bold}#${created.id}${C.reset} created (into chat ${created.target_session_id}${next})`);
+}
+
+/** The direct write of a PATCH body, by the rules the route applies to that kind of schedule. */
+export async function directPatch(db: Deps["db"], current: Schedule, body: Record<string, unknown>): Promise<void> {
+  if (current.kind === "session") {
+    const { patchSessionSchedule } = await import("../../services/session-schedules/session-schedule-save.ts");
+    patchSessionSchedule(current, body);
+    return;
+  }
+  const { scheduleChangesFrom } = await import("../../services/scheduler-edit.ts");
+  db.updateSchedule(current.id, scheduleChangesFrom(current, body));
+}
+
 export function registerScheduleWriteCommands(schedule: Command, loadDeps: () => Promise<Deps>): void {
   schedule
     .command("add")
-    .description("Add a scheduled agent (--prompt) or a script schedule (--script). Cron uses local timezone. Do not embed secrets in --prompt. Refused from an AI chat (use schedule_save).")
-    .requiredOption("--name <name>", "Schedule name")
+    .description("Add a scheduled agent (--prompt), a script schedule (--script), or a prompt delivered into an existing chat (--session). Cron uses local timezone unless --tz. Do not embed secrets in --prompt. Refused from an AI chat (use schedule_save).")
+    .option("--name <name>", "Schedule name (required, except with --session: the prompt's first line by default)")
     .option("--cron <expr>", "Cron expression (local timezone, e.g. \"0 7 * * *\"; a script may add seconds first)")
-    .requiredOption("--project <nameOrPath>", "Project name or path")
+    .option("--project <nameOrPath>", "Project name or path (required, except with --session: the chat's own)")
+    .option("--session <id>", "Deliver --prompt into this existing chat, once it is idle, instead of a chat of the schedule's own")
+    .option("--tz <zone>", "With --session: IANA time zone the cron is read in, e.g. Europe/London")
+    .option("--once", "With --session: fire once at the next match, then delete itself")
     .option("--prompt <text>", "Prompt sent to the agent each run")
     .option("--script <file>", "JavaScript module run each tick, or kept running")
     .option("--mode <mode>", "Script mode: tick (on the cron) or always-on", "tick")
@@ -85,6 +152,9 @@ export function registerScheduleWriteCommands(schedule: Command, loadDeps: () =>
     .action(async (opts) => {
       refuseScheduleWriteInAiChat("add");
       const { configService, db } = await loadDeps();
+      if (opts.session) return addSessionSchedule(opts, db);
+      if (opts.tz || opts.once) fail("--tz and --once are for a schedule delivered into a chat (--session)");
+      if (!opts.name || !opts.project) fail("--name and --project are required (or --session to deliver into an existing chat)");
       const projectPath = await projectPathOf(opts.project);
       let body: Record<string, unknown>;
       if (opts.script) {
@@ -124,12 +194,16 @@ export function registerScheduleWriteCommands(schedule: Command, loadDeps: () =>
       const { db } = await loadDeps();
       const current = db.getSchedule(Number(id));
       if (!current) fail(`Schedule not found: ${id}`);
-      const body = editBody(opts, opts.project ? await projectPathOf(opts.project) : undefined);
+      let body = editBody(opts, opts.project && current!.kind !== "session" ? await projectPathOf(opts.project) : undefined);
+      if (current!.kind === "session") {
+        const checked = sessionEditBody(opts, body);
+        body = checked.body;
+        if (checked.ignored.length) {
+          console.error(`${C.yellow}!${C.reset} Ignored ${checked.ignored.join(", ")}: schedule #${id} runs in its chat, on that chat's settings`);
+        }
+      }
       if (!Object.keys(body).length) fail("Nothing to change; pass at least one option (see --help)");
-      await scheduleWrite("PATCH", `/schedules/${id}`, body, async () => {
-        const { scheduleChangesFrom } = await import("../../services/scheduler-edit.ts");
-        db.updateSchedule(Number(id), scheduleChangesFrom(current!, body));
-      });
+      await scheduleWrite("PATCH", `/schedules/${id}`, body, () => directPatch(db, current!, body));
       console.log(`${C.green}✓${C.reset} Schedule #${id} updated`);
     });
 }

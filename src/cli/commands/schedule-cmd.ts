@@ -7,7 +7,7 @@ import { Command } from "commander";
 import type { ScheduleView } from "../../types/scheduler.ts";
 import { api, C, fail, serverApi, statusText } from "./schedule-cmd-api.ts";
 import { registerScheduleTemplateCommands } from "./schedule-cmd-template.ts";
-import { refuseScheduleWriteInAiChat, registerScheduleWriteCommands, scheduleWrite } from "./schedule-cmd-write.ts";
+import { directPatch, refuseScheduleWriteInAiChat, registerScheduleWriteCommands, scheduleWrite } from "./schedule-cmd-write.ts";
 
 async function loadDeps() {
   const { configService } = await import("../../services/config.service.ts");
@@ -35,11 +35,16 @@ export function registerScheduleCommands(program: Command): void {
         const status = s.enabled ? `${C.green}enabled${C.reset}` : `${C.dim}disabled${C.reset}`;
         const lastRun = db.listScheduleRuns(s.id, 1)[0];
         const last = lastRun ? `last: ${lastRun.status}` : "never run";
-        const kind = s.kind === "script" ? `script/${s.mode}` : "prompt";
-        const when = s.mode === "always-on" ? "" : `  ${C.cyan}${s.cron_expr}${C.reset}  next: ${s.next_fire_at ?? "—"}`;
+        const kind = s.kind === "script" ? `script/${s.mode}` : s.kind === "session" ? (s.recurring ? "session" : "session/once") : "prompt";
+        const zone = s.timezone ? ` ${s.timezone}` : "";
+        const when = s.mode === "always-on" ? "" : `  ${C.cyan}${s.cron_expr}${C.reset}${zone}  next: ${s.next_fire_at ?? "—"}`;
         const state = live?.get(s.id);
         const doing = state ? statusText(state) : "";
-        console.log(`${C.bold}#${s.id}${C.reset} ${s.name}  ${kind}${when}  ${status}${doing ? `  ${doing}` : ""}  ${C.dim}${last} · ${s.project_path}${C.reset}`);
+        // A session schedule names its chat; why it stopped firing, or that a fire waits for the chat to be idle.
+        const session = s.kind === "session"
+          ? `  session: ${s.target_session_id}${s.paused_reason ? `  ${C.yellow}paused: ${s.paused_reason}${C.reset}` : s.pending_since ? `  ${C.yellow}waiting since ${s.pending_since}${C.reset}` : ""}`
+          : "";
+        console.log(`${C.bold}#${s.id}${C.reset} ${s.name}  ${kind}${when}  ${status}${doing ? `  ${doing}` : ""}${session}  ${C.dim}${last} · ${s.project_path}${C.reset}`);
       }
     });
 
@@ -72,11 +77,9 @@ export function registerScheduleCommands(program: Command): void {
         const { db } = await loadDeps();
         const s = db.getSchedule(Number(id));
         if (!s) fail(`Schedule not found: ${id}`);
-        await scheduleWrite("PATCH", `/schedules/${id}`, { enabled: enabling }, async () => {
-          // The route's rules: turning one on works out its next fire, and refuses a script missing inputs.
-          const { scheduleChangesFrom } = await import("../../services/scheduler-edit.ts");
-          db.updateSchedule(Number(id), scheduleChangesFrom(s!, { enabled: enabling }));
-        });
+        // The route's rules: turning one on works out its next fire, refuses a script missing inputs,
+        // and clears a session schedule's pause (refused while its chat still cannot take it).
+        await scheduleWrite("PATCH", `/schedules/${id}`, { enabled: enabling }, () => directPatch(db, s!, { enabled: enabling }));
         console.log(`${C.green}✓${C.reset} Schedule #${id} ${action}d`);
       });
   }

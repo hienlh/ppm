@@ -16,6 +16,7 @@
 import type { PpmTool, PpmToolSwitches } from "./ppm-tools.ts";
 import { SESSION_HISTORY_TOOLS } from "./session-history-tools.ts";
 import { SESSION_COLLAB_TOOLS } from "./session-collab.ts";
+import { SESSION_SCHEDULE_TOOLS } from "./session-schedule-tools.ts";
 
 export interface FeatureIntro {
   /** Stable for the life of the install: the answer is stored under it. */
@@ -37,6 +38,16 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
       + "and message any session of the project. Everything it does shows up in PPM, where you can open or stop it. "
       + "It stays off until you choose.",
     tools: [...SESSION_HISTORY_TOOLS, ...SESSION_COLLAB_TOOLS],
+    since: "2026-11",
+  },
+  {
+    // A question of its own: an install that turned the tools above on must not get these silently.
+    id: "session-schedules-2026-11",
+    title: "Scheduled prompts in a chat",
+    body: "The AI can schedule a prompt into its own chat — every morning, or once at a set time — and list or delete "
+      + "those schedules. They survive restarts and are delivered once the chat is idle; Settings → Schedules lists "
+      + "them. It stays off until you choose.",
+    tools: [...SESSION_SCHEDULE_TOOLS],
     since: "2026-11",
   },
 ];

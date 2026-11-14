@@ -221,6 +221,21 @@ describe("changing a schedule", () => {
     expect(asks).toHaveLength(1);
   });
 
+  it("never creates, changes or fires a schedule that delivers into a chat, and asks nothing", async () => {
+    const routes = fakeRoutes([sched({ kind: "session", target_session_id: "chat-1" } as Partial<Schedule>)]);
+    const { asks, ask } = asker();
+    for (const result of [
+      await scheduleSave(ctxOf(routes.callRoute, ask), { kind: "session", name: "x", cron: "0 9 * * *", project: "web", prompt: "hi" }, deps),
+      await scheduleSave(ctxOf(routes.callRoute, ask), { id: 1, enabled: false }, deps),
+      await scheduleRunNow(ctxOf(routes.callRoute, ask), { id: 1 }, deps),
+    ]) {
+      expect(isError(result)).toBe(true);
+      expect((result as { content: Array<{ text: string }> }).content[0]!.text).toContain("kind \"session\"");
+    }
+    expect(asks).toEqual([]);
+    expect(routes.writes()).toEqual([]);
+  });
+
   it("changes only schedules of registered projects, but still reads the others", async () => {
     const routes = fakeRoutes([sched({ project_path: ELSEWHERE })]);
     const { asks, ask } = asker();

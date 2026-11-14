@@ -4,6 +4,7 @@ import type { TurnReference } from "./chat-turn-ref";
 import type { FromSessionReference } from "./chat-from-session";
 import type { AssistantProvenance } from "./assistant-provenance";
 import type { UserWordsReference } from "./user-words-block";
+import { decodeScheduleRunInCommandArgs, type ScheduleRunReference } from "./chat-schedule-run";
 /**
  * Parsing for stored user-message content.
  *
@@ -153,6 +154,8 @@ export interface ParsedUserMessage {
   provenance: AssistantProvenance | null;
   /** Set when PPM forwarded the user's own words from one of the Assistant's cards. */
   userWords: UserWordsReference | null;
+  /** Set when a session schedule sent it, PPM rather than the user typing it then. */
+  scheduleRun: ScheduleRunReference | null;
   files: string[];
   /** Body text with the slash-command args folded in, for transcript display */
   text: string;
@@ -163,6 +166,22 @@ export interface ParsedUserMessage {
   terminalBlocks: string[];
   idePath: string | null;
   agent: string | null;
+}
+
+/** How Claude Code opens its transcript record of a slash command it ran. */
+const COMMAND_RECORD_START = /^<command-(?:message|name)>/;
+const COMMAND_RECORD_ARGS = /<command-args>([\s\S]*?)<\/command-args>/;
+
+/**
+ * The run block a scheduled slash command carries in its args, read from the message exactly as
+ * stored. Only a message that *is* Claude's record of a command counts, and the args are taken before
+ * any other tag is stripped: the neutralizer breaks exact sentinels only, so a sentinel typed in two
+ * halves around a tag the display strips (`<local-command-stdout>`) would join up after stripping.
+ */
+function scheduleRunInCommandRecord(raw: string): ScheduleRunReference | null {
+  if (!COMMAND_RECORD_START.test(raw)) return null;
+  const args = raw.match(COMMAND_RECORD_ARGS)?.[1]?.trim();
+  return args ? decodeScheduleRunInCommandArgs(args).scheduleRun : null;
 }
 
 /** Full decomposition of a stored user message, outermost wrapper first. */
@@ -176,9 +195,15 @@ export function parseUserMessage(content: string): ParsedUserMessage {
     .replace(/<local-command-(?:stdout|stderr)>([\s\S]*?)<\/local-command-(?:stdout|stderr)>/g, "$1");
   const { cleanText: noSysTags, tags } = extractSystemTags(withoutCmdOutput);
   const { command, cleanText } = parseCommandTags(noSysTags);
+  // A scheduled slash command as Claude Code records it: its run block rides in the command's args.
+  let scheduleRun = decoded.scheduleRun;
+  if (!scheduleRun && command?.args && !decoded.fromSession && !decoded.userWords) {
+    scheduleRun = scheduleRunInCommandRecord(decoded.content);
+    if (scheduleRun) command.args = decodeScheduleRunInCommandArgs(command.args).args || undefined;
+  }
   const { agent, cleanText: body } = parseAgentTag(cleanText);
   const text = command?.args ? (body ? `${command.args}\n\n${body}` : command.args) : body;
-  return { files: parsed.files, text, body, tags, command, terminalBlocks: blocks, idePath, agent, replyTo: decoded.replyTo, turnRefs: decoded.turnRefs, fromSession: decoded.fromSession, provenance: decoded.provenance, userWords: decoded.userWords };
+  return { files: parsed.files, text, body, tags, command, terminalBlocks: blocks, idePath, agent, replyTo: decoded.replyTo, turnRefs: decoded.turnRefs, fromSession: decoded.fromSession, provenance: decoded.provenance, userWords: decoded.userWords, scheduleRun };
 }
 
 /**
@@ -188,10 +213,16 @@ export function parseUserMessage(content: string): ParsedUserMessage {
  * its typed `/name args` form and the agent comes back as a chip.
  */
 export function toComposerDraft(content: string): { agent: string | null; text: string } {
-  const { agent, body, command } = parseUserMessage(content);
-  if (!command) return { agent, text: body };
+  const parsed = parseUserMessage(content);
+  return { agent: parsed.agent, text: typedText(parsed) };
+}
+
+/** A parsed message's text as it was written: a slash command back in its `/name args` form. */
+export function typedText(parsed: Pick<ParsedUserMessage, "body" | "command">): string {
+  const { body, command } = parsed;
+  if (!command) return body;
   // Stored names appear both with and without the leading slash — normalise to one.
   const name = command.name.replace(/^\/+/, "");
   const typed = `/${name}${command.args ? ` ${command.args}` : ""}`;
-  return { agent, text: body ? `${typed}\n\n${body}` : typed };
+  return body ? `${typed}\n\n${body}` : typed;
 }

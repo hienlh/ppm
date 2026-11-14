@@ -8,6 +8,7 @@ import {
 } from "./tab-open-protocol.ts";
 import { SESSION_HISTORY_TOOLS } from "./session-history-tools.ts";
 import { SESSION_COLLAB_TOOLS } from "./session-collab.ts";
+import { SESSION_SCHEDULE_TOOLS } from "./session-schedule-tools.ts";
 import { answerFromSwitches, featureIntroOfTool } from "./feature-intros.ts";
 
 export const TERMINAL_TOOLS = [READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL] as const;
@@ -18,9 +19,10 @@ export const TERMINAL_TOOLS = [READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL] as cons
 export const TAB_TOOLS = [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, ...TERMINAL_TOOLS, ...SESSION_HISTORY_TOOLS] as const;
 /**
  * What `/api/sessions-mcp` serves: opening another PPM session and messaging the project's
- * sessions. Every session they create is an ordinary one the user sees, can open and can stop.
+ * sessions, and scheduling prompts into the caller's own chat. Every session they create is an
+ * ordinary one the user sees, can open and can stop.
  */
-export const SESSION_TOOLS = SESSION_COLLAB_TOOLS;
+export const SESSION_TOOLS = [...SESSION_COLLAB_TOOLS, ...SESSION_SCHEDULE_TOOLS] as const;
 export const PPM_TOOLS = [...TAB_TOOLS, ...DB_TOOLS, ...SESSION_TOOLS] as const;
 /** The two the single switch before these (`tab_tools`) turned on and off. */
 const LEGACY_TAB_TOOLS: readonly string[] = [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL];

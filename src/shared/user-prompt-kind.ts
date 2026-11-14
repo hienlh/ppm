@@ -57,10 +57,16 @@ export function promptTextOf(content: string): string | null {
   const stripped = stripSharedContext(content);
   // Another session's AI sent this through PPM: it opens a turn exactly as a typed prompt does,
   // whatever its body looks like, since only the server can write the block that says so.
-  const fromSession = decodeMessageBlocks(stripped).fromSession;
+  const { fromSession, scheduleRun } = decodeMessageBlocks(stripped);
   if (fromSession) {
     const parsed = parseUserMessage(stripped);
     return toComposerDraft(stripped).text || parsed.terminalBlocks.join("\n\n") || `Message from ${fromSession.title}`;
+  }
+  // A session schedule's run opens a turn of its own, on a prompt the user wrote when setting it up;
+  // only the server can write the block that says so.
+  if (scheduleRun) {
+    const parsed = parseUserMessage(stripped);
+    return toComposerDraft(stripped).text || parsed.terminalBlocks.join("\n\n") || `Scheduled: ${scheduleRun.name}`;
   }
   const trimmed = stripped.trim();
   if (!trimmed || trimmed === CONTINUE_NUDGE || INTERRUPT_MARKER_RE.test(trimmed)) return null;

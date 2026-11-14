@@ -155,7 +155,9 @@ async function* runTurn(input: {
       holds.add(hold);
       try {
         while (!stream.ended && !hold.released) {
-          const read = stream.queue.shift();
+          // A scheduled message is sent `later`: the real providers keep it for a turn of its own.
+          const at = stream.queue.findIndex((p) => !decodeMessageBlocks(p.message).scheduleRun);
+          const read = at === -1 ? undefined : stream.queue.splice(at, 1)[0];
           if (read) {
             // Read inside the running turn, the way each provider reads a message sent mid-turn.
             const readTurn = writer.absorb(read.message, turnId);

@@ -38,6 +38,14 @@ describe("resolveNotificationSettings", () => {
   });
 });
 
+describe("the AI-scheduled-a-prompt event", () => {
+  it("is on by default, so a schedule an AI made without asking is never silent, and can be switched off", () => {
+    expect(DEFAULT_NOTIFICATION_SETTINGS.events.schedule_created).toBe(true);
+    expect(resolveNotificationSettings({ events: { schedule: false } }).events.schedule_created).toBe(true);
+    expect(parseNotificationSettingsPatch({ events: { schedule_created: false } })).toEqual({ ok: true, patch: { events: { schedule_created: false } } });
+  });
+});
+
 describe("the reviewer comments event", () => {
   it("is on by default, has its copy, and can be switched off", () => {
     expect(DEFAULT_NOTIFICATION_SETTINGS.events.design_review).toBe(true);

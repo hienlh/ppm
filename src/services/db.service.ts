@@ -9,12 +9,13 @@ import { CODEX_DEFAULT_MODEL } from "../types/config.ts";
 import type { DbType } from "../shared/db-types.ts";
 import type { StoredConnectionConfig } from "../shared/db-connection-config.ts";
 import { createLogger } from "./logger.ts";
+import { widenCheckConstraint } from "./db-widen-check-constraint.ts";
 
 const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 71;
+export const CURRENT_SCHEMA_VERSION = 72;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1549,6 +1550,25 @@ export function runMigrations(database: Database): void {
     addColumnIfMissing(database, "extension_session_bindings", "extension_removed_at", "TEXT");
     database.exec(`PRAGMA user_version = 71;`);
   }
+
+  if (current < 72) {
+    // Session schedules: a prompt delivered into an existing chat. `pending_since` is when a
+    // fire came due and has not been delivered yet (several fires before delivery share it);
+    // `paused_reason` is why the schedule stopped firing until someone turns it back on.
+    // `recurring = 0` fires once. Null `timezone` is the machine's own. The kind CHECK needs a
+    // rebuild, which keeps every run, chat and runtime row that references a schedule.
+    addColumnIfMissing(database, "schedules", "target_session_id", "TEXT");
+    addColumnIfMissing(database, "schedules", "timezone", "TEXT");
+    addColumnIfMissing(database, "schedules", "recurring", "INTEGER NOT NULL DEFAULT 1");
+    addColumnIfMissing(database, "schedules", "pending_since", "TEXT");
+    addColumnIfMissing(database, "schedules", "paused_reason", "TEXT");
+    widenCheckConstraint(database, "schedules", "kind", ["prompt", "script", "session"]);
+    // Only a partial database (tests build such skeletons) lacks the table; nothing to index then.
+    if (database.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schedules'").get()) {
+      database.exec("CREATE INDEX IF NOT EXISTS idx_schedules_target_session ON schedules(target_session_id)");
+    }
+    database.exec(`PRAGMA user_version = 72;`);
+  }
 }
 
 /** Design share links (see migration 57). Idempotent: every statement is `IF NOT EXISTS`. */
@@ -1662,61 +1682,9 @@ function applyScheduleScriptSchema(database: Database): void {
   `);
 }
 
-/**
- * Rebuild `connections` so its type CHECK admits `types`, by SQLite's own
- * recipe for changing a constraint: copy into a new table, drop the old one,
- * rename the new one into its place.
- *
- * Foreign keys go off first, and *outside* the transaction because the pragma
- * is a no-op inside one: with them on, `DROP TABLE connections` deletes every
- * row of `connection_table_cache` through its `ON DELETE CASCADE` before the
- * new table exists. The table's own recorded SQL is reused with only the CHECK
- * replaced, so a column added by a later migration — or by a build that ran
- * before this one — is carried over rather than dropped, and ids are copied
- * as they are, so every cached row still points at its connection. The
- * AUTOINCREMENT high-water mark is kept too: an id a deleted connection had
- * is never handed out again, which matters to the query audit rows that still
- * name it.
- */
+/** Rebuild `connections` so its type CHECK admits `types` (see `widenCheckConstraint`). */
 function allowConnectionTypes(database: Database, types: readonly string[]): void {
-  const foreignKeysOn = () => (database.query("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys === 1;
-  const foreignKeys = foreignKeysOn();
-  database.exec("PRAGMA foreign_keys = OFF");
-  try {
-    // Still on means a caller holds a transaction, where the drop below would cascade.
-    if (foreignKeysOn()) throw new Error("Cannot rebuild the connections table inside a transaction");
-    // IMMEDIATE: a second process migrating at the same moment waits, then finds the work done.
-    database.transaction(() => {
-      const table = database.query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'connections'").get() as { sql: string } | null;
-      if (!table) return;
-      const check = /CHECK\s*\(\s*type\s+IN\s*\([^)]*\)\s*\)/i;
-      const current = table.sql.match(check)?.[0];
-      const wanted = `CHECK(type IN (${types.map((t) => `'${t}'`).join(", ")}))`;
-      if (!current || current === wanted) return; // no type constraint, or already widened
-      const createNew = table.sql.replace(check, wanted).replace(/^CREATE TABLE\s+(["`]?)connections\1/i, "CREATE TABLE connections_new");
-      if (!createNew.startsWith("CREATE TABLE connections_new")) throw new Error("Unexpected definition of the connections table");
-
-      const seq = database.query("SELECT seq FROM sqlite_sequence WHERE name = 'connections'").get() as { seq: number } | null;
-      const before = (database.query("SELECT COUNT(*) AS n FROM connections").get() as { n: number }).n;
-      database.exec("DROP TABLE IF EXISTS connections_new");
-      database.exec(createNew);
-      database.exec("INSERT INTO connections_new SELECT * FROM connections");
-      const after = (database.query("SELECT COUNT(*) AS n FROM connections_new").get() as { n: number }).n;
-      if (after !== before) throw new Error(`Copied ${after} of ${before} connections`);
-      database.exec("DROP TABLE connections");
-      database.exec("ALTER TABLE connections_new RENAME TO connections");
-      database.exec("CREATE INDEX IF NOT EXISTS idx_connections_type ON connections(type)");
-      database.exec("CREATE INDEX IF NOT EXISTS idx_connections_group ON connections(group_name)");
-      if (seq) {
-        // The copy restarted the counter at the highest id it copied.
-        const copied = (database.query("SELECT seq FROM sqlite_sequence WHERE name = 'connections'").get() as { seq: number } | null)?.seq ?? 0;
-        database.exec("DELETE FROM sqlite_sequence WHERE name = 'connections'");
-        database.query("INSERT INTO sqlite_sequence (name, seq) VALUES ('connections', ?)").run(Math.max(copied, seq.seq));
-      }
-    }).immediate();
-  } finally {
-    if (foreignKeys) database.exec("PRAGMA foreign_keys = ON");
-  }
+  widenCheckConstraint(database, "connections", "type", types);
 }
 
 // ---------------------------------------------------------------------------

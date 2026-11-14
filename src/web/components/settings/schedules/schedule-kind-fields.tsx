@@ -1,9 +1,14 @@
-/** The fields that depend on what a schedule runs: a prompt on a cron, or a script on a cron or always on. */
-import { lazy, Suspense, useMemo } from "react";
+/**
+ * The fields that depend on what a schedule runs: a prompt on a cron, a script on a cron or always
+ * on, or a prompt sent into an existing chat on a cron read in its own time zone.
+ */
+import { lazy, Suspense, useMemo, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { draftsToDecls, type ScheduleFormState } from "@/lib/schedule-form-model";
+import { formatInZone } from "@/lib/session-schedule-view";
 import { cronProblem, nextFires } from "../../../../shared/schedule-cron";
+import { timezoneProblem } from "../../../../shared/session-schedule-input";
 import type { ScheduleKind } from "../../../../types/scheduler";
 import { ScheduleInputsEditor } from "./schedule-inputs-editor";
 import { ScheduleInputValues } from "./schedule-input-values";
@@ -12,7 +17,13 @@ const ScheduleScriptEditor = lazy(() => import("./schedule-script-editor").then(
 
 type Set = <K extends keyof ScheduleFormState>(key: K, value: ScheduleFormState[K]) => void;
 
-export function ScheduleKindFields({ form, set, secretsSet }: { form: ScheduleFormState; set: Set; secretsSet: readonly string[] }) {
+export function ScheduleKindFields({ form, set, secretsSet, afterCron }: {
+  form: ScheduleFormState;
+  set: Set;
+  secretsSet: readonly string[];
+  /** Fields that belong right under the cron (a session schedule's time zone). */
+  afterCron?: ReactNode;
+}) {
   const decls = useMemo(() => draftsToDecls(form.inputs), [form.inputs]);
   return (
     <>
@@ -28,8 +39,11 @@ export function ScheduleKindFields({ form, set, secretsSet }: { form: ScheduleFo
           </p>
         </Field>
       )}
-      {form.mode === "tick" && <CronField kind={form.kind} value={form.cron} onChange={(v) => set("cron", v)} />}
-      {form.kind === "prompt" ? (
+      {form.mode === "tick" && (
+        <CronField kind={form.kind} value={form.cron} timezone={form.kind === "session" ? form.timezone : ""} onChange={(v) => set("cron", v)} />
+      )}
+      {afterCron}
+      {form.kind !== "script" ? (
         <Field label="Prompt (do not embed secrets)">
           <textarea
             value={form.prompt}
@@ -63,7 +77,8 @@ export function ScheduleKindFields({ form, set, secretsSet }: { form: ScheduleFo
           )}
         </>
       )}
-      <div className="grid grid-cols-2 gap-2">
+      {/* A session schedule runs on its chat's own settings: no turn cap, no timeout of its own. */}
+      {form.kind !== "session" && <div className="grid grid-cols-2 gap-2">
         {form.kind === "prompt" && (
           <Field label="Max turns (optional)">
             <Input type="number" min={1} value={form.maxTurns} onChange={(e) => set("maxTurns", e.target.value)} placeholder="∞" className="h-11 md:h-9 text-xs" />
@@ -74,20 +89,26 @@ export function ScheduleKindFields({ form, set, secretsSet }: { form: ScheduleFo
             <Input type="number" min={10_000} value={form.timeoutMs} onChange={(e) => set("timeoutMs", e.target.value)} className="h-11 md:h-9 text-xs" />
           </Field>
         )}
-      </div>
+      </div>}
     </>
   );
 }
 
-function CronField({ kind, value, onChange }: { kind: ScheduleKind; value: string; onChange: (v: string) => void }) {
+function CronField({ kind, value, timezone, onChange }: { kind: ScheduleKind; value: string; timezone: string; onChange: (v: string) => void }) {
+  // A zone that does not parse is named by its own field; the hint then reads the cron locally.
+  const zone = timezone.trim() && !timezoneProblem(timezone.trim()) ? timezone.trim() : null;
   const hint = useMemo(() => {
     if (!value.trim()) return "—";
-    const problem = cronProblem(value, kind);
+    const problem = cronProblem(value, kind, zone);
     if (problem) return problem;
+    if (zone) return `Next: ${nextFires(value, 3, undefined, zone).map((d) => formatInZone(d.toISOString(), zone)).join(" · ")}`;
     return `Next: ${nextFires(value, 3).map((d) => d.toLocaleString()).join(" · ")}`;
-  }, [value, kind]);
+  }, [value, kind, zone]);
+  const label = kind === "script" ? "Cron (local timezone; seconds first is allowed)"
+    : kind === "session" ? "Cron expression (in the time zone below)"
+    : "Cron expression (local timezone)";
   return (
-    <Field label={kind === "script" ? "Cron (local timezone; seconds first is allowed)" : "Cron expression (local timezone)"}>
+    <Field label={label}>
       <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={kind === "script" ? "*/30 * * * * *" : "0 7 * * *"} className="h-11 md:h-9 text-xs font-mono" />
       <p className="text-[11px] text-muted-foreground">{hint}</p>
     </Field>

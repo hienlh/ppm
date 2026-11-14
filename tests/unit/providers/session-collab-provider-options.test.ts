@@ -4,6 +4,7 @@ import {
 } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 import { buildThreadParams, sessionCollabMcpEnv } from "../../../src/providers/codex-app-server/codex-thread-params.ts";
 import { spawnFingerprint } from "../../../src/providers/claude-warm-spare.ts";
+import { hiddenBuiltinCronTools } from "../../../src/providers/claude-builtin-cron.ts";
 import {
   COLLAB_APPROVAL_WAIT_MS, SESSION_COLLAB_TOOLS_TIMEOUT_MS,
 } from "../../../src/services/session-collab/session-collab-tool.ts";
@@ -24,6 +25,7 @@ describe("session tools provider options", () => {
     });
     expect(CLAUDE_SESSION_COLLAB_TOOLS).toEqual([
       "mcp__ppm-sessions__create_session", "mcp__ppm-sessions__send_to_session", "mcp__ppm-sessions__session_status",
+      "mcp__ppm-sessions__session_schedule_create", "mcp__ppm-sessions__session_schedule_list", "mcp__ppm-sessions__session_schedule_delete",
       "mcp__ppm-sessions__report_to_assistant",
     ]);
   });
@@ -42,11 +44,35 @@ describe("session tools provider options", () => {
   it("gives Codex an approved mcp_servers override with the token only in the environment", () => {
     const params = buildThreadParams({ cwd: "/p", permission, sessionCollabMcp: access });
     expect(params.config!["mcp_servers.ppm_sessions"]).toEqual({
-      url: access.url, bearer_token_env_var: "PPM_SESSIONS_MCP_TOKEN", enabled_tools: ["create_session", "send_to_session", "session_status"],
+      url: access.url, bearer_token_env_var: "PPM_SESSIONS_MCP_TOKEN",
+      enabled_tools: ["create_session", "send_to_session", "session_status", "session_schedule_create", "session_schedule_list", "session_schedule_delete"],
       default_tools_approval_mode: "approve", startup_timeout_sec: 10, tool_timeout_sec: Math.ceil(SESSION_COLLAB_TOOLS_TIMEOUT_MS / 1000),
     });
     expect(JSON.stringify(params)).not.toContain("collab-secret");
     expect(sessionCollabMcpEnv(access)).toEqual({ PPM_SESSIONS_MCP_TOKEN: "collab-secret" });
     expect(sessionCollabMcpEnv(undefined)).toEqual({});
+  });
+
+  describe("Claude's own cron tools", () => {
+    const on = { ppm_tools: { session_schedule_create: true } };
+
+    it("are hidden only while the chat has PPM's schedule tool and the setting asks for it", () => {
+      expect(hiddenBuiltinCronTools(on, true)).toEqual(["CronCreate", "CronList", "CronDelete"]);
+      expect(hiddenBuiltinCronTools({ ...on, hide_builtin_cron: true }, true)).toEqual(["CronCreate", "CronList", "CronDelete"]);
+      expect(hiddenBuiltinCronTools({ ...on, hide_builtin_cron: false }, true)).toEqual([]);
+      // No server attached (a design session, minimal mode, the PPM Assistant): nothing replaces them.
+      expect(hiddenBuiltinCronTools(on, false)).toEqual([]);
+      expect(hiddenBuiltinCronTools({ ppm_tools: { session_schedule_create: false } }, true)).toEqual([]);
+    });
+
+    it("are kept, as the schedule tool is off, until the user answers the feature's own question", () => {
+      expect(hiddenBuiltinCronTools({}, true)).toEqual([]);
+      // Turning the session-collaboration feature on says nothing about schedules.
+      expect(hiddenBuiltinCronTools({ ppm_tools: { create_session: true, search_sessions: true } }, true)).toEqual([]);
+    });
+
+    it("leaves ScheduleWakeup alone, so /loop keeps working", () => {
+      expect(hiddenBuiltinCronTools(on, true)).not.toContain("ScheduleWakeup");
+    });
   });
 });

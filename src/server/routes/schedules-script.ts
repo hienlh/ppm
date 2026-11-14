@@ -14,6 +14,7 @@ import { configService } from "../../services/config.service.ts";
 import { getPpmDir } from "../../services/ppm-dir.ts";
 import { projectService } from "../../services/project.service.ts";
 import { newScheduleFrom, ScheduleEditError } from "../../services/scheduler-edit.ts";
+import { SessionScheduleRefusal } from "../../services/session-schedules/session-schedule-lifecycle.ts";
 import { scheduleStatus, toScheduleView } from "../../services/scheduler-view.ts";
 import { clearState, saveState } from "../../services/schedule-script/ctx-state.ts";
 import { liveScript } from "../../services/schedule-script/instance-guard.ts";
@@ -26,6 +27,10 @@ export const scheduleScriptRoutes = new Hono();
 /** A refused body: every problem in `problems`, all of them in the message too. */
 export function editErrorResponse(c: Context, e: unknown) {
   if (e instanceof ScheduleEditError) return c.json({ ...err(e.message), problems: e.problems }, e.status);
+  // A chat that cannot take the schedule, or already has as many as a chat may.
+  if (e instanceof SessionScheduleRefusal) {
+    return c.json({ ...err(e.message), code: e.code }, e.code === "limit" ? 409 : e.code === "not_found" ? 404 : 400);
+  }
   return c.json(err((e as Error).message), 400);
 }
 

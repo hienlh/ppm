@@ -1,5 +1,6 @@
 import { validateReply } from "../../shared/chat-reply.ts";
 import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
+import { scheduleRunPlacement, validateScheduleRun, type ScheduleRunReference } from "../../shared/chat-schedule-run.ts";
 import { validateTurnRefs } from "../../shared/chat-turn-ref.ts";
 import { recordTurnGrants } from "../../services/session-turns/turn-grant-ledger.ts";
 import { chatService } from "../../services/chat.service.ts";
@@ -406,6 +407,12 @@ export interface SessionEntry extends BackgroundTaskState {
    * the phase still idle; a watch report arriving then must wait rather than take that turn over.
    */
   messagesArriving?: number;
+  /**
+   * A watch report or a scheduled message is on its way in. Neither counts in `messagesArriving`
+   * (it would find itself arriving and never go in), so without this one each could pass the
+   * quiet check while the other was still resuming the session, and both land in one turn.
+   */
+  quietMessageArriving?: boolean;
   /**
    * Someone pressed Stop (or sent `/stop`) while the current turn ran: it ends as asked, not on
    * an error. Told to `turn_ended` listeners once, then cleared.
@@ -1415,7 +1422,7 @@ function emitTurnEnded(
   if (how.turnStillRunning) {
     // A PPM builtin answered inside a running turn: listeners hear it, the running turn is untouched.
     chatLifecycle.emit("turn_ended", {
-      sessionId, outcome, ...detail, projectName: entry.projectName ?? "", providerId: entry.providerId,
+      sessionId, outcome, ...detail, turnStillRunning: true, projectName: entry.projectName ?? "", providerId: entry.providerId,
     });
     return;
   }
@@ -2111,9 +2118,13 @@ interface DeliverOpts {
    * "watch": the server reporting on a watched chat — never the user, so it is refused while a
    * card waits or a turn runs rather than cancelling or steering it, and it leaves no chatting
    * device either.
+   * "schedule": a session schedule sending its prompt — PPM, not the user, so like a watch it waits
+   * for a quiet chat; unlike one, the turn it opens is ordinary and its approvals wait for the user.
    * Another session's AI, the PPM Assistant included, comes in through `deliverToSession`.
    */
   origin: "ws" | MessageServerOrigin | "extension";
+  /** With `schedule` only: the run, encoded in front of the prompt. */
+  scheduleRun?: ScheduleRunReference;
   /** With `extension` only: the turn the message opens or waits to open (see `deliverExtensionMessage`). */
   extension?: ExtensionTurnSpec;
   sender?: ChatWsSocket;
@@ -2143,7 +2154,10 @@ interface DeliverOpts {
   traceOrigin?: TraceOrigin;
 }
 
-/** A watch message finds the chat quiet, or does not go in: see {@link DeliverOpts.origin}. */
+/** Messages that find the chat quiet or do not go in: neither may cancel a card or steer a turn. */
+const waitsForQuiet = (origin: DeliverOpts["origin"]): boolean => origin === "watch" || origin === "schedule";
+
+/** A watch or schedule message finds the chat quiet, or does not go in: see {@link DeliverOpts.origin}. */
 const busyForWatch = (entry: SessionEntry): boolean =>
   !!entry.pendingApprovalEvent || entry.phase !== "idle" || (entry.messagesArriving ?? 0) > 0;
 
@@ -2157,8 +2171,18 @@ type MessageDelivery = { ok: true; sessionId: string; delivered?: SessionDeliver
 
 async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: string, opts: DeliverOpts): Promise<MessageDelivery> {
   // Counted from before the first await until the message has started or joined a turn (or was
-  // refused), so a watch report checking in between sees the chat as busy.
-  if (opts.origin === "watch") return deliverMessage(sessionId, entry, text, opts);
+  // refused), so a watch report checking in between sees the chat as busy. A message that waits for
+  // a quiet chat is not counted: it would find itself arriving and never go in.
+  if (waitsForQuiet(opts.origin)) {
+    // One at a time: the second finds the chat busy and waits for the turn the first opens.
+    if (entry.quietMessageArriving) return { ok: false, error: CHAT_BUSY };
+    entry.quietMessageArriving = true;
+    try {
+      return await deliverMessage(sessionId, entry, text, opts);
+    } finally {
+      entry.quietMessageArriving = false;
+    }
+  }
   entry.messagesArriving = (entry.messagesArriving ?? 0) + 1;
   try {
     return await deliverMessage(sessionId, entry, text, opts);
@@ -2173,8 +2197,8 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   // Only the user's own messages (typed in PPM or on Telegram) may push a waiting card aside.
   const fromUser = opts.origin === "ws" || opts.origin === "telegram";
   // A watch report waits for a quiet chat: pushed into a running turn it would steer the user's
-  // work mid-way, and with a card waiting it would cancel the card.
-  if (opts.origin === "watch" && busyForWatch(entry)) return { ok: false, error: CHAT_BUSY };
+  // work mid-way, and with a card waiting it would cancel the card. So would a scheduled run.
+  if (waitsForQuiet(opts.origin) && busyForWatch(entry)) return { ok: false, error: CHAT_BUSY };
 
   // Kits that self-namespace their skills (AgentKit's `/ak:debug`) publish a
   // name the runtime never registers — it names plugin items after the plugin
@@ -2195,7 +2219,7 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   await rewriteProviderSkillSigil(parsed, providerId, sessionId);
   // Asked again after the awaits above: a message may have started a turn meanwhile, and a watch
   // message going in now would be pushed into it.
-  if (opts.origin === "watch" && busyForWatch(entry)) return { ok: false, error: CHAT_BUSY };
+  if (waitsForQuiet(opts.origin) && busyForWatch(entry)) return { ok: false, error: CHAT_BUSY };
   // Only the server writes PPM's own tags (the shared-context block, a watch report). Typed or
   // pasted into an Assistant session, one would read to the model as the server speaking.
   if (fromUser && isAssistantSession(sessionId, entry.projectPath)) parsed.content = neutralizePpmTags(parsed.content);
@@ -2204,9 +2228,14 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   // caller of the chat socket (a script schedule) names its own door and grants nothing.
   const fromBrowser = opts.origin === "ws" && !opts.traceOrigin;
   if (fromBrowser && opts.turnRefs?.length) recordTurnGrants(sessionId, opts.turnRefs);
+  // A scheduled `/skill` stays the message's first characters where the provider runs it as one;
+  // the alias and sigil rewrites above have already given it the name that provider knows.
+  const runPlacement = opts.origin === "schedule" && opts.scheduleRun ? scheduleRunPlacement(parsed.content.trimStart(), providerId) : "before";
+  if (runPlacement === "after") parsed.content = parsed.content.trimStart();
   // The typed text has its block markers broken, so the only blocks that decode are these.
   parsed.content = encodeMessageBlocks(parsed.content, {
     turnRefs: opts.turnRefs ?? null, replyTo: opts.replyTo ?? null, ownProject: entry.projectName || undefined,
+    ...(opts.origin === "schedule" && opts.scheduleRun ? { scheduleRun: opts.scheduleRun, scheduleRunPlacement: runPlacement } : {}),
   });
   // The sender drew its own copy of this message before sending. Hand it the text as it now
   // stands, so the copy matches the transcript, the echo and a replay byte for byte.
@@ -2594,7 +2623,10 @@ function liveChatState(entry: SessionEntry): LiveChatState {
 }
 
 /** The server's own message doors; the PPM Assistant's messages go through the session tools instead. */
-const SERVER_ORIGINS: readonly MessageServerOrigin[] = ["telegram", "watch"];
+const SERVER_ORIGINS: readonly MessageServerOrigin[] = ["telegram", "watch", "schedule"];
+
+/** A client message id a server sender names its message with: printable, short, no spaces. */
+const SERVER_CLIENT_MESSAGE_ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 setChatControl({
   async sendUserMessage(asked, text, opts) {
@@ -2605,6 +2637,20 @@ setChatControl({
     if (imageError) return { ok: false, error: imageError };
     if (opts.permissionMode && !VALID_PERMISSION_MODES.includes(opts.permissionMode as typeof VALID_PERMISSION_MODES[number])) {
       return { ok: false, error: `Unknown permission mode "${opts.permissionMode}".` };
+    }
+    // A scheduled run uses the chat's own mode: a mode sent with it would become the chat's sticky
+    // one. Its run block is checked here, since only this door may put one in front of a prompt.
+    let scheduleRun: ScheduleRunReference | undefined;
+    if (opts.origin === "schedule") {
+      if (opts.permissionMode) return { ok: false, error: "A scheduled run uses the chat's own permission mode." };
+      const run = validateScheduleRun(opts.scheduleRun);
+      if (!run) return { ok: false, error: "A scheduled run needs a valid schedule-run reference." };
+      scheduleRun = run;
+    } else if (opts.scheduleRun !== undefined) {
+      return { ok: false, error: "Only a scheduled run carries a schedule-run reference." };
+    }
+    if (opts.clientMessageId !== undefined && (typeof opts.clientMessageId !== "string" || !SERVER_CLIENT_MESSAGE_ID_RE.test(opts.clientMessageId))) {
+      return { ok: false, error: "Invalid client message id." };
     }
     // Only a watch message carries watch news, and only in the shape the watch service builds.
     let watchEvents: WatchEventNotice[] | undefined;
@@ -2629,6 +2675,10 @@ setChatControl({
       origin: opts.origin,
       ...(opts.images?.length ? { images: opts.images } : {}),
       ...(opts.permissionMode ? { permissionMode: opts.permissionMode } : {}),
+      ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),
+      // Its own turn, never joined to one: if a turn started after the quiet check, `later` waits
+      // for that turn to end instead of steering it.
+      ...(scheduleRun ? { scheduleRun, priority: "later" as const } : {}),
       ...(opts.channel ? { channel: opts.channel } : {}),
       ...(watchEvents ? { watchEvents } : {}),
       ...(wakeNews ? { wakeNews } : {}),
@@ -2636,7 +2686,10 @@ setChatControl({
     });
     // Nobody is watching: the entry goes once it is idle (a running turn re-arms this when it ends).
     if (entry.clients.size === 0) startCleanupTimer(sessionId);
-    return result.ok ? { ok: true, sessionId: result.sessionId } : result;
+    if (!result.ok) return result;
+    // Only a schedule's sender tracks its turn, so only it is told whether the message started one
+    // or waits behind a turn that began after the quiet check.
+    return { ok: true, sessionId: result.sessionId, ...(scheduleRun && result.delivered ? { delivered: result.delivered } : {}) };
   },
   answerApproval(asked, requestId, answer, origin) {
     const sessionId = resolveMigratedSession(asked);
@@ -2654,6 +2707,14 @@ setChatControl({
   liveState(asked) {
     const entry = activeSessions.get(resolveMigratedSession(asked));
     return entry ? liveChatState(entry) : null;
+  },
+  messageQueued(asked, clientMessageId) {
+    const sessionId = resolveMigratedSession(asked);
+    const entry = activeSessions.get(sessionId);
+    // No entry, no consumer: nothing of this process can still be holding the message.
+    if (!entry) return false;
+    const provider = providerRegistry.get(entry.providerId);
+    return provider?.isMessageQueued ? provider.isMessageQueued(sessionId, clientMessageId) : null;
   },
   listLive() {
     return [...activeSessions].map(([sessionId, entry]) => ({ sessionId, ...liveChatState(entry) }));

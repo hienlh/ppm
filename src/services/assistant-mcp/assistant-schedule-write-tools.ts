@@ -30,6 +30,14 @@ import {
 
 const DELETE_RUNS_COUNTED = 200;
 
+/**
+ * Schedules that deliver a prompt into one of the user's chats are made and changed from that
+ * chat (its own schedule tools) or by the user; the Assistant may read and delete them only.
+ */
+const SESSION_SCHEDULES_NOT_HERE = "The Assistant does not create, change or run schedules that deliver into a chat "
+  + "(kind \"session\"). The chat's own AI makes them with its schedule tools, and the user can change them in "
+  + "Settings → Schedules; schedule_delete can remove one.";
+
 function staleResult(action: string, reason: string): Json {
   return textResult(JSON.stringify({
     outcome: "stale", action, reason,
@@ -67,6 +75,8 @@ async function ask(ctx: ToolContext, tool: string, input: Record<string, unknown
 }
 
 export async function scheduleSave(ctx: ToolContext, args: Record<string, unknown>, deps: ScheduleDeps = {}): Promise<Json> {
+  // A schedule delivered into one of the user's chats is that chat's to make, not the Assistant's.
+  if (args.kind !== undefined && args.kind !== "prompt") return errorResult(SESSION_SCHEDULES_NOT_HERE);
   const projects = registeredProjects(deps);
   const parsed = parseGivenSchedule(args, projects);
   if (!parsed.ok) return errorResult(parsed.error);
@@ -103,6 +113,7 @@ async function createSchedule(ctx: ToolContext, given: GivenSchedule, deps: Sche
 async function editSchedule(ctx: ToolContext, id: number, given: GivenSchedule, projects: AssistantProject[], deps: ScheduleDeps): Promise<Json> {
   const current = await changeableSchedule(ctx, id, projects);
   if (!current.ok) return errorResult(current.error);
+  if (current.schedule.kind === "session") return errorResult(SESSION_SCHEDULES_NOT_HERE);
   const before = current.settings;
   const after = applyGiven(before, given);
   const changed = changedFields(before, after);
@@ -155,7 +166,9 @@ export async function scheduleRunNow(ctx: ToolContext, args: Record<string, unkn
   if (id === null) return errorResult("`id` is required: a schedule id from schedules_list.");
   const current = await changeableSchedule(ctx, id, registeredProjects(deps));
   if (!current.ok) return errorResult(current.error);
-  const running = (await readRuns(ctx, id, 1))?.[0]?.status === "running";
+  // Firing one would put a message into the user's chat without the card such a message needs.
+  if (current.schedule.kind === "session") return errorResult(SESSION_SCHEDULES_NOT_HERE);
+  const running =(await readRuns(ctx, id, 1))?.[0]?.status === "running";
 
   const refused = await ask(ctx, SCHEDULE_RUN_NOW_TOOL, { id, project: current.project.name }, runNowScheduleSummary({
     id, settings: current.settings, provider: current.schedule.provider_id, running,

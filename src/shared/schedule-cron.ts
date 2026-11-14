@@ -1,7 +1,8 @@
 /**
  * Which cron expressions a schedule may use, for the server, the CLI and the browser alike.
  *
- * A prompt keeps the 5-field form (a chat turn every minute is already the most anyone wants).
+ * A prompt or session schedule keeps the 5-field form (a chat turn every minute is already the
+ * most anyone wants).
  * A script may add a seconds field in front — croner reads 6 fields that way — but may not fire
  * more often than every {@link SCRIPT_MIN_INTERVAL_MS}: each fire spawns a process.
  */
@@ -17,18 +18,21 @@ export function cronFieldCount(expr: string): number {
   return expr.trim().split(/\s+/).filter(Boolean).length;
 }
 
-/** Why `expr` cannot drive a schedule of `kind`, or null when it can. */
-export function cronProblem(expr: string, kind: ScheduleKind): string | null {
+/**
+ * Why `expr` cannot drive a schedule of `kind`, or null when it can. `timezone` (IANA) is the zone
+ * the expression is read in; it must already be valid, see `timezoneProblem`.
+ */
+export function cronProblem(expr: string, kind: ScheduleKind, timezone?: string | null): string | null {
   const fields = cronFieldCount(expr);
-  if (kind === "prompt" && fields !== 5) {
-    return "A prompt schedule takes 5 cron fields: minute hour day month weekday";
+  if (kind !== "script" && fields !== 5) {
+    return `A ${kind} schedule takes 5 cron fields: minute hour day month weekday`;
   }
   if (kind === "script" && fields !== 5 && fields !== 6) {
     return "A script schedule takes 5 cron fields, or 6 with seconds first";
   }
   let runs: Date[];
   try {
-    runs = new Cron(expr).nextRuns(SAMPLE);
+    runs = new Cron(expr, timezone ? { timezone } : {}).nextRuns(SAMPLE);
   } catch (e) {
     return `Invalid cron expression: ${(e as Error).message}`;
   }
@@ -41,10 +45,13 @@ export function cronProblem(expr: string, kind: ScheduleKind): string | null {
   return null;
 }
 
-/** The next `n` fires after `from`; empty when the expression does not parse. */
-export function nextFires(expr: string, n: number, from?: Date): Date[] {
+/**
+ * The next `n` fires after `from`, reading `expr` in `timezone` (IANA; the runtime's own zone when
+ * absent); empty when the expression or the zone does not parse.
+ */
+export function nextFires(expr: string, n: number, from?: Date, timezone?: string | null): Date[] {
   try {
-    return new Cron(expr).nextRuns(n, from);
+    return new Cron(expr, timezone ? { timezone } : {}).nextRuns(n, from);
   } catch {
     return [];
   }

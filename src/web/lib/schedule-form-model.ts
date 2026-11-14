@@ -3,9 +3,14 @@
  * The rules are the server's own (`schedule-definition.ts`), so the form refuses before a round
  * trip what the server would. Secrets follow the server's patch rule: a blank field keeps what
  * is saved, and nothing saved is ever shown or sent back.
+ *
+ * A session schedule ("Chat") sends its prompt into an existing chat on that chat's own settings,
+ * so it has no permission mode, turn cap or timeout; its rules are `session-schedule-input.ts`,
+ * the same ones the server, the CLI and the AI's tool check.
  */
 import { definitionProblems, DEFAULT_TIMEOUT_MS } from "../../shared/schedule-definition";
 import { missingRequiredInputs } from "../../shared/schedule-inputs";
+import { validateSessionScheduleInput } from "../../shared/session-schedule-input";
 import type {
   ScheduleInputDecl, ScheduleInputType, ScheduleInputValue, ScheduleKind, ScheduleMode, ScheduleView,
 } from "../../types/scheduler";
@@ -38,6 +43,12 @@ export interface ScheduleFormState {
   values: Record<string, string>;
   /** Secrets typed now; "" keeps the saved one. */
   secrets: Record<string, string>;
+  /** A session schedule's chat; fixed once the schedule exists. */
+  targetSessionId: string;
+  /** IANA zone a session schedule's cron is read in, as typed; "" is the PPM host's own. */
+  timezone: string;
+  /** False: a session schedule fires once and is then removed. */
+  recurring: boolean;
 }
 
 export const DEFAULT_SCRIPT = `export default async (ctx) => {\n  ctx.log("Hello from", ctx.schedule.name);\n};\n`;
@@ -59,13 +70,16 @@ export function initialForm(s: ScheduleView | null): ScheduleFormState {
     inputs: (s?.inputs ?? []).map(toDraft),
     values: Object.fromEntries(Object.entries(s?.inputValues ?? {}).map(([k, v]) => [k, String(v)])),
     secrets: {},
+    targetSessionId: s?.target_session_id ?? "",
+    timezone: s?.timezone ?? "",
+    recurring: s ? s.recurring !== 0 : true,
   };
 }
 
 /** A new schedule switched to `kind`: the timeout follows, unless it was typed. */
 export function withKind(f: ScheduleFormState, kind: ScheduleKind): ScheduleFormState {
   const typed = f.timeoutMs !== String(DEFAULT_TIMEOUT_MS[f.kind]);
-  return { ...f, kind, mode: kind === "prompt" ? "tick" : f.mode, timeoutMs: typed ? f.timeoutMs : String(DEFAULT_TIMEOUT_MS[kind]) };
+  return { ...f, kind, mode: kind === "script" ? f.mode : "tick", timeoutMs: typed ? f.timeoutMs : String(DEFAULT_TIMEOUT_MS[kind]) };
 }
 
 export function toDraft(d: ScheduleInputDecl): InputDraft {
@@ -108,6 +122,7 @@ export function secretPatch(decls: ScheduleInputDecl[], secrets: Record<string, 
 
 /** The body of POST /api/schedules, or of PATCH /api/schedules/:id when `editing`. */
 export function requestBody(f: ScheduleFormState, editing: boolean): Record<string, unknown> {
+  if (f.kind === "session") return sessionRequestBody(f, editing);
   const body: Record<string, unknown> = {
     name: f.name.trim(), description: f.description, project_path: f.projectPath,
     permission_mode: f.permissionMode, enabled: f.enabled, mode: f.mode,
@@ -123,8 +138,32 @@ export function requestBody(f: ScheduleFormState, editing: boolean): Record<stri
   };
 }
 
+/**
+ * A session schedule's body: only what it has. Its project, provider and permission mode come
+ * from the chat on the server; its chat is sent once, on create, since it cannot change.
+ */
+function sessionRequestBody(f: ScheduleFormState, editing: boolean): Record<string, unknown> {
+  return {
+    name: f.name.trim(), prompt: f.prompt, cron_expr: f.cron.trim(), timezone: f.timezone.trim() || null,
+    recurring: f.recurring, enabled: f.enabled,
+    ...(!editing && { kind: "session", target_session_id: f.targetSessionId }),
+  };
+}
+
+/** A session schedule's problems, by the shared rules; a missing chat is asked for by name. */
+function sessionProblems(f: ScheduleFormState): string[] {
+  const problems = f.projectPath ? [] : ["Pick a project"];
+  const check = validateSessionScheduleInput({
+    targetSessionId: f.targetSessionId, name: f.name.trim(), prompt: f.prompt, cron: f.cron.trim(),
+    timezone: f.timezone.trim() || null, recurring: f.recurring,
+  });
+  if (!check.ok) problems.push(...check.errors.map((e) => (e.startsWith("targetSessionId") ? "Pick a chat" : e)));
+  return problems;
+}
+
 /** What is wrong with the form, one sentence each; `secretsSet` are the secrets already saved. */
 export function formProblems(f: ScheduleFormState, secretsSet: readonly string[] = []): string[] {
+  if (f.kind === "session") return sessionProblems(f);
   const problems: string[] = [];
   if (!f.name.trim()) problems.push("Give the schedule a name");
   if (!f.projectPath) problems.push("Pick a project");

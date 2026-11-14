@@ -1399,6 +1399,18 @@ export class CodexAppServerProvider implements AIProvider {
   }
 
   /**
+   * Still in the queue, or taken from it and not yet named by codex. While the daily guard is
+   * being asked the message being started is in neither place, so that counts as still waiting.
+   */
+  isMessageQueued(sessionId: string, clientMessageId: string): boolean {
+    const live = this.live.get(sessionId);
+    if (!live || live.client.isClosed) return false;
+    return live.checkingDailyGuard
+      || live.startingTurn?.clientMessageId === clientMessageId
+      || live.pendingTurns.some((q) => q.opts?.clientMessageId === clientMessageId);
+  }
+
+  /**
    * Names the session's thread in codex itself (`thread/name/set`), so codex's own thread list
    * shows the title PPM shows. Needs a live app-server that already has the thread; false when
    * there is none, or when the codex build does not know the method — PPM's title stands either way.

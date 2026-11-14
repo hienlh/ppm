@@ -8,10 +8,10 @@
  * topic — can be paused without being forgotten.
  */
 
-export type NotificationEvent = "done" | "approval_request" | "question" | "collab_approval" | "schedule" | "jira" | "design_review" | "extension";
+export type NotificationEvent = "done" | "approval_request" | "question" | "collab_approval" | "schedule" | "schedule_created" | "jira" | "design_review" | "extension";
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
-  "done", "approval_request", "question", "collab_approval", "schedule", "jira", "design_review", "extension",
+  "done", "approval_request", "question", "collab_approval", "schedule", "schedule_created", "jira", "design_review", "extension",
 ];
 
 export interface NotificationSettings {
@@ -27,7 +27,7 @@ export interface NotificationSettings {
 }
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
-  events: { done: true, approval_request: true, question: true, collab_approval: true, schedule: true, jira: true, design_review: true, extension: true },
+  events: { done: true, approval_request: true, question: true, collab_approval: true, schedule: true, schedule_created: true, jira: true, design_review: true, extension: true },
   delay_seconds: 60,
   telegram: true,
   ntfy: true,
@@ -49,6 +49,7 @@ export const NOTIFICATION_EVENT_COPY: Record<NotificationEvent, { label: string;
   question: { label: "AI has a question", note: "The AI asked you something and is waiting." },
   collab_approval: { label: "Sessions need you", note: "An AI asks to open a session, to keep messaging another, or to message one with more permissions." },
   schedule: { label: "Scheduled run finished", note: "A schedule completed or failed." },
+  schedule_created: { label: "AI scheduled a prompt", note: "A chat's AI set up a schedule that sends a prompt into that chat." },
   jira: { label: "Jira", note: "A watcher found new issues, or a debug run finished." },
   design_review: { label: "Reviewer comments", note: "Someone commented on a design you shared." },
   extension: { label: "Extensions", note: "An extension asked to tell you something." },

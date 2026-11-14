@@ -179,6 +179,12 @@ export interface AIConfig {
   /** PPM's own AI tools, on or off one by one (`src/shared/ppm-tools.ts` has the defaults). */
   ppm_tools?: PpmToolSwitches;
   /**
+   * Spawn Claude chats without Claude Code's own cron tools while PPM's schedule tool is on, so the
+   * model schedules through the one that survives restarts. Unset defaults to true; Claude only
+   * (`src/providers/claude-builtin-cron.ts`).
+   */
+  hide_builtin_cron?: boolean;
+  /**
    * Idle minutes after which PPM stops what a chat left running — servers, emulators and daemons
    * its commands started. Unset or 0 never stops them, and the server log names what 30 idle
    * minutes would have stopped. Linux with systemd only
