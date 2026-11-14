@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { resolveBunPath } from "../../services/autostart-generator.ts";
 import { redactTruncate } from "./codex-redact.ts";
+import { codexLoginTag, codexStderrLogLine } from "./codex-stderr-log.ts";
 import type { JsonRpcResponse, ServerRequest, JsonRpcNotification } from "./codex-protocol.ts";
 import { AI_CHAT_MARK } from "../../services/ai-chat-env.ts";
 import { ppmInstanceEnv } from "../../services/ppm-instance-env.ts";
@@ -104,6 +105,8 @@ export class CodexJsonRpcClient {
   private purpose: "chat" | "login" | "control" = "control";
   /** The last stderr line logged, for the exit line (redacted). */
   private lastStderr = "";
+  /** The login this app-server runs on, named on each of its stderr lines. */
+  private account = "unknown";
 
   /** Spawn the subprocess. Injectable streams allow unit testing without a real spawn.
    * `codexHome` selects which account's auth the app-server uses (CODEX_HOME); `env` adds
@@ -121,6 +124,7 @@ export class CodexJsonRpcClient {
       windowsHide: true,
     });
     this.purpose = opts?.purpose ?? "control";
+    this.account = codexLoginTag(opts?.codexHome);
     // So the Task Manager's kill route can tell an AI chat to use chat_stop instead of ending this.
     this.proc.once("close", registerChatProviderPid(this.proc.pid, "codex"));
     // CODEX_HOME is <ppm dir>/codex-accounts/<account id>, so its name is the account id.
@@ -144,16 +148,13 @@ export class CodexJsonRpcClient {
   attach(stdout: NodeJS.ReadableStream, stderr?: NodeJS.ReadableStream | null): void {
     stdout.on("data", (chunk: Buffer) => this.onStdout(chunk));
     stderr?.on("data", (chunk: Buffer) => {
-      // codex's stderr is Rust tracing ("<time> ERROR codex_x::y: …", ANSI-coloured), so its
-      // own level decides ours: a failed cache write is not a PPM ERROR. An untagged line is
-      // `bun x` resolving the package unless it reads like a failure.
+      // ANSI-coloured Rust tracing; `codexStderrLogLine` picks the level, names the login
+      // and folds repeats.
       for (const line of chunk.toString().replace(/\x1b\[[0-9;]*m/g, "").split("\n")) {
-        const s = line.trim();
-        if (!s || /warning|trace-warnings|circular dependency/i.test(s)) continue;
-        const tag = /^(?:\S+\s+)?(ERROR|WARN|INFO|DEBUG|TRACE)\b/.exec(s)?.[1];
-        const loud = tag ? tag === "ERROR" || tag === "WARN" : /error|panic|fatal|fail/i.test(s);
-        this.lastStderr = redactTruncate(s, 200);
-        (loud ? log.warn : log.debug)(`stderr: ${this.lastStderr}`);
+        const out = codexStderrLogLine(this.account, line);
+        if (!out) continue;
+        this.lastStderr = out.text;
+        log[out.level](out.message);
       }
     });
   }

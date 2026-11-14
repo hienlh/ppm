@@ -392,6 +392,43 @@ export async function resolveCodexAccountForSession(sessionId?: string): Promise
   return selectCodexAccount({ usageOf: (id) => codexUsageLevel(usages[id]) });
 }
 
+/** Which login a listing (the model list) should be read on. */
+export type CodexListingLogin =
+  | { kind: "ambient" }
+  | { kind: "account"; account: CodexAccount }
+  | { kind: "none"; reason: string };
+
+/**
+ * The login a session-less listing runs on: the same one a new chat would, never a different
+ * one, and without advancing the round-robin cursor the way `resolveCodexAccountForSession`
+ * would.
+ *
+ * - No account switched on (none configured, or every one off): a new chat runs on the
+ *   machine's own `~/.codex` login, so the listing does too.
+ * - Accounts are on but a new chat would be refused (every one signed out, or every one held
+ *   back by its daily guard): `none`. The listing must not fall through to `~/.codex` here.
+ *   That login belongs to no account PPM uses and is usually stale, so every refresh of it
+ *   failed in the log.
+ * - Otherwise an account a new chat could get, preferring one with quota left. If every
+ *   account is out of quota, a chat still gets one, and so does the listing.
+ */
+export async function codexLoginForListing(): Promise<CodexListingLogin> {
+  if (!listCodexAccounts().some((a) => a.status !== "disabled")) return { kind: "ambient" };
+  const servable = servableAccounts();
+  if (servable.length === 0) return { kind: "none", reason: "every enabled Codex account is signed out" };
+  const usable = servable.filter((a) => !isCodexAccountUsageLimited(a.id));
+  let candidates = usable.length > 0 ? usable : servable;
+  const guarded = usable.filter((a) => a.dailyGuardEnabled);
+  if (guarded.length > 0) {
+    const blocked = dailyGuardBlockedIds(guarded, await getAllCodexUsages());
+    if (blocked.length > 0 && blocked.length === usable.length) {
+      return { kind: "none", reason: "the daily guard holds back every Codex account" };
+    }
+    candidates = candidates.filter((a) => !blocked.includes(a.id));
+  }
+  return { kind: "account", account: candidates[0]! };
+}
+
 // ── Usage (per account) ──
 // Both read through the shared provider-usage layer, so the accounts screen is
 // served from the same cache and snapshot store as the chat toolbar and cannot

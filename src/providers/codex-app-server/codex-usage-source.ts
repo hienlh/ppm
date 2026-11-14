@@ -4,7 +4,9 @@ import { AMBIENT_ACCOUNT_KEY } from "../../services/provider-usage/usage-source.
 import { listCodexAccounts, getCodexAccount } from "../../services/codex-account.service.ts";
 import { fetchCodexUsageLive } from "./codex-usage-fetch.ts";
 import { isCodexAuthFailure } from "./codex-auth-failure.ts";
-import { markCodexAccountAuthFailed, clearCodexAccountAuthFailure } from "../../services/codex-account-auth-state.ts";
+import {
+  markCodexAccountAuthFailed, clearCodexAccountAuthFailure, isCodexAccountAuthRecheckPending,
+} from "../../services/codex-account-auth-state.ts";
 
 /**
  * Codex's plug into the shared usage layer.
@@ -19,6 +21,12 @@ export const codexUsageSource: ProviderUsageSource = {
 
   listAccountIds(): string[] {
     return listCodexAccounts().map((a) => a.id);
+  },
+
+  // A signed-out account is read again on a widening interval rather than on every sweep:
+  // each read spawns an app-server that only repeats the refusal. Its last reading stays.
+  shouldSkip(accountId: string): boolean {
+    return accountId !== AMBIENT_ACCOUNT_KEY && isCodexAccountAuthRecheckPending(accountId);
   },
 
   async fetch(accountId: string): Promise<UsageInfo> {

@@ -17,6 +17,8 @@ import { withSharedContext } from "../../shared/provider-context.ts";
 import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount, getSessionCodexAccount, getSessionTitles, insertTurnUsage } from "../../services/db.service.ts";
 import {
   resolveCodexAccountForSession,
+  codexLoginForListing,
+  type CodexListingLogin,
   getCodexAccount,
   listCodexAccounts,
   peekCodexAccount,
@@ -1568,14 +1570,25 @@ export class CodexAppServerProvider implements AIProvider {
   }
 
   private async loadModels(): Promise<ModelOption[]> {
-    const client = new CodexJsonRpcClient();
-    let accountId: string | null = null;
+    // Read on the login a new chat would run on. Without a CODEX_HOME the app-server uses the
+    // machine's own ~/.codex login, which is right only when a chat would too: on a machine
+    // that manages accounts it is usually stale, and its failed refreshes filled the log.
+    let login: CodexListingLogin;
     try {
-      // Without a CODEX_HOME the app-server falls back to the machine's own
-      // ~/.codex login, which may be stale or absent — the model list then comes
-      // from an account PPM does not use, or fails outright on a refresh error.
-      const account = await resolveCodexAccountForSession();
-      accountId = account?.id ?? null;
+      login = await codexLoginForListing();
+    } catch (err) {
+      this.warnListFailure("model/list", "unresolved", err);
+      return this.modelsCache?.models ?? [];
+    }
+    if (login.kind === "none") {
+      // A chat would be refused too, so there is nothing to read the list on. Keep what we had.
+      log.debug(`model/list skipped: ${login.reason}`);
+      return this.modelsCache?.models ?? [];
+    }
+    const account = login.kind === "account" ? login.account : null;
+    const accountId = account ? account.id.slice(0, 8) : "ambient";
+    const client = new CodexJsonRpcClient();
+    try {
       client.start({ cwd: process.cwd(), ...(account ? { codexHome: account.home } : {}) });
       await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
       client.notify("initialized");
@@ -1591,8 +1604,8 @@ export class CodexAppServerProvider implements AIProvider {
       return models;
     } catch (err) {
       // The picker shows an empty list either way; this is the only record of why.
-      this.warnListFailure("model/list", accountId ?? "ambient", err);
-      return [];
+      this.warnListFailure("model/list", accountId, err);
+      return this.modelsCache?.models ?? [];
     } finally {
       client.close();
     }
