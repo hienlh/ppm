@@ -105,6 +105,28 @@ describe("listing and counts", () => {
     expect(cards.list({ limit: 10 }).cards.find((x) => x.kind === "done")!.provenance).toBe("Written by the web manager AI");
   });
 
+  it("lists exactly the open cards the waiting counts are made of, oldest first", () => {
+    const first = cards.create({ kind: "needs_decision", projectName: "api", projectPath: "/p/api", sessionId: "mgr-1", title: "Ship?" });
+    now += 10;
+    cards.create({ kind: "done", projectName: "api", projectPath: "/p/api", sessionId: "mgr-1", title: "Shipped" });
+    now += 10;
+    const urgent = cards.create({ kind: "urgent", projectName: "web", projectPath: "/p/web", sessionId: "mgr-2", title: "Down" });
+    now += 10;
+    const answered = cards.create({ kind: "needs_decision", projectName: "web", projectPath: "/p/web", sessionId: "mgr-2", title: "Old" });
+    cards.transition(answered.id, "dismissed", null);
+    // A card from a project PPM no longer lists still waits, and still counts in the total.
+    cards.create({ kind: "budget", projectName: null, projectPath: null, sessionId: null, title: "Paused" });
+
+    const open = cards.openCards();
+    expect(open.map((c) => c.title)).toEqual(["Ship?", "Down", "Paused"]);
+    expect(open.map((c) => c.id).slice(0, 2)).toEqual([first.id, urgent.id]);
+    const waiting = cards.waiting();
+    expect(waiting.total).toBe(open.length);
+    expect(waiting.byProject).toEqual({ api: 1, web: 1 });
+    for (const [project, n] of Object.entries(waiting.byProject)) expect(cards.openCards(project)).toHaveLength(n);
+    expect(cards.openCards("nope")).toEqual([]);
+  });
+
   it("gives PPM's own cards no manager provenance line, a failure PPM saw included", () => {
     const seen = cards.create({ kind: "failed", projectName: "api", projectPath: "/p/api", sessionId: "mgr-1", title: "Stopped", payload: { detected: true } });
     const reported = cards.create({ kind: "failed", projectName: "api", projectPath: "/p/api", sessionId: "mgr-1", title: "Deploy failed" });

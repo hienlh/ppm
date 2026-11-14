@@ -1,8 +1,8 @@
 /**
  * A card's menu: right-click on a desktop, long press → bottom sheet on a phone (the adaptive
  * menu, which disarms its press on `touchcancel`, so a scroll that starts on a card opens
- * nothing). It holds Reply (the user's own words to the card's manager chat) and, on a phone, the
- * actions that leave the button row there: Open manager chat and Dismiss.
+ * nothing). It repeats the card's lesser actions: Reply (the user's own words to the card's
+ * manager chat), Open manager chat and Dismiss.
  */
 import type { ReactNode } from "react";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import {
 import { cardRefusal, dismissAssistantCard } from "@/lib/assistant-cards-api";
 import { applyAssistantCard } from "@/stores/assistant-cards-store";
 import { useCardReplyStore } from "@/stores/assistant-card-reply-store";
+import { useCardReplyHost, type CardReplyHost } from "./card-reply-host";
 import {
   DISMISSABLE_CARD_KINDS, MANAGER_REPLY_CARD_KINDS, type AssistantCard,
 } from "../../../../shared/assistant-cards";
@@ -23,13 +24,14 @@ export interface CardMenuItem {
   destructive?: boolean;
 }
 
-export function cardMenuItems(card: AssistantCard): CardMenuItem[] {
+export function cardMenuItems(card: AssistantCard, host?: CardReplyHost): CardMenuItem[] {
   const items: CardMenuItem[] = [];
   const hasManager = !!card.sessionId && !!card.projectName;
+  const replyTo = host?.replyTo ?? ((c: AssistantCard) => useCardReplyStore.getState().replyTo(c));
   if (hasManager && MANAGER_REPLY_CARD_KINDS.includes(card.kind)) {
-    items.push({ label: "Reply", run: () => useCardReplyStore.getState().replyTo(card) });
+    items.push({ label: "Reply", run: () => replyTo(card) });
   }
-  if (hasManager) items.push({ label: "Open manager chat", run: () => openCardManagerChat(card) });
+  if (hasManager && !host?.inManagerChat) items.push({ label: "Open manager chat", run: () => openCardManagerChat(card) });
   if (card.status === "open" && DISMISSABLE_CARD_KINDS.includes(card.kind)) {
     items.push({
       label: "Dismiss",
@@ -45,7 +47,7 @@ export function cardMenuItems(card: AssistantCard): CardMenuItem[] {
 }
 
 export function CardMenu({ card, children }: { card: AssistantCard; children: ReactNode }) {
-  const items = cardMenuItems(card);
+  const items = cardMenuItems(card, useCardReplyHost());
   if (items.length === 0) return <>{children}</>;
   return (
     <ContextMenu>

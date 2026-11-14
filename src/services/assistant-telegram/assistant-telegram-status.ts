@@ -18,6 +18,8 @@ import { chatLink, isPublicHttpsUrl, OPEN_IN_PPM } from "./assistant-telegram-li
 
 /** How many chats one `/status` lists. */
 export const STATUS_MAX_ITEMS = 10;
+/** How many of the Assistant's open cards one `/status` lists. */
+export const STATUS_MAX_CARDS = 5;
 const TITLE_MAX = 60;
 const ERROR_MAX = 120;
 
@@ -37,6 +39,12 @@ export interface StatusReply {
 
 type Group = keyof typeof ICON;
 type Line = { group: Group; chat: AttentionChat; text: string; card?: LiveApprovalCard };
+
+const CARD_ICON = "📌";
+const CARD_KIND_TEXT: Partial<Record<string, string>> = {
+  needs_decision: "needs your decision", urgent: "urgent", approval: "waiting for your approval",
+  question: "waiting for your answer", rules_change: "a rules change to approve", budget: "the Assistant paused",
+};
 
 const ICON = {
   needsDecision: "🔐", running: "⏳", lostCards: "⚠️", stopped: "⛔", finishedUnread: "✅", finishedRead: "☑️",
@@ -61,9 +69,25 @@ export async function buildStatus(deps: StatusDeps = {}): Promise<StatusReply> {
   for (const c of attention.finishedRead) lines.push({ group: "finishedRead", chat: c, text: "finished" });
 
   const shown = lines.slice(0, STATUS_MAX_ITEMS);
-  const more = lines.length - shown.length + Object.values(attention.more).reduce((n, m) => n + (m ?? 0), 0);
+  const { assistantCards: moreCards = 0, ...moreChats } = attention.more;
+  const more = lines.length - shown.length + Object.values(moreChats).reduce((n, m) => n + (m ?? 0), 0);
+  // The Assistant's own cards still waiting on the user, whatever their age: each was sent here
+  // as a message of its own when it was made; this only says they still wait.
+  // At most a few lines, so the one reply stays well inside Telegram's message size.
+  const openCards = attention.assistantCards ?? [];
+  const cardLines = openCards.slice(0, STATUS_MAX_CARDS).map((c) => {
+    const project = c.project ? ` · ${escapeTelegramHtml(redactForTelegram(c.project))}` : "";
+    return `${CARD_ICON} <b>${escapeTelegramHtml(truncateText(redactForTelegram(c.title), TITLE_MAX))}</b>${project} — ${CARD_KIND_TEXT[c.kind] ?? "waiting for you"}`;
+  });
+  const cardsHeld = moreCards + Math.max(0, openCards.length - STATUS_MAX_CARDS);
+  if (cardsHeld > 0) cardLines.push(`<i>${cardsHeld} more cards in the PPM Assistant.</i>`);
+  const cardSection = cardLines.length ? ["<b>Waiting on you in the PPM Assistant</b>", "", ...cardLines, ""] : [];
+  if (shown.length === 0 && cardSection.length === 0) {
+    return { html: "Nothing needs you today: no card is open, and no chat is waiting, running or finished since midnight.", cards: [] };
+  }
   if (shown.length === 0) {
-    return { html: "Nothing needs you today: no chat is waiting, running or finished since midnight.", cards: [] };
+    const home = await (deps.homeLink ?? (() => notificationLink({ project: "", sessionId: "" })))().catch(() => null);
+    return { html: [...cardSection, ...(home ? [`${escapeTelegramHtml(OPEN_IN_PPM)}: ${escapeTelegramHtml(home)}`] : [])].join("\n").trim(), cards: [] };
   }
 
   let anyLinked = false;
@@ -77,7 +101,7 @@ export async function buildStatus(deps: StatusDeps = {}): Promise<StatusReply> {
     return `${ICON[line.group]} ${label}${project} — ${escapeTelegramHtml(redactForTelegram(line.text))}`;
   }));
 
-  const parts = ["<b>Your chats today</b>", "", ...rendered];
+  const parts = [...cardSection, "<b>Your chats today</b>", "", ...rendered];
   if (more > 0) parts.push("", `<i>${more} more in PPM.</i>`);
   if (!anyLinked) {
     // No project: PPM's home page.

@@ -147,12 +147,15 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
   {
     name: CHATS_ATTENTION_TOOL,
     title: "What needs the user",
-    description: "Overview of the user's chats across projects, open or not: cards waiting for an answer (with what "
-      + "each would run), chats running, cards lost to a restart, chats stopped on an error, finished chats not yet "
-      + "read, and finished ones already read. Each group lists at most 20. Never asks.",
+    description: "Overview of what waits on the user across projects: the PPM Assistant's own cards still open "
+      + "(assistantCards: a manager's needs-decision or urgent report, a manager chat's approval or question, a held "
+      + "rules change, a paused budget; id, project, kind, title, when it was sent; any age, `since` does not apply), "
+      + "then the user's chats, open or not: cards waiting for an answer (with what each would run), chats running, "
+      + "cards lost to a restart, chats stopped on an error, finished chats not yet read, and finished ones already "
+      + "read. Each group lists at most 20. Never asks.",
     inputSchema: object({
       project: { ...PROJECT, description: "Only this project's chats." },
-      since: { type: "string", description: "Finished and stopped chats from \"today\" (default) or the last hours, e.g. \"6h\" (up to 168h)." },
+      since: { type: "string", description: "Finished and stopped chats from \"today\" (default) or the last hours, e.g. \"6h\" (up to 168h). Open Assistant cards are listed whatever their age." },
     }),
     annotations: READ_ONLY,
   },

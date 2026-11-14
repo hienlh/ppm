@@ -41,6 +41,21 @@ assistantCardRoutes.get("/cards", (c) => {
   }
 });
 
+/**
+ * Every card still waiting on the user (oldest first), one project's when `project` names it: the
+ * cards behind the waiting counts, which the Assistant pins above its stream and a manager chat
+ * shows above its composer.
+ */
+assistantCardRoutes.get("/cards/open", (c) => {
+  const project = c.req.query("project");
+  if (project !== undefined && (project.length === 0 || project.length > 200)) return c.json(err("project is a project's name"), 400);
+  try {
+    return c.json(ok({ cards: assistantCards.openCards(project) }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 assistantCardRoutes.get("/waiting", (c) => {
   try {
     return c.json(ok(assistantCards.waiting()));

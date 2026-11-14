@@ -34,6 +34,7 @@ import { useReconnectIndicator } from "@/hooks/use-reconnect-indicator";
 import { ActivityChip } from "./activity-chip";
 import { AgentSessionProvider, normalizeProviderId } from "./agent-session-context";
 import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
+import { ManagerChatWaitingCards } from "@/components/assistant/manager-chat-waiting-cards";
 import { SessionChangesChip } from "./session-changes-chip";
 import { CONTINUE_AFTER_STOP, TurnStopBar } from "./turn-stop-bar";
 import { SessionChangesContext, useSessionChangesValue } from "./session-changes-context";
@@ -1400,6 +1401,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
         bashPartialOutput={bashPartialOutput}
         timeline={timeline}
       /></SessionChangesContext.Provider></AsyncQuestionContext.Provider>}
+
+      {/* A manager chat's own reports still waiting on the user in the PPM Assistant */}
+      {!assistant && <ManagerChatWaitingCards sessionId={sessionId} />}
 
       {/* Why the last turn ended, when an error ended it */}
       <TurnStopBar

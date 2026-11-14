@@ -1,6 +1,6 @@
 /**
  * The Assistant: a head (only where no window titlebar carries the name and gear), the chip row,
- * and one stream — the main session's chat with the cards placed among its messages by time.
+ * the "Waiting on you" bar holding every card still open, and one stream — the main session's chat with the cards placed among its messages by time.
  * Answering a card in your own words puts the reply-to bar where the composer is.
  *
  * The chat is an ordinary `ChatTab` in the virtual `__assistant__` project, embedded under the
@@ -17,6 +17,7 @@ import { useCardReplyStore } from "@/stores/assistant-card-reply-store";
 import { CardReplyBar } from "./cards/card-reply-bar";
 import { AssistantHead } from "./assistant-head";
 import { ManagerChipRow } from "./manager-chip-row";
+import { AssistantWaitingCards } from "./assistant-waiting-cards";
 import { useAssistantSessionChoice } from "./use-assistant-session-choice";
 import { useAssistantStreamTimeline } from "./use-assistant-stream-timeline";
 
@@ -76,9 +77,11 @@ export function AssistantWindowBody({ tabId, metadata }: { tabId: string; metada
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col" data-assistant-body="">
+    // A size container: the "Waiting on you" bar takes a share of this body's height, not the screen's.
+    <div className="flex h-full min-h-0 flex-col [container-type:size]" data-assistant-body="">
       {(isMobile || !inWindow) && <AssistantHead sessionId={sessionId} />}
       <ManagerChipRow />
+      <AssistantWaitingCards />
       {oneOff && (
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-accent-wash px-3 text-xs text-text-secondary" data-one-off="">
           <span>{ONE_OFF_LABEL}</span>·
