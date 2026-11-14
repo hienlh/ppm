@@ -1378,6 +1378,33 @@ reply in PPM; a Telegram reply to one goes to the Assistant as an ordinary messa
 messages flushed first and the reply never merged into them. A forwarded message, or one sent
 through an inline bot, is someone else's words and never answers a card.
 
+**The manager's answer to a reply** (`card-reply-followup-tracker.ts`, `card-reply-followup.ts`,
+`assistant-telegram-card-followups.ts`, `assistant-telegram-followup-format.ts`). A reply is often
+a question, or agrees on a wrong premise ("go ahead, it won't cost much quota, right?"), and its
+answer used to stay in the manager chat, which a user on their phone never opens. Two parts:
+
+- The block every manager turn carries says such a reply is **not an OK**
+  (`MANAGER_CARD_REPLY_RULE` in `manager-context-entry.ts`): answer, correct the premise with the
+  numbers, and ask again with a new needs-decision card before doing anything.
+- PPM follows the turn the reply opened and sends that turn's **final text** back. A text reply
+  (never an OK) is sent under a `card-<uuid>` id chosen before the send, so the turn a provider
+  names with it (`turn_started`) is the one — words queued behind a running turn, or other turns
+  in between, never pick up another turn's answer. A turn no provider named is judged after a 3 s
+  grace on an idle chat, as the session tools' waits are; queued words never are. The answer is the
+  top-level text after the turn's last top-level tool call (no tool output, thinking or subagent
+  text), at most one per reply, nothing for a turn with no text; it is kept on the card
+  (`answer.followUp`, cut to `CARD_FOLLOWUP_MAX_CHARS` = 1500) and shown under it in PPM.
+- On Telegram it goes **under the card's message**: redacted before the cut, hidden characters
+  shown, escaped through the Markdown formatter, "… see the chat for the rest." past 1500
+  characters, an Open in PPM link, and a line naming any card the manager opened in that turn. A
+  project at `title` detail gets only "the manager answered" and the link. A reply typed on
+  Telegram is answered in that chat with a sound whatever "quiet while I'm at PPM" or quiet hours
+  say — the user is holding the phone. A reply typed in PPM goes under each Telegram copy of the
+  card: silent while the user is at PPM, and not at all in quiet hours (nothing is saved up for the
+  morning: the answer is already under the card in PPM).
+- A new card the manager opens in that turn is sent at once, as every card is, so on the phone it
+  arrives just **before** the answer; the answer names it rather than holding a decision back.
+
 **Quiet hours** (`quiet_hours` and `timezone` in Settings → PPM Assistant). Inside the window every
 card but an `urgent` one is `held` in the database; past two urgent reports per manager per window
 an urgent report is already a held decision. A clock timer at the window's end — or the bridge

@@ -7,7 +7,8 @@
  *   the first OK on any surface wins and forwards once; a later one is told who answered, when.
  * - **A reply** goes word for word to the card's manager chat. A card that no longer waits, or is
  *   older than {@link STALE_REPLY_MS}, asks first ("send anyway?"). A reply to an approval or
- *   question card refuses that request, as typing in the manager chat would.
+ *   question card refuses that request, as typing in the manager chat would. The manager's answer
+ *   to a reply comes back to where it was typed (`card-reply-followup.ts`); an OK gets none.
  *
  * The card is marked answered before the words leave, so a second surface cannot forward too; if
  * the forward fails, the card is opened again and the error said. Until the manager chat has taken
