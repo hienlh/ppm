@@ -50,9 +50,9 @@ export const NXSYS_DECISION = {
   kind: "needs_decision",
   title: "NX-6294 · PR #11179 review đạt sau 2 vòng sửa — merge vào develop ngay hay chờ QA chạy lại bộ kiểm thử đầy đủ?",
   body: [
-    "PR #11179 sửa lỗi ở màn hình xuất báo cáo: khi người dùng huỷ một kỳ đã chốt rồi chốt lại, file xuất ra bị lặp dòng. Bản sửa gom dòng theo mã kỳ trước khi ghi file.",
+    "PR #11179 sửa lỗi ở màn hình xuất báo cáo: khi người dùng tạo lại một báo cáo vừa tạo, file xuất ra bị lặp dòng. Bản sửa gom các dòng trùng trước khi ghi file.",
     "",
-    "Vòng 1 review chỉ ra 2 chỗ: thiếu test cho kỳ bị huỷ hai lần, và một truy vấn chạy trong vòng lặp. Dev đã sửa cả hai, thêm 3 test tích hợp.",
+    "Vòng 1 review chỉ ra 2 chỗ: thiếu test cho trường hợp tạo lại hai lần liên tiếp, và một truy vấn chạy trong vòng lặp. Dev đã sửa cả hai, thêm 3 test tích hợp.",
     "",
     "Vòng 2: đọc lại toàn bộ diff (14 file, +412 −96). CI xanh. Mình chạy lại test tích hợp trên máy, qua hết.",
     "",

@@ -48,7 +48,8 @@ export function loopKit({ web, fx, tg, page, shotsDir, owner, record }) {
     body: () => page.locator("[data-assistant-body]:visible").first(),
     // The composer keeps a phone textarea and a desktop one; only the layout's own is visible.
     composer: () => kit.body().locator('textarea[aria-label="Message"]:visible').first(),
-    streamCard: (kind, text) => kit.body().locator(`[data-assistant-card="${kind}"]`, text ? { hasText: text } : {}).last(),
+    // A waiting card is only named in the stream (`data-card-pointer`); its buttons are in the bar.
+    streamCard: (kind, text) => kit.body().locator(`[data-assistant-card="${kind}"]:not([data-card-pointer])`, text ? { hasText: text } : {}).last(),
     async shot(name) {
       await page.screenshot({ path: `${shotsDir}/${name}.png` });
     },

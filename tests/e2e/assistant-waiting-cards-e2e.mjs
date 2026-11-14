@@ -191,20 +191,24 @@ try {
   await mob.goto(`${web}/project/alpha/assistant`);
   await mk.body().locator("[data-waiting-cards]").waitFor({ timeout: 30000 });
   await mk.shot("07-phone-waiting-bar-two-cards");
+  // On a phone the bar is one row; the card opens full screen in a sheet outside the body.
+  const msheet = mob.locator("[data-waiting-sheet]");
   await mk.body().locator('[data-manager-chip="alpha"] [data-manager-chip-count]').tap();
-  await mk.body().locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
-  assert.equal(await mk.body().locator("[data-waiting-card] h4").innerText(), DECISION);
+  await msheet.locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
+  assert.equal(await msheet.locator("[data-waiting-card] h4").innerText(), DECISION);
   await mk.page.waitForTimeout(400); // the outline fades in over 300 ms
   await mk.shot("08-phone-red-count-pressed-lands-on-card-highlighted");
   await mob.waitForTimeout(2000);
-  await mk.body().locator('button[aria-label="Next waiting card"]').tap();
-  await mk.body().locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
-  assert.equal(await mk.body().locator("[data-waiting-card] h4").innerText(), URGENT);
+  await msheet.locator('button[aria-label="Next waiting card"]').tap();
+  await msheet.locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
+  assert.equal(await msheet.locator("[data-waiting-card] h4").innerText(), URGENT);
   await mk.page.waitForTimeout(400); // the outline fades in over 300 ms
   await mk.shot("09-phone-next-card");
-  await mk.body().locator('button[aria-label="Previous waiting card"]').tap();
-  await mk.body().locator("[data-waiting-card]").getByRole("button", { name: "Reply" }).tap();
+  await msheet.locator('button[aria-label="Previous waiting card"]').tap();
+  await msheet.locator("[data-waiting-card]").getByRole("button", { name: "Reply" }).tap();
+  // Replying moves the sheet aside; the quote sits over the Assistant's own composer.
   await mk.body().locator("[data-card-reply-quote]").waitFor({ timeout: 5000 });
+  assert.equal(await msheet.count(), 0, "the sheet stepped aside for the reply");
   await mk.shot("10-phone-replying-to-card");
   await mk.body().locator('button[aria-label="Stop replying to this card"]').tap();
   ok("phone: bar, red count landing, next, Reply quote");
@@ -213,10 +217,12 @@ try {
   const mmgr = mob.locator("[data-manager-waiting-cards]:visible").first();
   await mmgr.waitFor({ timeout: 30000 });
   await mk.shot("11-phone-manager-chat-with-open-card");
-  await mmgr.getByRole("button", { name: "Reply" }).tap();
-  await mmgr.locator("[data-card-reply-quote]").waitFor({ timeout: 5000 });
+  await mmgr.locator("[data-waiting-toggle]").tap();
+  await msheet.getByRole("button", { name: "Reply" }).tap();
+  await msheet.locator("[data-card-reply-quote]").waitFor({ timeout: 5000 });
   await mk.shot("12-phone-manager-chat-replying-to-card");
-  await mmgr.locator('button[aria-label="Stop replying to this card"]').tap();
+  await msheet.locator('button[aria-label="Stop replying to this card"]').tap();
+  await msheet.locator('button[aria-label="Close the waiting cards"]').tap();
   ok("phone: the manager chat shows its own open card and answers it in place");
 
   // ---- Nothing waits ----
