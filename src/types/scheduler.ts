@@ -90,6 +90,8 @@ export interface ScheduleView extends Omit<Schedule, "secrets_enc" | "state_json
   /** Which secret inputs have a value saved. */
   secretsSet: string[];
   status: ScheduleStatusView;
+  /** A session schedule's chat as the user knows it; null when it has no title (or is not a session schedule). */
+  target_title?: string | null;
 }
 
 export interface ScheduleRun {
