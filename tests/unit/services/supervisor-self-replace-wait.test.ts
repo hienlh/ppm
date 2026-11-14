@@ -26,11 +26,12 @@ describe("waitForReplacement", () => {
     expect(Date.now() - start).toBeLessThan(2_000);
   });
 
-  it("counts a replacement that took over and then exited as a replacement", async () => {
+  it("does not trust a PID in status.json from a replacement that has already exited", async () => {
+    // It writes its PID first thing, then can still die on a migration or the server.
     const r = await waitForReplacement({
-      oldPid: 100, readSupervisorPid: () => 200, exited: () => ({ code: 0 }), timeoutMs: 5_000, sleep: noSleep,
+      oldPid: 100, readSupervisorPid: () => 200, exited: () => ({ code: 1 }), timeoutMs: 5_000, sleep: noSleep,
     });
-    expect(r).toEqual({ kind: "replaced", pid: 200 });
+    expect(r).toEqual({ kind: "exited", code: 1 });
   });
 
   it("times out when nothing happens, and ignores an unreadable status", async () => {

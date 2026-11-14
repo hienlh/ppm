@@ -137,11 +137,23 @@ async function listProcesses(): Promise<Map<number, { ppid: number; ticks: strin
   } finally {
     clearTimeout(killTimer);
   }
+  return parseProcessList(out, map);
+}
+
+/** The same listing, blocking: for a shutdown that exits before an await would resolve. */
+function listProcessesSync(): Map<number, { ppid: number; ticks: string }> {
+  const out = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", PS_LIST_CMD], {
+    encoding: "utf-8", timeout: LIST_TIMEOUT_MS, windowsHide: true, stdio: ["ignore", "pipe", "ignore"],
+  });
+  return parseProcessList(out);
+}
+
+function parseProcessList(out: string, map = new Map<number, { ppid: number; ticks: string }>()) {
   for (const line of out.split("\n")) {
     const [pidStr, ppidStr, ticks] = line.trim().split("|");
     const pid = parseInt(pidStr ?? "", 10);
     const ppid = parseInt(ppidStr ?? "", 10);
-    if (!isNaN(pid) && !isNaN(ppid)) map.set(pid, { ppid, ticks: ticks ?? "" });
+    if (!isNaN(pid) && !isNaN(ppid)) map.set(pid, { ppid, ticks: (ticks ?? "").trim() });
   }
   return map;
 }
@@ -292,6 +304,9 @@ export function startedNoEarlierThan(child: ProcInfo, parent: ProcInfo): boolean
 
 /** Every descendant of `rootPid` whose parent links hold by creation time, parents first. */
 export function descendantsByLineage(rootPid: number, procs: Map<number, ProcInfo>): number[] {
+  // Without the root's own creation time nothing below it can be checked; it has exited
+  // anyway, and what it left behind is the tracked list's business.
+  if (!procs.has(rootPid)) return [];
   const childrenOf = new Map<number, number[]>();
   for (const [pid, info] of procs) {
     if (pid === info.ppid) continue;
@@ -405,26 +420,47 @@ export async function reapTrackedDescendants(
 }
 
 /**
- * Kill `rootPid` and its descendants by creation-time lineage, sparing `protect`
- * and the calling process's own chain. Windows only; the safe replacement for
- * `taskkill /T` when the root is the server, whose tree is full of short-lived
- * processes whose PIDs come back. Falls back to `killProcessTree` when the
- * process list cannot be read.
+ * What `killTreeByLineage` kills: the root unless protected, then whatever the listing
+ * shows below it by lineage, sparing `protect` and the caller's own chain. A listing that
+ * failed, came back empty or lost the root still yields the root: an unreadable process
+ * table must never leave the server running. Exported for tests.
+ */
+export function lineageKillTargets(
+  rootPid: number,
+  procs: Map<number, ProcInfo> | null,
+  protect: Iterable<number | null | undefined> = [],
+  selfPid: number = process.pid,
+): number[] {
+  const guarded = new Set<number>(procs ? selfAndAncestors(selfPid, procs) : [selfPid]);
+  for (const p of protect) if (typeof p === "number" && p > 0) guarded.add(p);
+  if (guarded.has(rootPid)) return [];
+  const below = procs ? descendantsByLineage(rootPid, procs).filter((p) => !guarded.has(p)) : [];
+  return [rootPid, ...below];
+}
+
+/**
+ * Kill `rootPid` and its descendants by creation-time lineage, sparing `protect` and the
+ * calling process's own chain. Windows only; the safe replacement for `taskkill /T` on the
+ * server, whose tree is full of short-lived processes whose PIDs come back, and which
+ * `/T` would follow to whatever still names a reused PID as its parent.
  */
 export async function killTreeByLineage(
   rootPid: number,
   protect: Iterable<number | null | undefined> = [],
 ): Promise<void> {
   if (process.platform !== "win32") { killProcessTree(rootPid); return; }
-  let procs: Map<number, ProcInfo>;
-  try {
-    procs = await listProcesses();
-  } catch {
-    killProcessTree(rootPid);
-    return;
-  }
-  if (!procs.has(rootPid)) return;
-  const guarded = new Set<number>(selfAndAncestors(process.pid, procs));
-  for (const p of protect) if (typeof p === "number" && p > 0) guarded.add(p);
-  killPids([rootPid, ...descendantsByLineage(rootPid, procs)].filter((p) => !guarded.has(p)), "SIGKILL");
+  let procs: Map<number, ProcInfo> | null = null;
+  try { procs = await listProcesses(); } catch {}
+  killPids(lineageKillTargets(rootPid, procs, protect), "SIGKILL");
+}
+
+/** `killTreeByLineage`, blocking, for a shutdown about to exit. */
+export function killTreeByLineageSync(
+  rootPid: number,
+  protect: Iterable<number | null | undefined> = [],
+): void {
+  if (process.platform !== "win32") { killProcessTree(rootPid); return; }
+  let procs: Map<number, ProcInfo> | null = null;
+  try { procs = listProcessesSync(); } catch {}
+  killPids(lineageKillTargets(rootPid, procs, protect), "SIGKILL");
 }

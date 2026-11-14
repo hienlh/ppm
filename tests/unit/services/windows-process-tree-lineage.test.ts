@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   descendantsByLineage,
+  lineageKillTargets,
   selfAndAncestors,
   startedNoEarlierThan,
   reapTrackedDescendants,
@@ -58,6 +59,33 @@ describe("descendantsByLineage", () => {
 
   it("survives a parent cycle", () => {
     expect(descendantsByLineage(10, map([[10, 11, 5], [11, 10, 5]]))).toEqual([11]);
+  });
+});
+
+describe("lineageKillTargets", () => {
+  it("stopping the server reaches its own tree and nothing the old supervisor started", () => {
+    const targets = lineageKillTargets(23860, incident, [50360, 24628], 50000);
+    expect(targets.sort()).toEqual([12001, 12002, 23860, 51116].sort());
+  });
+
+  it("still kills the root when the process list could not be read, came back empty, or lost it", () => {
+    expect(lineageKillTargets(23860, null)).toEqual([23860]);
+    expect(lineageKillTargets(23860, new Map())).toEqual([23860]);
+    expect(lineageKillTargets(23860, map([[1, 0, 1]]))).toEqual([23860]);
+  });
+
+  it("never names the caller, its ancestors or a protected process", () => {
+    expect(lineageKillTargets(50000, incident, [], 50000)).toEqual([]);
+    expect(lineageKillTargets(23860, incident, [23860], 50000)).toEqual([]);
+    // The caller sits under the root (a CLI run from a chat's shell): it and its chain stay.
+    const t = lineageKillTargets(23860, incident, [], 12002);
+    for (const pid of [12002, 51116, 12001, 23860]) expect(t).not.toContain(pid);
+  });
+});
+
+describe("descendantsByLineage without its root", () => {
+  it("lists nothing, since no creation time can be checked against", () => {
+    expect(descendantsByLineage(99999, map([[5, 99999, 1]]))).toEqual([]);
   });
 });
 

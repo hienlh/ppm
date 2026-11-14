@@ -37,7 +37,7 @@ import {
 import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts";
 import { sdNotify, withoutNotifySocket } from "./sd-notify.ts";
 import {
-  killProcessTree, killTreeByLineage, snapshotServerDescendants, reapTrackedDescendants,
+  killProcessTree, killTreeByLineage, killTreeByLineageSync, snapshotServerDescendants, reapTrackedDescendants,
   findPortListenerPid, isPpmProcess, collectProcessTree, terminateTree,
 } from "./windows-process-tree.ts";
 import { reapZombiePortOrphans } from "./windows-zombie-port-reaper.ts";
@@ -512,7 +512,7 @@ function requestServerShutdown(child: Subprocess, timeoutMs: number = 2000): Pro
       // edge or this supervisor through one. The reap then catches orphans whose parent
       // chain already broke (they would keep the inherited listening socket: zombie port).
       void killTreeByLineage(pid, protectedPids())
-        .catch(() => killProcessTree(pid))
+        .catch(() => {})
         .then(() => reapServerOrphans())
         .finally(() => resolve());
     } else {
@@ -874,6 +874,7 @@ export async function spawnServer(
   // blocked if it was still set when the backoff ended, and a failed upgrade that clears it
   // sooner, then brings the server back itself, would start two servers.
   if (shuttingDown) {
+    serverRestartRequested = false;
     log("INFO", `Server stopped (exit ${exitCode}, signal ${exitSignal}) — supervisor shutting down or upgrading`);
     return;
   }
@@ -1458,7 +1459,8 @@ function startServerHealthCheck() {
       log("ERROR", `Server unresponsive for ${healthFailCount}×${SERVER_HEALTH_INTERVAL_MS / 1000}s (last probe: ${lastProbe}) — killing PID ${serverChild.pid}`);
       const pid = serverChild.pid;
       if (process.platform === "win32") {
-        killProcessTree(pid);
+        // By lineage, never `taskkill /T`: see requestServerShutdown.
+        await killTreeByLineage(pid, protectedPids()).catch(() => {});
         // Reap broken-chain orphans too, or the respawned server can't bind the port
         await reapServerOrphans();
       } else {
@@ -2192,7 +2194,9 @@ export function shutdown() {
     log("INFO", `Killing server child (PID: ${serverChild.pid})`);
     const pid = serverChild.pid;
     if (process.platform === "win32") {
-      killProcessTree(pid);
+      // Blocking, because this function exits before an await would return; by lineage,
+      // so a reused PID in the server tree cannot take this supervisor down mid-shutdown.
+      killTreeByLineageSync(pid, [process.pid]);
     } else {
       try { serverChild.kill("SIGTERM"); } catch {}
       setTimeout(() => { killProcessTree(pid); }, 2000).unref();
