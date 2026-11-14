@@ -16,7 +16,7 @@ import { TERMINAL_AI_MARK_EXPLANATION, TerminalAiMarkBadge } from "./terminal-ai
 import { TerminalMobileToolbar } from "./terminal-mobile-toolbar";
 import { TerminalLinksSheet } from "./terminal-links-sheet";
 import { TerminalSelectionChat } from "./terminal-selection-chat";
-import { TerminalLoginCallbackBar } from "./terminal-login-callback-bar";
+import { TerminalLoginCallbackBar, useLoginCallbackBar } from "./terminal-login-callback-bar";
 
 interface TerminalTabProps {
   metadata?: Record<string, unknown>;
@@ -41,7 +41,6 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
   const [ctrlMode, setCtrlMode] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
-  const [loginBarOpen, setLoginBarOpen] = useState(false);
   const activeTabId = useTabStore((s) => s.activeTabId);
   const [onboardingRefresh, setOnboardingRefresh] = useState(0);
   useEffect(() => {
@@ -150,6 +149,8 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
   }, [getSelection, getLastCommandOutput, getLastCommand, projectName]);
 
   const isMobile = typeof window !== "undefined" && "ontouchstart" in window;
+  // Desktop only: the phone reaches the same field through its links sheet.
+  const loginBar = useLoginCallbackBar(terminal, getBufferUrls, { enabled: !isMobile });
 
   return (
     <div data-onboarding="terminal" className="flex flex-col h-full min-h-0">
@@ -187,9 +188,9 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
         )}
         {!isMobile && (
           <button
-            onClick={() => setLoginBarOpen((open) => !open)}
+            onClick={loginBar.toggle}
             title="Finish a login whose browser redirect to 127.0.0.1 could not reach this machine"
-            aria-pressed={loginBarOpen}
+            aria-pressed={loginBar.visible}
             className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-surface-elevated text-text-primary hover:bg-primary hover:text-primary-foreground active:bg-primary active:text-primary-foreground transition-colors ml-auto"
           >
             <LogIn size={10} />
@@ -222,14 +223,7 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
         <TerminalSelectionChat terminal={terminal} projectName={projectName} touch={isMobile} />
       </div>
 
-      {!isMobile && (
-        <TerminalLoginCallbackBar
-          terminal={terminal}
-          getBufferUrls={getBufferUrls}
-          requested={loginBarOpen}
-          onRequestedChange={setLoginBarOpen}
-        />
-      )}
+      <TerminalLoginCallbackBar bar={loginBar} />
 
       {isMobile && (
         <>

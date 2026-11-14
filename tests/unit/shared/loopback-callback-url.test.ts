@@ -38,7 +38,7 @@ describe("normalizeLoopbackCallback — what a phone or a note copies", () => {
     expect(accepted(`127.0.0.1:54132/oauth/call\nback?code=abc-\r\n123_XYZ&state=s1`)).toBe(
       `http://127.0.0.1:54132/oauth/callback?code=abc-123_XYZ&state=s1`,
     );
-    expect(accepted(`​127.0.0.1:54132${CB}﻿`)).toBe(`http://127.0.0.1:54132${CB}`);
+    expect(accepted(`\u200B127.0.0.1:54132${CB}\uFEFF`)).toBe(`http://127.0.0.1:54132${CB}`);
   });
 
   it("drops quotes, wrapping brackets and sentence punctuation at either end", () => {
@@ -46,7 +46,7 @@ describe("normalizeLoopbackCallback — what a phone or a note copies", () => {
     for (const raw of [
       `"127.0.0.1:54132${CB}"`,
       `'http://127.0.0.1:54132${CB}'`,
-      `“127.0.0.1:54132${CB}”`,
+      `\u201C127.0.0.1:54132${CB}\u201D`,
       `(127.0.0.1:54132${CB})`,
       `<http://127.0.0.1:54132${CB}>`,
       `[http://127.0.0.1:54132${CB}]`,
@@ -72,6 +72,31 @@ describe("normalizeLoopbackCallback — what a phone or a note copies", () => {
   });
 });
 
+describe("normalizeLoopbackCallback - edge cases of the clean-up", () => {
+  it("repairs an http scheme whose slashes or colon got mangled", () => {
+    expect(accepted("http:127.0.0.1:5000/cb")).toBe("http://127.0.0.1:5000/cb");
+    expect(accepted("http:/127.0.0.1:5000/cb")).toBe("http://127.0.0.1:5000/cb");
+    expect(accepted("http//127.0.0.1:5000/cb")).toBe("http://127.0.0.1:5000/cb");
+    expect(accepted("HTTPS:/localhost:5000/cb")).toBe("https://localhost:5000/cb");
+    rejected("http:/evil.com/cb");
+  });
+
+  it("gives back the same URL when run on its own output, as the server does", () => {
+    for (const raw of [`127.0.0.1:54132${CB}`, `"(http://[::1]:8400/cb?x=(a))".`, "http:127.0.0.1:5000/cb", "127.1:9/cb"]) {
+      const once = accepted(raw);
+      expect(accepted(once)).toBe(once);
+    }
+  });
+
+  it("drops sentence punctuation at the very end even when it belonged to a value", () => {
+    // A trade-off asked for: a phone copy far more often ends in a stray "." or ")"
+    // than a callback's last value does. The field shows the URL it will send.
+    expect(accepted("127.0.0.1:1/cb?state=abc.")).toBe("http://127.0.0.1:1/cb?state=abc");
+    expect(accepted("127.0.0.1:1/cb?state=abc)")).toBe("http://127.0.0.1:1/cb?state=abc");
+    expect(accepted("127.0.0.1:1/cb?state=(abc)")).toBe("http://127.0.0.1:1/cb?state=(abc)");
+  });
+});
+
 describe("normalizeLoopbackCallback — still only this machine", () => {
   it("rejects a host that only starts or ends like a local one", () => {
     expect(rejected("localhost.evil.com:8400/cb")).toContain("localhost.evil.com");
@@ -94,6 +119,16 @@ describe("normalizeLoopbackCallback — still only this machine", () => {
     expect(rejected("http://evil.com/?redirect=http://127.0.0.1:8400")).toContain("evil.com");
     expect(rejected("http://evil.com/127.0.0.1:8400")).toContain("evil.com");
     expect(rejected("http://evil.com\\@127.0.0.1/cb")).toContain("evil.com");
+  });
+
+  it("accepts other spellings of a loopback address only because they parse to one", () => {
+    expect(accepted("http://127.1:9/cb")).toBe("http://127.0.0.1:9/cb");
+    expect(accepted("http://0x7f.1:9/cb")).toBe("http://127.0.0.1:9/cb");
+    expect(accepted("http://2130706433:9/cb")).toBe("http://127.0.0.1:9/cb");
+    // A backslash is a slash to the parser: what follows it is path, not host.
+    expect(accepted("127.0.0.1\\@evil.com")).toBe("http://127.0.0.1/@evil.com");
+    rejected("http://localhost./cb");
+    rejected("http://127.0.0.1%2eevil.com/cb");
   });
 
   it("rejects other networks, private ranges and 0.0.0.0", () => {

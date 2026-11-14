@@ -61,6 +61,25 @@ describe("POST /api/loopback/callback", () => {
     expect(received).toEqual(["/cb?code=c2"]);
   });
 
+  it("does not follow a redirect the listener answers with", async () => {
+    const elsewhere: string[] = [];
+    const second = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (req) => { elsewhere.push(req.url); return new Response("x"); } });
+    const redirecting = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response(null, { status: 302, headers: { Location: `http://127.0.0.1:${second.port}/next` } }),
+    });
+    try {
+      const { status, json } = await post({ url: `127.0.0.1:${redirecting.port}/cb?code=c` });
+      expect(status).toBe(200);
+      expect(json.data?.status).toBe(302);
+      expect(elsewhere).toEqual([]);
+    } finally {
+      redirecting.stop(true);
+      second.stop(true);
+    }
+  });
+
   it("refuses every way of dressing another host up as this one, and sends nothing", async () => {
     const spy = spyOnFetch();
     const port = listener.port;

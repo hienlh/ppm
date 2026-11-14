@@ -25,11 +25,11 @@ export function isLoopbackHostname(hostname: string): boolean {
 }
 
 /** Whitespace a copy can leave anywhere in a URL — line breaks from wrapping, zero-width marks. */
-const ANYWHERE_JUNK = /[\s​-‍⁠﻿]+/g;
+const ANYWHERE_JUNK = /[\s\u200B-\u200D\u2060\uFEFF]+/g;
 /** Quote marks a URL never starts or ends with, straight or typographic. */
-const QUOTES = `"'\`‘’“”«»`;
+const QUOTES = "\"'`\u2018\u2019\u201C\u201D\u00AB\u00BB";
 /** Punctuation a sentence leaves after a URL (or a list puts before one). */
-const LOOSE_PUNCT = ".,;:!?…";
+const LOOSE_PUNCT = ".,;:!?\u2026";
 const PAIRS: Record<string, string> = { "(": ")", "[": "]", "{": "}", "<": ">" };
 const CLOSERS: Record<string, string> = { ")": "(", "]": "[", "}": "{", ">": "<" };
 const BARE_IPV6 = /^\[[0-9a-f:.]*\]$/i;
@@ -76,6 +76,8 @@ export function cleanPastedCallback(raw: string): string {
 
 /** A scheme written out in full: `http://`, `HTTPS://`, `file://`… */
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
+/** `http:` or `https` with its `//` or its colon mangled: `http:127.0.0.1`, `http:/…`, `http//…`. */
+const MANGLED_HTTP = /^(https?)(?::\/{0,2}|\/\/)/i;
 
 export type LoopbackCallbackResult =
   | { ok: true; url: string }
@@ -94,9 +96,10 @@ export function normalizeLoopbackCallback(raw: string): LoopbackCallbackResult {
   const cleaned = cleanPastedCallback(raw);
   if (!cleaned) return { ok: false, reason: "Paste the address the sign-in page sent you to" };
 
-  const withScheme = HAS_SCHEME.test(cleaned)
-    ? cleaned
-    : cleaned.startsWith("//") ? `http:${cleaned}` : `http://${cleaned}`;
+  const repaired = HAS_SCHEME.test(cleaned) ? cleaned : cleaned.replace(MANGLED_HTTP, "$1://");
+  const withScheme = HAS_SCHEME.test(repaired)
+    ? repaired
+    : repaired.startsWith("//") ? `http:${repaired}` : `http://${repaired}`;
 
   let url: URL;
   try {

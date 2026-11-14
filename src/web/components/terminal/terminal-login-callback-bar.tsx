@@ -11,44 +11,62 @@
  *
  * It opens two ways: from the status bar's "Login callback" button at any time,
  * and by itself when the terminal prints such a link — unless the page is open
- * on the PPM machine itself, where the redirect simply works.
+ * on a loopback hostname, where the redirect reaches the CLI directly. (A
+ * browser reaching PPM through an SSH `-L` forward also sees `localhost` and
+ * gets no offer; the button still works there.) Closing the offer holds for
+ * the ports it named, for as long as the tab stays mounted.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Terminal } from "@xterm/xterm";
 import { X } from "@/lib/icons";
 import { isLoopbackHostname, loopbackRedirectPorts } from "@/lib/oauth-loopback-url";
 import { TerminalFinishLogin } from "./terminal-finish-login";
 
-/** Output arrives in bursts; scanning the scrollback once it settles is enough. */
-const SCAN_DEBOUNCE_MS = 400;
+/** How often, at most, the scrollback is scanned while output keeps arriving. */
+const SCAN_INTERVAL_MS = 1000;
+/**
+ * How far back a scan looks. A sign-in link is printed just before the CLI
+ * starts waiting, so it sits near the bottom; scanning the whole scrollback
+ * after every write would cost far more and find nothing new.
+ */
+const SCAN_ROWS = 300;
 
-/** The login ports a just-printed sign-in link redirects to, updated as the terminal writes. */
-export function useLoopbackLoginPorts(terminal: Terminal | null, getBufferUrls: () => string[]): string[] {
+/**
+ * The login ports the sign-in links near the bottom of the terminal redirect
+ * to. Scanned once on mount and then at most once a second while the terminal
+ * writes — a throttle rather than a debounce, so output that never pauses
+ * (`tail -f`, a long build) cannot keep a printed link from being noticed.
+ */
+export function useLoopbackLoginPorts(
+  terminal: Terminal | null,
+  getBufferUrls: (maxRows?: number) => string[],
+  enabled = true,
+): string[] {
   const [ports, setPorts] = useState<string[]>([]);
   useEffect(() => {
-    if (!terminal) return;
+    if (!terminal || !enabled) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const scan = () => {
-      const next = loopbackRedirectPorts(getBufferUrls());
+      timer = undefined;
+      const next = loopbackRedirectPorts(getBufferUrls(SCAN_ROWS));
       setPorts((prev) => (prev.join(",") === next.join(",") ? prev : next));
     };
     const sub = terminal.onWriteParsed(() => {
-      clearTimeout(timer);
-      timer = setTimeout(scan, SCAN_DEBOUNCE_MS);
+      timer ??= setTimeout(scan, SCAN_INTERVAL_MS);
     });
     scan();
     return () => {
       clearTimeout(timer);
       sub.dispose();
     };
-  }, [terminal, getBufferUrls]);
+  }, [terminal, getBufferUrls, enabled]);
   return ports;
 }
 
 /**
  * Whether to offer the field unasked: a sign-in link is waiting on a loopback
  * port, the user has not closed the offer for those ports, and this page is not
- * open on the PPM machine itself (where the redirect reaches the CLI directly).
+ * open on a loopback hostname (where the redirect reaches the CLI directly).
  */
 export function shouldSuggestFinishLogin(ports: readonly string[], dismissedKey: string | null, pageHostname: string): boolean {
   if (ports.length === 0) return false;
@@ -56,45 +74,55 @@ export function shouldSuggestFinishLogin(ports: readonly string[], dismissedKey:
   return ports.join(",") !== dismissedKey;
 }
 
-interface TerminalLoginCallbackBarProps {
-  terminal: Terminal | null;
-  getBufferUrls: () => string[];
-  /** Opened from the status bar, whatever the terminal printed. */
+export interface LoginCallbackBarState {
+  visible: boolean;
+  /** Opened from the status bar rather than offered by itself. */
   requested: boolean;
-  onRequestedChange: (open: boolean) => void;
-  /** Where this page is open; the PPM machine itself needs no help. */
-  pageHostname?: string;
+  ports: string[];
+  /** The status-bar button: closes the bar when it shows, for whichever reason it shows. */
+  toggle: () => void;
+  close: () => void;
 }
 
-export function TerminalLoginCallbackBar({
-  terminal,
-  getBufferUrls,
-  requested,
-  onRequestedChange,
-  pageHostname = window.location.hostname,
-}: TerminalLoginCallbackBarProps) {
-  const ports = useLoopbackLoginPorts(terminal, getBufferUrls);
+/** Everything the terminal tab needs to drive the bar and its status-bar button. */
+export function useLoginCallbackBar(
+  terminal: Terminal | null,
+  getBufferUrls: (maxRows?: number) => string[],
+  { enabled = true, pageHostname = window.location.hostname }: { enabled?: boolean; pageHostname?: string } = {},
+): LoginCallbackBarState {
+  const ports = useLoopbackLoginPorts(terminal, getBufferUrls, enabled);
+  const [requested, setRequested] = useState(false);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
-  const suggested = shouldSuggestFinishLogin(ports, dismissedKey, pageHostname);
-  if (!requested && !suggested) return null;
+  const suggested = enabled && shouldSuggestFinishLogin(ports, dismissedKey, pageHostname);
+  const visible = enabled && (requested || suggested);
+  const portsKey = ports.join(",");
 
-  const close = () => {
-    setDismissedKey(ports.join(","));
-    onRequestedChange(false);
-  };
+  const close = useCallback(() => {
+    setDismissedKey(portsKey);
+    setRequested(false);
+  }, [portsKey]);
+  const toggle = useCallback(() => {
+    if (visible) close();
+    else setRequested(true);
+  }, [visible, close]);
 
+  return { visible, requested, ports, toggle, close };
+}
+
+export function TerminalLoginCallbackBar({ bar }: { bar: LoginCallbackBarState }) {
+  if (!bar.visible) return null;
   return (
     // Positioned so it paints over the terminal's canvas: until xterm refits to the
     // shorter box, the canvas still has its old height and would cover the bar's top.
     <div role="region" aria-label="Finish a login" className="relative z-10 shrink-0 border-t border-border bg-surface">
       <div className="flex items-start gap-2 px-3 pt-2">
         <p className="flex-1 text-xs font-medium text-foreground">
-          {ports.length > 0
-            ? `This sign-in sends the browser back to port ${ports.join(", ")} on the machine running PPM`
+          {bar.ports.length > 0
+            ? `This sign-in sends the browser back to port ${bar.ports.join(", ")} on the machine running PPM`
             : "Finish a login started in this terminal"}
         </p>
         <button
-          onClick={close}
+          onClick={bar.close}
           aria-label="Close"
           title="Close"
           className="flex size-6 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-surface-elevated hover:text-foreground transition-colors"
@@ -102,7 +130,7 @@ export function TerminalLoginCallbackBar({
           <X className="size-3.5" />
         </button>
       </div>
-      <TerminalFinishLogin compact autoFocus={requested} onDone={close} />
+      <TerminalFinishLogin compact autoFocus={bar.requested} onDone={bar.close} />
     </div>
   );
 }

@@ -35,7 +35,25 @@ export function describeCallbackInput(text: string):
   if (!trimmed) return { kind: "empty" };
   const checked = normalizeLoopbackCallback(trimmed);
   if (!checked.ok) return { kind: "invalid", reason: checked.reason };
-  return { kind: "ready", url: checked.url, rewritten: checked.url !== trimmed };
+  // A trailing "/" the parser adds to a bare host is not worth pointing out.
+  const rewritten = checked.url !== trimmed && checked.url !== `${trimmed}/`;
+  return { kind: "ready", url: checked.url, rewritten };
+}
+
+/**
+ * What to tell the user after the server called the listener. The CLI's own
+ * page answers 200 when it took the code; anything 400 and up means it refused
+ * it (a stale `state`, a code already used) and the login is not finished.
+ */
+export function describeDeliveryResult(result: { status: number; body: string }):
+  | { ok: true }
+  | { ok: false; message: string } {
+  if (result.status < 400) return { ok: true };
+  const detail = result.body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
+  return {
+    ok: false,
+    message: `The waiting command answered ${result.status}${detail ? `: ${detail}` : ""}. Start the login again if it has given up.`,
+  };
 }
 
 export function TerminalFinishLogin({ onDone, compact = false, autoFocus = false }: TerminalFinishLoginProps) {
@@ -49,7 +67,12 @@ export function TerminalFinishLogin({ onDone, compact = false, autoFocus = false
     if (state.kind !== "ready") return;
     setSending(true);
     try {
-      await api.post("/api/loopback/callback", { url: state.url });
+      const result = await api.post<{ status: number; body: string }>("/api/loopback/callback", { url: state.url });
+      const verdict = describeDeliveryResult(result);
+      if (!verdict.ok) {
+        toast.error(verdict.message, { duration: 6000 });
+        return;
+      }
       toast.success("Sent to the waiting command", { duration: 2000 });
       setUrl("");
       onDone();
