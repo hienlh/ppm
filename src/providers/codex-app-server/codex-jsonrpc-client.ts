@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { resolveBunPath } from "../../services/autostart-generator.ts";
 import { redactTruncate } from "./codex-redact.ts";
+import { codexLoginTag, codexStderrLogLine } from "./codex-stderr-log.ts";
 import type { JsonRpcResponse, ServerRequest, JsonRpcNotification } from "./codex-protocol.ts";
 import { AI_CHAT_MARK } from "../../services/ai-chat-env.ts";
 import { ppmInstanceEnv } from "../../services/ppm-instance-env.ts";
@@ -104,13 +105,20 @@ export class CodexJsonRpcClient {
   private purpose: "chat" | "login" | "control" = "control";
   /** The last stderr line logged, for the exit line (redacted). */
   private lastStderr = "";
+  /** The login this app-server runs on, named on each of its stderr lines. */
+  private account = "unknown";
 
   /** Spawn the subprocess. Injectable streams allow unit testing without a real spawn.
    * `codexHome` selects which account's auth the app-server uses (CODEX_HOME); `env` adds
    * variables this one session needs (a design session's MCP token). `purpose` only sets
    * the log level of its start and exit: a chat or a login is lifecycle at INFO, while
-   * the short-lived control spawns (usage sweep, model and skill lists, fork) are DEBUG. */
-  start(opts?: { cwd?: string; codexHome?: string; env?: Record<string, string>; purpose?: "chat" | "login" | "control" }): void {
+   * the short-lived control spawns (usage sweep, model and skill lists, fork) are DEBUG.
+   * `loginHome` names the login on stderr lines when `codexHome` is not the login's own
+   * folder (an Assistant home); `null` there means `~/.codex`. */
+  start(opts?: {
+    cwd?: string; codexHome?: string; loginHome?: string | null;
+    env?: Record<string, string>; purpose?: "chat" | "login" | "control";
+  }): void {
     const env = { ...buildSpawnEnv(), ...(opts?.env ?? {}) };
     if (opts?.codexHome) env.CODEX_HOME = opts.codexHome;
     const [cmd, ...args] = codexCommand("app-server");
@@ -121,6 +129,7 @@ export class CodexJsonRpcClient {
       windowsHide: true,
     });
     this.purpose = opts?.purpose ?? "control";
+    this.account = codexLoginTag(opts?.loginHome !== undefined ? opts.loginHome ?? undefined : opts?.codexHome);
     // So the Task Manager's kill route can tell an AI chat to use chat_stop instead of ending this.
     this.proc.once("close", registerChatProviderPid(this.proc.pid, "codex"));
     // CODEX_HOME is <ppm dir>/codex-accounts/<account id>, so its name is the account id.
@@ -144,16 +153,13 @@ export class CodexJsonRpcClient {
   attach(stdout: NodeJS.ReadableStream, stderr?: NodeJS.ReadableStream | null): void {
     stdout.on("data", (chunk: Buffer) => this.onStdout(chunk));
     stderr?.on("data", (chunk: Buffer) => {
-      // codex's stderr is Rust tracing ("<time> ERROR codex_x::y: …", ANSI-coloured), so its
-      // own level decides ours: a failed cache write is not a PPM ERROR. An untagged line is
-      // `bun x` resolving the package unless it reads like a failure.
+      // ANSI-coloured Rust tracing; `codexStderrLogLine` picks the level, names the login
+      // and folds repeats.
       for (const line of chunk.toString().replace(/\x1b\[[0-9;]*m/g, "").split("\n")) {
-        const s = line.trim();
-        if (!s || /warning|trace-warnings|circular dependency/i.test(s)) continue;
-        const tag = /^(?:\S+\s+)?(ERROR|WARN|INFO|DEBUG|TRACE)\b/.exec(s)?.[1];
-        const loud = tag ? tag === "ERROR" || tag === "WARN" : /error|panic|fatal|fail/i.test(s);
-        this.lastStderr = redactTruncate(s, 200);
-        (loud ? log.warn : log.debug)(`stderr: ${this.lastStderr}`);
+        const out = codexStderrLogLine(this.account, line, Date.now(), this.purpose === "control");
+        if (!out) continue;
+        this.lastStderr = out.text;
+        log[out.level](out.message);
       }
     });
   }

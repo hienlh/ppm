@@ -17,6 +17,8 @@ import { withSharedContext } from "../../shared/provider-context.ts";
 import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount, getSessionCodexAccount, getSessionTitles, insertTurnUsage } from "../../services/db.service.ts";
 import {
   resolveCodexAccountForSession,
+  codexLoginForListing,
+  type CodexListingLogin,
   getCodexAccount,
   listCodexAccounts,
   peekCodexAccount,
@@ -927,7 +929,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
     const codexHome = live.assistant ? assistantSpawnHome(account.home) : account.home;
-    client.start({ cwd: live.cwd, codexHome, env: { ...liveMcpEnv(live), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
+    client.start({ cwd: live.cwd, codexHome, loginHome: account.home, env: { ...liveMcpEnv(live), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
     live.client = client;
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CHAT_INITIALIZE_TIMEOUT_MS);
@@ -1042,7 +1044,7 @@ export class CodexAppServerProvider implements AIProvider {
     // An Assistant app-server runs on a home of its own that shares only the account's login and
     // sessions folder, so the user's AGENTS.md, config.toml and skills stay behind.
     const codexHome = live.assistant ? assistantSpawnHome(account?.home) : account?.home;
-    client.start({ cwd, codexHome, env: { ...liveMcpEnv(live), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
+    client.start({ cwd, codexHome, loginHome: account?.home ?? null, env: { ...liveMcpEnv(live), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
 
     // A cold first start can outlast a control call's bound; failing here would cost the user's turn.
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CHAT_INITIALIZE_TIMEOUT_MS);
@@ -1568,14 +1570,25 @@ export class CodexAppServerProvider implements AIProvider {
   }
 
   private async loadModels(): Promise<ModelOption[]> {
-    const client = new CodexJsonRpcClient();
-    let accountId: string | null = null;
+    // Read on the login a new chat would run on. Without a CODEX_HOME the app-server uses the
+    // machine's own ~/.codex login, which is right only when a chat would too: on a machine
+    // that manages accounts it is usually stale, and its failed refreshes filled the log.
+    let login: CodexListingLogin;
     try {
-      // Without a CODEX_HOME the app-server falls back to the machine's own
-      // ~/.codex login, which may be stale or absent — the model list then comes
-      // from an account PPM does not use, or fails outright on a refresh error.
-      const account = await resolveCodexAccountForSession();
-      accountId = account?.id ?? null;
+      login = await codexLoginForListing();
+    } catch (err) {
+      this.warnListFailure("model/list", "unresolved", err);
+      return this.modelsCache?.models ?? [];
+    }
+    if (login.kind === "none") {
+      // A chat would be refused too, so there is nothing to read the list on. Keep what we had.
+      log.debug(`model/list skipped: ${login.reason}`);
+      return this.modelsCache?.models ?? [];
+    }
+    const account = login.kind === "account" ? login.account : null;
+    const accountId = account ? account.id.slice(0, 8) : "ambient";
+    const client = new CodexJsonRpcClient();
+    try {
       client.start({ cwd: process.cwd(), ...(account ? { codexHome: account.home } : {}) });
       await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
       client.notify("initialized");
@@ -1590,9 +1603,13 @@ export class CodexAppServerProvider implements AIProvider {
       if (models.length > 0) this.modelsCache = { models, expiry: Date.now() + MODELS_CACHE_TTL };
       return models;
     } catch (err) {
-      // The picker shows an empty list either way; this is the only record of why.
-      this.warnListFailure("model/list", accountId ?? "ambient", err);
-      return [];
+      // The picker keeps what it had either way; this is the only record of why.
+      this.warnListFailure("model/list", accountId, err);
+      // A refused login benches the account now rather than at the next usage sweep.
+      if (account && isCodexAuthFailure(codexErrorText(err))) {
+        markCodexAccountAuthFailed(account.id, redactTruncate(codexErrorText(err), 256));
+      }
+      return this.modelsCache?.models ?? [];
     } finally {
       client.close();
     }
