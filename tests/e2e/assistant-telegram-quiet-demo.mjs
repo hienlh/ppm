@@ -92,6 +92,8 @@ try {
     PPM_ASSISTANT_FAKE_TELEGRAM_DEBOUNCE_MS: "300",
     PPM_ASSISTANT_FIXTURE_TG_DELAY_SCALE: "0.05",
     PPM_TELEGRAM_QUIET_MS: String(QUIET_MS),
+    // Manager chats and their cards ("Waiting on you"), as the manager-loop e2e runs them.
+    PPM_ASSISTANT_MANAGER_LOOP: "1",
   };
   delete env.PPM_ALLOW_PROD_DB;
   const started = startChild("bun", ["tests/e2e/fixtures/assistant-server.ts"], { env, log: join(logs, "fixture.log"), ready: /Assistant fixture ready/ });
@@ -131,11 +133,8 @@ try {
   await kit.openLink(desk, link);
   await bell(desk).waitFor({ timeout: 20000 });
   assert.equal(await bell(desk).getAttribute("aria-pressed"), "true");
-  await kit.shot(desk, "01-assistant-window-bell-on");
-  await closeup(desk, bell(desk), "desktop-01b-bell-on-closeup.png");
   await kit.openLink(mobile, link);
   await bell(mobile).waitFor({ timeout: 20000 });
-  await kit.shot(mobile, "01-assistant-head-bell-on");
   pass("the bell shows in the Assistant window on desktop and on the phone, on");
 
   // 2. Typed in PPM: mirrored and answered, without a sound.
@@ -203,6 +202,47 @@ try {
   await until("desktop bell on", async () => (await bell(desk).getAttribute("aria-pressed")) === "true", 15000);
   await kit.shot(desk, "07-bell-on-again");
   pass("the bell turns it back on");
+
+  // 8. A manager chat's cards: a decision while at PPM is silent and waits in "Waiting on you";
+  //    an urgent one rings even while at PPM.
+  const { data: { settings } } = await fx.api("/api/assistant/settings");
+  await fx.api("/api/assistant/settings", { method: "PUT", body: JSON.stringify({ ...settings, timezone: "UTC", digest: { enabled: false, time: "08:00" } }) });
+  const lead = (await fx.post("/api/project/alpha/chat/sessions", { providerId: "claude", title: "Alpha lead" })).data.id;
+  const managerSay = async (label, ops, text) => {
+    await fx.script(label, ops, { match: text, sessionId: lead });
+    await fx.post("/__assistant-test/say", { project: "alpha", sessionId: lead, text, permissionMode: "default" });
+    await until(`${label} ran`, () => fx.turnOf(label), 30000);
+    await until(`${label} done`, async () => {
+      const mine = await fx.recordsOf(label);
+      return mine.every((c) => c.done) ? true : null;
+    }, 30000);
+  };
+  await managerSay("mgr-seed", [], "Keep the alpha release plan");
+  await fx.api("/api/assistant/managers/alpha", { method: "PUT", body: JSON.stringify({ sessionId: lead }) });
+  const DECISION = "Release 0.25.6 to npm tonight?";
+  const URGENT = "Staging is down after the deploy";
+  sends = await step(tg, "8. A manager chat's cards while at PPM: a decision is silent, an urgent card rings", async () => {
+    await managerSay("mgr-decision", [{ session: "report_to_assistant", args: { kind: "needs_decision", title: DECISION, body: "All tests pass; the changelog is written." } }], "Prepare the release");
+    await tg.waitText(OWNER, DECISION);
+    await managerSay("mgr-urgent", [{ session: "report_to_assistant", args: { kind: "urgent", title: URGENT, body: "The health check fails since 14:02." } }], "Watch staging");
+    await tg.waitText(OWNER, URGENT);
+  });
+  assert.ok(sends.find((s) => s.text.includes(DECISION))?.silent, "the decision card is silent while at PPM");
+  assert.equal(sends.find((s) => s.text.includes(URGENT))?.silent, false, "the urgent card rings while at PPM");
+  pass("manager cards while at PPM: the decision is silent, the urgent card rings");
+
+  // The bell beside "Waiting on you", on both devices.
+  const waitingBar = (dev) => dev.page.locator("[data-waiting-cards]:visible").first();
+  await waitingBar(desk).waitFor({ timeout: 30000 });
+  await sleep(600);
+  await kit.shot(desk, "01-assistant-window-bell-on");
+  await closeup(desk, bell(desk), "desktop-01b-bell-on-closeup.png");
+  await mobile.page.reload();
+  await waitingBar(mobile).waitFor({ timeout: 30000 });
+  await bell(mobile).waitFor({ timeout: 20000 });
+  await sleep(600);
+  await kit.shot(mobile, "01-assistant-head-bell-on");
+  pass("the bell sits in the Assistant's titlebar (desktop) and head (phone), with the Waiting on you bar below it");
 
   // Settings → PPM Assistant → Sessions & Telegram, on both devices.
   for (const dev of [desk, mobile]) {
