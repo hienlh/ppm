@@ -140,3 +140,24 @@ export function resetRotateFailureWarning(): void {
 }
 
 let rotateFailureReported = false;
+
+/**
+ * Keep the previous run's console capture before a new run truncates it.
+ *
+ * `ppm start` hands the supervisor `ppm.err.log` through `Start-Process
+ * -RedirectStandardError`, which opens its target with truncate. So the one record of why
+ * the previous supervisor died (a Bun panic, an out-of-memory abort, anything printed
+ * before the logger existed) was wiped by the very start that followed it — after the
+ * 14/11/2026 upgrade outage, only an empty file was left. A non-empty capture is moved to
+ * `<file>.1`, replacing the one before. Never throws.
+ */
+export function keepPreviousCapture(filePath: string): boolean {
+  try {
+    if (statSync(filePath).size === 0) return false;
+    rmSync(`${filePath}.1`, { force: true });
+    renameSync(filePath, `${filePath}.1`);
+    return true;
+  } catch {
+    return false;
+  }
+}

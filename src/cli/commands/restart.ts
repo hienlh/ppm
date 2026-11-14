@@ -194,7 +194,7 @@ export async function restartServer(options: { force?: boolean }) {
 
   const workerPath = resolve(getPpmDir(), ".restart-worker.ts");
   writeFileSync(workerPath, `
-import { readFileSync, writeFileSync, openSync, unlinkSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync, openSync, unlinkSync, appendFileSync, statSync, renameSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { spawnSync } from "node:child_process";
 
@@ -261,6 +261,12 @@ async function main() {
     // Not ppm.log: -RedirectStandardOutput truncates its target, which wiped the
     // log on every restart. The server appends its own formatted lines to ppm.log.
     const logPath = (P.ppmDir + "/ppm.out.log").replace(/\\//g, "\\\\").replace(/\\\\/g, "\\\\\\\\");
+    // Start-Process truncates its target: keep the previous capture as .err.log.1 (see
+    // keepPreviousCapture in log-rotate.ts, which this generated script cannot import).
+    try {
+      const prevErr = P.ppmDir + "/ppm.err.log";
+      if (statSync(prevErr).size > 0) { rmSync(prevErr + ".1", { force: true }); renameSync(prevErr, prevErr + ".1"); }
+    } catch {}
     const errPath = (P.ppmDir + "/ppm.err.log").replace(/\\//g, "\\\\").replace(/\\\\/g, "\\\\\\\\");
     const argStr = serverArgs.map((a: string) => "'" + (a || "_") + "'").join(",");
     const psCmd = "$p = Start-Process -PassThru -WindowStyle Hidden"

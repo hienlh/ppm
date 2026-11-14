@@ -37,7 +37,7 @@ import {
 import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts";
 import { sdNotify, withoutNotifySocket } from "./sd-notify.ts";
 import {
-  killProcessTree, snapshotServerDescendants, reapTrackedDescendants,
+  killProcessTree, killTreeByLineage, snapshotServerDescendants, reapTrackedDescendants,
   findPortListenerPid, isPpmProcess, collectProcessTree, terminateTree,
 } from "./windows-process-tree.ts";
 import { reapZombiePortOrphans } from "./windows-zombie-port-reaper.ts";
@@ -50,6 +50,7 @@ import { readProcessPrivateMB } from "./memory-diagnostics-native.ts";
 import { PLIST_LABEL } from "./autostart-generator.ts";
 import { logPriorityRaise } from "./process-priority.ts";
 import { installSpawnHandleGuard } from "./windows-socket-inheritance.ts";
+import { waitForReplacement } from "./supervisor-self-replace-wait.ts";
 import { readThreadSnapshot, describeThreadSnapshot, type ThreadSnapshot } from "./process-thread-snapshot.ts";
 import { readMachineCpuTimes, machineBusyFraction, type MachineCpuTimes } from "./machine-cpu.ts";
 
@@ -112,6 +113,8 @@ let edgeReplacing: { oldPid: number; privateMB: number | undefined; reason: stri
 // supervisor the authority on what `.server-port` should contain.
 let serverPublishedPort: number | null = null;
 let shuttingDown = false;
+// True while a crashed server waits out its backoff before being respawned.
+let serverBackoffPending = false;
 // Monotonic token for the authoritative tunnel loop. Every EXTERNAL (re)start
 // bumps it; a loop whose captured generation is stale must exit instead of
 // respawning, so restarts never leave two concurrent spawnTunnel loops racing
@@ -295,7 +298,7 @@ async function ensureBindablePort(preferred: number, host: string): Promise<numb
   if (await isPortBindable(preferred, host)) return preferred;
 
   if (process.platform === "win32") {
-    await reapTrackedDescendants((m) => log("INFO", m)).catch(() => {});
+    await reapServerOrphans().catch(() => {});
     const holderPid = findPortListenerPid(preferred);
     if (holderPid > 0) {
       let alive = false;
@@ -482,15 +485,36 @@ function stopTunnelForDisable(): void {
 // still alive, so on Windows we tree-kill immediately rather than waiting
 // for a graceful self-exit (which would let the orphans escape). This
 // mirrors the POSIX process-group kill used on macOS/Linux.
+/**
+ * Processes no server-tree kill may touch: this supervisor, the edge, the tunnel and the
+ * share host. None of them belongs to the server, but each was started by a supervisor
+ * whose PID a server descendant can later reuse (see `startedNoEarlierThan`).
+ */
+function protectedPids(): number[] {
+  const status = readStatus();
+  return [
+    process.pid, edgePid, adoptedTunnelPid, tunnelChild?.pid,
+    status.edgePid, status.tunnelPid, status.shareHostPid, status.shareHostTunnelPid,
+  ].filter((p): p is number => typeof p === "number" && p > 0);
+}
+
+/** Reap the tracked server orphans, never a protected process. */
+function reapServerOrphans(): Promise<number> {
+  return reapTrackedDescendants((m) => log("INFO", m), protectedPids());
+}
+
 function requestServerShutdown(child: Subprocess, timeoutMs: number = 2000): Promise<void> {
   return new Promise<void>((resolve) => {
     const pid = child.pid;
     if (process.platform === "win32") {
-      killProcessTree(pid);
-      // taskkill /T can't reach descendants whose parent chain already broke
-      // (orphans) — reap them from the periodic snapshot so they don't keep
-      // the inherited listening-socket handle open (zombie port).
-      reapTrackedDescendants((m) => log("INFO", m)).finally(() => resolve());
+      // Walked by creation time and sparing the protected processes: `taskkill /T` follows
+      // parent PIDs as they stand, and the server tree reuses PIDs fast enough to reach the
+      // edge or this supervisor through one. The reap then catches orphans whose parent
+      // chain already broke (they would keep the inherited listening socket: zombie port).
+      void killTreeByLineage(pid, protectedPids())
+        .catch(() => killProcessTree(pid))
+        .then(() => reapServerOrphans())
+        .finally(() => resolve());
     } else {
       // Snapshot the tree BEFORE signalling: the Claude SDK grandchildren are
       // not in their own process group, so once the server exits they reparent
@@ -786,7 +810,7 @@ export async function spawnServer(
   // new server can never bind (zombie port) and crash-loops to max_restarts.
   // No-op when nothing is tracked.
   if (process.platform === "win32") {
-    await reapTrackedDescendants((m) => log("INFO", m)).catch(() => {});
+    await reapServerOrphans().catch(() => {});
   }
 
   // The server binds an OS-assigned loopback port (`__serve__ 0 127.0.0.1`) and
@@ -845,6 +869,15 @@ export async function spawnServer(
     return;
   }
 
+  // Stopped on purpose (a stop, or an upgrade that tree-kills it, hence a non-zero code):
+  // not a crash. Treating it as one queued a backoff respawn that `shuttingDown` only
+  // blocked if it was still set when the backoff ended, and a failed upgrade that clears it
+  // sooner, then brings the server back itself, would start two servers.
+  if (shuttingDown) {
+    log("INFO", `Server stopped (exit ${exitCode}, signal ${exitSignal}) — supervisor shutting down or upgrading`);
+    return;
+  }
+
   // Exit code 42 = restart requested (e.g. /restart from Telegram)
   if (exitCode === 42 || (exitCode === 0 && !shuttingDown)) {
     log("INFO", `Server restart requested (code ${exitCode}), respawning immediately`);
@@ -890,9 +923,20 @@ export async function spawnServer(
 
   const delay = backoffDelay(serverRestarts);
   log("ERROR", `Server crashed (exit ${exitCode}, signal ${exitSignal}, up ${Math.round((Date.now() - startedAt) / 1000)}s) — restart #${serverRestarts}/${MAX_RESTARTS}, restarting in ${delay}ms`);
-  await Bun.sleep(delay);
+  serverBackoffPending = true;
+  try { await Bun.sleep(delay); } finally { serverBackoffPending = false; }
 
   if (!shuttingDown) return spawnServer(serverArgs, logFd);
+}
+
+/**
+ * Bring the server back after a failed self-replace, unless one is running or a crash
+ * backoff is about to start one: that backoff began before the upgrade, and once
+ * `shuttingDown` is cleared it respawns the server by itself.
+ */
+function respawnServerAfterFailedUpgrade(serverArgs: string[], logFd: number): void {
+  if (serverChild || serverBackoffPending) return;
+  void spawnServer(serverArgs, logFd);
 }
 
 // ─── Tunnel management ─────────────────────────────────────────────────
@@ -1416,7 +1460,7 @@ function startServerHealthCheck() {
       if (process.platform === "win32") {
         killProcessTree(pid);
         // Reap broken-chain orphans too, or the respawned server can't bind the port
-        await reapTrackedDescendants((m) => log("INFO", m));
+        await reapServerOrphans();
       } else {
         try { serverChild.kill("SIGTERM"); } catch {}
         setTimeout(() => { killProcessTree(pid); }, 1000).unref();
@@ -1820,39 +1864,48 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
       windowsHide: true,
     }));
     const killNewChild = () => { try { if (proc.pid) process.kill(proc.pid); } catch {} };
+    let newChildExit: { code: number | null } | null = null;
+    proc.once("exit", (code) => { newChildExit = { code }; });
     proc.unref();
     try { closeSync(newLogFd); } catch {} // child inherited fd, parent can close
 
-    // Poll status.json for new supervisor PID (up to 30s)
-    const start = Date.now();
-    while (Date.now() - start < SELF_REPLACE_TIMEOUT_MS) {
-      await Bun.sleep(1000);
-      try {
-        const data = JSON.parse(readFileSync(STATUS_FILE(), "utf-8"));
-        if (data.supervisorPid && data.supervisorPid !== currentSupervisorPid) {
-          log("INFO", `New supervisor detected (PID: ${data.supervisorPid}), handing off MainPID to systemd`);
-          await sdNotify(`MAINPID=${data.supervisorPid}`);
-          await Bun.sleep(300);
-          log("INFO", `Old supervisor exiting`);
-          if (heartbeatTimer) clearInterval(heartbeatTimer);
-          if (upgradeCheckTimer) clearInterval(upgradeCheckTimer);
-          if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);
-          if (dbBackupTimer) clearInterval(dbBackupTimer);
-          if (dbBackupDelayTimer) clearTimeout(dbBackupDelayTimer);
-          process.exit(0);
-        }
-      } catch {}
+    // Poll status.json for the new supervisor's PID (up to 30s), giving up at once if it exits.
+    const outcome = await waitForReplacement({
+      oldPid: currentSupervisorPid,
+      readSupervisorPid: () => {
+        try { return JSON.parse(readFileSync(STATUS_FILE(), "utf-8")).supervisorPid as number | undefined; }
+        catch { return undefined; }
+      },
+      exited: () => newChildExit,
+      timeoutMs: SELF_REPLACE_TIMEOUT_MS,
+      sleep: (ms) => Bun.sleep(ms),
+    });
+    if (outcome.kind === "replaced") {
+      log("INFO", `New supervisor detected (PID: ${outcome.pid}), handing off MainPID to systemd`);
+      await sdNotify(`MAINPID=${outcome.pid}`);
+      await Bun.sleep(300);
+      log("INFO", `Old supervisor exiting`);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (upgradeCheckTimer) clearInterval(upgradeCheckTimer);
+      if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);
+      if (dbBackupTimer) clearInterval(dbBackupTimer);
+      if (dbBackupDelayTimer) clearTimeout(dbBackupDelayTimer);
+      process.exit(0);
     }
 
-    // Timeout — new supervisor didn't start, restore old supervisor
-    log("ERROR", "Self-replace timeout: new supervisor did not start");
+    // The new supervisor never took over: this one carries on, and the caller brings the
+    // server (and a dead tunnel) back.
+    const error = outcome.kind === "exited"
+      ? `New supervisor exited (code ${outcome.code}) before taking over`
+      : "New supervisor failed to start within 30s";
+    log("ERROR", `Self-replace failed: ${error} — keeping this supervisor`);
     killNewChild();
     try { unlinkSync(restartingFlag()); } catch {}
     shuttingDown = false;
     notifyStateChange("upgrading", "running", "upgrade_failed");
     setState("running");
-    updateStatus({ state: "running" });
-    return { success: false, error: "New supervisor failed to start within 30s" };
+    updateStatus({ state: "running", supervisorPid: process.pid });
+    return { success: false, error };
   } catch (e) {
     log("ERROR", `Self-replace error: ${e}`);
     try { unlinkSync(restartingFlag()); } catch {}
@@ -2393,7 +2446,7 @@ export async function runSupervisor(opts: {
     const result = await selfReplace();
     if (!result.success) {
       log("ERROR", `Self-replace failed: ${result.error}, restarting children`);
-      spawnServer(serverArgs, logFd);
+      respawnServerAfterFailedUpgrade(serverArgs, logFd);
       // Tunnel was kept alive during selfReplace; only respawn if dead
       if (tunnelSharingEnabled && !tunnelChild && !tunnelUrl) spawnTunnel(_opts.port);
     }
@@ -2526,7 +2579,7 @@ export async function runSupervisor(opts: {
         selfReplace().then((result) => {
           if (!result.success) {
             log("ERROR", `Self-replace failed: ${result.error}, restarting children`);
-            spawnServer(serverArgs, logFd);
+            respawnServerAfterFailedUpgrade(serverArgs, logFd);
             if (tunnelSharingEnabled && !tunnelChild && !tunnelUrl) spawnTunnel(_opts.port);
           }
         });

@@ -1,6 +1,7 @@
 import { isMinimalMode, isMinimalPathDisabled } from "../services/runtime-mode.ts";
 import { Hono } from "hono";
 import { writeFileSync } from "node:fs";
+import { keepPreviousCapture } from "../services/log-rotate.ts";
 import { SERVER_PORT_FILE } from "../services/edge-target-resolver.ts";
 import { configService } from "../services/config.service.ts";
 import { VERSION } from "../version.ts";
@@ -757,6 +758,9 @@ export async function startServer(options: {
       // lines the supervisor and server append. The supervisor's `log()` and the
       // descriptor it hands the server already append everything to ppm.log;
       // this file only catches the supervisor's raw console output.
+      // The new capture truncates the old one: keep it as .err.log.1, the only place a
+      // supervisor that died without a log line (a panic, out of memory) left its reason.
+      keepPreviousCapture(logFile.replace(/\.log$/, ".err.log"));
       const outLog = logFile.replace(/\.log$/, ".out.log").replace(/\\/g, "\\\\");
       const errLog = logFile.replace(/\.log$/, ".err.log").replace(/\\/g, "\\\\");
       const winArgs = isCompiledBin ? superviseArgs : ["run", supervisorScript, ...superviseArgs];
