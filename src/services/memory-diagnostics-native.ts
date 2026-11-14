@@ -31,7 +31,12 @@ const MB = 1024 * 1024;
 type Win32 = {
   K32GetProcessMemoryInfo: (process: bigint, counters: number, size: number) => number;
   GetProcessHandleCount: (process: bigint, count: number) => number;
+  OpenProcess: (access: number, inherit: number, pid: number) => bigint;
+  CloseHandle: (handle: bigint) => number;
 };
+
+/** Enough to read another process's memory counters, and granted for any process of the same user. */
+const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
 /** `(HANDLE)-1`, the pseudo handle for the calling process. A bigint, so it crosses FFI unrounded. */
 const CURRENT_PROCESS = -1n;
@@ -49,6 +54,9 @@ async function loadWin32(): Promise<Win32 | null> {
     win32 = dlopen("kernel32.dll", {
       K32GetProcessMemoryInfo: { args: [FFIType.i64, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
       GetProcessHandleCount: { args: [FFIType.i64, FFIType.ptr], returns: FFIType.i32 },
+      // Handles cross as 64-bit integers so they are never rounded through a double.
+      OpenProcess: { args: [FFIType.u32, FFIType.i32, FFIType.u32], returns: FFIType.i64 },
+      CloseHandle: { args: [FFIType.i64], returns: FFIType.i32 },
     }).symbols as unknown as Win32;
   } catch {
     win32 = null;
@@ -56,23 +64,55 @@ async function loadWin32(): Promise<Win32 | null> {
   return win32;
 }
 
+/** Private bytes and peak working set of one process handle, or `{}` when the call fails. */
+async function readCounters(lib: Win32, handle: bigint): Promise<NativeMemory> {
+  const { ptr } = await import("bun:ffi");
+  const counters = new Uint8Array(COUNTERS_SIZE);
+  const view = new DataView(counters.buffer);
+  view.setUint32(0, COUNTERS_SIZE, true);
+  if (lib.K32GetProcessMemoryInfo(handle, ptr(counters), COUNTERS_SIZE) === 0) return {};
+  return {
+    privateMB: Math.round(Number(view.getBigUint64(OFFSET_PRIVATE_USAGE, true)) / MB),
+    peakRssMB: Math.round(Number(view.getBigUint64(OFFSET_PEAK_WORKING_SET, true)) / MB),
+  };
+}
+
 async function readWindows(): Promise<NativeMemory> {
   const lib = await loadWin32();
   if (!lib) return {};
   const { ptr } = await import("bun:ffi");
-  const out: NativeMemory = {};
-
-  const counters = new Uint8Array(COUNTERS_SIZE);
-  const view = new DataView(counters.buffer);
-  view.setUint32(0, COUNTERS_SIZE, true);
-  if (lib.K32GetProcessMemoryInfo(CURRENT_PROCESS, ptr(counters), COUNTERS_SIZE) !== 0) {
-    out.privateMB = Math.round(Number(view.getBigUint64(OFFSET_PRIVATE_USAGE, true)) / MB);
-    out.peakRssMB = Math.round(Number(view.getBigUint64(OFFSET_PEAK_WORKING_SET, true)) / MB);
-  }
+  const out: NativeMemory = await readCounters(lib, CURRENT_PROCESS);
 
   const handleCount = new Uint32Array(1);
   if (lib.GetProcessHandleCount(CURRENT_PROCESS, ptr(handleCount)) !== 0) out.handles = handleCount[0];
   return out;
+}
+
+/**
+ * Another process's private bytes (commit charge) in MB, read from outside it.
+ *
+ * Windows only, because only Windows reports commit per process; elsewhere, and for a
+ * process that cannot be opened (gone, or another user's), the answer is `undefined`.
+ * Never throws.
+ */
+export async function readProcessPrivateMB(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+): Promise<number | undefined> {
+  if (platform !== "win32" || !Number.isInteger(pid) || pid <= 0) return undefined;
+  try {
+    const lib = await loadWin32();
+    if (!lib) return undefined;
+    const handle = lib.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+    if (!handle) return undefined;
+    try {
+      return (await readCounters(lib, handle)).privateMB;
+    } finally {
+      lib.CloseHandle(handle);
+    }
+  } catch {
+    return undefined;
+  }
 }
 
 /** Parse the `kB` lines of `/proc/self/status` that matter here. Exported for tests. */

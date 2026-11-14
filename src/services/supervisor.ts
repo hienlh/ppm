@@ -45,6 +45,8 @@ import {
   SERVER_PORT_FILE, resolveTargetPort, _resetTargetCache,
 } from "./edge-target-resolver.ts";
 import { EDGE_PRIOR_DEATHS_ENV } from "./edge-forwarder.ts";
+import { EDGE_RECYCLE_EXIT_CODE, edgeOverLimit, edgeRecycleLimitMB } from "./edge-recycle-policy.ts";
+import { readProcessPrivateMB } from "./memory-diagnostics-native.ts";
 import { PLIST_LABEL } from "./autostart-generator.ts";
 import { logPriorityRaise } from "./process-priority.ts";
 import { installSpawnHandleGuard } from "./windows-socket-inheritance.ts";
@@ -92,6 +94,19 @@ let edgeProbeTimer: ReturnType<typeof setInterval> | null = null;
 // every respawn, so without this the same lines repeat every 10s while the public port is dark.
 let edgeDeathStreak = 0;
 const EDGE_DEATHS_BEFORE_ERROR = 3;
+// The edge's private bytes at the supervisor's last reading (Windows only; see
+// edge-recycle-policy.ts). Read on every 10s probe tick (one OpenProcess call), so it is
+// over the limit well before the edge, which needs two over-limit minutes in a row,
+// recycles; it is also the figure the replacement line reports.
+let lastEdgePrivateMB: number | undefined;
+// While the edge is over its limit it may exit to recycle at any moment. An edge this
+// supervisor spawned reports that through its exit event; an adopted one has no handle,
+// so it is polled this often instead of every 10s, which keeps the port's gap short.
+const EDGE_RECYCLE_WATCH_MS = 250;
+let edgeRecycleWatch: ReturnType<typeof setInterval> | null = null;
+// Set just before the old edge goes away, consumed by the next spawnEdge to log one line
+// naming both PIDs.
+let edgeReplacing: { oldPid: number; privateMB: number | undefined; reason: string } | null = null;
 // The loopback port our own server child published. Cleared on every respawn so
 // a stale value never fights the incoming generation. Once set, it makes the
 // supervisor the authority on what `.server-port` should contain.
@@ -541,9 +556,46 @@ async function spawnEdge(publicPort: number, host: string, logFd: number): Promi
     env: { ...withoutNotifySocket(process.env), [STDIO_IS_LOG_ENV]: "1", [EDGE_PRIOR_DEATHS_ENV]: String(edgeDeathStreak) },
   }));
   proc.unref();
+  // A stop that began while this spawn waited for the gate already ran its edge kill, with
+  // no PID to kill: take this edge down now, or it outlives the supervisor on the port.
+  // Not during an upgrade: selfReplace also sets `shuttingDown`, the new supervisor adopts
+  // the edge, and an upgrade that fails resumes with this one rather than with no edge.
+  if (shuttingDown && getState() !== "upgrading") {
+    try { if (proc.pid) process.kill(proc.pid, "SIGKILL"); } catch {}
+    return;
+  }
   edgePid = proc.pid ?? null;
+  lastEdgePrivateMB = undefined;
   updateStatus({ edgePid });
-  log(edgeDeathStreak > 1 ? "DEBUG" : "INFO", `Edge forwarder started on ${host}:${publicPort} (PID: ${edgePid}, detached)`);
+  if (edgeReplacing) {
+    const { oldPid, privateMB, reason } = edgeReplacing;
+    edgeReplacing = null;
+    const mem = privateMB === undefined ? "private unknown" : `${privateMB}MB private`;
+    log("INFO", `Edge forwarder replaced: PID ${oldPid} (${mem}, limit ${edgeRecycleLimitMB()}MB, ${reason}) → PID ${edgePid} on ${host}:${publicPort}`);
+  } else {
+    log(edgeDeathStreak > 1 ? "DEBUG" : "INFO", `Edge forwarder started on ${host}:${publicPort} (PID: ${edgePid}, detached)`);
+  }
+  // A recycling edge has already released the port: start its successor now rather than
+  // at the next probe tick, so the port is dark for a process start, not up to 10s.
+  const spawnedPid = edgePid;
+  proc.once("exit", (code) => {
+    if (code !== EDGE_RECYCLE_EXIT_CODE || edgePid !== spawnedPid || spawnedPid === null) return;
+    if (shuttingDown || getState() === "upgrading") return;
+    replaceRecycledEdge(spawnedPid, publicPort, host, logFd);
+  });
+}
+
+/** The edge exited to recycle (it passed its memory limit): spawn its successor. */
+function replaceRecycledEdge(oldPid: number, publicPort: number, host: string, logFd: number): void {
+  edgePid = null;
+  stopEdgeRecycleWatch();
+  edgeDeathStreak = 0;
+  edgeReplacing = { oldPid, privateMB: lastEdgePrivateMB, reason: "recycled itself at a quiet moment" };
+  void spawnEdge(publicPort, host, logFd).catch((e) => log("ERROR", `Edge respawn after recycle failed: ${e}`));
+}
+
+function stopEdgeRecycleWatch(): void {
+  if (edgeRecycleWatch) { clearInterval(edgeRecycleWatch); edgeRecycleWatch = null; }
 }
 
 /**
@@ -582,7 +634,25 @@ async function adoptEdge(publicPort: number, host: string): Promise<boolean> {
     log("DEBUG", `adoptEdge: cannot identify the listener on ${publicPort}; port is occupied and PID ${pid} is alive — adopting`);
   }
 
+  // Adopting keeps an edge alive across every upgrade, which is how one reached 5.7 GB:
+  // an edge already past its limit is replaced here, at a restart, instead of carried on.
+  // It is killed only when netstat names it as the public port's listener. `isPpmProcess` is
+  // not proof — on Windows it matches any command line containing "ppm", an editor or a test
+  // run included — so an edge whose listener cannot be confirmed is adopted as before, and
+  // recycles itself at its next quiet moment instead.
+  const limitMB = edgeRecycleLimitMB();
+  const privateMB = limitMB === null ? undefined : await readProcessPrivateMB(pid);
+  if (edgeOverLimit(privateMB, limitMB) && listener === pid) {
+    log("WARN", `adoptEdge: edge PID ${pid} holds ${privateMB}MB private (limit ${limitMB}MB) — replacing it instead of adopting`);
+    try { process.kill(pid, "SIGKILL"); } catch {}
+    edgeReplacing = { oldPid: pid, privateMB, reason: "over its limit at adoption" };
+    // The port is free once the process is gone; ensureBindablePort waits out the rest.
+    for (let i = 0; i < 20 && !(await isPortBindable(publicPort, host)); i++) await Bun.sleep(100);
+    return false;
+  }
+
   edgePid = pid;
+  lastEdgePrivateMB = privateMB;
   log("INFO", `Adopted existing edge forwarder (PID: ${pid}, port: ${publicPort})`);
   return true;
 }
@@ -592,22 +662,63 @@ function startEdgeProbe(publicPort: number, host: string, logFd: number) {
   if (edgeProbeTimer) return;
   edgeProbeTimer = setInterval(() => {
     if (shuttingDown || getState() === "upgrading" || !edgePid) return;
-    try {
-      process.kill(edgePid, 0);
-      if (edgeDeathStreak >= EDGE_DEATHS_BEFORE_ERROR) {
-        log("INFO", `Edge forwarder up again (PID: ${edgePid}) after ${edgeDeathStreak} deaths in a row`);
-      }
-      edgeDeathStreak = 0;
-    } catch {
-      edgeDeathStreak++;
-      if (edgeDeathStreak === 1) log("WARN", `Edge forwarder (PID: ${edgePid}) died — respawning`);
-      else if (edgeDeathStreak === EDGE_DEATHS_BEFORE_ERROR) log("ERROR", `Edge forwarder died ${edgeDeathStreak} times in a row — public port ${publicPort} is dark`);
-      else log("DEBUG", `Edge forwarder (PID: ${edgePid}) died again (#${edgeDeathStreak} in a row) — respawning`);
-      edgePid = null;
-      void spawnEdge(publicPort, host, logFd).catch((e) =>
-        log("ERROR", `Edge respawn failed: ${e}`));
+    if (!checkEdgeAlive(publicPort, host, logFd)) return;
+    if (edgeDeathStreak >= EDGE_DEATHS_BEFORE_ERROR) {
+      log("INFO", `Edge forwarder up again (PID: ${edgePid}) after ${edgeDeathStreak} deaths in a row`);
     }
+    edgeDeathStreak = 0;
+    void readEdgeMemory(publicPort, host, logFd);
   }, EDGE_PROBE_INTERVAL_MS);
+}
+
+/**
+ * Read the edge's private bytes (Windows; a no-op elsewhere). Over the limit, the edge is
+ * expected to recycle itself at its next quiet moment, so it is watched closely until then.
+ */
+async function readEdgeMemory(publicPort: number, host: string, logFd: number): Promise<void> {
+  const limitMB = edgeRecycleLimitMB();
+  const pid = edgePid;
+  if (limitMB === null || pid === null) return;
+  const privateMB = await readProcessPrivateMB(pid);
+  if (edgePid !== pid) return;
+  // No reading, or 0 (Windows' answer for a process that has exited while a handle to it is
+  // still open), most likely means the edge just recycled: keep the over-limit reading, so
+  // the death is handled as the replacement it is rather than as a crash.
+  if (!privateMB) return;
+  lastEdgePrivateMB = privateMB;
+  if (!edgeOverLimit(privateMB, limitMB)) { stopEdgeRecycleWatch(); return; }
+  if (edgeRecycleWatch) return;
+  edgeRecycleWatch = setInterval(() => {
+    if (shuttingDown || getState() === "upgrading" || edgePid !== pid) { stopEdgeRecycleWatch(); return; }
+    checkEdgeAlive(publicPort, host, logFd);
+  }, EDGE_RECYCLE_WATCH_MS);
+}
+
+/**
+ * True when the edge is alive. A dead edge is respawned here: as a replacement when its
+ * last reading was over the limit (it recycled itself and has no exit handle to say so),
+ * otherwise as a death.
+ */
+function checkEdgeAlive(publicPort: number, host: string, logFd: number): boolean {
+  if (!edgePid) return false;
+  try {
+    process.kill(edgePid, 0);
+    return true;
+  } catch {
+    if (edgeOverLimit(lastEdgePrivateMB, edgeRecycleLimitMB())) {
+      replaceRecycledEdge(edgePid, publicPort, host, logFd);
+      return false;
+    }
+    stopEdgeRecycleWatch();
+    edgeDeathStreak++;
+    if (edgeDeathStreak === 1) log("WARN", `Edge forwarder (PID: ${edgePid}) died — respawning`);
+    else if (edgeDeathStreak === EDGE_DEATHS_BEFORE_ERROR) log("ERROR", `Edge forwarder died ${edgeDeathStreak} times in a row — public port ${publicPort} is dark`);
+    else log("DEBUG", `Edge forwarder (PID: ${edgePid}) died again (#${edgeDeathStreak} in a row) — respawning`);
+    edgePid = null;
+    void spawnEdge(publicPort, host, logFd).catch((e) =>
+      log("ERROR", `Edge respawn failed: ${e}`));
+    return false;
+  }
 }
 
 /**
@@ -2047,6 +2158,7 @@ export function shutdown() {
   // exit would leave it holding the public port. The self-replace upgrade path
   // exits without calling shutdown(), which is exactly why the edge survives
   // an upgrade but not a stop.
+  stopEdgeRecycleWatch();
   if (edgePid) {
     log("INFO", `Killing edge forwarder (PID: ${edgePid})`);
     try { process.kill(edgePid, "SIGKILL"); } catch {}
