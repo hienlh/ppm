@@ -115,6 +115,16 @@ describe("edge recycle", () => {
     await closed;
   });
 
+  it("needs two over-limit readings in a row, so the supervisor has seen it over the limit first", async () => {
+    // One reading over, one under (the streak resets), then two over: recycles on the 4th.
+    const readings = [2000, 1000, 2000, 2000, 2000];
+    let calls = 0;
+    const { recycled } = await startRecycling(async () => readings[Math.min(calls++, readings.length - 1)]);
+    for (let i = 0; i < 50 && recycled.length === 0; i++) await sleep(20);
+    expect(recycled.length).toBe(1);
+    expect(calls).toBe(4);
+  });
+
   it("recycles only once, however long the process takes to exit", async () => {
     const { recycled } = await startRecycling(async () => 2000);
     await sleep(300);

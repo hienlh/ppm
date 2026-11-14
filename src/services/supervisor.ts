@@ -95,10 +95,10 @@ let edgeProbeTimer: ReturnType<typeof setInterval> | null = null;
 let edgeDeathStreak = 0;
 const EDGE_DEATHS_BEFORE_ERROR = 3;
 // The edge's private bytes at the supervisor's last reading (Windows only; see
-// edge-recycle-policy.ts). Read once a minute, and the figure the replacement line reports.
+// edge-recycle-policy.ts). Read on every 10s probe tick (one OpenProcess call), so it is
+// over the limit well before the edge, which needs two over-limit minutes in a row,
+// recycles; it is also the figure the replacement line reports.
 let lastEdgePrivateMB: number | undefined;
-let edgeProbeTicks = 0;
-const EDGE_MEMORY_EVERY_TICKS = 6;          // one reading a minute @ the 10s edge probe
 // While the edge is over its limit it may exit to recycle at any moment. An edge this
 // supervisor spawned reports that through its exit event; an adopted one has no handle,
 // so it is polled this often instead of every 10s, which keeps the port's gap short.
@@ -556,6 +556,12 @@ async function spawnEdge(publicPort: number, host: string, logFd: number): Promi
     env: { ...withoutNotifySocket(process.env), [STDIO_IS_LOG_ENV]: "1", [EDGE_PRIOR_DEATHS_ENV]: String(edgeDeathStreak) },
   }));
   proc.unref();
+  // A stop that began while this spawn waited for the gate already ran its edge kill, with
+  // no PID to kill: take this edge down now, or it outlives the supervisor on the port.
+  if (shuttingDown) {
+    try { if (proc.pid) process.kill(proc.pid, "SIGKILL"); } catch {}
+    return;
+  }
   edgePid = proc.pid ?? null;
   lastEdgePrivateMB = undefined;
   updateStatus({ edgePid });
@@ -628,11 +634,13 @@ async function adoptEdge(publicPort: number, host: string): Promise<boolean> {
 
   // Adopting keeps an edge alive across every upgrade, which is how one reached 5.7 GB:
   // an edge already past its limit is replaced here, at a restart, instead of carried on.
-  // Only an edge identified as ours is killed (the port listener, or a PPM process), so a
-  // recycled PID can never take an unrelated process down with it.
+  // It is killed only when netstat names it as the public port's listener. `isPpmProcess` is
+  // not proof — on Windows it matches any command line containing "ppm", an editor or a test
+  // run included — so an edge whose listener cannot be confirmed is adopted as before, and
+  // recycles itself at its next quiet moment instead.
   const limitMB = edgeRecycleLimitMB();
   const privateMB = limitMB === null ? undefined : await readProcessPrivateMB(pid);
-  if (edgeOverLimit(privateMB, limitMB) && (listener === pid || isPpmProcess(pid))) {
+  if (edgeOverLimit(privateMB, limitMB) && listener === pid) {
     log("WARN", `adoptEdge: edge PID ${pid} holds ${privateMB}MB private (limit ${limitMB}MB) — replacing it instead of adopting`);
     try { process.kill(pid, "SIGKILL"); } catch {}
     edgeReplacing = { oldPid: pid, privateMB, reason: "over its limit at adoption" };
@@ -657,7 +665,7 @@ function startEdgeProbe(publicPort: number, host: string, logFd: number) {
       log("INFO", `Edge forwarder up again (PID: ${edgePid}) after ${edgeDeathStreak} deaths in a row`);
     }
     edgeDeathStreak = 0;
-    if (++edgeProbeTicks % EDGE_MEMORY_EVERY_TICKS === 0) void readEdgeMemory(publicPort, host, logFd);
+    void readEdgeMemory(publicPort, host, logFd);
   }, EDGE_PROBE_INTERVAL_MS);
 }
 
@@ -671,6 +679,10 @@ async function readEdgeMemory(publicPort: number, host: string, logFd: number): 
   if (limitMB === null || pid === null) return;
   const privateMB = await readProcessPrivateMB(pid);
   if (edgePid !== pid) return;
+  // No reading, or 0 (Windows' answer for a process that has exited while a handle to it is
+  // still open), most likely means the edge just recycled: keep the over-limit reading, so
+  // the death is handled as the replacement it is rather than as a crash.
+  if (!privateMB) return;
   lastEdgePrivateMB = privateMB;
   if (!edgeOverLimit(privateMB, limitMB)) { stopEdgeRecycleWatch(); return; }
   if (edgeRecycleWatch) return;

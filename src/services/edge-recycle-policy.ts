@@ -25,6 +25,13 @@ export const DEFAULT_EDGE_RECYCLE_MB = 1536;
 export const EDGE_RECYCLE_QUIET_CONNECTIONS = 2;
 /** How often the edge reads its own private bytes. */
 export const EDGE_RECYCLE_CHECK_MS = 60_000;
+/**
+ * Over-limit readings in a row before the edge recycles. The supervisor reads the edge every
+ * 10s; requiring a second minute over the limit means it has seen the edge over it several
+ * times before the edge exits, so it treats the exit as a replacement (starting the
+ * successor from a 250 ms watch) rather than as a crash found at the next 10s probe.
+ */
+export const EDGE_RECYCLE_CONFIRM_READINGS = 2;
 /** The edge exits with this code after releasing the port, so the supervisor replaces it at once. */
 export const EDGE_RECYCLE_EXIT_CODE = 75;
 

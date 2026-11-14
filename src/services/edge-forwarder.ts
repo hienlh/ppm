@@ -25,8 +25,10 @@ import { registerMemoryGauge, startMemoryDiagnostics } from "./memory-diagnostic
 import { readNativeMemory } from "./memory-diagnostics-native.ts";
 import {
   EDGE_RECYCLE_CHECK_MS,
+  EDGE_RECYCLE_CONFIRM_READINGS,
   EDGE_RECYCLE_EXIT_CODE,
   EDGE_RECYCLE_QUIET_CONNECTIONS,
+  edgeOverLimit,
   edgeRecycleLimitMB,
   shouldRecycleEdge,
 } from "./edge-recycle-policy.ts";
@@ -211,6 +213,8 @@ export interface EdgeRecycleOptions {
   onRecycle: (info: EdgeRecycleInfo) => void;
   checkIntervalMs?: number;
   quietConnections?: number;
+  /** Over-limit readings in a row before recycling. */
+  confirmReadings?: number;
 }
 
 export interface EdgeForwarderOptions {
@@ -230,10 +234,14 @@ export interface EdgeForwarderOptions {
  */
 function watchForRecycle(server: net.Server, clients: Set<net.Socket>, opts: EdgeRecycleOptions): void {
   let recycling = false;
+  let overStreak = 0;
+  const confirm = opts.confirmReadings ?? EDGE_RECYCLE_CONFIRM_READINGS;
   const timer = setInterval(async () => {
     if (recycling) return;
     const privateMB = await opts.readPrivateMB();
-    if (recycling || !shouldRecycleEdge(privateMB, clients.size, opts.limitMB, opts.quietConnections)) return;
+    if (recycling) return;
+    overStreak = edgeOverLimit(privateMB, opts.limitMB) ? overStreak + 1 : 0;
+    if (overStreak < confirm || !shouldRecycleEdge(privateMB, clients.size, opts.limitMB, opts.quietConnections)) return;
     recycling = true;
     clearInterval(timer);
     const info: EdgeRecycleInfo = { privateMB: privateMB!, limitMB: opts.limitMB, openConnections: clients.size };
