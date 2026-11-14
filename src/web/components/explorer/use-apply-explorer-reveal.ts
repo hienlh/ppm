@@ -37,8 +37,10 @@ export function useApplyExplorerReveal(projectName: string | undefined): void {
           store.setFocusedPath(null);
           await new Promise((r) => setTimeout(r, 0));
           if (cancelled) {
-            // Give the row its focus back unless something else took focus meanwhile.
-            if (useFileStore.getState().focusedPath == null) useFileStore.getState().setFocusedPath(path);
+            // Give the row its focus back unless something else took focus meanwhile, or the tree
+            // now shows another project (a switch resets it) where this row does not exist.
+            const now = useFileStore.getState();
+            if (now.focusedPath == null && treeHasPath(now.tree, path)) now.setFocusedPath(path);
             return;
           }
         }
