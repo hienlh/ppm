@@ -9,7 +9,7 @@
  * picked up or dropped at once; the send lane checks the connection again before each call.
  */
 import { chatLifecycle, type ChatLifecycleEvents } from "../chat-control/chat-lifecycle.ts";
-import type { ChatMessageOrigin } from "../chat-control/chat-control.ts";
+import { chatControl, type ChatMessageOrigin } from "../chat-control/chat-control.ts";
 import { telegramChatsBoundTo } from "../assistant-hub/assistant-hub-db.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
 import { redactForTelegram } from "../telegram/telegram-html-format.ts";
@@ -56,8 +56,9 @@ export interface MirrorDeps {
  *   still at PPM when it is written (gone for five minutes, the answer buzzes);
  * - started by PPM (a watch, another session, an extension): while the user is at PPM.
  */
-export function turnSilence(origin: ChatMessageOrigin, silence: TelegramSilence | undefined): ((phase: "draft" | "final") => boolean) | undefined {
+export function turnSilence(origin: ChatMessageOrigin | undefined, silence: TelegramSilence | undefined): ((phase: "draft" | "final") => boolean) | undefined {
   if (!silence || origin === "telegram") return undefined;
+  // Who started it is not known: silent only while the user is at PPM, never on a guess.
   if (origin === "ws") return (phase) => (phase === "draft" ? silence.enabled() : silence.inPpm());
   return () => silence.inPpm();
 }
@@ -131,12 +132,16 @@ export class AssistantTelegramMirror {
     return chats;
   }
 
-  private renderer(sessionId: string, chatId: string, origin: ChatMessageOrigin): TurnRenderer {
+  /**
+   * `silenceOrigin` is who started the turn as far as silence goes; it differs from `origin` only
+   * for a turn met mid-stream whose starter is unknown (see `onStream`).
+   */
+  private renderer(sessionId: string, chatId: string, origin: ChatMessageOrigin, silenceOrigin: ChatMessageOrigin | undefined = origin): TurnRenderer {
     let byChat = this.turns.get(sessionId);
     if (!byChat) this.turns.set(sessionId, byChat = new Map());
     let r = byChat.get(chatId);
     if (!r || r.isFinished) {
-      const silent = turnSilence(origin, this.deps.silence);
+      const silent = turnSilence(silenceOrigin, this.deps.silence);
       r = new TurnRenderer({
         queue: this.deps.queue, state: this.deps.state, chatId, origin,
         showToolCalls: this.deps.showToolCalls,
@@ -185,8 +190,11 @@ export class AssistantTelegramMirror {
       return;
     }
     if (ev.type === "text" && typeof ev.content === "string") {
-      // A chat bound while a turn was already running joins it from here.
-      for (const chatId of this.chatsFor(p.sessionId)) this.renderer(p.sessionId, chatId, "ws").text(ev.content);
+      // A chat bound while a turn was already running joins it from here, and so does a turn that
+      // began without a message of its own (one queued behind the last, a Codex message that had
+      // to wait): who started it is asked of the live session, never assumed to be PPM.
+      const started = this.liveOrigin(p.sessionId);
+      for (const chatId of this.chatsFor(p.sessionId)) this.renderer(p.sessionId, chatId, started ?? "ws", started).text(ev.content);
     } else if (ev.type === "tool_use" && typeof ev.tool === "string") {
       const live = this.live(p.sessionId);
       for (const r of live) r.tool(ev.tool);
@@ -197,6 +205,14 @@ export class AssistantTelegramMirror {
     }
     // An error is not echoed here: the one that ends a turn closes the answer (`turnFooter`),
     // and repeating it would say it twice.
+  }
+
+  private liveOrigin(sessionId: string): ChatMessageOrigin | undefined {
+    try {
+      return chatControl()?.liveState(sessionId)?.turnOrigin;
+    } catch {
+      return undefined;
+    }
   }
 
   private live(sessionId: string): TurnRenderer[] {

@@ -138,7 +138,7 @@ async function showStatus(ctx: CommandContext, deps?: StatusDeps): Promise<void>
   const status = await buildStatus(deps);
   ctx.reply(status.html);
   // After the list: each card names its chat, and the list said which chat waits on what.
-  for (const card of status.cards) ctx.relayCard(card);
+  for (const card of status.cards) ctx.relayCard({ ...card, askedOnPhone: true });
 }
 
 /** What "quiet while at PPM" is, said the same way by `/quiet` and its button. */

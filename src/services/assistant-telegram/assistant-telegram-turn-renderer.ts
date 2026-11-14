@@ -71,6 +71,8 @@ export class TurnRenderer {
   private finished = false;
   /** Whether the final answer goes out silently; decided when it is first written. */
   private finalSilent: boolean | null = null;
+  /** A draft page went out without a sound: a final answer that must ring cannot be an edit of it. */
+  private silentDraft = false;
   private attempts = 0;
   private readonly now: () => number;
   private readonly startedAt: number;
@@ -162,8 +164,10 @@ export class TurnRenderer {
         if (!res.ok) return outcomeOf(res, this.attempts);
         this.shown[i] = html;
       } else {
-        const sent = await this.sendNew(client, html, "render", this.isSilent("draft"));
+        const silent = this.isSilent("draft");
+        const sent = await this.sendNew(client, html, "render", silent);
         if (sent.kind !== "done") return sent;
+        if (silent) this.silentDraft = true;
       }
     }
     return { kind: "done" };
@@ -182,7 +186,9 @@ export class TurnRenderer {
     const pages = this.pages(true);
     // Decided at the first attempt, so a retried final answer does not change its mind.
     const quiet = this.finalSilent ??= this.isSilent("final");
-    const asNew = !quiet && (this.deps.origin === "watch" || this.now() - this.startedAt > LONG_TURN_MS);
+    // A final answer that must ring after a silent draft is a new message however short the turn:
+    // Telegram never notifies about an edit.
+    const asNew = !quiet && (this.silentDraft || this.deps.origin === "watch" || this.now() - this.startedAt > LONG_TURN_MS);
     const inPlace = Math.min(pages.length, asNew ? Math.max(0, this.ids.length - 1) : this.ids.length);
     for (let i = 0; i < inPlace; i++) {
       if (this.shown[i] === pages[i]) continue;

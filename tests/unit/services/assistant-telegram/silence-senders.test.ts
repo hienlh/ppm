@@ -9,6 +9,8 @@ import { clientFor, connectChat, freshChat, queueFor, useFakeTelegram } from "./
 import { AssistantTelegramManagerCards } from "../../../../src/services/assistant-telegram/assistant-telegram-manager-cards.ts";
 import { AssistantTelegramDbNotices } from "../../../../src/services/assistant-telegram/assistant-telegram-db-notices.ts";
 import { AssistantTelegramRelay } from "../../../../src/services/assistant-telegram/assistant-telegram-relay.ts";
+import { AssistantTelegramCards } from "../../../../src/services/assistant-telegram/assistant-telegram-cards.ts";
+import { BridgeStateStore } from "../../../../src/services/assistant-telegram/assistant-telegram-state.ts";
 import { ButtonCodes } from "../../../../src/services/assistant-telegram/assistant-telegram-button-codes.ts";
 import { CardReminders, REMINDER_HTML, TelegramSilence } from "../../../../src/services/assistant-telegram/assistant-telegram-silence.ts";
 import type { BridgeAction } from "../../../../src/services/assistant-telegram/assistant-telegram-actions.ts";
@@ -182,6 +184,33 @@ describe("a chat's database approval notice", () => {
     w.advance(5 * MIN);
     await w.queue.whenIdle();
     expect(fake.sent(Number(away))).toHaveLength(1);
+  });
+});
+
+describe("a card the user asked for with /status", () => {
+  it("rings and gets no reminder even while the user is at PPM, unlike the same card sent unasked", async () => {
+    const w = world({ atPpm: true });
+    const cards = new AssistantTelegramCards({
+      queue: w.queue, state: new BridgeStateStore({ offset: 0, chats: {} }), codes: new ButtonCodes<BridgeAction>(), now: Date.now,
+      sessionLink: async () => "http://localhost:8080/assistant", chatLink: async () => "http://localhost:8080/x",
+      silence: w.silence, reminders: w.reminders,
+    });
+    const relayed = (requestId: string, askedOnPhone: boolean) => ({
+      targetSessionId: "t", targetProject: "api", targetProvider: "claude", targetTitle: "Deploy",
+      card: { requestId, tool: "Bash", input: { command: "make deploy" }, isQuestion: false }, ...(askedOnPhone ? { askedOnPhone } : {}),
+    });
+    const asked = connectChat(freshChat());
+    const unasked = connectChat(freshChat());
+    cards.relayed(asked, relayed("r-asked", true));
+    cards.relayed(unasked, relayed("r-unasked", false));
+    await fake.waitFor(() => fake.sent(Number(asked)).length === 1 && fake.sent(Number(unasked)).length === 1);
+    await w.queue.whenIdle();
+    expect(fake.sent(Number(asked))[0]!.silent).toBe(false);
+    expect(fake.sent(Number(unasked))[0]!.silent).toBe(true);
+    w.advance(5 * MIN);
+    await w.queue.whenIdle();
+    expect(fake.sent(Number(asked))).toHaveLength(1);
+    expect(pairs(unasked).at(-1)).toEqual([reminderText, false, fake.sent(Number(unasked))[0]!.message_id]);
   });
 });
 

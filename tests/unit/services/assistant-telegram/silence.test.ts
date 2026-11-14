@@ -10,7 +10,9 @@ import {
   CardReminders, quietWhileInPpm, REMINDER_HTML, setQuietWhileInPpm, TelegramSilence,
 } from "../../../../src/services/assistant-telegram/assistant-telegram-silence.ts";
 import { LONG_TURN_MS, PLACEHOLDER, TurnRenderer } from "../../../../src/services/assistant-telegram/assistant-telegram-turn-renderer.ts";
-import { turnSilence } from "../../../../src/services/assistant-telegram/assistant-telegram-mirror.ts";
+import { AssistantTelegramMirror, turnSilence } from "../../../../src/services/assistant-telegram/assistant-telegram-mirror.ts";
+import { chatLifecycle } from "../../../../src/services/chat-control/chat-lifecycle.ts";
+import { setTelegramBinding } from "../../../../src/services/assistant-hub/assistant-hub-db.ts";
 import { sendMessageTask } from "../../../../src/services/assistant-telegram/assistant-telegram-send-queue.ts";
 import { parseCommand, quietStatusHtml, runCommand } from "../../../../src/services/assistant-telegram/assistant-telegram-commands.ts";
 import type { AssistantClock } from "../../../../src/services/assistant-wake/assistant-clock.ts";
@@ -160,6 +162,36 @@ describe("a turn told to be silent", () => {
     expect(fake.deleted.findLast((m) => m.chat_id === Number(t.chat))?.silent).toBe(true);
   });
 
+  it("rings a short final answer as a new message when its draft went out silently", async () => {
+    const t = turn((phase) => phase === "draft");
+    t.r.start();
+    await t.queue.whenIdle();
+    t.r.text("Quick answer.");
+    t.r.finish();
+    await t.queue.whenIdle();
+    // An edit of the silent draft would never notify: the answer is a new message, with a sound.
+    expect(fake.sent(Number(t.chat)).map((m) => [m.text, m.silent])).toEqual([["Quick answer.", false]]);
+  });
+
+  it("finishes a watch's turn in place while the user is at PPM, and as a new message with a sound otherwise", async () => {
+    const s = { now: 10 * MIN, lastInput: 10 * MIN as number | null };
+    const silence = silenceAt(s);
+    const here = turn(turnSilence("watch", silence), "watch");
+    here.r.start();
+    here.r.text("Chat X finished.");
+    here.r.finish();
+    await here.queue.whenIdle();
+    expect(fake.sent(Number(here.chat)).map((m) => [m.text, m.silent])).toEqual([["Chat X finished.", true]]);
+    s.lastInput = null;
+    const away = turn(turnSilence("watch", silence), "watch");
+    away.r.start();
+    await away.queue.whenIdle();
+    away.r.text("Chat Y finished.");
+    away.r.finish();
+    await away.queue.whenIdle();
+    expect(fake.sent(Number(away.chat)).map((m) => [m.text, m.silent])).toEqual([["Chat Y finished.", false]]);
+  });
+
   it("is untouched with no silence rule (a turn typed on Telegram)", async () => {
     const t = turn(undefined, "telegram");
     t.r.start();
@@ -171,6 +203,39 @@ describe("a turn told to be silent", () => {
     await t.queue.whenIdle();
     expect(texts(fake, t.chat)).toEqual(["Done."]);
     expect(fake.sent(Number(t.chat))[0]!.silent).toBe(false);
+  });
+});
+
+describe("a turn met mid-stream, with no message of its own", () => {
+  // A turn queued behind another, or a Codex message that had to wait, starts streaming without a
+  // `user_message`: whoever started it is unknown here, so it is never taken for one typed in PPM.
+  async function streamTurn(atPpm: boolean) {
+    const chat = connectChat(freshChat());
+    const sessionId = `mid-${crypto.randomUUID()}`;
+    setTelegramBinding(chat, sessionId, "claude");
+    const queue = queueFor(client);
+    const s = { now: 10 * MIN, lastInput: atPpm ? 10 * MIN : null };
+    const mirror = new AssistantTelegramMirror({
+      queue, state: memoryState(), showToolCalls: () => false, onTurnDelivered: () => {}, silence: silenceAt(s),
+    });
+    mirror.attach();
+    try {
+      chatLifecycle.emit("stream", { sessionId, event: { type: "text", content: "Done in a moment." } });
+      await queue.whenIdle();
+      chatLifecycle.emit("turn_ended", { sessionId, outcome: "done", projectName: "__assistant__", providerId: "claude" });
+      await queue.whenIdle();
+    } finally {
+      mirror.detach();
+    }
+    return fake.sent(Number(chat)).map((m) => [m.text, m.silent]);
+  }
+
+  it("rings while the user is away from PPM", async () => {
+    expect(await streamTurn(false)).toEqual([["Done in a moment.", false]]);
+  });
+
+  it("is silent while the user is at PPM", async () => {
+    expect(await streamTurn(true)).toEqual([["Done in a moment.", true]]);
   });
 });
 

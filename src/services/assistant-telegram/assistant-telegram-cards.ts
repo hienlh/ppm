@@ -53,6 +53,11 @@ export interface RelayedCard {
   /** Called with the message id once the card is on the phone (replies to it are matched by it). */
   onSent?: (messageId: number) => void;
   /**
+   * Shown because the user asked for it on this phone (`/status`): they are holding it, so it goes
+   * out as before — with a sound, and no reminder — whether or not they are also at PPM.
+   */
+  askedOnPhone?: boolean;
+  /**
    * A project's manager chat: its turn is stopped on this card, so the headline says the chat is
    * waiting for the user rather than merely asking — read in a stream of answers, "asks" looked
    * like one more line of the conversation.
@@ -70,6 +75,8 @@ interface CardPresentation {
   link: () => Promise<string>;
   titleOnly?: string;
   onSent?: (messageId: number) => void;
+  /** Never silent: the user asked for it on the phone. */
+  askedOnPhone?: boolean;
 }
 
 /** A chat or project name inside a card's headline: plain (the headline is escaped), redacted, short. */
@@ -130,6 +137,7 @@ export class AssistantTelegramCards implements BridgeCards {
       link: () => this.deps.chatLink(p.targetProject, p.targetProvider, p.targetSessionId),
       ...(p.titleOnly !== undefined ? { titleOnly: p.titleOnly } : {}),
       ...(p.onSent ? { onSent: p.onSent } : {}),
+      ...(p.askedOnPhone ? { askedOnPhone: true } : {}),
     });
   }
 
@@ -224,7 +232,7 @@ export class AssistantTelegramCards implements BridgeCards {
       ...(link.button ? { fallbackHtml: first.html + linkText } : {}),
     }, {
       label: "approval card",
-      silent: () => this.deps.silence?.inPpm() ?? false,
+      silent: () => !how.askedOnPhone && (this.deps.silence?.inPpm() ?? false),
       onSent: (sent, info) => {
         card.messageId = sent.message_id;
         // Every card here waits on a decision: sent silently, it gets one reminder if nobody answers.

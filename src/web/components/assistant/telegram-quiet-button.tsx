@@ -57,7 +57,7 @@ export function TelegramQuietTitleButton({ skin }: { skin: "windows" | "macos" }
   const { visible, on, toggle } = useQuietSwitch();
   if (!visible) return null;
   return (
-    <TitleExtrasButton skin={skin} label={quietButtonLabel(on)} onClick={toggle}>
+    <TitleExtrasButton skin={skin} label={quietButtonLabel(on)} onClick={toggle} pressed={on}>
       <span data-telegram-quiet={on ? "on" : "off"} className="flex">
         {on ? <BellOff className="size-3.5" /> : <Bell className="size-3.5" />}
       </span>

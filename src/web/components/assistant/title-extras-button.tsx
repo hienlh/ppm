@@ -5,13 +5,15 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-export function TitleExtrasButton({ skin, label, onClick, children, wide }: {
+export function TitleExtrasButton({ skin, label, onClick, children, wide, pressed }: {
   skin: "windows" | "macos";
   label: string;
   onClick: () => void;
   children: ReactNode;
   /** Carries a word as well as an icon ("Open in project"). */
   wide?: boolean;
+  /** A toggle: whether it is on, for assistive technology. */
+  pressed?: boolean;
 }) {
   return (
     <button
@@ -19,6 +21,7 @@ export function TitleExtrasButton({ skin, label, onClick, children, wide }: {
       aria-label={label}
       title={label}
       onClick={onClick}
+      {...(pressed !== undefined ? { "aria-pressed": pressed } : {})}
       className={cn(
         "flex items-center justify-center gap-1.5 text-text-2 transition-colors can-hover:hover:bg-surface-elevated can-hover:hover:text-text",
         skin === "windows" ? "self-stretch" : "h-6 rounded",
