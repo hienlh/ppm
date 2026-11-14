@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.25.7] - 2026-11-15
+
+### Added
+
+- **Schedules that send a prompt into an existing chat**, with a time zone, one-shot runs and one catch-up after a restart; set them in Settings → Schedules, with `ppm schedule add --session`, from the chat's ⏰ chip, or let the chat's AI schedule its own prompts (off until you turn it on).
+- **A scheduled run shows in the chat as one line** that opens to its prompt; a schedule starting with `/` runs as that command in Claude chats; you are notified when an AI creates a schedule.
+- **Give the PPM Assistant a name, ways to address you and a personality** in Settings → PPM Assistant; the name shows on its window, cards and Telegram messages.
+
+### Changed
+
+- **Waiting on you opens full screen on a phone**, and a card waiting there is named once in the stream instead of showing its buttons twice.
+- While PPM's schedule tool is on, Claude chats start without CronCreate, CronList and CronDelete, so Claude schedules through PPM; `/loop` still works.
+
+### Fixed
+
+- **The edge forwarder is replaced once Bun's leaked memory takes it past 1.5 GB**, at a quiet moment, instead of growing for days.
+- Stop holds a chat's waiting scheduled prompts until the chat is next idle.
+
 ## [0.25.6] - 2026-11-15
 
 ### Added
