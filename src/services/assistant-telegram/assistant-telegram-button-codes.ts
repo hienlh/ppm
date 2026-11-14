@@ -55,6 +55,18 @@ export class ButtonCodes<T> {
     return found;
   }
 
+  /**
+   * Moves a group's codes to the newest end, so a card still being answered is the last whose
+   * buttons the store evicts when it is full (a step-by-step card makes all its codes up front).
+   */
+  touchGroup(group: string): void {
+    for (const [code, held] of [...this.codes]) {
+      if (held.group !== group) continue;
+      this.codes.delete(code);
+      this.codes.set(code, held);
+    }
+  }
+
   dropGroup(group: string): void {
     for (const [code, held] of this.codes) if (held.group === group) this.codes.delete(code);
   }

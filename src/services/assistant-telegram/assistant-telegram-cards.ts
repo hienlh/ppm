@@ -25,8 +25,8 @@ import type { BridgeCards, BridgeDeps } from "./assistant-telegram.service.ts";
 import { formatApprovalCard, formatQuestionCard, needsPpm, resolutionLine } from "./assistant-telegram-card-format.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
 import {
-  asksStepByStep, buttonLabel, mintWizardCodes, questionListHtml, wizardStepHtml, wizardStepRows, wizardWorstCaseSteps,
-  type Mint, type Selection, type WizardCodes,
+  EARLIER_STEP, applyWizardPress, asksStepByStep, buttonLabel, mintWizardCodes, questionListHtml, wizardStepHtml, wizardStepRows,
+  wizardWorstCaseSteps, type Mint, type Selection, type WizardState,
 } from "./assistant-telegram-question-wizard.ts";
 import { BUTTON_URL_INVALID, EDIT_INTERVAL_MS, outcomeOf, sendMessageTask } from "./assistant-telegram-send-queue.ts";
 import type { TelegramBotClient } from "../telegram/telegram-bot-client.ts";
@@ -37,7 +37,6 @@ const log = createLogger("assistant-telegram");
 /** Room left under Telegram's 4096 for the link line under a card. */
 const CARD_VISIBLE_MAX = 3900;
 const CARD_TITLE_MAX = 80;
-const EARLIER_STEP = "This button is from an earlier step.";
 
 /** A card of a chat other than the Assistant's own, and where that chat lives. */
 export interface RelayedCard {
@@ -90,7 +89,7 @@ interface ShownCard {
   /** Choices picked or ticked on a card asked step by step, sent together by Send. */
   selection: Selection;
   /** A card asked one question at a time: the step it is on (`questions.length` is the summary). */
-  wizard: { step: number; codes: WizardCodes } | null;
+  wizard: WizardState | null;
   /** Its text and buttons as they stand now. */
   view: () => { html: string; rows: InlineKeyboardButton[][] };
   /** Telegram refused the Open in PPM button: the card carries the link in its text instead. */
@@ -163,6 +162,13 @@ export class AssistantTelegramCards implements BridgeCards {
     const mint: Mint = (press) =>
       this.deps.codes.mint(chatId, group, { kind: "card", sessionId: p.sessionId, requestId: p.card.requestId, ...press });
 
+    const inlineLink = link.inline ? `\n\n${link.inline}` : "";
+    const linkRow = link.button ? [[link.button]] : [];
+    // Telegram refusing the link as a button: the link goes in the text instead.
+    const linkText = link.button ? `\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}` : "";
+    /** What the link adds to the text at most, whichever way it ends up shown. */
+    const linkRoom = Math.max(visibleLength(inlineLink), visibleLength(linkText));
+
     let rows: () => InlineKeyboardButton[][] = () => [];
     /** A step-by-step card's current step; anything else shows `card.html` throughout. */
     let stepHtml: (() => string) | null = null;
@@ -179,7 +185,7 @@ export class AssistantTelegramCards implements BridgeCards {
       const tooLong = `❓ <b>${escapeTelegramHtml(headline)}</b>\nThis question is too long to show here — answer it in PPM.`;
       const answerable = questions.length > 0 && !questions.some(needsPpm);
       if (answerable && asksStepByStep(questions)) {
-        if (wizardWorstCaseSteps(questions, headline).some((h) => visibleLength(h) > CARD_VISIBLE_MAX)) {
+        if (wizardWorstCaseSteps(questions, headline).some((h) => visibleLength(h) + linkRoom > CARD_VISIBLE_MAX)) {
           card.html = tooLong;
         } else {
           const codes = mintWizardCodes(questions, mint);
@@ -206,11 +212,7 @@ export class AssistantTelegramCards implements BridgeCards {
       ];
       rows = () => [buttons];
     }
-    const inlineLink = link.inline ? `\n\n${link.inline}` : "";
     card.html += inlineLink;
-    const linkRow = link.button ? [[link.button]] : [];
-    // Telegram refusing the link as a button: the link goes in the text instead.
-    const linkText = link.button ? `\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}` : "";
     card.view = () => {
       const html = stepHtml ? stepHtml() + inlineLink : card.html;
       return card.linkRefused ? { html: html + linkText, rows: rows() } : { html, rows: [...rows(), ...linkRow] };
@@ -228,7 +230,11 @@ export class AssistantTelegramCards implements BridgeCards {
         if (link.button && !sent.reply_markup?.inline_keyboard.flat().some((b) => b.url)) card.linkRefused = true;
         try { how.onSent?.(sent.message_id); } catch (e) { log.warn(`card ${card.requestId}: ${(e as Error).message}`); }
         if (card.done) this.finish(card);
-        else this.deps.state.add(chatId, "cards", sent.message_id);
+        else {
+          this.deps.state.add(chatId, "cards", sent.message_id);
+          // Pressed on before Telegram said the message was there: it still shows the first step.
+          if (card.wizard && (card.wizard.step > 0 || card.selection.size > 0)) this.redraw(card);
+        }
       },
       onDropped: () => { this.cards.delete(key); this.deps.codes.dropGroup(group); },
     }));
@@ -256,7 +262,10 @@ export class AssistantTelegramCards implements BridgeCards {
     }
     if (card.wizard && press.op !== "send" && press.op !== "allow" && press.op !== "deny") return this.step(card, card.wizard, press);
     if (press.op === "toggle" || press.op === "next" || press.op === "back") return "This button is no longer valid.";
-    if (press.op === "send" && card.wizard?.step !== card.questions.length) return EARLIER_STEP;
+    if (press.op === "send" && card.wizard?.step !== card.questions.length) {
+      if (card.wizard) this.redraw(card);
+      return EARLIER_STEP;
+    }
     let answer: { approved: boolean; answersById?: AnswersById };
     if (press.op === "allow" || press.op === "deny") {
       answer = { approved: press.op === "allow" };
@@ -280,42 +289,16 @@ export class AssistantTelegramCards implements BridgeCards {
   }
 
   /**
-   * A press on a step-by-step card that does not answer it: records a choice, moves between
-   * questions, and redraws the message. Only a button of the step on screen counts — one left
-   * over from another step (a double tap while the message was being edited) changes nothing.
+   * A press on a step-by-step card that does not answer it: records a choice or moves between
+   * questions (`applyWizardPress`), then redraws the message — also after a press left over from
+   * another step, which changes nothing but says the message is behind the card.
    */
-  private step(card: ShownCard, wizard: NonNullable<ShownCard["wizard"]>, press: CardPress): string {
-    if (press.op === "back") {
-      if (press.step !== wizard.step || wizard.step === 0) return EARLIER_STEP;
-      wizard.step--;
-      this.redraw(card);
-      return "Back.";
-    }
-    const q = card.questions[wizard.step];
-    if (!q || press.questionId !== q.id) return EARLIER_STEP;
-    const movedOn = () => {
-      wizard.step++;
-      this.redraw(card);
-      return wizard.step < card.questions.length ? "Next question." : "Check your answers, then Send.";
-    };
-    if (press.op === "next") {
-      if (!q.multiSelect) return "This button is no longer valid.";
-      return card.selection.get(q.id)?.length ? movedOn() : "Tick at least one choice first.";
-    }
-    const option = q.options.find((o) => o.label === press.option)?.label;
-    if (option === undefined || (press.op === "pick") === q.multiSelect) return "This button is no longer valid.";
-    if (press.op === "pick") {
-      card.selection.set(q.id, [option]);
-      return movedOn();
-    }
-    const now = card.selection.get(q.id) ?? [];
-    const on = !now.includes(option);
-    // Kept in the order the choices are listed, whatever order they were ticked in.
-    const next = q.options.map((o) => o.label).filter((l) => (l === option ? on : now.includes(l)));
-    if (next.length) card.selection.set(q.id, next);
-    else card.selection.delete(q.id);
-    this.redraw(card);
-    return on ? "Ticked." : "Unticked.";
+  private step(card: ShownCard, wizard: WizardState, press: CardPress): string {
+    // A card in use keeps its buttons longest when the code store is full.
+    this.deps.codes.touchGroup(card.group);
+    const { toast, redraw } = applyWizardPress(card.questions, wizard, card.selection, press);
+    if (redraw) this.redraw(card);
+    return toast;
   }
 
   /**

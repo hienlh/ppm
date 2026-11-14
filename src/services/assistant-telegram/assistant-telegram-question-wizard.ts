@@ -38,8 +38,9 @@ const shortHtml = (raw: string, max: number) => escapeTelegramHtml(truncateText(
 
 /** A button's text: plain, so not escaped, but redacted like everything else sent. */
 export function buttonLabel(raw: string): string {
-  const s = redactForTelegram(raw);
-  return s.length > LABEL_MAX ? `${s.slice(0, LABEL_MAX - 1)}…` : s;
+  // Counted in characters, not UTF-16 units, so a cut never splits an emoji in half.
+  const chars = Array.from(redactForTelegram(raw));
+  return chars.length > LABEL_MAX ? `${chars.slice(0, LABEL_MAX - 1).join("")}…` : chars.join("");
 }
 
 /** One question with one choice is answered with one press; anything else is asked step by step. */
@@ -56,6 +57,59 @@ export interface WizardCodes {
   /** [step]: Back, made for every step after the first (the summary is step `questions.length`). */
   back: (string | null)[];
   send: string;
+}
+
+/** Where a step-by-step card is: its step (`questions.length` is the summary) and its buttons. */
+export interface WizardState {
+  step: number;
+  codes: WizardCodes;
+}
+
+export const EARLIER_STEP = "This button is from an earlier step.";
+const INVALID = "This button is no longer valid.";
+
+/**
+ * A press that does not answer the card: picks or ticks a choice, or moves between questions.
+ * Only a button of the step on screen counts. One left over from another step (a double tap while
+ * the message was being edited, or a message that fell behind) changes nothing, but asks for a
+ * redraw so the message catches up with the card.
+ */
+export function applyWizardPress(
+  questions: readonly NormalizedQuestion[],
+  wizard: WizardState,
+  selection: Selection,
+  press: Pick<CardPress, "op" | "questionId" | "option" | "step">,
+): { toast: string; redraw: boolean } {
+  if (press.op === "back") {
+    if (press.step !== wizard.step || wizard.step === 0) return { toast: EARLIER_STEP, redraw: true };
+    wizard.step--;
+    return { toast: "Back.", redraw: true };
+  }
+  const q = questions[wizard.step];
+  if (!q || press.questionId !== q.id) return { toast: EARLIER_STEP, redraw: true };
+  const movedOn = () => {
+    wizard.step++;
+    return { toast: wizard.step < questions.length ? "Next question." : "Check your answers, then Send.", redraw: true };
+  };
+  if (press.op === "next") {
+    if (!q.multiSelect) return { toast: INVALID, redraw: false };
+    return selection.get(q.id)?.length ? movedOn() : { toast: "Tick at least one choice first.", redraw: false };
+  }
+  const option = q.options.find((o) => o.label === press.option)?.label;
+  if (option === undefined || (press.op !== "pick" && press.op !== "toggle") || (press.op === "pick") === q.multiSelect) {
+    return { toast: INVALID, redraw: false };
+  }
+  if (press.op === "pick") {
+    selection.set(q.id, [option]);
+    return movedOn();
+  }
+  const now = selection.get(q.id) ?? [];
+  const on = !now.includes(option);
+  // Kept in the order the choices are listed, whatever order they were ticked in.
+  const next = q.options.map((o) => o.label).filter((l) => (l === option ? on : now.includes(l)));
+  if (next.length) selection.set(q.id, next);
+  else selection.delete(q.id);
+  return { toast: on ? "Ticked." : "Unticked.", redraw: true };
 }
 
 export function mintWizardCodes(questions: readonly NormalizedQuestion[], mint: Mint): WizardCodes {

@@ -265,6 +265,34 @@ describe("a question card asked one question at a time", () => {
     expect(t.message(id).text).toContain(`Open in PPM: ${link}`);
   });
 
+  it("brings a message that fell behind back to the card's step when a leftover button is pressed", async () => {
+    const t = setup();
+    const { id } = await t.show(THREE);
+    const stepOne = t.buttons(id).find((b) => b.text === "staging")!.callback_data;
+    // The edit to question 2 is refused for good: the message still shows question 1.
+    fake.failNext("editMessageText", { code: 400, description: "Bad Request: message can't be edited" });
+    expect(await t.press(id, "staging")).toBe("Next question.");
+    expect(t.message(id).text).toContain("Question 1/3");
+    // Its buttons are now from an earlier step: pressing one changes nothing but redraws.
+    expect(t.pressData(stepOne)).toBe("This button is from an earlier step.");
+    await t.queue.whenIdle();
+    expect(t.message(id).text).toContain("Question 2/3");
+    expect(t.labels(id)).toEqual([["email"], ["Slack #releases"], ["nobody"], ["« Back", "Next »"]]);
+  });
+
+  it("keeps the buttons of a card being answered when the code store fills up", async () => {
+    const t = setup();
+    const { id } = await t.show(THREE);
+    // Older than the card: an earlier card's codes.
+    for (let i = 0; i < 400; i++) t.codes.mint(t.chat, "older", { kind: "switch", sessionId: `x${i}` });
+    await t.press(id, "staging");
+    // The store is full and evicts oldest first: the card in use is not the oldest any more.
+    for (let i = 0; i < 120; i++) t.codes.mint(t.chat, "newer", { kind: "switch", sessionId: `y${i}` });
+    expect(await t.press(id, "email")).toBe("Ticked.");
+    expect(await t.press(id, "« Back")).toBe("Back.");
+    expect(await t.press(id, "production")).toBe("Next question.");
+  });
+
   it("hides a secret in a choice on every step and in the summary", async () => {
     const t = setup();
     const secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
