@@ -62,6 +62,18 @@ const TURN_ROWS_SQL = `
   ORDER BY seq DESC
   LIMIT 400`;
 
+/**
+ * The trace's first top-level message: what the chat list shows as a chat's title until someone
+ * renames it (the providers title a chat by its first prompt). Read ascending on the primary key,
+ * so it stops at the first match.
+ */
+const FIRST_PROMPT_SQL = `
+  SELECT substr(json_extract(payload_json, '$.text'), 1, 600) AS text
+  FROM session_events
+  WHERE trace_id = ? AND type = 'user_message' AND json_extract(payload_json, '$.parentToolUseId') IS NULL
+  ORDER BY seq ASC
+  LIMIT 1`;
+
 interface TurnRow {
   ts: number;
   type: string;
@@ -81,6 +93,7 @@ export interface InterruptedChatDeps {
   /** The registered project at that path; null when none is. */
   projectNameOf(projectPath: string): string | null;
   providerOf(sessionId: string): string | null;
+  /** The title the chat was given (renamed by the user or the AI); null when it never was. */
   titleOf(sessionId: string): string | null;
   isAssistant(sessionId: string, projectPath: string | null): boolean;
   isDesign(sessionId: string): boolean;
@@ -175,6 +188,14 @@ export function findInterruptedChats(deps: InterruptedChatDeps, window: { since:
   const candidates = db.query(CANDIDATES_SQL).all(since, window.restartAt) as Array<{ trace_id: string; last_ts: number }>;
   const newestQ = db.query(NEWEST_SQL);
   const turnQ = db.query(TURN_ROWS_SQL);
+  const firstPromptQ = db.query(FIRST_PROMPT_SQL);
+  /** A renamed chat's title, else its own first prompt, else the cut-off turn's, else its id. */
+  const titleFor = (traceId: string, sessionId: string, turnPrompt: string | undefined): string => {
+    const renamed = firstLine(deps.titleOf(sessionId), 120);
+    if (renamed) return renamed;
+    const first = (firstPromptQ.get(traceId) as { text: string | null } | null)?.text ?? null;
+    return firstLine(withoutSecrets(first), 120) ?? turnPrompt ?? `Session ${sessionId.slice(0, 8)}`;
+  };
   const found: InterruptedChat[] = [];
   const seen = new Set<string>();
   for (const c of candidates) {
@@ -197,7 +218,7 @@ export function findInterruptedChats(deps: InterruptedChatDeps, window: { since:
       sessionId,
       providerId: deps.providerOf(sessionId) ?? turn.providerId ?? "claude",
       projectName,
-      title: firstLine(deps.titleOf(sessionId), 120) ?? `Session ${sessionId.slice(0, 8)}`,
+      title: titleFor(c.trace_id, sessionId, turn.prompt),
       ...(turn.prompt ? { prompt: turn.prompt } : {}),
       activity: turn.activity,
       lastAt: turn.lastAt,

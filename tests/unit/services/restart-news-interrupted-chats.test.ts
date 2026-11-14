@@ -154,8 +154,15 @@ describe("finding the chats a restart cut off", () => {
     expect(scan.chats).toHaveLength(MAX_INTERRUPTED_LISTED);
     expect(scan.more).toBe(3);
     expect(scan.chats.some((c) => c.sessionId === "web")).toBe(false);
-    // Newest first; a chat with no title is named by its id.
-    expect(scan.chats[0]!.title).toBe(`Session s${MAX_INTERRUPTED_LISTED + 2}`);
+    // Newest first; a chat never renamed goes by its first prompt, as the chat list shows it.
+    expect(scan.chats[0]!.title).toBe(`Task ${MAX_INTERRUPTED_LISTED + 2}`);
+  });
+
+  it("names a chat never renamed by its own first prompt, not the cut-off turn's or its id", () => {
+    trace("s1", PREV_START + 10, [user("Set up CI for the repo"), { type: "text", content: "Done" }, done]);
+    trace("s1", PREV_START + 100, [user("Now fix the flaky test"), tool("Bash")]);
+    const [chat] = findInterruptedChats(deps(), { since: PREV_START, restartAt: RESTART }).chats;
+    expect(chat).toMatchObject({ sessionId: "s1", title: "Set up CI for the repo", prompt: "Now fix the flaky test" });
   });
 });
 
