@@ -239,10 +239,24 @@ export interface SessionStatus {
   updatedAt: string | null;
 }
 
-/** How a `wait: true` call ended. */
+/** What a session is stuck on when it waits for the user: the card on its screen. */
+export interface WaitingCard {
+  kind: "approval" | "question";
+  /** The card's question or what it asks to run, at most {@link WAITING_CARD_TITLE_MAX} characters. */
+  title: string;
+}
+
+export const WAITING_CARD_TITLE_MAX = 160;
+
+/**
+ * How a `wait: true` call ended. A session showing the user a card cannot read the message or
+ * answer until the user does, so the wait ends at once with that card (`card`) rather than
+ * sitting out its timeout; the message is not lost, the session goes on with it once answered.
+ */
 export type SessionWaitOutcome =
   | { replied: true; text: string; turnId?: string; sentAt: string }
-  | { replied: false; reason: "turn_ended_without_reply" | "timeout" | "cancelled" };
+  | { replied: false; reason: "turn_ended_without_reply" | "timeout" | "cancelled" }
+  | { replied: false; reason: "waiting_for_user"; card: WaitingCard };
 
 export interface CreateSessionResult {
   sessionId: string;

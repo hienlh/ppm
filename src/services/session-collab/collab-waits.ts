@@ -1,5 +1,5 @@
 import { resolveMigratedSession } from "../db.service.ts";
-import type { SessionDelivery, SessionWaitOutcome } from "../../shared/session-collab.ts";
+import type { SessionDelivery, SessionWaitOutcome, WaitingCard } from "../../shared/session-collab.ts";
 
 /**
  * Calls made with `wait: true`, each waiting for one other session to answer. A wait holds only
@@ -15,6 +15,14 @@ import type { SessionDelivery, SessionWaitOutcome } from "../../shared/session-c
  * end after that is the one. A message no provider named is judged after a short grace: if the
  * target is idle then, the message was read and nothing more is coming; if a new turn started, the
  * message went into that one and the wait goes on.
+ *
+ * A target that puts a card in front of the user (an approval, a question) can neither read the
+ * message nor answer until the user does, which may be never: the wait ends at once as
+ * `waiting_for_user`, naming the card, so the waiting AI can tell its user what is in the way
+ * instead of sitting out the timeout in silence. A card already showing when the message is
+ * delivered counts too ({@link WaitHandle.attach} is told what the target shows then). A session
+ * tool's card the target raised to message the waiter itself does not: it stands between the wait
+ * and its reply, which, once the user allows it, is the wait's result.
  */
 
 export interface WaitReply {
@@ -38,8 +46,13 @@ export interface BeginWait {
  */
 export interface WaitHandle {
   outcome: Promise<SessionWaitOutcome>;
-  /** The message was delivered under `clientMessageId`; `bound` when its turn is already named. */
-  attach(clientMessageId: string, delivered: SessionDelivery, bound: boolean): void;
+  /**
+   * The message was delivered under `clientMessageId`; `bound` when its turn is already named,
+   * `waitingCard` when the target was showing the user a card as the delivery returned.
+   */
+  attach(clientMessageId: string, delivered: SessionDelivery, bound: boolean, waitingCard: WaitingCard | null): void;
+  /** Whether a turn of the target has taken the message (it was named), as far as is known now. */
+  taken(): boolean;
   /** The message was never delivered: the wait ends without anyone hearing of it. */
   abandon(): void;
 }
@@ -103,7 +116,7 @@ export function createCollabWaits(deps: {
       ok: true,
       wait: {
         outcome,
-        attach: (clientMessageId, _delivered, bound) => {
+        attach: (clientMessageId, _delivered, bound, waitingCard) => {
           wait.clientMessageId = clientMessageId;
           const boundAt = recentlyBound.get(clientMessageId);
           recentlyBound.delete(clientMessageId);
@@ -111,8 +124,13 @@ export function createCollabWaits(deps: {
           // The turn that took the message was named, and ended, before the delivery returned.
           if (boundAt !== undefined && wait.endedBeforeAttach !== null && wait.endedBeforeAttach > boundAt) {
             wait.settle({ replied: false, reason: "turn_ended_without_reply" });
+            return;
           }
+          // A card the target showed during the delivery counts only while it still shows one:
+          // answered meanwhile, the target is free to reply.
+          if (waitingCard) wait.settle({ replied: false, reason: "waiting_for_user", card: waitingCard });
         },
+        taken: () => wait.bound,
         abandon: () => wait.settle({ replied: false, reason: "cancelled" }),
       },
     };
@@ -187,8 +205,24 @@ export function createCollabWaits(deps: {
     }
   }
 
+  /**
+   * `sessionId` put a card in front of the user: every wait on it ends now with that card (see the
+   * header), except the wait of `raisedFor`, the session the card was raised to message. A wait
+   * whose delivery has not returned yet is judged by `attach`, against what the target shows then.
+   */
+  function targetWaitingForUser(sessionId: string, card: WaitingCard, raisedFor: string | null = null): number {
+    let n = 0;
+    for (const w of [...waits]) {
+      if (!same(w.target, sessionId) || w.clientMessageId === null) continue;
+      if (raisedFor !== null && same(w.waiter, raisedFor)) continue;
+      w.settle({ replied: false, reason: "waiting_for_user", card });
+      n++;
+    }
+    return n;
+  }
+
   return {
-    begin, claimReply, cancelWaiter, turnBound, turnEnded,
+    begin, claimReply, cancelWaiter, turnBound, turnEnded, targetWaitingForUser,
     isWaiting: (waiter: string, target: string): boolean => [...waits].some((w) => same(w.waiter, waiter) && same(w.target, target)),
     /** Every session `waiter` is waiting for now. */
     targetsOf: (waiter: string): string[] => [...waits].filter((w) => same(w.waiter, waiter)).map((w) => w.target),

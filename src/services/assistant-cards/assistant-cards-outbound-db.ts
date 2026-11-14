@@ -53,6 +53,17 @@ export function findCardByTelegramRef(chatId: string, messageId: number): CardRo
   return row ? rowFromDb(row) : null;
 }
 
+/**
+ * Open approval and question cards that never reached the phone because nothing could carry them
+ * when they were made (`pending`: the Telegram bridge was not running; `skipped`: it ran with no
+ * chat connected), oldest first. Each is a chat stopped until the user answers.
+ */
+export function listUnsentWaitingCardRows(): CardRow[] {
+  return getDb().query(`SELECT ${CARD_COLUMNS} FROM assistant_cards
+    WHERE outbound IN ('pending', 'skipped') AND status = 'open' AND kind IN ('approval', 'question')
+    ORDER BY created_at, rowid`).all().map(rowFromDb);
+}
+
 /** Cards held for the end of quiet hours, oldest first. */
 export function listHeldCardRows(): CardRow[] {
   return getDb().query(`SELECT ${CARD_COLUMNS} FROM assistant_cards WHERE outbound = 'held' ORDER BY created_at, rowid`).all().map(rowFromDb);

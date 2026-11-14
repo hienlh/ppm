@@ -231,3 +231,39 @@ describe("create_session with manager: true", () => {
     expect(w.created).toHaveLength(0);
   });
 });
+
+describe("send_to_session from the Assistant: a manager waiting on the user", () => {
+  const card = { kind: "question" as const, title: "Which branch first?" };
+
+  /** A delivery that queues behind the manager's running turn, and what the Assistant is told to expect. */
+  function queuedWorld() {
+    const w = world();
+    const deliver = w.env.deliver;
+    w.env.deliver = async (input) => ({ ...(await deliver(input)), delivered: "queued" });
+    const asked: boolean[] = [];
+    Object.assign(w.env, { managerAsked: (_a: string, _m: string, _p: string, queued: boolean) => asked.push(queued) });
+    return { w, asked };
+  }
+
+  it("leaves the turn that takes the message as the answer when the card came before it took the message", async () => {
+    const { w, asked } = queuedWorld();
+    const pending = sendToSessionTool(w.env, w.caller, { session_id: MANAGER, message: "Update the board.", wait: true }, signal());
+    await new Promise((r) => setTimeout(r, 5));
+    w.env.waits.targetWaitingForUser(MANAGER, card);
+    expect(JSON.parse(textOf(await pending)).reply).toEqual({ replied: false, reason: "waiting_for_user", card });
+    // The turn stopped on the card ends first: it is skipped, the next one is the answer.
+    expect(asked).toEqual([true]);
+  });
+
+  it("takes the end of the turn that read the message as the answer when the card is in that turn", async () => {
+    const { w, asked } = queuedWorld();
+    const pending = sendToSessionTool(w.env, w.caller, { session_id: MANAGER, message: "Update the board.", wait: true }, signal());
+    await new Promise((r) => setTimeout(r, 5));
+    w.env.waits.turnBound("session-1");
+    w.env.waits.targetWaitingForUser(MANAGER, card);
+    expect(JSON.parse(textOf(await pending)).reply.reason).toBe("waiting_for_user");
+    expect(asked).toEqual([false]);
+    // The card title is the manager AI's own words: the Assistant's turn is no longer clean.
+    expect(w.marked).toContain(`${ASSISTANT}:read`);
+  });
+});

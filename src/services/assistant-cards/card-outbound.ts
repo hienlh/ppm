@@ -8,6 +8,11 @@
  * request) is skipped rather than sent late. An `urgent` card always goes at once: the report tool
  * already made any urgent card past the per-window cap into a held decision.
  *
+ * A chat's approval or question made while nothing could carry it to the phone (the bridge not
+ * running yet, or running with no chat connected) is not lost: once a chat can be reached it goes
+ * out under one "Still waiting for you" header, if it still waits — the chat it came from is stopped
+ * until someone answers, and nobody may know that otherwise. Other kinds made then stay in PPM.
+ *
  * Only cards are held. The user's own conversation with the Assistant on Telegram is never held,
  * and the wake turns PPM would start are gated by the wake queue itself, so nothing waits mid-stream.
  */
@@ -17,7 +22,7 @@ import { currentQuietWindowEnd } from "../assistant-wake/wake-quiet-hours.ts";
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import { assistantCards, type AssistantCards } from "./assistant-cards.service.ts";
 import { getCardRow, type CardOutbound, type CardRow } from "./assistant-cards-db.ts";
-import { listHeldCardRows, setCardOutbound } from "./assistant-cards-outbound-db.ts";
+import { listHeldCardRows, listUnsentWaitingCardRows, setCardOutbound } from "./assistant-cards-outbound-db.ts";
 
 const log = createLogger("assistant-cards");
 
@@ -37,6 +42,8 @@ export interface CardOutboundDeps {
   /** When the quiet window now running ends; null outside quiet hours. */
   quietEnd(): number | null;
   held(): CardRow[];
+  /** Open approvals and questions that never went out (see the header); none when left out. */
+  unsentWaiting?(): CardRow[];
   row(id: string): CardRow | null;
   setOutbound(id: string, outbound: CardOutbound, at: number): void;
 }
@@ -46,6 +53,7 @@ const realDeps: CardOutboundDeps = {
   clock: assistantClock,
   quietEnd: currentQuietWindowEnd,
   held: listHeldCardRows,
+  unsentWaiting: listUnsentWaitingCardRows,
   row: getCardRow,
   setOutbound: (id, outbound, at) => { setCardOutbound(id, outbound, at); },
 };
@@ -54,6 +62,7 @@ const STILL_SHOWN = new Set(["open", "info"]);
 const MIN_TIMER_MS = 1000;
 
 export const awayHeader = (n: number): string => `While you were away: ${n} item${n === 1 ? "" : "s"}`;
+export const stillWaitingHeader = (n: number): string => `Still waiting for you: ${n} item${n === 1 ? "" : "s"}`;
 
 export function createCardOutbound(deps: CardOutboundDeps = realDeps) {
   let sink: CardOutboundSink | null = null;
@@ -112,12 +121,35 @@ export function createCardOutbound(deps: CardOutboundDeps = realDeps) {
     sink.send(sendable, awayHeader(sendable.length));
   }
 
+  /**
+   * Sends the open approvals and questions that never went out, now that a chat can be reached;
+   * in quiet hours they are held for the window's end like any card made then.
+   */
+  function catchUp(): void {
+    if (!sink?.ready() || !deps.unsentWaiting) return;
+    let rows: CardRow[];
+    try { rows = deps.unsentWaiting(); } catch (e) { log.warn(`unsent cards unreadable: ${(e as Error).message}`); return; }
+    if (rows.length === 0) return;
+    const now = deps.clock.now();
+    const end = safeQuietEnd();
+    if (end !== null) {
+      for (const row of rows) deps.setOutbound(row.id, "held", now);
+      if (!timer) schedule(end);
+      return;
+    }
+    const cards = rows.map((row) => deps.cards.toCard(row));
+    for (const card of cards) deps.setOutbound(card.id, "sent", now);
+    log.info(`${cards.length} waiting card(s) that never reached the phone sent`);
+    sink.send(cards, stillWaitingHeader(cards.length));
+  }
+
   return {
     /** The bridge started: cards go to it, and what quiet hours held goes out if they are over. */
     attach(s: CardOutboundSink): void {
       sink = s;
       off ??= deps.cards.onChange((card, change) => (change === "created" ? onCreated(card) : onChanged(card)));
       flush();
+      catchUp();
     },
     detach(s?: CardOutboundSink): void {
       if (s && sink !== s) return;
@@ -128,6 +160,8 @@ export function createCardOutbound(deps: CardOutboundDeps = realDeps) {
       timer = null;
     },
     flush,
+    /** A chat may have become reachable (connected, bound): what never went out goes now. */
+    catchUp,
   };
 }
 

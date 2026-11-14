@@ -110,7 +110,7 @@ export function SessionCollabToolCard({ call, toolUseId, output, isError, done, 
         )}
       </div>
       {isError && rawText && <p className="px-2.5 pb-2 text-error whitespace-pre-wrap break-words select-text">{rawText}</p>}
-      {reply && !reply.replied && <p className="px-2.5 pb-2 text-text-subtle" data-collab-no-reply={reply.reason}>{waitEndedText(reply.reason)}</p>}
+      {reply && !reply.replied && <p className="px-2.5 pb-2 text-text-subtle" data-collab-no-reply={reply.reason}>{waitEndedText(reply)}</p>}
       {stopped && (
         <p className="px-2.5 pb-2 text-text-subtle" {...(stoppedWait ? { "data-collab-no-reply": "cancelled" } : { "data-collab-no-result": "" })}>
           {stoppedCallText(call)}

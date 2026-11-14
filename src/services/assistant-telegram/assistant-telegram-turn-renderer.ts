@@ -54,6 +54,8 @@ export class TurnRenderer {
   private md = "";
   /** Already-HTML line closing the answer (how the turn stopped). */
   private footer = "";
+  /** What the turn is waiting on right now, shown under the draft only (plain text). */
+  private status: string | null = null;
   /** The draft messages, in page order, and the HTML each shows (null once deleted). */
   private readonly ids: number[] = [];
   private readonly shown: Array<string | null> = [];
@@ -91,6 +93,16 @@ export class TurnRenderer {
     this.draft();
   }
 
+  /**
+   * A line under the draft saying what the turn waits on (plain text), or null to take it away.
+   * Never part of the final answer.
+   */
+  waiting(note: string | null): void {
+    if (this.finished || this.status === note) return;
+    this.status = note;
+    this.draft();
+  }
+
   /** Ends the turn; `footerHtml` is already escaped (and redacted). */
   finish(footerHtml = ""): void {
     if (this.finished) return;
@@ -113,6 +125,17 @@ export class TurnRenderer {
     let html = this.md.trim() ? markdownToTelegramHtml(redactForTelegram(this.md.trim())) : "";
     if (this.footer) html += `${html ? "\n\n" : ""}${this.footer}`;
     const pages = html ? splitTelegramHtml(html, PAGE_MAX) : [];
+    // The waiting line only ever edits the last page: one that would not fit is left out rather
+    // than opening a page (a new message) of its own.
+    if (!final && this.status) {
+      const line = `⏳ <i>${escapeTelegramHtml(this.status)}</i>`;
+      const last = pages.length ? pages[pages.length - 1]! : "";
+      const withLine = `${last}${last ? "\n\n" : ""}${line}`;
+      if (withLine.length + PLACEHOLDER.length + 1 <= PAGE_MAX) {
+        if (pages.length) pages[pages.length - 1] = withLine;
+        else pages.push(withLine);
+      }
+    }
     if (final) return pages.length ? pages : [EMPTY_ANSWER];
     if (!pages.length) return [PLACEHOLDER];
     pages[pages.length - 1] += ` ${escapeTelegramHtml(PLACEHOLDER)}`;

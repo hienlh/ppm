@@ -1,7 +1,7 @@
 import { normalizeFromSessionTitle, type FromSessionReference } from "../../shared/chat-from-session.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
 import type { AssistantProvenance } from "../../shared/assistant-provenance.ts";
-import type { SessionDelivery, SessionWaitOutcome } from "../../shared/session-collab.ts";
+import type { SessionDelivery, SessionWaitOutcome, WaitingCard } from "../../shared/session-collab.ts";
 import type { CollabCaller, CollabEnv, CollabTarget } from "./collab-context.ts";
 import type { WaitHandle } from "./collab-waits.ts";
 
@@ -11,7 +11,8 @@ import type { WaitHandle } from "./collab-waits.ts";
  */
 
 export type DeliverOutcome =
-  | { ok: true; delivered: SessionDelivery; clientMessageId: string; reply?: SessionWaitOutcome }
+  /** `taken`: a turn of the target took the message before the wait ended (known only for a wait). */
+  | { ok: true; delivered: SessionDelivery; clientMessageId: string; reply?: SessionWaitOutcome; taken?: boolean }
   | { ok: false; message: string };
 
 /** The sender as the from-session block names it; the PPM Assistant is marked as such. */
@@ -70,7 +71,16 @@ export async function deliverAndWait(env: CollabEnv, input: {
   // Unread by the target until a turn of it takes the message; a turn already named has it.
   if (!delivered.turnBinding) env.unread.add(caller.sessionId, target.sessionId, delivered.clientMessageId, delivered.delivered);
   if (!handle) return { ok: true, delivered: delivered.delivered, clientMessageId: delivered.clientMessageId };
-  handle.attach(delivered.clientMessageId, delivered.delivered, !!delivered.turnBinding);
+  // A target already in front of the user (a question, an approval) cannot answer until the user
+  // does: the wait ends now, naming the card, instead of running out its timeout in silence —
+  // unless the card is the target's own request to message this caller, which the reply is behind.
+  const live = env.live(target.sessionId);
+  const towardsCaller = !!live?.waitingCardFor && env.canonical(live.waitingCardFor) === env.canonical(caller.sessionId);
+  const blocking = live?.waitingFor && !towardsCaller ? live.waitingCard ?? fallbackCard(live.waitingFor) : null;
+  handle.attach(delivered.clientMessageId, delivered.delivered, !!delivered.turnBinding, blocking);
   const reply = await handle.outcome;
-  return { ok: true, delivered: delivered.delivered, clientMessageId: delivered.clientMessageId, reply };
+  return { ok: true, delivered: delivered.delivered, clientMessageId: delivered.clientMessageId, reply, taken: handle.taken() };
 }
+
+/** A card the registry reported without its title. */
+const fallbackCard = (kind: "approval" | "question"): WaitingCard => ({ kind, title: kind === "question" ? "A question" : "An approval" });

@@ -106,7 +106,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       this.deps.relayCard(chatId, {
         targetSessionId: card.sessionId!, targetProject: card.projectName ?? "project",
         targetProvider: getSessionProvider(card.sessionId!) ?? "claude", targetTitle: getSessionTitle(card.sessionId!) || "Manager",
-        card: live, onSent: record, ...(detail === "title" ? { titleOnly: card.title } : {}),
+        card: live, onSent: record, manager: true, ...(detail === "title" ? { titleOnly: card.title } : {}),
       });
       return;
     }
