@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.25.3] - 2026-11-14
+
+### Fixed
+
+- **A chat waiting on your database approval or login now tells Telegram**, with the project, chat, connection and the SQL (secrets hidden), and a link to answer in PPM; Telegram never takes the password.
+- **A database change waits 30 minutes for your answer** instead of 10, with one reminder 5 minutes before it ends.
+- **SQL or a reason that mentions a password is never sent** to Telegram or to push and ntfy notifications.
+
 ## [0.25.2] - 2026-11-14
 
 ### Added
