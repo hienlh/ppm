@@ -20,6 +20,9 @@ Async questions arrive on completed `agentMessage` items with `questions`, not
 as approval requests. Live events and rollout history map them to an inline
 `RequestUserInput` card. Answering or skipping sends a normal follow-up message,
 so it works during a turn and after completion without blocking the agent.
+Mid-turn that message goes out as Send now (steered into the running turn), not
+held in the queue until the turn ends — the agent asked so it could act on the
+answer, and a queued answer left the card looking unanswered.
 The reply includes the originating item ID; the card derives its answered state
 from that user message after reload. Async cards do not take keyboard focus away
 from the composer. Nested agent questions are read-only in the parent transcript.
