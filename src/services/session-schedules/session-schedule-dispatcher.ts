@@ -8,6 +8,12 @@
  * checked against the chat's live state now and then, so a turn end PPM never heard or a queued
  * message Stop took down cannot hold a chat's schedules forever.
  *
+ * Stop holds the chat's pending schedules: a turn stopped on request means "not now", so a
+ * scheduled message that went down with it (or was waiting behind it) is not sent again into the
+ * chat the user just quieted. It stays pending and goes once a later turn in that chat ends, or a
+ * fire of one of its schedules comes due (its cron time, Run now), whichever is first. The hold is
+ * in memory only: a restart of PPM releases it, and the fire, stored as pending, goes then.
+ *
  * A scheduled turn is an ordinary turn in the chat's own permission mode: its approvals are shown
  * and wait for the user. What happens when a schedule cannot go out (held up, failed, the chat
  * gone) is `session-schedule-setbacks.ts`; no chat is ever created.
@@ -36,6 +42,8 @@ export class SessionScheduleDispatcher {
   private readonly waiting = new SessionScheduleWaitingList();
   private readonly flights = new Map<string, Flight>();
   private readonly retries = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Chats whose pending schedules wait after a Stop (see the file comment), by canonical id. */
+  private readonly held = new Set<string>();
   private readonly setbacks: SessionScheduleSetbacks;
   private stops: Array<() => void> = [];
 
@@ -65,6 +73,7 @@ export class SessionScheduleDispatcher {
     this.retries.clear();
     this.setbacks.clear();
     this.waiting.clear();
+    this.held.clear();
     for (const flight of this.flights.values()) if (flight.check) clearTimeout(flight.check);
     this.flights.clear();
   }
@@ -79,6 +88,8 @@ export class SessionScheduleDispatcher {
       broadcastSchedulesChanged();
     }
     this.waiting.add(sessionId, scheduleId);
+    // A fire coming due (or Run now) is the user's timer speaking again: it ends a Stop's hold.
+    this.held.delete(sessionId);
     return this.pump(sessionId);
   }
 
@@ -93,6 +104,8 @@ export class SessionScheduleDispatcher {
   async pump(asked: string): Promise<void> {
     const sessionId = this.env.canonical(asked);
     if (!this.running || this.flights.has(sessionId)) return;
+    // Stopped by the user: what is pending waits for a later turn's end or the next fire.
+    if (this.held.has(sessionId)) return;
     // A send into this chat failed a moment ago: its backoff pumps it again, and every schedule
     // that comes due meanwhile waits in the list for that.
     if (this.setbacks.isBackingOff(sessionId)) return;
@@ -155,6 +168,17 @@ export class SessionScheduleDispatcher {
     // Whether the chat is free is still judged from its live state when the next fire is pumped.
     if (p.turnStillRunning) return;
     const sessionId = this.env.canonical(p.sessionId);
+    // A turn stopped on request holds what is pending for this chat (a message queued behind that
+    // turn included: it is still in the waiting list until its own turn opens); any other end
+    // releases it, since the chat has moved on since the Stop.
+    if (p.cancelledBy) {
+      if (this.waiting.has(sessionId)) {
+        this.held.add(sessionId);
+        log.info(`session=${sessionId} turn stopped by ${p.cancelledBy}: its pending schedules wait for a later turn or their next fire`);
+      }
+    } else {
+      this.held.delete(sessionId);
+    }
     const flight = this.flights.get(sessionId);
     if (!flight) return this.wake(sessionId);
     if (flight.phase === "sending") flight.earlyEnd = p;
@@ -198,7 +222,7 @@ export class SessionScheduleDispatcher {
       },
       lost: (sessionId, f) => {
         this.flights.delete(sessionId);
-        log.info(`session=${sessionId} schedule ${f.schedule.id}: its queued message was dropped before its turn opened; sending it again`);
+        log.info(`session=${sessionId} schedule ${f.schedule.id}: its queued message was dropped before its turn opened; it stays pending`);
         this.wakeSoon(sessionId);
       },
     });
@@ -287,6 +311,7 @@ export class SessionScheduleDispatcher {
   private onMigrated(oldId: string, newId: string): void {
     this.waiting.rename(oldId, newId);
     this.setbacks.rename(oldId, newId);
+    if (this.held.delete(oldId)) this.held.add(newId);
     for (const map of [this.flights, this.retries] as Array<Map<string, unknown>>) {
       if (!map.has(oldId)) continue;
       map.set(newId, map.get(oldId));

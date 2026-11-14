@@ -647,25 +647,45 @@ describe("a message queued behind a turn that started after the quiet check", ()
     expect(listScheduleRuns(id)[0]!.status).toBe("done");
   });
 
-  it("stays pending and is sent again once when Stop dropped it with the turn ahead of it", async () => {
+  /** Queued behind a turn the user then stops, the provider dropping it along with that turn. */
+  async function queuedThenStopped(): Promise<number> {
     quick();
     let replies = 0;
     reply = (s) => {
       if (++replies === 1) return { ok: true, sessionId: s.sessionId, delivered: "queued" };
-      // Sent again into the idle chat: its own turn runs now.
+      // Sent again into an idle chat: its own turn runs now.
       live = busyLive();
       return { ok: true, sessionId: s.sessionId, delivered: "started" };
     };
     const id = pending();
     await dispatcher.due(id);
     expect(sent).toHaveLength(1);
-
-    // Stop killed the provider with the scheduled message still in its queue.
     queuedAnswer = false;
     stopped();
-    expect(listScheduleRuns(id)).toHaveLength(0);
-    await kitUntil(() => sent.length === 2);
+    return id;
+  }
 
+  it("is not sent again after Stop dropped it with the turn ahead of it: it stays pending", async () => {
+    const id = await queuedThenStopped();
+    // Well past the look that finds it lost (10 ms here, 3 s live) and several flight checks.
+    await Bun.sleep(150);
+    expect(sent).toHaveLength(1);
+    expect(listScheduleRuns(id)).toHaveLength(0);
+    expect(getSchedule(id)!.pending_since).not.toBeNull();
+    // A busy-chat retry or a provider event does not sneak it in either.
+    await dispatcher.pump(CHAT);
+    lifecycle.emit("approval_resolved", { sessionId: CHAT, requestId: "r", approved: true, reason: "answered" });
+    await Bun.sleep(20);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("goes once the chat's next turn has ended", async () => {
+    const id = await queuedThenStopped();
+    await Bun.sleep(60);
+    expect(sent).toHaveLength(1);
+    // The user writes again; that turn ends normally.
+    turnEnded("done");
+    await kitUntil(() => sent.length === 2);
     expect(sent[1]!.opts.clientMessageId).not.toBe(sent[0]!.opts.clientMessageId);
     expect(listScheduleRuns(id)).toHaveLength(1);
     expect(getSchedule(id)!.pending_since).toBeNull();
@@ -674,6 +694,54 @@ describe("a message queued behind a turn that started after the quiet check", ()
     await Bun.sleep(40);
     expect(sent).toHaveLength(2);
     expect(listScheduleRuns(id)[0]!.status).toBe("done");
+  });
+
+  it("is held again by a later turn that is stopped too", async () => {
+    await queuedThenStopped();
+    await Bun.sleep(40);
+    stopped();
+    await Bun.sleep(60);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("goes when its next fire comes due, folded into one run", async () => {
+    const id = await queuedThenStopped();
+    await Bun.sleep(60);
+    expect(sent).toHaveLength(1);
+    // The scheduler records the next fire into the one still pending and hands it over.
+    const first = getSchedule(id)!.pending_since!;
+    setSessionSchedulePending(id, new Date().toISOString(), new Date(Date.now() + 86_400_000).toISOString());
+    expect(getSchedule(id)!.pending_since).toBe(first);
+    await dispatcher.due(id);
+    expect(sent).toHaveLength(2);
+    expect(listScheduleRuns(id)).toHaveLength(1);
+  });
+
+  it("holds the chat's other pending schedules when the user stops a scheduled turn", async () => {
+    quick();
+    const a = pending({ name: "first", since: new Date(Date.now() - 5000).toISOString() });
+    const b = pending({ name: "second" });
+    await dispatcher.due(a);
+    await dispatcher.due(b);
+    expect(sent.map((s) => s.opts.scheduleRun?.name)).toEqual(["first"]);
+    stopped();
+    await Bun.sleep(60);
+    expect(sent).toHaveLength(1);
+    expect(getSchedule(b)!.pending_since).not.toBeNull();
+    turnEnded("done");
+    await kitUntil(() => sent.length === 2);
+    expect(sent[1]!.opts.scheduleRun?.name).toBe("second");
+  });
+
+  it("is released by a restart: a new deliverer sends the fire still pending", async () => {
+    const id = await queuedThenStopped();
+    await Bun.sleep(60);
+    dispatcher.stop();
+    dispatcher = new SessionScheduleDispatcher(env());
+    dispatcher.start();
+    live = null;
+    await dispatcher.due(id);
+    expect(sent).toHaveLength(2);
   });
 
   it("waits while the chat still holds it behind a running turn", async () => {

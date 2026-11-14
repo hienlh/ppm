@@ -98,12 +98,20 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   provider with the queued message in it. When that turn ends PPM asks the provider whether the
   message is still queued (`chatControl().messageQueued`, backed by Claude's turn binder and
   Codex's pending turns); one the chat no longer holds, with nothing running, is sent again with
-  its fire still pending. A `turn_ended` marked `turnStillRunning` (a PPM builtin answered inside
-  a running turn) ends nothing.
+  its fire still pending (after a Stop, only once the hold below ends). A `turn_ended` marked
+  `turnStillRunning` (a PPM builtin answered inside a running turn) ends nothing.
+- **Stop holds what is pending.** A turn stopped on request (`turn_ended.cancelledBy`: Stop in a
+  browser, `/stop`, Telegram, the Assistant) holds that chat's pending schedules, a scheduled
+  message queued behind the stopped turn included: it is not sent again a few seconds later into
+  the chat the user just quieted. It stays pending and goes at the first of: the end of any later
+  turn in that chat that was not itself stopped (a user turn or any other), or a fire of one of
+  the chat's schedules coming due (its next cron time, which coalesces into the pending fire, or
+  Run now). The hold lives in the deliverer's memory, so a restart of PPM releases it and the
+  stored pending fire goes at start. A Stop with nothing pending holds nothing.
 - **Nothing it misses holds a chat forever.** A message in flight is checked against the chat's
   live state every minute (`session-schedule-flight-watch.ts`): a started turn whose chat is idle
   ended unheard and its run is closed as an error; a queued message an idle chat no longer holds
-  is sent again.
+  is sent again (unless a Stop holds it).
 - **Coalescing.** Fires that come due while one is already pending fold into it: one turn, marked
   `coalesced` in its run block.
 - **Catch-up, session kind only.** A fire missed while PPM was off is delivered **once** at start

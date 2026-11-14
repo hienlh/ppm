@@ -5,7 +5,8 @@
 // (a), a due schedule waiting for a running turn with two dues folded into one (b), a fire missed
 // while PPM was off delivered once after a restart of the same install (c), the footer chip with
 // Pause and Resume (d), Settings → Schedules with its Session column and Chat kind (e), and a
-// scheduled message queued behind a person's turn that Stop takes down, run once afterwards (f), on a
+// scheduled message queued behind a person's turn that Stop takes down, held until the chat's next
+// turn ends and then run once (f), on a
 // desktop and a phone. No live credentials, no real PPM data.
 //
 // Run it in the capped e2e image (Chromium, Node 20 and playwright-core; see tests/e2e/docker/):
