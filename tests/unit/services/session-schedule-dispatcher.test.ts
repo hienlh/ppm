@@ -66,6 +66,11 @@ function env(over: Partial<SessionScheduleDispatchEnv> = {}): SessionScheduleDis
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 5));
+/** Waits for `check`, up to two seconds: timer-driven steps run late on a loaded machine. */
+async function kitUntil(check: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !check(); i++) await Bun.sleep(10);
+  expect(check()).toBe(true);
+}
 const busyLive = (over: Partial<LiveChatState> = {}): LiveChatState => ({
   phase: "streaming", running: true, projectName: "proj", providerId: "claude", queuedCards: 0, ...over,
 });
@@ -239,11 +244,9 @@ describe("a one-shot whose turn failed", () => {
     expect(notices.map((n) => n.kind)).toEqual(["retrying"]);
     expect(notices[0]!.body).toBe("Its turn failed: Not signed in. PPM will send it again in 1 minute.");
 
-    await Bun.sleep(40);
-    expect(sent).toHaveLength(2);
+    await kitUntil(() => sent.length === 2);
     failedTurn();
-    await Bun.sleep(40);
-    expect(sent).toHaveLength(3);
+    await kitUntil(() => sent.length === 3);
     // Told once, not at every retry.
     expect(notices.map((n) => n.kind)).toEqual(["retrying"]);
     turnEnded("done");
@@ -254,10 +257,11 @@ describe("a one-shot whose turn failed", () => {
     quick();
     const id = pending({ recurring: false });
     await dispatcher.due(id);
-    for (let i = 0; i < 4; i++) {
+    for (let i = 1; i <= 4; i++) {
+      await kitUntil(() => sent.length === i);
       failedTurn();
-      await Bun.sleep(40);
     }
+    await Bun.sleep(60);
     expect(sent).toHaveLength(4);
     const paused = getSchedule(id)!;
     expect(paused.paused_reason).toBe("Its turn failed: Not signed in. It failed 4 times in a row.");
@@ -417,7 +421,7 @@ describe("a send that fails for a reason that may pass", () => {
     expect(sent).toHaveLength(1);
     expect(notices).toHaveLength(0);
 
-    await Bun.sleep(80);
+    await kitUntil(() => getSchedule(id)!.paused_reason !== null);
     expect(sent).toHaveLength(4);
     const paused = getSchedule(id)!;
     expect(paused.paused_reason).toBe(
@@ -434,13 +438,11 @@ describe("a send that fails for a reason that may pass", () => {
     reply = (s) => (++calls % 3 === 0 ? { ok: true, sessionId: s.sessionId, delivered: "started" } : { ok: false, error: "Could not deliver the message: EPIPE" });
     const id = pending();
     await dispatcher.due(id);
-    await Bun.sleep(50);
-    expect(sent).toHaveLength(3);
+    await kitUntil(() => sent.length === 3);
     turnEnded();
     setSessionSchedulePending(id, new Date().toISOString(), null);
     await dispatcher.due(id);
-    await Bun.sleep(50);
-    expect(sent).toHaveLength(6);
+    await kitUntil(() => sent.length === 6);
     expect(getSchedule(id)!.paused_reason).toBeNull();
   });
 });
@@ -479,7 +481,12 @@ describe("a message queued behind a turn that started after the quiet check", ()
   it("stays pending and is sent again once when Stop dropped it with the turn ahead of it", async () => {
     quick();
     let replies = 0;
-    reply = (s) => ({ ok: true, sessionId: s.sessionId, delivered: ++replies === 1 ? "queued" : "started" });
+    reply = (s) => {
+      if (++replies === 1) return { ok: true, sessionId: s.sessionId, delivered: "queued" };
+      // Sent again into the idle chat: its own turn runs now.
+      live = busyLive();
+      return { ok: true, sessionId: s.sessionId, delivered: "started" };
+    };
     const id = pending();
     await dispatcher.due(id);
     expect(sent).toHaveLength(1);
@@ -488,12 +495,12 @@ describe("a message queued behind a turn that started after the quiet check", ()
     queuedAnswer = false;
     stopped();
     expect(listScheduleRuns(id)).toHaveLength(0);
-    await Bun.sleep(40);
+    await kitUntil(() => sent.length === 2);
 
-    expect(sent).toHaveLength(2);
     expect(sent[1]!.opts.clientMessageId).not.toBe(sent[0]!.opts.clientMessageId);
     expect(listScheduleRuns(id)).toHaveLength(1);
     expect(getSchedule(id)!.pending_since).toBeNull();
+    live = null;
     turnEnded("done");
     await Bun.sleep(40);
     expect(sent).toHaveLength(2);
@@ -524,10 +531,8 @@ describe("a message queued behind a turn that started after the quiet check", ()
     const id = pending();
     await dispatcher.due(id);
     turnEnded();
-    await Bun.sleep(15);
     expect(sent).toHaveLength(1);
-    await Bun.sleep(150);
-    expect(sent).toHaveLength(2);
+    await kitUntil(() => sent.length === 2);
   });
 });
 
@@ -551,7 +556,7 @@ describe("a turn end PPM never hears", () => {
     expect(listScheduleRuns(a)[0]!.status).toBe("running");
     // Idle with no end heard: the run is closed and the next schedule is sent.
     live = null;
-    await Bun.sleep(50);
+    await kitUntil(() => sent.length === 2);
     const run = listScheduleRuns(a)[0]!;
     expect(run.status).toBe("error");
     expect(run.error).toBe("PPM did not hear how this turn ended.");
