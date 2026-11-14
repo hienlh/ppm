@@ -4,7 +4,10 @@
  * never taken from the arguments, so a chat can neither see nor touch another chat's schedules.
  * Saving goes through the same function as the REST route and the CLI (`session-schedule-save.ts`).
  */
+import { getSessionTitle } from "../db.service.ts";
+import { createLogger } from "../logger.ts";
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
+import type { NotificationPayload } from "../notification.service.ts";
 import { MAX_SCHEDULES_PER_SESSION } from "../../shared/session-schedule-input.ts";
 import {
   SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_LIST_TOOL, type SessionScheduleTool,
@@ -16,6 +19,9 @@ import { SessionScheduleRefusal, sessionScheduleTargetIds } from "../session-sch
 import { createSessionSchedule, sessionSchedulesOf } from "../session-schedules/session-schedule-save.ts";
 import { announceSchedulesChanged } from "../session-schedules/session-schedules-changed.ts";
 import { liveScheduleTargetDeps, resolveScheduleTarget, type ScheduleTargetDeps } from "../session-schedules/session-schedule-target.ts";
+import { aiCreatedScheduleNotice, wallClock } from "./collab-schedule-created-notice.ts";
+
+const log = createLogger("session-collab");
 
 export interface SessionScheduleToolEnv {
   target: ScheduleTargetDeps;
@@ -24,6 +30,13 @@ export interface SessionScheduleToolEnv {
   now(): Date;
   /** The machine's own zone, which a schedule with none is read in. */
   localZone(): string;
+  /** The chat's title as the user knows it. */
+  chatTitle(sessionId: string): string;
+  /**
+   * Tell the user the AI created a schedule (`schedule_created`, through the notification
+   * service and the user's own settings). Never throws into the tool: the schedule is saved either way.
+   */
+  notifyCreated(payload: NotificationPayload, scheduleId: number): void;
 }
 
 export const liveSessionScheduleToolEnv: SessionScheduleToolEnv = {
@@ -31,18 +44,18 @@ export const liveSessionScheduleToolEnv: SessionScheduleToolEnv = {
   changed: announceSchedulesChanged,
   now: () => new Date(),
   localZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+  chatTitle: (sessionId) => liveScheduleTargetDeps.stored(sessionId, getSessionTitle) ?? `Session ${sessionId.slice(0, 8)}`,
+  notifyCreated: (payload, scheduleId) => {
+    import("../notification.service.ts").then(({ notificationService }) => {
+      // A slot of its own: neither replaced by the chat's "Chat completed" nor replacing it, and two
+      // schedules created in one turn are two notifications.
+      void notificationService.broadcast("schedule_created", payload, { ownKey: `session-schedule-created-${scheduleId}` });
+    }).catch((e) => log.warn(`could not notify about schedule ${scheduleId}: ${(e as Error).message}`));
+  },
 };
 
 const json = (value: unknown, isError = false): Json => textResult(JSON.stringify(value, null, 1), isError);
 const fail = (message: string): Json => textResult(message, true);
-
-/** `2026-11-17 Mon 09:00` in `zone`: the wall clock the user reads the schedule by. */
-function wallClock(iso: string, zone: string): string {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
-    timeZone: zone, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-  }).formatToParts(new Date(iso)).map((p) => [p.type, p.value]));
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.weekday} ${parts.hour}:${parts.minute}`;
-}
 
 /** A schedule as the AI reads it, its times on the schedule's own wall clock. */
 function describe(s: Schedule, env: SessionScheduleToolEnv): Json {
@@ -89,6 +102,12 @@ export function sessionScheduleToolCall(env: SessionScheduleToolEnv, tokenSessio
       return fail(refusalText(e));
     }
     env.changed();
+    // The AI needs no approval to schedule, so the user hears about every schedule it makes.
+    try {
+      env.notifyCreated(aiCreatedScheduleNotice(created, chat.target, env.chatTitle(sessionId), env.localZone()), created.id);
+    } catch (e) {
+      log.warn(`could not tell the user about schedule ${created.id}: ${(e as Error).message}`);
+    }
     return json({
       created: true,
       ...describe(created, env),

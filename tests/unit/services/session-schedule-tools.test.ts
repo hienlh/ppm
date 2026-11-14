@@ -10,6 +10,8 @@ import { getSchedule, insertSchedule } from "../../../src/services/scheduler-db.
 import { sessionScheduleToolCall, type SessionScheduleToolEnv } from "../../../src/services/session-collab/collab-schedules.ts";
 import { createSessionCollabMcpHandler } from "../../../src/services/session-collab/session-collab-endpoint.ts";
 import type { ScheduleTargetDeps } from "../../../src/services/session-schedules/session-schedule-target.ts";
+import type { NotificationPayload } from "../../../src/services/notification.service.ts";
+import { PROMPT_SUMMARY_MAX } from "../../../src/services/session-collab/collab-schedule-created-notice.ts";
 import { MAX_SCHEDULES_PER_SESSION } from "../../../src/shared/session-schedule-input.ts";
 
 const CHAT = "chat-sched-own";
@@ -20,6 +22,7 @@ interface FakeChat { assistant?: boolean; design?: boolean }
 let chats: Record<string, FakeChat>;
 let migrated: Record<string, string>;
 let changes: number;
+let notices: Array<{ payload: NotificationPayload; scheduleId: number }>;
 
 const target: ScheduleTargetDeps = {
   canonical: (id) => migrated[id] ?? id,
@@ -31,7 +34,11 @@ const target: ScheduleTargetDeps = {
   projectPath: (id) => (chats[id] ? "/work/proj" : null),
   provider: (id) => (chats[id] ? "claude" : null),
 };
-const env: SessionScheduleToolEnv = { target, changed: () => { changes++; }, now: () => NOW, localZone: () => "Asia/Saigon" };
+const env: SessionScheduleToolEnv = {
+  target, changed: () => { changes++; }, now: () => NOW, localZone: () => "Asia/Saigon",
+  chatTitle: (id) => `Title of ${id}`,
+  notifyCreated: (payload, scheduleId) => { notices.push({ payload, scheduleId }); },
+};
 
 type Result = { content: Array<{ text: string }>; isError?: boolean };
 const call = (sessionId: string, name: string, args: unknown = {}) => sessionScheduleToolCall(env, sessionId, name as never, args) as Result;
@@ -42,6 +49,7 @@ beforeEach(() => {
   chats = { [CHAT]: {}, [OTHER]: {} };
   migrated = {};
   changes = 0;
+  notices = [];
 });
 
 describe("session_schedule_create", () => {
@@ -92,6 +100,50 @@ describe("session_schedule_create", () => {
     chats["canvas-chat"] = { design: true };
     expect(call("assist-chat", "session_schedule_create", { cron: "0 9 * * *", prompt: "x" }).content[0]!.text).toContain("PPM Assistant");
     expect(call("canvas-chat", "session_schedule_list").isError).toBe(true);
+  });
+});
+
+describe("the notice for a schedule the AI created", () => {
+  it("tells the user once, naming the schedule, the chat, when it runs and what it will say, linked to the chat", () => {
+    const prompt = `Check the nightly build\n\nand   report ${"x".repeat(200)}`;
+    const out = body(call(CHAT, "session_schedule_create", { cron: "0 9 * * 1-5", prompt, name: "Build check", timezone: "Asia/Saigon" }));
+    expect(notices).toHaveLength(1);
+    const { payload, scheduleId } = notices[0]!;
+    expect(scheduleId).toBe(out.id);
+    expect(payload.title).toBe("AI scheduled a prompt: Build check");
+    // 2026-11-15 is a Sunday: the next weekday at 09:00 in Saigon is Monday 02:00 UTC.
+    expect(payload.body).toBe(`In Title of ${CHAT} (proj). Weekdays at 09:00 (Asia/Saigon), next run 2026-11-16 Mon 09:00.`);
+    expect(payload.detail!.startsWith("Check the nightly build and report xxx")).toBe(true);
+    expect(payload.detail).not.toContain("\n");
+    expect(payload.detail!.length).toBe(PROMPT_SUMMARY_MAX);
+    expect(payload.detail!.endsWith("…")).toBe(true);
+    expect(payload).toMatchObject({ project: "proj", sessionId: CHAT, providerId: "claude" });
+  });
+
+  it("says a one-shot runs once, on its own zone's clock, and quotes a short prompt whole", () => {
+    call(CHAT, "session_schedule_create", { cron: "30 8 * * *", prompt: "ping", recurring: false, timezone: "Europe/London" });
+    expect(notices[0]!.payload.body).toBe(`In Title of ${CHAT} (proj). Runs once, at 2026-11-15 Sun 08:30 (Europe/London).`);
+    expect(notices[0]!.payload.detail).toBe("ping");
+  });
+
+  it("names the chat by its current id when the token still names the one a provider renamed", () => {
+    migrated = { "chat-old-name": CHAT };
+    call("chat-old-name", "session_schedule_create", { cron: "0 9 * * *", prompt: "x" });
+    expect(notices[0]!.payload.sessionId).toBe(CHAT);
+  });
+
+  it("sends nothing for a refused schedule, a list or a delete", () => {
+    call(CHAT, "session_schedule_create", { cron: "0 0 9 * * *", prompt: "x" });
+    call(CHAT, "session_schedule_list");
+    call(CHAT, "session_schedule_delete", { id: 1 });
+    expect(notices).toEqual([]);
+  });
+
+  it("still saves the schedule when the notice cannot be sent", () => {
+    const throwing: SessionScheduleToolEnv = { ...env, notifyCreated: () => { throw new Error("notification service down"); } };
+    const res = sessionScheduleToolCall(throwing, CHAT, "session_schedule_create" as never, { cron: "0 9 * * *", prompt: "x" }) as Result;
+    expect(res.isError).toBeFalsy();
+    expect(getSchedule(body(res).id)).not.toBeNull();
   });
 });
 

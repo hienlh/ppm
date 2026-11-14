@@ -151,7 +151,12 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
 - **Notifications.** The turn notifies like any chat turn. The schedule itself sends a `schedule`
   notification only when it is held up behind a pending card (once per pending period, dropped if
   the card is answered first), when a turn failed before doing anything (once), when a turn
-  failed partway, and when it is paused.
+  failed partway, and when it is paused. A schedule a chat's AI creates (`session_schedule_create`)
+  needs no approval, so each one sends a `schedule_created` notification ("AI scheduled a prompt",
+  on by default, switched in Settings → Notifications): its name, the chat and project, when it
+  runs (cron in words, time zone, next run) and the prompt on one line cut to 120 characters,
+  linked to the chat (`collab-schedule-created-notice.ts`). Schedules saved from Settings, REST
+  or the CLI send none.
 - **Open PPMs follow along.** Whatever delivery changes on its own — a fire coming due, a turn
   taking it, a run ending, a one-shot going, a pause, a renamed or deleted chat — broadcasts
   `schedules:changed` on `/ws/global` (`broadcastSchedulesChanged`, coalesced over 50 ms), so the

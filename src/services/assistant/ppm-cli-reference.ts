@@ -805,7 +805,7 @@ ppm notify get
   --json — Print JSON
 
 ppm notify set <event> <state>
-  Switch an event (done, approval_request, question, collab_approval, schedule, jira, design_review, extension) or a channel (telegram, ntfy) on or off
+  Switch an event (done, approval_request, question, collab_approval, schedule, schedule_created, jira, design_review, extension) or a channel (telegram, ntfy) on or off
 
 ppm notify delay <seconds>
   Wait this long, and send only if nobody has looked by then (0 sends at once; at most 3600)
