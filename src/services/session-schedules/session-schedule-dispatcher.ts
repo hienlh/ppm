@@ -16,11 +16,11 @@ import type { Schedule } from "../../types/scheduler.ts";
 import {
   chatIsIdle, deliverable, isTransientDeliveryError, type Flight, type NoticeChat, type SessionScheduleDispatchEnv,
 } from "./session-schedule-dispatch-types.ts";
-import { heldUpNotice, pausedNotice } from "./session-schedule-notices.ts";
+import { heldUpNotice, pausedNotice, retryingNotice } from "./session-schedule-notices.ts";
 import { describeWait, ScheduleRetryBackoff } from "./session-schedule-retry-backoff.ts";
 import { scheduleRunReference } from "./session-schedule-run-reference.ts";
 import {
-  pauseSessionSchedule, recordRunEnded, recordRunStarted,
+  pauseSessionSchedule, recordOneShotDelivered, recordRunEnded, recordRunStarted, turnFailed,
 } from "./session-schedule-run-records.ts";
 import { SessionScheduleWaitingList } from "./session-schedule-waiting-list.ts";
 
@@ -120,7 +120,7 @@ export class SessionScheduleDispatcher {
       // resume, the message could not be pushed) may pass, so it is tried again before pausing.
       const now = this.env.target(current);
       if (!now.ok) return this.pauseAll(current, now.reason);
-      return this.failed(current, schedule, chat, `PPM could not send it into its chat: ${result.error}.`);
+      return this.failed(current, schedule, chat, `PPM could not send it into its chat: ${result.error}.`, false);
     }
     const early = flight.earlyEnd;
     flight.earlyEnd = undefined;
@@ -185,7 +185,7 @@ export class SessionScheduleDispatcher {
       log.warn(`session=${sessionId} schedule ${flight.schedule.id}: its turn ended unheard; the run is closed`);
       return this.end(sessionId, flight, {
         sessionId, outcome: "stopped", error: "PPM did not hear how this turn ended.", projectName: "", providerId: "",
-      });
+      }, true);
     }
     if (flight.phase !== "queued") return;
     if (!idle) {
@@ -213,10 +213,16 @@ export class SessionScheduleDispatcher {
     } catch (e) {
       log.warn(`could not record the run of schedule ${flight.schedule.id}: ${(e as Error).message}`);
     }
-    this.backoff.succeeded(flight.schedule.id);
+    // A recurring fire is spent once its turn opens. A one-shot's counts only once its turn ran.
+    if (flight.schedule.recurring) this.backoff.succeeded(flight.schedule.id);
   }
 
-  private end(sessionId: string, flight: Flight, p: ChatLifecycleEvents["turn_ended"]): void {
+  /**
+   * The schedule's turn is over. A one-shot goes only when that turn did not fail; one that failed
+   * keeps its fire pending and is tried again. `unheard`: PPM closed the turn itself, having found
+   * the chat idle with no end heard; the turn did open, so a one-shot counts as delivered.
+   */
+  private end(sessionId: string, flight: Flight, p: ChatLifecycleEvents["turn_ended"], unheard = false): void {
     if (flight.check) clearTimeout(flight.check);
     this.flights.delete(sessionId);
     if (flight.runId !== null) {
@@ -224,14 +230,26 @@ export class SessionScheduleDispatcher {
         log.warn(`could not record the end of schedule ${flight.schedule.id}'s run: ${(e as Error).message}`);
       }
     }
+    const schedule = flight.schedule.recurring ? null : getSchedule(flight.schedule.id);
+    if (schedule) {
+      if (!unheard && turnFailed(p)) {
+        const why = p.error ?? p.stop?.message.split("\n")[0] ?? `the turn ${p.outcome}`;
+        return this.failed(sessionId, schedule, flight.chat, `Its turn failed: ${String(why).replace(/\.$/, "")}.`, true);
+      }
+      try { recordOneShotDelivered(schedule, sessionId); } catch (e) {
+        log.warn(`could not remove one-shot schedule ${schedule.id}: ${(e as Error).message}`);
+      }
+      this.backoff.succeeded(schedule.id);
+    }
     this.wakeSoon(sessionId);
   }
 
   /**
    * A failure that may pass. The fire stays pending and the schedule is tried again after a wait
    * that grows with each failure in a row; once the waits are spent it is paused and the user told.
+   * `tellFirst`: a one-shot's turn failed, so the user hears about the first failure as well.
    */
-  private failed(sessionId: string, schedule: Schedule, chat: NoticeChat, reason: string): void {
+  private failed(sessionId: string, schedule: Schedule, chat: NoticeChat, reason: string, tellFirst: boolean): void {
     this.waiting.drop(sessionId, schedule.id);
     const outcome = this.backoff.fail(schedule.id, () => {
       this.due(schedule.id).catch((e) => log.warn(`schedule ${schedule.id} retry failed: ${(e as Error).message}`));
@@ -242,6 +260,7 @@ export class SessionScheduleDispatcher {
       this.env.notify(pausedNotice([schedule], chat, why));
     } else {
       log.warn(`Schedule ${schedule.id} (${schedule.name}) failure ${outcome.failures}: ${reason} Trying again in ${describeWait(outcome.delayMs)}`);
+      if (tellFirst && outcome.failures === 1) this.env.notify(retryingNotice(schedule, chat, reason, outcome.delayMs));
     }
     this.wakeSoon(sessionId);
   }

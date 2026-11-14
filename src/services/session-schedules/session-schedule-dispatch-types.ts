@@ -17,7 +17,7 @@ export interface NoticeChat {
 
 /** Something the user should hear about schedules, through the ordinary notification service. */
 export interface ScheduleNotice extends NoticeChat {
-  kind: "waiting" | "paused";
+  kind: "waiting" | "paused" | "retrying";
   /** The notification slot it takes: a later notice with the same key replaces it. */
   key: string;
   /** The schedules it is about; a chat that cannot be reached pauses all of its at once. */

@@ -18,20 +18,32 @@ const log = createLogger("scheduler");
 const OUTPUT_KEEP = 2000;
 
 /**
- * The schedule's turn started in `sessionId`: its pending fire is spent and the run is recorded. A
- * one-shot is deleted instead, its only fire delivered; its run row would go with it. Returns the
- * run row's id, or null when none was kept.
+ * The schedule's turn started in `sessionId`: the run is recorded and a recurring schedule's
+ * pending fire is spent. A one-shot keeps its fire pending until its turn has ended well
+ * ({@link recordOneShotDelivered}): a turn that fails before the model sees the prompt (a sign-in
+ * that expired, a provider that would not start) must not take the reminder with it.
  */
-export function recordRunStarted(schedule: Schedule, sessionId: string, at: number): number | null {
-  if (!schedule.recurring) {
-    deleteSchedule(schedule.id);
-    log.info(`Schedule ${schedule.id} (${schedule.name}) delivered its one fire into session ${sessionId} and was removed`);
-    return null;
-  }
-  clearSessionSchedulePending(schedule.id);
+export function recordRunStarted(schedule: Schedule, sessionId: string, at: number): number {
+  if (schedule.recurring) clearSessionSchedulePending(schedule.id);
   updateSchedule(schedule.id, { last_run_at: new Date(at).toISOString() });
   log.info(`Schedule ${schedule.id} (${schedule.name}) started a turn in session ${sessionId}`);
   return insertScheduleRun(schedule.id, sessionId, "running");
+}
+
+/** A one-shot's turn ended without failing: its only fire is delivered, and it goes, runs and all. */
+export function recordOneShotDelivered(schedule: Schedule, sessionId: string): void {
+  deleteSchedule(schedule.id);
+  log.info(`Schedule ${schedule.id} (${schedule.name}) delivered its one fire into session ${sessionId} and was removed`);
+}
+
+/**
+ * The turn failed rather than ran: the provider threw, or an error (not the user, not the turn
+ * limit) cut it off. A turn the user stopped, or one that ran into Max Turns, did run.
+ */
+export function turnFailed(end: ChatLifecycleEvents["turn_ended"]): boolean {
+  if (end.cancelledBy) return false;
+  if (end.outcome === "failed") return true;
+  return end.outcome === "stopped" && end.stop?.subtype !== "error_max_turns";
 }
 
 /** The run's turn is over; `done` only when it ended with an answer and no stop. */

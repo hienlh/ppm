@@ -4,6 +4,7 @@
  */
 import type { Schedule } from "../../types/scheduler.ts";
 import type { NoticeChat, ScheduleNotice } from "./session-schedule-dispatch-types.ts";
+import { describeWait } from "./session-schedule-retry-backoff.ts";
 
 const quoted = (schedules: readonly Schedule[]): string => schedules.map((s) => `"${s.name}"`).join(", ");
 
@@ -13,6 +14,15 @@ export function heldUpNotice(schedule: Schedule, chat: NoticeChat, chatTitle: st
     kind: "waiting", key: `waiting:${schedule.id}`, schedules: [schedule], ...chat, stillRelevant,
     title: "Schedule is waiting",
     body: `Schedule ${schedule.name} is waiting: an approval is pending in ${chatTitle}`,
+  };
+}
+
+/** A one-shot's turn failed before it ran; its fire stays pending and goes again after `delayMs`. */
+export function retryingNotice(schedule: Schedule, chat: NoticeChat, reason: string, delayMs: number): ScheduleNotice {
+  return {
+    kind: "retrying", key: `retrying:${schedule.id}`, schedules: [schedule], ...chat,
+    title: `Schedule did not run: ${schedule.name}`,
+    body: `${reason} PPM will send it again in ${describeWait(delayMs)}.`,
   };
 }
 

@@ -160,11 +160,80 @@ describe("delivery into an idle chat", () => {
     expect(listScheduleRuns(id)[0]!.status).toBe("error");
   });
 
-  it("deletes a one-shot once its turn has started", async () => {
+  it("deletes a one-shot only once its turn has ended without failing", async () => {
     const id = pending({ recurring: false });
     await dispatcher.due(id);
     expect(sent).toHaveLength(1);
+    // Running: still there, its fire still pending, its run recorded.
+    expect(getSchedule(id)!.pending_since).not.toBeNull();
+    expect(listScheduleRuns(id)[0]!.status).toBe("running");
+    turnEnded("done");
     expect(getSchedule(id)).toBeNull();
+  });
+
+  it("deletes a one-shot whose turn the user stopped, or that ran into Max Turns", async () => {
+    const a = pending({ recurring: false });
+    await dispatcher.due(a);
+    lifecycle.emit("turn_ended", { sessionId: CHAT, outcome: "stopped", cancelledBy: "ws", projectName: "proj", providerId: "claude" });
+    expect(getSchedule(a)).toBeNull();
+
+    const b = pending({ recurring: false });
+    await dispatcher.due(b);
+    lifecycle.emit("turn_ended", {
+      sessionId: CHAT, outcome: "stopped", stop: { message: "Reached maximum number of turns (8)", subtype: "error_max_turns", at: Date.now() },
+      projectName: "proj", providerId: "claude",
+    });
+    expect(getSchedule(b)).toBeNull();
+  });
+});
+
+describe("a one-shot whose turn failed", () => {
+  function quick(): void {
+    dispatcher.stop();
+    dispatcher = new SessionScheduleDispatcher(env({ retryBackoffMs: [15, 15, 15] }));
+    dispatcher.start();
+  }
+  const failedTurn = () => lifecycle.emit("turn_ended", {
+    sessionId: CHAT, outcome: "failed", error: "Not signed in", projectName: "proj", providerId: "claude",
+  });
+
+  it("is kept with its fire pending, records the run as an error, tells the user once and goes again", async () => {
+    quick();
+    const id = pending({ recurring: false });
+    await dispatcher.due(id);
+    failedTurn();
+
+    const kept = getSchedule(id)!;
+    expect(kept.pending_since).not.toBeNull();
+    expect(kept.paused_reason).toBeNull();
+    expect(listScheduleRuns(id)[0]).toMatchObject({ status: "error", error: "Not signed in" });
+    expect(notices.map((n) => n.kind)).toEqual(["retrying"]);
+    expect(notices[0]!.body).toBe("Its turn failed: Not signed in. PPM will send it again in 1 minute.");
+
+    await Bun.sleep(40);
+    expect(sent).toHaveLength(2);
+    failedTurn();
+    await Bun.sleep(40);
+    expect(sent).toHaveLength(3);
+    // Told once, not at every retry.
+    expect(notices.map((n) => n.kind)).toEqual(["retrying"]);
+    turnEnded("done");
+    expect(getSchedule(id)).toBeNull();
+  });
+
+  it("is paused, with one notice, once every retry has failed", async () => {
+    quick();
+    const id = pending({ recurring: false });
+    await dispatcher.due(id);
+    for (let i = 0; i < 4; i++) {
+      failedTurn();
+      await Bun.sleep(40);
+    }
+    expect(sent).toHaveLength(4);
+    const paused = getSchedule(id)!;
+    expect(paused.paused_reason).toBe("Its turn failed: Not signed in. It failed 4 times in a row.");
+    expect(paused.pending_since).toBeNull();
+    expect(notices.map((n) => n.kind)).toEqual(["retrying", "paused"]);
   });
 });
 
