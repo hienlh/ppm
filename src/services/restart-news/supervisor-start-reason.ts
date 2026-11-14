@@ -62,6 +62,26 @@ export function decideServerExit(exit: ServerExit, takeRequest: TakeRequest): Se
   return { action: "respawn_after_backoff", reason: { kind: "crash", detail: `exit ${exit.exitCode}, signal ${exit.signal}, after ${exit.upForS}s` } };
 }
 
+/** The health check killed server `pid` at `at`. */
+export interface HealthKillMark {
+  pid: number;
+  at: number;
+}
+
+/** A kill that has not ended its server by then failed, and the mark says nothing more. */
+export const HEALTH_KILL_MARK_TTL_MS = 60_000;
+
+/**
+ * Whether the exit of server `exitedPid` is the health check's kill. Only the server it killed:
+ * a mark left by a kill that failed must not label the next, unrelated exit the watchdog's.
+ */
+export const healthKillApplies = (mark: HealthKillMark | null, exitedPid: number | undefined): boolean =>
+  !!mark && mark.pid === exitedPid;
+
+/** The mark after a health probe the server answered: dropped once the kill has clearly failed. */
+export const healthKillAfterAnswer = (mark: HealthKillMark | null, now: number): HealthKillMark | null =>
+  mark && now - mark.at > HEALTH_KILL_MARK_TTL_MS ? null : mark;
+
 /** The server that comes back after the supervisor paused on repeated crashes and was resumed. */
 export function resumeAfterPauseReason(lastCrash: StartReason, takeRequest: TakeRequest): StartReason {
   return requestedOr(takeRequest, { kind: "manual", detail: `resumed after repeated crashes (last: ${lastCrash.detail ?? lastCrash.kind})` });

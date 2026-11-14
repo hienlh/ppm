@@ -57,8 +57,8 @@ import { uptime as osUptime } from "node:os";
 import { startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
 import { writeOrderedStop } from "./restart-news/ordered-stop-note.ts";
 import {
-  decideServerExit, initialStartReason, restartWithoutChildReason, resumeAfterPauseReason, resumeAfterStopReason,
-  REVIVE_REASON, UPGRADE_FAILED_REASON,
+  decideServerExit, healthKillAfterAnswer, healthKillApplies, initialStartReason, restartWithoutChildReason, resumeAfterPauseReason, resumeAfterStopReason,
+  REVIVE_REASON, UPGRADE_FAILED_REASON, type HealthKillMark,
 } from "./restart-news/supervisor-start-reason.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
@@ -183,7 +183,8 @@ let lastTunnelCrash = 0;
 
 let healthFailCount = 0;
 // Set when the health check kills the server, so its exit is reported as the watchdog's, not a crash.
-let healthKillPending = false;
+// Tied to the pid it killed and cleared at every exit, so a kill that failed never labels a later one.
+let healthKillMark: HealthKillMark | null = null;
 let noServerChildCycles = 0; // consecutive health cycles with no server child
 let tunnelFailCount = 0;
 let serverRestartRequested = false; // SIGUSR2 flag — skip backoff on next crash
@@ -878,6 +879,9 @@ export async function spawnServer(
   const exitCode = await serverChild.exited;
   serverChild = null;
   const exitSignal = exitedChild.signalCode ?? "none";
+  // Read and cleared before any return: whatever this exit was, the mark is spent.
+  const killedByHealthCheck = healthKillApplies(healthKillMark, childPid);
+  healthKillMark = null;
 
   // Don't respawn if in stopped state (soft stop)
   if (getState() === "stopped") {
@@ -905,10 +909,9 @@ export async function spawnServer(
   // restart-news/supervisor-start-reason.ts). The stopped and shutting-down exits returned above.
   const decision = decideServerExit({
     exitCode, signal: exitSignal, upForS: Math.round((Date.now() - startedAt) / 1000),
-    stopped: false, shuttingDown: false, healthKill: healthKillPending, restartRequested: serverRestartRequested,
+    stopped: false, shuttingDown: false, healthKill: killedByHealthCheck, restartRequested: serverRestartRequested,
   }, takeRequest);
   const wasRestartRequest = serverRestartRequested;
-  healthKillPending = false;
   serverRestartRequested = false;
 
   if (decision.action === "stay_down") return;
@@ -1484,7 +1487,13 @@ function startServerHealthCheck() {
       const res = await fetch(`http://127.0.0.1:${checkPort}/api/health`, {
         signal: AbortSignal.timeout(5000),
       });
-      if (res.ok) { healthFailCount = 0; await recordServerBaseline(serverChild?.pid); return; }
+      if (res.ok) {
+        healthFailCount = 0;
+        // Still answering long after the kill: the kill failed, and the mark would mislabel its next exit.
+        healthKillMark = healthKillAfterAnswer(healthKillMark, Date.now());
+        await recordServerBaseline(serverChild?.pid);
+        return;
+      }
       lastProbe = `HTTP ${res.status}`;
     } catch (e) {
       const err = e as { name?: string; code?: string; message?: string } | null;
@@ -1496,8 +1505,8 @@ function startServerHealthCheck() {
     log("WARN", `Server health probe on port ${checkPort} failed (${healthFailCount}/${SERVER_HEALTH_FAIL_THRESHOLD}): ${lastProbe}${waitingOn ? ` — ${waitingOn}` : ""}`);
     if (healthFailCount >= SERVER_HEALTH_FAIL_THRESHOLD && serverChild) {
       log("ERROR", `Server unresponsive for ${healthFailCount}×${SERVER_HEALTH_INTERVAL_MS / 1000}s (last probe: ${lastProbe}) — killing PID ${serverChild.pid}`);
-      healthKillPending = true;
       const pid = serverChild.pid;
+      healthKillMark = { pid, at: Date.now() };
       noteOrderedStop(pid, "the health check found it not answering");
       if (process.platform === "win32") {
         // By lineage, never `taskkill /T`: see requestServerShutdown.

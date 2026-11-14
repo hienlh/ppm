@@ -7,7 +7,7 @@
 import { describe, expect, it } from "bun:test";
 import type { StartReason } from "../../../src/services/restart-news/start-reason.ts";
 import {
-  BOOT_WINDOW_S, decideServerExit, initialStartReason, isUpgradeFailed, restartWithoutChildReason, resumeAfterPauseReason,
+  BOOT_WINDOW_S, decideServerExit, HEALTH_KILL_MARK_TTL_MS, healthKillAfterAnswer, healthKillApplies, initialStartReason, isUpgradeFailed, restartWithoutChildReason, resumeAfterPauseReason,
   resumeAfterStopReason, REVIVE_REASON, UPGRADE_FAILED_REASON, type ServerExit, type ServerExitDecision,
 } from "../../../src/services/restart-news/supervisor-start-reason.ts";
 
@@ -73,6 +73,22 @@ describe("a server's exit", () => {
   it("a request reader that throws falls back instead of failing the respawn", () => {
     expect(decideServerExit({ ...base, exitCode: 42 }, () => { throw new Error("EACCES"); }))
       .toEqual({ action: "respawn_now", reason: { kind: "manual", detail: "the server asked to be restarted" } });
+  });
+});
+
+describe("the health check's kill mark", () => {
+  it("labels only the exit of the server it killed", () => {
+    const mark = { pid: 4242, at: 1_000 };
+    expect(healthKillApplies(mark, 4242)).toBe(true);
+    // A kill that failed: the next server's crash or manual restart is not the watchdog's.
+    expect(healthKillApplies(mark, 5151)).toBe(false);
+    expect(healthKillApplies(null, 4242)).toBe(false);
+  });
+
+  it("is dropped once the server keeps answering well after the kill", () => {
+    const mark = { pid: 4242, at: 1_000 };
+    expect(healthKillAfterAnswer(mark, 1_000 + 5_000)).toBe(mark);
+    expect(healthKillAfterAnswer(mark, 1_000 + HEALTH_KILL_MARK_TTL_MS + 1)).toBeNull();
   });
 });
 
