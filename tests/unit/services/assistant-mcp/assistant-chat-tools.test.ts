@@ -210,15 +210,36 @@ describe("chat_organize", () => {
     expect(h.writes).toEqual([]);
   });
 
-  test("refuses to mark read a chat waiting on a card, and a manager chat's new title", async () => {
+  test("refuses to mark read a chat waiting on a card", async () => {
     const h = harness({ provenance: CLEAN });
     h.live.set("c1", { ...running("t1"), card: { requestId: "r1", tool: "Bash", input: {}, isQuestion: false } });
     expect(textOf(await run(h, CHAT_ORGANIZE_TOOL, { project: "alpha", changes: [{ sessionId: "c1", read: true }] }))).toContain("waiting for the user to answer a card");
     // Marking it unread, or pinning it, is still fine.
     expect((await run(h, CHAT_ORGANIZE_TOOL, { project: "alpha", changes: [{ sessionId: "c1", pinned: true }] })).isError).toBeUndefined();
-    h.chats.get("c2")!.facts.manager = true;
-    expect(textOf(await run(h, CHAT_ORGANIZE_TOOL, { project: "alpha", changes: [{ sessionId: "c2", title: "x" }] }))).toContain("manager chat");
     expect(h.writes).toEqual(["PUT /api/project/alpha/chat/sessions/c1/pin"]);
+  });
+
+  test("renames a manager chat at once in a clean turn, and reports its old title for an undo", async () => {
+    const h = harness({ provenance: CLEAN });
+    h.chats.get("c2")!.facts.manager = true;
+    h.chats.get("c2")!.facts.title = "Manager";
+    const res = await run(h, CHAT_ORGANIZE_TOOL, { project: "alpha", changes: [{ sessionId: "c2", title: "QL alpha" }] });
+    expect(h.asks).toEqual([]);
+    expect(h.writes).toEqual(['PATCH /api/project/alpha/chat/sessions/c2 {"title":"QL alpha"}']);
+    expect(JSON.parse(textOf(res)).chats).toEqual([{ sessionId: "c2", changed: { title: "QL alpha" }, previous: { title: "Manager" } }]);
+    // The undo is the same call back: the old title, at once again in a clean turn.
+    await run(h, CHAT_ORGANIZE_TOOL, { project: "alpha", changes: [{ sessionId: "c2", title: "Manager" }] });
+    expect(h.chats.get("c2")!.facts.title).toBe("Manager");
+    expect(h.asks).toEqual([]);
+  });
+
+  test("asks before renaming a manager chat once outside text reached the turn", async () => {
+    const h = harness({ provenance: AFTER_OUTSIDE_TEXT });
+    h.chats.get("c2")!.facts.manager = true;
+    await run(h, CHAT_ORGANIZE_TOOL, { project: "alpha", changes: [{ sessionId: "c2", title: "QL alpha" }] });
+    expect(h.asks).toHaveLength(1);
+    expect(h.asks[0]!.summary.facts).toEqual([{ label: "Release notes", value: "rename → «QL alpha» (c2)" }]);
+    expect(h.writes).toEqual(['PATCH /api/project/alpha/chat/sessions/c2 {"title":"QL alpha"}']);
   });
 
   test("checks the list: size, duplicates, empty entries, unknown fields and tags", async () => {

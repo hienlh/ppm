@@ -1,4 +1,4 @@
-import { MANAGER_CLAUDE_ONLY, MANAGER_PROVIDER_ID } from "../../shared/assistant-managers.ts";
+import { defaultManagerTitle, MANAGER_CLAUDE_ONLY, MANAGER_PROVIDER_ID } from "../../shared/assistant-managers.ts";
 import type { CreateSessionResult, SessionCollabCreateApproval } from "../../shared/session-collab.ts";
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import type { CollabCaller, CollabEnv } from "./collab-context.ts";
@@ -18,8 +18,6 @@ import { jsonResult, noteAiTextRead, statusOf } from "./collab-status.ts";
  * AI-created, so it neither counts against nor waits for the running limit.
  */
 
-export const DEFAULT_MANAGER_TITLE = "Manager";
-
 export async function createManagerSessionTool(
   env: CollabEnv, caller: CollabCaller,
   input: { title: string | null; task: string; project: { name: string; path: string }; provider: unknown; model: unknown; wait: boolean },
@@ -35,7 +33,7 @@ export async function createManagerSessionTool(
   if (existing) {
     return textResult(`${project.name} already has a manager chat (session ${existing}): message it with send_to_session.`, true);
   }
-  const title = input.title ?? DEFAULT_MANAGER_TITLE;
+  const title = input.title ?? defaultManagerTitle(project.name);
   const permissionMode = env.managerDefaultMode?.() ?? "default";
   const card: SessionCollabCreateApproval = {
     kind: "create", manager: true, askedBy: "assistant", title, providerId: MANAGER_PROVIDER_ID, model: null,

@@ -198,9 +198,12 @@ tool, once it exists, is the one kept on for a manager regardless. The tool list
 stream starts, so a chat made a manager while its stream is live gets the server at its next start
 (idle release, the warm-idle cap, a restart); nothing restarts it for this.
 
-`POST /api/assistant/managers/:project/create` (Settings) makes a new Claude chat titled "Manager"
-the project's manager, in the mode Settings → PPM Assistant gives new manager chats
+`POST /api/assistant/managers/:project/create` (Settings) makes a new Claude chat titled "QL
+<project>" the project's manager, in the mode Settings → PPM Assistant gives new manager chats
 (`manager_default_mode`), with the rules files below. No card: a person pressed the button.
+`create_session` with `manager: true` takes the same default title when the Assistant gives none
+(`defaultManagerTitle` in `src/shared/assistant-managers.ts`), so several manager windows open side
+by side say which project each one runs.
 
 The Assistant adopts an existing chat with `manager_assign` and takes the role away with
 `manager_unassign` (both under "Running the user's chats"); `ppm manager list | assign <session>
@@ -775,9 +778,12 @@ to the named project (`resolveAssistantSessionTarget`), and Assistant chats are 
   a clean turn: started by the user in PPM or on Telegram, with no outside text recorded yet. The
   endpoint reads the turn's provenance *before* the call marks it (`ToolContext.provenanceAtCall`),
   so an earlier read in the turn — `chat_list_sessions` included — means one card for the whole
-  call. It is refused in a turn PPM started on its own, marking a chat read is refused while that
-  chat shows a card, and a manager chat's title is left to the user. These refusals are advisory
-  guards; the card and the routes are the controls.
+  call. It is refused in a turn PPM started on its own, and marking a chat read is refused while
+  that chat shows a card. A manager chat is renamed like any other (the role belongs to the session,
+  not the title); a rename of a manager announces `assistant:managers_changed` too
+  (`managerChats.retitled`, from `renameChatSession`), so Settings → Manager chats and the manager
+  chips show the new name. The result lists each chat's `previous` title, pin and tag, which is how
+  a change is undone. These refusals are advisory guards; the card and the routes are the controls.
 - `chat_changes` reads a chat's review as its Review tab does (`assistant-chat-review-*.ts`): the
   turns route (`GET …/file-changes/turns`, the newest 20, with the paths the chat's calls name),
   then the list with those paths; with `path`, one listed file's blocks and a diff of at most 400

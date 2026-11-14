@@ -6,7 +6,7 @@ import { createProjectChatSession } from "../../services/chat-session-create.ts"
 import { chatService } from "../../services/chat.service.ts";
 import { setSessionMetadata, setSessionPermissionMode, setSessionTitle } from "../../services/db.service.ts";
 import { createLogger } from "../../services/logger.ts";
-import { MANAGER_PROVIDER_ID } from "../../shared/assistant-managers.ts";
+import { defaultManagerTitle, MANAGER_PROVIDER_ID } from "../../shared/assistant-managers.ts";
 import { RULES_FILE_MAX_BYTES } from "../../shared/assistant-limits.ts";
 import { ok, err } from "../../types/api.ts";
 import { managerRouteFailure, readJsonObject } from "./assistant-manager-route-helpers.ts";
@@ -65,7 +65,7 @@ assistantManagerRulesRoutes.post("/managers/:project/rules/decision", async (c) 
 });
 
 /**
- * A new Claude chat in the project, made its manager: titled "Manager" unless named, in the mode
+ * A new Claude chat in the project, made its manager: titled "QL <project>" unless named, in the mode
  * Settings → PPM Assistant gives new manager chats, with the rules files ensured. No card: a
  * person pressed the button.
  */
@@ -74,9 +74,9 @@ assistantManagerRulesRoutes.post("/managers/:project/create", async (c) => {
   if (body.title !== undefined && (typeof body.title !== "string" || body.title.trim().length > MAX_TITLE)) {
     return c.json(err(`title must be text of at most ${MAX_TITLE} characters`), 400);
   }
-  const title = (typeof body.title === "string" && body.title.trim()) || "Manager";
   try {
     const project = managerChats.project(c.req.param("project"));
+    const title = (typeof body.title === "string" && body.title.trim()) || defaultManagerTitle(project.name);
     const mode = getAssistantSettings().manager_default_mode;
     const session = await createProjectChatSession({
       providerId: MANAGER_PROVIDER_ID, projectName: project.name, projectPath: project.path, title,

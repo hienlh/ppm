@@ -106,6 +106,13 @@ export function createManagerChats(env: ManagerChatsEnv = realEnv) {
     return env.projects().find((p) => projectKey(p.path) === row.projectKey)?.name ?? basename(row.projectPath);
   }
 
+  /** The row of the project this chat manages, under its id or the id it migrated to. */
+  function rowFor(sessionId: string): ManagerChatRow | undefined {
+    const { byKey, bySession } = load();
+    const key = bySession.get(sessionId) ?? (bySession.size > 0 ? bySession.get(resolveMigratedSession(sessionId)) : undefined);
+    return key ? byKey.get(key) : undefined;
+  }
+
   /** The chat as it may become `target`'s manager, or why it may not. Writes nothing. */
   async function check(target: ManagerProject, asked: string): Promise<{ sessionId: string; found: boolean }> {
     const sessionId = resolveMigratedSession(asked);
@@ -137,9 +144,7 @@ export function createManagerChats(env: ManagerChatsEnv = realEnv) {
     },
     /** The row of the project this chat manages, with the name the list shows; null for any other chat. */
     forSession(sessionId: string): (ManagerChatRow & { projectName: string }) | null {
-      const { byKey, bySession } = load();
-      const key = bySession.get(sessionId) ?? (bySession.size > 0 ? bySession.get(resolveMigratedSession(sessionId)) : undefined);
-      const row = key ? byKey.get(key) : undefined;
+      const row = rowFor(sessionId);
       return row ? { ...row, projectName: nameFor(row) } : null;
     },
     isManagerChat(sessionId: string): boolean {
@@ -198,6 +203,14 @@ export function createManagerChats(env: ManagerChatsEnv = realEnv) {
       invalidate();
       if (done) env.changed([target.name]);
       return done;
+    },
+    /**
+     * A chat was renamed. The manager list carries each manager's title, and the session list's
+     * announcement does not reach it, so a renamed manager is announced as a manager change too.
+     */
+    retitled(sessionId: string): void {
+      const row = rowFor(sessionId);
+      if (row) env.changed([nameFor(row)]);
     },
     /** Drops the cached answers; the next question reads the table again. */
     invalidate,

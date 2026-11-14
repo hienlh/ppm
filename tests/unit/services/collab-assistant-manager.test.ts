@@ -203,6 +203,17 @@ describe("create_session with manager: true", () => {
     expect(w.deliveries).toHaveLength(0);
   });
 
+  it("titles the chat \"QL <project>\" when no title is given, and keeps a title that is", async () => {
+    const w = world({ answers: ["allow_once", "allow_once"] });
+    delete w.managers[OTHER_PATH];
+    const named = await createSessionTool(w.env, w.caller, { project: "other", manager: true }, signal());
+    expect(JSON.parse(textOf(named))).toMatchObject({ title: "QL other", manager: true });
+    expect(w.asked[0]).toMatchObject({ title: "QL other" });
+    delete w.managers[OTHER_PATH];
+    const given = await createSessionTool(w.env, w.caller, { title: "Ops lead", project: "other", manager: true }, signal());
+    expect(JSON.parse(textOf(given))).toMatchObject({ title: "Ops lead" });
+  });
+
   it("is refused for a project that has a manager, before asking", async () => {
     const w = world({ answers: ["allow_once"] });
     const result = await createSessionTool(w.env, w.caller, { title: "Manager", project: "other", manager: true }, signal());

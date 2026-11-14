@@ -44,8 +44,9 @@ export const CHAT_TOOL_DEFINITIONS: readonly AssistantToolDefinition[] = [
       + "false, `tag` (a tag's name in that project, or null to remove it), `read` true or false. Give only what changes. "
       + "Runs at once when the user started this turn and nothing they did not write has reached it yet (no chat titles, "
       + "files, tabs or other outside text read in this turn); otherwise the user approves the whole call on one card. "
-      + "Refused in a turn PPM started on its own. Marking a chat read is refused while it waits for the user on a card; "
-      + "a manager chat's title is left to the user.",
+      + "Refused in a turn PPM started on its own. Marking a chat read is refused while it waits for the user on a card. "
+      + "A manager chat can be renamed too (the user may want \"QL <project>\" names to tell several apart); it stays "
+      + "the manager. The result lists each chat's previous title, so a rename can be undone with another call.",
     inputSchema: object({
       project: PROJECT,
       changes: {

@@ -17,6 +17,17 @@ export type ManagerTelegramDetail = (typeof MANAGER_TELEGRAM_DETAILS)[number];
 export const MANAGER_PROVIDER_ID = "claude";
 export const MANAGER_CLAUDE_ONLY = "Manager chats run on Claude for now";
 
+/** The longest default title: the session tools' own title limit, so either door names it alike. */
+const MAX_DEFAULT_MANAGER_TITLE = 60;
+
+/**
+ * The title a new manager chat gets when nobody names it: "QL" ("quản lý", manager) and the
+ * project, so several manager chats open side by side say which project each one runs.
+ */
+export function defaultManagerTitle(projectName: string): string {
+  return `QL ${projectName.trim()}`.slice(0, MAX_DEFAULT_MANAGER_TITLE).trim();
+}
+
 /** What every surface listing a project's manager shows. */
 export interface ManagerChatSummary {
   projectName: string;

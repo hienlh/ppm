@@ -10,6 +10,7 @@
 import { chatControl, type LiveApprovalCard } from "../chat-control/chat-control.ts";
 import { getSessionProvider, getSessionTitle } from "../db.service.ts";
 import { projectTelegramDetail } from "../assistant-managers/manager-chats-db.ts";
+import { defaultManagerTitle } from "../../shared/assistant-managers.ts";
 import { getMainSession } from "../assistant/assistant-main-session.ts";
 import { addCardTelegramRef, setCardOutboundError } from "../assistant-cards/assistant-cards-outbound-db.ts";
 import { getCardRow } from "../assistant-cards/assistant-cards-db.ts";
@@ -105,7 +106,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       if (!live || this.deps.isShowing(chatId, live.requestId)) return;
       this.deps.relayCard(chatId, {
         targetSessionId: card.sessionId!, targetProject: card.projectName ?? "project",
-        targetProvider: getSessionProvider(card.sessionId!) ?? "claude", targetTitle: getSessionTitle(card.sessionId!) || "Manager",
+        targetProvider: getSessionProvider(card.sessionId!) ?? "claude", targetTitle: getSessionTitle(card.sessionId!) || (card.projectName ? defaultManagerTitle(card.projectName) : "Manager"),
         card: live, onSent: record, manager: true, ...(detail === "title" ? { titleOnly: card.title } : {}),
       });
       return;
