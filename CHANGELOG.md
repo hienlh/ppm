@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.5] - 2026-11-14
+
+### Fixed
+
+- **A background agent resumed with SendMessage is no longer killed** when the chat's sign-in token is renewed: PPM tracks background work by task, so the chat is woken when the agent finishes instead of going silent.
+- **Token renewal waits** while a chat's CLI has reported background activity in the last 3 minutes.
+
 ## [0.25.4] - 2026-11-14
 
 ### Changed
