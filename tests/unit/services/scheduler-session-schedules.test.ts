@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { SchedulerService } from "../../../src/services/scheduler-core.ts";
+import { onServerScheduleChange } from "../../../src/services/session-schedules/session-schedules-changed.ts";
 import {
   clearSessionSchedulePaused,
   countSessionSchedules,
@@ -75,6 +76,18 @@ describe("a session schedule coming due", () => {
     expect(runnerCalls).toBe(0);
     expect(listScheduleRuns(id)).toHaveLength(0);
     expect(scheduler.isRunning(id)).toBe(false);
+  });
+
+  it("tells open PPMs a fire is waiting", () => {
+    let told = 0;
+    const off = onServerScheduleChange(() => { told++; });
+    try {
+      sessionSchedule({ next_fire_at: ago(1_000) });
+      scheduler.tick();
+      expect(told).toBe(1);
+    } finally {
+      off();
+    }
   });
 
   it("coalesces fires that pass before delivery into the one already pending", () => {

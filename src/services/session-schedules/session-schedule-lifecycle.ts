@@ -15,6 +15,7 @@ import { nextFireAt } from "../scheduler-timing.ts";
 import { MAX_SCHEDULES_PER_SESSION } from "../../shared/session-schedule-input.ts";
 import type { Schedule } from "../../types/scheduler.ts";
 import { liveScheduleTargetDeps, resolveScheduleTarget, type ScheduleTarget, type ScheduleTargetDeps } from "./session-schedule-target.ts";
+import { broadcastSchedulesChanged } from "./session-schedules-changed.ts";
 
 const log = createLogger("scheduler");
 
@@ -91,7 +92,10 @@ export function sessionScheduleTargetIds(sessionId: string, deps: Pick<ScheduleT
 export function forgetSessionSchedulesOf(ids: readonly string[]): number {
   let removed = 0;
   for (const id of new Set(ids)) removed += deleteSessionSchedulesForTarget(id);
-  if (removed > 0) log.info(`session=${ids[0]} deleted, with its ${removed} schedule(s)`);
+  if (removed > 0) {
+    log.info(`session=${ids[0]} deleted, with its ${removed} schedule(s)`);
+    broadcastSchedulesChanged();
+  }
   return removed;
 }
 
@@ -100,7 +104,10 @@ export function followRenamedChats(lifecycle: ChatLifecycle = chatLifecycle): ()
   return lifecycle.on("migrated", ({ oldSessionId, newSessionId }) => {
     try {
       const moved = retargetSessionSchedules(oldSessionId, newSessionId);
-      if (moved > 0) log.info(`session=${oldSessionId} renamed to ${newSessionId}: ${moved} schedule(s) follow it`);
+      if (moved > 0) {
+        log.info(`session=${oldSessionId} renamed to ${newSessionId}: ${moved} schedule(s) follow it`);
+        broadcastSchedulesChanged();
+      }
     } catch (e) {
       log.warn(`session=${oldSessionId} schedules could not follow the rename to ${newSessionId}: ${(e as Error).message}`);
     }

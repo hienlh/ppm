@@ -12,6 +12,7 @@ import { createLogger } from "../logger.ts";
 import { getPendingSessionSchedules, setSessionSchedulePending, updateSchedule } from "../scheduler-db.service.ts";
 import { followingFireAt, nextFireAt } from "../scheduler-timing.ts";
 import { notifySessionScheduleDue } from "./session-schedule-due.ts";
+import { broadcastSchedulesChanged } from "./session-schedules-changed.ts";
 
 const log = createLogger("scheduler");
 
@@ -35,6 +36,7 @@ export function markSessionScheduleDue(schedule: Schedule, now = new Date()): vo
     return;
   }
   log.info(`Schedule ${schedule.id} (${schedule.name}) came due for session ${schedule.target_session_id}`);
+  broadcastSchedulesChanged();
   notifySessionScheduleDue(schedule.id);
 }
 

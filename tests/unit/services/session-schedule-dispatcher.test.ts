@@ -9,6 +9,7 @@ import {
   getSchedule, insertSchedule, listScheduleRuns, setSessionSchedulePending, updateSchedule,
 } from "../../../src/services/scheduler-db.service.ts";
 import { validateScheduleRun } from "../../../src/shared/chat-schedule-run.ts";
+import { onServerScheduleChange } from "../../../src/services/session-schedules/session-schedules-changed.ts";
 import { createChatLifecycle, type ChatLifecycle } from "../../../src/services/chat-control/chat-lifecycle.ts";
 import type {
   ChatControl, DeliverResult, LiveChatState, SendUserMessageOpts,
@@ -184,6 +185,34 @@ describe("delivery into an idle chat", () => {
       projectName: "proj", providerId: "claude",
     });
     expect(getSchedule(b)).toBeNull();
+  });
+});
+
+describe("telling open PPMs what delivery changed", () => {
+  let told = 0;
+  let off: () => void = () => {};
+  beforeEach(() => { told = 0; off = onServerScheduleChange(() => { told++; }); });
+  afterEach(() => off());
+
+  it("when a turn takes the fire, when it ends, and when a one-shot goes", async () => {
+    const id = pending({ recurring: false });
+    await dispatcher.due(id);
+    expect(told).toBe(1);
+    turnEnded("done");
+    expect(getSchedule(id)).toBeNull();
+    expect(told).toBe(2);
+  });
+
+  it("when the chat cannot be reached and its schedules pause", async () => {
+    target = { ok: false, reason: "The chat this schedule runs in no longer exists." };
+    await dispatcher.due(pending());
+    expect(told).toBe(1);
+  });
+
+  it("not while a busy chat only keeps its fire waiting", async () => {
+    live = busyLive();
+    await dispatcher.due(pending());
+    expect(told).toBe(0);
   });
 });
 

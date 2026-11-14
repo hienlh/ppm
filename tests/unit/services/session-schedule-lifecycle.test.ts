@@ -9,6 +9,7 @@ import {
   countSessionSchedules, getSchedule, insertSchedule, setSessionSchedulePaused, setSessionSchedulePending,
 } from "../../../src/services/scheduler-db.service.ts";
 import { createChatLifecycle } from "../../../src/services/chat-control/chat-lifecycle.ts";
+import { onServerScheduleChange } from "../../../src/services/session-schedules/session-schedules-changed.ts";
 import {
   assertCanAddSessionSchedule, followRenamedChats, forgetSessionSchedulesOf, resumeSessionSchedule,
   sessionScheduleTargetIds, SessionScheduleRefusal,
@@ -112,6 +113,27 @@ describe("following the chat", () => {
     expect(forgetSessionSchedulesOf(sessionScheduleTargetIds("old-id", deps))).toBe(2);
     expect(countSessionSchedules(CHAT) + countSessionSchedules("old-id")).toBe(0);
     expect(getSchedule(other)).not.toBeNull();
+  });
+
+  it("tells open PPMs when schedules follow a renamed chat or go with a deleted one, and only then", () => {
+    let told = 0;
+    const off = onServerScheduleChange(() => { told++; });
+    try {
+      const lifecycle = createChatLifecycle();
+      const stop = followRenamedChats(lifecycle);
+      schedule("codex-first-id");
+      lifecycle.emit("migrated", { oldSessionId: "nobody-here", newSessionId: "still-nobody" });
+      expect(told).toBe(0);
+      lifecycle.emit("migrated", { oldSessionId: "codex-first-id", newSessionId: "codex-thread-id" });
+      expect(told).toBe(1);
+      stop();
+      expect(forgetSessionSchedulesOf(["no-such-chat"])).toBe(0);
+      expect(told).toBe(1);
+      expect(forgetSessionSchedulesOf(["codex-thread-id"])).toBe(1);
+      expect(told).toBe(2);
+    } finally {
+      off();
+    }
   });
 });
 

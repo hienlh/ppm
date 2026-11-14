@@ -23,6 +23,7 @@ import {
   pauseSessionSchedule, recordOneShotDelivered, recordRunEnded, recordRunStarted, turnFailed,
 } from "./session-schedule-run-records.ts";
 import { SessionScheduleWaitingList } from "./session-schedule-waiting-list.ts";
+import { broadcastSchedulesChanged } from "./session-schedules-changed.ts";
 
 export type { ScheduleNotice, SessionScheduleDispatchEnv } from "./session-schedule-dispatch-types.ts";
 
@@ -77,7 +78,7 @@ export class SessionScheduleDispatcher {
     if (this.backoff.isWaiting(scheduleId)) return Promise.resolve();
     const sessionId = this.env.canonical(schedule.target_session_id!);
     // A chat renamed while PPM was not listening: the schedules follow it now.
-    if (sessionId !== schedule.target_session_id) retargetSessionSchedules(schedule.target_session_id!, sessionId);
+    if (sessionId !== schedule.target_session_id && retargetSessionSchedules(schedule.target_session_id!, sessionId) > 0) broadcastSchedulesChanged();
     this.waiting.add(sessionId, scheduleId);
     return this.pump(sessionId);
   }
@@ -215,6 +216,7 @@ export class SessionScheduleDispatcher {
     }
     // A recurring fire is spent once its turn opens. A one-shot's counts only once its turn ran.
     if (flight.schedule.recurring) this.backoff.succeeded(flight.schedule.id);
+    broadcastSchedulesChanged();
   }
 
   /**
@@ -241,6 +243,7 @@ export class SessionScheduleDispatcher {
       }
       this.backoff.succeeded(schedule.id);
     }
+    broadcastSchedulesChanged();
     this.wakeSoon(sessionId);
   }
 
@@ -262,15 +265,18 @@ export class SessionScheduleDispatcher {
       log.warn(`Schedule ${schedule.id} (${schedule.name}) failure ${outcome.failures}: ${reason} Trying again in ${describeWait(outcome.delayMs)}`);
       if (tellFirst && outcome.failures === 1) this.env.notify(retryingNotice(schedule, chat, reason, outcome.delayMs));
     }
+    broadcastSchedulesChanged();
     this.wakeSoon(sessionId);
   }
 
   private pauseAll(sessionId: string, reason: string): void {
-    for (const schedule of this.waiting.takeAll(sessionId)) {
+    const paused = this.waiting.takeAll(sessionId);
+    for (const schedule of paused) {
       pauseSessionSchedule(schedule, reason);
       this.backoff.succeeded(schedule.id);
       this.env.notify(pausedNotice([schedule], { sessionId, projectName: "" }, reason));
     }
+    if (paused.length > 0) broadcastSchedulesChanged();
   }
 
   /** Once per pending period: the schedule waits behind a card the user has to answer first. */
