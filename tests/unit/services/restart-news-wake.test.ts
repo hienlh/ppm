@@ -198,6 +198,15 @@ describe("queueing a start", () => {
     expect(pendingRestartNews(store)!.restarts).toHaveLength(1);
   });
 
+  it("queues nothing on the first run this database recorded", () => {
+    const store = memoryStore();
+    let scans = 0;
+    const first: ServerStart = { ...start(T), previous: null, restart: restart(T, { kind: "manual" }) };
+    startRestartNews({ start: first, store, scan: () => { scans++; return { chats: [], more: 0 }; }, enabled: () => true, mainSession: () => MAIN });
+    expect(pendingRestartNews(store)).toBeNull();
+    expect(scans).toBe(0);
+  });
+
   it("queues nothing with the setting off", () => {
     const store = memoryStore();
     startRestartNews({ start: start(T), store, scan: () => ({ chats: [chat("a")], more: 0 }), enabled: () => false, mainSession: () => MAIN });

@@ -1120,7 +1120,8 @@ so it can have each project's manager chat resume them. Code in `src/services/re
   its project's manager and the chat that opened it (`spawned_by`). At most 30 are listed.
 - **Delivery.** `startRestartNews()` runs in the hub startup before the cards start the wake queue
   and adds this start to the `restart` wake source (`restart-news-source.ts`, config row
-  `assistant_restart_news`, so a crash before delivery keeps it). One item per start; restarts before
+  `assistant_restart_news`, so a crash before delivery keeps it). The first run a database ever
+  records (a new install) has no previous run and queues nothing. One item per start; restarts before
   delivery merge into it; a delivered or stopped turn clears only what it carried; three failed turns
   drop it. Each listed chat is checked again when the news goes out (it can wait hours: a busy
   Assistant, the hourly cap, no main session yet): one deleted since, or with a trace row after the

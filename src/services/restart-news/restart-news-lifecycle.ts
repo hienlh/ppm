@@ -119,6 +119,12 @@ export function startRestartNews(deps: RestartNewsStartDeps = {}): void {
 }
 
 function queueStart(start: ServerStart, store: RestartNewsStore, deps: RestartNewsStartDeps): void {
+  // The first run this database ever recorded (a new install, or one from before the run log):
+  // there is no previous run to report on, so nothing restarted as far as anyone can tell.
+  if (!start.previous) {
+    log.info("first recorded server run: no restart news");
+    return;
+  }
   let enabled = true;
   try { enabled = (deps.enabled ?? (() => getAssistantSettings().restart_news))(); } catch { /* on unless switched off */ }
   if (!enabled) {
