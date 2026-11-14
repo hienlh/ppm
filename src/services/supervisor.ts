@@ -56,6 +56,10 @@ import { readMachineCpuTimes, machineBusyFraction, type MachineCpuTimes } from "
 import { uptime as osUptime } from "node:os";
 import { startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
 import { writeOrderedStop } from "./restart-news/ordered-stop-note.ts";
+import {
+  decideServerExit, initialStartReason, restartWithoutChildReason, resumeAfterPauseReason, resumeAfterStopReason,
+  REVIVE_REASON, UPGRADE_FAILED_REASON,
+} from "./restart-news/supervisor-start-reason.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 const MAX_RESTARTS = 10;
@@ -897,35 +901,26 @@ export async function spawnServer(
     return;
   }
 
-  // Exit code 42 = restart requested (e.g. /restart from Telegram)
-  if (exitCode === 42 || (exitCode === 0 && !shuttingDown)) {
-    log("INFO", `Server restart requested (code ${exitCode}), respawning immediately`);
-    // A SIGTERM ends a healthy-enough server with code 0 too, so the same exit can be the health
-    // check's kill or a `ppm restart` as well as the server asking for it.
-    const reason: StartReason = healthKillPending
-      ? { kind: "watchdog", detail: "the server stopped answering health checks and was stopped" }
-      : requestedOr({ kind: "manual", ...(serverRestartRequested ? {} : { detail: "the server asked to be restarted" }) });
-    healthKillPending = false;
-    serverRestartRequested = false;
-    return spawnServer(serverArgs, logFd, reason);
-  }
+  // Why the next server starts, and whether it starts now or after a backoff (table-tested in
+  // restart-news/supervisor-start-reason.ts). The stopped and shutting-down exits returned above.
+  const decision = decideServerExit({
+    exitCode, signal: exitSignal, upForS: Math.round((Date.now() - startedAt) / 1000),
+    stopped: false, shuttingDown: false, healthKill: healthKillPending, restartRequested: serverRestartRequested,
+  }, takeRequest);
+  const wasRestartRequest = serverRestartRequested;
+  healthKillPending = false;
+  serverRestartRequested = false;
 
-  // SIGUSR2 restart — skip backoff, respawn immediately
-  if (serverRestartRequested) {
-    serverRestartRequested = false;
-    log("INFO", `Server restarting (SIGUSR2), no backoff`);
-    healthKillPending = false;
-    if (!shuttingDown) return spawnServer(serverArgs, logFd, requestedOr({ kind: "manual" }));
-    return;
+  if (decision.action === "stay_down") return;
+  if (decision.action === "respawn_now") {
+    log("INFO", exitCode === 42 || exitCode === 0
+      ? `Server restart requested (code ${exitCode}), respawning immediately`
+      : `Server restarting (${wasRestartRequest ? "restart asked for" : "requested"}), no backoff`);
+    return spawnServer(serverArgs, logFd, decision.reason);
   }
 
   // Crash — apply backoff. A server the health check killed is the watchdog's restart.
-  const killedByWatchdog = healthKillPending;
-  healthKillPending = false;
-  const upFor = Math.round((Date.now() - startedAt) / 1000);
-  const crashReason: StartReason = killedByWatchdog
-    ? { kind: "watchdog", detail: `the server stopped answering health checks and was killed after ${upFor}s` }
-    : { kind: "crash", detail: `exit ${exitCode}, signal ${exitSignal}, after ${upFor}s` };
+  const crashReason = decision.reason;
   const now = Date.now();
   if (now - lastServerCrash > STABLE_WINDOW_MS) serverRestarts = 0;
   lastServerCrash = now;
@@ -950,7 +945,7 @@ export async function spawnServer(
     serverRestarts = 0;
     updateStatus({ state: "running", pausedAt: null, pauseReason: null });
     log("INFO", "Resuming server after pause");
-    if (!shuttingDown) return spawnServer(serverArgs, logFd, requestedOr({ kind: "manual", detail: `resumed after repeated crashes (last: ${crashReason.detail})` }));
+    if (!shuttingDown) return spawnServer(serverArgs, logFd, resumeAfterPauseReason(crashReason, takeRequest));
     return;
   }
 
@@ -963,31 +958,14 @@ export async function spawnServer(
 }
 
 /**
- * The reason a `ppm restart --reason …` left for this spawn, else `fallback`. Only consulted where
- * a person or a script asked for the restart: a crash never wears a request it did not make.
+ * The reason a `ppm restart --reason …` left, consumed. The decisions in
+ * `restart-news/supervisor-start-reason.ts` ask for it only where someone asked for the restart.
  */
-function requestedOr(fallback: StartReason): StartReason {
-  try {
-    return takeRestartRequest(getPpmDir()) ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
+const takeRequest = (): StartReason | null => takeRestartRequest(getPpmDir());
 
-const UPGRADE_FAILED: StartReason = { kind: "upgrade", detail: "the upgrade failed, so the previous version was started again" };
-
-/** A supervisor started this long after the machine is taken to have started with it. */
-const BOOT_WINDOW_S = 10 * 60;
-
-/** Why the supervisor's first server starts: an upgrade, a restart someone asked for, a boot, or a start. */
-function initialStartReason(isUpgrade: boolean): StartReason {
-  if (isUpgrade) return { kind: "upgrade" };
-  const requested = requestedOr({ kind: "unknown" });
-  if (requested.kind !== "unknown") return requested;
-  let up = Infinity;
-  try { up = osUptime(); } catch { /* unknown uptime: not a boot */ }
-  if (up < BOOT_WINDOW_S) return { kind: "boot", detail: `the machine started ${Math.round(up / 60)} min earlier` };
-  return { kind: "manual", detail: "PPM was started (ppm start, or its service starting it again)" };
+/** Seconds since the machine started; null when the OS will not say (then it is not a boot). */
+function machineUptimeS(): number | null {
+  try { return osUptime(); } catch { return null; }
 }
 
 /**
@@ -997,7 +975,7 @@ function initialStartReason(isUpgrade: boolean): StartReason {
  */
 function respawnServerAfterFailedUpgrade(serverArgs: string[], logFd: number): void {
   if (serverChild || serverBackoffPending) return;
-  void spawnServer(serverArgs, logFd, UPGRADE_FAILED);
+  void spawnServer(serverArgs, logFd, UPGRADE_FAILED_REASON);
 }
 
 // ─── Tunnel management ─────────────────────────────────────────────────
@@ -1479,7 +1457,7 @@ function startServerHealthCheck() {
       if (noServerChildCycles * SERVER_HEALTH_INTERVAL_MS >= SERVER_REVIVE_AFTER_MS) {
         noServerChildCycles = 0;
         log("WARN", "No server child while state=running — reviving server");
-        spawnServer(_serverArgs, _logFd, { kind: "unknown", detail: "no server process was running, so the supervisor started one" })
+        spawnServer(_serverArgs, _logFd, REVIVE_REASON)
           .catch((e) => log("ERROR", `Server revive failed: ${e}`));
       }
       return;
@@ -2225,7 +2203,7 @@ export async function softStop() {
   startServerHealthCheck();
   log("INFO", "Resuming server from stopped state");
   _softStopRunning = false;
-  spawnServer(_serverArgs, _logFd, requestedOr({ kind: "manual", detail: "resumed after ppm stop" }));
+  spawnServer(_serverArgs, _logFd, resumeAfterStopReason(takeRequest));
 }
 
 // ─── Shutdown ──────────────────────────────────────────────────────────
@@ -2504,7 +2482,7 @@ export async function runSupervisor(opts: {
       // silently no-ops and only `stop --kill` + `start` recovers.
       log("WARN", "No server child to restart — spawning one");
       noServerChildCycles = 0;
-      spawnServer(serverArgs, logFd, requestedOr({ kind: "manual" })).catch((e) => log("ERROR", `Server respawn failed: ${e}`));
+      spawnServer(serverArgs, logFd, restartWithoutChildReason(takeRequest)).catch((e) => log("ERROR", `Server respawn failed: ${e}`));
     }
   });
 
@@ -2780,7 +2758,7 @@ export async function runSupervisor(opts: {
   }, prevStatus.shareHostPid, { ppmRestarting: true });
 
   // Spawn server + (fresh) tunnel in parallel
-  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd, initialStartReason(isUpgrade))];
+  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd, initialStartReason({ isUpgrade, uptimeS: machineUptimeS(), takeRequest }))];
   const tunnelLoopStarted = tunnelSharingEnabled && !tunnelAdopted;
   if (tunnelLoopStarted) promises.push(spawnTunnel(_opts.port));
 

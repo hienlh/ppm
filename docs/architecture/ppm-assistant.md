@@ -1087,8 +1087,9 @@ so it can have each project's manager chat resume them. Code in `src/services/re
 
 - **Why it started.** The supervisor decides at every spawn and hands it to the server as
   `PPM_START_REASON` (`boot | upgrade | manual | watchdog | recycle | crash | unknown`) plus
-  `PPM_START_DETAIL` (exit code and signal, a note) — `start-reason.ts`, `spawnServer` in
-  `supervisor.ts`. A health-check kill is `watchdog` whichever exit code it ends with; a first spawn
+  `PPM_START_DETAIL` (exit code and signal, a note) — `start-reason.ts`; every decision (what an exit
+  means, the first start, resume, revive, failed self-replace) is a pure function in
+  `supervisor-start-reason.ts`, table-tested, which `spawnServer` in `supervisor.ts` calls. A health-check kill is `watchdog` whichever exit code it ends with; a first spawn
   within 10 minutes of the machine starting is `boot`. `ppm restart --reason <text>` (a kind by name,
   or free text as a `manual` note) leaves `.restart-reason` in the PPM folder, which the supervisor
   consumes once at its next manual spawn and ignores after 5 minutes; an external RAM watchdog that
