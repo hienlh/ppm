@@ -13,7 +13,7 @@
  * naming the card, and opening it shows the card full screen in a sheet with the pager and a
  * close button, the chat hidden behind it. A new card does not take the phone's screen by itself.
  */
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { BellRing, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-is-mobile";
@@ -23,6 +23,7 @@ import type { AssistantCard as Card } from "../../../shared/assistant-cards";
 import { AssistantCard } from "./cards/assistant-card";
 import { CardStickyActionsContext } from "./cards/card-shell";
 import { WaitingBadge } from "./manager-chip";
+import { MANAGER_CHAT_OPENING_EVENT } from "./open-manager-chat";
 
 /** How long the card the bar lands on stays outlined. */
 export const WAITING_HIGHLIGHT_MS = 1800;
@@ -90,6 +91,8 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
   const lastIndex = useRef(0);
   const known = useRef<Set<string> | null>(null);
   const root = useRef<HTMLElement>(null);
+  const row = useRef<HTMLButtonElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
 
   let index = cards.findIndex((c) => c.id === currentId);
   // The shown card was answered: stay at its place in the list, which now holds the next one.
@@ -102,6 +105,15 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
     if (opening) setOpen(true);
     setFlash((n) => n + 1);
   };
+
+  // Crossing the md width (a tablet rotating, a split view): each layout starts in its own resting
+  // state, so a desktop's unfolded box never turns into a sheet nobody opened.
+  const wasPhone = useRef(phone);
+  useEffect(() => {
+    if (wasPhone.current === phone) return;
+    wasPhone.current = phone;
+    setOpen(!phone);
+  }, [phone]);
 
   // A card that was not there before: the bar moves to it. A desktop unfolds; a phone's screen
   // is not taken over by a card nobody asked to see, so there only the row names it.
@@ -124,9 +136,38 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus?.nonce]);
 
-  // Answering a card in the Assistant's own composer: on a phone the sheet steps aside for it.
-  const replying = useCardReplyStore((s) => s.target !== null);
-  useEffect(() => { if (phone && replying) setOpen(false); }, [phone, replying]);
+  // Answering a card in the Assistant's own composer: on a phone the sheet steps aside for it, on
+  // every Reply (a second card's included). A manager chat answers in place and never sets this.
+  useEffect(() => {
+    if (!phone) return;
+    return useCardReplyStore.subscribe((s, before) => {
+      if (s.target && s.target !== before.target) setOpen(false);
+    });
+  }, [phone]);
+
+  // Leaving the Assistant: the sheet lives in the app's root, so a hidden tab would leave it
+  // over whatever comes next. It closes when a manager chat opens and when the bar stops being
+  // laid out (its tab hidden: the row measures 0).
+  useEffect(() => {
+    if (!phone || !open) return;
+    const close = () => setOpen(false);
+    window.addEventListener(MANAGER_CHAT_OPENING_EVENT, close);
+    const el = root.current;
+    const watcher = el && typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => { if (el.getClientRects().length === 0) close(); })
+      : null;
+    if (el) watcher?.observe(el);
+    return () => { window.removeEventListener(MANAGER_CHAT_OPENING_EVENT, close); watcher?.disconnect(); };
+  }, [phone, open]);
+
+  // The sheet is a dialog: focus moves into it, Escape closes it, and focus comes back to the row.
+  const sheetWasOpen = useRef(false);
+  useEffect(() => {
+    if (!phone) return;
+    if (open) closeButton.current?.focus({ preventScroll: true });
+    else if (sheetWasOpen.current) row.current?.focus({ preventScroll: true });
+    sheetWasOpen.current = open;
+  }, [phone, open]);
 
   const [lit, setLit] = useState(false);
   useEffect(() => {
@@ -167,6 +208,7 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
         data-waiting-count={cards.length}
       >
         <button
+          ref={row}
           type="button"
           onClick={() => setOpen(true)}
           aria-haspopup="dialog"
@@ -183,12 +225,21 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
           </span>
         </button>
         {note}
-        <BottomSheet open={open} onClose={() => setOpen(false)} zIndex={45} className="flex h-[var(--sheet-vh)] flex-col p-0">
-          <div role="dialog" aria-modal="true" aria-label={label} className="flex min-h-0 flex-1 flex-col" data-waiting-sheet="">
+        {/* `px-0 pt-0`, never `p-0`: the sheet's own bottom padding keeps the buttons clear of
+            the home indicator and, while typing a reply, of the keyboard. */}
+        <BottomSheet open={open} onClose={() => setOpen(false)} zIndex={45} className="flex h-[calc(var(--sheet-vh,100dvh)+var(--sheet-kb,0px))] flex-col px-0 pt-0">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={label}
+            className="flex min-h-0 flex-1 flex-col"
+            data-waiting-sheet=""
+            onKeyDown={(e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } }}
+          >
             <div className="flex shrink-0 items-center gap-1 border-b border-border pl-3 pr-1">
               <span className="flex min-w-0 flex-1 items-center gap-2"><Title label={label} count={cards.length} /></span>
               <Pager index={index} count={cards.length} step={step} />
-              <button type="button" onClick={() => setOpen(false)} aria-label="Close the waiting cards" className={NAV}>
+              <button ref={closeButton} type="button" onClick={() => setOpen(false)} aria-label="Close the waiting cards" className={NAV}>
                 <X className="size-5" />
               </button>
             </div>

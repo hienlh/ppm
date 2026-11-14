@@ -38,7 +38,11 @@ export function managerChatTitle(projectName: string): string {
   return `${projectName} · manager`;
 }
 
+/** Said before a manager chat opens, so a full-screen sheet over the Assistant gets out of the way. */
+export const MANAGER_CHAT_OPENING_EVENT = "ppm:manager-chat-opening";
+
 export function openManagerChat(target: ManagerChatRef): Promise<void> {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(MANAGER_CHAT_OPENING_EVENT));
   return usePanelStore.getState().isMobile() ? openOnPhone(target) : Promise.resolve(openInWindow(target));
 }
 

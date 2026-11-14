@@ -25,6 +25,14 @@ export function useSwipeToDismiss(onDismiss: () => void) {
   const scrollElRef = useRef<HTMLElement | null>(null);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    // React passes a portal's events up the component tree, not the page: a touch in a sheet
+    // opened from inside this one (a card's long-press menu over "Waiting on you") reaches these
+    // handlers too, and dragging that menu down would close this sheet with it. Only a touch that
+    // starts inside this sheet's own panel can drag it.
+    if (!(e.currentTarget as Node).contains(e.target as Node)) {
+      draggingRef.current = false;
+      return;
+    }
     startYRef.current = e.touches[0]!.clientY;
     draggingRef.current = true;
     dragYRef.current = 0;

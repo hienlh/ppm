@@ -68,7 +68,7 @@ describe("on a phone", () => {
     await click(row);
     expect(sheet()?.getAttribute("role")).toBe("dialog");
     // The sheet takes the whole visible height.
-    expect(sheet()!.parentElement!.className).toContain("h-[var(--sheet-vh)]");
+    expect(sheet()!.parentElement!.className).toContain("h-[calc(var(--sheet-vh,100dvh)+var(--sheet-kb,0px))]");
     expect(inSheet("[data-waiting-card] h4")?.textContent).toBe("Release 0.25.6 tonight?");
     expect(inSheet("[data-waiting-position]")?.textContent).toBe("1/2");
     // Its buttons stick to the sheet's bottom while the card scrolls.
@@ -100,6 +100,49 @@ describe("on a phone", () => {
     await click([...sheet()!.querySelectorAll("button")].find((b) => b.textContent === "Reply")!);
     expect(useCardReplyStore.getState().target?.cardId).toBe(a.id);
     expect(sheet()).toBeNull();
+    // A second card's Reply, while the first is still the target, steps aside too.
+    const b = card({ title: "Second" });
+    await view.rerender(createElement(WaitingCardsBar, { cards: [a, b], label: "Waiting on you" }));
+    // The row already names the new card; the sheet opens on it.
+    await click(view.container.querySelector("[data-waiting-toggle]"));
+    await click([...sheet()!.querySelectorAll("button")].find((x) => x.textContent === "Reply")!);
+    expect(useCardReplyStore.getState().target?.cardId).toBe(b.id);
+    expect(sheet()).toBeNull();
+  });
+
+  it("keeps the sheet's own bottom padding, takes focus and gives it back", async () => {
+    view = await mount(createElement(WaitingCardsBar, { cards: [card()], label: "Waiting on you" }));
+    const row = view.container.querySelector<HTMLButtonElement>("[data-waiting-toggle]")!;
+    await click(row);
+    const panel = sheet()!.parentElement!;
+    // `p-0` would merge away the panel's home-indicator and keyboard padding.
+    expect(panel.className).not.toMatch(/(^|\s)p-0(\s|$)/);
+    expect(panel.className).toContain("pb-[");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Close the waiting cards");
+    const { act } = await import("react");
+    await act(async () => { sheet()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    expect(sheet()).toBeNull();
+    expect(document.activeElement).toBe(row);
+  });
+
+  it("gets out of the way when a manager chat opens", async () => {
+    const { MANAGER_CHAT_OPENING_EVENT } = await import("../../../src/web/components/assistant/open-manager-chat");
+    view = await mount(createElement(WaitingCardsBar, { cards: [card()], label: "Waiting on you" }));
+    await click(view.container.querySelector("[data-waiting-toggle]"));
+    expect(sheet()).not.toBeNull();
+    const { act } = await import("react");
+    await act(async () => { window.dispatchEvent(new Event(MANAGER_CHAT_OPENING_EVENT)); });
+    expect(sheet()).toBeNull();
+  });
+
+  it("does not turn a desktop's unfolded box into a sheet when the width drops below md", async () => {
+    setWidth(1280);
+    view = await mount(createElement(WaitingCardsBar, { cards: [card()], label: "Waiting on you" }));
+    expect(view.container.querySelector("[data-waiting-slot] [data-waiting-card]")).not.toBeNull();
+    const { act } = await import("react");
+    await act(async () => { setWidth(744); });
+    expect(sheet()).toBeNull();
+    expect(view.container.querySelector("[data-waiting-toggle]")).not.toBeNull();
   });
 });
 
