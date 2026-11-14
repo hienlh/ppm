@@ -60,6 +60,8 @@ describe("assistant cards", () => {
     expect(draft.querySelector("b")).toBeNull();
     // The server did not offer an OK on this card: only the user's own words, through Reply.
     expect(buttons()).toEqual(["Reply", "Open manager chat", "Dismiss"]);
+    // In the stream the buttons never stick: they would float over the messages below.
+    expect(view.container.querySelector("[data-card-actions]")?.hasAttribute("data-sticky")).toBe(false);
   });
 
   it("sends OK with the exact draft's hash only when the server offers it", async () => {

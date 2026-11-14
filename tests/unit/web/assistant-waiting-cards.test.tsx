@@ -107,6 +107,8 @@ describe("the bar", () => {
     expect(q("[data-waiting-position]")?.textContent).toBe("1/2");
     expect(shownTitle()).toBe("First");
     expect(q("[data-highlighted]")).toBeNull();
+    // In the bar the buttons stick to its bottom while a long card scrolls.
+    expect(q("[data-waiting-card] [data-card-actions]")?.hasAttribute("data-sticky")).toBe(true);
     await click(q('button[aria-label="Next waiting card"]'));
     expect(q("[data-waiting-position]")?.textContent).toBe("2/2");
     expect(shownTitle()).toBe("Second");

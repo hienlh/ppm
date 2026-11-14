@@ -77,7 +77,8 @@ export function AssistantWindowBody({ tabId, metadata }: { tabId: string; metada
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col" data-assistant-body="">
+    // A size container: the "Waiting on you" bar takes a share of this body's height, not the screen's.
+    <div className="flex h-full min-h-0 flex-col [container-type:size]" data-assistant-body="">
       {(isMobile || !inWindow) && <AssistantHead sessionId={sessionId} />}
       <ManagerChipRow />
       <AssistantWaitingCards />

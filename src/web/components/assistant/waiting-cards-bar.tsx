@@ -14,6 +14,7 @@ import { BellRing, ChevronDown, ChevronLeft, ChevronRight } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { AssistantCard as Card } from "../../../shared/assistant-cards";
 import { AssistantCard } from "./cards/assistant-card";
+import { CardStickyActionsContext } from "./cards/card-shell";
 import { WaitingBadge } from "./manager-chip";
 
 /** How long the card the bar lands on stays outlined. */
@@ -35,11 +36,16 @@ interface Props {
   children?: (card: Card) => ReactNode;
   /** A line under the header that stays even when the bar is folded. */
   note?: ReactNode;
+  /** How tall the card area may grow before it scrolls; the host knows how much room it has. */
+  slotHeight?: string;
 }
 
 const NAV = "grid size-11 shrink-0 place-items-center rounded-full text-text-secondary can-hover:hover:bg-surface-elevated can-hover:hover:text-text-primary md:size-7";
 
-export function WaitingCardsBar({ cards, label, focus, onCard, children, note }: Props) {
+/** In the Assistant: a share of its own body (a size container), and never past half the screen. */
+export const ASSISTANT_SLOT_HEIGHT = "max-h-[min(42dvh,46cqh)] md:max-h-[min(50dvh,46cqh)]";
+
+export function WaitingCardsBar({ cards, label, focus, onCard, children, note, slotHeight = ASSISTANT_SLOT_HEIGHT }: Props) {
   const [currentId, setCurrentId] = useState<string | null>(cards[0]?.id ?? null);
   const [open, setOpen] = useState(true);
   const [flash, setFlash] = useState(0);
@@ -117,7 +123,7 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note }:
           )}
         </button>
         {cards.length > 1 && (
-          <div className="flex shrink-0 items-center rounded-full border border-border bg-surface" data-waiting-pager="">
+          <div className="flex shrink-0 items-center md:rounded-full md:border md:border-border md:bg-surface" data-waiting-pager="">
             <button type="button" className={NAV} onClick={() => step(-1)} aria-label="Previous waiting card">
               <ChevronLeft className="size-4" />
             </button>
@@ -142,14 +148,16 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note }:
       {open && (
         // The card scrolls here and keeps its buttons at the bottom; a phone keeps most of the
         // screen for the conversation and the keyboard.
-        <div className="max-h-[42dvh] overflow-y-auto px-3 pb-3 md:max-h-[50dvh]" data-waiting-slot="">
+        <div className={cn("overflow-y-auto px-3 pb-3", slotHeight)} data-waiting-slot="">
           <div
             key={current.id}
             className={cn("rounded-xl transition-shadow duration-300", lit && "ring-2 ring-error ring-offset-2 ring-offset-panel-2")}
             data-waiting-card={current.id}
             data-highlighted={lit ? "" : undefined}
           >
-            <AssistantCard card={current} onCard={onCard} />
+            <CardStickyActionsContext.Provider value>
+              <AssistantCard card={current} onCard={onCard} />
+            </CardStickyActionsContext.Provider>
           </div>
           {children?.(current)}
         </div>

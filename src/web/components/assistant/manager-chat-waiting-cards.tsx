@@ -46,6 +46,8 @@ export function ManagerChatWaitingCards({ sessionId }: { sessionId: string | nul
         <div className="overflow-hidden rounded-xl border border-border shadow-sm">
           <WaitingCardsBar
             cards={mine}
+            // Above a chat's composer, in a window or on a phone: room for the card, not the chat.
+            slotHeight="max-h-[min(34dvh,300px)]"
             label={WAITING_LABEL}
             onCard={takeCard}
             note={<p className="px-3 pb-1.5 text-[11px] text-text-subtle">{MANAGER_WAITING_NOTE}</p>}

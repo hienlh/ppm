@@ -8,14 +8,21 @@
  * Buttons come in two groups. The card's own answers (`actions`: OK, Reply, Allow…) lead on a
  * desktop; the rest (`secondary`: Open manager chat, Dismiss) sit at the right. On a phone the
  * answers share the bottom row, the first of them on the right under the thumb, with the rest as
- * one row of two above them. The button row sticks to the bottom of whatever scrolls the card, so a long card in
- * the "Waiting on you" bar keeps its buttons in view while its text scrolls.
+ * one row of two above them. In the "Waiting on you" bar the row sticks to the bar's bottom, so a
+ * long card keeps its buttons in view while its text scrolls.
  */
-import { useLayoutEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { createContext, useContext, useLayoutEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { ChevronDown } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardMenu } from "./card-menu";
+
+/**
+ * Set by the "Waiting on you" bar: there a long card scrolls inside the bar and its button row
+ * sticks to the bar's bottom, so OK and Reply stay in view. In the stream it must not stick, or
+ * every open card would float its buttons over the messages below it.
+ */
+export const CardStickyActionsContext = createContext(false);
 
 export type CardTone = "need" | "ok" | "fail" | "info" | "digest";
 
@@ -139,13 +146,14 @@ export function CardShell({ card, look, children, actions, secondary, error, met
 }) {
   const status = cardStatusLine(card);
   const waiting = card.status === "open" && look.tone === "need";
+  const sticky = useContext(CardStickyActionsContext);
   const article = (
     <article
       // A long press opens the card's menu on a phone, so it must not start a text selection there.
-      // `overflow-clip`, not `hidden`: a clipping box that is not a scroll container keeps the
-      // button row sticky against whatever scrolls the card.
+      // `overflow-clip`, not `hidden`: a clipping box that is not a scroll container lets the
+      // button row stick to the bar that scrolls the card.
       className={cn(
-        "w-full overflow-clip rounded-xl border bg-surface shadow-sm select-text max-md:select-none",
+        "@container/card w-full overflow-clip rounded-xl border bg-surface shadow-sm select-text max-md:select-none",
         waiting ? "border-error/35" : "border-border",
       )}
       data-assistant-card={card.kind}
@@ -173,13 +181,20 @@ export function CardShell({ card, look, children, actions, secondary, error, met
       {status
         ? <p className="border-t border-border px-3.5 py-2 text-xs text-text-subtle" data-card-status-line="">{status}</p>
         : (actions || secondary) && (
+          // Laid out by the card's own width, not the screen's: a desktop Assistant window is
+          // narrow too. Narrow, the answers take one row and the lesser actions another (above
+          // them on a phone, where the answers belong under the thumb); wide, all share one row.
           <div
-            className="sticky bottom-0 z-[1] flex flex-col gap-2 border-t border-border bg-surface px-3.5 py-2.5 md:flex-row md:items-center"
+            className={cn(
+              "flex flex-col gap-2 border-t border-border bg-surface px-3.5 py-2.5 @xl/card:flex-row @xl/card:items-center",
+              sticky && "sticky bottom-0 z-[1]",
+            )}
             data-card-actions=""
+            data-sticky={sticky ? "" : undefined}
           >
-            {/* On a phone the answers share one row, the first (OK, Allow, Send) on the right under the thumb. */}
-            {actions && <div className="order-2 flex flex-row-reverse gap-2 *:flex-1 md:order-1 md:flex-row md:flex-wrap md:*:flex-none">{actions}</div>}
-            {secondary && <div className="order-1 grid grid-cols-2 gap-2 md:order-2 md:ml-auto md:flex md:gap-1">{secondary}</div>}
+            {/* The first answer (OK, Allow, Send) sits on the right on a phone, under the thumb. */}
+            {actions && <div className="order-2 flex flex-row-reverse gap-2 *:flex-1 md:order-1 md:flex-row md:*:flex-none">{actions}</div>}
+            {secondary && <div className="order-1 grid auto-cols-fr grid-flow-col gap-2 md:order-2 md:flex md:gap-1 @xl/card:ml-auto">{secondary}</div>}
           </div>
         )}
       {error && <p className="px-3.5 pb-2.5 text-xs text-error" role="alert">{error}</p>}

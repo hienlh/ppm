@@ -267,11 +267,18 @@ try {
   else await body.locator("[data-waiting-card]").getByRole("button", { name: "Dismiss" }).click();
   await until("plan no longer waits", async () => (await k.cards()).find((c) => c.id === idOf(PLAN.title))?.status !== "open", 15000);
   const done = body.locator(`[data-assistant-card="needs_decision"]:not([data-card-status="open"])`, { hasText: PLAN.title }).last();
-  await done.scrollIntoViewIfNeeded();
+  // Scroll only the chat's own list: Playwright's scrollIntoView also scrolls the window's
+  // overflow-hidden boxes, which slides the bar over the stream.
+  await done.evaluate((el) => {
+    let box = el.parentElement;
+    while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+    if (box) box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - 12;
+  });
   assert.equal(await done.locator("[data-card-text][data-folded]").count(), 1, "the answered plan is folded");
   await done.screenshot({ path: join(shotsDir, "20-desktop-stream-answered-plan-folded.png") });
-  await done.locator("[data-card-text-toggle]").click();
+  await done.locator("[data-card-text-toggle]").evaluate((b) => b.click());
   await done.screenshot({ path: join(shotsDir, "21-desktop-stream-answered-plan-show-more.png") });
+  assert.equal(await body.locator("[data-card-actions][data-sticky]:not([data-waiting-cards] *)").count(), 0, "no card in the stream sticks its buttons");
   ok("an answered card folds behind Show more in the stream, and unfolds");
 
   // ---- Telegram (fake Bot API) ----
