@@ -33,6 +33,8 @@ export interface RestartEntry {
    * writing its own stop (on Windows it always ends the server that way).
    */
   stopOrderedBy?: string;
+  /** An upgrade that did not take: the supervisor started the previous version again. */
+  upgradeFailed?: boolean;
 }
 
 export interface InterruptedChat {
@@ -81,6 +83,7 @@ function parseRestart(raw: unknown): RestartEntry | null {
   if (!optStr(raw.detail, 400) || !optStr(raw.fromVersion, 50) || !optStr(raw.stopTrigger, 100) || !optStr(raw.stopOrderedBy, 100)) return null;
   if (raw.cleanStop !== undefined && typeof raw.cleanStop !== "boolean") return null;
   if (raw.stoppedAt !== undefined && !num(raw.stoppedAt)) return null;
+  if (raw.upgradeFailed !== undefined && typeof raw.upgradeFailed !== "boolean") return null;
   return {
     at: raw.at, kind: raw.kind as StartReasonKind, toVersion: raw.toVersion,
     ...(typeof raw.detail === "string" ? { detail: raw.detail } : {}),
@@ -89,6 +92,7 @@ function parseRestart(raw: unknown): RestartEntry | null {
     ...(num(raw.stoppedAt) ? { stoppedAt: raw.stoppedAt } : {}),
     ...(typeof raw.stopTrigger === "string" ? { stopTrigger: raw.stopTrigger } : {}),
     ...(typeof raw.stopOrderedBy === "string" ? { stopOrderedBy: raw.stopOrderedBy } : {}),
+    ...(raw.upgradeFailed === true ? { upgradeFailed: true } : {}),
   };
 }
 

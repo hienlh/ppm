@@ -17,7 +17,9 @@ import {
 } from "../../../src/services/restart-news/restart-news-source.ts";
 import { _resetRestartNews, startRestartNews } from "../../../src/services/restart-news/restart-news-lifecycle.ts";
 import { MAX_RESTART_ENTRY_CHARS, RESTART_OPENER, restartNewsEntry } from "../../../src/services/restart-news/restart-news-text.ts";
-import type { ServerStart } from "../../../src/services/restart-news/server-run-log.ts";
+import { recordServerStart, type ServerStart } from "../../../src/services/restart-news/server-run-log.ts";
+import { readStartReasonEnv, startReasonEnv } from "../../../src/services/restart-news/start-reason.ts";
+import { UPGRADE_FAILED_REASON } from "../../../src/services/restart-news/supervisor-start-reason.ts";
 import { createAssistantSendGuards, QUIET_HOURS_REFUSAL } from "../../../src/services/session-collab/assistant-send-guards.ts";
 import { assistantQuietNow } from "../../../src/services/session-collab/assistant-send-guards-live.ts";
 import { getAssistantSettings, saveAssistantSettings } from "../../../src/services/assistant/assistant-settings.service.ts";
@@ -36,6 +38,14 @@ const restart = (at: number, over: Partial<RestartEntry> = {}): RestartEntry => 
 const chat = (sessionId: string, over: Partial<InterruptedChat> = {}): InterruptedChat => ({
   sessionId, providerId: "claude", projectName: "api", title: `Chat ${sessionId}`, activity: "running tool Bash", lastAt: T - 1000, restartAt: T, ...over,
 });
+/** The restart entry the server records for a start the supervisor named, after a run of `from`. */
+function recordedStart(env: Record<string, string>, o: { from: string; to: string; at: number }): RestartEntry {
+  let json: string | null = null;
+  const log = { load: () => json, save: (j: string) => { json = j; } };
+  recordServerStart(log, { now: o.at - 20_000, pid: 1, version: o.from, given: null });
+  return recordServerStart(log, { now: o.at, pid: 2, version: o.to, given: readStartReasonEnv(env) }).restart;
+}
+
 const sourceOf = (store: RestartNewsStore, managers: Array<{ projectName: string; sessionId: string }> = []) =>
   createRestartNewsSource({ store, mainSession: () => MAIN, canonical: (id) => id, managers: () => managers });
 
@@ -105,6 +115,23 @@ describe("the pending restart news", () => {
     const [item] = sourceOf(store, [{ projectName: "api", sessionId: "mgr" }, { projectName: "web", sessionId: "mgr-web" }]).pending(MAIN);
     expect(item!.urgent).toBe(true);
     expect(item!.news!.restart!.managers).toEqual([{ projectName: "api", sessionId: "mgr" }]);
+  });
+
+  it("a failed self-replace replaces the brief run's upgraded line, and keeps both runs' chats", () => {
+    const store = memoryStore();
+    // As the server records it: the supervisor's failed-upgrade reason read back from the environment.
+    const failed = recordedStart(startReasonEnv(UPGRADE_FAILED_REASON), { from: "0.25.7", to: "0.25.6", at: T + 30_000 });
+    addRestartNews(store, restart(T, { kind: "upgrade", fromVersion: "0.25.6", toVersion: "0.25.7" }), { chats: [chat("a")], more: 0 });
+    addRestartNews(store, failed, { chats: [chat("b", { restartAt: T + 30_000 })], more: 0 });
+    const news = pendingRestartNews(store)!;
+    expect(news.restarts).toHaveLength(1);
+    expect(news.restarts[0]!.upgradeFailed).toBe(true);
+    expect(news.chats.map((c) => c.sessionId).sort()).toEqual(["a", "b"]);
+    const text = restartNewsEntry([news])!;
+    expect(text).toContain("an upgrade did not take, so PPM started its previous version again");
+    expect(text).toContain("Version 0.25.6 again (0.25.7 ran only briefly)");
+    expect(text).not.toContain("PPM was upgraded");
+    expect(text).not.toContain("0.25.7 → 0.25.6");
   });
 
   it("delivery keeps the count of unlisted chats that a restart merged in since", () => {

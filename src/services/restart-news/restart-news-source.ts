@@ -71,7 +71,12 @@ export function restartNewsUrgent(chats: readonly InterruptedChat[], moreChats =
 export function addRestartNews(store: RestartNewsStore, restart: RestartEntry, scan: InterruptedScan): void {
   const news = read(store);
   if (news.restarts.some((r) => r.at === restart.at)) return;
-  news.restarts = [...news.restarts, restart].sort((a, b) => a.at - b.at).slice(-RESTART_NEWS_MAX_RESTARTS);
+  // A self-replace that failed after its new version briefly ran: that run's "upgraded" line is
+  // no longer true, and telling both would read as an upgrade then a downgrade. The failed entry
+  // says the whole story; chats either run cut off stay listed.
+  const superseded = (r: RestartEntry) => !!restart.upgradeFailed && r.kind === "upgrade" && !r.upgradeFailed
+    && !!restart.fromVersion && r.toVersion === restart.fromVersion && r.at < restart.at;
+  news.restarts = [...news.restarts.filter((r) => !superseded(r)), restart].sort((a, b) => a.at - b.at).slice(-RESTART_NEWS_MAX_RESTARTS);
   const byId = new Map(news.chats.map((c) => [c.sessionId, c]));
   for (const c of scan.chats) byId.set(c.sessionId, c);
   const chats = [...byId.values()].sort((a, b) => b.lastAt - a.lastAt);

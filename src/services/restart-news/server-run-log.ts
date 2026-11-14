@@ -1,5 +1,6 @@
 import type { RestartEntry } from "../../shared/restart-news.ts";
 import { cleanDetail, type StartReason } from "./start-reason.ts";
+import { isUpgradeFailed } from "./supervisor-start-reason.ts";
 
 /**
  * Every server run, start to clean stop, so the next start can say what came before it. Kept in a
@@ -79,6 +80,7 @@ export function describeStart(
     ...(previous && previous.version !== version ? { fromVersion: previous.version } : {}),
     ...(cleanStop !== undefined ? { cleanStop } : {}),
     ...(previous && !wroteStop && orderedStop ? { stopOrderedBy: orderedStop.slice(0, 100) } : {}),
+    ...(isUpgradeFailed(given) ? { upgradeFailed: true } : {}),
     ...(previous?.stoppedAt !== undefined ? { stoppedAt: previous.stoppedAt } : {}),
     ...(previous?.stopTrigger ? { stopTrigger: previous.stopTrigger } : {}),
   };

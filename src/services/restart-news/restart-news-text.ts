@@ -37,12 +37,20 @@ const quote = (text: string) => JSON.stringify(text);
 const iso = (ms: number) => new Date(ms).toISOString();
 
 function restartLine(r: RestartEntry): string {
-  const parts = [`- At ${iso(r.at)}: ${KIND_TEXT[r.kind]}`];
-  const detail = cleanEventText(r.detail, 200);
-  if (detail) parts[0] += ` (${quote(detail)})`;
-  parts[0] += ".";
-  if (r.fromVersion && r.fromVersion !== r.toVersion) parts.push(`Version ${cleanEventText(r.fromVersion, 40)} → ${cleanEventText(r.toVersion, 40)}.`);
-  else parts.push(`Version ${cleanEventText(r.toVersion, 40)}.`);
+  const to = cleanEventText(r.toVersion, 40);
+  const from = r.fromVersion && r.fromVersion !== r.toVersion ? cleanEventText(r.fromVersion, 40) : "";
+  const parts: string[] = [];
+  if (r.upgradeFailed) {
+    // Not "upgraded": the version running now is the one from before the attempt.
+    parts.push(`- At ${iso(r.at)}: an upgrade did not take, so PPM started its previous version again.`);
+    parts.push(from ? `Version ${to} again (${from} ran only briefly).` : `Version ${to}, unchanged.`);
+  } else {
+    parts.push(`- At ${iso(r.at)}: ${KIND_TEXT[r.kind]}`);
+    const detail = cleanEventText(r.detail, 200);
+    if (detail) parts[0] += ` (${quote(detail)})`;
+    parts[0] += ".";
+    parts.push(from ? `Version ${from} → ${to}.` : `Version ${to}.`);
+  }
   // Only a stop nothing explains is called unclean: the supervisor's own stops are named as such.
   if (r.stopOrderedBy) parts.push(`The run before it was stopped by PPM's supervisor (${quote(cleanEventText(r.stopOrderedBy, 100))}).`);
   else if (r.cleanStop === false) parts.push("The run before it did not shut down cleanly (killed, crashed or lost power).");
