@@ -805,12 +805,11 @@ const tokenRotationDeps: TokenRotationDeps = {
       // The consumer loop outlives each turn, so a live subprocess between turns sits at
       // `idle` with `isStreamingActive` still set. A subprocess with no entry here belongs to
       // something else (a scheduled run) and is never ours to judge idle.
-      // Closing the subprocess kills whatever runs inside it, and a renewal can wait, so this one
-      // caller also holds off while the CLI is still emitting background events: the safety net
-      // for work it runs without reporting a task.
-      const busy = !entry || entry.phase !== "idle" || !!entry.pendingApprovalEvent || hasBackgroundWork(sessionId)
-        || backgroundEventRecent(entry);
-      return { sessionId, credential, busy };
+      const busy = !entry || entry.phase !== "idle" || !!entry.pendingApprovalEvent || hasBackgroundWork(sessionId);
+      // A renewal revokes the token and can wait, so it also holds off while the CLI is still
+      // emitting background events: the safety net for work it runs without reporting a task.
+      const holdRenewal = !!entry && !busy && backgroundEventRecent(entry);
+      return { sessionId, credential, busy, holdRenewal };
     });
   },
   dropIdle: (sessionId) => dropIdleSubprocess(
@@ -1626,7 +1625,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           log.debug(`session=${sessionId} compact_status=done (via compact_boundary)`);
           broadcast(sessionId, { type: "compact_status", status: "done" });
         } else if (sub === "task_progress") {
-          // A running task's heartbeat, which keeps coming after the turn that started it ends.
+          // One per step of a running task, still arriving after the turn that started it ended.
+          // Not a timer: a task blocked on one long command sends none, which the task tracking covers.
           noteBackgroundEvent(entry);
         } else if (sub === "task_started" || sub === "task_updated" || sub === "task_notification") {
           // Background command (local_bash) lifecycle. shellId === SDK task_id.

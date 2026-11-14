@@ -137,7 +137,8 @@ beforeAll(() => {
   }) as typeof providerRegistry.get;
 });
 afterAll(() => {
-  providerRegistry.get = realGet;
+  // The override is an own property shadowing the class method; deleting it restores the method.
+  delete (providerRegistry as { get?: unknown }).get;
   if (existsSync(testKeyPath)) unlinkSync(testKeyPath);
 });
 

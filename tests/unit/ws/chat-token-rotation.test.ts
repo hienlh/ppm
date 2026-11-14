@@ -46,6 +46,11 @@ describe("accountsToRenewNow", () => {
     expect(accountsToRenewNow([early, late], [live("s1", "a", "tok")], NOW)).toEqual([]);
   });
 
+  it("waits while a subprocess on the account asks to hold the renewal", () => {
+    const holding = { ...live("s2", "a", "tok"), holdRenewal: true };
+    expect(accountsToRenewNow([due], [live("s1", "a", "tok"), holding], NOW)).toEqual([]);
+  });
+
   it("skips accounts that cannot be renewed", () => {
     expect(accountsToRenewNow([{ ...due, renewable: false }], [live("s1", "a", "tok")], NOW)).toEqual([]);
   });
@@ -63,6 +68,11 @@ describe("staleIdleSessions", () => {
       live("api-key", "b", "old"),
     ];
     expect(staleIdleSessions(procs, current)).toEqual(["idle-stale"]);
+  });
+
+  it("still moves a subprocess that only holds the renewal off a token already replaced", () => {
+    // Its token is revoked: keeping it would only make the next message fail with a 401.
+    expect(staleIdleSessions([{ ...live("holding", "a", "old"), holdRenewal: true }], current)).toEqual(["holding"]);
   });
 });
 

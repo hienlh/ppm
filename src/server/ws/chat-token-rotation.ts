@@ -35,6 +35,13 @@ export interface LiveSubprocess {
   credential: SubprocessCredential;
   /** A turn, an approval or background work is running in it — dropping it would lose work. */
   busy: boolean;
+  /**
+   * Not busy, but showed background activity a moment ago: renewing now would revoke the token
+   * work it runs without reporting may still need, so the early renewal waits. Unlike `busy` it
+   * never keeps a subprocess on a token already replaced — that token is revoked, and whatever
+   * still runs on it fails at its next request either way.
+   */
+  holdRenewal?: boolean;
 }
 
 export interface RenewalCandidate {
@@ -52,7 +59,7 @@ export function accountsToRenewNow(candidates: RenewalCandidate[], live: LiveSub
     const id = p.credential.accountId;
     if (!id || !p.credential.oauthToken) continue;
     inUse.add(id);
-    if (p.busy) busy.add(id);
+    if (p.busy || p.holdRenewal) busy.add(id);
   }
   return candidates
     .filter((c) => {
