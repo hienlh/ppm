@@ -164,6 +164,30 @@ describe("the pending restart news", () => {
     expect(second!.urgent).toBe(false);
   });
 
+  it("drops the unlisted count with the last listed chat, so urgency and text agree that none waits", () => {
+    const store = memoryStore();
+    addRestartNews(store, restart(T), { chats: [chat("a"), chat("b")], more: 3 });
+    const gone = new Set(["a"]);
+    const source = createRestartNewsSource({
+      store, mainSession: () => MAIN, canonical: (id) => id, managers: () => [], now: () => T, stillCutOff: (c) => !gone.has(c.sessionId),
+    });
+    // One listed chat still waits: the unlisted ones are kept and told of.
+    const [some] = source.pending(MAIN);
+    expect(some!.news!.restart!.moreChats).toBe(3);
+    expect(restartNewsEntry([some!.news!.restart!])).toContain("And 3 more cut-off chat(s) not listed");
+
+    gone.add("b");
+    const [none] = source.pending(MAIN);
+    expect(none!.news!.restart!.chats).toEqual([]);
+    expect(none!.news!.restart!.moreChats).toBeUndefined();
+    expect(none!.urgent).toBe(false);
+    expect(pendingRestartNews(store)!.moreChats).toBeUndefined();
+    const text = restartNewsEntry([none!.news!.restart!])!;
+    expect(text).toContain("No chat was cut off mid-turn");
+    expect(text).toContain("Chats cut off mid-turn: none.");
+    expect(text).not.toContain("more cut-off chat");
+  });
+
   it("drops news older than 24 hours instead of telling it", () => {
     const store = memoryStore();
     addRestartNews(store, restart(T), { chats: [chat("a")], more: 0 });

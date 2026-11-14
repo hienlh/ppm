@@ -139,7 +139,13 @@ export function createRestartNewsSource(deps: RestartSourceDeps): WakeSource {
     });
     if (still.length === news.chats.length) return news;
     log.info(`restart news: ${news.chats.length - still.length} listed chat(s) ran again or were deleted since the restart; not telling of them`);
-    const next = { ...news, chats: still };
+    // The unlisted count cannot be re-checked, and goes with the last listed chat. The list holds
+    // the most recent cut-off chats; once every one of them has run again the user is back at work,
+    // and a bare count would keep the news urgent (through quiet hours) and tell the Assistant "N more
+    // chats were cut off" beside "no chat was cut off" — while no manager message could name them.
+    const moreChats = still.length ? news.moreChats : 0;
+    if (news.moreChats && !moreChats) log.info(`restart news: no listed chat still waits; dropping the ${news.moreChats} unlisted one(s) too`);
+    const next = { ...news, chats: still, moreChats };
     write(deps.store, next);
     return next;
   };
