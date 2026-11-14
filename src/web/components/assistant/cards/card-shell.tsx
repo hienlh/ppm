@@ -151,8 +151,10 @@ export function CardText({ text, fold, className }: { text: string; fold: boolea
   );
 }
 
-export function CardShell({ card, look, children, actions, secondary, error, meta }: {
+export function CardShell({ card, look, children, actions, secondary, error, meta, pointer }: {
   card: AssistantCard; look: CardLook; children?: ReactNode; error?: string | null;
+  /** Only names a card shown whole elsewhere ("Waiting on you"); see `waiting-card-pointer.tsx`. */
+  pointer?: boolean;
   /** The card's own answers, shown while it waits. */
   actions?: ReactNode;
   /** Lesser actions (Open manager chat, Dismiss), shown while it waits. */
@@ -174,6 +176,7 @@ export function CardShell({ card, look, children, actions, secondary, error, met
       )}
       data-assistant-card={card.kind}
       data-card-status={card.status}
+      data-card-pointer={pointer ? "" : undefined}
     >
       <header className="flex min-w-0 items-center gap-1.5 px-3.5 pt-3 text-xs">
         <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-semibold", TONE_CHIP[look.tone])} data-card-kind-label="">

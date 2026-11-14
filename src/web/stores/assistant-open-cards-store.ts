@@ -18,6 +18,8 @@ import { WAITING_CARD_KINDS, type AssistantCard } from "../../shared/assistant-c
 /** A press on a red count: show that project's (or every) waiting card. `nonce` makes each press new. */
 export interface WaitingFocus {
   projectName: string | null;
+  /** One card exactly (its "Show" in the stream), rather than the project's first. */
+  cardId?: string;
   nonce: number;
 }
 
@@ -103,10 +105,13 @@ export function resyncOpenCards(): void {
   if (started) void refresh();
 }
 
-/** Shows one project's waiting cards (every project's with null), from a press on a red count. */
-export function focusWaitingCards(projectName: string | null): void {
+/**
+ * Opens "Waiting on you" on one project's first card (every project's with null), from a press on
+ * a red count, or on one card exactly, from its "Show" in the stream.
+ */
+export function focusWaitingCards(projectName: string | null, cardId?: string): void {
   nonce += 1;
-  useOpenCardsStore.setState({ focus: { projectName, nonce } });
+  useOpenCardsStore.setState({ focus: { projectName, ...(cardId ? { cardId } : {}), nonce } });
 }
 
 /** A card an action or an event brought: taken in at once, or dropped once it stopped waiting. */

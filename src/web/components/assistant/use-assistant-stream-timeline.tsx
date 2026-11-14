@@ -14,6 +14,8 @@ import { rowTimes } from "@/lib/assistant-timeline-merge";
 import type { ChatTimelineExtension, ChatTimelineItem } from "@/components/chat/chat-timeline-extension";
 import { REPORT_KINDS, type AssistantCard as Card } from "../../../shared/assistant-cards";
 import { AssistantCard } from "./cards/assistant-card";
+import { WaitingCardPointer } from "./cards/waiting-card-pointer";
+import { isWaitingCard, useOpenCards } from "@/stores/assistant-open-cards-store";
 import { WakeTurnLine } from "./wake-turn-line";
 
 /** Report cards that landed in a wake turn's window: what that turn read. */
@@ -36,12 +38,21 @@ export function useAssistantStreamTimeline(): ChatTimelineExtension {
   const filter = useAssistantCardsStore((s) => s.filter);
   const nextBefore = useAssistantCardsStore((s) => s.nextBefore);
   const managers = useManagerChats();
+  const open = useOpenCards();
+  // Only cards the bar really holds: if its list never loaded, the stream keeps them whole.
+  const pinned = useMemo(() => new Set((open ?? []).map((c) => c.id)), [open]);
   const managerSession = filter ? managers?.find((m) => m.projectName === filter)?.sessionId ?? null : null;
 
   return useMemo<ChatTimelineExtension>(() => ({
     build: (rows) => {
       const list = cards ?? [];
-      const items: ChatTimelineItem[] = list.map((card) => ({ key: `card:${card.id}`, at: card.createdAt, node: <AssistantCard card={card} /> }));
+      // A card shown whole in "Waiting on you" is only named here, or its buttons would appear
+      // twice, one set right under the other.
+      const items: ChatTimelineItem[] = list.map((card) => ({
+        key: `card:${card.id}`,
+        at: card.createdAt,
+        node: pinned.has(card.id) && isWaitingCard(card) ? <WaitingCardPointer card={card} /> : <AssistantCard card={card} />,
+      }));
       const hidden = new Set<string>();
       for (const turn of collapsedWakeTurns(rows)) {
         for (const id of turn.ids) hidden.add(id);
@@ -58,5 +69,5 @@ export function useAssistantStreamTimeline(): ChatTimelineExtension {
     manualPaging: !!filter,
     hasEarlier: nextBefore !== null,
     onLoadEarlier: () => void loadEarlierAssistantCards(),
-  }), [cards, filter, managerSession, nextBefore]);
+  }), [cards, filter, managerSession, nextBefore, pinned]);
 }
