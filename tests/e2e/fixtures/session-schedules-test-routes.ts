@@ -2,14 +2,15 @@
  * The session-schedules fixture's own routes (`/__sched-test/*`): what the e2e arranges and reads
  * on the server side — the scripted turns' plans, the MCP calls they made and the turns each chat
  * ran, releasing a held turn, a schedule's stored row, a chat's live state, and making a schedule
- * come due now through the real timer. None exist in a real PPM.
+ * come due now through the real timer, and arming the race where a person's turn starts between
+ * a schedule's quiet check and its send. None exist in a real PPM.
  */
 import { calls, plans, releaseHolds, sends, type TurnPlan } from "./session-collab-scripted-providers";
 import { resolveMigratedSession, setSessionTitle } from "../../../src/services/db.service";
 import { getSchedule, updateSchedule } from "../../../src/services/scheduler-db.service";
 import { collabLiveState } from "../../../src/server/ws/chat";
 
-interface Ctx { alpha: string }
+interface Ctx { alpha: string; arm: (sessionId: string) => void }
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 export async function testRoute(req: Request, url: URL, ctx: Ctx): Promise<Response> {
@@ -28,6 +29,11 @@ export async function testRoute(req: Request, url: URL, ctx: Ctx): Promise<Respo
   }
   if (path === "/title" && req.method === "POST") {
     setSessionTitle(String(body.sessionId), String(body.title));
+    return json({ ok: true });
+  }
+  if (path === "/race" && req.method === "POST") {
+    // The chat's next scheduled message finds a person's turn already running (see the racing provider).
+    ctx.arm(resolveMigratedSession(String(body.sessionId)));
     return json({ ok: true });
   }
   if (path === "/schedule") return json({ schedule: getSchedule(Number(url.searchParams.get("id"))) });

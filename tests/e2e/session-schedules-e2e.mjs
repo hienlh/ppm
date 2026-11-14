@@ -4,7 +4,8 @@
 // and deliverer. Covers: the AI scheduling a prompt into its own chat and the run line it leaves
 // (a), a due schedule waiting for a running turn with two dues folded into one (b), a fire missed
 // while PPM was off delivered once after a restart of the same install (c), the footer chip with
-// Pause and Resume (d), and Settings → Schedules with its Session column and Chat kind (e), on a
+// Pause and Resume (d), Settings → Schedules with its Session column and Chat kind (e), and a
+// scheduled message queued behind a person's turn that Stop takes down, run once afterwards (f), on a
 // desktop and a phone. No live credentials, no real PPM data.
 //
 // Run it in the capped e2e image (Chromium, Node 20 and playwright-core; see tests/e2e/docker/):
@@ -26,6 +27,7 @@ import { createServer } from "node:net";
 import { createKit, pageInit } from "./fixtures/session-turn-refs-helpers.mjs";
 import { schedKit, runAiCreatesAndRuns, runBusyChatCoalesces, runChipPauseResume, runRestartCatchUp } from "./fixtures/session-schedules-steps.mjs";
 import { runPhone, runSettingsDesktop } from "./fixtures/session-schedules-steps-ui.mjs";
+import { runStopDropsQueuedSchedule } from "./fixtures/session-schedules-steps-stop.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-sched-e2e-"));
 const artifacts = process.env.PPM_SCHED_ARTIFACTS ? resolve(process.env.PPM_SCHED_ARTIFACTS) : join(sandbox, "artifacts");
@@ -108,6 +110,7 @@ try {
   await runAiCreatesAndRuns(ctx);
   await runChipPauseResume(ctx);
   await runBusyChatCoalesces(ctx);
+  await runStopDropsQueuedSchedule(ctx);
   await runRestartCatchUp(ctx);
   await sk.open(page, ctx.ids.A);
   await runSettingsDesktop(ctx);

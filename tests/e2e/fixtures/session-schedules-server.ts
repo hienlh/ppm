@@ -62,9 +62,9 @@ if (!resuming) {
 const { _setClaudeProjectsRoot } = await import("../../../src/services/agent-transcript/claude-projects-root");
 _setClaudeProjectsRoot(claudeProjects);
 
-const { ScriptedClaude } = await import("./session-collab-scripted-providers");
+const { RacingScriptedClaude } = await import("./session-schedules-racing-provider");
 const { providerRegistry } = await import("../../../src/providers/registry");
-const claude = new ScriptedClaude(claudeProjects);
+const claude = new RacingScriptedClaude(claudeProjects);
 providerRegistry.register(claude as never);
 providerRegistry.get = ((id: string) => (id === claude.id ? claude : undefined)) as typeof providerRegistry.get;
 providerRegistry.list = () => [{ id: claude.id, name: claude.name }];
@@ -82,7 +82,7 @@ const server = Bun.serve<SocketData>({
   hostname: "127.0.0.1", port,
   fetch(req, instance) {
     const url = new URL(req.url);
-    if (url.pathname.startsWith("/__sched-test/")) return testRoute(req, url, { alpha });
+    if (url.pathname.startsWith("/__sched-test/")) return testRoute(req, url, { alpha, arm: (id) => claude.arm(id) });
     let data: SocketData | undefined;
     if (url.pathname === "/ws/health") data = { type: "health" };
     else if (url.pathname === "/ws/global") data = { type: "global" };

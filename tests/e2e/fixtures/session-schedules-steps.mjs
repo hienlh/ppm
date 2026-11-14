@@ -45,7 +45,7 @@ export function schedKit(kit, web) {
 }
 
 /** Waits until a schedule has `n` finished runs; answers them. */
-async function finishedRuns(ctx, id, n, timeout = 30000) {
+export async function finishedRuns(ctx, id, n, timeout = 30000) {
   return ctx.kit.until(`${n} finished run(s) of schedule ${id}`, async () => {
     const runs = await ctx.sk.runs(id);
     return runs.length === n && runs.every((r) => r.status !== "running") ? runs : null;
@@ -53,7 +53,7 @@ async function finishedRuns(ctx, id, n, timeout = 30000) {
 }
 
 /** Counts stay where they are for `ms`: nothing ran twice. */
-async function stillOnce(ctx, id, sessionId, prompt, ms) {
+export async function stillOnce(ctx, id, sessionId, prompt, ms) {
   await new Promise((r) => setTimeout(r, ms));
   assert.equal((await ctx.sk.runs(id)).length, 1, `schedule ${id} ran exactly once`);
   assert.equal((await ctx.sk.sendsOf(sessionId, prompt)).length, 1, `the prompt of schedule ${id} reached its chat exactly once`);

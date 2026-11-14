@@ -2,7 +2,7 @@
 // its Session line and offers the Chat kind in its form (e), on a desktop and on a phone, plus the
 // phone's run line and the chip's bottom sheet. Screenshots for both layouts.
 import assert from "node:assert/strict";
-import { PROJECT, PROMPT_1 } from "./session-schedules-steps.mjs";
+import { PROJECT, PROMPT_3 } from "./session-schedules-steps.mjs";
 
 /** The New schedule form, set to the Chat kind with this project and chat picked. */
 async function fillChatKindForm(page, chatTitle, tap) {
@@ -58,18 +58,26 @@ export async function runPhone(ctx) {
     const page = ctx.current = await phone.newPage();
     try {
       await sk.open(page, A);
-      const line = sk.runLine(page, ctx.ids.S1);
+      // The restart check's run: it went out late, which is the note a phone moves into the panel.
+      const line = sk.runLine(page, ctx.ids.S3);
       await line.waitFor({ timeout: 30000 });
       // The answers render once the markdown chunk has loaded; until then they are placeholder bars.
       await page.getByText(/Scheduled: weekdays at 09:00/).first().waitFor({ timeout: 15000 });
       await line.scrollIntoViewIfNeeded();
-      const box = await line.locator("button").first().boundingBox();
+      const button = line.locator("button").first();
+      const box = await button.boundingBox();
       assert(box.height >= 44, `the run line is a 44px touch target (${box.height})`);
+      const collapsed = await button.innerText();
+      assert.match(collapsed, /Restart check/, `the schedule's name is shown in full (${collapsed})`);
+      assert.doesNotMatch(collapsed, /sent late/, "on a phone the note waits in the opened panel");
+      const name = await button.locator("span.truncate").evaluate((el) => el.scrollWidth <= el.clientWidth);
+      assert(name, "the name is not cut short");
       await page.screenshot({ path: `${artifacts}/phone-chat-schedule-run-line.png` });
-      await line.locator("button").first().tap();
-      await line.getByText(PROMPT_1).waitFor({ timeout: 5000 });
+      await button.tap();
+      await line.getByText(PROMPT_3).waitFor({ timeout: 5000 });
+      assert.match(await line.innerText(), /sent late/, "the opened panel says it was sent late");
       await page.screenshot({ path: `${artifacts}/phone-chat-schedule-run-line-expanded.png` });
-      kit.record("phone: the run line is a 44px target and opens to its prompt");
+      kit.record("phone: the run line is a 44px target showing the whole name, and opens to its prompt with the sent-late note");
 
       const chip = page.locator('[data-testid="session-schedules-chip"]:visible').first();
       await chip.waitFor({ timeout: 15000 });
