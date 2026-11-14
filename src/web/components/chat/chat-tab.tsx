@@ -36,6 +36,7 @@ import { AgentSessionProvider, normalizeProviderId } from "./agent-session-conte
 import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
 import { ManagerChatWaitingCards } from "@/components/assistant/manager-chat-waiting-cards";
 import { SessionChangesChip } from "./session-changes-chip";
+import { SessionSchedulesChip } from "./session-schedules-chip";
 import { CONTINUE_AFTER_STOP, TurnStopBar } from "./turn-stop-bar";
 import { SessionChangesContext, useSessionChangesValue } from "./session-changes-context";
 import { useSessionFileChanges } from "@/hooks/use-session-file-changes";
@@ -1415,7 +1416,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
       {!assistant && <McpSignInBar key={sessionId ?? "draft"} needsAuth={mcpNeedsAuth} projectName={projectName || undefined} />}
 
       {/* The footer: one context row — what runs beside this chat (agents and linked sessions),
-          what it changed, the connection when it has trouble; usage, History and ··· on the right — then the composer.
+          what it changed, its schedules, the connection when it has trouble; usage, History and ··· on the right — then the composer.
           No rules between them. The row is the popovers' anchor, so it is `relative`. */}
       <div className="shrink-0 px-2 pb-1.5 md:px-3 md:pb-3" data-chat-footer="">
         <div className="relative flex min-w-0 items-center gap-2 px-0.5 py-2 max-md:py-1.5" data-chat-context-row="">
@@ -1442,6 +1443,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
               onSetReviewed={sessionChanges.setReviewed}
               onReview={openReview}
             />}
+            {!minimalMode && !assistant && <SessionSchedulesChip sessionId={sessionId} />}
             <ConnectionChip stage={connectionStage} onRetry={retryConnection} />
           </div>
           <ChatFooterTools
