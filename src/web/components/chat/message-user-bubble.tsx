@@ -23,6 +23,7 @@ import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
 import { parseUserMessage, type ParsedUserMessage, type SystemTag } from "../../../shared/user-message-parse";
 import { FromSessionBubble } from "./from-session-bubble";
+import { ScheduleRunLine } from "./schedule-run-line";
 import type { VersionGroup } from "../../../types/api";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -58,7 +59,8 @@ type UserBubbleProps = {
 
 /**
  * A user message: the person's own bubble, or — when another session's AI sent it — the
- * from-session bubble, which is drawn apart and offers no Edit, Fork or Reply.
+ * from-session bubble, which is drawn apart and offers no Edit, Fork or Reply; or, when one of the
+ * chat's schedules sent it, a one-line note that opens to show the prompt.
  */
 export function UserBubble(props: UserBubbleProps) {
   const parsed = useMemo(() => parseUserMessage(props.content), [props.content]);
@@ -78,6 +80,8 @@ export function UserBubble(props: UserBubbleProps) {
       />
     );
   }
+  // A session schedule's prompt: PPM sent it on its own, so it is a line, not the person's bubble.
+  if (parsed.scheduleRun) return <ScheduleRunLine run={parsed.scheduleRun} text={parsed.text} />;
   return <OwnUserBubble {...props} parsed={parsed} />;
 }
 
