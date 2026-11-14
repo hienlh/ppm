@@ -2,7 +2,7 @@
 // one PPM_HOME (a crash is SIGKILL, a clean stop SIGTERM), the moved Assistant clock carried across
 // restarts, cutting a chat off mid-turn, and reading what the main Assistant session was woken with.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fixtureApi, startChild, until, sleep } from "../assistant-telegram/harness.mjs";
 
@@ -55,10 +55,17 @@ export function restartKit({ web, baseEnv, logs, record }) {
       console.log(`fixture run ${runs} ready, pid ${child.pid}${extra.PPM_START_REASON ? ` (PPM_START_REASON=${extra.PPM_START_REASON})` : ""}`);
     },
 
-    /** Ends the run: `crash` kills it with nothing written, `clean` lets it record its stop. */
-    async stop(how) {
+    /**
+     * Ends the run: `crash` kills it with nothing written, `clean` lets it record its stop.
+     * `orderedBy` first leaves the note the supervisor writes before a stop it orders
+     * (`.server-stop.<pid>.json`), so a hard kill reads as the supervisor's, as on Windows.
+     */
+    async stop(how, { orderedBy } = {}) {
       assert.ok(child, "a fixture is running");
       offset = (await fx.api("/__assistant-test/clock")).offset;
+      if (orderedBy) {
+        writeFileSync(join(baseEnv.PPM_HOME, `.server-stop.${child.pid}.json`), JSON.stringify({ pid: child.pid, at: Date.now(), why: orderedBy }));
+      }
       const exited = new Promise((r) => child.once("exit", r));
       child.kill(how === "crash" ? "SIGKILL" : "SIGTERM");
       const timer = setTimeout(() => child?.kill("SIGKILL"), 10000);
@@ -174,7 +181,8 @@ export async function assertCutOffNews(k, s, { turn, label, expect }) {
   assert.match(child, /^\s{2,}- Chat (it opened|opened by session)/, `${label}: the child is listed under its manager: ${child}`);
   assert.ok(child.includes(`"${s.childTitle}"`), `${label}: the child is listed by its title: ${child}`);
   assert.ok(ctx.includes(`The cut-off turn began with: "${s.cutText}`), `${label}: the cut-off turn's first line is quoted\n${ctx}`);
-  assert.ok(ctx.includes("What to do:"), `${label}: the news asks the Assistant to have the manager resume`);
+  assert.ok(ctx.includes("What to do (the cut-off chats are listed after these steps):"), `${label}: the news asks the Assistant to have the manager resume`);
+  assert.ok(ctx.indexOf("4. If a message to a manager chat is refused") < ctx.indexOf("Chats cut off mid-turn"), `${label}: the steps come before the list`);
 
   const [send] = await k.answered(label, 1);
   assert.equal(send.isError, false, `${label}: send_to_session to the manager was refused: ${send.text}`);
@@ -182,5 +190,7 @@ export async function assertCutOffNews(k, s, { turn, label, expect }) {
     (await k.turnsIn(s.manager)).find((t) => t.blocks?.fromSession?.kind === "assistant" && t.blocks.content.includes(label)), 30000);
   assert.equal(got.blocks.provenance?.startedBy, "ppm", `${label}: the manager is told PPM started the Assistant's turn`);
   assert.ok((got.blocks.provenance?.reason ?? "").split(", ").includes("restart"), `${label}: the provenance carries the restart reason (got ${got.blocks.provenance?.reason})`);
+  // Written by the server from the news, not from the Assistant's text: exactly alpha's cut-off chat.
+  assert.deepEqual(got.blocks.provenance?.restartChats, [s.child], `${label}: the provenance lists the cut-off chat's id (got ${JSON.stringify(got.blocks.provenance?.restartChats)})`);
   return got;
 }

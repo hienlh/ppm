@@ -7,14 +7,15 @@
 //
 // Project alpha has a manager chat and a child chat the manager opened (`spawned_by`); before each
 // restart the child is left mid-turn. Scenarios, in order on the state the previous left:
-//   0  first start: news with no cut-off chat once the main Assistant session exists
-//   a  crash (SIGKILL, no reason given): read from the run log as a crash
+//   0  first start: no previous run, so no news at all (the run is still recorded)
+//   a  crash (SIGKILL, no reason given): read from the run log as a crash, "did not shut down cleanly"
 //   b  upgrade: clean stop, PPM_START_REASON=upgrade, previous run on an older version
-//   c  watchdog: SIGKILL, PPM_START_REASON=watchdog with a detail
+//   c  watchdog: the supervisor's stop note, then SIGKILL (how every ordered stop ends on Windows),
+//      PPM_START_REASON=watchdog with a detail: "stopped by PPM's supervisor", never "not cleanly"
 //   d  manual: clean stop, PPM_START_REASON=manual with a detail
-//      a–d: exactly one restart-news wake turn naming the reason, the version line, the cut-off
-//      child under its manager; the scripted Assistant messages the manager, which receives it with
-//      the provenance reason "restart"
+//      a–d: exactly one restart-news wake turn naming the reason, the version line, the steps before
+//      the cut-off child under its manager; the scripted Assistant messages the manager, which
+//      receives it with the provenance reason "restart" and exactly the child's id in `restartChats`
 //   e  restart news switched off: no wake turn, the run log still written
 //   f  quiet hours with a chat cut off: the news is urgent and goes at once, the send passes too
 //   g  quiet hours, no chat cut off, two restarts: held, merged into one news, sent once quiet ends
