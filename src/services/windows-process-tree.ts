@@ -137,11 +137,23 @@ async function listProcesses(): Promise<Map<number, { ppid: number; ticks: strin
   } finally {
     clearTimeout(killTimer);
   }
+  return parseProcessList(out, map);
+}
+
+/** The same listing, blocking: for a shutdown that exits before an await would resolve. */
+function listProcessesSync(): Map<number, { ppid: number; ticks: string }> {
+  const out = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", PS_LIST_CMD], {
+    encoding: "utf-8", timeout: LIST_TIMEOUT_MS, windowsHide: true, stdio: ["ignore", "pipe", "ignore"],
+  });
+  return parseProcessList(out);
+}
+
+function parseProcessList(out: string, map = new Map<number, { ppid: number; ticks: string }>()) {
   for (const line of out.split("\n")) {
     const [pidStr, ppidStr, ticks] = line.trim().split("|");
     const pid = parseInt(pidStr ?? "", 10);
     const ppid = parseInt(ppidStr ?? "", 10);
-    if (!isNaN(pid) && !isNaN(ppid)) map.set(pid, { ppid, ticks: ticks ?? "" });
+    if (!isNaN(pid) && !isNaN(ppid)) map.set(pid, { ppid, ticks: (ticks ?? "").trim() });
   }
   return map;
 }
@@ -270,6 +282,69 @@ export async function terminateTree(pids: number[], graceMs: number = 2000): Pro
   killPids(targets, "SIGKILL");
 }
 
+type ProcInfo = { ppid: number; ticks: string };
+
+/**
+ * Could `child` be a child of `parent`? Only if it started no earlier.
+ *
+ * Windows never rewrites a process's parent PID, so a long-lived process keeps
+ * naming a parent that died long ago — and that PID is reused. The edge forwarder,
+ * the tunnel and a self-replaced supervisor all name the previous supervisor as
+ * their parent; once a server descendant took that PID, walking the tree by parent
+ * PID alone listed all three as server descendants, and the next reap killed
+ * them, the running supervisor included (the 0.25.6 → 0.25.7 upgrade, 14/11/2026).
+ * A child cannot predate its parent, so the creation time settles it. Unknown
+ * times are not proof either way and keep the link.
+ */
+export function startedNoEarlierThan(child: ProcInfo, parent: ProcInfo): boolean {
+  // `BigInt("")` is 0n rather than an error, so an unread time must be ruled out first.
+  if (!/^\d+$/.test(child.ticks) || !/^\d+$/.test(parent.ticks)) return true;
+  return BigInt(child.ticks) >= BigInt(parent.ticks);
+}
+
+/** Every descendant of `rootPid` whose parent links hold by creation time, parents first. */
+export function descendantsByLineage(rootPid: number, procs: Map<number, ProcInfo>): number[] {
+  // Without the root's own creation time nothing below it can be checked; it has exited
+  // anyway, and what it left behind is the tracked list's business.
+  if (!procs.has(rootPid)) return [];
+  const childrenOf = new Map<number, number[]>();
+  for (const [pid, info] of procs) {
+    if (pid === info.ppid) continue;
+    const arr = childrenOf.get(info.ppid);
+    if (arr) arr.push(pid);
+    else childrenOf.set(info.ppid, [pid]);
+  }
+  const out: number[] = [];
+  const visited = new Set<number>([rootPid]);
+  const queue = [rootPid];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    const parent = procs.get(cur);
+    for (const child of childrenOf.get(cur) ?? []) {
+      if (visited.has(child)) continue;
+      const info = procs.get(child)!;
+      if (parent && !startedNoEarlierThan(info, parent)) continue;
+      visited.add(child);
+      out.push(child);
+      queue.push(child);
+    }
+  }
+  return out;
+}
+
+/** `pid` and the chain of live processes that really started it, nearest first. */
+export function selfAndAncestors(pid: number, procs: Map<number, ProcInfo>): number[] {
+  const out = [pid];
+  let cur = procs.get(pid);
+  while (cur) {
+    const parent = procs.get(cur.ppid);
+    if (!parent || out.includes(cur.ppid) || !startedNoEarlierThan(cur, parent)) break;
+    out.push(cur.ppid);
+    cur = parent;
+  }
+  return out;
+}
+
 /**
  * Snapshot all live descendants of `rootPid` into the tracked file.
  * Previously tracked processes that are still the same process (alive with a
@@ -293,25 +368,8 @@ export async function snapshotServerDescendants(rootPid: number): Promise<void> 
     // Keep prior entries only while they still refer to the same process.
     const kept = readTracked().filter((t) => procs.get(t.pid)?.ticks === t.ticks);
     const tracked = new Map<number, TrackedProc>(kept.map((t) => [t.pid, t]));
-
-    const childrenOf = new Map<number, number[]>();
-    for (const [pid, info] of procs) {
-      const arr = childrenOf.get(info.ppid);
-      if (arr) arr.push(pid);
-      else childrenOf.set(info.ppid, [pid]);
-    }
-
-    // BFS with visited guard — PID reuse can produce bogus parent cycles.
-    const visited = new Set<number>([rootPid]);
-    const queue = [rootPid];
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      for (const child of childrenOf.get(cur) ?? []) {
-        if (visited.has(child)) continue;
-        visited.add(child);
-        tracked.set(child, { pid: child, ticks: procs.get(child)!.ticks });
-        queue.push(child);
-      }
+    for (const child of descendantsByLineage(rootPid, procs)) {
+      tracked.set(child, { pid: child, ticks: procs.get(child)!.ticks });
     }
 
     writeFileSync(trackedFile(), JSON.stringify([...tracked.values()]));
@@ -322,30 +380,95 @@ export async function snapshotServerDescendants(rootPid: number): Promise<void> 
 
 /**
  * Kill every tracked descendant that is still the same process it was when
- * snapshotted (PID alive + creation time matches). Clears the tracked file.
- * Returns the number of processes reaped.
+ * snapshotted (PID alive + creation time matches), together with its own
+ * descendants. Clears the tracked file. Returns the number of tracked processes
+ * reaped.
+ *
+ * Never kills `protect`, the calling process, or the processes that started it:
+ * a bad record must not be able to take down the supervisor, the edge or the
+ * tunnel. The subtree is walked here, by creation time, rather than by
+ * `taskkill /T`, which follows parent PIDs as they stand and so would reach the
+ * same wrongly-parented processes the snapshot used to.
  */
-export async function reapTrackedDescendants(log?: (msg: string) => void): Promise<number> {
+export async function reapTrackedDescendants(
+  log?: (msg: string) => void,
+  protect: Iterable<number | null | undefined> = [],
+): Promise<number> {
   if (process.platform !== "win32") return 0;
   const tracked = readTracked();
   if (tracked.length === 0) return 0;
   let killed = 0;
   try {
     const procs = await listProcesses();
+    const guarded = new Set<number>(selfAndAncestors(process.pid, procs));
+    for (const p of protect) if (typeof p === "number" && p > 0) guarded.add(p);
     for (const t of tracked) {
       const info = procs.get(t.pid);
       if (!info || info.ticks !== t.ticks) continue; // dead, or PID was reused
-      try {
-        execFileSync("taskkill", ["/PID", String(t.pid), "/T", "/F"], {
-          stdio: "ignore",
-          timeout: 5000,
-          windowsHide: true,
-        });
-        killed++;
-        log?.(`Reaped orphaned server descendant (PID: ${t.pid})`);
-      } catch {}
+      if (guarded.has(t.pid)) {
+        log?.(`Not reaping PID ${t.pid}: it is ${t.pid === process.pid ? "this process" : "protected"}, not a server descendant`);
+        continue;
+      }
+      const tree = [t.pid, ...descendantsByLineage(t.pid, procs)].filter((p) => !guarded.has(p));
+      killPids(tree, "SIGKILL");
+      killed++;
+      log?.(`Reaped orphaned server descendant (PID: ${t.pid}${tree.length > 1 ? ` and ${tree.length - 1} below it` : ""})`);
     }
   } catch {}
   try { unlinkSync(trackedFile()); } catch {}
   return killed;
+}
+
+/**
+ * What `killTreeByLineage` kills: the root, then whatever the listing shows below it by
+ * lineage, sparing `protect` and the caller's own chain. A listing that failed, came back
+ * empty or lost the root still yields the root: an unreadable process table must never
+ * leave the server running. The root is refused only when it is the caller or one of its
+ * ancestors — never because it is in `protect`, whose PIDs come from status.json and may
+ * name a process long gone whose PID the server now holds. Exported for tests.
+ */
+export function lineageKillTargets(
+  rootPid: number,
+  procs: Map<number, ProcInfo> | null,
+  protect: Iterable<number | null | undefined> = [],
+  selfPid: number = process.pid,
+): number[] {
+  const own = new Set<number>(procs ? selfAndAncestors(selfPid, procs) : [selfPid]);
+  if (own.has(rootPid)) return [];
+  const guarded = new Set<number>(own);
+  for (const p of protect) if (typeof p === "number" && p > 0) guarded.add(p);
+  const below = procs ? descendantsByLineage(rootPid, procs).filter((p) => !guarded.has(p)) : [];
+  return [rootPid, ...below];
+}
+
+/**
+ * Kill `rootPid` and its descendants by creation-time lineage, sparing `protect` and the
+ * calling process's own chain. Windows only; the safe replacement for `taskkill /T` on the
+ * server, whose tree is full of short-lived processes whose PIDs come back, and which
+ * `/T` would follow to whatever still names a reused PID as its parent.
+ */
+export async function killTreeByLineage(
+  rootPid: number,
+  protect: Iterable<number | null | undefined> = [],
+): Promise<void> {
+  if (process.platform !== "win32") { killProcessTree(rootPid); return; }
+  let procs: Map<number, ProcInfo> | null = null;
+  try { procs = await listProcesses(); } catch {}
+  killPids(lineageKillTargets(rootPid, procs, protect), "SIGKILL");
+}
+
+/** `killTreeByLineage`, blocking, for a shutdown about to exit. */
+export function killTreeByLineageSync(
+  rootPid: number,
+  protect: Iterable<number | null | undefined> = [],
+): void {
+  if (process.platform !== "win32") { killProcessTree(rootPid); return; }
+  let procs: Map<number, ProcInfo> | null = null;
+  // Bun 1.3.12 can throw ETIMEDOUT from a sync spawn with a timeout within milliseconds when
+  // it runs from a long timer; a second attempt is cheap and usually gets the listing.
+  for (let attempt = 0; attempt < 2 && procs === null; attempt++) {
+    const t0 = Date.now();
+    try { procs = listProcessesSync(); } catch { if (Date.now() - t0 > 1_000) break; }
+  }
+  killPids(lineageKillTargets(rootPid, procs, protect), "SIGKILL");
 }

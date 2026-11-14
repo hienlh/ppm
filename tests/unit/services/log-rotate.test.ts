@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   fdWritesTo, rotateIfOversized, stdioIsLogFile, consumeStdioIsLogEnv,
-  resetRotateFailureWarning, STDIO_IS_LOG_ENV,
+  resetRotateFailureWarning, STDIO_IS_LOG_ENV, keepPreviousCapture,
 } from "../../../src/services/log-rotate.ts";
 
 let dir: string;
@@ -165,5 +165,28 @@ describe("rotation", () => {
       chmodSync(dir, 0o755);
       resetRotateFailureWarning();
     }
+  });
+});
+
+describe("keeping the previous console capture", () => {
+  it("moves a non-empty capture to .1, replacing the one before", () => {
+    const f = join(dir, "ppm.err.log");
+    writeFileSync(`${f}.1`, "older");
+    writeFileSync(f, "panic: out of memory");
+    expect(keepPreviousCapture(f)).toBe(true);
+    expect(readFileSync(`${f}.1`, "utf8")).toBe("panic: out of memory");
+    expect(existsSync(f)).toBe(false);
+  });
+
+  it("leaves an empty capture alone, so an earlier .1 with a reason survives", () => {
+    const f = join(dir, "ppm.err.log");
+    writeFileSync(`${f}.1`, "the reason");
+    writeFileSync(f, "");
+    expect(keepPreviousCapture(f)).toBe(false);
+    expect(readFileSync(`${f}.1`, "utf8")).toBe("the reason");
+  });
+
+  it("does nothing, and does not throw, when there is no capture yet", () => {
+    expect(keepPreviousCapture(join(dir, "missing.err.log"))).toBe(false);
   });
 });
