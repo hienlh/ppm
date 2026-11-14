@@ -158,10 +158,29 @@ try {
   /** The bar's slot scrolled to its end, where the sticky buttons sit over the text. */
   const scrollSlot = (body, to) => body.locator("[data-waiting-slot]").evaluate((el, t) => { el.scrollTop = t === "end" ? el.scrollHeight : 0; }, to);
   /** The whole card, unclipped by the bar's height, for reading it end to end. */
+  // A phone's card is taller than its screen: the screen is made tall enough for the whole card
+  // (same width, so the same phone layout), or the bottom tab bar covers its end and the part
+  // past the screen comes out blank. The check below fails the run if any of it is still cut.
   async function wholeCardShot(pg, body, name) {
+    const size = pg.viewportSize();
     const style = await pg.addStyleTag({ content: "[data-waiting-slot]{max-height:none!important}" });
-    await body.locator("[data-waiting-card]").screenshot({ path: join(shotsDir, `${name}.png`) });
+    const card = body.locator("[data-waiting-card]");
+    const height = await card.evaluate((el) => el.getBoundingClientRect().height);
+    await pg.setViewportSize({ width: size.width, height: Math.max(size.height, Math.ceil(height) + 600) });
+    await pg.waitForTimeout(150);
+    const box = await card.boundingBox();
+    const covered = await card.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      // The card's last line must be the topmost thing there, under no tab bar or composer.
+      const hit = document.elementFromPoint(x, r.bottom - 4);
+      return !hit || !el.contains(hit);
+    });
+    assert.ok(box && box.y >= 0 && box.y + box.height <= pg.viewportSize().height && !covered, `${name}: the whole card is on screen and uncovered`);
+    await card.screenshot({ path: join(shotsDir, `${name}.png`) });
     await style.evaluate((el) => el.remove());
+    await pg.setViewportSize(size);
+    await pg.waitForTimeout(150);
   }
 
   // ---- Desktop ----
