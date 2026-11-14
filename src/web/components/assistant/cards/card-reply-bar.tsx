@@ -1,18 +1,20 @@
 /**
  * The reply-to bar: while the user answers a card in their own words, it stands where the
- * Assistant's composer is and says where the words go ("Replying to: api · Slack draft") and
- * that they go word for word. Sending posts them to the card's manager chat, not to the Assistant;
+ * Assistant's composer is and, the way Telegram quotes the message being answered, says over the
+ * field which card the words answer ("↩ Replying to card" over "api · Slack draft"); they go to
+ * that card's manager chat word for word, not to the Assistant. Sending posts them to the card's manager chat, not to the Assistant;
  * a card that stopped waiting or is a day old asks "send anyway?" first. Closed by its X, Esc, a
  * sent reply, a project switch, or the Assistant view going away; never stored, so a reload ends it.
  */
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, ArrowUp, X } from "@/lib/icons";
+import { ArrowUp, Undo2, X } from "@/lib/icons";
 import { cardRefusal, replyToAssistantCard } from "@/lib/assistant-cards-api";
 import { useCardReplyStore, type CardReplyTarget } from "@/stores/assistant-card-reply-store";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
 
 export const REPLY_PLACEHOLDER = "Your words go to the manager chat word for word…";
+export const REPLYING_TO_CARD = "Replying to card";
 
 /**
  * With no props it answers the card the Assistant's composer was pointed at; a manager chat passes
@@ -61,16 +63,22 @@ export function CardReplyBar(props: { target?: CardReplyTarget; onClose?: () => 
 
   return (
     <div className="px-1 pt-0.5" data-card-reply-bar="">
-      <div className="flex items-center gap-2 pb-2 text-xs text-text-secondary">
-        <ArrowRight className="size-3.5 shrink-0" />
-        <span className="min-w-0 truncate">
-          Replying to: <b className="font-medium text-text-primary">{target.projectName ?? "Assistant"} · {target.title}</b>
+      <div
+        className="mb-2 flex items-center gap-2 rounded-md border border-border border-l-2 border-l-primary bg-surface/60 py-1 pl-2 pr-0.5 text-xs"
+        data-card-reply-quote=""
+      >
+        <Undo2 className="size-3.5 shrink-0 text-primary" />
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium text-primary">{REPLYING_TO_CARD}</span>
+          <span className="block truncate text-text-secondary" data-card-reply-title="">
+            {target.projectName ? `${target.projectName} · ` : ""}{target.title}
+          </span>
         </span>
         <button
-          type="button" onClick={close} aria-label="Stop replying to this card"
-          className="ml-auto flex size-11 shrink-0 items-center justify-center rounded-md hover:bg-surface-elevated md:size-6"
+          type="button" onClick={close} aria-label="Stop replying to this card" title="Stop replying to this card"
+          className="flex size-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-surface-elevated md:size-7"
         >
-          <X className="size-3.5" />
+          <X className="size-4" />
         </button>
       </div>
       {question && (

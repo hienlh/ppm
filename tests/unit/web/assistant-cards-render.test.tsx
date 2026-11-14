@@ -58,8 +58,8 @@ describe("assistant cards", () => {
     const draft = view.container.querySelector("[data-card-draft]")!;
     expect(draft.textContent).toContain("Hi <b>there</b>⟨U+202E⟩");
     expect(draft.querySelector("b")).toBeNull();
-    // The server did not offer an OK on this card: only the user's own words, through Edit.
-    expect(buttons()).toEqual(["Edit", "Open manager chat", "Dismiss"]);
+    // The server did not offer an OK on this card: only the user's own words, through Reply.
+    expect(buttons()).toEqual(["Reply", "Open manager chat", "Dismiss"]);
   });
 
   it("sends OK with the exact draft's hash only when the server offers it", async () => {
@@ -67,20 +67,21 @@ describe("assistant cards", () => {
     view = await mount(<AssistantCard card={base({
       kind: "needs_decision", title: "Slack draft", okOffered: true, payload: { draft: { to: "#devs", text: "Shipping today.", sha256: sha } },
     })} />);
-    expect(buttons()).toEqual(["OK, send", "Edit", "Open manager chat", "Dismiss"]);
+    expect(buttons()).toEqual(["OK, send", "Reply", "Open manager chat", "Dismiss"]);
     await click([...view.container.querySelectorAll("button")].find((b) => b.textContent?.includes("OK, send"))!);
     expect(posts[0]!.url).toBe("/api/assistant/cards/11111111-1111-1111-1111-111111111111/ok");
     expect(posts[0]!.body).toMatchObject({ draftSha256: sha });
   });
 
-  it("Edit opens the reply bar, which sends the user's words to the card and closes", async () => {
+  it("Reply opens the reply bar, which sends the user's words to the card and closes", async () => {
     const { CardReplyBar } = await import("../../../src/web/components/assistant/cards/card-reply-bar");
     const { useCardReplyStore } = await import("../../../src/web/stores/assistant-card-reply-store");
     view = await mount(<><AssistantCard card={base({ kind: "needs_decision", title: "Release 2.14", projectName: "nxsys" })} /><CardReplyBar /></>);
     expect(view.container.querySelector("[data-card-reply-bar]")).toBeNull();
-    await click([...view.container.querySelectorAll("button")].find((b) => b.textContent === "Edit")!);
+    await click([...view.container.querySelectorAll("button")].find((b) => b.textContent === "Reply")!);
     const bar = view.container.querySelector("[data-card-reply-bar]")!;
-    expect(bar.textContent).toContain("Replying to: nxsys · Release 2.14");
+    expect(bar.querySelector("[data-card-reply-quote]")?.textContent).toContain("Replying to card");
+    expect(bar.querySelector("[data-card-reply-title]")?.textContent).toBe("nxsys · Release 2.14");
     const area = bar.querySelector("textarea")!;
     expect(area.getAttribute("placeholder")).toBe("Your words go to the manager chat word for word…");
     const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(area), "value")!.set!;

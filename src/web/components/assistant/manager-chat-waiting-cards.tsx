@@ -1,7 +1,7 @@
 /**
  * A manager chat's own cards that still wait on the user, above its composer: what this chat
  * reported to the PPM Assistant (a decision, an urgent report, a held rules change), answered
- * right here — OK, Edit (the reply bar opens under the card, and the words go to this chat word
+ * right here — OK, Reply (the reply bar opens under the card, and the words go to this chat word
  * for word), Dismiss. A request of the chat's own (an approval, a question) is left out: the chat
  * already shows it as its own card.
  *

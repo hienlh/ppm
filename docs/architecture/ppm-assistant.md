@@ -79,10 +79,31 @@ folded to one line, a wake turn answered `[no reply]` to "Assistant read N repor
 filter keeps that project's cards (fetched filtered, `stores/assistant-cards-store.ts`, the
 choice this device's own) and the loaded turns in which the Assistant messaged or asked its
 manager chat (`lib/assistant-stream-filter.ts`); while it is on, older history comes from
-"Load earlier" only. Reply-to — a decision card's Edit, or Reply in a card's right-click or
-long-press menu — stands where the composer is, says "Replying to: {project} · {title}", posts
-to `/cards/:id/reply` instead of the Assistant, and ends on send, Esc, ✕, a session or project
-switch; it is never stored. A chip or "Open manager chat" opens that chat in a window of its
+"Load earlier" only. Reply-to — a decision card's Reply, or Reply in a card's right-click or
+long-press menu — stands where the composer is with a Telegram-style quote over the field
+("↩ Replying to card", then "{project} · {title}", and ✕), posts to `/cards/:id/reply` instead
+of the Assistant, and ends on send, Esc, ✕, a session or project switch; it is never stored.
+
+**Waiting on you.** The stream places a card by its time, so an open one drifts up among later
+messages. Every card still waiting (`WAITING_CARD_KINDS`, `status = open`) is therefore also
+pinned between the chip row and the stream (`assistant-waiting-cards.tsx` over
+`waiting-cards-bar.tsx`): one card at a time, whole and with its own buttons, ‹ › and "n/N" to
+step (urgent first, then the oldest), folded to one 44 px row that still names the card. A new
+card opens the bar on itself; a chip's red count (`focusWaitingCards`) opens it on that
+project's first card, clearing a filter that would hide it; the card it lands on is outlined
+for 1.8 s. It follows the project filter, and "N more waiting in other projects · Show all"
+names what the filter hides. The list is `GET /api/assistant/cards/open`
+(`stores/assistant-open-cards-store.ts`), built by `assistantCards.openCards()` — the same
+function `waiting()` counts — so every red count has exactly its cards behind it; the store
+follows `assistant:card` and refetches when an `assistant:waiting_changed` does not describe it.
+A manager chat shows its own open reports the same way above its composer
+(`manager-chat-waiting-cards.tsx`, in `chat-tab.tsx`), leaving out its approvals and questions,
+which the chat already shows as its own cards; there Reply opens the reply bar under the card
+and "Open manager chat" is not offered. `chats_attention` lists the same cards first
+(`assistantCards`: id, project, kind, title, when sent, whatever `since` says), and Telegram's
+`/status` leads with them, so "nothing waits" is never said while one is open.
+
+A chip or "Open manager chat" opens that chat in a window of its
 own without switching project (`open-manager-chat.ts`: a `projectId: null` tab placed straight
 into a new window panel by `openTabInNewWindow`, never through a grid, and the project's slash
 cache hydrated); on a phone it switches project and opens the chat as a tab whose "‹ Assistant"

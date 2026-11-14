@@ -3,10 +3,10 @@
  * one, is shown whole and verbatim, with hidden characters made visible.
  *
  * "OK, send" (or "OK" with no draft) is offered only when the server says the whole decision is on
- * the card and nothing in it was hidden; it names the exact draft by its hash. "Edit" opens the
- * reply bar under the chat, where the user's own words go to the manager chat word for word.
+ * the card and nothing in it was hidden; it names the exact draft by its hash. "Reply" opens the
+ * reply bar under the chat (in a manager chat, under the card), where the user's own words go to the manager chat word for word.
  */
-import { BellRing, Check, ExternalLink, Pencil, TriangleAlert, X } from "@/lib/icons";
+import { BellRing, Check, ExternalLink, TriangleAlert, Undo2, X } from "@/lib/icons";
 import { dismissAssistantCard, okAssistantCard } from "@/lib/assistant-cards-api";
 import { escapeHiddenCharacters } from "../../../../shared/reveal-hidden-characters";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
@@ -32,7 +32,7 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
             </CardButton>
           )}
           <CardButton disabled={!card.sessionId} onClick={() => replyTo(card)}>
-            <Pencil className="size-3.5" />Edit
+            <Undo2 className="size-3.5" />Reply
           </CardButton>
           {!inManagerChat && (
             <CardButton variant="ghost" secondary onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
@@ -54,7 +54,7 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
         </div>
       )}
       {draft && !card.okOffered && card.status === "open" && (
-        <p className="text-xs text-text-subtle">This draft is too long or holds a hidden value, so it cannot be approved here. Reply with Edit, or open the manager chat.</p>
+        <p className="text-xs text-text-subtle">This draft is too long or holds a hidden value, so it cannot be approved here. Answer with Reply, or open the manager chat.</p>
       )}
       {card.payload.urgentCapped && (
         <p className="text-xs text-text-subtle">Held for the morning: this manager already raised its urgent reports tonight.</p>
