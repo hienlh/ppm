@@ -558,7 +558,9 @@ async function spawnEdge(publicPort: number, host: string, logFd: number): Promi
   proc.unref();
   // A stop that began while this spawn waited for the gate already ran its edge kill, with
   // no PID to kill: take this edge down now, or it outlives the supervisor on the port.
-  if (shuttingDown) {
+  // Not during an upgrade: selfReplace also sets `shuttingDown`, the new supervisor adopts
+  // the edge, and an upgrade that fails resumes with this one rather than with no edge.
+  if (shuttingDown && getState() !== "upgrading") {
     try { if (proc.pid) process.kill(proc.pid, "SIGKILL"); } catch {}
     return;
   }
