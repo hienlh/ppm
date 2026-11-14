@@ -1,4 +1,7 @@
+import type { Context } from "hono";
 import type { ConnectionRow } from "../db.service.ts";
+import { missingLogin } from "../database/connection-login.ts";
+import { holdRequestOpen } from "../../server/helpers/hold-request-open.ts";
 import { getAdapter } from "../database/adapter-registry.ts";
 import { isReadOnlyQuery } from "../database/readonly-check.ts";
 import { detectOperation, insertQueryLog, type QueryLogInput, type QueryOperation } from "../query-audit/query-audit.service.ts";
@@ -20,6 +23,7 @@ import { aiDatabaseArg, aiTargetConfig } from "./db-ai-target.ts";
 import { formatStatementResults } from "./db-ai-format.ts";
 import { runAiQuery, runApprovedScript, transactionControlIn } from "./db-ai-run.ts";
 import { dbApprovalBroker, type DbApprovalOutcome } from "./db-approval-broker.ts";
+import { dbLoginAttention } from "./db-login-attention.ts";
 import {
   DB_EXECUTE_RESULT_ROWS, DB_EXECUTE_STATEMENT_TIMEOUT_MS, DB_QUERY_DEFAULT_ROWS, DB_QUERY_MAX_ROWS, DB_QUERY_TIMEOUT_MS,
   OPEN_QUERY_WAIT_MS, dbChangeHint, dbToolDefinitions,
@@ -57,6 +61,11 @@ export function createDbToolsMcpHandler(deps: {
   /** Whether the user has this tool on (Settings → Tools). */
   enabled: (tool: string) => boolean;
   openSession?: (conn: ConnectionRow, config: Awaited<ReturnType<typeof aiTargetConfig>>) => Promise<DbQuerySession>;
+  /**
+   * A tool reached a connection nobody has logged in to: tell the user away from PPM, since the
+   * AI can only ask in the chat (`db-login-attention.ts`). Nobody is told when left out.
+   */
+  loginNeeded?: (sessionId: string, conn: ConnectionRow) => void;
 }) {
   const openSession = deps.openSession ?? ((conn, config) => getAdapter(conn.type).openQuerySession(config));
 
@@ -210,6 +219,15 @@ export function createDbToolsMcpHandler(deps: {
       if (!sql.trim()) return textResult("`sql` is required.", true);
       if (sql.length > MAX_DB_TOOL_SQL_CHARS) return textResult(`\`sql\` is longer than ${MAX_DB_TOOL_SQL_CHARS} characters; split it into smaller scripts.`, true);
       if (splitSqlScript(sql, dialectNameOf(conn.type)).length === 0) return textResult("The SQL has no statements to run: only comments or semicolons.", true);
+      // open_query needs no login: the user runs its tab, and the tab asks for the login itself.
+      if (name !== OPEN_QUERY_TOOL && deps.loginNeeded) {
+        try {
+          // A config that cannot be read is the tool's own error to report, below.
+          if (missingLogin(conn)) deps.loginNeeded(sessionId, conn);
+        } catch (e) {
+          console.warn(`[db-tools] telling the user about ${conn.name}'s login failed: ${errorText(e)}`);
+        }
+      }
       if (name === DB_QUERY_TOOL) return dbQuery(conn, target.database, sql, args);
       if (name === OPEN_QUERY_TOOL) return openQuery(sessionId, conn, target.database, sql);
       return dbExecute(sessionId, conn, target.database, sql, args, signal);
@@ -217,9 +235,20 @@ export function createDbToolsMcpHandler(deps: {
   });
 }
 
-export const dbToolsMcpHandler = createDbToolsMcpHandler({
+const handler = createDbToolsMcpHandler({
   resolveToken: (token) => dbToolsMcpTokens.resolve(token),
   openTab: (sessionId, req, waitMs) => tabOpenBroker.request(sessionId, req, waitMs),
   approve: (sessionId, input, signal) => dbApprovalBroker.request(sessionId, input, undefined, signal),
   enabled: (tool) => isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool),
+  loginNeeded: (sessionId, conn) => { dbLoginAttention.loginNeeded(sessionId, conn); },
 });
+
+/**
+ * The endpoint as mounted. A `db_execute` call holds its request for as long as the approval
+ * waits (`DB_APPROVAL_WAIT_MS`) with no byte sent, so Bun's idle timeout for the request is
+ * lifted, as `/api/sessions-mcp` does; the approval's own timer bounds the wait instead.
+ */
+export function dbToolsMcpHandler(c: Context): Promise<Response> {
+  holdRequestOpen(c, 0);
+  return handler(c);
+}

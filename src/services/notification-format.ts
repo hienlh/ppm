@@ -4,7 +4,7 @@
  */
 import type { NotificationPayload } from "./notification.service.ts";
 import { isAssistantProject } from "../shared/assistant-project.ts";
-import { dbExecuteApprovalInput } from "../shared/db-ai-tools.ts";
+import { MENTIONS_PASSWORD, PASSWORD_WITHHELD, dbExecuteApprovalInput } from "../shared/db-ai-tools.ts";
 import { sessionCollabApprovalInput, type SessionCollabApprovalInput } from "../shared/session-collab.ts";
 
 /** What a session-collaboration card asks, as a notification's title says it. */
@@ -78,9 +78,10 @@ export function describeApprovalInput(tool: string, input: unknown): Pick<Notifi
   if (!input || typeof input !== "object") return {};
   const i = input as Record<string, unknown>;
 
-  // A database change: the AI's reason, not the SQL, which may quote the rows it changes.
+  // A database change: the AI's reason, not the SQL, which may quote the rows it changes — and not
+  // the reason either when it mentions a password.
   const db = dbExecuteApprovalInput(tool, input);
-  if (db) return db.reason ? { detail: db.reason, detailStyle: "quote" } : {};
+  if (db) return db.reason ? { detail: MENTIONS_PASSWORD.test(db.reason) ? PASSWORD_WITHHELD : db.reason, detailStyle: "quote" } : {};
 
   const collab = sessionCollabApprovalInput(tool, input);
   if (collab) {

@@ -76,6 +76,7 @@ function setup(opts: { approval?: DbApprovalOutcome; tab?: TabOpenOutcome; enabl
   const tokens = createDbToolsMcpTokenStore();
   const approvals: Array<{ sessionId: string; input: Approval }> = [];
   const tabs: Array<{ sessionId: string; req: TabOpenAsk; waitMs: number }> = [];
+  const logins: Array<{ sessionId: string; connection: string }> = [];
   const handler = createDbToolsMcpHandler({
     resolveToken: (t) => tokens.resolve(t),
     openTab: async (sessionId, req, waitMs) => {
@@ -87,6 +88,7 @@ function setup(opts: { approval?: DbApprovalOutcome; tab?: TabOpenOutcome; enabl
       return opts.approval ?? { approved: true };
     },
     enabled: opts.enabled ?? (() => true),
+    loginNeeded: (sessionId, conn) => { logins.push({ sessionId, connection: conn.name }); },
   });
   const app = new Hono();
   app.all("/api/db-tools-mcp", handler);
@@ -96,7 +98,7 @@ function setup(opts: { approval?: DbApprovalOutcome; tab?: TabOpenOutcome; enabl
   const call = async (name: string, args: unknown): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> =>
     (await (await rpc({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name, arguments: args } })).json()).result;
   const text = async (name: string, args: unknown) => (await call(name, args)).content[0]!.text;
-  return { rpc, call, text, approvals, tabs };
+  return { rpc, call, text, approvals, tabs, logins };
 }
 
 describe("database tools for the AI chat", () => {
@@ -128,6 +130,22 @@ describe("database tools for the AI chat", () => {
     updateConnection(rw, { readonly: 0 });
     hidden = insertConnection("sqlite", "Secret", { type: "sqlite", path }).id;
     updateConnection(hidden, { aiAccess: 0 });
+  });
+
+  it("tells the user when a tool reaches a connection nobody has logged in to, and asks for no approval", async () => {
+    insertConnection("postgres", "AskPg", {
+      type: "postgres", connectionString: "postgresql://app@db.invalid:5432/app", passwordMode: "askPassword",
+    } as never);
+    const { text, approvals, logins } = setup();
+    expect(await text("db_query", { connection: "AskPg", sql: "SELECT 1" })).toContain("nobody has logged in to it since PPM started");
+    expect(await text("db_execute", { connection: "AskPg", sql: "DELETE FROM t", reason: "clean up" })).toContain("nobody has logged in to it since PPM started");
+    expect(approvals).toEqual([]);
+    expect(logins).toEqual([{ sessionId: "s1", connection: "AskPg" }, { sessionId: "s1", connection: "AskPg" }]);
+    // open_query needs no login from the AI: the tab asks for it when the user runs it.
+    await text("open_query", { connection: "AskPg", sql: "SELECT 1" });
+    // A connection that saves its password, or SQLite, never needs one.
+    await text("db_query", { connection: "Prod", sql: "SELECT 1" });
+    expect(logins).toHaveLength(2);
   });
 
   it("answers only the chat session's own token", async () => {

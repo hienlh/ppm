@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { PASSWORD_WITHHELD } from "../../../src/shared/db-ai-tools.ts";
 import {
   describeApprovalInput,
   formatPushNotification,
@@ -79,6 +80,13 @@ describe("describeApprovalInput", () => {
     expect(describeApprovalInput("exec", { command: ["npm", "publish"] })).toEqual({ detail: "npm publish", detailStyle: "code" });
     expect(describeApprovalInput("Edit", { file_path: "/srv/app/.env", old_string: "a" })).toEqual({ detail: "/srv/app/.env", detailStyle: "code" });
     expect(describeApprovalInput("WebFetch", { url: "https://example.com" })).toEqual({ detail: "https://example.com", detailStyle: "code" });
+  });
+
+  it("quotes a database change's reason, never its SQL, and withholds a reason that mentions a password", () => {
+    const db = { connectionId: 1, connectionName: "Pg", dbType: "postgres", group: null, color: null, readonly: false, sql: "DELETE FROM t", passwordRequired: true };
+    expect(describeApprovalInput("ppm:db_execute", { ...db, reason: "Drop the stuck job" })).toEqual({ detail: "Drop the stuck job", detailStyle: "quote" });
+    expect(describeApprovalInput("ppm:db_execute", { ...db, reason: "Set reporter's password to 'Hunter2'" }))
+      .toEqual({ detail: PASSWORD_WITHHELD, detailStyle: "quote" });
   });
 
   it("says nothing when there is nothing worth saying", () => {

@@ -1042,10 +1042,11 @@ default), and never in a design session.
 `http` server `ppm-db` with the token in `Authorization` and the three tools allowed by the
 PreToolUse hook (`CLAUDE_DB_TOOLS` — `db_execute` asks the user itself, with more than a generic
 Allow could show), and Codex gets `mcp_servers.ppm_db` with `bearer_token_env_var` and
-`default_tools_approval_mode = "approve"`. Both are given a 45-minute tool timeout
-(`DB_TOOLS_TIMEOUT_MS`): the user's ten minutes to answer plus the approved script's own run.
+`default_tools_approval_mode = "approve"`. Both are given a 65-minute tool timeout
+(`DB_TOOLS_TIMEOUT_MS`): the user's thirty minutes to answer plus the approved script's own run.
 `/api/db-tools-mcp` (`db-ai-tools-endpoint.ts`, mounted before auth) resolves the token to its
-session.
+session, and lifts Bun's idle timeout for the request (`server.timeout(req, 0)`, as
+`/api/sessions-mcp` does), since a `db_execute` call holds it for as long as the approval waits.
 
 **`db_query`** refuses SQL that `isReadOnlyQuery` reads as a write, pointing the AI at
 `db_execute`, then opens the connection with `readonly: true` whatever the connection's own
@@ -1084,8 +1085,8 @@ Then `db-approval-broker.ts` asks:
    A socket's `approval_response` for such a request is ignored.
 3. The approval settles as approved (the right password), declined (Decline), cancelled (the
    user sends a message, presses Stop, deletes the chat, the turn ends first, or the provider drops
-   the call) or timed out (10 minutes). Every outcome takes the card off every device
-   (`approval_resolved`).
+   the call) or timed out (`DB_APPROVAL_WAIT_MS`, 30 minutes). Every outcome takes the card off
+   every device (`approval_resolved`).
    One approval per session at a time; a second call while one waits is answered "busy".
 4. Approved, `runApprovedScript` (`db-ai-run.ts`) opens a writable session — a readonly
    connection included: the approval is what lifts it, for that script — runs `BEGIN` (or
@@ -1093,6 +1094,16 @@ Then `db-approval-broker.ts` asks:
    its timeout (30 minutes, or the connection's query timeout when shorter), or a total of rows changed
    other than `expected_rows` rolls everything back. MySQL and MariaDB commit DDL by
    themselves, which the tool description says.
+
+**Away from PPM.** The card is one of PPM's own approvals, so it never reaches the PPM Assistant's
+Telegram chats as a card — answering it takes PPM's password, which Telegram never carries. The
+broker tells `db-attention-events.ts` instead: `approval_shown` when it asks, and
+`approval_reminder` once, `DB_APPROVAL_REMINDER_BEFORE_MS` (5 minutes) before it gives up. A tool
+reaching a connection that asks for its password with no login held tells the same bus
+`login_needed` (`db-login-attention.ts`, once per connection and chat in 30 minutes) and sends a
+*Database login needed* notification through the usual channels. The Assistant's Telegram bridge
+turns these into notices with no buttons but *Open in PPM*
+([PPM Assistant → Telegram](ppm-assistant.md#telegram)).
 
 "PPM's password" is the auth token the user signs in with (`ppm-password.ts`; with auth off, no
 password is asked). It is a check that the person at the screen means it, not a secret from the

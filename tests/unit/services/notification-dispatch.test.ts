@@ -142,6 +142,21 @@ describe("NotificationService.broadcast", () => {
     expect(telegrammed.map((p) => p.title).sort()).toEqual(["other session", "second"]);
   });
 
+  it("gives a notification with its own key a slot and a tag apart from its session's", async () => {
+    settings({ delay_seconds: 20 });
+    const svc = service();
+    const login = svc.broadcast("approval_request", payload("s1", { title: "login" }), { ownKey: "db-login:4:s1" });
+    const done = svc.broadcast("done", payload("s1", { title: "done" }), { stillUnseen: () => true });
+    expect(await Promise.all([login, done])).toEqual(["sent", "sent"]);
+    expect(telegrammed.map((p) => p.title).sort()).toEqual(["done", "login"]);
+    expect(pushed.map((p) => p.tag).sort()).toEqual(["ppm-db-login:4:s1", "ppm-s1"]);
+    // With no delay it keeps its own tag too.
+    settings({ delay_seconds: 0 });
+    pushed = [];
+    await svc.broadcast("approval_request", payload("s1"), { ownKey: "db-login:4:s1" });
+    expect(pushed.map((p) => p.tag)).toEqual(["ppm-db-login:4:s1"]);
+  });
+
   it("keeps only the newest pending notification per coalesce key, and tags it with the key", async () => {
     settings({ delay_seconds: 20 });
     const svc = service();

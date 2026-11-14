@@ -1140,6 +1140,17 @@ when two watches and `/status` all want it. In quiet hours a watched chat's card
 chat still shows the request; one answered meanwhile is skipped. The hold is in memory: a restart
 drops it, and the card itself stays in PPM for as long as the chat shows it.
 
+**Database notices** (`assistant-telegram-db-notices.ts`). A chat's `db_execute` waiting for
+approval, the reminder 5 minutes before it gives up, and a connection nobody has logged in to
+(`db-attention-events.ts`, see [AI database tools](ai-chat-and-providers.md)) reach every
+connected chat as notices: project, chat, connection and database, and for a change the SQL
+(redacted, then cut at 600 characters) and the AI's reason, with an *Open in PPM* link and no
+other button. A script or reason that mentions a password is not shown at all: SQL spells a
+password literal in too many ways for a pattern to be trusted with it. Answering takes PPM's password and logging in takes the database's, and neither is
+asked for or taken on Telegram; every notice says so. In quiet hours the approval's notice is held
+like a watched chat's card and sent at their end if the change still waits; the reminder and the
+login notice are dropped.
+
 ### Manager cards, replies and quiet hours
 
 **Cards on the phone** (`card-outbound.ts`, `assistant-telegram-manager-cards.ts`,
