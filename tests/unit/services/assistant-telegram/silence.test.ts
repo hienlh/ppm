@@ -227,15 +227,21 @@ describe("a turn met mid-stream, with no message of its own", () => {
     } finally {
       mirror.detach();
     }
-    return fake.sent(Number(chat)).map((m) => [m.text, m.silent]);
+    // Every send to the chat, a deleted draft included: what reached the phone, and how.
+    const calls = fake.calls.filter((c) => c.method === "sendMessage" && Number(c.body.chat_id) === Number(chat));
+    return { shown: fake.sent(Number(chat)).map((m) => [m.text, m.silent]), silentSends: calls.filter((c) => c.body.disable_notification === true).length, sends: calls.length };
   }
 
-  it("rings while the user is away from PPM", async () => {
-    expect(await streamTurn(false)).toEqual([["Done in a moment.", false]]);
+  it("rings while the user is away from PPM, its draft included", async () => {
+    const t = await streamTurn(false);
+    expect(t.shown).toEqual([["Done in a moment.", false]]);
+    expect(t.silentSends).toBe(0);
   });
 
   it("is silent while the user is at PPM", async () => {
-    expect(await streamTurn(true)).toEqual([["Done in a moment.", true]]);
+    const t = await streamTurn(true);
+    expect(t.shown).toEqual([["Done in a moment.", true]]);
+    expect(t.silentSends).toBe(t.sends);
   });
 });
 

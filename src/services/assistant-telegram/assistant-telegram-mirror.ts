@@ -136,12 +136,16 @@ export class AssistantTelegramMirror {
    * `silenceOrigin` is who started the turn as far as silence goes; it differs from `origin` only
    * for a turn met mid-stream whose starter is unknown (see `onStream`).
    */
-  private renderer(sessionId: string, chatId: string, origin: ChatMessageOrigin, silenceOrigin: ChatMessageOrigin | undefined = origin): TurnRenderer {
+  private renderer(
+    sessionId: string, chatId: string, origin: ChatMessageOrigin,
+    // An object, not a defaulted parameter: an explicit `undefined` ("not known") must stay undefined.
+    how?: { silenceOrigin: ChatMessageOrigin | undefined },
+  ): TurnRenderer {
     let byChat = this.turns.get(sessionId);
     if (!byChat) this.turns.set(sessionId, byChat = new Map());
     let r = byChat.get(chatId);
     if (!r || r.isFinished) {
-      const silent = turnSilence(silenceOrigin, this.deps.silence);
+      const silent = turnSilence(how ? how.silenceOrigin : origin, this.deps.silence);
       r = new TurnRenderer({
         queue: this.deps.queue, state: this.deps.state, chatId, origin,
         showToolCalls: this.deps.showToolCalls,
@@ -194,7 +198,7 @@ export class AssistantTelegramMirror {
       // began without a message of its own (one queued behind the last, a Codex message that had
       // to wait): who started it is asked of the live session, never assumed to be PPM.
       const started = this.liveOrigin(p.sessionId);
-      for (const chatId of this.chatsFor(p.sessionId)) this.renderer(p.sessionId, chatId, started ?? "ws", started).text(ev.content);
+      for (const chatId of this.chatsFor(p.sessionId)) this.renderer(p.sessionId, chatId, started ?? "ws", { silenceOrigin: started }).text(ev.content);
     } else if (ev.type === "tool_use" && typeof ev.tool === "string") {
       const live = this.live(p.sessionId);
       for (const r of live) r.tool(ev.tool);
