@@ -1110,8 +1110,9 @@ so it can have each project's manager chat resume them. Code in `src/services/re
   `assistant_restart_news`, so a crash before delivery keeps it). One item per start; restarts before
   delivery merge into it; a delivered or stopped turn clears only what it carried; three failed turns
   drop it. It is urgent — passes quiet hours — only when a chat was cut off
-  (`RESTART_NEWS_URGENT_WHEN` in `assistant-limits.ts`). Settings → PPM Assistant `restart_news`
-  (default on) gates the news only; the run log is always written. Nothing goes to Telegram directly.
+  (`RESTART_NEWS_URGENT_WHEN` in `assistant-limits.ts`). Settings → PPM Assistant → Digest & quiet
+  hours → Restarts ("Tell the Assistant after PPM restarts", `restart_news`, default on) gates the
+  news only; the run log is always written. Nothing goes to Telegram directly.
 - **What the Assistant does.** The entry (`restart-news-text.ts`) lists the restarts, the cut-off
   chats by project with manager first and the chats it opened under it, and asks for one card-free
   message per affected manager naming its cut-off chats, and a line to the user for projects with no
@@ -1120,6 +1121,12 @@ so it can have each project's manager chat resume them. Code in `src/services/re
   tell each cut-off chat of its project to carry on with its own task (`manager-context-entry.ts`).
   The same urgent turn's manager messages pass quiet hours (`assistantQuietNow` in
   `assistant-send-guards-live.ts`); the hourly and daily budgets and the pair limit still apply.
+- **e2e.** `tests/e2e/assistant-restart-news-e2e.mjs` restarts the Assistant fixture on one PPM
+  folder (SIGKILL for a crash, SIGTERM for a clean stop, `PPM_START_REASON` as the supervisor sets
+  it) and checks crash, upgrade, watchdog and manual news, the switch, quiet hours and the merge,
+  then the Settings switch on a desktop and a phone. The fixture side is
+  `tests/e2e/fixtures/assistant-restart-news-fixture.ts`. Run it in the capped `ppm-e2e-chromium`
+  image with `PPM_ASSISTANT_WEB_DIR` and `PPM_RESTART_NEWS_SHOTS` set.
 
 ## Notebook
 
