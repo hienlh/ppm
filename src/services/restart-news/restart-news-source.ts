@@ -1,7 +1,7 @@
 import { createLogger } from "../logger.ts";
 import { RESTART_NEWS_MAX_RESTARTS, RESTART_NEWS_URGENT_WHEN } from "../../shared/assistant-limits.ts";
 import { parseRestartNews, type InterruptedChat, type RestartEntry, type RestartNewsPayload } from "../../shared/restart-news.ts";
-import type { WakeItem, WakeSource } from "../assistant-wake/assistant-wake-queue.ts";
+import type { AssistantWakeQueue, WakeItem, WakeSource } from "../assistant-wake/assistant-wake-queue.ts";
 import type { InterruptedScan } from "./interrupted-chats.ts";
 
 /**
@@ -79,6 +79,21 @@ export function addRestartNews(store: RestartNewsStore, restart: RestartEntry, s
   news.moreChats += scan.more + Math.max(0, chats.length - MAX_CHATS_KEPT);
   news.attempts = 0;
   write(store, news);
+}
+
+/**
+ * The cut-off chats of `projectName` in the restart news that the Assistant session's running wake
+ * turn carries, by session id: what a message from that turn to that project's manager may ask to
+ * resume. Empty for any other project, and outside such a turn.
+ */
+export function cutOffChatsCarried(
+  queue: Pick<AssistantWakeQueue, "carriedItems">, assistantSessionId: string, projectName: string,
+): string[] {
+  const ids = queue.carriedItems(assistantSessionId, RESTART_SOURCE_NAME)
+    .flatMap((i) => i.news?.restart?.chats ?? [])
+    .filter((c) => c.projectName === projectName)
+    .map((c) => c.sessionId);
+  return [...new Set(ids)];
 }
 
 /** What is pending, for tests and the log. */

@@ -1124,11 +1124,15 @@ so it can have each project's manager chat resume them. Code in `src/services/re
 - **What the Assistant does.** The entry (`restart-news-text.ts`) lists the restarts, the cut-off
   chats by project with manager first and the chats it opened under it, and asks for one card-free
   message per affected manager naming its cut-off chats, and a line to the user for projects with no
-  manager. A manager treats a PPM-started turn as a status ask; while the wake turn carries restart
-  news the server adds the provenance reason `restart`, and the manager rules allow one thing on it:
-  tell each cut-off chat of its project to carry on with its own task (`manager-context-entry.ts`).
-  The same urgent turn's manager messages pass quiet hours (`assistantQuietNow` in
-  `assistant-send-guards-live.ts`); the hourly and daily budgets and the pair limit still apply.
+  manager. A manager treats a PPM-started turn as a status ask. The server adds the provenance
+  reason `restart` only to a message to a manager whose project has cut-off chats in the news that
+  wake turn carries, and puts those chats' session ids in the block (`restartChats`, written from the
+  news, never from the Assistant's text; `restart` without the ids is refused on decode). Any other
+  message of that turn reads as a plain status ask. The manager rules allow one thing on it: tell
+  only the chats listed in the provenance block to carry on with their own task
+  (`manager-context-entry.ts`). Messages to those same managers pass quiet hours in the urgent turn
+  (`assistantQuietNow` in `assistant-send-guards-live.ts`); every other message still waits, and the
+  hourly and daily budgets and the pair limit still apply.
 - **e2e.** `tests/e2e/assistant-restart-news-e2e.mjs` restarts the Assistant fixture on one PPM
   folder (SIGKILL for a crash, SIGTERM for a clean stop, `PPM_START_REASON` as the supervisor sets
   it) and checks crash, upgrade, watchdog and manual news, the switch, quiet hours and the merge,

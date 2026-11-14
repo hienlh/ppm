@@ -11,8 +11,11 @@ export interface AssistantCollabHooks {
   managerOf?(projectPath: string): string | null;
   /** Every manager chat, as the Assistant's status and its context list them. */
   managers?(): Array<{ projectName: string; projectPath: string; sessionId: string }>;
-  /** How the Assistant session's running turn started, as PPM saw it. */
-  turnProvenance?(sessionId: string): AssistantProvenance;
+  /**
+   * How the Assistant session's running turn started, as PPM saw it, for a message to a chat of
+   * `recipient`'s project (which decides whether PPM's restart news lets it ask for a resume).
+   */
+  turnProvenance?(sessionId: string, recipient?: { projectName: string }): AssistantProvenance;
   /** Another AI's words reached the Assistant session's running turn (a status, a reply). */
   markUntrusted?(sessionId: string, reason: "read"): void;
   /** Budgets, duplicates and quiet hours for the Assistant's messages to manager chats. */

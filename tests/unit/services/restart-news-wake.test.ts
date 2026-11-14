@@ -13,7 +13,7 @@ import { AssistantWakeQueue } from "../../../src/services/assistant-wake/assista
 import { setAssistantClock } from "../../../src/services/assistant-wake/assistant-clock.ts";
 import { wakeContextEntry } from "../../../src/services/assistant-wake/wake-news-text.ts";
 import {
-  addRestartNews, createRestartNewsSource, pendingRestartNews, restartNewsUrgent, RESTART_SOURCE_NAME, type RestartNewsStore,
+  addRestartNews, createRestartNewsSource, cutOffChatsCarried, pendingRestartNews, restartNewsUrgent, RESTART_SOURCE_NAME, type RestartNewsStore,
 } from "../../../src/services/restart-news/restart-news-source.ts";
 import { _resetRestartNews, startRestartNews } from "../../../src/services/restart-news/restart-news-lifecycle.ts";
 import { RESTART_OPENER, restartNewsEntry } from "../../../src/services/restart-news/restart-news-text.ts";
@@ -26,7 +26,7 @@ import { NO_REPLY_TEXT } from "../../../src/shared/assistant-cards.ts";
 import type { InterruptedChat, RestartEntry } from "../../../src/shared/restart-news.ts";
 import { createTurnProvenanceTracker } from "../../../src/services/assistant/assistant-turn-provenance.ts";
 import { buildManagerBlock } from "../../../src/services/assistant-managers/manager-context-entry.ts";
-import { decodeProvenance, encodeProvenance, provenanceHeaderLine } from "../../../src/shared/assistant-provenance.ts";
+import { decodeProvenance, encodeProvenance, provenanceHeaderLine, validateProvenance } from "../../../src/shared/assistant-provenance.ts";
 
 const MAIN = "asst-main";
 const T = Date.UTC(2026, 11, 15, 12, 0, 0);
@@ -203,26 +203,31 @@ describe("a manager send from the restart turn", () => {
     configService.set("assistant", { ...getAssistantSettings(), quiet_hours: { enabled: true, start: "00:00", end: "23:59" }, timezone: "UTC" });
     setAssistantClock({ now: () => T, setTimer: () => () => {} });
   };
+  const projects: Record<string, string> = { mgr: "api", "mgr-web": "web" };
+  const projectOf = (m: string) => projects[m] ?? null;
   const guards = (queue: AssistantWakeQueue) => createAssistantSendGuards({
-    now: () => T, quiet: (a) => assistantQuietNow(a, queue), load: () => null, save: () => {},
+    now: () => T, quiet: (a, m) => assistantQuietNow(a, m, queue, projectOf), load: () => null, save: () => {},
   });
 
-  it("goes out despite quiet hours while the turn carries urgent restart news", async () => {
+  it("goes out despite quiet hours to a manager whose project had a chat cut off, and only to it", async () => {
     quietAllDay();
     const h = queueHarness(true);
     const store = memoryStore();
     addRestartNews(store, restart(T), { chats: [chat("a")], more: 0 });
     h.queue.addSource(sourceOf(store));
     await h.queue.pump(MAIN);
-    expect(assistantQuietNow(MAIN, h.queue)).toBe(false);
+    expect(assistantQuietNow(MAIN, "mgr", h.queue, projectOf)).toBe(false);
     expect(guards(h.queue).reserveUnattended(MAIN, "mgr", 5).ok).toBe(true);
+    // Same urgent turn, a project with nothing cut off: quiet hours still hold the message.
+    expect(assistantQuietNow(MAIN, "mgr-web", h.queue, projectOf)).toBe(true);
+    expect(guards(h.queue).reserveUnattended(MAIN, "mgr-web", 5).ok).toBe(false);
     h.queue.stop();
   });
 
   it("is still held by quiet hours in any other unattended turn", () => {
     quietAllDay();
     const h = queueHarness(true);
-    expect(assistantQuietNow(MAIN, h.queue)).toBe(true);
+    expect(assistantQuietNow(MAIN, "mgr", h.queue, projectOf)).toBe(true);
     const r = guards(h.queue).reserveUnattended(MAIN, "mgr", 5);
     expect(r.ok).toBe(false);
     expect(!r.ok && r.message).toBe(QUIET_HOURS_REFUSAL);
@@ -231,36 +236,60 @@ describe("a manager send from the restart turn", () => {
 });
 
 describe("the provenance a manager reads", () => {
-  const tracker = (carried: string[]) => createTurnProvenanceTracker({
-    isAssistant: () => true, liveOrigin: () => "watch", wakeSources: () => carried,
+  /** A tracker over a real wake queue whose running turn carries `chats` as restart news. */
+  async function carrying(chats: InterruptedChat[]) {
+    const h = queueHarness(false);
+    const store = memoryStore();
+    addRestartNews(store, restart(T), { chats, more: 0 });
+    h.queue.addSource(sourceOf(store));
+    await h.queue.pump(MAIN);
+    const t = createTurnProvenanceTracker({
+      isAssistant: () => true, liveOrigin: () => "watch",
+      restartChatsFor: (s, project) => cutOffChatsCarried(h.queue, s, project),
+    });
+    return { h, t };
+  }
+
+  it("names `restart`, with the cut-off chats' ids, only for a manager of a project that had chats cut off", async () => {
+    const { h, t } = await carrying([chat("a"), chat("b"), chat("w", { projectName: "web" })]);
+    t.noteMessage({ sessionId: MAIN, text: RESTART_OPENER, origin: "watch" });
+    expect(t.provenance(MAIN, { projectName: "api" })).toMatchObject({
+      startedBy: "ppm", untrusted: true, reason: "news, restart", restartChats: ["a", "b"],
+    });
+    // Another project in the same turn: an ordinary status ask, with nothing to resume.
+    const other = t.provenance(MAIN, { projectName: "docs" });
+    expect(other.reason).toBe("news");
+    expect(other.restartChats).toBeUndefined();
+    // No recipient (a create, a note): never `restart`.
+    expect(t.provenance(MAIN).reason).toBe("news");
+    h.queue.stop();
   });
 
-  it("names `restart` when the PPM-started turn carries restart news, and only then", () => {
-    const withRestart = tracker(["restart", "cards"]);
-    withRestart.noteMessage({ sessionId: MAIN, text: RESTART_OPENER, origin: "watch" });
-    expect(withRestart.provenance(MAIN)).toMatchObject({ startedBy: "ppm", untrusted: true, reason: "news, restart" });
-    const without = tracker(["cards"]);
-    without.noteMessage({ sessionId: MAIN, text: "[PPM] News", origin: "watch" });
-    expect(without.provenance(MAIN).reason).toBe("news");
-  });
-
-  it("never names it in a turn the user started", () => {
-    const t = tracker(["restart"]);
+  it("never names it in a turn the user started, nor outside a restart turn", async () => {
+    const { h, t } = await carrying([chat("a")]);
     t.noteMessage({ sessionId: MAIN, text: "hi", origin: "ws" });
-    expect(t.provenance(MAIN).reason).toBeUndefined();
+    expect(t.provenance(MAIN, { projectName: "api" }).reason).toBeUndefined();
+    h.queue.stop();
+    const idle = createTurnProvenanceTracker({ isAssistant: () => true, liveOrigin: () => "watch", restartChatsFor: () => [] });
+    idle.noteMessage({ sessionId: MAIN, text: "[PPM] News", origin: "watch" });
+    expect(idle.provenance(MAIN, { projectName: "api" }).reason).toBe("news");
   });
 
-  it("the header line says so, and the block still round-trips", () => {
-    const p = { startedBy: "ppm" as const, untrusted: true, reason: "news, restart" };
-    expect(provenanceHeaderLine(p)).toContain("resuming chats the restart cut off");
-    expect(provenanceHeaderLine({ ...p, reason: "news" })).toContain("a status ask only");
-    const decoded = decodeProvenance(encodeProvenance("Resume these", p));
-    expect(decoded).toEqual({ content: "Resume these", provenance: p });
+  it("the header line lists the chats, and the block round-trips; `restart` without its chats is refused", () => {
+    const p = { startedBy: "ppm" as const, untrusted: true, reason: "news, restart", restartChats: ["a", "b"] };
+    expect(provenanceHeaderLine(p)).toContain("resuming only these chats of your project that the restart cut off: a, b");
+    expect(provenanceHeaderLine({ startedBy: "ppm", untrusted: true, reason: "news" })).toContain("a status ask only");
+    expect(decodeProvenance(encodeProvenance("Resume these", p))).toEqual({ content: "Resume these", provenance: p });
+    expect(validateProvenance({ startedBy: "ppm", untrusted: true, reason: "news, restart" })).toBeNull();
+    expect(validateProvenance({ startedBy: "ppm", untrusted: true, reason: "news", restartChats: ["a"] })).toBeNull();
+    expect(validateProvenance({ startedBy: "user_ppm", untrusted: true, reason: "restart", restartChats: ["a"] })).toBeNull();
+    expect(validateProvenance({ ...p, restartChats: ["a b"] })).toBeNull();
   });
 
-  it("the manager's rules allow resuming cut-off chats on such a message, and nothing more", () => {
+  it("the manager's rules allow resuming only the chats the block lists, and nothing more", () => {
     const block = buildManagerBlock("api");
     expect(block).toContain("reasons include `restart`");
+    expect(block).toContain("only the chats listed in the provenance block");
     expect(block).toContain("no new work");
   });
 });

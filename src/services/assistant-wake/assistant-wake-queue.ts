@@ -174,6 +174,12 @@ export class AssistantWakeQueue {
     return turn?.sent ? turn.batch.map((b) => b.source.name) : [];
   }
 
+  /** The items from `source` that the running wake turn of this session carries; empty when none runs. */
+  carriedItems(sessionId: string, source: string): WakeItem[] {
+    const turn = this.turns.get(resolveMigratedSession(sessionId));
+    return turn?.sent ? turn.batch.filter((b) => b.source.name === source).flatMap((b) => b.items) : [];
+  }
+
   /** Whether the running wake turn of this session carries urgent news from `source`. */
   carryingUrgent(sessionId: string, source: string): boolean {
     const turn = this.turns.get(resolveMigratedSession(sessionId));

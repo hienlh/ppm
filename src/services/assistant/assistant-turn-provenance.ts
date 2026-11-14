@@ -14,7 +14,10 @@
 import { chatLifecycle } from "../chat-control/chat-lifecycle.ts";
 import { chatControl, type ChatMessageOrigin } from "../chat-control/chat-control.ts";
 import { decodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
-import { normalizeOpening, type AssistantProvenance, type ProvenanceStartedBy } from "../../shared/assistant-provenance.ts";
+import {
+  normalizeOpening, PROVENANCE_RESTART_CHATS_MAX, type AssistantProvenance, type ProvenanceStartedBy,
+} from "../../shared/assistant-provenance.ts";
+import { cutOffChatsCarried } from "../restart-news/restart-news-source.ts";
 import type { TraceOrigin } from "../../shared/session-trace.ts";
 import { hasForwardedPart } from "../assistant-telegram/assistant-telegram-inbound-text.ts";
 import { isAssistantSession } from "./assistant-session.ts";
@@ -37,8 +40,16 @@ export interface TurnProvenanceDeps {
   isAssistant(sessionId: string): boolean;
   /** Whose message the session's running turn belongs to, from the live chat; undefined when none. */
   liveOrigin(sessionId: string): ChatMessageOrigin | undefined;
-  /** The wake sources whose news the session's running wake turn carries; empty when none runs. */
-  wakeSources?(sessionId: string): string[];
+  /**
+   * The chats of `projectName` that the restart news carried by the session's running wake turn
+   * lists as cut off, by session id; empty when it carries none for that project.
+   */
+  restartChatsFor?(sessionId: string, projectName: string): string[];
+}
+
+/** Who a message goes to, as far as the provenance cares: the recipient's project. */
+export interface ProvenanceRecipient {
+  projectName: string;
 }
 
 const startedByOrigin = (origin: ChatMessageOrigin | undefined, scripted: boolean): ProvenanceStartedBy =>
@@ -114,20 +125,29 @@ export function createTurnProvenanceTracker(deps: TurnProvenanceDeps) {
       turns.set(to, rec);
     },
 
-    /** The provenance block for a message the session sends now. Unknown means untrusted. */
-    provenance(sessionId: string): AssistantProvenance {
+    /**
+     * The provenance block for a message the session sends now. Unknown means untrusted. `restart`
+     * is named only for a message to a project whose chats the turn's restart news lists as cut off,
+     * and the block then carries those chats' ids: any other recipient in the same turn reads an
+     * ordinary status ask.
+     */
+    provenance(sessionId: string, recipient?: ProvenanceRecipient): AssistantProvenance {
       const rec = turns.get(sessionId) ?? {
         startedBy: startedByOrigin(deps.liveOrigin(sessionId), false), reasons: new Set<UntrustedReason>(["unknown"]),
       };
       // Asked at send time, once the wake queue counts the turn as running; only a turn PPM started.
-      let carried: string[] = [];
-      try { carried = rec.startedBy === "ppm" ? deps.wakeSources?.(sessionId) ?? [] : []; } catch { /* not marked */ }
-      const reasons = [...new Set([...rec.reasons, ...(carried.includes("restart") ? ["restart" as const] : [])])].sort();
+      let restartChats: string[] = [];
+      try {
+        if (rec.startedBy === "ppm" && recipient) restartChats = [...new Set(deps.restartChatsFor?.(sessionId, recipient.projectName) ?? [])];
+      } catch { /* not marked */ }
+      restartChats = restartChats.slice(0, PROVENANCE_RESTART_CHATS_MAX);
+      const reasons = [...new Set([...rec.reasons, ...(restartChats.length ? ["restart" as const] : [])])].sort();
       return {
         startedBy: rec.startedBy,
         ...(rec.opening ? { opening: rec.opening } : {}),
         untrusted: reasons.length > 0,
         ...(reasons.length ? { reason: reasons.join(", ") } : {}),
+        ...(restartChats.length ? { restartChats } : {}),
       };
     },
   };
@@ -138,7 +158,7 @@ export type TurnProvenanceTracker = ReturnType<typeof createTurnProvenanceTracke
 export const assistantTurnProvenance = createTurnProvenanceTracker({
   isAssistant: (sessionId) => isAssistantSession(sessionId),
   liveOrigin: (sessionId) => chatControl()?.liveState(sessionId)?.turnOrigin,
-  wakeSources: (sessionId) => assistantWakeQueue.carrying(sessionId),
+  restartChatsFor: (sessionId, projectName) => cutOffChatsCarried(assistantWakeQueue, sessionId, projectName),
 });
 
 chatLifecycle.on("user_message", (m) => assistantTurnProvenance.noteMessage(m));
