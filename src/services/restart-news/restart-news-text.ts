@@ -40,7 +40,9 @@ function restartLine(r: RestartEntry): string {
   parts[0] += ".";
   if (r.fromVersion && r.fromVersion !== r.toVersion) parts.push(`Version ${cleanEventText(r.fromVersion, 40)} → ${cleanEventText(r.toVersion, 40)}.`);
   else parts.push(`Version ${cleanEventText(r.toVersion, 40)}.`);
-  if (r.cleanStop === false) parts.push("The run before it did not shut down cleanly (killed, crashed or lost power).");
+  // Only a stop nothing explains is called unclean: the supervisor's own stops are named as such.
+  if (r.stopOrderedBy) parts.push(`The run before it was stopped by PPM's supervisor (${quote(cleanEventText(r.stopOrderedBy, 100))}).`);
+  else if (r.cleanStop === false) parts.push("The run before it did not shut down cleanly (killed, crashed or lost power).");
   else if (r.stoppedAt !== undefined) parts.push(`The run before it shut down cleanly at ${iso(r.stoppedAt)}${r.stopTrigger ? ` (${cleanEventText(r.stopTrigger, 60)})` : ""}.`);
   return parts.join(" ");
 }

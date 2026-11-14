@@ -28,6 +28,11 @@ export interface RestartEntry {
   /** When the previous run stopped cleanly, and why it says it stopped. */
   stoppedAt?: number;
   stopTrigger?: string;
+  /**
+   * Why the supervisor stopped the previous run, when it stopped it on purpose without the run
+   * writing its own stop (on Windows it always ends the server that way).
+   */
+  stopOrderedBy?: string;
 }
 
 export interface InterruptedChat {
@@ -73,7 +78,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v =
 function parseRestart(raw: unknown): RestartEntry | null {
   if (!isRecord(raw)) return null;
   if (!num(raw.at) || !(START_REASON_KINDS as readonly unknown[]).includes(raw.kind) || !str(raw.toVersion, 50)) return null;
-  if (!optStr(raw.detail, 400) || !optStr(raw.fromVersion, 50) || !optStr(raw.stopTrigger, 100)) return null;
+  if (!optStr(raw.detail, 400) || !optStr(raw.fromVersion, 50) || !optStr(raw.stopTrigger, 100) || !optStr(raw.stopOrderedBy, 100)) return null;
   if (raw.cleanStop !== undefined && typeof raw.cleanStop !== "boolean") return null;
   if (raw.stoppedAt !== undefined && !num(raw.stoppedAt)) return null;
   return {
@@ -83,6 +88,7 @@ function parseRestart(raw: unknown): RestartEntry | null {
     ...(typeof raw.cleanStop === "boolean" ? { cleanStop: raw.cleanStop } : {}),
     ...(num(raw.stoppedAt) ? { stoppedAt: raw.stoppedAt } : {}),
     ...(typeof raw.stopTrigger === "string" ? { stopTrigger: raw.stopTrigger } : {}),
+    ...(typeof raw.stopOrderedBy === "string" ? { stopOrderedBy: raw.stopOrderedBy } : {}),
   };
 }
 

@@ -1098,6 +1098,11 @@ so it can have each project's manager chat resume them. Code in `src/services/re
   a row of the database the server runs on, so a dev server never reads the live one's runs). The next
   start compares: a version change becomes `from → to`; a run with no stop is a dirty stop; and with
   no supervisor-given reason a dirty stop reads as a crash of unknown cause (`server-run-log.ts`).
+  On Windows the supervisor ends the server with TerminateProcess, so the server never writes its
+  stop: before every stop it orders (restart, stop, upgrade, health check, its own shutdown) the
+  supervisor leaves `.server-stop.<pid>.json` with the reason (`ordered-stop-note.ts`), the next
+  start consumes the note matching its previous run's pid, and the news says "stopped by PPM's
+  supervisor" instead of "did not shut down cleanly" — which is kept for a stop nothing explains.
 - **Cut-off chats** come from the session trace (`interrupted-chats.ts`): among rows written during
   the previous run (at most 24 h back), a chat whose last top-level turn has no `done`,
   `run_failed`, `turn_aborted`, `run_closed` or final `error`. Left out: chats the new run already

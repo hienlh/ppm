@@ -4,7 +4,7 @@
  * and the `ppm restart --reason` request file the supervisor consumes once.
  */
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,6 +12,8 @@ import {
   START_DETAIL_ENV, START_REASON_ENV,
 } from "../../../src/services/restart-news/start-reason.ts";
 import { recordServerStart, recordServerStop, type RunLogStore } from "../../../src/services/restart-news/server-run-log.ts";
+import { ORDERED_STOP_MAX_AGE_MS, takeOrderedStop, writeOrderedStop } from "../../../src/services/restart-news/ordered-stop-note.ts";
+import { restartNewsEntry } from "../../../src/services/restart-news/restart-news-text.ts";
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) try { rmSync(d, { recursive: true, force: true }); } catch { /* windows handles */ } });
@@ -83,6 +85,57 @@ describe("a start nobody named", () => {
   it("refuses a reason that is not one of the kinds", () => {
     expect(readStartReasonEnv({ [START_REASON_ENV]: "because" })).toBeNull();
     expect(readStartReasonEnv({ [START_REASON_ENV]: "manual", [START_DETAIL_ENV]: "a‮b\nc" })).toEqual({ kind: "manual", detail: "a b c" });
+  });
+});
+
+describe("a stop the supervisor ordered", () => {
+  /** The previous run (pid 100) never writes its stop, as on Windows, where the supervisor terminates it. */
+  function hardKilled(dir: string, env: Record<string, string>) {
+    const store = memoryStore();
+    recordServerStart(store, { now: T0, pid: 100, version: "0.25.7", given: null });
+    return recordServerStart(store, {
+      now: T0 + 120_000, pid: 200, version: "0.25.7", given: readStartReasonEnv(env),
+      orderedStopOf: (previous) => takeOrderedStop(dir, previous, T0 + 120_000),
+    });
+  }
+
+  it("a restart the supervisor ordered and ended with a hard kill is not called unclean", () => {
+    const dir = scratch();
+    writeOrderedStop(dir, 100, "ppm restart", T0 + 60_000);
+    const s = hardKilled(dir, startReasonEnv({ kind: "manual" }));
+    expect(s.restart).toMatchObject({ kind: "manual", cleanStop: true, stopOrderedBy: "ppm restart" });
+    const text = restartNewsEntry([{ restarts: [s.restart], chats: [] }])!;
+    expect(text).toContain("stopped by PPM's supervisor");
+    expect(text).not.toContain("did not shut down cleanly");
+    // Consumed: the note is not worn by a later start.
+    expect(readdirSync(dir).filter((n) => n.startsWith(".server-stop."))).toEqual([]);
+  });
+
+  it("a real crash, with no note, is still called unclean", () => {
+    const dir = scratch();
+    const s = hardKilled(dir, startReasonEnv({ kind: "crash", detail: "exit 3, signal none, after 30s" }));
+    expect(s.restart).toMatchObject({ kind: "crash", cleanStop: false });
+    expect(s.restart.stopOrderedBy).toBeUndefined();
+    expect(restartNewsEntry([{ restarts: [s.restart], chats: [] }])).toContain("did not shut down cleanly");
+  });
+
+  it("with no reason given, an ordered stop is not taken for a crash", () => {
+    const dir = scratch();
+    writeOrderedStop(dir, 100, "ppm stop", T0 + 60_000);
+    expect(hardKilled(dir, {}).restart).toMatchObject({ kind: "unknown", cleanStop: true, stopOrderedBy: "ppm stop" });
+  });
+
+  it("ignores a note for another pid or one older than the run, and sweeps stale notes", () => {
+    const dir = scratch();
+    writeOrderedStop(dir, 100, "an older holder of the pid", T0 - 1);
+    writeOrderedStop(dir, 999, "another instance's server", T0 + 60_000);
+    writeOrderedStop(dir, 555, "long gone", T0 - ORDERED_STOP_MAX_AGE_MS - 10_000);
+    const old = join(dir, ".server-stop.555.json");
+    utimesSync(old, new Date(T0 - ORDERED_STOP_MAX_AGE_MS - 10_000), new Date(T0 - ORDERED_STOP_MAX_AGE_MS - 10_000));
+    const s = hardKilled(dir, {});
+    expect(s.restart).toMatchObject({ kind: "crash", cleanStop: false });
+    expect(existsSync(join(dir, ".server-stop.999.json"))).toBe(true);
+    expect(existsSync(old)).toBe(false);
   });
 });
 

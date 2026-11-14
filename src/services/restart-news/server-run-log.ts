@@ -7,10 +7,10 @@ import { cleanDetail, type StartReason } from "./start-reason.ts";
  * `ppm.dev.db` shares that folder with the live one, and must never read the live one's runs as
  * its own.
  *
- * A run that never wrote its stop was killed — by the supervisor's health check, an OOM killer, a
- * power cut, a crash Bun could not report. The supervisor names most of those itself; when it did
- * not (a server started some other way, or an older supervisor), a missing stop is reported as a
- * crash of unknown cause.
+ * A run that never wrote its stop was killed — by the supervisor (which then leaves a note saying
+ * why: `ordered-stop-note.ts`), an OOM killer, a power cut, a crash Bun could not report. When
+ * nobody named the start and no note explains the stop (a server started some other way, or an
+ * older supervisor), a missing stop is reported as a crash of unknown cause.
  */
 
 export const SERVER_RUN_LOG_ROW = "server_run_log";
@@ -54,9 +54,18 @@ function readRuns(store: RunLogStore): ServerRun[] {
 const writeRuns = (store: RunLogStore, runs: ServerRun[]) =>
   store.save(JSON.stringify({ version: 1, runs: runs.slice(-MAX_RUNS) }));
 
-/** The restart this start amounts to, from what the supervisor said and what the last run left. */
-export function describeStart(now: number, version: string, given: StartReason | null, previous: ServerRun | null): RestartEntry {
-  const cleanStop = previous ? previous.stoppedAt !== undefined : undefined;
+/**
+ * The restart this start amounts to, from what the supervisor said and what the last run left.
+ * `orderedStop` is the supervisor's note that it stopped the previous run on purpose (a restart, a
+ * stop, an upgrade, the health check): on Windows it ends the server without letting it write its
+ * own stop, so only that note tells a deliberate restart from a crash there.
+ */
+export function describeStart(
+  now: number, version: string, given: StartReason | null, previous: ServerRun | null, orderedStop: string | null = null,
+): RestartEntry {
+  const wroteStop = previous ? previous.stoppedAt !== undefined : undefined;
+  // "Not clean" is only said of a stop nothing explains: no stop written and none ordered.
+  const cleanStop = previous ? (wroteStop || orderedStop ? true : false) : undefined;
   let kind = given?.kind ?? "unknown";
   let detail = given?.detail;
   // Nobody said why, and the last run left no stop behind: it died.
@@ -69,6 +78,7 @@ export function describeStart(now: number, version: string, given: StartReason |
     ...(detail ? { detail } : {}),
     ...(previous && previous.version !== version ? { fromVersion: previous.version } : {}),
     ...(cleanStop !== undefined ? { cleanStop } : {}),
+    ...(previous && !wroteStop && orderedStop ? { stopOrderedBy: orderedStop.slice(0, 100) } : {}),
     ...(previous?.stoppedAt !== undefined ? { stoppedAt: previous.stoppedAt } : {}),
     ...(previous?.stopTrigger ? { stopTrigger: previous.stopTrigger } : {}),
   };
@@ -76,11 +86,14 @@ export function describeStart(now: number, version: string, given: StartReason |
 
 /** Records this run's start. Never throws: a log that cannot be written must not stop the server. */
 export function recordServerStart(
-  store: RunLogStore, opts: { now: number; pid: number; version: string; given: StartReason | null },
+  store: RunLogStore,
+  opts: { now: number; pid: number; version: string; given: StartReason | null; orderedStopOf?: (previous: ServerRun) => string | null },
 ): ServerStart {
   const runs = readRuns(store);
   const previous = runs.at(-1) ?? null;
-  const restart = describeStart(opts.now, opts.version, opts.given, previous);
+  let orderedStop: string | null = null;
+  try { orderedStop = previous && opts.orderedStopOf ? opts.orderedStopOf(previous) : null; } catch { /* unexplained, as before */ }
+  const restart = describeStart(opts.now, opts.version, opts.given, previous, orderedStop);
   const run: ServerRun = { pid: opts.pid, version: opts.version, startedAt: opts.now, startReason: restart.kind };
   try { writeRuns(store, [...runs, run]); } catch { /* the news still goes out; only the next start knows less */ }
   return { run, previous, restart };
