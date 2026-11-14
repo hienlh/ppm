@@ -157,30 +157,47 @@ try {
   }
   /** The bar's slot scrolled to its end, where the sticky buttons sit over the text. */
   const scrollSlot = (body, to) => body.locator("[data-waiting-slot]").evaluate((el, t) => { el.scrollTop = t === "end" ? el.scrollHeight : 0; }, to);
-  /** The whole card, unclipped by the bar's height, for reading it end to end. */
-  // A phone's card is taller than its screen: the screen is made tall enough for the whole card
-  // (same width, so the same phone layout), or the bottom tab bar covers its end and the part
-  // past the screen comes out blank. The check below fails the run if any of it is still cut.
+  /**
+   * The whole card, for reading it end to end. Shown where it lives, a card is cut three ways: the
+   * bar scrolls it, a desktop Assistant window is a fixed-size box, and a phone's bottom tab bar
+   * covers its end. So the card as rendered is copied into a layer on top of the page, at the
+   * same width (the same container-query layout), the screen made tall enough for it, and that
+   * layer photographed. The run fails if any of the copy is off screen or covered.
+   */
   async function wholeCardShot(pg, body, name) {
     const size = pg.viewportSize();
-    const style = await pg.addStyleTag({ content: "[data-waiting-slot]{max-height:none!important}" });
-    const card = body.locator("[data-waiting-card]");
-    const height = await card.evaluate((el) => el.getBoundingClientRect().height);
-    await pg.setViewportSize({ width: size.width, height: Math.max(size.height, Math.ceil(height) + 600) });
-    await pg.waitForTimeout(150);
-    const box = await card.boundingBox();
-    const covered = await card.evaluate((el) => {
-      const r = el.getBoundingClientRect();
-      const x = r.left + r.width / 2;
-      // The card's last line must be the topmost thing there, under no tab bar or composer.
-      const hit = document.elementFromPoint(x, r.bottom - 4);
-      return !hit || !el.contains(hit);
+    const height = await body.locator("[data-waiting-card]").evaluate((el) => {
+      const layer = document.createElement("div");
+      layer.id = "e2e-whole-card";
+      Object.assign(layer.style, {
+        position: "fixed", left: "0", top: "0", zIndex: "2147483647", padding: "12px",
+        width: `${el.getBoundingClientRect().width + 24}px`, boxSizing: "border-box",
+        background: getComputedStyle(document.body).backgroundColor,
+      });
+      const copy = el.cloneNode(true);
+      copy.removeAttribute("data-highlighted");
+      copy.style.outline = "none";
+      layer.appendChild(copy);
+      document.body.appendChild(layer);
+      return layer.getBoundingClientRect().height;
     });
-    assert.ok(box && box.y >= 0 && box.y + box.height <= pg.viewportSize().height && !covered, `${name}: the whole card is on screen and uncovered`);
-    await card.screenshot({ path: join(shotsDir, `${name}.png`) });
-    await style.evaluate((el) => el.remove());
-    await pg.setViewportSize(size);
-    await pg.waitForTimeout(150);
+    if (height > size.height) {
+      await pg.setViewportSize({ width: size.width, height: Math.ceil(height) + 20 });
+      await pg.waitForTimeout(150);
+    }
+    const layer = pg.locator("#e2e-whole-card");
+    const covered = await layer.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.bottom - 6);
+      return r.bottom > window.innerHeight || !hit || !el.contains(hit);
+    });
+    assert.ok(!covered, `${name}: the whole card is on screen and uncovered`);
+    await layer.screenshot({ path: join(shotsDir, `${name}.png`) });
+    await layer.evaluate((el) => el.remove());
+    if (height > size.height) {
+      await pg.setViewportSize(size);
+      await pg.waitForTimeout(150);
+    }
   }
 
   // ---- Desktop ----
