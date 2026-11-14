@@ -39,6 +39,15 @@ describe("signed-out account recheck backoff", () => {
     expect(readsAt).toEqual([0, 5, 15, 35, 75]);
   });
 
+  it("does not widen the wait for refusals that arrive together", () => {
+    // Three chats, a proxy turn and a one-shot on one account all hit the same transient 401.
+    for (let i = 0; i < 5; i++) markCodexAccountAuthFailed("a", "401");
+    now += 5 * MIN;
+    // Re-read at the next sweep, as after a single refusal, not an hour later.
+    expect(isCodexAccountAuthRecheckPending("a")).toBe(false);
+    expect(isCodexAccountAuthFailed("a")).toBe(true);
+  });
+
   it("reads again at once after a sign-in, and never skips the ambient login", async () => {
     markCodexAccountAuthFailed("a", "401");
     expect(isCodexAccountAuthRecheckPending("a")).toBe(true);

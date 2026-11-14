@@ -45,9 +45,14 @@ export function markCodexAccountAuthFailed(accountId: string, reason: string): v
   const now = Date.now();
   const prev = failures.get(accountId);
   const fresh = !prev || prev.until <= now;
-  const strikes = fresh ? 1 : prev.strikes + 1;
-  const recheckAt = now + codexAuthRecheckDelayMs(strikes);
-  failures.set(accountId, { until: recheckAt + MARK_TTL_MS, reason, since: fresh ? now : prev.since, strikes, recheckAt });
+  // Only a refusal on a read that was due widens the wait. Several turns in flight on one
+  // account all fail on the same transient 401 within a second; counting each would bench a
+  // recovered account for an hour instead of re-reading it at the next sweep.
+  const due = fresh || now >= prev.recheckAt;
+  const strikes = fresh ? 1 : due ? prev.strikes + 1 : prev.strikes;
+  const recheckAt = due ? now + codexAuthRecheckDelayMs(strikes) : prev.recheckAt;
+  const until = Math.max(fresh ? 0 : prev.until, recheckAt + MARK_TTL_MS);
+  failures.set(accountId, { until, reason, since: fresh ? now : prev.since, strikes, recheckAt });
   if (fresh) console.warn(`[codex] account ${accountId} is signed out — skipping it until it signs in again`);
 }
 

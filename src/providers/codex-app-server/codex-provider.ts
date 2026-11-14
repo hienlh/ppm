@@ -929,7 +929,7 @@ export class CodexAppServerProvider implements AIProvider {
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
     const codexHome = live.assistant ? assistantSpawnHome(account.home) : account.home;
-    client.start({ cwd: live.cwd, codexHome, env: { ...liveMcpEnv(live), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
+    client.start({ cwd: live.cwd, codexHome, loginHome: account.home, env: { ...liveMcpEnv(live), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
     live.client = client;
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CHAT_INITIALIZE_TIMEOUT_MS);
@@ -1044,7 +1044,7 @@ export class CodexAppServerProvider implements AIProvider {
     // An Assistant app-server runs on a home of its own that shares only the account's login and
     // sessions folder, so the user's AGENTS.md, config.toml and skills stay behind.
     const codexHome = live.assistant ? assistantSpawnHome(account?.home) : account?.home;
-    client.start({ cwd, codexHome, env: { ...liveMcpEnv(live), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
+    client.start({ cwd, codexHome, loginHome: account?.home ?? null, env: { ...liveMcpEnv(live), ...(live.assistant ? assistantShellEnv() : {}) }, purpose: "chat" });
 
     // A cold first start can outlast a control call's bound; failing here would cost the user's turn.
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CHAT_INITIALIZE_TIMEOUT_MS);
@@ -1603,8 +1603,12 @@ export class CodexAppServerProvider implements AIProvider {
       if (models.length > 0) this.modelsCache = { models, expiry: Date.now() + MODELS_CACHE_TTL };
       return models;
     } catch (err) {
-      // The picker shows an empty list either way; this is the only record of why.
+      // The picker keeps what it had either way; this is the only record of why.
       this.warnListFailure("model/list", accountId, err);
+      // A refused login benches the account now rather than at the next usage sweep.
+      if (account && isCodexAuthFailure(codexErrorText(err))) {
+        markCodexAccountAuthFailed(account.id, redactTruncate(codexErrorText(err), 256));
+      }
       return this.modelsCache?.models ?? [];
     } finally {
       client.close();

@@ -35,6 +35,13 @@ describe("codex stderr log lines", () => {
     expect(again.message).toContain("seen 6 more times since 2026-11-14T13:00:00.000Z");
   });
 
+  it("never folds a chat's errors, which may be the only record of why that chat failed", () => {
+    const t0 = Date.parse("2026-11-14T13:00:00Z");
+    expect(codexStderrLogLine("26447b3b", REFRESH("x"), t0)!.level).toBe("warn");
+    expect(codexStderrLogLine("26447b3b", REFRESH("y"), t0 + 1, false)!.level).toBe("warn");
+    expect(codexStderrLogLine("26447b3b", REFRESH("z"), t0 + 2, false)!.level).toBe("warn");
+  });
+
   it("keeps codex's own level for quiet lines and drops noise", () => {
     expect(codexStderrLogLine("ambient", "2026-11-14T13:00:00Z INFO codex_core: started")!.level).toBe("debug");
     expect(codexStderrLogLine("ambient", "   ")).toBeNull();

@@ -112,8 +112,13 @@ export class CodexJsonRpcClient {
    * `codexHome` selects which account's auth the app-server uses (CODEX_HOME); `env` adds
    * variables this one session needs (a design session's MCP token). `purpose` only sets
    * the log level of its start and exit: a chat or a login is lifecycle at INFO, while
-   * the short-lived control spawns (usage sweep, model and skill lists, fork) are DEBUG. */
-  start(opts?: { cwd?: string; codexHome?: string; env?: Record<string, string>; purpose?: "chat" | "login" | "control" }): void {
+   * the short-lived control spawns (usage sweep, model and skill lists, fork) are DEBUG.
+   * `loginHome` names the login on stderr lines when `codexHome` is not the login's own
+   * folder (an Assistant home); `null` there means `~/.codex`. */
+  start(opts?: {
+    cwd?: string; codexHome?: string; loginHome?: string | null;
+    env?: Record<string, string>; purpose?: "chat" | "login" | "control";
+  }): void {
     const env = { ...buildSpawnEnv(), ...(opts?.env ?? {}) };
     if (opts?.codexHome) env.CODEX_HOME = opts.codexHome;
     const [cmd, ...args] = codexCommand("app-server");
@@ -124,7 +129,7 @@ export class CodexJsonRpcClient {
       windowsHide: true,
     });
     this.purpose = opts?.purpose ?? "control";
-    this.account = codexLoginTag(opts?.codexHome);
+    this.account = codexLoginTag(opts?.loginHome !== undefined ? opts.loginHome ?? undefined : opts?.codexHome);
     // So the Task Manager's kill route can tell an AI chat to use chat_stop instead of ending this.
     this.proc.once("close", registerChatProviderPid(this.proc.pid, "codex"));
     // CODEX_HOME is <ppm dir>/codex-accounts/<account id>, so its name is the account id.
@@ -151,7 +156,7 @@ export class CodexJsonRpcClient {
       // ANSI-coloured Rust tracing; `codexStderrLogLine` picks the level, names the login
       // and folds repeats.
       for (const line of chunk.toString().replace(/\x1b\[[0-9;]*m/g, "").split("\n")) {
-        const out = codexStderrLogLine(this.account, line);
+        const out = codexStderrLogLine(this.account, line, Date.now(), this.purpose === "control");
         if (!out) continue;
         this.lastStderr = out.text;
         log[out.level](out.message);
