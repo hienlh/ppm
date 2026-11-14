@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { readFileSync, writeFileSync, existsSync, openSync, unlinkSync, renameSync } from "node:fs";
 import { getPpmDir } from "../../services/ppm-dir.ts";
+import { parseReasonArg, writeRestartRequest } from "../../services/restart-news/start-reason.ts";
 
 const statusFile = () => resolve(getPpmDir(), "status.json");
 const pidFile = () => resolve(getPpmDir(), "ppm.pid");
@@ -8,7 +9,7 @@ const restartingFlag = () => resolve(getPpmDir(), ".restarting");
 const restartResult = () => resolve(getPpmDir(), ".restart-result");
 
 /** Restart only the server process, keeping the tunnel alive */
-export async function restartServer(options: { force?: boolean }) {
+export async function restartServer(options: { force?: boolean; reason?: string }) {
   // Ignore SIGHUP so this process survives when PPM terminal dies
   process.on("SIGHUP", () => {});
 
@@ -28,6 +29,15 @@ export async function restartServer(options: { force?: boolean }) {
   // Supervisor-aware restart: send SIGUSR2 → supervisor restarts server child
   const supervisorPid = status.supervisorPid as number | undefined;
   if (supervisorPid) {
+    // Left for the supervisor's next spawn (a fresh supervisor's too, in the recovery below): it
+    // tells the restarted server why, and the server tells the PPM Assistant.
+    if (options.reason !== undefined) {
+      try {
+        writeRestartRequest(getPpmDir(), parseReasonArg(options.reason));
+      } catch (e) {
+        console.warn(`  ⚠  Could not record the restart reason: ${(e as Error).message}`);
+      }
+    }
     let supervisorAlive = true;
     try { process.kill(supervisorPid, 0); } catch { supervisorAlive = false; }
 

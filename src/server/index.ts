@@ -952,6 +952,9 @@ if (process.argv.includes("__serve__")) {
   }
   configService.load();
   await followLogLevelConfig();
+  // Before anything can start a chat turn: the next start compares against this run's start.
+  const { noteServerStart, noteServerStop } = await import("../services/restart-news/restart-news-run.ts");
+  noteServerStart();
   (await import("../services/memory-diagnostics.ts")).startMemoryDiagnostics();
 
   // Register CLI providers (cursor, codex) for the daemon/__serve__ runtime.
@@ -1364,6 +1367,8 @@ if (process.argv.includes("__serve__")) {
   // Graceful shutdown: close the listening socket so the port is released
   const gracefulShutdown = (trigger: string) => {
     serveLog.info(`Shutting down (${trigger}) after ${Math.round(process.uptime())}s`);
+    // First, while the database is surely still there: a run with no stop is read as a crash.
+    try { noteServerStop(trigger); } catch {}
     try { schedulerStop?.(); } catch {}
     try { codexCleanupRef?.(); } catch {}
     // Language servers are long-lived children; most exit on stdin EOF, but a

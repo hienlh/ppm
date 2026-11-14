@@ -53,6 +53,8 @@ import { installSpawnHandleGuard } from "./windows-socket-inheritance.ts";
 import { waitForReplacement } from "./supervisor-self-replace-wait.ts";
 import { readThreadSnapshot, describeThreadSnapshot, type ThreadSnapshot } from "./process-thread-snapshot.ts";
 import { readMachineCpuTimes, machineBusyFraction, type MachineCpuTimes } from "./machine-cpu.ts";
+import { uptime as osUptime } from "node:os";
+import { startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 const MAX_RESTARTS = 10;
@@ -175,6 +177,8 @@ let tunnelRestarts = 0;
 let lastTunnelCrash = 0;
 
 let healthFailCount = 0;
+// Set when the health check kills the server, so its exit is reported as the watchdog's, not a crash.
+let healthKillPending = false;
 let noServerChildCycles = 0; // consecutive health cycles with no server child
 let tunnelFailCount = 0;
 let serverRestartRequested = false; // SIGUSR2 flag — skip backoff on next crash
@@ -804,6 +808,7 @@ function repairServerPortFile(): void {
 export async function spawnServer(
   serverArgs: string[],
   logFd: number,
+  start: StartReason = { kind: "unknown" },
 ): Promise<void> {
   // Windows: reap orphaned descendants of the previous server before binding.
   // They hold an inherited handle to the listening socket — without this the
@@ -837,7 +842,8 @@ export async function spawnServer(
     cmd,
     stdio: ["ignore", logFd, logFd],
     // The child cannot work out on Windows that fd 1 is already the log, so it is told.
-    env: { ...withoutNotifySocket(process.env), [STDIO_IS_LOG_ENV]: "1" },
+    // Why this server starts, so it can tell the PPM Assistant what restarted (restart-news/).
+    env: { ...withoutNotifySocket(process.env), [STDIO_IS_LOG_ENV]: "1", ...startReasonEnv(start) },
     // No visible console window. Critical on Windows after an upgrade: the new
     // supervisor is spawned consoleless (detached), so without this its console
     // children — and the Claude SDK grandchildren they spawn — pop blank windows.
@@ -847,7 +853,7 @@ export async function spawnServer(
   const childPid = serverChild.pid;
   updateStatus({ pid: childPid });
   writeFileSync(PID_FILE(), String(process.pid)); // supervisor PID for stop
-  log("INFO", `Server started (PID: ${childPid})`);
+  log("INFO", `Server started (PID: ${childPid}, reason: ${start.kind}${start.detail ? ` — ${start.detail}` : ""})`);
   void mirrorServerPort();
 
   // Kept past the null below: a crash line without the signal and uptime cannot tell an
@@ -883,18 +889,32 @@ export async function spawnServer(
   // Exit code 42 = restart requested (e.g. /restart from Telegram)
   if (exitCode === 42 || (exitCode === 0 && !shuttingDown)) {
     log("INFO", `Server restart requested (code ${exitCode}), respawning immediately`);
-    return spawnServer(serverArgs, logFd);
+    // A SIGTERM ends a healthy-enough server with code 0 too, so the same exit can be the health
+    // check's kill or a `ppm restart` as well as the server asking for it.
+    const reason: StartReason = healthKillPending
+      ? { kind: "watchdog", detail: "the server stopped answering health checks and was stopped" }
+      : requestedOr({ kind: "manual", ...(serverRestartRequested ? {} : { detail: "the server asked to be restarted" }) });
+    healthKillPending = false;
+    serverRestartRequested = false;
+    return spawnServer(serverArgs, logFd, reason);
   }
 
   // SIGUSR2 restart — skip backoff, respawn immediately
   if (serverRestartRequested) {
     serverRestartRequested = false;
     log("INFO", `Server restarting (SIGUSR2), no backoff`);
-    if (!shuttingDown) return spawnServer(serverArgs, logFd);
+    healthKillPending = false;
+    if (!shuttingDown) return spawnServer(serverArgs, logFd, requestedOr({ kind: "manual" }));
     return;
   }
 
-  // Crash — apply backoff
+  // Crash — apply backoff. A server the health check killed is the watchdog's restart.
+  const killedByWatchdog = healthKillPending;
+  healthKillPending = false;
+  const upFor = Math.round((Date.now() - startedAt) / 1000);
+  const crashReason: StartReason = killedByWatchdog
+    ? { kind: "watchdog", detail: `the server stopped answering health checks and was killed after ${upFor}s` }
+    : { kind: "crash", detail: `exit ${exitCode}, signal ${exitSignal}, after ${upFor}s` };
   const now = Date.now();
   if (now - lastServerCrash > STABLE_WINDOW_MS) serverRestarts = 0;
   lastServerCrash = now;
@@ -919,7 +939,7 @@ export async function spawnServer(
     serverRestarts = 0;
     updateStatus({ state: "running", pausedAt: null, pauseReason: null });
     log("INFO", "Resuming server after pause");
-    if (!shuttingDown) return spawnServer(serverArgs, logFd);
+    if (!shuttingDown) return spawnServer(serverArgs, logFd, requestedOr({ kind: "manual", detail: `resumed after repeated crashes (last: ${crashReason.detail})` }));
     return;
   }
 
@@ -928,7 +948,35 @@ export async function spawnServer(
   serverBackoffPending = true;
   try { await Bun.sleep(delay); } finally { serverBackoffPending = false; }
 
-  if (!shuttingDown) return spawnServer(serverArgs, logFd);
+  if (!shuttingDown) return spawnServer(serverArgs, logFd, crashReason);
+}
+
+/**
+ * The reason a `ppm restart --reason …` left for this spawn, else `fallback`. Only consulted where
+ * a person or a script asked for the restart: a crash never wears a request it did not make.
+ */
+function requestedOr(fallback: StartReason): StartReason {
+  try {
+    return takeRestartRequest(getPpmDir()) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const UPGRADE_FAILED: StartReason = { kind: "upgrade", detail: "the upgrade failed, so the previous version was started again" };
+
+/** A supervisor started this long after the machine is taken to have started with it. */
+const BOOT_WINDOW_S = 10 * 60;
+
+/** Why the supervisor's first server starts: an upgrade, a restart someone asked for, a boot, or a start. */
+function initialStartReason(isUpgrade: boolean): StartReason {
+  if (isUpgrade) return { kind: "upgrade" };
+  const requested = requestedOr({ kind: "unknown" });
+  if (requested.kind !== "unknown") return requested;
+  let up = Infinity;
+  try { up = osUptime(); } catch { /* unknown uptime: not a boot */ }
+  if (up < BOOT_WINDOW_S) return { kind: "boot", detail: `the machine started ${Math.round(up / 60)} min earlier` };
+  return { kind: "manual", detail: "PPM was started (ppm start, or its service starting it again)" };
 }
 
 /**
@@ -938,7 +986,7 @@ export async function spawnServer(
  */
 function respawnServerAfterFailedUpgrade(serverArgs: string[], logFd: number): void {
   if (serverChild || serverBackoffPending) return;
-  void spawnServer(serverArgs, logFd);
+  void spawnServer(serverArgs, logFd, UPGRADE_FAILED);
 }
 
 // ─── Tunnel management ─────────────────────────────────────────────────
@@ -1420,7 +1468,8 @@ function startServerHealthCheck() {
       if (noServerChildCycles * SERVER_HEALTH_INTERVAL_MS >= SERVER_REVIVE_AFTER_MS) {
         noServerChildCycles = 0;
         log("WARN", "No server child while state=running — reviving server");
-        spawnServer(_serverArgs, _logFd).catch((e) => log("ERROR", `Server revive failed: ${e}`));
+        spawnServer(_serverArgs, _logFd, { kind: "unknown", detail: "no server process was running, so the supervisor started one" })
+          .catch((e) => log("ERROR", `Server revive failed: ${e}`));
       }
       return;
     }
@@ -1458,6 +1507,7 @@ function startServerHealthCheck() {
     log("WARN", `Server health probe on port ${checkPort} failed (${healthFailCount}/${SERVER_HEALTH_FAIL_THRESHOLD}): ${lastProbe}${waitingOn ? ` — ${waitingOn}` : ""}`);
     if (healthFailCount >= SERVER_HEALTH_FAIL_THRESHOLD && serverChild) {
       log("ERROR", `Server unresponsive for ${healthFailCount}×${SERVER_HEALTH_INTERVAL_MS / 1000}s (last probe: ${lastProbe}) — killing PID ${serverChild.pid}`);
+      healthKillPending = true;
       const pid = serverChild.pid;
       if (process.platform === "win32") {
         // By lineage, never `taskkill /T`: see requestServerShutdown.
@@ -2163,7 +2213,7 @@ export async function softStop() {
   startServerHealthCheck();
   log("INFO", "Resuming server from stopped state");
   _softStopRunning = false;
-  spawnServer(_serverArgs, _logFd);
+  spawnServer(_serverArgs, _logFd, requestedOr({ kind: "manual", detail: "resumed after ppm stop" }));
 }
 
 // ─── Shutdown ──────────────────────────────────────────────────────────
@@ -2441,7 +2491,7 @@ export async function runSupervisor(opts: {
       // silently no-ops and only `stop --kill` + `start` recovers.
       log("WARN", "No server child to restart — spawning one");
       noServerChildCycles = 0;
-      spawnServer(serverArgs, logFd).catch((e) => log("ERROR", `Server respawn failed: ${e}`));
+      spawnServer(serverArgs, logFd, requestedOr({ kind: "manual" })).catch((e) => log("ERROR", `Server respawn failed: ${e}`));
     }
   });
 
@@ -2717,7 +2767,7 @@ export async function runSupervisor(opts: {
   }, prevStatus.shareHostPid, { ppmRestarting: true });
 
   // Spawn server + (fresh) tunnel in parallel
-  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd)];
+  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd, initialStartReason(isUpgrade))];
   const tunnelLoopStarted = tunnelSharingEnabled && !tunnelAdopted;
   if (tunnelLoopStarted) promises.push(spawnTunnel(_opts.port));
 

@@ -78,6 +78,7 @@ export async function buildProgram(): Promise<Command> {
     .command("restart")
     .description("Restart the server (keeps tunnel alive)")
     .option("--force", "Force resume from paused state")
+    .option("--reason <text>", "Why PPM is restarted (watchdog, recycle, or free text); the PPM Assistant is told")
     .action(async (options) => {
       await (await import("./cli/utils/supervised-profile-check.ts")).exitUnlessSupervisedProfile();
       const { restartServer } = await import("./cli/commands/restart.ts");
