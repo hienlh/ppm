@@ -19,7 +19,7 @@
 import type { NormalizedQuestion } from "../../shared/approval-questions.ts";
 import type { InlineKeyboardButton } from "../telegram/telegram-types.ts";
 import { redactForTelegram } from "../telegram/telegram-html-format.ts";
-import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
+import { escapeTelegramHtml } from "../notification-format.ts";
 import { questionBlock } from "./assistant-telegram-card-format.ts";
 import type { CardPress } from "./assistant-telegram-actions.ts";
 
@@ -34,13 +34,20 @@ export type Mint = (press: Omit<CardPress, "kind" | "sessionId" | "requestId">) 
 export type Selection = Map<string, string[]>;
 
 /** User text in a card, cut to `max`: secrets hidden before the cut, so a cut cannot split one. */
-const shortHtml = (raw: string, max: number) => escapeTelegramHtml(truncateText(redactForTelegram(raw), max));
+const shortHtml = (raw: string, max: number) => escapeTelegramHtml(cutChars(redactForTelegram(raw).trim(), max));
+
+/**
+ * Text cut to `max` characters with an ellipsis. Counted in characters, not UTF-16 units: half
+ * of an emoji is not valid text, and Telegram refusing it would leave the card stuck on a step.
+ */
+function cutChars(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length <= max ? text : `${chars.slice(0, max - 1).join("").trimEnd()}…`;
+}
 
 /** A button's text: plain, so not escaped, but redacted like everything else sent. */
 export function buttonLabel(raw: string): string {
-  // Counted in characters, not UTF-16 units, so a cut never splits an emoji in half.
-  const chars = Array.from(redactForTelegram(raw));
-  return chars.length > LABEL_MAX ? `${chars.slice(0, LABEL_MAX - 1).join("")}…` : chars.join("");
+  return cutChars(redactForTelegram(raw), LABEL_MAX);
 }
 
 /** One question with one choice is answered with one press; anything else is asked step by step. */

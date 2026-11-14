@@ -1133,7 +1133,9 @@ several, Back from the second step on, and a summary with Send and Back at the e
 the message; only Send answers the card, every question at once. A card with a question that
 only takes typed or private text is shown whole and points to PPM. Buttons carry random codes bound
 to the chat they were sent to (`assistant-telegram-button-codes.ts`), all made when the card is
-shown: a step only chooses which to show, and a button left over from another step does nothing.
+shown: a step only chooses which to show, and a button left over from another step changes
+nothing but redraws the current step. A step that cannot be drawn ends the card on Telegram ("answer
+it in PPM"), and a full code store evicts whole cards, never part of one.
 Answering spends every code of that card, and after a restart every code is "no longer valid", so
 nothing pressed on an old card can run.
 

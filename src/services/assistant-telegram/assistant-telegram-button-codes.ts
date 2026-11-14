@@ -29,8 +29,14 @@ export class ButtonCodes<T> {
   /** A fresh code for `action`, as the button's `callback_data`. */
   mint(chatId: string, group: string, action: T): string {
     this.prune();
-    // Oldest first out: a Map iterates in insertion order.
-    while (this.codes.size >= MAX_CODES) this.codes.delete(this.codes.keys().next().value!);
+    // Oldest first out (a Map iterates in insertion order), a whole card at a time: a card left with
+    // some of its buttons — a step-by-step question card's first question gone, its Send still
+    // live — would be half usable, where one with none is plainly "no longer valid" everywhere.
+    while (this.codes.size >= MAX_CODES) {
+      const [code, held] = this.codes.entries().next().value!;
+      if (held.group === group) this.codes.delete(code);
+      else this.dropGroup(held.group);
+    }
     const code = randomBytes(12).toString("base64url");
     this.codes.set(code, { chatId, group, action, expiresAt: this.now() + CODE_TTL_MS });
     return `${CODE_PREFIX}${code}`;

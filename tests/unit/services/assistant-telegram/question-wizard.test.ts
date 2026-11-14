@@ -268,22 +268,59 @@ describe("a question card asked one question at a time", () => {
   it("brings a message that fell behind back to the card's step when a leftover button is pressed", async () => {
     const t = setup();
     const { id } = await t.show(THREE);
-    const stepOne = t.buttons(id).find((b) => b.text === "staging")!.callback_data;
-    // The edit to question 2 is refused for good: the message still shows question 1.
-    fake.failNext("editMessageText", { code: 400, description: "Bad Request: message can't be edited" });
+    const stepOne = { html: t.message(id).text, markup: t.message(id).reply_markup! };
     expect(await t.press(id, "staging")).toBe("Next question.");
+    // The message falls behind the card, as when a press lands before Telegram confirmed the send.
+    await client.editMessageText(t.chat, id, stepOne.html, { replyMarkup: stepOne.markup, final: true });
     expect(t.message(id).text).toContain("Question 1/3");
     // Its buttons are now from an earlier step: pressing one changes nothing but redraws.
-    expect(t.pressData(stepOne)).toBe("This button is from an earlier step.");
+    expect(t.pressData(stepOne.markup.inline_keyboard[0]![0]!.callback_data)).toBe("This button is from an earlier step.");
     await t.queue.whenIdle();
     expect(t.message(id).text).toContain("Question 2/3");
     expect(t.labels(id)).toEqual([["email"], ["Slack #releases"], ["nobody"], ["« Back", "Next »"]]);
   });
 
+  it("ends the card on Telegram, still waiting in PPM, when a step cannot be drawn", async () => {
+    const t = setup();
+    const { id } = await t.show(THREE);
+    const before = answered.length;
+    fake.failNext("editMessageText", { code: 400, description: "Bad Request: message can't be edited" });
+    await t.press(id, "staging");
+    const m = t.message(id);
+    expect(m.text).toContain("could not be updated here — answer it in PPM");
+    expect(m.reply_markup).toBeUndefined();
+    expect(answered.length).toBe(before);
+  });
+
+  it("does not answer with a Send pressed after going back from the summary", async () => {
+    const t = setup();
+    const { id } = await t.show(THREE);
+    await t.press(id, "staging");
+    await t.press(id, "email");
+    await t.press(id, "Next »");
+    await t.press(id, "now");
+    const send = t.buttons(id).find((b) => b.text === "Send")!.callback_data;
+    await t.press(id, "« Back");
+    const before = answered.length;
+    expect(t.pressData(send)).toBe("This button is from an earlier step.");
+    await t.queue.whenIdle();
+    expect(answered.length).toBe(before);
+    expect(t.message(id).text).toContain("Question 3/3");
+  });
+
+  it("evicts a whole card from a full code store, never part of one", async () => {
+    const t = setup();
+    const { id } = await t.show(THREE);
+    // Newer cards fill the store before anyone presses this one.
+    for (let i = 0; i < 495; i++) t.codes.mint(t.chat, `other-${Math.floor(i / 5)}`, { kind: "switch", sessionId: `x${i}` });
+    const live = t.buttons(id).map((b) => t.codes.peek(b.callback_data, t.chat).ok);
+    expect(new Set(live).size).toBe(1);
+  });
+
   it("keeps the buttons of a card being answered when the code store fills up", async () => {
     const t = setup();
     const { id } = await t.show(THREE);
-    // Older than the card: an earlier card's codes.
+    // Made after the card, so without a press the card's codes would be the oldest.
     for (let i = 0; i < 400; i++) t.codes.mint(t.chat, "older", { kind: "switch", sessionId: `x${i}` });
     await t.press(id, "staging");
     // The store is full and evicts oldest first: the card in use is not the oldest any more.

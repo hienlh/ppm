@@ -321,7 +321,19 @@ export class AssistantTelegramCards implements BridgeCards {
         }
         return outcomeOf(res, ++attempts);
       },
+      // Refused for good, or failing past the deadline: buttons that no longer match what the
+      // message says would only answer "from an earlier step", so the card ends here instead.
+      onDropped: () => this.giveUp(card),
     });
+  }
+
+  /** Ends a card on Telegram that cannot be kept up to date there; it still waits in PPM. */
+  private giveUp(card: ShownCard): void {
+    if (card.done) return;
+    card.done = true;
+    card.endLine = "<i>This card could not be updated here — answer it in PPM.</i>";
+    this.deps.codes.dropGroup(card.group);
+    this.finish(card);
   }
 
   /** Takes the card's buttons away and says why it is no longer waiting (once it was sent). */
