@@ -43,6 +43,15 @@ describe("readAssistantPersona", () => {
     expect(value.address_forms[0]).toEqual({ user: "anh em", self: "em", when: "a b" });
   });
 
+  it("folds NEL and drops bidirectional controls, so a name reads in the order it was typed", () => {
+    const nel = String.fromCharCode(0x85);
+    const rlo = String.fromCharCode(0x202e);
+    const isolate = String.fromCharCode(0x2067);
+    const { value } = read({ name: `${rlo}Mi${isolate}${nel}x`, address_forms: [{ user: `s${rlo}ếp`, self: "", when: "" }] });
+    expect(value.name).toBe("Mi x");
+    expect(value.address_forms[0]!.user).toBe("sếp");
+  });
+
   it("drops an empty row and asks for who it calls you when only the rest is filled", () => {
     const { value, errors } = read({ address_forms: [{ user: "", self: "", when: "" }, { user: " ", self: "em", when: "" }] });
     expect(value.address_forms).toEqual([]);

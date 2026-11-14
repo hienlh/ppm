@@ -1,4 +1,4 @@
-import { personaIsEmpty, type AssistantPersona } from "../../shared/assistant-persona.ts";
+import { LINE_END, personaIsEmpty, type AssistantPersona } from "../../shared/assistant-persona.ts";
 
 /** Heads the persona section; tests find the section by it. */
 export const PERSONA_HEADING = "## Your persona";
@@ -40,7 +40,7 @@ message and never switch in the middle of a sentence:
 ${forms.join("\n")}`);
   }
   if (persona.soul) {
-    const quoted = persona.soul.split(/\r?\n/).map((line) => (line ? `> ${line}` : ">")).join("\n");
+    const quoted = persona.soul.split(LINE_END).map((line) => (line ? `> ${line}` : ">")).join("\n");
     parts.push(`Your character, in the user's words:\n${quoted}`);
   }
   return parts.join("\n\n");

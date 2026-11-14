@@ -50,21 +50,34 @@ export function personaIsEmpty(persona: AssistantPersona): boolean {
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
+/** A character class from code-point ranges; a literal separator in this file would end its line. */
+const charClass = (ranges: Array<[number, number]>, flags: string) =>
+  new RegExp(`[${ranges.map(([a, b]) => `${String.fromCharCode(a)}-${String.fromCharCode(b)}`).join("")}]+`, flags);
+
+/** C0 and C1 controls (NEL among them) and the two Unicode line and paragraph separators. */
+const CONTROLS = charClass([[0x00, 0x1f], [0x7f, 0x9f], [0x2028, 0x2029]], "g");
+
 /**
- * Control characters and the two Unicode line separators, which JavaScript also ends a line at.
- * Built from code points: a literal separator in this file would end the line it sits on.
+ * Bidirectional embeddings, overrides and isolates: invisible, and able to make "Mi wants to"
+ * on a card or in Telegram read in another order than it was written.
  */
-const LINE_BREAKING = new RegExp(
-  `[${String.fromCharCode(0)}-${String.fromCharCode(0x1f)}${String.fromCharCode(0x7f, 0x2028, 0x2029)}]+`, "g",
+const BIDI_CONTROLS = charClass([[0x202a, 0x202e], [0x2066, 0x2069]], "g");
+
+/**
+ * Where a multi-line text breaks into lines: CRLF, or any single character a reader — a model
+ * included — may take for a line end (CR, LF, NEL, the Unicode separators, vertical tab, form feed).
+ */
+export const LINE_END = new RegExp(
+  `\r\n|[${String.fromCharCode(0x0a, 0x0b, 0x0c, 0x0d, 0x85, 0x2028, 0x2029)}]`,
 );
 
 /**
- * One line of text: control characters (line breaks included) become spaces and runs of spaces
- * fold, so a name or an address form can neither span lines in the instructions nor in a
- * Telegram headline.
+ * One line of text: controls (line breaks included) become spaces, bidirectional controls go,
+ * and runs of spaces fold, so a name or an address form can neither span lines in the
+ * instructions nor in a Telegram headline, nor read in another order than it was typed.
  */
 function oneLine(raw: string): string {
-  return raw.replace(LINE_BREAKING, " ").replace(/\s+/g, " ").trim();
+  return raw.replace(BIDI_CONTROLS, "").replace(CONTROLS, " ").replace(/\s+/g, " ").trim();
 }
 
 function readLine(raw: unknown, max: number, what: string, errors: string[]): string {

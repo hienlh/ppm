@@ -138,7 +138,7 @@ export function ApprovalCard({
   onRespond: (requestId: string, approved: boolean, data?: unknown) => void;
 }) {
   const summary = approval.summary;
-  const assistantName = useAssistantDisplayName();
+  const assistantName = useAssistantDisplayName(!!summary);
   return (
     <div className="rounded-lg border-2 border-warning/40 bg-warning/10 p-3 space-y-2" data-approval-request={approval.requestId}>
       <div className="flex items-center gap-2 text-warning text-sm font-medium">

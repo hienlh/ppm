@@ -41,17 +41,21 @@ export const assistantTitlebarTitle = {
   read: (): string => assistantShortName(useAssistantNameStore.getState()),
 };
 
-function useAssistantName(): string {
-  useEffect(ensureAssistantNameLoaded, []);
+/**
+ * `needed` false: a component that shows the name only sometimes (an approval card that may be
+ * any chat's, a message that may come from any session) asks nothing of the server until it does.
+ */
+function useAssistantName(needed: boolean): string {
+  useEffect(() => { if (needed) ensureAssistantNameLoaded(); }, [needed]);
   return useAssistantNameStore((s) => s.name);
 }
 
 /** "Mi", else "Assistant": a titlebar or a head. */
 export function useAssistantShortName(): string {
-  return assistantShortName({ name: useAssistantName() });
+  return assistantShortName({ name: useAssistantName(true) });
 }
 
-/** "Mi", else "PPM Assistant": in a sentence. */
-export function useAssistantDisplayName(): string {
-  return assistantDisplayName({ name: useAssistantName() });
+/** "Mi", else "PPM Assistant": in a sentence. Loads the name only while `needed`. */
+export function useAssistantDisplayName(needed = true): string {
+  return assistantDisplayName({ name: useAssistantName(needed) });
 }
