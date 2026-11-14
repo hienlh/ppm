@@ -163,7 +163,7 @@ export class AssistantTelegramSendQueue {
 }
 
 /** A button Telegram refused for its URL: the message is sent again without URL buttons. */
-const BUTTON_URL_INVALID = /BUTTON_URL_INVALID|wrong http url|unsupported url protocol/i;
+export const BUTTON_URL_INVALID =/BUTTON_URL_INVALID|wrong http url|unsupported url protocol/i;
 
 /**
  * A task that sends one new message. `fallbackHtml` replaces the text when Telegram refuses a URL

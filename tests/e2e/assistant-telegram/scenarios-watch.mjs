@@ -127,17 +127,20 @@ async function s13(ctx, chat, owner, devs) {
     await notifyTab.click({ timeout: 5000 }).catch(() => notifyTab.dispatchEvent("click"));
     for (const part of ["Tell the team?", "yes", "no"]) await root.getByText(part, { exact: true }).first().waitFor({ timeout: 10000 });
   }
+  // Two questions are asked one at a time in the same message, and only Send on the summary answers.
   const relayed = await tg.waitFor(chat, "relayed question card", (m) => m.text.includes("Which environment?") && buttonsOf(m).length > 0);
-  assert.ok(relayed.text.includes("Tell the team?"));
-  for (const label of ["Env: staging", "Notify: yes"]) {
+  assert.ok(relayed.text.includes("Question 1/2") && !relayed.text.includes("Tell the team?"), "the first message shows the first question only");
+  const steps = [
+    { press: "staging", toast: "Next question.", shows: "Tell the team?" },
+    { press: "yes", toast: "Check your answers, then Send.", shows: "Your answers" },
+    { press: "Send", toast: "Answer sent.", shows: null },
+  ];
+  for (const step of steps) {
     const n = (await tg.answers()).length;
-    await tg.pressLabel(chat, await tg.message(chat, relayed.message_id), label);
-    assert.equal((await tg.answerAfter(n)).text, "Ticked.");
+    await tg.pressLabel(chat, await tg.message(chat, relayed.message_id), step.press);
+    assert.equal((await tg.answerAfter(n)).text, step.toast);
+    if (step.shows) await until(`step shows "${step.shows}"`, async () => (await tg.message(chat, relayed.message_id)).text.includes(step.shows), 15000);
   }
-  await until("ticks shown", async () => labelsOf(await tg.message(chat, relayed.message_id)).filter((l) => l.startsWith("✓")).length === 2, 15000);
-  const n = (await tg.answers()).length;
-  await tg.pressLabel(chat, await tg.message(chat, relayed.message_id), "Send");
-  assert.equal((await tg.answerAfter(n)).text, "Answer sent.");
   const [asked] = await until("codex answered", async () => { const r = await fx.recordsOf("s13-codex"); return r[0]?.done && r; });
   assert.deepEqual(asked.answer, { env: ["staging"], notify: ["yes"] }, "Codex receives its answers by question id");
   for (const dev of devs) await until(`web form gone (${dev.name})`, async () => (await kit.chatRoot(dev).getByText("AI has 2 questions").count()) === 0, 15000);
@@ -154,7 +157,7 @@ async function s13(ctx, chat, owner, devs) {
   assert.equal((await tg.answerAfter(m)).text, "Answer sent.");
   const [claude] = await until("claude answered", async () => { const r = await fx.recordsOf("s13-claude"); return r[0]?.done && r; });
   assert.deepEqual(claude.answer, { "Màu nào?": "Xanh" }, "Claude receives its answer keyed by the question's text");
-  ctx.record("s13", "desktop+phone", "a Codex chat's two questions show as a full web form and are answered on Telegram by ticking + Send (Codex gets {id: answers}); the Assistant's Claude question is answered with one tap");
+  ctx.record("s13", "desktop+phone", "a Codex chat's two questions show as a full web form and are answered on Telegram one question at a time, then Send on the summary (Codex gets {id: answers}); the Assistant's Claude question is answered with one tap");
 }
 
 /** 14. A wake turn that fails three times becomes a push naming the chat; ten cards of a watched chat wake nothing. */

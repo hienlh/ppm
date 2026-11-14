@@ -178,19 +178,6 @@ describe("question cards on Telegram", () => {
     expect(answered.at(-1)).toEqual({ sessionId: "s", requestId, answer: { approved: true, answersById: { deploy_target: ["prod"] } } });
   });
 
-  it("ticks several choices and sends them together", async () => {
-    const t = setup();
-    const questions = [{ id: "q1", question: "Which?", options: [{ label: "a" }, { label: "b" }, { label: "c" }], multiSelect: true, allowsFreeText: true }];
-    const { message, requestId } = await t.show({ tool: "AskUserQuestion", input: {}, isQuestion: true, questions });
-    expect(t.press(message.message_id, "Send")).toContain("missing");
-    expect(t.press(message.message_id, "a")).toBe("Ticked.");
-    expect(t.press(message.message_id, "c")).toBe("Ticked.");
-    await t.queue.whenIdle();
-    expect(t.buttons(message.message_id).map((b) => b.text)).toEqual(["✓ a", "b", "✓ c", "Send"]);
-    expect(t.press(message.message_id, "Send")).toBe("Answer sent.");
-    expect(answered.at(-1)).toEqual({ sessionId: "s", requestId, answer: { approved: true, answersById: { q1: ["a", "c"] } } });
-  });
-
   it("sends a question that needs a typed or private answer to PPM", async () => {
     const t = setup();
     const questions = normalizeCodexQuestions({ questions: [{ id: "token", question: "API token?", isSecret: true }] });
