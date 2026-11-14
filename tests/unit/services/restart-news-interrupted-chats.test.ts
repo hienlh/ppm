@@ -109,6 +109,17 @@ describe("finding the chats a restart cut off", () => {
     expect(findInterruptedChats(deps(), { since: PREV_START, restartAt: RESTART }).chats).toEqual([]);
   });
 
+  it("leaves out a `ppm chat` process's turn and an extension's, and keeps schedule, jira, telegram and session turns", () => {
+    trace("s1", PREV_START + 1, [user("From the CLI"), tool("Bash")], "cli");
+    trace("s2", PREV_START + 2, [user("From an extension"), tool("Bash")], "extension");
+    trace("s3", PREV_START + 3, [user("Scheduled"), tool("Bash")], "schedule");
+    trace("s4", PREV_START + 4, [user("Ticket"), tool("Bash")], "jira");
+    trace("s5", PREV_START + 5, [user("Phone"), tool("Bash")], "telegram");
+    trace("s6", PREV_START + 6, [user("Another chat"), tool("Bash")], "session");
+    const ids = findInterruptedChats(deps(), { since: PREV_START, restartAt: RESTART }).chats.map((c) => c.sessionId).sort();
+    expect(ids).toEqual(["s3", "s4", "s5", "s6"]);
+  });
+
   it("leaves out another instance's chats: a trace this database never recorded, or one outside every project", () => {
     // The trace file is shared by ppm.db, ppm.dev.db and the CLI; only this database's own sessions count.
     trace("live-only", PREV_START + 1, [user("A live chat's secret task"), tool("Bash")]);

@@ -1106,7 +1106,10 @@ so it can have each project's manager chat resume them. Code in `src/services/re
 - **Cut-off chats** come from the session trace (`interrupted-chats.ts`): among rows written during
   the previous run (at most 24 h back), a chat whose last top-level turn has no `done`,
   `run_failed`, `turn_aborted`, `run_closed` or final `error`. Left out: chats the new run already
-  wrote to, the Assistant's own and design sessions, API proxy streams, and any session this
+  wrote to, the Assistant's own and design sessions, API proxy streams, a turn started by the
+  `ppm chat` CLI (its process outlives the server and usually still drives the session) or by an
+  extension (its AI budget is the extension's to spend) — browser, Telegram, schedule, scheduler,
+  Jira, session-tool and Assistant turns stay listed — and any session this
   database does not place in a registered project — `session-trace.db` is one file per PPM folder,
   shared by `ppm.db`, `ppm.dev.db` and the `ppm chat` CLI, so without that check a dev restart would
   report live chats (and hand their prompts to the dev Assistant). Each entry carries project,

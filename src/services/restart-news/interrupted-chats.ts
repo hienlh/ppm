@@ -19,8 +19,15 @@ import type { InterruptedChat } from "../../shared/restart-news.ts";
 
 /** Rows of one trace that close a turn. `run_closed` is a stream that ended mid-turn on its own: not the restart's doing. */
 const TURN_END_TYPES = new Set(["done", "run_failed", "error", "turn_aborted", "run_closed"]);
-/** Origins whose traces are not chats a person or a manager could resume. */
-const NOT_CHAT_ORIGINS = new Set(["proxy", "browser"]);
+/**
+ * Origins of a cut-off turn that no manager may be told to resume. `proxy` and `browser` are not
+ * chats at all. A `cli` turn belongs to a `ppm chat` process, which outlives the server: it is
+ * usually still running, and a manager injecting into it would drive a session another process
+ * owns. An `extension` turn spends an extension's AI budget, which only the extension controls.
+ * Every other origin (the browser's `ws`, `telegram`, `schedule`, `scheduler`, `jira`, `session`,
+ * the Assistant's own sends, a provider's continuation) is a chat a person or PPM was driving.
+ */
+const NOT_RESUMABLE_ORIGINS = new Set(["proxy", "browser", "cli", "extension"]);
 
 /** Most chats listed by name; the rest are counted. */
 export const MAX_INTERRUPTED_LISTED = 30;
@@ -165,7 +172,7 @@ export function findInterruptedChats(deps: InterruptedChatDeps, window: { since:
     const newest = newestQ.get(c.trace_id) as { ts: number } | null;
     if (newest && newest.ts >= window.restartAt) continue; // the new run has taken it up
     const turn = cutOffTurn(turnQ.all(c.trace_id, window.restartAt) as TurnRow[]);
-    if (!turn || NOT_CHAT_ORIGINS.has(turn.origin)) continue;
+    if (!turn || NOT_RESUMABLE_ORIGINS.has(turn.origin)) continue;
     const sessionId = deps.sessionOf(c.trace_id);
     if (seen.has(sessionId)) continue;
     seen.add(sessionId);
