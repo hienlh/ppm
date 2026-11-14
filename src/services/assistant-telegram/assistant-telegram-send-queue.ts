@@ -165,35 +165,64 @@ export class AssistantTelegramSendQueue {
 /** A button Telegram refused for its URL: the message is sent again without URL buttons. */
 export const BUTTON_URL_INVALID = /BUTTON_URL_INVALID|wrong http url|unsupported url protocol/i;
 
+/** How one message went out. */
+export interface SentInfo {
+  /** Sent without a sound (`disable_notification`). */
+  silent: boolean;
+}
+
 /**
  * A task that sends one new message. `fallbackHtml` replaces the text when Telegram refuses a URL
  * button, so a link that could not be a button still reaches the chat in the text.
+ *
+ * `silent` is asked when the message is actually sent, not when it was queued: whether the user is
+ * at PPM is a question about that moment.
  */
 export function sendMessageTask(
   queue: AssistantTelegramSendQueue,
   chatId: string,
-  message: { html: string; markup?: InlineKeyboardMarkup; fallbackHtml?: string },
-  opts: { label: string; final?: boolean; key?: string; onSent?: (sent: TelegramMessage) => void; onDropped?: (why: string) => void },
+  message: { html: string; markup?: InlineKeyboardMarkup; fallbackHtml?: string; replyTo?: number },
+  opts: {
+    label: string; final?: boolean; key?: string;
+    silent?: boolean | (() => boolean);
+    onSent?: (sent: TelegramMessage, info: SentInfo) => void;
+    onDropped?: (why: string) => void;
+  },
 ): SendTask {
   let attempts = 0;
+  let silent: boolean | null = null;
   return {
     label: opts.label,
     final: opts.final ?? true,
     ...(opts.key ? { key: opts.key } : {}),
     async run(client) {
       attempts++;
-      let res = await client.sendMessage(chatId, message.html, message.markup ? { replyMarkup: message.markup } : {});
+      // Decided once: a retried send keeps the answer its first attempt got.
+      if (silent === null) silent = readSilent(opts.silent);
+      const base = { ...(message.replyTo ? { replyTo: message.replyTo } : {}), ...(silent ? { silent: true } : {}) };
+      let res = await client.sendMessage(chatId, message.html, { ...base, ...(message.markup ? { replyMarkup: message.markup } : {}) });
       if (!res.ok && res.errorCode === 400 && BUTTON_URL_INVALID.test(res.description) && message.markup) {
         const rows = message.markup.inline_keyboard.map((row) => row.filter((b) => b.url === undefined)).filter((row) => row.length);
         log.info(`${opts.label}: Telegram refused a link button; sending it with the link in the text`);
-        res = await client.sendMessage(chatId, message.fallbackHtml ?? message.html, rows.length ? { replyMarkup: { inline_keyboard: rows } } : {});
+        res = await client.sendMessage(chatId, message.fallbackHtml ?? message.html, { ...base, ...(rows.length ? { replyMarkup: { inline_keyboard: rows } } : {}) });
       }
       if (res.ok) {
         queue.noteSent(chatId);
-        opts.onSent?.(res.result);
+        opts.onSent?.(res.result, { silent });
       }
       return outcomeOf(res, attempts);
     },
     ...(opts.onDropped ? { onDropped: opts.onDropped } : {}),
   };
+}
+
+/** A silence rule that throws is read as "not silent": a sound too many beats a lost message. */
+function readSilent(silent: boolean | (() => boolean) | undefined): boolean {
+  if (typeof silent !== "function") return silent === true;
+  try {
+    return silent();
+  } catch (e) {
+    log.warn(`could not tell whether to send silently: ${(e as Error).message}`);
+    return false;
+  }
 }

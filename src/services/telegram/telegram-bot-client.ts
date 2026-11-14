@@ -91,7 +91,7 @@ export class TelegramBotClient {
   sendMessage(
     chatId: number | string,
     html: string,
-    options: { replyMarkup?: InlineKeyboardMarkup; replyTo?: number } = {},
+    options: { replyMarkup?: InlineKeyboardMarkup; replyTo?: number; silent?: boolean } = {},
   ): Promise<TelegramCallResult<TelegramMessage>> {
     return this.call<TelegramMessage>("sendMessage", {
       chat_id: chatId,
@@ -100,6 +100,8 @@ export class TelegramBotClient {
       link_preview_options: { is_disabled: true },
       ...(options.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
       ...(options.replyTo ? { reply_parameters: { message_id: options.replyTo, allow_sending_without_reply: true } } : {}),
+      // Delivered without a sound or vibration: the message is there, the phone stays still.
+      ...(options.silent ? { disable_notification: true } : {}),
     });
   }
 

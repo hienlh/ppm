@@ -1,13 +1,14 @@
 /**
  * The Assistant's own head where no window titlebar carries it — the full-screen tab on a phone,
  * or the tab docked into a desktop grid: its name, "Telegram" while the shown session is the one
- * a Telegram chat talks to, the waiting count and the settings gear (44 px on a phone).
+ * a Telegram chat talks to, the "quiet while I'm at PPM" bell and the settings gear (44 px on a phone).
  */
 import { Bot, Send, Settings } from "@/lib/icons";
 import { openSettings } from "@/components/settings/open-settings";
 import { useAssistantTelegramBinding } from "@/hooks/use-assistant-telegram-binding";
 import { ASSISTANT_SETTINGS_LABEL } from "./assistant-title-extras";
 import { ASSISTANT_WINDOW_TITLE } from "./open-assistant";
+import { TelegramQuietHeadButton } from "./telegram-quiet-button";
 
 export function AssistantHead({ sessionId }: { sessionId: string | null }) {
   const { chatsOn } = useAssistantTelegramBinding();
@@ -23,12 +24,14 @@ export function AssistantHead({ sessionId }: { sessionId: string | null }) {
           <Send className="size-3" />Telegram
         </span>
       )}
+      <span className="ml-auto" />
+      <TelegramQuietHeadButton />
       <button
         type="button"
         onClick={() => openSettings("assistant")}
         aria-label={ASSISTANT_SETTINGS_LABEL}
         title={ASSISTANT_SETTINGS_LABEL}
-        className="ml-auto grid size-11 place-items-center rounded-lg text-text-secondary hover:bg-surface-elevated md:size-8"
+        className="grid size-11 place-items-center rounded-lg text-text-secondary hover:bg-surface-elevated md:size-8"
       >
         <Settings className="size-[18px] md:size-4" />
       </button>

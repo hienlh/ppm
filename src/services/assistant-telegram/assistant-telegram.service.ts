@@ -50,6 +50,8 @@ import { cardOutbound } from "../assistant-cards/card-outbound.ts";
 import { managerChats } from "../assistant-managers/manager-chats.service.ts";
 import { currentQuietWindowEnd } from "../assistant-wake/wake-quiet-hours.ts";
 import type { InlineKeyboardMarkup } from "../telegram/telegram-types.ts";
+import type { AssistantClock } from "../assistant-wake/assistant-clock.ts";
+import { CardReminders, quietWhileInPpm, TelegramSilence } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -79,6 +81,10 @@ export interface BridgeDeps {
   sessionLink: (providerId: string, sessionId: string) => Promise<string>;
   /** The link that opens any chat of a project in PPM. */
   chatLink: (project: string, providerId: string | null, sessionId: string) => Promise<string>;
+  /** Whether the user is at PPM, so a card goes out without a sound. */
+  silence?: TelegramSilence;
+  /** The one reminder with a sound for a card sent silently and left unanswered. */
+  reminders?: CardReminders;
 }
 
 export interface BridgeStartOptions {
@@ -97,11 +103,20 @@ export interface BridgeStartOptions {
   sessionLink?: (providerId: string, sessionId: string) => Promise<string>;
   /** The same, for a chat of any project (a watched chat's card, `/status`). */
   chatLink?: (project: string, providerId: string | null, sessionId: string) => Promise<string>;
+  /** Whether the user is at PPM; tests pass one with their own clock and presence. */
+  silence?: TelegramSilence;
+  /** When a silent card's reminder is due, and whether quiet hours are on then (tests). */
+  reminders?: { clock?: AssistantClock; quietEnd?: () => number | null; delayMs?: number };
 }
 
-function bridgeConfig(): Pick<PPMBotConfig, "enabled" | "show_tool_calls" | "debounce_ms"> {
+function bridgeConfig(): Pick<PPMBotConfig, "enabled" | "show_tool_calls" | "debounce_ms"> & { quiet_while_in_ppm: boolean } {
   const c = configService.get("clawbot") as Partial<PPMBotConfig> | undefined;
-  return { enabled: c?.enabled === true, show_tool_calls: c?.show_tool_calls !== false, debounce_ms: typeof c?.debounce_ms === "number" ? c.debounce_ms : 2000 };
+  return {
+    enabled: c?.enabled === true,
+    show_tool_calls: c?.show_tool_calls !== false,
+    debounce_ms: typeof c?.debounce_ms === "number" ? c.debounce_ms : 2000,
+    quiet_while_in_ppm: quietWhileInPpm(),
+  };
 }
 
 /** Everything one running bridge holds; gone when it stops. */
@@ -115,6 +130,7 @@ interface Running {
   dbNotices: AssistantTelegramDbNotices;
   cards: BridgeCards;
   codes: ButtonCodes<BridgeAction>;
+  reminders: CardReminders;
   offs: Array<() => void>;
 }
 
@@ -140,18 +156,20 @@ export class AssistantTelegramBridge {
     const state = new BridgeStateStore(readBridgeState(client.botId));
     const codes = new ButtonCodes<BridgeAction>({ now });
     const links = { sessionLink: opts.sessionLink ?? assistantSessionLink, chatLink: opts.chatLink ?? chatLink };
-    const cards = (opts.cards ?? ((deps) => new AssistantTelegramCards(deps)))({ queue, state, codes, now, ...links });
+    const silence = opts.silence ?? new TelegramSilence();
+    const reminders = new CardReminders({ queue, ...opts.reminders });
+    const cards = (opts.cards ?? ((deps) => new AssistantTelegramCards(deps)))({ queue, state, codes, now, ...links, silence, reminders });
     const relay = new AssistantTelegramRelay({
-      queue, chatLink: links.chatLink, relayCard: (chatId, card) => cards.relayed(chatId, card),
+      queue, chatLink: links.chatLink, relayCard: (chatId, card) => cards.relayed(chatId, card), silence,
     });
-    const dbNotices = new AssistantTelegramDbNotices({ queue, chatLink: links.chatLink });
+    const dbNotices = new AssistantTelegramDbNotices({ queue, chatLink: links.chatLink, silence, reminders });
     const mirror = new AssistantTelegramMirror({
-      queue, state, now, cards,
+      queue, state, now, cards, silence,
       showToolCalls: () => bridgeConfig().show_tool_calls,
       onTurnDelivered: (sessionId) => markRead(sessionId),
     });
     const managerCards = new AssistantTelegramManagerCards({
-      queue, codes, ...links,
+      queue, codes, ...links, silence, reminders,
       relayCard: (chatId, card) => cards.relayed(chatId, card),
       isShowing: (chatId, requestId) => cards.isShowing(chatId, requestId),
     });
@@ -181,7 +199,7 @@ export class AssistantTelegramBridge {
       () => cardOutbound.detach(managerCards),
     ];
     cardOutbound.attach(managerCards);
-    this.run = { poller, queue, state, inbound, mirror, relay, dbNotices, cards, codes, offs };
+    this.run = { poller, queue, state, inbound, mirror, relay, dbNotices, cards, codes, reminders, offs };
 
     recoverInterrupted(queue, state);
     mirror.attach();
@@ -201,6 +219,7 @@ export class AssistantTelegramBridge {
     run.relay.detach();
     run.dbNotices.detach();
     run.mirror.detach();
+    run.reminders.clear();
     run.inbound.stop();
     await run.poller.stop();
     run.queue.stop();

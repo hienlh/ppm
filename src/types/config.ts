@@ -34,6 +34,11 @@ export interface PPMBotConfig {
   show_tool_calls: boolean;
   /** Messages sent this close together are one message to the Assistant. */
   debounce_ms: number;
+  /**
+   * While the user is at PPM, what reaches Telegram goes out without a sound. On unless false
+   * (`assistant-telegram-silence.ts`).
+   */
+  quiet_while_in_ppm?: boolean;
 }
 
 export type ThemeMode = "light" | "dark" | "system";

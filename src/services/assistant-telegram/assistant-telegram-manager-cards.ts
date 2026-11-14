@@ -24,6 +24,7 @@ import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { cardEndLine, formatManagerCard, type CardDetail } from "./assistant-telegram-card-kinds.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
 import { outcomeOf, sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
+import type { CardReminders, TelegramSilence } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -38,6 +39,12 @@ export interface ManagerCardsDeps {
   recipients?: () => string[];
   detailOf?: (card: AssistantCard) => CardDetail;
   liveCard?: (sessionId: string, requestId: string) => LiveApprovalCard | null;
+  /** Whether the user is at PPM, so a card goes out without a sound. */
+  silence?: TelegramSilence;
+  /** The one reminder with a sound for a decision sent silently and left unanswered. */
+  reminders?: CardReminders;
+  /** Whether a card still waits on the user (its row is open). */
+  isOpen?: (cardId: string) => boolean;
 }
 
 const groupOf = (cardId: string, chatId: string): string => `mcard:${cardId}:${chatId}`;
@@ -61,6 +68,14 @@ function realLiveCard(sessionId: string, requestId: string): LiveApprovalCard | 
 export class AssistantTelegramManagerCards implements CardOutboundSink {
   constructor(private readonly deps: ManagerCardsDeps) {}
 
+  private silent(): boolean {
+    return this.deps.silence?.inPpm() ?? false;
+  }
+
+  private isOpen(cardId: string): boolean {
+    return (this.deps.isOpen ?? ((id) => getCardRow(id)?.status === "open"))(cardId);
+  }
+
   private recipients(): string[] {
     return (this.deps.recipients ?? (() => reachableChats().map((c) => c.chatId)))().filter(canSendTo);
   }
@@ -83,7 +98,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     // Links first, so every chat's lane gets the header and the cards in order.
     const links = await Promise.all(cards.map((c) => this.linkFor(c).catch(() => null)));
     for (const chatId of chats) {
-      if (header) this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: `<b>${escapeTelegramHtml(header)}</b>` }, { label: "away header" }));
+      if (header) this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: `<b>${escapeTelegramHtml(header)}</b>` }, { label: "away header", silent: () => this.silent() }));
       cards.forEach((card, i) => this.sendOne(chatId, card, links[i] ?? null));
     }
   }
@@ -129,7 +144,18 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       ...(rows.length ? { markup: { inline_keyboard: rows } } : {}),
       ...(link.button ? { fallbackHtml: `${html}\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}` } : {}),
     }, {
-      label: `${card.kind} card`, onSent: (sent) => record(sent.message_id),
+      label: `${card.kind} card`,
+      silent: () => this.silent(),
+      onSent: (sent, info) => {
+        record(sent.message_id);
+        // A decision sent silently gets one reminder if it is still open later.
+        if (info.silent && card.kind === "needs_decision") {
+          this.deps.reminders?.schedule({
+            chatId, messageId: sent.message_id, label: `${card.kind} card`,
+            stillWaiting: () => this.isOpen(card.id),
+          });
+        }
+      },
       // Refused (a 400 is never retried), past its deadline or its chat gone: on record, not assumed sent.
       onDropped: (why) => {
         this.deps.codes.dropGroup(group);

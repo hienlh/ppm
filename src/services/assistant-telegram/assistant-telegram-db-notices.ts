@@ -29,6 +29,7 @@ import { canSendTo, reachableChats } from "./assistant-telegram-access.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import { createQuietHold, type QuietHold, type QuietHoldDeps } from "./assistant-telegram-quiet-hold.ts";
+import type { CardReminders, TelegramSilence } from "./assistant-telegram-silence.ts";
 
 const log = createLogger("assistant-telegram");
 
@@ -58,6 +59,10 @@ export interface DbNoticesDeps {
   canonical?: (sessionId: string) => string;
   /** Quiet hours, and whether a held approval still waits (tests pass a fake clock and window). */
   quiet?: QuietHoldDeps;
+  /** Whether the user is at PPM, so a notice goes out without a sound. */
+  silence?: TelegramSilence;
+  /** The one reminder with a sound for an approval notice sent silently and left unanswered. */
+  reminders?: CardReminders;
 }
 
 type Shown = DbAttentionEvents["approval_shown"];
@@ -143,7 +148,7 @@ export class AssistantTelegramDbNotices {
     this.describe = deps.describe ?? realDescribe;
     this.canonical = deps.canonical ?? resolveMigratedSession;
     this.quiet = deps.quiet ?? realQuiet;
-    this.quietHold = createQuietHold<Held>(this.quiet, (p) => this.send(p.sessionId, "db approval", (chat) => approvalNoticeHtml(chat, p.input, p.expiresAt, this.quiet.clock.now())), "database approval notice");
+    this.quietHold = createQuietHold<Held>(this.quiet, (p) => this.sendApproval(p), "database approval notice");
   }
 
   attach(): void {
@@ -163,7 +168,17 @@ export class AssistantTelegramDbNotices {
 
   private onShown(p: Shown): void {
     if (this.quietHold.offer({ ...p, targetSessionId: p.sessionId, card: { requestId: p.requestId } })) return;
-    this.send(p.sessionId, "db approval", (chat) => approvalNoticeHtml(chat, p.input, p.expiresAt, this.quiet.clock.now()));
+    this.sendApproval(p);
+  }
+
+  /** The approval's notice waits on a decision: sent silently, it gets one reminder while the change still waits. */
+  private sendApproval(p: Shown): void {
+    this.send(p.sessionId, "db approval", (chat) => approvalNoticeHtml(chat, p.input, p.expiresAt, this.quiet.clock.now()), (chatId, messageId) => {
+      this.deps.reminders?.schedule({
+        chatId, messageId, label: "db approval",
+        stillWaiting: () => this.quiet.stillWaiting(p.sessionId, p.requestId),
+      });
+    });
   }
 
   private onReminder(p: DbAttentionEvents["approval_reminder"]): void {
@@ -180,14 +195,17 @@ export class AssistantTelegramDbNotices {
     try { return this.quiet.quietEnd() !== null; } catch { return false; }
   }
 
-  private send(sessionId: string, label: string, render: (chat: DescribedChat) => string): void {
+  private send(sessionId: string, label: string, render: (chat: DescribedChat) => string, onSilentSend?: (chatId: string, messageId: number) => void): void {
     let chats: string[];
     try { chats = this.connectedChats().filter(canSendTo); } catch { chats = []; }
     if (!chats.length) return;
-    void this.deliver(chats, sessionId, label, render).catch((e) => log.warn(`${label} notice for ${sessionId} not sent: ${(e as Error).message}`));
+    void this.deliver(chats, sessionId, label, render, onSilentSend).catch((e) => log.warn(`${label} notice for ${sessionId} not sent: ${(e as Error).message}`));
   }
 
-  private async deliver(chats: string[], asked: string, label: string, render: (chat: DescribedChat) => string): Promise<void> {
+  private async deliver(
+    chats: string[], asked: string, label: string, render: (chat: DescribedChat) => string,
+    onSilentSend?: (chatId: string, messageId: number) => void,
+  ): Promise<void> {
     // Held through quiet hours, or sent just as Codex renamed the chat: name and link the chat as it is now.
     let sessionId = asked;
     try { sessionId = this.canonical(asked); } catch { /* the id it was asked under */ }
@@ -203,7 +221,11 @@ export class AssistantTelegramDbNotices {
           markup: { inline_keyboard: [[link.button]] },
           fallbackHtml: `${html}\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}`,
         } : {}),
-      }, { label }));
+      }, {
+        label,
+        silent: () => this.deps.silence?.inPpm() ?? false,
+        ...(onSilentSend ? { onSent: (sent, info) => { if (info.silent) onSilentSend(chatId, sent.message_id); } } : {}),
+      }));
     }
   }
 }

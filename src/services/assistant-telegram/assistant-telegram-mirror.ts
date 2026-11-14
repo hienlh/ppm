@@ -21,6 +21,7 @@ import { TurnRenderer } from "./assistant-telegram-turn-renderer.ts";
 import { AssistantTelegramWaitNotes, type WaitNotesDeps } from "./assistant-telegram-wait-notes.ts";
 import { WakeTurnGate } from "./assistant-telegram-wake-gate.ts";
 import { NEWS_OPENER } from "../assistant-wake/wake-news-text.ts";
+import type { TelegramSilence } from "./assistant-telegram-silence.ts";
 
 /** How much of a message typed in PPM is repeated on Telegram. */
 export const MIRRORED_MESSAGE_MAX = 1000;
@@ -44,6 +45,21 @@ export interface MirrorDeps {
   now?: () => number;
   /** How long-waiting session tools are said in the draft (tests shorten the delay). */
   waitNotes?: Omit<WaitNotesDeps, "renderers">;
+  /** Whether the user is at PPM; left out, everything goes out with a sound. */
+  silence?: TelegramSilence;
+}
+
+/**
+ * Which messages of a turn go out without a sound, by who started it:
+ * - typed on Telegram: none, as before — the user is holding the phone;
+ * - typed in PPM: every draft while the switch is on, and the final answer only if the user is
+ *   still at PPM when it is written (gone for five minutes, the answer buzzes);
+ * - started by PPM (a watch, another session, an extension): while the user is at PPM.
+ */
+export function turnSilence(origin: ChatMessageOrigin, silence: TelegramSilence | undefined): ((phase: "draft" | "final") => boolean) | undefined {
+  if (!silence || origin === "telegram") return undefined;
+  if (origin === "ws") return (phase) => (phase === "draft" ? silence.enabled() : silence.inPpm());
+  return () => silence.inPpm();
 }
 
 export class AssistantTelegramMirror {
@@ -120,11 +136,13 @@ export class AssistantTelegramMirror {
     if (!byChat) this.turns.set(sessionId, byChat = new Map());
     let r = byChat.get(chatId);
     if (!r || r.isFinished) {
+      const silent = turnSilence(origin, this.deps.silence);
       r = new TurnRenderer({
         queue: this.deps.queue, state: this.deps.state, chatId, origin,
         showToolCalls: this.deps.showToolCalls,
         onDelivered: () => this.deps.onTurnDelivered(sessionId),
         ...(this.deps.now ? { now: this.deps.now } : {}),
+        ...(silent ? { silent } : {}),
       });
       byChat.set(chatId, r);
       r.start();
@@ -133,6 +151,8 @@ export class AssistantTelegramMirror {
   }
 
   private onUserMessage(p: ChatLifecycleEvents["user_message"]): void {
+    // Typed in PPM, in any chat: the user is at PPM now, whatever presence has heard yet.
+    if (p.origin === "ws") this.deps.silence?.notePpmMessage();
     // A turn PPM started waits until it has something to say (see WakeTurnGate).
     if (p.origin === "watch" && this.chatsFor(p.sessionId).length > 0) {
       this.wakeGate.hold(p.sessionId, p.text.includes(NEWS_OPENER) ? MANAGER_NEWS_LINE : WATCH_NEWS_LINE);
@@ -140,9 +160,16 @@ export class AssistantTelegramMirror {
     }
     for (const chatId of this.chatsFor(p.sessionId)) {
       const line = mirroredLine(p.origin, p.text, p.imageCount);
-      if (line) this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: line }, { label: "mirrored message" }));
+      if (line) this.enqueueLine(chatId, line, p.origin);
       this.renderer(p.sessionId, chatId, p.origin);
     }
+  }
+
+  /** The line saying where a message came from; the copy of one typed in PPM is silent while the switch is on. */
+  private enqueueLine(chatId: string, html: string, origin: ChatMessageOrigin): void {
+    const silence = this.deps.silence;
+    const silent = !silence ? false : origin === "ws" ? () => silence.enabled() : () => silence.inPpm();
+    this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html }, { label: "mirrored message", silent }));
   }
 
   private onStream(p: ChatLifecycleEvents["stream"]): void {
@@ -182,7 +209,7 @@ export class AssistantTelegramMirror {
   /** A held wake turn turned out to say something: its line, tools and text go out as they came. */
   private releaseWake(sessionId: string, held: { text: string; tools: string[]; line?: string }): void {
     for (const chatId of this.chatsFor(sessionId)) {
-      this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: held.line ?? WATCH_NEWS_LINE }, { label: "mirrored message" }));
+      this.enqueueLine(chatId, held.line ?? WATCH_NEWS_LINE, "watch");
       const r = this.renderer(sessionId, chatId, "watch");
       for (const tool of held.tools) r.tool(tool);
       if (held.text) r.text(held.text);

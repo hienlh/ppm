@@ -224,8 +224,16 @@ export class AssistantTelegramCards implements BridgeCards {
       ...(link.button ? { fallbackHtml: first.html + linkText } : {}),
     }, {
       label: "approval card",
-      onSent: (sent) => {
+      silent: () => this.deps.silence?.inPpm() ?? false,
+      onSent: (sent, info) => {
         card.messageId = sent.message_id;
+        // Every card here waits on a decision: sent silently, it gets one reminder if nobody answers.
+        if (info.silent) {
+          this.deps.reminders?.schedule({
+            chatId, messageId: sent.message_id, label: "approval card",
+            stillWaiting: () => !card.done && this.cards.get(key) === card,
+          });
+        }
         // Sent again without its link button: every later step has to leave the button out too.
         if (link.button && !sent.reply_markup?.inline_keyboard.flat().some((b) => b.url)) card.linkRefused = true;
         try { how.onSent?.(sent.message_id); } catch (e) { log.warn(`card ${card.requestId}: ${(e as Error).message}`); }
