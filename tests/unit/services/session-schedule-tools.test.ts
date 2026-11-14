@@ -7,10 +7,14 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { getSchedule, insertSchedule } from "../../../src/services/scheduler-db.service.ts";
-import { sessionScheduleToolCall, type SessionScheduleToolEnv } from "../../../src/services/session-collab/collab-schedules.ts";
+import {
+  sessionScheduleToolCall, type AiScheduleNotice, type SessionScheduleToolEnv,
+} from "../../../src/services/session-collab/collab-schedules.ts";
+import {
+  AI_SCHEDULE_NOTICES_PER_HOUR, AI_SCHEDULE_NOTICE_WINDOW_MS, AiScheduleNoticeLimit,
+} from "../../../src/services/session-collab/collab-schedule-notice-limit.ts";
 import { createSessionCollabMcpHandler } from "../../../src/services/session-collab/session-collab-endpoint.ts";
 import type { ScheduleTargetDeps } from "../../../src/services/session-schedules/session-schedule-target.ts";
-import type { NotificationPayload } from "../../../src/services/notification.service.ts";
 import { PROMPT_SUMMARY_MAX } from "../../../src/services/session-collab/collab-schedule-created-notice.ts";
 import { MAX_SCHEDULES_PER_SESSION } from "../../../src/shared/session-schedule-input.ts";
 
@@ -22,7 +26,8 @@ interface FakeChat { assistant?: boolean; design?: boolean }
 let chats: Record<string, FakeChat>;
 let migrated: Record<string, string>;
 let changes: number;
-let notices: Array<{ payload: NotificationPayload; scheduleId: number }>;
+let notices: AiScheduleNotice[];
+let now: Date;
 
 const target: ScheduleTargetDeps = {
   canonical: (id) => migrated[id] ?? id,
@@ -35,9 +40,10 @@ const target: ScheduleTargetDeps = {
   provider: (id) => (chats[id] ? "claude" : null),
 };
 const env: SessionScheduleToolEnv = {
-  target, changed: () => { changes++; }, now: () => NOW, localZone: () => "Asia/Saigon",
+  target, changed: () => { changes++; }, now: () => now, localZone: () => "Asia/Saigon",
   chatTitle: (id) => `Title of ${id}`,
-  notifyCreated: (payload, scheduleId) => { notices.push({ payload, scheduleId }); },
+  notify: (notice) => { notices.push(notice); },
+  noticeLimit: new AiScheduleNoticeLimit(),
 };
 
 type Result = { content: Array<{ text: string }>; isError?: boolean };
@@ -50,6 +56,8 @@ beforeEach(() => {
   migrated = {};
   changes = 0;
   notices = [];
+  now = NOW;
+  env.noticeLimit = new AiScheduleNoticeLimit();
 });
 
 describe("session_schedule_create", () => {
@@ -108,8 +116,8 @@ describe("the notice for a schedule the AI created", () => {
     const prompt = `Check the nightly build\n\nand   report ${"x".repeat(200)}`;
     const out = body(call(CHAT, "session_schedule_create", { cron: "0 9 * * 1-5", prompt, name: "Build check", timezone: "Asia/Saigon" }));
     expect(notices).toHaveLength(1);
-    const { payload, scheduleId } = notices[0]!;
-    expect(scheduleId).toBe(out.id);
+    const { payload, key } = notices[0]!;
+    expect(key).toBe(`session-schedule-created-${out.id}`);
     expect(payload.title).toBe("AI scheduled a prompt: Build check");
     // 2026-11-15 is a Sunday: the next weekday at 09:00 in Saigon is Monday 02:00 UTC.
     expect(payload.body).toBe(`In Title of ${CHAT} (proj). Weekdays at 09:00 (Asia/Saigon), next run 2026-11-16 Mon 09:00.`);
@@ -140,10 +148,70 @@ describe("the notice for a schedule the AI created", () => {
   });
 
   it("still saves the schedule when the notice cannot be sent", () => {
-    const throwing: SessionScheduleToolEnv = { ...env, notifyCreated: () => { throw new Error("notification service down"); } };
+    const throwing: SessionScheduleToolEnv = { ...env, notify: () => { throw new Error("notification service down"); } };
     const res = sessionScheduleToolCall(throwing, CHAT, "session_schedule_create" as never, { cron: "0 9 * * *", prompt: "x" }) as Result;
     expect(res.isError).toBeFalsy();
     expect(getSchedule(body(res).id)).not.toBeNull();
+  });
+});
+
+describe("an AI that keeps creating schedules", () => {
+  const createAndDelete = (sessionId = CHAT) => {
+    const id = body(call(sessionId, "session_schedule_create", { cron: "0 9 * * *", prompt: "spam" })).id as number;
+    call(sessionId, "session_schedule_delete", { id });
+    return id;
+  };
+
+  it("announces a schedule only if it still exists when the notification delay ends", () => {
+    const kept = body(call(CHAT, "session_schedule_create", { cron: "0 9 * * *", prompt: "keep" })).id as number;
+    const gone = createAndDelete();
+    const byKey = (id: number) => notices.find((n) => n.key === `session-schedule-created-${id}`)!;
+    expect(byKey(kept).stillRelevant!()).toBe(true);
+    expect(byKey(gone).stillRelevant!()).toBe(false);
+  });
+
+  it(`sends at most ${AI_SCHEDULE_NOTICES_PER_HOUR} notices per chat an hour, then one saying the rest are muted`, () => {
+    for (let i = 0; i < AI_SCHEDULE_NOTICES_PER_HOUR + 3; i++) createAndDelete();
+    expect(notices).toHaveLength(AI_SCHEDULE_NOTICES_PER_HOUR + 1);
+    expect(notices.slice(0, -1).every((n) => n.key.startsWith("session-schedule-created-"))).toBe(true);
+    const muted = notices.at(-1)!;
+    expect(muted.key).toBe(`session-schedules-muted-${CHAT}`);
+    expect(muted.stillRelevant).toBeUndefined(); // the user hears about the churn even though each schedule is gone
+    expect(muted.payload.title).toBe(`AI keeps scheduling prompts in Title of ${CHAT}`);
+    // The first notice went out at 01:00 UTC: a slot opens an hour later, 09:00 in Saigon.
+    expect(muted.payload.body).toContain(`more than ${AI_SCHEDULE_NOTICES_PER_HOUR} schedules within an hour`);
+    expect(muted.payload.body).toContain("before 2026-11-15 Sun 09:00 (Asia/Saigon)");
+    expect(muted.payload).toMatchObject({ project: "proj", sessionId: CHAT, providerId: "claude" });
+    // Every schedule was still saved: only the telling stopped.
+    expect(changes).toBe(2 * (AI_SCHEDULE_NOTICES_PER_HOUR + 3));
+  });
+
+  it("counts each chat apart, and lets notices through again once the hour has passed", () => {
+    for (let i = 0; i < AI_SCHEDULE_NOTICES_PER_HOUR + 1; i++) createAndDelete();
+    notices = [];
+    createAndDelete(OTHER);
+    expect(notices.map((n) => n.payload.sessionId)).toEqual([OTHER]);
+    now = new Date(NOW.getTime() + AI_SCHEDULE_NOTICE_WINDOW_MS + 1);
+    notices = [];
+    createAndDelete();
+    expect(notices.map((n) => n.key.startsWith("session-schedule-created-"))).toEqual([true]);
+  });
+});
+
+describe("the notice limit", () => {
+  it("notifies up to the cap, says once an hour that it is muted, and drops the rest until a slot opens", () => {
+    const limit = new AiScheduleNoticeLimit(2, 1000);
+    expect(limit.take("a", 0)).toEqual({ kind: "notify" });
+    expect(limit.take("a", 100)).toEqual({ kind: "notify" });
+    expect(limit.take("a", 200)).toEqual({ kind: "muted", resumesAt: 1000 });
+    expect(limit.take("a", 300)).toEqual({ kind: "drop" });
+    expect(limit.take("b", 300)).toEqual({ kind: "notify" });
+    expect(limit.take("a", 1001)).toEqual({ kind: "notify" });
+    // Over again, but the muted notice went out within the hour: a steady loop gets one per window.
+    expect(limit.take("a", 1050)).toEqual({ kind: "drop" });
+    expect(limit.take("a", 1101)).toEqual({ kind: "notify" });
+    expect(limit.take("a", 1150)).toEqual({ kind: "drop" });
+    expect(limit.take("a", 1250)).toEqual({ kind: "muted", resumesAt: 2001 });
   });
 });
 

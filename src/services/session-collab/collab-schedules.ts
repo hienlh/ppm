@@ -7,7 +7,7 @@
 import { getSessionTitle } from "../db.service.ts";
 import { createLogger } from "../logger.ts";
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
-import type { NotificationPayload } from "../notification.service.ts";
+import type { BroadcastOutcome, NotificationPayload } from "../notification.service.ts";
 import { MAX_SCHEDULES_PER_SESSION } from "../../shared/session-schedule-input.ts";
 import {
   SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_LIST_TOOL, type SessionScheduleTool,
@@ -18,8 +18,11 @@ import { ScheduleEditError } from "../scheduler-edit.ts";
 import { SessionScheduleRefusal, sessionScheduleTargetIds } from "../session-schedules/session-schedule-lifecycle.ts";
 import { createSessionSchedule, sessionSchedulesOf } from "../session-schedules/session-schedule-save.ts";
 import { announceSchedulesChanged } from "../session-schedules/session-schedules-changed.ts";
-import { liveScheduleTargetDeps, resolveScheduleTarget, type ScheduleTargetDeps } from "../session-schedules/session-schedule-target.ts";
-import { aiCreatedScheduleNotice, wallClock } from "./collab-schedule-created-notice.ts";
+import {
+  liveScheduleTargetDeps, resolveScheduleTarget, type ScheduleTarget, type ScheduleTargetDeps,
+} from "../session-schedules/session-schedule-target.ts";
+import { aiCreatedScheduleNotice, aiSchedulesMutedNotice, wallClock } from "./collab-schedule-created-notice.ts";
+import { AI_SCHEDULE_NOTICES_PER_HOUR, AiScheduleNoticeLimit } from "./collab-schedule-notice-limit.ts";
 
 const log = createLogger("session-collab");
 
@@ -33,10 +36,37 @@ export interface SessionScheduleToolEnv {
   /** The chat's title as the user knows it. */
   chatTitle(sessionId: string): string;
   /**
-   * Tell the user the AI created a schedule (`schedule_created`, through the notification
-   * service and the user's own settings). Never throws into the tool: the schedule is saved either way.
+   * Tell the user about the AI's schedules (`schedule_created`, through the notification service
+   * and the user's own settings). Never throws into the tool: the schedule is saved either way.
    */
-  notifyCreated(payload: NotificationPayload, scheduleId: number): void;
+  notify(notice: AiScheduleNotice): void;
+  /** How many of those notices each chat may still send (see `collab-schedule-notice-limit.ts`). */
+  noticeLimit: AiScheduleNoticeLimit;
+}
+
+/** One notification about the AI's schedules. */
+export interface AiScheduleNotice {
+  payload: NotificationPayload;
+  /** Its own notification slot and device tag (see `BroadcastOptions.ownKey`). */
+  key: string;
+  /** Asked when the notification delay ends; false sends nothing. */
+  stillRelevant?: () => boolean;
+}
+
+/**
+ * Sends `notice` through the notification service. A slot of its own: neither replaced by the chat's
+ * "Chat completed" nor replacing it, and two schedules created in one turn are two notifications.
+ */
+export function sendAiScheduleNotice(notice: AiScheduleNotice): Promise<BroadcastOutcome | "failed"> {
+  return import("../notification.service.ts")
+    .then(({ notificationService }) => notificationService.broadcast("schedule_created", notice.payload, {
+      ownKey: notice.key,
+      ...(notice.stillRelevant ? { stillUnseen: notice.stillRelevant } : {}),
+    }))
+    .catch((e) => {
+      log.warn(`could not send notice ${notice.key}: ${(e as Error).message}`);
+      return "failed" as const;
+    });
 }
 
 export const liveSessionScheduleToolEnv: SessionScheduleToolEnv = {
@@ -45,13 +75,8 @@ export const liveSessionScheduleToolEnv: SessionScheduleToolEnv = {
   now: () => new Date(),
   localZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
   chatTitle: (sessionId) => liveScheduleTargetDeps.stored(sessionId, getSessionTitle) ?? `Session ${sessionId.slice(0, 8)}`,
-  notifyCreated: (payload, scheduleId) => {
-    import("../notification.service.ts").then(({ notificationService }) => {
-      // A slot of its own: neither replaced by the chat's "Chat completed" nor replacing it, and two
-      // schedules created in one turn are two notifications.
-      void notificationService.broadcast("schedule_created", payload, { ownKey: `session-schedule-created-${scheduleId}` });
-    }).catch((e) => log.warn(`could not notify about schedule ${scheduleId}: ${(e as Error).message}`));
-  },
+  notify: sendAiScheduleNotice,
+  noticeLimit: new AiScheduleNoticeLimit(),
 };
 
 const json = (value: unknown, isError = false): Json => textResult(JSON.stringify(value, null, 1), isError);
@@ -79,6 +104,32 @@ function describe(s: Schedule, env: SessionScheduleToolEnv): Json {
   };
 }
 
+/**
+ * The notice for a schedule the AI just created, within the chat's cap. It is sent only if the
+ * schedule still exists when the notification delay ends, so a schedule created and deleted again
+ * (or a one-shot that already ran) is not announced.
+ */
+function notifyAboutCreated(env: SessionScheduleToolEnv, created: Schedule, chat: ScheduleTarget): void {
+  const turn = env.noticeLimit.take(chat.sessionId, env.now().getTime());
+  if (turn.kind === "drop") {
+    log.info(`not notifying about schedule ${created.id}: chat ${chat.sessionId} is past ${AI_SCHEDULE_NOTICES_PER_HOUR} schedule notices this hour`);
+    return;
+  }
+  const title = env.chatTitle(chat.sessionId);
+  if (turn.kind === "muted") {
+    env.notify({
+      payload: aiSchedulesMutedNotice(chat, title, AI_SCHEDULE_NOTICES_PER_HOUR, turn.resumesAt, env.localZone()),
+      key: `session-schedules-muted-${chat.sessionId}`,
+    });
+    return;
+  }
+  env.notify({
+    payload: aiCreatedScheduleNotice(created, chat, title, env.localZone()),
+    key: `session-schedule-created-${created.id}`,
+    stillRelevant: () => getSchedule(created.id) !== null,
+  });
+}
+
 function refusalText(e: unknown): string {
   if (e instanceof ScheduleEditError) return `Not saved: ${e.problems.join("; ")}.`;
   if (e instanceof SessionScheduleRefusal) return `Not saved: ${e.message}`;
@@ -102,9 +153,9 @@ export function sessionScheduleToolCall(env: SessionScheduleToolEnv, tokenSessio
       return fail(refusalText(e));
     }
     env.changed();
-    // The AI needs no approval to schedule, so the user hears about every schedule it makes.
+    // The AI needs no approval to schedule, so the user hears about the schedules it makes.
     try {
-      env.notifyCreated(aiCreatedScheduleNotice(created, chat.target, env.chatTitle(sessionId), env.localZone()), created.id);
+      notifyAboutCreated(env, created, chat.target);
     } catch (e) {
       log.warn(`could not tell the user about schedule ${created.id}: ${(e as Error).message}`);
     }

@@ -47,3 +47,20 @@ export function aiCreatedScheduleNotice(schedule: Schedule, chat: ScheduleTarget
     providerId: chat.providerId,
   };
 }
+
+/**
+ * The one notice a chat gets once its AI passes the cap on "AI scheduled a prompt" notices
+ * (`collab-schedule-notice-limit.ts`): the schedules are still saved, only the telling stops, so the
+ * user learns the AI is busy scheduling and where to look. `resumesAt` is when a notice slot opens.
+ */
+export function aiSchedulesMutedNotice(chat: ScheduleTarget, chatTitle: string, cap: number, resumesAt: number, localZone: string): NotificationPayload {
+  return {
+    title: `AI keeps scheduling prompts in ${chatTitle}`,
+    body: `It created more than ${cap} schedules within an hour in ${chatTitle} (${chat.projectName}). `
+      + `PPM will not notify about more of them before ${wallClock(new Date(resumesAt).toISOString(), localZone)} (${localZone}); `
+      + "open the chat to see its schedules.",
+    project: chat.projectName,
+    sessionId: chat.sessionId,
+    providerId: chat.providerId,
+  };
+}
