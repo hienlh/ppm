@@ -15,6 +15,7 @@
  *
  * Messages answering something done on Telegram (`/status`, `/sessions`, a pressed button) and the
  * answer to a message typed on Telegram are not this module's business: the user is on the phone.
+ * An `urgent` manager card rings whatever this says (`assistant-telegram-manager-cards.ts`).
  */
 import { configService } from "../config.service.ts";
 import { presenceTracker } from "../presence-tracker.ts";

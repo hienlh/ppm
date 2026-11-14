@@ -1165,6 +1165,7 @@ typed in PPM, or a PPM tab saw real input (`presence-tracker.ts`), within `QUIET
   turn ends, the final answer is re-sent with a sound as before.
 - A turn PPM started (a watch, another session), a card, a manager's card, a watch report and a
   `db_execute` notice go out silently too.
+- An `urgent` manager card always rings, and so does a card the user asked for with `/status`.
 - A turn typed on Telegram, and replies to commands and buttons, are unchanged.
 
 A card that waits on a decision and went out silently (a session's approval or question, a

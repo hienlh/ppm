@@ -114,6 +114,21 @@ describe("the Assistant's own cards", () => {
     expect(fake.sent(Number(chat))).toHaveLength(2);
   });
 
+  it("ring for an urgent card even while the user is at PPM, with no reminder", async () => {
+    const chat = connectChat(freshChat());
+    const w = world({ atPpm: true });
+    const urgent = managerCard({ kind: "urgent", title: "Staging is down" });
+    const done = managerCard({ kind: "done", title: "Released 0.25.1" });
+    managerCards(w, chat, new Set([urgent.id, done.id])).send([urgent, done]);
+    await fake.waitFor(() => fake.sent(Number(chat)).length === 2);
+    await w.queue.whenIdle();
+    // The urgent one rings; the report beside it, sent the same moment, stays silent.
+    expect(fake.sent(Number(chat)).map((m) => m.silent)).toEqual([false, true]);
+    w.advance(5 * MIN);
+    await w.queue.whenIdle();
+    expect(fake.sent(Number(chat))).toHaveLength(2);
+  });
+
   it("ring as before when the user is away from PPM, or the switch is off", async () => {
     for (const w of [world({ atPpm: false }), world({ atPpm: true, on: false })]) {
       const chat = connectChat(freshChat());

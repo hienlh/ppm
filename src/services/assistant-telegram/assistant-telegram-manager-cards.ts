@@ -145,7 +145,8 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       ...(link.button ? { fallbackHtml: `${html}\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}` } : {}),
     }, {
       label: `${card.kind} card`,
-      silent: () => this.silent(),
+      // An urgent card rings even while the user is at PPM: it is the one kind that asked to be heard.
+      silent: () => card.kind !== "urgent" && this.silent(),
       onSent: (sent, info) => {
         record(sent.message_id);
         // A decision sent silently gets one reminder if it is still open later.
