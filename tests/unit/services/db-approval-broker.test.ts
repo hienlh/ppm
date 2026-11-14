@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { createDbApprovalBroker, type DbApprovalChat, type DbApprovalEvent } from "../../../src/services/db-ai-tools/db-approval-broker.ts";
+import {
+  DB_APPROVAL_REMINDER_BEFORE_MS, DB_APPROVAL_WAIT_MS, createDbApprovalBroker, type DbApprovalChat, type DbApprovalEvent,
+} from "../../../src/services/db-ai-tools/db-approval-broker.ts";
+import { createDbAttentionEvents, type DbAttentionEvents } from "../../../src/services/db-ai-tools/db-attention-events.ts";
+import { DB_TOOLS_TIMEOUT_MS, dbToolDefinitions } from "../../../src/services/db-ai-tools/db-ai-tools-tool.ts";
 
 const INPUT = {
   connectionId: 7, connectionName: "Prod", dbType: "postgres" as const, group: "Live", color: null, readonly: true,
@@ -88,5 +92,65 @@ describe("db_execute approvals", () => {
     expect(await early.broker.request("s1", INPUT, undefined, AbortSignal.abort())).toMatchObject({ approved: false, reason: "cancelled" });
     expect(early.announced).toEqual([]);
     expect(early.resolved).toEqual([]);
+  });
+});
+
+describe("telling the user's other channels", () => {
+  function told(waitMs: number, reminderBeforeMs: number) {
+    const events = createDbAttentionEvents();
+    const shown: Array<DbAttentionEvents["approval_shown"]> = [];
+    const reminders: Array<DbAttentionEvents["approval_reminder"]> = [];
+    events.on("approval_shown", (p) => shown.push(p));
+    events.on("approval_reminder", (p) => reminders.push(p));
+    const ids: string[] = [];
+    const broker = createDbApprovalBroker({
+      chat: () => ({ announce: (_s, ev) => { ids.push(ev.requestId); return true; }, resolved: () => {} }),
+      passwordRequired: () => true, checkPassword: (typed) => typed === "pw", events, now: () => 1_000, reminderBeforeMs,
+    });
+    return { broker, shown, reminders, lastId: () => ids.at(-1)! };
+  }
+
+  it("waits 30 minutes, and every timeout above the call outlasts that", () => {
+    expect(DB_APPROVAL_WAIT_MS).toBe(30 * 60_000);
+    expect(DB_APPROVAL_REMINDER_BEFORE_MS).toBe(5 * 60_000);
+    // Claude takes the MCP timeout in ms, Codex in seconds; both include the approved script's own run.
+    expect(DB_TOOLS_TIMEOUT_MS).toBeGreaterThan(DB_APPROVAL_WAIT_MS + 25 * 60_000);
+    const execute = dbToolDefinitions("", () => true).find((t) => t.name === "db_execute") as { description: string };
+    expect(execute.description).toContain("do not answer within 30 minutes");
+  });
+
+  it("tells them once when the approval is shown, and reminds them once before it gives up", async () => {
+    const t = told(80, 40);
+    const outcome = t.broker.request("s1", INPUT, 80);
+    expect(t.shown).toEqual([{ sessionId: "s1", requestId: t.lastId(), input: { ...INPUT, passwordRequired: true }, expiresAt: 1_080 }]);
+    expect(t.reminders).toEqual([]);
+    await Bun.sleep(55);
+    expect(t.reminders).toEqual([{ sessionId: "s1", requestId: t.lastId(), input: { ...INPUT, passwordRequired: true }, expiresAt: 1_080 }]);
+    expect(await outcome).toMatchObject({ reason: "timeout" });
+    expect(t.reminders).toHaveLength(1);
+  });
+
+  it("sends no reminder for an approval answered before it, and none for a wait shorter than the reminder", async () => {
+    const answered = told(80, 40);
+    const outcome = answered.broker.request("s1", INPUT, 80);
+    expect(answered.broker.answer(answered.lastId(), { approved: false })).toEqual({ ok: true, approved: false });
+    await outcome;
+    await Bun.sleep(60);
+    expect(answered.shown).toHaveLength(1);
+    expect(answered.reminders).toEqual([]);
+
+    const short = told(30, 40);
+    await short.broker.request("s1", INPUT, 30);
+    expect(short.shown).toHaveLength(1);
+    expect(short.reminders).toEqual([]);
+  });
+
+  it("tells nobody about an approval no chat could show", async () => {
+    const events = createDbAttentionEvents();
+    const shown: unknown[] = [];
+    events.on("approval_shown", (p) => shown.push(p));
+    const broker = createDbApprovalBroker({ chat: () => ({ announce: () => false, resolved: () => {} }), passwordRequired: () => true, events });
+    expect(await broker.request("s1", INPUT)).toMatchObject({ reason: "no-chat" });
+    expect(shown).toEqual([]);
   });
 });

@@ -8,7 +8,9 @@
  * before any access check — that message is how a chat becomes allowed at all.
  *
  * It also carries what the user asked to hear about other chats (`assistant-telegram-relay.ts`):
- * a watched chat's cards, and watch reports from Assistant sessions no chat is bound to.
+ * a watched chat's cards, and watch reports from Assistant sessions no chat is bound to. And
+ * it tells the user when a chat's database tool waits on them (`assistant-telegram-db-notices.ts`):
+ * notices only, since the answer needs a password that is never taken on Telegram.
  *
  * Nothing here runs on its own: `startAssistantHub()` starts it when the Telegram side of the
  * Assistant is switched on.
@@ -37,6 +39,7 @@ import { AssistantTelegramCards } from "./assistant-telegram-cards.ts";
 import { assistantSessionLink, chatLink } from "./assistant-telegram-links.ts";
 import { AssistantTelegramMirror, type MirrorCardSink } from "./assistant-telegram-mirror.ts";
 import { AssistantTelegramRelay } from "./assistant-telegram-relay.ts";
+import { AssistantTelegramDbNotices } from "./assistant-telegram-db-notices.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { AssistantTelegramPoller } from "./assistant-telegram-poller.ts";
 import { AssistantTelegramSendQueue, EDIT_INTERVAL_MS, outcomeOf, sendMessageTask } from "./assistant-telegram-send-queue.ts";
@@ -109,6 +112,7 @@ interface Running {
   inbound: AssistantTelegramInbound;
   mirror: AssistantTelegramMirror;
   relay: AssistantTelegramRelay;
+  dbNotices: AssistantTelegramDbNotices;
   cards: BridgeCards;
   codes: ButtonCodes<BridgeAction>;
   offs: Array<() => void>;
@@ -140,6 +144,7 @@ export class AssistantTelegramBridge {
     const relay = new AssistantTelegramRelay({
       queue, chatLink: links.chatLink, relayCard: (chatId, card) => cards.relayed(chatId, card),
     });
+    const dbNotices = new AssistantTelegramDbNotices({ queue, chatLink: links.chatLink });
     const mirror = new AssistantTelegramMirror({
       queue, state, now, cards,
       showToolCalls: () => bridgeConfig().show_tool_calls,
@@ -176,11 +181,12 @@ export class AssistantTelegramBridge {
       () => cardOutbound.detach(managerCards),
     ];
     cardOutbound.attach(managerCards);
-    this.run = { poller, queue, state, inbound, mirror, relay, cards, codes, offs };
+    this.run = { poller, queue, state, inbound, mirror, relay, dbNotices, cards, codes, offs };
 
     recoverInterrupted(queue, state);
     mirror.attach();
     relay.attach();
+    dbNotices.attach();
     assistantBridgeReading(token);
     void client.setMyCommands(BOT_COMMANDS);
     log.info(`Reading Telegram bot ${client.botId}`);
@@ -193,6 +199,7 @@ export class AssistantTelegramBridge {
     this.run = null;
     for (const off of run.offs) off();
     run.relay.detach();
+    run.dbNotices.detach();
     run.mirror.detach();
     run.inbound.stop();
     await run.poller.stop();

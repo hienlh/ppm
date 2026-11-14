@@ -997,7 +997,9 @@ const approvals: PendingApprovals = createPendingApprovals({
       // Not buffered into the turn's replay: the tool call's own card already shows what is
       // asked, and a device that connects later reads the approval from `session_state`. Told to
       // chat listeners only when it is a session-tool card of the PPM Assistant, which Telegram
-      // shows too; the others are answered over HTTP with PPM's password, nowhere else.
+      // shows too; the others are answered over HTTP with PPM's password, nowhere else. A
+      // `db_execute` card still reaches Telegram, as a notice with no buttons: the broker tells
+      // `db-attention-events.ts`, which the Assistant's Telegram bridge listens to.
       broadcast(sessionId, ev);
       const relayed = collabCardForListeners(sessionId, entry.projectPath, ev);
       if (relayed) chatLifecycle.emit("approval_shown", { sessionId, card: relayed, projectName: entry.projectName ?? "", providerId: entry.providerId });

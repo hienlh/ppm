@@ -40,7 +40,8 @@ export interface QuietHold<T extends HeldDecision> {
   size(): number;
 }
 
-export function createQuietHold<T extends HeldDecision>(deps: QuietHoldDeps, release: (item: T) => void): QuietHold<T> {
+/** `what` names the held items in the log line at the end of quiet hours. */
+export function createQuietHold<T extends HeldDecision>(deps: QuietHoldDeps, release: (item: T) => void, what = "watched-chat card"): QuietHold<T> {
   const held = new Map<string, T>();
   let timer: Cancel | null = null;
 
@@ -66,7 +67,7 @@ export function createQuietHold<T extends HeldDecision>(deps: QuietHoldDeps, rel
       sent++;
       try { release(item); } catch (e) { log.warn(`held card ${item.card.requestId} not sent: ${(e as Error).message}`); }
     }
-    if (items.length) log.info(`quiet hours over: ${sent} of ${items.length} held watched-chat card(s) still waiting, sent`);
+    if (items.length) log.info(`quiet hours over: ${sent} of ${items.length} held ${what}(s) still waiting, sent`);
   }
 
   return {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DB_EXECUTE_APPROVAL, type DbApprovalAnswer, type DbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
 import { checkPpmPassword, ppmPasswordRequired } from "../ppm-password.ts";
+import { dbAttentionEvents, type DbAttentionBus } from "./db-attention-events.ts";
 
 /**
  * The server half of `db_execute`'s approval. The call waits here while the chat shows the user
@@ -9,6 +10,11 @@ import { checkPpmPassword, ppmPasswordRequired } from "../ppm-password.ts";
  * answers over HTTP (`POST /api/db/ai-approvals/:requestId`, behind PPM's auth) with PPM's
  * password typed again. A wrong password leaves the approval pending; a decline, the user
  * sending a message or stopping the chat, or nobody answering in time settles it as declined.
+ *
+ * While it waits, the approval is also told to the channels that reach the user away from PPM
+ * (`db-attention-events.ts`: the PPM Assistant's Telegram bridge), once when it is shown and once
+ * more `DB_APPROVAL_REMINDER_BEFORE_MS` before it gives up. Those are notices; the answer, and
+ * PPM's password with it, is given in PPM only.
  *
  * One approval per session at a time, and a session is known by the id it goes by now: Codex
  * renames a new chat during its first turn, which can be while the approval waits.
@@ -31,8 +37,13 @@ export type DbApprovalAnswerResult =
   | { ok: true; approved: boolean }
   | { ok: false; status: 400 | 403 | 404; error: string };
 
-/** How long the user has to answer. */
-export const DB_APPROVAL_WAIT_MS = 10 * 60_000;
+/**
+ * How long the user has to answer. Every timeout above the call — the providers' MCP timeout
+ * (`DB_TOOLS_TIMEOUT_MS`) and the endpoint's request (`dbToolsMcpRequestHandler`) — outlasts it.
+ */
+export const DB_APPROVAL_WAIT_MS = 30 * 60_000;
+/** How long before the approval gives up the user is reminded of it, once. */
+export const DB_APPROVAL_REMINDER_BEFORE_MS = 5 * 60_000;
 
 interface Pending {
   sessionId: string;
@@ -46,10 +57,17 @@ export function createDbApprovalBroker(opts: {
   canonical?: (sessionId: string) => string;
   passwordRequired?: () => boolean;
   checkPassword?: (typed: unknown) => boolean;
+  /** Where the approval is told to the user's other channels; the process-wide bus by default. */
+  events?: Pick<DbAttentionBus, "emit">;
+  now?: () => number;
+  reminderBeforeMs?: number;
 }) {
   const canonical = opts.canonical ?? ((sessionId: string) => sessionId);
   const passwordRequired = opts.passwordRequired ?? ppmPasswordRequired;
   const checkPassword = opts.checkPassword ?? checkPpmPassword;
+  const events = opts.events ?? dbAttentionEvents;
+  const now = opts.now ?? Date.now;
+  const reminderBeforeMs = opts.reminderBeforeMs ?? DB_APPROVAL_REMINDER_BEFORE_MS;
   const pending = new Map<string, Pending>();
 
   function pendingOf(sessionId: string): [string, Pending] | null {
@@ -72,12 +90,14 @@ export function createDbApprovalBroker(opts: {
     const event: DbApprovalEvent = { type: "approval_request", requestId, tool: DB_EXECUTE_APPROVAL, input: { ...input, passwordRequired: passwordRequired() } };
     return new Promise<DbApprovalOutcome>((done) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let reminder: ReturnType<typeof setTimeout> | undefined;
       const onAbort = () => settle({ approved: false, reason: "cancelled", message: "The call was cancelled before the user answered, so nothing ran." });
       const settle = (outcome: DbApprovalOutcome): void => {
         const entry = pending.get(requestId);
         if (!entry) return;
         pending.delete(requestId);
         if (timer) clearTimeout(timer);
+        if (reminder) clearTimeout(reminder);
         signal?.removeEventListener("abort", onAbort);
         try {
           opts.chat()?.resolved(canonical(entry.sessionId), requestId, outcome.approved);
@@ -105,6 +125,14 @@ export function createDbApprovalBroker(opts: {
         approved: false, reason: "timeout",
         message: `The user did not answer within ${Math.round(waitMs / 60_000)} minutes, so nothing ran.`,
       }), waitMs);
+      const notice = { sessionId, requestId, input: event.input, expiresAt: now() + waitMs };
+      events.emit("approval_shown", notice);
+      if (waitMs > reminderBeforeMs) {
+        reminder = setTimeout(() => {
+          reminder = undefined;
+          if (pending.has(requestId)) events.emit("approval_reminder", { ...notice, sessionId: canonical(sessionId) });
+        }, waitMs - reminderBeforeMs);
+      }
     });
   }
 
