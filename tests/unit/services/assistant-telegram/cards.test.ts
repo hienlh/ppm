@@ -7,6 +7,8 @@ import { ButtonCodes } from "../../../../src/services/assistant-telegram/assista
 import type { BridgeAction } from "../../../../src/services/assistant-telegram/assistant-telegram-actions.ts";
 import { HIDDEN_NOTE, TOO_LONG_NOTE } from "../../../../src/services/assistant-telegram/assistant-telegram-card-format.ts";
 import { normalizeCodexQuestions } from "../../../../src/shared/approval-questions.ts";
+import { configService } from "../../../../src/services/config.service.ts";
+import { DEFAULT_ASSISTANT_SETTINGS } from "../../../../src/shared/assistant-settings.ts";
 import type { TelegramCallbackQuery } from "../../../../src/services/telegram/telegram-types.ts";
 
 const fake = useFakeTelegram();
@@ -61,6 +63,21 @@ describe("approval cards on Telegram", () => {
     expect(message.text).toContain("echo `date` > ~/.bashrc && cat <in");
     expect(message.text).toContain("Folder: /repo");
     expect(t.buttons(message.message_id).map((b) => b.text)).toEqual(["Allow", "Deny"]);
+  });
+
+  it("heads the card with the Assistant's name when it has one, else \"PPM Assistant\"", async () => {
+    const t = setup();
+    const before = await t.show({ tool: "Bash", input: { command: "ls" } });
+    expect(before.message.text).toStartWith("🔐 PPM Assistant wants to");
+    configService.set("assistant", { ...structuredClone(DEFAULT_ASSISTANT_SETTINGS), persona: { name: "Mi", address_forms: [], soul: "" } });
+    try {
+      const named = await t.show({ tool: "Bash", input: { command: "ls" } });
+      expect(named.message.text).toStartWith("🔐 Mi wants to");
+      const asked = await t.show({ tool: "AskUserQuestion", isQuestion: true, input: { questions: [{ question: "Which?", options: [{ label: "A" }, { label: "B" }] }] } });
+      expect(asked.message.text).toStartWith("❓ Mi asks");
+    } finally {
+      configService.set("assistant", structuredClone(DEFAULT_ASSISTANT_SETTINGS));
+    }
   });
 
   it("offers no Allow on a write too long to show in full", async () => {

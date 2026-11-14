@@ -51,13 +51,20 @@ export function personaIsEmpty(persona: AssistantPersona): boolean {
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /**
+ * Control characters and the two Unicode line separators, which JavaScript also ends a line at.
+ * Built from code points: a literal separator in this file would end the line it sits on.
+ */
+const LINE_BREAKING = new RegExp(
+  `[${String.fromCharCode(0)}-${String.fromCharCode(0x1f)}${String.fromCharCode(0x7f, 0x2028, 0x2029)}]+`, "g",
+);
+
+/**
  * One line of text: control characters (line breaks included) become spaces and runs of spaces
  * fold, so a name or an address form can neither span lines in the instructions nor in a
  * Telegram headline.
  */
 function oneLine(raw: string): string {
-  // eslint-disable-next-line no-control-regex
-  return raw.replace(/[\u0000-\u001f\u007f  ]+/g, " ").replace(/\s+/g, " ").trim();
+  return raw.replace(LINE_BREAKING, " ").replace(/\s+/g, " ").trim();
 }
 
 function readLine(raw: unknown, max: number, what: string, errors: string[]): string {

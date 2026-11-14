@@ -7,7 +7,7 @@ import "../../test-setup.ts";
 import { Hono } from "hono";
 import { configService } from "../../../src/services/config.service.ts";
 import {
-  assistantSettingsView, enabledAssistantMcpServers, getAssistantSettings, saveAssistantSettings,
+  assistantNameForMessages, assistantSettingsView, enabledAssistantMcpServers, getAssistantSettings, saveAssistantSettings,
 } from "../../../src/services/assistant/assistant-settings.service.ts";
 import { assistantSettingsRoutes } from "../../../src/server/routes/assistant-settings.ts";
 import { DEFAULT_ASSISTANT_SETTINGS } from "../../../src/shared/assistant-settings.ts";
@@ -91,6 +91,31 @@ describe("assistant settings service", () => {
   it("keeps the whole server list out of config dumps", () => {
     saveOk({ mcp_servers: [SERVER] });
     expect(JSON.stringify(redactSecretConfigValue("assistant", configService.get("assistant")))).not.toContain("ghp-secret");
+  });
+});
+
+describe("the persona", () => {
+  const PERSONA = { name: "Mi", address_forms: [{ user: "sếp", self: "em", when: "báo gấp" }], soul: "Vui vẻ." };
+
+  it("is saved with the rest and shown to a browser as it is", () => {
+    const view = saveOk({ instructions: "Be brief.", persona: PERSONA });
+    expect(view.persona).toEqual(PERSONA);
+    expect(getAssistantSettings().persona).toEqual(PERSONA);
+    expect(assistantNameForMessages()).toBe("Mi");
+  });
+
+  it("is kept by a save from a pane that does not send it, and leaves the instructions alone", () => {
+    const pasted = "## Tính cách\nTên em là Mi.";
+    saveOk({ instructions: pasted, persona: PERSONA });
+    saveOk({ instructions: pasted });
+    expect(getAssistantSettings().persona).toEqual(PERSONA);
+    expect(getAssistantSettings().instructions).toBe(pasted);
+  });
+
+  it("refuses a soul over the limit, and names \"PPM Assistant\" while none is set", () => {
+    const result = saveAssistantSettings({ persona: { ...PERSONA, soul: "x".repeat(2001) } }, anyProvider);
+    expect(result.ok).toBe(false);
+    expect(assistantNameForMessages()).toBe("PPM Assistant");
   });
 });
 

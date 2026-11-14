@@ -14,6 +14,7 @@ afterAll(uninstallDom);
 const { describeWindow } = await import("../../../src/web/components/floating-window/use-window-meta");
 const { ManagerChip } = await import("../../../src/web/components/assistant/manager-chip");
 const { AssistantFilterSheet } = await import("../../../src/web/components/assistant/assistant-filter-sheet");
+const { rememberAssistantName } = await import("../../../src/web/stores/assistant-name-store");
 type Tab = import("../../../src/web/stores/tab-store").Tab;
 type Manager = import("../../../src/shared/assistant-managers").ManagerChatSummary;
 
@@ -42,6 +43,19 @@ describe("the Assistant in the window manager", () => {
     expect(meta.subtitle).toBeUndefined();
     expect(describeWindow("tab-host", tab({ type: "assistant", projectId: null }), false, 0).count).toBeUndefined();
     expect(describeWindow("tab-host", tab({ type: "editor" }), false, 5).renderExtras).toBeUndefined();
+  });
+
+  it("names its titlebar after the Assistant once it has a name, and back when it has none", () => {
+    const assistantTab = tab({ id: "assistant", type: "assistant", title: "PPM Assistant", projectId: null });
+    rememberAssistantName("Mi");
+    try {
+      expect(describeWindow("tab-host", assistantTab, false).titlebarTitle).toBe("Mi");
+      // The dock chip keeps the tab's own title.
+      expect(describeWindow("tab-host", assistantTab, false).title).toBe("PPM Assistant");
+    } finally {
+      rememberAssistantName("");
+    }
+    expect(describeWindow("tab-host", assistantTab, false).titlebarTitle).toBe("Assistant");
   });
 
   it("gives the Assistant a settings gear", async () => {

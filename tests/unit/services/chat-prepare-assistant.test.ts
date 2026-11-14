@@ -14,6 +14,7 @@ import { assistantWorkDir } from "../../../src/services/assistant/assistant-work
 import { ASSISTANT_APPROVAL_SECTION, ASSISTANT_READ_TOOLS_SECTION, ASSISTANT_UI_SECTION, buildAssistantInstructions } from "../../../src/services/assistant/assistant-instructions.ts";
 import { ASSISTANT_OPS_SECTION } from "../../../src/services/assistant/assistant-instructions-ops.ts";
 import { ASSISTANT_NOTEBOOK_SECTION } from "../../../src/services/assistant/assistant-instructions-notebook.ts";
+import { PERSONA_HEADING } from "../../../src/services/assistant/assistant-instructions-persona.ts";
 import { assistantMcpTokens } from "../../../src/services/assistant-mcp/assistant-mcp-tokens.ts";
 import type { AIProvider, PrewarmInput, SendMessageOpts } from "../../../src/types/chat.ts";
 
@@ -159,6 +160,24 @@ describe("chatService for an Assistant session", () => {
     setSessionMetadata("o3", "proj", "/proj");
     expect(await chatService.prepareSendOptions("stub-asst", "o3", "hi", { assistantMcpServers: opts.assistantMcpServers }))
       .not.toHaveProperty("assistantMcpServers");
+  });
+
+  it("carries the persona after every rule and tool section, and before the user's own instructions", async () => {
+    configService.set("assistant", {
+      ...DEFAULT_ASSISTANT_SETTINGS,
+      instructions: "Answer in Vietnamese.",
+      persona: { name: "Mi", address_forms: [{ user: "sếp", self: "em", when: "báo gấp" }], soul: "Vui vẻ." },
+    });
+    setSessionAssistant("p1");
+    const text = (await chatService.prepareSendOptions("stub-asst", "p1", "hi")).assistantInstructions!;
+    const persona = text.indexOf(PERSONA_HEADING);
+    expect(persona).toBeGreaterThan(0);
+    for (const heading of ["## Asking first", "## Keep a record you can undo from", "## Changing things", "## Your notebook"]) {
+      expect(text.indexOf(heading)).toBeGreaterThanOrEqual(0);
+      expect(text.indexOf(heading)).toBeLessThan(persona);
+    }
+    expect(text.indexOf(USER_INSTRUCTIONS_HEADING)).toBeGreaterThan(persona);
+    expect(text).toContain('Your name is "Mi".');
   });
 
   it("carries none of the user's shared instructions or memories, whatever the sharing setting", async () => {
