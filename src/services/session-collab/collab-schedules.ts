@@ -4,7 +4,6 @@
  * never taken from the arguments, so a chat can neither see nor touch another chat's schedules.
  * Saving goes through the same function as the REST route and the CLI (`session-schedule-save.ts`).
  */
-import { getSessionTitle } from "../db.service.ts";
 import { createLogger } from "../logger.ts";
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import type { BroadcastOutcome, NotificationPayload } from "../notification.service.ts";
@@ -19,7 +18,7 @@ import { SessionScheduleRefusal, sessionScheduleTargetIds } from "../session-sch
 import { createSessionSchedule, sessionSchedulesOf } from "../session-schedules/session-schedule-save.ts";
 import { announceSchedulesChanged } from "../session-schedules/session-schedules-changed.ts";
 import {
-  liveScheduleTargetDeps, resolveScheduleTarget, type ScheduleTarget, type ScheduleTargetDeps,
+  liveScheduleTargetDeps, resolveScheduleTarget, storedChatTitle, type ScheduleTarget, type ScheduleTargetDeps,
 } from "../session-schedules/session-schedule-target.ts";
 import { aiCreatedScheduleNotice, aiSchedulesMutedNotice, wallClock } from "./collab-schedule-created-notice.ts";
 import { AI_SCHEDULE_NOTICES_PER_HOUR, AiScheduleNoticeLimit } from "./collab-schedule-notice-limit.ts";
@@ -74,7 +73,7 @@ export const liveSessionScheduleToolEnv: SessionScheduleToolEnv = {
   changed: announceSchedulesChanged,
   now: () => new Date(),
   localZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
-  chatTitle: (sessionId) => liveScheduleTargetDeps.stored(sessionId, getSessionTitle) ?? `Session ${sessionId.slice(0, 8)}`,
+  chatTitle: storedChatTitle,
   notify: sendAiScheduleNotice,
   noticeLimit: new AiScheduleNoticeLimit(),
 };

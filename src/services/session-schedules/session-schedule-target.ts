@@ -11,7 +11,7 @@ import { resolve } from "node:path";
 import { configService } from "../config.service.ts";
 import { claudeTranscriptExists } from "../claude-transcript-exists.ts";
 import {
-  getSessionDesignSlug, getSessionProjectPath, getSessionProvider, resolveMigratedSession, sessionIdAliases,
+  getSessionDesignSlug, getSessionProjectPath, getSessionProvider, getSessionTitle, resolveMigratedSession, sessionIdAliases,
 } from "../db.service.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { isAssistantProject } from "../../shared/assistant-project.ts";
@@ -64,6 +64,11 @@ export const liveScheduleTargetDeps: ScheduleTargetDeps = {
   projectPath: getSessionProjectPath,
   provider: getSessionProvider,
 };
+
+/** The chat's title as the user knows it, from any id it had, else a short form of its id. */
+export function storedChatTitle(sessionId: string): string {
+  return liveScheduleTargetDeps.stored(sessionId, getSessionTitle) ?? `Session ${sessionId.slice(0, 8)}`;
+}
 
 /** The chat a schedule aimed at `sessionId` runs in now, or why it cannot run there. */
 export function resolveScheduleTarget(sessionId: string, deps: ScheduleTargetDeps = liveScheduleTargetDeps): ScheduleTargetResolution {

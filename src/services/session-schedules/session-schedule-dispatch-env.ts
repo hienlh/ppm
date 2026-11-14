@@ -4,13 +4,13 @@
  */
 import { chatControl } from "../chat-control/chat-control.ts";
 import { chatLifecycle } from "../chat-control/chat-lifecycle.ts";
-import { getSessionTitle, resolveMigratedSession } from "../db.service.ts";
+import { resolveMigratedSession } from "../db.service.ts";
 import { createLogger } from "../logger.ts";
 import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
 import { resolveSessionDir } from "../subagent-transcript-merger.ts";
 import type { ScheduleNotice, SessionScheduleDispatchEnv } from "./session-schedule-dispatch-types.ts";
 import { RETRY_BACKOFF_MS } from "./session-schedule-retry-backoff.ts";
-import { liveScheduleTargetDeps, resolveScheduleTarget, type ScheduleTargetResolution } from "./session-schedule-target.ts";
+import { resolveScheduleTarget, storedChatTitle, type ScheduleTargetResolution } from "./session-schedule-target.ts";
 
 const log = createLogger("scheduler");
 
@@ -66,7 +66,7 @@ export function liveDispatchEnv(): SessionScheduleDispatchEnv {
     canonical: resolveMigratedSession,
     target: deliveryTarget,
     notify: notifyScheduleNotice,
-    chatTitle: (sessionId) => liveScheduleTargetDeps.stored(sessionId, getSessionTitle) ?? `Session ${sessionId.slice(0, 8)}`,
+    chatTitle: storedChatTitle,
     newClientMessageId: () => `schedule-${crypto.randomUUID()}`,
     // The prompt may have been written by an AI through the schedule tools: it may not pose as PPM.
     promptText: neutralizePpmTags,
