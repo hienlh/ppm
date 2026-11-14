@@ -90,6 +90,15 @@ describe("finding the chats a restart cut off", () => {
     expect(scan.more).toBe(0);
   });
 
+  it("takes secrets out of the prompt before it leaves the chat", () => {
+    trace("web", PREV_START + 10, [user("Deploy with token=abc123secretvalue and key sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUV"), tool("Bash")]);
+    const [chat] = findInterruptedChats(deps(), { since: PREV_START, restartAt: RESTART }).chats;
+    expect(chat!.prompt).toContain("Deploy with token=");
+    expect(chat!.prompt).not.toContain("abc123secretvalue");
+    expect(chat!.prompt).not.toContain("sk-ant-api03");
+    expect(chat!.prompt).toContain("[REDACTED]");
+  });
+
   it("notes an approval still waiting, open cards and the chat that opened it", () => {
     trace("child", PREV_START + 20, [
       user("Fix the login bug"),

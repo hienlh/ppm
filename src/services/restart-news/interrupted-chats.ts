@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { InterruptedChat } from "../../shared/restart-news.ts";
+import { redactLogText } from "../../shared/log-redact.ts";
 
 /**
  * Which chats a restart cut off mid-turn, read from the session trace: the one record that says,
@@ -95,6 +96,14 @@ export interface InterruptedScan {
   more: number;
 }
 
+/**
+ * A user's words leave their chat here: into the Assistant's context, and from there possibly onto
+ * Telegram. Secrets (tokens, passwords, keys) are taken out first; names and paths stay, since the
+ * Assistant needs them to say which chat is which.
+ */
+const ONLY_SECRETS = { home: false, email: false, chats: false } as const;
+const withoutSecrets = (text: string | null): string | null => (text ? redactLogText(text, ONLY_SECRETS) : text);
+
 const firstLine = (text: string | null, max: number): string | undefined => {
   const line = (text ?? "").split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0);
   if (!line) return undefined;
@@ -134,7 +143,7 @@ export function cutOffTurn(rows: readonly TurnRow[]): { prompt?: string; activit
     if (row.type === "user_message") {
       const newest = rows[0]!;
       return {
-        prompt: firstLine(row.text, 160), activity: activityOf(newest), lastAt: newest.ts,
+        prompt: firstLine(withoutSecrets(row.text), 160), activity: activityOf(newest), lastAt: newest.ts,
         ...(pendingApproval ? { pendingApproval } : {}), origin: row.origin, providerId: row.provider_id ?? newest.provider_id,
       };
     }
