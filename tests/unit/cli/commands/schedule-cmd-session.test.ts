@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { directPatch, sessionAddBody } from "../../../../src/cli/commands/schedule-cmd-write.ts";
+import { directPatch, editBody, sessionAddBody, sessionEditBody } from "../../../../src/cli/commands/schedule-cmd-write.ts";
 import { configService } from "../../../../src/services/config.service.ts";
 import { openTestDb, setDb, setSessionMetadata, setSessionProvider } from "../../../../src/services/db.service.ts";
 import * as db from "../../../../src/services/scheduler-db.service.ts";
@@ -44,5 +44,19 @@ describe("ppm schedule add --session", () => {
     db.setSessionSchedulePaused(created.id, "paused for the test");
     await directPatch(db, db.getSchedule(created.id)!, { enabled: true });
     expect(db.getSchedule(created.id)!.paused_reason).toBeNull();
+  });
+});
+
+describe("ppm schedule edit on a schedule delivered into a chat", () => {
+  it("names the flags it did not use and sends only the rest", () => {
+    const opts = { name: "Renamed", project: "elsewhere", maxTurns: "3", timeout: "1000", permissionMode: "plan" };
+    const { body, ignored } = sessionEditBody(opts, editBody(opts, "/somewhere/else"));
+    expect(ignored).toEqual(["--project", "--permission-mode", "--max-turns", "--timeout"]);
+    expect(body).toEqual({ name: "Renamed" });
+  });
+
+  it("ignores nothing when only flags that apply are given", () => {
+    const opts = { cron: "0 8 * * *", prompt: "New prompt" };
+    expect(sessionEditBody(opts, editBody(opts))).toEqual({ body: { cron_expr: "0 8 * * *", prompt: "New prompt" }, ignored: [] });
   });
 });

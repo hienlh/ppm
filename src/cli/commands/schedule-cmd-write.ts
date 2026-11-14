@@ -70,6 +70,29 @@ export function editBody(opts: EditOpts, projectPath?: string): Record<string, u
   return Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined));
 }
 
+/** `edit` flags a schedule delivered into a chat has no use for: it runs on that chat's settings. */
+const NOT_FOR_SESSION: ReadonlyArray<[keyof EditOpts, string, string]> = [
+  ["project", "--project", "project_path"],
+  ["permissionMode", "--permission-mode", "permission_mode"],
+  ["maxTurns", "--max-turns", "max_turns"],
+  ["timeout", "--timeout", "timeout_ms"],
+];
+
+/**
+ * The `edit` body for a schedule delivered into a chat, without the flags that do not apply to
+ * one, and those flags by name so the command can say it did not use them.
+ */
+export function sessionEditBody(opts: EditOpts, body: Record<string, unknown>): { body: Record<string, unknown>; ignored: string[] } {
+  const kept = { ...body };
+  const ignored: string[] = [];
+  for (const [opt, flag, field] of NOT_FOR_SESSION) {
+    if (opts[opt] === undefined) continue;
+    ignored.push(flag);
+    delete kept[field];
+  }
+  return { body: kept, ignored };
+}
+
 interface SessionAddOpts {
   session: string; name?: string; cron?: string; prompt?: string; tz?: string; once?: boolean; disabled?: boolean;
   project?: string; script?: string; maxTurns?: string; timeout?: string;
@@ -171,7 +194,14 @@ export function registerScheduleWriteCommands(schedule: Command, loadDeps: () =>
       const { db } = await loadDeps();
       const current = db.getSchedule(Number(id));
       if (!current) fail(`Schedule not found: ${id}`);
-      const body = editBody(opts, opts.project ? await projectPathOf(opts.project) : undefined);
+      let body = editBody(opts, opts.project && current!.kind !== "session" ? await projectPathOf(opts.project) : undefined);
+      if (current!.kind === "session") {
+        const checked = sessionEditBody(opts, body);
+        body = checked.body;
+        if (checked.ignored.length) {
+          console.error(`${C.yellow}!${C.reset} Ignored ${checked.ignored.join(", ")}: schedule #${id} runs in its chat, on that chat's settings`);
+        }
+      }
       if (!Object.keys(body).length) fail("Nothing to change; pass at least one option (see --help)");
       await scheduleWrite("PATCH", `/schedules/${id}`, body, () => directPatch(db, current!, body));
       console.log(`${C.green}✓${C.reset} Schedule #${id} updated`);
