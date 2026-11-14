@@ -1,7 +1,7 @@
 /**
  * Consecutive failures of one session schedule, and the wait before it is tried again. A failure
  * here is one that may pass — the session would not resume, the message could not be pushed, a
- * one-shot's turn failed before it ran — so the fire stays pending and is tried again after
+ * turn failed before it did anything — so the fire stays pending and is tried again after
  * 1, 5, then 15 minutes; one failure more than there are waits and the schedule is paused.
  *
  * Kept in memory: a restart forgets the count, and the pending fire is handed over again then.

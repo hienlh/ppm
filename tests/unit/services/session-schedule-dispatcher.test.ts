@@ -270,6 +270,98 @@ describe("a one-shot whose turn failed", () => {
   });
 });
 
+describe("a turn that failed after it had started working", () => {
+  function quick(): void {
+    dispatcher.stop();
+    dispatcher = new SessionScheduleDispatcher(env({ retryBackoffMs: [15, 15, 15] }));
+    dispatcher.start();
+  }
+  const streamed = (event: unknown) => lifecycle.emit("stream", { sessionId: CHAT, event });
+  const overloaded = () => lifecycle.emit("turn_ended", {
+    sessionId: CHAT, outcome: "failed", error: "Overloaded", projectName: "proj", providerId: "claude",
+  });
+
+  it("is not sent again once a tool ran: the one-shot pauses, with one notice", async () => {
+    quick();
+    const id = pending({ recurring: false, name: "tag the release" });
+    await dispatcher.due(id);
+    streamed({ type: "tool_use", tool: "Bash", input: { command: "git push --tags" }, toolUseId: "t1" });
+    overloaded();
+    await Bun.sleep(60);
+
+    expect(sent).toHaveLength(1);
+    const paused = getSchedule(id)!;
+    expect(paused.paused_reason).toBe("The scheduled turn failed partway (Overloaded); resume it to try again.");
+    expect(paused.pending_since).toBeNull();
+    expect(listScheduleRuns(id)[0]).toMatchObject({ status: "error", error: "Overloaded" });
+    expect(notices.map((n) => n.kind)).toEqual(["failed"]);
+    expect(notices[0]!.title).toBe("Schedule failed partway: tag the release");
+  });
+
+  it("is not sent again once it had written part of its answer", async () => {
+    quick();
+    const id = pending({ recurring: false });
+    await dispatcher.due(id);
+    streamed({ type: "thinking", content: "Let me look." });
+    streamed({ type: "text", content: "Pushing the tag now." });
+    overloaded();
+    await Bun.sleep(60);
+
+    expect(sent).toHaveLength(1);
+    expect(getSchedule(id)!.paused_reason).not.toBeNull();
+    expect(notices.map((n) => n.kind)).toEqual(["failed"]);
+  });
+
+  it("leaves a recurring schedule on, waiting for its next fire, and tells the user once", async () => {
+    quick();
+    const id = pending();
+    await dispatcher.due(id);
+    streamed({ type: "tool_use", tool: "Bash", input: {}, toolUseId: "t1" });
+    overloaded();
+    await Bun.sleep(60);
+
+    expect(sent).toHaveLength(1);
+    const after = getSchedule(id)!;
+    expect(after.enabled).toBe(1);
+    expect(after.paused_reason).toBeNull();
+    expect(after.pending_since).toBeNull();
+    expect(listScheduleRuns(id)[0]!.status).toBe("error");
+    expect(notices.map((n) => n.kind)).toEqual(["failed"]);
+    expect(notices[0]!.body).toContain("It runs again at its next time.");
+  });
+
+  it("sends a recurring schedule again when its turn failed before doing anything", async () => {
+    quick();
+    const id = pending();
+    await dispatcher.due(id);
+    // Thinking alone is not work anyone can see.
+    streamed({ type: "thinking", content: "Let me look." });
+    overloaded();
+    expect(getSchedule(id)!.pending_since).not.toBeNull();
+    expect(notices.map((n) => n.kind)).toEqual(["retrying"]);
+
+    await kitUntil(() => sent.length === 2);
+    turnEnded("done");
+    expect(getSchedule(id)!.pending_since).toBeNull();
+    expect(listScheduleRuns(id).map((r) => r.status).sort()).toEqual(["done", "error"]);
+  });
+
+  it("does not count what streamed for the turn a queued message waited behind", async () => {
+    quick();
+    reply = (s) => ({ ok: true, sessionId: s.sessionId, delivered: "queued" });
+    queuedAnswer = true;
+    const id = pending({ recurring: false });
+    await dispatcher.due(id);
+    // The person's own turn, ahead of it, calls a tool.
+    streamed({ type: "tool_use", tool: "Bash", input: {}, toolUseId: "t0" });
+    streamed({ type: "turn_started", clientMessageId: sent[0]!.opts.clientMessageId });
+    overloaded();
+
+    expect(getSchedule(id)!.paused_reason).toBeNull();
+    expect(notices.map((n) => n.kind)).toEqual(["retrying"]);
+  });
+});
+
 describe("a busy chat", () => {
   it("waits for the running turn to end, then sends exactly once", async () => {
     live = busyLive();

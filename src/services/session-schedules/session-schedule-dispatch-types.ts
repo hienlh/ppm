@@ -17,7 +17,7 @@ export interface NoticeChat {
 
 /** Something the user should hear about schedules, through the ordinary notification service. */
 export interface ScheduleNotice extends NoticeChat {
-  kind: "waiting" | "paused" | "retrying";
+  kind: "waiting" | "paused" | "retrying" | "failed";
   /** The notification slot it takes: a later notice with the same key replaces it. */
   key: string;
   /** The schedules it is about; a chat that cannot be reached pauses all of its at once. */
@@ -65,6 +65,11 @@ export interface Flight {
   runId: number | null;
   /** The provider named the turn this message opened (`turn_started` with its id). */
   opened?: true;
+  /**
+   * Its turn already showed work (an answer's text, a tool call) before it ended. A turn that
+   * fails after that is never sent again: what its tools did would happen twice.
+   */
+  worked?: true;
   /** A turn end heard while still sending. */
   earlyEnd?: ChatLifecycleEvents["turn_ended"];
   /** The next look at the chat's live state while queued or started. */

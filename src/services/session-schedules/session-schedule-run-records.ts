@@ -7,7 +7,8 @@
 import type { ChatLifecycleEvents } from "../chat-control/chat-lifecycle.ts";
 import { createLogger } from "../logger.ts";
 import {
-  clearSessionSchedulePending, deleteSchedule, insertScheduleRun, setSessionSchedulePaused, updateSchedule, updateScheduleRun,
+  clearSessionSchedulePending, deleteSchedule, insertScheduleRun, setSessionSchedulePaused, setSessionSchedulePending, updateSchedule,
+  updateScheduleRun,
 } from "../scheduler-db.service.ts";
 import type { Schedule } from "../../types/scheduler.ts";
 import { describeTurnStop } from "../../shared/turn-stop.ts";
@@ -28,6 +29,15 @@ export function recordRunStarted(schedule: Schedule, sessionId: string, at: numb
   updateSchedule(schedule.id, { last_run_at: new Date(at).toISOString() });
   log.info(`Schedule ${schedule.id} (${schedule.name}) started a turn in session ${sessionId}`);
   return insertScheduleRun(schedule.id, sessionId, "running");
+}
+
+/**
+ * A recurring schedule's turn failed before it did anything: the fire its turn spent is pending
+ * again, so the retry sends it. A newer fire already pending is kept as it is; either way one
+ * pending fire stands for both.
+ */
+export function restoreRecurringFire(schedule: Schedule, since: string): void {
+  setSessionSchedulePending(schedule.id, since, schedule.next_fire_at);
 }
 
 /** A one-shot's turn ended without failing: its only fire is delivered, and it goes, runs and all. */

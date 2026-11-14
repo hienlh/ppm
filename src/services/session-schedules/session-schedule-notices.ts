@@ -27,6 +27,22 @@ export function retryingNotice(schedule: Schedule, chat: NoticeChat, reason: str
 }
 
 /**
+ * The schedule's turn failed after it had started working (written an answer, called a tool), so
+ * it is not sent again: a one-shot is paused until someone turns it back on, a recurring one runs
+ * again at its next time.
+ */
+export function failedPartwayNotice(schedule: Schedule, chat: NoticeChat, why: string): ScheduleNotice {
+  const after = schedule.recurring
+    ? "It runs again at its next time."
+    : "It is paused; turn it back on to run it again.";
+  return {
+    kind: "failed", key: `failed:${schedule.id}`, schedules: [schedule], ...chat,
+    title: `Schedule failed partway: ${schedule.name}`,
+    body: `Its turn failed after it had started working: ${why}. PPM did not send it again, so nothing it did runs twice. ${after}`,
+  };
+}
+
+/**
  * Schedules that stopped firing until they are turned back on. Several paused at once for one
  * chat (it was deleted while they waited) are one notice, not one each.
  */

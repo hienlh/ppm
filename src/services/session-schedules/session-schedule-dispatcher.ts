@@ -21,7 +21,9 @@ import {
 } from "./session-schedule-dispatch-types.ts";
 import { watchFlight } from "./session-schedule-flight-watch.ts";
 import { scheduleRunReference } from "./session-schedule-run-reference.ts";
-import { recordOneShotDelivered, recordRunEnded, recordRunStarted, turnFailed } from "./session-schedule-run-records.ts";
+import {
+  recordOneShotDelivered, recordRunEnded, recordRunStarted, restoreRecurringFire, turnFailed,
+} from "./session-schedule-run-records.ts";
 import { SessionScheduleSetbacks } from "./session-schedule-setbacks.ts";
 import { SessionScheduleWaitingList } from "./session-schedule-waiting-list.ts";
 import { broadcastSchedulesChanged } from "./session-schedules-changed.ts";
@@ -134,6 +136,8 @@ export class SessionScheduleDispatcher {
     // this message's own is its run: a turn ending says nothing, since Stop may have taken the
     // queued message down with the turn it waited behind.
     if (flight.opened) return this.begin(current, flight);
+    // What streamed while it went in belonged to the turn it now waits behind.
+    flight.worked = undefined;
     flight.phase = "queued";
     this.watch(flight, early ? this.env.queuedCheckMs : this.env.flightCheckMs);
   }
@@ -151,10 +155,19 @@ export class SessionScheduleDispatcher {
     else this.end(sessionId, flight, p);
   }
 
-  /** The provider names the turn a message opened (`turn_started`), which may come before any end. */
+  /**
+   * The provider names the turn a message opened (`turn_started`), which may come before any end;
+   * and a scheduled turn's text or tool calls mark it as having done something.
+   */
   private onStream(p: ChatLifecycleEvents["stream"]): void {
     if (this.flights.size === 0) return;
-    const ev = p.event as { type?: unknown; clientMessageId?: unknown } | null;
+    const ev = p.event as { type?: unknown; clientMessageId?: unknown; content?: unknown } | null;
+    if (showsWork(ev)) {
+      // Looked up by the id the event carries, not resolved: this runs for every streamed chunk.
+      const flight = this.flights.get(p.sessionId);
+      if (flight && (flight.phase !== "queued" || flight.opened)) flight.worked = true;
+      return;
+    }
     if (ev?.type !== "turn_started" || typeof ev.clientMessageId !== "string") return;
     const sessionId = this.env.canonical(p.sessionId);
     const flight = this.flights.get(sessionId);
@@ -195,15 +208,15 @@ export class SessionScheduleDispatcher {
     } catch (e) {
       log.warn(`could not record the run of schedule ${flight.schedule.id}: ${(e as Error).message}`);
     }
-    // A recurring fire is spent once its turn opens. A one-shot's counts only once its turn ran.
-    if (flight.schedule.recurring) this.setbacks.succeeded(flight.schedule.id);
     broadcastSchedulesChanged();
   }
 
   /**
-   * The schedule's turn is over. A one-shot goes only when that turn did not fail; one that failed
-   * keeps its fire pending and is tried again. `unheard`: PPM closed the turn itself, having found
-   * the chat idle with no end heard; the turn did open, so a one-shot counts as delivered.
+   * The schedule's turn is over. A one-shot goes only when that turn did not fail. A failed turn
+   * that did nothing visible (no text, no tool call) is tried again, its fire pending; one that
+   * failed after it had started working is not, since its tools may already have acted
+   * (`failedPartway`). `unheard`: PPM closed the turn itself, having found the chat idle with no end
+   * heard; the turn did open, so a one-shot counts as delivered.
    */
   private end(sessionId: string, flight: Flight, p: ChatLifecycleEvents["turn_ended"], unheard = false): void {
     if (flight.check) clearTimeout(flight.check);
@@ -213,17 +226,27 @@ export class SessionScheduleDispatcher {
         log.warn(`could not record the end of schedule ${flight.schedule.id}'s run: ${(e as Error).message}`);
       }
     }
-    const oneShot = flight.schedule.recurring ? null : getSchedule(flight.schedule.id);
-    if (oneShot && !unheard && turnFailed(p)) {
+    const schedule = getSchedule(flight.schedule.id);
+    if (schedule && !unheard && turnFailed(p)) {
       const why = String(p.error ?? p.stop?.message.split("\n")[0] ?? `the turn ${p.outcome}`).replace(/\.$/, "");
-      this.setbacks.failed(sessionId, oneShot, flight.chat, `Its turn failed: ${why}.`, true);
-    } else {
-      if (oneShot) {
-        try { recordOneShotDelivered(oneShot, sessionId); } catch (e) {
-          log.warn(`could not remove one-shot schedule ${oneShot.id}: ${(e as Error).message}`);
+      try {
+        if (flight.worked || p.finalText?.trim()) {
+          this.setbacks.failedPartway(schedule, flight.chat, why);
+        } else {
+          if (schedule.recurring) restoreRecurringFire(schedule, flight.schedule.pending_since ?? new Date(this.env.now()).toISOString());
+          this.setbacks.failed(sessionId, getSchedule(schedule.id) ?? schedule, flight.chat, `Its turn failed: ${why}.`, true);
         }
-        this.setbacks.succeeded(oneShot.id);
+      } catch (e) {
+        log.warn(`could not record how schedule ${schedule.id}'s failed turn is handled: ${(e as Error).message}`);
       }
+    } else {
+      if (schedule && !schedule.recurring) {
+        try { recordOneShotDelivered(schedule, sessionId); } catch (e) {
+          log.warn(`could not remove one-shot schedule ${schedule.id}: ${(e as Error).message}`);
+        }
+      }
+      // Counted only once the turn is over: a turn that fails before doing anything is retried.
+      this.setbacks.succeeded(flight.schedule.id);
       broadcastSchedulesChanged();
     }
     this.wakeSoon(sessionId);
@@ -261,4 +284,10 @@ export class SessionScheduleDispatcher {
       map.delete(oldId);
     }
   }
+}
+
+/** An event that shows the turn doing something: a piece of its answer, or a tool call. */
+function showsWork(ev: { type?: unknown; content?: unknown } | null): boolean {
+  if (ev?.type === "tool_use") return true;
+  return ev?.type === "text" && typeof ev.content === "string" && ev.content.trim() !== "";
 }

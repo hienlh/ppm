@@ -7,7 +7,7 @@
 import { createLogger } from "../logger.ts";
 import type { Schedule } from "../../types/scheduler.ts";
 import type { NoticeChat, SessionScheduleDispatchEnv } from "./session-schedule-dispatch-types.ts";
-import { heldUpNotice, pausedNotice, retryingNotice } from "./session-schedule-notices.ts";
+import { failedPartwayNotice, heldUpNotice, pausedNotice, retryingNotice } from "./session-schedule-notices.ts";
 import { describeWait, ScheduleRetryBackoff } from "./session-schedule-retry-backoff.ts";
 import { pauseSessionSchedule } from "./session-schedule-run-records.ts";
 import type { SessionScheduleWaitingList } from "./session-schedule-waiting-list.ts";
@@ -73,6 +73,20 @@ export class SessionScheduleSetbacks {
       log.warn(`Schedule ${schedule.id} (${schedule.name}) failure ${outcome.failures}: ${reason} Trying again in ${describeWait(outcome.delayMs)}`);
       if (tellFirst && outcome.failures === 1) this.env.notify(retryingNotice(schedule, chat, reason, outcome.delayMs));
     }
+    broadcastSchedulesChanged();
+  }
+
+  /**
+   * Its turn failed after it had already done something visible. Sending the prompt again would
+   * redo whatever its tools did, so it is not retried: a one-shot is paused (its fire given up), a
+   * recurring one waits for its next fire. The chat itself took the turn, so its failure count
+   * starts again from one.
+   */
+  failedPartway(schedule: Schedule, chat: NoticeChat, why: string): void {
+    this.backoff.succeeded(schedule.id);
+    if (!schedule.recurring) pauseSessionSchedule(schedule, `The scheduled turn failed partway (${why}); resume it to try again.`);
+    else log.warn(`Schedule ${schedule.id} (${schedule.name}) failed partway: ${why}. Not sent again; it waits for its next fire`);
+    this.env.notify(failedPartwayNotice(schedule, chat, why));
     broadcastSchedulesChanged();
   }
 

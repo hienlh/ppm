@@ -114,8 +114,15 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   zone the 5-field cron is read in, both for firing and for the "never fires" check.
   `recurring = 0` fires at the next match. Its fire stays pending through its turn, and the
   schedule deletes itself once that turn has ended without failing (a turn the user stopped, or
-  one that hit Max Turns, counts as run). A failed turn records the run as an error, tells the
-  user once, and the fire goes again on the backoff below.
+  one that hit Max Turns, counts as run).
+- **A failed turn.** A turn the provider ended with an error is sent again only if it did nothing
+  anyone could see: no text of its answer and no tool call (`worked` on the flight, set from the
+  chat's `stream` events). Such a failure records the run as an error, tells the user once, and the
+  fire goes again on the backoff below, for a one-shot and a recurring schedule alike. A turn that
+  failed after it had started working is never sent again, since its tools may already have
+  acted: the run is recorded as an error, one notification goes out, and a one-shot is paused
+  ("failed partway; resume it to try again") while a recurring one stays on and waits for its
+  next fire.
   A name is stored on one line with single spaces, as the run block carries it.
 - **The chat's own settings.** The turn runs in the chat's permission mode, model and account.
   `chatControl` refuses a `permissionMode` with origin `schedule`, because a mode sent with a
@@ -138,7 +145,8 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   `session-schedule-save.ts`, so no door accepts what another refuses.
 - **Notifications.** The turn notifies like any chat turn. The schedule itself sends a `schedule`
   notification only when it is held up behind a pending card (once per pending period, dropped if
-  the card is answered first), when a one-shot's turn failed (once), and when it is paused.
+  the card is answered first), when a turn failed before doing anything (once), when a turn
+  failed partway, and when it is paused.
 - **Open PPMs follow along.** Whatever delivery changes on its own — a fire coming due, a turn
   taking it, a run ending, a one-shot going, a pause, a renamed or deleted chat — broadcasts
   `schedules:changed` on `/ws/global` (`broadcastSchedulesChanged`, coalesced over 50 ms), so the
