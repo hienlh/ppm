@@ -22,7 +22,7 @@ type Props = { card: AssistantCard; onCard?: (card: AssistantCard) => void };
 type Question = NonNullable<AssistantCard["payload"]["questions"]>[number];
 
 const OpenChat = ({ card }: { card: AssistantCard }) => (
-  <CardButton variant="ghost" secondary label="Open manager chat" onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
+  <CardButton variant="ghost" secondary title="Open manager chat" onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
     <ExternalLink className="size-3.5" />Open chat
   </CardButton>
 );

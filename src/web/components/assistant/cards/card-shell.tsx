@@ -69,10 +69,10 @@ export function cardStatusLine(card: AssistantCard): string | null {
   }
 }
 
-export function CardButton({ children, onClick, variant = "default", disabled, secondary, label }: {
+export function CardButton({ children, onClick, variant = "default", disabled, secondary, title }: {
   children: ReactNode; onClick: () => void; variant?: "primary" | "default" | "danger" | "ghost"; disabled?: boolean;
-  /** The accessible name, where the visible text is a short form of it. */
-  label?: string;
+  /** A tooltip with the long form of a short label ("Open chat" → "Open manager chat"). */
+  title?: string;
   /** A lesser action (Open manager chat, Dismiss): quieter, and one of two per row on a phone. */
   secondary?: boolean;
 }) {
@@ -81,11 +81,10 @@ export function CardButton({ children, onClick, variant = "default", disabled, s
       type="button"
       disabled={disabled}
       onClick={onClick}
-      aria-label={label}
-      title={label}
+      title={title}
       className={cn(
         "inline-flex h-11 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors disabled:opacity-50 md:h-8 md:w-auto md:rounded-md md:text-xs",
-        secondary && "text-[13px] text-text-secondary max-md:h-10 md:px-2",
+        secondary && "text-[13px] text-text-secondary md:px-2",
         variant === "primary" && "bg-primary text-primary-foreground shadow-sm can-hover:hover:bg-primary/90",
         variant === "default" && "border border-border bg-surface text-text-primary can-hover:hover:bg-surface-elevated",
         variant === "danger" && "border border-error/40 text-error can-hover:hover:bg-error/10",
@@ -97,7 +96,8 @@ export function CardButton({ children, onClick, variant = "default", disabled, s
   );
 }
 
-/** How tall a closed card's text is before "Show more" (about eight lines). */
+/** How tall a closed card's text is before "Show more" (about eight lines), in rem. */
+const FOLDED_REM = 11.25;
 const FOLDED_TEXT = "max-h-[11.25rem]";
 
 /**
@@ -108,22 +108,34 @@ export function CardText({ text, fold, className }: { text: string; fold: boolea
   const box = useRef<HTMLParagraphElement>(null);
   const [overflows, setOverflows] = useState(false);
   const [open, setOpen] = useState(false);
+  // Folded only once the text is known to be longer than the fold, and measured again whenever
+  // the box changes size: a card that mounts in a hidden tab measures 0, and a clamp applied on
+  // that reading would hide the rest of the text with no "Show more" to reach it.
   useLayoutEffect(() => {
     const el = box.current;
-    setOverflows(!!el && fold && el.scrollHeight > el.clientHeight + 2);
+    if (!el || !fold) { setOverflows(false); return; }
+    const measure = () => {
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      setOverflows(el.scrollHeight > rem * FOLDED_REM + 2);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const watcher = new ResizeObserver(measure);
+    watcher.observe(el);
+    return () => watcher.disconnect();
   }, [text, fold]);
-  const folded = fold && !open;
+  const folded = fold && !open && overflows;
   return (
     <div className="relative">
       <p
         ref={box}
         className={cn("whitespace-pre-wrap break-words text-text-secondary", folded && `${FOLDED_TEXT} overflow-hidden`, className)}
         data-card-text=""
-        data-folded={folded && overflows ? "" : undefined}
+        data-folded={folded ? "" : undefined}
       >
         {text}
       </p>
-      {folded && overflows && <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-surface to-transparent" />}
+      {folded && <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-surface to-transparent" />}
       {fold && (overflows || open) && (
         <button
           type="button"
@@ -189,19 +201,20 @@ export function CardShell({ card, look, children, actions, secondary, error, met
           // narrow too. Narrow, the answers take one row and the lesser actions another (above
           // them on a phone, where the answers belong under the thumb); wide, all share one row.
           <div
-            className={cn(
-              "flex flex-col gap-2 border-t border-border bg-surface px-3.5 py-2.5 @[27rem]/card:flex-row @[27rem]/card:items-center",
-              sticky && "sticky bottom-0 z-[1]",
-            )}
+            className={cn("border-t border-border bg-surface px-3.5 py-2.5", sticky && "sticky bottom-0 z-[1]")}
             data-card-actions=""
             data-sticky={sticky ? "" : undefined}
           >
-            {/* The first answer (OK, Allow, Send) sits on the right on a phone, under the thumb. */}
-            {actions && <div className="order-2 flex flex-row-reverse gap-2 *:flex-1 md:order-1 md:flex-row md:*:flex-none">{actions}</div>}
-            {secondary && <div className="order-1 grid auto-cols-fr grid-flow-col gap-2 md:order-2 md:flex md:gap-1 @[27rem]/card:ml-auto">{secondary}</div>}
+            {/* Above the buttons, so a failed answer is said where the user is looking. */}
+            {error && <p className="pb-2 text-xs text-error" role="alert">{error}</p>}
+            <div className="flex flex-col gap-2 @[27rem]/card:flex-row @[27rem]/card:items-center">
+              {/* The first answer (OK, Allow, Send) sits on the right on a phone, under the thumb. */}
+              {actions && <div className="order-2 flex flex-row-reverse gap-2 *:flex-1 md:order-1 md:flex-row md:*:flex-none">{actions}</div>}
+              {secondary && <div className="order-1 grid auto-cols-fr grid-flow-col gap-2 md:order-2 md:flex md:gap-1 @[27rem]/card:ml-auto">{secondary}</div>}
+            </div>
           </div>
         )}
-      {error && <p className="px-3.5 pb-2.5 text-xs text-error" role="alert">{error}</p>}
+      {error && (status || !(actions || secondary)) && <p className="px-3.5 pb-2.5 text-xs text-error" role="alert">{error}</p>}
     </article>
   );
   return <CardMenu card={card}>{article}</CardMenu>;

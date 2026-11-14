@@ -20,7 +20,7 @@ export function OutcomeCard({ card, onCard }: Props) {
       look={failed ? { label: "Failed", Icon: XCircle, tone: "fail" } : { label: "Done", Icon: CircleCheckIcon, tone: "ok" }}
       error={error}
       actions={(
-        <CardButton label="Open manager chat" onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
+        <CardButton title="Open manager chat" onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
           <ExternalLink className="size-3.5" />Open chat
         </CardButton>
       )}

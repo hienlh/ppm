@@ -33,20 +33,19 @@ afterEach(async () => {
   for (const s of spies.splice(0)) s.mockRestore();
 });
 
-// A button is named by its accessible name: "Open chat" on screen is "Open manager chat".
-const buttons = () => [...view!.container.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
+const buttons = () => [...view!.container.querySelectorAll("button")].map((b) => b.textContent?.trim());
 
 describe("assistant cards", () => {
   it("offers Allow on an approval only when the whole request is shown", async () => {
     const deciding = { kind: "command", title: "Bash", facts: [], text: "npm publish", complete: true };
     view = await mount(<AssistantCard card={base({ kind: "approval", payload: { requestId: "r", deciding } })} />);
-    expect(buttons()).toEqual(["Allow", "Deny", "Open manager chat"]);
+    expect(buttons()).toEqual(["Allow", "Deny", "Open chat"]);
     expect(view.container.querySelector("[data-card-command]")?.textContent).toBe("npm publish");
     await click([...view.container.querySelectorAll("button")].find((b) => b.textContent?.includes("Allow"))!);
     expect(posts).toEqual([{ url: "/api/assistant/cards/11111111-1111-1111-1111-111111111111/answer", body: { decision: "allow" } }]);
     await view.unmount();
     view = await mount(<AssistantCard card={base({ kind: "approval", payload: { requestId: "r", deciding: { ...deciding, complete: false, incompleteReason: "Cut short." } } })} />);
-    expect(buttons()).toEqual(["Deny", "Open manager chat"]);
+    expect(buttons()).toEqual(["Deny", "Open chat"]);
     expect(view.container.textContent).toContain("Cut short.");
   });
 
@@ -60,7 +59,7 @@ describe("assistant cards", () => {
     expect(draft.textContent).toContain("Hi <b>there</b>⟨U+202E⟩");
     expect(draft.querySelector("b")).toBeNull();
     // The server did not offer an OK on this card: only the user's own words, through Reply.
-    expect(buttons()).toEqual(["Reply", "Open manager chat", "Dismiss"]);
+    expect(buttons()).toEqual(["Reply", "Open chat", "Dismiss"]);
     // In the stream the buttons never stick: they would float over the messages below.
     expect(view.container.querySelector("[data-card-actions]")?.hasAttribute("data-sticky")).toBe(false);
   });
@@ -70,7 +69,7 @@ describe("assistant cards", () => {
     view = await mount(<AssistantCard card={base({
       kind: "needs_decision", title: "Slack draft", okOffered: true, payload: { draft: { to: "#devs", text: "Shipping today.", sha256: sha } },
     })} />);
-    expect(buttons()).toEqual(["OK, send", "Reply", "Open manager chat", "Dismiss"]);
+    expect(buttons()).toEqual(["OK, send", "Reply", "Open chat", "Dismiss"]);
     await click([...view.container.querySelectorAll("button")].find((b) => b.textContent?.includes("OK, send"))!);
     expect(posts[0]!.url).toBe("/api/assistant/cards/11111111-1111-1111-1111-111111111111/ok");
     expect(posts[0]!.body).toMatchObject({ draftSha256: sha });
@@ -145,12 +144,36 @@ describe("assistant cards", () => {
     expect(posts[0]!.body).toEqual({ answersById: { q1: ["Merge, off by default (Recommended)"], q2: ["#88", "#93"] } });
   });
 
-  it("folds the long text of a card that no longer waits behind Show more", async () => {
+  it("folds long text only once it is measured longer than the fold, behind Show more", async () => {
     const { CardText } = await import("../../../src/web/components/assistant/cards/card-shell");
-    view = await mount(<><CardText text="open" fold={false} /><CardText text="closed" fold /></>);
-    const [open, closed] = [...view.container.querySelectorAll("[data-card-text]")];
-    expect(open!.className).not.toContain("max-h-");
-    expect(closed!.className).toContain("max-h-[11.25rem]");
+    // A text measured at 0 (a card mounted in a hidden tab) is never clamped with no way to open it.
+    view = await mount(<CardText text="closed" fold />);
+    expect(view.container.querySelector("[data-card-text]")!.className).not.toContain("max-h-");
+    expect(view.container.querySelector("[data-card-text-toggle]")).toBeNull();
+    await view.unmount();
+    const real = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get: () => 900 });
+    try {
+      view = await mount(<><CardText text="open" fold={false} /><CardText text="closed" fold /></>);
+      const [open, closed] = [...view.container.querySelectorAll("[data-card-text]")];
+      expect(open!.className).not.toContain("max-h-");
+      expect(closed!.className).toContain("max-h-[11.25rem]");
+      const toggle = view.container.querySelector("[data-card-text-toggle]")!;
+      expect(toggle.textContent).toBe("Show more");
+      await click(toggle);
+      expect(closed!.className).not.toContain("max-h-");
+      expect(toggle.textContent).toBe("Show less");
+    } finally {
+      if (real) Object.defineProperty(HTMLElement.prototype, "scrollHeight", real);
+      else delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+    }
+  });
+
+  it("says a failed answer inside the button row, where the user is looking", async () => {
+    spies.push(spyOn(api, "post").mockImplementation((async () => { throw new Error("Chats are not available in this PPM process"); }) as never));
+    view = await mount(<AssistantCard card={base({ kind: "needs_decision", okOffered: true })} />);
+    await click([...view.container.querySelectorAll("button")].find((b) => b.textContent === "OK")!);
+    expect(view.container.querySelector("[data-card-actions] [role=alert]")?.textContent).toBe("Chats are not available in this PPM process");
   });
 
   it("draws a held rules change in file order and offers Approve only for the whole change", async () => {

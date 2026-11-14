@@ -1,8 +1,8 @@
 /**
  * A card's menu: right-click on a desktop, long press → bottom sheet on a phone (the adaptive
  * menu, which disarms its press on `touchcancel`, so a scroll that starts on a card opens
- * nothing). It holds Reply (the user's own words to the card's manager chat) and, on a phone, the
- * actions that leave the button row there: Open manager chat and Dismiss.
+ * nothing). It repeats the card's lesser actions: Reply (the user's own words to the card's
+ * manager chat), Open manager chat and Dismiss.
  */
 import type { ReactNode } from "react";
 import { toast } from "sonner";

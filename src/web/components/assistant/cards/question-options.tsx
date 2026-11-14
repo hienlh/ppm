@@ -35,7 +35,8 @@ export function QuestionOptions({ label, options, multi, chosen, disabled, onPic
         const { text, recommended } = splitRecommended(o.label);
         return (
           <button
-            key={o.label}
+            // By place: two options may carry the same label.
+            key={i}
             type="button"
             role={multi ? "checkbox" : "radio"}
             aria-checked={on}

@@ -42,8 +42,11 @@ interface Props {
 
 const NAV = "grid size-11 shrink-0 place-items-center rounded-full text-text-secondary can-hover:hover:bg-surface-elevated can-hover:hover:text-text-primary md:size-7";
 
-/** In the Assistant: a share of its own body (a size container), and never past half the screen. */
-export const ASSISTANT_SLOT_HEIGHT = "max-h-[min(42dvh,46cqh)] md:max-h-[min(50dvh,46cqh)]";
+/**
+ * In the Assistant: a share of its own body (a size container), never past half the screen, and on
+ * a phone never under 200 px, which an open keyboard would otherwise squeeze to the buttons alone.
+ */
+export const ASSISTANT_SLOT_HEIGHT = "max-h-[max(200px,min(42dvh,46cqh))] md:max-h-[min(50dvh,46cqh)]";
 
 export function WaitingCardsBar({ cards, label, focus, onCard, children, note, slotHeight = ASSISTANT_SLOT_HEIGHT }: Props) {
   const [currentId, setCurrentId] = useState<string | null>(cards[0]?.id ?? null);
@@ -151,10 +154,10 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
         // The gap under the card sits outside the scrolling box: inside it, text would show
         // through under the button row that sticks to the box's bottom.
         <div className="pb-3">
-          <div className={cn("overflow-y-auto px-3 pt-0.5", slotHeight)} data-waiting-slot="">
+          <div className={cn("overflow-y-auto px-3", slotHeight)} data-waiting-slot="">
             <div
               key={current.id}
-              className={cn("rounded-xl transition-shadow duration-300", lit && "ring-2 ring-error ring-offset-2 ring-offset-panel-2")}
+              className={cn("rounded-xl transition-shadow duration-300", lit && "ring-2 ring-inset ring-error")}
               data-waiting-card={current.id}
               data-highlighted={lit ? "" : undefined}
             >

@@ -174,7 +174,7 @@ try {
   const mgr = page.locator("[data-manager-waiting-cards]:visible").first();
   await mgr.waitFor({ timeout: 30000 });
   assert.match(await mgr.innerText(), new RegExp(DECISION.replace(/[?.]/g, "\\$&")));
-  assert.equal(await mgr.getByRole("button", { name: "Open manager chat" }).count(), 0);
+  assert.equal(await mgr.getByRole("button", { name: "Open chat" }).count(), 0, "no Open chat inside the manager chat itself");
   await k.shot("05-desktop-manager-chat-with-open-card");
   await mgr.getByRole("button", { name: "Reply" }).click();
   await mgr.locator("[data-card-reply-quote]").waitFor({ timeout: 5000 });
