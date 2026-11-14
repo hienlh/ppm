@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { ConnectionRow } from "../db.service.ts";
 import { missingLogin } from "../database/connection-login.ts";
+import { holdRequestOpen } from "../../server/helpers/hold-request-open.ts";
 import { getAdapter } from "../database/adapter-registry.ts";
 import { isReadOnlyQuery } from "../database/readonly-check.ts";
 import { detectOperation, insertQueryLog, type QueryLogInput, type QueryOperation } from "../query-audit/query-audit.service.ts";
@@ -219,9 +220,10 @@ export function createDbToolsMcpHandler(deps: {
       if (sql.length > MAX_DB_TOOL_SQL_CHARS) return textResult(`\`sql\` is longer than ${MAX_DB_TOOL_SQL_CHARS} characters; split it into smaller scripts.`, true);
       if (splitSqlScript(sql, dialectNameOf(conn.type)).length === 0) return textResult("The SQL has no statements to run: only comments or semicolons.", true);
       // open_query needs no login: the user runs its tab, and the tab asks for the login itself.
-      if (name !== OPEN_QUERY_TOOL && deps.loginNeeded && missingLogin(conn)) {
+      if (name !== OPEN_QUERY_TOOL && deps.loginNeeded) {
         try {
-          deps.loginNeeded(sessionId, conn);
+          // A config that cannot be read is the tool's own error to report, below.
+          if (missingLogin(conn)) deps.loginNeeded(sessionId, conn);
         } catch (e) {
           console.warn(`[db-tools] telling the user about ${conn.name}'s login failed: ${errorText(e)}`);
         }
@@ -247,6 +249,6 @@ const handler = createDbToolsMcpHandler({
  * lifted, as `/api/sessions-mcp` does; the approval's own timer bounds the wait instead.
  */
 export function dbToolsMcpHandler(c: Context): Promise<Response> {
-  (c.env as { timeout?: (req: Request, seconds: number) => void } | undefined)?.timeout?.(c.req.raw, 0);
+  holdRequestOpen(c, 0);
   return handler(c);
 }

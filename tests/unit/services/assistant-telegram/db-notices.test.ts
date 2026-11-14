@@ -113,6 +113,54 @@ describe("a db_execute approval on Telegram", () => {
     expect(text.length).toBeLessThan(DB_NOTICE_SQL_MAX + 800);
   });
 
+  it("hides passwords written as SQL literals, in the script and in the reason", async () => {
+    const chat = connectChat(freshChat());
+    const t = setup();
+    const sql = [
+      "CREATE ROLE reporter LOGIN PASSWORD 'Hunter2-secret';",
+      "ALTER USER app WITH ENCRYPTED PASSWORD 'S3cr3t!';",
+      "CREATE USER 'ro'@'%' IDENTIFIED BY 'mysqlPw123';",
+      "ALTER USER 'x'@'%' IDENTIFIED WITH caching_sha2_password BY \"plugPw\";",
+      "CREATE USER MAPPING FOR app SERVER s OPTIONS (user 'u', password 'fdwpw');",
+      "SET PASSWORD FOR 'y'@'%' = 'setPw';",
+      "SELECT PASSWORD('oldFnPw');",
+      "ALTER ROLE q PASSWORD 'it''s-quoted';",
+      "CREATE USER z IDENTIFIED BY 'back\\'slash';",
+    ].join("\n");
+    t.events.emit("approval_shown", t.shown({ input: { ...INPUT, sql, reason: "Give reporter the password 'Hunter2-secret'" } }));
+    await fake.waitFor(() => texts(fake, chat).length === 1);
+    await t.queue.whenIdle();
+    const text = texts(fake, chat)[0]!;
+    for (const pw of ["Hunter2-secret", "S3cr3t!", "mysqlPw123", "plugPw", "fdwpw", "setPw", "oldFnPw", "it''s-quoted", "s-quoted", "slash"]) {
+      expect(text).not.toContain(pw);
+    }
+    // What the statement does stays readable.
+    expect(text).toContain("CREATE ROLE reporter LOGIN PASSWORD '[REDACTED]'");
+    expect(text).toContain("CREATE USER 'ro'@'%' IDENTIFIED BY '[REDACTED]'");
+    expect(text).toContain("OPTIONS (user 'u', password '[REDACTED]')");
+  });
+
+  it("names and links the chat by the id it goes by now, after a rename", async () => {
+    const chat = connectChat(freshChat());
+    const queue = queueFor(client);
+    const events = createDbAttentionEvents();
+    const described: string[] = [];
+    const links: string[] = [];
+    const n = new AssistantTelegramDbNotices({
+      queue, events, quiet: fakeQuiet(null).deps,
+      canonical: (id) => (id === "draft" ? "thread-9" : id),
+      describe: (id) => { described.push(id); return { project: "api", providerId: "codex", title: "Fix" }; },
+      chatLink: async (_p, _pr, id) => { links.push(id); return `http://localhost:8080/c/${id}`; },
+    });
+    n.attach();
+    notices.push(n);
+    events.emit("login_needed", { sessionId: "draft", connectionId: 1, connectionName: "Pg" });
+    await fake.waitFor(() => texts(fake, chat).length === 1);
+    await queue.whenIdle();
+    expect(described).toEqual(["thread-9"]);
+    expect(links).toEqual(["thread-9"]);
+  });
+
   it("sends nothing when no chat is connected", async () => {
     const t = setup();
     t.events.emit("approval_shown", t.shown());

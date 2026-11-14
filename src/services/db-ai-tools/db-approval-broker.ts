@@ -39,7 +39,7 @@ export type DbApprovalAnswerResult =
 
 /**
  * How long the user has to answer. Every timeout above the call — the providers' MCP timeout
- * (`DB_TOOLS_TIMEOUT_MS`) and the endpoint's request (`dbToolsMcpRequestHandler`) — outlasts it.
+ * (`DB_TOOLS_TIMEOUT_MS`) and the endpoint's request (`dbToolsMcpHandler`) — outlasts it.
  */
 export const DB_APPROVAL_WAIT_MS = 30 * 60_000;
 /** How long before the approval gives up the user is reminded of it, once. */

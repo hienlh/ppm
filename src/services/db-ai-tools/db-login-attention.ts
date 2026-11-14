@@ -1,4 +1,5 @@
 import { getSessionProjectName, getSessionProvider, getSessionTitle, resolveMigratedSession } from "../db.service.ts";
+import { hasHeldLogin } from "../database/connection-login.ts";
 import { createLogger } from "../logger.ts";
 import { dbAttentionEvents, type DbAttentionBus } from "./db-attention-events.ts";
 
@@ -66,7 +67,12 @@ function notifyLoginNeeded(sessionId: string, conn: { id: number; name: string }
       title: "Database login needed",
       body: `${project || "Project"} — AI needs ${conn.name}: log in in PPM's Database panel`,
       project, sessionId, ...(providerId ? { providerId } : {}), sessionTitle,
-    }, { coalesceKey: `db-login:${conn.id}:${sessionId}` });
+    }, {
+      // Its own slot: the turn usually ends right after, and its "Chat completed" must not replace this.
+      ownKey: `db-login:${conn.id}:${sessionId}`,
+      // Someone logged in meanwhile: nothing left to tell.
+      stillUnseen: () => !hasHeldLogin(conn.id),
+    });
   }).catch((e) => {
     log.warn(`login notification for ${sessionId} not sent: ${(e as Error).message}`);
   });

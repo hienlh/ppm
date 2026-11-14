@@ -43,6 +43,12 @@ export interface BroadcastOptions {
    */
   coalesceKey?: string;
   /**
+   * Its own waiting slot and device tag, even though it names a session: for news about a
+   * session that must neither replace that session's own notification (a waiting approval) nor
+   * be replaced by it (the turn's "Chat completed" right after).
+   */
+  ownKey?: string;
+  /**
    * Called the moment the notification goes out — synchronously inside `broadcast` when
    * there is no delay — and never for one that is switched off, replaced or seen. Lets a
    * caller that folds several events into one notification know which of them were told.
@@ -81,13 +87,14 @@ export class NotificationService {
       log.debug(`Notification ${type} not sent: switched off`);
       return Promise.resolve("off");
     }
-    const tag = opts.coalesceKey;
+    const tag = opts.ownKey ?? opts.coalesceKey;
+    const ownTag = opts.ownKey !== undefined;
     if (settings.delay_seconds === 0) {
       sent(opts);
-      return this.deliver(type, payload, tag).then(() => "sent");
+      return this.deliver(type, payload, tag, ownTag).then(() => "sent");
     }
 
-    const key = payload.sessionId || opts.coalesceKey || null;
+    const key = opts.ownKey ?? (payload.sessionId || opts.coalesceKey || null);
     if (key) this.pending.get(key)?.();
     return new Promise<BroadcastOutcome>((resolve) => {
       const cancel = () => {
@@ -107,13 +114,13 @@ export class NotificationService {
           return resolve("seen");
         }
         sent(opts);
-        this.deliver(type, payload, tag).finally(() => resolve("sent"));
+        this.deliver(type, payload, tag, ownTag).finally(() => resolve("sent"));
       }, settings.delay_seconds * this.msPerSecond);
       if (key) this.pending.set(key, cancel);
     });
   }
 
-  private async deliver(type: NotificationType, event: NotificationPayload, coalesceKey?: string): Promise<void> {
+  private async deliver(type: NotificationType, event: NotificationPayload, coalesceKey?: string, ownTag = false): Promise<void> {
     const settings = resolveNotificationSettings(configService.get("notifications"));
     const payload: NotificationPayload = { ...event, providerId: event.providerId || providerOf(event.sessionId) };
     const deviceName = (configService.get("device_name") as string) || "PPM";
@@ -149,7 +156,8 @@ export class NotificationService {
             path: notificationPath(payload),
             // Same tag = the newer notification replaces the older one on the device. Right for a
             // session or a coalesce key; wrong for two Jira hits that land in the same millisecond.
-            tag: payload.sessionId ? `ppm-${payload.sessionId}`
+            tag: ownTag && coalesceKey ? `ppm-${coalesceKey}`
+              : payload.sessionId ? `ppm-${payload.sessionId}`
               : coalesceKey ? `ppm-${coalesceKey}`
               : `ppm-${type}-${crypto.randomUUID()}`,
             project: payload.project,

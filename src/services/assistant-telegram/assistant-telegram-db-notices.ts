@@ -1,7 +1,8 @@
 /**
- * Tells the user on Telegram that a chat's database tool waits on them, when they are away from
- * PPM: a `db_execute` change waiting for approval (and once more shortly before it gives up), and
- * a connection nobody has logged in to since PPM started.
+ * Tells the user on Telegram that a chat's database tool waits on them, so they learn of it when
+ * they are away from PPM: a `db_execute` change waiting for approval (and once more shortly before
+ * it gives up), and a connection nobody has logged in to since PPM started. Sent as it happens,
+ * whether or not a PPM screen shows the chat: the card itself says nothing to a phone.
  *
  * Notices only, with no Allow or Deny: approving a change takes PPM's password, and a login takes
  * the database's, and neither is ever asked for or taken on Telegram. Each notice says so, names
@@ -15,7 +16,7 @@
  */
 import { dbApprovalBroker } from "../db-ai-tools/db-approval-broker.ts";
 import { dbAttentionEvents, type DbAttentionBus, type DbAttentionEvents } from "../db-ai-tools/db-attention-events.ts";
-import { getSessionProjectName, getSessionProvider, getSessionTitle } from "../db.service.ts";
+import { getSessionProjectName, getSessionProvider, getSessionTitle, resolveMigratedSession } from "../db.service.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
 import { redactForTelegram } from "../telegram/telegram-html-format.ts";
 import { chatControl } from "../chat-control/chat-control.ts";
@@ -53,6 +54,8 @@ export interface DbNoticesDeps {
   connectedChats?: () => string[];
   events?: Pick<DbAttentionBus, "on">;
   describe?: (sessionId: string) => DescribedChat;
+  /** The id a session goes by now: Codex renames a new chat during its first turn. */
+  canonical?: (sessionId: string) => string;
   /** Quiet hours, and whether a held approval still waits (tests pass a fake clock and window). */
   quiet?: QuietHoldDeps;
 }
@@ -90,8 +93,27 @@ function where(input: Pick<DbExecuteApprovalInput, "connectionName" | "database"
   return input.database ? `${conn} (database ${name(input.database, "")})` : conn;
 }
 
+/**
+ * Passwords written as SQL literals, which the generic redaction (`name=value`, known token
+ * shapes) does not see: `PASSWORD 'x'` (PostgreSQL roles, foreign-server options, MySQL's
+ * `SET PASSWORD = 'x'` and `PASSWORD('x')`), `IDENTIFIED [WITH plugin] BY|AS [PASSWORD] 'x'`, and
+ * MySQL's `SET PASSWORD FOR 'u'@'h' = 'x'`.
+ */
+const SQL_SECRETS: readonly RegExp[] = [
+  /(\bPASSWORD\s*(?:=\s*|\(\s*)?)(['"])(?:\\[\s\S]|\2\2|(?!\2)[^\\])*\2/gi,
+  /(\bIDENTIFIED\s+(?:WITH\s+\S+\s+)?(?:BY|AS)\s+(?:PASSWORD\s+)?)(['"])(?:\\[\s\S]|\2\2|(?!\2)[^\\])*\2/gi,
+  /(\bSET\s+PASSWORD\b[^=;]*=\s*(?:PASSWORD\s*\(\s*)?)(['"])(?:\\[\s\S]|\2\2|(?!\2)[^\\])*\2/gi,
+];
+
+export function redactSqlSecrets(text: string): string {
+  let out = text;
+  for (const re of SQL_SECRETS) out = out.replace(re, (_m, keep: string, quote: string) => `${keep}${quote}[REDACTED]${quote}`);
+  return out;
+}
+
 /** Redacted first, so a cut cannot leave half a secret the redaction no longer recognises. */
-const excerpt = (text: string, max: number): string => escapeTelegramHtml(truncateText(redactForTelegram(text), max));
+const excerpt = (text: string, max: number): string =>
+  escapeTelegramHtml(truncateText(redactForTelegram(redactSqlSecrets(text)), max));
 
 const minutesLeft = (expiresAt: number, now: number): number => Math.max(1, Math.round((expiresAt - now) / 60_000));
 
@@ -129,6 +151,7 @@ export class AssistantTelegramDbNotices {
   private offs: Array<() => void> = [];
   private readonly connectedChats: () => string[];
   private readonly describe: (sessionId: string) => DescribedChat;
+  private readonly canonical: (sessionId: string) => string;
   private readonly quiet: QuietHoldDeps;
   /** Approvals shown in quiet hours, sent at their end if they still wait. */
   private readonly quietHold: QuietHold<Held>;
@@ -136,6 +159,7 @@ export class AssistantTelegramDbNotices {
   constructor(private readonly deps: DbNoticesDeps) {
     this.connectedChats = deps.connectedChats ?? (() => reachableChats().map((c) => c.chatId));
     this.describe = deps.describe ?? realDescribe;
+    this.canonical = deps.canonical ?? resolveMigratedSession;
     this.quiet = deps.quiet ?? realQuiet;
     this.quietHold = createQuietHold<Held>(this.quiet, (p) => this.send(p.sessionId, "db approval", (chat) => approvalNoticeHtml(chat, p.input, p.expiresAt, this.quiet.clock.now())), "database approval notice");
   }
@@ -181,7 +205,10 @@ export class AssistantTelegramDbNotices {
     void this.deliver(chats, sessionId, label, render).catch((e) => log.warn(`${label} notice for ${sessionId} not sent: ${(e as Error).message}`));
   }
 
-  private async deliver(chats: string[], sessionId: string, label: string, render: (chat: DescribedChat) => string): Promise<void> {
+  private async deliver(chats: string[], asked: string, label: string, render: (chat: DescribedChat) => string): Promise<void> {
+    // Held through quiet hours, or sent just as Codex renamed the chat: name and link the chat as it is now.
+    let sessionId = asked;
+    try { sessionId = this.canonical(asked); } catch { /* the id it was asked under */ }
     const chat = this.describe(sessionId);
     let html = render(chat);
     const url = await this.deps.chatLink(chat.project, chat.providerId, sessionId).catch(() => null);
