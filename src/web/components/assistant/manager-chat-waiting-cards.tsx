@@ -43,7 +43,7 @@ export function ManagerChatWaitingCards({ sessionId }: { sessionId: string | nul
   return (
     <CardReplyHostContext.Provider value={host}>
       <div className="px-2 md:px-3" data-manager-waiting-cards="">
-        <div className="overflow-hidden rounded-xl border border-error/30">
+        <div className="overflow-hidden rounded-xl border border-border shadow-sm">
           <WaitingCardsBar
             cards={mine}
             label={WAITING_LABEL}

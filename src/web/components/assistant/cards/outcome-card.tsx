@@ -6,7 +6,7 @@
 import { CircleCheckIcon, ExternalLink, Pause, X, XCircle } from "@/lib/icons";
 import { dismissAssistantCard } from "@/lib/assistant-cards-api";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
-import { CardButton, CardShell } from "./card-shell";
+import { CardButton, CardShell, CardText } from "./card-shell";
 import { openCardManagerChat, useCardAction } from "./use-card-action";
 
 type Props = { card: AssistantCard; onCard?: (card: AssistantCard) => void };
@@ -20,18 +20,19 @@ export function OutcomeCard({ card, onCard }: Props) {
       look={failed ? { label: "Failed", Icon: XCircle, tone: "fail" } : { label: "Done", Icon: CircleCheckIcon, tone: "ok" }}
       error={error}
       actions={(
-        <>
-          <CardButton onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
-            <ExternalLink className="size-3.5" />Open manager chat
-          </CardButton>
-          <CardButton variant="ghost" secondary disabled={busy} onClick={() => void run(() => dismissAssistantCard(card.id))}>
-            <X className="size-3.5" />Dismiss
-          </CardButton>
-        </>
+        <CardButton onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
+          <ExternalLink className="size-3.5" />Open manager chat
+        </CardButton>
+      )}
+      secondary={(
+        <CardButton variant="ghost" secondary disabled={busy} onClick={() => void run(() => dismissAssistantCard(card.id))}>
+          <X className="size-3.5" />Dismiss
+        </CardButton>
       )}
     >
-      <h4 className="text-sm font-semibold">{card.title}</h4>
-      {card.body && <p className="whitespace-pre-wrap break-words text-text-secondary">{card.body}</p>}
+      <h4 className="text-[15px] font-semibold leading-snug text-text-primary" data-card-title="">{card.title}</h4>
+      {/* A report only tells: long text folds even while the card is open. */}
+      {card.body && <CardText text={card.body} fold />}
       {card.payload.detected && <p className="text-xs text-text-subtle">Seen by PPM: the manager chat has not reported on it.</p>}
     </CardShell>
   );

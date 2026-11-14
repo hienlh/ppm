@@ -37,7 +37,7 @@ interface Props {
   note?: ReactNode;
 }
 
-const NAV = "grid size-11 shrink-0 place-items-center rounded-md text-text-secondary hover:bg-surface-elevated hover:text-text-primary md:size-7";
+const NAV = "grid size-11 shrink-0 place-items-center rounded-full text-text-secondary can-hover:hover:bg-surface-elevated can-hover:hover:text-text-primary md:size-7";
 
 export function WaitingCardsBar({ cards, label, focus, onCard, children, note }: Props) {
   const [currentId, setCurrentId] = useState<string | null>(cards[0]?.id ?? null);
@@ -93,34 +93,35 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note }:
     <section
       ref={root}
       aria-label={label}
-      className="shrink-0 border-b border-error/30 bg-error/5"
+      className="shrink-0 border-b border-border bg-panel-2/60"
       data-waiting-cards=""
       data-waiting-count={cards.length}
     >
-      <div className="flex items-center gap-0.5 pl-3 pr-1 md:pr-1.5">
+      <div className="flex items-center gap-1 pl-3 pr-1.5">
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left text-xs md:min-h-9"
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left md:min-h-10"
           data-waiting-toggle=""
         >
-          <BellRing className="size-3.5 shrink-0 text-error" />
-          <span className="shrink-0 font-semibold text-error">{label}</span>
+          <span aria-hidden className="grid size-6 shrink-0 place-items-center rounded-full bg-error/10 text-error">
+            <BellRing className="size-3.5" />
+          </span>
+          <span className="shrink-0 text-[13px] font-semibold text-text-primary">{label}</span>
           <WaitingBadge count={cards.length} />
           {!open && (
-            <span className="min-w-0 truncate text-text-secondary" data-waiting-summary="">
+            <span className="min-w-0 truncate text-xs text-text-secondary" data-waiting-summary="">
               {current.projectName ? `${current.projectName} · ` : ""}{current.title}
             </span>
           )}
-          <ChevronDown className={cn("ml-auto size-3.5 shrink-0 text-text-subtle transition-transform", open && "rotate-180")} />
         </button>
         {cards.length > 1 && (
-          <div className="flex shrink-0 items-center" data-waiting-pager="">
+          <div className="flex shrink-0 items-center rounded-full border border-border bg-surface" data-waiting-pager="">
             <button type="button" className={NAV} onClick={() => step(-1)} aria-label="Previous waiting card">
               <ChevronLeft className="size-4" />
             </button>
-            <span className="min-w-8 text-center text-[11px] tabular-nums text-text-secondary" data-waiting-position="">
+            <span className="min-w-10 text-center text-[11px] font-medium tabular-nums text-text-secondary" data-waiting-position="">
               {index + 1}/{cards.length}
             </span>
             <button type="button" className={NAV} onClick={() => step(1)} aria-label="Next waiting card">
@@ -128,14 +129,23 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note }:
             </button>
           </div>
         )}
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-label={open ? "Fold the waiting cards" : "Show the waiting cards"}
+          className={NAV}
+        >
+          <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} />
+        </button>
       </div>
       {note}
       {open && (
-        // A phone keeps most of the screen for the conversation and the keyboard.
-        <div className="max-h-[35dvh] overflow-y-auto px-3 pb-3 md:max-h-[45dvh]" data-waiting-slot="">
+        // The card scrolls here and keeps its buttons at the bottom; a phone keeps most of the
+        // screen for the conversation and the keyboard.
+        <div className="max-h-[42dvh] overflow-y-auto px-3 pb-3 md:max-h-[50dvh]" data-waiting-slot="">
           <div
             key={current.id}
-            className={cn("rounded-xl transition-shadow duration-300", lit && "ring-2 ring-error ring-offset-2 ring-offset-surface")}
+            className={cn("rounded-xl transition-shadow duration-300", lit && "ring-2 ring-error ring-offset-2 ring-offset-panel-2")}
             data-waiting-card={current.id}
             data-highlighted={lit ? "" : undefined}
           >

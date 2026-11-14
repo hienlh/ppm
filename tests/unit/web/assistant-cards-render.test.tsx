@@ -104,13 +104,50 @@ describe("assistant cards", () => {
     expect(view.container.querySelector("[data-card-status-line]")?.textContent).toMatch(/^Answered on Telegram · \d\d:\d\d$/);
   });
 
-  it("answers a single-choice question with its options", async () => {
+  it("answers a single-choice question: a tap picks, Send answers", async () => {
     view = await mount(<AssistantCard card={base({
-      kind: "question", payload: { requestId: "q", questions: [{ id: "q1", question: "Ship now?", multiSelect: false, allowsFreeText: false, options: [{ label: "Yes" }, { label: "No" }] }] },
+      kind: "question", payload: { requestId: "q", questions: [{ id: "q1", question: "Ship now?", multiSelect: false, allowsFreeText: false, options: [{ label: "Yes (Recommended)", description: "Publish 0.25.6 tonight." }, { label: "No" }] }] },
     })} />);
-    expect(buttons()).toEqual(["Yes", "No", "Open manager chat"]);
-    await click([...view.container.querySelectorAll("button")].find((b) => b.textContent === "No")!);
+    const tiles = [...view.container.querySelectorAll("[data-card-option]")];
+    expect(tiles.map((t) => t.getAttribute("data-card-option"))).toEqual(["A", "B"]);
+    // The marker is a tag, the description is shown whole, and every tile is a 44 px target.
+    expect(tiles[0]!.textContent).toBe("AYesRecommendedPublish 0.25.6 tonight.");
+    for (const t of tiles) expect(t.className).toContain("min-h-11");
+    const send = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent === "Send answer")!;
+    expect(send().disabled).toBe(true);
+    await click(tiles[1]!);
+    expect(posts).toEqual([]);
+    expect(tiles[1]!.getAttribute("aria-checked")).toBe("true");
+    await click(send());
     expect(posts[0]!.body).toEqual({ answersById: { q1: ["No"] } });
+  });
+
+  it("answers every question of a card together, several choices where allowed", async () => {
+    view = await mount(<AssistantCard card={base({
+      kind: "question", payload: { requestId: "q", questions: [
+        { id: "q1", header: "PR #87", question: "Merge?", multiSelect: false, allowsFreeText: true, options: [{ label: "Merge, off by default (Recommended)" }, { label: "Not yet" }] },
+        { id: "q2", header: "Review", question: "Which PRs?", multiSelect: true, allowsFreeText: false, options: [{ label: "#88" }, { label: "#89" }, { label: "#93" }] },
+      ] },
+    })} />);
+    expect(view.container.querySelector("[data-card-kind-label]")?.textContent).toBe("2 questions");
+    const send = () => [...view!.container.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Send answers"))!;
+    expect(send().textContent).toBe("Send answers (0/2)");
+    const tile = (q: string, letter: string) => view!.container.querySelector(`[data-card-question="${q}"] [data-card-option="${letter}"]`)!;
+    await click(tile("q1", "A"));
+    await click(tile("q2", "A"));
+    await click(tile("q2", "C"));
+    expect(send().textContent).toBe("Send answers (2/2)");
+    expect(tile("q2", "A").getAttribute("role")).toBe("checkbox");
+    await click(send());
+    expect(posts[0]!.body).toEqual({ answersById: { q1: ["Merge, off by default (Recommended)"], q2: ["#88", "#93"] } });
+  });
+
+  it("folds the long text of a card that no longer waits behind Show more", async () => {
+    const { CardText } = await import("../../../src/web/components/assistant/cards/card-shell");
+    view = await mount(<><CardText text="open" fold={false} /><CardText text="closed" fold /></>);
+    const [open, closed] = [...view.container.querySelectorAll("[data-card-text]")];
+    expect(open!.className).not.toContain("max-h-");
+    expect(closed!.className).toContain("max-h-[11.25rem]");
   });
 
   it("draws a held rules change in file order and offers Approve only for the whole change", async () => {

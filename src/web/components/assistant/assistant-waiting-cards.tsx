@@ -63,7 +63,7 @@ export function AssistantWaitingCards() {
     </p>
   );
   if (shown.length === 0) {
-    return others ? <div className="shrink-0 border-b border-error/30 bg-error/5" data-waiting-cards="" data-waiting-count={0}>{others}</div> : null;
+    return others ? <div className="shrink-0 border-b border-border bg-panel-2/60" data-waiting-cards="" data-waiting-count={0}>{others}</div> : null;
   }
   return (
     <WaitingCardsBar

@@ -6,11 +6,11 @@
  * the card and nothing in it was hidden; it names the exact draft by its hash. "Reply" opens the
  * reply bar under the chat (in a manager chat, under the card), where the user's own words go to the manager chat word for word.
  */
-import { BellRing, Check, ExternalLink, TriangleAlert, Undo2, X } from "@/lib/icons";
+import { BellRing, Check, ExternalLink, Send, TriangleAlert, Undo2, X } from "@/lib/icons";
 import { dismissAssistantCard, okAssistantCard } from "@/lib/assistant-cards-api";
 import { escapeHiddenCharacters } from "../../../../shared/reveal-hidden-characters";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
-import { CardButton, CardShell } from "./card-shell";
+import { CardButton, CardShell, CardText } from "./card-shell";
 import { openCardManagerChat, useCardAction } from "./use-card-action";
 import { useCardReplyHost } from "./card-reply-host";
 
@@ -34,6 +34,10 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
           <CardButton disabled={!card.sessionId} onClick={() => replyTo(card)}>
             <Undo2 className="size-3.5" />Reply
           </CardButton>
+        </>
+      )}
+      secondary={(
+        <>
           {!inManagerChat && (
             <CardButton variant="ghost" secondary onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
               <ExternalLink className="size-3.5" />Open manager chat
@@ -45,13 +49,18 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
         </>
       )}
     >
-      <h4 className="text-sm font-semibold">{card.title}</h4>
-      {card.body && <p className="whitespace-pre-wrap break-words text-text-secondary">{card.body}</p>}
+      <h4 className="text-[15px] font-semibold leading-snug text-text-primary" data-card-title="">{card.title}</h4>
+      {card.body && <CardText text={card.body} fold={card.status !== "open"} />}
       {draft && (
-        <div className="rounded-lg border border-dashed border-border bg-panel-2 px-3 py-2" data-card-draft="">
-          <span className="block text-[11px] text-text-subtle">To: {escapeHiddenCharacters(draft.to)}</span>
-          <p className="whitespace-pre-wrap break-words font-mono text-xs">{escapeHiddenCharacters(draft.text)}</p>
-        </div>
+        <figure className="overflow-hidden rounded-lg border border-border bg-panel-2" data-card-draft="">
+          <figcaption className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-[11px] text-text-subtle">
+            <Send className="size-3 shrink-0" />
+            <span className="shrink-0 font-medium uppercase tracking-wide">Draft</span>
+            <span className="min-w-0 truncate">to {escapeHiddenCharacters(draft.to)}</span>
+          </figcaption>
+          {/* Shown whole: "OK, send" approves exactly this text. */}
+          <p className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-[12.5px] leading-relaxed text-text-primary">{escapeHiddenCharacters(draft.text)}</p>
+        </figure>
       )}
       {draft && !card.okOffered && card.status === "open" && (
         <p className="text-xs text-text-subtle">This draft is too long or holds a hidden value, so it cannot be approved here. Answer with Reply, or open the manager chat.</p>
