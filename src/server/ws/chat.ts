@@ -2689,6 +2689,14 @@ setChatControl({
     const entry = activeSessions.get(resolveMigratedSession(asked));
     return entry ? liveChatState(entry) : null;
   },
+  messageQueued(asked, clientMessageId) {
+    const sessionId = resolveMigratedSession(asked);
+    const entry = activeSessions.get(sessionId);
+    // No entry, no consumer: nothing of this process can still be holding the message.
+    if (!entry) return false;
+    const provider = providerRegistry.get(entry.providerId);
+    return provider?.isMessageQueued ? provider.isMessageQueued(sessionId, clientMessageId) : null;
+  },
   listLive() {
     return [...activeSessions].map(([sessionId, entry]) => ({ sessionId, ...liveChatState(entry) }));
   },

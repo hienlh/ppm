@@ -14,7 +14,7 @@ import { createLogger } from "../logger.ts";
 import { getSchedule, retargetSessionSchedules } from "../scheduler-db.service.ts";
 import type { Schedule } from "../../types/scheduler.ts";
 import {
-  deliverable, heldUpNotice, isTransientDeliveryError, pausedNotice, type Flight, type SessionScheduleDispatchEnv,
+  chatIsIdle, deliverable, heldUpNotice, isTransientDeliveryError, pausedNotice, type Flight, type SessionScheduleDispatchEnv,
 } from "./session-schedule-dispatch-types.ts";
 import { scheduleRunReference } from "./session-schedule-run-reference.ts";
 import { pauseSessionSchedule, recordRunEnded, recordRunStarted } from "./session-schedule-run-records.ts";
@@ -23,6 +23,9 @@ import { SessionScheduleWaitingList } from "./session-schedule-waiting-list.ts";
 export type { ScheduleNotice, SessionScheduleDispatchEnv } from "./session-schedule-dispatch-types.ts";
 
 const log = createLogger("scheduler");
+
+/** Idle looks a message still said to be queued survives before it is taken as lost and sent again. */
+const QUEUED_IDLE_CHECKS = 3;
 
 export class SessionScheduleDispatcher {
   private readonly waiting = new SessionScheduleWaitingList();
@@ -53,6 +56,7 @@ export class SessionScheduleDispatcher {
     for (const timer of this.retries.values()) clearTimeout(timer);
     this.retries.clear();
     this.waiting.clear();
+    for (const flight of this.flights.values()) if (flight.check) clearTimeout(flight.check);
     this.flights.clear();
   }
 
@@ -83,7 +87,7 @@ export class SessionScheduleDispatcher {
     if (live && (live.card || live.queuedCards > 0)) return this.tellHeldUp(schedule, target.sessionId, target.projectName, target.providerId);
     if (live?.running) return;
 
-    const flight: Flight = { schedule, clientMessageId: this.env.newClientMessageId(), phase: "sending", runId: null };
+    const flight: Flight = { schedule, clientMessageId: this.env.newClientMessageId(), phase: "sending", runId: null, idleChecks: 0 };
     this.flights.set(sessionId, flight);
     let result: Awaited<ReturnType<ChatControl["sendUserMessage"]>>;
     try {
@@ -110,12 +114,14 @@ export class SessionScheduleDispatcher {
     if (result.delivered === undefined || result.delivered === "started") {
       this.begin(current, flight);
       if (early) this.end(current, flight, early);
-    } else if (early) {
-      // A turn that started after the quiet check ended already: this message opened the next one.
-      this.begin(current, flight);
-    } else {
-      flight.phase = "queued";
+      return;
     }
+    // Queued behind a turn that began after the quiet check. Only the turn the provider names as
+    // this message's own is its run: a turn ending says nothing, since Stop may have taken the
+    // queued message down with the turn it waited behind.
+    if (flight.opened) return this.begin(current, flight);
+    flight.phase = "queued";
+    this.watch(flight, early ? this.env.queuedCheckMs : this.env.flightCheckMs);
   }
 
   private onTurnEnded(p: ChatLifecycleEvents["turn_ended"]): void {
@@ -126,23 +132,65 @@ export class SessionScheduleDispatcher {
     const flight = this.flights.get(sessionId);
     if (!flight) return this.wake(sessionId);
     if (flight.phase === "sending") flight.earlyEnd = p;
-    // The turn this message was queued behind is over; its own opens now.
-    else if (flight.phase === "queued") this.begin(sessionId, flight);
+    // The turn this message waited behind is over: its own should open now, and is looked for.
+    else if (flight.phase === "queued") this.watch(flight, this.env.queuedCheckMs);
     else this.end(sessionId, flight, p);
   }
 
-  /** A queued message names the turn it opened (`turn_started`), which may come before any end. */
+  /** The provider names the turn a message opened (`turn_started`), which may come before any end. */
   private onStream(p: ChatLifecycleEvents["stream"]): void {
     if (this.flights.size === 0) return;
     const ev = p.event as { type?: unknown; clientMessageId?: unknown } | null;
     if (ev?.type !== "turn_started" || typeof ev.clientMessageId !== "string") return;
     const sessionId = this.env.canonical(p.sessionId);
     const flight = this.flights.get(sessionId);
-    if (flight?.phase === "queued" && flight.clientMessageId === ev.clientMessageId) this.begin(sessionId, flight);
+    if (!flight || flight.clientMessageId !== ev.clientMessageId) return;
+    flight.opened = true;
+    if (flight.phase === "queued") this.begin(sessionId, flight);
+  }
+
+  /** Look at the chat's live state again after `ms`. */
+  private watch(flight: Flight, ms: number): void {
+    if (flight.check) clearTimeout(flight.check);
+    flight.check = setTimeout(() => this.checkFlight(flight), ms);
+    (flight.check as { unref?: () => void }).unref?.();
+  }
+
+  /**
+   * The flight against the chat's live state. A started turn whose chat is idle ended without PPM
+   * hearing it. A queued message the chat no longer holds, with no turn running, was lost (Stop
+   * killed the provider with it still queued): its fire is still pending, so it is sent again.
+   */
+  private checkFlight(flight: Flight): void {
+    const sessionId = this.keyOf(flight);
+    if (!sessionId) return;
+    flight.check = undefined;
+    const control = this.env.control();
+    const idle = chatIsIdle(control?.liveState(sessionId) ?? null);
+    if (flight.phase === "started") {
+      if (!idle) return this.watch(flight, this.env.flightCheckMs);
+      log.warn(`session=${sessionId} schedule ${flight.schedule.id}: its turn ended unheard; the run is closed`);
+      return this.end(sessionId, flight, {
+        sessionId, outcome: "stopped", error: "PPM did not hear how this turn ended.", projectName: "", providerId: "",
+      });
+    }
+    if (flight.phase !== "queued") return;
+    if (!idle) {
+      flight.idleChecks = 0;
+      return this.watch(flight, this.env.flightCheckMs);
+    }
+    const queued = control?.messageQueued?.(sessionId, flight.clientMessageId) ?? null;
+    // A provider that cannot say, or one that still claims the message with nothing running to
+    // hold it behind, is believed for a few looks only: an idle chat starts a queued message at once.
+    if (queued !== false && ++flight.idleChecks < QUEUED_IDLE_CHECKS) return this.watch(flight, this.env.flightCheckMs);
+    this.flights.delete(sessionId);
+    log.info(`session=${sessionId} schedule ${flight.schedule.id}: its queued message was dropped before its turn opened; sending it again`);
+    this.wakeSoon(sessionId);
   }
 
   private begin(sessionId: string, flight: Flight): void {
     flight.phase = "started";
+    this.watch(flight, this.env.flightCheckMs);
     this.waiting.drop(sessionId, flight.schedule.id);
     for (const key of [...this.told]) if (key.startsWith(`${flight.schedule.id}@`)) this.told.delete(key);
     try {
@@ -155,6 +203,7 @@ export class SessionScheduleDispatcher {
   }
 
   private end(sessionId: string, flight: Flight, p: ChatLifecycleEvents["turn_ended"]): void {
+    if (flight.check) clearTimeout(flight.check);
     this.flights.delete(sessionId);
     if (flight.runId !== null) {
       try { recordRunEnded(flight.runId, p); } catch (e) {

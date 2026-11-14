@@ -27,6 +27,8 @@ let sent: Sent[];
 let notices: ScheduleNotice[];
 let reply: (s: Sent) => DeliverResult;
 let target: ScheduleTargetResolution;
+/** What the chat answers when asked whether a queued schedule message is still waiting. */
+let queuedAnswer: boolean | null;
 let dispatcher: SessionScheduleDispatcher;
 let ids = 0;
 
@@ -39,10 +41,11 @@ const control: ChatControl = {
   answerApproval: () => "stale",
   cancelTurn: () => false,
   liveState: () => live,
+  messageQueued: () => queuedAnswer,
   listLive: () => [],
 };
 
-function env(): SessionScheduleDispatchEnv {
+function env(over: Partial<SessionScheduleDispatchEnv> = {}): SessionScheduleDispatchEnv {
   return {
     control: () => control,
     lifecycle,
@@ -54,6 +57,9 @@ function env(): SessionScheduleDispatchEnv {
     newClientMessageId: () => `schedule-test-${++ids}`,
     promptText: (p) => p,
     retryDelayMs: 60_000,
+    flightCheckMs: 60_000,
+    queuedCheckMs: 60_000,
+    ...over,
   };
 }
 
@@ -81,6 +87,7 @@ beforeEach(() => {
   setDb(openTestDb());
   lifecycle = createChatLifecycle();
   live = null;
+  queuedAnswer = null;
   sent = [];
   notices = [];
   reply = (s) => ({ ok: true, sessionId: s.sessionId, delivered: "started" });
@@ -270,5 +277,119 @@ describe("a chat PPM cannot reach", () => {
     expect(sent).toHaveLength(1);
     expect(getSchedule(id)!.paused_reason).toContain("Could not resume the session");
     expect(notices.map((n) => n.kind)).toEqual(["paused"]);
+  });
+});
+
+describe("a message queued behind a turn that started after the quiet check", () => {
+  /** A dispatcher that looks at a queued or running message again within milliseconds. */
+  function quick(): void {
+    dispatcher.stop();
+    dispatcher = new SessionScheduleDispatcher(env({ queuedCheckMs: 10, flightCheckMs: 20 }));
+    dispatcher.start();
+  }
+  const turnStarted = (clientMessageId: string) =>
+    lifecycle.emit("stream", { sessionId: CHAT, event: { type: "turn_started", turnId: `t-${clientMessageId}`, clientMessageId } });
+  const stopped = () => lifecycle.emit("turn_ended", {
+    sessionId: CHAT, outcome: "stopped", cancelledBy: "ws", projectName: "proj", providerId: "claude",
+  });
+
+  it("is not counted as run by the end of the turn it waited behind", async () => {
+    quick();
+    reply = (s) => ({ ok: true, sessionId: s.sessionId, delivered: "queued" });
+    queuedAnswer = true;
+    const id = pending();
+    await dispatcher.due(id);
+    stopped();
+    expect(getSchedule(id)!.pending_since).not.toBeNull();
+    expect(listScheduleRuns(id)).toHaveLength(0);
+
+    // Its own turn opens, named by the provider: only now is the fire spent.
+    turnStarted(sent[0]!.opts.clientMessageId!);
+    expect(getSchedule(id)!.pending_since).toBeNull();
+    expect(listScheduleRuns(id)[0]!.status).toBe("running");
+    turnEnded("done");
+    expect(listScheduleRuns(id)[0]!.status).toBe("done");
+  });
+
+  it("stays pending and is sent again once when Stop dropped it with the turn ahead of it", async () => {
+    quick();
+    let replies = 0;
+    reply = (s) => ({ ok: true, sessionId: s.sessionId, delivered: ++replies === 1 ? "queued" : "started" });
+    const id = pending();
+    await dispatcher.due(id);
+    expect(sent).toHaveLength(1);
+
+    // Stop killed the provider with the scheduled message still in its queue.
+    queuedAnswer = false;
+    stopped();
+    expect(listScheduleRuns(id)).toHaveLength(0);
+    await Bun.sleep(40);
+
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.opts.clientMessageId).not.toBe(sent[0]!.opts.clientMessageId);
+    expect(listScheduleRuns(id)).toHaveLength(1);
+    expect(getSchedule(id)!.pending_since).toBeNull();
+    turnEnded("done");
+    await Bun.sleep(40);
+    expect(sent).toHaveLength(2);
+    expect(listScheduleRuns(id)[0]!.status).toBe("done");
+  });
+
+  it("waits while the chat still holds it behind a running turn", async () => {
+    quick();
+    reply = (s) => ({ ok: true, sessionId: s.sessionId, delivered: "queued" });
+    queuedAnswer = true;
+    const id = pending();
+    await dispatcher.due(id);
+    live = busyLive();
+    turnEnded();
+    await Bun.sleep(60);
+    expect(sent).toHaveLength(1);
+    expect(getSchedule(id)!.pending_since).not.toBeNull();
+    // A turn opened by another message is not this one's.
+    turnStarted("someone-else");
+    expect(listScheduleRuns(id)).toHaveLength(0);
+  });
+
+  it("is sent again when a provider that cannot say leaves an idle chat for several looks", async () => {
+    quick();
+    let replies = 0;
+    reply = (s) => ({ ok: true, sessionId: s.sessionId, delivered: ++replies === 1 ? "queued" : "started" });
+    queuedAnswer = null;
+    const id = pending();
+    await dispatcher.due(id);
+    turnEnded();
+    await Bun.sleep(15);
+    expect(sent).toHaveLength(1);
+    await Bun.sleep(150);
+    expect(sent).toHaveLength(2);
+  });
+});
+
+describe("a turn end PPM never hears", () => {
+  it("closes the run once the chat is idle, and the chat's next schedule goes", async () => {
+    dispatcher.stop();
+    dispatcher = new SessionScheduleDispatcher(env({ flightCheckMs: 20 }));
+    dispatcher.start();
+    const a = pending({ name: "first", since: new Date(Date.now() - 5000).toISOString() });
+    const b = pending({ name: "second" });
+    live = busyLive();
+    await dispatcher.due(a);
+    await dispatcher.due(b);
+    live = null;
+    await dispatcher.pump(CHAT);
+    expect(sent.map((s) => s.opts.scheduleRun?.name)).toEqual(["first"]);
+
+    // Still running at the first look: nothing is closed.
+    live = busyLive();
+    await Bun.sleep(30);
+    expect(listScheduleRuns(a)[0]!.status).toBe("running");
+    // Idle with no end heard: the run is closed and the next schedule is sent.
+    live = null;
+    await Bun.sleep(50);
+    const run = listScheduleRuns(a)[0]!;
+    expect(run.status).toBe("error");
+    expect(run.error).toBe("PPM did not hear how this turn ended.");
+    expect(sent.map((s) => s.opts.scheduleRun?.name)).toEqual(["first", "second"]);
   });
 });

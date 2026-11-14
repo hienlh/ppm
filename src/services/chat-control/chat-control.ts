@@ -163,6 +163,12 @@ export interface ChatControl {
   cancelTurn(sessionId: string, origin: ServerOrigin): boolean;
   /** What a live chat is doing now; null when it has no entry in this process. */
   liveState(sessionId: string): LiveChatState | null;
+  /**
+   * Whether a message sent under `clientMessageId` still waits behind a turn to open its own.
+   * False once it opened one or is gone without opening any (Stop killed the subprocess with its
+   * queue); null when the chat's provider cannot say.
+   */
+  messageQueued?(sessionId: string, clientMessageId: string): boolean | null;
   /** Every chat with a live entry in this process. */
   listLive(): Array<LiveChatState & { sessionId: string }>;
 }

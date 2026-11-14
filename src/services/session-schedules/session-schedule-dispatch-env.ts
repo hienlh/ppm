@@ -15,6 +15,13 @@ const log = createLogger("scheduler");
 
 /** A chat that said "busy" with nothing announced to wake on is asked again after this. */
 const RETRY_DELAY_MS = 30_000;
+/** How often a schedule message in flight is checked against the chat's live state. */
+const FLIGHT_CHECK_MS = 60_000;
+/**
+ * A message queued behind a turn opens its own as soon as that turn is over (the provider names
+ * it within milliseconds); this long after, a chat that is idle and no longer holds it lost it.
+ */
+const QUEUED_CHECK_MS = 3_000;
 
 /**
  * Sent on its own notification slot: news about a chat that must neither replace that chat's own
@@ -63,5 +70,7 @@ export function liveDispatchEnv(): SessionScheduleDispatchEnv {
     // The prompt may have been written by an AI through the schedule tools: it may not pose as PPM.
     promptText: neutralizePpmTags,
     retryDelayMs: RETRY_DELAY_MS,
+    flightCheckMs: FLIGHT_CHECK_MS,
+    queuedCheckMs: QUEUED_CHECK_MS,
   };
 }

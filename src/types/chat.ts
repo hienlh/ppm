@@ -217,6 +217,12 @@ export interface AIProvider {
   /** True when a live streaming subprocess exists for this session */
   hasStreamingSession?(sessionId: string): boolean;
   /**
+   * Whether a message pushed under `clientMessageId` still waits to open its turn. False once it
+   * opened one, and once it is gone without opening any (the subprocess was stopped with it in
+   * its queue). Absent for a provider that cannot say.
+   */
+  isMessageQueued?(sessionId: string, clientMessageId: string): boolean;
+  /**
    * The effort the session's live subprocess sends and what overrides the pick there; null
    * when none is running or it cannot say. Only providers whose effort can be overridden
    * outside PPM implement it.

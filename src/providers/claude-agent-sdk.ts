@@ -907,6 +907,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
   /**
+   * A push stays with the turn binder until the CLI submits it (`UserPromptSubmit`), and the
+   * binder forgets a session's pushes when its CLI is stopped with them still queued.
+   */
+  isMessageQueued(sessionId: string, clientMessageId: string): boolean {
+    return this.streamingSessions.has(sessionId) && this.turnBinder.has(sessionId, clientMessageId);
+  }
+
+  /**
    * When the session's live subprocess started, or null with none. Its MCP servers were fixed
    * then, so a role given to the chat afterwards (a manager's tools) reaches it only at the next start.
    */
