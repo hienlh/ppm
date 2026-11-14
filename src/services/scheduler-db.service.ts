@@ -13,17 +13,20 @@ export function getSchedule(id: number): Schedule | null {
   return getDb().query("SELECT * FROM schedules WHERE id = ?").get(id) as Schedule | null;
 }
 
-/** Enabled schedules whose next_fire_at has passed. */
+/**
+ * Enabled schedules whose next_fire_at has passed. A paused one is left out here and below: it is
+ * not advanced while paused, so counting it would wake the timer at once, over and over.
+ */
 export function getDueSchedules(nowIso: string): Schedule[] {
   return getDb().query(
-    "SELECT * FROM schedules WHERE enabled = 1 AND next_fire_at IS NOT NULL AND next_fire_at <= ?",
+    "SELECT * FROM schedules WHERE enabled = 1 AND paused_reason IS NULL AND next_fire_at IS NOT NULL AND next_fire_at <= ?",
   ).all(nowIso) as Schedule[];
 }
 
 /** When the earliest enabled schedule is due, or null when none is waiting on a cron. */
 export function getEarliestFireAt(): string | null {
   const row = getDb().query(
-    "SELECT MIN(next_fire_at) AS at FROM schedules WHERE enabled = 1 AND next_fire_at IS NOT NULL",
+    "SELECT MIN(next_fire_at) AS at FROM schedules WHERE enabled = 1 AND paused_reason IS NULL AND next_fire_at IS NOT NULL",
   ).get() as { at: string | null } | null;
   return row?.at ?? null;
 }
@@ -31,8 +34,8 @@ export function getEarliestFireAt(): string | null {
 export function insertSchedule(s: NewSchedule): number {
   const res = getDb().query(
     `INSERT INTO schedules (name, cron_expr, provider_id, project_path, prompt, permission_mode, max_turns, timeout_ms, enabled, next_fire_at,
-       kind, mode, description, script, inputs_json, input_values_json, secrets_enc)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       kind, mode, description, script, inputs_json, input_values_json, secrets_enc, target_session_id, timezone, recurring)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     s.name, s.cron_expr, s.provider_id, s.project_path, s.prompt,
     s.permission_mode ?? "bypassPermissions",
@@ -47,6 +50,9 @@ export function insertSchedule(s: NewSchedule): number {
     s.inputs_json ?? "[]",
     s.input_values_json ?? "{}",
     s.secrets_enc ?? null,
+    s.target_session_id ?? null,
+    s.timezone ?? null,
+    s.recurring === false ? 0 : 1,
   );
   return Number(res.lastInsertRowid);
 }
@@ -124,4 +130,67 @@ export function cleanupScheduleRuns(): void {
         AND schedule_id NOT IN (SELECT id FROM schedules WHERE kind = 'script');
     DELETE FROM schedule_runs WHERE started_at < datetime('now', '-30 days');
   `);
+}
+
+// --- Session schedules: a prompt delivered into an existing chat ---------------------------
+
+/** The session schedules aimed at one chat, oldest first. */
+export function listSessionSchedulesForTarget(sessionId: string): Schedule[] {
+  return getDb().query(
+    "SELECT * FROM schedules WHERE kind = 'session' AND target_session_id = ? ORDER BY id",
+  ).all(sessionId) as Schedule[];
+}
+
+/** How many session schedules are aimed at one chat, on or off. */
+export function countSessionSchedules(sessionId: string): number {
+  return (getDb().query(
+    "SELECT COUNT(*) AS n FROM schedules WHERE kind = 'session' AND target_session_id = ?",
+  ).get(sessionId) as { n: number }).n;
+}
+
+/** Session schedules that can fire and have a fire waiting to be delivered. */
+export function getPendingSessionSchedules(): Schedule[] {
+  return getDb().query(
+    "SELECT * FROM schedules WHERE kind = 'session' AND enabled = 1 AND paused_reason IS NULL AND pending_since IS NOT NULL ORDER BY pending_since, id",
+  ).all() as Schedule[];
+}
+
+/**
+ * Record a fire that came due at `since` and move on to `nextFireAt`. A fire already waiting keeps
+ * its time: fires that pass before delivery become that one delivery, not a queue of them.
+ */
+export function setSessionSchedulePending(id: number, since: string, nextFireAt: string | null): void {
+  getDb().query(
+    "UPDATE schedules SET pending_since = COALESCE(pending_since, ?), next_fire_at = ?, updated_at = datetime('now') WHERE id = ?",
+  ).run(since, nextFireAt, id);
+}
+
+/** The waiting fire was delivered (or given up). */
+export function clearSessionSchedulePending(id: number): void {
+  getDb().query("UPDATE schedules SET pending_since = NULL, updated_at = datetime('now') WHERE id = ?").run(id);
+}
+
+/** Stop a session schedule firing until someone turns it back on, saying why. */
+export function setSessionSchedulePaused(id: number, reason: string): void {
+  getDb().query("UPDATE schedules SET paused_reason = ?, updated_at = datetime('now') WHERE id = ?").run(reason, id);
+}
+
+/** Let a paused session schedule fire again from `nextFireAt` on. */
+export function clearSessionSchedulePaused(id: number, nextFireAt: string | null): void {
+  getDb().query(
+    "UPDATE schedules SET paused_reason = NULL, next_fire_at = ?, updated_at = datetime('now') WHERE id = ?",
+  ).run(nextFireAt, id);
+}
+
+/** Delete every session schedule aimed at a chat that is gone; answers how many there were. */
+export function deleteSessionSchedulesForTarget(sessionId: string): number {
+  return getDb().query("DELETE FROM schedules WHERE kind = 'session' AND target_session_id = ?").run(sessionId).changes;
+}
+
+/** Follow a chat whose id changed (Codex renames a new chat); answers how many schedules moved. */
+export function retargetSessionSchedules(oldId: string, newId: string): number {
+  if (oldId === newId) return 0;
+  return getDb().query(
+    "UPDATE schedules SET target_session_id = ?, updated_at = datetime('now') WHERE kind = 'session' AND target_session_id = ?",
+  ).run(newId, oldId).changes;
 }

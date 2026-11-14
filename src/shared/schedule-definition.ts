@@ -19,7 +19,8 @@ export const SCHEDULE_LIMITS = {
   maxTimeoutMs: 6 * 60 * 60_000,
 } as const;
 
-export const DEFAULT_TIMEOUT_MS: Record<ScheduleKind, number> = { prompt: 1_800_000, script: 300_000 };
+/** A session schedule's turn runs on its chat's own settings; its value only fills the column. */
+export const DEFAULT_TIMEOUT_MS: Record<ScheduleKind, number> = { prompt: 1_800_000, script: 300_000, session: 1_800_000 };
 
 export interface ScheduleDefinition {
   kind: ScheduleKind;

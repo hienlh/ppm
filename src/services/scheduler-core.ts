@@ -15,6 +15,12 @@ import type { AlwaysOnScripts, Schedule, SchedulerRunner } from "../types/schedu
 import { createLogger } from "./logger.ts";
 import { executePromptRun } from "./scheduler-prompt-run.ts";
 import { MAX_SLEEP_MS, nextFireAt, wakeDelay } from "./scheduler-timing.ts";
+import {
+  catchUpSessionSchedule,
+  handOverPendingSessionSchedules,
+  markSessionScheduleDue,
+  queueSessionScheduleNow,
+} from "./session-schedules/session-schedule-firing.ts";
 
 export { nextFireAt, wakeDelay };
 export type { AlwaysOnScripts, SchedulerRunner };
@@ -50,8 +56,10 @@ export class SchedulerService {
     if (this.started) return;
     this.started = true;
     cleanupScheduleRuns();
-    // Recompute next_fire_at from now — missed runs during downtime are not caught up
+    // Recompute next_fire_at from now — missed runs during downtime are not caught up, except a
+    // session schedule's, which is delivered once.
     for (const s of getSchedules(true)) {
+      if (s.kind === "session") { catchUpSessionSchedule(s); continue; }
       if (s.mode !== "tick") continue;
       try {
         updateSchedule(s.id, { next_fire_at: nextFireAt(s.cron_expr) });
@@ -62,6 +70,7 @@ export class SchedulerService {
     this.ready = this.alwaysOn.prepare()
       .catch((e) => log.error("settling script processes left by the previous server failed:", e))
       .then(() => this.alwaysOn.sync());
+    handOverPendingSessionSchedules();
     this.arm();
     log.info("started");
   }
@@ -117,6 +126,8 @@ export class SchedulerService {
       return;
     }
     for (const schedule of due) {
+      // Delivered into its chat once that chat is idle, never run here.
+      if (schedule.kind === "session") { markSessionScheduleDue(schedule); continue; }
       this.advance(schedule);
       if (schedule.mode !== "tick") continue;
       if (this.isRunning(schedule.id)) {
@@ -150,8 +161,15 @@ export class SchedulerService {
     }
   }
 
-  /** Start one run, fire-and-forget. A prompt's run row is made here; a script tick makes its own at the end, if any. */
+  /**
+   * Start one run, fire-and-forget. A prompt's run row is made here; a script tick makes its own at
+   * the end, if any. A session schedule runs nothing here: its fire is queued for its chat.
+   */
   fire(schedule: Schedule, trigger = "tick"): number | null {
+    if (schedule.kind === "session") {
+      queueSessionScheduleNow(schedule);
+      return null;
+    }
     this.active.set(schedule.id, (this.active.get(schedule.id) ?? 0) + 1);
     if (schedule.kind === "script") {
       log.debug(`Schedule ${schedule.id} (${schedule.name}) fired (${trigger})`);
