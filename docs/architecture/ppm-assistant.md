@@ -88,7 +88,14 @@ of the Assistant, and ends on send, Esc, ✕, a session or project switch; it is
 messages. Every card still waiting (`WAITING_CARD_KINDS`, `status = open`) is therefore also
 pinned between the chip row and the stream (`assistant-waiting-cards.tsx` over
 `waiting-cards-bar.tsx`): one card at a time, whole and with its own buttons, ‹ › and "n/N" to
-step (urgent first, then the oldest), folded to one 44 px row that still names the card. A new
+step (urgent first, then the oldest), folded to one 44 px row that still names the card. Long
+cards are the norm (a plan runs to 1,500 characters): the card area takes a share of the
+Assistant body (a size container, `ASSISTANT_SLOT_HEIGHT`) and scrolls, and only there the card's
+button row sticks to its bottom (`CardStickyActionsContext`), so OK and Reply stay in view; in the
+stream nothing sticks. A card lays its buttons out by its own width (`@container/card`): one row
+from 27rem, else the answers on one row and Open chat / Dismiss on another, above them on a phone.
+Text of a card that no longer waits folds past eight lines behind "Show more" (`CardText`); a
+waiting card and a draft are always shown whole, since OK approves exactly them. A new
 card opens the bar on itself; a chip's red count (`focusWaitingCards`) opens it on that
 project's first card, moving a filter that would hide it to that project; the card it lands on is outlined
 for 1.8 s. It follows the project filter, and "N more waiting in other projects · Show all"
@@ -1001,7 +1008,11 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   card (`src/shared/assistant-limits.ts`).
 - **Answering.** `POST /api/assistant/cards/:id/answer` answers the exact request an approval or
   question card mirrors, through `chatControl().answerApproval` with origin `assistant_card`; Allow
-  is refused when the card does not show everything that would run. `POST …/dismiss` takes reports
+  is refused when the card does not show everything that would run. A question card is answered on
+  the card whatever its number of questions: each option is a lettered tile (A, B, C…) with its
+  whole description and a "Recommended" tag taken from "(Recommended)" in its label, the user picks
+  one per question (several where allowed) and sends them together; a question with no options or
+  a secret is answered in the chat (`cards/question-options.tsx`). `POST …/dismiss` takes reports
   and the budget card. Status changes are compare-and-set, so a second answer gets
   `already_answered`; a request answered anywhere else resolves its card; a request that no longer
   waits resolves it with nothing run.
