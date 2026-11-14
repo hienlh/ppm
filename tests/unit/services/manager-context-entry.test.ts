@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  ADDED_RULES_HEADING, APPROVED_RULES_HEADING, buildManagerBlock, MANAGER_USER_ACTION_RULE, managerContextEntry,
+  ADDED_RULES_HEADING, APPROVED_RULES_HEADING, buildManagerBlock, MANAGER_CARD_REPLY_RULE, MANAGER_USER_ACTION_RULE, managerContextEntry,
 } from "../../../src/services/assistant-managers/manager-context-entry.ts";
 import { DEFAULT_MANAGER_RULES_TEMPLATE } from "../../../src/services/assistant-managers/manager-rules-default-template.ts";
 import { decodeMessageBlocks } from "../../../src/shared/chat-message-blocks.ts";
@@ -55,6 +55,18 @@ describe("managerContextEntry", () => {
     // The rule is PPM's, in the block every turn carries — never written into the user's rules file.
     expect(DEFAULT_MANAGER_RULES_TEMPLATE).not.toContain(MANAGER_USER_ACTION_RULE);
     expect(managerContextEntry("p", "- rule", "- rule")).toContain(MANAGER_USER_ACTION_RULE);
+  });
+
+  it("tells every manager that a question or a wrong premise in a card reply is not an OK", () => {
+    expect(MANAGER_CARD_REPLY_RULE).toContain("is NOT an OK: do nothing yet");
+    expect(MANAGER_CARD_REPLY_RULE).toContain("correct the assumption with the numbers");
+    expect(MANAGER_CARD_REPLY_RULE).toContain("ask again with a new needs_decision card");
+    for (const marker of ["…nhỉ", "…không", "?", "right?"]) expect(MANAGER_CARD_REPLY_RULE).toContain(marker);
+    // Global, whatever the project and whatever its own rules file says (or leaves out).
+    for (const [name, rules] of [["nxsys", "- rule"], ["ppm", ""], ["culi", DEFAULT_MANAGER_RULES_TEMPLATE]] as const) {
+      expect(managerContextEntry(name, rules, rules)).toContain(MANAGER_CARD_REPLY_RULE);
+    }
+    expect(DEFAULT_MANAGER_RULES_TEMPLATE).not.toContain(MANAGER_CARD_REPLY_RULE);
   });
 
   it("says the rules win over the files they point to", () => {
