@@ -148,3 +148,31 @@ it("says a builtin answered inside a running turn left that turn running", async
   expect(ends[1]!.turnStillRunning).toBeUndefined();
   held.abortQuery(id);
 });
+
+it("lets a watch report and a scheduled message in one at a time, never into one turn", async () => {
+  const slow = new QueuedTurnsProvider("schedule-and-watch");
+  providerRegistry.register(slow);
+  const id = (await chatService.createSession(slow.id, { projectName: "web", projectPath: root })).id;
+  let resume!: () => void;
+  slow.resumeHold = new Promise<void>((r) => { resume = r; });
+
+  // The scheduled message is still resuming the cold session when the watch report checks in.
+  const scheduled = ctl().sendUserMessage(id, "the scheduled prompt", opts({ providerId: slow.id }));
+  await Bun.sleep(20);
+  // Bounded: a watch report let through waits behind the scheduled one's resume instead.
+  const watch = await Promise.race([
+    ctl().sendUserMessage(id, "watch news", {
+      origin: "watch", projectName: "web", providerId: slow.id,
+      watchEvents: [{ watchId: "w1", kind: "done", project: "web", sessionId: "watched", providerId: slow.id, title: "Watched", at: Date.now() }],
+    }),
+    Bun.sleep(1_000).then(() => "still waiting" as const),
+  ]);
+  expect(watch).toEqual({ ok: false, error: CHAT_BUSY });
+
+  resume();
+  expect((await scheduled).ok).toBe(true);
+  await until(() => slow.queries.length === 1, "the scheduled turn");
+  expect(slow.queries[0]!.message).toContain("the scheduled prompt");
+  expect(slow.pushes).toHaveLength(0);
+  slow.abortQuery(id);
+});

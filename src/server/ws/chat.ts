@@ -408,6 +408,12 @@ export interface SessionEntry extends BackgroundTaskState {
    */
   messagesArriving?: number;
   /**
+   * A watch report or a scheduled message is on its way in. Neither counts in `messagesArriving`
+   * (it would find itself arriving and never go in), so without this one each could pass the
+   * quiet check while the other was still resuming the session, and both land in one turn.
+   */
+  quietMessageArriving?: boolean;
+  /**
    * Someone pressed Stop (or sent `/stop`) while the current turn ran: it ends as asked, not on
    * an error. Told to `turn_ended` listeners once, then cleared.
    */
@@ -2167,7 +2173,16 @@ async function deliverUserMessage(sessionId: string, entry: SessionEntry, text: 
   // Counted from before the first await until the message has started or joined a turn (or was
   // refused), so a watch report checking in between sees the chat as busy. A message that waits for
   // a quiet chat is not counted: it would find itself arriving and never go in.
-  if (waitsForQuiet(opts.origin)) return deliverMessage(sessionId, entry, text, opts);
+  if (waitsForQuiet(opts.origin)) {
+    // One at a time: the second finds the chat busy and waits for the turn the first opens.
+    if (entry.quietMessageArriving) return { ok: false, error: CHAT_BUSY };
+    entry.quietMessageArriving = true;
+    try {
+      return await deliverMessage(sessionId, entry, text, opts);
+    } finally {
+      entry.quietMessageArriving = false;
+    }
+  }
   entry.messagesArriving = (entry.messagesArriving ?? 0) + 1;
   try {
     return await deliverMessage(sessionId, entry, text, opts);
