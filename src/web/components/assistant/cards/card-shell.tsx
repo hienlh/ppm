@@ -186,7 +186,7 @@ export function CardShell({ card, look, children, actions, secondary, error, met
           // them on a phone, where the answers belong under the thumb); wide, all share one row.
           <div
             className={cn(
-              "flex flex-col gap-2 border-t border-border bg-surface px-3.5 py-2.5 @xl/card:flex-row @xl/card:items-center",
+              "flex flex-col gap-2 border-t border-border bg-surface px-3.5 py-2.5 @[25rem]/card:flex-row @[25rem]/card:items-center",
               sticky && "sticky bottom-0 z-[1]",
             )}
             data-card-actions=""
@@ -194,7 +194,7 @@ export function CardShell({ card, look, children, actions, secondary, error, met
           >
             {/* The first answer (OK, Allow, Send) sits on the right on a phone, under the thumb. */}
             {actions && <div className="order-2 flex flex-row-reverse gap-2 *:flex-1 md:order-1 md:flex-row md:*:flex-none">{actions}</div>}
-            {secondary && <div className="order-1 grid auto-cols-fr grid-flow-col gap-2 md:order-2 md:flex md:gap-1 @xl/card:ml-auto">{secondary}</div>}
+            {secondary && <div className="order-1 grid auto-cols-fr grid-flow-col gap-2 md:order-2 md:flex md:gap-1 @[25rem]/card:ml-auto">{secondary}</div>}
           </div>
         )}
       {error && <p className="px-3.5 pb-2.5 text-xs text-error" role="alert">{error}</p>}
