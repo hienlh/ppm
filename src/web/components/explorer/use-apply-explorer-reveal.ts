@@ -31,8 +31,15 @@ export function useApplyExplorerReveal(projectName: string | undefined): void {
           useExplorerReveal.getState().finish({ id, ok: false, error: `The Explorer does not list ${path}: PPM's file tree leaves it out.` });
           return;
         }
-        store.setFocusedPath(path || null);
-        store.setSelectedFiles(path ? [path] : []);
+        // Focusing the row that already has focus changes nothing, so nothing would scroll to it:
+        // clear it for one render first (two sets in one task would be batched into none).
+        if (path && store.focusedPath === path) {
+          store.setFocusedPath(null);
+          await new Promise((r) => setTimeout(r, 0));
+          if (cancelled) return;
+        }
+        useFileStore.getState().setFocusedPath(path || null);
+        useFileStore.getState().setSelectedFiles(path ? [path] : []);
         useExplorerReveal.getState().finish({ id, ok: true });
       } catch (e) {
         if (!cancelled) useExplorerReveal.getState().finish({ id, ok: false, error: e instanceof Error ? e.message : String(e) });

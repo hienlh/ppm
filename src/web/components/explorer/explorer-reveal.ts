@@ -50,6 +50,9 @@ export function showExplorer(): void {
 /** Asks the tree to reveal `path` and shows the Explorer; resolves with how it ended, or a timeout. */
 export function revealInExplorer(target: Omit<ExplorerReveal, "id">, timeoutMs = 6_000): Promise<RevealOutcome> {
   const id = nextId++;
+  // A reveal still waiting is replaced, and its caller told so now rather than after its timeout.
+  const replaced = useExplorerReveal.getState().pending;
+  if (replaced) useExplorerReveal.getState().finish({ id: replaced.id, ok: false, error: "A newer reveal replaced this one before the Explorer showed it." });
   useExplorerReveal.setState({ pending: { ...target, id }, outcome: null });
   showExplorer();
   return new Promise((done) => {

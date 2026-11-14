@@ -57,6 +57,13 @@ describe("resolveRevealPath", () => {
     expect(await resolveRevealPath(project(), ".", deps())).toEqual({ ok: true, value: { path: "", kind: "folder" } });
   });
 
+  it("names the path as the disk spells it when the disk ignores case", async () => {
+    if (process.platform !== "win32" && process.platform !== "darwin") return;
+    expect(await resolveRevealPath(project(), "SRC/Server/ROUTES/Chat.ts", deps()))
+      .toEqual({ ok: true, value: { path: "src/server/routes/chat.ts", kind: "file" } });
+    expect((await resolveRevealPath(project(), api.toUpperCase(), deps())).ok).toBe(true);
+  });
+
   it("refuses a path outside the project, written as one or through ..", async () => {
     for (const p of [join(root, "outside.txt"), "../outside.txt", "src/../../outside.txt"]) {
       const r = await resolveRevealPath(project(), p, deps());
@@ -71,15 +78,23 @@ describe("resolveRevealPath", () => {
     } catch {
       return; // no links on this machine
     }
-    const r = await resolveRevealPath(project(), "escape", deps());
+    const r = await resolveRevealPath(project(), "escape/outside.txt", deps());
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain("leads outside project");
+    // It says a link leads out, never where to.
+    if (!r.ok) {
+      expect(r.error).toContain("leads outside the project through a link");
+      expect(r.error).not.toContain(join(root, "outside.txt"));
+    }
   });
 
   it("refuses a store the Assistant keeps private, a missing path and an empty one", async () => {
     const priv = await resolveRevealPath(project(), "keys", deps([join(api, "keys")]));
     expect(priv.ok).toBe(false);
     if (!priv.ok) expect(priv.error).toContain("logins or keys");
+    // The same answer whether or not a file is there, so it never tells which keys exist.
+    const absent = await resolveRevealPath(project(), "keys/id_rsa", deps([join(api, "keys")]));
+    expect(absent.ok).toBe(false);
+    if (!absent.ok) expect(absent.error).toContain("logins or keys");
     const missing = await resolveRevealPath(project(), "src/nope", deps());
     expect(missing.ok).toBe(false);
     expect((await resolveRevealPath(project(), "  ", deps())).ok).toBe(false);

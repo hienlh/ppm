@@ -99,6 +99,25 @@ describe("revealing in the tree", () => {
     await tree.unmount();
   });
 
+  it("waits for a tree that is not shown yet, and applies the reveal once it mounts", async () => {
+    let outcome: Awaited<ReturnType<typeof revealInExplorer>> | undefined;
+    const waiting = revealInExplorer({ projectName: "demo", path: "src/server", kind: "folder" }).then((o) => { outcome = o; });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(outcome).toBeUndefined();
+    const tree = await mount(<Tree project="demo" />);
+    await act(async () => { await waiting; });
+    expect(outcome).toMatchObject({ ok: true });
+    expect(useFileStore.getState().focusedPath).toBe("src/server");
+    await tree.unmount();
+  });
+
+  it("tells the caller of a reveal a newer one replaced it at once, not after its wait", async () => {
+    const first = revealInExplorer({ projectName: "elsewhere", path: "src", kind: "folder" }, 60_000);
+    const second = revealInExplorer({ projectName: "elsewhere", path: "src/server", kind: "folder" }, 100);
+    expect(await first).toMatchObject({ ok: false, error: expect.stringContaining("newer reveal") });
+    expect(await second).toMatchObject({ ok: false });
+  });
+
   it("leaves a reveal for another project to the tree that shows it, and gives up after the wait", async () => {
     const tree = await mount(<Tree project="demo" />);
     let outcome: Awaited<ReturnType<typeof revealInExplorer>> | undefined;

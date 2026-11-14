@@ -35,6 +35,7 @@ import { openSettings } from "@/components/settings/open-settings";
 import { FeatureBadge } from "@/components/ui/feature-badge";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
 import { cn } from "@/lib/utils";
+import { OPEN_NAVIGATION } from "@/components/database/db-sidebar-reveal";
 
 // Lazy so the design UI stays out of the entry bundle until the section is opened.
 const DesignsSidebarPanel = lazy(() =>
@@ -115,6 +116,17 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
   useEffect(() => {
     if (initialTab) setActiveTab(initialTab);
   }, [initialTab]);
+
+  // A request to show a section while the drawer already shows another one: `initialTab` does not
+  // change when the same section is asked for twice, so the drawer listens itself as well.
+  useEffect(() => {
+    const show = (e: Event) => {
+      const tab = (e as CustomEvent<{ tab?: SidebarActiveTab }>).detail?.tab;
+      if (tab) setActiveTab(tab);
+    };
+    window.addEventListener(OPEN_NAVIGATION, show);
+    return () => window.removeEventListener(OPEN_NAVIGATION, show);
+  }, []);
 
   // If the active tab disappears (Jira disabled, ext uninstalled), fall back to the first tab.
   useEffect(() => {

@@ -106,6 +106,8 @@ describe("ppm manager through the server", () => {
     const before = await announced();
 
     await ok(["chat", "rename", other, "Notes v2"]);
+    // An announcement goes out after the route answers: give a wrong one the time to arrive.
+    await new Promise((r) => setTimeout(r, 1000));
     expect(await announced()).toBe(before);
 
     await ok(["chat", "rename", manager, "QL beta"]);

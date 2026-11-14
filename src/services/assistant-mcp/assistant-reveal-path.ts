@@ -25,7 +25,17 @@ import { errorResult, jsonResult } from "./assistant-tool-output.ts";
 
 const MAX_PATH_CHARS = 4096;
 
-const isInside = (root: string, path: string): boolean => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
+/** Windows and macOS disks ignore case, so "inside" does too there, as `assistant-private-paths` does. */
+const foldCase = process.platform === "win32" || process.platform === "darwin";
+const fold = (p: string) => (foldCase ? p.toLowerCase() : p);
+const isInside = (root: string, path: string): boolean => {
+  const r = fold(root), p = fold(path);
+  return p === r || p.startsWith(r.endsWith(sep) ? r : r + sep);
+};
+
+const NOT_INSIDE = (project: AssistantProject) => `is not inside project "${project.name}"; its Explorer shows only the project's own files. `
+  + "Open a file elsewhere with ui_open_tab kind \"file\".";
+const PRIVATE = "is where logins or keys are kept; PPM does not show it for the Assistant. Ask the user to open it.";
 
 export interface RevealDeps {
   /** Every registered project's folder: what the private-store rule measures from. */
@@ -34,7 +44,14 @@ export interface RevealDeps {
   privateRoots?: () => string[];
 }
 
-/** The path as the device's tree names it (relative, `/`-separated, `""` for the root), or why not. */
+/**
+ * The path as the device's tree names it (relative, `/`-separated, `""` for the root), or why not.
+ *
+ * Every refusal that can be decided from the path as written is decided before the disk is
+ * touched: a UNC path names another machine, and a private store must be refused the same way
+ * whether or not the file in it exists, or the answer would say which keys are there. A refusal
+ * after following links never names where a link leads.
+ */
 export async function resolveRevealPath(project: AssistantProject, input: unknown, deps: RevealDeps = {}): Promise<Scoped<{ path: string; kind: "file" | "folder" }>> {
   if (typeof input !== "string" || !input.trim()) {
     return { ok: false, error: "`path` is required: a folder or file of the project, relative to its folder (\".\" for the folder itself)." };
@@ -43,16 +60,15 @@ export async function resolveRevealPath(project: AssistantProject, input: unknow
   const raw = input.trim();
   const absolute = isAbsolute(raw) || raw.startsWith("~") ? resolvePath(raw) : resolve(project.path, raw);
   const root = resolve(project.path);
-  if (!isInside(root, absolute)) {
-    return {
-      ok: false,
-      error: `${absolute} is not inside project "${project.name}" (${root}); its Explorer shows only the project's own files. `
-        + "Open a file elsewhere with ui_open_tab kind \"file\".",
-    };
-  }
-  // Checked before the disk is touched, as every other door does (a UNC path names another machine).
+  if (!isInside(root, absolute)) return { ok: false, error: `${absolute} ${NOT_INSIDE(project)}` };
   const early = tabReadRefusal(absolute, absolute);
   if (early) return { ok: false, error: early.replace("does not open", "does not show") };
+  const scope = assistantPrivateScope({
+    projectRoots: (deps.projectRoots ?? (() => projectService.list().map((p) => p.path)))(),
+    ...(deps.home ? { home: deps.home() } : {}),
+    ...(deps.privateRoots ? { roots: deps.privateRoots() } : {}),
+  });
+  if (isAssistantPrivatePath(absolute, scope)) return { ok: false, error: `${absolute} ${PRIVATE}` };
   let real: string;
   try {
     real = await realpath(absolute);
@@ -60,26 +76,19 @@ export async function resolveRevealPath(project: AssistantProject, input: unknow
     return { ok: false, error: `There is nothing at ${absolute}.` };
   }
   const realRoot = await realpath(root).catch(() => root);
-  if (!isInside(realRoot, real)) {
-    return { ok: false, error: `${absolute} leads outside project "${project.name}" (to ${real}); its Explorer shows only the project's own files.` };
-  }
+  if (!isInside(realRoot, real)) return { ok: false, error: `${absolute} leads outside the project through a link; ${NOT_INSIDE(project)}` };
   const late = tabReadRefusal(absolute, real);
   if (late) return { ok: false, error: late.replace("does not open", "does not show") };
-  const scope = assistantPrivateScope({
-    projectRoots: (deps.projectRoots ?? (() => projectService.list().map((p) => p.path)))(),
-    ...(deps.home ? { home: deps.home() } : {}),
-    ...(deps.privateRoots ? { roots: deps.privateRoots() } : {}),
-  });
-  if (isAssistantPrivatePath(absolute, scope) || isAssistantPrivatePath(real, scope)) {
-    return { ok: false, error: `${absolute} is where logins or keys are kept; PPM does not show it for the Assistant. Ask the user to open it.` };
-  }
+  if (isAssistantPrivatePath(real, scope)) return { ok: false, error: `${absolute} ${PRIVATE}` };
   let folder: boolean;
   try {
     folder = (await stat(real)).isDirectory();
   } catch {
     return { ok: false, error: `${absolute} could not be read.` };
   }
-  const path = absolute === root ? "" : relative(root, absolute).split(sep).join("/");
+  // Named from the disk's own spelling (the async realpath gives each name as stored), so a path
+  // written in the wrong case on a disk that ignores case still matches the tree's rows.
+  const path = fold(real) === fold(realRoot) ? "" : relative(realRoot, real).split(sep).join("/");
   return { ok: true, value: { path, kind: folder ? "folder" : "file" } };
 }
 

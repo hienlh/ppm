@@ -25,7 +25,10 @@ export const MANAGER_CLAUDE_ONLY = "Manager chats run on Claude for now";
 export function defaultManagerTitle(projectName: string): string {
   // Cut by character, not UTF-16 unit, so an emoji at the limit is never split in half; within
   // the session tools' title limit, so both doors that create a manager chat name it alike.
-  return Array.from(`QL ${projectName.trim()}`).slice(0, MAX_COLLAB_TITLE_CHARS).join("").trim();
+  // Spaces and control characters collapsed as the session tools collapse a given title.
+  // eslint-disable-next-line no-control-regex -- control characters are what this pattern is for
+  const name = projectName.replace(/[\x00-\x1f\x7f\s]+/g, " ").trim();
+  return Array.from(`QL ${name}`).slice(0, MAX_COLLAB_TITLE_CHARS).join("").trim();
 }
 
 /** What every surface listing a project's manager shows. */
