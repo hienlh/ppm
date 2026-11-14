@@ -44,7 +44,10 @@ export type MessageServerOrigin = Exclude<ServerOrigin, "assistant" | "assistant
  */
 export type ChatMessageOrigin = "ws" | ServerOrigin | "session" | "extension";
 
-/** How a message the server sends into a chat went. */
+/**
+ * How a message the server sends into a chat went. `delivered` is set for a `schedule` message
+ * only: whether it started its turn or waits behind one that began after the quiet check.
+ */
 export type DeliverResult = { ok: true; sessionId: string; delivered?: SessionDelivery } | { ok: false; error: string };
 
 /**

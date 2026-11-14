@@ -2667,7 +2667,10 @@ setChatControl({
     });
     // Nobody is watching: the entry goes once it is idle (a running turn re-arms this when it ends).
     if (entry.clients.size === 0) startCleanupTimer(sessionId);
-    return result.ok ? { ok: true, sessionId: result.sessionId, ...(result.delivered ? { delivered: result.delivered } : {}) } : result;
+    if (!result.ok) return result;
+    // Only a schedule's sender tracks its turn, so only it is told whether the message started one
+    // or waits behind a turn that began after the quiet check.
+    return { ok: true, sessionId: result.sessionId, ...(scheduleRun && result.delivered ? { delivered: result.delivered } : {}) };
   },
   answerApproval(asked, requestId, answer, origin) {
     const sessionId = resolveMigratedSession(asked);
