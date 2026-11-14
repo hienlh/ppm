@@ -145,6 +145,7 @@ try {
   await k.body().locator('[data-manager-chip="alpha"] [data-manager-chip-count]').click();
   await k.body().locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
   assert.equal(await k.body().locator("[data-waiting-card] h4").innerText(), DECISION, "the red count landed on alpha's card");
+  await k.page.waitForTimeout(400); // the outline fades in over 300 ms
   await k.shot("02-desktop-red-count-pressed-lands-on-card-highlighted");
   ok("desktop: alpha's red count lands on alpha's card, outlined");
 
@@ -152,6 +153,7 @@ try {
   await k.body().locator('button[aria-label="Next waiting card"]').click();
   assert.equal(await k.body().locator("[data-waiting-card] h4").innerText(), URGENT);
   await k.body().locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
+  await k.page.waitForTimeout(400); // the outline fades in over 300 ms
   await k.shot("03-desktop-next-card");
   ok("desktop: › steps to the next card, outlined");
 
@@ -192,11 +194,13 @@ try {
   await mk.body().locator('[data-manager-chip="alpha"] [data-manager-chip-count]').tap();
   await mk.body().locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
   assert.equal(await mk.body().locator("[data-waiting-card] h4").innerText(), DECISION);
+  await mk.page.waitForTimeout(400); // the outline fades in over 300 ms
   await mk.shot("08-phone-red-count-pressed-lands-on-card-highlighted");
   await mob.waitForTimeout(2000);
   await mk.body().locator('button[aria-label="Next waiting card"]').tap();
   await mk.body().locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
   assert.equal(await mk.body().locator("[data-waiting-card] h4").innerText(), URGENT);
+  await mk.page.waitForTimeout(400); // the outline fades in over 300 ms
   await mk.shot("09-phone-next-card");
   await mk.body().locator('button[aria-label="Previous waiting card"]').tap();
   await mk.body().locator("[data-waiting-card]").getByRole("button", { name: "Reply" }).tap();
