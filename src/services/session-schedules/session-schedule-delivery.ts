@@ -6,7 +6,9 @@
  */
 import { SessionScheduleDispatcher } from "./session-schedule-dispatcher.ts";
 import type { SessionScheduleDispatchEnv } from "./session-schedule-dispatch-types.ts";
-import { setSessionScheduleDueHandler, setSessionScheduleRetryLookup } from "./session-schedule-due.ts";
+import {
+  setSessionScheduleDueHandler, setSessionScheduleHeldLookup, setSessionScheduleRetryLookup,
+} from "./session-schedule-due.ts";
 import { followRenamedChats } from "./session-schedule-lifecycle.ts";
 import { broadcastToOpenPpms, setSchedulesChangedBroadcaster } from "./session-schedules-changed.ts";
 
@@ -17,6 +19,7 @@ export async function startSessionScheduleDelivery(env?: SessionScheduleDispatch
   dispatcher.start();
   setSessionScheduleDueHandler((scheduleId) => dispatcher.due(scheduleId));
   setSessionScheduleRetryLookup((scheduleId) => dispatcher.retryAt(scheduleId));
+  setSessionScheduleHeldLookup((scheduleId) => dispatcher.isHeld(scheduleId));
   // In a running server, what delivery changes on its own reaches every open PPM.
   if (!env) setSchedulesChangedBroadcaster(broadcastToOpenPpms);
   const unfollow = followRenamedChats(resolvedEnv.lifecycle);
@@ -24,6 +27,7 @@ export async function startSessionScheduleDelivery(env?: SessionScheduleDispatch
     if (!env) setSchedulesChangedBroadcaster(null);
     setSessionScheduleDueHandler(null);
     setSessionScheduleRetryLookup(null);
+    setSessionScheduleHeldLookup(null);
     unfollow();
     dispatcher.stop();
   };

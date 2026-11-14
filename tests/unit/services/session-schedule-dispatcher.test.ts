@@ -696,6 +696,31 @@ describe("a message queued behind a turn that started after the quiet check", ()
     expect(listScheduleRuns(id)[0]!.status).toBe("done");
   });
 
+  it("says it is held while held, and tells open schedule lists when the hold starts and ends", async () => {
+    quick();
+    reply = (s) => ({ ok: true, sessionId: s.sessionId, delivered: "queued" });
+    const id = pending();
+    await dispatcher.due(id);
+    queuedAnswer = false;
+    expect(dispatcher.isHeld(id)).toBe(false);
+    let changes = 0;
+    const off = onServerScheduleChange(() => { changes++; });
+    try {
+      stopped();
+      expect(dispatcher.isHeld(id)).toBe(true);
+      expect(changes).toBe(1);
+      // A second Stop changes nothing anyone sees.
+      stopped();
+      expect(changes).toBe(1);
+      reply = (s) => ({ ok: true, sessionId: s.sessionId, delivered: "started" });
+      turnEnded("done");
+      expect(dispatcher.isHeld(id)).toBe(false);
+      expect(changes).toBeGreaterThanOrEqual(2);
+    } finally {
+      off();
+    }
+  });
+
   it("is held again by a later turn that is stopped too", async () => {
     await queuedThenStopped();
     await Bun.sleep(40);

@@ -49,10 +49,19 @@ export interface SessionScheduleStatus {
   detail?: string;
 }
 
-/** What a session schedule is doing: active, waiting for its chat, paused (and why), or off. */
-export function sessionScheduleStatus(s: Pick<ScheduleView, "enabled" | "paused_reason" | "pending_since" | "timezone">): SessionScheduleStatus {
+/** What a session schedule is doing: active, waiting for its chat (or held after a Stop), paused (and why), or off. */
+export function sessionScheduleStatus(
+  s: Pick<ScheduleView, "enabled" | "paused_reason" | "pending_since" | "timezone" | "held_after_stop">,
+): SessionScheduleStatus {
   if (s.paused_reason) return { text: "Paused", tone: "bad", detail: s.paused_reason };
   if (!s.enabled) return { text: "Off", tone: "off" };
+  if (s.pending_since && s.held_after_stop) {
+    return {
+      text: "Held after Stop",
+      tone: "wait",
+      detail: `Due since ${formatInZone(s.pending_since, s.timezone)}; held after Stop until the chat's next turn ends or the next fire.`,
+    };
+  }
   if (s.pending_since) {
     return {
       text: "Waiting for the chat",

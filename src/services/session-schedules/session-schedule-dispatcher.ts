@@ -89,8 +89,15 @@ export class SessionScheduleDispatcher {
     }
     this.waiting.add(sessionId, scheduleId);
     // A fire coming due (or Run now) is the user's timer speaking again: it ends a Stop's hold.
-    this.held.delete(sessionId);
+    this.release(sessionId);
     return this.pump(sessionId);
+  }
+
+  /** This schedule's pending fire waits because the user stopped a turn in its chat. */
+  isHeld(scheduleId: number): boolean {
+    const schedule = getSchedule(scheduleId);
+    if (!schedule?.target_session_id || !schedule.pending_since) return false;
+    return this.held.has(this.env.canonical(schedule.target_session_id));
   }
 
   /** When this schedule's chat is tried again after a failed send or turn (epoch ms), or null. */
@@ -172,12 +179,14 @@ export class SessionScheduleDispatcher {
     // turn included: it is still in the waiting list until its own turn opens); any other end
     // releases it, since the chat has moved on since the Stop.
     if (p.cancelledBy) {
-      if (this.waiting.has(sessionId)) {
+      if (this.waiting.has(sessionId) && !this.held.has(sessionId)) {
         this.held.add(sessionId);
+        // The footer chip and Settings say a held schedule is held, so they read again.
+        broadcastSchedulesChanged();
         log.info(`session=${sessionId} turn stopped by ${p.cancelledBy}: its pending schedules wait for a later turn or their next fire`);
       }
     } else {
-      this.held.delete(sessionId);
+      this.release(sessionId);
     }
     const flight = this.flights.get(sessionId);
     if (!flight) return this.wake(sessionId);
@@ -288,6 +297,11 @@ export class SessionScheduleDispatcher {
   private wake(asked: string): void {
     const sessionId = this.env.canonical(asked);
     if (this.waiting.has(sessionId)) this.wakeSoon(sessionId);
+  }
+
+  /** Ends a Stop's hold on this chat, telling open schedule lists when there was one. */
+  private release(sessionId: string): void {
+    if (this.held.delete(sessionId)) broadcastSchedulesChanged();
   }
 
   private wakeSoon(sessionId: string): void {

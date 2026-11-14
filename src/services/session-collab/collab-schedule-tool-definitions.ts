@@ -21,7 +21,9 @@ export function sessionScheduleToolDefinitions() {
         + "it survives PPM and this chat's process restarting; prefer it to any built-in scheduler (CronCreate, "
         + "durable or not) for anything that must still happen after a restart. It is delivered only while the chat "
         + "is idle: a running turn finishes first, and fires missed while waiting (or while PPM was off) arrive once, "
-        + `not as a queue. A chat holds at most ${MAX_SCHEDULES_PER_SESSION} schedules; the user sees and can delete `
+        + "not as a queue. When the user presses Stop in this chat, a fire waiting for it is held until the chat's next "
+        + "turn ends or the schedule's next fire, so it does not start the moment the user stopped. "
+        + `A chat holds at most ${MAX_SCHEDULES_PER_SESSION} schedules; the user sees and can delete `
         + "them in PPM. The result gives the schedule's id and its next fire time.",
       inputSchema: {
         type: "object",
@@ -51,7 +53,8 @@ export function sessionScheduleToolDefinitions() {
       title: "List this chat's schedules",
       description:
         "List the prompts scheduled into this chat: id, name, cron, time zone, whether it repeats, its next fire, whether a "
-        + "fire is waiting for the chat to be idle, and why one is paused. Only this chat's schedules.",
+        + "fire is waiting for the chat to be idle (or held after the user pressed Stop, until the chat's next turn ends or "
+        + "the next fire), and why one is paused. Only this chat's schedules.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },

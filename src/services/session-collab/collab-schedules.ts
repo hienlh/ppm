@@ -17,6 +17,7 @@ import { ScheduleEditError } from "../scheduler-edit.ts";
 import { SessionScheduleRefusal, sessionScheduleTargetIds } from "../session-schedules/session-schedule-lifecycle.ts";
 import { createSessionSchedule, sessionSchedulesOf } from "../session-schedules/session-schedule-save.ts";
 import { announceSchedulesChanged } from "../session-schedules/session-schedules-changed.ts";
+import { isSessionScheduleHeld } from "../session-schedules/session-schedule-due.ts";
 import {
   liveScheduleTargetDeps, resolveScheduleTarget, storedChatTitle, type ScheduleTarget, type ScheduleTargetDeps,
 } from "../session-schedules/session-schedule-target.ts";
@@ -98,7 +99,12 @@ function describe(s: Schedule, env: SessionScheduleToolEnv): Json {
       : `Once, at the next match of "${s.cron_expr}" in ${zone}; then it deletes itself.`,
     enabled: s.enabled === 1,
     nextFire: s.next_fire_at ? { at: s.next_fire_at, local: wallClock(s.next_fire_at, zone) } : null,
-    ...(s.pending_since && { waitingSince: s.pending_since, waiting: "It came due and is delivered once this chat is idle." }),
+    ...(s.pending_since && {
+      waitingSince: s.pending_since,
+      waiting: isSessionScheduleHeld(s.id)
+        ? "It came due and is held after Stop: the user stopped a turn in this chat, so it goes once this chat's next turn ends or its next fire comes due."
+        : "It came due and is delivered once this chat is idle.",
+    }),
     ...(s.paused_reason && { pausedReason: s.paused_reason }),
   };
 }

@@ -6,7 +6,8 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
-import { getSchedule, insertSchedule } from "../../../src/services/scheduler-db.service.ts";
+import { getSchedule, insertSchedule, setSessionSchedulePending } from "../../../src/services/scheduler-db.service.ts";
+import { setSessionScheduleHeldLookup } from "../../../src/services/session-schedules/session-schedule-due.ts";
 import {
   sessionScheduleToolCall, type AiScheduleNotice, type SessionScheduleToolEnv,
 } from "../../../src/services/session-collab/collab-schedules.ts";
@@ -226,6 +227,22 @@ describe("session_schedule_list and session_schedule_delete", () => {
     const out = body(call(CHAT, "session_schedule_list"));
     expect(out.schedules.map((s: { prompt: string }) => s.prompt)).toEqual(["mine"]);
     expect(out.max).toBe(MAX_SCHEDULES_PER_SESSION);
+  });
+
+  it("says when a fire waits for the chat, and when it is held after the user pressed Stop", () => {
+    const waiting = seed(CHAT, "waiting");
+    const held = seed(CHAT, "held");
+    for (const id of [waiting, held]) setSessionSchedulePending(id, "2026-11-15T00:30:00.000Z", null);
+    setSessionScheduleHeldLookup((id) => id === held);
+    try {
+      const out = body(call(CHAT, "session_schedule_list"));
+      const byPrompt = (p: string) => out.schedules.find((s: { prompt: string }) => s.prompt === p);
+      expect(byPrompt("waiting").waiting).toBe("It came due and is delivered once this chat is idle.");
+      expect(byPrompt("held").waiting).toContain("held after Stop");
+      expect(byPrompt("held").waiting).toContain("next turn ends or its next fire comes due");
+    } finally {
+      setSessionScheduleHeldLookup(null);
+    }
   });
 
   it("cannot delete another chat's schedule, and answers as for one that does not exist", () => {

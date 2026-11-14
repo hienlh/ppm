@@ -163,6 +163,13 @@ describe("a session schedule (Chat)", () => {
     const base = { ...saved, kind: "session" as const, enabled: 1, pending_since: null, paused_reason: null, timezone: null };
     expect(scheduleStatusLabel(base, 0)).toEqual({ text: "Active", tone: "ok" });
     expect(scheduleStatusLabel({ ...base, pending_since: "2026-11-15T08:00:00Z" }, 0)).toEqual({ text: "Waiting for the chat", tone: "wait" });
+    // Held after the user pressed Stop in its chat: the chip and Settings say why it waits.
+    expect(scheduleStatusLabel({ ...base, pending_since: "2026-11-15T08:00:00Z", held_after_stop: true }, 0)).toEqual({ text: "Held after Stop", tone: "wait" });
+    const { sessionScheduleStatus } = await import("../../../src/web/lib/session-schedule-view");
+    expect(sessionScheduleStatus({ ...base, pending_since: "2026-11-15T08:00:00Z", held_after_stop: true }).detail)
+      .toContain("held after Stop until the chat's next turn ends or the next fire");
+    // Not due, nothing to hold.
+    expect(scheduleStatusLabel({ ...base, held_after_stop: true }, 0)).toEqual({ text: "Active", tone: "ok" });
     expect(scheduleStatusLabel({ ...base, enabled: 0, paused_reason: "Its chat is gone." }, 0)).toEqual({ text: "Paused", tone: "bad" });
     expect(scheduleStatusLabel({ ...base, enabled: 0 }, 0)).toEqual({ text: "Off", tone: "off" });
   });

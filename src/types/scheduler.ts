@@ -92,6 +92,11 @@ export interface ScheduleView extends Omit<Schedule, "secrets_enc" | "state_json
   status: ScheduleStatusView;
   /** A session schedule's chat as the user knows it; null when it has no title (or is not a session schedule). */
   target_title?: string | null;
+  /**
+   * A session schedule's pending fire held because the user stopped a turn in its chat: it goes once
+   * that chat's next turn ends or the schedule's next fire comes due. Absent for other kinds.
+   */
+  held_after_stop?: boolean;
 }
 
 export interface ScheduleRun {

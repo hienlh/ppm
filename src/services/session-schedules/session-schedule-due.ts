@@ -29,6 +29,29 @@ export function setSessionScheduleRetryLookup(fn: SessionScheduleRetryLookup | n
   retryLookup = fn;
 }
 
+/** Whether the deliverer holds this schedule's pending fire after a Stop in its chat. */
+export type SessionScheduleHeldLookup = (scheduleId: number) => boolean;
+
+let heldLookup: SessionScheduleHeldLookup | null = null;
+
+/** Register how to ask the deliverer whether a schedule is held after a Stop, or clear it with null. */
+export function setSessionScheduleHeldLookup(fn: SessionScheduleHeldLookup | null): void {
+  heldLookup = fn;
+}
+
+/**
+ * A pending fire the deliverer holds because the user stopped a turn in its chat: it goes once that
+ * chat's next turn ends or the schedule's next fire comes due. False with no deliverer running.
+ */
+export function isSessionScheduleHeld(scheduleId: number): boolean {
+  try {
+    return heldLookup?.(scheduleId) ?? false;
+  } catch (e) {
+    log.warn(`could not ask whether schedule ${scheduleId} is held: ${(e as Error)?.message ?? e}`);
+    return false;
+  }
+}
+
 /**
  * Run now while the schedule's chat waits out a retry after a failed send: the deliverer would
  * only fold the fire into the one already waiting, so the request is answered with when that

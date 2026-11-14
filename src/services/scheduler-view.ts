@@ -8,6 +8,7 @@ import { blockedBy, liveScript } from "./schedule-script/instance-guard.ts";
 import { readSecrets } from "./schedule-script/schedule-secrets.ts";
 import { getRuntime } from "./schedule-script/script-runtime-db.ts";
 import { alwaysOnSupervisor, schedulerService } from "./scheduler.service.ts";
+import { isSessionScheduleHeld } from "./session-schedules/session-schedule-due.ts";
 
 export function toScheduleView(s: Schedule): ScheduleView {
   const { secrets_enc, state_json, inputs_json, input_values_json, ...rest } = s;
@@ -17,6 +18,7 @@ export function toScheduleView(s: Schedule): ScheduleView {
     inputValues: parseOr<Record<string, ScheduleInputValue>>(input_values_json, {}),
     secretsSet: secretKeys(s),
     status: scheduleStatus(s),
+    ...(s.kind === "session" && { held_after_stop: isSessionScheduleHeld(s.id) }),
   };
 }
 
