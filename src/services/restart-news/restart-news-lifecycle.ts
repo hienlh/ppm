@@ -13,7 +13,9 @@ import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { managerChats } from "../assistant-managers/manager-chats.service.ts";
 import { listOpenCardRows } from "../assistant-cards/assistant-cards-db.ts";
 import { parentOf } from "../session-collab/session-links.service.ts";
-import { findInterruptedChats, type InterruptedChatDeps, type InterruptedScan } from "./interrupted-chats.ts";
+import { resolveTraceId } from "../session-trace/session-trace-store.ts";
+import type { InterruptedChat } from "../../shared/restart-news.ts";
+import { findInterruptedChats, tracesWrittenSince, type InterruptedChatDeps, type InterruptedScan } from "./interrupted-chats.ts";
 import type { ServerStart } from "./server-run-log.ts";
 import { currentServerStart } from "./restart-news-run.ts";
 import { addRestartNews, createRestartNewsSource, RESTART_NEWS_ROW, restartNewsUrgent, type RestartNewsStore } from "./restart-news-source.ts";
@@ -77,6 +79,17 @@ export interface RestartNewsStartDeps {
   enabled?: () => boolean;
   store?: RestartNewsStore;
   mainSession?: () => string | null;
+  stillCutOff?: (chat: InterruptedChat) => boolean;
+}
+
+/**
+ * Whether a chat the news lists is still waiting when the news goes out: this database still knows
+ * it (it was not deleted), and none of the traces it went by has a row since the restart that found it.
+ */
+function stillCutOffLive(chat: InterruptedChat): boolean {
+  if (firstOf(chat.sessionId, getSessionProjectPath) === null) return false;
+  const traceIds = [...new Set(sessionIdAliases(chat.sessionId).map(resolveTraceId))];
+  return !tracesWrittenSince(getTraceDb(), traceIds, chat.restartAt);
 }
 
 /**
@@ -99,6 +112,7 @@ export function startRestartNews(deps: RestartNewsStartDeps = {}): void {
       }),
       canonical: resolveMigratedSession,
       managers: () => managerChats.list().map((r) => ({ projectName: r.projectName, sessionId: resolveMigratedSession(r.sessionId) })),
+      stillCutOff: deps.stillCutOff ?? stillCutOffLive,
     }));
   }
 }

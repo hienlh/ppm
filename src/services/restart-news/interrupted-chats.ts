@@ -138,6 +138,18 @@ export function cutOffTurn(rows: readonly TurnRow[]): { prompt?: string; activit
 }
 
 /**
+ * Whether any of these traces has a row (other than a browser's) written at or after `since`: a
+ * chat listed as cut off that has done this has been taken up again since the news was written.
+ */
+export function tracesWrittenSince(traceDb: Database, traceIds: readonly string[], since: number): boolean {
+  const newestQ = traceDb.query(NEWEST_SQL);
+  return traceIds.some((id) => {
+    const newest = newestQ.get(id) as { ts: number } | null;
+    return !!newest && newest.ts >= since;
+  });
+}
+
+/**
  * Every chat whose last turn of the previous run was left unfinished, newest first. `restartAt` is
  * the new run's start (rows from then on are the new run's). Throws when the trace cannot be read.
  */

@@ -13,7 +13,7 @@ import { AssistantWakeQueue } from "../../../src/services/assistant-wake/assista
 import { setAssistantClock } from "../../../src/services/assistant-wake/assistant-clock.ts";
 import { wakeContextEntry } from "../../../src/services/assistant-wake/wake-news-text.ts";
 import {
-  addRestartNews, createRestartNewsSource, cutOffChatsCarried, pendingRestartNews, restartNewsUrgent, RESTART_SOURCE_NAME, type RestartNewsStore,
+  addRestartNews, createRestartNewsSource, cutOffChatsCarried, pendingRestartNews, RESTART_NEWS_MAX_AGE_MS, restartNewsUrgent, RESTART_SOURCE_NAME, type RestartNewsStore,
 } from "../../../src/services/restart-news/restart-news-source.ts";
 import { _resetRestartNews, startRestartNews } from "../../../src/services/restart-news/restart-news-lifecycle.ts";
 import { RESTART_OPENER, restartNewsEntry } from "../../../src/services/restart-news/restart-news-text.ts";
@@ -105,6 +105,47 @@ describe("the pending restart news", () => {
     const [item] = sourceOf(store, [{ projectName: "api", sessionId: "mgr" }, { projectName: "web", sessionId: "mgr-web" }]).pending(MAIN);
     expect(item!.urgent).toBe(true);
     expect(item!.news!.restart!.managers).toEqual([{ projectName: "api", sessionId: "mgr" }]);
+  });
+
+  it("re-checks each chat when it goes out: one that ran again or was deleted is dropped, and with none left it is not urgent", () => {
+    const store = memoryStore();
+    addRestartNews(store, restart(T), { chats: [chat("a"), chat("b")], more: 0 });
+    const gone = new Set(["a"]);
+    const source = createRestartNewsSource({
+      store, mainSession: () => MAIN, canonical: (id) => id, managers: () => [], now: () => T, stillCutOff: (c) => !gone.has(c.sessionId),
+    });
+    const [first] = source.pending(MAIN);
+    expect(first!.news!.restart!.chats.map((c) => c.sessionId)).toEqual(["b"]);
+    expect(first!.urgent).toBe(true);
+    expect(pendingRestartNews(store)!.chats.map((c) => c.sessionId)).toEqual(["b"]);
+    gone.add("b");
+    const [second] = source.pending(MAIN);
+    expect(second!.news!.restart!.chats).toEqual([]);
+    expect(second!.urgent).toBe(false);
+  });
+
+  it("drops news older than 24 hours instead of telling it", () => {
+    const store = memoryStore();
+    addRestartNews(store, restart(T), { chats: [chat("a")], more: 0 });
+    let now = T + RESTART_NEWS_MAX_AGE_MS - 1;
+    const source = createRestartNewsSource({ store, mainSession: () => MAIN, canonical: (id) => id, managers: () => [], now: () => now });
+    expect(source.pending(MAIN)).toHaveLength(1);
+    now = T + RESTART_NEWS_MAX_AGE_MS + 1;
+    expect(source.pending(MAIN)).toEqual([]);
+    expect(pendingRestartNews(store)).toBeNull();
+  });
+
+  it("keeps a newer restart when an older one expires", () => {
+    const store = memoryStore();
+    addRestartNews(store, restart(T), { chats: [chat("a")], more: 0 });
+    addRestartNews(store, restart(T + 3_600_000), { chats: [chat("b", { restartAt: T + 3_600_000 })], more: 0 });
+    const source = createRestartNewsSource({
+      store, mainSession: () => MAIN, canonical: (id) => id, managers: () => [], now: () => T + RESTART_NEWS_MAX_AGE_MS + 1,
+    });
+    source.expire!();
+    const left = pendingRestartNews(store)!;
+    expect(left.restarts.map((r) => r.at)).toEqual([T + 3_600_000]);
+    expect(left.chats.map((c) => c.sessionId)).toEqual(["b"]);
   });
 
   it("waits while there is no main Assistant session", () => {

@@ -109,9 +109,45 @@ export interface RestartSourceDeps {
   canonical(sessionId: string): string;
   /** Every project's manager chat, read when the news goes out. */
   managers(): Array<{ projectName: string; sessionId: string }>;
+  /**
+   * Whether a listed chat still waits to be resumed when the news goes out: false once it has run
+   * again since the restart that found it, or was deleted. News can wait hours (a busy Assistant,
+   * the hourly cap, no main session yet), and telling a manager to resume a chat the user already
+   * resumed would run the same work twice. Absent: every chat is taken as still cut off.
+   */
+  stillCutOff?(chat: InterruptedChat): boolean;
+  now?(): number;
 }
 
+/** Pending news older than this is dropped rather than told: its chats are a day stale. */
+export const RESTART_NEWS_MAX_AGE_MS = 24 * 60 * 60_000;
+
 export function createRestartNewsSource(deps: RestartSourceDeps): WakeSource {
+  const now = () => (deps.now ? deps.now() : Date.now());
+  /** The listed chats that still wait; the pending row is rewritten when some no longer do. */
+  const recheck = (news: PendingNews): PendingNews => {
+    if (!deps.stillCutOff || news.chats.length === 0) return news;
+    const still = news.chats.filter((c) => {
+      try { return deps.stillCutOff!(c); } catch { return true; }
+    });
+    if (still.length === news.chats.length) return news;
+    log.info(`restart news: ${news.chats.length - still.length} listed chat(s) ran again or were deleted since the restart; not telling of them`);
+    const next = { ...news, chats: still };
+    write(deps.store, next);
+    return next;
+  };
+  /** Drops restarts (and the chats they found) older than {@link RESTART_NEWS_MAX_AGE_MS}. */
+  const expire = (): void => {
+    const news = read(deps.store);
+    if (news.restarts.length === 0) return;
+    const cutoff = now() - RESTART_NEWS_MAX_AGE_MS;
+    const restarts = news.restarts.filter((r) => r.at >= cutoff);
+    if (restarts.length === news.restarts.length) return;
+    log.info(`restart news: dropping ${news.restarts.length - restarts.length} restart(s) older than 24 h that the Assistant was never told of`);
+    write(deps.store, restarts.length
+      ? { ...news, restarts, chats: news.chats.filter((c) => c.restartAt >= cutoff) }
+      : { ...EMPTY });
+  };
   /** Clears what `item` carried: restarts and chats up to its time; anything merged in since stays. */
   const clear = (items: WakeItem[]) => {
     const upTo = Math.max(...items.map((i) => i.at));
@@ -134,8 +170,11 @@ export function createRestartNewsSource(deps: RestartSourceDeps): WakeSource {
     pending(sessionId) {
       const main = deps.mainSession();
       if (!main || deps.canonical(sessionId) !== deps.canonical(main)) return [];
-      const news = read(deps.store);
-      if (news.restarts.length === 0) return [];
+      // A pump the queue starts on its own skips the tick's expiry: day-old news must not go out then either.
+      expire();
+      const stored = read(deps.store);
+      if (stored.restarts.length === 0) return [];
+      const news = recheck(stored);
       const at = news.restarts.at(-1)!.at;
       const projects = new Set(news.chats.map((c) => c.projectName));
       let managers: Array<{ projectName: string; sessionId: string }> = [];
@@ -155,6 +194,7 @@ export function createRestartNewsSource(deps: RestartSourceDeps): WakeSource {
         news: { kind: "restart", key, project: "", sessionId: "", at, restart },
       }];
     },
+    expire,
     delivered: (_id, items) => clear(items),
     ended: (_id, items) => clear(items),
     failed(_id, items) {

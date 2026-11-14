@@ -1117,7 +1117,10 @@ so it can have each project's manager chat resume them. Code in `src/services/re
   and adds this start to the `restart` wake source (`restart-news-source.ts`, config row
   `assistant_restart_news`, so a crash before delivery keeps it). One item per start; restarts before
   delivery merge into it; a delivered or stopped turn clears only what it carried; three failed turns
-  drop it. It is urgent — passes quiet hours — only when a chat was cut off
+  drop it. Each listed chat is checked again when the news goes out (it can wait hours: a busy
+  Assistant, the hourly cap, no main session yet): one deleted since, or with a trace row after the
+  restart that found it, is dropped, and urgency is worked out from what is left. A restart pending
+  for more than 24 h is dropped with a log line (`RESTART_NEWS_MAX_AGE_MS`). It is urgent — passes quiet hours — only when a chat was cut off
   (`RESTART_NEWS_URGENT_WHEN` in `assistant-limits.ts`). Settings → PPM Assistant → Digest & quiet
   hours → Restarts ("Tell the Assistant after PPM restarts", `restart_news`, default on) gates the
   news only; the run log is always written. Nothing goes to Telegram directly.

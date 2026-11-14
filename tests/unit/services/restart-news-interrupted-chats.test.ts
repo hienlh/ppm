@@ -12,7 +12,7 @@ import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
 import { closeTraceDb, getTraceDb } from "../../../src/services/session-trace/session-trace-db.ts";
 import { appendBatch } from "../../../src/services/session-trace/session-trace-store.ts";
 import {
-  cutOffTurn, findInterruptedChats, MAX_INTERRUPTED_LISTED, type InterruptedChatDeps,
+  cutOffTurn, findInterruptedChats, MAX_INTERRUPTED_LISTED, tracesWrittenSince, type InterruptedChatDeps,
 } from "../../../src/services/restart-news/interrupted-chats.ts";
 
 const dirs: string[] = [];
@@ -136,6 +136,17 @@ describe("finding the chats a restart cut off", () => {
     expect(scan.chats.some((c) => c.sessionId === "web")).toBe(false);
     // Newest first; a chat with no title is named by its id.
     expect(scan.chats[0]!.title).toBe(`Session s${MAX_INTERRUPTED_LISTED + 2}`);
+  });
+});
+
+describe("re-checking a listed chat", () => {
+  it("sees a chat taken up again since the restart, across the traces it went by", () => {
+    trace("web", PREV_START + 5, [user("Cut off"), tool("Bash")]);
+    trace("web-renamed", PREV_START + 6, [user("Old id"), tool("Bash")]);
+    expect(tracesWrittenSince(getTraceDb(), ["web", "web-renamed"], RESTART)).toBe(false);
+    trace("web-renamed", RESTART + 50, [user("Resumed")]);
+    expect(tracesWrittenSince(getTraceDb(), ["web", "web-renamed"], RESTART)).toBe(true);
+    expect(tracesWrittenSince(getTraceDb(), ["nobody"], RESTART)).toBe(false);
   });
 });
 
