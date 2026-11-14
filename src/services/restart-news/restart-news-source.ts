@@ -153,10 +153,12 @@ export function createRestartNewsSource(deps: RestartSourceDeps): WakeSource {
     const upTo = Math.max(...items.map((i) => i.at));
     const news = read(deps.store);
     const restarts = news.restarts.filter((r) => r.at > upTo);
+    // The unlisted count the turn told of is spent; what restarts merged in since added stays.
+    const told = items.reduce((n, i) => n + (i.news?.restart?.moreChats ?? 0), 0);
     write(deps.store, {
       restarts,
       chats: restarts.length ? news.chats.filter((c) => c.restartAt > upTo) : [],
-      moreChats: 0,
+      moreChats: restarts.length ? Math.max(0, news.moreChats - told) : 0,
       attempts: 0,
     });
   };

@@ -107,6 +107,19 @@ describe("the pending restart news", () => {
     expect(item!.news!.restart!.managers).toEqual([{ projectName: "api", sessionId: "mgr" }]);
   });
 
+  it("delivery keeps the count of unlisted chats that a restart merged in since", () => {
+    const store = memoryStore();
+    const source = sourceOf(store);
+    addRestartNews(store, restart(T), { chats: [chat("a")], more: 2 });
+    const items = source.pending(MAIN);
+    expect(items[0]!.news!.restart!.moreChats).toBe(2);
+    addRestartNews(store, restart(T + 5_000), { chats: [chat("b", { restartAt: T + 5_000 })], more: 3 });
+    source.delivered(MAIN, items, "Told the managers.");
+    const left = pendingRestartNews(store)!;
+    expect(left.restarts.map((r) => r.at)).toEqual([T + 5_000]);
+    expect(left.moreChats).toBe(3);
+  });
+
   it("re-checks each chat when it goes out: one that ran again or was deleted is dropped, and with none left it is not urgent", () => {
     const store = memoryStore();
     addRestartNews(store, restart(T), { chats: [chat("a"), chat("b")], more: 0 });
