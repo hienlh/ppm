@@ -27,7 +27,8 @@ async function editThenNextTurn(k, s, label, text) {
 
 /** A held change's card in the stream, answered with one of its buttons. */
 async function decideInPpm(k, title, button) {
-  const card = k.body().locator('[data-assistant-card="rules_change"][data-card-status="open"]').last();
+  // The bar's copy: the stream only names a waiting card (`data-card-pointer`).
+  const card = k.body().locator('[data-assistant-card="rules_change"][data-card-status="open"]:not([data-card-pointer])').last();
   await card.waitFor({ timeout: 20000 });
   if (title) assert.match(await card.innerText(), title);
   await card.getByRole("button", { name: button }).click();

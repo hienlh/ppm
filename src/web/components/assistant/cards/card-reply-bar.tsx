@@ -99,7 +99,8 @@ export function CardReplyBar(props: { target?: CardReplyTarget; onClose?: () => 
           rows={2}
           onChange={(e) => { setText(e.target.value); setQuestion(null); }}
           onKeyDown={(e) => {
-            if (e.key === "Escape") { e.preventDefault(); close(); return; }
+            // Escape ends the reply only, not a sheet the bar sits in.
+            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(false); }
           }}
           placeholder={REPLY_PLACEHOLDER}

@@ -16,9 +16,14 @@ import { WaitingCardsBar, type WaitingBarFocus } from "./waiting-cards-bar";
 
 export const WAITING_LABEL = "Waiting on you";
 
-/** The card a press on a project's red count lands on: its first waiting card, else the first of all. */
-export function focusTarget(ordered: readonly AssistantCard[], projectName: string | null): AssistantCard | null {
-  return (projectName ? ordered.find((c) => c.projectName === projectName) : undefined) ?? ordered[0] ?? null;
+/**
+ * The card a press lands on: the card named, else the project's first waiting card, else the
+ * first of all.
+ */
+export function focusTarget(ordered: readonly AssistantCard[], projectName: string | null, cardId?: string): AssistantCard | null {
+  return (cardId ? ordered.find((c) => c.id === cardId) : undefined)
+    ?? (projectName ? ordered.find((c) => c.projectName === projectName) : undefined)
+    ?? ordered[0] ?? null;
 }
 
 function takeCard(card: AssistantCard): void {
@@ -35,7 +40,7 @@ export function AssistantWaitingCards() {
 
   useEffect(() => {
     if (!focus || !all) return;
-    const target = focusTarget(ordered, focus.projectName);
+    const target = focusTarget(ordered, focus.projectName, focus.cardId);
     // A filter that would hide the card moves to the card's project (or to every project).
     if (target && filter && target.projectName !== filter) setAssistantCardFilter(target.projectName);
     setBarFocus({ cardId: target?.id ?? null, nonce: focus.nonce });
