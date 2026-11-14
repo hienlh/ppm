@@ -314,7 +314,8 @@ describe("a question card asked one question at a time", () => {
     // Newer cards fill the store before anyone presses this one.
     for (let i = 0; i < 495; i++) t.codes.mint(t.chat, `other-${Math.floor(i / 5)}`, { kind: "switch", sessionId: `x${i}` });
     const live = t.buttons(id).map((b) => t.codes.peek(b.callback_data, t.chat).ok);
-    expect(new Set(live).size).toBe(1);
+    // The card was the oldest, so all of it went: none of its buttons is left half working.
+    expect(live.every((ok) => !ok)).toBe(true);
   });
 
   it("keeps the buttons of a card being answered when the code store fills up", async () => {

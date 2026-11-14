@@ -34,7 +34,8 @@ export type Mint = (press: Omit<CardPress, "kind" | "sessionId" | "requestId">) 
 export type Selection = Map<string, string[]>;
 
 /** User text in a card, cut to `max`: secrets hidden before the cut, so a cut cannot split one. */
-const shortHtml = (raw: string, max: number) => escapeTelegramHtml(cutChars(redactForTelegram(raw).trim(), max));
+const shortHtml = (raw: string, max: number) =>
+  escapeTelegramHtml(cutChars(redactForTelegram(raw).trim().replace(/\n{3,}/g, "\n\n"), max));
 
 /**
  * Text cut to `max` characters with an ellipsis. Counted in characters, not UTF-16 units: half
