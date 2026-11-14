@@ -1060,7 +1060,8 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
 
 `src/services/assistant-wake/assistant-wake-queue.ts` is the one door through which PPM starts an
 Assistant turn on its own. Its sources are the watches, the card news (`done`, `failed`, `urgent`,
-the morning digest; for the main session) and late manager replies (`manager-wake-sources.ts`). It starts
+the morning digest; for the main session), late manager replies (`manager-wake-sources.ts`) and
+restart news (below). It starts
 at most `WAKE_TURNS_PER_HOUR` per Assistant session, never while that session runs a turn or shows
 a card, and during quiet hours only when something urgent waits; news held back goes into the next
 turn together. The turn opens with a fixed sentence and carries the news in the shared-context
@@ -1077,6 +1078,48 @@ push; a turn carrying only manager news never sends "Chat completed", since its 
 **Known limitation:** a manager's subagent calls the tool with the manager's own token, and an MCP
 call carries nothing that ties it to the CLI's tool call, so PPM cannot label a report as a
 subagent's. The manager rules tell the manager not to report on a child's say-so.
+
+### Restart news
+
+After every server start (upgrade, health-check kill, crash, `ppm restart`, machine boot) the main
+Assistant session gets one wake turn saying what restarted and which chats were cut off mid-turn,
+so it can have each project's manager chat resume them. Code in `src/services/restart-news/`.
+
+- **Why it started.** The supervisor decides at every spawn and hands it to the server as
+  `PPM_START_REASON` (`boot | upgrade | manual | watchdog | recycle | crash | unknown`) plus
+  `PPM_START_DETAIL` (exit code and signal, a note) — `start-reason.ts`, `spawnServer` in
+  `supervisor.ts`. A health-check kill is `watchdog` whichever exit code it ends with; a first spawn
+  within 10 minutes of the machine starting is `boot`. `ppm restart --reason <text>` (a kind by name,
+  or free text as a `manual` note) leaves `.restart-reason` in the PPM folder, which the supervisor
+  consumes once at its next manual spawn and ignores after 5 minutes; an external RAM watchdog that
+  says nothing shows up as `manual`.
+- **The run log.** The server records `{pid, version, startedAt}` at boot and `stoppedAt` with the
+  trigger on a graceful shutdown (`restart-news-run.ts`, config row `server_run_log`, last 20 runs —
+  a row of the database the server runs on, so a dev server never reads the live one's runs). The next
+  start compares: a version change becomes `from → to`; a run with no stop is a dirty stop; and with
+  no supervisor-given reason a dirty stop reads as a crash of unknown cause (`server-run-log.ts`).
+- **Cut-off chats** come from the session trace (`interrupted-chats.ts`): among rows written during
+  the previous run (at most 24 h back), a chat whose last top-level turn has no `done`,
+  `run_failed`, `turn_aborted`, `run_closed` or final `error`. Left out: chats the new run already
+  wrote to, the Assistant's own and design sessions, API proxy streams. Each entry carries project,
+  title, provider, the turn's first prompt line, what it was last doing, an approval it was waiting on
+  (`approval_request` with no `approval_resolved`), how many cards about it were open, whether it is
+  its project's manager and the chat that opened it (`spawned_by`). At most 30 are listed.
+- **Delivery.** `startRestartNews()` runs in the hub startup before the cards start the wake queue
+  and adds this start to the `restart` wake source (`restart-news-source.ts`, config row
+  `assistant_restart_news`, so a crash before delivery keeps it). One item per start; restarts before
+  delivery merge into it; a delivered or stopped turn clears only what it carried; three failed turns
+  drop it. It is urgent — passes quiet hours — only when a chat was cut off
+  (`RESTART_NEWS_URGENT_WHEN` in `assistant-limits.ts`). Settings → PPM Assistant `restart_news`
+  (default on) gates the news only; the run log is always written. Nothing goes to Telegram directly.
+- **What the Assistant does.** The entry (`restart-news-text.ts`) lists the restarts, the cut-off
+  chats by project with manager first and the chats it opened under it, and asks for one card-free
+  message per affected manager naming its cut-off chats, and a line to the user for projects with no
+  manager. A manager treats a PPM-started turn as a status ask; while the wake turn carries restart
+  news the server adds the provenance reason `restart`, and the manager rules allow one thing on it:
+  tell each cut-off chat of its project to carry on with its own task (`manager-context-entry.ts`).
+  The same urgent turn's manager messages pass quiet hours (`assistantQuietNow` in
+  `assistant-send-guards-live.ts`); the hourly and daily budgets and the pair limit still apply.
 
 ## Notebook
 
@@ -1383,8 +1426,8 @@ hand. PPMBot's old tables are left in place, unused.
 ## Startup
 
 `startAssistantHub()` (`src/services/assistant-hub/assistant-hub-startup.ts`) starts the watch
-service and the cards (signals, rules and budget cards, the wake queue's manager sources, the
-restart sweep), the morning digest (its timer, and whatever a restart left of a run), carries
+service, the restart news (before the cards, so the wake queue's first tick finds it), and the cards
+(signals, rules and budget cards, the wake queue's manager sources, the restart sweep), the morning digest (its timer, and whatever a restart left of a run), carries
 PPMBot's settings over, then starts the Telegram bridge when it is switched on and
 has a bot. `src/server/index.ts` and the e2e fixture call the same function, so a test exercises
 the wiring the server runs. A Telegram failure (bad token, Telegram unreachable) is logged and shown
