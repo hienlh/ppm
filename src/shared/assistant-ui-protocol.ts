@@ -18,6 +18,7 @@ export const ASSISTANT_UI_OPS = [
   "close_tab",
   "move_tab",
   "switch_project",
+  "reveal_path",
   "describe_tab",
   "list_commands",
   "run_command",
@@ -111,6 +112,25 @@ export interface AssistantNavResult {
   project: string | null;
   previousProject: string | null;
   window?: string;
+}
+
+/**
+ * `reveal_path`: the project's own file tree (the sidebar's Explorer, the navigation drawer on a
+ * phone), not the OS File Explorer window. `path` is relative to the project's folder, `""` for
+ * the folder itself; the server proved it lies inside the project and that PPM's read rules allow it.
+ */
+export interface AssistantRevealPathArgs {
+  project: string;
+  path: string;
+  kind: "file" | "folder";
+}
+
+/** Where the tree now shows: the path revealed, and the project shown before and after. */
+export interface AssistantRevealPathResult {
+  path: string;
+  kind: "file" | "folder";
+  project: string | null;
+  previousProject: string | null;
 }
 
 /** The tab a close took away, enough to open it again. */

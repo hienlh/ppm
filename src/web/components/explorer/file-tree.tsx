@@ -50,6 +50,7 @@ import { useDropTransfer } from "@/components/os-explorer/dnd/use-drop-transfer"
 import { usePathDropTarget } from "@/components/os-explorer/dnd/use-path-drop-target";
 import { useFileUploadDrag } from "./use-file-upload-drag";
 import { useTreeKeyboardNav } from "./use-tree-keyboard-nav";
+import { useApplyExplorerReveal } from "./use-apply-explorer-reveal";
 
 /** Synthetic root node for creating files/folders at project root */
 const ROOT_NODE: FileNode = { name: "", path: "", type: "directory" };
@@ -349,6 +350,9 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     }
     loadIndex(name);
   }, [activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A folder or file another part of PPM asked to show (the Assistant's `ui_reveal_path`).
+  useApplyExplorerReveal(activeProject?.name);
 
   // Persist expanded state per project. Reads LIVE store state (not the captured
   // render value): on project switch the captured set still belongs to the previous

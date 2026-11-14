@@ -369,7 +369,7 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
 - **Remember, never ask**: `chat_watch` and `chat_unwatch` — a watch only reads and reports, like
   setting a reminder (see [Watches](#watches)); `notebook_add`, `notebook_edit` and
   `notebook_delete`, which only touch the Assistant's own notebook (see [Notebook](#notebook)).
-- **Navigate the chatting device, never ask**: `ui_open_tab`, `ui_focus_tab`,
+- **Navigate the chatting device, never ask**: `ui_open_tab`, `ui_focus_tab`, `ui_reveal_path`,
   `ui_switch_project`, `ui_move_tab`, and `ui_close_tab` for a tab that loses nothing. Each answers
   `previousProject`, the place a moved tab came from, or enough to reopen what it closed, so the
   agent can undo — there is no Undo of PPM's own. `ui_move_tab` (`assistant-move-tab.ts` on the
@@ -378,6 +378,17 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
   `splitPanel`, `redockTab`, `popOutTab`), never layout logic of its own; a phone, which has no
   splits or windows, refuses, and so does the Assistant's own tab. A database table tab opens only for a relation `db_query` could read
   unasked (see Databases below); a view that does more than read is refused, not opened.
+  `ui_reveal_path` shows a folder or file in the project's own file tree — the sidebar's Explorer,
+  the navigation drawer on a phone — never the OS File Explorer window. The server
+  (`assistant-reveal-path.ts`) takes a path relative to the project or absolute, and refuses one
+  outside the project (lexically and after symlinks), one the editor's read rules refuse
+  (`tabReadRefusal`, shared with `open_file`) and one in a store the Assistant treats as private
+  (`isAssistantPrivatePath`). The device (`assistant-reveal-path.ts` → `explorer-reveal.ts`)
+  switches project, opens the Explorer, and leaves the reveal pending in a store the tree applies
+  once it shows that project with its root loaded (`use-apply-explorer-reveal.ts`), because the
+  tree resets its state whenever it mounts; it then expands the parents (and a folder itself),
+  focuses and selects the row, and answers. A path the tree leaves out (`.git`) is reported, not
+  claimed as shown.
 - **Ask first**: `db_query` for anything not proven to read, `chat_answer_approval` (always — even
   to deny, since a denial changes what that chat does next),
   `ui_run_command` for a command declared `changesData` and for every extension command,

@@ -33,7 +33,7 @@ export interface AssistantChat {
   sessionId: string;
 }
 
-function requireProject(name: unknown): ProjectInfo {
+export function requireProject(name: unknown): ProjectInfo {
   if (typeof name !== "string" || !name.trim() || isAssistantProject(name)) {
     throw new Error("`project` must name one of the user's registered projects.");
   }
@@ -49,7 +49,7 @@ function keepAssistantOnScreen(): void {
 }
 
 /** Brings `project` up the way the project switcher does. */
-function showProject(project: ProjectInfo): void {
+export function showProject(project: ProjectInfo): void {
   if (usePanelStore.getState().currentProject !== project.name) {
     useProjectStore.getState().setActiveProject(project);
     usePanelStore.getState().switchProject(project.name);

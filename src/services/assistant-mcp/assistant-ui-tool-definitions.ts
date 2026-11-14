@@ -1,6 +1,6 @@
 import {
   UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_LIST_COMMANDS_TOOL, UI_MOVE_TAB_TOOL, UI_OPEN_TAB_TOOL, UI_READ_TAB_TOOL,
-  UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
+  UI_REVEAL_PATH_TOOL, UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import {
   ASSISTANT_MOVE_TAB_DESTINATIONS, ASSISTANT_SPLIT_DIRECTIONS, ASSISTANT_TAB_KINDS, MAX_ASSISTANT_COMMAND_ID_CHARS,
@@ -101,6 +101,22 @@ export const UI_NAV_TOOL_DEFINITIONS = [
       index: { type: "integer", minimum: 0, description: "Position among the panel's tabs, 0 first." },
     }, ["tabId", "to"]),
     annotations: { ...NAV, idempotentHint: false },
+  },
+  {
+    name: UI_REVEAL_PATH_TOOL,
+    title: "Show a folder or file in the Explorer",
+    description: "Show a folder or file of `project` in that project's file tree (the Explorer: the sidebar on a "
+      + "desktop, the navigation drawer on a phone) on the chatting device: the project is switched to first when "
+      + "another is showing, the Explorer opened, every parent folder expanded, and the row scrolled into view and "
+      + "selected; a folder is expanded too. `path` is relative to the project's folder (\".\" for the folder "
+      + "itself) or absolute, and must lie inside the project; places PPM keeps private are refused. This is not the "
+      + "OS File Explorer window, and it opens no file: to show a file's content use ui_open_tab kind \"file\". "
+      + "Answers the path shown, whether it is a file or a folder, and `previousProject`.",
+    inputSchema: object({
+      project: PROJECT,
+      path: { type: "string", description: "A folder or file of the project, relative to its folder, or absolute." },
+    }, ["project", "path"]),
+    annotations: NAV,
   },
 ] as const;
 
