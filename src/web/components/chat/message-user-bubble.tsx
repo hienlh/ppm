@@ -21,7 +21,7 @@ import { CollapsibleMessageBody } from "./collapsible-message-body";
 import { cn, basename } from "@/lib/utils";
 import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
-import { parseUserMessage, type ParsedUserMessage, type SystemTag } from "../../../shared/user-message-parse";
+import { parseUserMessage, typedText, type ParsedUserMessage, type SystemTag } from "../../../shared/user-message-parse";
 import { FromSessionBubble } from "./from-session-bubble";
 import { ScheduleRunLine } from "./schedule-run-line";
 import type { VersionGroup } from "../../../types/api";
@@ -81,7 +81,8 @@ export function UserBubble(props: UserBubbleProps) {
     );
   }
   // A session schedule's prompt: PPM sent it on its own, so it is a line, not the person's bubble.
-  if (parsed.scheduleRun) return <ScheduleRunLine run={parsed.scheduleRun} text={parsed.text} />;
+  // Shown as written: a scheduled `/skill args` that Claude Code recorded as a command keeps its name.
+  if (parsed.scheduleRun) return <ScheduleRunLine run={parsed.scheduleRun} text={typedText(parsed)} />;
   return <OwnUserBubble {...props} parsed={parsed} />;
 }
 

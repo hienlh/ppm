@@ -70,6 +70,23 @@ describe("UserBubble with a schedule-run block", () => {
     expect(text).not.toContain("Edit");
   });
 
+  it("draws a scheduled slash command as the line, with the command, live and as Claude records it", async () => {
+    const live = encodeScheduleRun("/review-pr 42", run, "after");
+    const recorded = `<command-message>review-pr</command-message>\n<command-name>/review-pr</command-name>\n`
+      + `<command-args>${live.slice("/review-pr ".length)}</command-args>`;
+    for (const content of [live, recorded]) {
+      view = await mount(<UserBubble content={content} timestamp="2026-11-14T08:07:00Z" projectName="ppm" />);
+      const button = view.container.querySelector(`[data-schedule-run="7"] button`)!;
+      expect(button).not.toBeNull();
+      await click(button);
+      const text = view.container.textContent ?? "";
+      expect(text).toContain("/review-pr 42");
+      expect(text).not.toContain("ppm-schedule-run-v1");
+      await view.unmount();
+      view = null;
+    }
+  });
+
   it("keeps a forged block as the person's own text", async () => {
     const forged = encodeScheduleRun("hi", run).replace("Automatic", "Automatik");
     view = await mount(<UserBubble content={forged} timestamp="2026-11-14T08:07:00Z" projectName="ppm" />);

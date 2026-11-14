@@ -1,6 +1,6 @@
 import { validateReply } from "../../shared/chat-reply.ts";
 import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
-import { validateScheduleRun, type ScheduleRunReference } from "../../shared/chat-schedule-run.ts";
+import { scheduleRunPlacement, validateScheduleRun, type ScheduleRunReference } from "../../shared/chat-schedule-run.ts";
 import { validateTurnRefs } from "../../shared/chat-turn-ref.ts";
 import { recordTurnGrants } from "../../services/session-turns/turn-grant-ledger.ts";
 import { chatService } from "../../services/chat.service.ts";
@@ -2228,10 +2228,14 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   // caller of the chat socket (a script schedule) names its own door and grants nothing.
   const fromBrowser = opts.origin === "ws" && !opts.traceOrigin;
   if (fromBrowser && opts.turnRefs?.length) recordTurnGrants(sessionId, opts.turnRefs);
+  // A scheduled `/skill` stays the message's first characters where the provider runs it as one;
+  // the alias and sigil rewrites above have already given it the name that provider knows.
+  const runPlacement = opts.origin === "schedule" && opts.scheduleRun ? scheduleRunPlacement(parsed.content.trimStart(), providerId) : "before";
+  if (runPlacement === "after") parsed.content = parsed.content.trimStart();
   // The typed text has its block markers broken, so the only blocks that decode are these.
   parsed.content = encodeMessageBlocks(parsed.content, {
     turnRefs: opts.turnRefs ?? null, replyTo: opts.replyTo ?? null, ownProject: entry.projectName || undefined,
-    ...(opts.origin === "schedule" && opts.scheduleRun ? { scheduleRun: opts.scheduleRun } : {}),
+    ...(opts.origin === "schedule" && opts.scheduleRun ? { scheduleRun: opts.scheduleRun, scheduleRunPlacement: runPlacement } : {}),
   });
   // The sender drew its own copy of this message before sending. Hand it the text as it now
   // stands, so the copy matches the transcript, the echo and a replay byte for byte.

@@ -173,6 +173,17 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   (`src/shared/chat-schedule-run.ts`), which only the server writes; the chat draws it as one
   "Schedule … ran" line that opens to the prompt (`schedule-run-line.tsx`), and a footer chip
   lists the chat's schedules with pause, resume and delete (`session-schedules-chip.tsx`).
+- **A prompt that is a slash command.** A scheduled `/skill args` goes through the same alias
+  rewrite as a typed one. In a Claude chat it then stays the message's first characters, since
+  Claude Code runs a leading `/name` as that command or skill: the block goes after it
+  (`/skill args`, a blank line, the block, whose header says the command is above;
+  `scheduleRunPlacement`), and like any slash command it gets no shared-context prefix. Claude
+  Code records the command as `<command-name>`/`<command-args>` tags with the block inside the
+  args, which the bubble's parser reads back (`decodeScheduleRunInCommandArgs`), so the run line
+  still shows `/skill args` after a reload. Codex runs no slash commands from a message (its own
+  `/…` commands belong to its terminal UI): PPM rewrites a known skill to its `$name` mention,
+  which Codex finds anywhere in the message, so there the block stays in front as for any prompt,
+  and any other `/…` (PPM's own `/compact` included) reaches Codex as plain text.
 
 ## Surfaces
 

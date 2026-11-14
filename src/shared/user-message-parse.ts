@@ -4,7 +4,7 @@ import type { TurnReference } from "./chat-turn-ref";
 import type { FromSessionReference } from "./chat-from-session";
 import type { AssistantProvenance } from "./assistant-provenance";
 import type { UserWordsReference } from "./user-words-block";
-import type { ScheduleRunReference } from "./chat-schedule-run";
+import { decodeScheduleRunInCommandArgs, type ScheduleRunReference } from "./chat-schedule-run";
 /**
  * Parsing for stored user-message content.
  *
@@ -179,9 +179,18 @@ export function parseUserMessage(content: string): ParsedUserMessage {
     .replace(/<local-command-(?:stdout|stderr)>([\s\S]*?)<\/local-command-(?:stdout|stderr)>/g, "$1");
   const { cleanText: noSysTags, tags } = extractSystemTags(withoutCmdOutput);
   const { command, cleanText } = parseCommandTags(noSysTags);
+  // A scheduled slash command as Claude Code records it: its run block rides in the command's args.
+  let scheduleRun = decoded.scheduleRun;
+  if (!scheduleRun && command?.args && !decoded.fromSession && !decoded.userWords) {
+    const split = decodeScheduleRunInCommandArgs(command.args);
+    if (split.scheduleRun) {
+      scheduleRun = split.scheduleRun;
+      command.args = split.args || undefined;
+    }
+  }
   const { agent, cleanText: body } = parseAgentTag(cleanText);
   const text = command?.args ? (body ? `${command.args}\n\n${body}` : command.args) : body;
-  return { files: parsed.files, text, body, tags, command, terminalBlocks: blocks, idePath, agent, replyTo: decoded.replyTo, turnRefs: decoded.turnRefs, fromSession: decoded.fromSession, provenance: decoded.provenance, userWords: decoded.userWords, scheduleRun: decoded.scheduleRun };
+  return { files: parsed.files, text, body, tags, command, terminalBlocks: blocks, idePath, agent, replyTo: decoded.replyTo, turnRefs: decoded.turnRefs, fromSession: decoded.fromSession, provenance: decoded.provenance, userWords: decoded.userWords, scheduleRun };
 }
 
 /**
@@ -191,10 +200,16 @@ export function parseUserMessage(content: string): ParsedUserMessage {
  * its typed `/name args` form and the agent comes back as a chip.
  */
 export function toComposerDraft(content: string): { agent: string | null; text: string } {
-  const { agent, body, command } = parseUserMessage(content);
-  if (!command) return { agent, text: body };
+  const parsed = parseUserMessage(content);
+  return { agent: parsed.agent, text: typedText(parsed) };
+}
+
+/** A parsed message's text as it was written: a slash command back in its `/name args` form. */
+export function typedText(parsed: Pick<ParsedUserMessage, "body" | "command">): string {
+  const { body, command } = parsed;
+  if (!command) return body;
   // Stored names appear both with and without the leading slash — normalise to one.
   const name = command.name.replace(/^\/+/, "");
   const typed = `/${name}${command.args ? ` ${command.args}` : ""}`;
-  return { agent, text: body ? `${typed}\n\n${body}` : typed };
+  return body ? `${typed}\n\n${body}` : typed;
 }

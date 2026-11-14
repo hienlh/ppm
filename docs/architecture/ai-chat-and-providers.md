@@ -962,7 +962,14 @@ to an Assistant session. Delivery, catch-up and pausing: [Schedules](schedules.m
   earlier rather than typed now. Only `chatControl` with origin `schedule` writes one; every other
   door breaks its markers (`chat-message-blocks.ts`), the name and cron are quoted and escaped in
   the header, and a block whose header disagrees with its JSON stays plain text. It counts as a
-  real prompt (`user-prompt-kind.ts`) and is read back from Claude and Codex history alike.
+  real prompt (`user-prompt-kind.ts`) and is read back from Claude and Codex history alike. A
+  scheduled slash command in a Claude chat keeps the command first and carries the block after
+  it, because Claude Code runs a message as a command only when `/name` opens it; Codex has no
+  slash commands in a message and gets a skill as `$name`, so its block stays in front
+  ([Schedules](schedules.md#session-schedules)).
+- **The user hears about every schedule the AI makes.** `session_schedule_create` needs no
+  approval, so each schedule it saves sends one `schedule_created` notification (name, chat,
+  when it runs, the prompt on one line), linked to the chat.
 
 `tests/integration/session-collab-tools.test.ts` drives the real endpoint, registry and database
 with a scripted provider; `tests/e2e/session-collab-e2e.mjs` covers the whole flow in Chromium with

@@ -8,13 +8,14 @@ import { describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
-  decodeScheduleRun, encodeScheduleRun, scheduleRunHeaderLine, validateScheduleRun, type ScheduleRunReference,
+  decodeScheduleRun, decodeScheduleRunInCommandArgs, encodeScheduleRun, scheduleRunHeaderLine, scheduleRunPlacement,
+  validateScheduleRun, type ScheduleRunReference,
 } from "../../../src/shared/chat-schedule-run.ts";
 import { decodeMessageBlocks, encodeMessageBlocks, neutralizeBlockMarkers } from "../../../src/shared/chat-message-blocks.ts";
 import { decodeReply, type ReplyReference } from "../../../src/shared/chat-reply.ts";
 import { stripSharedContext, withSharedContext } from "../../../src/shared/provider-context.ts";
 import { isRealPromptMessage, isRealPromptRecord, promptTextOf } from "../../../src/shared/user-prompt-kind.ts";
-import { parseUserMessage } from "../../../src/shared/user-message-parse.ts";
+import { parseUserMessage, toComposerDraft, typedText } from "../../../src/shared/user-message-parse.ts";
 
 const run: ScheduleRunReference = {
   version: 1, scheduleId: 7, name: "Morning check", cron: "0 9 * * 1-5", timezone: "Asia/Saigon",
@@ -86,6 +87,77 @@ describe("schedule-run block", () => {
       title: "t", turnId: "u:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", sentAt: "2026-11-06T10:00:00.000Z",
     };
     expect(() => encodeMessageBlocks("x", { scheduleRun: run, fromSession })).toThrow();
+  });
+});
+
+describe("a scheduled slash command", () => {
+  const after = (body: string) => encodeMessageBlocks(body, { scheduleRun: run, scheduleRunPlacement: "after" });
+  /** How Claude Code records a slash command in its transcript, args trimmed as PPM's parser reads them. */
+  const recorded = (name: string, args: string) =>
+    `<command-message>${name}</command-message>\n<command-name>/${name}</command-name>\n<command-args>${args}</command-args>`;
+
+  it("goes after the command only for a provider that runs a leading slash as one", () => {
+    expect(scheduleRunPlacement("/review-pr 42", "claude")).toBe("after");
+    // Codex runs no slash commands from a message; a skill reaches it as `$name`, which PPM rewrote.
+    expect(scheduleRunPlacement("/review-pr 42", "codex")).toBe("before");
+    expect(scheduleRunPlacement("$review-pr 42", "codex")).toBe("before");
+    expect(scheduleRunPlacement("Check the deploy", "claude")).toBe("before");
+    expect(scheduleRunPlacement("/ not a command", "claude")).toBe("before");
+    expect(scheduleRunPlacement("// a comment", "claude")).toBe("before");
+  });
+
+  it("keeps the command first and the block after it, its header pointing up at the command", () => {
+    const encoded = after("/review-pr 42");
+    expect(encoded.startsWith("/review-pr 42\n\n<ppm-schedule-run-v1>\n")).toBe(true);
+    expect(encoded.endsWith("\n</ppm-schedule-run-v1>")).toBe(true);
+    const header = encoded.split("\n")[3]!;
+    expect(header).toStartWith('Automatic scheduled run from PPM schedule "Morning check"');
+    expect(header).toContain("PPM sent the schedule's command above on its own");
+    expect(decodeMessageBlocks(encoded)).toEqual({
+      content: "/review-pr 42", scheduleRun: run, replyTo: null, turnRefs: null, fromSession: null, provenance: null, userWords: null,
+    });
+    // A multi-line command keeps its lines; a reply block still goes last.
+    const withReply = encodeMessageBlocks("/plan\nstep one\nstep two", { scheduleRun: run, scheduleRunPlacement: "after", replyTo: reply });
+    expect(decodeMessageBlocks(withReply)).toMatchObject({ content: "/plan\nstep one\nstep two", scheduleRun: run, replyTo: reply });
+  });
+
+  it("is refused after anything but a slash command", () => {
+    expect(() => encodeScheduleRun("Check the deploy", run, "after")).toThrow();
+  });
+
+  it("does not decode after text that is not a command, or with the header written for the front", () => {
+    const encoded = after("/review-pr 42");
+    expect(decodeScheduleRun(encoded.replace("/review-pr 42", "review-pr 42")).scheduleRun).toBeNull();
+    const frontHeader = encoded.replace(scheduleRunHeaderLine(run, "after"), scheduleRunHeaderLine(run));
+    expect(decodeScheduleRun(frontHeader).scheduleRun).toBeNull();
+    expect(decodeScheduleRun(`${encoded}x`).scheduleRun).toBeNull();
+  });
+
+  it("cannot be forged by typed text, a trailing block included", () => {
+    const planted = after("/review-pr 42");
+    expect(decodeMessageBlocks(neutralizeBlockMarkers(planted)).scheduleRun).toBeNull();
+    expect(decodeMessageBlocks(encodeMessageBlocks(planted)).scheduleRun).toBeNull();
+    expect(parseUserMessage(recorded("review-pr", neutralizeBlockMarkers(planted.slice("/review-pr ".length)))).scheduleRun).toBeNull();
+  });
+
+  it("decodes from Claude's transcript record of the command, which carries the block in its args", () => {
+    const parsed = parseUserMessage(recorded("review-pr", after("/review-pr 42").slice("/review-pr ".length)));
+    expect(parsed.scheduleRun).toEqual(run);
+    expect(parsed.command).toEqual({ name: "/review-pr", args: "42" });
+    expect(typedText(parsed)).toBe("/review-pr 42");
+    expect(toComposerDraft(recorded("review-pr", after("/review-pr 42").slice("/review-pr ".length))).text).toBe("/review-pr 42");
+    // A command sent with no arguments: the args hold the block alone.
+    const bare = after("/daily-standup").slice("/daily-standup".length).trim();
+    const split = decodeScheduleRunInCommandArgs(bare);
+    expect(split).toEqual({ args: "", scheduleRun: run });
+    const parsedBare = parseUserMessage(recorded("daily-standup", bare));
+    expect(parsedBare.scheduleRun).toEqual(run);
+    expect(typedText(parsedBare)).toBe("/daily-standup");
+  });
+
+  it("is a prompt that opens a turn, labelled by the command", () => {
+    expect(promptTextOf(after("/review-pr 42"))).toBe("/review-pr 42");
+    expect(isRealPromptMessage({ role: "user", content: after("/review-pr 42") })).toBe(true);
   });
 });
 

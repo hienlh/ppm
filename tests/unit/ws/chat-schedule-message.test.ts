@@ -17,6 +17,7 @@ import { notificationService } from "../../../src/services/notification.service.
 import { CHAT_BUSY, chatControl, type ChatControl, type SendUserMessageOpts } from "../../../src/services/chat-control/chat-control.ts";
 import type { ScheduleRunReference } from "../../../src/shared/chat-schedule-run.ts";
 import { decodeMessageBlocks } from "../../../src/shared/chat-message-blocks.ts";
+import { stripSharedContext } from "../../../src/shared/provider-context.ts";
 import type { SendMessageOpts } from "../../../src/types/chat.ts";
 import { chatLifecycle, type ChatLifecycleEvents } from "../../../src/services/chat-control/chat-lifecycle.ts";
 import { QueuedTurnsProvider } from "../../helpers/queued-turns-provider.ts";
@@ -124,6 +125,53 @@ it("opens a turn of its own with the run in front of the prompt, and shows its a
   // A second scheduled message finds the chat busy rather than steering the turn or the card.
   expect(await ctl().sendUserMessage(id, "again", opts())).toEqual({ ok: false, error: CHAT_BUSY });
   expect(provider.turns).toHaveLength(1);
+});
+
+/** `fake` answers as provider `id` until the test ends; the real one (if any) comes back after. */
+function standIn(id: string, fake: QueuedTurnsProvider & { listSkills?: () => Promise<Array<{ name: string }>> }): QueuedTurnsProvider {
+  const real = providerRegistry.get(id);
+  providerRegistry.register(fake);
+  restores.push(() => {
+    if (real) providerRegistry.register(real);
+    else (providerRegistry as unknown as { providers: Map<string, unknown> }).providers.delete(id);
+  });
+  return fake;
+}
+
+it("keeps a scheduled slash command first for Claude, with the run after it", async () => {
+  const claude = standIn("claude", new QueuedTurnsProvider("claude"));
+  const id = (await chatService.createSession("claude", { projectName: "web", projectPath: root })).id;
+  expect((await ctl().sendUserMessage(id, "/review-pr 42", opts({ providerId: "claude" }))).ok).toBe(true);
+  await until(() => claude.queries.length === 1, "the scheduled turn");
+  const sent = claude.queries[0]!.message;
+  // First, with nothing in front: not even PPM's shared context, which a slash command never gets.
+  expect(sent.startsWith("/review-pr 42\n\n<ppm-schedule-run-v1>\n")).toBe(true);
+  expect(decodeMessageBlocks(sent)).toMatchObject({ content: "/review-pr 42", scheduleRun: run });
+  claude.abortQuery(id);
+});
+
+it("sends a scheduled skill to Codex as its `$name` mention with the run in front", async () => {
+  const fake = Object.assign(new QueuedTurnsProvider("codex"), { listSkills: async () => [{ name: "review-pr" }] });
+  const codex = standIn("codex", fake);
+  const id = (await chatService.createSession("codex", { projectName: "web", projectPath: root })).id;
+  expect((await ctl().sendUserMessage(id, "/review-pr 42", opts({ providerId: "codex" }))).ok).toBe(true);
+  await until(() => codex.queries.length === 1, "the scheduled turn");
+  // PPM puts its shared context in front of a message that is not a slash command.
+  const sent = stripSharedContext(codex.queries[0]!.message);
+  expect(sent.startsWith("<ppm-schedule-run-v1>\n")).toBe(true);
+  expect(decodeMessageBlocks(sent)).toMatchObject({ content: "$review-pr 42", scheduleRun: run });
+  codex.abortQuery(id);
+});
+
+it("leaves a prompt that is not a command as it was, the run in front, for Claude too", async () => {
+  const claude = standIn("claude", new QueuedTurnsProvider("claude"));
+  const id = (await chatService.createSession("claude", { projectName: "web", projectPath: root })).id;
+  expect((await ctl().sendUserMessage(id, "Check the nightly build", opts({ providerId: "claude" }))).ok).toBe(true);
+  await until(() => claude.queries.length === 1, "the scheduled turn");
+  const sent = stripSharedContext(claude.queries[0]!.message);
+  expect(sent.startsWith("<ppm-schedule-run-v1>\n")).toBe(true);
+  expect(sent.endsWith("\n\nCheck the nightly build")).toBe(true);
+  claude.abortQuery(id);
 });
 
 it("says a builtin answered inside a running turn left that turn running", async () => {
