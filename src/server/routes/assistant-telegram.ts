@@ -3,6 +3,7 @@ import { getDb } from "../../services/db.service.ts";
 import { reachableChats } from "../../services/assistant-telegram/assistant-telegram-access.ts";
 import { assistantSessionTitle, BindingError, bindChat, boundSession } from "../../services/assistant-telegram/assistant-telegram-binding.ts";
 import { assistantTelegramBridge, assistantTelegramConfig } from "../../services/assistant-telegram/assistant-telegram.service.ts";
+import { quietWhileInPpm } from "../../services/assistant-telegram/assistant-telegram-silence.ts";
 import { ok, err } from "../../types/api.ts";
 
 /**
@@ -36,6 +37,8 @@ assistantTelegramRoutes.get("/", async (c) => {
       enabled: assistantTelegramConfig().enabled,
       running: assistantTelegramBridge.running,
       error: assistantTelegramBridge.lastError,
+      // "Quiet while I'm at PPM", which the Assistant window's button shows and flips.
+      quietWhileInPpm: quietWhileInPpm(),
       chats,
     }));
   } catch (e) {

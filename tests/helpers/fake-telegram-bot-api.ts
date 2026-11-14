@@ -40,6 +40,8 @@ export interface FakeSentMessage {
   parse_mode?: string;
   reply_markup?: InlineKeyboardMarkup;
   reply_to?: number;
+  /** Sent with `disable_notification: true`: delivered without a sound. */
+  silent: boolean;
   /** Earlier texts, oldest first. */
   history: string[];
 }
@@ -269,6 +271,7 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
           ...(typeof body.parse_mode === "string" ? { parse_mode: body.parse_mode } : {}),
           ...(body.reply_markup ? { reply_markup: body.reply_markup as InlineKeyboardMarkup } : {}),
           ...(replyTo ? { reply_to: replyTo } : {}),
+          silent: body.disable_notification === true,
           history: [],
         };
         messages.set(chatId, [...(messages.get(chatId) ?? []), sent]);

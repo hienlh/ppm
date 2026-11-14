@@ -18,7 +18,8 @@ import type { TelegramBotClient } from "../telegram/telegram-bot-client.ts";
 import type { InlineKeyboardMarkup, TelegramCallbackQuery, TelegramMessage, TelegramUpdate } from "../telegram/telegram-types.ts";
 import { checkAccess, refusalText } from "./assistant-telegram-access.ts";
 import { BindingError, ensureBoundSession } from "./assistant-telegram-binding.ts";
-import { parseCommand, runCommand } from "./assistant-telegram-commands.ts";
+import { parseCommand, quietStatusHtml, runCommand } from "./assistant-telegram-commands.ts";
+import { setQuietWhileInPpm } from "./assistant-telegram-silence.ts";
 import { fetchPhoto } from "./assistant-telegram-photos.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
@@ -174,6 +175,7 @@ export class AssistantTelegramInbound {
         chatId,
         reply: (html, markup) => this.reply(chatId, html, markup),
         switchCode: (sessionId) => this.deps.codes.mint(chatId, `switch:${chatId}:${updateId}`, { kind: "switch", sessionId }),
+        quietCode: (on) => this.deps.codes.mint(chatId, `quiet:${chatId}:${updateId}`, { kind: "quiet", on }),
         relayCard: (card) => this.deps.relayCard(chatId, card),
       });
       return false;
@@ -294,6 +296,19 @@ export class AssistantTelegramInbound {
     if (messageId) this.removeButtons(chatId, messageId);
     if (action.kind === "switch") {
       await this.deps.client.answerCallbackQuery(cq.id, this.deps.switchSession(chatId, action.sessionId));
+      return;
+    }
+    if (action.kind === "quiet") {
+      let on: boolean;
+      try {
+        on = setQuietWhileInPpm(action.on);
+      } catch (e) {
+        log.warn(`Telegram chat ${chatId}: could not change the quiet switch: ${(e as Error).message}`);
+        await this.deps.client.answerCallbackQuery(cq.id, "Could not change it; see PPM's log.");
+        return;
+      }
+      await this.deps.client.answerCallbackQuery(cq.id, on ? "Quiet while at PPM: on." : "Quiet while at PPM: off.");
+      this.reply(chatId, quietStatusHtml(on));
       return;
     }
     const pending = this.backlog.get(action.pendingId);

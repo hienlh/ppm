@@ -1,6 +1,6 @@
 /**
  * The `/api/settings/clawbot` contract the Settings pane builds on (the `clawbot` name is PPMBot's,
- * kept so existing setups carry over): three settings and none of PPMBot's old fields, revoking a
+ * kept so existing setups carry over): four settings and none of PPMBot's old fields, revoking a
  * chat forgets it in the bridge too, and PPMBot's memories are listed read-only.
  */
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
@@ -39,27 +39,28 @@ beforeEach(() => {
 });
 
 describe("GET/PUT /api/settings/clawbot", () => {
-  it("answers the three settings only, whatever an old PPMBot row holds", async () => {
+  it("answers the four settings only, whatever an old PPMBot row holds", async () => {
     configService.set("clawbot", {
       enabled: false, default_provider: "codex", system_prompt: "", show_tool_calls: false, show_thinking: true,
       permission_mode: "bypassPermissions", debounce_ms: 900,
     } as never);
     const res = await call("GET", "/api/settings/clawbot");
-    expect(res.json.data).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 900 });
+    expect(res.json.data).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 900, quiet_while_in_ppm: true });
   });
 
   it("saves a subset, ignores PPMBot's old fields, and stores nothing else", async () => {
     configService.set("clawbot", { enabled: false, show_tool_calls: true, debounce_ms: 2000 });
     const res = await call("PUT", "/api/settings/clawbot", { debounce_ms: 500, permission_mode: "bypassPermissions", default_provider: "x", show_thinking: true });
     expect(res.status).toBe(200);
-    expect(res.json.data).toEqual({ enabled: false, show_tool_calls: true, debounce_ms: 500 });
-    expect(configService.get("clawbot")).toEqual({ enabled: false, show_tool_calls: true, debounce_ms: 500 });
+    expect(res.json.data).toEqual({ enabled: false, show_tool_calls: true, debounce_ms: 500, quiet_while_in_ppm: true });
+    expect(configService.get("clawbot")).toEqual({ enabled: false, show_tool_calls: true, debounce_ms: 500, quiet_while_in_ppm: true });
   });
 
   it("refuses values of the wrong kind", async () => {
     expect((await call("PUT", "/api/settings/clawbot", { debounce_ms: 30001 })).status).toBe(400);
     expect((await call("PUT", "/api/settings/clawbot", { debounce_ms: 1.5 })).status).toBe(400);
     expect((await call("PUT", "/api/settings/clawbot", { enabled: "yes" })).status).toBe(400);
+    expect((await call("PUT", "/api/settings/clawbot", { quiet_while_in_ppm: "off" })).status).toBe(400);
     expect((await call("PUT", "/api/settings/clawbot", "not json")).status).toBe(400);
     expect((await call("PUT", "/api/settings/clawbot", [1])).status).toBe(400);
   });
@@ -77,7 +78,17 @@ describe("GET/PUT /api/settings/clawbot", () => {
     configService.set("clawbot", { enabled: false, show_tool_calls: true, debounce_ms: 2000, system_prompt: "Be brief." } as never);
     await call("PUT", "/api/settings/clawbot", { show_tool_calls: false });
     expect(configService.get("assistant")!.instructions).toContain("Be brief.");
-    expect(configService.get("clawbot")).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 2000 });
+    expect(configService.get("clawbot")).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 2000, quiet_while_in_ppm: true });
+  });
+
+  it("turns \"quiet while I'm at PPM\" off and on, keeping the other settings", async () => {
+    configService.set("clawbot", { enabled: false, show_tool_calls: false, debounce_ms: 700 });
+    const off = await call("PUT", "/api/settings/clawbot", { quiet_while_in_ppm: false });
+    expect(off.json.data).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 700, quiet_while_in_ppm: false });
+    expect((await call("GET", "/api/settings/clawbot")).json.data.quiet_while_in_ppm).toBe(false);
+    const on = await call("PUT", "/api/settings/clawbot", { quiet_while_in_ppm: true });
+    expect(on.json.data.quiet_while_in_ppm).toBe(true);
+    expect(configService.get("clawbot")).toEqual({ enabled: false, show_tool_calls: false, debounce_ms: 700, quiet_while_in_ppm: true });
   });
 });
 

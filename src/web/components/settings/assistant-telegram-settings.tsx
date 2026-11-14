@@ -9,7 +9,7 @@
  *
  * Built on the `/api/settings/clawbot*` routes the old PPMBot used (same config key, same bot and
  * connected chats, so nothing has to be set up again), sending only the keys that still mean
- * something there: `enabled`, `show_tool_calls`, `debounce_ms`. The bot token is only ever sent,
+ * something there: `enabled`, `show_tool_calls`, `debounce_ms`, `quiet_while_in_ppm`. The bot token is only ever sent,
  * never read back.
  */
 import { useCallback, useEffect, useState } from "react";
@@ -26,12 +26,15 @@ import { SectionHeader, SwitchRow } from "./settings-rows";
 import { ConnectCard, TelegramChatList, useTelegramConnect } from "./telegram-connect";
 import { TelegramBotTokenField } from "./telegram-bot-token-field";
 import { useSettingsChanged } from "@/hooks/use-settings-changed";
+import { QUIET_CHANGED_EVENT, QUIET_SWITCH_LABEL, QUIET_SWITCH_NOTE } from "../../../shared/assistant-telegram-quiet";
 
 /** The bridge options the server keeps under `clawbot`. */
 export interface AssistantTelegramOptions {
   enabled: boolean;
   show_tool_calls: boolean;
   debounce_ms: number;
+  /** "Quiet while I'm at PPM"; the Assistant window's button and `/quiet` flip the same switch. */
+  quiet_while_in_ppm: boolean;
 }
 
 /** The server's bounds for message grouping. */
@@ -78,6 +81,12 @@ export function AssistantTelegramSettings({ embedded = false }: { embedded?: boo
   // `reloads` counts the changes announced from elsewhere (`ppm ppmbot`, another device).
   const [reloads, setReloads] = useState(0);
   useSettingsChanged(["clawbot", "telegram"], () => setReloads((n) => n + 1));
+  // Flipped by `/quiet` on the phone or the Assistant window's button: the switch here follows.
+  useEffect(() => {
+    const onQuiet = () => setReloads((n) => n + 1);
+    window.addEventListener(QUIET_CHANGED_EVENT, onQuiet);
+    return () => window.removeEventListener(QUIET_CHANGED_EVENT, onQuiet);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -116,7 +125,7 @@ export function AssistantTelegramSettings({ embedded = false }: { embedded?: boo
   };
 
   /** Saves one or more bridge options; the server answers with all three as stored. */
-  const saveOptions = async (patch: Partial<Pick<AssistantTelegramOptions, "show_tool_calls" | "debounce_ms">>) => {
+  const saveOptions = async (patch: Partial<Pick<AssistantTelegramOptions, "show_tool_calls" | "debounce_ms" | "quiet_while_in_ppm">>) => {
     setSavingOptions(true);
     try {
       const saved = await api.put<AssistantTelegramOptions>("/api/settings/clawbot", patch);
@@ -204,7 +213,14 @@ export function AssistantTelegramSettings({ embedded = false }: { embedded?: boo
 
           {options && (
             <div className="space-y-3 pt-1">
-              <div className="rounded-lg border border-border">
+              <div className="divide-y divide-border rounded-lg border border-border">
+                <SwitchRow
+                  label={QUIET_SWITCH_LABEL}
+                  note={QUIET_SWITCH_NOTE}
+                  checked={options.quiet_while_in_ppm !== false}
+                  disabled={savingOptions}
+                  onChange={(on) => void saveOptions({ quiet_while_in_ppm: on })}
+                />
                 <SwitchRow
                   label="Show tool names"
                   note="A line in the reply naming each tool the Assistant uses. Inputs and outputs are never sent."

@@ -1155,6 +1155,29 @@ PPMBot's formatter did not, and one `<` in an answer made Telegram refuse the wh
 actually *sent* within `SUPPRESS_WINDOW_MS`. Basing it on successful sends rather than on polling
 means a blocked bot or a failing send still lets the push through.
 
+**Quiet while the user is at PPM** (`assistant-telegram-silence.ts`, switch
+`clawbot.quiet_while_in_ppm`, on unless set to false). The user counts as at PPM when a message was
+typed in PPM, or a PPM tab saw real input (`presence-tracker.ts`), within `QUIET_WINDOW_MS`
+(5 minutes). Then:
+- A turn typed in PPM is still mirrored in full, but every message of it goes out with
+  `disable_notification`, and its final answer is edited in place rather than re-sent as a new
+  message (the re-send exists only to buzz). If the user has been gone for 5 minutes when the
+  turn ends, the final answer is re-sent with a sound as before.
+- A turn PPM started (a watch, another session), a card, a manager's card, a watch report and a
+  `db_execute` notice go out silently too.
+- An `urgent` manager card always rings, and so does a card the user asked for with `/status`.
+- A turn typed on Telegram, and replies to commands and buttons, are unchanged.
+
+A card that waits on a decision and went out silently (a session's approval or question, a
+watched or manager chat's, a manager's `needs_decision`, a `db_execute` approval notice) gets
+**one** reminder with a sound, as a reply to the card, if it still waits 5 minutes later
+(`CardReminders`, on the Assistant clock). Quiet hours win: a reminder due inside them is not sent,
+and what quiet hours hold is held as before. The switch is changed in Settings, by `/quiet` on the
+phone or by the bell in the Assistant window; each change goes out as
+`assistant:telegram_quiet_changed` on `/ws/global`, so the three stay in step. Off, everything goes
+out with a sound as it did before. Reminders live in memory: a restart drops them, as it drops the
+cards' buttons. `PPM_TELEGRAM_QUIET_MS` shortens the window for a demo or an e2e.
+
 ### Cards and the Allow rule
 
 A session's card appears on Telegram as the same card: whichever answer comes first, in PPM or on
@@ -1308,7 +1331,8 @@ PPM asks every manager chat whose digest switch is on (`PATCH /api/assistant/man
 ### Commands, links and settings
 
 Commands are `BOT_COMMANDS` in `assistant-telegram-commands.ts` (`/new`, `/sessions`, `/status`,
-`/stop`, `/help`, plus `/start`). `/status` is `chats_attention` in a message
+`/stop`, `/quiet [on|off]`, `/help`, plus `/start`). `/quiet` alone shows the quiet switch with a
+button that flips it. `/status` is `chats_attention` in a message
 (`assistant-telegram-status.ts`), followed by the cards it lists with working buttons. There is no
 `/restart`: a restart is a change, and the Assistant can run `ppm restart` in a shell, which asks.
 
@@ -1324,11 +1348,11 @@ sits in the text.
 `src/web/components/settings/assistant-telegram-settings.tsx`) holds the Assistant's own bot token
 (the `ppmbot_telegram` row, separate from the Notifications bot, so a chat connected for alerts
 cannot command the Assistant), the switch, the connected chats with the session each talks to,
-the Connect link, and the two display settings. The old settings id `ppmbot` opens it
+the Connect link, "Quiet while I'm at PPM" and the two display settings. The old settings id `ppmbot` opens it
 (`assistant-settings-tab-store.ts`). The REST surface stayed where PPMBot had
 it, under `/api/settings/clawbot*` in `src/server/routes/settings.ts`, now taking only `enabled`,
-`show_tool_calls` and `debounce_ms`; `/api/assistant/telegram` (`src/server/routes/assistant-telegram.ts`)
-lists chats and their sessions, binds, and lists PPMBot's old memories. The Assistant's session
+`show_tool_calls`, `debounce_ms` and `quiet_while_in_ppm`; `/api/assistant/telegram` (`src/server/routes/assistant-telegram.ts`)
+lists chats and their sessions with `quietWhileInPpm`, binds, and lists PPMBot's old memories. The Assistant's session
 list marks the bound session and offers *Use on Telegram* (`settings/assistant/assistant-session-row.tsx`, `src/web/hooks/use-assistant-telegram-binding.ts`).
 
 **From PPMBot** (`ppmbot-migration.ts`, once): only the user-written `system_prompt` is copied into

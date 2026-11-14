@@ -1,5 +1,5 @@
 /**
- * The bot's commands: `/start`, `/new [claude|codex]`, `/sessions`, `/status`, `/stop`, `/help`. There is no
+ * The bot's commands: `/start`, `/new [claude|codex]`, `/sessions`, `/status`, `/stop`, `/quiet [on|off]`, `/help`. There is no
  * `/restart`: restarting PPM is a change, and a change goes through an approval card (the
  * Assistant can run `ppm restart` in a shell, which asks).
  *
@@ -16,6 +16,7 @@ import type { SessionInfo } from "../../types/chat.ts";
 import { assistantProviderIds, BindingError, boundSession, startNewSession } from "./assistant-telegram-binding.ts";
 import { buildStatus, type StatusDeps } from "./assistant-telegram-status.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
+import { quietWhileInPpm, setQuietWhileInPpm } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -25,6 +26,7 @@ export const BOT_COMMANDS: TelegramBotCommand[] = [
   { command: "sessions", description: "Switch to another conversation" },
   { command: "status", description: "Which chats need you today" },
   { command: "stop", description: "Stop the answer in progress" },
+  { command: "quiet", description: "Silence the phone while you are at PPM (on/off)" },
   { command: "help", description: "What this bot can do" },
 ];
 
@@ -48,6 +50,8 @@ export interface CommandContext {
   switchCode(sessionId: string): string;
   /** Shows another chat's card here, with buttons that answer that chat. */
   relayCard(card: RelayedCard): void;
+  /** A button code that turns "quiet while at PPM" on or off when pressed. */
+  quietCode?(on: boolean): string;
 }
 
 export interface CommandDeps {
@@ -64,6 +68,7 @@ export const HELP_TEXT = [
   "/sessions — switch to another conversation",
   "/status — which chats need you today, with the cards they wait on",
   "/stop — stop the answer in progress",
+  "/quiet — while you are at PPM, messages here arrive without a sound (<code>/quiet on</code>, <code>/quiet off</code>)",
   "/help — this message",
 ].join("\n");
 
@@ -86,6 +91,8 @@ export async function runCommand(cmd: ParsedCommand, ctx: CommandContext, deps: 
         return await showStatus(ctx, deps.status);
       case "stop":
         return stopTurn(ctx);
+      case "quiet":
+        return quiet(cmd.args, ctx);
       default:
         return ctx.reply(`Unknown command /${escapeTelegramHtml(cmd.name)}. Send /help for the list.`);
     }
@@ -131,7 +138,26 @@ async function showStatus(ctx: CommandContext, deps?: StatusDeps): Promise<void>
   const status = await buildStatus(deps);
   ctx.reply(status.html);
   // After the list: each card names its chat, and the list said which chat waits on what.
-  for (const card of status.cards) ctx.relayCard(card);
+  for (const card of status.cards) ctx.relayCard({ ...card, askedOnPhone: true });
+}
+
+/** What "quiet while at PPM" is, said the same way by `/quiet` and its button. */
+export function quietStatusHtml(on: boolean): string {
+  return on
+    ? "🔕 <b>Quiet while you are at PPM: on.</b>\nWhile you are using PPM (or typed there in the last 5 minutes), messages here arrive without a sound. "
+      + "A card left unanswered for 5 minutes is sent once more with a sound. Send /quiet off to turn it off."
+    : "🔔 <b>Quiet while you are at PPM: off.</b>\nEvery message here arrives with a sound, as before. Send /quiet on to turn it on.";
+}
+
+function quiet(args: string, ctx: CommandContext): void {
+  const asked = args.toLowerCase();
+  if (asked === "on" || asked === "off") return ctx.reply(quietStatusHtml(setQuietWhileInPpm(asked === "on")));
+  if (asked) return ctx.reply("Send <code>/quiet</code>, <code>/quiet on</code> or <code>/quiet off</code>.");
+  const on = quietWhileInPpm();
+  const markup: InlineKeyboardMarkup | undefined = ctx.quietCode
+    ? { inline_keyboard: [[{ text: on ? "Turn off" : "Turn on", callback_data: ctx.quietCode(!on) }]] }
+    : undefined;
+  ctx.reply(quietStatusHtml(on), markup);
 }
 
 function stopTurn(ctx: CommandContext): void {

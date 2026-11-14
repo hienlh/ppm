@@ -631,17 +631,17 @@ settingsRoutes.put("/session-trace", async (c) => {
 
 // ── PPM Assistant on Telegram (kept under PPMBot's `clawbot` key and routes) ──
 
-/** The three settings the bridge reads, whatever else an old PPMBot row still holds. */
-const CLAWBOT_KEYS = ["enabled", "show_tool_calls", "debounce_ms"] as const;
+/** The settings the bridge reads, whatever else an old PPMBot row still holds. */
+const CLAWBOT_KEYS = ["enabled", "show_tool_calls", "debounce_ms", "quiet_while_in_ppm"] as const;
 
-/** GET /settings/clawbot — `{ enabled, show_tool_calls, debounce_ms }` */
+/** GET /settings/clawbot — `{ enabled, show_tool_calls, debounce_ms, quiet_while_in_ppm }` */
 settingsRoutes.get("/clawbot", async (c) => {
   const { assistantTelegramConfig } = await import("../../services/assistant-telegram/assistant-telegram.service.ts");
   return c.json(ok(assistantTelegramConfig()));
 });
 
 /**
- * PUT /settings/clawbot — any of the three settings. PPMBot's other fields (provider, permission
+ * PUT /settings/clawbot — any of the four settings. PPMBot's other fields (provider, permission
  * mode, thinking, system prompt) are ignored rather than refused, so an older page still saves.
  * Switching `enabled` starts or stops the bridge.
  */
@@ -653,7 +653,7 @@ settingsRoutes.put("/clawbot", async (c) => {
     return c.json(err("Body must be JSON"), 400);
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) return c.json(err("Body must be an object"), 400);
-  for (const key of ["enabled", "show_tool_calls"] as const) {
+  for (const key of ["enabled", "show_tool_calls", "quiet_while_in_ppm"] as const) {
     if (body[key] !== undefined && typeof body[key] !== "boolean") return c.json(err(`${key} must be true or false`), 400);
   }
   const debounce = body.debounce_ms;
@@ -668,6 +668,11 @@ settingsRoutes.put("/clawbot", async (c) => {
     const updated: PPMBotConfig = { ...assistantTelegramConfig() };
     for (const key of CLAWBOT_KEYS) if (body[key] !== undefined) (updated as unknown as Record<string, unknown>)[key] = body[key];
     configService.set("clawbot", updated);
+    // The Assistant window's button and `/quiet` show the same switch: tell every tab it moved.
+    if (typeof body.quiet_while_in_ppm === "boolean") {
+      const { setQuietWhileInPpm } = await import("../../services/assistant-telegram/assistant-telegram-silence.ts");
+      setQuietWhileInPpm(body.quiet_while_in_ppm);
+    }
 
     const { syncAssistantTelegram } = await import("../../services/assistant-hub/assistant-hub-startup.ts");
     await syncAssistantTelegram();

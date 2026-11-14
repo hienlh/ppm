@@ -12,7 +12,8 @@
  * started by a watch, which the user did not just ask for) therefore ends with its answer as a
  * new message, so the phone actually buzzes; the message that held the draft is deleted (or, if
  * Telegram refuses, collapsed to a pointer). A short turn's answer simply replaces its "…", which
- * the user is looking at anyway.
+ * the user is looking at anyway. A turn told to be silent (the user is at PPM, see
+ * `assistant-telegram-silence.ts`) sends its new messages without a sound and finishes in place.
  */
 import { markdownToTelegramHtml, redactForTelegram, splitTelegramHtml } from "../telegram/telegram-html-format.ts";
 import type { TelegramBotClient } from "../telegram/telegram-bot-client.ts";
@@ -40,6 +41,12 @@ export interface TurnRendererDeps {
   /** The final answer reached the chat. */
   onDelivered?: () => void;
   now?: () => number;
+  /**
+   * Whether the turn's new messages go out without a sound, asked as each draft page is sent and
+   * once for the final answer. A silent final answer is never re-sent as a new message: that only
+   * exists to make the phone buzz. Left out, nothing is silent.
+   */
+  silent?: (phase: "draft" | "final") => boolean;
 }
 
 /** `mcp__ppm-assistant__chat_search` and `ppm_assistant:chat_search` are both `chat_search`. */
@@ -62,6 +69,10 @@ export class TurnRenderer {
   /** Pages of the final answer sent as new messages so far (a retried final resumes after them). */
   private finalSent = 0;
   private finished = false;
+  /** Whether the final answer goes out silently; decided when it is first written. */
+  private finalSilent: boolean | null = null;
+  /** A draft page went out without a sound: a final answer that must ring cannot be an edit of it. */
+  private silentDraft = false;
   private attempts = 0;
   private readonly now: () => number;
   private readonly startedAt: number;
@@ -153,17 +164,31 @@ export class TurnRenderer {
         if (!res.ok) return outcomeOf(res, this.attempts);
         this.shown[i] = html;
       } else {
-        const sent = await this.sendNew(client, html, "render");
+        const silent = this.isSilent("draft");
+        const sent = await this.sendNew(client, html, "render", silent);
         if (sent.kind !== "done") return sent;
+        if (silent) this.silentDraft = true;
       }
     }
     return { kind: "done" };
   }
 
+  private isSilent(phase: "draft" | "final"): boolean {
+    try {
+      return this.deps.silent?.(phase) ?? false;
+    } catch {
+      return false;
+    }
+  }
+
   private async writeFinal(client: TelegramBotClient): Promise<TaskOutcome> {
     this.attempts++;
     const pages = this.pages(true);
-    const asNew = this.deps.origin === "watch" || this.now() - this.startedAt > LONG_TURN_MS;
+    // Decided at the first attempt, so a retried final answer does not change its mind.
+    const quiet = this.finalSilent ??= this.isSilent("final");
+    // A final answer that must ring after a silent draft is a new message however short the turn:
+    // Telegram never notifies about an edit.
+    const asNew = !quiet && (this.silentDraft || this.deps.origin === "watch" || this.now() - this.startedAt > LONG_TURN_MS);
     const inPlace = Math.min(pages.length, asNew ? Math.max(0, this.ids.length - 1) : this.ids.length);
     for (let i = 0; i < inPlace; i++) {
       if (this.shown[i] === pages[i]) continue;
@@ -174,7 +199,7 @@ export class TurnRenderer {
     // The rest goes out as new messages before any draft is removed, so the chat never shows a
     // gap where the answer was.
     for (let i = inPlace + this.finalSent; i < pages.length; i++) {
-      const sent = await this.sendNew(client, pages[i]!, null);
+      const sent = await this.sendNew(client, pages[i]!, null, quiet);
       if (sent.kind !== "done") return sent;
       this.finalSent++;
     }
@@ -196,8 +221,8 @@ export class TurnRenderer {
   }
 
   /** Sends a message; a draft one is remembered so a restart can mark it as cut off. */
-  private async sendNew(client: TelegramBotClient, html: string, remember: "render" | null): Promise<TaskOutcome> {
-    const res = await client.sendMessage(this.deps.chatId, html);
+  private async sendNew(client: TelegramBotClient, html: string, remember: "render" | null, silent: boolean): Promise<TaskOutcome> {
+    const res = await client.sendMessage(this.deps.chatId, html, silent ? { silent: true } : {});
     if (!res.ok) return outcomeOf(res, this.attempts);
     this.deps.queue.noteSent(this.deps.chatId);
     if (remember) {

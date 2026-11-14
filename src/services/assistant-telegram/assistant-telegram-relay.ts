@@ -29,6 +29,7 @@ import { createQuietHold, type QuietHold, type QuietHoldDeps } from "./assistant
 import { chatControl } from "../chat-control/chat-control.ts";
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { currentQuietWindowEnd } from "../assistant-wake/wake-quiet-hours.ts";
+import type { TelegramSilence } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -49,6 +50,8 @@ export interface RelayDeps {
   events?: Pick<typeof watchEvents, "on">;
   /** Quiet hours for watched chats' cards (tests pass a fake clock and window). */
   quiet?: QuietHoldDeps;
+  /** Whether the user is at PPM, so a report goes out without a sound. */
+  silence?: TelegramSilence;
 }
 
 const realQuiet: QuietHoldDeps = {
@@ -135,7 +138,7 @@ export class AssistantTelegramRelay {
           markup: { inline_keyboard: [[link.button]] },
           fallbackHtml: `${html}\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}`,
         } : {}),
-      }, { label: "watch report" }));
+      }, { label: "watch report", silent: () => this.deps.silence?.inPpm() ?? false }));
     }
   }
 

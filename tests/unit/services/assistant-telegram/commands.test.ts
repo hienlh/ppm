@@ -85,7 +85,8 @@ describe("the bot's commands", () => {
       status: { attention: () => attention, liveCard: () => card, link: async () => "http://localhost:8080/x", homeLink: async () => "http://localhost:8080/" },
     });
     expect(t.replies[0]!.html).toContain("<b>Deploy</b> · api — waiting for your decision");
-    expect(t.relayed).toEqual([{ targetSessionId: "s-wait", targetProject: "api", targetProvider: STUB, targetTitle: "Deploy", card }]);
+    // Asked for on the phone: shown as before, with a sound, whether or not the user is at PPM too.
+    expect(t.relayed).toEqual([{ targetSessionId: "s-wait", targetProject: "api", targetProvider: STUB, targetTitle: "Deploy", card, askedOnPhone: true }]);
     expect(BOT_COMMANDS.map((c) => c.command)).toContain("status");
   });
 });

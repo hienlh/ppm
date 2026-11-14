@@ -4,6 +4,8 @@ import { assistantSettingsRoutes } from "../../../../src/server/routes/assistant
 import { getDb, setSessionAssistant, setSessionProvider, setSessionTitle } from "../../../../src/services/db.service.ts";
 import { providerRegistry } from "../../../../src/providers/registry.ts";
 import type { AIProvider } from "../../../../src/types/chat.ts";
+import { configService } from "../../../../src/services/config.service.ts";
+import { setQuietWhileInPpm } from "../../../../src/services/assistant-telegram/assistant-telegram-silence.ts";
 
 /** A provider whose session titles come from its own listing, as Codex's do. */
 const TITLED = "stub-titled-sessions";
@@ -43,6 +45,18 @@ describe("/api/assistant/telegram", () => {
 
     const list = await (await assistantSettingsRoutes.request("/telegram")).json();
     expect(list.data).toMatchObject({ enabled: false, running: false, chats: [{ chatId: chat, sessionId: session, sessionTitle: "Daily check" }] });
+  });
+
+  it("says whether \"quiet while I'm at PPM\" is on, for the Assistant window's bell", async () => {
+    const before = configService.get("clawbot");
+    try {
+      setQuietWhileInPpm(false);
+      expect((await (await assistantSettingsRoutes.request("/telegram")).json()).data.quietWhileInPpm).toBe(false);
+      setQuietWhileInPpm(true);
+      expect((await (await assistantSettingsRoutes.request("/telegram")).json()).data.quietWhileInPpm).toBe(true);
+    } finally {
+      configService.set("clawbot", before as never);
+    }
   });
 
   it("names a bound session that was never renamed by the title its provider derives", async () => {
