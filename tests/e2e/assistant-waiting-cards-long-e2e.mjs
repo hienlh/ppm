@@ -170,7 +170,7 @@ try {
       const layer = document.createElement("div");
       layer.id = "e2e-whole-card";
       Object.assign(layer.style, {
-        position: "fixed", left: "0", top: "0", zIndex: "2147483647", padding: "12px",
+        position: "fixed", left: "0", top: "72px", zIndex: "2147483647", padding: "12px",
         width: `${el.getBoundingClientRect().width + 24}px`, boxSizing: "border-box",
         background: getComputedStyle(document.body).backgroundColor,
       });
@@ -179,10 +179,11 @@ try {
       copy.style.outline = "none";
       layer.appendChild(copy);
       document.body.appendChild(layer);
-      return layer.getBoundingClientRect().height;
+      // Below the corner ribbon; only the copied card is photographed, not the layer around it.
+      return layer.getBoundingClientRect().bottom;
     });
     if (height > size.height) {
-      await pg.setViewportSize({ width: size.width, height: Math.ceil(height) + 20 });
+      await pg.setViewportSize({ width: size.width, height: Math.ceil(height) + 24 });
       await pg.waitForTimeout(150);
     }
     const layer = pg.locator("#e2e-whole-card");
@@ -192,7 +193,7 @@ try {
       return r.bottom > window.innerHeight || !hit || !el.contains(hit);
     });
     assert.ok(!covered, `${name}: the whole card is on screen and uncovered`);
-    await layer.screenshot({ path: join(shotsDir, `${name}.png`) });
+    await layer.locator(":scope > *").screenshot({ path: join(shotsDir, `${name}.png`) });
     await layer.evaluate((el) => el.remove());
     if (height > size.height) {
       await pg.setViewportSize(size);
