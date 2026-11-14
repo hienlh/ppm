@@ -106,6 +106,15 @@ export interface DbQueryTabOpen {
   sql: string;
 }
 
+/**
+ * Text that sets or uses a database password, which no redaction pattern can be trusted to hide:
+ * SQL writes one as a quoted literal in many forms (`PASSWORD 'x'`, `IDENTIFIED BY 'x'`,
+ * `REPLACE 'old'`, `E'x'`, `$$x$$`, dynamic SQL), and a notification that reaches a phone stays
+ * there. A script or reason that matches is left out of every notice; the card in PPM shows it.
+ */
+export const MENTIONS_PASSWORD = /pass(?:word|wd)|identified/i;
+export const PASSWORD_WITHHELD = "(Not shown here: it sets or uses a password. Open the chat in PPM to read it.)";
+
 export const MAX_DB_TOOL_SQL_CHARS = 50_000;
 export const MAX_DB_TOOL_REASON_CHARS = 2_000;
 

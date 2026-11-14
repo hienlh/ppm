@@ -24,7 +24,7 @@ import { chatService } from "../chat.service.ts";
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { currentQuietWindowEnd } from "../assistant-wake/wake-quiet-hours.ts";
 import { createLogger } from "../logger.ts";
-import type { DbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
+import { MENTIONS_PASSWORD, PASSWORD_WITHHELD, type DbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
 import { canSendTo, reachableChats } from "./assistant-telegram-access.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
@@ -92,16 +92,6 @@ function where(input: Pick<DbExecuteApprovalInput, "connectionName" | "database"
   const conn = `<b>${name(input.connectionName, "a connection")}</b>`;
   return input.database ? `${conn} (database ${name(input.database, "")})` : conn;
 }
-
-/**
- * Text that sets or uses a database password, which the generic redaction (`name=value`, known
- * token shapes) cannot be trusted to hide: SQL writes one as a quoted literal in many forms
- * (`PASSWORD 'x'`, `ENCRYPTED PASSWORD`, `IDENTIFIED BY 'x'`, `REPLACE 'old'`, `E'x'`, `$$x$$`,
- * dynamic SQL), and one form missed is a password kept on Telegram's servers for good. Such a
- * script, or reason, is not shown at all; the card in PPM shows it whole.
- */
-export const MENTIONS_PASSWORD = /pass(?:word|wd)|identified/i;
-export const PASSWORD_WITHHELD = "(Not shown here: it sets or uses a password. Open the chat in PPM to read it.)";
 
 /** Redacted first, so a cut cannot leave half a secret the redaction no longer recognises. */
 const excerpt = (text: string, max: number): string => escapeTelegramHtml(truncateText(redactForTelegram(text), max));

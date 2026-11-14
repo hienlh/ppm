@@ -6,11 +6,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { clientFor, connectChat, disconnectChat, freshChat, queueFor, texts, useFakeTelegram } from "./bridge-test-kit.ts";
 import {
-  ANSWER_IN_PPM, AssistantTelegramDbNotices, DB_NOTICE_SQL_MAX, LOGIN_IN_PPM, PASSWORD_WITHHELD, type DescribedChat,
+  ANSWER_IN_PPM, AssistantTelegramDbNotices, DB_NOTICE_SQL_MAX, LOGIN_IN_PPM, type DescribedChat,
 } from "../../../../src/services/assistant-telegram/assistant-telegram-db-notices.ts";
 import { createDbAttentionEvents, type DbAttentionEvents } from "../../../../src/services/db-ai-tools/db-attention-events.ts";
 import { getDb } from "../../../../src/services/db.service.ts";
-import type { DbExecuteApprovalInput } from "../../../../src/shared/db-ai-tools.ts";
+import { PASSWORD_WITHHELD, type DbExecuteApprovalInput } from "../../../../src/shared/db-ai-tools.ts";
 
 const fake = useFakeTelegram();
 const client = clientFor(fake);
@@ -183,18 +183,33 @@ describe("a db_execute approval on Telegram", () => {
     expect(t.links).toEqual([]);
   });
 
+  it("shows a harmless script but withholds a reason that mentions a password", async () => {
+    const chat = connectChat(freshChat());
+    const t = setup();
+    t.events.emit("approval_shown", t.shown({ input: { ...INPUT, reason: "The user's password column is stale; reset to 'Hunter2'" } }));
+    await fake.waitFor(() => texts(fake, chat).length === 1);
+    await t.queue.whenIdle();
+    const text = texts(fake, chat)[0]!;
+    expect(text).toContain("UPDATE invoices SET paid = true WHERE id = 42");
+    expect(text).toContain(`Why: ${PASSWORD_WITHHELD}`);
+    expect(text).not.toContain("Hunter2");
+  });
+
   it("reminds once more before it gives up, saying how long is left", async () => {
     const chat = connectChat(freshChat());
     const t = setup();
     const p = t.shown();
     t.quiet.advance(25 * 60_000);
-    t.events.emit("approval_reminder", p);
+    // The reminder names the change, never the script or the reason.
+    t.events.emit("approval_reminder", { ...p, input: { ...INPUT, sql: "ALTER ROLE r PASSWORD 'Hunter2'", reason: "rotate Hunter2" } });
     await fake.waitFor(() => texts(fake, chat).length === 1);
     await t.queue.whenIdle();
     const text = texts(fake, chat)[0]!;
     expect(text).toContain("Still waiting: a database change");
     expect(text).toContain("Chat “Fix the <stuck> invoices” in billing-api still waits for your approval to change Prod <pg> (database billing).");
     expect(text).toContain("PPM gives up in 5 minutes and nothing runs.");
+    expect(text).not.toContain("Hunter2");
+    expect(text).not.toContain("ALTER ROLE");
     expect(text).toContain(ANSWER_IN_PPM);
     expect(allButtons(chat)).toEqual([]);
   });
