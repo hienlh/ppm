@@ -55,13 +55,17 @@ const meta: Record<string, { path?: string; title?: string; design?: boolean; as
   web: { path: "/p/web", title: "Web chat" },
   asst: { path: "/ppm/assistant", assistant: true },
   design: { path: "/p/web", design: true },
+  stray: { path: "/not/a/project", title: "Outside every project" },
 };
+
+/** Numbered sessions `s0`, `s1`… are ordinary chats of `web`. */
+const pathOf = (id: string) => meta[id]?.path ?? (/^s\d+$/.test(id) ? "/p/web" : null);
 
 function deps(): InterruptedChatDeps {
   return {
     traceDb: getTraceDb(),
     sessionOf: (id) => id,
-    projectPathOf: (id) => meta[id]?.path ?? null,
+    projectPathOf: pathOf,
     projectNameOf: (path) => ({ "/p/api": "api", "/p/web": "web" } as Record<string, string>)[path] ?? null,
     providerOf: () => "claude",
     titleOf: (id) => meta[id]?.title ?? null,
@@ -103,6 +107,16 @@ describe("finding the chats a restart cut off", () => {
     trace("design", PREV_START + 2, [user("Make it blue"), tool("Write")]);
     trace("proxy-1", PREV_START + 3, [user("completion"), { type: "text", content: "…" }], "proxy");
     expect(findInterruptedChats(deps(), { since: PREV_START, restartAt: RESTART }).chats).toEqual([]);
+  });
+
+  it("leaves out another instance's chats: a trace this database never recorded, or one outside every project", () => {
+    // The trace file is shared by ppm.db, ppm.dev.db and the CLI; only this database's own sessions count.
+    trace("live-only", PREV_START + 1, [user("A live chat's secret task"), tool("Bash")]);
+    trace("stray", PREV_START + 2, [user("Somewhere else"), tool("Bash")]);
+    trace("web", PREV_START + 3, [user("Ours"), tool("Bash")]);
+    const scan = findInterruptedChats(deps(), { since: PREV_START, restartAt: RESTART });
+    expect(scan.chats.map((c) => c.sessionId)).toEqual(["web"]);
+    expect(scan.more).toBe(0);
   });
 
   it("leaves out a chat the new run has already written to, and a turn stopped or closed on purpose", () => {

@@ -1,5 +1,4 @@
 import type { Database } from "bun:sqlite";
-import { basename } from "node:path";
 import type { InterruptedChat } from "../../shared/restart-news.ts";
 
 /**
@@ -11,6 +10,11 @@ import type { InterruptedChat } from "../../shared/restart-news.ts";
  * `error`, `turn_aborted` or `run_closed`. A chat already written to again by the new run is left
  * out (someone or something has taken it up), and so is anything that is not a person's chat: the
  * PPM Assistant's own sessions, design sessions, and the API proxy's streams.
+ *
+ * The trace file is shared: `ppm.db` and `ppm.dev.db` keep theirs in one PPM folder, and the
+ * `ppm chat` CLI appends to it from its own process. So a trace counts only when this database
+ * places its session in a registered project; anything else is another instance's chat, and
+ * listing it would hand that instance's prompts to this one's Assistant.
  */
 
 /** Rows of one trace that close a turn. `run_closed` is a stream that ended mid-turn on its own: not the restart's doing. */
@@ -64,7 +68,9 @@ export interface InterruptedChatDeps {
   traceDb: Database;
   /** The id the session goes by now (a Codex chat is renamed on its first turn). */
   sessionOf(traceId: string): string;
+  /** Where this database recorded the session; null for one it never recorded (another instance's). */
   projectPathOf(sessionId: string): string | null;
+  /** The registered project at that path; null when none is. */
   projectNameOf(projectPath: string): string | null;
   providerOf(sessionId: string): string | null;
   titleOf(sessionId: string): string | null;
@@ -152,8 +158,11 @@ export function findInterruptedChats(deps: InterruptedChatDeps, window: { since:
     if (seen.has(sessionId)) continue;
     seen.add(sessionId);
     const projectPath = deps.projectPathOf(sessionId);
+    // A session this database never recorded, or one outside every registered project, is not ours to report.
+    if (!projectPath) continue;
     if (deps.isAssistant(sessionId, projectPath) || deps.isDesign(sessionId)) continue;
-    const projectName = (projectPath && deps.projectNameOf(projectPath)) || (projectPath ? basename(projectPath) : "") || "unknown project";
+    const projectName = deps.projectNameOf(projectPath);
+    if (!projectName) continue;
     const parent = deps.parentOf(sessionId);
     const cards = deps.openCardsOf(sessionId);
     found.push({
