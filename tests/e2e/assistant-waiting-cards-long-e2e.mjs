@@ -250,38 +250,7 @@ try {
   await page.locator("[data-manager-waiting-cards]:visible").first().waitFor({ timeout: 30000 });
   await k.shot("19-desktop-manager-chat-long-cards");
 
-  // Answer all four questions on the card, from the desktop.
-  await page.goto(`${web}/project/ppm/assistant`);
-  await body.locator("[data-waiting-cards]").waitFor({ timeout: 30000 });
-  await show(body, question.id);
-  for (const [n, letter] of [[1, "A"], [2, "A"], [3, "B"], [4, "A"]]) await q(n, letter).click();
-  await body.locator("[data-waiting-card]").getByRole("button", { name: "Send answers (4/4)" }).click();
-  const [asked] = await k.answered("r-questions", 1);
-  assert.equal(asked.approved, true, "the manager got its answers");
-  ok("the four answers reached the manager chat");
-
-  // A card that no longer waits folds in the stream: OK the plan, then find it there.
-  await show(body, idOf(PLAN.title));
-  const okButton = body.locator("[data-waiting-card]").getByRole("button", { name: "OK", exact: true });
-  if (await okButton.count()) await okButton.click();
-  else await body.locator("[data-waiting-card]").getByRole("button", { name: "Dismiss" }).click();
-  await until("plan no longer waits", async () => (await k.cards()).find((c) => c.id === idOf(PLAN.title))?.status !== "open", 15000);
-  const done = body.locator(`[data-assistant-card="needs_decision"]:not([data-card-status="open"])`, { hasText: PLAN.title }).last();
-  // Scroll only the chat's own list: Playwright's scrollIntoView also scrolls the window's
-  // overflow-hidden boxes, which slides the bar over the stream.
-  await done.evaluate((el) => {
-    let box = el.parentElement;
-    while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
-    if (box) box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - 12;
-  });
-  assert.equal(await done.locator("[data-card-text][data-folded]").count(), 1, "the answered plan is folded");
-  await done.screenshot({ path: join(shotsDir, "20-desktop-stream-answered-plan-folded.png") });
-  await done.locator("[data-card-text-toggle]").evaluate((b) => b.click());
-  await done.screenshot({ path: join(shotsDir, "21-desktop-stream-answered-plan-show-more.png") });
-  assert.equal(await body.locator("[data-card-actions][data-sticky]:not([data-waiting-cards] *)").count(), 0, "no card in the stream sticks its buttons");
-  ok("an answered card folds behind Show more in the stream, and unfolds");
-
-  // ---- Telegram (fake Bot API) ----
+  // ---- Telegram (fake Bot API), before anything is answered ----
   const sent = await tg.sent(OWNER);
   const pick = (needle) => sent.findLast((m) => m.text.includes(needle));
   const tgShots = [
@@ -300,6 +269,39 @@ try {
   }
   await writeFile(join(shotsDir, "telegram-messages.txt"), text.join("\n"));
   ok("Telegram copies drawn from the fake Bot API");
+
+  // Answer all four questions on the card, from the desktop.
+  await page.goto(`${web}/project/ppm/assistant`);
+  await body.locator("[data-waiting-cards]").waitFor({ timeout: 30000 });
+  await show(body, question.id);
+  for (const [n, letter] of [[1, "A"], [2, "A"], [3, "B"], [4, "A"]]) await q(n, letter).click();
+  await body.locator("[data-waiting-card]").getByRole("button", { name: "Send answers (4/4)" }).click();
+  const [asked] = await k.answered("r-questions", 1);
+  assert.equal(asked.approved, true, "the manager got its answers");
+  ok("the four answers reached the manager chat");
+
+  // A card that no longer waits folds in the stream: OK the plan, then find it there.
+  await show(body, idOf(PLAN.title));
+  const okButton = body.locator("[data-waiting-card]").getByRole("button", { name: "OK", exact: true });
+  if (await okButton.count()) await okButton.click();
+  else await body.locator("[data-waiting-card]").getByRole("button", { name: "Dismiss" }).click();
+  await until("plan no longer waits", async () => (await k.cards()).find((c) => c.id === idOf(PLAN.title))?.status !== "open", 15000);
+  // Fold the bar so the stream has the window's height.
+  await body.locator("[data-waiting-toggle]").click();
+  const done = body.locator(`[data-assistant-card="needs_decision"]:not([data-card-status="open"])`, { hasText: PLAN.title }).last();
+  // Scroll only the chat's own list: Playwright's scrollIntoView also scrolls the window's
+  // overflow-hidden boxes, which slides the bar over the stream.
+  await done.evaluate((el) => {
+    let box = el.parentElement;
+    while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+    if (box) box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - 12;
+  });
+  assert.equal(await done.locator("[data-card-text][data-folded]").count(), 1, "the answered plan is folded");
+  await done.screenshot({ path: join(shotsDir, "20-desktop-stream-answered-plan-folded.png") });
+  await done.locator("[data-card-text-toggle]").evaluate((b) => b.click());
+  await done.screenshot({ path: join(shotsDir, "21-desktop-stream-answered-plan-show-more.png") });
+  assert.equal(await body.locator("[data-card-actions][data-sticky]:not([data-waiting-cards] *)").count(), 0, "no card in the stream sticks its buttons");
+  ok("an answered card folds behind Show more in the stream, and unfolds");
 
   const unexpected = pageErrors.filter((e) => !/read the 'serviceWorker' property/.test(e));
   if (unexpected.length) throw new Error(`page errors:\n${unexpected.join("\n")}`);

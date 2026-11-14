@@ -148,18 +148,22 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
       {open && (
         // The card scrolls here and keeps its buttons at the bottom; a phone keeps most of the
         // screen for the conversation and the keyboard.
-        <div className={cn("overflow-y-auto px-3 pb-3", slotHeight)} data-waiting-slot="">
-          <div
-            key={current.id}
-            className={cn("rounded-xl transition-shadow duration-300", lit && "ring-2 ring-error ring-offset-2 ring-offset-panel-2")}
-            data-waiting-card={current.id}
-            data-highlighted={lit ? "" : undefined}
-          >
-            <CardStickyActionsContext.Provider value>
-              <AssistantCard card={current} onCard={onCard} />
-            </CardStickyActionsContext.Provider>
+        // The gap under the card sits outside the scrolling box: inside it, text would show
+        // through under the button row that sticks to the box's bottom.
+        <div className="pb-3">
+          <div className={cn("overflow-y-auto px-3 pt-0.5", slotHeight)} data-waiting-slot="">
+            <div
+              key={current.id}
+              className={cn("rounded-xl transition-shadow duration-300", lit && "ring-2 ring-error ring-offset-2 ring-offset-panel-2")}
+              data-waiting-card={current.id}
+              data-highlighted={lit ? "" : undefined}
+            >
+              <CardStickyActionsContext.Provider value>
+                <AssistantCard card={current} onCard={onCard} />
+              </CardStickyActionsContext.Provider>
+            </div>
+            {children?.(current)}
           </div>
-          {children?.(current)}
         </div>
       )}
     </section>
