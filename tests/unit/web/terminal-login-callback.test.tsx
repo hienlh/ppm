@@ -116,6 +116,21 @@ describe("TerminalLoginCallbackBar", () => {
     await view.unmount();
   });
 
+  it("stays open once the user is typing, even after its link scrolls out of reach", async () => {
+    const { terminal, listeners } = fakeTerminal();
+    const urls = [SSO_LINK];
+    const view = await mount(<Harness terminal={terminal} urls={() => urls} />);
+    const input = view.container.querySelector('input[aria-label="Callback address"]') as HTMLInputElement;
+    await act(async () => input.focus());
+    urls.length = 0; // the link is no longer near the bottom
+    await act(async () => {
+      for (const l of listeners) l();
+      await new Promise((r) => setTimeout(r, 1100));
+    });
+    expect(region(view.container)).not.toBeNull();
+    await view.unmount();
+  });
+
   it("is hidden until asked when nothing in the terminal needs it", async () => {
     const { terminal } = fakeTerminal();
     const view = await mount(<Harness terminal={terminal} urls={() => []} />);

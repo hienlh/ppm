@@ -82,6 +82,12 @@ export interface LoginCallbackBarState {
   /** The status-bar button: closes the bar when it shows, for whichever reason it shows. */
   toggle: () => void;
   close: () => void;
+  /**
+   * The user is using the field. An offer that opened by itself lasts only while
+   * its link is near the bottom of the terminal; once someone is typing into it,
+   * more output must not take it (and what they typed) away.
+   */
+  engage: () => void;
 }
 
 /** Everything the terminal tab needs to drive the bar and its status-bar button. */
@@ -106,7 +112,9 @@ export function useLoginCallbackBar(
     else setRequested(true);
   }, [visible, close]);
 
-  return { visible, requested, ports, toggle, close };
+  const engage = useCallback(() => setRequested(true), []);
+
+  return { visible, requested, ports, toggle, close, engage };
 }
 
 export function TerminalLoginCallbackBar({ bar }: { bar: LoginCallbackBarState }) {
@@ -130,7 +138,7 @@ export function TerminalLoginCallbackBar({ bar }: { bar: LoginCallbackBarState }
           <X className="size-3.5" />
         </button>
       </div>
-      <TerminalFinishLogin compact autoFocus={bar.requested} onDone={bar.close} />
+      <TerminalFinishLogin compact autoFocus={bar.requested} onDone={bar.close} onEngage={bar.engage} />
     </div>
   );
 }

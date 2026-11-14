@@ -24,6 +24,8 @@ interface TerminalFinishLoginProps {
   /** Desktop size: a pointer needs no 44px target, and the bar sits over the terminal. */
   compact?: boolean;
   autoFocus?: boolean;
+  /** The user started using the field (focused or typed into it). */
+  onEngage?: () => void;
 }
 
 /** What the field shows under the input for the current text: nothing, the URL to be sent, or why not. */
@@ -56,7 +58,7 @@ export function describeDeliveryResult(result: { status: number; body: string })
   };
 }
 
-export function TerminalFinishLogin({ onDone, compact = false, autoFocus = false }: TerminalFinishLoginProps) {
+export function TerminalFinishLogin({ onDone, compact = false, autoFocus = false, onEngage }: TerminalFinishLoginProps) {
   const [url, setUrl] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -98,7 +100,11 @@ export function TerminalFinishLogin({ onDone, compact = false, autoFocus = false
       >
         <input
           value={url}
-          onChange={(e) => setUrl(e.target.value)}
+          onChange={(e) => {
+            setUrl(e.target.value);
+            onEngage?.();
+          }}
+          onFocus={onEngage}
           autoFocus={autoFocus}
           inputMode="url"
           autoCapitalize="off"
