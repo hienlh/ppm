@@ -18,6 +18,7 @@ import { MessageActionBar } from "./message-action-bar";
 import { CopyTurnLinkButton } from "./copy-turn-link-button";
 import { ProviderBadge } from "./provider-selector";
 import { TurnRefChipRow } from "./turn-ref-chip";
+import { useAssistantDisplayName } from "@/stores/assistant-name-store";
 
 const STARTED_BY_TEXT: Record<AssistantProvenance["startedBy"], string> = {
   user_ppm: "started by you in PPM",
@@ -47,7 +48,8 @@ export function FromSessionBubble({ from, provenance, text, plainContent, turnRe
 }) {
   const provider = providerLabel(from.providerId);
   // The PPM Assistant is named as such; its session opens in the Assistant, never in a project.
-  const sender = from.kind === "assistant" ? "PPM Assistant" : from.title;
+  const assistantName = useAssistantDisplayName();
+  const sender = from.kind === "assistant" ? assistantName : from.title;
   const openSender = () => void openLinkedSession({
     projectName: from.projectName,
     providerId: from.providerId,

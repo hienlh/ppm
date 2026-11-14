@@ -18,6 +18,7 @@ import { buildStatus, type StatusDeps } from "./assistant-telegram-status.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { quietWhileInPpm, setQuietWhileInPpm } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
+import { assistantNameForMessages } from "../assistant/assistant-settings.service.ts";
 
 const log = createLogger("assistant-telegram");
 
@@ -58,8 +59,15 @@ export interface CommandDeps {
   status?: StatusDeps;
 }
 
-export const HELP_TEXT = [
-  "<b>PPM Assistant</b> — the AI that works on your PPM.",
+/** /help, headed with the Assistant's name when it has one ("<b>Mi</b> — PPM Assistant, …"). */
+export function helpText(name = assistantNameForMessages()): string {
+  const head = name === "PPM Assistant"
+    ? "<b>PPM Assistant</b> — the AI that works on your PPM."
+    : `<b>${escapeTelegramHtml(name)}</b> — PPM Assistant, the AI that works on your PPM.`;
+  return [head, ...HELP_BODY].join("\n");
+}
+
+const HELP_BODY = [
   "",
   "Just write a message: it answers here and in PPM's Assistant window, which share one conversation.",
   "Anything that changes something (sending a message into a chat, running a command…) shows a card first; answer it here or in PPM.",
@@ -70,7 +78,10 @@ export const HELP_TEXT = [
   "/stop — stop the answer in progress",
   "/quiet — while you are at PPM, messages here arrive without a sound (<code>/quiet on</code>, <code>/quiet off</code>)",
   "/help — this message",
-].join("\n");
+];
+
+/** /help with no name set. */
+export const HELP_TEXT = helpText("PPM Assistant");
 
 function providerName(id: string): string {
   return providerRegistry.get(id)?.name ?? id;
@@ -82,7 +93,7 @@ export async function runCommand(cmd: ParsedCommand, ctx: CommandContext, deps: 
     switch (cmd.name) {
       case "start":
       case "help":
-        return ctx.reply(HELP_TEXT);
+        return ctx.reply(helpText());
       case "new":
         return await newSession(cmd.args, ctx);
       case "sessions":

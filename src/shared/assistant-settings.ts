@@ -11,6 +11,7 @@
 import { RULES_FILE_MAX_BYTES } from "./assistant-limits.ts";
 import { DEFAULT_QUIET_HOURS, readQuietHours, readTimeZone, type QuietHours } from "./assistant-quiet-hours.ts";
 import { DEFAULT_DIGEST, readDigestSettings, type DigestSettings } from "./assistant-digest.ts";
+import { DEFAULT_ASSISTANT_PERSONA, readAssistantPersona, type AssistantPersona } from "./assistant-persona.ts";
 
 export const ASSISTANT_INSTRUCTIONS_MAX_CHARS = 8000;
 export const ASSISTANT_MCP_MAX_SERVERS = 20;
@@ -76,6 +77,8 @@ export interface AssistantSettings {
   providers: Record<string, AssistantProviderDefaults>;
   /** The user's own instructions, added after PPM's. */
   instructions: string;
+  /** Its name, how it addresses the user and its character: tone only, never permissions. */
+  persona: AssistantPersona;
   mcp_servers: AssistantMcpServer[];
   /**
    * The main Assistant session; null once it was cleared, absent while none was ever set (which
@@ -105,6 +108,7 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   default_provider: null,
   providers: {},
   instructions: "",
+  persona: structuredClone(DEFAULT_ASSISTANT_PERSONA),
   mcp_servers: [],
   manager_default_mode: "default",
   manager_template: "",
@@ -275,7 +279,9 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
   const timezone = readTimeZone(raw.timezone, errors);
   return {
     value: {
-      default_provider: defaultProvider, providers: readProviders(raw.providers, errors), instructions, mcp_servers: servers,
+      default_provider: defaultProvider, providers: readProviders(raw.providers, errors), instructions,
+      persona: readAssistantPersona(raw.persona, errors),
+      mcp_servers: servers,
       ...(raw.main_session !== undefined ? { main_session: readMainSession(raw.main_session) } : {}),
       manager_default_mode: managerMode,
       manager_template: managerTemplate,
@@ -300,6 +306,7 @@ export function maskAssistantSettings(settings: AssistantSettings): AssistantSet
   return {
     ...settings,
     providers: structuredClone(settings.providers),
+    persona: structuredClone(settings.persona),
     quiet_hours: { ...settings.quiet_hours },
     digest: { ...settings.digest },
     mcp_servers: settings.mcp_servers.map((s) => s.transport === "stdio"

@@ -107,16 +107,17 @@ export function describeWindow(kind: WindowKind, tab: Tab | undefined, busy: boo
   const slug = typeof tab.metadata?.designSlug === "string" ? tab.metadata.designSlug : tab.title;
   const extras = tabWindowExtras(tab.type);
   const TitleExtras = extras?.TitleExtras;
+  const titlebarTitle = extras?.titlebarTitle?.read();
   // A tab with no project of its own (a manager chat opened beside another project) still names
   // the project it works in.
   const where = project ?? (tab.type === "chat" && typeof tab.metadata?.projectName === "string" ? tab.metadata.projectName : undefined);
   return {
     title: tab.title,
-    ...(extras?.titlebarTitle ? { titlebarTitle: extras.titlebarTitle } : {}),
+    ...(titlebarTitle ? { titlebarTitle } : {}),
     icon: getTabTypeIcon(tab.type),
     tone: isDesign ? designTone(slug) : (TAB_TONES[tab.type] ?? tone("primary")),
     // A titlebar that already names itself ("Assistant") needs no kind beside it.
-    subtitle: where ? `${kindLabel} · ${where}` : extras?.titlebarTitle ? undefined : kindLabel,
+    subtitle: where ? `${kindLabel} · ${where}` : titlebarTitle ? undefined : kindLabel,
     ...(extras?.showIdle ? { showIdle: true } : {}),
     kindLabel,
     busy,
@@ -157,5 +158,8 @@ export function useWindowMeta(win: Pick<WindowRuntimeState, "id" | "kind">): Win
   const busy = useStreamingStore((s) => (sessionId ? s.sessions.has(sessionId) : false));
   const counter = tabWindowExtras(tab?.type)?.count;
   const count = useSyncExternalStore(counter?.subscribe ?? noSubscribe, () => (tab && counter ? counter.read(tab) : 0));
+  // Re-renders when the titlebar label changes (the Assistant renamed); `describeWindow` reads it.
+  const label = tabWindowExtras(tab?.type)?.titlebarTitle;
+  useSyncExternalStore(label?.subscribe ?? noSubscribe, () => label?.read() ?? "");
   return describeWindow(win.kind, tab, busy, count);
 }
