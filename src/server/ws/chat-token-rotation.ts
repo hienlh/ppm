@@ -51,7 +51,7 @@ export interface RenewalCandidate {
   renewable: boolean;
 }
 
-/** Accounts to renew now: in use by some subprocess, near expiry, and busy in none. */
+/** Accounts to renew now: in use by some subprocess, near expiry, and busy or holding in none. */
 export function accountsToRenewNow(candidates: RenewalCandidate[], live: LiveSubprocess[], nowS: number): string[] {
   const inUse = new Set<string>();
   const busy = new Set<string>();

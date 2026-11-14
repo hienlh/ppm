@@ -180,7 +180,7 @@ async function chatOnDueAccount() {
     await chatWebSocket.message(socket as any, JSON.stringify({ type: "message", content }));
     await until(() => messages.filter((m) => m.type === "done").length === doneCount && !getSessionTurnState(session.id).running, `turn ${doneCount} to end`);
   };
-  return { id: session.id, say };
+  return { id: session.id, accountId: account.id, say };
 }
 
 const rotatedAway = (sessionId: string) => provider.abortReasons.some((a) => a.sessionId === sessionId && a.reason === "token_rotated");
@@ -223,6 +223,18 @@ it("holds the renewal while the subprocess is still emitting a subagent's events
   setSystemTime(new Date(Date.now() + PAST_QUIET_WINDOW_MS));
   await runTokenRotationSweep();
   expect(rotatedAway(id)).toBe(true);
+});
+
+it("still moves a subprocess off a token renewed elsewhere while it only holds the renewal", async () => {
+  const { id, accountId, say } = await chatOnDueAccount();
+  await say("plain", 1);
+  provider.emit(id, { type: "tool_use", tool: "Bash", input: { command: "bun test" }, toolUseId: "toolu_child", parentToolUseId: "toolu_unknown" } as ChatEvent);
+  await Bun.sleep(30);
+
+  // Another path renews the account (a turn's pre-flight, the usage poller), revoking the token
+  // this subprocess holds. Keeping it would only make the next message fail with a 401.
+  await accountService.refreshAccessToken(accountId, false, true);
+  await until(() => rotatedAway(id), "the subprocess to be moved off the revoked token");
 });
 
 it("forgets the tasks of a subprocess that is gone, so the next one is not held busy by them", async () => {
