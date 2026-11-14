@@ -1,22 +1,30 @@
 /**
- * Settings → PPM Assistant → Digest & quiet hours. There is no time zone field: saving either
- * control also sends this browser's IANA zone, and the zone the times are read in is shown as
- * plain text under them.
+ * Settings → PPM Assistant → Digest & quiet hours: when PPM wakes or holds the Assistant on its
+ * own, plus the restart-news switch. There is no time zone field: saving a time also sends this
+ * browser's IANA zone, and the zone the times are read in is shown as plain text under them.
  */
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Coffee, Loader2 } from "@/lib/icons";
+import { Coffee, Loader2, RotateCcw } from "@/lib/icons";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { browserTimeZone, getAssistantSettings, patchAssistantSettings } from "@/lib/assistant-settings-api";
+import { browserTimeZone, getAssistantSettings, patchAssistantSettings, type AssistantSettingsResponse } from "@/lib/assistant-settings-api";
 import { isClockTime, type QuietHours } from "../../../../shared/assistant-quiet-hours";
 import type { DigestSettings } from "../../../../shared/assistant-digest";
 import { SettingLine, SettingsCard } from "./assistant-settings-card";
 
 export const DIGEST_HINT = "Asks each manager chat (queued while it is busy), then sends one digest.";
 export const QUIET_HINT = "Messages are held until quiet hours end. Urgent items go out at once.";
+export const RESTART_NEWS_LABEL = "Tell the Assistant after PPM restarts";
+export const RESTART_NEWS_HINT = "After every restart, PPM wakes the Assistant with why it restarted and which chats were cut off, so it can ask their managers to continue.";
 
-interface Saved { digest: DigestSettings; quiet: QuietHours; timezone: string | undefined }
+interface Saved { digest: DigestSettings; quiet: QuietHours; timezone: string | undefined; restartNews: boolean }
+
+function savedFrom(res: AssistantSettingsResponse): Saved {
+  const s = res.settings;
+  // A server older than the switch sends none; the news is on unless switched off.
+  return { digest: s.digest, quiet: s.quiet_hours, timezone: s.timezone, restartNews: s.restart_news !== false };
+}
 
 /** The read-only line naming the zone the times are in. */
 export function zoneLine(saved: string | undefined, device: string | undefined): string {
@@ -53,7 +61,7 @@ export function AssistantDigestQuietSection() {
   useEffect(() => {
     let live = true;
     getAssistantSettings()
-      .then((res) => { if (live) setSaved({ digest: res.settings.digest, quiet: res.settings.quiet_hours, timezone: res.settings.timezone }); })
+      .then((res) => { if (live) setSaved(savedFrom(res)); })
       .catch((e: Error) => { if (live) setError(e.message || "Could not load the Assistant's settings"); });
     return () => { live = false; };
   }, []);
@@ -61,11 +69,13 @@ export function AssistantDigestQuietSection() {
   if (error) return <p className="text-xs text-error" role="alert">{error}</p>;
   if (!saved) return <div className="flex justify-center py-8 text-muted-foreground"><Loader2 className="size-4 animate-spin" /></div>;
 
-  const save = async (patch: { digest?: DigestSettings; quiet_hours?: QuietHours }) => {
+  // A time is read in the zone it was saved in, so saving one sends this browser's zone; the
+  // restart-news switch holds no time and leaves the saved zone alone.
+  const save = async (patch: { digest?: DigestSettings; quiet_hours?: QuietHours; restart_news?: boolean }) => {
     setSaving(true);
     try {
-      const res = await patchAssistantSettings({ ...patch, timezone: browserTimeZone() });
-      setSaved({ digest: res.settings.digest, quiet: res.settings.quiet_hours, timezone: res.settings.timezone });
+      const res = await patchAssistantSettings(patch.restart_news === undefined ? { ...patch, timezone: browserTimeZone() } : patch);
+      setSaved(savedFrom(res));
     } catch (e) {
       toast.error("Could not save", { description: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -91,6 +101,14 @@ export function AssistantDigestQuietSection() {
         </SettingLine>
       </SettingsCard>
       <p className="px-1 text-xs text-text-subtle" data-testid="assistant-time-zone">{zoneLine(saved.timezone, browserTimeZone())}</p>
+      <div className="pt-3" data-testid="assistant-restart-news">
+        <SettingsCard icon={RotateCcw} title="Restarts">
+          <SettingLine label={RESTART_NEWS_LABEL} note={RESTART_NEWS_HINT}>
+            <Switch aria-label={RESTART_NEWS_LABEL} checked={saved.restartNews} disabled={saving}
+              onCheckedChange={(restart_news) => void save({ restart_news })} />
+          </SettingLine>
+        </SettingsCard>
+      </div>
     </div>
   );
 }

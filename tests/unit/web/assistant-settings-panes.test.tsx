@@ -204,6 +204,35 @@ describe("digest and quiet hours", () => {
     expect(body!.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
     expect(body!.instructions).toBe("Be brief.");
     // Left out, so the server keeps what is stored rather than what this pane last read.
-    for (const key of ["quiet_hours", "manager_default_mode", "manager_template", "main_session"]) expect(key in body!).toBe(false);
+    for (const key of ["quiet_hours", "manager_default_mode", "manager_template", "main_session", "restart_news"]) expect(key in body!).toBe(false);
+  });
+
+  it("shows the restart-news switch on when the server sends none, and saves only that switch when it is turned off", async () => {
+    view = await mount(<AssistantDigestQuietSection />);
+    await settle();
+    const toggle = document.body.querySelector<HTMLButtonElement>("[aria-label='Tell the Assistant after PPM restarts']")!;
+    expect(toggle).toBeTruthy();
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(text()).toContain("which chats were cut off");
+    await click(toggle);
+    await settle();
+    const [body] = sent("PUT", "/api/assistant/settings") as Array<Record<string, unknown>>;
+    expect(body!.restart_news).toBe(false);
+    expect(body!.instructions).toBe("Be brief.");
+    // No time is saved, so the zone the digest and quiet hours are read in stays as stored.
+    for (const key of ["timezone", "digest", "quiet_hours", "manager_default_mode", "manager_template", "main_session"]) expect(key in body!).toBe(false);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("shows the restart-news switch off when it was saved off, and turns it back on", async () => {
+    answers.unshift(on("GET", "/api/assistant/settings", () => ok({ ...SETTINGS_RESPONSE, settings: { ...SETTINGS, restart_news: false } })));
+    view = await mount(<AssistantDigestQuietSection />);
+    await settle();
+    const toggle = document.body.querySelector<HTMLButtonElement>("[aria-label='Tell the Assistant after PPM restarts']")!;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await click(toggle);
+    await settle();
+    const [body] = sent("PUT", "/api/assistant/settings") as Array<Record<string, unknown>>;
+    expect(body!.restart_news).toBe(true);
   });
 });
