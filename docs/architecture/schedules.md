@@ -135,9 +135,11 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   it. Deleting the chat deletes its schedules, and a provider rename (`migrated`) carries them to
   the new id.
 - **A failure that may pass → tried again.** A send the chat refuses for any other reason (the
-  session would not resume, the push failed) keeps the fire pending and tries again after 1, 5
-  and 15 minutes (`session-schedule-retry-backoff.ts`, in memory); the fourth failure in a row
-  pauses the schedule with a notification. A schedule turned off with a fire still waiting (the
+  session would not resume, the push failed) keeps the fire pending and tries the chat again
+  after 1, 5 and 15 minutes (`session-schedule-retry-backoff.ts`, in memory). The count and the
+  wait are the chat's, not one schedule's: every schedule pending for that chat waits out the same
+  wait, failed sends and failed turns of any of them add to one count, and the fourth failure in a
+  row pauses all of the chat's pending schedules together with one notification naming them. A schedule turned off with a fire still waiting (the
   chip's Pause) sends that fire as soon as it is turned on again. If the scheduler cannot record
   a fire at all, its timer waits 30 seconds before trying again.
 - **Limits.** At most 20 per chat (`MAX_SCHEDULES_PER_SESSION`), checked through

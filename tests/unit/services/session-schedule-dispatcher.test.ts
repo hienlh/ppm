@@ -264,7 +264,7 @@ describe("a one-shot whose turn failed", () => {
     await Bun.sleep(60);
     expect(sent).toHaveLength(4);
     const paused = getSchedule(id)!;
-    expect(paused.paused_reason).toBe("Its turn failed: Not signed in. It failed 4 times in a row.");
+    expect(paused.paused_reason).toBe("Its turn failed: Not signed in. Schedules in this chat failed 4 times in a row.");
     expect(paused.pending_since).toBeNull();
     expect(notices.map((n) => n.kind)).toEqual(["retrying", "paused"]);
   });
@@ -517,9 +517,58 @@ describe("a send that fails for a reason that may pass", () => {
     expect(sent).toHaveLength(4);
     const paused = getSchedule(id)!;
     expect(paused.paused_reason).toBe(
-      "PPM could not send it into its chat: Could not resume the session: the CLI exited. It failed 4 times in a row.",
+      "PPM could not send it into its chat: Could not resume the session: the CLI exited. Schedules in this chat failed 4 times in a row.",
     );
     expect(notices.map((n) => n.kind)).toEqual(["paused"]);
+  });
+
+  it("backs off once for the chat, and pauses all of its pending schedules with one notice", async () => {
+    dispatcher.stop();
+    dispatcher = new SessionScheduleDispatcher(env({ retryBackoffMs: [15, 15, 15] }));
+    dispatcher.start();
+    reply = () => ({ ok: false, error: "Could not resume the session: thread not found" });
+    const a = pending({ name: "morning", since: new Date(Date.now() - 9000).toISOString() });
+    const b = pending({ name: "noon", since: new Date(Date.now() - 5000).toISOString() });
+    await dispatcher.due(a);
+    expect(sent).toHaveLength(1);
+    // Due while the chat backs off: it waits for the same wait instead of failing into the chat too.
+    await dispatcher.due(b);
+    expect(sent).toHaveLength(1);
+    const c = pending({ name: "evening" });
+    await dispatcher.due(c);
+
+    await kitUntil(() => getSchedule(a)!.paused_reason !== null);
+    await Bun.sleep(60);
+    // Four sends in all for the chat, each the oldest pending fire, not four per schedule.
+    expect(sent.map((s) => s.opts.scheduleRun?.name)).toEqual(["morning", "morning", "morning", "morning"]);
+    for (const id of [a, b, c]) {
+      expect(getSchedule(id)!.paused_reason).toBe(
+        "PPM could not send it into its chat: Could not resume the session: thread not found. Schedules in this chat failed 4 times in a row.",
+      );
+      expect(getSchedule(id)!.pending_since).toBeNull();
+    }
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.kind).toBe("paused");
+    expect(notices[0]!.title).toBe("3 schedules paused");
+    expect(notices[0]!.schedules.map((s) => s.id).sort()).toEqual([a, b, c].sort());
+  });
+
+  it("counts a failed turn and a failed send of another schedule as the same chat's failures", async () => {
+    dispatcher.stop();
+    dispatcher = new SessionScheduleDispatcher(env({ retryBackoffMs: [15, 15, 15] }));
+    dispatcher.start();
+    const a = pending({ recurring: false, name: "one-shot", since: new Date(Date.now() - 9000).toISOString() });
+    await dispatcher.due(a);
+    lifecycle.emit("turn_ended", { sessionId: CHAT, outcome: "failed", error: "Not signed in", projectName: "proj", providerId: "claude" });
+    reply = () => ({ ok: false, error: "Could not resume the session: Not signed in" });
+    const b = pending({ name: "daily" });
+    await dispatcher.due(b);
+    // Not sent: the chat waits out the backoff its failed turn started.
+    expect(sent).toHaveLength(1);
+    await kitUntil(() => getSchedule(a)!.paused_reason !== null);
+    expect(sent).toHaveLength(4);
+    expect(getSchedule(b)!.paused_reason).not.toBeNull();
+    expect(notices.map((n) => n.kind)).toEqual(["retrying", "paused"]);
   });
 
   it("counts from one again after a send goes through", async () => {

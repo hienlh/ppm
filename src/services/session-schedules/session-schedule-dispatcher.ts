@@ -40,8 +40,8 @@ export class SessionScheduleDispatcher {
   private stops: Array<() => void> = [];
 
   constructor(private readonly env: SessionScheduleDispatchEnv) {
-    this.setbacks = new SessionScheduleSetbacks(env, this.waiting, (scheduleId) => {
-      this.due(scheduleId).catch((e) => log.warn(`schedule ${scheduleId} retry failed: ${(e as Error).message}`));
+    this.setbacks = new SessionScheduleSetbacks(env, this.waiting, (sessionId) => {
+      this.pump(sessionId).catch((e) => log.warn(`session=${sessionId} schedule retry failed: ${(e as Error).message}`));
     });
   }
 
@@ -73,8 +73,6 @@ export class SessionScheduleDispatcher {
   due(scheduleId: number): Promise<void> {
     const schedule = getSchedule(scheduleId);
     if (!this.running || !deliverable(schedule)) return Promise.resolve();
-    // Failed a moment ago: its backoff hands it back, and fires meanwhile fold into it.
-    if (this.setbacks.isBackingOff(scheduleId)) return Promise.resolve();
     const sessionId = this.env.canonical(schedule.target_session_id!);
     // A chat renamed while PPM was not listening: the schedules follow it now.
     if (sessionId !== schedule.target_session_id && retargetSessionSchedules(schedule.target_session_id!, sessionId) > 0) {
@@ -88,6 +86,9 @@ export class SessionScheduleDispatcher {
   async pump(asked: string): Promise<void> {
     const sessionId = this.env.canonical(asked);
     if (!this.running || this.flights.has(sessionId)) return;
+    // A send into this chat failed a moment ago: its backoff pumps it again, and every schedule
+    // that comes due meanwhile waits in the list for that.
+    if (this.setbacks.isBackingOff(sessionId)) return;
     const schedule = this.waiting.next(sessionId);
     if (!schedule) return;
     const resolved = this.env.target(sessionId);
@@ -122,8 +123,8 @@ export class SessionScheduleDispatcher {
       // resume, the message could not be pushed) may pass, so it is tried again before pausing.
       const now = this.env.target(current);
       if (!now.ok) return this.setbacks.pauseAll(current, now.reason);
-      this.setbacks.failed(current, schedule, chat, `PPM could not send it into its chat: ${result.error}.`, false);
-      return this.wakeSoon(current);
+      // The chat's other pending schedules wait out the same backoff rather than fail into it too.
+      return this.setbacks.failed(current, schedule, chat, `PPM could not send it into its chat: ${result.error}.`, false);
     }
     const early = flight.earlyEnd;
     flight.earlyEnd = undefined;
@@ -231,7 +232,7 @@ export class SessionScheduleDispatcher {
       const why = String(p.error ?? p.stop?.message.split("\n")[0] ?? `the turn ${p.outcome}`).replace(/\.$/, "");
       try {
         if (flight.worked || p.finalText?.trim()) {
-          this.setbacks.failedPartway(schedule, flight.chat, why);
+          this.setbacks.failedPartway(sessionId, schedule, flight.chat, why);
         } else {
           if (schedule.recurring) restoreRecurringFire(schedule, flight.schedule.pending_since ?? new Date(this.env.now()).toISOString());
           this.setbacks.failed(sessionId, getSchedule(schedule.id) ?? schedule, flight.chat, `Its turn failed: ${why}.`, true);
@@ -246,7 +247,7 @@ export class SessionScheduleDispatcher {
         }
       }
       // Counted only once the turn is over: a turn that fails before doing anything is retried.
-      this.setbacks.succeeded(flight.schedule.id);
+      this.setbacks.succeeded(sessionId);
       broadcastSchedulesChanged();
     }
     this.wakeSoon(sessionId);
@@ -278,6 +279,7 @@ export class SessionScheduleDispatcher {
 
   private onMigrated(oldId: string, newId: string): void {
     this.waiting.rename(oldId, newId);
+    this.setbacks.rename(oldId, newId);
     for (const map of [this.flights, this.retries] as Array<Map<string, unknown>>) {
       if (!map.has(oldId)) continue;
       map.set(newId, map.get(oldId));
