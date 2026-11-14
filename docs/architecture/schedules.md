@@ -1,9 +1,9 @@
-# Schedules (prompt and script)
+# Schedules (prompt, script and session)
 
 > Part of the [PPM system architecture](../system-architecture.md). Gotchas live in
 > `src/services/schedule-script/CLAUDE.md`.
 
-A schedule is one row in `schedules`, of one of two kinds:
+A schedule is one row in `schedules`, of one of three kinds:
 
 - **prompt** — the original kind: on a 5-field cron, send a prompt to an AI chat in a project.
 - **script** — JavaScript that PPM runs in a child process, in one of two modes:
@@ -12,6 +12,8 @@ A schedule is one row in `schedules`, of one of two kinds:
   - **always-on**: one long-lived process that PPM starts, restarts after a crash with backoff
     (5 s doubling to 5 min, reset after 10 min of uptime) and stops when the schedule is turned
     off or deleted.
+- **session** — a prompt delivered into one existing Claude or Codex chat, as a turn of that chat
+  (see [Session schedules](#session-schedules)).
 
 A script is an ES module whose default export takes `ctx`:
 
@@ -77,14 +79,62 @@ value, ids, a session, state or a path of this machine.
 
 Example templates ship in `templates/schedules/` and are tested as PPM runs them.
 
+## Session schedules
+
+A session schedule sends its prompt into the chat it names (`target_session_id`) and nowhere
+else: it never creates a chat. Code in `src/services/session-schedules/`.
+
+- **Firing is not running.** When its time comes the scheduler only records the fire as pending
+  (`pending_since`) and hands the id to the deliverer (`session-schedule-firing.ts` →
+  `session-schedule-due.ts`). The deliverer (`session-schedule-dispatcher.ts`) sends it through
+  `chatControl().sendUserMessage` with origin `schedule` once the chat is **idle**: no turn
+  running, no card on screen or queued behind it. It waits on the chat's own `turn_ended` and
+  `approval_resolved` events rather than polling, one schedule turn per chat at a time. A
+  schedule's message never cancels a card or steers a turn (`waitsForQuiet` in
+  `src/server/ws/chat.ts`); if a turn starts between the quiet check and the send, it goes in as
+  `priority: "later"` and waits for that turn to end.
+- **Coalescing.** Fires that come due while one is already pending fold into it: one turn, marked
+  `coalesced` in its run block.
+- **Catch-up, session kind only.** A fire missed while PPM was off is delivered **once** at start
+  (`catchUpSessionSchedule`, marked `catchUp`); prompt and script schedules still skip missed
+  fires. A fire counts as run only once its turn has started (`recordRunStarted`), so a restart in
+  between sends it again: a rare double run rather than a lost reminder.
+- **Time zone and one-shot.** `timezone` (IANA, canonicalised; null is the machine's own) is the
+  zone the 5-field cron is read in, both for firing and for the "never fires" check.
+  `recurring = 0` fires at the next match, and the schedule deletes itself once that turn starts.
+- **The chat's own settings.** The turn runs in the chat's permission mode, model and account.
+  `chatControl` refuses a `permissionMode` with origin `schedule`, because a mode sent with a
+  server message becomes the one that chat's subprocess keeps. The turn's approvals wait for the
+  user like any other.
+- **Unreachable chat → paused.** A chat that is gone, in an unregistered project, an Assistant or
+  design session, on another provider, or a Claude chat whose transcript left the disk pauses its
+  schedules (`paused_reason`, the pending fire dropped) with a notification. Turning one back on
+  clears the pause and is refused while the chat still cannot take it. Deleting the chat deletes
+  its schedules, and a provider rename (`migrated`) carries them to the new id.
+- **Limits.** At most 20 per chat (`MAX_SCHEDULES_PER_SESSION`), checked through
+  `assertCanAddSessionSchedule`; REST, CLI and the AI's tool all save through
+  `session-schedule-save.ts`, so no door accepts what another refuses.
+- **Notifications.** The turn notifies like any chat turn. The schedule itself sends a `schedule`
+  notification only when it is held up behind a pending card (once per pending period, dropped if
+  the card is answered first) and when it is paused.
+- **In the chat.** The prompt is preceded by a `<ppm-schedule-run-v1>` block
+  (`src/shared/chat-schedule-run.ts`), which only the server writes; the chat draws it as one
+  "Schedule … ran" line that opens to the prompt (`schedule-run-line.tsx`), and a footer chip
+  lists the chat's schedules with pause, resume and delete (`session-schedules-chip.tsx`).
+
 ## Surfaces
 
-- REST: `src/server/routes/schedules.ts` (CRUD, `run-now`, `runs`) and `schedules-script.ts`
-  (`logs`, `state`, `export`, `import`).
-- CLI: `ppm schedule add|list|rm|enable|disable|run-now|runs|export|import|state|set-state`.
+- REST: `src/server/routes/schedules.ts` (CRUD, `run-now`, `runs`; `?session=<id>` lists one
+  chat's session schedules, each with `target_title`) and `schedules-script.ts` (`logs`, `state`,
+  `export`, `import`).
+- CLI: `ppm schedule add|list|rm|enable|disable|run-now|runs|export|import|state|set-state`;
+  `add --session <id> --prompt … --cron … [--tz <zone>] [--once]` makes a session schedule.
   Changes to a script schedule go through the running server, which owns the process.
 - UI: Settings → Schedules (`src/web/components/settings/schedules/`): the form with its script
-  editor and input declarations, the import sheet, the live log, and a status chip per row.
+  editor and input declarations, the import sheet, the live log, and a status chip per row. A
+  session schedule's row names its chat in the Session column; the form's kind *Chat* picks one.
 - DB: migration 58 adds `kind`, `mode`, `description`, `script`, `inputs_json`,
   `input_values_json`, `secrets_enc`, `state_json` to `schedules`, plus `schedule_runtime`
   (one process per schedule), `schedule_chats` (key → chat) and `schedule_ai_turns`.
+  Migration 72 adds `target_session_id`, `timezone`, `recurring`, `pending_since` and
+  `paused_reason`, and rebuilds the `kind` CHECK to accept `session`.

@@ -784,6 +784,9 @@ answers the tour's "PPM has new features" step (UI and registry in
   any other way (`ppm config set`) is settled the same way on the next `GET /api/feature-intros`.
 - **No web UI, no answer.** An install used only through PPMBot, the scheduler or the CLI keeps the
   six off until someone answers in the browser or sets a switch. Accepted.
+- **The schedule tools ask again.** `session_schedule_create`, `_list` and `_delete` sit on the same
+  server but are a feature of their own (`session-schedules-2026-11`), so an install that turned the
+  six on does not get them silently; they follow the same rules.
 
 ## Session collaboration
 
@@ -934,6 +937,33 @@ written by canonical id.
 - As with the turn tools, an agent running in bypass mode can still reach other sessions' files
   with its own shell; the boundary is what PPM's tools allow, not the OS.
 
+### Session schedules
+
+The same server carries three tools with which a chat's AI schedules prompts into **its own**
+chat (`src/services/session-collab/collab-schedules.ts`, definitions in
+`collab-schedule-tool-definitions.ts`): `session_schedule_create { cron, prompt, recurring?,
+timezone?, name? }`, `session_schedule_list {}` and `session_schedule_delete { id }`. The chat is
+the one the token names, resolved to its current id, never an argument; another chat's schedule
+id reads as not found. The shape follows Claude Code's CronCreate (5-field cron, `recurring`
+true by default, a one-shot deletes itself), and saving goes through the same
+`session-schedule-save.ts` as REST and the CLI. Codex gets them through the server's
+`enabled_tools` (`SESSION_TOOLS`); the endpoint still lists only the ones switched on, and never
+to an Assistant session. Delivery, catch-up and pausing: [Schedules](schedules.md#session-schedules).
+
+- **Claude's own cron tools are hidden** while `session_schedule_create` is on and
+  `ai.hide_builtin_cron` is not false (Settings → Tools → Schedules): `hiddenBuiltinCronTools`
+  (`src/providers/claude-builtin-cron.ts`) passes `CronCreate`, `CronList` and `CronDelete` as
+  `disallowedTools`, whose jobs die with the CLI process. Not `CLAUDE_CODE_DISABLE_CRON`: that
+  also turns off `ScheduleWakeup` and `/loop`, which stay. A chat without PPM's tool keeps
+  Claude's, and the warm spare decides from the same inputs so `spawnFingerprint` still matches.
+- **The schedule-run block.** A scheduled turn's message starts with `<ppm-schedule-run-v1>`
+  (`src/shared/chat-schedule-run.ts`): schedule id, name, cron, zone, when it came due and was
+  sent, `catchUp` and `coalesced`, under a header line telling the model the prompt was scheduled
+  earlier rather than typed now. Only `chatControl` with origin `schedule` writes one; every other
+  door breaks its markers (`chat-message-blocks.ts`), the name and cron are quoted and escaped in
+  the header, and a block whose header disagrees with its JSON stays plain text. It counts as a
+  real prompt (`user-prompt-kind.ts`) and is read back from Claude and Codex history alike.
+
 `tests/integration/session-collab-tools.test.ts` drives the real endpoint, registry and database
 with a scripted provider; `tests/e2e/session-collab-e2e.mjs` covers the whole flow in Chromium with
 scripted Claude and Codex providers that call the real endpoint (fixture server
@@ -961,9 +991,10 @@ switched in Settings → Tools (`ai.ppm_tools`). Full design and verification:
 Settings → Tools (`tools-settings-section.tsx`) turns each of PPM's own AI tools on or off —
 `open_file`, `open_preview`, `open_url`, `read_terminal`, `run_in_terminal`, `search_sessions`,
 `list_session_turns`, `read_session_turns`, `db_query`, `open_query`, `db_execute`,
-`create_session`, `send_to_session`, `session_status`, in the groups Tabs, Terminal, Session
-history, Database and Session collaboration (whose limits and "Ask before creating sessions" sit
-under its switches) — for Claude and Codex alike. Claude's and Codex's built-in tools and MCP servers are not there. The switches are
+`create_session`, `send_to_session`, `session_status`, `session_schedule_create`,
+`session_schedule_list`, `session_schedule_delete`, in the groups Tabs, Terminal, Session history,
+Database, Session collaboration (whose limits and "Ask before creating sessions" sit under its
+switches) and Schedules (with "Hide Claude's built-in cron tools" under it) — for Claude and Codex alike. Claude's and Codex's built-in tools and MCP servers are not there. The switches are
 `ai.ppm_tools` (`PUT /api/settings/ai` merges one tool at a time and refuses any other name), and
 `src/shared/ppm-tools.ts` answers for the server and the pane alike: a tool never switched takes
 its default — `open_file` and `open_preview` follow the single switch that came before
