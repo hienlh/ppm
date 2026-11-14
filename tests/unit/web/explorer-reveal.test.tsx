@@ -79,6 +79,20 @@ describe("revealing in the tree", () => {
     await tree.unmount();
   });
 
+  it("scrolls to a row that already had focus: focus is cleared for one render, then set again", async () => {
+    const tree = await mount(<Tree project="demo" />);
+    useFileStore.getState().setFocusedPath("src");
+    const seen: Array<string | null> = [];
+    const stop = useFileStore.subscribe((s) => { seen.push(s.focusedPath); });
+    let outcome: Awaited<ReturnType<typeof revealInExplorer>> | undefined;
+    await act(async () => { outcome = await revealInExplorer({ projectName: "demo", path: "src", kind: "folder" }); });
+    stop();
+    expect(outcome).toMatchObject({ ok: true });
+    expect(seen).toContain(null);
+    expect(useFileStore.getState().focusedPath).toBe("src");
+    await tree.unmount();
+  });
+
   it("reveals a file without opening it as a folder", async () => {
     const tree = await mount(<Tree project="demo" />);
     let outcome: Awaited<ReturnType<typeof revealInExplorer>> | undefined;

@@ -1,5 +1,5 @@
-import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { readdir, realpath, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Json } from "../mcp-http-endpoint.ts";
 import { projectService } from "../project.service.ts";
 import { resolvePath } from "../fs-path-guard.service.ts";
@@ -69,27 +69,54 @@ export async function resolveRevealPath(project: AssistantProject, input: unknow
     ...(deps.privateRoots ? { roots: deps.privateRoots() } : {}),
   });
   if (isAssistantPrivatePath(absolute, scope)) return { ok: false, error: `${absolute} ${PRIVATE}` };
+  const realRoot = await realpath(root).catch(() => root);
+  /** Why a real location may not be shown, or null. Never names where a link leads. */
+  const refuseReal = (where: string): string | null => {
+    if (!isInside(realRoot, where)) return `${absolute} leads outside the project through a link, and its Explorer shows only the project's own files.`;
+    const late = tabReadRefusal(absolute, where);
+    if (late) return late.replace("does not open", "does not show");
+    if (isAssistantPrivatePath(where, scope)) return `${absolute} ${PRIVATE}`;
+    return null;
+  };
   let real: string;
   try {
     real = await realpath(absolute);
   } catch {
-    return { ok: false, error: `There is nothing at ${absolute}.` };
+    // A missing path is judged by where its nearest existing folder really is: behind a link into
+    // `~/.ssh`, "nothing at id_rsa" beside a refusal for id_ed25519 would say which keys exist.
+    const nearest = await nearestRealFolder(absolute, root);
+    return { ok: false, error: (nearest ? refuseReal(nearest) : null) ?? `There is nothing at ${absolute}.` };
   }
-  const realRoot = await realpath(root).catch(() => root);
-  if (!isInside(realRoot, real)) return { ok: false, error: `${absolute} leads outside the project through a link; ${NOT_INSIDE(project)}` };
-  const late = tabReadRefusal(absolute, real);
-  if (late) return { ok: false, error: late.replace("does not open", "does not show") };
-  if (isAssistantPrivatePath(real, scope)) return { ok: false, error: `${absolute} ${PRIVATE}` };
+  const refused = refuseReal(real);
+  if (refused) return { ok: false, error: refused };
   let folder: boolean;
   try {
     folder = (await stat(real)).isDirectory();
   } catch {
     return { ok: false, error: `${absolute} could not be read.` };
   }
-  // Named from the disk's own spelling (the async realpath gives each name as stored), so a path
-  // written in the wrong case on a disk that ignores case still matches the tree's rows.
-  const path = fold(real) === fold(realRoot) ? "" : relative(realRoot, real).split(sep).join("/");
+  if (fold(absolute) === fold(root)) return { ok: true, value: { path: "", kind: "folder" } };
+  // The folders on the way are named as the disk spells them (the async realpath gives each name
+  // as stored), so a path in the wrong case still matches the tree's rows. The last name is kept
+  // as the folder lists it rather than followed: a link at the end (CLAUDE.md → AGENTS.md) is a
+  // row of its own, and that row is the one asked for.
+  const realParent = await realpath(dirname(absolute)).catch(() => null);
+  if (!realParent || refuseReal(realParent)) return { ok: false, error: refuseReal(realParent ?? real) ?? `${absolute} could not be read.` };
+  const want = basename(absolute);
+  const names = await readdir(realParent).catch(() => [] as string[]);
+  const stored = names.includes(want) ? want : names.find((n) => fold(n) === fold(want)) ?? want;
+  const path = relative(realRoot, join(realParent, stored)).split(sep).join("/");
   return { ok: true, value: { path, kind: folder ? "folder" : "file" } };
+}
+
+/** The real location of the nearest folder above `path` that exists, staying inside `root` as written. */
+async function nearestRealFolder(path: string, root: string): Promise<string | null> {
+  for (let dir = dirname(path); isInside(root, dir); dir = dirname(dir)) {
+    const real = await realpath(dir).catch(() => null);
+    if (real) return real;
+    if (dirname(dir) === dir) break;
+  }
+  return null;
 }
 
 function revealResult(data: unknown): AssistantRevealPathResult | null {

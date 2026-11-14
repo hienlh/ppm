@@ -85,6 +85,18 @@ describe("resolveRevealPath", () => {
       expect(r.error).toContain("leads outside the project through a link");
       expect(r.error).not.toContain(join(root, "outside.txt"));
     }
+    // A missing file behind the same link gets the same answer, so nothing says what exists there.
+    const missing = await resolveRevealPath(project(), "escape/id_rsa", deps());
+    expect(missing).toEqual({ ok: false, error: expect.stringContaining("leads outside the project through a link") });
+  });
+
+  it("keeps a link at the end of the path as its own row, not its target", async () => {
+    try {
+      symlinkSync(join(api, "src", "server", "routes"), join(api, "routes-link"), process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      return; // no links on this machine
+    }
+    expect(await resolveRevealPath(project(), "routes-link", deps())).toEqual({ ok: true, value: { path: "routes-link", kind: "folder" } });
   });
 
   it("refuses a store the Assistant keeps private, a missing path and an empty one", async () => {

@@ -36,7 +36,11 @@ export function useApplyExplorerReveal(projectName: string | undefined): void {
         if (path && store.focusedPath === path) {
           store.setFocusedPath(null);
           await new Promise((r) => setTimeout(r, 0));
-          if (cancelled) return;
+          if (cancelled) {
+            // Give the row its focus back unless something else took focus meanwhile.
+            if (useFileStore.getState().focusedPath == null) useFileStore.getState().setFocusedPath(path);
+            return;
+          }
         }
         useFileStore.getState().setFocusedPath(path || null);
         useFileStore.getState().setSelectedFiles(path ? [path] : []);
