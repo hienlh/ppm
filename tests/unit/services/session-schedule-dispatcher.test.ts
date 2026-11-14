@@ -131,6 +131,20 @@ describe("delivery into an idle chat", () => {
     expect(getSchedule(id)!.paused_reason).toBeNull();
   });
 
+  it("keeps the run open through a builtin command answered inside the scheduled turn", async () => {
+    const id = pending();
+    await dispatcher.due(id);
+    lifecycle.emit("turn_ended", {
+      sessionId: CHAT, outcome: "done", finalText: "PPM v1.0", turnStillRunning: true, projectName: "proj", providerId: "claude",
+    });
+    expect(listScheduleRuns(id)[0]!.status).toBe("running");
+
+    turnEnded("done");
+    const run = listScheduleRuns(id)[0]!;
+    expect(run.status).toBe("done");
+    expect(run.output_truncated).toBe("all good");
+  });
+
   it("records a turn that did not finish as an error", async () => {
     const id = pending();
     await dispatcher.due(id);

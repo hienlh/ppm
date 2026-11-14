@@ -1416,7 +1416,7 @@ function emitTurnEnded(
   if (how.turnStillRunning) {
     // A PPM builtin answered inside a running turn: listeners hear it, the running turn is untouched.
     chatLifecycle.emit("turn_ended", {
-      sessionId, outcome, ...detail, projectName: entry.projectName ?? "", providerId: entry.providerId,
+      sessionId, outcome, ...detail, turnStillRunning: true, projectName: entry.projectName ?? "", providerId: entry.providerId,
     });
     return;
   }

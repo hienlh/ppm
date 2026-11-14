@@ -18,6 +18,8 @@ import { CHAT_BUSY, chatControl, type ChatControl, type SendUserMessageOpts } fr
 import type { ScheduleRunReference } from "../../../src/shared/chat-schedule-run.ts";
 import { decodeMessageBlocks } from "../../../src/shared/chat-message-blocks.ts";
 import type { SendMessageOpts } from "../../../src/types/chat.ts";
+import { chatLifecycle, type ChatLifecycleEvents } from "../../../src/services/chat-control/chat-lifecycle.ts";
+import { QueuedTurnsProvider } from "../../helpers/queued-turns-provider.ts";
 
 let root: string;
 let savedProjects: unknown;
@@ -112,4 +114,29 @@ it("opens a turn of its own with the run in front of the prompt, and shows its a
   // A second scheduled message finds the chat busy rather than steering the turn or the card.
   expect(await ctl().sendUserMessage(id, "again", opts())).toEqual({ ok: false, error: CHAT_BUSY });
   expect(provider.turns).toHaveLength(1);
+});
+
+it("says a builtin answered inside a running turn left that turn running", async () => {
+  const held = new QueuedTurnsProvider("schedule-builtin-mid-turn");
+  providerRegistry.register(held);
+  // No project folder: bound to the temp root, this session keeps it busy on Windows, and the
+  // folder plays no part in what is checked here.
+  const id = (await chatService.createSession(held.id, {})).id;
+  const ends: Array<ChatLifecycleEvents["turn_ended"]> = [];
+  const off = chatLifecycle.on("turn_ended", (p) => { if (p.sessionId === id) ends.push(p); });
+  restores.push(off);
+
+  expect((await ctl().sendUserMessage(id, "hold:the run", opts({ providerId: held.id }))).ok).toBe(true);
+  await until(() => !!ctl().liveState(id)?.running, "the scheduled turn");
+  expect((await ctl().sendUserMessage(id, "/version", { origin: "telegram", projectName: "web", providerId: held.id })).ok).toBe(true);
+  expect(ends).toHaveLength(1);
+  expect(ends[0]!.turnStillRunning).toBe(true);
+  expect(ctl().liveState(id)?.running).toBe(true);
+
+  await until(() => (held as unknown as { holds: Map<string, unknown> }).holds.has(id), "the turn to hold");
+  held.release(id);
+
+  await until(() => ends.length === 2, "the scheduled turn's own end");
+  expect(ends[1]!.turnStillRunning).toBeUndefined();
+  held.abortQuery(id);
 });

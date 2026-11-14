@@ -61,6 +61,12 @@ export interface ChatLifecycleEvents {
     error?: string;
     /** The turn was stopped on request (Stop, `/stop`), by whoever asked — not cut off by an error. */
     cancelledBy?: ChatMessageOrigin;
+    /**
+     * A PPM builtin (`/skills`, `/version`) answered a message typed into a running turn: that
+     * message is answered, but the running turn goes on and the chat is not idle. A listener
+     * tracking a turn must wait for the real end.
+     */
+    turnStillRunning?: true;
     projectName: string;
     providerId: string;
   };

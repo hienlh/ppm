@@ -119,6 +119,9 @@ export class SessionScheduleDispatcher {
   }
 
   private onTurnEnded(p: ChatLifecycleEvents["turn_ended"]): void {
+    // A builtin command answered mid-turn: the running turn, a scheduled one included, goes on.
+    // Whether the chat is free is still judged from its live state when the next fire is pumped.
+    if (p.turnStillRunning) return;
     const sessionId = this.env.canonical(p.sessionId);
     const flight = this.flights.get(sessionId);
     if (!flight) return this.wake(sessionId);
