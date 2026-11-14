@@ -6,8 +6,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import {
-  getSchedule, insertSchedule, listScheduleRuns, setSessionSchedulePending,
+  getSchedule, insertSchedule, listScheduleRuns, setSessionSchedulePending, updateSchedule,
 } from "../../../src/services/scheduler-db.service.ts";
+import { validateScheduleRun } from "../../../src/shared/chat-schedule-run.ts";
 import { createChatLifecycle, type ChatLifecycle } from "../../../src/services/chat-control/chat-lifecycle.ts";
 import type {
   ChatControl, DeliverResult, LiveChatState, SendUserMessageOpts,
@@ -114,6 +115,20 @@ describe("delivery into an idle chat", () => {
     const run = listScheduleRuns(id)[0]!;
     expect(run.status).toBe("done");
     expect(run.output_truncated).toBe("all good");
+  });
+
+  it("sends a schedule stored with a tab, a newline or a double space in its name or cron", async () => {
+    // A row saved before names were normalized: the chat refuses a run block it would rewrite.
+    const id = pending({ name: "Daily  check\tnow\nplease" });
+    updateSchedule(id, { cron_expr: "0  9 * * *" });
+    await dispatcher.due(id);
+
+    expect(sent).toHaveLength(1);
+    const ref = sent[0]!.opts.scheduleRun!;
+    expect(ref.name).toBe("Daily check now please");
+    expect(ref.cron).toBe("0 9 * * *");
+    expect(validateScheduleRun(ref)).not.toBeNull();
+    expect(getSchedule(id)!.paused_reason).toBeNull();
   });
 
   it("records a turn that did not finish as an error", async () => {

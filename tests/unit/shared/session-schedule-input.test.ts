@@ -28,6 +28,15 @@ describe("validateSessionScheduleInput", () => {
     expect(check.ok && check.value).toMatchObject({ name: "Standup", recurring: false, timezone: "Asia/Saigon", cron: "30 14 15 11 *" });
   });
 
+  it("stores a name with runs of spaces, tabs or newlines as one line the run block accepts", () => {
+    for (const name of ["Daily  check", "Daily\tcheck", "Daily\ncheck", " Daily \r\n  check "]) {
+      const check = validateSessionScheduleInput({ ...valid, name });
+      expect(check.ok && check.value.name).toBe("Daily check");
+    }
+    const derived = validateSessionScheduleInput({ ...valid, prompt: "Check\t the   deploy\nthen report" });
+    expect(derived.ok && derived.value.name).toBe("Check the deploy");
+  });
+
   it("names a schedule after the prompt's first line, cut short", () => {
     const long = "x".repeat(80);
     const check = validateSessionScheduleInput({ ...valid, prompt: `${long}\nsecond line` });

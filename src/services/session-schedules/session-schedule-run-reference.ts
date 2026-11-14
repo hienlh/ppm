@@ -3,7 +3,7 @@
  * sent it, and whether it went out late or stands for several fires. The block itself is written by
  * the chat socket (`chat-schedule-run.ts`); this only fills it in from the stored schedule.
  */
-import type { ScheduleRunReference } from "../../shared/chat-schedule-run.ts";
+import { normalizeScheduleRunText, type ScheduleRunReference } from "../../shared/chat-schedule-run.ts";
 import type { Schedule } from "../../types/scheduler.ts";
 import { followingFireAt } from "../scheduler-timing.ts";
 
@@ -28,8 +28,10 @@ export function scheduleRunReference(schedule: Schedule, now: number): ScheduleR
   return {
     version: 1,
     scheduleId: schedule.id,
-    name: schedule.name,
-    cron: schedule.cron_expr,
+    // Normalized here as well as on save: a row stored before names were normalized may still hold
+    // a tab, a newline or a double space, which the chat's check on the block refuses.
+    name: normalizeScheduleRunText(schedule.name) || `Schedule ${schedule.id}`,
+    cron: normalizeScheduleRunText(schedule.cron_expr),
     timezone: schedule.timezone,
     scheduledFor: new Date(due).toISOString(),
     firedAt: new Date(now).toISOString(),

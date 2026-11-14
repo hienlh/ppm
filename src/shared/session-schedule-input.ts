@@ -7,6 +7,7 @@
  * are not part of it; fields it does not know are left unread rather than refused.
  */
 import { isTimeZone } from "./assistant-quiet-hours.ts";
+import { normalizeScheduleRunText } from "./chat-schedule-run.ts";
 import { cronProblem } from "./schedule-cron.ts";
 import { SCHEDULE_LIMITS } from "./schedule-definition.ts";
 import { SESSION_ID_RE } from "./session-turn-ids.ts";
@@ -47,7 +48,7 @@ function canonicalZone(zone: unknown): string | null {
 
 /** A name for a schedule given none: the prompt's first line, cut short. */
 function nameFromPrompt(prompt: string): string {
-  const line = prompt.trim().split(/\r?\n/, 1)[0]!.trim();
+  const line = normalizeScheduleRunText(prompt.trim().split(/\r?\n/, 1)[0]!);
   return line.length > DERIVED_NAME_CHARS ? `${line.slice(0, DERIVED_NAME_CHARS - 1)}…` : line;
 }
 
@@ -77,7 +78,9 @@ export function validateSessionScheduleInput(raw: Record<string, unknown>): Sess
 
   if (errors.length > 0) return { ok: false, errors };
   const text = prompt as string;
-  const given = typeof name === "string" ? name.trim() : "";
+  // Stored as the run block carries it (one line, single spaces): a name the block would rewrite
+  // fails the chat's check on that block at delivery, and the schedule would pause on its first fire.
+  const given = typeof name === "string" ? normalizeScheduleRunText(name) : "";
   return {
     ok: true,
     value: {
