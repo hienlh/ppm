@@ -1461,7 +1461,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
             <span>Starting conversation...</span>
           </div>
         </div>
-      ) : <AsyncQuestionContext.Provider value={{ messages: renderedMessages, onSend: isConnected ? (content) => sendMessage(content, { permissionMode }) : undefined }}><SessionChangesContext.Provider value={sessionChangesValue}><MessageList
+      ) : <AsyncQuestionContext.Provider value={{ messages: renderedMessages, queued: queuedMessages, onSend: isConnected ? (content) => sendMessage(content, { permissionMode, sendNow: true }) : undefined }}><SessionChangesContext.Provider value={sessionChangesValue}><MessageList
         messages={renderedMessages}
         onExpandCompact={expandCompact}
         isCompactExpanded={isCompactExpanded}

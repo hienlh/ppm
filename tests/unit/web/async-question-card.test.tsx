@@ -11,12 +11,12 @@ const questions = [{ id: "db", question: "Which database?", options: [{ label: "
 /** The same question as `QuestionCard` takes it: normalized, with a typed-answer row. */
 const cardQuestions: NormalizedQuestion[] = [{ ...questions[0]!, multiSelect: false, allowsFreeText: true }];
 
-function Harness({ sent, history = [] }: { sent: string[]; history?: ChatMessage[] }) {
+function Harness({ sent, history = [], itemId = "ask-1" }: { sent: string[]; history?: ChatMessage[]; itemId?: string }) {
   const [messages, setMessages] = useState(history);
   return <AsyncQuestionContext.Provider value={{ messages, onSend: (content) => {
     sent.push(content);
     setMessages((previous) => [...previous, { id: "answer", role: "user", content, timestamp: new Date().toISOString() }]);
-  } }}><AsyncQuestionCard itemId="ask-1" questions={questions} /></AsyncQuestionContext.Provider>;
+  } }}><AsyncQuestionCard itemId={itemId} questions={questions} /></AsyncQuestionContext.Provider>;
 }
 
 const button = (container: HTMLElement, label: string) => Array.from(container.querySelectorAll("button, [role=button]"))
@@ -36,10 +36,59 @@ describe("async question card", () => {
     } finally { await view.unmount(); }
   });
 
+  it("shows the answer as sent at once while the reply waits to reach the conversation", async () => {
+    // Mid-turn the reply is pushed to the provider and joins `messages` only when it is taken in;
+    // until then the card must not look unanswered, or the user answers again.
+    const sent: string[] = [];
+    const view = await mount(<AsyncQuestionContext.Provider value={{ messages: [], onSend: (content) => { sent.push(content); } }}>
+      <AsyncQuestionCard itemId="ask-pending" questions={questions} />
+    </AsyncQuestionContext.Provider>);
+    try {
+      await click(button(view.container, "Postgres"));
+      await click(button(view.container, "Submit"));
+      expect(sent).toEqual([formatQuestionReply("ask-pending", questions, { db: "Postgres" })]);
+      expect(view.container.textContent).toContain("Response sent");
+      expect(button(view.container, "Submit")).toBeNull();
+    } finally { await view.unmount(); }
+  });
+
+  it("stays closed when it remounts before the reply reaches the conversation", async () => {
+    // The card remounts whenever the turn's events regroup. Reopening then let every further click
+    // queue another answer to the same question.
+    const sent: string[] = [];
+    const card = () => <AsyncQuestionContext.Provider value={{ messages: [], onSend: (content) => { sent.push(content); } }}>
+      <AsyncQuestionCard itemId="ask-remount" questions={questions} />
+    </AsyncQuestionContext.Provider>;
+    const first = await mount(card());
+    try {
+      await click(button(first.container, "SQLite"));
+      await click(button(first.container, "Submit"));
+    } finally { await first.unmount(); }
+    const second = await mount(card());
+    try {
+      expect(second.container.textContent).toContain("Response sent");
+      expect(button(second.container, "Submit")).toBeNull();
+      expect(sent).toHaveLength(1);
+    } finally { await second.unmount(); }
+  });
+
+  it("is closed while its reply waits in the queue", async () => {
+    // Another device answered, or this page reloaded: the reply sits in the session's queue only.
+    const content = formatQuestionReply("ask-queued", questions, { db: "SQLite" });
+    const view = await mount(<AsyncQuestionContext.Provider value={{ messages: [], onSend: () => {},
+      queued: [{ id: "q1", content, imageCount: 0, queuedAt: "now" }] }}>
+      <AsyncQuestionCard itemId="ask-queued" questions={questions} />
+    </AsyncQuestionContext.Provider>);
+    try {
+      expect(view.container.textContent).toContain("Response sent");
+      expect(button(view.container, "Submit")).toBeNull();
+    } finally { await view.unmount(); }
+  });
+
   it("restores the answered state from the user message after remount", async () => {
     const history: ChatMessage[] = [{ id: "answer", role: "user", timestamp: "now",
-      content: formatQuestionReply("ask-1", questions, { db: "Postgres" }) }];
-    const view = await mount(<Harness sent={[]} history={history} />);
+      content: formatQuestionReply("ask-history", questions, { db: "Postgres" }) }];
+    const view = await mount(<Harness sent={[]} history={history} itemId="ask-history" />);
     try {
       expect(view.container.textContent).toContain("Postgres");
       expect(view.container.textContent).toContain("Response sent");
@@ -49,10 +98,10 @@ describe("async question card", () => {
 
   it("sends an explicit skip instead of submitting the first option", async () => {
     const sent: string[] = [];
-    const view = await mount(<Harness sent={sent} />);
+    const view = await mount(<Harness sent={sent} itemId="ask-skip" />);
     try {
       await click(button(view.container, "Skip"));
-      expect(sent).toEqual([formatQuestionReply("ask-1", questions)]);
+      expect(sent).toEqual([formatQuestionReply("ask-skip", questions)]);
       expect(view.container.textContent).toContain("Skipped by the user");
     } finally { await view.unmount(); }
   });
@@ -61,7 +110,7 @@ describe("async question card", () => {
     const input = document.createElement("input");
     document.body.appendChild(input);
     input.focus();
-    const view = await mount(<Harness sent={[]} />);
+    const view = await mount(<Harness sent={[]} itemId="ask-focus" />);
     try { expect(document.activeElement).toBe(input); }
     finally { await view.unmount(); input.remove(); }
   });
@@ -110,7 +159,7 @@ describe("async question card", () => {
   });
 
   it("does not offer a submit action without a connected sender", async () => {
-    const view = await mount(<AsyncQuestionCard itemId="ask-1" questions={questions} />);
+    const view = await mount(<AsyncQuestionCard itemId="ask-offline" questions={questions} />);
     try {
       expect(view.container.textContent).toContain("Connect to answer");
       expect(button(view.container, "Submit")).toBeNull();
