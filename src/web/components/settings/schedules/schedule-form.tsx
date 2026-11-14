@@ -9,6 +9,7 @@ import { formProblems, initialForm, requestBody, withKind, type ScheduleFormStat
 import type { ScheduleView } from "../../../../types/scheduler";
 import { Field, ScheduleKindFields, Segmented } from "./schedule-kind-fields";
 import { ScheduleSheet } from "./schedule-sheet";
+import { SessionChatPicker, SessionTimingFields } from "./schedule-session-fields";
 
 const PERMISSION_MODES = ["bypassPermissions", "acceptEdits", "default", "plan"];
 
@@ -46,6 +47,12 @@ export function ScheduleForm({
   }, [open, schedule]);
 
   const set = <K extends keyof ScheduleFormState>(key: K, value: ScheduleFormState[K]) => setForm((f) => ({ ...f, [key]: value }));
+  const isSession = form.kind === "session";
+  // A session schedule's chat (and so its project) is fixed once it exists.
+  const chatFixed = isSession && !!schedule;
+  const projectName = projects.find((p) => p.path === form.projectPath)?.name;
+  // A chat belongs to one project: another project means picking its chat again.
+  const setProject = (path: string) => setForm((f) => ({ ...f, projectPath: path, targetSessionId: path === f.projectPath ? f.targetSessionId : "" }));
 
   const submit = async () => {
     const problems = formProblems(form, schedule?.secretsSet);
@@ -71,13 +78,18 @@ export function ScheduleForm({
         <Field label="Kind">
           <Segmented
             value={form.kind}
-            options={[["prompt", "Prompt"], ["script", "Script"]]}
+            options={[["prompt", "Prompt"], ["script", "Script"], ["session", "Chat"]]}
             onChange={(kind) => setForm((f) => withKind(f, kind))}
             disabled={!!schedule}
           />
+          {isSession && (
+            <p className="text-[11px] text-muted-foreground">
+              Sends the prompt into an existing chat, on that chat&apos;s own model and permissions, once it is idle.
+            </p>
+          )}
         </Field>
         <Field label="Name">
-          <Input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder={form.kind === "script" ? "Support inbox watcher" : "Morning PR review"} className="h-11 md:h-9 text-xs" />
+          <Input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder={form.kind === "script" ? "Support inbox watcher" : isSession ? "Optional — the prompt's first line" : "Morning PR review"} className="h-11 md:h-9 text-xs" />
         </Field>
         {form.kind === "script" && (
           <Field label="Description (optional)">
@@ -85,15 +97,36 @@ export function ScheduleForm({
           </Field>
         )}
         <Field label="Project">
-          <Select value={form.projectPath} onValueChange={(v) => set("projectPath", v)}>
+          <Select value={form.projectPath} onValueChange={setProject} disabled={chatFixed}>
             <SelectTrigger className="w-full min-h-11 md:min-h-9 text-xs"><SelectValue placeholder="Select project" /></SelectTrigger>
             <SelectContent>
               {projects.map((p) => <SelectItem key={p.path} value={p.path}>{p.name}</SelectItem>)}
             </SelectContent>
           </Select>
         </Field>
-        <ScheduleKindFields form={form} set={set} secretsSet={schedule?.secretsSet ?? []} />
-        <Field label={form.kind === "script" ? "Permission mode (for ctx.ai.chat)" : "Permission mode"}>
+        {isSession && (
+          <SessionChatPicker
+            projectName={projectName}
+            value={form.targetSessionId}
+            onChange={(id) => set("targetSessionId", id)}
+            disabled={chatFixed}
+            currentTitle={schedule?.target_title}
+          />
+        )}
+        <ScheduleKindFields
+          form={form}
+          set={set}
+          secretsSet={schedule?.secretsSet ?? []}
+          afterCron={isSession && (
+            <SessionTimingFields
+              timezone={form.timezone}
+              recurring={form.recurring}
+              onTimezone={(v) => set("timezone", v)}
+              onRecurring={(v) => set("recurring", v)}
+            />
+          )}
+        />
+        {!isSession && <Field label={form.kind === "script" ? "Permission mode (for ctx.ai.chat)" : "Permission mode"}>
           <Select value={form.permissionMode} onValueChange={(v) => set("permissionMode", v)}>
             <SelectTrigger className="w-full min-h-11 md:min-h-9 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -103,7 +136,7 @@ export function ScheduleForm({
           {form.permissionMode === "bypassPermissions" && (
             <p className="text-[11px] text-warning">⚠ Unattended writes — agent can modify code and run commands</p>
           )}
-        </Field>
+        </Field>}
         <div className="flex items-center justify-between min-h-11">
           <span className="text-xs font-medium">Enabled</span>
           <Switch checked={form.enabled} onCheckedChange={(v) => set("enabled", v)} />

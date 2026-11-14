@@ -1,6 +1,7 @@
-/** A schedule's state in a word or two: on or off, and for a script, what its process is doing. */
+/** A schedule's state in a word or two: on or off, for a script what its process is doing, for a chat schedule whether it waits or was paused. */
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { sessionScheduleStatus } from "@/lib/session-schedule-view";
 import type { ScheduleView } from "../../../../types/scheduler";
 
 const TONES = {
@@ -11,6 +12,11 @@ const TONES = {
 } as const;
 
 export function scheduleStatusLabel(s: ScheduleView, now: number): { text: string; tone: keyof typeof TONES } {
+  // A session schedule has no process: it is active, waiting for its chat, paused or off.
+  if (s.kind === "session") {
+    const { text, tone } = sessionScheduleStatus(s);
+    return { text, tone };
+  }
   const { state, restartAt } = s.status;
   switch (state) {
     case "running": return { text: "Running", tone: "ok" };

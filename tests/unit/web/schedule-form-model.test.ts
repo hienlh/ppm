@@ -114,3 +114,71 @@ describe("scheduleStatusLabel", () => {
     expect(scheduleStatusLabel({ ...saved, status: { ...saved.status, state: "blocked", pid: 42 } }, now).text).toBe("Blocked");
   });
 });
+
+describe("a session schedule (Chat)", () => {
+  const CHAT = "aaaaaaaa-0000-4000-8000-000000000001";
+  const chat = (over: Partial<ScheduleFormState> = {}): ScheduleFormState => ({
+    ...withKind(initialForm(null), "session"),
+    projectPath: "/work/demo", targetSessionId: CHAT, prompt: "Check the build", cron: "0 8 * * *",
+    ...over,
+  });
+
+  it("asks for a project and a chat, by name, before anything is sent", () => {
+    const problems = formProblems(chat({ projectPath: "", targetSessionId: "" }));
+    expect(problems).toContain("Pick a project");
+    expect(problems).toContain("Pick a chat");
+  });
+
+  it("is checked by the shared rules: prompt, 5-field cron and an IANA zone; the name may be left out", () => {
+    expect(formProblems(chat())).toEqual([]);
+    expect(formProblems(chat({ prompt: "  " }))).toContain("A session schedule needs a prompt");
+    expect(formProblems(chat({ cron: "*/30 * * * * *" }))[0]).toContain("5 cron fields");
+    expect(formProblems(chat({ timezone: "Mars/Olympus" }))[0]).toContain("IANA time zone");
+    expect(formProblems(chat({ timezone: "Europe/London" }))).toEqual([]);
+  });
+
+  it("sends only what a session schedule has, and its chat only when it is created", () => {
+    const created = requestBody(chat({ timezone: " Europe/London ", recurring: false }), false);
+    expect(created).toEqual({
+      name: "", prompt: "Check the build", cron_expr: "0 8 * * *", timezone: "Europe/London",
+      recurring: false, enabled: true, kind: "session", target_session_id: CHAT,
+    });
+    for (const key of ["permission_mode", "max_turns", "timeout_ms", "project_path", "mode"]) expect(created).not.toHaveProperty(key);
+    const edited = requestBody(chat({ timezone: "" }), true);
+    expect(edited).not.toHaveProperty("kind");
+    expect(edited).not.toHaveProperty("target_session_id");
+    expect(edited.timezone).toBeNull();
+  });
+
+  it("reads a saved one back with its chat, zone and one-shot flag", () => {
+    const view = {
+      ...saved, kind: "session" as const, mode: "tick" as const, script: null, inputs: [], inputValues: {}, secretsSet: [],
+      target_session_id: CHAT, timezone: "Asia/Saigon", recurring: 0, pending_since: null, paused_reason: null,
+    };
+    expect(initialForm(view)).toMatchObject({ kind: "session", targetSessionId: CHAT, timezone: "Asia/Saigon", recurring: false });
+  });
+
+  it("says a session schedule is active, waiting for its chat, paused or off", async () => {
+    const { scheduleStatusLabel } = await import("../../../src/web/components/settings/schedules/schedule-status-chip");
+    const base = { ...saved, kind: "session" as const, enabled: 1, pending_since: null, paused_reason: null, timezone: null };
+    expect(scheduleStatusLabel(base, 0)).toEqual({ text: "Active", tone: "ok" });
+    expect(scheduleStatusLabel({ ...base, pending_since: "2026-11-15T08:00:00Z" }, 0)).toEqual({ text: "Waiting for the chat", tone: "wait" });
+    expect(scheduleStatusLabel({ ...base, enabled: 0, paused_reason: "Its chat is gone." }, 0)).toEqual({ text: "Paused", tone: "bad" });
+    expect(scheduleStatusLabel({ ...base, enabled: 0 }, 0)).toEqual({ text: "Off", tone: "off" });
+  });
+});
+
+describe("session schedule wording", () => {
+  it("puts common crons into words and leaves the rest as written", async () => {
+    const { describeCron, zoneCity } = await import("../../../src/web/lib/session-schedule-view");
+    expect(describeCron("0 8 * * *")).toBe("Daily at 08:00");
+    expect(describeCron("30 9 * * 1-5")).toBe("Weekdays at 09:30");
+    expect(describeCron("0 9 * * 1,3")).toBe("Mon, Wed at 09:00");
+    expect(describeCron("*/15 * * * *")).toBe("Every 15 minutes");
+    expect(describeCron("5 * * * *")).toBe("Hourly at :05");
+    expect(describeCron("0 7 1 * *")).toBe("Monthly on day 1 at 07:00");
+    expect(describeCron("0 8 15 11 *")).toBe("Nov 15 at 08:00");
+    expect(describeCron("0 8-17/2 * * *")).toBe("0 8-17/2 * * *");
+    expect(zoneCity("America/Argentina/Buenos_Aires")).toBe("Buenos Aires");
+  });
+});

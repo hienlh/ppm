@@ -45,10 +45,13 @@ export function cronProblem(expr: string, kind: ScheduleKind, timezone?: string 
   return null;
 }
 
-/** The next `n` fires after `from`; empty when the expression does not parse. */
-export function nextFires(expr: string, n: number, from?: Date): Date[] {
+/**
+ * The next `n` fires after `from`, reading `expr` in `timezone` (IANA; the runtime's own zone when
+ * absent); empty when the expression or the zone does not parse.
+ */
+export function nextFires(expr: string, n: number, from?: Date, timezone?: string | null): Date[] {
   try {
-    return new Cron(expr).nextRuns(n, from);
+    return new Cron(expr, timezone ? { timezone } : {}).nextRuns(n, from);
   } catch {
     return [];
   }

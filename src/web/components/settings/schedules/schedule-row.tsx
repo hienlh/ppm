@@ -1,7 +1,7 @@
-/** One schedule row — tap to expand runs, long-press/right-click for actions. */
+/** One schedule row — tap to expand runs, long-press/right-click for actions; a chat schedule also names its chat. */
 import { useState } from "react";
 import {
-  Play, Pencil, Trash2, Power, ChevronDown, ChevronRight, RotateCw, ScrollText, Download, FileCode, MessageSquare,
+  Play, Pencil, Trash2, Power, ChevronDown, ChevronRight, RotateCw, ScrollText, Download, FileCode, MessageSquare, Clock,
 } from "@/lib/icons";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
@@ -16,6 +16,8 @@ import { downloadBlob } from "@/components/remote-desktop/remote-desktop-recordi
 import { serializeScheduleTemplate, type ScheduleTemplate } from "../../../../shared/schedule-template";
 import { ScheduleRuns } from "./schedule-runs";
 import { ScheduleStatusChip } from "./schedule-status-chip";
+import { ScheduleSessionTarget } from "./schedule-session-target";
+import { nextRunText, zoneCity } from "@/lib/session-schedule-view";
 import type { ScheduleView } from "../../../../types/scheduler";
 
 export function ScheduleRow({
@@ -33,13 +35,15 @@ export function ScheduleRow({
   const [runsKey, setRunsKey] = useState(0); // bump to force runs refetch after run-now
   const isScript = schedule.kind === "script";
   const alwaysOn = schedule.mode === "always-on";
-  const KindIcon = isScript ? FileCode : MessageSquare;
+  const isSession = schedule.kind === "session";
+  const KindIcon = isScript ? FileCode : isSession ? Clock : MessageSquare;
 
   const runNow = async () => {
     try {
       const res = await api.post<{ runId: number | null; wasRunning: boolean }>(`/api/schedules/${schedule.id}/run-now`);
       // A script tick keeps a run only if it has something to show, so it has no number yet.
       if (res.runId !== null) toast.success(`Run #${res.runId} started${res.wasRunning ? " (previous run still active)" : ""}`);
+      else if (isSession) toast.success("Queued: it is sent once its chat is idle");
       else toast.success(alwaysOn ? "Restarting" : "Tick started");
       setExpanded(true);
       setRunsKey((k) => k + 1);
@@ -80,7 +84,9 @@ export function ScheduleRow({
     }
   };
 
-  const when = alwaysOn
+  const when = isSession
+    ? <><span className="font-mono">{schedule.cron_expr}</span>{" · "}{schedule.timezone ? zoneCity(schedule.timezone) : "host time"}{" · "}{schedule.recurring ? "repeats" : "once"}{" · "}{nextRunText(schedule)}</>
+    : alwaysOn
     ? "Always on"
     : <><span className="font-mono">{schedule.cron_expr}</span>{" · "}{schedule.next_fire_at && schedule.enabled ? `next ${new Date(schedule.next_fire_at).toLocaleString()}` : "—"}</>;
 
@@ -117,15 +123,18 @@ export function ScheduleRow({
               <ScrollText className="size-3.5" /> Logs
             </ContextMenuItem>
           )}
-          <ContextMenuItem onClick={exportTemplate}>
-            <Download className="size-3.5" /> Export template
-          </ContextMenuItem>
+          {!isSession && (
+            <ContextMenuItem onClick={exportTemplate}>
+              <Download className="size-3.5" /> Export template
+            </ContextMenuItem>
+          )}
           <ContextMenuSeparator />
           <ContextMenuItem variant="destructive" onClick={remove}>
             <Trash2 className="size-3.5" /> Delete
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
+      {isSession && <ScheduleSessionTarget schedule={schedule} onChanged={onChanged} />}
       {expanded && (
         <div className="px-2.5 pb-2.5 space-y-1.5">
           <p className="text-[11px] text-muted-foreground break-all line-clamp-3">

@@ -25,7 +25,7 @@ export function SchedulesSettingsSection() {
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] text-muted-foreground">
-          Periodically wake Claude to work on a project unattended, or run a script on a cron or always on.
+          Periodically wake Claude to work on a project unattended, send a prompt into one of your chats, or run a script on a cron or always on.
         </p>
         <div className="flex gap-2 shrink-0">
           <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="min-h-11 md:min-h-8 text-xs gap-1 cursor-pointer">
