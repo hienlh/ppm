@@ -10,8 +10,9 @@
  * that chat's name and linking to it; their buttons answer that chat.
  *
  * Each card is a new message (an edit would not buzz the phone). Pressing Allow or Deny spends
- * every button of that card; a question with several choices keeps its buttons while choices are
- * ticked, until Send.
+ * every button of that card. A question card with more than one question, or one question that
+ * takes several choices, is asked one question at a time in that same message and answered only
+ * by Send on its summary (`assistant-telegram-question-wizard.ts`).
  */
 import { chatControl, type LiveApprovalCard } from "../chat-control/chat-control.ts";
 import type { ChatLifecycleEvents } from "../chat-control/chat-lifecycle.ts";
@@ -23,14 +24,18 @@ import type { CardPress } from "./assistant-telegram-actions.ts";
 import type { BridgeCards, BridgeDeps } from "./assistant-telegram.service.ts";
 import { formatApprovalCard, formatQuestionCard, needsPpm, resolutionLine } from "./assistant-telegram-card-format.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
-import { outcomeOf, sendMessageTask } from "./assistant-telegram-send-queue.ts";
+import {
+  EARLIER_STEP, applyWizardPress, asksStepByStep, buttonLabel, mintWizardCodes, questionListHtml, wizardStepHtml, wizardStepRows,
+  wizardWorstCaseSteps, type Mint, type Selection, type WizardState,
+} from "./assistant-telegram-question-wizard.ts";
+import { BUTTON_URL_INVALID, EDIT_INTERVAL_MS, outcomeOf, sendMessageTask } from "./assistant-telegram-send-queue.ts";
+import type { TelegramBotClient } from "../telegram/telegram-bot-client.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
 
 /** Room left under Telegram's 4096 for the link line under a card. */
 const CARD_VISIBLE_MAX = 3900;
-const LABEL_MAX = 60;
 const CARD_TITLE_MAX = 80;
 
 /** A card of a chat other than the Assistant's own, and where that chat lives. */
@@ -77,24 +82,23 @@ interface ShownCard {
   sessionId: string;
   requestId: string;
   group: string;
+  /** What it says once it is no longer waiting; on a card shown in one step, also what it says until then. */
   html: string;
   isQuestion: boolean;
   questions: NormalizedQuestion[];
-  /** Ticked choices of a card answered with Send. */
-  selection: Map<string, string[]>;
-  /** The buttons as last sent, rebuilt when a tick changes. */
-  rows: (selection: Map<string, string[]>) => InlineKeyboardButton[][];
+  /** Choices picked or ticked on a card asked step by step, sent together by Send. */
+  selection: Selection;
+  /** A card asked one question at a time: the step it is on (`questions.length` is the summary). */
+  wizard: WizardState | null;
+  /** Its text and buttons as they stand now. */
+  view: () => { html: string; rows: InlineKeyboardButton[][] };
+  /** Telegram refused the Open in PPM button: the card carries the link in its text instead. */
+  linkRefused: boolean;
   messageId: number | null;
   done: boolean;
   /** Why it is no longer waiting, shown under it once it is done. */
   endLine: string | null;
 }
-
-/** A button's text: plain, so not escaped, but redacted like everything else sent. */
-const label = (raw: string) => {
-  const s = redactForTelegram(raw);
-  return s.length > LABEL_MAX ? `${s.slice(0, LABEL_MAX - 1)}…` : s;
-};
 
 export class AssistantTelegramCards implements BridgeCards {
   private readonly cards = new Map<string, ShownCard>();
@@ -145,7 +149,8 @@ export class AssistantTelegramCards implements BridgeCards {
     const questions = p.card.isQuestion ? p.card.questions ?? [] : [];
     const card: ShownCard = {
       chatId, sessionId: p.sessionId, requestId: p.card.requestId, group, html: "", isQuestion: p.card.isQuestion,
-      questions, selection: new Map(), rows: () => [], messageId: null, done: false, endLine: null,
+      questions, selection: new Map(), wizard: null, view: () => ({ html: card.html, rows: [] }), linkRefused: false,
+      messageId: null, done: false, endLine: null,
     };
     // Registered before the link is looked up, so a card answered meanwhile is known to be done.
     this.cards.set(key, card);
@@ -154,10 +159,19 @@ export class AssistantTelegramCards implements BridgeCards {
       this.cards.delete(key);
       return;
     }
-    const mint = (press: Omit<CardPress, "kind" | "sessionId" | "requestId">) =>
+    const mint: Mint = (press) =>
       this.deps.codes.mint(chatId, group, { kind: "card", sessionId: p.sessionId, requestId: p.card.requestId, ...press });
 
-    let rows: ShownCard["rows"] = () => [];
+    const inlineLink = link.inline ? `\n\n${link.inline}` : "";
+    const linkRow = link.button ? [[link.button]] : [];
+    // Telegram refusing the link as a button: the link goes in the text instead.
+    const linkText = link.button ? `\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}` : "";
+    /** What the link adds to the text at most, whichever way it ends up shown. */
+    const linkRoom = Math.max(visibleLength(inlineLink), visibleLength(linkText));
+
+    let rows: () => InlineKeyboardButton[][] = () => [];
+    /** A step-by-step card's current step; anything else shows `card.html` throughout. */
+    let stepHtml: (() => string) | null = null;
     if (how.titleOnly !== undefined) {
       // The project keeps its details off the phone: the title, and nothing that acts on the rest.
       const headline = card.isQuestion ? how.questionHeadline : how.approvalHeadline;
@@ -167,9 +181,27 @@ export class AssistantTelegramCards implements BridgeCards {
         rows = () => [deny];
       }
     } else if (card.isQuestion) {
-      card.html = formatQuestionCard(questions, how.questionHeadline);
-      if (visibleLength(card.html) > CARD_VISIBLE_MAX) card.html = `❓ <b>${escapeTelegramHtml(how.questionHeadline)}</b>\nThis question is too long to show here — answer it in PPM.`;
-      else if (questions.length > 0 && !questions.some(needsPpm)) rows = questionRows(questions, mint);
+      const headline = how.questionHeadline;
+      const tooLong = `❓ <b>${escapeTelegramHtml(headline)}</b>\nThis question is too long to show here — answer it in PPM.`;
+      const answerable = questions.length > 0 && !questions.some(needsPpm);
+      if (answerable && asksStepByStep(questions)) {
+        if (wizardWorstCaseSteps(questions, headline).some((h) => visibleLength(h) + linkRoom > CARD_VISIBLE_MAX)) {
+          card.html = tooLong;
+        } else {
+          const codes = mintWizardCodes(questions, mint);
+          const wizard = { step: 0, codes };
+          card.wizard = wizard;
+          card.html = questionListHtml(questions, headline);
+          if (visibleLength(card.html) > CARD_VISIBLE_MAX) card.html = `❓ <b>${escapeTelegramHtml(headline)}</b>`;
+          stepHtml = () => wizardStepHtml(questions, wizard.step, card.selection, headline);
+          rows = () => wizardStepRows(questions, wizard.step, card.selection, codes);
+        }
+      } else {
+        // One question, one choice — or a question only PPM can take, shown whole with no buttons.
+        card.html = formatQuestionCard(questions, headline);
+        if (visibleLength(card.html) > CARD_VISIBLE_MAX) card.html = tooLong;
+        else if (answerable) rows = singlePickRows(questions[0]!, mint);
+      }
     } else {
       // The deciding part is capped well under Telegram's limit, so the card always fits.
       const formatted = formatApprovalCard(p.card, how.approvalHeadline);
@@ -180,21 +212,29 @@ export class AssistantTelegramCards implements BridgeCards {
       ];
       rows = () => [buttons];
     }
-    if (link.inline) card.html += `\n\n${link.inline}`;
-    const linkRow = link.button ? [[link.button]] : [];
-    card.rows = (selection) => [...rows(selection), ...linkRow];
+    card.html += inlineLink;
+    card.view = () => {
+      const html = stepHtml ? stepHtml() + inlineLink : card.html;
+      return card.linkRefused ? { html: html + linkText, rows: rows() } : { html, rows: [...rows(), ...linkRow] };
+    };
+    const first = card.view();
     this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, {
-      html: card.html,
-      markup: { inline_keyboard: card.rows(card.selection) },
-      // Telegram refusing the link as a button: the link goes in the text instead.
-      ...(link.button ? { fallbackHtml: `${card.html}\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}` } : {}),
+      html: first.html,
+      markup: { inline_keyboard: first.rows },
+      ...(link.button ? { fallbackHtml: first.html + linkText } : {}),
     }, {
       label: "approval card",
       onSent: (sent) => {
         card.messageId = sent.message_id;
+        // Sent again without its link button: every later step has to leave the button out too.
+        if (link.button && !sent.reply_markup?.inline_keyboard.flat().some((b) => b.url)) card.linkRefused = true;
         try { how.onSent?.(sent.message_id); } catch (e) { log.warn(`card ${card.requestId}: ${(e as Error).message}`); }
         if (card.done) this.finish(card);
-        else this.deps.state.add(chatId, "cards", sent.message_id);
+        else {
+          this.deps.state.add(chatId, "cards", sent.message_id);
+          // Pressed on before Telegram said the message was there: it still shows the first step.
+          if (card.wizard && (card.wizard.step > 0 || card.selection.size > 0)) this.redraw(card);
+        }
       },
       onDropped: () => { this.cards.delete(key); this.deps.codes.dropGroup(group); },
     }));
@@ -220,7 +260,12 @@ export class AssistantTelegramCards implements BridgeCards {
       this.deps.codes.dropGroup(group);
       return "This card is no longer waiting.";
     }
-    if (press.op === "toggle") return this.toggle(card, press);
+    if (card.wizard && press.op !== "send" && press.op !== "allow" && press.op !== "deny") return this.step(card, card.wizard, press);
+    if (press.op === "toggle" || press.op === "next" || press.op === "back") return "This button is no longer valid.";
+    if (press.op === "send" && card.wizard?.step !== card.questions.length) {
+      if (card.wizard) this.redraw(card);
+      return EARLIER_STEP;
+    }
     let answer: { approved: boolean; answersById?: AnswersById };
     if (press.op === "allow" || press.op === "deny") {
       answer = { approved: press.op === "allow" };
@@ -243,27 +288,52 @@ export class AssistantTelegramCards implements BridgeCards {
     return press.op === "deny" ? "Denied." : press.op === "allow" ? "Allowed." : "Answer sent.";
   }
 
-  private toggle(card: ShownCard, press: CardPress): string {
-    const q = card.questions.find((x) => x.id === press.questionId);
-    if (!q || !press.option) return "This button is no longer valid.";
-    const now = card.selection.get(q.id) ?? [];
-    const on = !now.includes(press.option);
-    const next = q.multiSelect ? (on ? [...now, press.option] : now.filter((o) => o !== press.option)) : on ? [press.option] : [];
-    if (next.length) card.selection.set(q.id, next);
-    else card.selection.delete(q.id);
+  /**
+   * A press on a step-by-step card that does not answer it: records a choice or moves between
+   * questions (`applyWizardPress`), then redraws the message — also after a press left over from
+   * another step, which changes nothing but says the message is behind the card.
+   */
+  private step(card: ShownCard, wizard: WizardState, press: CardPress): string {
+    // A card in use keeps its buttons longest when the code store is full.
+    this.deps.codes.touchGroup(card.group);
+    const { toast, redraw } = applyWizardPress(card.questions, wizard, card.selection, press);
+    if (redraw) this.redraw(card);
+    return toast;
+  }
+
+  /**
+   * Edits the card's message to its current step. Queued under one key per card, so presses
+   * faster than Telegram takes edits become one edit, drawn from the card as it is when it runs.
+   */
+  private redraw(card: ShownCard): void {
     const messageId = card.messageId;
-    if (messageId !== null) {
-      const markup = { inline_keyboard: card.rows(card.selection) };
-      this.deps.queue.enqueue(card.chatId, {
-        key: `ticks:${card.group}`, final: false, label: "card ticks",
-        run: async (client) => {
-          if (card.done) return { kind: "done" };
-          const res = await client.editMessageReplyMarkup(card.chatId, messageId, markup);
-          return res.ok ? { kind: "done" } : { kind: "failed", why: `${res.errorCode} ${res.description}` };
-        },
-      });
-    }
-    return on ? "Ticked." : "Unticked.";
+    if (messageId === null) return;
+    let attempts = 0;
+    this.deps.queue.enqueue(card.chatId, {
+      key: `step:${card.group}`, final: true, label: "question step",
+      run: async (client: TelegramBotClient) => {
+        if (card.done) return { kind: "done" };
+        const view = card.view();
+        const res = await client.editMessageText(card.chatId, messageId, view.html, { replyMarkup: { inline_keyboard: view.rows } });
+        if (!res.ok && !("throttled" in res) && res.errorCode === 400 && BUTTON_URL_INVALID.test(res.description) && !card.linkRefused) {
+          card.linkRefused = true;
+          return { kind: "retry", afterMs: EDIT_INTERVAL_MS, why: "link button refused" };
+        }
+        return outcomeOf(res, ++attempts);
+      },
+      // Refused for good, or failing past the deadline: buttons that no longer match what the
+      // message says would only answer "from an earlier step", so the card ends here instead.
+      onDropped: () => this.giveUp(card),
+    });
+  }
+
+  /** Ends a card on Telegram that cannot be kept up to date there; it still waits in PPM. */
+  private giveUp(card: ShownCard): void {
+    if (card.done) return;
+    card.done = true;
+    card.endLine = "<i>This card could not be updated here — answer it in PPM.</i>";
+    this.deps.codes.dropGroup(card.group);
+    this.finish(card);
   }
 
   /** Takes the card's buttons away and says why it is no longer waiting (once it was sent). */
@@ -285,27 +355,10 @@ export class AssistantTelegramCards implements BridgeCards {
   }
 }
 
-type Mint = (press: Omit<CardPress, "kind" | "sessionId" | "requestId">) => string;
-
-/**
- * One question with one choice: a button per option answers at once. Anything else: buttons
- * tick choices (✓) and Send answers them all, so nothing is sent half-answered.
- */
-function questionRows(questions: readonly NormalizedQuestion[], mint: Mint): (s: Map<string, string[]>) => InlineKeyboardButton[][] {
-  if (questions.length === 1 && !questions[0]!.multiSelect) {
-    const q = questions[0]!;
-    const rows = q.options.map((o) => [{ text: label(o.label), callback_data: mint({ op: "pick", questionId: q.id, option: o.label }) }]);
-    return () => rows;
-  }
-  const codes = questions.map((q) => q.options.map((o) => ({ q, o, data: mint({ op: "toggle", questionId: q.id, option: o.label }) })));
-  const send = mint({ op: "send" });
-  return (selection) => [
-    ...codes.flat().map(({ q, o, data }) => [{
-      text: `${selection.get(q.id)?.includes(o.label) ? "✓ " : ""}${questions.length > 1 ? `${label(q.header ?? q.id)}: ` : ""}${label(o.label)}`,
-      callback_data: data,
-    }]),
-    [{ text: "Send", callback_data: send }],
-  ];
+/** One question with one choice: a button per option answers it at once. */
+function singlePickRows(q: NormalizedQuestion, mint: Mint): () => InlineKeyboardButton[][] {
+  const rows = q.options.map((o) => [{ text: buttonLabel(o.label), callback_data: mint({ op: "pick", questionId: q.id, option: o.label }) }]);
+  return () => rows;
 }
 
 /** What Telegram counts against its limit: the text after the markup is parsed. */

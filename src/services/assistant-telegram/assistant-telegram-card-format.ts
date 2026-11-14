@@ -93,14 +93,20 @@ export function needsPpm(q: NormalizedQuestion): boolean {
   return q.secret === true || q.options.length === 0;
 }
 
+/** User text inside a card: secrets hidden, then escaped. */
+export const redactedHtml = (s: string): string => esc(redactSecretsForTelegram(s).text);
+
+/** One question as a card shows it: the question, then every choice with its description. */
+export function questionBlock(q: NormalizedQuestion): string[] {
+  const lines = [`${q.header ? `<b>${redactedHtml(q.header)}</b> — ` : ""}${redactedHtml(q.question)}${q.multiSelect ? " <i>(choose any)</i>" : ""}`];
+  for (const o of q.options) lines.push(`• ${redactedHtml(o.label)}${o.description ? ` — <i>${redactedHtml(o.description)}</i>` : ""}`);
+  if (needsPpm(q)) lines.push(`<i>${q.secret ? "This answer is private: give it in PPM." : "This needs a typed answer: give it in PPM."}</i>`);
+  return lines;
+}
+
 export function formatQuestionCard(questions: readonly NormalizedQuestion[], headline: string): string {
   const lines = [`❓ <b>${esc(headline)}</b>`];
-  for (const q of questions) {
-    const red = (s: string) => esc(redactSecretsForTelegram(s).text);
-    lines.push("", `${q.header ? `<b>${red(q.header)}</b> — ` : ""}${red(q.question)}${q.multiSelect ? " <i>(choose any)</i>" : ""}`);
-    for (const o of q.options) lines.push(`• ${red(o.label)}${o.description ? ` — <i>${red(o.description)}</i>` : ""}`);
-    if (needsPpm(q)) lines.push(`<i>${q.secret ? "This answer is private: give it in PPM." : "This needs a typed answer: give it in PPM."}</i>`);
-  }
+  for (const q of questions) lines.push("", ...questionBlock(q));
   return lines.join("\n");
 }
 
@@ -120,7 +126,10 @@ export function resolutionLine(r: { approved: boolean; reason: string; by?: stri
   const where = r.by === "telegram" ? "here" : r.by === "assistant" ? "by the Assistant" : "in PPM";
   if (isQuestion) {
     if (!r.approved) return `<i>Skipped ${where}.</i>`;
-    const answers = r.answers && typeof r.answers === "object" ? Object.values(r.answers as Record<string, unknown>).map(String) : [];
+    // A question that takes several choices answers with a list; it reads as "a, b", not "a,b".
+    const answers = r.answers && typeof r.answers === "object"
+      ? Object.values(r.answers as Record<string, unknown>).map((a) => (Array.isArray(a) ? a.map(String).join(", ") : String(a)))
+      : [];
     const shown = answers.length ? `: ${esc(redactSecretsForTelegram(answers.join("; ")).text.slice(0, 500))}` : "";
     return `<i>Answered ${where}${shown}</i>`;
   }

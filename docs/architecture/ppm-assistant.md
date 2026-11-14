@@ -1125,10 +1125,19 @@ lifecycle bus (`chat-collab-approval-relay.ts`), so they reach Telegram under th
 is showing, through the session tools' broker, as Allow once or Deny; nothing settles them "for the
 session", and the Assistant answering a card never does.
 
-Questions show their choices as buttons (several at once: toggle, then Send); a question that
-only takes typed text points to PPM. Buttons carry random codes bound to the chat they were sent
-to (`assistant-telegram-button-codes.ts`): pressing one spends every code of that card, and after
-a restart every code is "no longer valid", so nothing pressed on an old card can run.
+Questions show their choices as buttons. One question with one choice is answered by the press.
+Anything else — several questions, or a question that takes several choices — is asked one
+question at a time in the same message (`assistant-telegram-question-wizard.ts`): "Question k/n"
+with only that question's buttons, a pick moving on, ticks (✓) plus Next for a question that takes
+several, Back from the second step on, and a summary with Send and Back at the end. Each step edits
+the message; only Send answers the card, every question at once. A card with a question that
+only takes typed or private text is shown whole and points to PPM. Buttons carry random codes bound
+to the chat they were sent to (`assistant-telegram-button-codes.ts`), all made when the card is
+shown: a step only chooses which to show, and a button left over from another step changes
+nothing but redraws the current step. A step that cannot be drawn ends the card on Telegram ("answer
+it in PPM"), and a full code store evicts whole cards, never part of one.
+Answering spends every code of that card, and after a restart every code is "no longer valid", so
+nothing pressed on an old card can run.
 
 **Relayed cards** (`assistant-telegram-relay.ts`). A watched chat's card goes to the chats bound to
 the Assistant session that set the watch, or to every connected chat when that session is
