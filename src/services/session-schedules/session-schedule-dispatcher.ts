@@ -4,24 +4,25 @@
  * chat's own events (`turn_ended`, `approval_resolved`), never polled. One schedule turn per chat
  * at a time; several schedules pending for one chat go one turn after another.
  *
+ * A fire counts as run only from the turn its own message opened, and a message in flight is
+ * checked against the chat's live state now and then, so a turn end PPM never heard or a queued
+ * message Stop took down cannot hold a chat's schedules forever.
+ *
  * A scheduled turn is an ordinary turn in the chat's own permission mode: its approvals are shown
- * and wait for the user, and the user is told when a schedule is held up by a card already
- * waiting. A chat PPM can no longer reach pauses its schedules instead; no chat is ever created.
+ * and wait for the user. What happens when a schedule cannot go out (held up, failed, the chat
+ * gone) is `session-schedule-setbacks.ts`; no chat is ever created.
  */
 import type { ChatControl } from "../chat-control/chat-control.ts";
 import type { ChatLifecycleEvents } from "../chat-control/chat-lifecycle.ts";
 import { createLogger } from "../logger.ts";
 import { getSchedule, retargetSessionSchedules } from "../scheduler-db.service.ts";
-import type { Schedule } from "../../types/scheduler.ts";
 import {
-  chatIsIdle, deliverable, isTransientDeliveryError, type Flight, type NoticeChat, type SessionScheduleDispatchEnv,
+  deliverable, isTransientDeliveryError, type Flight, type NoticeChat, type SessionScheduleDispatchEnv,
 } from "./session-schedule-dispatch-types.ts";
-import { heldUpNotice, pausedNotice, retryingNotice } from "./session-schedule-notices.ts";
-import { describeWait, ScheduleRetryBackoff } from "./session-schedule-retry-backoff.ts";
+import { watchFlight } from "./session-schedule-flight-watch.ts";
 import { scheduleRunReference } from "./session-schedule-run-reference.ts";
-import {
-  pauseSessionSchedule, recordOneShotDelivered, recordRunEnded, recordRunStarted, turnFailed,
-} from "./session-schedule-run-records.ts";
+import { recordOneShotDelivered, recordRunEnded, recordRunStarted, turnFailed } from "./session-schedule-run-records.ts";
+import { SessionScheduleSetbacks } from "./session-schedule-setbacks.ts";
 import { SessionScheduleWaitingList } from "./session-schedule-waiting-list.ts";
 import { broadcastSchedulesChanged } from "./session-schedules-changed.ts";
 
@@ -29,21 +30,17 @@ export type { ScheduleNotice, SessionScheduleDispatchEnv } from "./session-sched
 
 const log = createLogger("scheduler");
 
-/** Idle looks a message still said to be queued survives before it is taken as lost and sent again. */
-const QUEUED_IDLE_CHECKS = 3;
-
 export class SessionScheduleDispatcher {
   private readonly waiting = new SessionScheduleWaitingList();
   private readonly flights = new Map<string, Flight>();
   private readonly retries = new Map<string, ReturnType<typeof setTimeout>>();
-  /** `<schedule id>@<pending since>`: the pending periods the user was already told were held up. */
-  private readonly told = new Set<string>();
-  /** Consecutive failures per schedule, and the wait before each is tried again. */
-  private readonly backoff: ScheduleRetryBackoff;
+  private readonly setbacks: SessionScheduleSetbacks;
   private stops: Array<() => void> = [];
 
   constructor(private readonly env: SessionScheduleDispatchEnv) {
-    this.backoff = new ScheduleRetryBackoff(env.retryBackoffMs);
+    this.setbacks = new SessionScheduleSetbacks(env, this.waiting, (scheduleId) => {
+      this.due(scheduleId).catch((e) => log.warn(`schedule ${scheduleId} retry failed: ${(e as Error).message}`));
+    });
   }
 
   get running(): boolean { return this.stops.length > 0; }
@@ -64,7 +61,7 @@ export class SessionScheduleDispatcher {
     this.stops = [];
     for (const timer of this.retries.values()) clearTimeout(timer);
     this.retries.clear();
-    this.backoff.clear();
+    this.setbacks.clear();
     this.waiting.clear();
     for (const flight of this.flights.values()) if (flight.check) clearTimeout(flight.check);
     this.flights.clear();
@@ -74,11 +71,13 @@ export class SessionScheduleDispatcher {
   due(scheduleId: number): Promise<void> {
     const schedule = getSchedule(scheduleId);
     if (!this.running || !deliverable(schedule)) return Promise.resolve();
-    // Failed a moment ago: its backoff timer hands it back, and fires meanwhile fold into it.
-    if (this.backoff.isWaiting(scheduleId)) return Promise.resolve();
+    // Failed a moment ago: its backoff hands it back, and fires meanwhile fold into it.
+    if (this.setbacks.isBackingOff(scheduleId)) return Promise.resolve();
     const sessionId = this.env.canonical(schedule.target_session_id!);
     // A chat renamed while PPM was not listening: the schedules follow it now.
-    if (sessionId !== schedule.target_session_id && retargetSessionSchedules(schedule.target_session_id!, sessionId) > 0) broadcastSchedulesChanged();
+    if (sessionId !== schedule.target_session_id && retargetSessionSchedules(schedule.target_session_id!, sessionId) > 0) {
+      broadcastSchedulesChanged();
+    }
     this.waiting.add(sessionId, scheduleId);
     return this.pump(sessionId);
   }
@@ -90,14 +89,14 @@ export class SessionScheduleDispatcher {
     const schedule = this.waiting.next(sessionId);
     if (!schedule) return;
     const resolved = this.env.target(sessionId);
-    if (!resolved.ok) return this.pauseAll(sessionId, resolved.reason);
+    if (!resolved.ok) return this.setbacks.pauseAll(sessionId, resolved.reason);
     const { target } = resolved;
     const control = this.env.control();
     // The chat layer loads after the scheduler hands over pending fires: look again shortly.
     if (!control) return this.retryLater(sessionId);
     const chat: NoticeChat = { sessionId: target.sessionId, projectName: target.projectName, providerId: target.providerId };
     const live = control.liveState(sessionId);
-    if (live && (live.card || live.queuedCards > 0)) return this.tellHeldUp(schedule, chat);
+    if (live && (live.card || live.queuedCards > 0)) return this.setbacks.heldUp(schedule, chat);
     if (live?.running) return;
 
     const flight: Flight = { schedule, chat, clientMessageId: this.env.newClientMessageId(), phase: "sending", runId: null, idleChecks: 0 };
@@ -120,8 +119,9 @@ export class SessionScheduleDispatcher {
       // from disk, no longer a chat a schedule may reach. Any other refusal (the session would not
       // resume, the message could not be pushed) may pass, so it is tried again before pausing.
       const now = this.env.target(current);
-      if (!now.ok) return this.pauseAll(current, now.reason);
-      return this.failed(current, schedule, chat, `PPM could not send it into its chat: ${result.error}.`, false);
+      if (!now.ok) return this.setbacks.pauseAll(current, now.reason);
+      this.setbacks.failed(current, schedule, chat, `PPM could not send it into its chat: ${result.error}.`, false);
+      return this.wakeSoon(current);
     }
     const early = flight.earlyEnd;
     flight.earlyEnd = undefined;
@@ -163,50 +163,31 @@ export class SessionScheduleDispatcher {
     if (flight.phase === "queued") this.begin(sessionId, flight);
   }
 
-  /** Look at the chat's live state again after `ms`. */
+  /** Look at the flight's chat again after `ms` (`session-schedule-flight-watch.ts`). */
   private watch(flight: Flight, ms: number): void {
-    if (flight.check) clearTimeout(flight.check);
-    flight.check = setTimeout(() => this.checkFlight(flight), ms);
-    (flight.check as { unref?: () => void }).unref?.();
-  }
-
-  /**
-   * The flight against the chat's live state. A started turn whose chat is idle ended without PPM
-   * hearing it. A queued message the chat no longer holds, with no turn running, was lost (Stop
-   * killed the provider with it still queued): its fire is still pending, so it is sent again.
-   */
-  private checkFlight(flight: Flight): void {
-    const sessionId = this.keyOf(flight);
-    if (!sessionId) return;
-    flight.check = undefined;
-    const control = this.env.control();
-    const idle = chatIsIdle(control?.liveState(sessionId) ?? null);
-    if (flight.phase === "started") {
-      if (!idle) return this.watch(flight, this.env.flightCheckMs);
-      log.warn(`session=${sessionId} schedule ${flight.schedule.id}: its turn ended unheard; the run is closed`);
-      return this.end(sessionId, flight, {
-        sessionId, outcome: "stopped", error: "PPM did not hear how this turn ended.", projectName: "", providerId: "",
-      }, true);
-    }
-    if (flight.phase !== "queued") return;
-    if (!idle) {
-      flight.idleChecks = 0;
-      return this.watch(flight, this.env.flightCheckMs);
-    }
-    const queued = control?.messageQueued?.(sessionId, flight.clientMessageId) ?? null;
-    // A provider that cannot say, or one that still claims the message with nothing running to
-    // hold it behind, is believed for a few looks only: an idle chat starts a queued message at once.
-    if (queued !== false && ++flight.idleChecks < QUEUED_IDLE_CHECKS) return this.watch(flight, this.env.flightCheckMs);
-    this.flights.delete(sessionId);
-    log.info(`session=${sessionId} schedule ${flight.schedule.id}: its queued message was dropped before its turn opened; sending it again`);
-    this.wakeSoon(sessionId);
+    watchFlight(flight, ms, {
+      keyOf: (f) => this.keyOf(f),
+      control: () => this.env.control(),
+      flightCheckMs: this.env.flightCheckMs,
+      endedUnheard: (sessionId, f) => {
+        log.warn(`session=${sessionId} schedule ${f.schedule.id}: its turn ended unheard; the run is closed`);
+        this.end(sessionId, f, {
+          sessionId, outcome: "stopped", error: "PPM did not hear how this turn ended.", projectName: "", providerId: "",
+        }, true);
+      },
+      lost: (sessionId, f) => {
+        this.flights.delete(sessionId);
+        log.info(`session=${sessionId} schedule ${f.schedule.id}: its queued message was dropped before its turn opened; sending it again`);
+        this.wakeSoon(sessionId);
+      },
+    });
   }
 
   private begin(sessionId: string, flight: Flight): void {
     flight.phase = "started";
     this.watch(flight, this.env.flightCheckMs);
     this.waiting.drop(sessionId, flight.schedule.id);
-    for (const key of [...this.told]) if (key.startsWith(`${flight.schedule.id}@`)) this.told.delete(key);
+    this.setbacks.turnOpened(flight.schedule.id);
     try {
       // Read again: the schedule may have been edited or deleted while its message went in.
       const schedule = getSchedule(flight.schedule.id);
@@ -215,7 +196,7 @@ export class SessionScheduleDispatcher {
       log.warn(`could not record the run of schedule ${flight.schedule.id}: ${(e as Error).message}`);
     }
     // A recurring fire is spent once its turn opens. A one-shot's counts only once its turn ran.
-    if (flight.schedule.recurring) this.backoff.succeeded(flight.schedule.id);
+    if (flight.schedule.recurring) this.setbacks.succeeded(flight.schedule.id);
     broadcastSchedulesChanged();
   }
 
@@ -232,67 +213,20 @@ export class SessionScheduleDispatcher {
         log.warn(`could not record the end of schedule ${flight.schedule.id}'s run: ${(e as Error).message}`);
       }
     }
-    const schedule = flight.schedule.recurring ? null : getSchedule(flight.schedule.id);
-    if (schedule) {
-      if (!unheard && turnFailed(p)) {
-        const why = p.error ?? p.stop?.message.split("\n")[0] ?? `the turn ${p.outcome}`;
-        return this.failed(sessionId, schedule, flight.chat, `Its turn failed: ${String(why).replace(/\.$/, "")}.`, true);
-      }
-      try { recordOneShotDelivered(schedule, sessionId); } catch (e) {
-        log.warn(`could not remove one-shot schedule ${schedule.id}: ${(e as Error).message}`);
-      }
-      this.backoff.succeeded(schedule.id);
-    }
-    broadcastSchedulesChanged();
-    this.wakeSoon(sessionId);
-  }
-
-  /**
-   * A failure that may pass. The fire stays pending and the schedule is tried again after a wait
-   * that grows with each failure in a row; once the waits are spent it is paused and the user told.
-   * `tellFirst`: a one-shot's turn failed, so the user hears about the first failure as well.
-   */
-  private failed(sessionId: string, schedule: Schedule, chat: NoticeChat, reason: string, tellFirst: boolean): void {
-    this.waiting.drop(sessionId, schedule.id);
-    const outcome = this.backoff.fail(schedule.id, () => {
-      this.due(schedule.id).catch((e) => log.warn(`schedule ${schedule.id} retry failed: ${(e as Error).message}`));
-    });
-    if (outcome.verdict === "give_up") {
-      const why = `${reason} It failed ${outcome.failures} times in a row.`;
-      pauseSessionSchedule(schedule, why);
-      this.env.notify(pausedNotice([schedule], chat, why));
+    const oneShot = flight.schedule.recurring ? null : getSchedule(flight.schedule.id);
+    if (oneShot && !unheard && turnFailed(p)) {
+      const why = String(p.error ?? p.stop?.message.split("\n")[0] ?? `the turn ${p.outcome}`).replace(/\.$/, "");
+      this.setbacks.failed(sessionId, oneShot, flight.chat, `Its turn failed: ${why}.`, true);
     } else {
-      log.warn(`Schedule ${schedule.id} (${schedule.name}) failure ${outcome.failures}: ${reason} Trying again in ${describeWait(outcome.delayMs)}`);
-      if (tellFirst && outcome.failures === 1) this.env.notify(retryingNotice(schedule, chat, reason, outcome.delayMs));
+      if (oneShot) {
+        try { recordOneShotDelivered(oneShot, sessionId); } catch (e) {
+          log.warn(`could not remove one-shot schedule ${oneShot.id}: ${(e as Error).message}`);
+        }
+        this.setbacks.succeeded(oneShot.id);
+      }
+      broadcastSchedulesChanged();
     }
-    broadcastSchedulesChanged();
     this.wakeSoon(sessionId);
-  }
-
-  private pauseAll(sessionId: string, reason: string): void {
-    const paused = this.waiting.takeAll(sessionId);
-    for (const schedule of paused) {
-      pauseSessionSchedule(schedule, reason);
-      this.backoff.succeeded(schedule.id);
-    }
-    if (paused.length === 0) return;
-    // One notice for the chat, naming each schedule: a chat deleted while PPM was off can hold
-    // many pending fires, and they all pause for the one reason.
-    this.env.notify(pausedNotice(paused, { sessionId, projectName: "" }, reason));
-    broadcastSchedulesChanged();
-  }
-
-  /** Once per pending period: the schedule waits behind a card the user has to answer first. */
-  private tellHeldUp(schedule: Schedule, chat: NoticeChat): void {
-    const key = `${schedule.id}@${schedule.pending_since}`;
-    if (this.told.has(key)) return;
-    this.told.add(key);
-    const control = this.env.control;
-    const { sessionId } = chat;
-    this.env.notify(heldUpNotice(schedule, chat, this.env.chatTitle(sessionId), () => {
-      const live = control()?.liveState(sessionId);
-      return !!live && (!!live.card || live.queuedCards > 0);
-    }));
   }
 
   /** A chat event that may have freed the chat: look again once the event has played out. */
