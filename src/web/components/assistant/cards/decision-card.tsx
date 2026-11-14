@@ -8,15 +8,15 @@
  */
 import { BellRing, Check, ExternalLink, Pencil, TriangleAlert, X } from "@/lib/icons";
 import { dismissAssistantCard, okAssistantCard } from "@/lib/assistant-cards-api";
-import { useCardReplyStore } from "@/stores/assistant-card-reply-store";
 import { escapeHiddenCharacters } from "../../../../shared/reveal-hidden-characters";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardButton, CardShell } from "./card-shell";
 import { openCardManagerChat, useCardAction } from "./use-card-action";
+import { useCardReplyHost } from "./card-reply-host";
 
 export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (card: AssistantCard) => void }) {
   const { busy, error, run } = useCardAction(onCard);
-  const replyTo = useCardReplyStore((s) => s.replyTo);
+  const { replyTo, inManagerChat } = useCardReplyHost();
   const urgent = card.kind === "urgent";
   const draft = card.payload.draft;
   return (
@@ -34,9 +34,11 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
           <CardButton disabled={!card.sessionId} onClick={() => replyTo(card)}>
             <Pencil className="size-3.5" />Edit
           </CardButton>
-          <CardButton variant="ghost" secondary onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
-            <ExternalLink className="size-3.5" />Open manager chat
-          </CardButton>
+          {!inManagerChat && (
+            <CardButton variant="ghost" secondary onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
+              <ExternalLink className="size-3.5" />Open manager chat
+            </CardButton>
+          )}
           <CardButton variant="ghost" secondary disabled={busy} onClick={() => void run(() => dismissAssistantCard(card.id))}>
             <X className="size-3.5" />Dismiss
           </CardButton>

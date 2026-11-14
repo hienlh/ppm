@@ -8,15 +8,21 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, ArrowUp, X } from "@/lib/icons";
 import { cardRefusal, replyToAssistantCard } from "@/lib/assistant-cards-api";
-import { useCardReplyStore } from "@/stores/assistant-card-reply-store";
+import { useCardReplyStore, type CardReplyTarget } from "@/stores/assistant-card-reply-store";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
 
 export const REPLY_PLACEHOLDER = "Your words go to the manager chat word for word…";
 
-export function CardReplyBar() {
-  const target = useCardReplyStore((s) => s.target);
-  const close = useCardReplyStore((s) => s.close);
+/**
+ * With no props it answers the card the Assistant's composer was pointed at; a manager chat passes
+ * the card it is answering in place, and how to close the bar.
+ */
+export function CardReplyBar(props: { target?: CardReplyTarget; onClose?: () => void } = {}) {
+  const storeTarget = useCardReplyStore((s) => s.target);
+  const storeClose = useCardReplyStore((s) => s.close);
+  const target = props.target ?? storeTarget;
+  const close = props.onClose ?? storeClose;
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

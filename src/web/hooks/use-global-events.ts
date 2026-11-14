@@ -14,6 +14,7 @@ import {
 import { handleSessionCollabEvent } from "@/lib/session-collab-events";
 import { resyncManagerChats } from "./use-manager-chats";
 import { resyncAssistantCards } from "@/stores/assistant-cards-store";
+import { resyncOpenCards } from "@/stores/assistant-open-cards-store";
 import { resyncAssistantWaiting } from "@/stores/assistant-waiting-store";
 import { useProjectStore } from "@/stores/project-store";
 import { PROJECTS_CHANGED_EVENT } from "../../shared/projects-events";
@@ -138,6 +139,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         syncAllKnownProjects();
         resyncManagerChats();
         resyncAssistantCards();
+        resyncOpenCards();
         resyncAssistantWaiting();
         notifyGlobalReady();
         return;

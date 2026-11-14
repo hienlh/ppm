@@ -18,6 +18,10 @@ export function fetchAssistantCards(q: { before?: number; limit?: number; projec
   return api.get<AssistantCardsPage>(`/api/assistant/cards?${params}`);
 }
 
+/** Every card still waiting on the user, oldest first: the cards behind the waiting counts. */
+export const fetchOpenAssistantCards = (): Promise<{ cards: AssistantCard[] }> =>
+  api.get<{ cards: AssistantCard[] }>("/api/assistant/cards/open");
+
 export const fetchAssistantWaiting = (): Promise<AssistantWaiting> => api.get<AssistantWaiting>("/api/assistant/waiting");
 
 export function answerAssistantCard(id: string, body: { decision?: "allow" | "deny"; answersById?: Record<string, string[]> }) {
