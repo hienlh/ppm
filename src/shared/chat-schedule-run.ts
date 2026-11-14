@@ -50,6 +50,9 @@ const END = SCHEDULE_RUN_BLOCK_END;
 const END_AFTER = SCHEDULE_RUN_BLOCK_END_AFTER;
 /** What separates a slash command from the block after it. */
 const AFTER_GAP = "\n\n";
+/** The tag that closes a command's args in Claude's transcript, and the form it is broken into. */
+const COMMAND_ARGS_END = "</command-args>";
+const COMMAND_ARGS_END_BROKEN = `<${String.fromCharCode(0x200b)}/command-args>`;
 
 /** Where the block sits: in front of the prompt, or after a slash command that must stay first. */
 export type ScheduleRunPlacement = "before" | "after";
@@ -135,7 +138,10 @@ export function encodeScheduleRun(content: string, ref?: ScheduleRunReference | 
   if (!valid) throw new Error("Invalid schedule-run reference");
   if (placement === "after") {
     if (!startsWithSlashCommand(content)) throw new Error("Only a slash command carries its schedule-run block after it");
-    return `${content}${AFTER_GAP}${START}${scheduleRunHeaderLine(valid, "after")}\n${escapeJson(JSON.stringify(valid))}${END_AFTER}`;
+    // Claude Code records the args verbatim inside <command-args>…</command-args>, so a literal
+    // closing tag in the prompt would end them early and push the block out of the args.
+    const args = content.split(COMMAND_ARGS_END).join(COMMAND_ARGS_END_BROKEN);
+    return `${args}${AFTER_GAP}${START}${scheduleRunHeaderLine(valid, "after")}\n${escapeJson(JSON.stringify(valid))}${END_AFTER}`;
   }
   return `${START}${scheduleRunHeaderLine(valid)}\n${escapeJson(JSON.stringify(valid))}${END}${content}`;
 }

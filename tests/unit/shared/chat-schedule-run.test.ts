@@ -169,6 +169,17 @@ describe("a scheduled slash command", () => {
     expect(parseUserMessage(sent).scheduleRun).toBeNull();
   });
 
+  it("survives a prompt whose args contain a literal closing args tag", () => {
+    const encoded = after("/x a </command-args> b");
+    expect(encoded).not.toContain("a </command-args> b");
+    expect(decodeMessageBlocks(encoded).scheduleRun).toEqual(run);
+    const parsed = parseUserMessage(recorded("x", encoded.slice("/x ".length)));
+    expect(parsed.scheduleRun).toEqual(run);
+    expect(parsed.text).not.toContain("ppm-schedule-run");
+    expect(parsed.command?.args).toStartWith("a <");
+    expect(parsed.command?.args).toEndWith("/command-args> b");
+  });
+
   it("decodes from Claude's transcript record of the command, which carries the block in its args", () => {
     const parsed = parseUserMessage(recorded("review-pr", after("/review-pr 42").slice("/review-pr ".length)));
     expect(parsed.scheduleRun).toEqual(run);
