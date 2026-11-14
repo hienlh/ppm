@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.25.8] - 2026-11-15
+
+### Added
+
+- **The PPM Assistant is told after every PPM restart** (upgrade, crash, watchdog, manual or boot) why it restarted, the versions before and after, and which chats it cut off mid-turn in every project, so it can ask each project's manager to resume them; switch it in Settings → PPM Assistant.
+- `ppm restart --reason "<text>"` records why you restarted.
+
+### Fixed
+
+- **An upgrade no longer takes PPM down**: a reused Windows process id could make the supervisor kill its own edge, tunnel and new supervisor; a server-tree kill now never reaches them, and a new supervisor that dies brings the old one back to restart the server.
+- The previous `ppm.err.log` is kept as `ppm.err.log.1` when PPM starts.
+
 ## [0.25.7] - 2026-11-15
 
 ### Added
