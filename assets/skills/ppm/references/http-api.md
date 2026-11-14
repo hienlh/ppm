@@ -133,6 +133,7 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 ## /api/chat
 
 - `GET    /api/chat/sessions/running`
+- `GET    /api/chat/sessions/status`
 - `POST   /api/chat/sessions/read`
 
 ## /api/cli
@@ -246,6 +247,7 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 
 ## /api/extensions
 
+- `POST   /api/extensions/commands/execute`
 - `GET    /api/extensions`
 - `GET    /api/extensions/contributions`
 - `GET    /api/extensions/:id{.+}`
@@ -450,6 +452,8 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `GET    /api/project/:projectName/chat/sessions/:id/turn-window`
 - `GET    /api/project/:projectName/chat/sessions/:id/links`
 - `POST   /api/project/:projectName/chat/sessions/:id/stop-children`
+- `POST   /api/project/:projectName/chat/sessions/:id/messages`
+- `POST   /api/project/:projectName/chat/sessions/:id/cancel`
 
 ## /api/project/:projectName/chat/prepare
 
@@ -838,4 +842,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.25.1 -->
+<!-- Generated from src/server/routes/ for PPM v0.25.2 -->

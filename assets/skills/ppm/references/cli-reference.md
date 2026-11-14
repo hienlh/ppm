@@ -751,6 +751,16 @@ Disable an extension (its commands leave every open palette)
 
 **Usage:** `ppm ext disable [options] <name>`
 
+### `ppm ext run`
+
+Run a command an extension declared, on the running server
+
+**Options:**
+- `--json` — print the result as one line of JSON
+- `--timeout [ms]` — how long to wait for the command, in ms (1000 to 600000)
+
+**Usage:** `ppm ext run [options] [command] [args...]`
+
 ### `ppm ext dev`
 
 Symlink a local extension for development
@@ -1612,7 +1622,7 @@ Show the events, the delay and the channels
 
 ### `ppm notify set`
 
-Switch an event (done, approval_request, question, collab_approval, schedule, jira, design_review) or a channel (telegram, ntfy) on or off
+Switch an event (done, approval_request, question, collab_approval, schedule, jira, design_review, extension) or a channel (telegram, ntfy) on or off
 
 **Usage:** `ppm notify set [options] <event> <state>`
 
