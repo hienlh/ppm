@@ -285,11 +285,9 @@ type ProcInfo = { ppid: number; ticks: string };
  * times are not proof either way and keep the link.
  */
 export function startedNoEarlierThan(child: ProcInfo, parent: ProcInfo): boolean {
-  try {
-    return BigInt(child.ticks) >= BigInt(parent.ticks);
-  } catch {
-    return true;
-  }
+  // `BigInt("")` is 0n rather than an error, so an unread time must be ruled out first.
+  if (!/^\d+$/.test(child.ticks) || !/^\d+$/.test(parent.ticks)) return true;
+  return BigInt(child.ticks) >= BigInt(parent.ticks);
 }
 
 /** Every descendant of `rootPid` whose parent links hold by creation time, parents first. */
