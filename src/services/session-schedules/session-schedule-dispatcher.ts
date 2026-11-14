@@ -82,6 +82,13 @@ export class SessionScheduleDispatcher {
     return this.pump(sessionId);
   }
 
+  /** When this schedule's chat is tried again after a failed send or turn (epoch ms), or null. */
+  retryAt(scheduleId: number): number | null {
+    const schedule = getSchedule(scheduleId);
+    if (!schedule?.target_session_id) return null;
+    return this.setbacks.retryAt(this.env.canonical(schedule.target_session_id));
+  }
+
   /** Sends the oldest pending schedule of this chat, if the chat is idle and nothing is in flight. */
   async pump(asked: string): Promise<void> {
     const sessionId = this.env.canonical(asked);

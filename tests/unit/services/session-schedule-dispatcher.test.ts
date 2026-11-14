@@ -15,6 +15,9 @@ import type {
   ChatControl, DeliverResult, LiveChatState, SendUserMessageOpts,
 } from "../../../src/services/chat-control/chat-control.ts";
 import { SessionScheduleDispatcher } from "../../../src/services/session-schedules/session-schedule-dispatcher.ts";
+import { startSessionScheduleDelivery } from "../../../src/services/session-schedules/session-schedule-delivery.ts";
+import { SessionScheduleRetryWaitError } from "../../../src/services/session-schedules/session-schedule-due.ts";
+import { queueSessionScheduleNow } from "../../../src/services/session-schedules/session-schedule-firing.ts";
 import type { ScheduleNotice, SessionScheduleDispatchEnv } from "../../../src/services/session-schedules/session-schedule-dispatch-types.ts";
 import type { ScheduleTargetResolution } from "../../../src/services/session-schedules/session-schedule-target.ts";
 
@@ -569,6 +572,31 @@ describe("a send that fails for a reason that may pass", () => {
     expect(sent).toHaveLength(4);
     expect(getSchedule(b)!.paused_reason).not.toBeNull();
     expect(notices.map((n) => n.kind)).toEqual(["retrying", "paused"]);
+  });
+
+  it("refuses Run now while the chat waits to retry, naming when the next attempt goes", async () => {
+    dispatcher.stop();
+    const stopDelivery = await startSessionScheduleDelivery(env());
+    try {
+      reply = () => ({ ok: false, error: "Could not resume the session: the CLI exited" });
+      const a = pending({ name: "morning" });
+      const b = pending({ name: "evening" });
+      const before = Date.now();
+      queueSessionScheduleNow(getSchedule(a)!);
+      await kitUntil(() => sent.length === 1);
+
+      // Another schedule of the same chat waits for the same retry.
+      let refused: unknown = null;
+      try { queueSessionScheduleNow(getSchedule(b)!); } catch (e) { refused = e; }
+      expect(refused).toBeInstanceOf(SessionScheduleRetryWaitError);
+      const at = (refused as SessionScheduleRetryWaitError).retryAt;
+      expect(at).toBeGreaterThanOrEqual(before + 60_000);
+      expect(at).toBeLessThanOrEqual(Date.now() + 60_000);
+      expect((refused as Error).message).toContain("next attempt at");
+      expect(sent).toHaveLength(1);
+    } finally {
+      stopDelivery();
+    }
   });
 
   it("counts from one again after a send goes through", async () => {

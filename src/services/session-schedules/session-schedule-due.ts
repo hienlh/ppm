@@ -19,6 +19,39 @@ export function setSessionScheduleDueHandler(fn: SessionScheduleDueHandler | nul
   handler = fn;
 }
 
+/** When the deliverer tries this schedule's chat again after a failure (epoch ms), or null. */
+export type SessionScheduleRetryLookup = (scheduleId: number) => number | null;
+
+let retryLookup: SessionScheduleRetryLookup | null = null;
+
+/** Register how to ask the deliverer about a chat's retry wait, or clear it with null. */
+export function setSessionScheduleRetryLookup(fn: SessionScheduleRetryLookup | null): void {
+  retryLookup = fn;
+}
+
+/**
+ * Run now while the schedule's chat waits out a retry after a failed send: the deliverer would
+ * only fold the fire into the one already waiting, so the request is answered with when that
+ * retry goes instead of looking accepted and doing nothing.
+ */
+export class SessionScheduleRetryWaitError extends Error {
+  constructor(readonly retryAt: number) {
+    const at = new Date(retryAt).toLocaleTimeString("en-GB", { hour12: false });
+    super(`Waiting to retry after a failed send into its chat; next attempt at ${at}.`);
+  }
+}
+
+/** Throws {@link SessionScheduleRetryWaitError} while the schedule's chat waits out a retry. */
+export function assertNotWaitingToRetry(scheduleId: number): void {
+  let at: number | null = null;
+  try {
+    at = retryLookup?.(scheduleId) ?? null;
+  } catch (e) {
+    log.warn(`could not ask whether schedule ${scheduleId} waits to retry: ${(e as Error)?.message ?? e}`);
+  }
+  if (at !== null) throw new SessionScheduleRetryWaitError(at);
+}
+
 /** Tell the deliverer, if any. Never throws into the scheduler: a failure is logged. */
 export function notifySessionScheduleDue(scheduleId: number): void {
   if (!handler) return;

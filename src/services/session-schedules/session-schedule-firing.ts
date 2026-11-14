@@ -11,7 +11,7 @@ import type { Schedule } from "../../types/scheduler.ts";
 import { createLogger } from "../logger.ts";
 import { getPendingSessionSchedules, setSessionSchedulePending, updateSchedule } from "../scheduler-db.service.ts";
 import { followingFireAt, nextFireAt } from "../scheduler-timing.ts";
-import { notifySessionScheduleDue } from "./session-schedule-due.ts";
+import { assertNotWaitingToRetry, notifySessionScheduleDue } from "./session-schedule-due.ts";
 import { broadcastSchedulesChanged } from "./session-schedules-changed.ts";
 
 const log = createLogger("scheduler");
@@ -45,9 +45,13 @@ export function markSessionScheduleDue(schedule: Schedule, now = new Date()): bo
   return true;
 }
 
-/** A fire asked for by hand: pending now, the cron's own next fire left as it is. */
+/**
+ * A fire asked for by hand: pending now, the cron's own next fire left as it is. Refused while the
+ * schedule is paused, or while its chat waits out a retry after a failed send.
+ */
 export function queueSessionScheduleNow(schedule: Schedule, now = new Date()): void {
   if (schedule.paused_reason) throw new Error(`This schedule is paused: ${schedule.paused_reason}`);
+  assertNotWaitingToRetry(schedule.id);
   setSessionSchedulePending(schedule.id, now.toISOString(), schedule.next_fire_at);
   log.info(`Schedule ${schedule.id} (${schedule.name}) queued by hand for session ${schedule.target_session_id}`);
   notifySessionScheduleDue(schedule.id);

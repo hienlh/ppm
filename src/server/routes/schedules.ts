@@ -14,6 +14,7 @@ import {
   listScheduleRuns,
 } from "../../services/scheduler-db.service.ts";
 import { ScheduleBusyError } from "../../services/scheduler-core.ts";
+import { SessionScheduleRetryWaitError } from "../../services/session-schedules/session-schedule-due.ts";
 import { alwaysOnSupervisor, schedulerService } from "../../services/scheduler.service.ts";
 import { configService } from "../../services/config.service.ts";
 import { broadcastGlobalEvent } from "../ws/global.ts";
@@ -143,7 +144,9 @@ schedulesRoutes.post("/:id{[0-9]+}/run-now", (c) => {
   try {
     return c.json(ok(schedulerService.runJobNow(id)));
   } catch (e) {
-    return c.json(err((e as Error).message), e instanceof ScheduleBusyError ? 409 : 400);
+    // A session schedule whose chat waits to retry is not queued again: the answer says when it goes.
+    const conflict = e instanceof ScheduleBusyError || e instanceof SessionScheduleRetryWaitError;
+    return c.json(err((e as Error).message), conflict ? 409 : 400);
   }
 });
 

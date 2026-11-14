@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { configService } from "../../../src/services/config.service.ts";
 import { openTestDb, setDb, setSessionMetadata, setSessionProvider, setSessionTitle } from "../../../src/services/db.service.ts";
 import { getSchedule, insertSchedule, setSessionSchedulePaused, setSessionSchedulePending } from "../../../src/services/scheduler-db.service.ts";
-import { setSessionScheduleDueHandler } from "../../../src/services/session-schedules/session-schedule-due.ts";
+import { setSessionScheduleDueHandler, setSessionScheduleRetryLookup } from "../../../src/services/session-schedules/session-schedule-due.ts";
 import { schedulesRoutes } from "../../../src/server/routes/schedules.ts";
 import { MAX_SCHEDULES_PER_SESSION } from "../../../src/shared/session-schedule-input.ts";
 import type { ProjectConfig } from "../../../src/types/config.ts";
@@ -126,6 +126,46 @@ describe("listing and changing session schedules", () => {
       expect(heard).toEqual([id]);
       expect(getSchedule(id)!.pending_since).not.toBeNull();
     } finally {
+      setSessionScheduleDueHandler(null);
+    }
+  });
+});
+
+describe("Run now on a session schedule", () => {
+  const seed = () => insertSchedule({
+    name: "s", cron_expr: "0 9 * * *", provider_id: "claude", project_path: project.path, prompt: "p", kind: "session", target_session_id: CHAT,
+  });
+
+  it("answers 409 with the next attempt while its chat waits to retry, and queues nothing", async () => {
+    const at = new Date(2026, 10, 15, 14, 5, 30).getTime();
+    const heard: number[] = [];
+    setSessionScheduleDueHandler((id) => { heard.push(id); });
+    setSessionScheduleRetryLookup(() => at);
+    try {
+      const id = seed();
+      const res = await send("POST", `/${id}/run-now`);
+      expect(res.status).toBe(409);
+      expect((await json(res)).error).toBe("Waiting to retry after a failed send into its chat; next attempt at 14:05:30.");
+      expect(heard).toEqual([]);
+      expect(getSchedule(id)!.pending_since).toBeNull();
+    } finally {
+      setSessionScheduleRetryLookup(null);
+      setSessionScheduleDueHandler(null);
+    }
+  });
+
+  it("queues the fire when its chat is not waiting to retry", async () => {
+    const heard: number[] = [];
+    setSessionScheduleDueHandler((id) => { heard.push(id); });
+    setSessionScheduleRetryLookup(() => null);
+    try {
+      const id = seed();
+      const res = await send("POST", `/${id}/run-now`);
+      expect(res.status).toBe(200);
+      expect(heard).toEqual([id]);
+      expect(getSchedule(id)!.pending_since).not.toBeNull();
+    } finally {
+      setSessionScheduleRetryLookup(null);
       setSessionScheduleDueHandler(null);
     }
   });

@@ -139,7 +139,10 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   after 1, 5 and 15 minutes (`session-schedule-retry-backoff.ts`, in memory). The count and the
   wait are the chat's, not one schedule's: every schedule pending for that chat waits out the same
   wait, failed sends and failed turns of any of them add to one count, and the fourth failure in a
-  row pauses all of the chat's pending schedules together with one notification naming them. A schedule turned off with a fire still waiting (the
+  row pauses all of the chat's pending schedules together with one notification naming them.
+  Run now during that wait is refused with 409 and the time of the next attempt
+  (`SessionScheduleRetryWaitError`, asked of the deliverer through `session-schedule-due.ts`),
+  which `ppm schedule run-now` prints, rather than being accepted and folded into the waiting fire. A schedule turned off with a fire still waiting (the
   chip's Pause) sends that fire as soon as it is turned on again. If the scheduler cannot record
   a fire at all, its timer waits 30 seconds before trying again.
 - **Limits.** At most 20 per chat (`MAX_SCHEDULES_PER_SESSION`), checked through
