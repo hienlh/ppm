@@ -90,7 +90,7 @@ pinned between the chip row and the stream (`assistant-waiting-cards.tsx` over
 `waiting-cards-bar.tsx`): one card at a time, whole and with its own buttons, ‹ › and "n/N" to
 step (urgent first, then the oldest), folded to one 44 px row that still names the card. A new
 card opens the bar on itself; a chip's red count (`focusWaitingCards`) opens it on that
-project's first card, clearing a filter that would hide it; the card it lands on is outlined
+project's first card, moving a filter that would hide it to that project; the card it lands on is outlined
 for 1.8 s. It follows the project filter, and "N more waiting in other projects · Show all"
 names what the filter hides. The list is `GET /api/assistant/cards/open`
 (`stores/assistant-open-cards-store.ts`), built by `assistantCards.openCards()` — the same

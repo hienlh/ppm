@@ -67,7 +67,10 @@ async function refresh(): Promise<void> {
   const asked = changes;
   try {
     const { cards } = await fetchOpenAssistantCards();
-    if (asked !== changes || !Array.isArray(cards)) return;
+    // A card changed while the answer was on its way, so it may already be stale: ask again
+    // rather than drop it, or a list still empty would stay empty for the page's life.
+    if (asked !== changes) { void refresh(); return; }
+    if (!Array.isArray(cards)) return;
     useOpenCardsStore.setState({ cards: cards.filter(isWaitingCard).sort(byAge) });
   } catch {
     // A server without the Assistant, or a transient failure: the list stays as it was.

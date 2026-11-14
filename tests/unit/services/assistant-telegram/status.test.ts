@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import "../../../test-setup.ts";
-import { buildStatus, STATUS_MAX_ITEMS } from "../../../../src/services/assistant-telegram/assistant-telegram-status.ts";
+import { buildStatus, STATUS_MAX_CARDS, STATUS_MAX_ITEMS } from "../../../../src/services/assistant-telegram/assistant-telegram-status.ts";
 import type { ChatsAttention } from "../../../../src/services/assistant-hub/chat-attention.service.ts";
 import type { LiveApprovalCard } from "../../../../src/services/chat-control/chat-control.ts";
 import { parseTelegramHtml } from "../../../helpers/fake-telegram-bot-api.ts";
@@ -81,5 +81,11 @@ describe("/status", () => {
     a.running = [{ ...chat(1), phase: "streaming" }];
     const both = await buildStatus({ attention: () => a, ...localLinks });
     expect(both.html.indexOf("📌")).toBeLessThan(both.html.indexOf("Your chats today"));
+
+    // A busy day: a few lines, the rest folded into the count.
+    a.assistantCards = Array.from({ length: STATUS_MAX_CARDS + 2 }, (_, i) => ({ ...a.assistantCards[0]!, cardId: `c${i}`, title: `Card ${i}` }));
+    const busy = await buildStatus({ attention: () => a, ...localLinks });
+    expect(busy.html.match(/📌/g)).toHaveLength(STATUS_MAX_CARDS);
+    expect(busy.html).toContain("4 more cards in the PPM Assistant");
   });
 });

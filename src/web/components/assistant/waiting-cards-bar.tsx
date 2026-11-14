@@ -131,7 +131,8 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note }:
       </div>
       {note}
       {open && (
-        <div className="max-h-[45dvh] overflow-y-auto px-3 pb-3" data-waiting-slot="">
+        // A phone keeps most of the screen for the conversation and the keyboard.
+        <div className="max-h-[35dvh] overflow-y-auto px-3 pb-3 md:max-h-[45dvh]" data-waiting-slot="">
           <div
             key={current.id}
             className={cn("rounded-xl transition-shadow duration-300", lit && "ring-2 ring-error ring-offset-2 ring-offset-surface")}

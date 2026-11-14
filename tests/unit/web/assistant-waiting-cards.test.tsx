@@ -160,7 +160,7 @@ describe("in the Assistant", () => {
     expect(useAssistantCardsStore.getState().filter).toBeNull();
   });
 
-  it("lands on a project's first card when its red count is pressed, clearing a filter that hides it", async () => {
+  it("lands on a project's first card when its red count is pressed, moving a filter that hides it", async () => {
     openList = [card({ title: "Ship 0.25.6?" }), card({ projectName: "nxsys", title: "Payroll run" })];
     view = await mount(createElement("div", null, createElement(ManagerChip, { manager: manager(), waiting: 1 }), createElement(AssistantWaitingCards)));
     await settle();
@@ -168,14 +168,41 @@ describe("in the Assistant", () => {
     expect(shownTitle()).toBe("Payroll run");
     const count = q('[data-manager-chip="ppm"] [data-manager-chip-count]')!;
     expect(count.getAttribute("aria-label")).toBe("Show the 1 card from ppm waiting on you");
+    // 44 × 44 below `md`.
     expect(count.className).toContain("h-11");
+    expect(count.className).toContain("min-w-11");
     await click(count);
     await tick();
-    expect(useAssistantCardsStore.getState().filter).toBeNull();
+    expect(useAssistantCardsStore.getState().filter).toBe("ppm");
     expect(shownTitle()).toBe("Ship 0.25.6?");
     expect(q("[data-highlighted]")).not.toBeNull();
     // Taken once: the press does not linger for the next visit.
     expect(useOpenCardsStore.getState().focus).toBeNull();
+    // Nor for the next filter change, which mounts the bar afresh.
+    await act(async () => { setAssistantCardFilter(null); });
+    await tick();
+    expect(q("[data-highlighted]")).toBeNull();
+    expect(q("[data-waiting-position]")?.textContent).toBe("1/2");
+  });
+
+  it("keeps the first list when a card changes while it loads", async () => {
+    const first = card({ title: "There from the start" });
+    openList = [first];
+    // The answer to the first read is held until a card event has landed.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    let reads = 0;
+    (spies[0] as unknown as { mockImplementation(f: unknown): void }).mockImplementation((async (url: string) => {
+      if (url.startsWith("/api/assistant/cards/open")) { reads += 1; if (reads === 1) await gate; return { cards: openList }; }
+      return {};
+    }) as never);
+    await act(async () => { useOpenCardsStore.setState({ cards: null }); store.resyncOpenCards(); });
+    await act(async () => { window.dispatchEvent(new CustomEvent("assistant:card", { detail: { card: card({ kind: "done" }) } })); });
+    release();
+    await tick();
+    await tick();
+    expect(reads).toBe(2);
+    expect(useOpenCardsStore.getState().cards?.map((c) => c.title)).toEqual(["There from the start"]);
   });
 
   it("disappears once nothing waits", async () => {

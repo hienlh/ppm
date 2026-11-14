@@ -18,6 +18,8 @@ import { chatLink, isPublicHttpsUrl, OPEN_IN_PPM } from "./assistant-telegram-li
 
 /** How many chats one `/status` lists. */
 export const STATUS_MAX_ITEMS = 10;
+/** How many of the Assistant's open cards one `/status` lists. */
+export const STATUS_MAX_CARDS = 5;
 const TITLE_MAX = 60;
 const ERROR_MAX = 120;
 
@@ -71,12 +73,14 @@ export async function buildStatus(deps: StatusDeps = {}): Promise<StatusReply> {
   const more = lines.length - shown.length + Object.values(moreChats).reduce((n, m) => n + (m ?? 0), 0);
   // The Assistant's own cards still waiting on the user, whatever their age: each was sent here
   // as a message of its own when it was made; this only says they still wait.
+  // At most a few lines, so the one reply stays well inside Telegram's message size.
   const openCards = attention.assistantCards ?? [];
-  const cardLines = openCards.map((c) => {
+  const cardLines = openCards.slice(0, STATUS_MAX_CARDS).map((c) => {
     const project = c.project ? ` · ${escapeTelegramHtml(redactForTelegram(c.project))}` : "";
     return `${CARD_ICON} <b>${escapeTelegramHtml(truncateText(redactForTelegram(c.title), TITLE_MAX))}</b>${project} — ${CARD_KIND_TEXT[c.kind] ?? "waiting for you"}`;
   });
-  if (moreCards > 0) cardLines.push(`<i>${moreCards} more cards in the PPM Assistant.</i>`);
+  const cardsHeld = moreCards + Math.max(0, openCards.length - STATUS_MAX_CARDS);
+  if (cardsHeld > 0) cardLines.push(`<i>${cardsHeld} more cards in the PPM Assistant.</i>`);
   const cardSection = cardLines.length ? ["<b>Waiting on you in the PPM Assistant</b>", "", ...cardLines, ""] : [];
   if (shown.length === 0 && cardSection.length === 0) {
     return { html: "Nothing needs you today: no card is open, and no chat is waiting, running or finished since midnight.", cards: [] };

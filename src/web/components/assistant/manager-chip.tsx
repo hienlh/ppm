@@ -57,7 +57,7 @@ export function ManagerChip({ manager, waiting }: { manager: ManagerChatSummary;
           onClick={() => focusWaitingCards(manager.projectName)}
           aria-label={showLabel}
           title={showLabel}
-          className="relative flex h-11 items-center pr-2 md:h-[26px] md:pr-1.5"
+          className="relative flex h-11 min-w-11 items-center justify-center pr-1 md:h-[26px] md:min-w-0 md:justify-start md:pr-1.5"
           data-manager-chip-count=""
         >
           <WaitingBadge count={waiting} />

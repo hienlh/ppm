@@ -4,7 +4,7 @@
  * one line that clears it, so a count on the rail or the dock always has its cards in reach.
  *
  * A press on a chip's red count asks for that project's first card (`focusWaitingCards`): the bar
- * opens on it, outlined, clearing a filter that would hide it.
+ * opens on it, outlined; a filter that would hide it moves to that project.
  */
 import { useEffect, useState } from "react";
 import { applyAssistantCard, setAssistantCardFilter, useAssistantCardsStore } from "@/stores/assistant-cards-store";
@@ -36,12 +36,16 @@ export function AssistantWaitingCards() {
   useEffect(() => {
     if (!focus || !all) return;
     const target = focusTarget(ordered, focus.projectName);
-    if (target && filter && target.projectName !== filter) setAssistantCardFilter(null);
+    // A filter that would hide the card moves to the card's project (or to every project).
+    if (target && filter && target.projectName !== filter) setAssistantCardFilter(target.projectName);
     setBarFocus({ cardId: target?.id ?? null, nonce: focus.nonce });
     // Taken once: a later visit to the Assistant must not land on it again.
     useOpenCardsStore.setState({ focus: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, all]);
+  // The bar (a child, so its effects ran first) has landed: a later filter change, which mounts
+  // the bar afresh, must not land on that card again.
+  useEffect(() => { if (barFocus) setBarFocus(null); }, [barFocus]);
 
   if (!all) return null;
   const shown = filter ? ordered.filter((c) => c.projectName === filter) : ordered;
