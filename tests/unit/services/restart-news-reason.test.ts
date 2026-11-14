@@ -105,7 +105,7 @@ describe("a stop the supervisor ordered", () => {
     const s = hardKilled(dir, startReasonEnv({ kind: "manual" }));
     expect(s.restart).toMatchObject({ kind: "manual", cleanStop: true, stopOrderedBy: "ppm restart" });
     const text = restartNewsEntry([{ restarts: [s.restart], chats: [] }])!;
-    expect(text).toContain("stopped by PPM's supervisor");
+    expect(text).toContain("stopped on purpose by PPM");
     expect(text).not.toContain("did not shut down cleanly");
     // Consumed: the note is not worn by a later start.
     expect(readdirSync(dir).filter((n) => n.startsWith(".server-stop."))).toEqual([]);

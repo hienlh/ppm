@@ -101,7 +101,7 @@ export async function scenarioC(k, s) {
     id: "c", how: "crash", kind: "watchdog",
     stopOpts: { orderedBy: "the health check found it not answering" },
     env: { PPM_START_REASON: "watchdog", PPM_START_DETAIL: "health check failed 3 times" },
-    expect: ["a watchdog restarted PPM", "(\"health check failed 3 times\")", "The run before it was stopped by PPM's supervisor (\"the health check found it not answering\")"],
+    expect: ["a watchdog restarted PPM", "(\"health check failed 3 times\")", "The run before it was stopped on purpose by PPM (\"the health check found it not answering\")"],
     unexpected: ["did not shut down cleanly"],
   });
   k.record("c", "watchdog (supervisor's stop note + SIGKILL, PPM_START_REASON=watchdog + detail): one wake turn quotes the detail and says the supervisor stopped the run, not that it failed to shut down cleanly; child listed; manager messaged");

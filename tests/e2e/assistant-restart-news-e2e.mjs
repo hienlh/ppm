@@ -11,7 +11,7 @@
 //   a  crash (SIGKILL, no reason given): read from the run log as a crash, "did not shut down cleanly"
 //   b  upgrade: clean stop, PPM_START_REASON=upgrade, previous run on an older version
 //   c  watchdog: the supervisor's stop note, then SIGKILL (how every ordered stop ends on Windows),
-//      PPM_START_REASON=watchdog with a detail: "stopped by PPM's supervisor", never "not cleanly"
+//      PPM_START_REASON=watchdog with a detail: "stopped on purpose by PPM", never "not cleanly"
 //   d  manual: clean stop, PPM_START_REASON=manual with a detail
 //      a–d: exactly one restart-news wake turn naming the reason, the version line, the steps before
 //      the cut-off child under its manager; the scripted Assistant messages the manager, which

@@ -51,8 +51,9 @@ function restartLine(r: RestartEntry): string {
     parts[0] += ".";
     parts.push(from ? `Version ${from} → ${to}.` : `Version ${to}.`);
   }
-  // Only a stop nothing explains is called unclean: the supervisor's own stops are named as such.
-  if (r.stopOrderedBy) parts.push(`The run before it was stopped by PPM's supervisor (${quote(cleanEventText(r.stopOrderedBy, 100))}).`);
+  // Only a stop nothing explains is called unclean. An ordered stop is named, but not credited to the
+  // supervisor: `ppm stop --kill` leaves the same note from the command line.
+  if (r.stopOrderedBy) parts.push(`The run before it was stopped on purpose by PPM (${quote(cleanEventText(r.stopOrderedBy, 100))}).`);
   else if (r.cleanStop === false) parts.push("The run before it did not shut down cleanly (killed, crashed or lost power).");
   else if (r.stoppedAt !== undefined) parts.push(`The run before it shut down cleanly at ${iso(r.stoppedAt)}${r.stopTrigger ? ` (${cleanEventText(r.stopTrigger, 60)})` : ""}.`);
   return parts.join(" ");
