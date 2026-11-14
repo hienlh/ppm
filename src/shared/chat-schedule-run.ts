@@ -184,7 +184,8 @@ export function decodeScheduleRun(content: string): { content: string; scheduleR
  * Splits the block off a slash command's arguments as Claude Code records the command in its
  * transcript (`<command-args>…</command-args>`, trimmed): the arguments then the block, or the block
  * alone for a command sent with none. Only the server writes the block, and the text a message
- * carries has its markers broken (`neutralizeBlockMarkers`), so arguments cannot forge one.
+ * carries has its markers broken (`neutralizeBlockMarkers`), so arguments cannot forge one — as long
+ * as they are passed exactly as stored: stripping any tag first could join a sentinel typed in halves.
  */
 export function decodeScheduleRunInCommandArgs(args: string): { args: string; scheduleRun: ScheduleRunReference | null } {
   const block = trailingBlock(args);

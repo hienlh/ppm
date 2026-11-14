@@ -168,6 +168,22 @@ export interface ParsedUserMessage {
   agent: string | null;
 }
 
+/** How Claude Code opens its transcript record of a slash command it ran. */
+const COMMAND_RECORD_START = /^<command-(?:message|name)>/;
+const COMMAND_RECORD_ARGS = /<command-args>([\s\S]*?)<\/command-args>/;
+
+/**
+ * The run block a scheduled slash command carries in its args, read from the message exactly as
+ * stored. Only a message that *is* Claude's record of a command counts, and the args are taken before
+ * any other tag is stripped: the neutralizer breaks exact sentinels only, so a sentinel typed in two
+ * halves around a tag the display strips (`<local-command-stdout>`) would join up after stripping.
+ */
+function scheduleRunInCommandRecord(raw: string): ScheduleRunReference | null {
+  if (!COMMAND_RECORD_START.test(raw)) return null;
+  const args = raw.match(COMMAND_RECORD_ARGS)?.[1]?.trim();
+  return args ? decodeScheduleRunInCommandArgs(args).scheduleRun : null;
+}
+
 /** Full decomposition of a stored user message, outermost wrapper first. */
 export function parseUserMessage(content: string): ParsedUserMessage {
   const decoded = decodeMessageBlocks(content);
@@ -182,11 +198,8 @@ export function parseUserMessage(content: string): ParsedUserMessage {
   // A scheduled slash command as Claude Code records it: its run block rides in the command's args.
   let scheduleRun = decoded.scheduleRun;
   if (!scheduleRun && command?.args && !decoded.fromSession && !decoded.userWords) {
-    const split = decodeScheduleRunInCommandArgs(command.args);
-    if (split.scheduleRun) {
-      scheduleRun = split.scheduleRun;
-      command.args = split.args || undefined;
-    }
+    scheduleRun = scheduleRunInCommandRecord(decoded.content);
+    if (scheduleRun) command.args = decodeScheduleRunInCommandArgs(command.args).args || undefined;
   }
   const { agent, cleanText: body } = parseAgentTag(cleanText);
   const text = command?.args ? (body ? `${command.args}\n\n${body}` : command.args) : body;
