@@ -46,6 +46,14 @@ afterAll(() => {
   for (const k of ["pid", "edgePid", "tunnelPid", "shareHostPid", "shareHostTunnelPid", "supervisorPid"]) {
     if (typeof s[k] === "number") started.add(s[k] as number);
   }
+  // A quick tunnel status.json had not recorded yet, or anything else run out of the scratch
+  // home: found by its command line, which names that home, and stopped by exact PID.
+  if (process.platform === "win32") {
+    const out = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+      `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${home.split(/[\\/]/).pop()}*' -and $_.Name -ne 'powershell.exe' } | ForEach-Object { $_.ProcessId }`,
+    ]).stdout.toString();
+    for (const line of out.split(/\r?\n/)) { const pid = Number(line.trim()); if (pid > 0 && pid !== process.pid) started.add(pid); }
+  }
   for (const pid of started) { try { process.kill(pid, "SIGKILL"); } catch {} }
   console.log(`[supervisor-upgrade-self-replace] stopped PIDs: ${[...started].join(", ")}`);
   try { rmSync(home, { recursive: true, force: true }); } catch {}
