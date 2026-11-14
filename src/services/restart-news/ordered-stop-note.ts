@@ -33,6 +33,15 @@ export function writeOrderedStop(ppmDir: string, pid: number | undefined, why: s
 }
 
 /**
+ * Takes back the note for server `pid`: the stop it announced did not happen (the kill failed and the
+ * server went on answering). Left behind, it would excuse that server's next, real crash. Never throws.
+ */
+export function dropOrderedStop(ppmDir: string, pid: number | undefined): void {
+  if (!pid || pid <= 0) return;
+  try { unlinkSync(notePath(ppmDir, pid)); } catch { /* none was written, or the next start took it */ }
+}
+
+/**
  * Why the supervisor stopped the run `pid` that started at `startedAt`, consumed; null when it
  * left no note for that run. Stale notes for other pids are removed on the way.
  */

@@ -1103,8 +1103,12 @@ so it can have each project's manager chat resume them. Code in `src/services/re
   On Windows the supervisor ends the server with TerminateProcess, so the server never writes its
   stop: before every stop it orders (restart, stop, upgrade, health check, its own shutdown) the
   supervisor leaves `.server-stop.<pid>.json` with the reason (`ordered-stop-note.ts`), the next
-  start consumes the note matching its previous run's pid, and the news says "stopped by PPM's
-  supervisor" instead of "did not shut down cleanly" — which is kept for a stop nothing explains.
+  start consumes the note matching its previous run's pid, and the news says "stopped on purpose
+  by PPM" instead of "did not shut down cleanly" — which is kept for a stop nothing explains.
+  `ppm stop --kill`, `ppm down`, `ppm stop --all` and `ppm restart`'s dead-supervisor recovery
+  TerminateProcess the supervisor itself, so `stop.ts` writes the same note for a server still
+  running before it kills anything. When the health check's kill fails and the server answers
+  again, the supervisor deletes its note, so a later real crash of that server is not excused.
 - **Cut-off chats** come from the session trace (`interrupted-chats.ts`): among rows written during
   the previous run (at most 24 h back), a chat whose last top-level turn has no `done`,
   `run_failed`, `turn_aborted`, `run_closed` or final `error`. Left out: chats the new run already

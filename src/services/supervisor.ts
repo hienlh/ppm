@@ -55,9 +55,9 @@ import { readThreadSnapshot, describeThreadSnapshot, type ThreadSnapshot } from 
 import { readMachineCpuTimes, machineBusyFraction, type MachineCpuTimes } from "./machine-cpu.ts";
 import { uptime as osUptime } from "node:os";
 import { dropStaleRestartRequest, startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
-import { writeOrderedStop } from "./restart-news/ordered-stop-note.ts";
+import { dropOrderedStop, writeOrderedStop } from "./restart-news/ordered-stop-note.ts";
 import {
-  decideServerExit, healthKillAfterAnswer, healthKillApplies, initialStartReason, restartWithoutChildReason, resumeAfterPauseReason, resumeAfterStopReason,
+  decideServerExit, healthKillApplies, healthProbeAnswered, initialStartReason, restartWithoutChildReason, resumeAfterPauseReason, resumeAfterStopReason,
   REVIVE_REASON, UPGRADE_FAILED_REASON, type HealthKillMark,
 } from "./restart-news/supervisor-start-reason.ts";
 
@@ -1492,8 +1492,9 @@ function startServerHealthCheck() {
       });
       if (res.ok) {
         healthFailCount = 0;
-        // Still answering long after the kill: the kill failed, and the mark would mislabel its next exit.
-        healthKillMark = healthKillAfterAnswer(healthKillMark, Date.now());
+        // Still answering long after the kill: the kill failed, and the mark — and the stop note the
+        // kill left — would mislabel its next exit.
+        healthKillMark = healthProbeAnswered(healthKillMark, Date.now(), (pid) => dropOrderedStop(getPpmDir(), pid));
         await recordServerBaseline(serverChild?.pid);
         return;
       }

@@ -82,6 +82,21 @@ export const healthKillApplies = (mark: HealthKillMark | null, exitedPid: number
 export const healthKillAfterAnswer = (mark: HealthKillMark | null, now: number): HealthKillMark | null =>
   mark && now - mark.at > HEALTH_KILL_MARK_TTL_MS ? null : mark;
 
+/**
+ * {@link healthKillAfterAnswer}, plus the cleanup a failed kill needs: the kill also left an
+ * ordered-stop note for that pid, and once the mark is dropped the note goes too (`dropNote`) —
+ * otherwise a later, real crash of the same server would read as a stop the supervisor ordered.
+ */
+export function healthProbeAnswered(
+  mark: HealthKillMark | null, now: number, dropNote: (pid: number) => void,
+): HealthKillMark | null {
+  const next = healthKillAfterAnswer(mark, now);
+  if (mark && !next) {
+    try { dropNote(mark.pid); } catch { /* the note then stays, as before */ }
+  }
+  return next;
+}
+
 /** The server that comes back after the supervisor paused on repeated crashes and was resumed. */
 export function resumeAfterPauseReason(lastCrash: StartReason, takeRequest: TakeRequest): StartReason {
   return requestedOr(takeRequest, { kind: "manual", detail: `resumed after repeated crashes (last: ${lastCrash.detail ?? lastCrash.kind})` });

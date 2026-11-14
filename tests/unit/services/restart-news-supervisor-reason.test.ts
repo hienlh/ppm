@@ -5,9 +5,13 @@
  * file left by `ppm restart --reason` is read only where someone asked for the restart.
  */
 import { describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { StartReason } from "../../../src/services/restart-news/start-reason.ts";
+import { dropOrderedStop, takeOrderedStop, writeOrderedStop } from "../../../src/services/restart-news/ordered-stop-note.ts";
 import {
-  BOOT_WINDOW_S, decideServerExit, HEALTH_KILL_MARK_TTL_MS, healthKillAfterAnswer, healthKillApplies, initialStartReason, isUpgradeFailed, restartWithoutChildReason, resumeAfterPauseReason,
+  BOOT_WINDOW_S, decideServerExit, HEALTH_KILL_MARK_TTL_MS, healthKillAfterAnswer, healthKillApplies, healthProbeAnswered, initialStartReason, isUpgradeFailed, restartWithoutChildReason, resumeAfterPauseReason,
   resumeAfterStopReason, REVIVE_REASON, UPGRADE_FAILED_REASON, type ServerExit, type ServerExitDecision,
 } from "../../../src/services/restart-news/supervisor-start-reason.ts";
 
@@ -89,6 +93,32 @@ describe("the health check's kill mark", () => {
     const mark = { pid: 4242, at: 1_000 };
     expect(healthKillAfterAnswer(mark, 1_000 + 5_000)).toBe(mark);
     expect(healthKillAfterAnswer(mark, 1_000 + HEALTH_KILL_MARK_TTL_MS + 1)).toBeNull();
+  });
+
+  it("takes back the stop note a failed kill left, so the server's next real crash is not excused", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ppm-health-note-"));
+    try {
+      const mark = { pid: 4242, at: 1_000 };
+      writeOrderedStop(dir, 4242, "the health check found it not answering", 1_000);
+      const drop = (pid: number) => dropOrderedStop(dir, pid);
+
+      // Still inside the window the kill may take: the mark and the note stay.
+      expect(healthProbeAnswered(mark, 1_000 + 5_000, drop)).toBe(mark);
+      expect(existsSync(join(dir, ".server-stop.4242.json"))).toBe(true);
+
+      // The server kept answering: the kill failed, and both go.
+      expect(healthProbeAnswered(mark, 1_000 + HEALTH_KILL_MARK_TTL_MS + 1, drop)).toBeNull();
+      expect(existsSync(join(dir, ".server-stop.4242.json"))).toBe(false);
+      // That server crashing later is then reported as the crash it is.
+      expect(takeOrderedStop(dir, { pid: 4242, startedAt: 0 })).toBeNull();
+
+      // No mark: nothing to take back, whatever notes other stops left.
+      writeOrderedStop(dir, 5151, "ppm restart", 2_000);
+      expect(healthProbeAnswered(null, 9_999_999, drop)).toBeNull();
+      expect(existsSync(join(dir, ".server-stop.5151.json"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
