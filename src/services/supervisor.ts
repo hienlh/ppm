@@ -54,7 +54,7 @@ import { waitForReplacement } from "./supervisor-self-replace-wait.ts";
 import { readThreadSnapshot, describeThreadSnapshot, type ThreadSnapshot } from "./process-thread-snapshot.ts";
 import { readMachineCpuTimes, machineBusyFraction, type MachineCpuTimes } from "./machine-cpu.ts";
 import { uptime as osUptime } from "node:os";
-import { startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
+import { dropStaleRestartRequest, startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
 import { writeOrderedStop } from "./restart-news/ordered-stop-note.ts";
 import {
   decideServerExit, healthKillAfterAnswer, healthKillApplies, initialStartReason, restartWithoutChildReason, resumeAfterPauseReason, resumeAfterStopReason,
@@ -826,6 +826,9 @@ export async function spawnServer(
   logFd: number,
   start: StartReason = { kind: "unknown" },
 ): Promise<void> {
+  // This spawn's reason is already decided; a `ppm restart --reason` request older than five
+  // minutes is nobody's, and is removed rather than left for some later manual spawn to read.
+  try { dropStaleRestartRequest(getPpmDir()); } catch { /* left for the age check on read */ }
   // Windows: reap orphaned descendants of the previous server before binding.
   // They hold an inherited handle to the listening socket — without this the
   // new server can never bind (zombie port) and crash-loops to max_restarts.

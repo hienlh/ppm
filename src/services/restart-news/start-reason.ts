@@ -82,6 +82,27 @@ export function writeRestartRequest(ppmDir: string, reason: StartReason, now = D
   renameSync(tmp, file);
 }
 
+/** Removes the request: the CLI that wrote it did not get its restart through. Never throws. */
+export function clearRestartRequest(ppmDir: string): void {
+  try { unlinkSync(requestPath(ppmDir)); } catch { /* none left */ }
+}
+
+/**
+ * Removes a request too old to be anyone's, unread. Most spawns never read it (a crash must not
+ * wear one), so without this a leftover would sit in the folder until the next manual restart.
+ */
+export function dropStaleRestartRequest(ppmDir: string, now = Date.now()): void {
+  const file = requestPath(ppmDir);
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8").replace(/^﻿/, "")) as { at?: unknown };
+    const at = typeof parsed.at === "number" ? parsed.at : -Infinity;
+    if (now - at <= RESTART_REQUEST_MAX_AGE_MS && at - now <= 60_000) return;
+  } catch {
+    if (!existsSync(file)) return; // nothing there; an unreadable one is dropped below
+  }
+  try { unlinkSync(file); } catch { /* another reader took it */ }
+}
+
 /**
  * The request the CLI left, consumed: read once and deleted, so a later spawn for another reason
  * never wears it. Null when there is none, it is stale, or it cannot be read.

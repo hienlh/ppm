@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { readFileSync, writeFileSync, existsSync, openSync, unlinkSync, renameSync } from "node:fs";
 import { getPpmDir } from "../../services/ppm-dir.ts";
-import { parseReasonArg, writeRestartRequest } from "../../services/restart-news/start-reason.ts";
+import { clearRestartRequest, parseReasonArg, writeRestartRequest } from "../../services/restart-news/start-reason.ts";
 
 const statusFile = () => resolve(getPpmDir(), "status.json");
 const pidFile = () => resolve(getPpmDir(), "ppm.pid");
@@ -30,14 +30,18 @@ export async function restartServer(options: { force?: boolean; reason?: string 
   const supervisorPid = status.supervisorPid as number | undefined;
   if (supervisorPid) {
     // Left for the supervisor's next spawn (a fresh supervisor's too, in the recovery below): it
-    // tells the restarted server why, and the server tells the PPM Assistant.
-    if (options.reason !== undefined) {
+    // tells the restarted server why, and the server tells the PPM Assistant. Written only once
+    // this command is about to ask for the restart, and removed when the ask fails, so a later
+    // spawn for some other cause never wears these words.
+    const leaveReason = () => {
+      if (options.reason === undefined) return;
       try {
         writeRestartRequest(getPpmDir(), parseReasonArg(options.reason));
       } catch (e) {
         console.warn(`  ⚠  Could not record the restart reason: ${(e as Error).message}`);
       }
-    }
+    };
+    const dropReason = () => { if (options.reason !== undefined) clearRestartRequest(getPpmDir()); };
     let supervisorAlive = true;
     try { process.kill(supervisorPid, 0); } catch { supervisorAlive = false; }
 
@@ -54,6 +58,7 @@ export async function restartServer(options: { force?: boolean; reason?: string 
       const profile = status.profile as string | undefined;
       const { stopServer } = await import("./stop.ts");
       await stopServer({ kill: true });
+      leaveReason();
       const { startServer } = await import("../../server/index.ts");
       await startServer({ port: port ? String(port) : undefined, profile, minimal: status.minimalMode === true });
       return;
@@ -70,12 +75,14 @@ export async function restartServer(options: { force?: boolean; reason?: string 
     // Stopped state: treat restart as resume (send resume command)
     if (state === "stopped") {
       console.log("\n  Server is stopped. Resuming via supervisor...\n");
+      leaveReason();
       const cmdFile = resolve(getPpmDir(), ".supervisor-cmd");
       writeFileSync(cmdFile, JSON.stringify({ action: "resume" }));
       // Signal supervisor (Windows: polling picks up command file)
       if (process.platform !== "win32") {
         try { process.kill(supervisorPid, "SIGUSR2"); } catch (e) {
           console.error(`  ✗  Failed to signal supervisor: ${e}`);
+          dropReason();
           process.exit(1);
         }
       }
@@ -99,6 +106,7 @@ export async function restartServer(options: { force?: boolean; reason?: string 
     const oldServerPid = status.pid as number | undefined;
     console.log("\n  Restarting PPM server via supervisor...");
     console.log("  If you're using PPM terminal, wait a few seconds for auto-reconnect.\n");
+    leaveReason();
 
     if (process.platform === "win32") {
       // Write restart command file — new supervisors (v0.13.31+) handle it
@@ -122,13 +130,16 @@ export async function restartServer(options: { force?: boolean; reason?: string 
         } catch {}
       }
 
-      // Fallback for old supervisors: kill server PID directly, supervisor auto-respawns
+      // Fallback for old supervisors: kill server PID directly, supervisor auto-respawns.
+      // That respawn is a crash to the supervisor, which never reads the request: drop it.
       if (!handled && oldServerPid) {
+        dropReason();
         try { process.kill(oldServerPid); } catch {}
       }
     } else {
       try { process.kill(supervisorPid, "SIGUSR2"); } catch (e) {
         console.error(`  ✗  Failed to signal supervisor: ${e}`);
+        dropReason();
         process.exit(1);
       }
     }

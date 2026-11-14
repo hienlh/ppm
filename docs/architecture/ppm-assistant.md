@@ -1091,8 +1091,9 @@ so it can have each project's manager chat resume them. Code in `src/services/re
   means, the first start, resume, revive, failed self-replace) is a pure function in
   `supervisor-start-reason.ts`, table-tested, which `spawnServer` in `supervisor.ts` calls. A health-check kill is `watchdog` whichever exit code it ends with; a first spawn
   within 10 minutes of the machine starting is `boot`. `ppm restart --reason <text>` (a kind by name,
-  or free text as a `manual` note) leaves `.restart-reason` in the PPM folder, which the supervisor
-  consumes once at its next manual spawn and ignores after 5 minutes; an external RAM watchdog that
+  or free text as a `manual` note) leaves `.restart-reason` in the PPM folder — only once the command
+  is about to ask, and removed again when its ask fails — which the supervisor consumes once at its
+  next manual spawn and ignores after 5 minutes (every spawn deletes one that old, unread); an external RAM watchdog that
   says nothing shows up as `manual`.
 - **The run log.** The server records `{pid, version, startedAt}` at boot and `stoppedAt` with the
   trigger on a graceful shutdown (`restart-news-run.ts`, config row `server_run_log`, last 20 runs —

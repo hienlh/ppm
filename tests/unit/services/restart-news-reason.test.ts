@@ -8,7 +8,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  parseReasonArg, readStartReasonEnv, RESTART_REQUEST_MAX_AGE_MS, startReasonEnv, takeRestartRequest, writeRestartRequest,
+  clearRestartRequest, dropStaleRestartRequest, parseReasonArg, readStartReasonEnv, RESTART_REQUEST_MAX_AGE_MS, startReasonEnv, takeRestartRequest, writeRestartRequest,
   START_DETAIL_ENV, START_REASON_ENV,
 } from "../../../src/services/restart-news/start-reason.ts";
 import { recordServerStart, recordServerStop, type RunLogStore } from "../../../src/services/restart-news/server-run-log.ts";
@@ -171,6 +171,28 @@ describe("ppm restart --reason", () => {
     writeRestartRequest(dir, { kind: "manual" }, 1_000_000);
     expect(takeRestartRequest(dir, 1_000_000 + RESTART_REQUEST_MAX_AGE_MS + 1)).toBeNull();
     expect(existsSync(join(dir, ".restart-reason"))).toBe(false);
+  });
+
+  it("a stale request is removed unread at the next spawn; a fresh one stays for the restart that asked", () => {
+    const dir = scratch();
+    const file = join(dir, ".restart-reason");
+    writeRestartRequest(dir, { kind: "manual", detail: "fresh" }, 1_000_000);
+    dropStaleRestartRequest(dir, 1_000_000 + 60_000);
+    expect(existsSync(file)).toBe(true);
+    dropStaleRestartRequest(dir, 1_000_000 + RESTART_REQUEST_MAX_AGE_MS + 1);
+    expect(existsSync(file)).toBe(false);
+    writeFileSync(file, "{garbage");
+    dropStaleRestartRequest(dir, 1_000_000);
+    expect(existsSync(file)).toBe(false);
+    expect(() => dropStaleRestartRequest(dir)).not.toThrow();
+  });
+
+  it("the CLI removes its request when its restart did not go through", () => {
+    const dir = scratch();
+    writeRestartRequest(dir, { kind: "recycle" }, 1_000_000);
+    clearRestartRequest(dir);
+    expect(takeRestartRequest(dir, 1_000_001)).toBeNull();
+    expect(() => clearRestartRequest(dir)).not.toThrow();
   });
 
   it("reads a request file written with a byte-order mark and drops a malformed one", () => {
