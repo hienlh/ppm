@@ -193,6 +193,18 @@ export function CardShell({ card, look, children, actions, secondary, error, met
         <p className="px-3.5 pt-1.5 text-[11px] italic text-text-subtle" data-card-provenance="">{card.provenance}</p>
       )}
       {children && <div className="space-y-2.5 px-3.5 pb-3 pt-2 text-sm leading-relaxed text-text-primary">{children}</div>}
+      {/* The manager's answer to the user's reply on this card, sent here and to where they replied. */}
+      {card.answer?.followUp && (
+        <div className="mx-3.5 mb-3 rounded-md border border-border bg-panel-2 px-2.5 py-2 text-sm" data-card-followup="">
+          <p className="pb-1 text-[11px] font-medium text-text-subtle">
+            {"The manager's answer to your reply"} · {cardTime(card.answer.followUp.at)}
+          </p>
+          <CardText text={card.answer.followUp.text} fold />
+          {card.answer.followUp.truncated && (
+            <p className="pt-1 text-xs text-text-subtle">The rest is in the manager chat.</p>
+          )}
+        </div>
+      )}
       {/* Why a card that was answered waits again (the answer never reached the manager chat). */}
       {card.status === "open" && card.answer?.note && (
         <p className="mx-3.5 mb-3 rounded-md bg-error/10 px-2.5 py-1.5 text-xs text-error" data-card-notice="">{card.answer.note}</p>

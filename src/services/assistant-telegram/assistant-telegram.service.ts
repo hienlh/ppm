@@ -47,6 +47,8 @@ import { BridgeStateStore, readBridgeState } from "./assistant-telegram-state.ts
 import { AssistantTelegramManagerCards } from "./assistant-telegram-manager-cards.ts";
 import { AssistantTelegramCardReplies } from "./assistant-telegram-card-replies.ts";
 import { cardOutbound } from "../assistant-cards/card-outbound.ts";
+import { attachCardFollowupSink, detachCardFollowupSink } from "../assistant-cards/card-reply-followup.ts";
+import { AssistantTelegramCardFollowups } from "./assistant-telegram-card-followups.ts";
 import { managerChats } from "../assistant-managers/manager-chats.service.ts";
 import { currentQuietWindowEnd } from "../assistant-wake/wake-quiet-hours.ts";
 import type { InlineKeyboardMarkup } from "../telegram/telegram-types.ts";
@@ -173,6 +175,7 @@ export class AssistantTelegramBridge {
       relayCard: (chatId, card) => cards.relayed(chatId, card),
       isShowing: (chatId, requestId) => cards.isShowing(chatId, requestId),
     });
+    const cardFollowups = new AssistantTelegramCardFollowups({ queue, chatLink: links.chatLink, silence });
     const replyTo = (chatId: string, html: string, markup?: InlineKeyboardMarkup) =>
       queue.enqueue(chatId, sendMessageTask(queue, chatId, { html, ...(markup ? { markup } : {}) }, { label: "card reply" }));
     const cardReplies = new AssistantTelegramCardReplies({ codes, reply: replyTo });
@@ -197,8 +200,10 @@ export class AssistantTelegramBridge {
       // hours hold it): its push would say the same thing twice. Nothing else is held back.
       addNotificationSuppressor((sessionId, kind) => kind === "approval" && managerCardReachesPhone(sessionId, managerCards)),
       () => cardOutbound.detach(managerCards),
+      () => detachCardFollowupSink(cardFollowups),
     ];
     cardOutbound.attach(managerCards);
+    attachCardFollowupSink(cardFollowups);
     this.run = { poller, queue, state, inbound, mirror, relay, dbNotices, cards, codes, reminders, offs };
 
     recoverInterrupted(queue, state);

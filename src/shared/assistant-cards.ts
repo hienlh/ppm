@@ -57,6 +57,18 @@ export interface AssistantCardAnswer {
   clientMessageId?: string;
   /** The manager chat the words went to. */
   deliveredTo?: string;
+  /**
+   * The manager's answer to the user's reply: the final text of the turn the reply opened, cut to
+   * `CARD_FOLLOWUP_MAX_CHARS` (`truncated` then; the rest is in the manager chat).
+   */
+  followUp?: CardFollowUp;
+}
+
+/** The manager's answer to a reply on a card, shown under the card. */
+export interface CardFollowUp {
+  text: string;
+  truncated: boolean;
+  at: number;
 }
 
 /** A draft message a manager asks the user to approve sending. */

@@ -23,6 +23,7 @@ import { cardOkOffered } from "./card-ok-rule.ts";
 import { forwardUserWords, repliesToManager, type CardActor, type ForwardHow, type ForwardResult } from "./forward-verbatim.ts";
 import { realForwardEnv } from "./forward-verbatim-env.ts";
 import { cardDelivery } from "./card-delivery.ts";
+import type { FollowupOrigin } from "./card-reply-followup-tracker.ts";
 
 export type CardReplyResult =
   | { ok: true; card: AssistantCard; to: "manager" | "assistant"; projectName?: string }
@@ -62,6 +63,16 @@ function recordDelivery(deps: CardReplyDeps, id: string, forwarded: Extract<Forw
   }
   deps.cards.amendAnswer(id, { delivery: "delivered", ...(forwarded.to === "manager" ? { deliveredTo: forwarded.sessionId } : {}) });
 }
+/**
+ * Where the manager's answer to a reply goes back: the Telegram chat it was typed in (under the
+ * card's message there), or the card in PPM. An OK gets none: it decides, it does not ask.
+ */
+export function followupOrigin(actor: CardActor): FollowupOrigin | null {
+  if (actor.channel === "ppm") return { channel: "ppm" };
+  if (!actor.telegramChatId) return null;
+  return { channel: "telegram", chatId: actor.telegramChatId, ...(actor.telegramReplyTo ? { replyTo: actor.telegramReplyTo } : {}) };
+}
+
 const where = (channel: string): string => (channel === "telegram" ? "on Telegram" : channel === "chat" ? "in the manager chat" : "in PPM");
 
 /** "14:02" today, "9 Nov 14:02" another day, in the user's zone. */
@@ -157,7 +168,8 @@ export async function replyToCard(id: string, body: unknown, actor: CardActor, d
     }
   }
   const supersede = answered && (card.kind === "approval" || card.kind === "question");
-  const forwarded = await deps.forward(card, b.text, { actor, supersede });
+  const followUp = followupOrigin(actor);
+  const forwarded = await deps.forward(card, b.text, { actor, supersede, ...(followUp ? { followUp } : {}) });
   if (!forwarded.ok) {
     if (answered) deps.cards.reopen(id);
     return { ok: false, status: 502, error: `Not sent: ${forwarded.error}` };

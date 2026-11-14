@@ -15,6 +15,7 @@ import { MANAGER_REPLY_CARD_KINDS, type AssistantCard } from "../../shared/assis
 import type { UserWordsReference } from "../../shared/user-words-block.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import type { DeliverUserWordsInput, DeliverUserWordsResult } from "../../server/ws/chat-user-words.ts";
+import type { FollowupHandle, FollowupOrigin } from "./card-reply-followup-tracker.ts";
 
 export interface ForwardTarget {
   sessionId: string;
@@ -29,6 +30,8 @@ export interface CardActor {
   deviceId?: string;
   fetchSite?: string;
   telegramChatId?: string;
+  /** The card's message in that Telegram chat the user replied to. */
+  telegramReplyTo?: number;
 }
 
 export interface ForwardHow {
@@ -38,6 +41,8 @@ export interface ForwardHow {
   draftTo?: string;
   /** The words answer the request the manager chat waits on (a reply to an approval or question card). */
   supersede: boolean;
+  /** The manager's answer to these words goes back here once its turn ends (a reply, not an OK). */
+  followUp?: FollowupOrigin;
 }
 
 export interface ForwardEnv {
@@ -51,6 +56,8 @@ export interface ForwardEnv {
   mainSession(): string | null;
   note(assistantSessionId: string, line: string): void;
   trace(sessionId: string, providerId: string, payload: Record<string, unknown>): void;
+  /** Starts following the turn that will answer words sent under `clientMessageId`. */
+  expectFollowup?(input: { cardId: string; clientMessageId: string; origin: FollowupOrigin; sessionId: string }): FollowupHandle;
 }
 
 export type ForwardResult =
@@ -90,11 +97,21 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
     ...(how.ok ? { ok: true as const } : {}),
     ...(how.ok && how.draftSha256 ? { draftSha256: how.draftSha256, ...(how.draftTo ? { draftTo: how.draftTo } : {}) } : {}),
   };
+  // The id is chosen here, before the send, so the turn it opens can be followed even when the
+  // provider names that turn before the send returns.
+  const clientMessageId = `card-${crypto.randomUUID()}`;
+  const following = how.followUp
+    ? env.expectFollowup?.({ cardId: card.id, clientMessageId, origin: how.followUp, sessionId: target.sessionId }) ?? null
+    : null;
   const delivered = await env.deliverUserWords({
     targetSessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName,
-    projectPath: target.projectPath, text, userWords, supersede: how.supersede,
+    projectPath: target.projectPath, text, userWords, supersede: how.supersede, clientMessageId,
   });
-  if (!delivered.ok) return delivered;
+  if (!delivered.ok) {
+    following?.abandon();
+    return delivered;
+  }
+  following?.attach(delivered.delivered);
   env.userWrote(delivered.sessionId);
   env.trace(delivered.sessionId, target.providerId, {
     cardId: card.id, channel: actor.channel, ok: how.ok === true,

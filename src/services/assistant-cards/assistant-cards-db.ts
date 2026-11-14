@@ -1,7 +1,7 @@
 import { getDb } from "../db.service.ts";
 import {
   ASSISTANT_CARD_KINDS, ASSISTANT_CARD_STATUSES, WAITING_CARD_KINDS,
-  type AssistantCardAnswer, type AssistantCardKind, type AssistantCardPayload, type AssistantCardStatus,
+  type AssistantCardAnswer, type AssistantCardKind, type AssistantCardPayload, type AssistantCardStatus, type CardFollowUp,
 } from "../../shared/assistant-cards.ts";
 
 /**
@@ -127,6 +127,18 @@ export function casCardStatus(id: string, from: AssistantCardStatus, to: Assista
 export function setAnsweredCardAnswer(id: string, answer: AssistantCardAnswer, at: number): boolean {
   return getDb().query("UPDATE assistant_cards SET answer_json = ?, updated_at = ? WHERE id = ? AND status = 'answered'")
     .run(JSON.stringify(answer), at, id).changes > 0;
+}
+
+/**
+ * Puts the manager's answer to a reply under a card that no longer waits — answered by that reply,
+ * or closed before it and replied to anyway (its answer, if it had none, records PPM at the time it
+ * closed, so its status line keeps its time). False for an open card or one that is gone.
+ */
+export function setCardFollowUp(id: string, followUp: CardFollowUp, at: number): boolean {
+  return getDb().query(`UPDATE assistant_cards
+    SET answer_json = json_set(COALESCE(answer_json, json_object('by', 'ppm', 'channel', 'ppm', 'at', updated_at)), '$.followUp', json(?)),
+        updated_at = ?
+    WHERE id = ? AND status != 'open'`).run(JSON.stringify(followUp), at, id).changes > 0;
 }
 
 /** Answered cards whose forwarded words have not reached their manager chat yet, oldest first. */

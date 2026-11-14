@@ -18,6 +18,8 @@ import type { BridgeAction, ManagerCardPress } from "./assistant-telegram-action
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 
 const MAX_PENDING = 50;
+/** The manager's answer to the reply comes back under the card (`assistant-telegram-card-followups.ts`). */
+export const ANSWER_FOLLOWS = "Its answer will come here, under the card.";
 
 export interface CardRepliesDeps {
   codes: ButtonCodes<BridgeAction>;
@@ -41,8 +43,9 @@ export class AssistantTelegramCardReplies {
 
   constructor(private readonly deps: CardRepliesDeps) {}
 
-  private actor(chatId: string): CardActor {
-    return { channel: "telegram", telegramChatId: chatId };
+  /** `replyTo` is the card's message the user answered, where the manager's answer goes too. */
+  private actor(chatId: string, replyTo?: number): CardActor {
+    return { channel: "telegram", telegramChatId: chatId, ...(replyTo ? { telegramReplyTo: replyTo } : {}) };
   }
 
   /** Whether this message of this chat shows one of the Assistant's cards. */
@@ -62,14 +65,14 @@ export class AssistantTelegramCardReplies {
       this.deps.reply(chatId, "To answer a card, reply to it with text.");
       return true;
     }
-    this.answer(chatId, row.id, await (this.deps.replyTo ?? replyToCard)(row.id, { text: m.text }, this.actor(chatId)), m.text);
+    this.answer(chatId, row.id, await (this.deps.replyTo ?? replyToCard)(row.id, { text: m.text }, this.actor(chatId, m.replyToMessageId)), m.text);
     return true;
   }
 
   private answer(chatId: string, cardId: string, result: CardReplyResult, text: string): void {
     if (result.ok) {
       this.deps.reply(chatId, result.to === "manager"
-        ? `Sent to the <b>${escapeTelegramHtml(result.projectName ?? "project")}</b> manager, word for word.`
+        ? `Sent to the <b>${escapeTelegramHtml(result.projectName ?? "project")}</b> manager, word for word. ${ANSWER_FOLLOWS}`
         : "Sent to the Assistant.");
       return;
     }

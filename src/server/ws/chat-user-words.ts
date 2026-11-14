@@ -33,6 +33,11 @@ export interface DeliverUserWordsInput {
    * behind any request, as a message from another session does.
    */
   supersede: boolean;
+  /**
+   * The id to send the words under, chosen by the caller so it can follow the turn they open;
+   * anything but a `card-<uuid>` is replaced, since the delivery reconciler keys on that prefix.
+   */
+  clientMessageId?: string;
 }
 
 /**
@@ -43,6 +48,8 @@ export interface DeliverUserWordsInput {
 export type DeliverUserWordsResult =
   | { ok: true; content: string; sessionId: string; delivered: SessionDelivery; clientMessageId: string }
   | { ok: false; error: string };
+
+const CARD_CLIENT_ID_RE = /^card-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** A leading `/` would run as a slash command the user never typed into that chat. */
 const defuseCommand = (text: string): string => (text.trimStart().startsWith("/") ? `${String.fromCharCode(0x200b)}${text}` : text);
@@ -58,7 +65,8 @@ export async function deliverUserWords(input: DeliverUserWordsInput): Promise<De
   // Pasted text (an email, a log) may carry a loose PPM-looking tag or a copy of the user-words
   // header: both are defused, so the one block PPM builds below is the only one there.
   const content = encodeMessageBlocks(defuseCommand(defuseUserWordsHeader(neutralizePpmTags(input.text))), { userWords: input.userWords, ownProject: input.projectName || undefined });
-  const clientMessageId = `card-${crypto.randomUUID()}`;
+  const clientMessageId = input.clientMessageId && CARD_CLIENT_ID_RE.test(input.clientMessageId)
+    ? input.clientMessageId : `card-${crypto.randomUUID()}`;
   return withSessionLock(target, async () => {
     const entry = ensureSessionEntry(target, input.providerId, input.projectPath, input.projectName);
     if (entry.providerId !== input.providerId) {

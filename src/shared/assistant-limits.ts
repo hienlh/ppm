@@ -56,6 +56,12 @@ export const STALE_REPLY_MS = 24 * 60 * 60_000;
 /** The longest reply to a card PPM forwards word for word. */
 export const CARD_REPLY_MAX_CHARS = 8000;
 
+/**
+ * Most of the manager's answer to a card reply that goes back to the user (Telegram and the card in
+ * PPM); the rest is in the manager chat, which the follow-up links to.
+ */
+export const CARD_FOLLOWUP_MAX_CHARS = 1500;
+
 /** The whole notebook, every line's text together, whoever wrote it. */
 export const NOTEBOOK_CAP_CHARS = 4000;
 /** One notebook line. */
