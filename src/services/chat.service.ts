@@ -94,14 +94,15 @@ export const BACK_ON_PPM_CONTEXT_ENTRY = [
 const MAX_CHANNEL_RECORDS = 512;
 
 /**
- * The message as a provider may receive it. Only two doors encode PPM's message blocks, each from
+ * The message as a provider may receive it. Only these doors encode PPM's message blocks, each from
  * fields it validated itself and after neutralizing the body: the chat socket (reply, turn
- * references) and the session tools' inject path (from-session). Text arriving through any other
- * door — a schedule, a Jira ticket, a group-chat peer, PPMBot — has every block marker broken, so
- * none of it can pose as a block the chat decodes.
+ * references; a session schedule's run, which reaches it as `schedule`) and the session tools'
+ * inject path (from-session). Text arriving through any other door — a prompt or script schedule,
+ * a Jira ticket, a group-chat peer, PPMBot — has every block marker broken, so none of it can pose
+ * as a block the chat decodes.
  */
 const fromOrigin = (message: string, origin: TraceOrigin | undefined): string =>
-  origin === "ws" || origin === "session" ? message : neutralizeBlockMarkers(message);
+  origin === "ws" || origin === "session" || origin === "schedule" ? message : neutralizeBlockMarkers(message);
 
 /**
  * What the "turn start" / "turn end" log lines need about one run, which can span many turns.

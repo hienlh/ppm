@@ -3,6 +3,8 @@ import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import type { AnswersById, NormalizedQuestion } from "../../shared/approval-questions.ts";
 import type { WatchEventNotice } from "../../types/chat.ts";
 import type { WakeNewsNotice } from "../../shared/assistant-wake-news.ts";
+import type { ScheduleRunReference } from "../../shared/chat-schedule-run.ts";
+import type { SessionDelivery } from "../../shared/session-collab.ts";
 
 /**
  * What the rest of the server may do to a chat that only a browser could do before: send it a
@@ -26,8 +28,11 @@ import type { WakeNewsNotice } from "../../shared/assistant-wake-news.ts";
  * `assistant_card` is the user pressing a button on one of the Assistant's cards, which mirrors a
  * manager chat's own approval or question. `delete` only stops a turn, as the first step of
  * deleting that same chat (`DELETE /chat/sessions/:id?stopRunning=1`); it never sends or answers.
+ * `schedule` is a session schedule sending its prompt into the chat it targets: PPM, not the user,
+ * so it answers no card and joins no running turn, but the turn it opens is an ordinary one — its
+ * approvals are shown and wait for the user, in the chat's own permission mode.
  */
-export type ServerOrigin = "telegram" | "watch" | "assistant" | "assistant_card" | "delete";
+export type ServerOrigin = "telegram" | "watch" | "schedule" | "assistant" | "assistant_card" | "delete";
 
 /** The server origins that may send a chat a message (see {@link ChatControl.sendUserMessage}). */
 export type MessageServerOrigin = Exclude<ServerOrigin, "assistant" | "assistant_card" | "delete">;
@@ -40,11 +45,11 @@ export type MessageServerOrigin = Exclude<ServerOrigin, "assistant" | "assistant
 export type ChatMessageOrigin = "ws" | ServerOrigin | "session" | "extension";
 
 /** How a message the server sends into a chat went. */
-export type DeliverResult = { ok: true; sessionId: string } | { ok: false; error: string };
+export type DeliverResult = { ok: true; sessionId: string; delivered?: SessionDelivery } | { ok: false; error: string };
 
 /**
- * The error a `watch` message gets when the chat is not quiet: a waiting approval card would be
- * cancelled by it and a running turn steered by it, and a watch never speaks for the user.
+ * The error a `watch` or `schedule` message gets when the chat is not quiet: a waiting approval
+ * card would be cancelled by it and a running turn steered by it, and neither speaks for the user.
  */
 export const CHAT_BUSY = "busy";
 
@@ -69,8 +74,15 @@ export interface SendUserMessageOpts {
   /** The chat's provider; the stored owner wins when there is one. */
   providerId: string;
   images?: Array<{ data: string; mediaType: string }>;
-  /** The mode a turn this message starts runs in; the chat's sticky mode when absent. */
+  /**
+   * The mode a turn this message starts runs in; the chat's sticky mode when absent. Refused with
+   * `schedule`: a scheduled run uses the chat's own mode, and passing one would overwrite it.
+   */
   permissionMode?: string;
+  /** The id the turn this message opens is announced under (`turn_started`), when the sender tracks it. */
+  clientMessageId?: string;
+  /** With `schedule` only, and required by it: which schedule fired, rendered in front of the prompt. */
+  scheduleRun?: ScheduleRunReference;
   /** The channel the user typed on, when it is not a PPM screen. */
   channel?: "telegram";
   /**
@@ -134,8 +146,8 @@ export interface ChatControl {
   /**
    * Delivers `text` as the user's message. `telegram` is the user typing elsewhere: it answers a
    * waiting card the way a typed message does, and leaves no PPM screen as "the chatting device".
-   * `watch` is never the user: it is refused with {@link CHAT_BUSY} while a card waits or a turn
-   * runs. A message joining a running turn carries its `channel` too.
+   * `watch` and `schedule` are never the user: they are refused with {@link CHAT_BUSY} while a card
+   * waits or a turn runs. A message joining a running turn carries its `channel` too.
    */
   sendUserMessage(sessionId: string, text: string, opts: SendUserMessageOpts): Promise<DeliverResult>;
   /**

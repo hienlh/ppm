@@ -31,6 +31,11 @@ export type TraceOrigin =
   | "telegram"
   /** The server reporting on a chat the PPM Assistant was asked to watch. */
   | "watch"
+  /**
+   * A session schedule sending its prompt into an existing chat. Not `scheduler`, which is a
+   * prompt or script schedule posting into a chat of its own through the chat socket.
+   */
+  | "schedule"
   /** A chat's running turn stopped so that the chat could be deleted. */
   | "delete"
   | "unknown";
