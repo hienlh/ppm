@@ -148,6 +148,18 @@ describe("the pending restart news", () => {
     expect(pendingRestartNews(store)).toBeNull();
   });
 
+  it("switching the setting off drops news already waiting", () => {
+    const store = memoryStore();
+    addRestartNews(store, restart(T), { chats: [chat("a")], more: 0 });
+    let on = true;
+    const source = createRestartNewsSource({ store, mainSession: () => MAIN, canonical: (id) => id, managers: () => [], now: () => T, enabled: () => on });
+    expect(source.pending(MAIN)).toHaveLength(1);
+    on = false;
+    source.expire!();
+    expect(pendingRestartNews(store)).toBeNull();
+    expect(source.pending(MAIN)).toEqual([]);
+  });
+
   it("keeps a newer restart when an older one expires", () => {
     const store = memoryStore();
     addRestartNews(store, restart(T), { chats: [chat("a")], more: 0 });

@@ -117,6 +117,8 @@ export interface RestartSourceDeps {
    */
   stillCutOff?(chat: InterruptedChat): boolean;
   now?(): number;
+  /** Settings → PPM Assistant → restart news. Switched off, news already waiting is dropped too. */
+  enabled?(): boolean;
 }
 
 /** Pending news older than this is dropped rather than told: its chats are a day stale. */
@@ -136,10 +138,22 @@ export function createRestartNewsSource(deps: RestartSourceDeps): WakeSource {
     write(deps.store, next);
     return next;
   };
-  /** Drops restarts (and the chats they found) older than {@link RESTART_NEWS_MAX_AGE_MS}. */
+  /** Off unless the switch says on; a switch that cannot be read leaves the news as it is. */
+  const switchedOff = (): boolean => {
+    try { return deps.enabled ? !deps.enabled() : false; } catch { return false; }
+  };
+  /**
+   * Drops restarts (and the chats they found) older than {@link RESTART_NEWS_MAX_AGE_MS}, and all of
+   * it once the switch is off: whoever turned it off does not want the Assistant told any more.
+   */
   const expire = (): void => {
     const news = read(deps.store);
     if (news.restarts.length === 0) return;
+    if (switchedOff()) {
+      log.info(`restart news is switched off: dropping the ${news.restarts.length} restart(s) still waiting to be told`);
+      write(deps.store, { ...EMPTY });
+      return;
+    }
     const cutoff = now() - RESTART_NEWS_MAX_AGE_MS;
     const restarts = news.restarts.filter((r) => r.at >= cutoff);
     if (restarts.length === news.restarts.length) return;

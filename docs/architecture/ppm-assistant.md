@@ -1128,7 +1128,7 @@ so it can have each project's manager chat resume them. Code in `src/services/re
   for more than 24 h is dropped with a log line (`RESTART_NEWS_MAX_AGE_MS`). It is urgent — passes quiet hours — only when a chat was cut off
   (`RESTART_NEWS_URGENT_WHEN` in `assistant-limits.ts`). Settings → PPM Assistant → Digest & quiet
   hours → Restarts ("Tell the Assistant after PPM restarts", `restart_news`, default on) gates the
-  news only; the run log is always written. Nothing goes to Telegram directly.
+  news only — switching it off also drops news already waiting — and the run log is always written. Nothing goes to Telegram directly.
 - **What the Assistant does.** The entry (`restart-news-text.ts`) lists the restarts, then the steps,
   then the cut-off chats by project with manager first and the chats it opened under it (the steps
   come before the list so the 14,000-character cap cuts chats, never the steps), and asks for one card-free

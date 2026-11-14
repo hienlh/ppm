@@ -113,6 +113,7 @@ export function startRestartNews(deps: RestartNewsStartDeps = {}): void {
       canonical: resolveMigratedSession,
       managers: () => managerChats.list().map((r) => ({ projectName: r.projectName, sessionId: resolveMigratedSession(r.sessionId) })),
       stillCutOff: deps.stillCutOff ?? stillCutOffLive,
+      enabled: deps.enabled ?? (() => getAssistantSettings().restart_news),
     }));
   }
 }
