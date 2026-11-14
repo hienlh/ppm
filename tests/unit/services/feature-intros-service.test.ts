@@ -11,6 +11,9 @@ import { PPM_TOOLS, ppmToolOn } from "../../../src/shared/ppm-tools.ts";
 import type { ProjectConfig } from "../../../src/types/config.ts";
 
 const INTRO = FEATURE_INTROS[0]!;
+/** The features introduced after this one, already answered, so only this one is asked here. */
+const otherIntrosAnswered = () =>
+  Object.fromEntries(FEATURE_INTROS.slice(1).map((i) => [i.id, { answer: "off" as const, skips: 0, via: "tour" as const }]));
 const SIX = ["search_sessions", "list_session_turns", "read_session_turns", "create_session", "send_to_session", "session_status"];
 const ai = () => configService.get("ai");
 const onTools = () => PPM_TOOLS.filter((tool) => ppmToolOn(ai(), tool));
@@ -19,7 +22,7 @@ let savedProjects: ProjectConfig[];
 beforeEach(() => {
   savedProjects = configService.get("projects");
   configService.set("projects", []);
-  configService.set("feature_intros", {});
+  configService.set("feature_intros", otherIntrosAnswered());
   const { ppm_tools: _drop, ...rest } = ai();
   configService.set("ai", { ...rest, session_collab: { askBeforeCreate: false } });
   getDb().run("DELETE FROM session_metadata");
@@ -122,5 +125,22 @@ describe("feature introductions", () => {
     setSessionMetadata("feature-intro-session", "p", "/tmp/p");
     expect(isExistingUser()).toBe(true);
     expect(featureIntrosView().isExistingUser).toBe(true);
+  });
+});
+
+describe("scheduled prompts in a chat", () => {
+  const SCHEDULES = FEATURE_INTROS.find((i) => i.id === "session-schedules-2026-11")!;
+  const THREE = ["session_schedule_create", "session_schedule_list", "session_schedule_delete"];
+
+  it("is a question of its own: turning the session tools on leaves the schedule tools off and still asked", () => {
+    configService.set("feature_intros", {});
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id]);
+    answerFeatureIntro(INTRO.id, "on");
+    for (const tool of THREE) expect(onTools()).not.toContain(tool);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id]);
+
+    answerFeatureIntro(SCHEDULES.id, "on");
+    for (const tool of THREE) expect(onTools()).toContain(tool);
+    expect(featureIntrosView().pending).toEqual([]);
   });
 });

@@ -12,12 +12,12 @@ import {
 } from "../../services/assistant-mcp/assistant-mcp-tools.ts";
 import { ASSISTANT_TOOLS, CODEX_ASSISTANT_MCP_SERVER } from "../../shared/assistant-tool-names.ts";
 import type { AssistantMcpServer } from "../../shared/assistant-settings.ts";
-import { TAB_TOOLS } from "../../shared/ppm-tools.ts";
+import { SESSION_TOOLS, TAB_TOOLS } from "../../shared/ppm-tools.ts";
 import {
   CODEX_DB_TOOLS_MCP_SERVER, CODEX_DB_TOOLS_MCP_TOKEN_ENV, DB_TOOLS, DB_TOOLS_TIMEOUT_MS, type DbToolsMcpAccess,
 } from "../../services/db-ai-tools/db-ai-tools-tool.ts";
 import {
-  CODEX_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_TOKEN_ENV, SESSION_COLLAB_TOOLS, SESSION_COLLAB_TOOLS_TIMEOUT_MS,
+  CODEX_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_TOKEN_ENV, SESSION_COLLAB_TOOLS_TIMEOUT_MS,
   type SessionCollabMcpAccess,
 } from "../../services/session-collab/session-collab-tool.ts";
 
@@ -235,7 +235,8 @@ export function sessionCollabMcpConfig(access: SessionCollabMcpAccess | undefine
     [`mcp_servers.${CODEX_SESSION_COLLAB_MCP_SERVER}`]: {
       url: access.url,
       bearer_token_env_var: CODEX_SESSION_COLLAB_MCP_TOKEN_ENV,
-      enabled_tools: [...SESSION_COLLAB_TOOLS],
+      // The schedule tools too; the endpoint still lists only the ones switched on.
+      enabled_tools: [...SESSION_TOOLS],
       default_tools_approval_mode: "approve",
       startup_timeout_sec: 10,
       tool_timeout_sec: Math.ceil(SESSION_COLLAB_TOOLS_TIMEOUT_MS / 1000),

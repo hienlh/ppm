@@ -4,7 +4,9 @@ import { isPpmTool, ppmToolOffMessage, ppmToolOn } from "../../shared/ppm-tools.
 import {
   CREATE_SESSION_TOOL, REPORT_TO_ASSISTANT_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL,
 } from "../../shared/session-collab.ts";
+import { isSessionScheduleTool } from "../../shared/session-schedule-tools.ts";
 import { configService } from "../config.service.ts";
+import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { reportToolDefinition } from "../assistant-cards/manager-report-tool.ts";
 import { isReportingManager, NOT_A_MANAGER, reportToAssistantCall } from "../assistant-cards/manager-report-env.ts";
 import type { CallLimiter } from "../tab-tools-mcp/session-history-rate-limit.ts";
@@ -14,12 +16,15 @@ import { createSessionTool } from "./collab-create.ts";
 import { createCollabLimiter } from "./collab-rate-limit.ts";
 import { sendToSessionTool } from "./collab-send.ts";
 import { sessionStatusTool } from "./collab-status.ts";
+import { sessionScheduleToolDefinitions } from "./collab-schedule-tool-definitions.ts";
+import { liveSessionScheduleToolEnv, sessionScheduleToolCall, type SessionScheduleToolEnv } from "./collab-schedules.ts";
 import { sessionCollabToolDefinitions } from "./session-collab-tool.ts";
 import { sessionCollabMcpTokens, type SessionCollabTokenBinding } from "./session-collab-tokens.ts";
 
 /**
- * `/api/sessions-mcp` — serves `create_session`, `send_to_session` and `session_status` to one
- * chat session's own agent (the MCP plumbing is `mcp-http-endpoint.ts`). The token names the
+ * `/api/sessions-mcp` — serves `create_session`, `send_to_session` and `session_status`, and the
+ * `session_schedule_*` tools for the caller's own chat, to one chat session's own agent (the MCP
+ * plumbing is `mcp-http-endpoint.ts`). The token names the
  * session; every call is checked against that session's canonical id and its project, and never
  * against an id the model supplied about itself.
  */
@@ -34,19 +39,25 @@ export function createSessionCollabMcpHandler(deps: {
   limiter?: CallLimiter;
   /** `report_to_assistant`, for the chat the token names (the live one by default). */
   report?: (sessionId: string, args: unknown) => Json;
+  /** What the schedule tools save through (the live database by default). */
+  schedules?: SessionScheduleToolEnv;
 }) {
   const limiter = deps.limiter ?? createCollabLimiter();
   const report = deps.report ?? reportToAssistantCall;
+  const schedules = deps.schedules ?? liveSessionScheduleToolEnv;
   return createMcpHttpHandler<SessionCollabTokenBinding>({
     serverName: "ppm-sessions",
     tokenRequired: "A chat session token is required",
     resolveToken: deps.resolveToken,
-    tools: [...sessionCollabToolDefinitions(), reportToolDefinition()],
+    tools: [...sessionCollabToolDefinitions(), ...sessionScheduleToolDefinitions(), reportToolDefinition()],
     unavailable: (name, { sessionId }) => {
       if (deps.enabled(name, sessionId)) return null;
       return name === REPORT_TO_ASSISTANT_TOOL ? NOT_A_MANAGER : ppmToolOffMessage(name);
     },
     callTool: async ({ sessionId }, name, rawArgs, signal) => {
+      // The caller's own chat only, delivering nothing to anyone: the send policy, its rate limit
+      // and the session registry have no say here.
+      if (isSessionScheduleTool(name)) return sessionScheduleToolCall(schedules, sessionId, name, rawArgs);
       const env = deps.env();
       const caller = resolveCaller(env, sessionId);
       if (!caller.ok) return textResult(caller.message, true);
@@ -84,6 +95,8 @@ let collabEnvRef: CollabEnv | null = null;
  */
 export function sessionToolOnFor(tool: string, sessionId: string): boolean {
   if (tool === REPORT_TO_ASSISTANT_TOOL) return isReportingManager(sessionId);
+  // The PPM Assistant keeps to its own schedule tools, which show the user a card first.
+  if (isSessionScheduleTool(tool) && isAssistantSession(sessionId)) return false;
   return isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool);
 }
 

@@ -12,6 +12,7 @@ import { FEATURE_INTROS_CHANGED_EVENT } from "../../../shared/feature-intros";
 import { useNewFeatureTools } from "./use-new-feature-tools";
 import { SESSION_HISTORY_TOOLS } from "../../../shared/session-history-tools";
 import { SESSION_COLLAB_TOOLS } from "../../../shared/session-collab";
+import { SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_TOOLS } from "../../../shared/session-schedule-tools";
 import type { SessionCollabSettings } from "../../../shared/session-collab-settings";
 import { SectionHeader, SwitchRow } from "./settings-rows";
 import { SessionCollabSettingsControls } from "./session-collab-settings-controls";
@@ -75,6 +76,18 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Check sessions",
     note: "Reads what the linked sessions are doing: running or idle, waiting on you, and the opening of their last answer.",
   },
+  session_schedule_create: {
+    label: "Schedule prompts",
+    note: "Schedules a prompt into its own chat on a cron, repeating or once. It survives restarts and is delivered when the chat is idle.",
+  },
+  session_schedule_list: {
+    label: "List schedules",
+    note: "Lists the prompts scheduled into its own chat, with their next fire.",
+  },
+  session_schedule_delete: {
+    label: "Delete schedules",
+    note: "Deletes a prompt scheduled into its own chat. Another chat's schedules are out of its reach.",
+  },
 };
 
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [
@@ -94,6 +107,11 @@ const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }>
     title: "Session collaboration",
     intro: "Sessions of one project opening and messaging each other. Every session an AI creates is an ordinary one you can see, open and stop.",
     tools: SESSION_COLLAB_TOOLS,
+  },
+  {
+    title: "Schedules",
+    intro: "Prompts a chat schedules into itself. Each one is listed in Settings → Schedules, where you can turn it off or delete it.",
+    tools: SESSION_SCHEDULE_TOOLS,
   },
 ];
 
@@ -143,6 +161,16 @@ export function ToolsSettingsSection() {
     }
   }, [load]);
 
+  const changeHideCron = useCallback(async (on: boolean) => {
+    setSettings((current) => (current ? { ...current, hide_builtin_cron: on } : current));
+    try {
+      setSettings(await updateAISettings({ hide_builtin_cron: on }));
+    } catch (e) {
+      toast.error("Could not save", { description: errorText(e) });
+      await load();
+    }
+  }, [load]);
+
   if (!settings) {
     return <p className="text-xs text-muted-foreground">{loadError ?? "Loading…"}</p>;
   }
@@ -179,6 +207,18 @@ export function ToolsSettingsSection() {
           </div>
           {group.tools === SESSION_COLLAB_TOOLS && (
             <SessionCollabSettingsControls stored={settings.session_collab} onChange={(patch) => void changeCollab(patch)} />
+          )}
+          {group.tools === SESSION_SCHEDULE_TOOLS && (
+            <div className="rounded-lg border border-border">
+              <SwitchRow
+                label="Hide Claude's built-in cron tools"
+                note={ppmToolOn(settings, SESSION_SCHEDULE_CREATE_TOOL)
+                  ? "Claude chats start without CronCreate, CronList and CronDelete, whose jobs end with the chat's process, so Claude schedules through PPM. /loop keeps working."
+                  : "Takes effect while “Schedule prompts” is on. Claude only: Codex has no cron tools of its own."}
+                checked={settings.hide_builtin_cron !== false}
+                onChange={(on) => void changeHideCron(on)}
+              />
+            </div>
           )}
         </section>
       ))}

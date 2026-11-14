@@ -233,6 +233,8 @@ export interface AISettings {
   share_provider_context?: boolean;
   tab_tools?: boolean;
   ppm_tools?: PpmToolSwitches;
+  /** Claude chats lose CronCreate/CronList/CronDelete while PPM's schedule tool is on; unset is true. */
+  hide_builtin_cron?: boolean;
   /** Always complete in a server answer; a PUT may send any part of it. */
   session_collab?: Partial<SessionCollabSettings>;
   leftover_processes_idle_minutes?: number;

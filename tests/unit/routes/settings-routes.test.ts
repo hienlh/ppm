@@ -227,6 +227,27 @@ describe("PUT /settings/ai", () => {
     }
   });
 
+  it("saves whether Claude's own cron tools are hidden, as a boolean only", async () => {
+    const app = createApp();
+    const put = (body: Record<string, unknown>) => app.request("/settings/ai", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    expect(configService.get("ai").hide_builtin_cron).toBeUndefined();
+    const res = await put({ hide_builtin_cron: false });
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.hide_builtin_cron).toBe(false);
+    expect(configService.load().ai.hide_builtin_cron).toBe(false);
+    // An unrelated update leaves it as it was.
+    expect((await put({ share_provider_context: true })).status).toBe(200);
+    expect(configService.load().ai.hide_builtin_cron).toBe(false);
+    for (const value of ["false", 0, null, {}]) {
+      expect((await put({ hide_builtin_cron: value })).status).toBe(400);
+      expect(configService.get("ai").hide_builtin_cron).toBe(false);
+    }
+    expect((await put({ hide_builtin_cron: true })).status).toBe(200);
+    expect(configService.load().ai.hide_builtin_cron).toBe(true);
+  });
+
   it("switches PPM's tools one at a time, and refuses tool names and values it does not know", async () => {
     const app = createApp();
     const put = (body: Record<string, unknown>) => app.request("/settings/ai", {

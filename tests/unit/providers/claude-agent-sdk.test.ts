@@ -1805,6 +1805,32 @@ describe("ClaudeAgentSdkProvider", () => {
       }
     });
 
+    it("hides Claude's own cron tools in the spare and in the turn that takes it over, only while PPM's schedule tool is on", async () => {
+      (configService as any).config.ai.ppm_tools = { session_schedule_create: true, session_schedule_list: true, session_schedule_delete: true };
+      setServerListenAddress(8125, "0.0.0.0");
+      try {
+        const clis = cliFactory();
+        await provider.prewarm({ projectPath: project });
+        expect(clis[0]!.options.disallowedTools).toEqual(["CronCreate", "CronList", "CronDelete"]);
+        const session = await provider.createSession({ projectPath: project, adoptWarmSpare: true });
+        // What chatService.prepareSendOptions hands the turn: the terminal tools are on by default.
+        await drain(provider.sendMessage(session.id, "hi", {
+          tabToolsMcp: tabToolsMcpAccessFor(session.id)!, sessionCollabMcp: sessionCollabMcpAccessFor(session.id)!,
+        }));
+        expect(clis).toHaveLength(1);
+
+        // Switched off in Settings → Tools: Claude keeps its own cron tools.
+        (configService as any).config.ai.hide_builtin_cron = false;
+        const plain = await provider.createSession({ projectPath: project });
+        await drain(provider.sendMessage(plain.id, "hi", { sessionCollabMcp: sessionCollabMcpAccessFor(plain.id)! }));
+        expect(clis.at(-1)!.options.disallowedTools).toBeUndefined();
+      } finally {
+        delete (configService as any).config.ai.ppm_tools;
+        delete (configService as any).config.ai.hide_builtin_cron;
+        setServerListenAddress(0, "");
+      }
+    });
+
     it("is spawned with the very options a cold first turn with the same picks uses", async () => {
       const claude = (configService as any).config.ai.providers.claude;
       const saved = claude.system_prompt;

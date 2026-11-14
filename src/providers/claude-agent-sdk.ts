@@ -22,6 +22,7 @@ import { captureBaseline } from "../services/session-file-baselines/session-file
 import { observeFile } from "../services/session-file-baselines/session-file-history.ts";
 import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../services/session-file-baselines/shell-change-tracker.ts";
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
+import { hiddenBuiltinCronTools } from "./claude-builtin-cron.ts";
 import { PromptTurnBinder } from "./claude-prompt-turn-binder.ts";
 import { CONTINUE_NUDGE } from "../shared/user-prompt-kind.ts";
 import { APPROVAL_WAKE, ApprovalQueue } from "./claude-approval-queue.ts";
@@ -958,6 +959,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     systemPrompt: ReturnType<typeof buildSystemPromptOption>;
     env: Record<string, string | undefined>;
     allowedTools: string[];
+    /** Built-in tools the chat is spawned without (`claude-builtin-cron.ts`). */
+    disallowedTools?: string[];
     mcpServers: Record<string, unknown>;
     /** Load only `mcpServers`, ignoring every MCP config the CLI would find on its own. */
     strictMcpConfig?: boolean;
@@ -1011,6 +1014,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       env: p.env,
       settings: { permissions: { allow: [], deny: [] } },
       allowedTools: p.allowedTools,
+      ...(p.disallowedTools?.length ? { disallowedTools: p.disallowedTools } : {}),
       ...(Object.keys(p.mcpServers).length > 0 && { mcpServers: p.mcpServers }),
       ...(p.strictMcpConfig && { strictMcpConfig: true }),
       permissionMode: p.permissionMode,
@@ -1088,6 +1092,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       systemPrompt: buildSystemPromptOption(providerConfig.system_prompt, undefined, undefined, extensionCliHint()),
       env: this.buildQueryEnv(projectPath, account),
       allowedTools: allowedToolsFor({ isBypass, agentTeams: providerConfig.agent_teams }),
+      disallowedTools: hiddenBuiltinCronTools(ai, !!sessionTools),
       mcpServers: {
         ...this.resolveMcpServers(projectPath), ...tabToolsMcpServers(tabTools), ...dbToolsMcpServers(dbTools),
         ...sessionCollabMcpServers(sessionTools),
@@ -1259,6 +1264,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const allowedTools = allowedToolsFor({
       isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool, assistantPolicy, extensionPolicy: !!extensionPolicy,
     });
+    // An Assistant session has the session tools' server but never PPM's schedule tools.
+    const disallowedTools = hiddenBuiltinCronTools(configService.get("ai"), !!sessionCollabMcp && !assistantPolicy);
 
     /** Approval requests from canUseTool and the PreToolUse hook, handed out by the main loop. */
     const approvals = new ApprovalQueue<ChatEvent>();
@@ -1597,6 +1604,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         systemPrompt: systemPromptOpt,
         env: queryEnv,
         allowedTools,
+        disallowedTools,
         mcpServers,
         strictMcpConfig: assistantPolicy || !!extensionPolicy,
         isolated: assistantPolicy,

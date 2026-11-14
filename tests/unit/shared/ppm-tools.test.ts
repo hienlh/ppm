@@ -4,6 +4,8 @@ import {
   anyPpmToolOn, isPpmTool, patchPpmToolSwitches, PPM_TOOLS, ppmToolOn, SESSION_TOOLS, TAB_TOOLS, TERMINAL_TOOLS, type PpmTool,
 } from "../../../src/shared/ppm-tools.ts";
 import { SESSION_HISTORY_TOOLS } from "../../../src/shared/session-history-tools.ts";
+import { SESSION_COLLAB_TOOLS } from "../../../src/shared/session-collab.ts";
+import { SESSION_SCHEDULE_TOOLS } from "../../../src/shared/session-schedule-tools.ts";
 
 const onOf = (ai: Parameters<typeof ppmToolOn>[0]) => PPM_TOOLS.filter((tool) => ppmToolOn(ai, tool));
 const ALL_TAB_TOOLS_OFF = Object.fromEntries(TAB_TOOLS.map((tool) => [tool, false]));
@@ -30,7 +32,19 @@ describe("PPM tool switches", () => {
     expect(onOf({ ppm_tools: { search_sessions: true } })).toContain("create_session");
     expect(onOf({ ppm_tools: { search_sessions: false } }).filter((t) => SESSION_TOOLS_AND_HISTORY.includes(t))).toEqual([]);
     expect(onOf({ ppm_tools: { search_sessions: false, session_status: true } })).toEqual(
-      ["open_url", ...TERMINAL_TOOLS, "list_session_turns", "read_session_turns", ...DB_TOOLS, ...SESSION_TOOLS]);
+      ["open_url", ...TERMINAL_TOOLS, "list_session_turns", "read_session_turns", ...DB_TOOLS, ...SESSION_COLLAB_TOOLS]);
+  });
+
+  it("keeps the schedule tools off until their own question is answered, whatever the session tools' answer", () => {
+    const sessionToolsOn = Object.fromEntries([...SESSION_HISTORY_TOOLS, ...SESSION_COLLAB_TOOLS].map((tool) => [tool, true]));
+    expect(onOf({ ppm_tools: sessionToolsOn }).filter((t) => SESSION_SCHEDULE_TOOLS.includes(t as never))).toEqual([]);
+    // "Turn on" for the schedule feature writes all three; one set later turns the unset siblings with it.
+    expect(onOf({ ppm_tools: { session_schedule_list: true } }).filter((t) => SESSION_SCHEDULE_TOOLS.includes(t as never)))
+      .toEqual([...SESSION_SCHEDULE_TOOLS]);
+    expect(patchPpmToolSwitches(undefined, { session_schedule_create: true }))
+      .toEqual({ session_schedule_create: true, session_schedule_list: false, session_schedule_delete: false });
+    // A schedule tool alone is reason enough to attach the session tools' server.
+    expect(anyPpmToolOn({ ppm_tools: { session_schedule_create: true } }, SESSION_TOOLS)).toBe(true);
   });
 
   it("saves one introduced switch without flipping its siblings", () => {

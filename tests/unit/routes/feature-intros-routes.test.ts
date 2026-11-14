@@ -10,6 +10,9 @@ import {
 } from "../../../src/shared/feature-intros.ts";
 
 const INTRO = FEATURE_INTROS[0]!;
+/** The features introduced after this one, already answered, so only this one is asked here. */
+const otherIntrosAnswered = (): FeatureIntroStates =>
+  Object.fromEntries(FEATURE_INTROS.slice(1).map((i) => [i.id, { answer: "off" as const, skips: 0, via: "tour" as const }]));
 let events: unknown[] = [];
 const app = () => new Hono().route("/api/feature-intros", createFeatureIntroRoutes((e) => events.push(e))).route("/api/settings", settingsRoutes);
 const post = (path: string, body?: unknown) => app().request(path, {
@@ -21,12 +24,12 @@ const record = () => (configService.get("feature_intros") as FeatureIntroStates 
 function aDayLater(): void {
   const current = record()!;
   const lastSkipAt = new Date(Date.parse(current.lastSkipAt!) - FEATURE_INTRO_SKIP_WINDOW_MS - 1000).toISOString();
-  configService.set("feature_intros", { [INTRO.id]: { ...current, lastSkipAt } });
+  configService.set("feature_intros", { ...configService.get("feature_intros"), [INTRO.id]: { ...current, lastSkipAt } });
 }
 
 beforeEach(() => {
   events = [];
-  configService.set("feature_intros", {});
+  configService.set("feature_intros", otherIntrosAnswered());
   const { ppm_tools: _drop, ...rest } = configService.get("ai");
   configService.set("ai", rest);
   getDb().run("DELETE FROM session_metadata");
