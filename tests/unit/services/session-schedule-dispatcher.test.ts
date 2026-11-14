@@ -368,6 +368,26 @@ describe("a chat PPM cannot reach", () => {
     expect(notices.map((n) => n.kind)).toEqual(["paused"]);
   });
 
+  it("tells the user once for the chat, naming every schedule it paused", async () => {
+    const a = pending({ name: "morning" });
+    const b = pending({ name: "evening" });
+    live = busyLive();
+    await dispatcher.due(a);
+    await dispatcher.due(b);
+    target = { ok: false, reason: "The chat this schedule runs in no longer exists." };
+    live = null;
+    await dispatcher.pump(CHAT);
+
+    expect(getSchedule(a)!.paused_reason).not.toBeNull();
+    expect(getSchedule(b)!.paused_reason).not.toBeNull();
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.title).toBe("2 schedules paused");
+    expect(notices[0]!.body).toBe(
+      "The chat this schedule runs in no longer exists. Paused: \"morning\", \"evening\". Turn them back on once the chat can take them again.",
+    );
+    expect(notices[0]!.schedules.map((s) => s.id).sort()).toEqual([a, b].sort());
+  });
+
   it("pauses at once when the chat turns out to be gone after a send failed", async () => {
     reply = () => {
       target = { ok: false, reason: "The chat's conversation is no longer on this machine." };

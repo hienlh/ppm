@@ -274,9 +274,12 @@ export class SessionScheduleDispatcher {
     for (const schedule of paused) {
       pauseSessionSchedule(schedule, reason);
       this.backoff.succeeded(schedule.id);
-      this.env.notify(pausedNotice([schedule], { sessionId, projectName: "" }, reason));
     }
-    if (paused.length > 0) broadcastSchedulesChanged();
+    if (paused.length === 0) return;
+    // One notice for the chat, naming each schedule: a chat deleted while PPM was off can hold
+    // many pending fires, and they all pause for the one reason.
+    this.env.notify(pausedNotice(paused, { sessionId, projectName: "" }, reason));
+    broadcastSchedulesChanged();
   }
 
   /** Once per pending period: the schedule waits behind a card the user has to answer first. */
