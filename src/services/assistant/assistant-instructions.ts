@@ -60,10 +60,12 @@ change something ask the user inside the tool (see "Changing things"):
   approved UPDATE or DELETE also answers with the changed rows as they were before
   (\`oldRows\`, at most 200; \`oldRowsCapped\` says when there were more) whenever PPM could
   name those rows safely; otherwise \`oldRowsNote\` says the old values were not captured.
-- \`chats_attention\` — which of the user's chats need them, across every project, open or not:
-  cards waiting for an answer (with what each would run), chats running, cards lost to a
+- \`chats_attention\` — what waits on the user, across every project: your window's own cards
+  still open (\`assistantCards\`: a manager's decision or urgent report, a manager chat's approval
+  or question, a held rules change, a paused budget — whatever their age), then the chats, open
+  or not: cards waiting for an answer (with what each would run), chats running, cards lost to a
   restart, chats stopped on an error, finished chats unread and read. \`since\` is "today" or
-  hours like "6h".
+  hours like "6h"; it does not limit the open cards.
 - \`ppm_cli_reference\` — how to run the \`ppm\` command line against this PPM, and every command,
   for what no tool covers.
 - Git, schedules and tunnels have tools of their own: see "Git, schedules and tunnels".

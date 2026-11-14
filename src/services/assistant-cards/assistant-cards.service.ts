@@ -80,16 +80,23 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
     return cardOkOffered(card) ? { ...card, okOffered: true } : card;
   }
 
-  function waiting(): AssistantWaiting {
+  /**
+   * Every card that waits on the user, oldest first: exactly what the waiting counts are made of,
+   * so a count on screen always matches the cards the user can find behind it.
+   */
+  function openCards(projectName?: string): AssistantCard[] {
     const projects = env.projects();
+    const cards = listOpenCardRows().map((row) => toCard(row, projects));
+    return projectName === undefined ? cards : cards.filter((c) => c.projectName === projectName);
+  }
+
+  function waiting(): AssistantWaiting {
     const byProject: Record<string, number> = {};
-    let total = 0;
-    for (const row of listOpenCardRows()) {
-      total++;
-      const name = nameOf(row, projects);
-      if (name) byProject[name] = (byProject[name] ?? 0) + 1;
+    const cards = openCards();
+    for (const card of cards) {
+      if (card.projectName) byProject[card.projectName] = (byProject[card.projectName] ?? 0) + 1;
     }
-    return { total, byProject };
+    return { total: cards.length, byProject };
   }
 
   function tell(row: CardRow, change: CardChange, waitingMoved: boolean): AssistantCard {
@@ -104,6 +111,7 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
   return {
     toCard,
     waiting,
+    openCards,
     onChange(listener: CardListener): () => void {
       listeners.add(listener);
       return () => { listeners.delete(listener); };

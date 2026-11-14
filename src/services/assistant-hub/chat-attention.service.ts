@@ -7,12 +7,16 @@ import { cleanSummaryText } from "../assistant/assistant-ui-summary.ts";
 import { watchedChatTitle } from "../assistant-watch/watched-chat-title.ts";
 import { isAssistantProject } from "../../shared/assistant-project.ts";
 import type { NormalizedQuestion } from "../../shared/approval-questions.ts";
+import type { AssistantCard, AssistantCardKind } from "../../shared/assistant-cards.ts";
+import { assistantCards as cardStore } from "../assistant-cards/assistant-cards.service.ts";
 
 /**
  * "Which chats need me?" across every project, whether or not a chat is open anywhere: the
- * cards waiting for an answer, what is running, what finished or stopped on an error, and the
- * cards a restart took away. Built only from what PPM records — the live chats in this process,
- * the unread marks, the session trace — never guessed from a transcript.
+ * PPM Assistant's own cards still waiting on the user (a manager's decision, an urgent report, a
+ * held rules change…), the chat cards waiting for an answer, what is running, what finished or
+ * stopped on an error, and the cards a restart took away. Built only from what PPM records — the
+ * Assistant's card store, the live chats in this process, the unread marks, the session trace —
+ * never guessed from a transcript.
  *
  * A chat lands in one group only, the most urgent that fits. Titles are names users and other
  * AIs gave, so they are cleaned like any other screen text; a waiting card's deciding part is
@@ -23,10 +27,12 @@ export const ATTENTION_GROUP_MAX = 20;
 /** How much of a card's deciding text an overview shows; the whole of it is on the card. */
 export const ATTENTION_DECIDING_CHARS = 500;
 const TITLE_CHARS = 120;
+/** How much of an Assistant card's body an overview shows; the whole of it is on the card. */
+export const ATTENTION_CARD_BODY_CHARS = 300;
 const MAX_HOURS = 168;
 
-export type AttentionGroup = "needsDecision" | "running" | "lostCards" | "stopped" | "finishedUnread" | "finishedRead";
-const GROUPS: readonly AttentionGroup[] = ["needsDecision", "running", "lostCards", "stopped", "finishedUnread", "finishedRead"];
+export type AttentionGroup = "assistantCards" | "needsDecision" | "running" | "lostCards" | "stopped" | "finishedUnread" | "finishedRead";
+const GROUPS: readonly AttentionGroup[] = ["assistantCards", "needsDecision", "running", "lostCards", "stopped", "finishedUnread", "finishedRead"];
 
 export interface AttentionChat {
   sessionId: string;
@@ -44,8 +50,33 @@ export interface AttentionCard {
   questions?: NormalizedQuestion[];
 }
 
+/**
+ * One of the PPM Assistant's cards that still waits on the user, as the Assistant window shows
+ * it. It waits there (and on Telegram, when connected) until the user answers it.
+ */
+export interface AttentionAssistantCard {
+  cardId: string;
+  kind: AssistantCardKind;
+  project: string | null;
+  title: string;
+  /** The card's text, shortened for an overview. */
+  body?: string;
+  bodyShortened?: boolean;
+  /** The manager chat the card came from, when it came from one. */
+  managerSessionId: string | null;
+  createdAt: string;
+  /** The card offers the user a one-tap OK (the whole decision fits on it). */
+  okOffered: boolean;
+  /** The card carries a draft message the manager wants to send. */
+  hasDraft: boolean;
+  /** An approval or question card mirrors this request of its manager chat (listed in needsDecision too). */
+  requestId?: string;
+}
+
 export interface ChatsAttention {
   since: string;
+  /** The Assistant's open cards, oldest first; not limited by `since`, since a card waits until answered. */
+  assistantCards: AttentionAssistantCard[];
   needsDecision: Array<AttentionChat & { card: AttentionCard; queuedCards: number }>;
   running: Array<AttentionChat & { phase: string }>;
   lostCards: Array<AttentionChat & { kind: "approval" | "question" }>;
@@ -65,6 +96,8 @@ export interface AttentionSources {
   /** Project, provider and title as PPM records them, for chats only the trace named. */
   meta(sessionIds: string[]): Map<string, { project: string | null; providerId: string | null; title: string | null }>;
   isAssistant(sessionId: string): boolean;
+  /** The Assistant's cards still waiting on the user; none when absent. */
+  openCards?(): AssistantCard[];
 }
 
 function recordedMeta(ids: string[]): Map<string, { project: string | null; providerId: string | null; title: string | null }> {
@@ -89,6 +122,7 @@ export const defaultAttentionSources: AttentionSources = {
   turnEnds: (since) => turnEndsSince(since),
   meta: recordedMeta,
   isAssistant: (id) => isAssistantSession(id),
+  openCards: () => cardStore.openCards(),
 };
 
 /**
@@ -127,6 +161,24 @@ function attentionCard(card: LiveApprovalCard): AttentionCard {
   };
 }
 
+function attentionAssistantCard(card: AssistantCard): AttentionAssistantCard {
+  const whole = cleanSummaryText(card.body, Number.MAX_SAFE_INTEGER) ?? "";
+  const shortened = whole.length > ATTENTION_CARD_BODY_CHARS;
+  return {
+    cardId: card.id,
+    kind: card.kind,
+    project: card.projectName,
+    title: cleanSummaryText(card.title, TITLE_CHARS) || card.kind,
+    ...(whole ? { body: cleanSummaryText(whole, ATTENTION_CARD_BODY_CHARS)! } : {}),
+    ...(shortened ? { bodyShortened: true } : {}),
+    managerSessionId: card.sessionId,
+    createdAt: new Date(card.createdAt).toISOString(),
+    okOffered: card.okOffered === true,
+    hasDraft: !!card.payload.draft,
+    ...(card.payload.requestId ? { requestId: card.payload.requestId } : {}),
+  };
+}
+
 export function chatsAttention(
   opts: { project?: string; since: number },
   sources: AttentionSources = defaultAttentionSources,
@@ -134,8 +186,17 @@ export function chatsAttention(
   const seen = new Set<string>();
   const notes: string[] = [];
   const groups: { [G in AttentionGroup]: ChatsAttention[G] } = {
-    needsDecision: [], running: [], lostCards: [], stopped: [], finishedUnread: [], finishedRead: [],
+    assistantCards: [], needsDecision: [], running: [], lostCards: [], stopped: [], finishedUnread: [], finishedRead: [],
   };
+
+  try {
+    for (const card of sources.openCards?.() ?? []) {
+      if (opts.project && card.projectName !== opts.project) continue;
+      groups.assistantCards.push(attentionAssistantCard(card));
+    }
+  } catch {
+    notes.push("The Assistant's cards could not be read: cards waiting in the Assistant window are missing.");
+  }
 
   // One chat, one group: the first (most urgent) to claim it keeps it. The Assistant's own chats
   // and other projects are never listed.

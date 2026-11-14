@@ -10,7 +10,7 @@ import type { LiveApprovalCard } from "../../../../src/services/chat-control/cha
 import { parseTelegramHtml } from "../../../helpers/fake-telegram-bot-api.ts";
 
 const empty = (): ChatsAttention => ({
-  since: "", needsDecision: [], running: [], lostCards: [], stopped: [], finishedUnread: [], finishedRead: [], more: {},
+  since: "", assistantCards: [], needsDecision: [], running: [], lostCards: [], stopped: [], finishedUnread: [], finishedRead: [], more: {},
 });
 const chat = (n: number, title: string | null = `Chat ${n}`) => ({ sessionId: `s-${n}`, project: "api", providerId: "claude", title });
 const card = (id: string): LiveApprovalCard => ({ requestId: id, tool: "Bash", input: { command: "rm -rf dist" }, isQuestion: false });
@@ -61,5 +61,25 @@ describe("/status", () => {
     const reply = await buildStatus({ attention: () => a, liveCard: () => null, ...localLinks });
     expect(reply.html).toContain("waiting for your decision");
     expect(reply.cards).toEqual([]);
+  });
+
+  it("lists the Assistant's open cards first, and never says nothing waits while one is open", async () => {
+    const a = empty();
+    a.assistantCards = [{
+      cardId: "c1", kind: "needs_decision", project: "ppm", title: "Ship <0.25.6>?", managerSessionId: "m1",
+      createdAt: new Date(0).toISOString(), okOffered: true, hasDraft: false,
+    }];
+    a.more = { assistantCards: 2 };
+    const reply = await buildStatus({ attention: () => a, ...localLinks });
+    expect(reply.html).not.toContain("Nothing needs you");
+    expect(reply.html).toContain("📌 <b>Ship &lt;0.25.6&gt;?</b> · ppm — needs your decision");
+    expect(reply.html).toContain("2 more cards in the PPM Assistant");
+    // Held-back cards are not counted as chats.
+    expect(reply.html).not.toContain("more in PPM.");
+    parseTelegramHtml(reply.html);
+
+    a.running = [{ ...chat(1), phase: "streaming" }];
+    const both = await buildStatus({ attention: () => a, ...localLinks });
+    expect(both.html.indexOf("📌")).toBeLessThan(both.html.indexOf("Your chats today"));
   });
 });
