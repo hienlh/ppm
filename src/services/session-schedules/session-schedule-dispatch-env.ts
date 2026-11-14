@@ -9,6 +9,7 @@ import { createLogger } from "../logger.ts";
 import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
 import { resolveSessionDir } from "../subagent-transcript-merger.ts";
 import type { ScheduleNotice, SessionScheduleDispatchEnv } from "./session-schedule-dispatch-types.ts";
+import { RETRY_BACKOFF_MS } from "./session-schedule-retry-backoff.ts";
 import { liveScheduleTargetDeps, resolveScheduleTarget, type ScheduleTargetResolution } from "./session-schedule-target.ts";
 
 const log = createLogger("scheduler");
@@ -36,10 +37,10 @@ function notifyScheduleNotice(n: ScheduleNotice): void {
       sessionId: n.sessionId,
       ...(n.providerId ? { providerId: n.providerId } : {}),
     }, {
-      ownKey: `session-schedule-${n.kind}:${n.schedule.id}`,
+      ownKey: `session-schedule-${n.key}`,
       ...(n.stillRelevant ? { stillUnseen: n.stillRelevant } : {}),
     });
-  }).catch((e) => log.warn(`could not notify about schedule ${n.schedule.id}: ${(e as Error).message}`));
+  }).catch((e) => log.warn(`could not notify about schedule(s) ${n.schedules.map((s) => s.id).join(",")}: ${(e as Error).message}`));
 }
 
 /**
@@ -72,5 +73,6 @@ export function liveDispatchEnv(): SessionScheduleDispatchEnv {
     retryDelayMs: RETRY_DELAY_MS,
     flightCheckMs: FLIGHT_CHECK_MS,
     queuedCheckMs: QUEUED_CHECK_MS,
+    retryBackoffMs: RETRY_BACKOFF_MS,
   };
 }

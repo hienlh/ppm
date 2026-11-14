@@ -59,6 +59,7 @@ function env(over: Partial<SessionScheduleDispatchEnv> = {}): SessionScheduleDis
     retryDelayMs: 60_000,
     flightCheckMs: 60_000,
     queuedCheckMs: 60_000,
+    retryBackoffMs: [60_000, 300_000, 900_000],
     ...over,
   };
 }
@@ -269,14 +270,60 @@ describe("a chat PPM cannot reach", () => {
     expect(notices.map((n) => n.kind)).toEqual(["paused"]);
   });
 
-  it("pauses when the chat cannot be resumed, without trying again", async () => {
-    reply = () => ({ ok: false, error: "Could not resume the session: thread not found" });
+  it("pauses at once when the chat turns out to be gone after a send failed", async () => {
+    reply = () => {
+      target = { ok: false, reason: "The chat's conversation is no longer on this machine." };
+      return { ok: false, error: "Could not resume the session: thread not found" };
+    };
     const id = pending();
     await dispatcher.due(id);
+    expect(getSchedule(id)!.paused_reason).toBe("The chat's conversation is no longer on this machine.");
+    expect(notices.map((n) => n.kind)).toEqual(["paused"]);
+  });
+});
+
+describe("a send that fails for a reason that may pass", () => {
+  it("keeps the fire pending and tries again after each wait, then pauses with one notice", async () => {
+    dispatcher.stop();
+    dispatcher = new SessionScheduleDispatcher(env({ retryBackoffMs: [15, 15, 15] }));
+    dispatcher.start();
+    reply = () => ({ ok: false, error: "Could not resume the session: the CLI exited" });
+    const id = pending();
     await dispatcher.due(id);
     expect(sent).toHaveLength(1);
-    expect(getSchedule(id)!.paused_reason).toContain("Could not resume the session");
+    const waiting = getSchedule(id)!;
+    expect(waiting.pending_since).not.toBeNull();
+    expect(waiting.paused_reason).toBeNull();
+    // A fire coming due meanwhile waits for the backoff rather than going at once.
+    await dispatcher.due(id);
+    expect(sent).toHaveLength(1);
+    expect(notices).toHaveLength(0);
+
+    await Bun.sleep(80);
+    expect(sent).toHaveLength(4);
+    const paused = getSchedule(id)!;
+    expect(paused.paused_reason).toBe(
+      "PPM could not send it into its chat: Could not resume the session: the CLI exited. It failed 4 times in a row.",
+    );
     expect(notices.map((n) => n.kind)).toEqual(["paused"]);
+  });
+
+  it("counts from one again after a send goes through", async () => {
+    dispatcher.stop();
+    dispatcher = new SessionScheduleDispatcher(env({ retryBackoffMs: [15, 15, 15] }));
+    dispatcher.start();
+    let calls = 0;
+    reply = (s) => (++calls % 3 === 0 ? { ok: true, sessionId: s.sessionId, delivered: "started" } : { ok: false, error: "Could not deliver the message: EPIPE" });
+    const id = pending();
+    await dispatcher.due(id);
+    await Bun.sleep(50);
+    expect(sent).toHaveLength(3);
+    turnEnded();
+    setSessionSchedulePending(id, new Date().toISOString(), null);
+    await dispatcher.due(id);
+    await Bun.sleep(50);
+    expect(sent).toHaveLength(6);
+    expect(getSchedule(id)!.paused_reason).toBeNull();
   });
 });
 

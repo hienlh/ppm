@@ -8,13 +8,20 @@ import type { ChatLifecycle, ChatLifecycleEvents } from "../chat-control/chat-li
 import type { Schedule } from "../../types/scheduler.ts";
 import type { ScheduleTargetResolution } from "./session-schedule-target.ts";
 
-/** Something the user should hear about a schedule, through the ordinary notification service. */
-export interface ScheduleNotice {
-  kind: "waiting" | "paused";
-  schedule: Schedule;
+/** The chat a notice is about, as a notification links back to it. */
+export interface NoticeChat {
   sessionId: string;
   projectName: string;
   providerId?: string;
+}
+
+/** Something the user should hear about schedules, through the ordinary notification service. */
+export interface ScheduleNotice extends NoticeChat {
+  kind: "waiting" | "paused";
+  /** The notification slot it takes: a later notice with the same key replaces it. */
+  key: string;
+  /** The schedules it is about; a chat that cannot be reached pauses all of its at once. */
+  schedules: Schedule[];
   title: string;
   body: string;
   /** Asked when a delayed notification is due; false drops it (the card was answered meanwhile). */
@@ -43,11 +50,15 @@ export interface SessionScheduleDispatchEnv {
   flightCheckMs: number;
   /** After the turn a message was queued behind ended: how long its own turn has to open. */
   queuedCheckMs: number;
+  /** Waits before trying again after the 1st, 2nd… failure in a row; past the last, it pauses. */
+  retryBackoffMs: readonly number[];
 }
 
 /** A schedule's turn on its way into a chat, or running there. */
 export interface Flight {
   schedule: Schedule;
+  /** The chat it goes to, for the notices its outcome may need. */
+  chat: NoticeChat;
   clientMessageId: string;
   /** `sending`: handed to the chat; `queued`: behind a turn that started meanwhile; `started`: its own turn runs. */
   phase: "sending" | "queued" | "started";
@@ -76,27 +87,4 @@ export const isTransientDeliveryError = (error: string): boolean =>
 export function deliverable(schedule: Schedule | null): schedule is Schedule {
   return !!schedule && schedule.kind === "session" && !!schedule.enabled && !schedule.paused_reason
     && !!schedule.pending_since && !!schedule.target_session_id;
-}
-
-/** The user's notice that a schedule waits behind a card already on the chat's screen. */
-export function heldUpNotice(
-  schedule: Schedule, sessionId: string, projectName: string, providerId: string, chatTitle: string,
-  stillRelevant: () => boolean,
-): ScheduleNotice {
-  return {
-    kind: "waiting", schedule, sessionId, projectName, providerId, stillRelevant,
-    title: "Schedule is waiting",
-    body: `Schedule ${schedule.name} is waiting: an approval is pending in ${chatTitle}`,
-  };
-}
-
-/** The user's notice that a schedule stopped firing until it is turned back on. */
-export function pausedNotice(
-  schedule: Schedule, sessionId: string, projectName: string, providerId: string | undefined, reason: string,
-): ScheduleNotice {
-  return {
-    kind: "paused", schedule, sessionId, projectName, ...(providerId ? { providerId } : {}),
-    title: `Schedule paused: ${schedule.name}`,
-    body: `${reason} Turn it back on once the chat can take it again.`,
-  };
 }
