@@ -11,7 +11,7 @@
 import { ExternalLink, Copy, Link2Off } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { copyToClipboard } from "@/lib/clipboard";
-import { loopbackRedirectPort } from "@/lib/oauth-loopback-url";
+import { loopbackRedirectPort, loopbackRedirectPorts } from "@/lib/oauth-loopback-url";
 import { TerminalFinishLogin } from "./terminal-finish-login";
 import { toast } from "sonner";
 
@@ -30,7 +30,7 @@ export function TerminalLinksSheet({ open, onClose, urls }: TerminalLinksSheetPr
 
   // Ports any listed login will redirect back to. Their presence is what makes
   // the finish-login step relevant, so it stays hidden the rest of the time.
-  const loopbackPorts = [...new Set(urls.map(loopbackRedirectPort).filter((p): p is string => !!p))];
+  const loopbackPorts = loopbackRedirectPorts(urls);
 
   return (
     // Above the mobile dock sheet (z-60) this is opened from, or it renders

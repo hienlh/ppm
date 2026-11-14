@@ -47,7 +47,8 @@ interface UseTerminalReturn {
   /** The prompt line the last command was typed on, empty until one is entered. */
   getLastCommand: () => string;
   /** URLs present in the scrollback, most recent first. */
-  getBufferUrls: () => string[];
+  /** URLs in the last `maxRows` rows of scrollback (default: the whole scan window), newest first. */
+  getBufferUrls: (maxRows?: number) => string[];
   restart: () => void;
   /** Whether the server says an AI typed into this shell, which carries the AI-chat mark; null until it has said. */
   aiMark: boolean | null;
@@ -160,12 +161,12 @@ export function useTerminal(
    * Wrapped lines are joined first — a URL long enough to matter is usually the
    * one that got split across rows.
    */
-  const getBufferUrls = useCallback(() => {
+  const getBufferUrls = useCallback((maxRows: number = URL_SCAN_MAX_ROWS) => {
     const term = termRef.current;
     if (!term) return [];
     const buf = term.buffer.active;
     const endRow = buf.baseY + buf.cursorY;
-    const startRow = Math.max(0, endRow - URL_SCAN_MAX_ROWS);
+    const startRow = Math.max(0, endRow - Math.min(maxRows, URL_SCAN_MAX_ROWS));
 
     const logical: string[] = [];
     let current = "";

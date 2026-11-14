@@ -2,19 +2,17 @@
  * Recognises OAuth authorization URLs that hand their result back to a port on
  * the machine running the CLI, rather than to whatever device opened them.
  *
- * This is what strands a login started from a phone: the sign-in succeeds, the
- * browser is redirected to 127.0.0.1:<port>, and on the phone that address is
- * the phone itself — so the CLI waiting on the real machine never hears back.
+ * This is what strands a login started from another device: the sign-in
+ * succeeds, the browser is redirected to 127.0.0.1:<port>, and on that device
+ * the address is the device itself — so the CLI waiting on the real machine
+ * never hears back.
+ *
+ * What may be pasted back and delivered is decided in
+ * `src/shared/loopback-callback-url.ts`, which the server runs too.
  */
+import { isLoopbackHostname, normalizeLoopbackCallback } from "../../shared/loopback-callback-url";
 
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "::1"]);
-
-/** Whether a hostname addresses the machine the browser is running on. */
-export function isLoopbackHostname(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (LOOPBACK_HOSTNAMES.has(host)) return true;
-  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
-}
+export { isLoopbackHostname, normalizeLoopbackCallback };
 
 /**
  * The loopback port an authorization URL will redirect back to, or null when it
@@ -41,15 +39,12 @@ export function loopbackRedirectPort(url: string): string | null {
   }
 }
 
+/** The distinct loopback ports the logins among these URLs will redirect back to. */
+export function loopbackRedirectPorts(urls: readonly string[]): string[] {
+  return [...new Set(urls.map(loopbackRedirectPort).filter((p): p is string => !!p))];
+}
+
 /** Whether a pasted string is a callback this machine could deliver. */
 export function isDeliverableCallback(url: string): boolean {
-  try {
-    const parsed = new URL(url.trim());
-    return (
-      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
-      isLoopbackHostname(parsed.hostname)
-    );
-  } catch {
-    return false;
-  }
+  return normalizeLoopbackCallback(url).ok;
 }
