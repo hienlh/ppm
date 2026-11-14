@@ -95,10 +95,17 @@ button row sticks to its bottom (`CardStickyActionsContext`), so OK and Reply st
 stream nothing sticks. A card lays its buttons out by its own width (`@container/card`): one row
 from 27rem, else the answers on one row and Open chat / Dismiss on another, above them on a phone.
 Text of a card that no longer waits folds past eight lines behind "Show more" (`CardText`); a
-waiting card and a draft are always shown whole, since OK approves exactly them. A new
-card opens the bar on itself; a chip's red count (`focusWaitingCards`) opens it on that
-project's first card, moving a filter that would hide it to that project; the card it lands on is outlined
-for 1.8 s. It follows the project filter, and "N more waiting in other projects · Show all"
+waiting card and a draft are always shown whole, since OK approves exactly them. On a phone
+(below `md`) half a screen of card over half a screen of chat read as broken, so there the bar is
+only the 44 px row, and opening it shows the card in a full-height sheet (`BottomSheet`,
+`h-[var(--sheet-vh)]`) with the pager and a 44 px close button, the card scrolling inside with its
+buttons stuck to the sheet's bottom; a new card only renames the row there, and replying in the
+Assistant's composer moves the sheet aside. In the stream, on every screen, a card the bar holds
+is only named (`cards/waiting-card-pointer.tsx`: kind, project, time, title and "Waiting on you,
+in the bar above · Show"), so its buttons never appear twice; once answered it is drawn whole
+again. A new card opens the bar on itself (on a desktop); a chip's red count
+(`focusWaitingCards`) opens it on that project's first card, and "Show" on exactly that card,
+moving a filter that would hide it to that project; the card it lands on is outlined for 1.8 s. It follows the project filter, and "N more waiting in other projects · Show all"
 names what the filter hides. The list is `GET /api/assistant/cards/open`
 (`stores/assistant-open-cards-store.ts`), built by `assistantCards.openCards()` — the same
 function `waiting()` counts — so every red count has exactly its cards behind it; the store
