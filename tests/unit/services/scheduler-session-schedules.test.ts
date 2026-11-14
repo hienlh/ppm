@@ -4,8 +4,8 @@
  * Prompt schedules keep their own rule: nothing missed is caught up.
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { openTestDb, setDb } from "../../../src/services/db.service.ts";
-import { SchedulerService } from "../../../src/services/scheduler-core.ts";
+import { getDb, openTestDb, setDb } from "../../../src/services/db.service.ts";
+import { RECORD_RETRY_MS, SchedulerService } from "../../../src/services/scheduler-core.ts";
 import { onServerScheduleChange } from "../../../src/services/session-schedules/session-schedules-changed.ts";
 import {
   clearSessionSchedulePaused,
@@ -76,6 +76,23 @@ describe("a session schedule coming due", () => {
     expect(runnerCalls).toBe(0);
     expect(listScheduleRuns(id)).toHaveLength(0);
     expect(scheduler.isRunning(id)).toBe(false);
+  });
+
+  it("waits before trying again when the fire could not be recorded, instead of waking every 20 ms", () => {
+    const id = sessionSchedule({ next_fire_at: ago(1_000) });
+    // Every write to the schedules table refused, as under a lock that is not let go.
+    getDb().exec("CREATE TRIGGER refuse_writes BEFORE UPDATE ON schedules BEGIN SELECT RAISE(ABORT, 'database is locked'); END");
+    expect(scheduler.nextWakeDelayMs()).toBeLessThan(1_000);
+    scheduler.tick();
+    expect(getSchedule(id)!.pending_since).toBeNull();
+    expect(heard).toEqual([]);
+    expect(scheduler.nextWakeDelayMs()).toBeGreaterThan(RECORD_RETRY_MS - 1_000);
+
+    getDb().exec("DROP TRIGGER refuse_writes");
+    expect(scheduler.nextWakeDelayMs(Date.now() + RECORD_RETRY_MS)).toBeLessThan(1_000);
+    scheduler.tick();
+    expect(getSchedule(id)!.pending_since).not.toBeNull();
+    expect(heard).toEqual([id]);
   });
 
   it("tells open PPMs a fire is waiting", () => {

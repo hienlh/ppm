@@ -27,6 +27,9 @@ export type { AlwaysOnScripts, SchedulerRunner };
 
 const log = createLogger("scheduler");
 
+/** How long the timer waits before trying again to record a session schedule's fire after a failed write. */
+export const RECORD_RETRY_MS = 30_000;
+
 /** A script tick asked to run while its previous one still is: two at once never run. */
 export class ScheduleBusyError extends Error {}
 
@@ -45,6 +48,11 @@ export class SchedulerService {
   // Refcount, not a Set: run-now can overlap a tick-run for the same id, and the
   // first finisher must not drop the guard while the second is still executing.
   private active = new Map<number, number>();
+  /**
+   * Until when the timer sleeps at least {@link RECORD_RETRY_MS}: a session schedule whose fire
+   * could not be recorded is still due, and without this the timer would wake for it every 20 ms.
+   */
+  private recordFailedUntil = 0;
 
   constructor(
     private runner: SchedulerRunner,
@@ -91,15 +99,22 @@ export class SchedulerService {
     void this.ready.then(() => this.alwaysOn.sync());
   }
 
-  /** Sleep until the earliest due schedule, a minute at most, then tick and arm again. */
-  private arm(): void {
-    if (this.timer) clearTimeout(this.timer);
+  /** How long the timer sleeps from now: until the earliest due schedule, a minute at most. */
+  nextWakeDelayMs(now = Date.now()): number {
     let delay = MAX_SLEEP_MS;
     try {
-      delay = wakeDelay(getEarliestFireAt());
+      delay = wakeDelay(getEarliestFireAt(), now);
     } catch (e) {
       log.warn(`could not read when the next schedule is due: ${(e as Error).message}`);
     }
+    const backoff = this.recordFailedUntil - now;
+    return backoff > 0 ? Math.max(delay, backoff) : delay;
+  }
+
+  /** Sleep until the earliest due schedule, a minute at most, then tick and arm again. */
+  private arm(): void {
+    if (this.timer) clearTimeout(this.timer);
+    const delay = this.nextWakeDelayMs();
     this.timer = setTimeout(() => {
       this.timer = null;
       this.tick();
@@ -127,7 +142,10 @@ export class SchedulerService {
     }
     for (const schedule of due) {
       // Delivered into its chat once that chat is idle, never run here.
-      if (schedule.kind === "session") { markSessionScheduleDue(schedule); continue; }
+      if (schedule.kind === "session") {
+        if (!markSessionScheduleDue(schedule)) this.recordFailedUntil = Date.now() + RECORD_RETRY_MS;
+        continue;
+      }
       this.advance(schedule);
       if (schedule.mode !== "tick") continue;
       if (this.isRunning(schedule.id)) {

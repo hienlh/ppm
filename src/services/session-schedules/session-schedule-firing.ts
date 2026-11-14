@@ -26,18 +26,23 @@ function safeFollowingFire(schedule: Schedule, from: Date): string | null {
   }
 }
 
-/** A due fire from the timer: pending at its scheduled time, next fire from now, deliverer told. */
-export function markSessionScheduleDue(schedule: Schedule, now = new Date()): void {
+/**
+ * A due fire from the timer: pending at its scheduled time, next fire from now, deliverer told.
+ * False when the fire could not be recorded: the schedule is then still due, and the caller has
+ * to wait before trying again rather than wake for it at once.
+ */
+export function markSessionScheduleDue(schedule: Schedule, now = new Date()): boolean {
   const since = schedule.next_fire_at ?? now.toISOString();
   try {
     setSessionSchedulePending(schedule.id, since, safeFollowingFire(schedule, now));
   } catch (e) {
     log.warn(`failed to record the fire of schedule ${schedule.id}: ${(e as Error).message}`);
-    return;
+    return false;
   }
   log.info(`Schedule ${schedule.id} (${schedule.name}) came due for session ${schedule.target_session_id}`);
   broadcastSchedulesChanged();
   notifySessionScheduleDue(schedule.id);
+  return true;
 }
 
 /** A fire asked for by hand: pending now, the cron's own next fire left as it is. */
