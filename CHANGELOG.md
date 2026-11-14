@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.25.4] - 2026-11-14
+
+### Changed
+
+- **A Telegram card with several questions asks them one at a time in one message**: "Question 2/3" with that question's own buttons, Back and Next, and a summary with Send; nothing is answered until Send.
+
+### Fixed
+
+- **The Codex model list uses the account a chat would use**, and keeps the last list instead of starting Codex when no account can serve.
+- **A signed-out Codex account is retried less and less often** (5 minutes up to hourly), and its errors name the account and are logged once an hour instead of every 5 minutes.
+
 ## [0.25.3] - 2026-11-14
 
 ### Fixed
