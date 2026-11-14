@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { clientFor, connectChat, disconnectChat, freshChat, queueFor, texts, useFakeTelegram } from "./bridge-test-kit.ts";
 import {
-  ANSWER_IN_PPM, AssistantTelegramDbNotices, DB_NOTICE_SQL_MAX, LOGIN_IN_PPM, type DescribedChat,
+  ANSWER_IN_PPM, AssistantTelegramDbNotices, DB_NOTICE_SQL_MAX, LOGIN_IN_PPM, PASSWORD_WITHHELD, type DescribedChat,
 } from "../../../../src/services/assistant-telegram/assistant-telegram-db-notices.ts";
 import { createDbAttentionEvents, type DbAttentionEvents } from "../../../../src/services/db-ai-tools/db-attention-events.ts";
 import { getDb } from "../../../../src/services/db.service.ts";
@@ -113,7 +113,7 @@ describe("a db_execute approval on Telegram", () => {
     expect(text.length).toBeLessThan(DB_NOTICE_SQL_MAX + 800);
   });
 
-  it("hides passwords written as SQL literals, in the script and in the reason", async () => {
+  it("withholds a script and a reason that set or use a password", async () => {
     const chat = connectChat(freshChat());
     const t = setup();
     const sql = [
@@ -134,10 +134,25 @@ describe("a db_execute approval on Telegram", () => {
     for (const pw of ["Hunter2-secret", "S3cr3t!", "mysqlPw123", "plugPw", "fdwpw", "setPw", "oldFnPw", "it''s-quoted", "s-quoted", "slash"]) {
       expect(text).not.toContain(pw);
     }
-    // What the statement does stays readable.
-    expect(text).toContain("CREATE ROLE reporter LOGIN PASSWORD '[REDACTED]'");
-    expect(text).toContain("CREATE USER 'ro'@'%' IDENTIFIED BY '[REDACTED]'");
-    expect(text).toContain("OPTIONS (user 'u', password '[REDACTED]')");
+    // No pattern is trusted with every way SQL spells a password: neither the script nor the reason is shown.
+    expect(text).not.toContain("CREATE ROLE");
+    expect(text).not.toContain("Give reporter");
+    expect(text.split(PASSWORD_WITHHELD)).toHaveLength(3);
+    expect(text).toContain("wants to run this on Prod <pg> (database billing):");
+    expect(text).toContain(ANSWER_IN_PPM);
+  });
+
+  it("withholds a script that sets a password in a form no pattern knows", async () => {
+    const chat = connectChat(freshChat());
+    const t = setup();
+    const sql = "ALTER ROLE a PASSWORD 'pa\\'; ALTER ROLE b PASSWORD E'secret16'; ALTER USER c IDENTIFIED BY 'n' REPLACE 'old9';";
+    t.events.emit("approval_shown", t.shown({ input: { ...INPUT, sql, reason: "rotate" } }));
+    await fake.waitFor(() => texts(fake, chat).length === 1);
+    await t.queue.whenIdle();
+    const text = texts(fake, chat)[0]!;
+    for (const pw of ["secret16", "old9", "pa\\"]) expect(text).not.toContain(pw);
+    expect(text).toContain(PASSWORD_WITHHELD);
+    expect(text).toContain("Why: rotate");
   });
 
   it("names and links the chat by the id it goes by now, after a rename", async () => {

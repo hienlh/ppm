@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import { createDbAttentionEvents, type DbAttentionEvents } from "../../../src/services/db-ai-tools/db-attention-events.ts";
-import { DB_LOGIN_NOTICE_WINDOW_MS, createDbLoginAttention } from "../../../src/services/db-ai-tools/db-login-attention.ts";
+import { DB_LOGIN_NOTICE_WINDOW_MS, createDbLoginAttention, loginNotificationOptions } from "../../../src/services/db-ai-tools/db-login-attention.ts";
 
 function setup(canonical?: (id: string) => string) {
   let now = 0;
@@ -63,5 +63,14 @@ describe("telling the user a connection needs a login", () => {
     const attention = createDbLoginAttention({ events, notify: () => { throw new Error("push down"); } });
     expect(attention.loginNeeded("s1", PG)).toBe(true);
     expect(told).toHaveLength(1);
+  });
+
+  it("keeps the notification apart from the session's own, and drops it once someone logged in", () => {
+    const held = new Set<number>();
+    const opts = loginNotificationOptions(4, "s1", (id) => held.has(id));
+    expect(opts.ownKey).toBe("db-login:4:s1");
+    expect(opts.stillUnseen()).toBe(true);
+    held.add(4);
+    expect(opts.stillUnseen()).toBe(false);
   });
 });

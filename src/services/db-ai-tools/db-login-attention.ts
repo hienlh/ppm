@@ -56,6 +56,16 @@ export function createDbLoginAttention(deps: DbLoginAttentionDeps = {}) {
   return { loginNeeded, size: () => told.size };
 }
 
+/** How the login notification waits: apart from the session's own, and only while nobody has logged in. */
+export function loginNotificationOptions(connectionId: number, sessionId: string, hasLogin: (id: number) => boolean = hasHeldLogin) {
+  return {
+    // Its own slot: the turn usually ends right after, and its "Chat completed" must not replace this.
+    ownKey: `db-login:${connectionId}:${sessionId}`,
+    // Someone logged in meanwhile: nothing left to tell.
+    stillUnseen: () => !hasLogin(connectionId),
+  };
+}
+
 /** The "Needs approval" notification for a connection waiting on a login, through the usual channels. */
 function notifyLoginNeeded(sessionId: string, conn: { id: number; name: string }): void {
   const project = getSessionProjectName(sessionId) ?? "";
@@ -67,12 +77,7 @@ function notifyLoginNeeded(sessionId: string, conn: { id: number; name: string }
       title: "Database login needed",
       body: `${project || "Project"} — AI needs ${conn.name}: log in in PPM's Database panel`,
       project, sessionId, ...(providerId ? { providerId } : {}), sessionTitle,
-    }, {
-      // Its own slot: the turn usually ends right after, and its "Chat completed" must not replace this.
-      ownKey: `db-login:${conn.id}:${sessionId}`,
-      // Someone logged in meanwhile: nothing left to tell.
-      stillUnseen: () => !hasHeldLogin(conn.id),
-    });
+    }, loginNotificationOptions(conn.id, sessionId));
   }).catch((e) => {
     log.warn(`login notification for ${sessionId} not sent: ${(e as Error).message}`);
   });

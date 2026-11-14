@@ -94,26 +94,17 @@ function where(input: Pick<DbExecuteApprovalInput, "connectionName" | "database"
 }
 
 /**
- * Passwords written as SQL literals, which the generic redaction (`name=value`, known token
- * shapes) does not see: `PASSWORD 'x'` (PostgreSQL roles, foreign-server options, MySQL's
- * `SET PASSWORD = 'x'` and `PASSWORD('x')`), `IDENTIFIED [WITH plugin] BY|AS [PASSWORD] 'x'`, and
- * MySQL's `SET PASSWORD FOR 'u'@'h' = 'x'`.
+ * Text that sets or uses a database password, which the generic redaction (`name=value`, known
+ * token shapes) cannot be trusted to hide: SQL writes one as a quoted literal in many forms
+ * (`PASSWORD 'x'`, `ENCRYPTED PASSWORD`, `IDENTIFIED BY 'x'`, `REPLACE 'old'`, `E'x'`, `$$x$$`,
+ * dynamic SQL), and one form missed is a password kept on Telegram's servers for good. Such a
+ * script, or reason, is not shown at all; the card in PPM shows it whole.
  */
-const SQL_SECRETS: readonly RegExp[] = [
-  /(\bPASSWORD\s*(?:=\s*|\(\s*)?)(['"])(?:\\[\s\S]|\2\2|(?!\2)[^\\])*\2/gi,
-  /(\bIDENTIFIED\s+(?:WITH\s+\S+\s+)?(?:BY|AS)\s+(?:PASSWORD\s+)?)(['"])(?:\\[\s\S]|\2\2|(?!\2)[^\\])*\2/gi,
-  /(\bSET\s+PASSWORD\b[^=;]*=\s*(?:PASSWORD\s*\(\s*)?)(['"])(?:\\[\s\S]|\2\2|(?!\2)[^\\])*\2/gi,
-];
-
-export function redactSqlSecrets(text: string): string {
-  let out = text;
-  for (const re of SQL_SECRETS) out = out.replace(re, (_m, keep: string, quote: string) => `${keep}${quote}[REDACTED]${quote}`);
-  return out;
-}
+export const MENTIONS_PASSWORD = /pass(?:word|wd)|identified/i;
+export const PASSWORD_WITHHELD = "(Not shown here: it sets or uses a password. Open the chat in PPM to read it.)";
 
 /** Redacted first, so a cut cannot leave half a secret the redaction no longer recognises. */
-const excerpt = (text: string, max: number): string =>
-  escapeTelegramHtml(truncateText(redactForTelegram(redactSqlSecrets(text)), max));
+const excerpt = (text: string, max: number): string => escapeTelegramHtml(truncateText(redactForTelegram(text), max));
 
 const minutesLeft = (expiresAt: number, now: number): number => Math.max(1, Math.round((expiresAt - now) / 60_000));
 
@@ -122,9 +113,10 @@ export function approvalNoticeHtml(chat: DescribedChat, input: DbExecuteApproval
     "🔐 <b>A database change is waiting for your approval</b>",
     "",
     `${whichChat(chat)} wants to run this on ${where(input)}:`,
-    `<pre>${excerpt(input.sql, DB_NOTICE_SQL_MAX)}</pre>`,
+    MENTIONS_PASSWORD.test(input.sql) ? `<i>${escapeTelegramHtml(PASSWORD_WITHHELD)}</i>` : `<pre>${excerpt(input.sql, DB_NOTICE_SQL_MAX)}</pre>`,
   ];
-  if (input.reason?.trim()) lines.push(`Why: ${excerpt(input.reason, REASON_MAX)}`);
+  const reason = input.reason?.trim();
+  if (reason) lines.push(`Why: ${MENTIONS_PASSWORD.test(reason) ? `<i>${escapeTelegramHtml(PASSWORD_WITHHELD)}</i>` : excerpt(reason, REASON_MAX)}`);
   lines.push("", `Nothing runs unless you approve within ${minutesLeft(expiresAt, now)} minutes. ${ANSWER_IN_PPM}`);
   return lines.join("\n");
 }
