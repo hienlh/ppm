@@ -306,10 +306,19 @@ class ChatService {
     // With no limit set it is only logged, as the idle sweep's stops are.
     const { deleteSessionBinding } = await import("./extension-session-binding.service.ts");
     deleteSessionBinding(sessionId);
+    // Read now: the ids a chat's schedules aim at include ones it had before a provider renamed it.
+    const scheduleLifecycle = await import("./session-schedules/session-schedule-lifecycle.ts");
+    const scheduleTargets = scheduleLifecycle.sessionScheduleTargetIds(sessionId);
     try {
       await provider.deleteSession(sessionId);
     } finally {
       stopChatSessionProcesses(sessionId);
+    }
+    // Only once the chat is really gone: a delete the provider refused keeps its schedules.
+    try {
+      scheduleLifecycle.forgetSessionSchedulesOf(scheduleTargets);
+    } catch (e) {
+      log.warn(`session=${sessionId} could not drop its schedules: ${(e as Error).message}`);
     }
     // Once the chat is really gone: it is no project's manager any more, and a deleted main
     // session leaves none. A delete the provider refused keeps both roles.

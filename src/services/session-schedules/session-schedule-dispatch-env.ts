@@ -7,8 +7,9 @@ import { chatLifecycle } from "../chat-control/chat-lifecycle.ts";
 import { getSessionTitle, resolveMigratedSession } from "../db.service.ts";
 import { createLogger } from "../logger.ts";
 import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
-import type { ScheduleNotice, SessionScheduleDispatchEnv } from "./session-schedule-dispatcher.ts";
-import { liveScheduleTargetDeps, resolveScheduleTarget } from "./session-schedule-target.ts";
+import { resolveSessionDir } from "../subagent-transcript-merger.ts";
+import type { ScheduleNotice, SessionScheduleDispatchEnv } from "./session-schedule-dispatch-types.ts";
+import { liveScheduleTargetDeps, resolveScheduleTarget, type ScheduleTargetResolution } from "./session-schedule-target.ts";
 
 const log = createLogger("scheduler");
 
@@ -34,13 +35,28 @@ function notifyScheduleNotice(n: ScheduleNotice): void {
   }).catch((e) => log.warn(`could not notify about schedule ${n.schedule.id}: ${(e as Error).message}`));
 }
 
+/**
+ * The target as the deliverer may use it. A Claude chat whose conversation is gone from disk is
+ * refused here: resumed, the provider would start it fresh under the same id, which is a new chat
+ * in all but name, and a schedule never creates one.
+ */
+function deliveryTarget(sessionId: string): ScheduleTargetResolution {
+  const resolved = resolveScheduleTarget(sessionId);
+  if (!resolved.ok || resolved.target.providerId !== "claude") return resolved;
+  const { target } = resolved;
+  if (resolveSessionDir(target.sessionId, target.projectPath) === null) {
+    return { ok: false, reason: "The chat's conversation is no longer on this machine." };
+  }
+  return resolved;
+}
+
 export function liveDispatchEnv(): SessionScheduleDispatchEnv {
   return {
     control: chatControl,
     lifecycle: chatLifecycle,
     now: () => Date.now(),
     canonical: resolveMigratedSession,
-    target: (sessionId) => resolveScheduleTarget(sessionId),
+    target: deliveryTarget,
     notify: notifyScheduleNotice,
     chatTitle: (sessionId) => liveScheduleTargetDeps.stored(sessionId, getSessionTitle) ?? `Session ${sessionId.slice(0, 8)}`,
     newClientMessageId: () => `schedule-${crypto.randomUUID()}`,

@@ -75,11 +75,23 @@ export function resumeSessionSchedule(id: number, now = new Date(), deps: Schedu
   return getSchedule(id)!;
 }
 
-/** The chat is gone: so are the schedules aimed at it, under any id it had. Answers how many. */
-export function forgetSessionSchedulesOf(sessionId: string, deps: Pick<ScheduleTargetDeps, "canonical"> = liveScheduleTargetDeps): number {
+/**
+ * Every id a chat's schedules may be stored under. Read before the chat is deleted: deleting it
+ * may take the rows that link its old ids to its current one.
+ */
+export function sessionScheduleTargetIds(sessionId: string, deps: Pick<ScheduleTargetDeps, "canonical"> = liveScheduleTargetDeps): string[] {
+  try {
+    return idsOf(sessionId, deps);
+  } catch {
+    return [sessionId];
+  }
+}
+
+/** The chat is gone: so are the schedules aimed at it, under any of `ids`. Answers how many. */
+export function forgetSessionSchedulesOf(ids: readonly string[]): number {
   let removed = 0;
-  for (const id of idsOf(sessionId, deps)) removed += deleteSessionSchedulesForTarget(id);
-  if (removed > 0) log.info(`session=${sessionId} deleted, with its ${removed} schedule(s)`);
+  for (const id of new Set(ids)) removed += deleteSessionSchedulesForTarget(id);
+  if (removed > 0) log.info(`session=${ids[0]} deleted, with its ${removed} schedule(s)`);
   return removed;
 }
 
