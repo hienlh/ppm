@@ -212,6 +212,11 @@ describe("reading the server's answer", () => {
     expect(parseAssistantTelegramState(null)).toBeNull();
     expect(parseAssistantTelegramState({ enabled: true })).toBeNull();
     expect(parseAssistantTelegramState({ enabled: true, running: false, chats: [{ chatId: 5 }, { chatId: "9", sessionId: "" }] }))
-      .toEqual({ enabled: true, running: false, error: null, chats: [{ chatId: "9", name: "9", sessionId: null, sessionTitle: null }] });
+      .toEqual({ enabled: true, running: false, error: null, quietWhileInPpm: true, chats: [{ chatId: "9", name: "9", sessionId: null, sessionTitle: null }] });
+  });
+
+  it("reads \"quiet while I'm at PPM\" as on unless the server says false", () => {
+    expect(parseAssistantTelegramState({ enabled: true, chats: [], quietWhileInPpm: false })?.quietWhileInPpm).toBe(false);
+    expect(parseAssistantTelegramState({ enabled: true, chats: [], quietWhileInPpm: "no" })?.quietWhileInPpm).toBe(true);
   });
 });

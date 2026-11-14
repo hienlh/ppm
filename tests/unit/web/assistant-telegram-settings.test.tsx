@@ -22,6 +22,8 @@ const { isSettingsCategoryId, SETTINGS_CATEGORIES } = await import("../../../src
 const { SECTIONS } = await import("../../../src/web/components/settings/settings-section-content");
 const { NotificationsSettingsSection } = await import("../../../src/web/components/settings/notifications-settings-section");
 const { DEFAULT_NOTIFICATION_SETTINGS } = await import("../../../src/shared/notification-settings");
+const { TelegramQuietHeadButton } = await import("../../../src/web/components/assistant/telegram-quiet-button");
+const { QUIET_CHANGED_EVENT } = await import("../../../src/shared/assistant-telegram-quiet");
 
 interface Answer { status?: number; body: unknown }
 type Req = { method: string; url: string; body: unknown };
@@ -50,7 +52,7 @@ const READY = {
   botUsername: "ppm_ai_bot",
   chats: [{ chatId: "42", name: "Thang (@thang)" }],
 };
-const OPTIONS = { enabled: false, show_tool_calls: true, debounce_ms: 2000 };
+const OPTIONS = { enabled: false, show_tool_calls: true, debounce_ms: 2000, quiet_while_in_ppm: true };
 const BINDINGS = {
   enabled: false, running: false, error: null,
   chats: [{ chatId: "42", name: "Thang (@thang)", sessionId: "s-1", sessionTitle: "Morning check" }],
@@ -108,6 +110,35 @@ async function typeInto(el: HTMLInputElement | HTMLTextAreaElement, value: strin
     el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+
+describe("the Assistant window's quiet bell", () => {
+  it("is hidden while the Assistant's Telegram side is off", async () => {
+    view = await mount(<TelegramQuietHeadButton />);
+    await settle();
+    expect(document.body.querySelector("[data-telegram-quiet]")).toBeNull();
+  });
+
+  it("shows the switch, flips it with the same setting, and follows a change made elsewhere", async () => {
+    let quietOn = true;
+    serve(
+      (req) => (req.method === "GET" && req.url === "/api/assistant/telegram" ? ok({ ...BINDINGS, enabled: true, quietWhileInPpm: quietOn }) : undefined),
+      on("PUT", "/api/settings/clawbot", (req) => { quietOn = (req.body as { quiet_while_in_ppm: boolean }).quiet_while_in_ppm; return ok({ ...OPTIONS, quiet_while_in_ppm: quietOn }); }),
+    );
+    view = await mount(<TelegramQuietHeadButton />);
+    await settle();
+    const bell = () => document.body.querySelector<HTMLButtonElement>("[data-telegram-quiet]")!;
+    expect(bell().dataset.telegramQuiet).toBe("on");
+    expect(bell().getAttribute("aria-pressed")).toBe("true");
+    await click(bell());
+    await settle();
+    expect(sent("PUT", "/api/settings/clawbot").map((r) => r.body)).toEqual([{ quiet_while_in_ppm: false }]);
+    expect(bell().dataset.telegramQuiet).toBe("off");
+    quietOn = true;
+    await act(async () => { window.dispatchEvent(new Event(QUIET_CHANGED_EVENT)); });
+    await settle();
+    expect(bell().dataset.telegramQuiet).toBe("on");
+  });
+});
 
 describe("the Assistant's Telegram settings", () => {
   it("asks for a bot of its own first, saves the token to the Assistant's endpoint, and never shows it", async () => {
@@ -208,7 +239,8 @@ describe("the Assistant's Telegram settings", () => {
     view = await mount(<AssistantTelegramSettings />);
     await settle();
 
-    const toolNames = [...document.body.querySelectorAll('button[role="switch"]')][1]!;
+    // Switches in order: the bridge, quiet while at PPM, tool names.
+    const toolNames = [...document.body.querySelectorAll('button[role="switch"]')][2]!;
     await click(toolNames);
     await settle();
 
@@ -223,6 +255,29 @@ describe("the Assistant's Telegram settings", () => {
     for (const r of sent("PUT", "/api/settings/clawbot")) {
       expect(Object.keys(r.body as object).every((k) => ["enabled", "show_tool_calls", "debounce_ms"].includes(k))).toBe(true);
     }
+  });
+
+  it("turns \"quiet while I'm at PPM\" off with that key alone, and follows a change made elsewhere", async () => {
+    let stored = { ...OPTIONS };
+    serve(
+      on("GET", "/api/settings/clawbot/telegram", ok(READY)),
+      (req) => (req.method === "GET" && req.url === "/api/settings/clawbot" ? ok(stored) : undefined),
+      on("PUT", "/api/settings/clawbot", (req) => { stored = { ...stored, ...(req.body as object) }; return ok(stored); }),
+    );
+    view = await mount(<AssistantTelegramSettings />);
+    await settle();
+    expect(text()).toContain("Quiet while I'm at PPM");
+    const quiet = () => [...document.body.querySelectorAll('button[role="switch"]')][1]!;
+    expect(quiet().getAttribute("aria-checked")).toBe("true");
+    await click(quiet());
+    await settle();
+    expect(sent("PUT", "/api/settings/clawbot").map((r) => r.body)).toEqual([{ quiet_while_in_ppm: false }]);
+    expect(quiet().getAttribute("aria-checked")).toBe("false");
+    // `/quiet on` from the phone: the switch here follows without a reload.
+    stored = { ...stored, quiet_while_in_ppm: true };
+    await act(async () => { window.dispatchEvent(new Event(QUIET_CHANGED_EVENT)); });
+    await settle();
+    expect(quiet().getAttribute("aria-checked")).toBe("true");
   });
 
   it("refuses a grouping the server would refuse", () => {
