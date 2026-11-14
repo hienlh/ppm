@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { configService } from "../../../src/services/config.service.ts";
 import { openTestDb, setDb, setSessionMetadata, setSessionProvider, setSessionTitle } from "../../../src/services/db.service.ts";
-import { getSchedule, insertSchedule, setSessionSchedulePaused } from "../../../src/services/scheduler-db.service.ts";
+import { getSchedule, insertSchedule, setSessionSchedulePaused, setSessionSchedulePending } from "../../../src/services/scheduler-db.service.ts";
+import { setSessionScheduleDueHandler } from "../../../src/services/session-schedules/session-schedule-due.ts";
 import { schedulesRoutes } from "../../../src/server/routes/schedules.ts";
 import { MAX_SCHEDULES_PER_SESSION } from "../../../src/shared/session-schedule-input.ts";
 import type { ProjectConfig } from "../../../src/types/config.ts";
@@ -110,5 +111,22 @@ describe("listing and changing session schedules", () => {
     const refused = await send("PATCH", `/${orphan}`, { enabled: true, name: "renamed" });
     expect(refused.status).toBe(400);
     expect(getSchedule(orphan)).toMatchObject({ paused_reason: "gone", name: "s" });
+  });
+
+  it("hands a fire that waited while the schedule was off to delivery as soon as it is on again", async () => {
+    const heard: number[] = [];
+    setSessionScheduleDueHandler((id) => { heard.push(id); });
+    try {
+      const id = seed(CHAT);
+      expect((await send("PATCH", `/${id}`, { enabled: false })).status).toBe(200);
+      setSessionSchedulePending(id, new Date(Date.now() - 60_000).toISOString(), null);
+      expect((await send("PATCH", `/${id}`, { name: "renamed" })).status).toBe(200);
+      expect(heard).toEqual([]);
+      expect((await send("PATCH", `/${id}`, { enabled: true })).status).toBe(200);
+      expect(heard).toEqual([id]);
+      expect(getSchedule(id)!.pending_since).not.toBeNull();
+    } finally {
+      setSessionScheduleDueHandler(null);
+    }
   });
 });

@@ -13,6 +13,7 @@ import type { Schedule } from "../../types/scheduler.ts";
 import { getSchedule, insertSchedule, listSessionSchedulesForTarget, updateSchedule } from "../scheduler-db.service.ts";
 import { ScheduleEditError } from "../scheduler-edit.ts";
 import { nextFireAt } from "../scheduler-timing.ts";
+import { notifySessionScheduleDue } from "./session-schedule-due.ts";
 import { assertCanAddSessionSchedule, resumeSessionSchedule, sessionScheduleTargetIds } from "./session-schedule-lifecycle.ts";
 import { liveScheduleTargetDeps, type ScheduleTargetDeps } from "./session-schedule-target.ts";
 
@@ -90,7 +91,11 @@ export function patchSessionSchedule(current: Schedule, body: Body, { deps = liv
   // Turned on while paused: resumed first, so a chat that still cannot take it leaves it unchanged.
   if (body.enabled === true && current.paused_reason !== null) resumeSessionSchedule(current.id, now, deps);
   updateSchedule(current.id, changes);
-  return getSchedule(current.id)!;
+  const saved = getSchedule(current.id)!;
+  // Turned off with a fire still waiting (the chip's Pause), then on again: that fire goes now,
+  // rather than at the next cron match, which for a one-shot may be a year away.
+  if (enabling && saved.pending_since && !saved.paused_reason) notifySessionScheduleDue(saved.id);
+  return saved;
 }
 
 /** Every session schedule aimed at the chat `sessionId` names, under any id it had, oldest first. */
