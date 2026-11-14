@@ -45,10 +45,12 @@ export function ScheduleRunLine({ run, text, now }: {
         className="flex min-h-11 max-w-full min-w-0 items-center gap-1.5 rounded-full px-3 text-xs text-text-3 transition-colors can-hover:hover:bg-surface-hover can-hover:hover:text-text-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 md:min-h-7"
       >
         <Clock className="size-3.5 shrink-0" />
-        <span className="shrink-0">Schedule</span>
+        {/* On a phone the clock icon already says "schedule", and the note moves into the
+            opened panel, so the name is not squeezed to a few letters by fixed-width parts. */}
+        <span className="hidden shrink-0 sm:inline">Schedule</span>
         <span className="min-w-0 truncate font-medium text-text-2">{run.name}</span>
         <span className="shrink-0">ran · {formatInZone(run.firedAt, run.timezone, now)}</span>
-        {note && <span className="shrink-0 text-text-subtle">· {note}</span>}
+        {note && <span className="hidden shrink-0 text-text-subtle sm:inline">· {note}</span>}
         <Chevron className="size-3 shrink-0" />
       </button>
       {open && (
@@ -66,6 +68,7 @@ export function ScheduleRunLine({ run, text, now }: {
             {" · "}
             {run.timezone ? zoneCity(run.timezone) : "the PPM host's time zone"}
             {run.scheduledFor !== run.firedAt && <> · due {formatInZone(run.scheduledFor, run.timezone, now)}</>}
+            {note && <span className="sm:hidden"> · {note}</span>}
           </p>
         </div>
       )}
