@@ -1622,7 +1622,7 @@ Show the events, the delay and the channels
 
 ### `ppm notify set`
 
-Switch an event (done, approval_request, question, collab_approval, schedule, jira, design_review, extension) or a channel (telegram, ntfy) on or off
+Switch an event (done, approval_request, question, collab_approval, schedule, schedule_created, jira, design_review, extension) or a channel (telegram, ntfy) on or off
 
 **Usage:** `ppm notify set [options] <event> <state>`
 
@@ -1896,12 +1896,15 @@ Scheduled Claude agents (cron) and script schedules
 
 ### `ppm schedule add`
 
-Add a scheduled agent (--prompt) or a script schedule (--script). Cron uses local timezone. Do not embed secrets in --prompt. Refused from an AI chat (use schedule_save).
+Add a scheduled agent (--prompt), a script schedule (--script), or a prompt delivered into an existing chat (--session). Cron uses local timezone unless --tz. Do not embed secrets in --prompt. Refused from an AI chat (use schedule_save).
 
 **Options:**
-- `--name <name>` — Schedule name
+- `--name <name>` — Schedule name (required, except with --session: the prompt's first line by default)
 - `--cron <expr>` — Cron expression (local timezone, e.g. "0 7 * * *"; a script may add seconds first)
-- `--project <nameOrPath>` — Project name or path
+- `--project <nameOrPath>` — Project name or path (required, except with --session: the chat's own)
+- `--session <id>` — Deliver --prompt into this existing chat, once it is idle, instead of a chat of the schedule's own
+- `--tz <zone>` — With --session: IANA time zone the cron is read in, e.g. Europe/London
+- `--once` — With --session: fire once at the next match, then delete itself
 - `--prompt <text>` — Prompt sent to the agent each run
 - `--script <file>` — JavaScript module run each tick, or kept running
 - `--mode <mode>` — Script mode: tick (on the cron) or always-on (default: `"tick"`)
