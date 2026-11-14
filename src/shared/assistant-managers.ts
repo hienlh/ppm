@@ -6,6 +6,7 @@
  * nor an Assistant session. The **main** Assistant session is the one Telegram follows.
  */
 import { isAssistantProject } from "./assistant-project.ts";
+import { MAX_COLLAB_TITLE_CHARS } from "./session-collab.ts";
 
 export const MANAGERS_CHANGED_EVENT = "assistant:managers_changed";
 export const MAIN_SESSION_CHANGED_EVENT = "assistant:main_session_changed";
@@ -17,15 +18,14 @@ export type ManagerTelegramDetail = (typeof MANAGER_TELEGRAM_DETAILS)[number];
 export const MANAGER_PROVIDER_ID = "claude";
 export const MANAGER_CLAUDE_ONLY = "Manager chats run on Claude for now";
 
-/** The longest default title: the session tools' own title limit, so either door names it alike. */
-const MAX_DEFAULT_MANAGER_TITLE = 60;
-
 /**
  * The title a new manager chat gets when nobody names it: "QL" ("quản lý", manager) and the
  * project, so several manager chats open side by side say which project each one runs.
  */
 export function defaultManagerTitle(projectName: string): string {
-  return `QL ${projectName.trim()}`.slice(0, MAX_DEFAULT_MANAGER_TITLE).trim();
+  // Cut by character, not UTF-16 unit, so an emoji at the limit is never split in half; within
+  // the session tools' title limit, so both doors that create a manager chat name it alike.
+  return Array.from(`QL ${projectName.trim()}`).slice(0, MAX_COLLAB_TITLE_CHARS).join("").trim();
 }
 
 /** What every surface listing a project's manager shows. */

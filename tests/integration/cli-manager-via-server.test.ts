@@ -41,6 +41,14 @@ async function createChat(project: string, title: string): Promise<string> {
   await ok(["chat", "rename", id, title]);
   return id;
 }
+/** Announcements go out after the route answers, so a check waits for them. */
+async function until(check: () => Promise<boolean>, ms = 10_000): Promise<void> {
+  const start = Date.now();
+  while (!(await check())) {
+    if (Date.now() - start > ms) throw new Error("timed out waiting for an announcement");
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 const managers = async () => JSON.parse((await ok(["manager", "list", "--json"])).stdout) as Array<{ projectName: string; sessionId: string }>;
 
 beforeAll(async () => {
@@ -88,6 +96,24 @@ describe("ppm manager through the server", () => {
     expect(await managers()).toEqual([]);
     expect((await ok(["manager", "unassign", "-p", "alpha"])).stdout).toContain("alpha had no manager chat; nothing changed.");
   }, 180_000);
+
+  it("announces the manager list again when its manager chat is renamed, and not for any other chat", async () => {
+    const manager = await createChat("beta", "Manager");
+    const other = await createChat("beta", "Notes");
+    const assigning = await announced();
+    await ok(["manager", "assign", manager]);
+    await until(async () => (await announced()) > assigning);
+    const before = await announced();
+
+    await ok(["chat", "rename", other, "Notes v2"]);
+    expect(await announced()).toBe(before);
+
+    await ok(["chat", "rename", manager, "QL beta"]);
+    await until(async () => (await announced()) > before);
+    const last = (await server.events()).filter((e) => e.type === "assistant:managers_changed").at(-1) as { managers?: Array<{ projectName: string; title: string | null }> };
+    expect(last.managers).toEqual([expect.objectContaining({ projectName: "beta", title: "QL beta" })]);
+    await ok(["manager", "unassign", "-p", "beta"]);
+  }, 120_000);
 
   it("refuses a chat of another project with the server's own check", async () => {
     const betaChat = await createChat("beta", "Beta chat");

@@ -238,7 +238,8 @@ describe("chat_organize", () => {
     h.chats.get("c2")!.facts.manager = true;
     await run(h, CHAT_ORGANIZE_TOOL, { project: "alpha", changes: [{ sessionId: "c2", title: "QL alpha" }] });
     expect(h.asks).toHaveLength(1);
-    expect(h.asks[0]!.summary.facts).toEqual([{ label: "Release notes", value: "rename → «QL alpha» (c2)" }]);
+    // The card says the chat is the manager: its name is how the user picks which chat to type into.
+    expect(h.asks[0]!.summary.facts).toEqual([{ label: "Release notes", value: 'rename → «QL alpha» · the manager chat of "alpha" (c2)', tone: "warning" }]);
     expect(h.writes).toEqual(['PATCH /api/project/alpha/chat/sessions/c2 {"title":"QL alpha"}']);
   });
 

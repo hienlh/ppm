@@ -96,7 +96,8 @@ export async function chatOrganize(ctx: ToolContext, args: Record<string, unknow
       tool: CHAT_ORGANIZE_TOOL,
       input: { project: project.name, changes: effective.map((p) => ({ sessionId: p.chat.sessionId, ...p.change })) },
       summary: chatOrganizeSummary({
-        project: project.name, entries: effective.map((p) => ({ sessionId: p.chat.sessionId, title: p.chat.facts.title, change: p.change })),
+        project: project.name,
+        entries: effective.map((p) => ({ sessionId: p.chat.sessionId, title: p.chat.facts.title, change: p.change, manager: p.chat.facts.manager })),
       }),
     });
     if (verdict.verdict !== "approved") return notApprovedResult(CHAT_ORGANIZE_TOOL, verdict);

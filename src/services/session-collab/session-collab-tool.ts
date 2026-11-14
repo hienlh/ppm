@@ -1,6 +1,6 @@
 import { SESSION_COLLAB_LIMITS } from "../../shared/session-collab-settings.ts";
 import {
-  CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL,
+  CREATE_SESSION_TOOL, MAX_COLLAB_TITLE_CHARS, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL,
 } from "../../shared/session-collab.ts";
 
 /**
@@ -35,8 +35,8 @@ export function collabTextTooLarge(field: "task" | "message", text: string): str
     + "(about 24,000 characters of English, fewer in scripts that take more bytes a character). "
     + "Shorten it, or write the details to a file in the project and send its path.";
 }
-/** Longest title a created session gets; longer ones are cut. */
-export const MAX_COLLAB_TITLE_CHARS = 60;
+/** Longest title a created session gets; longer ones are cut. Kept in shared code for the manager's default title. */
+export { MAX_COLLAB_TITLE_CHARS };
 /** Sessions one `session_status` call reports at most. */
 export const MAX_STATUS_SESSIONS = 20;
 

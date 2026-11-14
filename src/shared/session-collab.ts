@@ -331,3 +331,6 @@ export interface SessionCollabApprovalEvent {
 }
 
 export type SessionCollabGlobalEvent = SessionCreatedEvent | SessionLinkChangedEvent | SessionCollabApprovalEvent;
+
+/** The longest title a session tool gives a new session, a manager chat's default title included. */
+export const MAX_COLLAB_TITLE_CHARS = 60;

@@ -143,7 +143,7 @@ describe("the user's own edit", () => {
 });
 
 describe("creating a manager chat", () => {
-  it("makes a new Claude chat titled Manager the project's manager, in Settings' mode, with the files", async () => {
+  it("makes a new Claude chat titled \"QL <project>\" the project's manager, in Settings' mode, with the files", async () => {
     configService.set("assistant", { ...configService.get("assistant"), manager_default_mode: "plan" });
     const project = fx.project();
     const res = await fx.call("POST", `/api/assistant/managers/${project.name}/create`, {});
@@ -152,7 +152,7 @@ describe("creating a manager chat", () => {
     expect(fx.created).toContain(sessionId);
     expect(managerChats.managerFor(project.path)?.sessionId).toBe(sessionId);
     expect(getSessionPermissionMode(sessionId)).toBe("plan");
-    expect(getSessionTitle(sessionId)).toBe("Manager");
+    expect(getSessionTitle(sessionId)).toBe(`QL ${project.name}`);
     expect(existsSync(join(project.path, ".ppm", "manager.md"))).toBe(true);
     expect((await fx.call("POST", "/api/assistant/managers/no-such-project/create", {})).status).toBe(404);
   });

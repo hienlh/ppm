@@ -780,7 +780,8 @@ to the named project (`resolveAssistantSessionTarget`), and Assistant chats are 
   so an earlier read in the turn — `chat_list_sessions` included — means one card for the whole
   call. It is refused in a turn PPM started on its own, and marking a chat read is refused while
   that chat shows a card. A manager chat is renamed like any other (the role belongs to the session,
-  not the title); a rename of a manager announces `assistant:managers_changed` too
+  not the title), and on a card its line says "the manager chat of <project>" in warning tone, since
+  that name is how the user picks which chat to type into; a rename of a manager announces `assistant:managers_changed` too
   (`managerChats.retitled`, from `renameChatSession`), so Settings → Manager chats and the manager
   chips show the new name. The result lists each chat's `previous` title, pin and tag, which is how
   a change is undone. These refusals are advisory guards; the card and the routes are the controls.
