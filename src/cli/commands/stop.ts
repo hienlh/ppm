@@ -2,10 +2,25 @@ import { resolve } from "node:path";
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { getPpmDir, isIsolatedPpmHome } from "../../services/ppm-dir.ts";
 import { reapTrackedDescendants } from "../../services/windows-process-tree.ts";
+import { writeOrderedStop } from "../../services/restart-news/ordered-stop-note.ts";
 
 const pidFile = () => resolve(getPpmDir(), "ppm.pid");
 const statusFile = () => resolve(getPpmDir(), "status.json");
 const cmdFile = () => resolve(getPpmDir(), ".supervisor-cmd");
+
+/**
+ * Leaves the next server start a note that this stop was ordered (`ordered-stop-note.ts`), before
+ * anything is killed. On Windows `process.kill` is TerminateProcess: the supervisor's shutdown,
+ * which writes the note itself on POSIX, never runs, and the server dies with it — so without this
+ * the next start reads `ppm stop --kill` as a run that "did not shut down cleanly". Written into the
+ * same PPM folder, keyed by the same server pid, as the supervisor's own note. Only for a server
+ * still running: one already dead stopped on its own, and a note would hide that crash.
+ */
+function noteServerStop(serverPid: number | null | undefined, why: string): void {
+  if (!serverPid) return;
+  try { process.kill(serverPid, 0); } catch { return; }
+  writeOrderedStop(getPpmDir(), serverPid, why);
+}
 
 function killPid(pid: number, label: string): boolean {
   try {
@@ -102,6 +117,7 @@ export async function stopServer(options?: { all?: boolean; kill?: boolean }) {
     if (existsSync(statusFile())) {
       try {
         const data = JSON.parse(readFileSync(statusFile(), "utf-8"));
+        noteServerStop(data.pid, "ppm stop --all");
         // Kill supervisor first (cascades to server + tunnel children)
         if (data.supervisorPid) { killPid(data.supervisorPid, "supervisor"); killed++; }
         if (data.pid) { killPid(data.pid, "server"); killed++; }
@@ -229,6 +245,9 @@ async function hardStop() {
     cleanup();
     return;
   }
+
+  // `ppm restart` recovering from a dead supervisor comes through here as well.
+  noteServerStop(serverPid, "ppm stop --kill or ppm down");
 
   // Kill supervisor first — its SIGTERM handler kills server + tunnel children
   if (supervisorPid) {

@@ -125,7 +125,7 @@ export const collabEnv: CollabEnv = {
   managers: () => managerChats.list().map((r) => ({
     projectName: r.projectName, projectPath: r.projectPath, sessionId: resolveMigratedSession(r.sessionId),
   })),
-  turnProvenance: (sessionId) => assistantTurnProvenance.provenance(sessionId),
+  turnProvenance: (sessionId, recipient) => assistantTurnProvenance.provenance(sessionId, recipient),
   markUntrusted: (sessionId, reason) => assistantTurnProvenance.markUntrusted(sessionId, reason),
   assistantGuards: assistantSendGuards,
   managerDefaultMode: () => getAssistantSettings().manager_default_mode,

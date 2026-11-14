@@ -9,6 +9,7 @@ import type { WatchEventNotice } from "../../types/chat.ts";
 import { WATCH_OPENER } from "../assistant-watch/watch-event-text.ts";
 import { firstLine } from "../assistant-watch/watch-push.ts";
 import { NEWS_OPENER } from "./wake-news-text.ts";
+import { RESTART_OPENER } from "../restart-news/restart-news-text.ts";
 import { assistantClock } from "./assistant-clock.ts";
 import { quietNow } from "./wake-quiet-hours.ts";
 
@@ -173,6 +174,18 @@ export class AssistantWakeQueue {
     return turn?.sent ? turn.batch.map((b) => b.source.name) : [];
   }
 
+  /** The items from `source` that the running wake turn of this session carries; empty when none runs. */
+  carriedItems(sessionId: string, source: string): WakeItem[] {
+    const turn = this.turns.get(resolveMigratedSession(sessionId));
+    return turn?.sent ? turn.batch.filter((b) => b.source.name === source).flatMap((b) => b.items) : [];
+  }
+
+  /** Whether the running wake turn of this session carries urgent news from `source`. */
+  carryingUrgent(sessionId: string, source: string): boolean {
+    const turn = this.turns.get(resolveMigratedSession(sessionId));
+    return !!turn?.sent && turn.batch.some((b) => b.source.name === source && b.items.some((i) => i.urgent));
+  }
+
   /** Looks for news once the current event has played out (a turn end is still unwinding its stream). */
   schedule(sessionId: string): void {
     setTimeout(() => {
@@ -203,7 +216,8 @@ export class AssistantWakeQueue {
     this.turns.set(id, turn);
     let result: Awaited<ReturnType<ChatControl["sendUserMessage"]>>;
     try {
-      result = await control.sendUserMessage(id, watchEvents.length ? WATCH_OPENER : NEWS_OPENER, {
+      const opener = watchEvents.length ? WATCH_OPENER : wakeNews.every((n) => n.kind === "restart") ? RESTART_OPENER : NEWS_OPENER;
+      result = await control.sendUserMessage(id, opener, {
         origin: "watch", projectName: ASSISTANT_PROJECT_NAME, providerId: this.providerOf(id) ?? live?.providerId ?? "claude",
         ...(watchEvents.length ? { watchEvents } : {}), ...(wakeNews.length ? { wakeNews } : {}),
       });

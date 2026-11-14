@@ -39,8 +39,8 @@ export function isManagerTarget(env: CollabEnv, target: CollabTarget): boolean {
 }
 
 /** What PPM writes about the Assistant's turn; an unattended turn is always PPM's. */
-function provenanceOf(env: CollabEnv, caller: CollabCaller): AssistantProvenance {
-  const seen = env.turnProvenance?.(caller.sessionId) ?? { startedBy: "ppm", untrusted: true, reason: "unknown" };
+function provenanceOf(env: CollabEnv, caller: CollabCaller, target: CollabTarget): AssistantProvenance {
+  const seen = env.turnProvenance?.(caller.sessionId, { projectName: target.projectName }) ?? { startedBy: "ppm", untrusted: true, reason: "unknown" };
   return caller.unattended && seen.startedBy !== "ppm" ? { ...seen, startedBy: "ppm", untrusted: true, reason: seen.reason ?? "unknown" } : seen;
 }
 
@@ -85,7 +85,7 @@ export async function managerSendCheck(
     throw e;
   }
 
-  const provenance = provenanceOf(env, caller);
+  const provenance = provenanceOf(env, caller, target);
   const clean = provenance.startedBy !== "ppm" && !provenance.untrusted;
   return {
     ok: true,

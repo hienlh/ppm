@@ -32,6 +32,9 @@
  * refuses to start unless `<PPM_HOME>/bin/cloudflared` is `tests/fixtures/fake-cloudflared.ts`.
  * With PPM_ASSISTANT_MANAGER_LOOP=1 the Assistant's clock is one the e2e moves, the rules check
  * gets a scripted answer, and a project chat can be typed into (`assistant-manager-fixture.ts`).
+ * With PPM_ASSISTANT_RESTART_NEWS=1 each run is recorded as a server run and becomes restart news
+ * (`assistant-restart-news-fixture.ts`); PPM_ASSISTANT_BOOT_SCRIPTS (JSON) posts match scripts
+ * before the hub starts, since a wake turn can begin at its first tick.
  * The "codex" provider renames each new session on its first turn (`session_migrated`), as Codex
  * does when its thread id replaces PPM's draft id. Sessions and transcripts are kept in a JSON
  * file (PPM_ASSISTANT_FIXTURE_STATE) and Claude's are also written where the CLI writes them, so
@@ -85,6 +88,11 @@ configService.set("ai", {
 });
 const managerLoop = process.env.PPM_ASSISTANT_MANAGER_LOOP === "1"
   ? await (await import("./assistant-manager-fixture")).setupManagerLoop({ port })
+  : null;
+// This run recorded at boot as the server records it, before anything can start a turn: the hub
+// startup below turns it into restart news (assistant-restart-news-e2e.mjs only).
+const restartNews = process.env.PPM_ASSISTANT_RESTART_NEWS === "1"
+  ? await (await import("./assistant-restart-news-fixture")).setupRestartNews()
   : null;
 
 // A forward spawns whatever sits where PPM looks for cloudflared, and downloads the real one when
@@ -171,6 +179,12 @@ const saveState = () => writeFileSync(statePath, JSON.stringify(state));
 const scripts = new Map<string, Script[]>();
 /** Scripts waiting for the first turn whose message contains their `match`. */
 const matchScripts: Script[] = [];
+// Scripts a restarted fixture needs before the hub starts: a wake turn can begin at the hub's first
+// tick, before any test route could post one. Each needs a `match`.
+for (const s of JSON.parse(process.env.PPM_ASSISTANT_BOOT_SCRIPTS ?? "[]") as Script[]) {
+  if (typeof s.label !== "string" || !Array.isArray(s.ops) || typeof s.match !== "string" || !s.match) throw new Error("A boot script needs label, ops and match");
+  matchScripts.push(s);
+}
 const calls: CallRecord[] = [];
 const turnsSeen: Array<{
   label: string; sessionId: string; provider: string; message: string; assistant: boolean; images: number; mode?: string; at: number;
@@ -236,6 +250,8 @@ class ScriptedProvider {
     };
     state.sessions[s.id] = s;
     saveState();
+    // As both real providers do: what finds a chat's project when nothing has it open (restart news).
+    if (config.projectPath) setSessionMetadata(s.id, config.projectName, config.projectPath);
     this.sessions.set(s.id, this.publicSession(s));
     return this.publicSession(s);
   }
@@ -661,6 +677,9 @@ async function testRoute(req: Request, path: string): Promise<Response> {
     const answered = await managerLoop.route(req, path.slice("/__assistant-test/".length));
     if (answered) return answered;
   }
+  if (restartNews && path.startsWith("/__assistant-test/rn/")) {
+    return (await restartNews.route(req, path.slice("/__assistant-test/rn/".length))) ?? json({ error: "unknown test route" }, 404);
+  }
   if (telegram && path.startsWith("/__assistant-test/tg/")) {
     return (await telegram.route(req, path.slice("/__assistant-test/tg/".length))) ?? json({ error: "unknown test route" }, 404);
   }
@@ -696,6 +715,7 @@ async function testRoute(req: Request, path: string): Promise<Response> {
   if (path === "/__assistant-test/exit" && req.method === "POST") {
     const { terminalService } = await import("../../../src/services/terminal.service");
     for (const t of terminalService.list()) { try { terminalService.kill(t.id); } catch { /* already gone */ } }
+    restartNews?.stop("exit route");
     setTimeout(() => process.exit(0), 50);
     return json({ ok: true });
   }
@@ -767,7 +787,8 @@ setServerListenAddress(server.port ?? port, "127.0.0.1");
 // on and gave it a bot (pointed at a fake Bot API through PPM_TELEGRAM_API_BASE).
 const { startAssistantHub } = await import("../../../src/services/assistant-hub/assistant-hub-startup");
 await startAssistantHub(telegram ? { bridge: telegram.bridge } : {});
-function shutdown() { server.stop(true); process.exit(0); }
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+// A clean stop is recorded first, as the server's graceful shutdown does.
+function shutdown(trigger: string) { restartNews?.stop(trigger); server.stop(true); process.exit(0); }
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 console.log(`Assistant fixture ready at http://127.0.0.1:${server.port}${resuming ? " (resumed)" : ""}; scripted providers only.`);
