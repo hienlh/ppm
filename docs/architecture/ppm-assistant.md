@@ -1124,8 +1124,9 @@ so it can have each project's manager chat resume them. Code in `src/services/re
   (`RESTART_NEWS_URGENT_WHEN` in `assistant-limits.ts`). Settings → PPM Assistant → Digest & quiet
   hours → Restarts ("Tell the Assistant after PPM restarts", `restart_news`, default on) gates the
   news only; the run log is always written. Nothing goes to Telegram directly.
-- **What the Assistant does.** The entry (`restart-news-text.ts`) lists the restarts, the cut-off
-  chats by project with manager first and the chats it opened under it, and asks for one card-free
+- **What the Assistant does.** The entry (`restart-news-text.ts`) lists the restarts, then the steps,
+  then the cut-off chats by project with manager first and the chats it opened under it (the steps
+  come before the list so the 14,000-character cap cuts chats, never the steps), and asks for one card-free
   message per affected manager naming its cut-off chats, and a line to the user for projects with no
   manager. A manager treats a PPM-started turn as a status ask. The server adds the provenance
   reason `restart` only to a message to a manager whose project has cut-off chats in the news that

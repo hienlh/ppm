@@ -29,7 +29,9 @@ const KIND_TEXT: Record<StartReasonKind, string> = {
   unknown: "the cause was not recorded",
 };
 
-const MAX_ENTRY_CHARS = 14_000;
+export const MAX_RESTART_ENTRY_CHARS = 14_000;
+const MAX_ENTRY_CHARS = MAX_RESTART_ENTRY_CHARS;
+const CUT_NOTE = "…\n(The list was cut short here; ask each manager chat to check its project's chats.)";
 const quote = (text: string) => JSON.stringify(text);
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -97,8 +99,8 @@ function instructions(payload: RestartNewsPayload): string {
     ].join(" ");
   }
   return [
-    "What to do:",
-    "1. For each project above that has a manager chat, send that manager chat one message (send_to_session, no card needed)",
+    "What to do (the cut-off chats are listed after these steps):",
+    "1. For each project listed below that has a manager chat, send that manager chat one message (send_to_session, no card needed)",
     "naming every cut-off chat of its project by session id, saying PPM restarted, and asking it to check each one and",
     "resume or restart its work. If the manager chat itself was cut off, that same message resumes it. Never message the",
     "other cut-off chats yourself.",
@@ -122,6 +124,9 @@ export function restartNewsEntry(payloads: readonly RestartNewsPayload[]): strin
 
   const lines = [HEADING, restarts.length > 1 ? `PPM restarted ${restarts.length} times since you were last told:` : "PPM restarted:"];
   lines.push(...restarts.map(restartLine));
+  // The steps go before the list: the cap below cuts from the end, and a long list must lose its
+  // last chats, never the instructions the turn exists to carry out.
+  lines.push(instructions({ restarts, chats, ...(more ? { moreChats: more } : {}) }));
   if (chats.length === 0) {
     lines.push("Chats cut off mid-turn: none.");
   } else {
@@ -134,7 +139,6 @@ export function restartNewsEntry(payloads: readonly RestartNewsPayload[]): strin
     }
     if (more > 0) lines.push(`And ${more} more cut-off chat(s) not listed: ask each manager chat to check its project's chats.`);
   }
-  lines.push(instructions({ restarts, chats, ...(more ? { moreChats: more } : {}) }));
   const text = lines.join("\n");
-  return text.length > MAX_ENTRY_CHARS ? `${text.slice(0, MAX_ENTRY_CHARS - 1)}…` : text;
+  return text.length > MAX_ENTRY_CHARS ? `${text.slice(0, MAX_ENTRY_CHARS - CUT_NOTE.length)}${CUT_NOTE}` : text;
 }

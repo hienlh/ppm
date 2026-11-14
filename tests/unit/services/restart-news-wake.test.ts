@@ -16,7 +16,7 @@ import {
   addRestartNews, createRestartNewsSource, cutOffChatsCarried, pendingRestartNews, RESTART_NEWS_MAX_AGE_MS, restartNewsUrgent, RESTART_SOURCE_NAME, type RestartNewsStore,
 } from "../../../src/services/restart-news/restart-news-source.ts";
 import { _resetRestartNews, startRestartNews } from "../../../src/services/restart-news/restart-news-lifecycle.ts";
-import { RESTART_OPENER, restartNewsEntry } from "../../../src/services/restart-news/restart-news-text.ts";
+import { MAX_RESTART_ENTRY_CHARS, RESTART_OPENER, restartNewsEntry } from "../../../src/services/restart-news/restart-news-text.ts";
 import type { ServerStart } from "../../../src/services/restart-news/server-run-log.ts";
 import { createAssistantSendGuards, QUIET_HOURS_REFUSAL } from "../../../src/services/session-collab/assistant-send-guards.ts";
 import { assistantQuietNow } from "../../../src/services/session-collab/assistant-send-guards-live.ts";
@@ -357,6 +357,21 @@ describe("the news text", () => {
     expect(text).toContain("that request is gone and must be asked again");
     expect(text).toContain("send that manager chat one message");
     expect(text).toContain("no manager chat, tell the user");
+  });
+
+  it("keeps every step when a long list hits the cap: the steps come first and the list is cut", () => {
+    const long = (n: number) => "x".repeat(n);
+    const chats = Array.from({ length: 30 }, (_, i) => chat(`chat-${i}-${long(60)}`, {
+      projectName: `project-${i % 3}-${long(80)}`, title: long(200), prompt: long(300), activity: long(100),
+      pendingApproval: long(100), openCards: 3, parentSessionId: `parent-${long(60)}`,
+    }));
+    const text = restartNewsEntry([{ restarts: Array.from({ length: 10 }, (_, i) => restart(T + i, { detail: long(300) })), chats, moreChats: 7 }])!;
+    expect(text.length).toBeLessThanOrEqual(MAX_RESTART_ENTRY_CHARS);
+    expect(text).toContain("The list was cut short here");
+    for (const step of ["1. For each project", "2. A chat that was waiting", "3. For a project with no manager", "4. If a message to a manager chat is refused"]) {
+      expect(text).toContain(step);
+    }
+    expect(text.indexOf("4. If a message")).toBeLessThan(text.indexOf("Chats cut off mid-turn"));
   });
 
   it("with no cut-off chat, allows the no-reply answer", () => {
