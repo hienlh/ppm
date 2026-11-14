@@ -39,8 +39,8 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
       secondary={(
         <>
           {!inManagerChat && (
-            <CardButton variant="ghost" secondary onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
-              <ExternalLink className="size-3.5" />Open manager chat
+            <CardButton variant="ghost" secondary label="Open manager chat" onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
+              <ExternalLink className="size-3.5" />Open chat
             </CardButton>
           )}
           <CardButton variant="ghost" secondary disabled={busy} onClick={() => void run(() => dismissAssistantCard(card.id))}>

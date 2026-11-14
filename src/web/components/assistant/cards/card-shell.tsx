@@ -69,8 +69,10 @@ export function cardStatusLine(card: AssistantCard): string | null {
   }
 }
 
-export function CardButton({ children, onClick, variant = "default", disabled, secondary }: {
+export function CardButton({ children, onClick, variant = "default", disabled, secondary, label }: {
   children: ReactNode; onClick: () => void; variant?: "primary" | "default" | "danger" | "ghost"; disabled?: boolean;
+  /** The accessible name, where the visible text is a short form of it. */
+  label?: string;
   /** A lesser action (Open manager chat, Dismiss): quieter, and one of two per row on a phone. */
   secondary?: boolean;
 }) {
@@ -79,9 +81,11 @@ export function CardButton({ children, onClick, variant = "default", disabled, s
       type="button"
       disabled={disabled}
       onClick={onClick}
+      aria-label={label}
+      title={label}
       className={cn(
-        "inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors disabled:opacity-50 md:h-8 md:w-auto md:rounded-md md:text-xs",
-        secondary && "text-[13px] text-text-secondary max-md:h-10",
+        "inline-flex h-11 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors disabled:opacity-50 md:h-8 md:w-auto md:rounded-md md:text-xs",
+        secondary && "text-[13px] text-text-secondary max-md:h-10 md:px-2",
         variant === "primary" && "bg-primary text-primary-foreground shadow-sm can-hover:hover:bg-primary/90",
         variant === "default" && "border border-border bg-surface text-text-primary can-hover:hover:bg-surface-elevated",
         variant === "danger" && "border border-error/40 text-error can-hover:hover:bg-error/10",
@@ -186,7 +190,7 @@ export function CardShell({ card, look, children, actions, secondary, error, met
           // them on a phone, where the answers belong under the thumb); wide, all share one row.
           <div
             className={cn(
-              "flex flex-col gap-2 border-t border-border bg-surface px-3.5 py-2.5 @[25rem]/card:flex-row @[25rem]/card:items-center",
+              "flex flex-col gap-2 border-t border-border bg-surface px-3.5 py-2.5 @[27rem]/card:flex-row @[27rem]/card:items-center",
               sticky && "sticky bottom-0 z-[1]",
             )}
             data-card-actions=""
@@ -194,7 +198,7 @@ export function CardShell({ card, look, children, actions, secondary, error, met
           >
             {/* The first answer (OK, Allow, Send) sits on the right on a phone, under the thumb. */}
             {actions && <div className="order-2 flex flex-row-reverse gap-2 *:flex-1 md:order-1 md:flex-row md:*:flex-none">{actions}</div>}
-            {secondary && <div className="order-1 grid auto-cols-fr grid-flow-col gap-2 md:order-2 md:flex md:gap-1 @[25rem]/card:ml-auto">{secondary}</div>}
+            {secondary && <div className="order-1 grid auto-cols-fr grid-flow-col gap-2 md:order-2 md:flex md:gap-1 @[27rem]/card:ml-auto">{secondary}</div>}
           </div>
         )}
       {error && <p className="px-3.5 pb-2.5 text-xs text-error" role="alert">{error}</p>}

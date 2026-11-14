@@ -222,7 +222,7 @@ try {
   await scrollSlot(mbody, "end");
   await mk.shot("11-phone-bar-long-plan-scrolled-end");
   await scrollSlot(mbody, "top");
-  const mActions = await mbody.locator("[data-waiting-card] [data-card-actions] button").evaluateAll((bs) => bs.map((b) => [b.textContent.trim(), Math.round(b.getBoundingClientRect().height)]));
+  const mActions = await mbody.locator("[data-waiting-card] [data-card-actions] button").evaluateAll((bs) => bs.map((b) => [b.getAttribute("aria-label") ?? b.textContent.trim(), Math.round(b.getBoundingClientRect().height)]));
   for (const [label, h] of mActions) assert.ok(h >= 40, `${label} is ${h}px tall on a phone`);
   for (const label of ["Reply", "Open manager chat", "Dismiss"]) assert.ok(mActions.some(([l]) => l === label), `${label} is on the card on a phone (${mActions.map(([l]) => l).join(", ")})`);
   ok("phone: the long plan scrolls inside the bar; OK, Reply, Open manager chat and Dismiss all on the card, 40px+");

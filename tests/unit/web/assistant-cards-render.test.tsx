@@ -33,7 +33,8 @@ afterEach(async () => {
   for (const s of spies.splice(0)) s.mockRestore();
 });
 
-const buttons = () => [...view!.container.querySelectorAll("button")].map((b) => b.textContent?.trim());
+// A button is named by its accessible name: "Open chat" on screen is "Open manager chat".
+const buttons = () => [...view!.container.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
 
 describe("assistant cards", () => {
   it("offers Allow on an approval only when the whole request is shown", async () => {
