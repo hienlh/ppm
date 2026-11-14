@@ -683,7 +683,7 @@ class ChatService {
       ...rest,
       ...(!rest.model && defaults.model ? { model: defaults.model } : {}),
       ...(!rest.effort && defaults.effort ? { effort: defaults.effort } : {}),
-      assistantInstructions: buildAssistantInstructions({ sections, userInstructions: settings.instructions }),
+      assistantInstructions: buildAssistantInstructions({ sections, persona: settings.persona, userInstructions: settings.instructions }),
       assistantSession: true,
       ...(assistantMcp ? { assistantMcp } : {}),
       ...(servers.length > 0 ? { assistantMcpServers: servers } : {}),

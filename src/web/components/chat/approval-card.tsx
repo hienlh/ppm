@@ -1,6 +1,7 @@
 import { AlertCircle, ShieldAlert } from "@/lib/icons";
 import { hasHiddenCharacters, revealHiddenCharacters } from "@/lib/reveal-hidden-characters";
 import type { ApprovalSummary } from "../../../shared/assistant-approval";
+import { useAssistantDisplayName } from "@/stores/assistant-name-store";
 
 /**
  * The card a chat shows while a tool waits on the user's approval. A provider's card shows the
@@ -137,11 +138,12 @@ export function ApprovalCard({
   onRespond: (requestId: string, approved: boolean, data?: unknown) => void;
 }) {
   const summary = approval.summary;
+  const assistantName = useAssistantDisplayName(!!summary);
   return (
     <div className="rounded-lg border-2 border-warning/40 bg-warning/10 p-3 space-y-2" data-approval-request={approval.requestId}>
       <div className="flex items-center gap-2 text-warning text-sm font-medium">
         <ShieldAlert className="size-4" />
-        <span>{summary ? "PPM Assistant asks for approval" : "Tool Approval Required"}</span>
+        <span>{summary ? `${assistantName} asks for approval` : "Tool Approval Required"}</span>
       </div>
       {summary ? <SummaryBody summary={summary} /> : <RawInputBody tool={approval.tool} input={approval.input} />}
       <div className="flex gap-2">

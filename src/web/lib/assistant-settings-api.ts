@@ -1,5 +1,6 @@
 import { api } from "@/lib/api-client";
 import type { AssistantSettingsView } from "../../shared/assistant-settings";
+import { rememberAssistantName } from "@/stores/assistant-name-store";
 
 /** Settings → PPM Assistant as the server sends it: every MCP env and header value blanked. */
 export interface AssistantSettingsResponse {
@@ -19,20 +20,26 @@ export interface AssistantSettingsResponse {
 export const KEYS_SAVED_ELSEWHERE = ["digest", "quiet_hours", "timezone", "manager_default_mode", "manager_template"] as const;
 type KeySavedElsewhere = (typeof KEYS_SAVED_ELSEWHERE)[number];
 
+/** Every answer carries the persona: the name shown across the app follows it at once. */
+function noteName(res: AssistantSettingsResponse): AssistantSettingsResponse {
+  rememberAssistantName(res?.settings?.persona?.name);
+  return res;
+}
+
 export function getAssistantSettings(): Promise<AssistantSettingsResponse> {
-  return api.get<AssistantSettingsResponse>("/api/assistant/settings");
+  return api.get<AssistantSettingsResponse>("/api/assistant/settings").then(noteName);
 }
 
 /** A blank env or header value keeps the saved one. Answers with the stored settings, blanked. */
 export function saveAssistantSettings(settings: AssistantSettingsView): Promise<AssistantSettingsResponse> {
-  return api.put<AssistantSettingsResponse>("/api/assistant/settings", settings);
+  return api.put<AssistantSettingsResponse>("/api/assistant/settings", settings).then(noteName);
 }
 
 /** The General pane's save: everything but the keys other sub-panes own. */
 export function saveGeneralAssistantSettings(settings: AssistantSettingsView): Promise<AssistantSettingsResponse> {
   const body: Partial<AssistantSettingsView> = { ...settings };
   for (const key of KEYS_SAVED_ELSEWHERE) delete body[key];
-  return api.put<AssistantSettingsResponse>("/api/assistant/settings", body);
+  return api.put<AssistantSettingsResponse>("/api/assistant/settings", body).then(noteName);
 }
 
 /**
@@ -48,7 +55,7 @@ export async function patchAssistantSettings(
   const body: Partial<AssistantSettingsView> = { ...current.settings };
   delete body.main_session;
   for (const key of KEYS_SAVED_ELSEWHERE) delete body[key];
-  return api.put<AssistantSettingsResponse>("/api/assistant/settings", { ...body, ...patch });
+  return api.put<AssistantSettingsResponse>("/api/assistant/settings", { ...body, ...patch }).then(noteName);
 }
 
 /** The zone this browser runs in, which the digest time and quiet hours are saved in. */

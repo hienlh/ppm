@@ -7,18 +7,19 @@ import { Bot, Send, Settings } from "@/lib/icons";
 import { openSettings } from "@/components/settings/open-settings";
 import { useAssistantTelegramBinding } from "@/hooks/use-assistant-telegram-binding";
 import { ASSISTANT_SETTINGS_LABEL } from "./assistant-title-extras";
-import { ASSISTANT_WINDOW_TITLE } from "./open-assistant";
+import { useAssistantShortName } from "@/stores/assistant-name-store";
 import { TelegramQuietHeadButton } from "./telegram-quiet-button";
 
 export function AssistantHead({ sessionId }: { sessionId: string | null }) {
   const { chatsOn } = useAssistantTelegramBinding();
   const onTelegram = !!sessionId && chatsOn(sessionId).length > 0;
+  const name = useAssistantShortName();
   return (
     <div className="flex h-[52px] shrink-0 items-center gap-2 border-b border-border pl-3.5 pr-1.5 md:h-10" data-assistant-head="">
       <span className="grid size-6 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-primary to-accent-2 text-primary-foreground">
         <Bot className="size-3.5" />
       </span>
-      <span className="text-[13px] font-semibold">{ASSISTANT_WINDOW_TITLE}</span>
+      <span className="min-w-0 truncate text-[13px] font-semibold" data-assistant-name="">{name}</span>
       {onTelegram && (
         <span className="inline-flex items-center gap-1 text-[11px] text-info" data-telegram-label="">
           <Send className="size-3" />Telegram

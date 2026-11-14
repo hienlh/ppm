@@ -1,19 +1,31 @@
 import { ASSISTANT_CHATS_SUBSECTIONS } from "./assistant-instructions-chats.ts";
+import { assistantPersonaSection } from "./assistant-instructions-persona.ts";
+import type { AssistantPersona } from "../../shared/assistant-persona.ts";
 
 /**
  * The instruction block every PPM Assistant turn carries (Claude `append`, Codex
  * `developerInstructions`). Server-built: nothing from a chat message, a tool result or another
- * session reaches it. The one text the user wrote — their own instructions from Settings → PPM
- * Assistant — comes last, under a heading that says whose it is.
+ * session reaches it. What the user wrote in Settings → PPM Assistant comes last, each part under
+ * a heading that says whose it is: the persona (name, forms of address, character), then their
+ * own instructions.
  *
  * `sections` is where capabilities add their own guidance as they arrive (the tools that read
  * PPM's state, the ones that drive its UI, the ones that change data), each one a complete
- * Markdown section appended after the base rules, which stay first and govern them.
+ * Markdown section appended after the base rules, which stay first and govern them. The persona
+ * goes after all of them, so nothing it says comes before a rule it could be read as changing.
  */
-export function buildAssistantInstructions(opts: { sections?: readonly string[]; userInstructions?: string } = {}): string {
+export function buildAssistantInstructions(
+  opts: { sections?: readonly string[]; persona?: AssistantPersona; userInstructions?: string } = {},
+): string {
   const extra = (opts.sections ?? []).map((s) => s.trim()).filter(Boolean);
+  const persona = opts.persona ? assistantPersonaSection(opts.persona) : null;
   const user = opts.userInstructions?.trim();
-  return [BASE_INSTRUCTIONS, ...extra, ...(user ? [`${USER_INSTRUCTIONS_HEADING}\n\n${user}`] : [])].join("\n\n");
+  return [
+    BASE_INSTRUCTIONS,
+    ...extra,
+    ...(persona ? [persona] : []),
+    ...(user ? [`${USER_INSTRUCTIONS_HEADING}\n\n${user}`] : []),
+  ].join("\n\n");
 }
 
 /** Heads the user's own text, which may refine but never lift the rules above it. */

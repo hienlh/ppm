@@ -11,6 +11,8 @@ import { AssistantProviderDefaultsRow } from "./assistant-provider-defaults";
 import { AssistantMcpServerDialog } from "./assistant-mcp-server-dialog";
 import { IconButton, SectionHeader } from "./settings-rows";
 import { AssistantLegacyMemories, appendToInstructions } from "./assistant-legacy-memories";
+import { AssistantPersonaSettings, personaDraftTooLong } from "./assistant-persona-settings";
+import { DEFAULT_ASSISTANT_PERSONA } from "../../../shared/assistant-persona";
 
 const CHAT_DEFAULT = "__chat__";
 
@@ -21,10 +23,10 @@ function savedKeysOf(server: AssistantMcpServer | undefined): Set<string> {
 }
 
 /** The fields this pane edits; the rest of the row belongs to the other sub-tabs. */
-const generalFields = (s: AssistantSettingsView) => JSON.stringify([s.default_provider, s.providers, s.instructions, s.mcp_servers]);
+const generalFields = (s: AssistantSettingsView) => JSON.stringify([s.default_provider, s.providers, s.instructions, s.persona, s.mcp_servers]);
 
 /**
- * The Assistant's own provider, model, effort, instructions and MCP servers. Assistant sessions
+ * The Assistant's own provider, model, effort, name and personality, instructions and MCP servers. Assistant sessions
  * use none of the settings, MCP servers, hooks, plugins or memory of ordinary chats, so
  * everything they run with is set here. One Save for the whole panel, which leaves the keys the
  * other sub-tabs save (digest, quiet hours, manager defaults) to them.
@@ -56,7 +58,8 @@ export function AssistantGeneralSettings() {
   const servers = draft.mcp_servers;
   const editingServer = typeof editing === "number" ? servers[editing] ?? null : null;
   const takenNames = new Set(servers.filter((_, i) => i !== editing).map((s) => foldMcpName(s.name)));
-  const tooLong = draft.instructions.length > loaded.limits.instructionsMaxChars;
+  const persona = draft.persona ?? DEFAULT_ASSISTANT_PERSONA;
+  const tooLong = draft.instructions.length > loaded.limits.instructionsMaxChars || personaDraftTooLong(persona);
 
   const save = async () => {
     setSaving(true);
@@ -100,13 +103,15 @@ export function AssistantGeneralSettings() {
           }} />
       ))}
 
+      <AssistantPersonaSettings value={persona} disabled={saving} onChange={(next) => patch({ persona: next })} />
+
       <div className="space-y-1">
         <Label htmlFor="asst-instructions" className="text-xs text-text-subtle">Your instructions</Label>
         <textarea id="asst-instructions" rows={4} value={draft.instructions} disabled={saving}
           onChange={(e) => patch({ instructions: e.target.value })}
           placeholder="Added after PPM's own rules, which still come first. For example: answer in Vietnamese."
           className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-        <p className={tooLong ? "text-xs text-destructive" : "text-xs text-text-subtle"}>
+        <p className={draft.instructions.length > loaded.limits.instructionsMaxChars ? "text-xs text-destructive" : "text-xs text-text-subtle"}>
           {draft.instructions.length.toLocaleString()} / {loaded.limits.instructionsMaxChars.toLocaleString()} characters
         </p>
         <AssistantLegacyMemories instructions={draft.instructions} disabled={saving}

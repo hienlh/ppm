@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { connectChat, freshChat } from "./bridge-test-kit.ts";
-import { BOT_COMMANDS, HELP_TEXT, parseCommand, runCommand } from "../../../../src/services/assistant-telegram/assistant-telegram-commands.ts";
+import { BOT_COMMANDS, HELP_TEXT, helpText, parseCommand, runCommand } from "../../../../src/services/assistant-telegram/assistant-telegram-commands.ts";
 import { boundSession } from "../../../../src/services/assistant-telegram/assistant-telegram-binding.ts";
 import { providerRegistry } from "../../../../src/providers/registry.ts";
 import type { AIProvider } from "../../../../src/types/chat.ts";
@@ -72,6 +72,14 @@ describe("the bot's commands", () => {
     await runCommand({ name: "help", args: "" }, t.ctx);
     await runCommand({ name: "restart", args: "" }, t.ctx);
     expect(t.replies.map((r) => r.html)).toEqual(["Nothing is running.", HELP_TEXT, "Unknown command /restart. Send /help for the list."]);
+  });
+
+  it("heads /help with the Assistant's name, escaped, when it has one", () => {
+    expect(helpText("PPM Assistant")).toBe(HELP_TEXT);
+    const lines = (text: string) => text.split("\n");
+    expect(lines(HELP_TEXT)[0]).toBe("<b>PPM Assistant</b> — the AI that works on your PPM.");
+    expect(lines(helpText("Mi <3"))[0]).toBe("<b>Mi &lt;3</b> — PPM Assistant, the AI that works on your PPM.");
+    expect(lines(helpText("Mi")).slice(1)).toEqual(lines(HELP_TEXT).slice(1));
   });
 
   it("answers /status with the list, then the waiting card of each chat it names", async () => {

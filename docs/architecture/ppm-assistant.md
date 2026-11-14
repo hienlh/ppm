@@ -135,7 +135,8 @@ settings save never writes the key, so a pane opened before a change cannot put 
 (`src/web/components/settings/assistant-settings-section.tsx`, sub-tabs in
 `assistant-settings-tab-store.ts`; `openAssistantSettings(tab)` in `open-assistant-settings.ts`
 lands on one; the window's gear opens the pane). Sub-tabs, in order:
-- *General* — provider, model, instructions, MCP servers (`assistant-general-settings.tsx`). Its
+- *General* — provider, model, name and personality (`assistant-persona-settings.tsx`), instructions,
+  MCP servers (`assistant-general-settings.tsx`). Its
   Save leaves out the keys the other sub-tabs own (`KEYS_SAVED_ELSEWHERE` in
   `lib/assistant-settings-api.ts`); each of those saves through `patchAssistantSettings`, which
   reads the stored row and sends it back whole with only its own keys changed, so an older draft
@@ -274,7 +275,18 @@ read PPM's auth token ("PPM's password" in `CLAUDE.md`).
 The Assistant inherits none of the user's own agent setup or of ordinary chats' settings.
 Settings → AI & Accounts → **PPM Assistant** (`/api/assistant/settings`, config key `assistant`,
 shape and validation in `src/shared/assistant-settings.ts`) holds its default provider, a model
-and effort per provider, extra instructions appended after PPM's own, and its own MCP servers.
+and effort per provider, extra instructions appended after PPM's own, a persona, and its own MCP
+servers. The persona (`src/shared/assistant-persona.ts`) is a name, a list of ways to address the
+user — each what it calls the user, what it calls itself and when that fits — and a free-text
+personality of up to 2,000 characters. `assistant-instructions-persona.ts` turns it into a
+"Your persona" section placed after every rule and tool section and before the user's own
+instructions, saying it changes only the Assistant's voice and none of its permissions,
+approvals or limits; names and forms are single lines quoted with `JSON.stringify`, the
+personality is quoted line by line. The name replaces "PPM Assistant" on the window's titlebar
+and the Assistant's head (`assistant-name-store.ts`, refreshed by every settings answer this
+browser gets), on approval cards and messages it sends into chats, and in Telegram's card
+headlines and `/help` (`assistantNameForMessages()`); with no name everything reads as before.
+A persona pasted into the instructions earlier stays there: nothing moves it.
 Those servers' `env` and header values never reach a browser (the whole list is in
 `SECRET_CONFIG_KEYS`), and a saved header is dropped when its server's URL moves to another
 origin.

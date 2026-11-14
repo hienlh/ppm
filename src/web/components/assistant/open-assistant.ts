@@ -23,8 +23,6 @@ import { ASSISTANT_PROJECT_NAME } from "../../../shared/assistant-project";
 /** The Assistant's one tab id (`deriveTabId("assistant")`). */
 export const ASSISTANT_TAB_ID = "assistant";
 export const ASSISTANT_TAB_TITLE = "PPM Assistant";
-/** What its window's titlebar says; the dock chip keeps the tab's title. */
-export const ASSISTANT_WINDOW_TITLE = "Assistant";
 
 export interface OpenAssistantInput {
   /** Show this session (a notification, a history entry) instead of the one already open. */

@@ -18,6 +18,7 @@ import { MessageActionBar } from "./message-action-bar";
 import { CopyTurnLinkButton } from "./copy-turn-link-button";
 import { ProviderBadge } from "./provider-selector";
 import { TurnRefChipRow } from "./turn-ref-chip";
+import { useAssistantDisplayName } from "@/stores/assistant-name-store";
 
 const STARTED_BY_TEXT: Record<AssistantProvenance["startedBy"], string> = {
   user_ppm: "started by you in PPM",
@@ -26,8 +27,8 @@ const STARTED_BY_TEXT: Record<AssistantProvenance["startedBy"], string> = {
 };
 
 /** One line saying how the Assistant's turn behind this message started, as PPM recorded it. */
-export function provenanceLine(p: AssistantProvenance): string {
-  return `Asked by PPM Assistant · ${STARTED_BY_TEXT[p.startedBy]}${p.untrusted ? " · other text in that turn" : ""}`;
+export function provenanceLine(p: AssistantProvenance, name = "PPM Assistant"): string {
+  return `Asked by ${name} · ${STARTED_BY_TEXT[p.startedBy]}${p.untrusted ? " · other text in that turn" : ""}`;
 }
 
 export function FromSessionBubble({ from, provenance, text, plainContent, turnRefs, turn, timestamp, projectName, sessionId, providerId }: {
@@ -47,7 +48,8 @@ export function FromSessionBubble({ from, provenance, text, plainContent, turnRe
 }) {
   const provider = providerLabel(from.providerId);
   // The PPM Assistant is named as such; its session opens in the Assistant, never in a project.
-  const sender = from.kind === "assistant" ? "PPM Assistant" : from.title;
+  const assistantName = useAssistantDisplayName(from.kind === "assistant");
+  const sender = from.kind === "assistant" ? assistantName : from.title;
   const openSender = () => void openLinkedSession({
     projectName: from.projectName,
     providerId: from.providerId,
@@ -77,7 +79,7 @@ export function FromSessionBubble({ from, provenance, text, plainContent, turnRe
         </button>
         {provenance && (
           <p className="-mt-1 mb-1 text-xs text-text-subtle" data-provenance={provenance.startedBy}>
-            {provenanceLine(provenance)}
+            {provenanceLine(provenance, assistantName)}
           </p>
         )}
         {turnRefs && turnRefs.length > 0 && <TurnRefChipRow refs={turnRefs} currentProject={projectName} />}

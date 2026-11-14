@@ -24,6 +24,7 @@ import type { CardPress } from "./assistant-telegram-actions.ts";
 import type { BridgeCards, BridgeDeps } from "./assistant-telegram.service.ts";
 import { formatApprovalCard, formatQuestionCard, needsPpm, resolutionLine } from "./assistant-telegram-card-format.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
+import { assistantNameForMessages } from "../assistant/assistant-settings.service.ts";
 import {
   EARLIER_STEP, applyWizardPress, asksStepByStep, buttonLabel, mintWizardCodes, questionListHtml, wizardStepHtml, wizardStepRows,
   wizardWorstCaseSteps, type Mint, type Selection, type WizardState,
@@ -113,9 +114,10 @@ export class AssistantTelegramCards implements BridgeCards {
   constructor(private readonly deps: BridgeDeps) {}
 
   shown(chatId: string, p: ChatLifecycleEvents["approval_shown"]): void {
+    const name = assistantNameForMessages();
     this.showSafely(chatId, p, {
-      approvalHeadline: "PPM Assistant wants to",
-      questionHeadline: "PPM Assistant asks",
+      approvalHeadline: `${name} wants to`,
+      questionHeadline: `${name} asks`,
       link: () => this.deps.sessionLink(p.providerId, p.sessionId),
     });
   }

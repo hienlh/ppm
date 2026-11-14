@@ -4,6 +4,7 @@ import {
   maskAssistantSettings, readAssistantSettings,
   type AssistantMainSession, type AssistantMcpServer, type AssistantProviderDefaults, type AssistantSettings, type AssistantSettingsView,
 } from "../../shared/assistant-settings.ts";
+import { assistantDisplayName } from "../../shared/assistant-persona.ts";
 
 /**
  * Settings → PPM Assistant, as stored in the `assistant` config row. Read fresh on every call:
@@ -13,6 +14,19 @@ export function getAssistantSettings(): AssistantSettings {
   // A stored row only ever comes from `saveAssistantSettings`, so anything invalid in it is
   // dropped rather than reported.
   return readAssistantSettings(configService.get("assistant") ?? {}).value;
+}
+
+/**
+ * What PPM calls the Assistant in a sentence it writes ("Mi asks", Telegram's headlines): the
+ * name from Settings → PPM Assistant, else "PPM Assistant". Never throws — a name is not worth
+ * failing a card over.
+ */
+export function assistantNameForMessages(): string {
+  try {
+    return assistantDisplayName(getAssistantSettings().persona);
+  } catch {
+    return assistantDisplayName(null);
+  }
 }
 
 /** What a browser may see: every MCP env and header value blanked. */
@@ -88,8 +102,8 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
   const saved = getAssistantSettings();
   // The main session is PPM's to pick and the user's to change through its own route; a pane
   // opened before the change would otherwise put the old one back. A body naming no default mode
-  // for manager chats, no rules template, no quiet hours, no digest or no time zone (a pane that
-  // predates them) keeps the saved one.
+  // for manager chats, no rules template, no quiet hours, no digest, no time zone or no persona
+  // (a pane that predates them) keeps the saved one.
   const sentKey = (key: string) => typeof input === "object" && input !== null && key in input;
   const { main_session: _ignored, timezone: _zone, ...sent } = value;
   const timezone = sentKey("timezone") ? value.timezone : saved.timezone;
@@ -100,6 +114,7 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
     manager_template: sentKey("manager_template") ? value.manager_template : saved.manager_template,
     quiet_hours: sentKey("quiet_hours") ? value.quiet_hours : saved.quiet_hours,
     digest: sentKey("digest") ? value.digest : saved.digest,
+    persona: sentKey("persona") ? value.persona : saved.persona,
     ...(timezone ? { timezone } : {}),
   };
   configService.set("assistant", next);

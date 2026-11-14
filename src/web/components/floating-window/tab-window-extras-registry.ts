@@ -12,7 +12,7 @@ import type { Tab, TabType } from "@/stores/tab-store";
 import { AssistantTitleExtras } from "@/components/assistant/assistant-title-extras";
 import { OpenInProjectTitleExtras } from "@/components/assistant/open-in-project-button";
 import { useAssistantWaitingStore } from "@/stores/assistant-waiting-store";
-import { ASSISTANT_WINDOW_TITLE } from "@/components/assistant/open-assistant";
+import { assistantTitlebarTitle } from "@/stores/assistant-name-store";
 
 export type WindowSkinName = "windows" | "macos";
 
@@ -25,8 +25,11 @@ export interface TabTitleExtrasProps {
 
 export interface TabWindowExtras {
   TitleExtras?: ComponentType<TabTitleExtrasProps>;
-  /** The titlebar's label when it differs from the tab's title (the dock keeps the tab's). */
-  titlebarTitle?: string;
+  /**
+   * The titlebar's label when it differs from the tab's title (the dock keeps the tab's). Read
+   * whenever `subscribe` reports a change, like `count`: the Assistant's follows its name.
+   */
+  titlebarTitle?: { subscribe: (onChange: () => void) => () => void; read: () => string };
   /** The titlebar says "Idle" as well as "Working": its state is what the window is for. */
   showIdle?: boolean;
   /** A count for the dock chip, read whenever `subscribe` reports a change. */
@@ -39,7 +42,7 @@ function build(): Partial<Record<TabType, TabWindowExtras>> {
   return {
     assistant: {
       TitleExtras: AssistantTitleExtras,
-      titlebarTitle: ASSISTANT_WINDOW_TITLE,
+      titlebarTitle: assistantTitlebarTitle,
       showIdle: true,
       count: { subscribe: useAssistantWaitingStore.subscribe, read: () => useAssistantWaitingStore.getState().total },
     },
