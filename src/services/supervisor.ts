@@ -865,6 +865,7 @@ export async function spawnServer(
   }
 
   if (exitCode === 0 && shuttingDown) {
+    serverRestartRequested = false;
     log("INFO", `Server exited cleanly (code ${exitCode})`);
     return;
   }

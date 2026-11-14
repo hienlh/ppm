@@ -420,10 +420,12 @@ export async function reapTrackedDescendants(
 }
 
 /**
- * What `killTreeByLineage` kills: the root unless protected, then whatever the listing
- * shows below it by lineage, sparing `protect` and the caller's own chain. A listing that
- * failed, came back empty or lost the root still yields the root: an unreadable process
- * table must never leave the server running. Exported for tests.
+ * What `killTreeByLineage` kills: the root, then whatever the listing shows below it by
+ * lineage, sparing `protect` and the caller's own chain. A listing that failed, came back
+ * empty or lost the root still yields the root: an unreadable process table must never
+ * leave the server running. The root is refused only when it is the caller or one of its
+ * ancestors — never because it is in `protect`, whose PIDs come from status.json and may
+ * name a process long gone whose PID the server now holds. Exported for tests.
  */
 export function lineageKillTargets(
   rootPid: number,
@@ -431,9 +433,10 @@ export function lineageKillTargets(
   protect: Iterable<number | null | undefined> = [],
   selfPid: number = process.pid,
 ): number[] {
-  const guarded = new Set<number>(procs ? selfAndAncestors(selfPid, procs) : [selfPid]);
+  const own = new Set<number>(procs ? selfAndAncestors(selfPid, procs) : [selfPid]);
+  if (own.has(rootPid)) return [];
+  const guarded = new Set<number>(own);
   for (const p of protect) if (typeof p === "number" && p > 0) guarded.add(p);
-  if (guarded.has(rootPid)) return [];
   const below = procs ? descendantsByLineage(rootPid, procs).filter((p) => !guarded.has(p)) : [];
   return [rootPid, ...below];
 }
@@ -461,6 +464,11 @@ export function killTreeByLineageSync(
 ): void {
   if (process.platform !== "win32") { killProcessTree(rootPid); return; }
   let procs: Map<number, ProcInfo> | null = null;
-  try { procs = listProcessesSync(); } catch {}
+  // Bun 1.3.12 can throw ETIMEDOUT from a sync spawn with a timeout within milliseconds when
+  // it runs from a long timer; a second attempt is cheap and usually gets the listing.
+  for (let attempt = 0; attempt < 2 && procs === null; attempt++) {
+    const t0 = Date.now();
+    try { procs = listProcessesSync(); } catch { if (Date.now() - t0 > 1_000) break; }
+  }
   killPids(lineageKillTargets(rootPid, procs, protect), "SIGKILL");
 }

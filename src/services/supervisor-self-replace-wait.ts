@@ -32,8 +32,10 @@ export async function waitForReplacement(opts: WaitForReplacementOptions): Promi
   while (Date.now() - start < opts.timeoutMs) {
     await sleep(pollMs);
     // Exit first. The replacement writes its PID to status.json almost as soon as it
-    // starts, well before the migrations and the server it may then die on; trusting the
-    // PID alone would make this supervisor exit too and leave nothing running.
+    // starts, before the edge, tunnel and server it may still fail on; a replacement that
+    // has already exited by then must not be taken for one that took over, or this
+    // supervisor would exit too and leave nothing running. (One that dies after this
+    // supervisor has accepted it is not covered: nothing is left to notice.)
     const exit = opts.exited();
     if (exit) return { kind: "exited", code: exit.code };
     const pid = opts.readSupervisorPid();

@@ -74,9 +74,14 @@ describe("lineageKillTargets", () => {
     expect(lineageKillTargets(23860, map([[1, 0, 1]]))).toEqual([23860]);
   });
 
-  it("never names the caller, its ancestors or a protected process", () => {
+  it("never names the caller, its ancestors or a protected process below the root", () => {
     expect(lineageKillTargets(50000, incident, [], 50000)).toEqual([]);
-    expect(lineageKillTargets(23860, incident, [23860], 50000)).toEqual([]);
+    const spared = lineageKillTargets(23860, incident, [12001], 50000);
+    expect(spared).toContain(23860);
+    expect(spared).not.toContain(12001);
+    // A protected PID that is the root itself is stale (status.json named a dead process
+    // whose PID the server now has): the server is still killed.
+    expect(lineageKillTargets(23860, incident, [23860], 50000)).toContain(23860);
     // The caller sits under the root (a CLI run from a chat's shell): it and its chain stay.
     const t = lineageKillTargets(23860, incident, [], 12002);
     for (const pid of [12002, 51116, 12001, 23860]) expect(t).not.toContain(pid);
