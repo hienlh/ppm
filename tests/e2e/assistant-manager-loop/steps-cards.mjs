@@ -29,7 +29,8 @@ export async function step3(k, s) {
   s.decisionMessage = onPhone.message_id;
   assert.equal((await k.waiting()).total, 1);
   await rail(k, "PPM Assistant · 1 waiting").waitFor({ timeout: 15000 });
-  const chip = k.body().locator('[data-manager-chip="alpha"]');
+  // The chip is two buttons in one pill; the name's button carries the count in its label.
+  const chip = k.body().locator('[data-manager-chip="alpha"] button').first();
   await until("chip count", async () => /· 1 waiting$/.test(await chip.getAttribute("aria-label") ?? ""), 15000);
   const dock = k.page.locator('[role="toolbar"][aria-label="Windows"] button[data-chip]:visible', { hasText: "Assistant" });
   await until("dock count", async () => /· 1 waiting$/.test(await dock.first().getAttribute("aria-label") ?? ""), 15000);
