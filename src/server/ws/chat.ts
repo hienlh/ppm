@@ -26,6 +26,14 @@ import { configService } from "../../services/config.service.ts";
 import { prefixTokens } from "../../shared/turn-usage.ts";
 import type { PromptCacheState } from "../../shared/prompt-cache-idle.ts";
 import { isAsyncAgentLaunchAck, isTerminalAgentStatus } from "../../shared/background-agent-status.ts";
+import {
+  backgroundEventRecent,
+  clearBackgroundTasks,
+  hasRunningTasks,
+  noteBackgroundEvent,
+  noteTaskEvent,
+  type BackgroundTaskState,
+} from "./chat-background-tasks.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
 import { needsAuthServerNames } from "../../services/mcp-oauth/mcp-oauth-redirect.ts";
 import { mcpStatusEvent, registerMcpSignInSync } from "./chat-mcp-sign-in-sync.ts";
@@ -299,7 +307,7 @@ export function chatSocketData(sessionId: string, projectName: string, query: UR
   };
 }
 
-export interface SessionEntry {
+export interface SessionEntry extends BackgroundTaskState {
   providerId: string;
   clients: Set<ChatWsSocket>;
   projectPath?: string;
@@ -633,9 +641,16 @@ export function dropIdleSubprocess(sessionId: string, reason: string, note: stri
   log.info(`session=${sessionId} released subprocess (${reason}): ${note}`);
 }
 
-/** Whether a background agent or shell the session started is still running in its subprocess. */
+/**
+ * Whether a background agent or shell the session started is still running in its subprocess.
+ * The SDK's own task lifecycle is the primary signal (`chat-background-tasks.ts`): it is the only
+ * one that sees an agent resumed by `SendMessage`. The launch-ack set and the shell registry stay
+ * as well, since each was the only signal for its kind of work before.
+ */
 export function hasBackgroundWork(sessionId: string): boolean {
-  if ((activeSessions.get(sessionId)?.backgroundToolUseIds?.size ?? 0) > 0) return true;
+  const entry = activeSessions.get(sessionId);
+  if (entry && hasRunningTasks(entry)) return true;
+  if ((entry?.backgroundToolUseIds?.size ?? 0) > 0) return true;
   return backgroundShellRegistry.list(sessionId).some((sh) => sh.status !== "stopped");
 }
 
@@ -790,7 +805,11 @@ const tokenRotationDeps: TokenRotationDeps = {
       // The consumer loop outlives each turn, so a live subprocess between turns sits at
       // `idle` with `isStreamingActive` still set. A subprocess with no entry here belongs to
       // something else (a scheduled run) and is never ours to judge idle.
-      const busy = !entry || entry.phase !== "idle" || !!entry.pendingApprovalEvent || hasBackgroundWork(sessionId);
+      // Closing the subprocess kills whatever runs inside it, and a renewal can wait, so this one
+      // caller also holds off while the CLI is still emitting background events: the safety net
+      // for work it runs without reporting a task.
+      const busy = !entry || entry.phase !== "idle" || !!entry.pendingApprovalEvent || hasBackgroundWork(sessionId)
+        || backgroundEventRecent(entry);
       return { sessionId, credential, busy };
     });
   },
@@ -1563,6 +1582,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       // Child streams can outlive the root turn. Their content and terminal
       // events belong to the Agent card, never to the root turn's lifecycle.
       if (ev.parentToolUseId) {
+        noteBackgroundEvent(entry);
         emitNestedChild(sessionId, event);
         continue;
       }
@@ -1605,12 +1625,20 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           entry.compactStatus = null;
           log.debug(`session=${sessionId} compact_status=done (via compact_boundary)`);
           broadcast(sessionId, { type: "compact_status", status: "done" });
+        } else if (sub === "task_progress") {
+          // A running task's heartbeat, which keeps coming after the turn that started it ends.
+          noteBackgroundEvent(entry);
         } else if (sub === "task_started" || sub === "task_updated" || sub === "task_notification") {
           // Background command (local_bash) lifecycle. shellId === SDK task_id.
           const taskId = (ev as any).taskId as string | undefined;
           const taskStatus = (ev as any).taskStatus as string | undefined;
           const taskToolUseId = (ev as any).taskToolUseId as string | undefined;
           const outputFile = (ev as any).outputFile as string | undefined;
+          // What the subprocess counts as running. An agent woken again by SendMessage appears
+          // only here: its tool result is not the launch ack, and its task id already ended once.
+          if (noteTaskEvent(entry, sub, taskId, taskStatus)) {
+            bgShellLog.info(`session=${sessionId} task ${taskId} ${entry.runningTaskIds?.has(taskId!) ? "running" : `ended (${taskStatus})`} tasksRunning=${entry.runningTaskIds?.size ?? 0}`);
+          }
           // A backgrounded Agent reports its outcome only here — its tool_result was a
           // launch ack the card must not read as "finished". Forward the terminal state so
           // the card can settle. Harmless for background bash tasks: no card matches them.
@@ -2054,6 +2082,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     bashOutputSpy.stopAllForSession(sessionId);
     // SDK subprocess teardown kills its background children — reflect as stopped
     backgroundShellRegistry.markAllStopped(sessionId);
+    // and forget the tasks and launches it was running, or one whose end never arrived would keep
+    // the session busy (never released, never moved onto a renewed token) for good.
+    clearBackgroundTasks(entry);
+    entry.backgroundToolUseIds?.clear();
     broadcastBackgroundRegistry(sessionId);
     // Cleanup team watchers
     for (const w of entry.teamWatchers.values()) w.cleanup();
