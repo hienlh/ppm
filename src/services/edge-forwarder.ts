@@ -22,6 +22,14 @@ import net from "node:net";
 import { resolveTargetPort, _resetTargetCache } from "./edge-target-resolver.ts";
 import { createLogger, installFileLogSink } from "./logger.ts";
 import { registerMemoryGauge, startMemoryDiagnostics } from "./memory-diagnostics.ts";
+import { readNativeMemory } from "./memory-diagnostics-native.ts";
+import {
+  EDGE_RECYCLE_CHECK_MS,
+  EDGE_RECYCLE_EXIT_CODE,
+  EDGE_RECYCLE_QUIET_CONNECTIONS,
+  edgeRecycleLimitMB,
+  shouldRecycleEdge,
+} from "./edge-recycle-policy.ts";
 
 const log = createLogger("edge");
 
@@ -188,11 +196,55 @@ async function handleConnection(
   if (clientEnded) upstream.end();
 }
 
+/** What the edge saw when it decided to recycle. */
+export interface EdgeRecycleInfo {
+  privateMB: number;
+  limitMB: number;
+  openConnections: number;
+}
+
+export interface EdgeRecycleOptions {
+  limitMB: number;
+  /** This process's private bytes in MB, or undefined when unreadable. */
+  readPrivateMB: () => Promise<number | undefined>;
+  /** Called once, after the listener and every client socket are closed. */
+  onRecycle: (info: EdgeRecycleInfo) => void;
+  checkIntervalMs?: number;
+  quietConnections?: number;
+}
+
 export interface EdgeForwarderOptions {
   publicPort: number;
   host?: string;
   /** How long a client waits for a reachable server. Defaults to 5s. */
   connectWindowMs?: number;
+  /** Release the port once memory passes a limit while few clients are connected. Off when absent. */
+  recycle?: EdgeRecycleOptions;
+}
+
+/**
+ * Check memory on a timer and, once over the limit at a quiet moment, close the listener
+ * and the few open clients and hand over to `onRecycle`. Closing the listener first is what
+ * lets the successor bind the same port the moment it starts; the clients that were cut
+ * (a WebSocket, a cloudflared origin connection) reconnect to that successor.
+ */
+function watchForRecycle(server: net.Server, clients: Set<net.Socket>, opts: EdgeRecycleOptions): void {
+  let recycling = false;
+  const timer = setInterval(async () => {
+    if (recycling) return;
+    const privateMB = await opts.readPrivateMB();
+    if (recycling || !shouldRecycleEdge(privateMB, clients.size, opts.limitMB, opts.quietConnections)) return;
+    recycling = true;
+    clearInterval(timer);
+    const info: EdgeRecycleInfo = { privateMB: privateMB!, limitMB: opts.limitMB, openConnections: clients.size };
+    log.warn(`Recycling: private ${info.privateMB}MB >= ${info.limitMB}MB with ${info.openConnections} open connection(s) — releasing the port for a fresh edge`);
+    server.close();
+    for (const c of clients) c.destroy();
+    opts.onRecycle(info);
+  }, opts.checkIntervalMs ?? EDGE_RECYCLE_CHECK_MS);
+  // The check must never be what keeps the process alive.
+  timer.unref?.();
+  server.once("close", () => clearInterval(timer));
 }
 
 /**
@@ -204,18 +256,21 @@ export function startEdgeForwarder(
 ): Promise<net.Server> {
   const host = opts.host ?? "0.0.0.0";
   const connectWindowMs = opts.connectWindowMs ?? CONNECT_WINDOW_MS;
+  const clients = new Set<net.Socket>();
   return new Promise((resolvePromise, reject) => {
     // allowHalfOpen keeps the other direction alive when one side sends FIN —
     // long-lived chat WS and SSE streams depend on it.
     const server = net.createServer({ allowHalfOpen: true }, (client) => {
       openConnections++;
       totalConnections++;
-      client.once("close", () => { openConnections--; });
+      clients.add(client);
+      client.once("close", () => { openConnections--; clients.delete(client); });
       void handleConnection(client, connectWindowMs);
     });
     server.once("error", reject);
     server.listen(opts.publicPort, host, () => {
       server.removeListener("error", reject);
+      if (opts.recycle) watchForRecycle(server, clients, opts.recycle);
       resolvePromise(server);
     });
   });
@@ -239,9 +294,19 @@ if (process.argv.includes("__edge__")) {
     process.exit(2);
   }
 
+  // Windows only (see edge-recycle-policy.ts): the supervisor sees the exit code and starts
+  // the successor at once, which binds the port this process has just released.
+  const limitMB = edgeRecycleLimitMB();
+  const recycle: EdgeRecycleOptions | undefined = limitMB === null ? undefined : {
+    limitMB,
+    quietConnections: EDGE_RECYCLE_QUIET_CONNECTIONS,
+    readPrivateMB: async () => (await readNativeMemory()).privateMB,
+    onRecycle: () => process.exit(EDGE_RECYCLE_EXIT_CODE),
+  };
+
   try {
-    await startEdgeForwarder({ publicPort, host });
-    log.info(`Listening on ${host}:${publicPort}`);
+    await startEdgeForwarder({ publicPort, host, recycle });
+    log.info(`Listening on ${host}:${publicPort}${limitMB === null ? "" : ` (recycles above ${limitMB}MB private)`}`);
   } catch (err) {
     const repeat = Number(process.env[EDGE_PRIOR_DEATHS_ENV]) >= 2;
     log[repeat ? "debug" : "fatal"](`Failed to bind ${host}:${publicPort}: ${err} — exiting`);
