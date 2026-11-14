@@ -64,7 +64,7 @@ const WAIT = {
     + "A session showing the user a card (a question or an approval) cannot read your message or answer until "
     + "the user does, so the wait ends at once with reply.reason \"waiting_for_user\" and reply.card naming that "
     + "card. Your message is not lost: that session goes on with it once the user has answered, so do not send it "
-    + "again. Tell the user which card in which session is waiting for them.",
+    + "again unless the user stops that session instead. Tell the user which card in which session is waiting for them.",
 };
 
 export function sessionCollabToolDefinitions() {
