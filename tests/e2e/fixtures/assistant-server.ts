@@ -178,6 +178,8 @@ const turnsSeen: Array<{
   sharedContext?: string; priority?: string; runId: string;
   /** The message as PPM's block decoder reads it: content, sender, provenance, the user's words. */
   blocks: ReturnType<typeof decodeMessageBlocks>;
+  /** The instruction block an Assistant turn carried. */
+  instructions?: string;
 }> = [];
 const pendingApprovals = new Map<string, (answer: { approved: boolean; data?: unknown }) => void>();
 
@@ -357,6 +359,8 @@ class ScriptedProvider {
     turnsSeen.push({
       label: script.label, sessionId, provider: this.id, message, assistant, images: opts?.images?.length ?? 0, mode: opts?.permissionMode, at: Date.now(),
       sharedContext: opts?.sharedContext, priority: opts?.priority, runId: run.id, blocks: decodeMessageBlocks(stripSharedContext(message)),
+      // What PPM told the Assistant this turn, so a script can check where a section sits.
+      ...(assistant && opts?.assistantInstructions ? { instructions: opts.assistantInstructions } : {}),
     });
     // Both CLIs put the user's message on disk as the turn starts, which is what proves a chat
     // in its first turn belongs to its project.
