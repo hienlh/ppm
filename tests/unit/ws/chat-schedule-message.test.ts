@@ -28,9 +28,19 @@ beforeAll(() => {
   savedProjects = configService.get("projects");
   configService.set("projects", [{ name: "web", path: root }]);
 });
-afterAll(() => {
+afterAll(async () => {
   configService.set("projects", savedProjects as never);
-  rmSync(root, { recursive: true, force: true });
+  // Retried: on Windows the work a chat starts in its project once a turn ends holds the folder
+  // for a moment after the last test.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+      return;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EBUSY" || attempt >= 40) throw e;
+      await Bun.sleep(100);
+    }
+  }
 });
 
 const restores: Array<() => void> = [];
@@ -119,9 +129,7 @@ it("opens a turn of its own with the run in front of the prompt, and shows its a
 it("says a builtin answered inside a running turn left that turn running", async () => {
   const held = new QueuedTurnsProvider("schedule-builtin-mid-turn");
   providerRegistry.register(held);
-  // No project folder: bound to the temp root, this session keeps it busy on Windows, and the
-  // folder plays no part in what is checked here.
-  const id = (await chatService.createSession(held.id, {})).id;
+  const id = (await chatService.createSession(held.id, { projectName: "web", projectPath: root })).id;
   const ends: Array<ChatLifecycleEvents["turn_ended"]> = [];
   const off = chatLifecycle.on("turn_ended", (p) => { if (p.sessionId === id) ends.push(p); });
   restores.push(off);
