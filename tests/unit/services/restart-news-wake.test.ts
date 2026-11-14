@@ -26,6 +26,7 @@ import { NO_REPLY_TEXT } from "../../../src/shared/assistant-cards.ts";
 import type { InterruptedChat, RestartEntry } from "../../../src/shared/restart-news.ts";
 import { createTurnProvenanceTracker } from "../../../src/services/assistant/assistant-turn-provenance.ts";
 import { buildManagerBlock } from "../../../src/services/assistant-managers/manager-context-entry.ts";
+import { decodeProvenance, encodeProvenance, provenanceHeaderLine } from "../../../src/shared/assistant-provenance.ts";
 
 const MAIN = "asst-main";
 const T = Date.UTC(2026, 11, 15, 12, 0, 0);
@@ -247,6 +248,14 @@ describe("the provenance a manager reads", () => {
     const t = tracker(["restart"]);
     t.noteMessage({ sessionId: MAIN, text: "hi", origin: "ws" });
     expect(t.provenance(MAIN).reason).toBeUndefined();
+  });
+
+  it("the header line says so, and the block still round-trips", () => {
+    const p = { startedBy: "ppm" as const, untrusted: true, reason: "news, restart" };
+    expect(provenanceHeaderLine(p)).toContain("resuming chats the restart cut off");
+    expect(provenanceHeaderLine({ ...p, reason: "news" })).toContain("a status ask only");
+    const decoded = decodeProvenance(encodeProvenance("Resume these", p));
+    expect(decoded).toEqual({ content: "Resume these", provenance: p });
   });
 
   it("the manager's rules allow resuming cut-off chats on such a message, and nothing more", () => {
