@@ -24,6 +24,8 @@ import { getAssistantSettings, saveAssistantSettings } from "../../../src/servic
 import { parseWakeNews } from "../../../src/shared/assistant-wake-news.ts";
 import { NO_REPLY_TEXT } from "../../../src/shared/assistant-cards.ts";
 import type { InterruptedChat, RestartEntry } from "../../../src/shared/restart-news.ts";
+import { createTurnProvenanceTracker } from "../../../src/services/assistant/assistant-turn-provenance.ts";
+import { buildManagerBlock } from "../../../src/services/assistant-managers/manager-context-entry.ts";
 
 const MAIN = "asst-main";
 const T = Date.UTC(2026, 11, 15, 12, 0, 0);
@@ -224,6 +226,33 @@ describe("a manager send from the restart turn", () => {
     expect(r.ok).toBe(false);
     expect(!r.ok && r.message).toBe(QUIET_HOURS_REFUSAL);
     h.queue.stop();
+  });
+});
+
+describe("the provenance a manager reads", () => {
+  const tracker = (carried: string[]) => createTurnProvenanceTracker({
+    isAssistant: () => true, liveOrigin: () => "watch", wakeSources: () => carried,
+  });
+
+  it("names `restart` when the PPM-started turn carries restart news, and only then", () => {
+    const withRestart = tracker(["restart", "cards"]);
+    withRestart.noteMessage({ sessionId: MAIN, text: RESTART_OPENER, origin: "watch" });
+    expect(withRestart.provenance(MAIN)).toMatchObject({ startedBy: "ppm", untrusted: true, reason: "news, restart" });
+    const without = tracker(["cards"]);
+    without.noteMessage({ sessionId: MAIN, text: "[PPM] News", origin: "watch" });
+    expect(without.provenance(MAIN).reason).toBe("news");
+  });
+
+  it("never names it in a turn the user started", () => {
+    const t = tracker(["restart"]);
+    t.noteMessage({ sessionId: MAIN, text: "hi", origin: "ws" });
+    expect(t.provenance(MAIN).reason).toBeUndefined();
+  });
+
+  it("the manager's rules allow resuming cut-off chats on such a message, and nothing more", () => {
+    const block = buildManagerBlock("api");
+    expect(block).toContain("reasons include `restart`");
+    expect(block).toContain("no new work");
   });
 });
 

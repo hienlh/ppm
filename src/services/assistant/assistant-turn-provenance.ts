@@ -19,8 +19,13 @@ import type { TraceOrigin } from "../../shared/session-trace.ts";
 import { hasForwardedPart } from "../assistant-telegram/assistant-telegram-inbound-text.ts";
 import { isAssistantSession } from "./assistant-session.ts";
 import { toolUseBringsOutsideText } from "./assistant-outside-text.ts";
+import { assistantWakeQueue } from "../assistant-wake/assistant-wake-queue.ts";
 
-export type UntrustedReason = "news" | "forwarded" | "read" | "scheduled" | "digest" | "late_reply" | "unknown";
+/**
+ * `restart` is not text from outside: it says the PPM-started turn carries PPM's own restart news,
+ * which is what lets a manager chat resume the chats a restart cut off (`manager-context-entry.ts`).
+ */
+export type UntrustedReason = "news" | "forwarded" | "read" | "scheduled" | "digest" | "late_reply" | "restart" | "unknown";
 
 interface TurnRecord {
   startedBy: ProvenanceStartedBy;
@@ -32,6 +37,8 @@ export interface TurnProvenanceDeps {
   isAssistant(sessionId: string): boolean;
   /** Whose message the session's running turn belongs to, from the live chat; undefined when none. */
   liveOrigin(sessionId: string): ChatMessageOrigin | undefined;
+  /** The wake sources whose news the session's running wake turn carries; empty when none runs. */
+  wakeSources?(sessionId: string): string[];
 }
 
 const startedByOrigin = (origin: ChatMessageOrigin | undefined, scripted: boolean): ProvenanceStartedBy =>
@@ -112,7 +119,10 @@ export function createTurnProvenanceTracker(deps: TurnProvenanceDeps) {
       const rec = turns.get(sessionId) ?? {
         startedBy: startedByOrigin(deps.liveOrigin(sessionId), false), reasons: new Set<UntrustedReason>(["unknown"]),
       };
-      const reasons = [...rec.reasons].sort();
+      // Asked at send time, once the wake queue counts the turn as running; only a turn PPM started.
+      let carried: string[] = [];
+      try { carried = rec.startedBy === "ppm" ? deps.wakeSources?.(sessionId) ?? [] : []; } catch { /* not marked */ }
+      const reasons = [...new Set([...rec.reasons, ...(carried.includes("restart") ? ["restart" as const] : [])])].sort();
       return {
         startedBy: rec.startedBy,
         ...(rec.opening ? { opening: rec.opening } : {}),
@@ -128,6 +138,7 @@ export type TurnProvenanceTracker = ReturnType<typeof createTurnProvenanceTracke
 export const assistantTurnProvenance = createTurnProvenanceTracker({
   isAssistant: (sessionId) => isAssistantSession(sessionId),
   liveOrigin: (sessionId) => chatControl()?.liveState(sessionId)?.turnOrigin,
+  wakeSources: (sessionId) => assistantWakeQueue.carrying(sessionId),
 });
 
 chatLifecycle.on("user_message", (m) => assistantTurnProvenance.noteMessage(m));
