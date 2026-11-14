@@ -15,7 +15,8 @@ import { clip, errorResult, jsonResult, notApprovedResult } from "./assistant-to
  * calls. In a clean turn — the user started it, and nothing the user did not write has reached it
  * — it runs at once, as the user's own request. Otherwise one card covers the whole call, and it
  * is refused outright in a turn PPM started on its own. Marking a chat read is refused while that
- * chat shows a card, so the sign that it needs the user cannot be cleared from here.
+ * chat shows a card, so the sign that it needs the user cannot be cleared from here. A manager
+ * chat is renamed like any other: its title is only a name, and the role stays with the session.
  */
 
 type Tag = { id: number; name: string };
@@ -54,7 +55,6 @@ async function plan(ctx: ToolContext, project: AssistantProject, asked: AskedCha
     if (!found.ok) return found.error;
     const chat = found.value;
     const { facts } = chat;
-    if (a.title !== undefined && facts.manager) return `"${chat.name}" is the project's manager chat; its title is left to the user.`;
     if (a.read === true && deps.control()?.liveState(chat.sessionId)?.card) {
       return `"${chat.name}" is waiting for the user to answer a card; it is not marked read while that card waits.`;
     }
@@ -96,7 +96,8 @@ export async function chatOrganize(ctx: ToolContext, args: Record<string, unknow
       tool: CHAT_ORGANIZE_TOOL,
       input: { project: project.name, changes: effective.map((p) => ({ sessionId: p.chat.sessionId, ...p.change })) },
       summary: chatOrganizeSummary({
-        project: project.name, entries: effective.map((p) => ({ sessionId: p.chat.sessionId, title: p.chat.facts.title, change: p.change })),
+        project: project.name,
+        entries: effective.map((p) => ({ sessionId: p.chat.sessionId, title: p.chat.facts.title, change: p.change, manager: p.chat.facts.manager })),
       }),
     });
     if (verdict.verdict !== "approved") return notApprovedResult(CHAT_ORGANIZE_TOOL, verdict);

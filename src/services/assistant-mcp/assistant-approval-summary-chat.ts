@@ -77,15 +77,19 @@ export function describeOrganizeChange(change: OrganizeChange): string {
 
 export function chatOrganizeSummary(input: {
   project: string;
-  entries: Array<{ sessionId: string; title: string | null; change: OrganizeChange }>;
+  entries: Array<{ sessionId: string; title: string | null; change: OrganizeChange; manager?: boolean }>;
 }): ApprovalSummary {
   const n = input.entries.length;
   return {
     headline: `Change ${n} chat${n === 1 ? "" : "s"} in "${input.project}"`,
-    facts: input.entries.map((e) => exactFact(
-      cut(e.title || unnamedChat(e.sessionId), LABEL_TITLE_CHARS),
-      `${describeOrganizeChange(e.change)} (${e.sessionId})`,
-      e.change.pinned === false ? "warning" : undefined,
-    )),
+    facts: input.entries.map((e) => {
+      // A manager's name is what the user goes by to pick which chat to type into, so its rename says so.
+      const renamesManager = e.manager === true && e.change.title !== undefined;
+      return exactFact(
+        cut(e.title || unnamedChat(e.sessionId), LABEL_TITLE_CHARS),
+        `${describeOrganizeChange(e.change)}${renamesManager ? ` · the manager chat of "${input.project}"` : ""} (${e.sessionId})`,
+        e.change.pinned === false || renamesManager ? "warning" : undefined,
+      );
+    }),
   };
 }

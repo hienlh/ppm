@@ -120,6 +120,22 @@ describe("assigning", () => {
     expect(fresh.managerFor(A.path)?.sessionId).toBe(renamed);
     expect(fresh.isManagerChat(draft)).toBe(true);
   });
+
+  it("announces a renamed manager chat, under its old id too, and stays quiet for any other chat", async () => {
+    const m = managers();
+    const draft = chat(A);
+    await m.assign(A.name, draft);
+    changes = [];
+    m.retitled(chat(A));
+    expect(changes).toEqual([]);
+    m.retitled(draft);
+    expect(changes).toEqual([[A.name]]);
+    const later = `chat-${crypto.randomUUID()}`;
+    setSessionMigratedTo(draft, later);
+    const fresh = managers();
+    fresh.retitled(draft);
+    expect(changes).toEqual([[A.name], [A.name]]);
+  });
 });
 
 describe("removing", () => {

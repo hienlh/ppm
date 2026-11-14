@@ -34,8 +34,11 @@ const MAX_PATH_CHARS = 4096;
 
 const isInside = (root: string, path: string): boolean => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
 
-/** Why the editor's read rules (`assertReadPermitted`) refuse the path, or null when they do not. */
-function refusal(absolute: string, real: string): string | null {
+/**
+ * Why the editor's read rules (`assertReadPermitted`) refuse the path, or null when they do not.
+ * Also the rule the Assistant's `ui_reveal_path` applies, so both name a path PPM refuses alike.
+ */
+export function tabReadRefusal(absolute: string, real: string): string | null {
   try {
     assertReadPermitted(absolute, real);
     return null;
@@ -60,7 +63,7 @@ export async function resolveTabTarget(input: unknown, binding: TabToolsBinding)
   }
   // The path as given is checked before it reaches the disk, as every other door does: on
   // Windows a UNC path names another machine, and resolving it opens an SMB session there.
-  const early = refusal(absolute, absolute);
+  const early = tabReadRefusal(absolute, absolute);
   if (early) return { ok: false, error: early };
   let real: string;
   try {
@@ -73,7 +76,7 @@ export async function resolveTabTarget(input: unknown, binding: TabToolsBinding)
   } catch {
     return { ok: false, error: `${absolute} could not be read.` };
   }
-  const late = refusal(absolute, real);
+  const late = tabReadRefusal(absolute, real);
   if (late) return { ok: false, error: late };
   const html = /\.html?$/i.test(absolute);
   if (binding.projectPath && binding.projectName) {

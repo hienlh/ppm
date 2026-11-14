@@ -1,6 +1,6 @@
 import { SESSION_COLLAB_LIMITS } from "../../shared/session-collab-settings.ts";
 import {
-  CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL,
+  CREATE_SESSION_TOOL, MAX_COLLAB_TITLE_CHARS, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL,
 } from "../../shared/session-collab.ts";
 
 /**
@@ -35,8 +35,8 @@ export function collabTextTooLarge(field: "task" | "message", text: string): str
     + "(about 24,000 characters of English, fewer in scripts that take more bytes a character). "
     + "Shorten it, or write the details to a file in the project and send its path.";
 }
-/** Longest title a created session gets; longer ones are cut. */
-export const MAX_COLLAB_TITLE_CHARS = 60;
+/** Longest title a created session gets; longer ones are cut. Kept in shared code for the manager's default title. */
+export { MAX_COLLAB_TITLE_CHARS };
 /** Sessions one `session_status` call reports at most. */
 export const MAX_STATUS_SESSIONS = 20;
 
@@ -84,7 +84,7 @@ export function sessionCollabToolDefinitions() {
       inputSchema: {
         type: "object",
         properties: {
-          title: { type: "string", description: `A short title for the new session (at most ${MAX_COLLAB_TITLE_CHARS} characters), shown in the user's session list.` },
+          title: { type: "string", description: `A short title for the new session (at most ${MAX_COLLAB_TITLE_CHARS} characters), shown in the user's session list. Required, except with \`manager\`.` },
           task: { type: "string", description: `The task, complete enough to work from without this conversation (required, except with \`manager\`). Say what to send back, and that the reply goes through send_to_session. At most ${MAX_COLLAB_MESSAGE_BYTES / 1024} KB; put longer material in a file and give its path.` },
           provider: { type: "string", enum: ["claude", "codex"], description: "The AI to run it on; yours by default." },
           model: { type: "string", description: "The model; the same as yours by default." },
@@ -97,12 +97,13 @@ export function sessionCollabToolDefinitions() {
           },
           manager: {
             type: "boolean",
-            description: "PPM Assistant only: create the project's manager chat (Claude, titled \"Manager\" unless you give a "
-              + "title). Refused when the project already has one. The user is asked once; after that you message it "
+            description: "PPM Assistant only: create the project's manager chat (Claude, titled \"QL <project>\" unless you "
+              + "give a title). Refused when the project already has one. The user is asked once; after that you message it "
               + "without asking. `task` is optional here.",
           },
         },
-        required: ["title"],
+        // `title` is checked by the handler: a manager chat may leave it out and get "QL <project>".
+        required: [],
         additionalProperties: false,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },

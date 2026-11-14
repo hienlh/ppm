@@ -198,9 +198,12 @@ tool, once it exists, is the one kept on for a manager regardless. The tool list
 stream starts, so a chat made a manager while its stream is live gets the server at its next start
 (idle release, the warm-idle cap, a restart); nothing restarts it for this.
 
-`POST /api/assistant/managers/:project/create` (Settings) makes a new Claude chat titled "Manager"
-the project's manager, in the mode Settings → PPM Assistant gives new manager chats
+`POST /api/assistant/managers/:project/create` (Settings) makes a new Claude chat titled "QL
+<project>" the project's manager, in the mode Settings → PPM Assistant gives new manager chats
 (`manager_default_mode`), with the rules files below. No card: a person pressed the button.
+`create_session` with `manager: true` takes the same default title when the Assistant gives none
+(`defaultManagerTitle` in `src/shared/assistant-managers.ts`), so several manager windows open side
+by side say which project each one runs.
 
 The Assistant adopts an existing chat with `manager_assign` and takes the role away with
 `manager_unassign` (both under "Running the user's chats"); `ppm manager list | assign <session>
@@ -366,7 +369,7 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
 - **Remember, never ask**: `chat_watch` and `chat_unwatch` — a watch only reads and reports, like
   setting a reminder (see [Watches](#watches)); `notebook_add`, `notebook_edit` and
   `notebook_delete`, which only touch the Assistant's own notebook (see [Notebook](#notebook)).
-- **Navigate the chatting device, never ask**: `ui_open_tab`, `ui_focus_tab`,
+- **Navigate the chatting device, never ask**: `ui_open_tab`, `ui_focus_tab`, `ui_reveal_path`,
   `ui_switch_project`, `ui_move_tab`, and `ui_close_tab` for a tab that loses nothing. Each answers
   `previousProject`, the place a moved tab came from, or enough to reopen what it closed, so the
   agent can undo — there is no Undo of PPM's own. `ui_move_tab` (`assistant-move-tab.ts` on the
@@ -375,6 +378,17 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
   `splitPanel`, `redockTab`, `popOutTab`), never layout logic of its own; a phone, which has no
   splits or windows, refuses, and so does the Assistant's own tab. A database table tab opens only for a relation `db_query` could read
   unasked (see Databases below); a view that does more than read is refused, not opened.
+  `ui_reveal_path` shows a folder or file in the project's own file tree — the sidebar's Explorer,
+  the navigation drawer on a phone — never the OS File Explorer window. The server
+  (`assistant-reveal-path.ts`) takes a path relative to the project or absolute, and refuses one
+  outside the project (lexically and after symlinks), one the editor's read rules refuse
+  (`tabReadRefusal`, shared with `open_file`) and one in a store the Assistant treats as private
+  (`isAssistantPrivatePath`). The device (`assistant-reveal-path.ts` → `explorer-reveal.ts`)
+  switches project, opens the Explorer, and leaves the reveal pending in a store the tree applies
+  once it shows that project with its root loaded (`use-apply-explorer-reveal.ts`), because the
+  tree resets its state whenever it mounts; it then expands the parents (and a folder itself),
+  focuses and selects the row, and answers. A path the tree leaves out (`.git`) is reported, not
+  claimed as shown.
 - **Ask first**: `db_query` for anything not proven to read, `chat_answer_approval` (always — even
   to deny, since a denial changes what that chat does next),
   `ui_run_command` for a command declared `changesData` and for every extension command,
@@ -775,9 +789,13 @@ to the named project (`resolveAssistantSessionTarget`), and Assistant chats are 
   a clean turn: started by the user in PPM or on Telegram, with no outside text recorded yet. The
   endpoint reads the turn's provenance *before* the call marks it (`ToolContext.provenanceAtCall`),
   so an earlier read in the turn — `chat_list_sessions` included — means one card for the whole
-  call. It is refused in a turn PPM started on its own, marking a chat read is refused while that
-  chat shows a card, and a manager chat's title is left to the user. These refusals are advisory
-  guards; the card and the routes are the controls.
+  call. It is refused in a turn PPM started on its own, and marking a chat read is refused while
+  that chat shows a card. A manager chat is renamed like any other (the role belongs to the session,
+  not the title), and on a card its line says "the manager chat of <project>" in warning tone, since
+  that name is how the user picks which chat to type into; a rename of a manager announces `assistant:managers_changed` too
+  (`managerChats.retitled`, from `renameChatSession`), so Settings → Manager chats and the manager
+  chips show the new name. The result lists each chat's `previous` title, pin and tag, which is how
+  a change is undone. These refusals are advisory guards; the card and the routes are the controls.
 - `chat_changes` reads a chat's review as its Review tab does (`assistant-chat-review-*.ts`): the
   turns route (`GET …/file-changes/turns`, the newest 20, with the paths the chat's calls name),
   then the list with those paths; with `path`, one listed file's blocks and a diff of at most 400

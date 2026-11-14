@@ -97,6 +97,11 @@ export const ASSISTANT_UI_SECTION = `## The user's screen
   project; \`ui_move_tab\` moves a tab into another panel, a new split beside one (right or
   down) or a floating window; \`ui_close_tab\` closes a tab. They only change what the screen
   shows, so they need no confirmation, and they act on the same device \`ui_get_state\` reads.
+- \`ui_reveal_path\` shows a folder or file of a project in that project's file tree (the
+  Explorer: the sidebar on a desktop, the drawer on a phone), its parent folders opened and the
+  row selected. Use it when the user wants to see where something is or to "go into" a folder;
+  the path must be inside the project. It opens no file (that is \`ui_open_tab\` kind "file"),
+  and it is not the OS File Explorer window. Navigation only, so no confirmation.
 - \`ui_move_tab\` works on a desktop only; a phone has no split panels or windows and refuses.
   Its answer says where the tab was (\`previous\`): to undo, move it back there.
 - Opening or focusing a tab of another project switches the screen to that project first.

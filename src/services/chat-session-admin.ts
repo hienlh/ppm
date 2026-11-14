@@ -4,6 +4,7 @@
  * rows behind.
  */
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
+import { managerChats } from "./assistant-managers/manager-chats.service.ts";
 import { chatService } from "./chat.service.ts";
 import { deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getSessionProvider, setSessionTitle, unpinSession } from "./db.service.ts";
 import { draftService } from "./draft.service.ts";
@@ -20,6 +21,8 @@ export async function renameChatSession(id: string, title: string, projectPath: 
   }
   const session = chatService.getSession(id);
   if (session) session.title = title;
+  // Settings → Manager chats and the Assistant's manager chips show this title too.
+  managerChats.retitled(id);
 }
 
 /** The provider's own cleanup (transcript, process), then every row PPM keeps about the chat. */

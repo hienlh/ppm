@@ -4,7 +4,7 @@ import { getSessionProvider, resolveMigratedSession } from "../db.service.ts";
 import {
   CHAT_LIST_SESSIONS_TOOL, CHAT_READ_MESSAGES_TOOL, CHAT_SEARCH_TOOL, CLAUDE_ASSISTANT_MCP_SERVER, DB_LIST_CONNECTIONS_TOOL,
   DB_QUERY_TOOL, PROJECT_ADD_TOOL, PROJECTS_LIST_TOOL, UI_CLOSE_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_GET_STATE_TOOL, UI_OPEN_TAB_TOOL,
-  UI_LIST_COMMANDS_TOOL, UI_MOVE_TAB_TOOL, UI_READ_TAB_TOOL, UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
+  UI_LIST_COMMANDS_TOOL, UI_MOVE_TAB_TOOL, UI_READ_TAB_TOOL, UI_REVEAL_PATH_TOOL, UI_RUN_COMMAND_TOOL, UI_SWITCH_PROJECT_TOOL,
   CHATS_ATTENTION_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL, NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,
   TERMINAL_TYPE_TOOL,
@@ -23,6 +23,7 @@ import { dbListConnections, dbQuery } from "./assistant-db-tools.ts";
 import { errorResult } from "./assistant-tool-output.ts";
 import { uiGetState } from "./assistant-ui-tools.ts";
 import { uiCloseTab, uiFocusTab, uiMoveTab, uiOpenTab, uiSwitchProject } from "./assistant-ui-nav-tools.ts";
+import { uiRevealPath } from "./assistant-reveal-path.ts";
 import { uiReadTab } from "./assistant-ui-read-tool.ts";
 import { uiListCommands, uiRunCommand } from "./assistant-ui-command-tools.ts";
 import { approvalAskerFor } from "./assistant-approval-broker.ts";
@@ -91,6 +92,7 @@ export const callAssistantTool: ToolCall = async ({ sessionId }, name, args, sig
     case UI_SWITCH_PROJECT_TOOL: return uiSwitchProject(sessionId, args);
     case UI_CLOSE_TAB_TOOL: return uiCloseTab(sessionId, args, ask);
     case UI_MOVE_TAB_TOOL: return uiMoveTab(sessionId, args);
+    case UI_REVEAL_PATH_TOOL: return uiRevealPath(sessionId, args);
     case UI_READ_TAB_TOOL: return uiReadTab(sessionId, args, ask);
     case UI_LIST_COMMANDS_TOOL: return uiListCommands(sessionId, args);
     case UI_RUN_COMMAND_TOOL: return uiRunCommand(sessionId, args, ask);

@@ -14,7 +14,7 @@ import { managerModeLabel } from "@/lib/assistant-manager-table";
 import { projectCacheId } from "@/lib/browser-cache/cache-keys";
 import { useSessionListStore, EMPTY_SESSIONS } from "@/stores/session-list-store";
 import { useProjectRef } from "@/stores/session-list-sync-triggers";
-import { canOfferManagerRole, MANAGER_ASSIGN_CONSEQUENCE, type ManagerChatSummary } from "../../../../shared/assistant-managers";
+import { canOfferManagerRole, defaultManagerTitle, MANAGER_ASSIGN_CONSEQUENCE, type ManagerChatSummary } from "../../../../shared/assistant-managers";
 import type { ManagerMode } from "../../../../shared/assistant-settings";
 import { AssistantSettingsDialog, DIALOG_BUTTON, DialogActions } from "./assistant-settings-dialog";
 
@@ -78,7 +78,7 @@ export function AssignManagerDialog({ projectName, current, defaultMode, onClose
         <div className="space-y-1 rounded-md border border-border p-3">
           <p className="font-medium">Create new manager chat</p>
           <p className="text-xs text-text-subtle">
-            A new Claude chat titled “Manager”, in {managerModeLabel(defaultMode)} mode
+            A new Claude chat titled “{defaultManagerTitle(projectName)}”, in {managerModeLabel(defaultMode)} mode
             {defaultMode === "bypassPermissions" ? ", which runs without approval prompts" : ""}.
             Its rules start from your template.
           </p>
