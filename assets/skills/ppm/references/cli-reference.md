@@ -1876,6 +1876,7 @@ Restart the server (keeps tunnel alive)
 
 **Options:**
 - `--force` — Force resume from paused state
+- `--reason <text>` — Why PPM is restarted (watchdog, recycle, or free text); the PPM Assistant is told
 
 ## `ppm restore`
 
