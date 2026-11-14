@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.25.6] - 2026-11-15
+
+### Added
+
+- **Cards waiting on you are pinned** above the Assistant's stream and in their manager chat, can be answered with **Reply** quoting the card, and show long content whole on desktop, phone and Telegram.
+- **The Assistant can rename manager chats** (new ones are titled "QL <project>") and **show a folder or file in the project's Explorer** (`ui_reveal_path`).
+- **Telegram stays quiet while you are at PPM**: switch it with `/quiet` or the bell beside "Waiting on you"; an urgent card still rings.
+
+### Fixed
+
+- **A login callback can be pasted from the desktop terminal too**, with or without `http://`.
+
 ## [0.25.5] - 2026-11-14
 
 ### Fixed
