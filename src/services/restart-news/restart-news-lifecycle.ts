@@ -1,6 +1,5 @@
-import { resolve } from "node:path";
 import { createLogger } from "../logger.ts";
-import { configService } from "../config.service.ts";
+import { projectNameForPath } from "../project-name-for-path.ts";
 import {
   getConfigValue, getSessionDesignSlug, getSessionProjectPath, getSessionProvider, getSessionTitle,
   resolveMigratedSession, sessionIdAliases, setConfigValue,
@@ -41,8 +40,8 @@ const firstOf = <T>(sessionId: string, read: (id: string) => T | null): T | null
   return null;
 };
 
-/** The running server's answers for the scan; open cards are counted once, up front. */
-function liveDeps(): InterruptedChatDeps {
+/** The running server's answers for the scan; open cards are counted once, up front. Exported for tests. */
+export function liveInterruptedChatDeps(): InterruptedChatDeps {
   const openCards = new Map<string, number>();
   try {
     for (const row of listOpenCardRows()) {
@@ -55,7 +54,9 @@ function liveDeps(): InterruptedChatDeps {
     traceDb: getTraceDb(),
     sessionOf: (traceId) => resolveMigratedSession(traceId),
     projectPathOf: (id) => firstOf(id, getSessionProjectPath),
-    projectNameOf: (path) => configService.get("projects").find((p) => resolve(p.path) === resolve(path))?.name ?? null,
+    // Case-folded on Windows: a chat whose folder was recorded as `c:\users\…` (a Codex rollout's
+    // cwd) belongs to the project registered as `C:\Users\…`, and a miss drops it from the news.
+    projectNameOf: projectNameForPath,
     providerOf: (id) => firstOf(id, getSessionProvider),
     titleOf: (id) => firstOf(id, getSessionTitle),
     isAssistant: (id, path) => isAssistantSession(id, path),
@@ -134,7 +135,7 @@ function queueStart(start: ServerStart, store: RestartNewsStore, deps: RestartNe
   let scan: InterruptedScan = { chats: [], more: 0 };
   try {
     // The previous run's start bounds the scan: an older unfinished turn is not this restart's doing.
-    const read = deps.scan ?? ((s: ServerStart) => findInterruptedChats(liveDeps(), { since: s.previous?.startedAt ?? 0, restartAt: s.run.startedAt }));
+    const read = deps.scan ?? ((s: ServerStart) => findInterruptedChats(liveInterruptedChatDeps(), { since: s.previous?.startedAt ?? 0, restartAt: s.run.startedAt }));
     scan = read(start);
   } catch (e) {
     log.warn(`could not read which chats the restart cut off: ${(e as Error).message}`);

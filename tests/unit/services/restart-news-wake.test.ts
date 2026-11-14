@@ -15,7 +15,7 @@ import { wakeContextEntry } from "../../../src/services/assistant-wake/wake-news
 import {
   addRestartNews, createRestartNewsSource, cutOffChatsCarried, pendingRestartNews, RESTART_NEWS_MAX_AGE_MS, restartNewsUrgent, RESTART_SOURCE_NAME, type RestartNewsStore,
 } from "../../../src/services/restart-news/restart-news-source.ts";
-import { _resetRestartNews, startRestartNews } from "../../../src/services/restart-news/restart-news-lifecycle.ts";
+import { _resetRestartNews, liveInterruptedChatDeps, startRestartNews } from "../../../src/services/restart-news/restart-news-lifecycle.ts";
 import { MAX_RESTART_ENTRY_CHARS, RESTART_OPENER, restartNewsEntry } from "../../../src/services/restart-news/restart-news-text.ts";
 import { recordServerStart, type ServerStart } from "../../../src/services/restart-news/server-run-log.ts";
 import { readStartReasonEnv, startReasonEnv } from "../../../src/services/restart-news/start-reason.ts";
@@ -244,6 +244,26 @@ describe("queueing a start", () => {
     const store = memoryStore();
     startRestartNews({ start: start(T), store, scan: () => { throw new Error("trace locked"); }, enabled: () => true, mainSession: () => MAIN });
     expect(pendingRestartNews(store)!.chats).toEqual([]);
+  });
+});
+
+describe("the live scan's project lookup", () => {
+  const root = process.platform === "win32" ? "C:\\Work\\RestartNewsApi" : "/work/RestartNewsApi";
+  const saved = configService.get("projects");
+  afterEach(() => { configService.set("projects", saved); });
+
+  it("finds the project a chat's folder names, spelled as registered", () => {
+    configService.set("projects", [...saved, { name: "rn-api", path: root }]);
+    expect(liveInterruptedChatDeps().projectNameOf(root)).toBe("rn-api");
+    expect(liveInterruptedChatDeps().projectNameOf(`${root}-other`)).toBeNull();
+  });
+
+  // A Codex rollout records its cwd as the shell spelled it (`c:\work\…`); the folder is the same
+  // one, and a case-sensitive comparison silently dropped the chat from the news.
+  it.skipIf(process.platform !== "win32")("finds it on Windows whatever the folder's letter case", () => {
+    configService.set("projects", [...saved, { name: "rn-api", path: root }]);
+    expect(liveInterruptedChatDeps().projectNameOf(root.toLowerCase())).toBe("rn-api");
+    expect(liveInterruptedChatDeps().projectNameOf(root.toUpperCase())).toBe("rn-api");
   });
 });
 
