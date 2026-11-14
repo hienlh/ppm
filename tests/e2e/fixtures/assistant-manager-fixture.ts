@@ -19,9 +19,13 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 interface JumpTimer { at: number; fn: () => void; live: boolean }
 
-/** Real time plus an offset that only grows: a timer is due once either catches up with it. */
-function jumpClock(): AssistantClock & { advance(ms: number): number; offset(): number } {
-  let offset = 0;
+/**
+ * Real time plus an offset that only grows: a timer is due once either catches up with it. A
+ * restarted fixture starts at the offset the previous run reached (PPM_ASSISTANT_CLOCK_OFFSET_MS),
+ * so quiet hours and the hourly caps read the same clock on both sides of the restart.
+ */
+function jumpClock(initialOffset = 0): AssistantClock & { advance(ms: number): number; offset(): number } {
+  let offset = initialOffset;
   const timers: JumpTimer[] = [];
   const now = () => Date.now() + offset;
   const fire = (t: JumpTimer) => {
@@ -77,7 +81,9 @@ export async function setupManagerLoop(opts: { port: number }): Promise<ManagerL
   const { answerFeatureIntrosAtStartup } = await import("./answer-feature-intros");
   await answerFeatureIntrosAtStartup("on");
   const { setAssistantClock } = await import("../../../src/services/assistant-wake/assistant-clock");
-  const clock = jumpClock();
+  const startOffset = Number(process.env.PPM_ASSISTANT_CLOCK_OFFSET_MS ?? 0);
+  if (!Number.isFinite(startOffset) || startOffset < 0) throw new Error("PPM_ASSISTANT_CLOCK_OFFSET_MS must be a number >= 0");
+  const clock = jumpClock(startOffset);
   setAssistantClock(clock);
   const rulesChecks: string[][] = [];
 
