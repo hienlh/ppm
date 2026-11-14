@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.25.2] - 2026-11-14
+
+### Added
+
+- **Extensions can run chats of their own**: create a chat bound to the extension's instructions, toolsets and tool policy, send it messages and read its answers without a browser (RPC and REST), and keep it bound across `/clear`, forks and restarts.
+- **`ppm.ai` for extensions**: one-shot completions on Claude or Codex with structured output, web search, a chosen account and cancellation, plus model lists, quota usage and whether you are at the device.
+- **Extensions can notify you** through PPM (`ppm.notify`), with a link back to their own command or panel.
+- **Extension MCP toolsets** are served to the chats an extension binds.
+- **Run extension commands from the terminal**: `ppm ext run`, and `ppm <name>` aliases an extension contributes.
+- **Richer extension UI**: composer dialog, tree rows with tooltips, icons, badges, links, wrapping and a long-press sheet on phones, a data folder, window placement and the device's time zone.
+
+### Fixed
+
+- **A chat waiting on another chat no longer hangs 10 minutes** when that chat is stopped on your card: the wait ends at once and says which card is waiting.
+- **Manager chats' cards reach Telegram** with the project and chat named and "waiting for your answer"; cards made while the bridge was off are sent when it starts.
+- **Telegram shows what it is waiting for** during a long wait on another chat.
+- **Manager chats report when they leave you something to do or decide.**
+- **The extension host survives an extension's crash or unhandled error** and rebuilds itself if it dies; installed and dev-linked extensions come back after a restart.
+- **An extension reads only the chats it created**, can call `ppm.ai` only within limits, and a Codex one-shot leaves your own MCP servers out.
+- **The command palette filters a Windows path** (`D:\dir\fi`) by the name being typed, and finds commands by their title.
+- **`ppm projects` lists your projects**, and adds or removes them through the running PPM.
+
 ## [0.25.1] - 2026-11-14
 
 ### Added
