@@ -96,6 +96,8 @@ export interface AssistantSettings {
   digest: DigestSettings;
   /** The user's IANA time zone, saved with the quiet hours and the digest time; absent means the server's own. */
   timezone?: string;
+  /** After every server restart, wake the Assistant with why it restarted and which chats it cut off. */
+  restart_news: boolean;
 }
 
 /**
@@ -114,6 +116,7 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   manager_template: "",
   quiet_hours: { ...DEFAULT_QUIET_HOURS },
   digest: { ...DEFAULT_DIGEST },
+  restart_news: true,
 };
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -276,6 +279,12 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
     } else managerTemplate = raw.manager_template;
   }
 
+  let restartNews = DEFAULT_ASSISTANT_SETTINGS.restart_news;
+  if (raw.restart_news !== undefined && raw.restart_news !== null) {
+    if (typeof raw.restart_news === "boolean") restartNews = raw.restart_news;
+    else errors.push("restart_news must be true or false");
+  }
+
   const timezone = readTimeZone(raw.timezone, errors);
   return {
     value: {
@@ -288,6 +297,7 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
       quiet_hours: readQuietHours(raw.quiet_hours, errors),
       digest: readDigestSettings(raw.digest, errors),
       ...(timezone ? { timezone } : {}),
+      restart_news: restartNews,
     },
     errors,
   };

@@ -3,6 +3,7 @@ import { NO_REPLY_TEXT } from "../../shared/assistant-cards.ts";
 import type { WakeNewsNotice } from "../../shared/assistant-wake-news.ts";
 import type { WatchEventNotice } from "../../types/chat.ts";
 import { cleanEventText, MAX_EVENT_TITLE_CHARS, watchEventsContextEntry } from "../assistant-watch/watch-event-text.ts";
+import { restartNewsEntry } from "../restart-news/restart-news-text.ts";
 
 /**
  * The shared-context entry of a turn PPM started on its own: the watch report (unchanged) and the
@@ -55,13 +56,23 @@ function newsLine(n: WakeNewsNotice): string {
   return lines.join("\n");
 }
 
-/** The news half of the entry; undefined when there is none. */
-export function wakeNewsEntry(news: readonly WakeNewsNotice[] | undefined): string | undefined {
-  if (!news?.length) return undefined;
-  const listed = news.slice(0, MAX_NEWS_LISTED).map(newsLine);
-  const more = news.length - listed.length;
-  const text = [NEWS_ENTRY_HEADING, ...listed, ...(more > 0 ? [`- And ${more} more: they are on the user's cards.`] : [])].join("\n");
-  return text.length > MAX_ENTRY_CHARS ? `${text.slice(0, MAX_ENTRY_CHARS - 1)}…` : text;
+/**
+ * The news half of the entry; undefined when there is none. Restart news has a heading of its own:
+ * unlike a manager's report it is on no card, and it asks the Assistant to act.
+ */
+export function wakeNewsEntry(all: readonly WakeNewsNotice[] | undefined): string | undefined {
+  if (!all?.length) return undefined;
+  const restart = restartNewsEntry(all.flatMap((n) => (n.kind === "restart" && n.restart ? [n.restart] : [])));
+  const news = all.filter((n) => n.kind !== "restart");
+  let managerText: string | undefined;
+  if (news.length) {
+    const listed = news.slice(0, MAX_NEWS_LISTED).map(newsLine);
+    const more = news.length - listed.length;
+    const text = [NEWS_ENTRY_HEADING, ...listed, ...(more > 0 ? [`- And ${more} more: they are on the user's cards.`] : [])].join("\n");
+    managerText = text.length > MAX_ENTRY_CHARS ? `${text.slice(0, MAX_ENTRY_CHARS - 1)}…` : text;
+  }
+  const parts = [restart, managerText].filter((p): p is string => !!p);
+  return parts.length ? parts.join("\n\n") : undefined;
 }
 
 /** The whole entry of a turn PPM started: watch report first, then manager news. */

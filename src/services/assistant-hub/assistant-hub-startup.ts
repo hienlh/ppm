@@ -14,6 +14,7 @@
 import { assistantWatchService } from "../assistant-watch/assistant-watch.service.ts";
 import { assistantWakeQueue } from "../assistant-wake/assistant-wake-queue.ts";
 import { startAssistantCards, stopAssistantCards } from "../assistant-cards/assistant-cards-startup.ts";
+import { startRestartNews, stopRestartNews } from "../restart-news/restart-news-lifecycle.ts";
 import { startAssistantDigest, stopAssistantDigest } from "../assistant-digest/assistant-digest-env.ts";
 import {
   assistantTelegramBridge, assistantTelegramConfig, type BridgeStartOptions,
@@ -47,6 +48,13 @@ export async function startAssistantHub(opts: AssistantHubOptions = {}): Promise
     assistantWatchService.start();
   } catch (e) {
     log.error("Assistant watches could not start:", e);
+  }
+  // Before the cards: they start the wake queue, whose first tick then finds the restart news
+  // (and the open cards the scan counts are still those the restart left).
+  try {
+    startRestartNews();
+  } catch (e) {
+    log.error("Restart news could not start:", e);
   }
   try {
     startAssistantCards();
@@ -85,6 +93,7 @@ export async function stopAssistantHub(): Promise<void> {
   await assistantTelegramBridge.stop();
   stopAssistantDigest();
   stopAssistantCards();
+  stopRestartNews();
   assistantWatchService.stop();
   assistantWakeQueue.stop();
 }

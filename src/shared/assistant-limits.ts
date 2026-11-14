@@ -28,6 +28,16 @@ export const PROVENANCE_OPENING_MAX_CHARS = 200;
  */
 export const WAKE_TURNS_PER_HOUR = 6;
 
+/**
+ * When restart news counts as urgent — starts its turn during quiet hours, and lets that turn
+ * message manager chats despite them: `cut_off_chats` only when a restart cut a chat off mid-turn
+ * (work is stalled until someone resumes it); `always`; or `never` (held like any other news).
+ */
+export const RESTART_NEWS_URGENT_WHEN: "cut_off_chats" | "always" | "never" = "cut_off_chats";
+
+/** Restarts one pending restart news item lists at most; older ones are dropped as they merge in. */
+export const RESTART_NEWS_MAX_RESTARTS = 10;
+
 /** Reports one manager chat may file per rolling hour. */
 export const REPORTS_PER_MANAGER_PER_HOUR = 20;
 

@@ -5,7 +5,10 @@
  * came from another AI and is data.
  */
 
-export type WakeNewsKind = "report" | "late_reply";
+import { parseRestartNews, type RestartNewsPayload } from "./restart-news.ts";
+
+/** `restart`: PPM's server restarted; its payload says why and which chats were cut off mid-turn. */
+export type WakeNewsKind = "report" | "late_reply" | "restart";
 export type WakeReportKind = "done" | "failed" | "urgent" | "digest";
 
 export interface WakeNewsNotice {
@@ -25,6 +28,8 @@ export interface WakeNewsNotice {
   text?: string;
   /** Report news only: filed by a subagent of the manager. */
   subagent?: boolean;
+  /** Restart news only (its `project` and `sessionId` are empty). */
+  restart?: RestartNewsPayload;
 }
 
 const REPORT_KINDS: readonly WakeReportKind[] = ["done", "failed", "urgent", "digest"];
@@ -44,9 +49,16 @@ export function parseWakeNews(raw: unknown): WakeNewsNotice[] | null {
   for (const item of raw) {
     if (!item || typeof item !== "object") return null;
     const e = item as Record<string, unknown>;
-    if (e.kind !== "report" && e.kind !== "late_reply") return null;
+    if (e.kind !== "report" && e.kind !== "late_reply" && e.kind !== "restart") return null;
     if (!str(e.key, 100) || !str(e.project, 300) || !str(e.sessionId, 200)) return null;
     if (typeof e.at !== "number" || !Number.isFinite(e.at)) return null;
+    if (e.kind === "restart") {
+      const restart = parseRestartNews(e.restart);
+      if (!restart) return null;
+      out.push({ kind: "restart", key: e.key, project: "", sessionId: "", at: e.at, restart });
+      continue;
+    }
+    if (e.restart !== undefined) return null;
     if (e.kind === "report" && !REPORT_KINDS.includes(e.reportKind as WakeReportKind)) return null;
     for (const k of ["title", "body", "text"] as const) if (e[k] !== undefined && !str(e[k])) return null;
     if (e.items !== undefined && (!Array.isArray(e.items) || e.items.length > MAX_ITEMS || !e.items.every((i) => str(i, 1000)))) return null;

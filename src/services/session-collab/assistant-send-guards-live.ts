@@ -11,16 +11,28 @@ import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { getAssistantSettings } from "../assistant/assistant-settings.service.ts";
 import { assistantBudgetEvents } from "../assistant/assistant-budget-events.ts";
 import { inQuietHours } from "../../shared/assistant-quiet-hours.ts";
+import { assistantWakeQueue, type AssistantWakeQueue } from "../assistant-wake/assistant-wake-queue.ts";
+import { RESTART_SOURCE_NAME } from "../restart-news/restart-news-source.ts";
 import { createAssistantSendGuards } from "./assistant-send-guards.ts";
 
 export const ASSISTANT_BUDGET_STATE_ROW = "assistant_budget_state";
 
+/**
+ * Whether quiet hours hold back this Assistant session's unattended messages to manager chats. A
+ * restart that cut chats off mid-turn is urgent: the turn telling of it was let through quiet hours
+ * to get that work resumed, so its messages to manager chats are too. Budgets still apply.
+ */
+export function assistantQuietNow(
+  assistant: string, queue: Pick<AssistantWakeQueue, "carryingUrgent"> = assistantWakeQueue,
+): boolean {
+  if (queue.carryingUrgent(assistant, RESTART_SOURCE_NAME)) return false;
+  const settings = getAssistantSettings();
+  return inQuietHours(assistantClock.now(), settings.quiet_hours, settings.timezone);
+}
+
 export const assistantSendGuards = createAssistantSendGuards({
   now: () => assistantClock.now(),
-  quiet: () => {
-    const settings = getAssistantSettings();
-    return inQuietHours(assistantClock.now(), settings.quiet_hours, settings.timezone);
-  },
+  quiet: (assistant) => assistantQuietNow(assistant),
   load: () => getConfigValue(ASSISTANT_BUDGET_STATE_ROW),
   save: (json) => setConfigValue(ASSISTANT_BUDGET_STATE_ROW, json),
   announce: (event) => assistantBudgetEvents.emit({ ...event, at: assistantClock.now() }),

@@ -23,8 +23,8 @@ export type BudgetHit = "hour" | "day" | "pair";
 
 export interface AssistantSendGuardsEnv {
   now(): number;
-  /** Whether quiet hours are on right now. */
-  quiet(): boolean;
+  /** Whether quiet hours hold back this Assistant session's unattended messages right now. */
+  quiet(assistant: string): boolean;
   /** The stored budget state, or null. */
   load(): string | null;
   save(json: string): void;
@@ -95,8 +95,8 @@ export function createAssistantSendGuards(env: AssistantSendGuardsEnv) {
     try { env.save(JSON.stringify({ version: 1, sends: out, paused: [...paused], pairs: pairCounts })); } catch { /* counted in memory still */ }
   };
   /** A quiet-hours check that cannot answer holds the message, as quiet hours would. */
-  const quiet = (): boolean => {
-    try { return env.quiet(); } catch { return true; }
+  const quiet = (assistant: string): boolean => {
+    try { return env.quiet(assistant); } catch { return true; }
   };
   const within = (list: number[], ms: number, now: number) => list.filter((t) => now - t < ms).length;
 
@@ -113,7 +113,7 @@ export function createAssistantSendGuards(env: AssistantSendGuardsEnv) {
      * budget running out pauses the Assistant (`pausedNow` is true for the send that did it).
      */
     reserveUnattended(assistant: string, manager: string, pairLimit: number): Reservation {
-      if (quiet()) return { ok: false, reason: "quiet", message: QUIET_HOURS_REFUSAL, pausedNow: false };
+      if (quiet(assistant)) return { ok: false, reason: "quiet", message: QUIET_HOURS_REFUSAL, pausedNow: false };
       const now = env.now();
       const list = (state().get(assistant) ?? []).filter((t) => now - t < DAY);
       state().set(assistant, list);
