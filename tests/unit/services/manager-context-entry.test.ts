@@ -59,16 +59,18 @@ describe("managerContextEntry", () => {
 
   it("tells every manager that a question or a wrong premise in a card reply is not an OK", () => {
     expect(MANAGER_CARD_REPLY_RULE).toContain("is NOT an OK: do nothing yet");
-    expect(MANAGER_CARD_REPLY_RULE).toContain("correct the assumption with the numbers");
-    expect(MANAGER_CARD_REPLY_RULE).toContain("ask again with a new needs_decision card");
+    expect(MANAGER_CARD_REPLY_RULE).toContain("corrects the assumption with the numbers");
+    expect(MANAGER_CARD_REPLY_RULE).toContain("Ask again with a new needs_decision card whose body answers the question");
     for (const marker of ["…nhỉ", "…không", "?", "right?"]) expect(MANAGER_CARD_REPLY_RULE).toContain(marker);
-    // The new card first, the answer last: an answer written before a tool call is lost to a
-    // trailing "Card sent.", so the order is part of the rule.
+    // With a new card, the card is the answer and the closing text only points to it: a full answer
+    // in both reached the phone as two messages saying the same thing.
+    expect(MANAGER_CARD_REPLY_RULE).toContain("it is the whole answer");
+    expect(MANAGER_CARD_REPLY_RULE).toContain("one line that only points to the card, without repeating what it says");
+    // Without a card, the answer comes last: written before a tool call it is lost to a trailing
+    // "Card sent.", so the order is part of the rule.
     expect(MANAGER_CARD_REPLY_RULE).toContain("as the last thing you write in this turn, with no tool call after it");
-    expect(MANAGER_CARD_REPLY_RULE.indexOf("First ask again with a new needs_decision card"))
-      .toBeLessThan(MANAGER_CARD_REPLY_RULE.indexOf("answer the question"));
     // The answer goes to the phone, so it is held to a report's limits.
-    expect(MANAGER_CARD_REPLY_RULE).toContain("often their phone on Telegram: keep it to a few lines");
+    expect(MANAGER_CARD_REPLY_RULE).toContain("often their phone on Telegram, so keep it to a few lines");
     expect(MANAGER_CARD_REPLY_RULE).toContain("same limits as a report (no client personal or tax data, use ticket ids)");
     // Global, whatever the project and whatever its own rules file says (or leaves out).
     for (const [name, rules] of [["nxsys", "- rule"], ["ppm", ""], ["culi", DEFAULT_MANAGER_RULES_TEMPLATE]] as const) {

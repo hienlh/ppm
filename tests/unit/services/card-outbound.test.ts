@@ -41,7 +41,10 @@ const gate = createCardOutbound({
   held: listHeldCardRows,
   row: getCardRow,
   setOutbound: (id, o, at) => { setCardOutbound(id, o, at); },
+  answersPhone: (c) => phoneAnswers.has(c.title),
 });
+/** Titles of cards made while their turn answers a reply typed on Telegram moments ago. */
+const phoneAnswers = new Set<string>();
 const card = (kind: AssistantCard["kind"], title: string) =>
   cards.create({ kind, projectName: "api", projectPath: "/p/api", sessionId: "mgr", title });
 const outbound = (id: string) => getCardRow(id)!.outbound;
@@ -49,8 +52,20 @@ const outbound = (id: string) => getCardRow(id)!.outbound;
 beforeEach(() => {
   gate.detach();
   getDb().run("DELETE FROM assistant_cards");
-  sent.length = 0; changed.length = 0; timers.length = 0; quietUntil = null; ready = true;
+  sent.length = 0; changed.length = 0; timers.length = 0; quietUntil = null; ready = true; phoneAnswers.clear();
   gate.attach(sink);
+});
+
+describe("a card that answers a reply typed on the phone", () => {
+  it("goes out at once in quiet hours: the user is holding the phone, waiting for it", () => {
+    quietUntil = now + 8 * 60 * 60_000;
+    phoneAnswers.add("Run it? ~40% quota");
+    const answer = card("needs_decision", "Run it? ~40% quota");
+    const other = card("needs_decision", "Unrelated decision");
+    expect(sent).toEqual([{ ids: [answer.id] }]);
+    expect(outbound(answer.id)).toBe("sent");
+    expect(outbound(other.id)).toBe("held");
+  });
 });
 
 describe("the outbound gate", () => {

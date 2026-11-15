@@ -7,6 +7,9 @@
  * text is put under the card in PPM and handed to the Telegram bridge, which answers in the chat the
  * reply came from, under the card's message (`assistant-telegram-card-followups.ts`).
  *
+ * A turn that opened a card answered with it: the card is kept as the answer (`newCards`) and the
+ * turn's text is dropped, since it says what the card says and the two read as one message twice.
+ *
  * The text kept on the card is cut to {@link CARD_FOLLOWUP_MAX_CHARS}; what goes to Telegram is
  * further redacted and subject to the project's detail level there, exactly as the card was.
  */
@@ -56,17 +59,26 @@ export function deliverCardFollowup(deps: CardFollowupDeps, result: FollowupResu
   }
   // The manager's answer is the AI's own text: a vault value it repeats is replaced before the card
   // keeps it (in `ppm.db`) or it is handed on — and before the cut, so the cut cannot halve one.
+  // The new cards' titles are the AI's text too, named under this card and in Telegram's pointer line.
   const text = turnSecretScrubber.scrub(result.text);
-  const cut = cutFollowupText(text, CARD_FOLLOWUP_MAX_CHARS, result.overflow);
-  const stored: CardFollowUp = { text: cut.text, truncated: cut.truncated, at: deps.now() };
+  const newCards = result.newCards.map((c) => ({ id: c.id, title: turnSecretScrubber.scrub(c.title) }));
+  // A new card is the answer: the turn's text only says again what the card says, so only the card
+  // is named under this one (and the bridge sends the card itself under the user's message).
+  const answeredWithCard = newCards.length > 0;
+  const cut = answeredWithCard ? { text: "", truncated: false } : cutFollowupText(text, CARD_FOLLOWUP_MAX_CHARS, result.overflow);
+  const stored: CardFollowUp = {
+    text: cut.text, truncated: cut.truncated, at: deps.now(), ...(answeredWithCard ? { newCards } : {}),
+  };
   if (!deps.cards.setFollowUp(card.id, stored)) {
     // The card waits again ("your answer did not reach the manager chat; send it again"): an answer
     // on the phone would contradict it, and the user would send the same words twice.
     log.info(`card ${card.id}: the manager's answer is not sent (the card waits again)`);
     return;
   }
-  log.info(`card ${card.id}: the manager answered the user's ${result.origin.channel} reply (${text.length} chars${cut.truncated ? ", cut" : ""})`);
-  handOn(deps, { ...result, text, card: deps.cards.get(card.id) ?? card, stored });
+  log.info(answeredWithCard
+    ? `card ${card.id}: the manager answered the user's ${result.origin.channel} reply with ${newCards.length} new card(s) (${newCards.map((c) => c.id).join(", ")}); its text is not passed on`
+    : `card ${card.id}: the manager answered the user's ${result.origin.channel} reply (${text.length} chars${cut.truncated ? ", cut" : ""})`);
+  handOn(deps, { ...result, text, newCards, card: deps.cards.get(card.id) ?? card, stored });
 }
 
 function handOn(deps: CardFollowupDeps, delivery: CardFollowupDelivery): void {

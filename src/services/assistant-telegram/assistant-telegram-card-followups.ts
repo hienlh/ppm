@@ -12,6 +12,10 @@
  *   the phone, so nothing is saved up for the morning).
  * - **The turn was stopped** (Stop, an error) before it answered: a Telegram reply gets one line
  *   saying so, with the link; a PPM reply gets nothing.
+ * - **The manager answered with a new card**: the card is the answer and the turn's text, which
+ *   says the same, is never sent. A Telegram reply gets the card itself under the user's message
+ *   and nothing more; only a card that did not go there (held, refused, a relayed approval) is
+ *   named in one line. A PPM reply gets nothing here: the new card reaches Telegram on its own.
  *
  * Every send goes through the bridge's lane for that chat and its access check, like a card.
  */
@@ -27,7 +31,7 @@ import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import { createLogger } from "../logger.ts";
 import { canSendTo } from "./assistant-telegram-access.ts";
 import type { CardDetail } from "./assistant-telegram-card-kinds.ts";
-import { formatCardFollowup } from "./assistant-telegram-followup-format.ts";
+import { formatCardFollowup, formatNewCardPointer } from "./assistant-telegram-followup-format.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { TelegramSilence } from "./assistant-telegram-silence.ts";
 
@@ -47,6 +51,8 @@ export interface CardFollowupsDeps {
   canSend?: (chatId: string) => boolean;
   /** The clock the reply's time was taken on (the Assistant's). */
   now?: () => number;
+  /** Whether this card went to this chat threaded under the user's reply (`AssistantTelegramManagerCards`). */
+  threadedIn?: (cardId: string, chatId: string) => boolean;
 }
 
 interface Target { chatId: string; replyTo?: number; silent: () => boolean }
@@ -84,7 +90,8 @@ export class AssistantTelegramCardFollowups implements CardFollowupSink {
       return canSend(chatId) ? [{ chatId, ...(replyTo ? { replyTo } : {}), silent }] : [];
     }
     // A stopped turn is said only to a reply typed on Telegram; a PPM reply has the chat at hand.
-    if (refs.length === 0 || d.stopped) return [];
+    // A new card goes to every chat by itself, as every card does: nothing to add under the old one.
+    if (refs.length === 0 || d.stopped || d.newCards.length > 0) return [];
     if (this.quiet()) {
       log.info(`card ${d.card.id}: the manager's answer stays in PPM (quiet hours)`);
       return [];
@@ -101,18 +108,46 @@ export class AssistantTelegramCardFollowups implements CardFollowupSink {
     void this.sendTo(d, targets).catch((e) => log.warn(`card ${d.card.id}: answer not sent to Telegram: ${(e as Error).message}`));
   }
 
-  private async sendTo(d: CardFollowupDelivery, targets: Target[]): Promise<void> {
+  /**
+   * The manager answered with a new card. A card that went to this chat under the user's reply is
+   * the whole answer, so nothing more is sent; one that did not (held, refused, or a relayed
+   * approval) is only named, in one line under the reply — its text is the card's, never repeated.
+   */
+  private unthreadedCards(d: CardFollowupDelivery, chatId: string): Array<{ id: string; title: string }> {
+    const threaded = this.deps.threadedIn ?? (() => false);
+    return d.newCards.filter((c) => {
+      try { return !threaded(c.id, chatId); } catch { return true; }
+    });
+  }
+
+  private async sendTo(d: CardFollowupDelivery, all: Target[]): Promise<void> {
+    const pointers = new Map<string, Array<{ title: string }>>();
+    let targets = all;
+    if (d.newCards.length > 0 && !d.stopped) {
+      targets = all.filter((t) => {
+        const left = this.unthreadedCards(d, t.chatId);
+        if (left.length === 0) {
+          log.info(`card ${d.card.id}: the manager answered with a new card, sent under the user's reply; no follow-up`);
+          return false;
+        }
+        pointers.set(t.chatId, left);
+        return true;
+      });
+      if (targets.length === 0) return;
+    }
     const project = d.card.projectName ?? null;
     const url = project
       ? await this.deps.chatLink(project, getSessionProvider(d.sessionId), d.sessionId).catch(() => null)
       : null;
     let detail: CardDetail = "title";
     try { detail = (this.deps.detailOf ?? realDetail)(d.card); } catch { /* unknown: the safe side */ }
-    const formatted = formatCardFollowup({
-      text: d.text, overflow: d.overflow, detail, projectName: project, newCards: d.newCards, url, ...(d.stopped ? { stopped: true } : {}),
+    const answer = formatCardFollowup({
+      text: d.text, overflow: d.overflow, detail, projectName: project, url, ...(d.stopped ? { stopped: true } : {}),
     });
     const record = this.deps.recordRef ?? addCardTelegramRef;
     for (const t of targets) {
+      const left = pointers.get(t.chatId);
+      const formatted = left ? formatNewCardPointer({ projectName: project, newCards: left, url }) : answer;
       this.deps.queue.enqueue(t.chatId, sendMessageTask(this.deps.queue, t.chatId, {
         html: formatted.html,
         ...(t.replyTo ? { replyTo: t.replyTo } : {}),

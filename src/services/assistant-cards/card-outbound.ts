@@ -6,7 +6,8 @@
  * starting after PPM was off through it — sends one "While you were away" header and the held
  * cards, oldest first. A held card that stopped waiting meanwhile (answered in PPM, gone with its
  * request) is skipped rather than sent late. An `urgent` card always goes at once: the report tool
- * already made any urgent card past the per-window cap into a held decision.
+ * already made any urgent card past the per-window cap into a held decision. So does a card that
+ * answers a reply the user typed on Telegram moments ago: it is the answer they are waiting for.
  *
  * A chat's approval or question made while nothing could carry it to the phone (the bridge not
  * running yet, or running with no chat connected) is not lost: once a chat can be reached it goes
@@ -23,6 +24,8 @@ import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import { assistantCards, type AssistantCards } from "./assistant-cards.service.ts";
 import { getCardRow, type CardOutbound, type CardRow } from "./assistant-cards-db.ts";
 import { listHeldCardRows, listUnsentWaitingCardRows, setCardOutbound } from "./assistant-cards-outbound-db.ts";
+import { cardReplyFollowups } from "./card-reply-followup.ts";
+import { CARD_FOLLOWUP_LOUD_MS } from "../../shared/assistant-limits.ts";
 
 const log = createLogger("assistant-cards");
 
@@ -46,6 +49,19 @@ export interface CardOutboundDeps {
   unsentWaiting?(): CardRow[];
   row(id: string): CardRow | null;
   setOutbound(id: string, outbound: CardOutbound, at: number): void;
+  /**
+   * Whether the card answers a reply the user typed on Telegram moments ago (within
+   * {@link CARD_FOLLOWUP_LOUD_MS}): they are holding the phone and waiting for it, so quiet hours
+   * do not hold it — the same rule as the follow-up it replaces. Never when left out.
+   */
+  answersPhone?(card: AssistantCard): boolean;
+}
+
+/** The real {@link CardOutboundDeps.answersPhone}: a reply on Telegram the card's turn is answering. */
+function answersPhoneNow(card: AssistantCard): boolean {
+  const now = assistantClock.now();
+  return cardReplyFollowups.answering(card.sessionId)
+    .some((a) => a.origin.channel === "telegram" && now - a.repliedAt <= CARD_FOLLOWUP_LOUD_MS);
 }
 
 const realDeps: CardOutboundDeps = {
@@ -56,6 +72,7 @@ const realDeps: CardOutboundDeps = {
   unsentWaiting: listUnsentWaitingCardRows,
   row: getCardRow,
   setOutbound: (id, outbound, at) => { setCardOutbound(id, outbound, at); },
+  answersPhone: answersPhoneNow,
 };
 
 const STILL_SHOWN = new Set(["open", "info"]);
@@ -69,6 +86,10 @@ export function createCardOutbound(deps: CardOutboundDeps = realDeps) {
   let off: (() => void) | null = null;
   let timer: Cancel | null = null;
 
+  const answersPhone = (card: AssistantCard): boolean => {
+    try { return deps.answersPhone?.(card) ?? false; } catch { return false; }
+  };
+
   const safeQuietEnd = (): number | null => {
     try { return deps.quietEnd(); } catch (e) { log.warn(`quiet hours unreadable, sending: ${(e as Error).message}`); return null; }
   };
@@ -81,7 +102,7 @@ export function createCardOutbound(deps: CardOutboundDeps = realDeps) {
   function onCreated(card: AssistantCard): void {
     const now = deps.clock.now();
     if (!sink?.ready()) return deps.setOutbound(card.id, "skipped", now);
-    const end = card.kind === "urgent" ? null : safeQuietEnd();
+    const end = card.kind === "urgent" || answersPhone(card) ? null : safeQuietEnd();
     if (end !== null) {
       deps.setOutbound(card.id, "held", now);
       log.info(`card ${card.id} held for the end of quiet hours`);

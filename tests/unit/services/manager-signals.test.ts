@@ -16,7 +16,7 @@ import { FAILED_CARD_GRACE_MS } from "../../../src/shared/assistant-limits.ts";
 const MGR = "mgr-signals-1";
 const CHILD = "child-signals-1";
 
-function harness() {
+function harness(opts: { answersCardReply?: (sessionId: string) => boolean } = {}) {
   let now = Date.UTC(2026, 10, 10, 10, 0, 0);
   const timers: Array<{ at: number; fn: () => void; live: boolean }> = [];
   const clock = {
@@ -36,6 +36,7 @@ function harness() {
     openRequestCard: findOpenRequestCard,
     reportsSince: (id, kinds, since) => countSessionCardsSince([id], kinds, since),
     lateReply: (r) => late.push(r),
+    ...(opts.answersCardReply ? { answersCardReply: opts.answersCardReply } : {}),
   });
   signals.start();
   stops.push(() => signals.stop());
@@ -119,5 +120,18 @@ describe("late replies", () => {
     expect(h.late).toEqual([expect.objectContaining({ assistantSessionId: "asst-1", managerSessionId: MGR, text: "Build is green; 3 tickets left." })]);
     end("an unrelated later turn");
     expect(h.late).toHaveLength(1);
+  });
+
+  it("hands nothing on for a turn that answered the user's reply on a card: the user has that answer already", () => {
+    let answering = true;
+    const h = harness({ answersCardReply: (id) => answering && id === MGR });
+    h.signals.expectReply("asst-1", MGR, "api", false);
+    const end = (finalText: string) => h.lifecycle.emit("turn_ended", { sessionId: MGR, outcome: "done", finalText, projectName: "api", providerId: "claude" });
+    end("Quota is at 60%; I opened a card to ask again.");
+    expect(h.late).toHaveLength(0);
+    // The expectation was used by that turn, so a later turn is not news either.
+    answering = false;
+    end("an unrelated later turn");
+    expect(h.late).toHaveLength(0);
   });
 });

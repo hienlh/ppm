@@ -83,7 +83,7 @@ describe("following the turn a card reply opened", () => {
     expect(delivered.map((d) => d.text)).toEqual(["No: it costs ~40% of the weekly quota (55% left)."]);
   });
 
-  it("sends nothing when all the turn wrote around its tool calls is an acknowledgement", () => {
+  it("names the new card and no text when all the turn wrote around its tool calls is an acknowledgement", () => {
     const { t, delivered, named, say } = setup();
     t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
     named(ID);
@@ -91,8 +91,40 @@ describe("following the turn a card reply opened", () => {
     t.onCardCreated({ id: "n1", title: "Run it?", sessionId: S });
     say("Card sent.");
     t.onTurnEnded(S);
-    expect(delivered).toHaveLength(0);
+    // The card is the answer: the turn still answered, with nothing to say beside it.
+    expect(delivered.map((d) => ({ text: d.text, newCards: d.newCards }))).toEqual([{ text: "", newCards: [{ id: "n1", title: "Run it?" }] }]);
     expect(t.size()).toBe(0);
+  });
+
+  it("sends nothing when a turn with no card wrote nothing", () => {
+    const { t, delivered, named } = setup();
+    t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
+    named(ID);
+    t.onStream(S, { type: "tool_use", tool: "Bash" });
+    t.onTurnEnded(S);
+    expect(delivered).toHaveLength(0);
+  });
+
+  it("answers which replies a turn is answering, while it runs and only then", () => {
+    const { t, named } = setup();
+    const tg = { channel: "telegram" as const, chatId: "42", replyTo: 7, messageId: 99 };
+    expect(t.answering(S)).toEqual([]);
+    const h = t.expect({ cardId: "c1", clientMessageId: ID, origin: tg, sessionId: S });
+    // Not yet in a turn (the send has not returned): a card now is not its answer.
+    expect(t.answering(S)).toEqual([]);
+    h.attach("started");
+    named(ID);
+    expect(t.answering(S)).toEqual([{ origin: tg, repliedAt: 1_000 }]);
+    expect(t.answering("another-chat")).toEqual([]);
+    expect(t.answering(null)).toEqual([]);
+    t.onTurnEnded(S);
+    expect(t.answering(S)).toEqual([]);
+  });
+
+  it("never counts a reply queued behind the running turn as answered by it", () => {
+    const { t } = setup();
+    t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("queued");
+    expect(t.answering(S)).toEqual([]);
   });
 
   it("delivers a short real answer written after the card, though it has no number and no question", () => {
@@ -451,6 +483,21 @@ describe("cutFollowupText", () => {
 
 describe("deliverCardFollowup", () => {
   const card = { id: "c1", projectName: "ppm", status: "answered" } as AssistantCard;
+
+  it("keeps only the new card under the old one when the manager answered with a card, never the turn's text", () => {
+    const stored: CardFollowUp[] = [];
+    const sent: CardFollowupDelivery[] = [];
+    const cards = { get: () => card, setFollowUp: (_id: string, f: CardFollowUp) => { stored.push(f); return true; } };
+    const result: FollowupResult = {
+      cardId: "c1", origin, sessionId: S, overflow: false, repliedAt: 1,
+      text: "Quota is at 60%; a full run takes ~40%. I opened a card to ask again.",
+      newCards: [{ id: "n1", title: "Run the full suite? It costs ~40%" }],
+    };
+    deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: (d) => sent.push(d) }) }, result);
+    expect(stored).toEqual([{ text: "", truncated: false, at: 5, newCards: [{ id: "n1", title: "Run the full suite? It costs ~40%" }] }]);
+    // Handed on all the same: the bridge decides whether the card under the reply already said it.
+    expect(sent.map((d) => d.newCards.map((c) => c.id))).toEqual([["n1"]]);
+  });
 
   it("keeps the cut answer on the card and hands it on; a sink that throws is contained", () => {
     const stored: CardFollowUp[] = [];

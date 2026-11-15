@@ -22,7 +22,9 @@ import type { LateReply } from "../assistant-wake/manager-wake-sources.ts";
  *   reported in between. A turn the user stopped, or one cut short by a rate limit or an
  *   overloaded provider, is not a failure the user needs a card for.
  * - The end of a manager turn that took an Assistant message nothing waited for is a late reply:
- *   news for the Assistant, no card.
+ *   news for the Assistant, no card — unless that turn answered the user's reply on a card. Its
+ *   answer already went straight to the user (`card-reply-followup.ts`, or as the card it opened),
+ *   and news of it would have the Assistant tell the user the same thing a second time.
  *
  * Lifecycle listeners only record and enqueue.
  */
@@ -41,6 +43,12 @@ export interface ManagerSignalsDeps {
   openRequestCard(requestId: string): CardRow | null;
   reportsSince(sessionId: string, kinds: readonly AssistantCardKind[], since: number): number;
   lateReply(reply: LateReply): void;
+  /**
+   * Whether the turn of this chat that is ending answers a reply the user gave on a card
+   * (`cardReplyFollowups.answering`). Asked from this `turn_ended` listener, which is started
+   * before the follow-ups' own, so the reply is still known. Never when left out.
+   */
+  answersCardReply?(sessionId: string): boolean;
   graceMs?: number;
 }
 
@@ -102,7 +110,11 @@ export function createManagerSignals(deps: ManagerSignalsDeps) {
       else {
         expected.delete(id);
         const text = p.finalText?.trim();
-        if (p.outcome === "done" && text) {
+        let answeredUser = false;
+        try { answeredUser = deps.answersCardReply?.(id) ?? false; } catch { /* unknown: news as before */ }
+        if (p.outcome === "done" && text && answeredUser) {
+          log.info(`session=${id} the turn answered the user's reply on a card; no late-reply news for the Assistant`);
+        } else if (p.outcome === "done" && text) {
           deps.lateReply({ assistantSessionId: owed.assistant, managerSessionId: id, project: m.projectName, text, at: deps.clock.now() });
         }
       }

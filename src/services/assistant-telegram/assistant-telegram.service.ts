@@ -181,7 +181,11 @@ export class AssistantTelegramBridge {
       relayCard: (chatId, card) => cards.relayed(chatId, card),
       isShowing: (chatId, requestId) => cards.isShowing(chatId, requestId),
     });
-    const cardFollowups = new AssistantTelegramCardFollowups({ queue, chatLink: links.chatLink, silence });
+    const cardFollowups = new AssistantTelegramCardFollowups({
+      queue, chatLink: links.chatLink, silence,
+      // A new card that went under the user's reply is the whole answer there.
+      threadedIn: (cardId, chatId) => managerCards.threadedIn(cardId, chatId),
+    });
     const replyTo = (chatId: string, html: string, markup?: InlineKeyboardMarkup) =>
       queue.enqueue(chatId, sendMessageTask(queue, chatId, { html, ...(markup ? { markup } : {}) }, { label: "card reply" }));
     const cardReplies = new AssistantTelegramCardReplies({ codes, reply: replyTo });

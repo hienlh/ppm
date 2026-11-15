@@ -10,7 +10,8 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import { clientFor, connectChat, freshChat, queueFor, useFakeTelegram } from "./bridge-test-kit.ts";
 import { AssistantTelegramCardFollowups } from "../../../../src/services/assistant-telegram/assistant-telegram-card-followups.ts";
 import {
-  FOLLOWUP_CUT_NOTE, FOLLOWUP_STOPPED_NOTE, FOLLOWUP_TITLE_ONLY_NOTE, formatCardFollowup,
+  FOLLOWUP_CUT_NOTE, FOLLOWUP_LABEL, FOLLOWUP_STOPPED_NOTE, FOLLOWUP_TITLE_ONLY_NOTE, formatCardFollowup, formatNewCardPointer,
+  NEW_CARD_POINTER_LABEL,
 } from "../../../../src/services/assistant-telegram/assistant-telegram-followup-format.ts";
 import { TelegramSilence } from "../../../../src/services/assistant-telegram/assistant-telegram-silence.ts";
 import type { CardFollowupDelivery } from "../../../../src/services/assistant-cards/card-reply-followup.ts";
@@ -31,7 +32,7 @@ const fake = useFakeTelegram();
 const client = clientFor(fake);
 beforeEach(() => { getDb().query("DELETE FROM clawbot_paired_chats").run(); });
 
-const base = { overflow: false, detail: "full" as const, projectName: "ppm", newCards: [], url: null };
+const base = { overflow: false, detail: "full" as const, projectName: "ppm", url: null };
 const visible = (html: string): string => {
   const parsed = parseTelegramHtml(html);
   if ("error" in parsed) throw new Error(parsed.error);
@@ -80,14 +81,21 @@ describe("formatCardFollowup", () => {
     }
   });
 
-  it("names the new card the manager opened in that turn, and links back to the chat", () => {
-    const publicLink = formatCardFollowup({ ...base, text: "It costs a lot.", newCards: [{ title: "Run it anyway? ~40% <quota>" }], url: "https://ppm.example.com/x" });
-    expect(visible(publicLink.html)).toContain("It also opened a new card: Run it anyway? ~40% <quota>");
+  it("links back to the chat: a button on a public address, written out on a local one", () => {
+    const publicLink = formatCardFollowup({ ...base, text: "It costs a lot.", url: "https://ppm.example.com/x" });
     expect(publicLink.markup?.inline_keyboard[0]![0]).toMatchObject({ text: "Open in PPM", url: "https://ppm.example.com/x" });
     expect(publicLink.fallbackHtml).toContain("https://ppm.example.com/x");
     const lan = formatCardFollowup({ ...base, text: "ok", url: "http://localhost:8080/x" });
     expect(lan.markup).toBeUndefined();
     expect(visible(lan.html)).toContain("Open in PPM: http://localhost:8080/x");
+  });
+
+  it("names a new card in one line by its title only, escaped, with the link", () => {
+    const pointer = formatNewCardPointer({ projectName: "ppm", newCards: [{ title: "Run it anyway? ~40% <quota>" }], url: "https://ppm.example.com/x" });
+    expect(visible(pointer.html)).toBe(`${NEW_CARD_POINTER_LABEL} Run it anyway? ~40% <quota> · ppm`);
+    expect(pointer.markup?.inline_keyboard[0]![0]).toMatchObject({ url: "https://ppm.example.com/x" });
+    const many = formatNewCardPointer({ projectName: null, newCards: ["a", "b", "c", "d", "e"].map((title) => ({ title })), url: null });
+    expect(visible(many.html)).toBe(`${NEW_CARD_POINTER_LABEL} a, b, c and 2 more`);
   });
 });
 
@@ -237,10 +245,93 @@ describe("where the answer goes", () => {
     expect(stripTelegramHtml(msg!.text)).toContain(FOLLOWUP_STOPPED_NOTE);
   });
 
+  it("sends nothing under a PPM reply's copies when the manager answered with a new card: the card goes out by itself", () => {
+    const chat = connectChat(freshChat());
+    const { s } = sink({ atPpm: false, refs: [{ chatId: chat, messageId: 3 }] });
+    expect(s.targets({ ...delivery({ channel: "ppm" }), newCards: [{ id: "n1", title: "Run it?" }] })).toEqual([]);
+  });
+
   it("keeps a PPM reply's answer in PPM during quiet hours, for a card never sent to Telegram, and for a chat cut off", () => {
     const chat = connectChat(freshChat());
     expect(sink({ atPpm: false, quiet: true, refs: [{ chatId: chat, messageId: 3 }] }).s.targets(delivery({ channel: "ppm" }))).toEqual([]);
     expect(sink({ atPpm: false }).s.targets(delivery({ channel: "ppm" }))).toEqual([]);
     expect(sink({ atPpm: false }).s.targets(delivery({ channel: "telegram", chatId: "9999999999" }))).toEqual([]);
+  });
+});
+
+/**
+ * The case the user reported: a reply on Telegram that the manager answers with a new card plus a
+ * closing line. It used to reach the phone twice, as the new card and as "The manager's answer to
+ * your reply" saying much the same. Now the card goes under the user's reply and nothing else.
+ */
+describe("a manager that answers a Telegram reply with a new card", () => {
+  const USER_MESSAGE = 4242;
+
+  function bridge(chat: string, opts: { answering: boolean; atPpm?: boolean }) {
+    const queue = queueFor(client);
+    const silence = new TelegramSilence({ enabled: () => true, idleMs: () => (opts.atPpm ? 0 : null), now: () => 1_000_000 });
+    const managerCards = new AssistantTelegramManagerCards({
+      queue, codes: { mint: () => "c", dropGroup: () => {} } as never, chatLink: async () => "", sessionLink: async () => "",
+      relayCard: () => {}, isShowing: () => false, detailOf: () => "full", recipients: () => [chat], silence,
+      answering: () => (opts.answering
+        ? [{ origin: { channel: "telegram", chatId: chat, replyTo: 77, messageId: USER_MESSAGE }, repliedAt: REPLIED_AT }]
+        : []),
+      now: () => REPLIED_AT + 5_000,
+    });
+    const followups = new AssistantTelegramCardFollowups({
+      queue, silence, chatLink: async () => "", detailOf: () => "full", now: () => REPLIED_AT + 9_000,
+      refsOf: () => [{ chatId: chat, messageId: 77 }], recordRef: () => {},
+      threadedIn: (cardId, chatId) => managerCards.threadedIn(cardId, chatId),
+    });
+    return { queue, managerCards, followups };
+  }
+
+  const newCard = (): AssistantCard => {
+    const store = createAssistantCards({ now: () => 1, projects: () => [], announce: () => {} });
+    return store.create({ kind: "needs_decision", sessionId: "mgr", title: "Run the full suite? ~40% quota", body: "Quota is at 60%; a full run takes ~40%." });
+  };
+  const answer = (chat: string, made: AssistantCard): CardFollowupDelivery => ({
+    ...delivery({ channel: "telegram", chatId: chat, replyTo: 77, messageId: USER_MESSAGE }),
+    text: "Quota is at 60% and a full run takes ~40%, so I opened a card to ask again.",
+    newCards: [{ id: made.id, title: made.title }],
+  });
+
+  it("sends the card under the user's own message, with a sound while they are at PPM, and no follow-up text", async () => {
+    const chat = connectChat(freshChat());
+    const { queue, managerCards, followups } = bridge(chat, { answering: true, atPpm: true });
+    const made = newCard();
+    managerCards.send([made]);
+    followups.send(answer(chat, made));
+    await fake.waitFor(() => fake.sent(Number(chat))[0]);
+    await queue.whenIdle();
+    const sent = fake.sent(Number(chat));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ reply_to: USER_MESSAGE, silent: false });
+    expect(stripTelegramHtml(sent[0]!.text)).toContain("Run the full suite?");
+    expect(stripTelegramHtml(sent[0]!.text)).not.toContain(stripTelegramHtml(FOLLOWUP_LABEL));
+  });
+
+  it("names a card that did not go under the reply in one line, never the turn's text", async () => {
+    const chat = connectChat(freshChat());
+    const { queue, followups } = bridge(chat, { answering: false });
+    const made = newCard();
+    followups.send(answer(chat, made));
+    const msg = await fake.waitFor(() => fake.sent(Number(chat))[0]);
+    await queue.whenIdle();
+    expect(fake.sent(Number(chat))).toHaveLength(1);
+    expect(msg).toMatchObject({ reply_to: 77 });
+    expect(stripTelegramHtml(msg!.text)).toBe(`${NEW_CARD_POINTER_LABEL} Run the full suite? ~40% quota · ppm`);
+  });
+
+  it("threads nothing for a card made while no reply is being answered", async () => {
+    const chat = connectChat(freshChat());
+    const { queue, managerCards } = bridge(chat, { answering: false, atPpm: true });
+    const made = newCard();
+    managerCards.send([made]);
+    const msg = await fake.waitFor(() => fake.sent(Number(chat))[0]);
+    await queue.whenIdle();
+    expect(msg!.reply_to).toBeUndefined();
+    expect(msg!.silent).toBe(true);
+    expect(managerCards.threadedIn(made.id, chat)).toBe(false);
   });
 });
