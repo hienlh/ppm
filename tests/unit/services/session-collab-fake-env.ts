@@ -6,7 +6,7 @@ import { SESSION_COLLAB_DEFAULTS, type SessionCollabSettings } from "../../../sr
 import {
   permissionRank, type SessionCollabAnswer, type SessionCollabApprovalInput, type SessionCreatedEvent, type SessionDelivery,
 } from "../../../src/shared/session-collab.ts";
-import type { CollabEnv, LiveSessionState } from "../../../src/services/session-collab/collab-context.ts";
+import type { CollabEnv, CollabProviderId, LiveSessionState } from "../../../src/services/session-collab/collab-context.ts";
 import { createCollabWaits } from "../../../src/services/session-collab/collab-waits.ts";
 import { createCollabUnread } from "../../../src/services/session-collab/collab-unread.ts";
 import type { DeliverToSessionInput } from "../../../src/server/ws/chat-inject.ts";
@@ -15,7 +15,7 @@ export const PROJECT_PATH = process.platform === "win32" ? "C:\\work\\app" : "/w
 export const OTHER_PATH = process.platform === "win32" ? "C:\\work\\other" : "/work/other";
 
 export interface FakeSession {
-  providerId: "claude" | "codex";
+  providerId: CollabProviderId;
   /** Absent for a session PPM has no record of (one only a provider's own files know). */
   projectPath?: string;
   title?: string;
@@ -94,7 +94,7 @@ export function fakeEnv(opts: {
     providerRunsDesign: (id) => (opts.designProviders ?? ["claude", "codex"]).includes(id),
     projectNameOf: (path) => (path === PROJECT_PATH ? "app" : path === OTHER_PATH ? "other" : null),
     title: (id) => sessions[id]?.title ?? null,
-    providerExists: (id) => id === "claude" || id === "codex",
+    providerExists: (id) => id === "claude" || id === "codex" || id === "antigravity",
     links: {
       parentOf: (id) => sessions[id]?.parent ?? null,
       depthOf: (id) => sessions[id]?.depth ?? 0,
@@ -169,7 +169,7 @@ export function fakeEnv(opts: {
       // A real create awaits the provider: overlapping creates interleave here.
       await new Promise((r) => setTimeout(r, 1));
       sessions[id] = {
-        providerId: providerId as "claude" | "codex", projectPath: input.projectPath, title: input.title,
+        providerId: providerId as CollabProviderId, projectPath: input.projectPath, title: input.title,
         ...(input.designSlug ? { design: true, designSlug: input.designSlug } : {}),
       };
       created.push(id);

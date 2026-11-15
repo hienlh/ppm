@@ -14,9 +14,12 @@ import {
 import { tabToolResultText } from "./tab-tool-call";
 import type { LinkedSessionStatus } from "./linked-sessions";
 
-/** Claude names a tool `mcp__ppm-sessions__create_session`; Codex `ppm_sessions:create_session`. */
+/**
+ * Claude names a tool `mcp__ppm-sessions__create_session`; Codex `ppm_sessions:create_session`;
+ * Antigravity `mcp_ppm-sessions_create_session`.
+ */
 const TOOL_NAME = new RegExp(
-  `^(?:mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__|${CODEX_SESSION_COLLAB_MCP_SERVER}:)(${CREATE_SESSION_TOOL}|${SEND_TO_SESSION_TOOL}|${SESSION_STATUS_TOOL})$`,
+  `^(?:mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__|${CODEX_SESSION_COLLAB_MCP_SERVER}:|mcp_${CLAUDE_SESSION_COLLAB_MCP_SERVER}_)(${CREATE_SESSION_TOOL}|${SEND_TO_SESSION_TOOL}|${SESSION_STATUS_TOOL})$`,
 );
 
 export type SessionCollabToolCall =

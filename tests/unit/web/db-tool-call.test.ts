@@ -12,6 +12,13 @@ describe("dbToolCall", () => {
     expect(dbToolOf("ppm_db:open_query")).toBe("open_query");
   });
 
+  it("reads Antigravity's name, which joins server and tool with one underscore", () => {
+    expect(dbToolCall("mcp_ppm-db_db_query", { connection: "Prod", sql: "SELECT 1", toolSummary: "Count rows" }))
+      .toEqual({ tool: "db_query", connection: "Prod", sql: "SELECT 1" });
+    expect(dbToolOf("mcp_ppm-db_open_query")).toBe("open_query");
+    expect(dbToolOf("mcp_ppm-tabs_open_file")).toBeNull();
+  });
+
   it("is not another server's tool, nor a call without a connection and SQL", () => {
     expect(dbToolOf("mcp__ppm-tabs__open_file")).toBeNull();
     expect(dbToolOf("mcp__ppm-db__db_query_all")).toBeNull();

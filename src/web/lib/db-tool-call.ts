@@ -21,9 +21,10 @@ export interface DbToolCall {
 /*
  * Claude names the tool `mcp__ppm-db__db_query`. Codex names it `ppm_db:db_query` and wraps the
  * arguments as `{ server, tool, arguments }`, live and in the history read back alike.
+ * Antigravity names it `mcp_ppm-db_db_query`.
  */
 const TOOL_NAME = new RegExp(
-  `^(?:mcp__${CLAUDE_DB_TOOLS_MCP_SERVER}__|${CODEX_DB_TOOLS_MCP_SERVER}:)(${DB_QUERY_TOOL}|${OPEN_QUERY_TOOL}|${DB_EXECUTE_TOOL})$`,
+  `^(?:mcp__${CLAUDE_DB_TOOLS_MCP_SERVER}__|${CODEX_DB_TOOLS_MCP_SERVER}:|mcp_${CLAUDE_DB_TOOLS_MCP_SERVER}_)(${DB_QUERY_TOOL}|${OPEN_QUERY_TOOL}|${DB_EXECUTE_TOOL})$`,
 );
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);

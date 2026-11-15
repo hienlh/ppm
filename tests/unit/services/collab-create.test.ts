@@ -121,6 +121,13 @@ describe("create_session", () => {
     }
   });
 
+  it("an Antigravity parent given no mode runs agy's own, asking for each tool, and so does the child", async () => {
+    const w = world({ mode: null, providerId: "antigravity" }, { settings: { askBeforeCreate: false } });
+    const result = await createSessionTool(w.env, w.caller, { title: "One", task: "a" }, signal());
+    expect(result.isError).toBeUndefined();
+    expect(w.deliveries[0]).toMatchObject({ providerId: "antigravity", permissionMode: "default" });
+  });
+
   it("creates in the caller's own project only, and checks its arguments", async () => {
     const w = world({}, { settings: { askBeforeCreate: false } });
     expect((await createSessionTool(w.env, w.caller, { title: "x", task: "a", project: "other" }, signal())).isError).toBe(true);
@@ -131,6 +138,8 @@ describe("create_session", () => {
     // Another provider does not inherit the parent's model.
     const ok = JSON.parse(textOf(await createSessionTool(w.env, w.caller, { title: "x", task: "a", provider: "codex" }, signal())));
     expect(ok).toMatchObject({ providerId: "codex", model: null });
+    const agy = JSON.parse(textOf(await createSessionTool(w.env, w.caller, { title: "y", task: "b", provider: "antigravity" }, signal())));
+    expect(agy).toMatchObject({ providerId: "antigravity", model: null });
   });
 
   it("waits for the child's reply when asked to", async () => {

@@ -46,6 +46,12 @@ export function designAnswerReply(env: CollabEnv, targetId: string, clientMessag
   return { replied: true, text, sentAt: new Date(answer.at).toISOString() };
 }
 
+/** The user's wait setting, shortened to what the caller's provider lets a tool call last. */
+function waitTimeoutMs(env: CollabEnv, caller: CollabCaller): number {
+  const setting = env.settings().waitTimeoutMinutes * 60_000;
+  return caller.answerBy === undefined ? setting : Math.max(0, Math.min(setting, caller.answerBy - Date.now()));
+}
+
 export async function deliverAndWait(env: CollabEnv, input: {
   caller: CollabCaller;
   target: CollabTarget;
@@ -67,7 +73,7 @@ export async function deliverAndWait(env: CollabEnv, input: {
     // Registered before delivery: a reply faster than the delivery's return is still this wait's.
     const begun = env.waits.begin({
       waiter: caller.sessionId, target: target.sessionId, signal: input.signal,
-      timeoutMs: env.settings().waitTimeoutMinutes * 60_000,
+      timeoutMs: waitTimeoutMs(env, caller),
     });
     if (!begun.ok) return { ok: false, message: begun.message };
     handle = begun.wait;
