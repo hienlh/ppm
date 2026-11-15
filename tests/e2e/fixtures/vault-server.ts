@@ -69,7 +69,10 @@ configService.set("port", port);
 if (!resuming) {
   configService.set("ai", {
     default_provider: "claude", new_chat_provider_mode: "default", share_provider_context: false,
-    providers: { claude: { type: "mock", permission_mode: "bypassPermissions" } },
+    providers: {
+      claude: { type: "mock", permission_mode: "bypassPermissions" },
+      codex: { type: "mock", permission_mode: "bypassPermissions" },
+    },
   });
   await (await import("./answer-feature-intros")).answerFeatureIntrosAtStartup();
   // Settings → Tools, as the user turns them on: the vault's tools for ordinary chats (off by
@@ -90,7 +93,11 @@ const { stripSharedContext } = await import("../../../src/shared/provider-contex
 const { setServerListenAddress } = await import("../../../src/services/server-listen-address");
 const { setSessionMetadata } = await import("../../../src/services/db.service");
 const { CLAUDE_ASSISTANT_MCP_PREFIX } = await import("../../../src/shared/assistant-tool-names");
-const { CLAUDE_SESSION_COLLAB_MCP_SERVER } = await import("../../../src/shared/session-collab");
+const { CLAUDE_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_SERVER } = await import("../../../src/shared/session-collab");
+const { historyWriter, readHistory } = await import("./vault-provider-history");
+// The history files go under the process's home: refuse to write anywhere but the sandbox's.
+const { homedir } = await import("node:os");
+if (canonical(homedir()) !== privateHome) throw new Error("homedir() is not the sandbox home");
 type SendOpts = import("../../../src/providers/provider.interface").SendMessageOpts;
 type ChatEvent = import("../../../src/providers/provider.interface").ChatEvent;
 type ChatMessage = import("../../../src/providers/provider.interface").ChatMessage;
@@ -106,7 +113,8 @@ interface CallRecord {
   label: string; sessionId: string; tool: string; via: string; assistant: boolean; handed: boolean;
   status?: number; isError?: boolean; text?: string; done?: boolean; ms?: number;
 }
-interface StoredSession extends Session { messages: ChatMessage[]; known: string[] }
+/** `known`: every marker value the "model" was given — its context, kept in the fixture's own state. */
+interface StoredSession extends Session { known: string[] }
 
 const MARKER = /CANARY-T[123]-[A-Za-z0-9-]+/g;
 
@@ -140,27 +148,30 @@ function fill(value: unknown, s: StoredSession): unknown {
 
 interface LiveRun { queue: Array<{ message: string; opts?: SendOpts }>; wake?: () => void; abort: AbortController }
 
+/** Codex names an MCP tool `server:tool` and wraps its arguments, as the codex provider streams it. */
+const codexToolEvent = (name: string, input: Record<string, unknown>) => {
+  const [server, tool] = name.split("__");
+  return { tool: `${server}:${tool}`, input: { server, tool, arguments: input } };
+};
+
 class VaultScriptedProvider {
-  readonly id = "claude";
-  readonly name = "Claude";
+  constructor(readonly id: "claude" | "codex", readonly name: string) {
+    for (const s of Object.values(state.sessions)) if (s.providerId === id) this.sessions.set(s.id, this.publicSession(s));
+  }
   readonly supportsAssistantSessions = true;
   /** Read by `chatService.getSession`. */
   readonly sessions = new Map<string, Session>();
   private live = new Map<string, LiveRun>();
 
-  constructor() {
-    for (const s of Object.values(state.sessions)) this.sessions.set(s.id, this.publicSession(s));
-  }
-
   private publicSession(s: StoredSession): Session {
-    const { messages: _m, known: _k, ...session } = s;
+    const { known: _k, ...session } = s;
     return session;
   }
 
   async createSession(config: import("../../../src/providers/provider.interface").SessionConfig): Promise<Session> {
     const s: StoredSession = {
       id: crypto.randomUUID(), providerId: this.id, title: config.title ?? "New Chat",
-      projectName: config.projectName, projectPath: config.projectPath, createdAt: new Date().toISOString(), messages: [], known: [],
+      projectName: config.projectName, projectPath: config.projectPath, createdAt: new Date().toISOString(), known: [],
     };
     state.sessions[s.id] = s;
     saveState();
@@ -177,22 +188,22 @@ class VaultScriptedProvider {
   }
 
   private info(s: StoredSession): SessionInfo {
-    return { id: s.id, providerId: s.providerId, title: s.title, projectName: s.projectName, createdAt: s.createdAt, updatedAt: s.messages.at(-1)?.timestamp ?? s.createdAt } as SessionInfo;
+    return { id: s.id, providerId: s.providerId, title: s.title, projectName: s.projectName, createdAt: s.createdAt, updatedAt: s.createdAt } as SessionInfo;
   }
 
   async listSessions(): Promise<SessionInfo[]> {
-    return Object.values(state.sessions).map((s) => this.info(s));
+    return Object.values(state.sessions).filter((s) => s.providerId === this.id).map((s) => this.info(s));
   }
 
   async listSessionsByDir(dir: string): Promise<SessionInfo[]> {
     const fold = (p?: string) => (p ? resolve(p).toLowerCase() : "");
-    return Object.values(state.sessions).filter((s) => fold(s.projectPath) === fold(dir)).map((s) => this.info(s));
+    return Object.values(state.sessions).filter((s) => s.providerId === this.id && fold(s.projectPath) === fold(dir)).map((s) => this.info(s));
   }
 
   async getSessionInfoById(sessionId: string, dir?: string): Promise<SessionInfo | null> {
     const s = state.sessions[sessionId];
     const fold = (p?: string) => (p ? resolve(p).toLowerCase() : "");
-    return s && (!dir || fold(s.projectPath) === fold(dir)) ? this.info(s) : null;
+    return s && s.providerId === this.id && (!dir || fold(s.projectPath) === fold(dir)) ? this.info(s) : null;
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -202,7 +213,9 @@ class VaultScriptedProvider {
   }
 
   async getMessages(sessionId: string): Promise<ChatMessage[]> {
-    return state.sessions[sessionId]?.messages ?? [];
+    // Read back from the history file itself: what PPM rewrote there is what the chat shows.
+    const s = state.sessions[sessionId];
+    return s ? readHistory(s, codexToolEvent) : [];
   }
 
   /** This provider never asks for an approval of its own; PPM's vault cards are PPM's. */
@@ -253,7 +266,8 @@ class VaultScriptedProvider {
     const plain = stripSharedContext(message);
     if (s.title === "New Chat") s.title = plain.slice(0, 50);
     const now = () => new Date().toISOString();
-    s.messages.push({ id: crypto.randomUUID(), role: "user", content: message, timestamp: now() });
+    const history = historyWriter(s);
+    history.user(message);
     transcript(sessionId, "in", "message", `${opts?.sharedContext ?? ""}\n${message}`);
     learn(s, message);
     const index = scripts.findIndex((sc) => plain.includes(sc.match));
@@ -272,12 +286,14 @@ class VaultScriptedProvider {
       if (run.abort.signal.aborted) break;
       if ("text" in op) {
         said.push(op.text);
+        history.text(op.text);
         yield emit({ type: "text", content: op.text });
         continue;
       }
       if ("repeat" in op) {
         const text = s.known.length ? `Everything I was given: ${s.known.join(" | ")}` : "I was given no values.";
         said.push(text);
+        history.text(text);
         yield emit({ type: "text", content: text });
         continue;
       }
@@ -286,9 +302,14 @@ class VaultScriptedProvider {
       const record: CallRecord = { label: script.label, sessionId, tool: op.call, via: op.via, assistant, handed: !!access };
       calls.push(record);
       const toolUseId = `tu-${crypto.randomUUID()}`;
-      const toolName = op.via === "assistant" ? `${CLAUDE_ASSISTANT_MCP_PREFIX}${op.call}` : `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${op.call}`;
+      const toolName = this.id === "codex"
+        ? `${CODEX_SESSION_COLLAB_MCP_SERVER}__${op.call}`
+        : op.via === "assistant" ? `${CLAUDE_ASSISTANT_MCP_PREFIX}${op.call}` : `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${op.call}`;
       transcript(sessionId, "out", "tool_use", JSON.stringify({ tool: toolName, args }));
-      yield emit({ type: "tool_use", tool: toolName, input: args, toolUseId } as ChatEvent);
+      history.toolUse(toolName, args, toolUseId);
+      yield emit((this.id === "codex"
+        ? { type: "tool_use", ...codexToolEvent(toolName, args), toolUseId }
+        : { type: "tool_use", tool: toolName, input: args, toolUseId }) as ChatEvent);
       const started = Date.now();
       if (!access) {
         record.isError = true;
@@ -312,20 +333,20 @@ class VaultScriptedProvider {
       }
       record.ms = Date.now() - started;
       transcript(sessionId, "in", "tool_result", record.text ?? "");
+      history.toolResult(toolUseId, record.text ?? "", record.isError === true);
       learn(s, record.text ?? "");
       record.done = true;
       yield emit({ type: "tool_result", output: stringifyToolResultContent([{ type: "text", text: record.text ?? "" }]), isError: record.isError, toolUseId } as ChatEvent);
     }
     if (run.abort.signal.aborted) {
-      s.messages.push({ id: crypto.randomUUID(), role: "assistant", content: said.join("\n\n"), events, timestamp: now() } as ChatMessage);
       saveState();
       return;
     }
     const closing = `Turn "${script.label}" done.`;
     said.push(closing);
+    history.text(closing);
     yield emit({ type: "text", content: closing });
     transcript(sessionId, "out", "reply", said.join("\n\n"));
-    s.messages.push({ id: crypto.randomUUID(), role: "assistant", content: said.join("\n\n"), events, timestamp: now() } as ChatMessage);
     saveState();
     seen.done = true;
     yield { type: "done", sessionId };
@@ -333,9 +354,10 @@ class VaultScriptedProvider {
 }
 
 const { providerRegistry } = await import("../../../src/providers/registry");
-const claude = new VaultScriptedProvider();
-const providers = [claude];
-providerRegistry.register(claude as never);
+const claude = new VaultScriptedProvider("claude", "Claude");
+const codex = new VaultScriptedProvider("codex", "Codex");
+const providers = [claude, codex];
+for (const p of providers) providerRegistry.register(p as never);
 // Keep the imported production provider instances unreachable, including aggregate routes.
 providerRegistry.get = ((id: string) => providers.find((p) => p.id === id)) as typeof providerRegistry.get;
 providerRegistry.list = () => providers.map((p) => ({ id: p.id, name: p.name }));

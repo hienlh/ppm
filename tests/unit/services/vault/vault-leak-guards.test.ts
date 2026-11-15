@@ -15,6 +15,7 @@ import { TELEGRAM_API_BASE_ENV } from "../../../../src/services/telegram/telegra
 import { startFakeTelegram } from "../../../helpers/fake-telegram-bot-api.ts";
 import { quoteCard, quoteTelegramMessage } from "../../../../src/services/assistant-telegram/assistant-telegram-reply-quote.ts";
 import { VAULT_NOTICE_HTML } from "../../../../src/services/assistant-telegram/assistant-telegram-db-notices.ts";
+import { deliverCardFollowup } from "../../../../src/services/assistant-cards/card-reply-followup.ts";
 
 afterEach(() => turnSecretScrubber.clear());
 
@@ -136,5 +137,22 @@ describe("Telegram", () => {
       if (saved === undefined) delete process.env[TELEGRAM_API_BASE_ENV];
       else process.env[TELEGRAM_API_BASE_ENV] = saved;
     }
+  });
+});
+
+describe("card follow-ups", () => {
+  it("keep a value the manager repeats out of the card's stored answer and what is handed on", () => {
+    turnSecretScrubber.hold("m1", [{ name: "NI", value: "CANARY-T2-followup" }]);
+    let stored: unknown = null;
+    let handed: unknown = null;
+    const card = { id: "c1", status: "answered" } as never;
+    deliverCardFollowup({
+      cards: { get: () => card, setFollowUp: (_id, f) => { stored = f; return true; } },
+      now: () => 1,
+      sink: () => ({ send: (d) => { handed = d; } }),
+    }, { cardId: "c1", origin: { channel: "telegram", chatId: "1" }, sessionId: "m1", text: "Submitted with NI CANARY-T2-followup.", overflow: false });
+    expect(JSON.stringify(stored)).not.toContain("CANARY");
+    expect(JSON.stringify(stored)).toContain("[vault:NI]");
+    expect(JSON.stringify(handed)).not.toContain("CANARY");
   });
 });

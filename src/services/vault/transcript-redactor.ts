@@ -3,11 +3,15 @@ import { basename, dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { readFileChunks } from "../file-chunks.ts";
 import { createLogger } from "../logger.ts";
+import { HOLD_MS } from "./turn-secret-scrubber.ts";
 
 /**
  * After a turn in which an AI was handed secure or sealed values, rewrites the provider's history
  * files on this machine so those values no longer sit in them: Claude's session transcript (and its
  * subagents' transcripts) and Codex's rollout. Each value becomes `[vault:<item name>]`.
+ *
+ * The values stay noted for the scrubber's hold, and every later turn of that chat is checked too:
+ * the AI keeps them in its context and repeating one in a later turn writes it to the same files.
  *
  * Only the files change. The running CLI or app-server is left alone, so its prompt cache stays
  * warm — and it still holds the value in memory until the chat is reopened. What was already sent
@@ -128,6 +132,22 @@ export async function redactJsonlFile(path: string, values: readonly { name: str
   return "changed";
 }
 
+/** Whether the bytes of `path` from `fromByte` to its end mention any of `values`. */
+async function tailMentions(path: string, fromByte: number, values: readonly { name: string; value: string }[]): Promise<boolean> {
+  const items = values.map((v) => itemOf(v.name, v.value)).filter((i): i is Item => !!i);
+  if (!items.length || !existsSync(path)) return false;
+  const decoder = new TextDecoder();
+  let rest = "";
+  for await (const chunk of readFileChunks(path, { fromByte })) {
+    rest += decoder.decode(chunk, { stream: true });
+    const nl = rest.lastIndexOf("\n");
+    if (nl < 0) continue;
+    if (mentions(rest.slice(0, nl), items)) return true;
+    rest = rest.slice(nl + 1);
+  }
+  return mentions(rest + decoder.decode(), items);
+}
+
 export interface RedactorDeps {
   /** The history files of a session: its transcript or rollout, and its subagents'. */
   files: (providerId: string, sessionId: string) => Promise<string[]>;
@@ -137,13 +157,28 @@ export interface RedactorDeps {
   settleMs?: number;
   stableMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
 }
+
+/**
+ * A session's values are kept for the scrubber's hold (24 h after the last one was handed out), not
+ * dropped after the first pass: the AI still has them in its context and may repeat one in any
+ * later turn, which the CLI writes to the same files. A later pass reads only what was appended
+ * since the last one and rewrites the file only when that holds a value; a pass right after a value
+ * was handed out reads the whole file, as the first one always did.
+ */
+interface Pending { values: Map<string, string>; until: number; fresh: boolean }
 
 export function createTranscriptRedactor(deps: RedactorDeps) {
   const canonical = deps.canonical ?? ((id: string) => id);
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const pending = new Map<string, Map<string, string>>(); // session → value → name
+  const now = deps.now ?? Date.now;
+  const pending = new Map<string, Pending>(); // session → its values (value → name)
+  /** Per file, the size up to which it was last left with no value in it. */
+  const checkedTo = new Map<string, number>();
   const working = new Set<string>();
+  /** Sessions whose turn ended while a pass was already running: that pass runs once more. */
+  const again = new Set<string>();
 
   async function stable(path: string): Promise<boolean> {
     if (!existsSync(path)) return true;
@@ -156,33 +191,51 @@ export function createTranscriptRedactor(deps: RedactorDeps) {
 
   /** Redacts every file of the session; true when all are done (nothing left busy). */
   async function runOnce(providerId: string, sessionId: string): Promise<boolean> {
-    const values = [...(pending.get(sessionId) ?? new Map()).entries()].map(([value, name]) => ({ name, value }));
-    if (!values.length) return true;
+    const entry = pending.get(sessionId);
+    const values = [...(entry?.values ?? new Map<string, string>()).entries()].map(([value, name]) => ({ name, value }));
+    if (!entry || !values.length) return true;
     if (deps.running?.(sessionId)) return false;
+    const full = entry.fresh;
     const files = await deps.files(providerId, sessionId);
     let allDone = true;
     for (const f of files) {
       if (!(await stable(f))) { allDone = false; continue; }
       if (deps.running?.(sessionId)) return false;
+      const size = existsSync(f) ? statSync(f).size : 0;
+      const from = checkedTo.get(f);
+      // Nothing appended since the last pass, or nothing appended that holds a value: left as it is.
+      if (!full && from !== undefined && from <= size && (from === size || !(await tailMentions(f, from, values)))) {
+        checkedTo.set(f, size);
+        continue;
+      }
       const r = await redactJsonlFile(f, values);
-      if (r === "busy") allDone = false;
+      if (r === "busy") { allDone = false; continue; }
+      if (existsSync(f)) checkedTo.set(f, statSync(f).size);
     }
+    if (allDone) entry.fresh = false;
     return allDone;
   }
 
   return {
-    /** Values handed to the AI of `sessionId` in the turn under way: redacted once it ends. */
+    /** Values handed to the AI of `sessionId`: its history files are kept clear of them for the hold. */
     note(sessionId: string, items: readonly { name: string; value: string }[]): void {
       const id = canonical(sessionId);
-      const map = pending.get(id) ?? new Map<string, string>();
-      for (const it of items) map.set(it.value, it.name);
-      pending.set(id, map);
+      const entry = pending.get(id) ?? { values: new Map<string, string>(), until: 0, fresh: true };
+      for (const it of items) {
+        if (!entry.values.has(it.value)) entry.fresh = true;
+        entry.values.set(it.value, it.name);
+      }
+      entry.until = now() + HOLD_MS;
+      pending.set(id, entry);
     },
 
     /** The session's turn ended: redact its files once they settle, retrying while they are busy. */
     async turnEnded(providerId: string, asked: string): Promise<void> {
       const sessionId = canonical(asked);
-      if (!pending.has(sessionId) || working.has(sessionId)) return;
+      const entry = pending.get(sessionId);
+      if (!entry) return;
+      if (entry.until <= now()) { pending.delete(sessionId); return; }
+      if (working.has(sessionId)) { again.add(sessionId); return; }
       working.add(sessionId);
       try {
         await sleep(deps.settleMs ?? SETTLE_MS);
@@ -193,10 +246,10 @@ export function createTranscriptRedactor(deps: RedactorDeps) {
           } catch (e) {
             log.warn(`redacting history of session=${sessionId} failed: ${(e as Error)?.name ?? "error"}`);
           }
-          // A turn running again keeps the values pending for its own end.
-          if (done) { pending.delete(sessionId); return; }
+          // Done, unless another turn ended meanwhile; a turn running again redacts at its own end.
+          if (done && !again.delete(sessionId)) return;
           if (deps.running?.(sessionId)) return;
-          await sleep((deps.settleMs ?? SETTLE_MS) * (i + 1));
+          await sleep((deps.settleMs ?? SETTLE_MS) * (done ? 1 : i + 1));
         }
         log.warn(`history of session=${sessionId} still busy after ${MAX_TRIES} tries; will try after its next turn`);
       } finally {

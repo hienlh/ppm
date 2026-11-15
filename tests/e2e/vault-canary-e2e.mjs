@@ -211,12 +211,12 @@ async function send(root, text) {
 }
 const PROJECT = "vaultproj";
 let chatSessionId, assistantSessionId, items;
-const layoutFor = (sessionId) => {
-  const tab = { id: `chat-${sessionId}`, type: "chat", title: "Vault canary", projectId: PROJECT, closable: true, metadata: { projectName: PROJECT, sessionId, providerId: "claude" } };
+const layoutFor = (sessionId, providerId = "claude") => {
+  const tab = { id: `chat-${sessionId}`, type: "chat", title: "Vault canary", projectId: PROJECT, closable: true, metadata: { projectName: PROJECT, sessionId, providerId } };
   return { layout: { panels: { main: { id: "main", tabs: [tab], activeTabId: tab.id, tabHistory: [tab.id] } }, grid: [["main"]], focusedPanelId: "main" } };
 };
-async function openChat(kind) {
-  await api(`/api/project/${PROJECT}/workspace`, { method: "PUT", body: JSON.stringify(layoutFor(chatSessionId)) });
+async function openChat(kind, sessionId = chatSessionId, providerId = "claude") {
+  await api(`/api/project/${PROJECT}/workspace`, { method: "PUT", body: JSON.stringify(layoutFor(sessionId, providerId)) });
   const page = await newPage(kind);
   await page.goto(`${web}/project/${PROJECT}`);
   await page.locator(COMPOSER).first().waitFor({ timeout: 30000 });
@@ -240,7 +240,46 @@ function filesWith(dir, needle) {
   const n = Buffer.from(needle, "utf8");
   return walk(dir).filter((f) => { try { return readFileSync(f).includes(n); } catch { return false; } }).map((f) => f.slice(dir.length + 1));
 }
+/** The scripted provider's own capture of everything it received and said (sandbox/provider): not where any CLI keeps history. */
 const transcriptText = () => (existsSync(transcriptPath) ? readFileSync(transcriptPath, "utf8") : "");
+
+// The history files the CLIs keep and PPM's transcript redactor rewrites: Claude's session JSONL
+// and Codex's rollout, under the sandbox home.
+const historyRoots = () => [join(home, ".claude", "projects"), join(home, ".codex", "sessions")].filter((d) => existsSync(d));
+const historyFiles = () => historyRoots().flatMap((d) => walk(d)).filter((f) => f.endsWith(".jsonl"));
+const historyFile = (sessionId) => historyFiles().find((f) => f.endsWith(`${sessionId}.jsonl`)) ?? null;
+const VALUE = /CANARY-T[23]-/;
+/** The file's text, its lines, and (for Claude) its uuid → parentUuid chain. */
+function readHistoryFile(path) {
+  const text = readFileSync(path, "utf8");
+  const lines = text.split("\n").filter(Boolean);
+  const records = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } });
+  return { text, lines, records, chain: records.map((r) => (r ? `${r.uuid ?? "-"}<-${r.parentUuid ?? "-"}` : "unparsable")) };
+}
+/**
+ * Waits (up to 20 s) for PPM to take every T2/T3 value out of a history file after the turn that
+ * handed them out, then checks the rewrite kept the file whole: every line JSON, the same lines in
+ * the same order, the uuid/parentUuid chain unchanged, lines that held no value byte for byte.
+ */
+async function checkRedacted(label, path, before) {
+  const after = await until(`${label}: values gone from ${path}`, async () => {
+    const now = readHistoryFile(path);
+    return VALUE.test(now.text) ? null : now;
+  }, 20000, 250).catch((e) => { record(`${label}: the values were taken out within 20 s`, false, e.message.slice(0, 300)); return null; });
+  if (!after) return null;
+  record(`${label}: the values were taken out within 20 s`, true);
+  check(`${label}: no T2/T3 left, [vault:<name>] in their place, every line still JSON`, () => {
+    assert.ok(!VALUE.test(after.text));
+    assert.ok(after.text.includes(`[vault:${NAMES.a}]`), "no [vault:] marker");
+    assert.ok(after.records.every(Boolean), "a line no longer parses");
+  });
+  check(`${label}: same lines in the same order, uuid/parentUuid chain unchanged, value-free lines byte-identical`, () => {
+    assert.equal(after.lines.length, before.lines.length);
+    assert.deepEqual(after.chain, before.chain);
+    before.lines.forEach((l, i) => { if (!VALUE.test(l)) assert.equal(after.lines[i], l, `line ${i + 1} changed`); });
+  });
+  return after;
+}
 async function telegramText() {
   const r = await (await fetch(`${tgInfo.control}/calls?from=0`)).json();
   return r.calls.map((c) => c.raw).join("\n");
@@ -467,6 +506,33 @@ try {
     const toolCard = await chat.locator('[data-vault-tool-card="vault_read"]').allInnerTexts();
     check("chat: the vault_read tool cards never draw a T2 value", () => assert.ok(!toolCard.join("\n").includes("CANARY-T2-")));
 
+    // The Claude CLI's transcript held the values as handed out (tool result and the AI's repeat);
+    // after the turn, PPM rewrites them out. Read at once: the rewrite waits for the files to settle.
+    const jsonl = historyFile(chatSessionId);
+    const beforeJsonl = jsonl ? readHistoryFile(jsonl) : null;
+    check("claude history: the transcript JSONL holds the T2 values as recorded, before the rewrite (control)", () => {
+      assert.ok(beforeJsonl, "no transcript JSONL for the chat");
+      assert.ok(beforeJsonl.text.includes(T2A) && beforeJsonl.text.includes(T2B));
+      assert.ok(beforeJsonl.records.some((r) => r?.toolUseResult) && beforeJsonl.records.every(Boolean));
+    });
+    if (beforeJsonl) await checkRedacted("claude history", jsonl, beforeJsonl);
+    const hist = (await api(`/api/project/${PROJECT}/chat/sessions/${chatSessionId}/messages?providerId=claude`)).data;
+    check("claude history: the chat's history route reads the rewritten file (marker in place, no T2)", () => {
+      const text = JSON.stringify(hist.messages);
+      assert.ok(hist.messages.length >= 2, `${hist.messages.length} messages`);
+      assert.ok(text.includes("canary read secure once"), "the earlier prompt is there");
+      assert.ok(text.includes(`[vault:${NAMES.a}]`) && !VALUE.test(text));
+    });
+    await chat.reload();
+    await chat.locator(COMPOSER).first().waitFor({ timeout: 30000 });
+    await chat.getByText(`[vault:${NAMES.a}]`, { exact: false }).first().waitFor({ timeout: 15000 });
+    const reopened = await chat.locator("body").innerText();
+    check("claude history: reopened in the browser, the earlier messages load with the marker and no T2", () => {
+      assert.ok(reopened.includes("canary read secure once"));
+      assert.ok(!VALUE.test(reopened));
+    });
+    await shot(chat, "desktop-chat-reopened-after-redaction", "Desktop: the chat reopened after PPM rewrote its transcript — the AI's repeat shows [vault:<name>]");
+
     // Sealed, shown to the user only.
     await script("s4-sealed-show", "canary sealed show", [read([NAMES.sealed], `${PURPOSE} passport number`), { repeat: true }]);
     await send(chat, "canary sealed show");
@@ -479,12 +545,20 @@ try {
     await shot(chat, "desktop-sealed-shown-to-user", "Desktop: the sealed value shown to the user only, with Copy and a countdown");
     const { calls: s4 } = await turnDone("s4-sealed-show");
     check("chat: Show to me gives the AI no T3", () => { assert.match(s4[0].text, /shown to them only/); assert.ok(!s4[0].text.includes(T3)); });
+    check("claude history: the chat resumes after the rewrite — the follow-up turn ran on the same session", () => {
+      assert.equal(s4[0].sessionId, chatSessionId);
+      assert.ok(readHistoryFile(historyFile(chatSessionId)).records.every(Boolean));
+    });
 
     // Snapshot after the two show-only reads: T3 must be nowhere yet, the transcript included.
     await sleep(1500);
     const [tgT, nT, pT] = [await telegramText(), await ntfyText(), await pushesText()];
     const t3Files = filesWith(ppm, "CANARY-T3-");
-    check("snapshot after show-only reads: T3 absent from the provider transcript", () => assert.ok(!transcriptText().includes("CANARY-T3-")));
+    check("snapshot after show-only reads: T3 absent from the scripted provider's own capture", () => assert.ok(!transcriptText().includes("CANARY-T3-")));
+    check("snapshot after show-only reads: T3 absent from the CLI history files (Claude JSONL)", () => {
+      const hits = historyFiles().filter((f) => readFileSync(f, "utf8").includes("CANARY-T3-"));
+      assert.equal(hits.length, 0, hits.join(", "));
+    });
     check("snapshot after show-only reads: T3 absent from every file under PPM_HOME", () => assert.deepEqual(t3Files, []));
     check("snapshot after show-only reads: T3 absent from Telegram, ntfy and web pushes", () => assert.ok(![tgT, nT, pT].some((t) => t.includes("CANARY-T3-"))));
 
@@ -646,6 +720,53 @@ try {
     });
   }
 
+  // A Codex chat: its rollout holds the values as Codex records them; PPM rewrites them out, the
+  // history reads back with the marker, and the chat takes another turn.
+  {
+    const codexId = (await post(`/api/project/${PROJECT}/chat/sessions`, { providerId: "codex", title: "Vault canary codex" })).data.id;
+    const cx = await openChat("desktop", codexId, "codex");
+    await script("x1-codex-secure", "codex canary secure", [read([NAMES.a, NAMES.b], `${PURPOSE} codex needs both`), { repeat: true }]);
+    await send(cx, "codex canary secure");
+    const card = cx.locator('[data-vault-card="read-secure"]');
+    await card.waitFor({ timeout: 30000 });
+    await card.getByLabel("Secure tier password").fill(PW2);
+    await card.getByRole("button", { name: "Approve" }).click();
+    const { calls: x1, turn: x1Turn } = await turnDone("x1-codex-secure");
+    const rollout = historyFile(codexId);
+    const beforeRollout = rollout ? readHistoryFile(rollout) : null;
+    check("codex: the vault card worked in a Codex chat and gave both items", () => {
+      assert.equal(x1Turn.sessionId, codexId);
+      assert.ok(x1[0].text.includes(T2A) && x1[0].text.includes(T2B), x1[0].text.slice(0, 120));
+    });
+    check("codex history: the rollout holds the T2 values as recorded, before the rewrite (control)", () => {
+      assert.ok(beforeRollout, "no rollout for the chat");
+      assert.equal(beforeRollout.records[0]?.type, "session_meta");
+      assert.ok(beforeRollout.text.includes(T2A) && beforeRollout.text.includes(T2B));
+      assert.ok(beforeRollout.records.some((r) => r?.payload?.type === "function_call_output"));
+    });
+    if (beforeRollout) await checkRedacted("codex history", rollout, beforeRollout);
+    const xh = (await api(`/api/project/${PROJECT}/chat/sessions/${codexId}/messages?providerId=codex`)).data;
+    check("codex history: the chat's history route reads the rewritten rollout (marker in place, no T2)", () => {
+      const text = JSON.stringify(xh.messages);
+      assert.ok(text.includes("codex canary secure"), "the earlier prompt is there");
+      assert.ok(text.includes(`[vault:${NAMES.a}]`) && !VALUE.test(text));
+    });
+    await cx.reload();
+    await cx.locator(COMPOSER).first().waitFor({ timeout: 30000 });
+    await cx.getByText(`[vault:${NAMES.a}]`, { exact: false }).first().waitFor({ timeout: 15000 });
+    await shot(cx, "desktop-codex-chat-reopened-after-redaction", "Desktop: a Codex chat reopened after PPM rewrote its rollout");
+    await script("x2-codex-follow-up", "codex canary follow-up", [{ text: "Still here." }]);
+    await send(cx, "codex canary follow-up");
+    const { turn: x2 } = await turnDone("x2-codex-follow-up");
+    check("codex history: the chat resumes after the rewrite — a follow-up turn runs and the rollout stays valid", () => {
+      assert.equal(x2.sessionId, codexId);
+      const now = readHistoryFile(rollout);
+      assert.ok(now.records.every(Boolean) && now.lines.length > beforeRollout.lines.length);
+      assert.equal(now.lines[0], beforeRollout.lines[0], "session_meta untouched");
+    });
+    await cx.context().close();
+  }
+
   // A five-minute window, a read inside it with no card, and what the status says.
   {
     await chat.reload();
@@ -667,6 +788,13 @@ try {
     check("chat: a read inside the window needs no card", () => { assert.ok(s3[0].text.includes(T2A)); assert.equal(cardsNow, 0); assert.ok(s3[0].ms < 5000, `${s3[0].ms} ms`); });
     const status = (await api("/api/vault/status")).data;
     check("status before restart: a chat window on the secure tier is open", () => assert.ok(status.grants.some((g) => g.tier === "secure" && !g.settings), JSON.stringify(status.grants)));
+    // The rewrite runs in the live server a few seconds after a turn, and what it still has to do
+    // is held in memory only: a stop inside that window leaves the last turn's values on disk for
+    // good (reported, not fixed). So the restart waits for it — and that it happened is checked.
+    const lastFiles = [chatSessionId, assistantSessionId].map(historyFile).filter(Boolean);
+    const settled = await until("the last turns' values are out of the history files", () => lastFiles.every((f) => !VALUE.test(readFileSync(f, "utf8"))), 20000, 250)
+      .then(() => true, () => false);
+    check("before restart: the last turns' values were taken out of the chat's history file within 20 s", () => assert.ok(settled, lastFiles.join(", ")));
   }
 
   // ---------------------------------------------------------------- 4. Restart
@@ -761,24 +889,31 @@ writeFileSync(out, JSON.stringify({ dbs: res, vault }));
     if (has(pushesAll, needle)) hits.push("web pushes");
     if (has(notesBeforeStop, needle)) hits.push("notebook (API)");
     if (has(fixtureLog, needle)) hits.push("fixture stdout/stderr");
-    if (has(providerStore, needle)) hits.push("provider transcript/store");
+    if (has(providerStore, needle)) hits.push("scripted provider's own capture");
+    const inHistory = historyFiles().filter((f) => readFileSync(f, "utf8").includes(needle));
+    if (inHistory.length) hits.push(`CLI history files: ${inHistory.map((f) => f.slice(home.length + 1)).join(", ")}`);
     return hits;
   };
-  check("scan: the marker passwords are nowhere (PPM_HOME, DBs, logs, Telegram, ntfy, pushes, transcript, fixture output)", () => {
+  check("scan: the marker passwords are nowhere (PPM_HOME, DBs, logs, Telegram, ntfy, pushes, capture, CLI history, fixture output)", () => {
     const hits = [...where(PW2).map((h) => `PW2 in ${h}`), ...where(PW3).map((h) => `PW3 in ${h}`)];
     assert.equal(hits.length, 0, hits.join("; "));
   });
   check("scan: CANARY-T1 is not in ppm.log or any log under PPM_HOME", () => assert.ok(!has(logsText, "CANARY-T1-"), logFiles.filter((f) => readFileSync(f, "utf8").includes("CANARY-T1-")).join(", ")));
   check("scan: ppm.log exists and was written (the log check is not vacuous)", () => assert.ok(logFiles.some((f) => f.endsWith("ppm.log")) && logsText.length > 1000, `${logFiles.length} log files, ${logsText.length} chars`));
   check("scan: CANARY-T1 reached the AI (control)", () => assert.ok(transcript.includes(T1)));
-  check("scan: CANARY-T2 reached the AI and sits in the provider transcript (control)", () => assert.ok(transcript.includes(T2A) && transcript.includes(T2B)));
-  check("scan: CANARY-T2 only in the provider transcript", () => {
-    const hits = where("CANARY-T2-").filter((h) => h !== "provider transcript/store");
+  check("scan: CANARY-T2 reached the AI: in the scripted provider's own capture (control)", () => assert.ok(transcript.includes(T2A) && transcript.includes(T2B)));
+  check("scan: the CLI history files exist and carry [vault:<name>] (control)", () => {
+    const files = historyFiles();
+    assert.ok(files.length >= 3, `${files.length} history files`);
+    assert.ok(files.some((f) => readFileSync(f, "utf8").includes(`[vault:${NAMES.a}]`)));
+  });
+  check("scan: CANARY-T2 only in the scripted provider's own capture — none in the CLI history files", () => {
+    const hits = where("CANARY-T2-").filter((h) => h !== "scripted provider's own capture");
     assert.equal(hits.length, 0, `also in: ${hits.join("; ")}`);
   });
-  check("scan: CANARY-T3 (given to the AI once) only in the provider transcript", () => {
+  check("scan: CANARY-T3 (given to the AI once) only in the scripted provider's own capture — none in the CLI history files", () => {
     assert.ok(transcript.includes(T3), "the give-to-AI read did not reach the transcript");
-    const hits = where("CANARY-T3-").filter((h) => h !== "provider transcript/store");
+    const hits = where("CANARY-T3-").filter((h) => h !== "scripted provider's own capture");
     assert.equal(hits.length, 0, `also in: ${hits.join("; ")}`);
   });
   check("scan: session-trace.db was written and holds no T2/T3", () => {

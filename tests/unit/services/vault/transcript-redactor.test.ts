@@ -94,9 +94,40 @@ describe("redactor", () => {
     running = false;
     await r.turnEnded("claude", "s1");
     expect(readFileSync(f, "utf8")).not.toContain("CANARY");
-    expect(r.pendingSessions()).toEqual([]);
+    // Still held: the AI may repeat the value in a later turn of the same chat.
+    expect(r.pendingSessions()).toEqual(["s1"]);
     // What the provider appended while it was busy is kept.
     expect(readFileSync(f, "utf8")).toContain('{"type":"progress"}');
+  });
+
+  it("clears a value the AI repeats in a later turn, rewriting only when what was appended holds one", async () => {
+    const f = join(dir, "s.jsonl");
+    writeFileSync(f, transcript());
+    const r = createTranscriptRedactor({ files: async () => [f], settleMs: 1, stableMs: 1 });
+    r.note("s1", [V[0]!]);
+    await r.turnEnded("claude", "s1");
+    expect(readFileSync(f, "utf8")).not.toContain("CANARY");
+    // A later turn hands out nothing and says nothing secret: the file is left as it is.
+    appendFileSync(f, `${JSON.stringify({ type: "assistant", uuid: "a3", parentUuid: "s1", message: { content: [{ type: "text", text: "Done." }] } })}\n`);
+    const quiet = readFileSync(f, "utf8");
+    await r.turnEnded("claude", "s1");
+    expect(readFileSync(f, "utf8")).toBe(quiet);
+    // The turn after repeats the value from its context: rewritten, links intact.
+    appendFileSync(f, `${JSON.stringify({ type: "assistant", uuid: "a4", parentUuid: "a3", message: { content: [{ type: "text", text: "Again: CANARY-T2-file" }] } })}\n`);
+    await r.turnEnded("claude", "s1");
+    const after = readFileSync(f, "utf8");
+    expect(after).not.toContain("CANARY");
+    expect(after).toContain("Again: [vault:NI]");
+    expect(after.split("\n").filter(Boolean).map((l) => JSON.parse(l).uuid)).toEqual(["u1", "a1", "r1", "a2", "s1", "a3", "a4"]);
+  });
+
+  it("lets a chat's values go once the hold is over", async () => {
+    let t = 0;
+    const r = createTranscriptRedactor({ files: async () => [], settleMs: 1, stableMs: 1, now: () => t });
+    r.note("s1", [V[0]!]);
+    t += 24 * 60 * 60_000 + 1;
+    await r.turnEnded("claude", "s1");
+    expect(r.pendingSessions()).toEqual([]);
   });
 
   it("does nothing for a session that was handed no value", async () => {
