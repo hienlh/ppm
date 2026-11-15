@@ -48,7 +48,7 @@ function setup(opts: { idle?: () => boolean } = {}) {
 const origin = { channel: "telegram" as const, chatId: "42", replyTo: 7 };
 
 describe("following the turn a card reply opened", () => {
-  it("sends the named turn's final text once: text before its last tool call is not the answer", () => {
+  it("sends the named turn's top-level text once: never tool output, thinking or a subagent's words", () => {
     const { t, delivered, say, named } = setup();
     const h = t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S });
     h.attach("started");
@@ -62,7 +62,7 @@ describe("following the turn a card reply opened", () => {
     say("~40% of the weekly quota.");
     t.onTurnEnded(S);
     expect(delivered).toEqual([{
-      cardId: "c1", origin, sessionId: S, text: "It will cost a lot: ~40% of the weekly quota.", overflow: false, newCards: [], repliedAt: 1_000,
+      cardId: "c1", origin, sessionId: S, text: "Let me check the quota…\n\nIt will cost a lot: ~40% of the weekly quota.", overflow: false, newCards: [], repliedAt: 1_000,
     }]);
     // At most one follow-up per reply.
     named(ID); say("again"); t.onTurnEnded(S);
@@ -127,7 +127,7 @@ describe("following the turn a card reply opened", () => {
     }
   });
 
-  it("keeps a confirmation-like answer when the turn opened no card: 'did you send the mail?' → 'Đã gửi ạ.'", () => {
+  it("sends every block of a turn that opened no card, in order: 'did you send the mail?' → 'Đã gửi ạ.' kept", () => {
     for (const answer of ["Đã gửi ạ.", "Done.", "Sent!"]) {
       const { t, delivered, named, say } = setup();
       t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
@@ -137,12 +137,17 @@ describe("following the turn a card reply opened", () => {
       t.onStream(S, { type: "tool_result", output: "{\"id\":\"m1\"}" });
       say(answer);
       t.onTurnEnded(S);
-      expect(delivered.map((d) => d.text)).toEqual([answer]);
+      expect(delivered.map((d) => d.text)).toEqual([`Để em gửi luôn.\n\n${answer}`]);
     }
-    // The same line after a card the turn opened is only that card's confirmation.
+    // After a card the turn opened, the same line is only that card's confirmation; with no card,
+    // both lines go, in order.
     const blocks = { blocks: ["Không ạ, đắt lắm.", "Done."], size: 0, sawTool: true, overflow: false };
     expect(answerOf(blocks, true).text).toBe("Không ạ, đắt lắm.");
-    expect(answerOf(blocks, false).text).toBe("Done.");
+    expect(answerOf(blocks, false).text).toBe("Không ạ, đắt lắm.\n\nDone.");
+    // Still within the cap with the final block whole.
+    const long = answerOf({ blocks: ["x".repeat(CARD_FOLLOWUP_MAX_CHARS), "", "Done: sent to 3 people."], size: 0, sawTool: true, overflow: false });
+    expect(long.text.endsWith("…\n\nDone: sent to 3 people.")).toBe(true);
+    expect(long.text.length).toBeLessThanOrEqual(CARD_FOLLOWUP_MAX_CHARS);
   });
 
   it("joins every real block, and lets the earliest give way when they do not fit", () => {

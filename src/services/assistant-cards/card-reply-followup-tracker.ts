@@ -167,21 +167,20 @@ function append(c: Collected, text: string): void {
  * words went in, every block rather than the last, and room for `CARD_FOLLOWUP_MAX_CHARS` — so the
  * text is gathered here a second time rather than stretching that one to serve both.
  *
- * The answer in what a reply gathered. With no tool call it is the whole text, however short.
- * Around tool calls: lines that only confirm a tool call go; short lines go only when a longer real
- * block is there to be the answer; with none, the last remaining block is it — a lost short answer
- * costs more than a stray aside. When they do not fit what the user is shown, the earliest blocks
- * give way, because the rule puts the answer last.
+ * The answer in what a reply gathered. In a turn that opened no card it is every block, in order:
+ * nothing there is the card's chatter, and a short line ("Không ạ, đắt lắm.", "Done." after a mail
+ * tool) may be the whole answer or half of it. In a turn that opened a card: lines that only
+ * confirm a tool call go; short lines go only when a longer real block is there to be the answer;
+ * with none, the last remaining block is it — a lost short answer costs more than a stray aside.
+ * When they do not fit what the user is shown, the earliest blocks give way, because the rule puts
+ * the answer last.
  */
 export function answerOf(c: Collected | null, openedCard = false): Buffer {
   if (!c) return { text: "", overflow: false };
   let blocks = c.blocks.map((b) => b.trim()).filter(Boolean);
-  if (c.sawTool) {
-    // "Done." / "Đã gửi ạ." confirms the card only in a turn that opened one; after any other tool
-    // (a mail sent, a file written) it is the answer to "did you send it?", and kept as one.
-    const confirms = (b: string): boolean => isConfirmationBlock(b);
-    const kept = openedCard ? blocks.filter((b) => !confirms(b)) : blocks;
-    const real = kept.filter((b) => (!openedCard && confirms(b)) || !isThrowawayBlock(b));
+  if (c.sawTool && openedCard) {
+    const kept = blocks.filter((b) => !isConfirmationBlock(b));
+    const real = kept.filter((b) => !isThrowawayBlock(b));
     blocks = real.length > 0 ? real : kept.slice(-1);
   }
   return fitAnswer(blocks, c.overflow);
