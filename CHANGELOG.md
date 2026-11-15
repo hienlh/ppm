@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A checked option in a menu showed an empty ring instead of a dot.** Sort menus, the design Layout and Variant pickers and every context menu with a choice drew the selected option as a hollow circle, so nothing looked selected. It is a filled dot again.
+
+- **The Accept buttons of a merge conflict were drawn over the code and over each other.** Each conflict's Current / Incoming / Both bar wrapped into a narrow column on top of the lines above it, and two nearby conflicts' bars overlapped. Each bar now has a row of its own above its conflict.
+
+- **Chat, Assistant, Explorer, Settings and other floating windows had no colour on their icon.** Their tile in the titlebar and the dock was transparent, while the editor's was tinted. Every window's tile now has its colour.
+
+- **The chat list could show the start of PPM's shared-context block as a chat's title.** A title made from the message as it was sent showed "<ppm-shared-context> PPM provider sharing is…". The block is now left out of every title, and a chat whose title was nothing else is listed as "Untitled".
+
+- **A design's toolbar cut off its last buttons, the Chat toggle among them, in a narrow pane.** In a design opened in a window, the buttons shrank to their icons and nine of them still fell past the edge. Buttons that do not fit are now listed in the ··· menu, and Chat and Layout stay in the bar.
+
+- **The clock in time fields was almost invisible on dark themes.** The quiet-hours and digest times in Settings → PPM Assistant showed a black clock on a dark field. The browser now draws the controls it owns (time and date pickers, select arrows) in the theme's light or dark mode.
+
+- **Removing a dev-linked extension left its link behind.** Linking an extension of the same name from another folder then failed with EEXIST. Removing one now deletes its link (never the folder it points to), and a link left by an older version no longer blocks a new one.
+
+- **A Postgres table showed every column twice when another schema had a table of the same name.** Two schemas each holding an `items` table (and so an `items_pkey`) doubled the column list, and a foreign key pointing into another schema was not shown. Both now come out right.
+
+- **Git Graph said "Failed to look up projects" when PPM listened on a port other than its configured one.** Extensions called PPM back on the configured port, which is not the one in use under the supervisor or on a dev or scratch port. They now use the port PPM actually listens on.
+
 ## [0.26.12] - 2026-11-18
 
 ### Added
