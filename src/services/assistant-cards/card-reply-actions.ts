@@ -74,7 +74,11 @@ function recordDelivery(deps: CardReplyDeps, id: string, forwarded: Extract<Forw
 export function followupOrigin(actor: CardActor): FollowupOrigin | null {
   if (actor.channel === "ppm") return { channel: "ppm" };
   if (!actor.telegramChatId) return null;
-  return { channel: "telegram", chatId: actor.telegramChatId, ...(actor.telegramReplyTo ? { replyTo: actor.telegramReplyTo } : {}) };
+  return {
+    channel: "telegram", chatId: actor.telegramChatId,
+    ...(actor.telegramReplyTo ? { replyTo: actor.telegramReplyTo } : {}),
+    ...(actor.telegramMessageId ? { messageId: actor.telegramMessageId } : {}),
+  };
 }
 
 const where = (channel: string): string => (channel === "telegram" ? "on Telegram" : channel === "chat" ? "in the manager chat" : "in PPM");

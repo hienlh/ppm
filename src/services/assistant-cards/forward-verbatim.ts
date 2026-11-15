@@ -32,6 +32,8 @@ export interface CardActor {
   telegramChatId?: string;
   /** The card's message in that Telegram chat the user replied to. */
   telegramReplyTo?: number;
+  /** The user's own message in that chat (the reply itself). */
+  telegramMessageId?: number;
 }
 
 export interface ForwardHow {

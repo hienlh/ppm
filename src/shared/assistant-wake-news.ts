@@ -26,6 +26,11 @@ export interface WakeNewsNotice {
   items?: string[];
   /** Late-reply news only: the manager's final answer. */
   text?: string;
+  /**
+   * Late-reply news only: the same turn answered the user's reply on a card, and PPM already sent
+   * the user that answer, so the Assistant must not tell them again.
+   */
+  userHasAnswer?: boolean;
   /** Report news only: filed by a subagent of the manager. */
   subagent?: boolean;
   /** Restart news only (its `project` and `sessionId` are empty). */
@@ -63,6 +68,7 @@ export function parseWakeNews(raw: unknown): WakeNewsNotice[] | null {
     for (const k of ["title", "body", "text"] as const) if (e[k] !== undefined && !str(e[k])) return null;
     if (e.items !== undefined && (!Array.isArray(e.items) || e.items.length > MAX_ITEMS || !e.items.every((i) => str(i, 1000)))) return null;
     if (e.subagent !== undefined && typeof e.subagent !== "boolean") return null;
+    if (e.userHasAnswer !== undefined && typeof e.userHasAnswer !== "boolean") return null;
     out.push({
       kind: e.kind, key: e.key, project: e.project, sessionId: e.sessionId, at: e.at,
       ...(e.kind === "report" ? { reportKind: e.reportKind as WakeReportKind } : {}),
@@ -71,6 +77,7 @@ export function parseWakeNews(raw: unknown): WakeNewsNotice[] | null {
       ...(Array.isArray(e.items) ? { items: e.items as string[] } : {}),
       ...(typeof e.text === "string" ? { text: e.text } : {}),
       ...(e.subagent === true ? { subagent: true } : {}),
+      ...(e.kind === "late_reply" && e.userHasAnswer === true ? { userHasAnswer: true } : {}),
     });
   }
   return out;

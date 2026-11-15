@@ -24,9 +24,15 @@ import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { cardEndLine, formatManagerCard, type CardDetail } from "./assistant-telegram-card-kinds.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
 import { cardPhotosTask } from "./assistant-telegram-card-photos.ts";
+import { formatNewCardPointer } from "./assistant-telegram-followup-format.ts";
+import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { outcomeOf, sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { CardReminders, TelegramSilence } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
+import { cardReplyFollowups } from "../assistant-cards/card-reply-followup.ts";
+import { isAnswerCard, type AnsweredReply } from "../assistant-cards/card-reply-followup-tracker.ts";
+import { assistantClock } from "../assistant-wake/assistant-clock.ts";
+import { CARD_FOLLOWUP_LOUD_MS } from "../../shared/assistant-limits.ts";
 
 const log = createLogger("assistant-telegram");
 
@@ -46,9 +52,17 @@ export interface ManagerCardsDeps {
   reminders?: CardReminders;
   /** Whether a card still waits on the user (its row is open). */
   isOpen?: (cardId: string) => boolean;
+  /** The replies on cards a turn of this chat is answering now (`cardReplyFollowups.answering`). */
+  answering?: (sessionId: string | null) => AnsweredReply[];
+  /** The clock the reply's time was taken on (the Assistant's). */
+  now?: () => number;
 }
 
+/** Under which message a card goes in one chat, and whether it rings whatever else holds. */
+interface Thread { replyTo: number; loud: boolean }
+
 const groupOf = (cardId: string, chatId: string): string => `mcard:${cardId}:${chatId}`;
+const MAX_THREADED = 500;
 
 /**
  * A project's detail level outlives its manager chat. A card of a project PPM has no setting for
@@ -67,7 +81,48 @@ function realLiveCard(sessionId: string, requestId: string): LiveApprovalCard | 
 }
 
 export class AssistantTelegramManagerCards implements CardOutboundSink {
+  /**
+   * "card\nchat" for each card sent into a chat as the answer to the user's reply there, and
+   * whether the follow-up has asked about it already (it then sent nothing, counting on the card).
+   */
+  private readonly threaded = new Map<string, { asked: boolean }>();
+
   constructor(private readonly deps: ManagerCardsDeps) {}
+
+  /**
+   * Whether this card went to this chat under the user's reply: then it is the manager's whole
+   * answer there, and the follow-up sends nothing (`assistant-telegram-card-followups.ts`).
+   */
+  threadedIn(cardId: string, chatId: string): boolean {
+    const mark = this.threaded.get(`${cardId}\n${chatId}`);
+    if (!mark) return false;
+    mark.asked = true;
+    return true;
+  }
+
+  /**
+   * Per chat, the user's message a card answers. A card the manager opens while its turn answers a
+   * reply typed on Telegram goes in that chat as a reply to the user's own message (to the card's
+   * message they replied to when theirs is unknown), so the answer reads as one, and rings while
+   * they are likely still holding the phone — like the follow-up it replaces. Asked when the card
+   * is handed over, before anything awaits: the reply is forgotten once its turn ends.
+   */
+  private threadsOf(card: AssistantCard): Map<string, Thread> {
+    const threads = new Map<string, Thread>();
+    if (card.kind === "approval" || card.kind === "question" || !isAnswerCard(card)) return threads;
+    let answering: AnsweredReply[];
+    try { answering = (this.deps.answering ?? ((s) => cardReplyFollowups.answering(s)))(card.sessionId); } catch { return threads; }
+    const now = (this.deps.now ?? (() => assistantClock.now()))();
+    for (const a of answering) {
+      if (a.origin.channel !== "telegram" || threads.has(a.origin.chatId)) continue;
+      // Only a card made after the reply answers it: one held overnight, or sent again, that goes
+      // out while a later reply's turn runs is not its answer.
+      if (card.createdAt < a.repliedAt) continue;
+      const replyTo = a.origin.messageId ?? a.origin.replyTo;
+      if (replyTo) threads.set(a.origin.chatId, { replyTo, loud: now - a.repliedAt <= CARD_FOLLOWUP_LOUD_MS });
+    }
+    return threads;
+  }
 
   private silent(): boolean {
     return this.deps.silence?.inPpm() ?? false;
@@ -90,17 +145,24 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
   }
 
   send(cards: AssistantCard[], header?: string): void {
-    void this.sendAll(cards, header).catch((e) => log.warn(`cards not sent to Telegram: ${(e as Error).message}`));
-  }
-
-  private async sendAll(cards: AssistantCard[], header?: string): Promise<void> {
     const chats = this.recipients();
     if (!chats.length) return;
+    const threads = cards.map((c) => this.threadsOf(c));
+    // Marked now, before the link is awaited: the turn may end first, and its follow-up must know.
+    cards.forEach((card, i) => {
+      for (const chatId of threads[i]!.keys()) if (chats.includes(chatId)) this.threaded.set(`${card.id}\n${chatId}`, { asked: false });
+    });
+    // Asked only until the turn's follow-up is sent, so the oldest marks can go.
+    while (this.threaded.size > MAX_THREADED) this.threaded.delete(this.threaded.keys().next().value!);
+    void this.sendAll(cards, chats, threads, header).catch((e) => log.warn(`cards not sent to Telegram: ${(e as Error).message}`));
+  }
+
+  private async sendAll(cards: AssistantCard[], chats: string[], threads: Array<Map<string, Thread>>, header?: string): Promise<void> {
     // Links first, so every chat's lane gets the header and the cards in order.
     const links = await Promise.all(cards.map((c) => this.linkFor(c).catch(() => null)));
     for (const chatId of chats) {
       if (header) this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: `<b>${escapeTelegramHtml(header)}</b>` }, { label: "away header", silent: () => this.silent() }));
-      cards.forEach((card, i) => this.sendOne(chatId, card, links[i] ?? null));
+      cards.forEach((card, i) => this.sendOne(chatId, card, links[i] ?? null, threads[i]!.get(chatId) ?? null));
     }
   }
 
@@ -112,7 +174,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     return main ? this.deps.sessionLink(main.providerId, main.sessionId) : null;
   }
 
-  private sendOne(chatId: string, card: AssistantCard, url: string | null): void {
+  private sendOne(chatId: string, card: AssistantCard, url: string | null, thread: Thread | null = null): void {
     const record = (messageId: number) => addCardTelegramRef(card.id, { chatId, messageId });
     const detail = this.detail(card);
     if (card.kind === "approval" || card.kind === "question") {
@@ -157,10 +219,12 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       html,
       ...(rows.length ? { markup: { inline_keyboard: rows } } : {}),
       ...(link.button ? { fallbackHtml: `${html}\n\n${escapeTelegramHtml(link.button.text)}: ${escapeTelegramHtml(link.button.url!)}` } : {}),
+      ...(thread ? { replyTo: thread.replyTo } : {}),
     }, {
       label: `${card.kind} card`,
       // An urgent card rings even while the user is at PPM: it is the one kind that asked to be heard.
-      silent: () => card.kind !== "urgent" && this.silent(),
+      // So does the answer to a reply typed on the phone moments ago: the user is waiting for it.
+      silent: () => card.kind !== "urgent" && !thread?.loud && this.silent(),
       onSent: (sent, info) => {
         record(sent.message_id);
         // A decision sent silently gets one reminder if it is still open later.
@@ -174,9 +238,31 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       // Refused (a 400 is never retried), past its deadline or its chat gone: on record, not assumed sent.
       onDropped: (why) => {
         this.deps.codes.dropGroup(group);
+        // Not on the phone after all. A follow-up still to come names it instead; one that already
+        // counted on it sent nothing, so the line naming it goes now, under the user's reply.
+        const key = `${card.id}\n${chatId}`;
+        const mark = this.threaded.get(key);
+        this.threaded.delete(key);
+        if (mark?.asked && thread) {
+          try { this.sendPointer(chatId, card, url, thread); } catch (e) { log.warn(`card ${card.id}: could not name it under the reply: ${(e as Error).message}`); }
+        }
         try { setCardOutboundError(card.id, why, Date.now()); } catch (e) { log.warn(`card ${card.id}: could not record the failed send: ${(e as Error).message}`); }
       },
     }));
+  }
+
+  /** The one line naming a card that answered the user's reply but never reached the phone. */
+  private sendPointer(chatId: string, card: AssistantCard, url: string | null, thread: Thread): void {
+    // The title is the manager's own text: a vault value in it is replaced here, not only by the client.
+    const formatted = formatNewCardPointer({
+      projectName: card.projectName ?? null, newCards: [{ title: turnSecretScrubber.scrub(card.title) }], url,
+    });
+    this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, {
+      html: formatted.html, replyTo: thread.replyTo,
+      ...(formatted.markup ? { markup: formatted.markup } : {}),
+      ...(formatted.fallbackHtml ? { fallbackHtml: formatted.fallbackHtml } : {}),
+      // Rings like the card it stands for would have: the user may still be holding the phone.
+    }, { label: "card pointer", silent: () => !thread.loud && this.silent() }));
   }
 
   changed(card: AssistantCard): void {

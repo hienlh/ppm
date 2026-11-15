@@ -1490,14 +1490,43 @@ answer used to stay in the manager chat, which a user on their phone never opens
   the chat.", with the link; a reply typed in PPM gets nothing.
 - On Telegram it goes **under the card's message**: redacted before the cut, hidden characters
   shown, escaped through the Markdown formatter, "… see the chat for the rest." past 1500
-  characters, an Open in PPM link, and a line naming any card the manager opened while gathering
-  that answer (never a card another turn made). A project at `title` detail gets only "the manager
+  characters, and an Open in PPM link. A project at `title` detail gets only "the manager
   answered" and the link. A reply typed on Telegram is answered in that chat with a sound whatever
   "quiet while I'm at PPM" or quiet hours say, for `CARD_FOLLOWUP_LOUD_MS` (30 min) after the reply
   — the user is holding the phone; a later answer (the reply started a long task) comes silently
   while the user is at PPM or in quiet hours. A reply typed in PPM goes under each Telegram copy of
   the card: silent while the user is at PPM, and not at all in quiet hours (nothing is saved up for
   the morning: the answer is already under the card in PPM).
+- **A turn that opened a card answers with that card, and its text is never passed on** — not to
+  Telegram, not under the card in PPM. The two used to arrive side by side and read as the same
+  message twice (the rule tells the manager to put the answer in the card's body and end with one
+  line pointing to it). The card (any kind but a relayed approval or question) goes to Telegram as
+  a **reply to the user's own message** (`messageId` on the follow-up origin, else the card they
+  replied to), with a sound for `CARD_FOLLOWUP_LOUD_MS`, and is not held by quiet hours in that
+  window (`answersPhone` in `card-outbound.ts`); the bridge marks it threaded
+  (`AssistantTelegramManagerCards.threadedIn`) the moment it is handed over, before any await, so
+  the follow-up that comes at the turn's end sends nothing. A card that did not go under the reply
+  (refused, or an approval relayed on its own) is named in one line, "↩ The manager answered with a
+  new card: <title>", under the card replied to. A reply typed in PPM gets nothing on Telegram
+  either way: the card goes out by itself, as every card does. In PPM, `card.followUp` keeps
+  `newCards` and an empty `text`, and the old card shows "The manager answered your reply with a new
+  card" with Show while that card waits. Who answers is asked of `cardReplyFollowups.answering`, a
+  pure query, so the order of the listeners that ask it does not matter.
+- Only a card the manager **reported itself** (`isAnswerCard`: a `REPORT_KINDS` kind, not a
+  failure PPM detected) is the answer, and only one made after the reply (`createdAt >= repliedAt`)
+  is threaded under it or let past quiet hours. An approval or question PPM mirrors from the chat in
+  that turn leaves the text answer as it was, and a card held overnight that goes out while a later
+  reply's turn runs is not threaded under that reply.
+- If the card under the reply is refused after the follow-up already counted on it, the one-line
+  pointer goes out from its `onDropped` instead. (That exposed a send-queue bug, now fixed: a task
+  queued from inside `onDropped` started a second loop on the lane and was sent twice; `pumping`
+  in `assistant-telegram-send-queue.ts` keeps one loop per lane.)
+- **Late-reply news for that turn says the user has the answer.** An Assistant message a manager
+  had not answered yet makes its next turn end news for the Assistant (`expectReply`). When that
+  turn also answers a card reply, its answer already reached the user, so the news carries
+  `userHasAnswer` and tells the Assistant not to repeat it — it still hears it, since the same turn
+  may answer its own message too (`answersCardReply`, asked before the follow-up tracker's own
+  `turn_ended` listener forgets the reply, since the signals start first).
 - The answer's Telegram message is recorded as one of the card's messages, marked `followUp`, so a
   reply to it reaches the same manager like a reply to the card (the card is answered by then, so
   it asks "send anyway?"). That holds for a bare OK too, and for an OK to the "stopped" notice: it
@@ -1507,12 +1536,11 @@ answer used to stay in the manager chat, which a user on their phone never opens
   rewritten when the card changes, nor answered under as one of the card's copies, and follow-up
   refs are capped apart (the newest 5) from the card's own copies (20), so many replies cannot push
   the card's copies out. The acknowledgement says "If the manager answers, it will
-  come here, under the card." — no promise, since several of the cases above send nothing.
-- A new card the manager opens in that turn is sent at once, as every card is, so on the phone it
-  arrives just **before** the answer; the answer names it rather than holding a decision back.
+  come here." — no promise, since several of the cases above send nothing.
 
 **Quiet hours** (`quiet_hours` and `timezone` in Settings → PPM Assistant). Inside the window every
-card but an `urgent` one is `held` in the database; past two urgent reports per manager per window
+card but an `urgent` one, or one answering a reply typed on Telegram within the last 30 minutes, is
+`held` in the database; past two urgent reports per manager per window
 an urgent report is already a held decision. A clock timer at the window's end — or the bridge
 starting after a window that ended while PPM was off — sends "While you were away: N items" and
 the held cards, oldest first, skipping any that stopped waiting meanwhile. The end is worked out in

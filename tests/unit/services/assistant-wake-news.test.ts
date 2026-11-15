@@ -32,6 +32,15 @@ describe("the news entry", () => {
     expect(entry).toContain("Watch report");
     expect(entry).toContain("answered your earlier message");
     expect(entry).toContain("\"All green.\"");
+    expect(entry).not.toContain("do not repeat it to them");
+  });
+
+  it("tells the Assistant not to repeat a late reply the user already got as the answer to their card reply", () => {
+    const late: WakeNewsNotice = { kind: "late_reply", key: "r2", project: "web", sessionId: "mgr-2", at: 1, text: "Quota is at 60%.", userHasAnswer: true };
+    expect(wakeNewsEntry([late])).toContain("PPM already sent them that answer: do not repeat it to them.");
+    // The mark survives the round trip the notices make, and only on a late reply.
+    expect(parseWakeNews([late])).toEqual([late]);
+    expect(parseWakeNews([{ ...late, kind: "report", reportKind: "done" }])?.[0]).not.toHaveProperty("userHasAnswer");
   });
 
   it("tells the Assistant of the morning digest once, every item naming its project, quoted and capped", () => {

@@ -150,9 +150,65 @@ describe("card follow-ups", () => {
       cards: { get: () => card, setFollowUp: (_id, f) => { stored = f; return true; } },
       now: () => 1,
       sink: () => ({ send: (d) => { handed = d; } }),
-    }, { cardId: "c1", origin: { channel: "telegram", chatId: "1" }, sessionId: "m1", text: "Submitted with NI CANARY-T2-followup.", overflow: false });
+    }, { cardId: "c1", origin: { channel: "telegram", chatId: "1" }, sessionId: "m1", text: "Submitted with NI CANARY-T2-followup.", overflow: false, newCards: [], repliedAt: 1 });
     expect(JSON.stringify(stored)).not.toContain("CANARY");
     expect(JSON.stringify(stored)).toContain("[vault:NI]");
     expect(JSON.stringify(handed)).not.toContain("CANARY");
+  });
+
+  it("keep a value out of the title of a new card the manager answered with, stored and handed on", () => {
+    turnSecretScrubber.hold("m1", [{ name: "NI", value: "CANARY-T2-newcard" }]);
+    let stored: unknown = null;
+    let handed: unknown = null;
+    const card = { id: "c1", status: "answered" } as never;
+    deliverCardFollowup({
+      cards: { get: () => card, setFollowUp: (_id, f) => { stored = f; return true; } },
+      now: () => 1,
+      sink: () => ({ send: (d) => { handed = d; } }),
+    }, {
+      cardId: "c1", origin: { channel: "telegram", chatId: "1" }, sessionId: "m1", overflow: false, repliedAt: 1,
+      text: "Opened a card for NI CANARY-T2-newcard.", newCards: [{ id: "n1", title: "Submit for NI CANARY-T2-newcard?" }],
+    });
+    expect(JSON.stringify(stored)).not.toContain("CANARY");
+    expect(stored).toMatchObject({ text: "", newCards: [{ id: "n1", title: "Submit for NI [vault:NI]?" }] });
+    expect(JSON.stringify(handed)).not.toContain("CANARY");
+  });
+});
+
+describe("the line naming a new card that never reached the phone", () => {
+  it("carries no vault value from the card's title", async () => {
+    const { AssistantTelegramManagerCards } = await import("../../../../src/services/assistant-telegram/assistant-telegram-manager-cards.ts");
+    const { AssistantTelegramSendQueue } = await import("../../../../src/services/assistant-telegram/assistant-telegram-send-queue.ts");
+    const { createAssistantCards } = await import("../../../../src/services/assistant-cards/assistant-cards.service.ts");
+    const fake = startFakeTelegram();
+    process.env[TELEGRAM_API_BASE_ENV] = fake.url;
+    try {
+      const CHAT = 8_700_001;
+      const { connectChat } = await import("../assistant-telegram/bridge-test-kit.ts");
+      connectChat(CHAT);
+      turnSecretScrubber.hold("mgr", [{ name: "NI", value: "CANARY-T2-pointer" }]);
+      const client = new TelegramBotClient(fake.token, { editIntervalMs: 0, sleep: async () => {} });
+      const queue = new AssistantTelegramSendQueue(client, { canSend: () => true, scaleDelay: () => 0 });
+      const cards = new AssistantTelegramManagerCards({
+        queue, codes: { mint: () => "c", dropGroup: () => {} } as never, chatLink: async () => "", sessionLink: async () => "",
+        relayCard: () => {}, isShowing: () => false, detailOf: () => "full", recipients: () => [String(CHAT)],
+        answering: () => [{ origin: { channel: "telegram", chatId: String(CHAT), messageId: 42 }, repliedAt: 0 }], now: () => 1,
+      });
+      const store = createAssistantCards({ now: () => 1, projects: () => [], announce: () => {} });
+      const made = store.create({ kind: "needs_decision", sessionId: "mgr", title: "Submit for NI CANARY-T2-pointer?" });
+      fake.failNext("sendMessage", { code: 400, description: "Bad Request: REPLY_MARKUP_TOO_LONG" });
+      cards.send([made]);
+      // The follow-up counted on the card, so its refusal sends the one line naming it.
+      expect(cards.threadedIn(made.id, String(CHAT))).toBe(true);
+      await fake.waitFor(() => fake.sent(CHAT).find((m) => !m.failed));
+      await queue.whenIdle();
+      const sent = fake.sent(CHAT).filter((m) => !m.failed);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.text).not.toContain("CANARY");
+      expect(sent[0]!.text).toContain("[vault:NI]");
+    } finally {
+      fake.stop();
+      delete process.env[TELEGRAM_API_BASE_ENV];
+    }
   });
 });

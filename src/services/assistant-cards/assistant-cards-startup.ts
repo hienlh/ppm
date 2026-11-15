@@ -19,7 +19,7 @@ import { CARD_RETENTION_MS, countSessionCardsSince, findOpenCardsBy, findOpenReq
 import { budgetEventCard, rulesEventCard, type EventCardsDeps } from "./assistant-event-cards.ts";
 import { sweepGoneRequestCards } from "./assistant-card-actions.ts";
 import { startCardDelivery } from "./card-delivery.ts";
-import { startCardReplyFollowups } from "./card-reply-followup.ts";
+import { cardReplyFollowups, startCardReplyFollowups } from "./card-reply-followup.ts";
 import { createManagerSignals, type ManagerSignals } from "./manager-signals.ts";
 import { setManagerAskedHook } from "./manager-reply-expectations.ts";
 
@@ -50,6 +50,8 @@ export function startAssistantCards(): void {
     openRequestCard: findOpenRequestCard,
     reportsSince: (sessionId, kinds, since) => countSessionCardsSince([sessionId], kinds, since),
     lateReply: (reply) => lateReplies.add(reply),
+    // Started before the follow-ups below, so a turn's reply is still known when it ends.
+    answersCardReply: (sessionId) => cardReplyFollowups.answering(sessionId).length > 0,
   });
   signals.start();
   const live = signals;

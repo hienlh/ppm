@@ -29,20 +29,55 @@
  * memory; `deliver` is handed the result and must not block.
  */
 import { CARD_FOLLOWUP_MAX_CHARS } from "../../shared/assistant-limits.ts";
+import { REPORT_KINDS } from "../../shared/assistant-cards.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import type { Cancel } from "../assistant-wake/assistant-clock.ts";
 
 /** Where the user replied from, which is where the answer goes back. */
 export type FollowupOrigin =
   | { channel: "ppm" }
-  | { channel: "telegram"; chatId: string; /** The card's message the user replied to. */ replyTo?: number };
+  | {
+    channel: "telegram";
+    chatId: string;
+    /** The card's message the user replied to. */
+    replyTo?: number;
+    /** The user's own message (their reply): a card the manager opens to answer it is threaded under it. */
+    messageId?: number;
+  };
+
+/** A card made in a manager chat, as far as the follow-up needs to know it. */
+export interface AnswerCardCandidate {
+  id: string;
+  title: string;
+  sessionId: string | null;
+  /** Left out by tests that only care about the turn; every real card has one. */
+  kind?: string;
+  payload?: { detected?: unknown };
+}
+
+/**
+ * Whether a card can be the manager's answer: one it wrote itself with `report_to_assistant`. Not an
+ * approval or question PPM mirrors from the chat (the manager asked for a tool, it said nothing to
+ * the user), and not a failure PPM detected on its own — a text answer in that turn is still the
+ * answer, and dropping it for such a card would leave the user with none.
+ */
+export function isAnswerCard(card: Pick<AnswerCardCandidate, "kind" | "payload">): boolean {
+  if (card.kind === undefined) return true;
+  return (REPORT_KINDS as readonly string[]).includes(card.kind) && !card.payload?.detected;
+}
+
+/** A reply a card answers: made by the manager chat while the turn that read the reply runs. */
+export interface AnsweredReply {
+  origin: FollowupOrigin;
+  repliedAt: number;
+}
 
 export interface FollowupResult {
   cardId: string;
   origin: FollowupOrigin;
   /** The manager chat, as the turn's events named it. */
   sessionId: string;
-  /** The turn's answer ({@link answerOf}), trimmed; never empty unless `stopped`. */
+  /** The turn's answer ({@link answerOf}), trimmed; never empty unless `stopped` or there are `newCards`. */
   text: string;
   /**
    * The turn the words went into was stopped or failed before it finished: its partial text is not
@@ -52,7 +87,10 @@ export interface FollowupResult {
   stopped?: true;
   /** More text came than was kept: the rest is only in the chat. */
   overflow: boolean;
-  /** Cards the manager made during that turn (a new card asking again, say). */
+  /**
+   * Cards the manager made during that turn (a new card asking again, say). When there is one, the
+   * card is the answer and the turn's text is not passed on: it says what the card says.
+   */
   newCards: Array<{ id: string; title: string }>;
   /** When the user replied (the words were sent), on the tracker's clock. */
   repliedAt: number;
@@ -230,6 +268,16 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
   /** The replies followed in a chat. */
   const inSession = (session: string): Pending[] => [...pending.values()].filter((p) => p.sessionId === session);
   const forget = (p: Pending): void => { if (live(p)) { pending.delete(p.clientMessageId); rewatch(); } };
+  /**
+   * The replies a turn of this chat is answering now: gathering their turn — named and running, or
+   * pushed into the running turn and not judged yet. Never a reply queued behind it, so a card a
+   * schedule's turn made before or after is never named as its.
+   */
+  const gathering = (sessionId: string | null): Pending[] => {
+    if (!sessionId || pending.size === 0) return [];
+    const session = watched.has(sessionId) ? sessionId : deps.canonical(sessionId);
+    return inSession(session).filter((p) => p.collect && (p.bound || (p.delivered !== null && p.delivered !== "queued")));
+  };
 
   function prune(): void {
     const now = deps.now();
@@ -244,7 +292,8 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
     const base = { cardId: p.cardId, origin: p.origin, sessionId: session, newCards: p.newCards, repliedAt: p.at };
     if (buffer?.stopped) { deps.deliver({ ...base, text: "", overflow: false, stopped: true }); return; }
     const text = buffer?.text.trim() ?? "";
-    if (!text) return;
+    // A turn that answered with a card and wrote nothing else still answered.
+    if (!text && p.newCards.length === 0) return;
     deps.deliver({ ...base, text, overflow: buffer!.overflow });
   }
 
@@ -360,14 +409,21 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
      * while the reply is gathering its turn — named and running, or pushed into the running turn and
      * not judged yet — so a card a schedule's turn made before or after is never named as its.
      */
-    onCardCreated(card: { id: string; title: string; sessionId: string | null }): void {
-      if (!card.sessionId || pending.size === 0) return;
-      const session = watched.has(card.sessionId) ? card.sessionId : deps.canonical(card.sessionId);
-      for (const p of pending.values()) {
-        if (p.sessionId === session && p.collect && (p.bound || (p.delivered !== null && p.delivered !== "queued"))) {
-          p.newCards.push({ id: card.id, title: card.title });
-        }
-      }
+    onCardCreated(card: AnswerCardCandidate): void {
+      if (!isAnswerCard(card)) return;
+      for (const p of gathering(card.sessionId)) p.newCards.push({ id: card.id, title: card.title });
+    },
+
+    /**
+     * The replies a turn of this chat is answering right now — the same ones a card it makes would
+     * be counted for ({@link onCardCreated}). A pure question, so its answer does not depend on
+     * whether the asker's listener runs before or after this tracker's own: the Telegram bridge asks
+     * it as a new card goes out (to thread the card under the user's reply), the outbound gate as
+     * the card is made, and the manager signals as the turn ends (before this tracker's own
+     * `turn_ended` listener forgets the reply, since they are started first).
+     */
+    answering(sessionId: string | null): AnsweredReply[] {
+      return gathering(sessionId).map((p) => ({ origin: p.origin, repliedAt: p.at }));
     },
 
     /** The provider renamed the chat: the replies followed in it follow it. */

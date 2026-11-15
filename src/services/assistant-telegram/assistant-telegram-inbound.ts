@@ -195,7 +195,9 @@ export class AssistantTelegramInbound {
     // into a gathered message. One sent while PPM was off is asked about first, like any other.
     const repliedTo = message.reply_to_message?.message_id;
     if (repliedTo !== undefined && this.deps.replyToCard && this.deps.isCardMessage?.(chatId, repliedTo)) {
-      const card: CardReplyMessage = { text, replyToMessageId: repliedTo, notTheUsers: !!from || !!message.via_bot };
+      const card: CardReplyMessage = {
+        text, replyToMessageId: repliedTo, messageId: message.message_id, notTheUsers: !!from || !!message.via_bot,
+      };
       await this.flush(chatId);
       if (this.now() - message.date * 1000 > BACKLOG_AGE_MS) {
         // Quoted too: when Run comes, the card may no longer take replies and the words go to the Assistant.

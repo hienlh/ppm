@@ -19,11 +19,13 @@ import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 
 const MAX_PENDING = 50;
 /**
- * The manager's answer to the reply comes back under the card (`assistant-telegram-card-followups.ts`)
- * — if there is one: a turn with no text, a stopped turn's notice aside, words that never arrived or
- * a bridge stopped meanwhile all send nothing, so this is no promise.
+ * The manager's answer to the reply comes back here — under the card (`assistant-telegram-card-followups.ts`),
+ * or, when the manager answers with a new card, as that card under the user's own message
+ * (`assistant-telegram-manager-cards.ts`) — if there is one: a turn with no text, a stopped turn's
+ * notice aside, words that never arrived or a bridge stopped meanwhile all send nothing, so this is
+ * no promise.
  */
-export const ANSWER_FOLLOWS = "If the manager answers, it will come here, under the card.";
+export const ANSWER_FOLLOWS = "If the manager answers, it will come here.";
 
 export interface CardRepliesDeps {
   codes: ButtonCodes<BridgeAction>;
@@ -39,18 +41,26 @@ export interface CardRepliesDeps {
 export interface CardReplyMessage {
   text: string;
   replyToMessageId: number;
+  /** The user's message itself. */
+  messageId?: number;
   /** Forwarded from someone, or sent through an inline bot. */
   notTheUsers: boolean;
 }
 
 export class AssistantTelegramCardReplies {
-  private readonly pending = new Map<string, { chatId: string; cardId: string; text: string }>();
+  private readonly pending = new Map<string, { chatId: string; cardId: string; text: string; messageId?: number }>();
 
   constructor(private readonly deps: CardRepliesDeps) {}
 
-  /** `replyTo` is the card's message the user answered, where the manager's answer goes too. */
-  private actor(chatId: string, replyTo?: number): CardActor {
-    return { channel: "telegram", telegramChatId: chatId, ...(replyTo ? { telegramReplyTo: replyTo } : {}) };
+  /**
+   * `replyTo` is the card's message the user answered, where the manager's answer goes too;
+   * `messageId` the user's own message, under which a card the manager opens to answer it goes.
+   */
+  private actor(chatId: string, replyTo?: number, messageId?: number): CardActor {
+    return {
+      channel: "telegram", telegramChatId: chatId,
+      ...(replyTo ? { telegramReplyTo: replyTo } : {}), ...(messageId ? { telegramMessageId: messageId } : {}),
+    };
   }
 
   /** Whether this message of this chat shows one of the Assistant's cards. */
@@ -70,11 +80,15 @@ export class AssistantTelegramCardReplies {
       this.deps.reply(chatId, "To answer a card, reply to it with text.");
       return true;
     }
-    this.answer(chatId, row.id, await (this.deps.replyTo ?? replyToCard)(row.id, { text: m.text }, this.actor(chatId, m.replyToMessageId)), m.text);
+    this.answer(
+      chatId, row.id,
+      await (this.deps.replyTo ?? replyToCard)(row.id, { text: m.text }, this.actor(chatId, m.replyToMessageId, m.messageId)),
+      m.text, m.messageId,
+    );
     return true;
   }
 
-  private answer(chatId: string, cardId: string, result: CardReplyResult, text: string): void {
+  private answer(chatId: string, cardId: string, result: CardReplyResult, text: string, messageId?: number): void {
     if (result.ok) {
       this.deps.reply(chatId, result.to === "manager"
         ? `Sent to the <b>${escapeTelegramHtml(result.projectName ?? "project")}</b> manager, word for word. ${ANSWER_FOLLOWS}`
@@ -84,7 +98,7 @@ export class AssistantTelegramCardReplies {
     if (result.error === "confirm" && result.question) {
       while (this.pending.size >= MAX_PENDING) this.pending.delete(this.pending.keys().next().value!);
       const pendingId = crypto.randomUUID();
-      this.pending.set(pendingId, { chatId, cardId, text });
+      this.pending.set(pendingId, { chatId, cardId, text, ...(messageId ? { messageId } : {}) });
       const code = this.deps.codes.mint(chatId, `anyway:${pendingId}`, { kind: "mcard", cardId, op: "send_anyway", pendingId });
       this.deps.reply(chatId, escapeTelegramHtml(result.question), { inline_keyboard: [[{ text: "Send anyway", callback_data: code }]] });
       return;
@@ -111,8 +125,10 @@ export class AssistantTelegramCardReplies {
       const waiting = press.pendingId ? this.pending.get(press.pendingId) : undefined;
       if (!waiting || waiting.chatId !== chatId || waiting.cardId !== press.cardId) return "This button is no longer valid.";
       this.pending.delete(press.pendingId!);
-      const result = await (this.deps.replyTo ?? replyToCard)(press.cardId, { text: waiting.text, force: true }, this.actor(chatId));
-      this.answer(chatId, press.cardId, result, waiting.text);
+      const result = await (this.deps.replyTo ?? replyToCard)(
+        press.cardId, { text: waiting.text, force: true }, this.actor(chatId, undefined, waiting.messageId),
+      );
+      this.answer(chatId, press.cardId, result, waiting.text, waiting.messageId);
       return result.ok ? "Sent." : "Not sent.";
     }
     if (!press.rulesHash || !press.projectName) return "This button is no longer valid.";

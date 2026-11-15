@@ -6,12 +6,14 @@
  *
  * The scenario is the one that prompted this: the user answers a card with a question resting on a
  * wrong assumption ("go ahead, surely it won't cost much quota, right?"); the manager answers that
- * it will cost a lot, with numbers, and asks again with a new card. The answer must reach the phone
- * under the card the user replied to — with a sound, though the user was at PPM a moment ago — and
- * sit under the card in PPM. Then the ways it can go wrong: a manager that answers first and
- * acknowledges its card after (the answer still arrives, the "Đã gửi card." does not), a turn that
- * fails halfway (only that it stopped), and a reply pushed into someone else's running turn that
- * another sender's turn follows (nothing at all — neither turn's text is known to be the answer).
+ * it will cost a lot, with numbers, and asks again with a new card. The new card is the answer: it
+ * must reach the phone as a reply to the user's own message — with a sound, though the user was at
+ * PPM a moment ago — and the turn's closing text, which says the same, must not follow it (it once
+ * did, and the user saw two near-identical messages); in PPM only the new card is named under the
+ * old one. Then: a reply typed in PPM (only the card goes to Telegram), a manager that answers first
+ * and acknowledges its card after (still only the card), a turn that fails halfway (only that it
+ * stopped), a reply pushed into someone else's running turn that another sender's turn follows
+ * (nothing at all), and a turn that opens no card (its text is the answer and is sent).
  * Set `PPM_CARD_FOLLOWUP_DEMO_LOG` to write the exchange as a readable log.
  */
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
@@ -76,7 +78,7 @@ const ANSWER = [
 ].join("\n");
 const OTHER_ANSWER = "Gửi Assistant: khách Foo Ltd còn nợ 1.234 £ (ticket NX-77).";
 /** How the manager answers a question in a reply: as the rule says, the other way round, or failing. */
-let script: "card-then-answer" | "answer-then-card" | "card-then-short" | "fail" = "card-then-answer";
+let script: "card-then-answer" | "answer-then-card" | "short-no-card" | "fail" = "card-then-answer";
 /** The card the manager opened in its latest answering turn. */
 let lastNewCardId = "";
 const SHORT_ANSWER = "Đúng rồi anh, rẻ thôi.";
@@ -113,6 +115,13 @@ const stub = {
         note("PPM       manager chat → the turn fails halfway (API error) after “Để em kiểm tra quota, chạy cái này sẽ tố”");
         throw new Error("API overloaded");
       }
+      if (script === "short-no-card") {
+        // Nothing to ask again: the answer is the whole reply, so its text goes back as it is.
+        yield { type: "text", content: SHORT_ANSWER };
+        note(`PPM       manager chat → answers in one short line, with no new card: “${SHORT_ANSWER}”`);
+        yield { type: "done", sessionId };
+        return;
+      }
       // The rule says new card first, answer last; `answer-then-card` is a model that does it the
       // other way round and then acknowledges the card.
       if (script === "answer-then-card") yield { type: "text", content: ANSWER };
@@ -122,10 +131,7 @@ const stub = {
       note(`PPM       manager chat → report_to_assistant: new needs_decision card ${cardId.slice(0, 8)}`);
       lastNewCardId = cardId;
       yield { type: "tool_result", toolUseId: "t1", output: `{"cardId":"${cardId}"}` };
-      if (script === "card-then-short") {
-        yield { type: "text", content: SHORT_ANSWER };
-        note(`PPM       manager chat → a short answer after the card: “${SHORT_ANSWER}”`);
-      } else if (script === "answer-then-card") {
+      if (script === "answer-then-card") {
         yield { type: "text", content: "Đã gửi card." };
         note(`PPM       manager chat → it answered first:\n      ${ANSWER.replace(/\n/g, "\n      ")}\n      … then wrote after the card: “Đã gửi card.”`);
       } else {
@@ -263,32 +269,28 @@ describe("the manager's answer to a card reply", () => {
     // The user is on the phone now, but was at PPM a moment ago: quiet mode would hush other messages.
     const typed = replyTo(card.message_id, question);
     note(`Telegram  phone → PPM bot   (msg #${typed.message?.message_id}, reply_to #${card.message_id}): “${question}”`);
-    const followUp = await until(() => fake.sent(PHONE).find((m) => m.text.includes("The manager's answer to your reply")));
+    const newCard = await until(() => fake.sent(PHONE).find((m) => m.text.startsWith("🔔 Needs your decision") && m.text.includes("Tốn ~40% quota tuần")));
     await idle(manager);
+    advance(FOLLOWUP_GRACE_MS + 1);
     await assistantTelegramBridge.settle();
     logBot();
 
-    expect(followUp.reply_to).toBe(card.message_id);
-    expect(followUp.silent).toBe(false);
-    expect(followUp.text).toContain("tốn nhiều quota");
-    expect(followUp.text).toContain("~1.2M tokens ≈ 40%");
-    expect(followUp.text).not.toContain("Để em kiểm tra quota trước");
-    expect(followUp.text).toContain("It also opened a new card: Chạy full regression trên Opus? Tốn ~40% quota tuần");
-    expect(fake.buttons(PHONE, followUp.message_id).flat()[0]).toMatchObject({ text: "Open in PPM" });
+    // The new card is the answer: under the user's own reply, with a sound (they are holding the
+    // phone, though they were at PPM a moment ago) — and nothing else says the same thing again.
+    expect(newCard.reply_to).toBe(typed.message!.message_id);
+    expect(newCard.silent).toBe(false);
+    expect(fake.sent(PHONE).filter((m) => m.text.includes("The manager's answer to your reply"))).toHaveLength(0);
+    expect(fake.sent(PHONE).filter((m) => m.text.includes("~1.2M tokens ≈ 40%"))).toHaveLength(0);
     const ack = lastWith("word for word")!;
-    expect(ack.text).toContain("If the manager answers, it will come here, under the card.");
-    const newCard = fake.sent(PHONE).find((m) => m.text.startsWith("🔔 Needs your decision") && m.text.includes("Tốn ~40% quota tuần"))!;
-    expect(newCard.silent).toBe(true);
-    // The new decision went out at once (silently: the user was at PPM); the answer followed it.
-    expect(newCard.message_id).toBeLessThan(followUp.message_id);
-    expect(fake.sent(PHONE).filter((m) => m.text.includes("The manager's answer to your reply"))).toHaveLength(1);
+    expect(ack.text).toContain("If the manager answers, it will come here.");
     const stored = assistantCards.get(cardId)!;
     expect(stored.status).toBe("answered");
-    expect(stored.followUp).toMatchObject({ text: ANSWER, truncated: false });
-    note(`PPM       card ${cardId.slice(0, 8)} in the Assistant window: answered, with “The manager's answer to your reply” under it (${stored.followUp!.text.length} chars)`);
+    expect(stored.followUp).toMatchObject({ text: "", truncated: false, newCards: [{ id: lastNewCardId, title: "Chạy full regression trên Opus? Tốn ~40% quota tuần" }] });
+    note(`PPM       card ${cardId.slice(0, 8)} in the Assistant window: answered, with only “The manager answered your reply with a new card: ${stored.followUp!.newCards![0]!.title}” (Show) under it`);
+    note("PPM       the turn's closing text is not sent anywhere: the card already says it");
   });
 
-  it("goes under the card's Telegram copy, silently, when the reply was typed in PPM while the user is there", async () => {
+  it("sends only the new card to Telegram when the reply was typed in PPM: nothing under the old card's copy", async () => {
     note("");
     note("── Scenario 2: the user replies from PPM (and is at PPM) ──");
     atPpm = true;
@@ -301,12 +303,18 @@ describe("the manager's answer to a card reply", () => {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: question }),
     });
     expect(res.status).toBe(200);
-    const followUp = await until(() => fake.sent(PHONE).find((m) => m.reply_to === card.message_id && m.text.includes("The manager's answer")));
+    const newCard = await until(() => fake.sent(PHONE).find((m) => m.message_id > card.message_id && m.text.includes("Tốn ~40% quota tuần")));
     await idle(manager);
+    advance(FOLLOWUP_GRACE_MS + 1);
+    await until(() => assistantCards.get(cardId)!.followUp);
     await assistantTelegramBridge.settle();
     logBot();
-    expect(followUp.silent).toBe(true);
-    expect(assistantCards.get(cardId)!.followUp?.text).toContain("tốn nhiều quota");
+    // The reply was typed in PPM: the card goes out as every card does (silently, the user is at PPM).
+    expect(newCard.silent).toBe(true);
+    expect(newCard.reply_to).toBeUndefined();
+    expect(fake.sent(PHONE).filter((m) => m.reply_to === card.message_id)).toHaveLength(0);
+    expect(assistantCards.get(cardId)!.followUp?.newCards?.map((c) => c.id)).toEqual([lastNewCardId]);
+    note(`PPM       card ${cardId.slice(0, 8)}: “answered with a new card” under it; nothing sent under its Telegram copy`);
     ppmCardId = cardId;
   });
 
@@ -329,7 +337,7 @@ describe("the manager's answer to a card reply", () => {
     note("PPM       the manager's new answer replaced the old one under the card in PPM; nothing went to Telegram (quiet hours; its new card is held for 07:00 as every card is)");
   });
 
-  it("still reaches the phone when the manager answers first and opens its card after, without its 'Đã gửi card.'", async () => {
+  it("sends only the card when the manager answers first and opens its card after: neither the answer nor 'Đã gửi card.'", async () => {
     note("");
     note("── Scenario 4: next morning 08:30; the manager answers first, then opens the card and says so ──");
     advance(9.5 * 60 * 60_000); // 08:30 Asia/Saigon: the held cards went out at 07:00
@@ -342,15 +350,17 @@ describe("the manager's answer to a card reply", () => {
     const question = "bật thì chắc ko tốn gì nhỉ";
     const typed = replyTo(card.message_id, question);
     note(`Telegram  phone → PPM bot   (msg #${typed.message?.message_id}, reply_to #${card.message_id}): “${question}”`);
-    const followUp = await until(() => fake.sent(PHONE).find((m) => m.reply_to === card.message_id && m.text.includes("The manager's answer")));
+    const newCard = await until(() => fake.sent(PHONE).find((m) => m.reply_to === typed.message!.message_id && m.text.includes("Tốn ~40% quota tuần")));
     await idle(manager);
+    advance(FOLLOWUP_GRACE_MS + 1);
+    await until(() => assistantCards.get(cardId)!.followUp);
     await assistantTelegramBridge.settle();
     logBot();
     script = "card-then-answer";
-    expect(followUp.silent).toBe(false);
-    expect(followUp.text).toContain("~1.2M tokens ≈ 40%");
-    expect(followUp.text).not.toContain("Đã gửi card");
-    expect(assistantCards.get(cardId)!.followUp?.text).toBe(ANSWER);
+    expect(newCard.silent).toBe(false);
+    const after = fake.sent(PHONE).filter((m) => m.message_id > typed.message!.message_id);
+    expect(after.filter((m) => m.text.includes("The manager's answer") || m.text.includes("Đã gửi card") || m.text.includes("~1.2M tokens"))).toHaveLength(0);
+    expect(assistantCards.get(cardId)!.followUp?.newCards?.map((c) => c.id)).toEqual([lastNewCardId]);
   });
 
   it("tells the phone only that the turn stopped when it fails halfway, and keeps nothing on the card", async () => {
@@ -414,10 +424,11 @@ describe("the manager's answer to a card reply", () => {
     note("PPM       nothing sent for that reply: the turn it went into was followed by another sender's turn, so which text answers it is not known");
   });
 
-  it("delivers a short answer written after the card; an OK to that answer stays with the replied card", async () => {
+  it("still delivers the text of a turn that opened no card; an OK to that answer stays with the replied card", async () => {
     note("");
-    note("── Scenario 7: the manager opens the card first and answers in one short line; the user says OK to that answer ──");
-    script = "card-then-short";
+    note("── Scenario 7: the manager answers in one short line and opens no card; the user says OK to that answer ──");
+    script = "short-no-card";
+    const cardsBefore = lastNewCardId;
     const cardId = await report({ kind: "needs_decision", title: "Bật log chi tiết cho worker?", body: "Cần anh OK." });
     const card = await until(() => lastWith("Bật log chi tiết"));
     logBot();
@@ -430,18 +441,15 @@ describe("the manager's answer to a card reply", () => {
     logBot();
     script = "card-then-answer";
     expect(followUp.text).toContain(SHORT_ANSWER);
-    expect(followUp.text).not.toContain("Để em kiểm tra quota trước");
-    expect(assistantCards.get(cardId)!.followUp?.text).toBe(SHORT_ANSWER);
-    // The answer named a new card, but an OK to the answer is no decision on it: that card was only
-    // named by title here, and it is decided on its own message.
-    const newCardId = lastNewCardId;
+    expect(followUp.silent).toBe(false);
+    expect(lastNewCardId).toBe(cardsBefore);
+    expect(assistantCards.get(cardId)!.followUp).toMatchObject({ text: SHORT_ANSWER });
+    expect(assistantCards.get(cardId)!.followUp?.newCards).toBeUndefined();
     const ok = replyTo(followUp.message_id, "OK");
     note(`Telegram  phone → PPM bot   (msg #${ok.message?.message_id}, reply_to #${followUp.message_id}, the answer): “OK”`);
     await until(() => fake.sent(PHONE).find((m) => m.message_id > followUp.message_id && m.text.includes("send anyway")));
     await assistantTelegramBridge.settle();
     logBot();
-    expect(assistantCards.get(newCardId)!.status).toBe("open");
-    expect(received.some((r) => decodeMessageBlocks(r.message).userWords?.cardId === newCardId)).toBe(false);
-    note(`PPM       the OK stayed with card ${cardId.slice(0, 8)}, which is answered already, so it asks “send anyway?”; the new card ${newCardId.slice(0, 8)} still waits on its own message`);
+    note(`PPM       the OK stayed with card ${cardId.slice(0, 8)}, which is answered already, so it asks “send anyway?”`);
   });
 });

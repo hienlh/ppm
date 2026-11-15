@@ -33,18 +33,23 @@ export const MANAGER_USER_ACTION_RULE =
  * A reply to a card is free text, and a user on a phone answers a question with a question, or
  * agrees on a wrong premise ("go ahead, it won't cost much quota, right?"). Read as a yes, the
  * manager acts on a premise the numbers contradict and the user learns of it afterwards. The
- * answer itself reaches the user: PPM sends the text of the turn the reply opened back to the
- * channel they replied from. The card comes first and the answer last because a one-line
- * acknowledgement after the card ("Card sent.") is what a model writes otherwise, and an answer
- * buried before a tool call is easy to lose. The answer leaves PPM like a report does, so it is
- * bound by a report's limits: redaction catches secrets, never a client's name or tax figures.
+ * answer itself reaches the user. When the turn opened a card, the card is the answer: it goes to
+ * the channel they replied from (on Telegram, under their reply) and the turn's text is not sent,
+ * because a full answer in both read as the same message twice. So the card carries the answer and
+ * the text only points to it. When the turn opened none, its text is sent back instead, which is
+ * why that answer comes last: an answer buried before a tool call is easy to lose. The answer
+ * leaves PPM like a report does, so it is bound by a report's limits: redaction catches secrets,
+ * never a client's name or tax figures.
  */
 export const MANAGER_CARD_REPLY_RULE =
   "A reply to a card that asks a question (\"…nhỉ\", \"…không\", \"?\", \"right?\") or rests on an assumption the facts "
-  + "or numbers contradict is NOT an OK: do nothing yet. First ask again with a new needs_decision card; then answer the "
-  + "question and correct the assumption with the numbers as the last thing you write in this turn, with no tool call "
-  + "after it. PPM sends that answer to where the user replied, often their phone on Telegram: keep it to a few lines, "
-  + "with the same limits as a report (no client personal or tax data, use ticket ids). Act only on a plain yes to that new card.";
+  + "or numbers contradict is NOT an OK: do nothing yet. Ask again with a new needs_decision card whose body answers the "
+  + "question and corrects the assumption with the numbers; PPM sends that card to where the user replied, under their "
+  + "reply, and it is the whole answer. Then end the turn with one line that only points to the card, without repeating "
+  + "what it says. A reply you answer without a new card: answer it as the last thing you write in this turn, with no "
+  + "tool call after it; PPM sends that text to where the user replied, often their phone on Telegram, so keep it to a "
+  + "few lines with the same limits as a report (no client personal or tax data, use ticket ids). Act only on a plain "
+  + "yes to that new card.";
 
 /**
  * A card offering several choices in its text shows the user one OK, or nothing to press at all on

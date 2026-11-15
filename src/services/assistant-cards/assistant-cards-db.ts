@@ -77,8 +77,13 @@ function parse<T>(json: string | null, fallback: T): T {
 function parseFollowUp(value: unknown): CardFollowUp | undefined {
   if (!value || typeof value !== "object") return undefined;
   const f = value as Record<string, unknown>;
-  return typeof f.text === "string" && typeof f.truncated === "boolean" && typeof f.at === "number"
-    ? { text: f.text, truncated: f.truncated, at: f.at } : undefined;
+  if (typeof f.text !== "string" || typeof f.truncated !== "boolean" || typeof f.at !== "number") return undefined;
+  const newCards = Array.isArray(f.newCards)
+    ? f.newCards.filter((c): c is { id: string; title: string } =>
+      !!c && typeof (c as { id?: unknown }).id === "string" && typeof (c as { title?: unknown }).title === "string")
+      .map((c) => ({ id: c.id, title: c.title }))
+    : [];
+  return { text: f.text, truncated: f.truncated, at: f.at, ...(newCards.length ? { newCards } : {}) };
 }
 
 /**

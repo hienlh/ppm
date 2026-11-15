@@ -41,7 +41,10 @@ function newsLine(n: WakeNewsNotice): string {
   const when = ` at ${new Date(n.at).toISOString()}`;
   if (n.kind === "late_reply") {
     const text = cleanEventText(n.text, NEWS_QUOTE_MAX);
-    return `${head} answered your earlier message${when}.\n  Its answer began: ${text ? quote(text) : "(no text)"}`;
+    const seen = n.userHasAnswer
+      ? "\n  The same turn answered the user's reply on a card, and PPM already sent them that answer: do not repeat it to them."
+      : "";
+    return `${head} answered your earlier message${when}.\n  Its answer began: ${text ? quote(text) : "(no text)"}${seen}`;
   }
   const card = `(card ${cleanEventText(n.key, 40)})`;
   // The digest PPM put together speaks for every project at once; its items name their project.

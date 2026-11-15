@@ -63,9 +63,15 @@ export interface AssistantCardAnswer {
 
 /** The manager's answer to a reply on a card, shown under the card. */
 export interface CardFollowUp {
+  /** The turn's answer; empty when the manager answered with a new card (`newCards`). */
   text: string;
   truncated: boolean;
   at: number;
+  /**
+   * The cards the manager opened to answer: then they are the answer, and only they are named here
+   * — the turn's text repeats what they say.
+   */
+  newCards?: Array<{ id: string; title: string }>;
 }
 
 /** A design screenshot on a card: the kept shot's id and what it shows. */
