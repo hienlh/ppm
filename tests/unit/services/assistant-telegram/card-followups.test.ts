@@ -315,7 +315,7 @@ describe("a manager that answers a Telegram reply with a new card", () => {
     // Exactly once: the line is queued from inside the refused card's drop, which once started a
     // second loop on the same lane and sent it twice.
     expect(fake.sent(Number(chat)).filter((m) => !m.failed)).toHaveLength(1);
-    expect(pointer).toMatchObject({ reply_to: USER_MESSAGE });
+    expect(pointer).toMatchObject({ reply_to: USER_MESSAGE, silent: false });
     expect(stripTelegramHtml(pointer!.text)).toBe(`${NEW_CARD_POINTER_LABEL} Run the full suite? ~40% quota`);
   });
   const answer = (chat: string, made: AssistantCard): CardFollowupDelivery => ({

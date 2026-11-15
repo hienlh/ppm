@@ -242,20 +242,23 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
         const key = `${card.id}\n${chatId}`;
         const mark = this.threaded.get(key);
         this.threaded.delete(key);
-        if (mark?.asked && thread) this.sendPointer(chatId, card, url, thread.replyTo);
+        if (mark?.asked && thread) {
+          try { this.sendPointer(chatId, card, url, thread); } catch (e) { log.warn(`card ${card.id}: could not name it under the reply: ${(e as Error).message}`); }
+        }
         try { setCardOutboundError(card.id, why, Date.now()); } catch (e) { log.warn(`card ${card.id}: could not record the failed send: ${(e as Error).message}`); }
       },
     }));
   }
 
   /** The one line naming a card that answered the user's reply but never reached the phone. */
-  private sendPointer(chatId: string, card: AssistantCard, url: string | null, replyTo: number): void {
+  private sendPointer(chatId: string, card: AssistantCard, url: string | null, thread: Thread): void {
     const formatted = formatNewCardPointer({ projectName: card.projectName ?? null, newCards: [card], url });
     this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, {
-      html: formatted.html, replyTo,
+      html: formatted.html, replyTo: thread.replyTo,
       ...(formatted.markup ? { markup: formatted.markup } : {}),
       ...(formatted.fallbackHtml ? { fallbackHtml: formatted.fallbackHtml } : {}),
-    }, { label: "card pointer", silent: () => this.silent() }));
+      // Rings like the card it stands for would have: the user may still be holding the phone.
+    }, { label: "card pointer", silent: () => !thread.loud && this.silent() }));
   }
 
   changed(card: AssistantCard): void {
