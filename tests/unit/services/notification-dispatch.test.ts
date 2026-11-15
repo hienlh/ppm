@@ -6,6 +6,7 @@ import { telegramService } from "../../../src/services/telegram-notification.ser
 import { ntfyService } from "../../../src/services/ntfy-notification.service.ts";
 import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from "../../../src/shared/notification-settings.ts";
 import { openTestDb, setDb, setSessionProvider } from "../../../src/services/db.service.ts";
+import { turnSecretScrubber } from "../../../src/services/vault/turn-secret-scrubber.ts";
 
 // Patch the channel singletons rather than mock.module, which leaks across test files.
 const originals = { push: webPushService.send, telegram: telegramService.send, ntfy: ntfyService.send, settings: configService.get("notifications") };
@@ -75,6 +76,21 @@ describe("NotificationService.broadcast", () => {
       tag: "ppm-s1",
       urgency: "normal",
     });
+  });
+
+  it("never carries a secure or sealed vault value an AI just read, on any channel", async () => {
+    settings({ delay_seconds: 0 });
+    let ntfyDetail: string | undefined;
+    ntfyService.send = (async (p: NotificationPayload) => { ntfyDetail = p.detail; }) as typeof ntfyService.send;
+    turnSecretScrubber.hold("s1", [{ name: "NI", value: "QQ 12 34 56 C" }]);
+    try {
+      await service().broadcast("done", payload("s1", { detail: "Your NI number is QQ123456C, and the public one is fine." }));
+    } finally {
+      turnSecretScrubber.clear();
+    }
+    expect(pushed[0]!.body).toBe("ppm — Fix login\nYour NI number is [vault:NI], and the public one is fine.");
+    expect(telegrammed[0]!.detail).toBe("Your NI number is [vault:NI], and the public one is fine.");
+    expect(ntfyDetail).toBe("Your NI number is [vault:NI], and the public one is fine.");
   });
 
   it("marks approvals and questions urgent", async () => {
