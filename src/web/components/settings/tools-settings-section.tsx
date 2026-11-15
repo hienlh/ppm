@@ -14,6 +14,7 @@ import { SESSION_HISTORY_TOOLS } from "../../../shared/session-history-tools";
 import { SESSION_COLLAB_TOOLS } from "../../../shared/session-collab";
 import { SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_TOOLS } from "../../../shared/session-schedule-tools";
 import type { SessionCollabSettings } from "../../../shared/session-collab-settings";
+import { VAULT_TOOLS } from "../../../shared/vault";
 import { SectionHeader, SwitchRow } from "./settings-rows";
 import { SessionCollabSettingsControls } from "./session-collab-settings-controls";
 
@@ -92,6 +93,18 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Delete schedules",
     note: "Deletes a prompt scheduled into its own chat. Another chat's schedules are out of its reach.",
   },
+  vault_list: {
+    label: "List vault items",
+    note: "Lists the names, kinds and tiers of your vault's items, never a value.",
+  },
+  vault_read: {
+    label: "Read vault items",
+    note: "Reads public items at once. Secure items need your password on a card; a sealed item is shown to you unless you give it to the AI.",
+  },
+  vault_propose: {
+    label: "Propose vault items",
+    note: "Asks you to save something to the vault. You pick the tier and confirm with its password.",
+  },
 };
 
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [
@@ -116,6 +129,11 @@ const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }>
     title: "Schedules",
     intro: "Prompts a chat schedules into itself. Each one is listed in Settings → Schedules, where you can turn it off or delete it.",
     tools: SESSION_SCHEDULE_TOOLS,
+  },
+  {
+    title: "Vault",
+    intro: "Your secret vault (Settings → Vault), for ordinary chats. Off until you turn them on here; the PPM Assistant always has them.",
+    tools: VAULT_TOOLS,
   },
 ];
 

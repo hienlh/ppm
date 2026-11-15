@@ -119,6 +119,8 @@ import { ToolImagePreview } from "./tool-image-preview";
 import { TabToolCard } from "./tab-tool-card";
 import { SessionCollabToolCard } from "./session-collab-tool-card";
 import { sessionCollabToolCall } from "@/lib/session-collab-tool-call";
+import { VaultToolCard } from "./vault-tool-card";
+import { vaultToolCall } from "@/lib/vault-tool-call";
 import { DeviceToolDetails, DeviceToolSummary } from "./device-tool-card";
 import { deviceToolCall, deviceToolOf, tabToolCall } from "@/lib/tab-tool-call";
 import { DbToolSummary, DbToolDetails } from "./db-tool-card";
@@ -267,6 +269,15 @@ export function ToolCard({
     return (
       <SessionCollabToolCard call={collabCall} toolUseId={toolUseId} output={hasResult ? String((result as any).output ?? "") : undefined}
         isError={isError} done={!!isDone} projectName={projectName} />
+    );
+  }
+
+  // The vault's tools: a locked read is drawn as a count, never as the values it returned.
+  const vaultCall = tool.type === "tool_use" ? vaultToolCall(toolName, input) : null;
+  if (vaultCall) {
+    return (
+      <VaultToolCard call={vaultCall} toolUseId={toolUseId} output={hasResult ? String((result as any).output ?? "") : undefined}
+        isError={isError} done={!!isDone} />
     );
   }
 
