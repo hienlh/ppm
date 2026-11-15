@@ -821,12 +821,16 @@ A task or message may be at most 24 KB in UTF-8 bytes (`MAX_COLLAB_MESSAGE_BYTES
   names one). The browser sits on the server's network, so every request is held (`Fetch`) and let
   through only to that token's files and the design CDNs, downloads are refused, and a page that
   navigated anywhere else is not captured. One capture runs at a time, under a 120 s deadline. No
-  browser, no picture: the call says so. Known limit: the DevTools port is a loopback TCP port for
-  the few seconds a capture runs, which another account on the same machine could reach. Each shot is kept as
-  `<ppm dir>/design-shots/<id>.png` for seven days (at most 300) and served by `GET /api/design-shots/<id>.png`
-  before auth, the 128-bit id being the only credential (a phone opens it from Telegram with no
-  login). The AI gets the pictures inline while they fit, plus each id and link; a manager chat
-  passes the ids to `report_to_assistant`'s `images`.
+  browser, no picture: the call says so. DevTools is reached over `--remote-debugging-pipe` on Linux
+  and macOS, so nothing else on the machine can connect and the browser dies with PPM. On Windows
+  Bun hands a child no descriptor past stdio (measured: Edge never answers on the pipe), so there it
+  is a loopback port the browser picks, open only for the seconds a capture runs — which another
+  account on the same machine could reach; a pipe that does not answer at start falls back to the
+  port too. Each shot is kept as `<ppm dir>/design-shots/<id>.png` for seven days (at most 300) and
+  served by `GET /api/design-shots/<id>.png` behind the login like every other route; the card
+  fetches it with the token. No link leaves PPM: the AI gets the pictures inline while they fit and
+  an id for each, and a manager chat passes the ids to `report_to_assistant`'s `images`, which
+  Telegram receives as the pictures themselves.
 
 **Design chats.** `create_session` with `design: "<slug>"` opens a Design chat for an existing
 design of the project (`designs/<slug>/`, checked to exist; the provider must take design

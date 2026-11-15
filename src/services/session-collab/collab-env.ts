@@ -10,7 +10,6 @@ import { chatService } from "../chat.service.ts";
 import { createProjectChatSession } from "../chat-session-create.ts";
 import { getDesign } from "../design/design-store.service.ts";
 import { captureDesignShots } from "../design/shots/design-shots.service.ts";
-import { notificationLink } from "../notification-link.ts";
 import { createLogger } from "../logger.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { listSessionTurns } from "../session-turns/session-turn-index.service.ts";
@@ -151,8 +150,6 @@ export const collabEnv: CollabEnv = {
     return { slug: design.slug, title: design.title };
   },
   captureDesignShots: (projectPath, slug, variants) => captureDesignShots(projectPath, slug, variants),
-  // The path wins over project and session: the link opens the picture itself.
-  shotLink: (id) => notificationLink({ project: "", sessionId: "", path: `/api/design-shots/${id}.png` }),
   providerRunsDesign: (providerId) => !!(providerRegistry.get(providerId) as { supportsDesignInstructions?: boolean } | undefined)
     ?.supportsDesignInstructions,
   createSession: async (providerId, input) => {

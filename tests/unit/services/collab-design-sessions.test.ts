@@ -140,18 +140,17 @@ describe("design_screenshot", () => {
       calls.push({ path, slug, variants });
       return [shot("a".repeat(32), "index.html"), shot("b".repeat(32), "variant-2.html")];
     };
-    w.env.shotLink = async (id) => `https://ppm.example/api/design-shots/${id}.png`;
     return { ...w, calls };
   }
 
-  it("renders the caller's own project's design and returns ids, links and the pictures", async () => {
+  it("renders the caller's own project's design and returns ids and the pictures, never a link", async () => {
     const w = shotWorld();
     const result = await designShotTool(w.env, w.caller, { design: "kho-task" });
     expect(result.isError).toBeUndefined();
     const content = result.content as Array<{ type: string; text?: string; mimeType?: string }>;
     const listed = JSON.parse(content[0]!.text!);
     expect(listed.shots.map((s: { id: string }) => s.id)).toEqual(["a".repeat(32), "b".repeat(32)]);
-    expect(listed.shots[0].link).toBe(`https://ppm.example/api/design-shots/${"a".repeat(32)}.png`);
+    expect(listed.shots[0].link).toBeUndefined();
     expect(content.filter((c) => c.type === "image").every((c) => c.mimeType === "image/png")).toBe(true);
     expect(w.calls).toEqual([{ path: PROJECT_PATH, slug: "kho-task", variants: undefined }]);
   });

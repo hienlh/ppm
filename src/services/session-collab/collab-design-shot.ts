@@ -7,8 +7,8 @@ import { projectFor, type CollabCaller, type CollabEnv } from "./collab-context.
 /**
  * `design_screenshot`: PNG pictures of a design's variants, rendered on the server. The calling
  * AI sees them (image blocks, while they fit), and gets for each an id it can put on a
- * `report_to_assistant` card — which sends the pictures to the user's Telegram — and a link that
- * shows it from anywhere PPM is reachable.
+ * `report_to_assistant` card, which shows them in PPM and sends the pictures to the user's
+ * Telegram. No link is handed out: the pictures are served only to a signed-in PPM.
  *
  * Only a design of a project the caller reaches: its own, or for the PPM Assistant the one it
  * names. One capture runs at a time in the whole server, since each starts a browser.
@@ -32,10 +32,10 @@ export function designShotToolDefinition() {
     title: "Screenshot a design",
     description:
       "Render the variants (pages) of an existing design of this project to PNG, the way the page looks in a browser "
-      + "1280 px wide, and return the pictures with an id and a link for each. Use it to look at what a Design chat built, "
+      + "1280 px wide, and return the pictures with an id for each. Use it to look at what a Design chat built, "
       + "and to show the user: a manager chat puts the ids in `report_to_assistant`'s `images`, and PPM sends those pictures "
       + "to the user's phone with the card. Every variant by default, at most " + MAX_SHOTS_PER_CALL + " per call. "
-      + "Links stop working after seven days. Web fonts and images from other sites may come out substituted.",
+      + "Ids stop working after seven days. Web fonts and images from other sites may come out substituted.",
     inputSchema: {
       type: "object",
       properties: {
@@ -54,7 +54,7 @@ export function designShotToolDefinition() {
 }
 
 export async function designShotTool(env: CollabEnv, caller: CollabCaller, args: Json): Promise<Json> {
-  if (!env.captureDesignShots || !env.shotLink) return textResult("Design screenshots are not available here.", true);
+  if (!env.captureDesignShots) return textResult("Design screenshots are not available here.", true);
   if (!isValidDesignSlug(args.design)) return textResult("`design` must be a design's slug: the name of its folder under designs/.", true);
   const variants = args.variants;
   if (variants !== undefined && (!Array.isArray(variants) || variants.length > MAX_SHOTS_PER_CALL
@@ -70,9 +70,7 @@ export async function designShotTool(env: CollabEnv, caller: CollabCaller, args:
   } catch (e) {
     return textResult(`No screenshot was taken: ${(e as Error).message}`, true);
   }
-  const listed = await Promise.all(shots.map(async (s) => ({
-    id: s.id, design: s.slug, file: s.file, label: s.label, width: s.width, height: s.height, link: await env.shotLink!(s.id),
-  })));
+  const listed = shots.map((s) => ({ id: s.id, design: s.slug, file: s.file, label: s.label, width: s.width, height: s.height }));
   const content: Json[] = [{
     type: "text",
     text: JSON.stringify({ project: project.name, shots: listed }, null, 2),

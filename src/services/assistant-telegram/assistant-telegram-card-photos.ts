@@ -2,7 +2,8 @@
  * The pictures a report card carries (`payload.images`, design screenshots), sent to a Telegram
  * chat just before the card's own message, so the user sees the choices and then the card to
  * answer them on. One picture goes as a photo, several as one album; each caption numbers it the
- * way the card lists it and links to the full-size picture in PPM.
+ * way the card lists it. No link: the pictures are the picture, and PPM serves its copy only to a
+ * signed-in browser.
  *
  * Sent only where the card is shown in full: a project whose cards reach the phone by title only
  * gets no pictures either. A picture whose file is gone (pruned after seven days) is left out.
@@ -15,15 +16,13 @@ import { MAX_TELEGRAM_ALBUM, type TelegramPhotoUpload } from "../telegram/telegr
 import { outcomeOf, type SendTask } from "./assistant-telegram-send-queue.ts";
 
 /** The caption under picture `index` (0-based) of a card. */
-export function cardPhotoCaption(image: CardImage, index: number, link: string | null): string {
+export function cardPhotoCaption(image: CardImage, index: number): string {
   const name = image.label ? `${image.file} · ${image.label}` : image.file;
-  const head = `<b>${index + 1}.</b> ${escapeTelegramHtml(image.designTitle)} — ${escapeTelegramHtml(name)}`;
-  return link ? `${head}\n<a href="${escapeTelegramHtml(link)}">Open full size</a>` : head;
+  return `<b>${index + 1}.</b> ${escapeTelegramHtml(image.designTitle)} — ${escapeTelegramHtml(name)}`;
 }
 
 /** The task sending a card's pictures, or null when it has none. */
 export function cardPhotosTask(chatId: string, card: AssistantCard, opts: {
-  link: (id: string) => Promise<string | null>;
   silent: () => boolean;
   read?: (id: string) => Promise<Uint8Array | null>;
 }): SendTask | null {
@@ -41,8 +40,7 @@ export function cardPhotosTask(chatId: string, card: AssistantCard, opts: {
         for (const [i, image] of images.entries()) {
           const bytes = await read(image.id);
           if (!bytes) continue;
-          const link = await opts.link(image.id).catch(() => null);
-          uploads.push({ bytes, filename: `${i + 1}-${image.file.replace(/[^\w.-]+/g, "_")}.png`, caption: cardPhotoCaption(image, i, link) });
+          uploads.push({ bytes, filename: `${i + 1}-${image.file.replace(/[^\w.-]+/g, "_")}.png`, caption: cardPhotoCaption(image, i) });
         }
       }
       if (!uploads.length) return { kind: "done" };

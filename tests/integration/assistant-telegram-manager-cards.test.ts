@@ -296,7 +296,7 @@ describe("quiet hours", () => {
 });
 
 describe("a card with design pictures", () => {
-  it("sends the pictures as one album just before the card, numbered, with a full-size link", async () => {
+  it("sends the pictures as one album just before the card, numbered, with no link", async () => {
     const one = "1".repeat(32), two = "2".repeat(32);
     keepShot(one, "index.html", "Light");
     keepShot(two, "variant-2.html", "Dark");
@@ -309,7 +309,7 @@ describe("a card with design pictures", () => {
     expect(photos[0]!.photo!.album).toBe(photos[1]!.photo!.album);
     expect(photos[0]!.text).toContain("1. Kho task — index.html · Light");
     expect(photos[1]!.text).toContain("2. Kho task — variant-2.html · Dark");
-    expect(photos[1]!.text).toContain("Open full size");
+    expect(photos.every((p) => !/https?:\/\//.test(p.text))).toBe(true);
     // Pictures first, then the card that is answered.
     expect(fresh.indexOf(photos[1]!)).toBeLessThan(fresh.indexOf(card));
     expect(card.text).toContain("2 pictures above");

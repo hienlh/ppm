@@ -15,7 +15,7 @@ import { designShotRoutes } from "../../src/server/routes/design-shots.ts";
 import {
   captureDesignShots, readShot, shotRequestAllowed, shotsDir, type ShotDeps,
 } from "../../src/services/design/shots/design-shots.service.ts";
-import { findHeadlessBrowser } from "../../src/services/design/shots/headless-browser.ts";
+import { findHeadlessBrowser, launchHeadlessBrowser } from "../../src/services/design/shots/headless-browser.ts";
 
 const browser = findHeadlessBrowser();
 // A project may not live inside the PPM folder: the design paths refuse it.
@@ -89,6 +89,21 @@ describe.skipIf(!browser)("design screenshots with a real browser", () => {
     const shots = await captureDesignShots(projectPath, "kho-task", ["variant-2.html"], deps);
     expect(shots.map((s) => s.file)).toEqual(["variant-2.html"]);
     await expect(captureDesignShots(projectPath, "kho-task", ["nope.html"], deps)).rejects.toThrow('no variant "nope.html"');
+  }, 60_000);
+});
+
+describe.skipIf(!browser)("how PPM reaches the browser's DevTools", () => {
+  it("uses the private pipe off Windows, and the loopback port only on Windows", async () => {
+    const started = await launchHeadlessBrowser(browser!);
+    try {
+      expect(started.transport).toBe(process.platform === "win32" ? "port" : "pipe");
+      const version = await started.cdp.send("Browser.getVersion");
+      expect(String(version.product)).toMatch(/Chrome|Edg|Chromium/i);
+    } finally {
+      await started.close();
+    }
+    // Closed: the connection refuses, the browser is gone.
+    await expect(started.cdp.send("Browser.getVersion")).rejects.toThrow();
   }, 60_000);
 });
 

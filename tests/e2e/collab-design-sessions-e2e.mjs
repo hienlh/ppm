@@ -6,8 +6,8 @@
 //       `design`), the user allows it on the card, the new chat is a Design chat (its turn runs
 //       with the design instructions) and its answer comes back as the reply;
 //   D2  a follow-up with send_to_session and wait: the Design chat's answer is again the reply;
-//   D3  design_screenshot renders both variants to PNG with a real Chromium, and the links serve
-//       them without a login.
+//   D3  design_screenshot renders both variants to PNG with a real Chromium, served by id (the
+//       fixture runs with auth off; the route is behind the login in a real PPM).
 //
 // Run it in the capped e2e image (Chromium, Node 20 and playwright-core; see tests/e2e/docker/):
 //
@@ -165,7 +165,6 @@ try {
     const { shots } = jsonOf(call.text);
     assert.deepEqual(shots.map((s) => s.file), ["index.html", "variant-2.html"]);
     for (const shot of shots) {
-      // The link is PPM's public address; the same path on this server, with no login.
       const res = await fetch(`${web}/api/design-shots/${shot.id}.png`);
       assert.equal(res.status, 200);
       assert.equal(res.headers.get("content-type"), "image/png");

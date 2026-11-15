@@ -59,8 +59,6 @@ export interface CollabEnv extends AssistantCollabHooks {
   providerRunsDesign?(providerId: string): boolean;
   /** Renders the design's variants to PNG on the server and keeps them (`design-shots.service.ts`). */
   captureDesignShots?(projectPath: string, slug: string, variants?: string[]): Promise<CapturedDesignShot[]>;
-  /** The link that shows a kept shot, from anywhere PPM is reachable. */
-  shotLink?(id: string): Promise<string>;
   projectNameOf(projectPath: string): string | null;
   title(sessionId: string): string | null;
   providerExists(providerId: string): boolean;

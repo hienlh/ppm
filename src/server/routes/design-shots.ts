@@ -2,10 +2,10 @@ import { Hono } from "hono";
 import { readShot, shotPngPath } from "../../services/design/shots/design-shots.service.ts";
 
 /**
- * `GET /api/design-shots/<id>.png`: a design screenshot PPM rendered (`design-shots.service.ts`).
- * Mounted before auth, because the link is opened from Telegram on a phone that holds no PPM
- * login. The id — 128 random bits, never listed anywhere — is the only credential, exactly like
- * a share link's code, and it stops working when the shot is pruned (seven days).
+ * `GET /api/design-shots/<id>.png`: a design screenshot PPM rendered (`design-shots.service.ts`),
+ * behind PPM's login like every other route (mounted after `authMiddleware`). Telegram receives
+ * the pictures themselves, so nothing outside PPM needs to open this; the card in PPM fetches it
+ * with the token. A shot is gone once pruned (seven days).
  */
 export const designShotRoutes = new Hono();
 
