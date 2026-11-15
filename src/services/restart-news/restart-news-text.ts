@@ -76,9 +76,9 @@ function chatLine(c: InterruptedChat, indent: string, role: string): string {
 }
 
 const TASK_STATE_TEXT: Record<BackgroundTask["state"], string> = {
-  alive: "still running: its output was written after the restart",
-  stopped: "stopped: it ran inside the chat's Claude process, which ended with the server",
-  unknown: "not known: the shell PPM ran it in ended with the server, but anything it started outside PPM (a container, a detached process) may still run",
+  alive: "still running: its output was written after the restart. Only check on it; do not start it again",
+  stopped: "stopped: it ran inside the chat's Claude process, which ended with the server. It may be started again",
+  unknown: "not known: the shell PPM ran it in ended with the server, but anything it started outside PPM (a container, a detached process) may still run. It must not be started again without the user's OK: running it twice can do harm (a deploy, a migration)",
 };
 
 function backgroundChatLine(c: BackgroundWorkChat, indent: string, role: string): string {
@@ -149,8 +149,10 @@ function instructions(payload: RestartNewsPayload): string {
     "the restart stopped):",
     "1. For each project listed below that has a manager chat, send that manager chat one message (send_to_session, no card needed)",
     "naming every listed chat of its project by session id, saying PPM restarted, and asking it to check each one: a",
-    "cut-off chat resumes or restarts its work; a chat whose background work stopped checks whether that work still runs",
-    "and is still needed, and starts it again only if so. Name each background task (what it was for, or its command)",
+    "cut-off chat resumes or restarts its work; for a chat whose background work stopped, a task marked stopped may be",
+    "started again if still needed, a task still running is only checked on, and a task whose state is not known is",
+    "never started again on the manager's own say: the manager first asks the user with a needs_decision report naming",
+    "the task and saying it may still be running outside PPM. Name each background task (what it was for, or its command)",
     "and what PPM knows of it after the restart. If the manager chat itself is listed, that same message covers it.",
     "Never message the other listed chats yourself.",
     "2. A chat that was waiting on an approval or question lost it: ask the manager to have it asked again, never answer it.",

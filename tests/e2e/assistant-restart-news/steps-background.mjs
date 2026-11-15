@@ -54,7 +54,7 @@ export async function scenarioBackground(k, s) {
     const has = (text) => assert.ok(ctx.includes(text), `h: the news says ${JSON.stringify(text)}\n--- news ---\n${ctx}`);
     has("Chats cut off mid-turn: none.");
     has("Chats whose background work was stopped (1)");
-    has("starts it again only if so");
+    has("the manager first asks the user with a needs_decision report");
     const lines = ctx.split("\n");
     const head = lines.findIndex((l) => l.includes(`session ${s.bg}`));
     assert.ok(head > 0, `h: the chat is listed\n${ctx}`);
@@ -64,8 +64,8 @@ export async function scenarioBackground(k, s) {
     const logs = lines.find((l) => l.includes("Bash started at"));
     assert.ok(batch?.includes('command "powershell -File run-batch.ps1 -Count 26 -Token [REDACTED]"'), `h: the batch is named by its command, token taken out: ${batch}`);
     assert.ok(logs?.includes('for "Follow the benchmark container log"') && !logs.includes("command"), `h: the log follower is named by what it was for, not its command: ${logs}`);
-    assert.ok(batch.includes("After the restart: not known"), `h: nothing says whether the batch still runs: ${batch}`);
-    assert.ok(logs?.includes("After the restart: still running"), `h: the log follower wrote after the restart: ${logs}`);
+    assert.ok(batch.includes("After the restart: not known") && batch.includes("must not be started again without the user's OK"), `h: nothing says whether the batch still runs, so it waits for the user: ${batch}`);
+    assert.ok(logs?.includes("After the restart: still running") && logs.includes("do not start it again"), `h: the log follower wrote after the restart, so it is only checked on: ${logs}`);
     assert.ok(!ctx.includes(SECRET.slice(12)), "h: the secret in the command line is not repeated");
     assert.match(k.logOf(), /0 chat\(s\) cut off, 1 chat\(s\) with background work stopped \(urgent\)/, "h: the server logs the urgent news");
 

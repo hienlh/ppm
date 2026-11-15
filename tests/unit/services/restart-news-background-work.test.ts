@@ -257,9 +257,11 @@ describe("in the restart news", () => {
     expect(text).toContain('"Chat bench" (session bench, claude): was between turns');
     expect(text).toContain('PowerShell started at 2026-11-15T10:18:00.000Z (for "Resume benchmark", command "powershell -File run-batch.ps1")');
     expect(text).toContain("After the restart: not known");
+    expect(text).toContain("It must not be started again without the user's OK");
     expect(text).toContain("and 2 more background task(s)");
     expect(text).toContain("And 1 more chat(s) with stopped background work not listed");
-    expect(text).toContain("starts it again only if so");
+    expect(text).toContain("the manager first asks the user with a needs_decision report");
+    expect(text).toContain("a task still running is only checked on");
     expect(text).not.toContain("There is nothing to resume");
   });
 

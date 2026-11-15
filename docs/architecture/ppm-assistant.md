@@ -1157,15 +1157,18 @@ chat resume them. Code in `src/services/restart-news/`.
   then the cut-off chats and then the chats whose background work stopped, each by project with
   manager first and the chats it opened under it (the steps come before the lists so the
   14,000-character cap cuts chats, never the steps), and asks for one card-free message per affected
-  manager naming its listed chats (a stopped background task is checked, and started again only if
-  still needed), and a line to the user for projects with no manager. A manager treats a PPM-started turn as a status ask. The server adds the provenance
+  manager naming its listed chats, and a line to the user for projects with no manager. For
+  background work the state decides: `stopped` may be started again if still needed, `alive` is only
+  checked on, and `unknown` is never started again until the user says so — the manager reports
+  `needs_decision` first, naming the task and that it may still run outside PPM, because some work
+  (a deploy, a migration) does harm when it runs twice. A manager treats a PPM-started turn as a status ask. The server adds the provenance
   reason `restart` only to a message to a manager whose project has chats listed in the news that
   wake turn carries (cut off, or with background work stopped), and puts those chats' session ids in
   the block (`restartChats`, at most 60, written from the news by `restartChatsCarried`, never from
   the Assistant's text; `restart` without the ids is refused on decode). Any other
   message of that turn reads as a plain status ask. The manager rules allow one thing on it: tell
   only the chats listed in the provenance block to carry on with their own task
-  (`manager-context-entry.ts`). Messages to those same managers pass quiet hours in the urgent turn
+  (`manager-context-entry.ts`), with the same three rules for background work. Messages to those same managers pass quiet hours in the urgent turn
   (`assistantQuietNow` in `assistant-send-guards-live.ts`); every other message still waits, and the
   hourly and daily budgets and the pair limit still apply.
 - **e2e.** `tests/e2e/assistant-restart-news-e2e.mjs` restarts the Assistant fixture on one PPM
