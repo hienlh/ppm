@@ -1086,8 +1086,9 @@ subagent's. The manager rules tell the manager not to report on a child's say-so
 ### Restart news
 
 After every server start (upgrade, health-check kill, crash, `ppm restart`, machine boot) the main
-Assistant session gets one wake turn saying what restarted and which chats were cut off mid-turn,
-so it can have each project's manager chat resume them. Code in `src/services/restart-news/`.
+Assistant session gets one wake turn saying what restarted, which chats were cut off mid-turn and
+which chats between turns had their background work stopped, so it can have each project's manager
+chat resume them. Code in `src/services/restart-news/`.
 
 - **Why it started.** The supervisor decides at every spawn and hands it to the server as
   `PPM_START_REASON` (`boot | upgrade | manual | watchdog | recycle | crash | unknown`) plus
@@ -1126,6 +1127,20 @@ so it can have each project's manager chat resume them. Code in `src/services/re
   title, provider, the turn's first prompt line, what it was last doing, an approval it was waiting on
   (`approval_request` with no `approval_resolved`), how many cards about it were open, whether it is
   its project's manager and the chat that opened it (`spawned_by`). At most 30 are listed.
+- **Chats whose background work stopped** (`background-work-chats.ts`): a chat between turns can
+  still have a `run_in_background` shell, a backgrounded agent, a Monitor or an agent woken by
+  `SendMessage` running in its CLI. PPM tracks that only in memory (`hasBackgroundWork`), and on
+  Windows nothing runs on the way down, so it is read back from the trace: a `task_started` in the
+  previous run with no terminal `task_updated`/`task_notification` and no `run_closed`, `run_failed`
+  or `turn_aborted` after it (each closes the CLI). Same filters and cap as the cut-off list, and a
+  chat already listed there is not listed again (across two restarts, the later one's entry wins).
+  Each chat carries up to 5 tasks with the tool, what it was for — or, only when nothing says, its
+  command's first line with credentials taken out (`background-command-text.ts`: `-p…`, `user:pass`,
+  `--password`, `*_TOKEN=`, `Authorization:` on top of the log redaction) — and when it started,
+  plus what became of it: `alive` when its `<claude temp>/<folder>/<session>/tasks/<task>.output` was written after
+  the restart (`task-output-file.ts`; asked again when the news goes out), `stopped` for work that
+  ran inside the CLI (agents), `unknown` otherwise — the shell ended with the server, but what it
+  started outside PPM (a container, a detached process) may still run.
 - **Delivery.** `startRestartNews()` runs in the hub startup before the cards start the wake queue
   and adds this start to the `restart` wake source (`restart-news-source.ts`, config row
   `assistant_restart_news`, so a crash before delivery keeps it). The first run a database ever
@@ -1135,26 +1150,33 @@ so it can have each project's manager chat resume them. Code in `src/services/re
   Assistant, the hourly cap, no main session yet): one deleted since, or with a trace row after the
   restart that found it, is dropped, and urgency is worked out from what is left. A restart pending
   for more than 24 h is dropped with a log line (`RESTART_NEWS_MAX_AGE_MS`). It is urgent — passes quiet hours — only when a chat was cut off
-  (`RESTART_NEWS_URGENT_WHEN` in `assistant-limits.ts`). Settings → PPM Assistant → Digest & quiet
+  or had its background work stopped (`RESTART_NEWS_URGENT_WHEN` in `assistant-limits.ts`). Settings → PPM Assistant → Digest & quiet
   hours → Restarts ("Tell the Assistant after PPM restarts", `restart_news`, default on) gates the
   news only — switching it off also drops news already waiting — and the run log is always written. Nothing goes to Telegram directly.
 - **What the Assistant does.** The entry (`restart-news-text.ts`) lists the restarts, then the steps,
-  then the cut-off chats by project with manager first and the chats it opened under it (the steps
-  come before the list so the 14,000-character cap cuts chats, never the steps), and asks for one card-free
-  message per affected manager naming its cut-off chats, and a line to the user for projects with no
-  manager. A manager treats a PPM-started turn as a status ask. The server adds the provenance
-  reason `restart` only to a message to a manager whose project has cut-off chats in the news that
-  wake turn carries, and puts those chats' session ids in the block (`restartChats`, written from the
-  news, never from the Assistant's text; `restart` without the ids is refused on decode). Any other
+  then the cut-off chats and then the chats whose background work stopped, each by project with
+  manager first and the chats it opened under it (the steps come before the lists so the
+  14,000-character cap cuts chats, never the steps), and asks for one card-free message per affected
+  manager naming its listed chats, and a line to the user for projects with no manager. For
+  background work the state decides: `stopped` may be started again if still needed, `alive` is only
+  checked on, and `unknown` is never started again until the user says so — the manager reports
+  `needs_decision` first, naming the task and that it may still run outside PPM, because some work
+  (a deploy, a migration) does harm when it runs twice. A manager treats a PPM-started turn as a status ask. The server adds the provenance
+  reason `restart` only to a message to a manager whose project has chats listed in the news that
+  wake turn carries (cut off, or with background work stopped), and puts those chats' session ids in
+  the block (`restartChats`, at most 60, written from the news by `restartChatsCarried`, never from
+  the Assistant's text; `restart` without the ids is refused on decode). Any other
   message of that turn reads as a plain status ask. The manager rules allow one thing on it: tell
   only the chats listed in the provenance block to carry on with their own task
-  (`manager-context-entry.ts`). Messages to those same managers pass quiet hours in the urgent turn
+  (`manager-context-entry.ts`), with the same three rules for background work. Messages to those same managers pass quiet hours in the urgent turn
   (`assistantQuietNow` in `assistant-send-guards-live.ts`); every other message still waits, and the
   hourly and daily budgets and the pair limit still apply.
 - **e2e.** `tests/e2e/assistant-restart-news-e2e.mjs` restarts the Assistant fixture on one PPM
   folder (SIGKILL for a crash, SIGTERM for a clean stop, `PPM_START_REASON` as the supervisor sets
   it) and checks crash, upgrade, watchdog and manual news, the switch, quiet hours and the merge,
-  then the Settings switch on a desktop and a phone. The fixture side is
+  a chat between turns with two background tasks (one still writing its output), then the Settings
+  switch on a desktop and a phone. The scripted provider's `background` op reports a task the way the
+  Claude provider does. The fixture side is
   `tests/e2e/fixtures/assistant-restart-news-fixture.ts`. Run it in the capped `ppm-e2e-chromium`
   image with `PPM_ASSISTANT_WEB_DIR` and `PPM_RESTART_NEWS_SHOTS` set.
 

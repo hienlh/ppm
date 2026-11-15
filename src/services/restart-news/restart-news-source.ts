@@ -1,13 +1,17 @@
 import { createLogger } from "../logger.ts";
 import { RESTART_NEWS_MAX_RESTARTS, RESTART_NEWS_URGENT_WHEN } from "../../shared/assistant-limits.ts";
-import { parseRestartNews, type InterruptedChat, type RestartEntry, type RestartNewsPayload } from "../../shared/restart-news.ts";
+import {
+  parseRestartNews, type BackgroundWorkChat, type InterruptedChat, type RestartEntry, type RestartNewsPayload,
+} from "../../shared/restart-news.ts";
 import type { AssistantWakeQueue, WakeItem, WakeSource } from "../assistant-wake/assistant-wake-queue.ts";
 import type { InterruptedScan } from "./interrupted-chats.ts";
+import { refreshTaskStates, type BackgroundScan } from "./background-work-chats.ts";
+import type { TaskOutputProbe } from "./task-output-file.ts";
 
 /**
  * The wake queue's restart source: one news item for the main Assistant session holding every
- * restart it has not been told of yet. Each server start adds its restart and the chats it cut
- * off; restarts that come before the news goes out merge into the same item. Kept in a config row
+ * restart it has not been told of yet. Each server start adds its restart, the chats it cut off,
+ * and the chats between turns whose background work it stopped; restarts that come before the news goes out merge into the same item. Kept in a config row
  * (not memory), because the restart that most needs telling about — a crash — would otherwise take
  * the news with it.
  */
@@ -22,15 +26,20 @@ interface PendingNews {
   restarts: RestartEntry[];
   chats: InterruptedChat[];
   moreChats: number;
+  background: BackgroundWorkChat[];
+  moreBackground: number;
   attempts: number;
 }
+
+/** Either list's chat: what the re-check and the expiry read. */
+type ListedChat = Pick<InterruptedChat, "sessionId" | "restartAt">;
 
 export interface RestartNewsStore {
   load(): string | null;
   save(json: string): void;
 }
 
-const EMPTY: PendingNews = { restarts: [], chats: [], moreChats: 0, attempts: 0 };
+const EMPTY: PendingNews = { restarts: [], chats: [], moreChats: 0, background: [], moreBackground: 0, attempts: 0 };
 
 function read(store: RestartNewsStore): PendingNews {
   try {
@@ -40,7 +49,10 @@ function read(store: RestartNewsStore): PendingNews {
     const payload = Array.isArray(raw.restarts) && raw.restarts.length ? parseRestartNews(raw) : null;
     if (!payload) return { ...EMPTY };
     const attempts = typeof raw.attempts === "number" && Number.isInteger(raw.attempts) ? raw.attempts : 0;
-    return { restarts: payload.restarts, chats: payload.chats, moreChats: payload.moreChats ?? 0, attempts };
+    return {
+      restarts: payload.restarts, chats: payload.chats, moreChats: payload.moreChats ?? 0,
+      background: payload.backgroundChats ?? [], moreBackground: payload.moreBackgroundChats ?? 0, attempts,
+    };
   } catch {
     return { ...EMPTY };
   }
@@ -51,24 +63,40 @@ function write(store: RestartNewsStore, news: PendingNews): void {
     store.save(JSON.stringify({ version: 1, restarts: [], chats: [] }));
     return;
   }
-  store.save(JSON.stringify({
-    version: 1, restarts: news.restarts, chats: news.chats,
-    ...(news.moreChats ? { moreChats: news.moreChats } : {}), attempts: news.attempts,
-  }));
+  store.save(JSON.stringify({ version: 1, ...payloadOf(news), attempts: news.attempts }));
 }
 
-/** Whether news holding these chats starts a turn in quiet hours. */
-export function restartNewsUrgent(chats: readonly InterruptedChat[], moreChats = 0): boolean {
+function payloadOf(news: PendingNews): RestartNewsPayload {
+  return {
+    restarts: news.restarts, chats: news.chats,
+    ...(news.moreChats ? { moreChats: news.moreChats } : {}),
+    ...(news.background.length ? { backgroundChats: news.background } : {}),
+    ...(news.moreBackground ? { moreBackgroundChats: news.moreBackground } : {}),
+  };
+}
+
+/**
+ * Whether news holding these chats starts a turn in quiet hours: any chat to get going again, cut
+ * off mid-turn or with its background work stopped, makes it urgent.
+ */
+export function restartNewsUrgent(chats: readonly InterruptedChat[], moreChats = 0, backgroundChats = 0): boolean {
   if (RESTART_NEWS_URGENT_WHEN === "always") return true;
   if (RESTART_NEWS_URGENT_WHEN === "never") return false;
-  return chats.length + moreChats > 0;
+  return chats.length + moreChats + backgroundChats > 0;
+}
+
+/** One entry per session id, the newer one winning, newest first. */
+function mergeChats<T extends { sessionId: string; lastAt: number }>(older: readonly T[], newer: readonly T[]): T[] {
+  const byId = new Map(older.map((c) => [c.sessionId, c]));
+  for (const c of newer) byId.set(c.sessionId, c);
+  return [...byId.values()].sort((a, b) => b.lastAt - a.lastAt);
 }
 
 /**
  * Adds one server start to the pending news. A start already recorded (the hub started twice in
  * one process) changes nothing. A chat cut off again replaces its older entry.
  */
-export function addRestartNews(store: RestartNewsStore, restart: RestartEntry, scan: InterruptedScan): void {
+export function addRestartNews(store: RestartNewsStore, restart: RestartEntry, scan: InterruptedScan, background: BackgroundScan = { chats: [], more: 0 }): void {
   const news = read(store);
   if (news.restarts.some((r) => r.at === restart.at)) return;
   // A self-replace that failed after its new version briefly ran: that run's "upgraded" line is
@@ -77,34 +105,43 @@ export function addRestartNews(store: RestartNewsStore, restart: RestartEntry, s
   const superseded = (r: RestartEntry) => !!restart.upgradeFailed && r.kind === "upgrade" && !r.upgradeFailed
     && !!restart.fromVersion && r.toVersion === restart.fromVersion && r.at < restart.at;
   news.restarts = [...news.restarts.filter((r) => !superseded(r)), restart].sort((a, b) => a.at - b.at).slice(-RESTART_NEWS_MAX_RESTARTS);
-  const byId = new Map(news.chats.map((c) => [c.sessionId, c]));
-  for (const c of scan.chats) byId.set(c.sessionId, c);
-  const chats = [...byId.values()].sort((a, b) => b.lastAt - a.lastAt);
-  news.chats = chats.slice(0, MAX_CHATS_KEPT);
-  news.moreChats += scan.more + Math.max(0, chats.length - MAX_CHATS_KEPT);
+  // A chat in both lists (found by two restarts, say cut off at one and between turns at the next)
+  // is told once, as the later restart found it; one restart never puts a chat in both.
+  const cutAll = mergeChats(news.chats, scan.chats);
+  const bgAll = mergeChats(news.background, background.chats);
+  const cutAt = new Map(cutAll.map((c) => [c.sessionId, c.restartAt]));
+  const bgAt = new Map(bgAll.map((c) => [c.sessionId, c.restartAt]));
+  const cut = cutAll.filter((c) => !((bgAt.get(c.sessionId) ?? -Infinity) > c.restartAt));
+  const bg = bgAll.filter((c) => !((cutAt.get(c.sessionId) ?? -Infinity) >= c.restartAt));
+  news.chats = cut.slice(0, MAX_CHATS_KEPT);
+  news.moreChats += scan.more + Math.max(0, cut.length - MAX_CHATS_KEPT);
+  news.background = bg.slice(0, MAX_CHATS_KEPT);
+  news.moreBackground += background.more + Math.max(0, bg.length - MAX_CHATS_KEPT);
   news.attempts = 0;
   write(store, news);
 }
 
 /**
- * The cut-off chats of `projectName` in the restart news that the Assistant session's running wake
- * turn carries, by session id: what a message from that turn to that project's manager may ask to
- * resume. Empty for any other project, and outside such a turn.
+ * The chats of `projectName` in the restart news that the Assistant session's running wake turn
+ * carries, by session id — those cut off mid-turn, then those whose background work stopped: what a
+ * message from that turn to that project's manager may ask to resume or run again. Empty for any
+ * other project, and outside such a turn.
  */
-export function cutOffChatsCarried(
+export function restartChatsCarried(
   queue: Pick<AssistantWakeQueue, "carriedItems">, assistantSessionId: string, projectName: string,
 ): string[] {
-  const ids = queue.carriedItems(assistantSessionId, RESTART_SOURCE_NAME)
-    .flatMap((i) => i.news?.restart?.chats ?? [])
-    .filter((c) => c.projectName === projectName)
-    .map((c) => c.sessionId);
+  const items = queue.carriedItems(assistantSessionId, RESTART_SOURCE_NAME);
+  const ids = [
+    ...items.flatMap((i) => i.news?.restart?.chats ?? []),
+    ...items.flatMap((i) => i.news?.restart?.backgroundChats ?? []),
+  ].filter((c) => c.projectName === projectName).map((c) => c.sessionId);
   return [...new Set(ids)];
 }
 
 /** What is pending, for tests and the log. */
 export function pendingRestartNews(store: RestartNewsStore): RestartNewsPayload | null {
   const news = read(store);
-  return news.restarts.length ? { restarts: news.restarts, chats: news.chats, ...(news.moreChats ? { moreChats: news.moreChats } : {}) } : null;
+  return news.restarts.length ? payloadOf(news) : null;
 }
 
 export interface RestartSourceDeps {
@@ -120,7 +157,12 @@ export interface RestartSourceDeps {
    * the hourly cap, no main session yet), and telling a manager to resume a chat the user already
    * resumed would run the same work twice. Absent: every chat is taken as still cut off.
    */
-  stillCutOff?(chat: InterruptedChat): boolean;
+  stillCutOff?(chat: ListedChat): boolean;
+  /**
+   * A probe for whether a background task's output was written after `since`, built once per
+   * re-check when the news goes out; absent: task states stay as the scan found them.
+   */
+  taskOutputProbe?(): TaskOutputProbe;
   now?(): number;
   /** Settings → PPM Assistant → restart news. Switched off, news already waiting is dropped too. */
   enabled?(): boolean;
@@ -131,21 +173,37 @@ export const RESTART_NEWS_MAX_AGE_MS = 24 * 60 * 60_000;
 
 export function createRestartNewsSource(deps: RestartSourceDeps): WakeSource {
   const now = () => (deps.now ? deps.now() : Date.now());
-  /** The listed chats that still wait; the pending row is rewritten when some no longer do. */
-  const recheck = (news: PendingNews): PendingNews => {
-    if (!deps.stillCutOff || news.chats.length === 0) return news;
-    const still = news.chats.filter((c) => {
+  const waiting = <T extends ListedChat>(list: readonly T[]): T[] => (deps.stillCutOff
+    ? list.filter((c) => {
       try { return deps.stillCutOff!(c); } catch { return true; }
-    });
-    if (still.length === news.chats.length) return news;
-    log.info(`restart news: ${news.chats.length - still.length} listed chat(s) ran again or were deleted since the restart; not telling of them`);
-    // The unlisted count cannot be re-checked, and goes with the last listed chat. The list holds
-    // the most recent cut-off chats; once every one of them has run again the user is back at work,
+    })
+    : [...list]);
+  /**
+   * The listed chats that still wait, with background tasks whose output has been written since the
+   * restart marked alive; the pending row is rewritten when anything changed.
+   */
+  const recheck = (news: PendingNews): PendingNews => {
+    if (news.chats.length + news.background.length + news.moreChats + news.moreBackground === 0) return news;
+    const still = waiting(news.chats);
+    const stillBackground = waiting(news.background);
+    let probe: TaskOutputProbe | null = null;
+    if (deps.taskOutputProbe && stillBackground.some((c) => c.tasks.some((t) => t.state === "unknown"))) {
+      try { probe = deps.taskOutputProbe(); } catch { /* states stay as found */ }
+    }
+    const background = probe ? stillBackground.map((c) => refreshTaskStates(c, probe!)) : stillBackground;
+    const dropped = news.chats.length - still.length + news.background.length - background.length;
+    const orphaned = (!still.length && news.moreChats > 0) || (!background.length && news.moreBackground > 0);
+    if (dropped === 0 && !orphaned && background.every((c, i) => c === news.background[i])) return news;
+    if (dropped) log.info(`restart news: ${dropped} listed chat(s) ran again or were deleted since the restart; not telling of them`);
+    // An unlisted count cannot be re-checked, and goes with the last listed chat of its list. A list
+    // holds the most recent such chats; once every one of them has run again the user is back at work,
     // and a bare count would keep the news urgent (through quiet hours) and tell the Assistant "N more
     // chats were cut off" beside "no chat was cut off" — while no manager message could name them.
     const moreChats = still.length ? news.moreChats : 0;
-    if (news.moreChats && !moreChats) log.info(`restart news: no listed chat still waits; dropping the ${news.moreChats} unlisted one(s) too`);
-    const next = { ...news, chats: still, moreChats };
+    const moreBackground = background.length ? news.moreBackground : 0;
+    const lost = news.moreChats + news.moreBackground - moreChats - moreBackground;
+    if (lost) log.info(`restart news: no listed chat of a list still waits; dropping its ${lost} unlisted one(s) too`);
+    const next = { ...news, chats: still, moreChats, background, moreBackground };
     write(deps.store, next);
     return next;
   };
@@ -170,7 +228,11 @@ export function createRestartNewsSource(deps: RestartSourceDeps): WakeSource {
     if (restarts.length === news.restarts.length) return;
     log.info(`restart news: dropping ${news.restarts.length - restarts.length} restart(s) older than 24 h that the Assistant was never told of`);
     write(deps.store, restarts.length
-      ? { ...news, restarts, chats: news.chats.filter((c) => c.restartAt >= cutoff) }
+      ? {
+        ...news, restarts,
+        chats: news.chats.filter((c) => c.restartAt >= cutoff),
+        background: news.background.filter((c) => c.restartAt >= cutoff),
+      }
       : { ...EMPTY });
   };
   /** Clears what `item` carried: restarts and chats up to its time; anything merged in since stays. */
@@ -180,10 +242,13 @@ export function createRestartNewsSource(deps: RestartSourceDeps): WakeSource {
     const restarts = news.restarts.filter((r) => r.at > upTo);
     // The unlisted count the turn told of is spent; what restarts merged in since added stays.
     const told = items.reduce((n, i) => n + (i.news?.restart?.moreChats ?? 0), 0);
+    const toldBackground = items.reduce((n, i) => n + (i.news?.restart?.moreBackgroundChats ?? 0), 0);
     write(deps.store, {
       restarts,
       chats: restarts.length ? news.chats.filter((c) => c.restartAt > upTo) : [],
       moreChats: restarts.length ? Math.max(0, news.moreChats - told) : 0,
+      background: restarts.length ? news.background.filter((c) => c.restartAt > upTo) : [],
+      moreBackground: restarts.length ? Math.max(0, news.moreBackground - toldBackground) : 0,
       attempts: 0,
     });
   };
@@ -203,21 +268,17 @@ export function createRestartNewsSource(deps: RestartSourceDeps): WakeSource {
       if (stored.restarts.length === 0) return [];
       const news = recheck(stored);
       const at = news.restarts.at(-1)!.at;
-      const projects = new Set(news.chats.map((c) => c.projectName));
+      const projects = new Set([...news.chats, ...news.background].map((c) => c.projectName));
       let managers: Array<{ projectName: string; sessionId: string }> = [];
       try {
         managers = deps.managers().filter((m) => projects.has(m.projectName));
       } catch (e) {
         log.warn(`restart news: the manager chats could not be read: ${(e as Error).message}`);
       }
-      const restart: RestartNewsPayload = {
-        restarts: news.restarts, chats: news.chats,
-        ...(news.moreChats ? { moreChats: news.moreChats } : {}),
-        ...(managers.length ? { managers } : {}),
-      };
+      const restart: RestartNewsPayload = { ...payloadOf(news), ...(managers.length ? { managers } : {}) };
       const key = `restart:${at}`;
       return [{
-        key, at, urgent: restartNewsUrgent(news.chats, news.moreChats),
+        key, at, urgent: restartNewsUrgent(news.chats, news.moreChats, news.background.length + news.moreBackground),
         news: { kind: "restart", key, project: "", sessionId: "", at, restart },
       }];
     },

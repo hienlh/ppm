@@ -32,14 +32,15 @@ export interface AssistantProvenance {
   reason?: string;
   /**
    * With the reason `restart` only, and always with it: the chats of the recipient's project that
-   * PPM's restart news lists as cut off mid-turn, by session id. Written by the server from the
-   * news itself, so the manager resumes exactly these and nothing the Assistant adds.
+   * PPM's restart news lists — cut off mid-turn, or between turns with background work the restart
+   * stopped — by session id. Written by the server from the news itself, so the manager resumes
+   * exactly these and nothing the Assistant adds.
    */
   restartChats?: string[];
 }
 
-/** Cut-off chats one provenance block names at most (the restart news lists at most 30). */
-export const PROVENANCE_RESTART_CHATS_MAX = 30;
+/** Chats one provenance block names at most (the restart news lists at most 30 of each kind). */
+export const PROVENANCE_RESTART_CHATS_MAX = 60;
 const SESSION_ID_RE = /^[\w.:-]{1,200}$/;
 
 export const PROVENANCE_BLOCK_START = "\n\n<ppm-assistant-provenance-v1>\n";

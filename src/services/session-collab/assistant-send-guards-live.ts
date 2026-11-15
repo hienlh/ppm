@@ -13,7 +13,7 @@ import { getAssistantSettings } from "../assistant/assistant-settings.service.ts
 import { assistantBudgetEvents } from "../assistant/assistant-budget-events.ts";
 import { inQuietHours } from "../../shared/assistant-quiet-hours.ts";
 import { assistantWakeQueue, type AssistantWakeQueue } from "../assistant-wake/assistant-wake-queue.ts";
-import { cutOffChatsCarried, RESTART_SOURCE_NAME } from "../restart-news/restart-news-source.ts";
+import { restartChatsCarried, RESTART_SOURCE_NAME } from "../restart-news/restart-news-source.ts";
 import { createAssistantSendGuards } from "./assistant-send-guards.ts";
 
 export const ASSISTANT_BUDGET_STATE_ROW = "assistant_budget_state";
@@ -26,9 +26,10 @@ const managerProject = (manager: string): string | null => {
 
 /**
  * Whether quiet hours hold back this Assistant session's unattended message to `manager`. A restart
- * that cut chats off mid-turn is urgent: the turn telling of it was let through quiet hours to get
- * that work resumed, so its messages to the managers of projects with cut-off chats are too — and
- * only those; any other message of that turn waits like the rest. Budgets still apply.
+ * that cut chats off mid-turn, or stopped a chat's background work, is urgent: the turn telling of it
+ * was let through quiet hours to get that work going again, so its messages to the managers of
+ * projects with such chats are too — and only those; any other message of that turn waits like the
+ * rest. Budgets still apply.
  */
 export function assistantQuietNow(
   assistant: string,
@@ -38,7 +39,7 @@ export function assistantQuietNow(
 ): boolean {
   if (queue.carryingUrgent(assistant, RESTART_SOURCE_NAME)) {
     const project = projectOf(manager);
-    if (project && cutOffChatsCarried(queue, assistant, project).length > 0) return false;
+    if (project && restartChatsCarried(queue, assistant, project).length > 0) return false;
   }
   const settings = getAssistantSettings();
   return inQuietHours(assistantClock.now(), settings.quiet_hours, settings.timezone);

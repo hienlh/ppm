@@ -13,8 +13,9 @@ import { managerChats } from "../assistant-managers/manager-chats.service.ts";
 import { listOpenCardRows } from "../assistant-cards/assistant-cards-db.ts";
 import { parentOf } from "../session-collab/session-links.service.ts";
 import { resolveTraceId } from "../session-trace/session-trace-store.ts";
-import type { InterruptedChat } from "../../shared/restart-news.ts";
-import { findInterruptedChats, tracesWrittenSince, type InterruptedChatDeps, type InterruptedScan } from "./interrupted-chats.ts";
+import { findInterruptedChats, tracesWrittenSince, type InterruptedScan } from "./interrupted-chats.ts";
+import { findBackgroundWorkChats, type BackgroundScan, type BackgroundWorkDeps } from "./background-work-chats.ts";
+import { taskOutputProbe } from "./task-output-file.ts";
 import type { ServerStart } from "./server-run-log.ts";
 import { currentServerStart } from "./restart-news-run.ts";
 import { addRestartNews, createRestartNewsSource, RESTART_NEWS_ROW, restartNewsUrgent, type RestartNewsStore } from "./restart-news-source.ts";
@@ -22,7 +23,8 @@ import { addRestartNews, createRestartNewsSource, RESTART_NEWS_ROW, restartNewsU
 /**
  * Restart news in the running server: the Assistant hub's startup turns this server start
  * (recorded at boot by `restart-news-run.ts`) into news for the main Assistant session — why PPM
- * restarted and which chats it cut off — through the one wake queue. The run log is written
+ * restarted, which chats it cut off, and which chats' background work it stopped — through the one
+ * wake queue. The run log is written
  * whatever Settings say; only the news obeys Settings → PPM Assistant → `restart_news`.
  */
 
@@ -40,8 +42,8 @@ const firstOf = <T>(sessionId: string, read: (id: string) => T | null): T | null
   return null;
 };
 
-/** The running server's answers for the scan; open cards are counted once, up front. Exported for tests. */
-export function liveInterruptedChatDeps(): InterruptedChatDeps {
+/** The running server's answers for the scans; open cards are counted once, up front. Exported for tests. */
+export function liveInterruptedChatDeps(): BackgroundWorkDeps {
   const openCards = new Map<string, number>();
   try {
     for (const row of listOpenCardRows()) {
@@ -70,24 +72,46 @@ export function liveInterruptedChatDeps(): InterruptedChatDeps {
       return parent ? resolveMigratedSession(parent) : null;
     },
     openCardsOf: (id) => openCards.get(id) ?? 0,
+    taskOutputWrittenSince: taskOutputProbe(),
   };
+}
+
+/** Both of a start's scans: the chats cut off mid-turn, then the chats between turns whose background work stopped. */
+export interface RestartScans {
+  cutOff: InterruptedScan;
+  background: BackgroundScan;
+}
+
+/** The live scans for `start`; the previous run's start bounds both. */
+function scanLive(start: ServerStart): RestartScans {
+  const deps = liveInterruptedChatDeps();
+  const window = { since: start.previous?.startedAt ?? 0, restartAt: start.run.startedAt };
+  const cutOff = findInterruptedChats(deps, window);
+  let background: BackgroundScan = { chats: [], more: 0 };
+  try {
+    // Every cut-off chat, the unlisted ones too: a chat past the list's cap was still mid-turn.
+    background = findBackgroundWorkChats(deps, window, new Set(cutOff.allIds ?? cutOff.chats.map((c) => c.sessionId)));
+  } catch (e) {
+    log.warn(`could not read which chats' background work the restart stopped: ${(e as Error).message}`);
+  }
+  return { cutOff, background };
 }
 
 export interface RestartNewsStartDeps {
   /** This process's start; the one recorded at boot when absent. */
   start?: ServerStart | null;
-  scan?: (start: ServerStart) => InterruptedScan;
+  scan?: (start: ServerStart) => RestartScans;
   enabled?: () => boolean;
   store?: RestartNewsStore;
   mainSession?: () => string | null;
-  stillCutOff?: (chat: InterruptedChat) => boolean;
+  stillCutOff?: (chat: { sessionId: string; restartAt: number }) => boolean;
 }
 
 /**
  * Whether a chat the news lists is still waiting when the news goes out: this database still knows
  * it (it was not deleted), and none of the traces it went by has a row since the restart that found it.
  */
-function stillCutOffLive(chat: InterruptedChat): boolean {
+function stillCutOffLive(chat: { sessionId: string; restartAt: number }): boolean {
   if (firstOf(chat.sessionId, getSessionProjectPath) === null) return false;
   const traceIds = [...new Set(sessionIdAliases(chat.sessionId).map(resolveTraceId))];
   return !tracesWrittenSince(getTraceDb(), traceIds, chat.restartAt);
@@ -114,6 +138,7 @@ export function startRestartNews(deps: RestartNewsStartDeps = {}): void {
       canonical: resolveMigratedSession,
       managers: () => managerChats.list().map((r) => ({ projectName: r.projectName, sessionId: resolveMigratedSession(r.sessionId) })),
       stillCutOff: deps.stillCutOff ?? stillCutOffLive,
+      taskOutputProbe: () => taskOutputProbe(),
       enabled: deps.enabled ?? (() => getAssistantSettings().restart_news),
     }));
   }
@@ -132,18 +157,20 @@ function queueStart(start: ServerStart, store: RestartNewsStore, deps: RestartNe
     log.info("restart news is switched off: the Assistant is not told of this restart");
     return;
   }
-  let scan: InterruptedScan = { chats: [], more: 0 };
+  let scans: RestartScans = { cutOff: { chats: [], more: 0 }, background: { chats: [], more: 0 } };
   try {
-    // The previous run's start bounds the scan: an older unfinished turn is not this restart's doing.
-    const read = deps.scan ?? ((s: ServerStart) => findInterruptedChats(liveInterruptedChatDeps(), { since: s.previous?.startedAt ?? 0, restartAt: s.run.startedAt }));
-    scan = read(start);
+    // The previous run's start bounds the scans: older unfinished work is not this restart's doing.
+    scans = (deps.scan ?? scanLive)(start);
   } catch (e) {
     log.warn(`could not read which chats the restart cut off: ${(e as Error).message}`);
   }
   try {
-    addRestartNews(store, start.restart, scan);
-    const n = scan.chats.length + scan.more;
-    log.info(`restart news queued: ${start.restart.kind}, ${n} chat(s) cut off${restartNewsUrgent(scan.chats, scan.more) ? " (urgent)" : ""}`);
+    const { cutOff, background } = scans;
+    addRestartNews(store, start.restart, cutOff, background);
+    const n = cutOff.chats.length + cutOff.more;
+    const bg = background.chats.length + background.more;
+    const urgent = restartNewsUrgent(cutOff.chats, cutOff.more, bg);
+    log.info(`restart news queued: ${start.restart.kind}, ${n} chat(s) cut off, ${bg} chat(s) with background work stopped${urgent ? " (urgent)" : ""}`);
   } catch (e) {
     log.warn(`could not queue the restart news: ${(e as Error).message}`);
   }

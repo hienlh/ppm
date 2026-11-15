@@ -28,7 +28,7 @@ const TURN_END_TYPES = new Set(["done", "run_failed", "error", "turn_aborted", "
  * Every other origin (the browser's `ws`, `telegram`, `schedule`, `scheduler`, `jira`, `session`,
  * the Assistant's own sends, a provider's continuation) is a chat a person or PPM was driving.
  */
-const NOT_RESUMABLE_ORIGINS = new Set(["proxy", "browser", "cli", "extension"]);
+export const NOT_RESUMABLE_ORIGINS: ReadonlySet<string> = new Set(["proxy", "browser", "cli", "extension"]);
 
 /** Most chats listed by name; the rest are counted. */
 export const MAX_INTERRUPTED_LISTED = 30;
@@ -44,7 +44,7 @@ const CANDIDATES_SQL = `
   LIMIT 500`;
 
 /** The trace's newest row of any kind but a browser's, on the primary key. */
-const NEWEST_SQL = `
+export const NEWEST_SQL = `
   SELECT ts FROM session_events WHERE trace_id = ? AND source <> 'browser' ORDER BY seq DESC LIMIT 1`;
 
 /**
@@ -107,6 +107,8 @@ export interface InterruptedScan {
   chats: InterruptedChat[];
   /** Cut-off chats past {@link MAX_INTERRUPTED_LISTED}. */
   more: number;
+  /** Every cut-off chat found, listed or not: what the background-work scan leaves to this list. */
+  allIds?: string[];
 }
 
 /**
@@ -115,9 +117,9 @@ export interface InterruptedScan {
  * Assistant needs them to say which chat is which.
  */
 const ONLY_SECRETS = { home: false, email: false, chats: false } as const;
-const withoutSecrets = (text: string | null): string | null => (text ? redactLogText(text, ONLY_SECRETS) : text);
+export const withoutSecrets = (text: string | null): string | null => (text ? redactLogText(text, ONLY_SECRETS) : text);
 
-const firstLine = (text: string | null, max: number): string | undefined => {
+export const firstLine = (text: string | null, max: number): string | undefined => {
   const line = (text ?? "").split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0);
   if (!line) return undefined;
   const chars = Array.from(line);
@@ -167,6 +169,20 @@ export function cutOffTurn(rows: readonly TurnRow[]): { prompt?: string; activit
 }
 
 /**
+ * A chat's title as the chat list shows it: a renamed chat's title, else its own first prompt,
+ * else `fallback` (the cut-off turn's prompt), else its id.
+ */
+export function chatTitleReader(deps: Pick<InterruptedChatDeps, "traceDb" | "titleOf">): (traceId: string, sessionId: string, fallback?: string) => string {
+  const firstPromptQ = deps.traceDb.query(FIRST_PROMPT_SQL);
+  return (traceId, sessionId, fallback) => {
+    const renamed = firstLine(deps.titleOf(sessionId), 120);
+    if (renamed) return renamed;
+    const first = (firstPromptQ.get(traceId) as { text: string | null } | null)?.text ?? null;
+    return firstLine(withoutSecrets(first), 120) ?? fallback ?? `Session ${sessionId.slice(0, 8)}`;
+  };
+}
+
+/**
  * Whether any of these traces has a row (other than a browser's) written at or after `since`: a
  * chat listed as cut off that has done this has been taken up again since the news was written.
  */
@@ -188,14 +204,7 @@ export function findInterruptedChats(deps: InterruptedChatDeps, window: { since:
   const candidates = db.query(CANDIDATES_SQL).all(since, window.restartAt) as Array<{ trace_id: string; last_ts: number }>;
   const newestQ = db.query(NEWEST_SQL);
   const turnQ = db.query(TURN_ROWS_SQL);
-  const firstPromptQ = db.query(FIRST_PROMPT_SQL);
-  /** A renamed chat's title, else its own first prompt, else the cut-off turn's, else its id. */
-  const titleFor = (traceId: string, sessionId: string, turnPrompt: string | undefined): string => {
-    const renamed = firstLine(deps.titleOf(sessionId), 120);
-    if (renamed) return renamed;
-    const first = (firstPromptQ.get(traceId) as { text: string | null } | null)?.text ?? null;
-    return firstLine(withoutSecrets(first), 120) ?? turnPrompt ?? `Session ${sessionId.slice(0, 8)}`;
-  };
+  const titleFor = chatTitleReader(deps);
   const found: InterruptedChat[] = [];
   const seen = new Set<string>();
   for (const c of candidates) {
@@ -230,5 +239,8 @@ export function findInterruptedChats(deps: InterruptedChatDeps, window: { since:
     });
   }
   found.sort((a, b) => b.lastAt - a.lastAt);
-  return { chats: found.slice(0, MAX_INTERRUPTED_LISTED), more: Math.max(0, found.length - MAX_INTERRUPTED_LISTED) };
+  return {
+    chats: found.slice(0, MAX_INTERRUPTED_LISTED), more: Math.max(0, found.length - MAX_INTERRUPTED_LISTED),
+    allIds: found.map((c) => c.sessionId),
+  };
 }
