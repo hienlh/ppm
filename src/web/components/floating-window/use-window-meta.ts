@@ -33,7 +33,25 @@ export interface WindowMeta extends WindowChromeIdentity {
   filled: boolean;
 }
 
-const tone = (token: string) => `var(--color-${token})`;
+/**
+ * The runtime theme variable behind each Tailwind colour name. Not `var(--color-<token>)`: those
+ * are `@theme inline`, so Tailwind emits one only when something it scans spells it out, and
+ * `--color-accent-2`, `--color-info`, `--color-text-2`, `--color-text-3` never were — those
+ * tiles drew no colour at all. Same mapping as the `@theme inline` block in globals.css.
+ */
+const TONE_VARS: Record<string, string> = {
+  primary: "--accent",
+  accent: "--panel-2",
+  "accent-2": "--accent-2",
+  success: "--success",
+  warning: "--warning",
+  error: "--error",
+  info: "--info",
+  "text-2": "--text-2",
+  "text-3": "--text-3",
+};
+
+const tone = (token: string) => `var(${TONE_VARS[token]})`;
 
 /** The colours a design can be given; a design keeps the one its slug hashes to. */
 const DESIGN_TONES = ["primary", "accent-2", "success", "warning", "error", "info"].map(tone);
