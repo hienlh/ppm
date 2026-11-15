@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.1] - 2026-11-15
+
+### Fixed
+
+- **Every chat's waiting approval or question now reaches you**: it shows in the Assistant's Waiting on you and on Telegram with its expiry time, can be answered from Telegram where that is allowed, and a line says when it expired.
+
 ## [0.26.0] - 2026-11-15
 
 ### Added
