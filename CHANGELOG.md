@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.25.9] - 2026-11-15
+
+### Added
+
+- **Open a Design chat from any chat**: `create_session` takes a design, and `send_to_session` reaches Design chats; the Design tab shows those messages live.
+- **`design_screenshot`** photographs a design's variants, and a manager's card can carry them, sent to Telegram as photos.
+- **A manager's answer to your card reply comes back where you replied**, under the card on Telegram or in PPM, even while Telegram is quiet.
+
+### Changed
+
+- **A card reply that asks a question or rests on a wrong assumption is not an OK**: every manager answers it and asks again with a new card.
+
 ## [0.25.8] - 2026-11-15
 
 ### Added
