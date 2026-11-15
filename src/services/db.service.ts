@@ -10,12 +10,13 @@ import type { DbType } from "../shared/db-types.ts";
 import type { StoredConnectionConfig } from "../shared/db-connection-config.ts";
 import { createLogger } from "./logger.ts";
 import { widenCheckConstraint } from "./db-widen-check-constraint.ts";
+import { applyPpmTasksSchema } from "./ppm-tasks/ppm-tasks-schema.ts";
 
 const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 73;
+export const CURRENT_SCHEMA_VERSION = 74;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1608,6 +1609,14 @@ export function runMigrations(database: Database): void {
     `);
     database.exec(`CREATE INDEX IF NOT EXISTS idx_vault_items_tier ON vault_items(tier)`);
     database.exec(`PRAGMA user_version = 73;`);
+  }
+
+  if (current < 74) {
+    // PPM Tasks (`src/services/ppm-tasks/`): the per-project task store, its statuses, members,
+    // custom fields, links, link-state cache, handed-off work checks and history. Only adds
+    // tables; projects that already have a manager chat get the store switched on.
+    applyPpmTasksSchema(database);
+    database.exec(`PRAGMA user_version = 74;`);
   }
 }
 

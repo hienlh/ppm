@@ -1333,6 +1333,13 @@ if (process.argv.includes("__serve__")) {
         console.error("[assistant-telegram] Startup error:", e);
       });
 
+    // PPM Tasks: daily history compaction (the store itself needs no startup)
+    import("../services/ppm-tasks/ppm-tasks-startup.ts")
+      .then(({ startPpmTasks }) => startPpmTasks())
+      .catch((e) => {
+        console.error("[ppm-tasks] Startup error:", e);
+      });
+
     // Start Jira watchers (non-blocking, cleanup on exit)
     import("../services/jira-watcher.service.ts")
       .then(({ jiraWatcherService }) => {
