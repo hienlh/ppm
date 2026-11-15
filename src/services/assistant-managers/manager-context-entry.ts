@@ -36,13 +36,15 @@ export const MANAGER_USER_ACTION_RULE =
  * answer itself reaches the user: PPM sends the text of the turn the reply opened back to the
  * channel they replied from. The card comes first and the answer last because a one-line
  * acknowledgement after the card ("Card sent.") is what a model writes otherwise, and an answer
- * buried before a tool call is easy to lose.
+ * buried before a tool call is easy to lose. The answer leaves PPM like a report does, so it is
+ * bound by a report's limits: redaction catches secrets, never a client's name or tax figures.
  */
 export const MANAGER_CARD_REPLY_RULE =
   "A reply to a card that asks a question (\"…nhỉ\", \"…không\", \"?\", \"right?\") or rests on an assumption the facts "
   + "or numbers contradict is NOT an OK: do nothing yet. First ask again with a new needs_decision card; then answer the "
   + "question and correct the assumption with the numbers as the last thing you write in this turn, with no tool call "
-  + "after it (PPM sends that answer back to where the user replied). Act only on a plain yes to that new card.";
+  + "after it. PPM sends that answer to where the user replied, often their phone on Telegram: keep it to a few lines, "
+  + "with the same limits as a report (no client personal or tax data, use ticket ids). Act only on a plain yes to that new card.";
 
 /** The fixed part: the chat's role, who may authorize what, and how to report. */
 export function buildManagerBlock(projectName: string): string {

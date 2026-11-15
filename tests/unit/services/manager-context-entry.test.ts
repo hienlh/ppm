@@ -67,6 +67,9 @@ describe("managerContextEntry", () => {
     expect(MANAGER_CARD_REPLY_RULE).toContain("as the last thing you write in this turn, with no tool call after it");
     expect(MANAGER_CARD_REPLY_RULE.indexOf("First ask again with a new needs_decision card"))
       .toBeLessThan(MANAGER_CARD_REPLY_RULE.indexOf("answer the question"));
+    // The answer goes to the phone, so it is held to a report's limits.
+    expect(MANAGER_CARD_REPLY_RULE).toContain("often their phone on Telegram: keep it to a few lines");
+    expect(MANAGER_CARD_REPLY_RULE).toContain("same limits as a report (no client personal or tax data, use ticket ids)");
     // Global, whatever the project and whatever its own rules file says (or leaves out).
     for (const [name, rules] of [["nxsys", "- rule"], ["ppm", ""], ["culi", DEFAULT_MANAGER_RULES_TEMPLATE]] as const) {
       expect(managerContextEntry(name, rules, rules)).toContain(MANAGER_CARD_REPLY_RULE);
