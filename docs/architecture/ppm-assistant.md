@@ -1262,10 +1262,15 @@ first `QUOTE_MAX_LINES` lines. It goes as the message's `ppm-reply-v1` block, af
 words and labelled data only, through `sendUserMessage`'s `replyTo`, which only a `telegram`
 message may carry and only for the chat it is sent to. The old text is old content, so its block
 markers are broken, its `<ppm-…>` tags defused and the user-words header marked as quoted before
-it is quoted. A message the user forwarded or sent through an inline bot is quoted as someone
-else's, and a quote of a card or of such a message (`OUTSIDE_QUOTE_PREFIXES` on the block's
-`messageId`) marks the turn `forwarded` in its provenance, like a forwarded message does; a quote
-of the Assistant's own message or the user's does not. A burst of messages answers at most one
+it is quoted, and each of its lines is prefixed `> ` so none passes for the quote's own header. A
+bot message counts as the Assistant's own words only when the mirror recorded it as an answer of
+the chat's current session from a turn that stayed trusted (`assistant-telegram-own-answers.ts`,
+in memory); every other bot message — a watch report, another chat's card, a notice, a list, an
+answer PPM no longer remembers — is quoted as text relayed from elsewhere. Such quotes, cards and
+messages the user forwarded or sent through an inline bot (`OUTSIDE_QUOTE_PREFIXES` on the block's
+`messageId`) mark the turn `forwarded` in its provenance, as does any reply, in PPM too, whose quote
+holds a forwarded part; a message typed through an inline bot is itself wrapped like a forward. A
+file's name is quoted as coming from the file, never from the user. A burst of messages answers at most one
 message: a reply to another one sends what was gathered first. A card with no manager chat (a
 digest — its items — a rules or budget card) still sends its reply to the Assistant, now with the
 card quoted; a reply to a card that waited while PPM was off keeps its quote for when *Run* sends it.

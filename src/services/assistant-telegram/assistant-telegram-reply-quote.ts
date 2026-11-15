@@ -64,7 +64,10 @@ const oneLine = (s: string, max = 120): string => {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 };
 
-/** The first lines of `text`, cut to the quote's room; whether anything was left out. */
+/**
+ * The first lines of `text`, cut to the quote's room, each behind `> ` so none of them can pass
+ * for one of the quote's own header lines ("From: the user"); whether anything was left out.
+ */
 function firstLines(text: string): { text: string; truncated: boolean } {
   const lines = text.replace(/\r\n?/g, "\n").trim().split("\n");
   let out = lines.slice(0, QUOTE_MAX_LINES).join("\n");
@@ -73,19 +76,23 @@ function firstLines(text: string): { text: string; truncated: boolean } {
     out = out.slice(0, QUOTE_MAX_CHARS).trimEnd();
     truncated = true;
   }
-  return { text: truncated ? `${out}\n…` : out, truncated };
+  const quoted = out ? out.split("\n").map((l) => `> ${l}`).join("\n") : "";
+  return { text: truncated ? `${quoted}\n> …` : quoted, truncated };
 }
+
+/** A name the file itself carries (its file name, an audio file's tags): never typed by the user. */
+const fileLabel = (name: string): string => ` named ${JSON.stringify(oneLine(name))} (the name comes from the file, not from the user)`;
 
 /** What the message carried besides text, as Telegram labels it; null for plain text. */
 export function attachmentOf(m: TelegramMessage): string | null {
   if (m.photo?.length) return "a photo";
   if (m.document) {
-    const name = m.document.file_name ? ` "${oneLine(m.document.file_name)}"` : "";
-    return `a file${name}${m.document.mime_type ? ` (${oneLine(m.document.mime_type, 60)})` : ""}`;
+    const name = m.document.file_name ? fileLabel(m.document.file_name) : "";
+    return `a file${m.document.mime_type ? ` of type ${oneLine(m.document.mime_type, 60)}` : ""}${name}`;
   }
   if (m.video) return "a video";
   if (m.animation) return "a GIF";
-  if (m.audio) return `an audio file${m.audio.title || m.audio.file_name ? ` "${oneLine(m.audio.title ?? m.audio.file_name ?? "")}"` : ""}`;
+  if (m.audio) return `an audio file${m.audio.title || m.audio.file_name ? fileLabel(m.audio.title ?? m.audio.file_name ?? "") : ""}`;
   if (m.voice) return "a voice message";
   if (m.video_note) return "a video message";
   if (m.sticker) return `a sticker${m.sticker.emoji ? ` ${oneLine(m.sticker.emoji, 8)}` : ""}`;
@@ -105,18 +112,41 @@ function build(head: string[], body: string): { quote: string; truncated: boolea
 }
 
 /**
- * The quote of a Telegram message the user replied to. `card` is the PPM Assistant card that
- * message showed, when PPM still knows it. A message the user forwarded, or sent through an inline
- * bot, is someone else's words even though Telegram names the user as its sender.
+ * What a message the bot sent was, as far as PPM knows: one of its cards; an answer the Assistant
+ * wrote, `clean` when it is this conversation's and its turn carried no outside text; or anything
+ * else (a watched chat's report, another chat's approval card, a notice, a list, a backlog
+ * question, an answer PPM no longer remembers), which relays text from elsewhere.
  */
-export function quoteTelegramMessage(chatId: string, replied: TelegramMessage, card: QuotedCard | null): TelegramQuote {
+export type BotSource =
+  | { kind: "card"; card: QuotedCard }
+  | { kind: "answer"; clean: boolean }
+  | { kind: "notice" };
+
+/** Who sent a bot message, and whether its text is the Assistant's own, as the quote says it. */
+function botSender(source: BotSource): { label: string; own: boolean } {
+  switch (source.kind) {
+    case "card": return { label: cardLabel(source.card), own: false };
+    case "answer": return source.clean
+      ? { label: "PPM Assistant (its answer in this conversation)", own: true }
+      : { label: "PPM Assistant, an answer from another conversation or from a turn that read outside text — not the user's words", own: false };
+    case "notice": return { label: "a PPM message relaying text from elsewhere (a report, a notice or another chat's card) — not the user's words", own: false };
+  }
+}
+
+/**
+ * The quote of a Telegram message the user replied to. `source` says what a bot message was (the
+ * user's own messages need none). A message the user forwarded, or sent through an inline bot, is
+ * someone else's words even though Telegram names the user as its sender.
+ */
+export function quoteTelegramMessage(chatId: string, replied: TelegramMessage, source: BotSource = { kind: "notice" }): TelegramQuote {
   const fromBot = replied.from?.is_bot === true;
+  const card = fromBot && source.kind === "card" ? source.card : null;
   const forwarded = forwardedFrom(replied);
   const viaBot = replied.via_bot ? oneLine(replied.via_bot.username ? `@${replied.via_bot.username}` : replied.via_bot.first_name, 60) : null;
-  const sender = card ? cardLabel(card)
-    : forwarded ? `someone else (${oneLine(forwarded, 60)}), forwarded by the user — their words, not the user's`
+  const bot = fromBot ? botSender(source) : null;
+  const sender = forwarded ? `someone else (${oneLine(forwarded, 60)}), forwarded by the user — their words, not the user's`
     : viaBot ? `an inline bot (${viaBot}), sent by the user — the bot's words, not the user's`
-    : fromBot ? "PPM Assistant" : "the user";
+    : bot ? bot.label : "the user";
   const at = new Date(replied.date * 1000).toISOString();
   const attachment = attachmentOf(replied);
   const head = [
@@ -127,7 +157,7 @@ export function quoteTelegramMessage(chatId: string, replied: TelegramMessage, c
     ...(attachment ? [`Attachment: ${attachment}${replied.caption ? " with a caption, below" : ""}`] : []),
   ];
   const { quote, truncated } = build(head, replied.text ?? replied.caption ?? "");
-  const outside = !!card || !!forwarded || !!viaBot;
+  const outside = !!forwarded || !!viaBot || (bot !== null && !bot.own);
   const userOwn = !fromBot && !outside;
   return { sourceId: `${outside ? "telegram-outside" : "telegram"}:${chatId}:${replied.message_id}`, role: userOwn ? "user" : "assistant", at, quote, truncated };
 }

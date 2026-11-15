@@ -26,8 +26,9 @@ import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 import type { BridgeAction, ManagerCardPress } from "./assistant-telegram-actions.ts";
 import type { CardReplyMessage } from "./assistant-telegram-card-replies.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
-import { forwardedFrom, wrapForwarded, backlogQuestion } from "./assistant-telegram-inbound-text.ts";
-import { quoteTelegramMessage, toReplyReference, type QuotedCard, type TelegramQuote } from "./assistant-telegram-reply-quote.ts";
+import { forwardedFrom, wrapForwarded, backlogQuestion, viaInlineBot } from "./assistant-telegram-inbound-text.ts";
+import { quoteTelegramMessage, toReplyReference, type BotSource, type QuotedCard, type TelegramQuote } from "./assistant-telegram-reply-quote.ts";
+import type { AnswerTurn } from "./assistant-telegram-own-answers.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -63,6 +64,10 @@ export interface InboundDeps {
   isCardMessage?: (chatId: string, messageId: number) => boolean;
   /** The card a message of this chat showed, whatever became of it; for the quote of a reply. */
   cardOf?: (chatId: string, messageId: number) => QuotedCard | null;
+  /** The Assistant turn a bot message of this chat was an answer of; null for any other bot message. */
+  answerOf?: (chatId: string, messageId: number) => AnswerTurn | null;
+  /** The session the chat talks to now, for telling this conversation's answers from another's. */
+  boundSessionOf?: (chatId: string) => string | null;
   now?: () => number;
 }
 
@@ -170,7 +175,8 @@ export class AssistantTelegramInbound {
     // Allowed again (reconnected): a later refusal is worth saying once more.
     this.forgetRefusals(chatId);
 
-    const from = forwardedFrom(message);
+    // Text a forward or an inline bot wrote is someone else's, whoever Telegram names as sender.
+    const from = forwardedFrom(message) ?? viaInlineBot(message);
     // A forwarded "/stop" is someone else's text, not the owner's command.
     const command = from ? null : parseCommand(message.text);
     if (command) {
@@ -239,13 +245,16 @@ export class AssistantTelegramInbound {
   private quoteOf(chatId: string, message: TelegramMessage): TelegramQuote | null {
     const replied = message.reply_to_message;
     if (!replied) return null;
-    let card: QuotedCard | null = null;
+    let source: BotSource = { kind: "notice" };
     try {
-      card = this.deps.cardOf?.(chatId, replied.message_id) ?? null;
+      const card = this.deps.cardOf?.(chatId, replied.message_id) ?? null;
+      const answer = card ? null : this.deps.answerOf?.(chatId, replied.message_id) ?? null;
+      if (card) source = { kind: "card", card };
+      else if (answer) source = { kind: "answer", clean: answer.trusted && answer.sessionId === this.deps.boundSessionOf?.(chatId) };
     } catch (e) {
-      log.warn(`Telegram chat ${chatId}: the card of a replied message is unreadable: ${(e as Error).message}`);
+      log.warn(`Telegram chat ${chatId}: what a replied message was is unreadable: ${(e as Error).message}`);
     }
-    return quoteTelegramMessage(chatId, replied, card);
+    return quoteTelegramMessage(chatId, replied, source);
   }
 
   /** Sends what the chat gathered as one message. Runs on the chat's lane. */

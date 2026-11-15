@@ -22,6 +22,7 @@ import { AssistantTelegramWaitNotes, type WaitNotesDeps } from "./assistant-tele
 import { WakeTurnGate } from "./assistant-telegram-wake-gate.ts";
 import { NEWS_OPENER } from "../assistant-wake/wake-news-text.ts";
 import type { TelegramSilence } from "./assistant-telegram-silence.ts";
+import { recordAnswerMessage, renameAnswerSession, type AnswerTurn } from "./assistant-telegram-own-answers.ts";
 
 /** How much of a message typed in PPM is repeated on Telegram. */
 export const MIRRORED_MESSAGE_MAX = 1000;
@@ -47,6 +48,11 @@ export interface MirrorDeps {
   waitNotes?: Omit<WaitNotesDeps, "renderers">;
   /** Whether the user is at PPM; left out, everything goes out with a sound. */
   silence?: TelegramSilence;
+  /**
+   * Whether the session's running turn carries outside text (its provenance). Left out, every turn
+   * is taken to: an answer then never counts as the Assistant's own clean words when quoted.
+   */
+  turnUntrusted?: (sessionId: string) => boolean;
 }
 
 /**
@@ -68,6 +74,8 @@ export class AssistantTelegramMirror {
   private readonly turns = new Map<string, Map<string, TurnRenderer>>();
   private offs: Array<() => void> = [];
   private readonly bound = new Map<string, { at: number; chats: string[] }>();
+  /** The running turn of each session, as its answer messages are recorded (see own-answers). */
+  private readonly answerTurns = new Map<string, AnswerTurn>();
   private readonly wakeGate = new WakeTurnGate();
   private readonly waitNotes: AssistantTelegramWaitNotes;
 
@@ -146,9 +154,11 @@ export class AssistantTelegramMirror {
     let r = byChat.get(chatId);
     if (!r || r.isFinished) {
       const silent = turnSilence(how ? how.silenceOrigin : origin, this.deps.silence);
+      const turn = this.answerTurn(sessionId);
       r = new TurnRenderer({
         queue: this.deps.queue, state: this.deps.state, chatId, origin,
         showToolCalls: this.deps.showToolCalls,
+        onMessage: (messageId) => recordAnswerMessage(chatId, messageId, turn),
         onDelivered: () => this.deps.onTurnDelivered(sessionId),
         ...(this.deps.now ? { now: this.deps.now } : {}),
         ...(silent ? { silent } : {}),
@@ -156,7 +166,26 @@ export class AssistantTelegramMirror {
       byChat.set(chatId, r);
       r.start();
     }
+    this.checkTrust(sessionId);
     return r;
+  }
+
+  private answerTurn(sessionId: string): AnswerTurn {
+    let turn = this.answerTurns.get(sessionId);
+    if (!turn) this.answerTurns.set(sessionId, turn = { sessionId, trusted: true });
+    return turn;
+  }
+
+  /**
+   * Asked as the turn goes, while its provenance exists (it is gone by the time the turn has
+   * ended): once the turn carries outside text, every answer message it sent stops counting as clean.
+   */
+  private checkTrust(sessionId: string): void {
+    const turn = this.answerTurns.get(sessionId);
+    if (!turn?.trusted) return;
+    let untrusted = true;
+    try { untrusted = this.deps.turnUntrusted?.(sessionId) ?? true; } catch { /* unknown: untrusted */ }
+    if (untrusted) turn.trusted = false;
   }
 
   private onUserMessage(p: ChatLifecycleEvents["user_message"]): void {
@@ -200,6 +229,7 @@ export class AssistantTelegramMirror {
       const started = this.liveOrigin(p.sessionId);
       for (const chatId of this.chatsFor(p.sessionId)) this.renderer(p.sessionId, chatId, started ?? "ws", { silenceOrigin: started }).text(ev.content);
     } else if (ev.type === "tool_use" && typeof ev.tool === "string") {
+      this.checkTrust(p.sessionId);
       const live = this.live(p.sessionId);
       for (const r of live) r.tool(ev.tool);
       // A session tool told to wait can sit for minutes with nothing streaming: the draft says so.
@@ -243,11 +273,16 @@ export class AssistantTelegramMirror {
     const footer = turnFooter(p);
     for (const r of this.live(p.sessionId)) r.finish(footer);
     this.turns.delete(p.sessionId);
+    // The final pages go out after this, recorded against the turn as it was judged during it.
+    this.answerTurns.delete(p.sessionId);
   }
 
   private onMigrated(p: ChatLifecycleEvents["migrated"]): void {
     this.wakeGate.rename(p.oldSessionId, p.newSessionId);
     this.waitNotes.renamed(p.oldSessionId, p.newSessionId);
+    renameAnswerSession(p.oldSessionId, p.newSessionId);
+    const turn = this.answerTurns.get(p.oldSessionId);
+    if (turn) { this.answerTurns.delete(p.oldSessionId); this.answerTurns.set(p.newSessionId, turn); }
     const byChat = this.turns.get(p.oldSessionId);
     if (!byChat) return;
     this.turns.delete(p.oldSessionId);

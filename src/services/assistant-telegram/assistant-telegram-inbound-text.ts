@@ -43,6 +43,16 @@ export function forwardedFrom(message: TelegramMessage): string | null {
 }
 
 /**
+ * Who wrote a message sent through an inline bot (`@bot query` in the chat box): the bot did, so
+ * it is someone else's words like a forward; null for a message the user typed.
+ */
+export function viaInlineBot(message: TelegramMessage): string | null {
+  const bot = message.via_bot;
+  if (!bot) return null;
+  return `inline bot ${cleanName(bot.username ? `@${bot.username}` : bot.first_name || "")}`;
+}
+
+/**
  * A forwarded message is someone else's words, passed on as material — not the owner's
  * instruction, whatever it says. It is labelled that way for the model, as content from another
  * chat is.

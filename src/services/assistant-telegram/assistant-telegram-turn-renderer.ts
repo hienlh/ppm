@@ -47,6 +47,8 @@ export interface TurnRendererDeps {
    * exists to make the phone buzz. Left out, nothing is silent.
    */
   silent?: (phase: "draft" | "final") => boolean;
+  /** Every message the turn sent, draft or final page: what a later reply can be told apart by. */
+  onMessage?: (messageId: number) => void;
 }
 
 /** `mcp__ppm-assistant__chat_search` and `ppm_assistant:chat_search` are both `chat_search`. */
@@ -225,6 +227,7 @@ export class TurnRenderer {
     const res = await client.sendMessage(this.deps.chatId, html, silent ? { silent: true } : {});
     if (!res.ok) return outcomeOf(res, this.attempts);
     this.deps.queue.noteSent(this.deps.chatId);
+    this.deps.onMessage?.(res.result.message_id);
     if (remember) {
       this.ids.push(res.result.message_id);
       this.shown.push(html);

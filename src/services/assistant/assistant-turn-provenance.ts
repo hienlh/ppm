@@ -96,6 +96,8 @@ export function createTurnProvenanceTracker(deps: TurnProvenanceDeps) {
       // A reply that quotes a card, or a message someone else wrote, carries their text too: the
       // quote is data, but what the turn then does with it must not count as the user's own ask.
       if (m.origin === "telegram" && decoded.replyTo && quotesOutsideText(decoded.replyTo.messageId)) rec.reasons.add("forwarded");
+      // A reply in PPM quotes a bubble as it was: a Telegram message holding a forward is someone else's text too.
+      if (decoded.replyTo && hasForwardedPart(decoded.replyTo.quote)) rec.reasons.add("forwarded");
       if (m.origin === "telegram" && hasForwardedPart(body)) {
         // Someone else's words: never quoted as the user's opening.
         rec.reasons.add("forwarded");
