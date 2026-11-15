@@ -88,6 +88,9 @@ function parseConflicts(content: string): ConflictRegion[] {
   return regions;
 }
 
+/** The room each conflict's Accept bar is given above its `<<<<<<<` line. */
+const CONFLICT_BAR_HEIGHT = 24;
+
 interface ConflictEditorProps {
   metadata?: Record<string, unknown>;
   tabId?: string;
@@ -104,6 +107,7 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof MonacoType | null>(null);
   const widgetsRef = useRef<MonacoType.editor.IContentWidget[]>([]);
+  const zonesRef = useRef<string[]>([]);
   const decorationsRef = useRef<MonacoType.editor.IEditorDecorationsCollection | null>(null);
 
   // A phone keeps its own wrap answer, and defaults to wrapping.
@@ -167,6 +171,21 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
       editor.removeContentWidget(w);
     }
     widgetsRef.current = [];
+    const oldZones = zonesRef.current;
+    zonesRef.current = [];
+    editor.changeViewZones((acc) => {
+      for (const id of oldZones) acc.removeZone(id);
+      // A content widget takes no room of its own: without a zone above each conflict its
+      // bar was drawn over the code line above, and neighbouring conflicts' bars over each
+      // other. The zone is the room; the widget (which can take clicks) is drawn in it.
+      for (const region of regions) {
+        zonesRef.current.push(acc.addZone({
+          afterLineNumber: region.startLine - 1,
+          heightInPx: CONFLICT_BAR_HEIGHT,
+          domNode: document.createElement("div"),
+        }));
+      }
+    });
 
     // Clear old decorations
     if (decorationsRef.current) {
@@ -213,13 +232,16 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
     for (const region of regions) {
       const widgetId = `conflict-widget-${region.id}`;
 
+      // Monaco sets the widget's own node to `display: block`, so the row is an inner element.
       const domNode = document.createElement("div");
       domNode.className = "conflict-actions";
       domNode.innerHTML =
+        `<div class="conflict-actions-row">` +
         `<span class="conflict-label">Current Change (${escHtml(region.currentLabel || "HEAD")})</span>` +
         `<button class="conflict-btn conflict-btn-current" data-action="current">Accept Current</button>` +
         `<button class="conflict-btn conflict-btn-incoming" data-action="incoming">Accept Incoming</button>` +
-        `<button class="conflict-btn conflict-btn-both" data-action="both">Accept Both</button>`;
+        `<button class="conflict-btn conflict-btn-both" data-action="both">Accept Both</button>` +
+        `</div>`;
 
       domNode.addEventListener("click", (e) => {
         const btn = (e.target as HTMLElement).closest("[data-action]");
@@ -313,7 +335,8 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
         .conflict-marker-line { background: rgba(100, 100, 100, 0.15) !important; font-style: italic; }
         .conflict-glyph-current { background: var(--color-success) !important; }
         .conflict-glyph-incoming { background: var(--color-primary) !important; }
-        .conflict-actions { display: flex; gap: 8px; align-items: center; padding: 2px 0; font-size: 12px; font-family: system-ui; }
+        .conflict-actions { white-space: nowrap; }
+        .conflict-actions-row { display: flex; gap: 8px; align-items: center; height: ${CONFLICT_BAR_HEIGHT}px; font-size: 12px; font-family: system-ui; }
         .conflict-label { color: var(--color-success); font-weight: 600; margin-right: 8px; }
         .conflict-btn { padding: 1px 8px; border-radius: 3px; border: none; cursor: pointer; font-size: 11px; opacity: 0.9; }
         .conflict-btn:hover { opacity: 1; }
