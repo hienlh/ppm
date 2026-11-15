@@ -7,7 +7,7 @@
  * Same component names, same API — behavior adapts automatically.
  */
 import React, { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
-import { CircleIcon } from "@/lib/icons";
+import { RadioDot } from "./radio-dot";
 import * as Radix from "./context-menu";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
@@ -294,7 +294,7 @@ function ContextMenuRadioItem({
   return (
     <BottomSheetItem className={className} onClick={() => onValueChange?.(value)}>
       <span className="flex size-4 shrink-0 items-center justify-center">
-        {active === value && <CircleIcon className="size-2 fill-current" />}
+        {active === value && <RadioDot />}
       </span>
       {children}
     </BottomSheetItem>
