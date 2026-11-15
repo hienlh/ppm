@@ -1,7 +1,7 @@
 /**
  * "Waiting on you": every red count has exactly its cards behind it, in reach. The list follows
  * the card events and refetches when the counts do not describe it. In the Assistant each waiting
- * card is drawn once, whole, in the stream, and a dock above the composer counts them and asks for
+ * card is drawn once, whole, in the stream, and a chip in the footer counts them and asks for
  * a jump to each (the arrows, a press on the dock, a chip's red count, which also moves a filter
  * that hides the card); a filter that hides cards says so. A manager chat's bar shows one card at a
  * time with a pager, opens on a new card, and answers its own reports (not its requests) in place,
@@ -17,7 +17,7 @@ afterAll(uninstallDom);
 const store = await import("../../../src/web/stores/assistant-open-cards-store");
 const { applyOpenCard, countsMatch, orderWaitingCards, useOpenCardsStore, focusWaitingCards } = store;
 const { WaitingCardsBar, WAITING_HIGHLIGHT_MS } = await import("../../../src/web/components/assistant/waiting-cards-bar");
-const { AssistantWaitingDock } = await import("../../../src/web/components/assistant/assistant-waiting-cards");
+const { AssistantWaitingChip } = await import("../../../src/web/components/assistant/assistant-waiting-cards");
 const { focusTarget, useWaitingCardJump } = await import("../../../src/web/components/assistant/use-waiting-card-jump");
 const { jumpToWaitingCard, useWaitingJumpStore } = await import("../../../src/web/stores/assistant-waiting-jump-store");
 const { ManagerChatWaitingCards, managerChatWaitingCards } = await import("../../../src/web/components/assistant/manager-chat-waiting-cards");
@@ -152,26 +152,29 @@ describe("a manager chat's bar", () => {
   });
 });
 
-/** The Assistant's dock plus its jump hook, as the body mounts them. */
+/** The Assistant's chip plus its jump hook, as the body mounts them. */
 function Assistant() {
   const root = useRef<HTMLDivElement>(null);
   useWaitingCardJump(root);
-  return createElement("div", { ref: root }, createElement(AssistantWaitingDock));
+  return createElement("div", { ref: root }, createElement(AssistantWaitingChip));
 }
 const jumpedTo = () => useWaitingJumpStore.getState().request?.cardId ?? null;
 const dock = () => q("[data-waiting-dock]");
+/** The card the chip is on, as its accessible name says (the chip itself shows no title). */
+const onCard = () => q("[data-waiting-go]")?.getAttribute("aria-label") ?? null;
 
 describe("in the Assistant", () => {
-  it("counts every open card in a dock and jumps to each, stepping with the arrows", async () => {
+  it("counts every open card in one footer chip and jumps to each, stepping with the arrows", async () => {
     const a = card({ title: "Ship 0.25.6?" }); const b = card({ projectName: "nxsys", title: "Payroll run" });
     openList = [a, b];
     view = await mount(createElement(Assistant));
     await settle();
     expect(dock()?.getAttribute("data-waiting-count")).toBe("2");
-    expect(dock()?.textContent).toContain("Waiting on you");
-    expect(q("[data-waiting-summary]")?.textContent).toBe("ppm · Ship 0.25.6?");
-    expect(q("[data-waiting-position]")?.textContent).toBe("1/2");
-    // The dock never draws a card: the stream does.
+    expect(dock()?.getAttribute("aria-label")).toBe("Waiting on you");
+    // Simple: an icon, "Waiting", the count and the pager; no card title, no project.
+    expect(dock()?.textContent).toBe("Waiting21/2");
+    expect(onCard()).toBe('Go to "Ship 0.25.6?", waiting on you');
+    // The chip never draws a card: the stream does.
     expect(q("[data-waiting-card]")).toBeNull();
     expect(q("[data-card-actions]")).toBeNull();
     await click(q("[data-waiting-go]"));
@@ -179,14 +182,21 @@ describe("in the Assistant", () => {
     await click(q('button[aria-label="Next waiting card"]'));
     expect(jumpedTo()).toBe(b.id);
     expect(q("[data-waiting-position]")?.textContent).toBe("2/2");
-    expect(q("[data-waiting-summary]")?.textContent).toBe("nxsys · Payroll run");
+    expect(onCard()).toBe('Go to "Payroll run", waiting on you');
     await click(q('button[aria-label="Next waiting card"]'));
     expect(jumpedTo()).toBe(a.id);
     await click(q('button[aria-label="Previous waiting card"]'));
     expect(jumpedTo()).toBe(b.id);
-    // 44 px hit areas below `md`.
-    expect(q("[data-waiting-go]")!.className).toContain("min-h-12");
-    expect(q('button[aria-label="Next waiting card"]')!.className).toContain("size-11");
+    // The footer chips' size, with 44 px hit areas below `md` (an invisible ::after).
+    expect(dock()!.className).toContain("h-7");
+    expect(dock()!.className).toContain("max-md:h-[26px]");
+    expect(q("[data-waiting-go]")!.className).toContain("max-md:after:-inset-y-2.5");
+    for (const label of ["Next waiting card", "Previous waiting card"]) {
+      const step = q(`button[aria-label="${label}"]`)!.className;
+      expect(step).toContain("max-md:size-[22px]");
+      expect(step).toContain("max-md:after:-inset-x-[11px]");
+      expect(step).toContain("max-md:after:-inset-y-[11px]");
+    }
   });
 
   it("has no pager for one card, names a new card without jumping, and says what a filter hides", async () => {
@@ -197,17 +207,18 @@ describe("in the Assistant", () => {
     expect(q("[data-waiting-pager]")).toBeNull();
     const fresh = card({ projectName: "nxsys", title: "Payroll run" });
     await act(async () => { window.dispatchEvent(new CustomEvent("assistant:card", { detail: { card: fresh } })); });
-    expect(q("[data-waiting-summary]")?.textContent).toBe("nxsys · Payroll run");
+    expect(onCard()).toBe('Go to "Payroll run", waiting on you');
     expect(q("[data-waiting-position]")?.textContent).toBe("2/2");
     // The user may be reading: a card arriving does not move the stream.
     expect(jumpedTo()).toBeNull();
     await act(async () => { setAssistantCardFilter("nxsys"); });
     expect(dock()?.getAttribute("data-waiting-count")).toBe("1");
-    expect(q("[data-waiting-elsewhere]")?.textContent).toContain("1 more in other projects");
+    expect(q("[data-waiting-elsewhere]")?.textContent).toBe("+1");
+    expect(q("[data-waiting-elsewhere]")?.getAttribute("aria-label")).toBe("1 more waiting in other projects: show all projects");
     await act(async () => { setAssistantCardFilter("gone"); });
     expect(q("[data-waiting-go]")).toBeNull();
-    expect(q("[data-waiting-elsewhere]")?.textContent).toContain("2 waiting in other projects");
-    await click([...view.container.querySelectorAll("[data-waiting-elsewhere] button")][0]!);
+    expect(q("[data-waiting-elsewhere]")?.textContent).toBe("+2");
+    await click(q("[data-waiting-elsewhere]"));
     expect(useAssistantCardsStore.getState().filter).toBeNull();
   });
 
@@ -225,12 +236,12 @@ describe("in the Assistant", () => {
     await tick();
     expect(useAssistantCardsStore.getState().filter).toBe("ppm");
     expect(jumpedTo()).toBe(ship.id);
-    // The dock names the card the stream landed on.
-    expect(q("[data-waiting-summary]")?.textContent).toBe("ppm · Ship 0.25.6?");
+    // The chip is on the card the stream landed on.
+    expect(onCard()).toBe('Go to "Ship 0.25.6?", waiting on you');
     await act(async () => { setAssistantCardFilter(null); });
     await act(async () => { focusWaitingCards("nxsys"); });
     await tick();
-    expect(q("[data-waiting-summary]")?.textContent).toBe("nxsys · Payroll run");
+    expect(onCard()).toBe('Go to "Payroll run", waiting on you');
     expect(q("[data-waiting-position]")?.textContent).toBe("2/2");
     // Taken once: the press does not linger for the next visit.
     expect(useOpenCardsStore.getState().focus).toBeNull();

@@ -1,7 +1,7 @@
 // "Waiting on you" in the PPM Assistant, end to end at three sizes (1440 desktop, an 800 px
 // floating window, a 390 px phone). Every waiting card is drawn once, whole, at its own place in
-// the stream, with its buttons at its end; a dock above the composer counts them and jumps the
-// stream to each (outlined). A decision the user already answered folds to one line that opens it
+// the stream, with its buttons at its end; one "Waiting" chip in the chat footer's context row
+// counts them and jumps the stream to each (outlined). A decision the user already answered folds to one line that opens it
 // again, read-only. A manager chat still shows its own report in its bar, and the dock and every
 // red count are gone once nothing waits.
 //
@@ -296,14 +296,18 @@ try {
     };
   });
 
-  /** Steps the dock to `card` with its arrows, then presses the dock: the stream lands on it. */
+  /**
+   * Steps the chip to `card` and presses it: the stream lands on it. The chip names no card, so the
+   * card it is on is read from its accessible name.
+   */
   async function jumpTo(v, card) {
     const { body, inStream, press, page: pg } = v;
-    for (let i = 0; i < 5 && !(await body().locator("[data-waiting-summary]").innerText()).includes(card.title); i++) {
+    const go = body().locator("[data-waiting-go]");
+    for (let i = 0; i < 5 && (await go.getAttribute("aria-label")) !== `Go to "${card.title}", waiting on you`; i++) {
       await press(body().locator('button[aria-label="Next waiting card"]'));
       await pg.waitForTimeout(50);
     }
-    await press(body().locator("[data-waiting-go]"));
+    await press(go);
     await body().locator(`[data-waiting-card="${card.id}"][data-highlighted]`).waitFor({ timeout: 5000 });
     await pg.waitForTimeout(700); // the smooth scroll, then the outline fading in (300 ms)
     // The whole card above the dock; a card taller than the stream shows its buttons above it.
@@ -347,7 +351,7 @@ try {
     await shoot("answered-opened");
     await press(line);
     await until(`${size}: folded again`, async () => (await full.count()) === 0, 5000);
-    ok(`${size}: an answered card is one ≥44px line naming title, project, answer and time; it opens read-only with its last line above the dock, and folds again`);
+    ok(`${size}: an answered card is one ≥44px line naming title, project, answer and time; it opens read-only with its last line above the footer, and folds again`);
   }
 
   /** The four shots every size takes, plus the answered card both ways. */
@@ -356,13 +360,36 @@ try {
     await dock().waitFor({ timeout: 30000 });
     assert.equal(await dock().getAttribute("data-waiting-count"), "4");
     await checkStream(v, size);
-    // The dock: right above the composer, the stream at its bottom.
-    const dockBox = await dock().boundingBox();
-    const composerBox = await body().locator("[data-chat-footer]").boundingBox();
-    assert.ok(dockBox.y >= composerBox.y && dockBox.y + dockBox.height <= composerBox.y + composerBox.height, `${size}: the dock sits in the footer, above the composer`);
-    for (const sel of ["[data-waiting-go]", 'button[aria-label="Next waiting card"]', 'button[aria-label="Previous waiting card"]']) {
-      const box = await body().locator(sel).boundingBox();
-      if (size === "390") assert.ok(box.height >= 44 && (sel === "[data-waiting-go]" || box.width >= 44), `390: ${sel} is at least 44px (${box.width}x${box.height})`);
+    // One chip on the left of the footer's context row, the size of the footer's other chips; no
+    // card title and no project on it.
+    assert.equal(await body().locator("[data-chat-context-row] [data-waiting-dock]").count(), 1, `${size}: the chip is in the footer's context row`);
+    assert.equal(await dock().innerText().then((t) => t.replace(/\s+/g, "")), "Waiting41/4", `${size}: the chip says Waiting, the count and n/N only`);
+    const chipH = (await dock().boundingBox()).height;
+    assert.ok(chipH <= 34, `${size}: the chip is footer-chip sized (${chipH}px)`);
+    // Each part answers a press at least 44px across on a phone, and the row's clip cuts none of it.
+    const hits = await dock().evaluate((chip) => {
+      let zone = chip.parentElement;
+      while (zone && getComputedStyle(zone).overflow !== "hidden" && getComputedStyle(zone).overflowX !== "hidden") zone = zone.parentElement;
+      const z = zone.getBoundingClientRect();
+      return [...chip.querySelectorAll("button")].map((b) => {
+        const r = b.getBoundingClientRect();
+        const a = getComputedStyle(b, "::after");
+        const px = (v) => (v === "auto" ? 0 : parseFloat(v) || 0);
+        const hit = a.content === "none" || a.content === "normal"
+          ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom }
+          : { left: r.left - (-px(a.left)), right: r.right + -px(a.right), top: r.top + px(a.top), bottom: r.bottom - px(a.bottom) };
+        return {
+          label: b.getAttribute("aria-label"), w: Math.round(hit.right - hit.left), h: Math.round(hit.bottom - hit.top),
+          clipped: hit.right > z.right + 0.5 || hit.left < z.left - 0.5 || hit.top < z.top - 0.5 || hit.bottom > z.bottom + 0.5,
+        };
+      });
+    });
+    if (size === "390") {
+      for (const h of hits) {
+        assert.ok(h.h >= 44, `390: "${h.label}" answers a press 44px tall (${h.h})`);
+        if (h.label !== null && !h.label.startsWith("Go to")) assert.ok(h.w >= 44, `390: "${h.label}" answers a press 44px wide (${h.w})`);
+        assert.ok(!h.clipped, `390: "${h.label}" is not cut by the row's clip`);
+      }
     }
     await pg.waitForTimeout(800); // the messages under the dock finish painting
     // At the stream's end, the last message scrolls fully above the dock: the dock starts where the
@@ -372,7 +399,7 @@ try {
     assert.ok(last.floor >= last.listBottom - 1, `${size}: the dock does not cover the stream (${JSON.stringify(last)})`);
     assert.ok(last.bottom <= last.floor + 1, `${size}: the last message is fully above the dock (${JSON.stringify(last)})`);
     await shot("dock");
-    ok(`${size}: no bar above the stream; each waiting card drawn once and whole with its buttons at its end; the dock sits above the composer and covers nothing`);
+    ok(`${size}: no bar above the stream; each waiting card drawn once and whole with its buttons at its end; one simple chip in the footer's context row, 44px presses on a phone`);
 
     const longFits = await jumpTo(v, long);
     await shot("long-card");
@@ -393,7 +420,7 @@ try {
     await inStream(pics).locator("[data-card-images] img").first().waitFor({ timeout: 15000 });
     assert.equal(await inStream(pics).locator("[data-card-images] img").count(), 2, `${size}: both screenshots are shown`);
     await shot("images-card");
-    ok(`${size}: the dock's arrows and press land the stream on each card, outlined, the card (or a tall card's buttons) above the dock: long, choices, images`);
+    ok(`${size}: the chip's arrows and press land the stream on each card, outlined, the card (or a tall card's buttons) above the footer: long, choices, images`);
 
     await answeredBothWays(v, size, shot);
   }
@@ -468,7 +495,7 @@ try {
   assert.equal(await body().locator("[data-waiting-card]").count(), 0, "no waiting card left in the stream");
   assert.ok(await body().locator("[data-answered-card]").count() >= 6, "every settled card is folded");
   await page.screenshot({ path: join(shotsDir, "b-1440-nothing-waiting.png") });
-  ok("no card left: the dock and every red count are gone; every settled card is one folded line");
+  ok("no card left: the chip and every red count are gone; every settled card is one folded line");
 
   const unexpected = pageErrors.filter((e) => !/read the 'serviceWorker' property/.test(e));
   if (unexpected.length) throw new Error(`page errors:\n${unexpected.join("\n")}`);

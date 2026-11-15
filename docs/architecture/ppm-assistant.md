@@ -91,20 +91,21 @@ to 1,500 characters) is read with the chat's own scrollbar. Waiting cards come f
 as well as from the loaded pages (`streamCards` in `use-assistant-stream-timeline.tsx`), and are
 marked `keep`, so one older than the loaded history is drawn before the oldest loaded message
 instead of being held back, and moves up to its own place once that page loads
-(`placeTimelineItems`). Right above the composer (`ChatTab`'s `composerDock`) a dock,
-`assistant-waiting-cards.tsx`, says how many wait, names one ("{project} · {title}") and steps with
-‹ "n/N" › (urgent first, then the oldest): a press on the dock or an arrow scrolls the stream to
-that card and outlines it for 1.8 s. The jump is a store request (`stores/assistant-waiting-jump-store.ts`)
-that the Assistant body answers (`use-waiting-card-jump.ts`): it scrolls only the list holding the
-card (`scrollIntoView` would also move the floating window's frame and the app's panels;
-`lib/reveal-in-scroll-list.ts`) so the whole card shows, or, for a card taller than the stream, its
-button row just above the dock. The dock clears the strip where the footer is pulled up over the
-list's faded end (`[data-chat-footer-lead]` in `globals.css`), so it never covers the stream and the
-last message scrolls fully above it. A new card renames the dock without moving the stream.
-The dock is 48 px tall with 44 px arrows below `md`, and disappears when nothing waits. A chip's red
-count (`focusWaitingCards`) jumps to that project's first card, and "Show" under a follow-up to
-exactly that card, moving a filter that would hide it to that project. The dock follows the project
-filter, and "N more in other projects · Show all" names what the filter hides. A card lays its
+(`placeTimelineItems`). On the left of the chat footer's context row (`ChatTab`'s `contextChip`, where
+an ordinary chat shows its activity, changes and connection chips) one chip,
+`assistant-waiting-cards.tsx`, in the footer chips' size and the connection chip's alert tint, says
+"Waiting" with the red count and steps with ‹ "n/N" › (urgent first, then the oldest); it names no
+card and no project. A press on it or an arrow scrolls the stream to that card and outlines it for
+1.8 s. The jump is a store request (`stores/assistant-waiting-jump-store.ts`) that the Assistant body
+answers (`use-waiting-card-jump.ts`): it scrolls only the list holding the card (`scrollIntoView`
+would also move the floating window's frame and the app's panels; `lib/reveal-in-scroll-list.ts`) so
+the whole card shows, or, for a card taller than the stream, its button row just above the footer,
+clear of the message navigator in the list's corner. A new card moves the chip to itself without
+moving the stream. Below `md` the chip is 26 px drawn with 44 px hit areas (an invisible `::after`,
+as on the footer's other chips), and it disappears when nothing waits. A chip's red count on the
+manager row (`focusWaitingCards`) jumps to that project's first card, and "Show" under a follow-up to
+exactly that card, moving a filter that would hide it to that project. The chip follows the project
+filter, and a "+N" on it clears the filter when cards of other projects wait. A card lays its
 buttons out by its own width (`@container/card`): one row from 27rem, else the answers on one row
 and Open chat / Dismiss on another, above them on a phone. A decision that no longer waits (a
 `WAITING_CARD_KINDS` card answered, dismissed, resolved elsewhere or gone) folds to one 44 px line

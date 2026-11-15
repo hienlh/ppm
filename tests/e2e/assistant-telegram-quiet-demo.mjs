@@ -231,7 +231,7 @@ try {
   assert.equal(sends.find((s) => s.text.includes(URGENT))?.silent, false, "the urgent card rings while at PPM");
   pass("manager cards while at PPM: the decision is silent, the urgent card rings");
 
-  // The bell in the Assistant's head, with the "Waiting on you" dock above the composer, on both devices.
+  // The bell in the Assistant's head, with the "Waiting" chip in the chat footer, on both devices.
   const waitingBar = (dev) => dev.page.locator("[data-waiting-dock]:visible").first();
   await waitingBar(desk).waitFor({ timeout: 30000 });
   await sleep(600);
@@ -242,7 +242,7 @@ try {
   await bell(mobile).waitFor({ timeout: 20000 });
   await sleep(600);
   await kit.shot(mobile, "01-assistant-head-bell-on");
-  pass("the bell sits in the Assistant's titlebar (desktop) and head (phone), with the Waiting on you dock above the composer");
+  pass("the bell sits in the Assistant's titlebar (desktop) and head (phone), with the Waiting chip in the chat footer");
 
   // Settings → PPM Assistant → Sessions & Telegram, on both devices.
   for (const dev of [desk, mobile]) {

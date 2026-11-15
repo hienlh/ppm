@@ -562,13 +562,8 @@ html, body {
   z-index: 20; /* above the scroll buttons (z-10), which its pickers and popovers cover */
   margin-top: -12px;
 }
-[data-chat-list] + [data-chat-footer] > [data-chat-context-row]:first-child {
+[data-chat-list] + [data-chat-footer] > [data-chat-context-row] {
   padding-top: 12px;
-}
-/* Something drawn above the context row (the Assistant's "Waiting on you" dock) clears the faded
-   strip the same way, so it never covers the list's last lines. */
-[data-chat-list] + [data-chat-footer] > [data-chat-footer-lead]:first-child {
-  margin-top: 12px;
 }
 /* The scroll buttons sit above the footer's top padding, not inside the fade. */
 [data-chat-list]:has(+ [data-chat-footer]) [data-chat-scroll-nav] {

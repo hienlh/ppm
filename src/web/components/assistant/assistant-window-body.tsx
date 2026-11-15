@@ -1,8 +1,8 @@
 /**
  * The Assistant: a head (only where no window titlebar carries the name and gear), the chip row,
  * and one stream — the main session's chat with the cards placed among its messages by time, each
- * card that still waits drawn there whole with its buttons. Right above the composer, the "Waiting
- * on you" dock counts them and jumps the stream to each. Answering a card in your own words puts
+ * card that still waits drawn there whole with its buttons. In the footer's context row, the
+ * "Waiting on you" chip counts them and jumps the stream to each. Answering a card in your own words puts
  * the reply-to bar where the composer is.
  *
  * The chat is an ordinary `ChatTab` in the virtual `__assistant__` project, embedded under the
@@ -19,7 +19,7 @@ import { useCardReplyStore } from "@/stores/assistant-card-reply-store";
 import { CardReplyBar } from "./cards/card-reply-bar";
 import { AssistantHead } from "./assistant-head";
 import { ManagerChipRow } from "./manager-chip-row";
-import { AssistantWaitingDock, AssistantWaitingList } from "./assistant-waiting-cards";
+import { AssistantWaitingChip, AssistantWaitingList } from "./assistant-waiting-cards";
 import { useAssistantSessionChoice } from "./use-assistant-session-choice";
 import { useAssistantStreamTimeline } from "./use-assistant-stream-timeline";
 import { useWaitingCardJump } from "./use-waiting-card-jump";
@@ -81,7 +81,7 @@ export function AssistantWindowBody({ tabId, metadata }: { tabId: string; metada
         onBranchSwitch={followBranch}
         timeline={timeline}
         composerOverride={replying ? <CardReplyBar /> : undefined}
-        composerDock={<AssistantWaitingDock />}
+        contextChip={<AssistantWaitingChip />}
       />
     );
   }

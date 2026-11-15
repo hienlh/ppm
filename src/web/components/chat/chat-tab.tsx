@@ -91,8 +91,8 @@ interface ChatTabProps {
    * mounted underneath, so what was typed in it is still there afterwards.
    */
   composerOverride?: React.ReactNode;
-  /** Sits right above the footer's context row, at the composer's width (the Assistant's "Waiting on you" dock). */
-  composerDock?: React.ReactNode;
+  /** First on the left of the footer's context row, beside the chat's own chips (the Assistant's "Waiting on you"). */
+  contextChip?: React.ReactNode;
 }
 
 /**
@@ -113,7 +113,7 @@ export function ChatTab(props: ChatTabProps) {
   ) : <ChatTabContent {...props} />;
 }
 
-function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch, historyFilter, timeline, composerOverride, composerDock }: ChatTabProps) {
+function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch, historyFilter, timeline, composerOverride, contextChip }: ChatTabProps) {
   const minimalMode = useSettingsStore((s) => s.minimalMode);
   const preparation = useNewChatPreparation();
   const metadataRef = useRef(metadata);
@@ -1421,11 +1421,11 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           what it changed, its schedules, the connection when it has trouble; usage, History and ··· on the right — then the composer.
           No rules between them. The row is the popovers' anchor, so it is `relative`. */}
       <div className="shrink-0 px-2 pb-1.5 md:px-3 md:pb-3" data-chat-footer="">
-        {composerDock}
         <div className="relative flex min-w-0 items-center gap-2 px-0.5 py-2 max-md:py-1.5" data-chat-context-row="">
           {/* Padded so the chips' focus rings and widened touch areas (10px past a 26px phone chip,
               see footer-chip.ts) are not cut by the clip. */}
           <div className="-my-2.5 flex min-w-0 items-center gap-1.5 overflow-hidden py-2.5 @max-[420px]/chat:gap-1 max-md:gap-1">
+            {contextChip}
             <ActivityChip
               projectName={projectName}
               agentProviderId={agentSessionIdentity.providerId}
