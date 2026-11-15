@@ -64,6 +64,16 @@ describe("a card body on Telegram", () => {
     expect(visible(formatManagerCard(card({ body: bold }), "full").html)).toContain("**cut her…");
   });
 
+  it("stays inside Telegram's limit when a table pads out far past the Markdown", () => {
+    // One wide header cell pads every short row to its width: 1,453 characters of Markdown
+    // become tens of thousands once laid out.
+    const table = [`| ${"h".repeat(150)} | x |`, "|---|---|", ...Array.from({ length: 190 }, () => "|a|b|")].join("\n");
+    for (const kind of ["done", "needs_decision"] as const) {
+      const f = formatManagerCard(card({ kind, body: table }), "full");
+      expect(visible(f.html).length).toBeLessThan(4096);
+    }
+  });
+
   it("keeps a decision's draft verbatim, Markdown markers and all", () => {
     const draft = { to: "#culi-devs", text: "**Not bold** `not code` <b>", sha256: "a".repeat(64) };
     const { html } = formatManagerCard(card({ kind: "needs_decision", body: "**Pick one**", payload: { draft } }), "full");

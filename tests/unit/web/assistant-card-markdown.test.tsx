@@ -68,7 +68,15 @@ describe("a card body as Markdown", () => {
     expect(byText("PR")?.getAttribute("target")).toBe("_blank");
     expect(byText("PR")?.getAttribute("rel")).toBe("noopener noreferrer");
     expect(byText("mail")?.getAttribute("target")).toBe("_blank");
-    expect(byText("bad")?.getAttribute("href") ?? "").not.toContain("javascript");
+    // A refused scheme is just its text: an empty href would reload the whole app.
+    expect(byText("bad")).toBeUndefined();
+    expect(text().textContent).toContain("bad");
+  });
+
+  it("names the host a link goes to when its label does not", async () => {
+    view = await mount(<AssistantCard card={card("[github.com/acme/pull/12](https://evil.test/x) and [docs.test page](https://docs.test/a)")} />);
+    const hosts = [...text().querySelectorAll("[data-link-host]")].map((n) => n.textContent);
+    expect(hosts).toEqual([" (evil.test)"]);
   });
 
   it("still folds long Markdown behind Show more", async () => {

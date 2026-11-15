@@ -19,7 +19,7 @@ import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import { DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, type DigestProject } from "../../shared/assistant-digest.ts";
 import { escapeHiddenCharacters } from "../../shared/reveal-hidden-characters.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
-import { markdownToTelegramHtml, redactSecretsForTelegram } from "../telegram/telegram-html-format.ts";
+import { markdownToTelegramHtml, redactSecretsForTelegram, splitTelegramHtml } from "../telegram/telegram-html-format.ts";
 import { REVIEW_FIT_MAX, TOO_LONG_NOTE } from "./assistant-telegram-card-format.ts";
 
 export type CardDetail = "full" | "title";
@@ -60,12 +60,15 @@ export const cleanTelegramText = clean;
 
 /**
  * A card's body as Telegram HTML. Cut as shown (hidden characters revealed first) before it is
- * formatted, so the cut lands in the Markdown and the formatter closes every tag it opens.
+ * formatted, so the cut lands in the Markdown and the formatter closes every tag it opens. A
+ * table is padded to its widest cells, so formatting can make the text much longer than the
+ * Markdown: past `BODY_MAX` as Telegram counts it, the HTML is cut again, between tags.
  */
 function bodyHtml(text: string, counter: { hidden: number }): string {
   const r = redactSecretsForTelegram(truncateText(escapeHiddenCharacters(text), BODY_MAX));
   counter.hidden += r.hidden;
-  return markdownToTelegramHtml(r.text);
+  const html = markdownToTelegramHtml(r.text);
+  return telegramVisibleLength(html) <= BODY_MAX ? html : `${splitTelegramHtml(html, BODY_MAX)[0] ?? ""}\n…`;
 }
 
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();

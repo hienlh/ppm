@@ -107,16 +107,43 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
 /** Link — external links open in new tab; file paths open in editor */
 function MdLink({ href, children, node, ...props }: any) {
   const { openFileOrSearch, card } = useMdContext();
-  if (href?.match(/^(https?:)?\/\//i)) {
+  const external = Boolean(href?.match(/^(https?:)?\/\//i));
+  const target = !external && href ? parseMarkdownFileTarget(href) : null;
+  if (card && !target) return <CardLink href={href} node={node} {...props}>{children}</CardLink>;
+  if (external) {
     return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
   }
-  const target = href ? parseMarkdownFileTarget(href) : null;
   if (target) {
     return <a href={href} onClick={(e: React.MouseEvent) => { e.preventDefault(); openFileOrSearch(target.path, target.line); }} {...props}>{children}</a>;
   }
-  // A card's link never replaces the app it is read in. An in-page anchor stays put.
-  if (card && href && !href.startsWith("#")) return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
   return <a href={href} {...props}>{children}</a>;
+}
+
+/** The text a hast node shows. */
+function textOfNode(node: any): string {
+  if (!node) return "";
+  if (node.type === "text") return String(node.value ?? "");
+  return (node.children ?? []).map(textOfNode).join("");
+}
+
+/**
+ * A link in a card's text, which a manager AI wrote. It never replaces the app it is read in: it
+ * opens in a new tab, an in-page anchor stays put, and one whose scheme was refused (blanked by
+ * the URL filter) is just its text. A label that does not name where the link goes is followed by
+ * the host it does go to, since a phone shows no target on hover.
+ */
+function CardLink({ href, node, children, ...props }: any) {
+  if (!href) return <span {...props}>{children}</span>;
+  if (href.startsWith("#")) return <a href={href} {...props}>{children}</a>;
+  let host = "";
+  try { host = new URL(href, window.location.href).host; } catch { /* not a URL: no host to show */ }
+  const shown = host && host !== window.location.host && !textOfNode(node).toLowerCase().includes(host.toLowerCase());
+  return (
+    <>
+      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+      {shown && <span className="text-text-subtle" data-link-host=""> ({host})</span>}
+    </>
+  );
 }
 
 /** Image — auth-loads local file paths via API, click to open overlay */
