@@ -297,12 +297,16 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
       }
     },
 
-    /** A card was made: one the replied-to manager made while answering goes with the answer. */
+    /**
+     * A card was made: one the replied-to manager made while answering goes with the answer. Only
+     * while the reply is gathering its turn — named and running, or pushed into the running turn and
+     * not judged yet — so a card a schedule's turn made before or after is never named as its.
+     */
     onCardCreated(card: { id: string; title: string; sessionId: string | null }): void {
       if (!card.sessionId || pending.size === 0) return;
       const session = watched.has(card.sessionId) ? card.sessionId : deps.canonical(card.sessionId);
       for (const p of pending.values()) {
-        if (p.sessionId === session && (p.bound || (p.delivered !== null && p.delivered !== "queued"))) {
+        if (p.sessionId === session && p.collect && (p.bound || (p.delivered !== null && p.delivered !== "queued"))) {
           p.newCards.push({ id: card.id, title: card.title });
         }
       }

@@ -267,6 +267,26 @@ describe("following the turn a card reply opened", () => {
     expect(delivered[0]!.newCards).toEqual([{ id: "n1", title: "Run the full suite? It costs ~40%" }]);
   });
 
+  it("never names a card another turn made: before the reply's turn opened, or after it was judged", () => {
+    let idle = false;
+    const { t, delivered, say, named, runTimers } = setup({ idle: () => idle });
+    named("schedule-1");
+    t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("inserted");
+    t.onTurnEnded(S);
+    runTimers(); // not idle: judged, nothing sent
+    named("schedule-2");
+    t.onCardCreated({ id: "x", title: "the schedule's card", sessionId: S });
+    t.onTurnEnded(S);
+    t.expect({ cardId: "c2", clientMessageId: "card-b", origin, sessionId: S }).attach("queued");
+    t.onCardCreated({ id: "y", title: "made while c2 waited in the queue", sessionId: S });
+    idle = true;
+    named(ID);
+    t.onCardCreated({ id: "n1", title: "Run it? ~40% of the quota", sessionId: S });
+    say("Answer: 40%.");
+    t.onTurnEnded(S);
+    expect(delivered.map((d) => [d.cardId, d.newCards.map((c) => c.id)])).toEqual([["c1", ["n1"]]]);
+  });
+
   it("marks an answer longer than it keeps, and follows a chat the provider renamed", () => {
     const { t, delivered, say, named, aliases } = setup();
     t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
