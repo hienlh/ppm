@@ -7,7 +7,12 @@ import { describe, expect, it } from "bun:test";
 import {
   answerOf, createFollowupTracker, cutFollowupText, FOLLOWUP_BUFFER_MAX, isConfirmationBlock, isThrowawayBlock, type FollowupResult,
 } from "../../../src/services/assistant-cards/card-reply-followup-tracker.ts";
-import { deliverCardFollowup } from "../../../src/services/assistant-cards/card-reply-followup.ts";
+import {
+  attachCardFollowupSink, cardReplyFollowups, deliverCardFollowup, detachCardFollowupSink, followupOutcome, startCardReplyFollowups,
+  type CardFollowupDelivery,
+} from "../../../src/services/assistant-cards/card-reply-followup.ts";
+import { assistantCards } from "../../../src/services/assistant-cards/assistant-cards.service.ts";
+import { chatLifecycle } from "../../../src/services/chat-control/chat-lifecycle.ts";
 import { forwardUserWords, type ForwardEnv } from "../../../src/services/assistant-cards/forward-verbatim.ts";
 import type { AssistantCard, CardFollowUp } from "../../../src/shared/assistant-cards.ts";
 import { CARD_FOLLOWUP_MAX_CHARS } from "../../../src/shared/assistant-limits.ts";
@@ -327,6 +332,31 @@ describe("following the turn a card reply opened", () => {
     t.onTurnEnded("thread-9");
     expect(delivered[0]).toMatchObject({ overflow: true, sessionId: "thread-9" });
     expect(delivered[0]!.text.length).toBe(FOLLOWUP_BUFFER_MAX);
+  });
+});
+
+describe("listening to the chat lifecycle", () => {
+  it("treats a Stop reported as a normal end (done + cancelledBy) as a stopped turn: no partial text anywhere", () => {
+    const card = assistantCards.create({ kind: "needs_decision", sessionId: "mgr-stop", title: "Run it?" });
+    assistantCards.transition(card.id, "answered", { by: "user", channel: "telegram", at: 1 });
+    const sent: CardFollowupDelivery[] = [];
+    const sink = { send: (d: CardFollowupDelivery) => sent.push(d) };
+    attachCardFollowupSink(sink);
+    const stop = startCardReplyFollowups();
+    try {
+      const clientMessageId = "card-99999999-2222-4333-8444-555555555555";
+      cardReplyFollowups.expect({ cardId: card.id, clientMessageId, origin, sessionId: "mgr-stop" }).attach("started");
+      chatLifecycle.emit("stream", { sessionId: "mgr-stop", event: { type: "turn_started", turnId: "t1", clientMessageId } });
+      chatLifecycle.emit("stream", { sessionId: "mgr-stop", event: { type: "text", content: "Half an answer: it co" } });
+      chatLifecycle.emit("turn_ended", { sessionId: "mgr-stop", outcome: "done", cancelledBy: "telegram", projectName: "ppm", providerId: "claude" });
+      expect(sent.map((d) => [d.stopped, d.text])).toEqual([[true, ""]]);
+      expect(assistantCards.get(card.id)!.followUp).toBeUndefined();
+    } finally {
+      stop();
+      detachCardFollowupSink(sink);
+    }
+    expect(followupOutcome({ outcome: "done" })).toBe("done");
+    expect(followupOutcome({ outcome: "failed" })).toBe("failed");
   });
 });
 

@@ -11,14 +11,16 @@
  * further redacted and subject to the project's detail level there, exactly as the card was.
  */
 import { createLogger } from "../logger.ts";
-import { chatLifecycle } from "../chat-control/chat-lifecycle.ts";
+import { chatLifecycle, type ChatLifecycleEvents } from "../chat-control/chat-lifecycle.ts";
 import { chatControl } from "../chat-control/chat-control.ts";
 import { resolveMigratedSession } from "../db.service.ts";
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { CARD_FOLLOWUP_MAX_CHARS } from "../../shared/assistant-limits.ts";
 import type { AssistantCard, CardFollowUp } from "../../shared/assistant-cards.ts";
 import { assistantCards, type AssistantCards } from "./assistant-cards.service.ts";
-import { createFollowupTracker, cutFollowupText, type FollowupResult, type FollowupTracker } from "./card-reply-followup-tracker.ts";
+import {
+  createFollowupTracker, cutFollowupText, type FollowupResult, type FollowupTracker, type TurnOutcome,
+} from "./card-reply-followup-tracker.ts";
 
 const log = createLogger("assistant-cards");
 
@@ -92,12 +94,22 @@ export function detachCardFollowupSink(s?: CardFollowupSink): void {
   if (!s || sink === s) sink = null;
 }
 
+/**
+ * How a turn ended, for the follow-up. A Stop is not always reported as `stopped`: on the first turn
+ * of a fresh Claude subprocess the provider ends an aborted turn with a normal `done`, and the turn
+ * stop is not recorded, so `turn_ended` says `done` with `cancelledBy` set. Whoever asked, a turn
+ * cut short has no answer.
+ */
+export function followupOutcome(e: Pick<ChatLifecycleEvents["turn_ended"], "outcome" | "cancelledBy">): TurnOutcome {
+  return e.cancelledBy ? "stopped" : e.outcome;
+}
+
 /** Starts listening; returns the stop. */
 export function startCardReplyFollowups(): () => void {
   const offs = [
     chatLifecycle.on("stream", (e) => cardReplyFollowups.onStream(e.sessionId, e.event)),
     chatLifecycle.on("turn_ended", (e) => cardReplyFollowups.onTurnEnded(e.sessionId, {
-      outcome: e.outcome, ...(e.turnStillRunning ? { turnStillRunning: true } : {}),
+      outcome: followupOutcome(e), ...(e.turnStillRunning ? { turnStillRunning: true } : {}),
     })),
     chatLifecycle.on("migrated", (e) => cardReplyFollowups.onMigrated(e.oldSessionId, e.newSessionId)),
     assistantCards.onChange((card, change) => { if (change === "created") cardReplyFollowups.onCardCreated(card); }),
