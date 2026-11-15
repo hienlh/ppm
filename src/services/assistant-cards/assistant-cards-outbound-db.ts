@@ -43,7 +43,10 @@ export function addCardTelegramRef(id: string, ref: TelegramCardRef): void {
     const row = db.query(`SELECT ${CARD_COLUMNS} FROM assistant_cards WHERE id = ?`).get(id);
     if (!row) return;
     const refs = rowFromDb(row).telegramRefs.filter((r) => !(r.chatId === ref.chatId && r.messageId === ref.messageId));
-    refs.push({ chatId: ref.chatId, messageId: ref.messageId, ...(ref.followUp ? { followUp: true as const } : {}) });
+    refs.push({
+      chatId: ref.chatId, messageId: ref.messageId,
+      ...(ref.followUp ? { followUp: true as const, ...(ref.newCardId ? { newCardId: ref.newCardId } : {}) } : {}),
+    });
     const copies = refs.filter((r) => !r.followUp).slice(-MAX_REFS);
     const followUps = refs.filter((r) => r.followUp).slice(-MAX_FOLLOWUP_REFS);
     db.query("UPDATE assistant_cards SET telegram_refs_json = ? WHERE id = ?").run(JSON.stringify([...copies, ...followUps]), id);

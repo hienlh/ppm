@@ -19,7 +19,8 @@ import { getDb } from "../../../../src/services/db.service.ts";
 import { stripTelegramHtml } from "../../../../src/services/telegram/telegram-html-format.ts";
 import { parseTelegramHtml } from "../../../helpers/fake-telegram-bot-api.ts";
 import type { AssistantCard } from "../../../../src/shared/assistant-cards.ts";
-import type { TelegramCardRef } from "../../../../src/services/assistant-cards/assistant-cards-db.ts";
+import type { CardRow, TelegramCardRef } from "../../../../src/services/assistant-cards/assistant-cards-db.ts";
+import { AssistantTelegramCardReplies, isBareOk } from "../../../../src/services/assistant-telegram/assistant-telegram-card-replies.ts";
 import { addCardTelegramRef } from "../../../../src/services/assistant-cards/assistant-cards-outbound-db.ts";
 import { createAssistantCards } from "../../../../src/services/assistant-cards/assistant-cards.service.ts";
 import { AssistantTelegramManagerCards } from "../../../../src/services/assistant-telegram/assistant-telegram-manager-cards.ts";
@@ -142,6 +143,15 @@ describe("where the answer goes", () => {
     expect(recorded).toEqual([{ cardId: card.id, ref: { chatId: chat, messageId: msg!.message_id, followUp: true } }]);
   });
 
+  it("records the one new card the answer named, for an OK to the answer to reach", async () => {
+    const chat = connectChat(freshChat());
+    const { s, queue, recorded } = sink({ atPpm: false });
+    s.send({ ...delivery({ channel: "telegram", chatId: chat, replyTo: 77 }), newCards: [{ id: "n1", title: "Run it? 40%" }] });
+    const msg = await fake.waitFor(() => fake.sent(Number(chat))[0]);
+    await queue.whenIdle();
+    expect(recorded[0]!.ref).toEqual({ chatId: chat, messageId: msg!.message_id, followUp: true, newCardId: "n1" });
+  });
+
   it("never answers under an earlier answer as if it were a copy of the card", async () => {
     const a = connectChat(freshChat());
     const refs: TelegramCardRef[] = [{ chatId: a, messageId: 30, followUp: true }, { chatId: a, messageId: 3 }];
@@ -207,6 +217,27 @@ describe("where the answer goes", () => {
     await queue.whenIdle();
     expect(msg).toMatchObject({ reply_to: 3, silent: false });
     expect(stripTelegramHtml(msg!.text)).toContain(FOLLOWUP_STOPPED_NOTE);
+  });
+
+  it("sends a bare OK to the answer on to the new card it named; anything else stays with the replied card", async () => {
+    const rows: Record<string, CardRow> = {
+      old: { id: "old", telegramRefs: [{ chatId: "5", messageId: 10 }, { chatId: "5", messageId: 30, followUp: true, newCardId: "n1" }, { chatId: "5", messageId: 31, followUp: true }] } as CardRow,
+      n1: { id: "n1", telegramRefs: [{ chatId: "5", messageId: 40 }] } as CardRow,
+    };
+    const calls: Array<[string, number | undefined]> = [];
+    const replies = new AssistantTelegramCardReplies({
+      codes: { mint: () => "x", dropGroup: () => {} } as never, reply: () => {},
+      findCard: () => rows.old!, cardRow: (id) => rows[id] ?? null,
+      replyTo: async (cardId, _body, actor) => { calls.push([cardId, actor.telegramReplyTo]); return { ok: true, card: {} as AssistantCard, to: "manager", projectName: "ppm" }; },
+    });
+    await replies.reply("5", { text: "OK", replyToMessageId: 30, notTheUsers: false });
+    await replies.reply("5", { text: "Được.", replyToMessageId: 30, notTheUsers: false });
+    await replies.reply("5", { text: "ok nhưng chạy ban đêm", replyToMessageId: 30, notTheUsers: false });
+    await replies.reply("5", { text: "OK", replyToMessageId: 31, notTheUsers: false });
+    await replies.reply("5", { text: "OK", replyToMessageId: 10, notTheUsers: false });
+    expect(calls).toEqual([["n1", 40], ["n1", 40], ["old", 30], ["old", 31], ["old", 10]]);
+    expect(isBareOk("👍")).toBe(true);
+    expect(isBareOk("okay then skip it")).toBe(false);
   });
 
   it("keeps a PPM reply's answer in PPM during quiet hours, for a card never sent to Telegram, and for a chat cut off", () => {

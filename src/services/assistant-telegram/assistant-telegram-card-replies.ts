@@ -9,6 +9,7 @@
  * longer waits, or is older than a day, asks first: "send anyway?".
  */
 import { findCardByTelegramRef } from "../assistant-cards/assistant-cards-outbound-db.ts";
+import { getCardRow, type CardRow } from "../assistant-cards/assistant-cards-db.ts";
 import { okCard, replyToCard, type CardReplyResult } from "../assistant-cards/card-reply-actions.ts";
 import type { CardActor } from "../assistant-cards/forward-verbatim.ts";
 import { decideManagerRules } from "../assistant-managers/manager-rules.service.ts";
@@ -33,7 +34,12 @@ export interface CardRepliesDeps {
   replyTo?: typeof replyToCard;
   decideRules?: (projectName: string, action: "approve" | "revert", hash: string) => Promise<void>;
   findCard?: typeof findCardByTelegramRef;
+  cardRow?: typeof getCardRow;
 }
+
+/** "OK", "ok.", "Được", "đồng ý", "yes", "👍": a plain yes, nothing more. */
+const BARE_OK_RE = /^(?:ok(?:e|ay|ie)?|yes|yep|được|đc|đồng ý|duyệt|ừ|👍)[\s.!]*$/iu;
+export const isBareOk = (text: string): boolean => BARE_OK_RE.test(text.trim());
 
 export interface CardReplyMessage {
   text: string;
@@ -69,8 +75,24 @@ export class AssistantTelegramCardReplies {
       this.deps.reply(chatId, "To answer a card, reply to it with text.");
       return true;
     }
-    this.answer(chatId, row.id, await (this.deps.replyTo ?? replyToCard)(row.id, { text: m.text }, this.actor(chatId, m.replyToMessageId)), m.text);
+    const target = this.newCardTarget(chatId, row, m) ?? { cardId: row.id, replyTo: m.replyToMessageId };
+    this.answer(chatId, target.cardId, await (this.deps.replyTo ?? replyToCard)(target.cardId, { text: m.text }, this.actor(chatId, target.replyTo)), m.text);
     return true;
+  }
+
+  /**
+   * A bare OK in reply to the manager's answer means yes to the new card that answer named ("It
+   * also opened a new card: X"), not to the card it sits under, which is answered already: sent
+   * there, the OK would ask "send anyway?" and then reach the manager as words on the old card.
+   * Its answer, if any, goes under the new card's message in this chat.
+   */
+  private newCardTarget(chatId: string, row: CardRow, m: CardReplyMessage): { cardId: string; replyTo?: number } | null {
+    const ref = row.telegramRefs.find((r) => r.chatId === chatId && r.messageId === m.replyToMessageId);
+    if (!ref?.followUp || !ref.newCardId || !isBareOk(m.text)) return null;
+    const card = (this.deps.cardRow ?? getCardRow)(ref.newCardId);
+    if (!card) return null;
+    const copy = card.telegramRefs.find((r) => r.chatId === chatId && !r.followUp);
+    return { cardId: card.id, ...(copy ? { replyTo: copy.messageId } : {}) };
   }
 
   private answer(chatId: string, cardId: string, result: CardReplyResult, text: string): void {
