@@ -76,7 +76,10 @@ const ANSWER = [
 ].join("\n");
 const OTHER_ANSWER = "Gửi Assistant: khách Foo Ltd còn nợ 1.234 £ (ticket NX-77).";
 /** How the manager answers a question in a reply: as the rule says, the other way round, or failing. */
-let script: "card-then-answer" | "answer-then-card" | "fail" = "card-then-answer";
+let script: "card-then-answer" | "answer-then-card" | "card-then-short" | "fail" = "card-then-answer";
+/** The card the manager opened in its latest answering turn. */
+let lastNewCardId = "";
+const SHORT_ANSWER = "Đúng rồi anh, rẻ thôi.";
 let releaseLongTurn: (() => void) | null = null;
 /** Messages pushed into a running turn (`inserted`), as opposed to ones that opened a turn. */
 const pushed: string[] = [];
@@ -117,8 +120,12 @@ const stub = {
       yield { type: "tool_use", tool: "mcp__ppm-sessions__report_to_assistant", toolUseId: "t1", input: {} };
       const cardId = await report({ kind: "needs_decision", title: "Chạy full regression trên Opus? Tốn ~40% quota tuần", body: "Còn 55% quota; chạy xong còn ~15% cho 4 ngày." });
       note(`PPM       manager chat → report_to_assistant: new needs_decision card ${cardId.slice(0, 8)}`);
+      lastNewCardId = cardId;
       yield { type: "tool_result", toolUseId: "t1", output: `{"cardId":"${cardId}"}` };
-      if (script === "answer-then-card") {
+      if (script === "card-then-short") {
+        yield { type: "text", content: SHORT_ANSWER };
+        note(`PPM       manager chat → a short answer after the card: “${SHORT_ANSWER}”`);
+      } else if (script === "answer-then-card") {
         yield { type: "text", content: "Đã gửi card." };
         note(`PPM       manager chat → it answered first:\n      ${ANSWER.replace(/\n/g, "\n      ")}\n      … then wrote after the card: “Đã gửi card.”`);
       } else {
@@ -406,4 +413,35 @@ describe("the manager's answer to a card reply", () => {
     expect(received.filter((r) => isTheReply(r.message))).toHaveLength(1);
     note("PPM       nothing sent for that reply: the turn it went into was followed by another sender's turn, so which text answers it is not known");
   });
-});
+
+  it("delivers a short answer written after the card, and a bare OK to it reaches the new card it named", async () => {
+    note("");
+    note("── Scenario 7: the manager opens the card first and answers in one short line; the user says OK to that answer ──");
+    script = "card-then-short";
+    const cardId = await report({ kind: "needs_decision", title: "Bật log chi tiết cho worker?", body: "Cần anh OK." });
+    const card = await until(() => lastWith("Bật log chi tiết"));
+    logBot();
+    const question = "bật cái này rẻ đúng không?";
+    const typed = replyTo(card.message_id, question);
+    note(`Telegram  phone → PPM bot   (msg #${typed.message?.message_id}, reply_to #${card.message_id}): “${question}”`);
+    const followUp = await until(() => fake.sent(PHONE).find((m) => m.reply_to === card.message_id && m.text.includes("The manager's answer")));
+    await idle(manager);
+    await assistantTelegramBridge.settle();
+    logBot();
+    script = "card-then-answer";
+    expect(followUp.text).toContain(SHORT_ANSWER);
+    expect(followUp.text).not.toContain("Để em kiểm tra quota trước");
+    expect(assistantCards.get(cardId)!.followUp?.text).toBe(SHORT_ANSWER);
+    const newCardId = lastNewCardId;
+    const newCardMsg = fake.sent(PHONE).find((m) => m.text.includes("Tốn ~40% quota tuần") && m.message_id < followUp.message_id && m.message_id > card.message_id)!;
+    const ok = replyTo(followUp.message_id, "OK");
+    note(`Telegram  phone → PPM bot   (msg #${ok.message?.message_id}, reply_to #${followUp.message_id}, the answer): “OK”`);
+    await until(() => received.some((r) => { const w = decodeMessageBlocks(r.message); return w.userWords?.cardId === newCardId && w.content === "OK"; }));
+    await idle(manager);
+    await assistantTelegramBridge.settle();
+    logBot();
+    expect(assistantCards.get(newCardId)!.status).toBe("answered");
+    expect(fake.sent(PHONE).some((m) => m.text.includes("send anyway"))).toBe(false);
+    expect(fake.sent(PHONE).some((m) => m.reply_to === newCardMsg.message_id && m.text.includes("The manager's answer"))).toBe(true);
+    note(`PPM       the OK went to the new card ${newCardId.slice(0, 8)} (now answered), not to card ${cardId.slice(0, 8)}; no “send anyway?”`);
+  });});
