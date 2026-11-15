@@ -1,16 +1,17 @@
-import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
 import { collabApprovalBroker } from "../../services/session-collab/collab-approval-broker.ts";
 import type { ChatMessageOrigin, LiveApprovalCard } from "../../services/chat-control/chat-control.ts";
 import { SESSION_COLLAB_APPROVAL, sessionCollabApprovalInput } from "../../shared/session-collab.ts";
 
 /**
- * The PPM Assistant's session-tool cards (a message into a chat, a chat it wants to open) beyond
- * the browser: told to the chat's server-side listeners, so the Assistant's Telegram bridge shows
- * them beside its other cards, and settled by a press there through the same broker a click in PPM
- * answers. Every other PPM approval stays with PPM's own screen.
+ * The session tools' cards (a message into a chat, a chat to open) beyond the browser: told to the
+ * chat's server-side listeners whichever chat shows them, so the PPM Assistant's "Waiting on you"
+ * and its Telegram bridge carry them beside every other card, and settled by a person's press there
+ * through the same broker a click in PPM answers. A chat that waits on such a card is stopped until
+ * someone answers, and the card gives up after ten minutes: shown only on PPM's screen, it ran out
+ * while the user was away and never knew.
  *
- * Telegram answers once or not at all: "allow for this session" is never offered off PPM, and the
- * Assistant's cards do not offer it anywhere.
+ * Off PPM a card answers once or not at all: "allow for this session" is never offered there.
+ * `db_execute` and vault cards stay with PPM's own screen: they take a password typed into PPM.
  */
 
 interface ApprovalEventLike {
@@ -19,24 +20,30 @@ interface ApprovalEventLike {
   input: unknown;
 }
 
-/** The card as listeners see it, when it is one of the Assistant's session-tool cards; else null. */
-export function collabCardForListeners(sessionId: string, cwd: string | null | undefined, ev: ApprovalEventLike): LiveApprovalCard | null {
+/** The card as listeners see it, when it is a session-tool card; else null. */
+export function collabCardForListeners(ev: ApprovalEventLike): LiveApprovalCard | null {
   if (ev.tool !== SESSION_COLLAB_APPROVAL || !sessionCollabApprovalInput(ev.tool, ev.input)) return null;
-  if (!isAssistantSession(sessionId, cwd)) return null;
-  return { requestId: ev.requestId, tool: ev.tool, input: ev.input, isQuestion: false };
+  const expiresAt = collabApprovalBroker.expiresAt(ev.requestId);
+  return { requestId: ev.requestId, tool: ev.tool, input: ev.input, isQuestion: false, ...(expiresAt ? { expiresAt } : {}) };
 }
 
 /**
- * Settles one of PPM's own approvals pressed somewhere other than PPM: the session-tool card an
- * Assistant session is showing, pressed on Telegram. "stale" for anything else (a `db_execute`
- * change needs PPM's password; the Assistant answering another chat's card never settles one; a
- * card of another session) and for a card no longer waiting.
+ * Who may settle a session-tool card from outside PPM's chat: the user pressing a button on
+ * Telegram, or on the Assistant's mirror of the card in PPM. Never the Assistant's model answering
+ * another chat's card (`assistant`), and never anything that is not a person's press.
+ */
+const PRESSES: ReadonlySet<ChatMessageOrigin> = new Set<ChatMessageOrigin>(["telegram", "assistant_card"]);
+
+/**
+ * Settles one of PPM's own approvals pressed somewhere other than the chat itself: a session-tool
+ * card, pressed on Telegram or on its mirror in the Assistant. "stale" for anything else (a
+ * `db_execute` change needs PPM's password; the Assistant answering another chat's card never
+ * settles one; a card of another session) and for a card no longer waiting.
  */
 export function settleCollabApprovalFromServer(
-  sessionId: string, cwd: string | null | undefined, requestId: string, approved: boolean, origin: ChatMessageOrigin,
+  sessionId: string, requestId: string, approved: boolean, origin: ChatMessageOrigin,
 ): "answered" | "stale" {
-  if (origin !== "telegram" || collabApprovalBroker.pendingEvent(sessionId)?.requestId !== requestId) return "stale";
-  if (!isAssistantSession(sessionId, cwd)) return "stale";
+  if (!PRESSES.has(origin) || collabApprovalBroker.pendingEvent(sessionId)?.requestId !== requestId) return "stale";
   const result = collabApprovalBroker.answer(requestId, { answer: approved ? "allow_once" : "deny" });
   return result.ok ? "answered" : "stale";
 }

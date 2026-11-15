@@ -118,6 +118,8 @@ const REASONS: Record<string, string> = {
   session_closed: "the chat was closed",
   // An Assistant request withdrawn or timed out: nobody answered it, so it was not "denied".
   request_ended: "the request ended without an answer",
+  // A session tool's card gives up after its wait: nothing was done, which the user should know.
+  expired: "it expired — nobody answered in time, so nothing was done",
 };
 
 /** The line under a card once it is no longer waiting. */

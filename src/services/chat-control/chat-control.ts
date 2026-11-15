@@ -114,6 +114,8 @@ export interface LiveApprovalCard {
   isQuestion: boolean;
   /** A question card's questions, the same shape for every provider; answer them by id. */
   questions?: NormalizedQuestion[];
+  /** When the request gives up by itself if nobody answers (ms since the epoch); absent when it waits for good. */
+  expiresAt?: number;
 }
 
 /**

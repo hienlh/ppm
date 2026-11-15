@@ -36,6 +36,12 @@ export interface ChatLifecycleEvents {
   /** A card is now on the chat's screen (a queued one only once it reaches the front). */
   approval_shown: { sessionId: string; card: LiveApprovalCard; projectName: string; providerId: string };
   /**
+   * A card only PPM's screen can answer is now on the chat's screen: a `db_execute` change or a
+   * vault unlock, both taking a password typed into PPM. Its content is not given: a listener may
+   * only say that the chat waits (`approval_resolved` says when it no longer does).
+   */
+  ppm_only_card_shown: { sessionId: string; requestId: string; kind: "db_execute" | "vault"; projectName: string; providerId: string };
+  /**
    * A card left, answered or not. `by` names who answered; absent when it went for another
    * reason (`reason`: the turn ended, a message superseded it, the turn was stopped). May name a
    * card that was queued and never shown — a listener that never saw it ignores it.

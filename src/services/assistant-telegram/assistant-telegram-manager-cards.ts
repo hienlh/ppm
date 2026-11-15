@@ -178,13 +178,18 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     const record = (messageId: number) => addCardTelegramRef(card.id, { chatId, messageId });
     const detail = this.detail(card);
     if (card.kind === "approval" || card.kind === "question") {
+      // A `db_execute` or vault card already has its own notice on Telegram, with no buttons: it
+      // takes a password typed into PPM (`assistant-telegram-db-notices.ts`).
+      if (card.payload.answerInPpm) return;
       const requestId = card.payload.requestId;
       const live = card.sessionId && requestId ? (this.deps.liveCard ?? realLiveCard)(card.sessionId, requestId) : null;
       if (!live || this.deps.isShowing(chatId, live.requestId)) return;
+      const chat = card.payload.chat;
       this.deps.relayCard(chatId, {
         targetSessionId: card.sessionId!, targetProject: card.projectName ?? "project",
-        targetProvider: getSessionProvider(card.sessionId!) ?? "claude", targetTitle: getSessionTitle(card.sessionId!) || "Manager",
-        card: live, onSent: record, manager: true, ...(detail === "title" ? { titleOnly: card.title } : {}),
+        targetProvider: chat?.providerId ?? getSessionProvider(card.sessionId!) ?? "claude",
+        targetTitle: chat ? chat.title : getSessionTitle(card.sessionId!) || "Manager",
+        card: live, onSent: record, ...(chat ? {} : { manager: true }), ...(detail === "title" ? { titleOnly: card.title } : {}),
       });
       return;
     }

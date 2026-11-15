@@ -30,7 +30,15 @@ export interface ManagerChatRef {
   projectName: string;
   sessionId: string;
   title?: string | null;
+  /**
+   * Another chat of the project, opened the same way from one of its cards: its provider, and the
+   * title its tab takes. Absent for the manager chat.
+   */
+  chat?: { title: string; providerId: string };
 }
+
+const tabTitle = (target: ManagerChatRef): string => target.chat?.title ?? managerChatTitle(target.projectName);
+const providerOf = (target: ManagerChatRef): string => target.chat?.providerId ?? MANAGER_PROVIDER_ID;
 
 const MANAGER_WINDOW_SIZE = { w: 520, h: 640 };
 
@@ -65,10 +73,10 @@ function openInWindow(target: ManagerChatRef): void {
   const rect = cascadeSpawnRect(Object.values(windows.windows).map((w) => w.rect), windows.bounds, MANAGER_WINDOW_SIZE);
   const opened = store.openTabInNewWindow({
     type: "chat",
-    title: managerChatTitle(target.projectName),
+    title: tabTitle(target),
     projectId: null,
     closable: true,
-    metadata: { projectName: target.projectName, sessionId: target.sessionId, providerId: MANAGER_PROVIDER_ID, managerWindow: true },
+    metadata: { projectName: target.projectName, sessionId: target.sessionId, providerId: providerOf(target), managerWindow: true },
   }, { rect });
   if (!opened) toast.error("Too many windows are open. Close one to open the manager chat.");
 }
@@ -81,10 +89,10 @@ async function openOnPhone(target: ManagerChatRef): Promise<void> {
   }
   const id = usePanelStore.getState().openTab({
     type: "chat",
-    title: managerChatTitle(target.projectName),
+    title: tabTitle(target),
     projectId: target.projectName,
     closable: true,
-    metadata: { projectName: target.projectName, sessionId: target.sessionId, providerId: MANAGER_PROVIDER_ID },
+    metadata: { projectName: target.projectName, sessionId: target.sessionId, providerId: providerOf(target) },
   });
   const returnTo: AssistantReturn = { kind: "assistant", project: from === target.projectName ? null : from };
   if (id) patchTabMetadata(id, { returnTo, returnNote: true });
@@ -105,7 +113,8 @@ export async function openManagerChatInProject(tab: Tab): Promise<void> {
   const panelId = usePanelStore.getState().getPanelForTab(tab.id)?.id;
   const windowId = panelId ? windowIdFromPanelId(panelId) : null;
   if (windowId) closeWindow(windowId);
-  if (!(await showProjectTab(projectName, "chat", `${MANAGER_PROVIDER_ID}/${sessionId}`))) {
+  const providerId = typeof tab.metadata?.providerId === "string" ? tab.metadata.providerId : MANAGER_PROVIDER_ID;
+  if (!(await showProjectTab(projectName, "chat", `${providerId}/${sessionId}`))) {
     toast.error(`${projectName} is not a project in this PPM any more.`);
   }
 }

@@ -24,7 +24,7 @@ import type { CardPress } from "./assistant-telegram-actions.ts";
 import type { BridgeCards, BridgeDeps } from "./assistant-telegram.service.ts";
 import { formatApprovalCard, formatQuestionCard, needsPpm, resolutionLine } from "./assistant-telegram-card-format.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
-import { assistantNameForMessages } from "../assistant/assistant-settings.service.ts";
+import { assistantNameForMessages, getAssistantSettings } from "../assistant/assistant-settings.service.ts";
 import {
   EARLIER_STEP, applyWizardPress, asksStepByStep, buttonLabel, mintWizardCodes, questionListHtml, wizardStepHtml, wizardStepRows,
   wizardWorstCaseSteps, type Mint, type Selection, type WizardState,
@@ -32,8 +32,13 @@ import {
 import { BUTTON_URL_INVALID, EDIT_INTERVAL_MS, outcomeOf, sendMessageTask } from "./assistant-telegram-send-queue.ts";
 import type { TelegramBotClient } from "../telegram/telegram-bot-client.ts";
 import { createLogger } from "../logger.ts";
+import { currentQuietWindowEnd } from "../assistant-wake/wake-quiet-hours.ts";
 
 const log = createLogger("assistant-telegram");
+
+function inQuietHours(): boolean {
+  try { return currentQuietWindowEnd() !== null; } catch { return false; }
+}
 
 /** Room left under Telegram's 4096 for the link line under a card. */
 const CARD_VISIBLE_MAX = 3900;
@@ -106,6 +111,35 @@ interface ShownCard {
   done: boolean;
   /** Why it is no longer waiting, shown under it once it is done. */
   endLine: string | null;
+  /** The card's headline, as the line saying it expired names it. */
+  headline: string;
+}
+
+/**
+ * "21:09": a deadline as the person reads a clock — in the time zone saved in the Assistant's
+ * settings (the server's own when none is), since PPM often runs in UTC far from its user.
+ */
+function clockTime(ms: number, zone: string | undefined): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", ...(zone ? { timeZone: zone } : {}) }).format(ms);
+  } catch {
+    return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(ms);
+  }
+}
+
+function assistantZone(): string | undefined {
+  try { return getAssistantSettings().timezone ?? undefined; } catch { return undefined; }
+}
+
+/** The line on a card that gives up by itself: how long is left, and that nothing runs after. */
+export function expiryLine(expiresAt: number, now: number, zone: string | undefined = assistantZone()): string {
+  const minutes = Math.max(1, Math.round((expiresAt - now) / 60_000));
+  return `⏳ <i>Expires in ${minutes} minute${minutes === 1 ? "" : "s"} (at ${clockTime(expiresAt, zone)}). If nobody answers by then, nothing is done.</i>`;
+}
+
+/** The one line sent under a card that ran out with nobody answering. */
+export function expiredNoticeHtml(headline: string): string {
+  return `⌛ <b>This card expired</b>: ${escapeTelegramHtml(headline)}. Nobody answered in time, so nothing was done.`;
 }
 
 export class AssistantTelegramCards implements BridgeCards {
@@ -161,6 +195,7 @@ export class AssistantTelegramCards implements BridgeCards {
       chatId, sessionId: p.sessionId, requestId: p.card.requestId, group, html: "", isQuestion: p.card.isQuestion,
       questions, selection: new Map(), wizard: null, view: () => ({ html: card.html, rows: [] }), linkRefused: false,
       messageId: null, done: false, endLine: null,
+      headline: p.card.isQuestion ? how.questionHeadline : how.approvalHeadline,
     };
     // Registered before the link is looked up, so a card answered meanwhile is known to be done.
     this.cards.set(key, card);
@@ -222,6 +257,8 @@ export class AssistantTelegramCards implements BridgeCards {
       ];
       rows = () => [buttons];
     }
+    // A card that gives up by itself says when, worked out as it goes out (it may have waited in quiet hours).
+    if (p.card.expiresAt) card.html += `\n\n${expiryLine(p.card.expiresAt, this.deps.now())}`;
     card.html += inlineLink;
     card.view = () => {
       const html = stepHtml ? stepHtml() + inlineLink : card.html;
@@ -265,7 +302,19 @@ export class AssistantTelegramCards implements BridgeCards {
       card.endLine = resolutionLine(p, card.isQuestion);
       this.deps.codes.dropGroup(card.group);
       this.finish(card);
+      if (p.reason === "expired") this.sayExpired(card);
     }
+  }
+
+  /**
+   * One line under a card that ran out: an edit does not buzz the phone, and the user should learn
+   * that what they were asked about did not happen. Not in quiet hours, like any other reminder.
+   */
+  private sayExpired(card: ShownCard): void {
+    if (card.messageId === null || inQuietHours()) return;
+    this.deps.queue.enqueue(card.chatId, sendMessageTask(this.deps.queue, card.chatId, {
+      html: expiredNoticeHtml(card.headline), replyTo: card.messageId,
+    }, { label: "card expired", silent: () => this.deps.silence?.inPpm() ?? false }));
   }
 
   forgetChat(chatId: string): void {

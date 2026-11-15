@@ -5,6 +5,7 @@ import {
 } from "../../shared/session-collab.ts";
 import { isUnattendedTurn, UNATTENDED_TURN_REFUSAL } from "../chat-control/chat-control.ts";
 import { COLLAB_APPROVAL_WAIT_MS } from "./session-collab-tool.ts";
+import { ppmCardEnd, type PpmCardEnd } from "../../shared/ppm-card-end.ts";
 
 /**
  * The cards a session tool waits on before it acts: creating a session, messaging past the pair
@@ -19,8 +20,11 @@ import { COLLAB_APPROVAL_WAIT_MS } from "./session-collab-tool.ts";
 export interface CollabApprovalChat {
   /** Show the card in the session's chat; false when this server has no chat for the session. */
   announce(sessionId: string, event: SessionCollabApprovalRequest): boolean;
-  /** The card was answered, or given up on: take it off the session's devices. */
-  resolved(sessionId: string, requestId: string, answer: SessionCollabAnswer | null): void;
+  /**
+   * The card was answered, or given up on: take it off the session's devices. `end` says which,
+   * so the surfaces relaying it can tell an expired card from one the user answered.
+   */
+  resolved(sessionId: string, requestId: string, answer: SessionCollabAnswer | null, end?: PpmCardEnd): void;
 }
 
 export type CollabApprovalOutcome =
@@ -34,6 +38,8 @@ export type CollabApprovalAnswerResult =
 interface Pending {
   sessionId: string;
   event: SessionCollabApprovalRequest;
+  /** When the card gives up if nobody answers (ms since the epoch). */
+  expiresAt: number;
   settle: (outcome: CollabApprovalOutcome) => void;
 }
 
@@ -75,13 +81,15 @@ export function createCollabApprovalBroker(opts: {
         if (timer) clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
         try {
-          opts.chat()?.resolved(canonical(entry.sessionId), requestId, outcome.allowed ? outcome.answer : outcome.reason === "denied" ? "deny" : null);
+          const answer = outcome.allowed ? outcome.answer : outcome.reason === "denied" ? "deny" : null;
+          const end = ppmCardEnd(outcome.allowed || outcome.reason === "denied", outcome.allowed ? undefined : outcome.reason);
+          opts.chat()?.resolved(canonical(entry.sessionId), requestId, answer, end);
         } catch (e) {
           console.warn(`[session-collab] clearing approval ${requestId} failed: ${(e as Error).message}`);
         }
         done(outcome);
       };
-      pending.set(requestId, { sessionId, event, settle });
+      pending.set(requestId, { sessionId, event, expiresAt: Date.now() + waitMs, settle });
       signal?.addEventListener("abort", onAbort, { once: true });
       let shown = false;
       try {
@@ -127,6 +135,8 @@ export function createCollabApprovalBroker(opts: {
     cancelSession,
     has: (requestId: string) => pending.has(requestId),
     pendingEvent: (sessionId: string): SessionCollabApprovalRequest | null => pendingOf(sessionId)?.[1].event ?? null,
+    /** When a waiting card gives up if nobody answers; null once it no longer waits. */
+    expiresAt: (requestId: string): number | null => pending.get(requestId)?.expiresAt ?? null,
     pendingCount: () => pending.size,
   };
 }

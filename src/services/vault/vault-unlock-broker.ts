@@ -4,6 +4,7 @@ import {
   type VaultCardInput, type VaultCardRequester, type VaultItemKind, type VaultItemMeta, type VaultLockedTier, type VaultTier,
 } from "../../shared/vault.ts";
 import { createLogger } from "../logger.ts";
+import { ppmCardEnd, type PpmCardEnd } from "../../shared/ppm-card-end.ts";
 import { vaultGrants, type VaultGrants } from "./vault-grants.ts";
 import { vaultService, VaultError, type VaultItemValue, type VaultService, type UnlockFailure } from "./vault.service.ts";
 
@@ -37,7 +38,8 @@ export type VaultCardEvent = { type: "approval_request"; requestId: string; tool
 
 export interface VaultCardChat {
   announce(sessionId: string, event: VaultCardEvent): boolean;
-  resolved(sessionId: string, requestId: string, approved: boolean): void;
+  /** The card was answered, or given up on; `end` says which. */
+  resolved(sessionId: string, requestId: string, approved: boolean, end?: PpmCardEnd): void;
 }
 
 export type VaultRefusal = { ok: false; reason: "declined" | "timeout" | "cancelled" | "no-chat" | "busy" | "refused" | "rate-limited"; message: string };
@@ -125,7 +127,8 @@ export function createVaultUnlockBroker(opts: {
         if (timer) clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
         try {
-          opts.chat()?.resolved(canonical(entry.sessionId), requestId, outcome.ok);
+          const reason = outcome.ok ? undefined : (outcome as VaultRefusal).reason;
+          opts.chat()?.resolved(canonical(entry.sessionId), requestId, outcome.ok, ppmCardEnd(outcome.ok || reason === "declined", reason));
         } catch (e) {
           log.warn(`clearing card ${requestId} failed: ${(e as Error).message}`);
         }

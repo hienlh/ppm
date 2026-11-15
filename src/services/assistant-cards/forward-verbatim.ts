@@ -139,7 +139,7 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
   if (main) {
     const what = how.ok ? "gave their OK on" : how.choice ? `picked the choice with id "${how.choice.id}" on` : "answered";
     env.note(main, `The user ${what} the ${kindName(card)} card ${card.id} for ${target.projectName} ${where(actor.channel)}; `
-      + "PPM forwarded it word for word to that project's manager chat.");
+      + `PPM forwarded it word for word to ${card.payload.chat ? "the chat it came from" : "that project's manager chat"}.`);
   }
   return {
     ok: true, to: "manager", projectName: target.projectName, sessionId: delivered.sessionId,

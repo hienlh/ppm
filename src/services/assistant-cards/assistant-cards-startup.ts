@@ -1,5 +1,6 @@
 /**
- * Starts PPM Assistant's cards: what PPM sees in manager chats, the rules and budget events, the
+ * Starts PPM Assistant's cards: what PPM sees in manager chats (and the cards other chats wait on),
+ * the rules and budget events, the
  * two manager news sources of the wake queue, and the restart sweep. Called by the Assistant hub's
  * startup, after the watch service, so every unattended turn goes through the one wake queue.
  */
@@ -22,8 +23,27 @@ import { startCardDelivery } from "./card-delivery.ts";
 import { cardReplyFollowups, startCardReplyFollowups } from "./card-reply-followup.ts";
 import { createManagerSignals, type ManagerSignals } from "./manager-signals.ts";
 import { setManagerAskedHook } from "./manager-reply-expectations.ts";
+import { ordinaryChatFor, type OrdinaryChatDeps } from "./ordinary-chat-cards.ts";
+import { configService } from "../config.service.ts";
+import { getSessionDesignSlug, getSessionTitle, resolveMigratedSession } from "../db.service.ts";
+import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
+import { chatService } from "../chat.service.ts";
+import { isAssistantSession } from "../assistant/assistant-session.ts";
+import { parentOf } from "../session-collab/session-links.service.ts";
 
 const log = createLogger("assistant-cards");
+
+/** Where the chats whose cards the Assistant shows are told apart and named (`ordinary-chat-cards.ts`). */
+const ordinaryChatDeps: OrdinaryChatDeps = {
+  projects: () => configService.get("projects"),
+  isAssistant: (sessionId) => isAssistantSession(sessionId),
+  isManager: (sessionId) => managerChats.forSession(sessionId) !== null,
+  isDesign: (sessionId) => getSessionDesignSlug(resolveMigratedSession(sessionId)) !== null,
+  parentOf,
+  turnOrigin: (sessionId) => chatControl()?.liveState(sessionId)?.turnOrigin,
+  // The user's rename, else the title the chat shows (its provider's, from the first message).
+  title: (sessionId) => getSessionTitle(sessionId) || chatService.getSession(sessionId)?.title || null,
+};
 
 let stops: Array<() => void> = [];
 let signals: ManagerSignals | null = null;
@@ -47,6 +67,9 @@ export function startAssistantCards(): void {
     cards: assistantCards,
     clock: assistantClock,
     managerFor: (sessionId) => managerChats.forSession(sessionId),
+    chatFor: (p) => ordinaryChatFor(p, ordinaryChatDeps),
+    // A vault value the turn read never reaches the card store, its broadcast or a backup.
+    scrub: (value, sessionId) => turnSecretScrubber.scrubIn(value, sessionId),
     openRequestCard: findOpenRequestCard,
     reportsSince: (sessionId, kinds, since) => countSessionCardsSince([sessionId], kinds, since),
     lateReply: (reply) => lateReplies.add(reply),

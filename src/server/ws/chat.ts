@@ -47,7 +47,8 @@ import { setTabOpenDelivery, tabOpenBroker } from "../../services/tab-tools-mcp/
 import { assistantUiBroker, setAssistantUiDelivery } from "../../services/assistant-mcp/assistant-ui-tools.ts";
 import { parseAssistantUiResult, type UiSummary } from "../../shared/assistant-ui-protocol.ts";
 import { setDbApprovalChat, type DbApprovalEvent } from "../../services/db-ai-tools/db-approval-broker.ts";
-import { dbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
+import { DB_EXECUTE_APPROVAL, dbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
+import type { PpmCardEnd } from "../../shared/ppm-card-end.ts";
 import { ppmApprovals } from "./chat-ppm-approvals.ts";
 import { claimTurnOrigin, noteQueuedTurnOrigin, turnOriginAfterTurn, turnRunning, type ArrivingMessage } from "./chat-turn-origin.ts";
 import { setCollabApprovalChat } from "../../services/session-collab/collab-approval-broker.ts";
@@ -1021,6 +1022,8 @@ setAssistantUiDelivery((sessionId, request) => deliverToChattingDevice(sessionId
 
 /** The card as a caller outside the socket layer sees it. */
 function liveApprovalCard(ev: PendingApprovalEvent): LiveApprovalCard {
+  // A session tool's card gives up after its wait; the deadline goes wherever the card is shown.
+  const collab = isPpmApproval(ev) ? collabCardForListeners(ev) : null;
   return {
     requestId: ev.requestId,
     tool: ev.tool,
@@ -1028,6 +1031,7 @@ function liveApprovalCard(ev: PendingApprovalEvent): LiveApprovalCard {
     ...(ev.summary ? { summary: ev.summary } : {}),
     isQuestion: ev.tool === "AskUserQuestion",
     ...(ev.questions ? { questions: ev.questions } : {}),
+    ...(collab?.expiresAt ? { expiresAt: collab.expiresAt } : {}),
   };
 }
 
@@ -1055,14 +1059,19 @@ const approvals: PendingApprovals = createPendingApprovals({
     approvalHeldAt.set(ev, Date.now());
     if (isPpmApproval(ev)) {
       // Not buffered into the turn's replay: the tool call's own card already shows what is
-      // asked, and a device that connects later reads the approval from `session_state`. Told to
-      // chat listeners only when it is a session-tool card of the PPM Assistant, which Telegram
-      // shows too; the others are answered over HTTP with PPM's password, nowhere else. A
-      // `db_execute` card still reaches Telegram, as a notice with no buttons: the broker tells
-      // `db-attention-events.ts`, which the Assistant's Telegram bridge listens to.
+      // asked, and a device that connects later reads the approval from `session_state`. A
+      // session tool's card is told to chat listeners whichever chat shows it: the PPM Assistant's
+      // "Waiting on you" and Telegram carry it and can answer it. A `db_execute` or vault card is
+      // answered over HTTP with a password typed into PPM, nowhere else, so listeners only hear
+      // that the chat waits; Telegram gets a notice with no buttons from `db-attention-events.ts`.
       broadcast(sessionId, ev);
-      const relayed = collabCardForListeners(sessionId, entry.projectPath, ev);
+      const relayed = collabCardForListeners(ev);
       if (relayed) chatLifecycle.emit("approval_shown", { sessionId, card: relayed, projectName: entry.projectName ?? "", providerId: entry.providerId });
+      else {
+        // Only that the chat waits, never what it asks: the Assistant names it and links to the chat.
+        const kind = ev.tool === VAULT_CARD_APPROVAL ? "vault" : ev.tool === DB_EXECUTE_APPROVAL ? "db_execute" : null;
+        if (kind) chatLifecycle.emit("ppm_only_card_shown", { sessionId, requestId: ev.requestId, kind, projectName: entry.projectName ?? "", providerId: entry.providerId });
+      }
       announceApprovalRequest(sessionId, entry, ev, () => activeSessions.get(sessionId)?.pendingApprovalEvent?.requestId === ev.requestId);
       return;
     }
@@ -1091,7 +1100,8 @@ const approvals: PendingApprovals = createPendingApprovals({
     if (waiting) approvals.offer(sessionId, slot, ppmApprovalEvent(waiting));
   },
   ended: (sessionId, ev, reason, how) => {
-    if (isPpmApproval(ev) && !collabCardForListeners(sessionId, activeSessions.get(sessionId)?.projectPath, ev)) return;
+    // Every card's end is told, PPM's own included: a listener that named one (the Assistant's
+    // "Waiting on you") takes it away. A `db_execute` or vault card's end says only whether it was approved.
     chatLifecycle.emit("approval_resolved", {
       sessionId,
       requestId: ev.requestId,
@@ -1150,20 +1160,26 @@ function announcePpmApproval(sessionId: string, event: { type: string; requestId
 
 /**
  * One of PPM's own approvals was answered, or given up on: every device drops its card. A session
- * tool's card that nobody answered (timed out, cancelled) comes with a null `answer`.
+ * tool's card that nobody answered (timed out, cancelled) comes with a null `answer`. `end` is how
+ * the broker settled it; the slot's end reason follows it, so a card nobody answered is never told
+ * to listeners as answered, and one that ran out is told as `expired`.
  */
-function ppmApprovalResolved(sessionId: string, requestId: string, approved: boolean, answer?: SessionCollabAnswer | null): void {
+function ppmApprovalResolved(
+  sessionId: string, requestId: string, approved: boolean, answer: SessionCollabAnswer | null | undefined, end: PpmCardEnd | undefined,
+): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
   broadcast(sessionId, { type: "approval_resolved", requestId, approved, answers: answer ? { answer } : null });
-  approvals.clear(sessionId, entry, requestId, answer === null ? APPROVAL_END.requestEnded : APPROVAL_END.answered, { approved });
+  const settled = end ?? (answer === null ? "ended" : "answered");
+  const reason = settled === "answered" ? APPROVAL_END.answered : settled === "expired" ? APPROVAL_END.expired : APPROVAL_END.requestEnded;
+  approvals.clear(sessionId, entry, requestId, reason, { approved });
   broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
 }
 /** Hand `db_execute` approvals to this chat; again in a test that swapped in a chat of its own. */
 export function registerDbApprovalChat(): void {
   setDbApprovalChat({
     announce: (sessionId, event: DbApprovalEvent) => announcePpmApproval(sessionId, event),
-    resolved: (sessionId, requestId, approved) => ppmApprovalResolved(sessionId, requestId, approved),
+    resolved: (sessionId, requestId, approved, end) => ppmApprovalResolved(sessionId, requestId, approved, undefined, end),
   }, resolveMigratedSession);
 }
 registerDbApprovalChat();
@@ -1179,8 +1195,8 @@ setCollabApprovalChat({
     if (shown) collabApprovalGlobal(sessionId, { requestId: event.requestId, state: "pending", input: event.input });
     return shown;
   },
-  resolved: (sessionId, requestId, answer) => {
-    ppmApprovalResolved(sessionId, requestId, answer === "allow_once" || answer === "allow_session", answer);
+  resolved: (sessionId, requestId, answer, end) => {
+    ppmApprovalResolved(sessionId, requestId, answer === "allow_once" || answer === "allow_session", answer, end);
     collabApprovalGlobal(sessionId, { requestId, state: "resolved", ...(answer ? { answer } : {}) });
   },
 }, resolveMigratedSession);
@@ -1189,7 +1205,7 @@ setCollabApprovalChat({
 export function registerVaultCardChat(): void {
   setVaultCardChat({
     announce: (sessionId, event: VaultCardEvent) => announcePpmApproval(sessionId, event),
-    resolved: (sessionId, requestId, approved) => ppmApprovalResolved(sessionId, requestId, approved),
+    resolved: (sessionId, requestId, approved, end) => ppmApprovalResolved(sessionId, requestId, approved, undefined, end),
   }, resolveMigratedSession);
   setVaultSessionResolver(resolveMigratedSession);
   setScrubberSessionResolver(resolveMigratedSession);
@@ -2537,13 +2553,14 @@ function answerApprovalCore(
   // another chat's card: it takes the tier's password, typed into PPM by the user.
   if (vaultUnlockBroker.has(requestId)) return "stale";
   // PPM's own approvals are answered over authenticated HTTP (a `db_execute` change with PPM's
-  // password). The one exception is a session tool's card pressed on Telegram, which settles it
-  // through its broker, once and never "for the session" (see `chat-collab-approval-relay.ts`).
+  // password). The one exception is a session tool's card pressed on Telegram or on its mirror in
+  // the PPM Assistant, which settles it through its broker, once and never "for the session"
+  // (see `chat-collab-approval-relay.ts`).
   if (ppmApprovals.has(requestId)) {
     const previous = resolvingBy;
     resolvingBy = origin;
     try {
-      return settleCollabApprovalFromServer(sessionId, entry.projectPath, requestId, approved, origin);
+      return settleCollabApprovalFromServer(sessionId, requestId, approved, origin);
     } finally {
       resolvingBy = previous;
     }

@@ -44,5 +44,7 @@ export function useCardAction(onCard: (card: AssistantCard) => void = applyAssis
  */
 export function openCardManagerChat(card: AssistantCard): void {
   if (!card.projectName || !card.sessionId) return;
-  void openManagerChat({ projectName: card.projectName, sessionId: card.sessionId });
+  // Another chat's card opens that chat, under its own provider and name.
+  const chat = card.payload.chat;
+  void openManagerChat({ projectName: card.projectName, sessionId: card.sessionId, ...(chat ? { chat } : {}) });
 }

@@ -47,13 +47,15 @@ export function answerCard(id: string, body: unknown, deps: CardActionDeps = rea
   if (decision !== undefined && decision !== "allow" && decision !== "deny") return { ok: false, status: 400, error: "decision must be allow or deny" };
   const requestId = card.payload.requestId;
   if (!requestId || !card.sessionId) return { ok: false, status: 400, error: "This card mirrors no request" };
+  // A password typed into PPM is the only answer: never Allow, and never a Deny from here either.
+  if (card.payload.answerInPpm) return { ok: false, status: 400, error: "Answer this in the chat in PPM: it needs a password typed there." };
 
   let answer: { approved: boolean; answersById?: Record<string, string[]> };
   if (card.kind === "approval") {
     if (decision === undefined) return { ok: false, status: 400, error: "decision is required" };
     // The same bar as Telegram: Allow only where the whole request is on the card.
     if (decision === "allow" && card.payload.deciding?.complete !== true) {
-      return { ok: false, status: 400, error: "This request is not shown in full here; open the manager chat to answer it." };
+      return { ok: false, status: 400, error: `This request is not shown in full here; open the ${card.payload.chat ? "chat" : "manager chat"} to answer it.` };
     }
     answer = { approved: decision === "allow" };
   } else if (decision === "deny") {

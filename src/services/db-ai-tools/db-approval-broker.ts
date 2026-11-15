@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { DB_EXECUTE_APPROVAL, type DbApprovalAnswer, type DbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
 import { checkPpmPassword, ppmPasswordRequired } from "../ppm-password.ts";
 import { dbAttentionEvents, type DbAttentionBus } from "./db-attention-events.ts";
+import { ppmCardEnd, type PpmCardEnd } from "../../shared/ppm-card-end.ts";
 
 /**
  * The server half of `db_execute`'s approval. The call waits here while the chat shows the user
@@ -25,8 +26,8 @@ export type DbApprovalEvent = { type: "approval_request"; requestId: string; too
 export interface DbApprovalChat {
   /** Show the approval in the session's chat; false when this server has no chat for the session. */
   announce(sessionId: string, event: DbApprovalEvent): boolean;
-  /** The approval was answered, or given up on: take it off the session's devices. */
-  resolved(sessionId: string, requestId: string, approved: boolean): void;
+  /** The approval was answered, or given up on: take it off the session's devices. `end` says which. */
+  resolved(sessionId: string, requestId: string, approved: boolean, end?: PpmCardEnd): void;
 }
 
 export type DbApprovalOutcome =
@@ -100,7 +101,8 @@ export function createDbApprovalBroker(opts: {
         if (reminder) clearTimeout(reminder);
         signal?.removeEventListener("abort", onAbort);
         try {
-          opts.chat()?.resolved(canonical(entry.sessionId), requestId, outcome.approved);
+          const end = ppmCardEnd(outcome.approved || outcome.reason === "declined", outcome.approved ? undefined : outcome.reason);
+          opts.chat()?.resolved(canonical(entry.sessionId), requestId, outcome.approved, end);
         } catch (e) {
           console.warn(`[db-tools] clearing approval ${requestId} failed: ${(e as Error).message}`);
         }

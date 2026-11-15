@@ -24,6 +24,7 @@ import { NEWS_OPENER } from "../../src/services/assistant-wake/wake-news-text.ts
 import { startAssistantCards, stopAssistantCards } from "../../src/services/assistant-cards/assistant-cards-startup.ts";
 import { assistantCards } from "../../src/services/assistant-cards/assistant-cards.service.ts";
 import { NOT_A_MANAGER } from "../../src/services/assistant-cards/manager-report-env.ts";
+import { recordSpawn } from "../../src/services/session-collab/session-links.service.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../src/shared/assistant-project.ts";
 import { FAILED_CARD_GRACE_MS, WAKE_TURNS_PER_HOUR } from "../../src/shared/assistant-limits.ts";
 import type { AssistantCard } from "../../src/shared/assistant-cards.ts";
@@ -71,6 +72,8 @@ let projectsBefore: PpmConfig["projects"] = [];
 let assistantBefore: unknown;
 let manager = "";
 let child = "";
+/** A chat the user opened in the project: neither the manager nor one it opened. */
+let other = "";
 let assistant = "";
 let clock = Date.UTC(2026, 10, 10, 9, 0, 0);
 const timers: Array<{ at: number; fn: () => void; live: boolean }> = [];
@@ -103,6 +106,9 @@ beforeAll(async () => {
   manager = chatIn("cards", projectPath, "Manager");
   child = chatIn("cards", projectPath, "Child");
   await managerChats.assign("cards", manager, "user");
+  // The manager opened it: what it waits on is the manager's to report, not a card of its own.
+  recordSpawn(child, manager);
+  other = chatIn("cards", projectPath, "Kho task");
   assistant = `asst-${crypto.randomUUID()}`;
   setSessionMetadata(assistant, ASSISTANT_PROJECT_NAME, join(home, "assistant-work"));
   setSessionProvider(assistant, "claude");
@@ -236,6 +242,18 @@ describe("what PPM sees in the manager chat", () => {
     ctl().answerApproval(child, ctl().liveState(child)!.card!.requestId, { approved: false }, "telegram");
     await idle(manager);
     await idle(child);
+  });
+
+  it("cards the approval of a chat the user opened, named, and resolves it when answered on Telegram", async () => {
+    await send(other, "ASK-BASH please");
+    await until(() => !!ctl().liveState(other)?.card, "the chat's card");
+    const requestId = ctl().liveState(other)!.card!.requestId;
+    const [card] = await cards();
+    expect(card).toMatchObject({ kind: "approval", sessionId: other, status: "open", projectName: "cards" });
+    expect(card!.payload).toMatchObject({ requestId, chat: { title: "Kho task", providerId: "claude" } });
+    expect(ctl().answerApproval(other, requestId, { approved: false }, "telegram")).toBe("answered");
+    expect((await cards())[0]).toMatchObject({ status: "resolved", answer: { note: "Answered on Telegram" } });
+    await idle(other);
   });
 
   it("keeps one failed card when the manager reports a failure inside the grace period", async () => {

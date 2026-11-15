@@ -54,6 +54,37 @@ describe("session tools' approval cards", () => {
     expect(await hidden.broker.request("caller-session", createInput)).toMatchObject({ allowed: false, reason: "no-chat" });
   });
 
+  it("knows when a waiting card gives up, and says it expired only when nobody answered in time", async () => {
+    const expired: Array<{ requestId: string; end: string | undefined }> = [];
+    const announced: SessionCollabApprovalRequest[] = [];
+    const broker = createCollabApprovalBroker({
+      chat: () => ({
+        announce: (_s, event) => { announced.push(event); return true; },
+        resolved: (_s, requestId, _answer, end) => { expired.push({ requestId, end }); },
+      }),
+    });
+    const before = Date.now();
+    const waiting = broker.request("caller-session", createInput, undefined, 60_000);
+    const id = announced[0]!.requestId;
+    const at = broker.expiresAt(id)!;
+    expect(at).toBeGreaterThanOrEqual(before + 60_000);
+    expect(at).toBeLessThanOrEqual(Date.now() + 60_000);
+    broker.answer(id, { answer: "deny" });
+    await waiting;
+    expect(broker.expiresAt(id)).toBeNull();
+
+    expect(await broker.request("caller-session", createInput, undefined, 5)).toMatchObject({ reason: "timeout" });
+    const controller = new AbortController();
+    const cancelled = broker.request("caller-session", createInput, controller.signal);
+    controller.abort();
+    await cancelled;
+    expect(expired).toEqual([
+      { requestId: id, end: "answered" },
+      { requestId: announced[1]!.requestId, end: "expired" },
+      { requestId: announced[2]!.requestId, end: "ended" },
+    ]);
+  });
+
   it("holds one card per session; cancelling the session settles it", async () => {
     const { broker } = setup();
     const first = broker.request("caller-session", createInput);
