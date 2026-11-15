@@ -25,6 +25,7 @@ import { cardEndLine, formatManagerCard, type CardDetail } from "./assistant-tel
 import { placeLink } from "./assistant-telegram-links.ts";
 import { cardPhotosTask } from "./assistant-telegram-card-photos.ts";
 import { formatNewCardPointer } from "./assistant-telegram-followup-format.ts";
+import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { outcomeOf, sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { CardReminders, TelegramSilence } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
@@ -252,7 +253,10 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
 
   /** The one line naming a card that answered the user's reply but never reached the phone. */
   private sendPointer(chatId: string, card: AssistantCard, url: string | null, thread: Thread): void {
-    const formatted = formatNewCardPointer({ projectName: card.projectName ?? null, newCards: [card], url });
+    // The title is the manager's own text: a vault value in it is replaced here, not only by the client.
+    const formatted = formatNewCardPointer({
+      projectName: card.projectName ?? null, newCards: [{ title: turnSecretScrubber.scrub(card.title) }], url,
+    });
     this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, {
       html: formatted.html, replyTo: thread.replyTo,
       ...(formatted.markup ? { markup: formatted.markup } : {}),
