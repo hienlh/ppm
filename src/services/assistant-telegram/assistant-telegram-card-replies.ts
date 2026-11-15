@@ -18,8 +18,12 @@ import type { BridgeAction, ManagerCardPress } from "./assistant-telegram-action
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 
 const MAX_PENDING = 50;
-/** The manager's answer to the reply comes back under the card (`assistant-telegram-card-followups.ts`). */
-export const ANSWER_FOLLOWS = "Its answer will come here, under the card.";
+/**
+ * The manager's answer to the reply comes back under the card (`assistant-telegram-card-followups.ts`)
+ * — if there is one: a turn with no text, a stopped turn's notice aside, words that never arrived or
+ * a bridge stopped meanwhile all send nothing, so this is no promise.
+ */
+export const ANSWER_FOLLOWS = "If the manager answers, it will come here, under the card.";
 
 export interface CardRepliesDeps {
   codes: ButtonCodes<BridgeAction>;

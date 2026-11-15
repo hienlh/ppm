@@ -230,7 +230,7 @@ describe("the manager's answer to a card reply", () => {
     expect(followUp.text).toContain("It also opened a new card: Chạy full regression trên Opus? Tốn ~40% quota tuần");
     expect(fake.buttons(PHONE, followUp.message_id).flat()[0]).toMatchObject({ text: "Open in PPM" });
     const ack = lastWith("word for word")!;
-    expect(ack.text).toContain("Its answer will come here, under the card.");
+    expect(ack.text).toContain("If the manager answers, it will come here, under the card.");
     const newCard = fake.sent(PHONE).find((m) => m.text.startsWith("🔔 Needs your decision") && m.text.includes("Tốn ~40% quota tuần"))!;
     expect(newCard.silent).toBe(true);
     // The new decision went out at once (silently: the user was at PPM); the answer followed it.
