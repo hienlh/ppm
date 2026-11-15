@@ -1,7 +1,7 @@
 import { getDb } from "../db.service.ts";
 import {
   ASSISTANT_CARD_KINDS, ASSISTANT_CARD_STATUSES, WAITING_CARD_KINDS,
-  type AssistantCardAnswer, type AssistantCardKind, type AssistantCardPayload, type AssistantCardStatus,
+  type AssistantCardAnswer, type AssistantCardKind, type AssistantCardPayload, type AssistantCardStatus, type CardFollowUp,
 } from "../../shared/assistant-cards.ts";
 
 /**
@@ -22,7 +22,10 @@ export interface CardRow {
   body: string;
   payload: AssistantCardPayload & { projectName?: string };
   status: AssistantCardStatus;
+  /** Who answered the card, as stored (a stored follow-up rides along in it, for rewrites to keep). */
   answer: AssistantCardAnswer | null;
+  /** The manager's answer to a reply on the card (stored in `answer_json` as `followUp`). */
+  followUp?: CardFollowUp;
   outbound: CardOutbound;
   wake: CardWake;
   /** The Telegram messages showing this card; a message id means something only with its chat. */
@@ -34,6 +37,12 @@ export interface CardRow {
 export interface TelegramCardRef {
   chatId: string;
   messageId: number;
+  /**
+   * The message is the manager's answer to a reply on the card, not the card: a reply to it reaches
+   * the card's manager like a reply to the card, but it is never rewritten as the card or answered
+   * under as one of the card's copies.
+   */
+  followUp?: true;
 }
 
 interface Raw {
@@ -48,7 +57,8 @@ function parseRefs(json: string | null): TelegramCardRef[] {
     const value = JSON.parse(json) as unknown;
     if (!Array.isArray(value)) return [];
     return value.filter((r): r is TelegramCardRef =>
-      !!r && typeof r === "object" && typeof r.chatId === "string" && Number.isInteger(r.messageId));
+      !!r && typeof r === "object" && typeof r.chatId === "string" && Number.isInteger(r.messageId))
+      .map((r) => ({ chatId: r.chatId, messageId: r.messageId, ...(r.followUp === true ? { followUp: true as const } : {}) }));
   } catch {
     return [];
   }
@@ -64,6 +74,24 @@ function parse<T>(json: string | null, fallback: T): T {
   }
 }
 
+function parseFollowUp(value: unknown): CardFollowUp | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const f = value as Record<string, unknown>;
+  return typeof f.text === "string" && typeof f.truncated === "boolean" && typeof f.at === "number"
+    ? { text: f.text, truncated: f.truncated, at: f.at } : undefined;
+}
+
+/**
+ * The stored answer, and the follow-up kept beside it. A card replied to with no answer of its own
+ * stores only `{ followUp }`: that is no answer (nobody answered it), so `answer` stays null.
+ */
+function splitAnswer(json: string | null): { answer: AssistantCardAnswer | null; followUp?: CardFollowUp } {
+  const raw = parse<(Partial<AssistantCardAnswer> & { followUp?: unknown }) | null>(json, null);
+  const followUp = parseFollowUp(raw?.followUp);
+  const answer = raw && typeof raw.by === "string" ? raw as AssistantCardAnswer : null;
+  return { answer, ...(followUp ? { followUp } : {}) };
+}
+
 const toRow = (r: Raw): CardRow => ({
   id: r.id,
   kind: r.kind as AssistantCardKind,
@@ -73,7 +101,7 @@ const toRow = (r: Raw): CardRow => ({
   body: r.body,
   payload: parse(r.payload_json, {}),
   status: r.status as AssistantCardStatus,
-  answer: parse<AssistantCardAnswer | null>(r.answer_json, null),
+  ...splitAnswer(r.answer_json),
   outbound: r.outbound as CardOutbound,
   wake: r.wake as CardWake,
   telegramRefs: parseRefs(r.telegram_refs_json),
@@ -127,6 +155,18 @@ export function casCardStatus(id: string, from: AssistantCardStatus, to: Assista
 export function setAnsweredCardAnswer(id: string, answer: AssistantCardAnswer, at: number): boolean {
   return getDb().query("UPDATE assistant_cards SET answer_json = ?, updated_at = ? WHERE id = ? AND status = 'answered'")
     .run(JSON.stringify(answer), at, id).changes > 0;
+}
+
+/**
+ * Puts the manager's answer to a reply under a card that no longer waits — answered by that reply,
+ * or closed before it and replied to anyway. A card with no answer (a done report) gets the
+ * follow-up alone: no answer is made up for it. False for an open card or one that is gone.
+ */
+export function setCardFollowUp(id: string, followUp: CardFollowUp, at: number): boolean {
+  return getDb().query(`UPDATE assistant_cards
+    SET answer_json = json_set(COALESCE(answer_json, '{}'), '$.followUp', json(?)),
+        updated_at = ?
+    WHERE id = ? AND status != 'open'`).run(JSON.stringify(followUp), at, id).changes > 0;
 }
 
 /** Answered cards whose forwarded words have not reached their manager chat yet, oldest first. */

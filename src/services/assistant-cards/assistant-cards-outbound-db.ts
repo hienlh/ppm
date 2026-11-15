@@ -10,6 +10,12 @@ import { CARD_COLUMNS, rowFromDb, type CardOutbound, type CardRow, type Telegram
 const OUTBOUNDS: readonly CardOutbound[] = ["pending", "held", "sent", "skipped"];
 /** Copies of one card kept at most: one per connected chat, and a phone rarely has more than a few. */
 const MAX_REFS = 20;
+/**
+ * The manager's answers to replies on one card kept at most, counted apart from the card's own
+ * copies: a card replied to many times must not lose its copies, or a reply to the card itself
+ * stops finding it and its copies stop being rewritten when it ends.
+ */
+const MAX_FOLLOWUP_REFS = 5;
 
 export function setCardOutbound(id: string, outbound: CardOutbound, at: number): boolean {
   if (!OUTBOUNDS.includes(outbound)) throw new Error(`Unknown outbound "${String(outbound)}"`);
@@ -37,12 +43,17 @@ export function addCardTelegramRef(id: string, ref: TelegramCardRef): void {
     const row = db.query(`SELECT ${CARD_COLUMNS} FROM assistant_cards WHERE id = ?`).get(id);
     if (!row) return;
     const refs = rowFromDb(row).telegramRefs.filter((r) => !(r.chatId === ref.chatId && r.messageId === ref.messageId));
-    refs.push({ chatId: ref.chatId, messageId: ref.messageId });
-    db.query("UPDATE assistant_cards SET telegram_refs_json = ? WHERE id = ?").run(JSON.stringify(refs.slice(-MAX_REFS)), id);
+    refs.push({ chatId: ref.chatId, messageId: ref.messageId, ...(ref.followUp ? { followUp: true as const } : {}) });
+    const copies = refs.filter((r) => !r.followUp).slice(-MAX_REFS);
+    const followUps = refs.filter((r) => r.followUp).slice(-MAX_FOLLOWUP_REFS);
+    db.query("UPDATE assistant_cards SET telegram_refs_json = ? WHERE id = ?").run(JSON.stringify([...copies, ...followUps]), id);
   })();
 }
 
-/** The card a Telegram message in `chatId` shows, if any: the same message id in another chat is another message. */
+/**
+ * The card a Telegram message in `chatId` shows, or answers a reply on (a follow-up ref), if any:
+ * the same message id in another chat is another message.
+ */
 export function findCardByTelegramRef(chatId: string, messageId: number): CardRow | null {
   if (!Number.isInteger(messageId)) return null;
   const row = getDb().query(`SELECT ${CARD_COLUMNS} FROM assistant_cards

@@ -52,6 +52,9 @@ function clean(text: string, counter: { hidden: number }): string {
   return escapeTelegramHtml(r.text);
 }
 
+/** The same treatment for any other manager-written line bound for Telegram. */
+export const cleanTelegramText = clean;
+
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 
 /**

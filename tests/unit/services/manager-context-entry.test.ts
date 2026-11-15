@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  ADDED_RULES_HEADING, APPROVED_RULES_HEADING, buildManagerBlock, MANAGER_USER_ACTION_RULE, managerContextEntry,
+  ADDED_RULES_HEADING, APPROVED_RULES_HEADING, buildManagerBlock, MANAGER_CARD_REPLY_RULE, MANAGER_USER_ACTION_RULE, managerContextEntry,
 } from "../../../src/services/assistant-managers/manager-context-entry.ts";
 import { DEFAULT_MANAGER_RULES_TEMPLATE } from "../../../src/services/assistant-managers/manager-rules-default-template.ts";
 import { decodeMessageBlocks } from "../../../src/shared/chat-message-blocks.ts";
@@ -55,6 +55,26 @@ describe("managerContextEntry", () => {
     // The rule is PPM's, in the block every turn carries — never written into the user's rules file.
     expect(DEFAULT_MANAGER_RULES_TEMPLATE).not.toContain(MANAGER_USER_ACTION_RULE);
     expect(managerContextEntry("p", "- rule", "- rule")).toContain(MANAGER_USER_ACTION_RULE);
+  });
+
+  it("tells every manager that a question or a wrong premise in a card reply is not an OK", () => {
+    expect(MANAGER_CARD_REPLY_RULE).toContain("is NOT an OK: do nothing yet");
+    expect(MANAGER_CARD_REPLY_RULE).toContain("correct the assumption with the numbers");
+    expect(MANAGER_CARD_REPLY_RULE).toContain("ask again with a new needs_decision card");
+    for (const marker of ["…nhỉ", "…không", "?", "right?"]) expect(MANAGER_CARD_REPLY_RULE).toContain(marker);
+    // The new card first, the answer last: an answer written before a tool call is lost to a
+    // trailing "Card sent.", so the order is part of the rule.
+    expect(MANAGER_CARD_REPLY_RULE).toContain("as the last thing you write in this turn, with no tool call after it");
+    expect(MANAGER_CARD_REPLY_RULE.indexOf("First ask again with a new needs_decision card"))
+      .toBeLessThan(MANAGER_CARD_REPLY_RULE.indexOf("answer the question"));
+    // The answer goes to the phone, so it is held to a report's limits.
+    expect(MANAGER_CARD_REPLY_RULE).toContain("often their phone on Telegram: keep it to a few lines");
+    expect(MANAGER_CARD_REPLY_RULE).toContain("same limits as a report (no client personal or tax data, use ticket ids)");
+    // Global, whatever the project and whatever its own rules file says (or leaves out).
+    for (const [name, rules] of [["nxsys", "- rule"], ["ppm", ""], ["culi", DEFAULT_MANAGER_RULES_TEMPLATE]] as const) {
+      expect(managerContextEntry(name, rules, rules)).toContain(MANAGER_CARD_REPLY_RULE);
+    }
+    expect(DEFAULT_MANAGER_RULES_TEMPLATE).not.toContain(MANAGER_CARD_REPLY_RULE);
   });
 
   it("says the rules win over the files they point to", () => {

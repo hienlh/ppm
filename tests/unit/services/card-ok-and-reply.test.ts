@@ -150,6 +150,38 @@ describe("a reply", () => {
     expect(cards.get(card.id)).toMatchObject({ status: "answered", answer: { channel: "telegram", note: "You replied on Telegram" } });
   });
 
+  it("asks for the manager's answer back where it was typed; an OK asks for none", async () => {
+    const card = decision();
+    await replyToCard(card.id, { text: "dùng đi chắc ko tốn nhiều quota đâu nhỉ" }, { ...phone, telegramReplyTo: 31 }, deps);
+    expect(forwards[0]!.how.followUp).toEqual({ channel: "telegram", chatId: "42", replyTo: 31 });
+    const other = decision();
+    await replyToCard(other.id, { text: "why?" }, web, deps);
+    expect(forwards[1]!.how.followUp).toEqual({ channel: "ppm" });
+    const third = decision();
+    await okCard(third.id, { draftSha256: SHA }, phone, deps);
+    expect(forwards[2]!.how.followUp).toBeUndefined();
+  });
+
+  it("lets the same reply keep the manager's answer under a card that no longer waits, but not under an open one", () => {
+    const card = decision();
+    expect(cards.setFollowUp(card.id, { text: "x", truncated: false, at: now })).toBe(false);
+    cards.transition(card.id, "dismissed", null);
+    expect(cards.setFollowUp(card.id, { text: "It costs ~40%.", truncated: false, at: now })).toBe(true);
+    // A card nobody answered keeps no answer: the follow-up sits beside it, none is made up.
+    expect(cards.get(card.id)!.answer).toBeNull();
+    expect(cards.get(card.id)!.followUp).toEqual({ text: "It costs ~40%.", truncated: false, at: now });
+  });
+
+  it("keeps the follow-up beside an answer, through a later rewrite of that answer", () => {
+    const card = decision();
+    cards.transition(card.id, "answered", { by: "user", channel: "telegram", at: now, delivery: "pending" });
+    expect(cards.setFollowUp(card.id, { text: "No, 40%.", truncated: false, at: now })).toBe(true);
+    expect(cards.amendAnswer(card.id, { delivery: "delivered" })).toBe(true);
+    const after = cards.get(card.id)!;
+    expect(after.answer).toEqual({ by: "user", channel: "telegram", at: now, delivery: "delivered" });
+    expect(after.followUp).toEqual({ text: "No, 40%.", truncated: false, at: now });
+  });
+
   it("asks first on a card answered already, then sends when told to, leaving the card as it was", async () => {
     const card = decision();
     await okCard(card.id, { draftSha256: SHA }, web, deps);

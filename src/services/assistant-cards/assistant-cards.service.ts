@@ -14,10 +14,11 @@ import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import {
   reportProvenanceLine, WAITING_CARD_KINDS,
   type AssistantCard, type AssistantCardAnswer, type AssistantCardKind, type AssistantCardPayload,
-  type AssistantCardsPage, type AssistantCardStatus, type AssistantWaiting,
+  type AssistantCardsPage, type AssistantCardStatus, type AssistantWaiting, type CardFollowUp,
 } from "../../shared/assistant-cards.ts";
 import {
-  casCardStatus, getCardRow, insertCardRow, listCardRows, listOpenCardRows, setAnsweredCardAnswer, setCardWake, type CardRow, type CardWake,
+  casCardStatus, getCardRow, insertCardRow, listCardRows, listOpenCardRows, setAnsweredCardAnswer, setCardFollowUp, setCardWake,
+  type CardRow, type CardWake,
 } from "./assistant-cards-db.ts";
 import { cardOkOffered } from "./card-ok-rule.ts";
 
@@ -70,9 +71,12 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
   function toCard(row: CardRow, projects = env.projects()): AssistantCard {
     const { projectName: _stored, ...payload } = row.payload;
     const projectName = nameOf(row, projects);
+    // The stored answer carries the follow-up for rewrites to keep; a card shows it on its own.
+    const { followUp: _inAnswer, ...answer } = (row.answer ?? {}) as AssistantCardAnswer & { followUp?: unknown };
     const card: AssistantCard = {
       id: row.id, kind: row.kind, projectName, projectKey: row.projectKey, sessionId: row.sessionId,
-      title: row.title, body: row.body, payload, status: row.status, answer: row.answer,
+      title: row.title, body: row.body, payload, status: row.status, answer: row.answer ? answer : null,
+      ...(row.followUp ? { followUp: row.followUp } : {}),
       provenance: reportProvenanceLine(row.kind, projectName, payload.subagent === true, payload.detected === true),
       createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
@@ -155,6 +159,17 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
       if (!casCardStatus(id, "answered", "open", note ? { by: "ppm", channel: "ppm", at, note } : null, at)) return false;
       const row = getCardRow(id);
       if (row) tell(row, "changed", isWaiting(row));
+      return true;
+    },
+    /**
+     * Puts the manager's answer to a reply under the card and tells every PPM tab. Card listeners
+     * are not told: nothing about whether the card waits changed, and its Telegram copies were
+     * answered in place by the follow-up itself.
+     */
+    setFollowUp(id: string, followUp: CardFollowUp): boolean {
+      if (!setCardFollowUp(id, followUp, env.now())) return false;
+      const row = getCardRow(id);
+      if (row) env.announce(toCard(row), waiting(), false);
       return true;
     },
     /** Adds to the answer of a card still answered (how its words were delivered); false otherwise. */

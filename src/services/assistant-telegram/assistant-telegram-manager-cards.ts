@@ -168,7 +168,8 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
   changed(card: AssistantCard): void {
     // The relay's own cards end themselves when their request does.
     if (card.kind === "approval" || card.kind === "question") return;
-    const refs = getCardRow(card.id)?.telegramRefs ?? [];
+    // A follow-up message is the manager's answer to a reply, not a copy of the card: left as it is.
+    const refs = (getCardRow(card.id)?.telegramRefs ?? []).filter((r) => !r.followUp);
     const html = `${formatManagerCard(card, this.detail(card)).html}\n\n${cardEndLine(card)}`;
     for (const ref of refs) {
       this.deps.codes.dropGroup(groupOf(card.id, ref.chatId));

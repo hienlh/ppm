@@ -56,6 +56,19 @@ export const STALE_REPLY_MS = 24 * 60 * 60_000;
 /** The longest reply to a card PPM forwards word for word. */
 export const CARD_REPLY_MAX_CHARS = 8000;
 
+/**
+ * Most of the manager's answer to a card reply that goes back to the user (Telegram and the card in
+ * PPM); the rest is in the manager chat, which the follow-up links to.
+ */
+export const CARD_FOLLOWUP_MAX_CHARS = 1500;
+
+/**
+ * How long after a reply typed on Telegram its answer still rings whatever "quiet while I'm at PPM"
+ * and quiet hours say: the user is holding the phone for minutes, not hours. A later answer (the
+ * reply started a long task) follows the quiet rules: silent while at PPM or in quiet hours.
+ */
+export const CARD_FOLLOWUP_LOUD_MS = 30 * 60_000;
+
 /** The whole notebook, every line's text together, whoever wrote it. */
 export const NOTEBOOK_CAP_CHARS = 4000;
 /** One notebook line. */

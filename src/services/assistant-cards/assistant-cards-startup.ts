@@ -19,6 +19,7 @@ import { CARD_RETENTION_MS, countSessionCardsSince, findOpenCardsBy, findOpenReq
 import { budgetEventCard, rulesEventCard, type EventCardsDeps } from "./assistant-event-cards.ts";
 import { sweepGoneRequestCards } from "./assistant-card-actions.ts";
 import { startCardDelivery } from "./card-delivery.ts";
+import { startCardReplyFollowups } from "./card-reply-followup.ts";
 import { createManagerSignals, type ManagerSignals } from "./manager-signals.ts";
 import { setManagerAskedHook } from "./manager-reply-expectations.ts";
 
@@ -76,6 +77,8 @@ export function startAssistantCards(): void {
   ];
   // An answer whose words never reached its manager chat opens its card again (now, for a restart).
   stops.push(startCardDelivery());
+  // The manager's answer to a reply on a card goes back to where the user replied.
+  stops.push(startCardReplyFollowups());
   try {
     const pruned = pruneOldCardRows(assistantClock.now() - CARD_RETENTION_MS);
     if (pruned > 0) log.info(`${pruned} card(s) older than 90 days and no longer waiting removed`);

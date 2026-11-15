@@ -1378,6 +1378,75 @@ reply in PPM; a Telegram reply to one goes to the Assistant as an ordinary messa
 messages flushed first and the reply never merged into them. A forwarded message, or one sent
 through an inline bot, is someone else's words and never answers a card.
 
+**The manager's answer to a reply** (`card-reply-followup-tracker.ts`, `card-reply-followup.ts`,
+`assistant-telegram-card-followups.ts`, `assistant-telegram-followup-format.ts`). A reply is often
+a question, or agrees on a wrong premise ("go ahead, it won't cost much quota, right?"), and its
+answer used to stay in the manager chat, which a user on their phone never opens. Two parts:
+
+- The block every manager turn carries says such a reply is **not an OK**
+  (`MANAGER_CARD_REPLY_RULE` in `manager-context-entry.ts`): do nothing yet, open a new
+  needs-decision card **first**, then answer and correct the premise with the numbers as the
+  **last** thing in the turn, no tool call after it. It also says the answer goes to the user's
+  phone, so it is a few lines under a report's limits (no client personal or tax data, ticket ids):
+  redaction catches secret-shaped strings, never a client's name or tax figures.
+- PPM follows the turn the reply opened and sends that turn's answer back. A text reply (never an
+  OK) is sent under a `card-<uuid>` id chosen before the send, so the turn a provider names with it
+  (`turn_started`) is the one, however many turns run in between or the words wait in a queue.
+- **A reply pushed into a running turn is never named.** The bundled Claude CLI runs
+  `UserPromptSubmit` only for a prompt that opens a turn; a push folded into a running turn becomes
+  an attachment PPM never sees. Such a reply is judged **once**, against the first turn end after
+  it went in: after a 3 s grace it is answered only if its own turn has not been named meanwhile,
+  the chat is idle, and `liveState().turnId` is still the turn that ended (and the one running when
+  the words went in). If a turn PPM started (a schedule, the Assistant, another chat's message)
+  opened in between, nothing is sent: that turn may be answering someone else, and later turns are
+  never judged for the reply (its own `turn_started` can still claim it). `turnId` moves only for
+  prompts PPM pushed (`claude-prompt-turn-binder.ts`), so a task-notification or CLI-continuation
+  turn in between goes unseen — but what is sent is always the snapshot taken at the first turn
+  end, so no later turn's text can leak. Queued words are never judged this way.
+- The answer is the turn's top-level text **from the reply on**, gathered per reply as blocks split
+  at each top-level tool call (no tool output, thinking or subagent text). With no tool call it is
+  the whole text, however short. Around tool calls: a line that only confirms the call ("Card
+  sent.", "Đã gửi card.", "Done.": `isConfirmationBlock`) is dropped when the turn opened a card.
+  A turn that opened no card sends every block, in order ("Không ạ, đắt lắm." → mail tool → "Done."
+  sends both lines). In a turn that opened a card, another short line
+  (one line, under 40 characters, no digit, no question mark) is dropped only when a longer real
+  block is there, and with none the last remaining block is the answer — so "card first, then
+  'Được anh.'" arrives, and so does an answer written before the card. The rest is joined. Within
+  1500 characters the last real block (the answer, since the rule puts it last) stays whole: earlier
+  blocks go first, the one beside the answer cut with "…"; an answer longer than that on its own is
+  cut by the follow-up with "see the chat". At most one follow-up per reply, nothing for a turn
+  that wrote only confirmations.
+  It is kept on the card as `card.followUp` (beside `answer`, never in a made-up one: a done report
+  nobody answered keeps `answer: null`), cut to `CARD_FOLLOWUP_MAX_CHARS` = 1500, and shown under
+  it in PPM. Nothing is kept or sent when the card waits again (its words were reported lost).
+- **A turn that is stopped or fails** has no answer: its partial text is never sent or kept. That
+  includes a Stop reported as a normal end: on the first turn of a fresh Claude subprocess an
+  aborted turn ends with `done`, so `turn_ended` carries `outcome: "done"` with `cancelledBy` set,
+  and `followupOutcome` reads `cancelledBy` as stopped. A reply typed on Telegram gets one line, "The manager's turn was stopped before it answered; see
+  the chat.", with the link; a reply typed in PPM gets nothing.
+- On Telegram it goes **under the card's message**: redacted before the cut, hidden characters
+  shown, escaped through the Markdown formatter, "… see the chat for the rest." past 1500
+  characters, an Open in PPM link, and a line naming any card the manager opened while gathering
+  that answer (never a card another turn made). A project at `title` detail gets only "the manager
+  answered" and the link. A reply typed on Telegram is answered in that chat with a sound whatever
+  "quiet while I'm at PPM" or quiet hours say, for `CARD_FOLLOWUP_LOUD_MS` (30 min) after the reply
+  — the user is holding the phone; a later answer (the reply started a long task) comes silently
+  while the user is at PPM or in quiet hours. A reply typed in PPM goes under each Telegram copy of
+  the card: silent while the user is at PPM, and not at all in quiet hours (nothing is saved up for
+  the morning: the answer is already under the card in PPM).
+- The answer's Telegram message is recorded as one of the card's messages, marked `followUp`, so a
+  reply to it reaches the same manager like a reply to the card (the card is answered by then, so
+  it asks "send anyway?"). That holds for a bare OK too, and for an OK to the "stopped" notice: it
+  is never routed to a new card the answer named. Routing it there once let an "ok, noted" approve
+  a card the user never saw (one named only by title, held back in quiet hours, or behind a notice
+  that named nothing), so a decision on a new card is taken only on that card. A follow-up is never
+  rewritten when the card changes, nor answered under as one of the card's copies, and follow-up
+  refs are capped apart (the newest 5) from the card's own copies (20), so many replies cannot push
+  the card's copies out. The acknowledgement says "If the manager answers, it will
+  come here, under the card." — no promise, since several of the cases above send nothing.
+- A new card the manager opens in that turn is sent at once, as every card is, so on the phone it
+  arrives just **before** the answer; the answer names it rather than holding a decision back.
+
 **Quiet hours** (`quiet_hours` and `timezone` in Settings → PPM Assistant). Inside the window every
 card but an `urgent` one is `held` in the database; past two urgent reports per manager per window
 an urgent report is already a held decision. A clock timer at the window's end — or the bridge
