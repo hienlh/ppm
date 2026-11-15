@@ -13,6 +13,7 @@ import { Hono } from "hono";
 import { TelegramBotClient } from "../../../../src/services/telegram/telegram-bot-client.ts";
 import { TELEGRAM_API_BASE_ENV } from "../../../../src/services/telegram/telegram-api-base.ts";
 import { startFakeTelegram } from "../../../helpers/fake-telegram-bot-api.ts";
+import { quoteCard, quoteTelegramMessage } from "../../../../src/services/assistant-telegram/assistant-telegram-reply-quote.ts";
 import { VAULT_NOTICE_HTML } from "../../../../src/services/assistant-telegram/assistant-telegram-db-notices.ts";
 
 afterEach(() => turnSecretScrubber.clear());
@@ -95,6 +96,18 @@ describe("notebook and other chats", () => {
   });
 });
 
+describe("Telegram reply quotes", () => {
+  it("a quoted bot message or card body reaches the Assistant without a held value, even when cut", () => {
+    turnSecretScrubber.hold("s1", [{ name: "NI", value: "CANARY-T2-quote" }]);
+    const long = `${"line\n".repeat(7)}NI CANARY-T2-quote and more`;
+    const q = quoteTelegramMessage("42", { message_id: 7, date: 1, chat: { id: 42, type: "private" }, from: { id: 1, is_bot: true, first_name: "bot" }, text: long } as never);
+    expect(q.quote).not.toContain("CANARY");
+    const c = quoteCard({ id: "c1", kind: "report", projectName: "p", status: "open", title: "t", body: "Your NI is CANARY-T2-quote", createdAt: 1 } as never);
+    expect(c.quote).not.toContain("CANARY");
+    expect(c.quote).toContain("[vault:NI]");
+  });
+});
+
 describe("Telegram", () => {
   it("scrubs held values from every message sent, and the vault notice names nothing", async () => {
     const fake = startFakeTelegram();
@@ -107,6 +120,16 @@ describe("Telegram", () => {
       const texts = JSON.stringify(fake.sent(4242));
       expect(texts).not.toContain("CANARY");
       expect(texts).toContain("[vault:NI]");
+      // A card body sent as HTML, a photo's caption and an album caption go through the same filter.
+      await client.sendMessage(4242, "<b>Card</b>\nNI: <code>CANARY-T2-tg</code>");
+      await client.sendPhotos(4242, [{ bytes: new Uint8Array([137, 80, 78, 71]), filename: "a.png", caption: "Shot of CANARY-T2-tg" }]);
+      await client.sendPhotos(4242, [
+        { bytes: new Uint8Array([137, 80, 78, 71]), filename: "a.png", caption: "first CANARY-T2-tg" },
+        { bytes: new Uint8Array([137, 80, 78, 71]), filename: "b.png" },
+      ]);
+      const all = JSON.stringify(fake.sent(4242));
+      expect(all).not.toContain("CANARY");
+      expect(all.match(/\[vault:NI\]/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
       expect(VAULT_NOTICE_HTML).not.toMatch(/secure|sealed|NI|passport/i);
     } finally {
       fake.stop();
