@@ -3,11 +3,15 @@
  * its project, how it ended ("OK given in PPM", "Chose "Ship tonight"", "You replied", "Dismissed")
  * and when, so a chat full of answered cards still reads as a conversation. A press opens the card
  * whole again, read-only (it has no buttons any more, only its status line), and a second press
- * folds it. Whether a card is open is kept by id outside the component: the stream re-places a card
- * among new messages as they arrive, which mounts it afresh.
+ * folds it. Opening scrolls the stream just enough to show the card's last line above the footer
+ * (never so far that the line itself leaves the top). Whether a card is open is kept by id outside
+ * the component: the stream re-places a card among new messages as they arrive, which mounts it
+ * afresh.
  */
+import { useEffect, useRef } from "react";
 import { Check, ChevronDown, MessageCircle, X } from "@/lib/icons";
 import { create } from "zustand";
+import { revealInScrollList } from "@/lib/reveal-in-scroll-list";
 import { cn } from "@/lib/utils";
 import { WAITING_CARD_KINDS, type AssistantCard as Card } from "../../../../shared/assistant-cards";
 import { AssistantCard } from "./assistant-card";
@@ -37,15 +41,23 @@ export function answerSummary(card: Card): string {
 
 export function AnsweredCardFold({ card }: { card: Card }) {
   const open = useUnfolded((s) => s.ids.has(card.id));
+  const box = useRef<HTMLDivElement>(null);
+  const pressed = useRef(false);
+  // Only an open the user just asked for scrolls; a card that mounts open (re-placed) stays put.
+  useEffect(() => {
+    if (!open || !pressed.current || !box.current) return;
+    pressed.current = false;
+    revealInScrollList(box.current, "reveal");
+  }, [open]);
   const panel = `answered-card-${card.id}`;
   // Set aside (dismissed, or it stopped waiting by itself) reads differently from answered.
   const setAside = card.status === "dismissed" || card.status === "gone";
   const Mark = setAside ? X : Check;
   return (
-    <div className="w-full space-y-2" data-answered-card={card.id} data-answered-open={open ? "" : undefined}>
+    <div ref={box} className="w-full space-y-2" data-answered-card={card.id} data-answered-open={open ? "" : undefined}>
       <button
         type="button"
-        onClick={() => toggle(card.id)}
+        onClick={() => { pressed.current = true; toggle(card.id); }}
         aria-expanded={open}
         aria-controls={panel}
         className="flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-xl border border-border bg-surface/60 px-3 py-1.5 text-left can-hover:hover:bg-surface-elevated"

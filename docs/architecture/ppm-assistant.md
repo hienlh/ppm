@@ -96,8 +96,11 @@ instead of being held back, and moves up to its own place once that page loads
 ‹ "n/N" › (urgent first, then the oldest): a press on the dock or an arrow scrolls the stream to
 that card and outlines it for 1.8 s. The jump is a store request (`stores/assistant-waiting-jump-store.ts`)
 that the Assistant body answers (`use-waiting-card-jump.ts`): it scrolls only the list holding the
-card (`scrollIntoView` would also move the floating window's frame and the app's panels) and leaves
-the card's top 12 px under the list's top. A new card renames the dock without moving the stream.
+card (`scrollIntoView` would also move the floating window's frame and the app's panels;
+`lib/reveal-in-scroll-list.ts`) so the whole card shows, or, for a card taller than the stream, its
+button row just above the dock. The dock clears the strip where the footer is pulled up over the
+list's faded end (`[data-chat-footer-lead]` in `globals.css`), so it never covers the stream and the
+last message scrolls fully above it. A new card renames the dock without moving the stream.
 The dock is 48 px tall with 44 px arrows below `md`, and disappears when nothing waits. A chip's red
 count (`focusWaitingCards`) jumps to that project's first card, and "Show" under a follow-up to
 exactly that card, moving a filter that would hide it to that project. The dock follows the project
@@ -107,8 +110,8 @@ and Open chat / Dismiss on another, above them on a phone. A decision that no lo
 `WAITING_CARD_KINDS` card answered, dismissed, resolved elsewhere or gone) folds to one 44 px line
 in the stream (`cards/answered-card-fold.tsx`): title, project, how it ended ("Chose …", "OK given
 in PPM", "You replied in PPM", "Dismissed") and when, plus "manager answered" once a reply got its
-answer; a press opens the card whole and read-only (its status line, no buttons), a second press
-folds it, and which ones are open is kept by card id so a card re-placed among new messages stays
+answer; a press opens the card whole and read-only (its status line, no buttons), scrolling just
+enough to show its last line above the footer, a second press folds it, and which ones are open is kept by card id so a card re-placed among new messages stays
 as it was. Reports that never asked anything (done, failed, digest, rules notes) are not folded
 this way. Text of a card that no longer waits folds past eight lines behind "Show more"
 (`CardText`); a waiting card and a draft are always shown whole, since OK approves exactly them. The list is `GET /api/assistant/cards/open`

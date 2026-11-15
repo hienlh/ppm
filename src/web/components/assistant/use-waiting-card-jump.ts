@@ -1,7 +1,7 @@
 /**
  * The Assistant's half of a jump to a waiting card (`assistant-waiting-jump-store.ts`): find the
- * card in this Assistant's own stream, scroll the stream so its top sits just under the stream's
- * top, and outline it. Also turns a press on a red count (`focusWaitingCards`) into a jump: the
+ * card in this Assistant's own stream, scroll the stream so the whole card shows (a card taller
+ * than the stream shows its end, where its buttons are, just above the dock), and outline it. Also turns a press on a red count (`focusWaitingCards`) into a jump: the
  * card named, else that project's first; a project filter that would hide it moves to its project.
  *
  * The card may not be in the page yet (a filter just changed, the list is still loading), so the
@@ -14,10 +14,9 @@ import { useEffect, useRef, type RefObject } from "react";
 import { setAssistantCardFilter, useAssistantCardsStore } from "@/stores/assistant-cards-store";
 import { orderWaitingCards, useOpenCards, useOpenCardsStore } from "@/stores/assistant-open-cards-store";
 import { jumpToWaitingCard, lightWaitingCard, useWaitingJumpStore } from "@/stores/assistant-waiting-jump-store";
+import { revealInScrollList } from "@/lib/reveal-in-scroll-list";
 import type { AssistantCard } from "../../../shared/assistant-cards";
 
-/** The gap left above a card a jump lands on, in px. */
-const LAND_GAP = 12;
 /** How long a jump keeps looking for a card that is not in the page yet. */
 const FIND_FOR_MS = 3000;
 const FIND_EVERY_MS = 50;
@@ -36,26 +35,9 @@ export function focusTarget(ordered: readonly AssistantCard[], projectName: stri
     ?? ordered[0] ?? null;
 }
 
-/** The nearest ancestor that scrolls vertically: the chat's message list. */
-function scrollParent(el: HTMLElement, stop: HTMLElement): HTMLElement | null {
-  for (let node = el.parentElement; node && node !== stop; node = node.parentElement) {
-    const y = getComputedStyle(node).overflowY;
-    if (y === "auto" || y === "scroll") return node;
-  }
-  return null;
-}
-
-/**
- * Scrolls only the list that holds the card. `scrollIntoView` would also move every ancestor that
- * can be scrolled from script, `overflow: hidden` ones included (a floating window's frame, the
- * app's panels), and leave the layout shifted.
- */
+/** Scrolls only the list that holds the card, so the card can be read and answered. */
 export function scrollCardIntoView(card: HTMLElement, root: HTMLElement, smooth: boolean): HTMLElement | null {
-  const list = scrollParent(card, root);
-  if (!list) return null;
-  const top = list.scrollTop + card.getBoundingClientRect().top - list.getBoundingClientRect().top - LAND_GAP;
-  list.scrollTo({ top: Math.max(0, top), behavior: smooth ? "smooth" : "auto" });
-  return list;
+  return revealInScrollList(card, "land", { stop: root, smooth });
 }
 
 /** The waiting card `id` in `root`, looked up afresh (a re-placed card is a new element). */
@@ -84,7 +66,6 @@ function holdInPlace(root: HTMLElement, list: HTMLElement, id: string): () => vo
   for (const type of USER_INPUT) list.addEventListener(type, stop, { passive: true });
   return stop;
 }
-
 
 function prefersReducedMotion(): boolean {
   return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;

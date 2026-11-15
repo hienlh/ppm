@@ -278,6 +278,24 @@ try {
     }
   }
 
+  /**
+   * Where `loc` sits against the readable part of the stream: the list's top and the dock's top
+   * (nothing under the dock can be read). All in px relative to the viewport.
+   */
+  const readable = (v, loc) => loc.evaluate((el) => {
+    let list = el.parentElement;
+    while (list && !/(auto|scroll)/.test(getComputedStyle(list).overflowY)) list = list.parentElement;
+    const body = el.closest("[data-assistant-body]");
+    const dock = body.querySelector("[data-waiting-dock]");
+    const r = el.getBoundingClientRect();
+    const l = list.getBoundingClientRect();
+    return {
+      top: Math.round(r.top), bottom: Math.round(r.bottom), height: Math.round(r.height),
+      listTop: Math.round(l.top), listBottom: Math.round(l.bottom),
+      floor: Math.round(dock ? Math.min(dock.getBoundingClientRect().top, l.bottom) : l.bottom),
+    };
+  });
+
   /** Steps the dock to `card` with its arrows, then presses the dock: the stream lands on it. */
   async function jumpTo(v, card) {
     const { body, inStream, press, page: pg } = v;
@@ -288,15 +306,21 @@ try {
     await press(body().locator("[data-waiting-go]"));
     await body().locator(`[data-waiting-card="${card.id}"][data-highlighted]`).waitFor({ timeout: 5000 });
     await pg.waitForTimeout(700); // the smooth scroll, then the outline fading in (300 ms)
-    // Its top just under the stream's top, unless the stream has no more to scroll (a card near
-    // the end); either way the card's top is in view.
-    const at = await inStream(card).evaluate((el) => {
-      let list = el.parentElement;
-      while (list && !/(auto|scroll)/.test(getComputedStyle(list).overflowY)) list = list.parentElement;
-      const top = Math.round(el.getBoundingClientRect().top - list.getBoundingClientRect().top);
-      return { top, bottomed: list.scrollTop + list.clientHeight >= list.scrollHeight - 2, height: list.clientHeight };
+    // The whole card above the dock; a card taller than the stream shows its buttons above it.
+    const at = await readable(v, inStream(card));
+    const row = await readable(v, inStream(card).locator("[data-card-actions]"));
+    // Either all of the card shows, or (a card taller than the room left) its buttons do.
+    const fits = at.top >= at.listTop - 1 && at.bottom <= at.floor + 1;
+    const rowShows = row.top >= at.listTop - 1 && row.bottom <= at.floor + 1;
+    assert.ok(fits || (rowShows && at.height > at.floor - at.listTop - 90), `the jump shows "${card.title}" whole, or a tall card's buttons, above the dock (${JSON.stringify({ at, row })})`);
+    // Its buttons are clear of the message navigator floating in the list's corner.
+    const clear = await inStream(card).locator("[data-card-actions]").evaluate((el) => {
+      const nav = el.closest("[data-chat-list]")?.querySelector("[data-chat-scroll-nav]")?.getBoundingClientRect();
+      const row = el.getBoundingClientRect();
+      return !nav || nav.height === 0 || row.bottom <= nav.top + 1 || row.top >= nav.bottom - 1;
     });
-    assert.ok(at.top >= 0 && (at.top <= 40 || (at.bottomed && at.top < at.height)), `the jump brought "${card.title}" to the stream's top (${JSON.stringify(at)})`);
+    if (row.bottom <= at.floor + 1 && row.top >= at.listTop - 1) assert.ok(clear, `the buttons of "${card.title}" are not under the message navigator`);
+    return fits;
   }
 
   /** The answered card's line, folded and then opened (read-only, no buttons). */
@@ -316,12 +340,14 @@ try {
     await full.waitFor({ timeout: 5000 });
     assert.equal(await full.locator("[data-card-actions]").count(), 0, `${size}: opened, it is read-only`);
     assert.match(await full.locator("[data-card-status-line]").innerText(), /Chose "Delete all 35" in PPM/);
-    await line.scrollIntoViewIfNeeded();
-    await pg.waitForTimeout(200);
+    // Opening it brought its last line (how it ended) above the dock, by itself.
+    await pg.waitForTimeout(300);
+    const end = await readable(v, full.locator("[data-card-status-line]"));
+    assert.ok(end.top >= end.listTop - 1 && end.bottom <= end.floor + 1, `${size}: the opened card's last line shows above the dock (${JSON.stringify(end)})`);
     await shoot("answered-opened");
     await press(line);
     await until(`${size}: folded again`, async () => (await full.count()) === 0, 5000);
-    ok(`${size}: an answered card is one ≥44px line naming title, project, answer and time; it opens read-only and folds again`);
+    ok(`${size}: an answered card is one ≥44px line naming title, project, answer and time; it opens read-only with its last line above the dock, and folds again`);
   }
 
   /** The four shots every size takes, plus the answered card both ways. */
@@ -339,14 +365,27 @@ try {
       if (size === "390") assert.ok(box.height >= 44 && (sel === "[data-waiting-go]" || box.width >= 44), `390: ${sel} is at least 44px (${box.width}x${box.height})`);
     }
     await pg.waitForTimeout(800); // the messages under the dock finish painting
+    // At the stream's end, the last message scrolls fully above the dock: the dock starts where the
+    // list ends, never over it.
+    const lastRow = body().locator("[data-chat-list] [data-timeline-item], [data-chat-list] [data-msg-index]").last();
+    const last = await readable(v, lastRow);
+    assert.ok(last.floor >= last.listBottom - 1, `${size}: the dock does not cover the stream (${JSON.stringify(last)})`);
+    assert.ok(last.bottom <= last.floor + 1, `${size}: the last message is fully above the dock (${JSON.stringify(last)})`);
     await shot("dock");
-    ok(`${size}: no bar above the stream; each waiting card drawn once and whole with its buttons at its end; the dock sits above the composer`);
+    ok(`${size}: no bar above the stream; each waiting card drawn once and whole with its buttons at its end; the dock sits above the composer and covers nothing`);
 
-    await jumpTo(v, long);
+    const longFits = await jumpTo(v, long);
     await shot("long-card");
-    await inStream(long).evaluate((el) => el.scrollIntoView({ block: "end" }));
-    await pg.waitForTimeout(200);
-    await shot("long-card-end");
+    if (!longFits) {
+      // Taller than the stream: landed on its buttons. Its start, scrolled to by hand.
+      await inStream(long).evaluate((el) => {
+        let list = el.parentElement;
+        while (list && !/(auto|scroll)/.test(getComputedStyle(list).overflowY)) list = list.parentElement;
+        list.scrollTop += el.getBoundingClientRect().top - list.getBoundingClientRect().top - 12;
+      });
+      await pg.waitForTimeout(200);
+      await shot("long-card-top");
+    }
     await jumpTo(v, choices);
     assert.equal(await inStream(choices).locator("[data-card-choice]").count(), 3, `${size}: three choices on the card`);
     await shot("choices-card");
@@ -354,7 +393,7 @@ try {
     await inStream(pics).locator("[data-card-images] img").first().waitFor({ timeout: 15000 });
     assert.equal(await inStream(pics).locator("[data-card-images] img").count(), 2, `${size}: both screenshots are shown`);
     await shot("images-card");
-    ok(`${size}: the dock's arrows and press land the stream on each card, outlined: long, choices, images`);
+    ok(`${size}: the dock's arrows and press land the stream on each card, outlined, the card (or a tall card's buttons) above the dock: long, choices, images`);
 
     await answeredBothWays(v, size, shot);
   }

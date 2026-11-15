@@ -83,6 +83,7 @@ function WaitingDock({ cards, elsewhere }: { cards: readonly AssistantCard[]; el
       aria-label={WAITING_LABEL}
       className="mb-1 overflow-hidden rounded-xl border border-error/35 bg-surface"
       data-waiting-dock=""
+      data-chat-footer-lead=""
       data-waiting-count={cards.length}
     >
       <div className="bg-error/5">
