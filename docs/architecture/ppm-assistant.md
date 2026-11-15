@@ -1043,7 +1043,12 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   markers are broken in every field (`card-text-cleaning.ts`). A draft is only neutralized, so the
   text the user approves is the text sent; it carries `sha256(to + "\n" + text)`. Every report card
   carries a server-written line, "Written by the {project} manager AI" (or "Marked urgent by…").
-  The browser renders all of it as plain text.
+  A body (and the manager's answer to a reply) is Markdown: the browser draws it with the chat's
+  renderer in its card mode (`MarkdownRenderer card`: no raw HTML, the Assistant's no-fetch rules,
+  no image loaded at all — not even a local one — and every non-file link in a new tab), and
+  Telegram gets it through `markdownToTelegramHtml`, which escapes before it adds a tag. The title,
+  the draft and the rules diff stay plain text: a draft is what would be sent, character for
+  character. The manager is told to write bodies that way (short sections, bullets, bold, code).
 - **Caps.** 20 reports per manager per hour; 2 urgent per manager per quiet window, after which an
   urgent report becomes a decision held for the morning; the same urgent title collapses into one
   card (`src/shared/assistant-limits.ts`).
@@ -1249,6 +1254,26 @@ A message sent while PPM was off and older than `BACKLOG_AGE_MS` asks *Run* / *S
 running unannounced. A forwarded message is wrapped as someone else's words and never read as a
 command. Photos up to `MAX_PHOTO_BYTES` reach the session; other files do not. `/start <token>`
 goes to the connect code before any access check, since it is how a chat becomes allowed.
+A message sent as a reply to anything but a card the card path takes (a reply to a card still
+answers that card, as before) carries what it replied to, as Telegram's quote does
+(`assistant-telegram-reply-quote.ts`): who sent it (the Assistant, a card of which kind, project
+and state, or the user), when, what it carried (a photo, a file and its name, a caption) and its
+first `QUOTE_MAX_LINES` lines. It goes as the message's `ppm-reply-v1` block, after the user's
+words and labelled data only, through `sendUserMessage`'s `replyTo`, which only a `telegram`
+message may carry and only for the chat it is sent to. The old text is old content, so its block
+markers are broken, its `<ppm-…>` tags defused and the user-words header marked as quoted before
+it is quoted, and each of its lines is prefixed `> ` so none passes for the quote's own header. A
+bot message counts as the Assistant's own words only when the mirror recorded it as an answer of
+the chat's current session from a turn that stayed trusted (`assistant-telegram-own-answers.ts`,
+in memory); every other bot message — a watch report, another chat's card, a notice, a list, an
+answer PPM no longer remembers — is quoted as text relayed from elsewhere. Such quotes, cards and
+messages the user forwarded or sent through an inline bot (`OUTSIDE_QUOTE_PREFIXES` on the block's
+`messageId`) mark the turn `forwarded` in its provenance, as does any reply, in PPM too, whose quote
+holds a forwarded part; a message typed through an inline bot is itself wrapped like a forward. A
+file's name is quoted as coming from the file, never from the user. A burst of messages answers at most one
+message: a reply to another one sends what was gathered first. A card with no manager chat (a
+digest — its items — a rules or budget card) still sends its reply to the Assistant, now with the
+card quoted; a reply to a card that waited while PPM was off keeps its quote for when *Run* sends it.
 
 **Going out** (`assistant-telegram-mirror.ts`, `assistant-telegram-turn-renderer.ts`,
 `assistant-telegram-send-queue.ts`). For each bound session the mirror streams the answer by

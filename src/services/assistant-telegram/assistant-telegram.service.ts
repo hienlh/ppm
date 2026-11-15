@@ -15,6 +15,11 @@
  * Nothing here runs on its own: `startAssistantHub()` starts it when the Telegram side of the
  * Assistant is switched on.
  */
+import { findCardByTelegramRef } from "../assistant-cards/assistant-cards-outbound-db.ts";
+import { assistantCards } from "../assistant-cards/assistant-cards.service.ts";
+import { assistantTurnProvenance } from "../assistant/assistant-turn-provenance.ts";
+import { answerMessage } from "./assistant-telegram-own-answers.ts";
+import { boundSession } from "./assistant-telegram-binding.ts";
 import { TelegramBotClient, type TelegramBotClientOptions } from "../telegram/telegram-bot-client.ts";
 import { BOT_TOKEN_RE } from "../telegram/telegram-api-base.ts";
 import type { TelegramCallbackQuery } from "../telegram/telegram-types.ts";
@@ -169,6 +174,7 @@ export class AssistantTelegramBridge {
       queue, state, now, cards, silence,
       showToolCalls: () => bridgeConfig().show_tool_calls,
       onTurnDelivered: (sessionId) => markRead(sessionId),
+      turnUntrusted: (sessionId) => assistantTurnProvenance.provenance(sessionId).untrusted,
     });
     const managerCards = new AssistantTelegramManagerCards({
       queue, codes, ...links, silence, reminders,
@@ -190,6 +196,12 @@ export class AssistantTelegramBridge {
       pressManagerCard: (chatId, press, group) => cardReplies.press(chatId, press, group),
       replyToCard: (chatId, m) => cardReplies.reply(chatId, m),
       isCardMessage: (chatId, messageId) => cardReplies.isCardMessage(chatId, messageId),
+      cardOf: (chatId, messageId) => {
+        const row = findCardByTelegramRef(chatId, messageId);
+        return row ? assistantCards.toCard(row) : null;
+      },
+      answerOf: (chatId, messageId) => answerMessage(chatId, messageId),
+      boundSessionOf: (chatId) => boundSession(chatId)?.sessionId ?? null,
     });
     poller = new AssistantTelegramPoller(client, state, (update) => inbound.dispatch(update));
     const offs = [

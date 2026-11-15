@@ -51,7 +51,7 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
       )}
     >
       <h4 className="text-[15px] font-semibold leading-snug text-text-primary" data-card-title="">{card.title}</h4>
-      {card.body && <CardText text={card.body} fold={card.status !== "open"} />}
+      {card.body && <CardText text={card.body} fold={card.status !== "open"} projectName={card.projectName} />}
       <CardImages images={card.payload.images} />
       {draft && (
         <figure className="overflow-hidden rounded-lg border border-border bg-panel-2" data-card-draft="">

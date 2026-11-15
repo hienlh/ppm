@@ -46,6 +46,11 @@ export interface MdContextValue {
    * diagrams stay source), and code is not offered to a terminal it has no project for.
    */
   assistantContent: boolean;
+  /**
+   * A PPM Assistant card's text: nothing is fetched on its own, not even a local image (shown as
+   * a link instead), and every link that is not a file opens in a new tab.
+   */
+  card?: boolean;
   /** True while the message is still streaming — defer async Shiki highlight until done. */
   isStreaming: boolean;
   openFileOrSearch: (path: string, line?: SourceLine) => void;

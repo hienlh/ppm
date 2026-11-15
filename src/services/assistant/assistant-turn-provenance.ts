@@ -7,10 +7,12 @@
  * fixed by that first message: the user in PPM, the user on Telegram, or PPM itself (a watch
  * report, a scheduled script) — and a turn PPM began keeps "PPM" even after the user types into
  * it. It is marked untrusted, with the reason, when it carried watch news, a forwarded Telegram
- * message or a scheduled script's text, or when the Assistant ran a tool in it that can bring outside
+ * message (or a reply quoting one, or quoting a card), or a scheduled script's text, or when the
+ * Assistant ran a tool in it that can bring outside
  * text — a file read or search, a shell command, a git, schedule or tunnel read, another chat or a
  * tab (`assistant-outside-text.ts`: every tool but a short allowlist).
  */
+import { quotesOutsideText } from "../assistant-telegram/assistant-telegram-reply-quote.ts";
 import { chatLifecycle } from "../chat-control/chat-lifecycle.ts";
 import { chatControl, type ChatMessageOrigin } from "../chat-control/chat-control.ts";
 import { decodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
@@ -89,7 +91,13 @@ export function createTurnProvenanceTracker(deps: TurnProvenanceDeps) {
       if (m.origin === "watch") rec.reasons.add("news");
       if (scripted) rec.reasons.add("scheduled");
       if (scripted || (m.origin !== "ws" && m.origin !== "telegram")) return;
-      const body = decodeMessageBlocks(m.text).content;
+      const decoded = decodeMessageBlocks(m.text);
+      const body = decoded.content;
+      // A reply that quotes a card, or a message someone else wrote, carries their text too: the
+      // quote is data, but what the turn then does with it must not count as the user's own ask.
+      if (m.origin === "telegram" && decoded.replyTo && quotesOutsideText(decoded.replyTo.messageId)) rec.reasons.add("forwarded");
+      // A reply in PPM quotes a bubble as it was: a Telegram message holding a forward is someone else's text too.
+      if (decoded.replyTo && hasForwardedPart(decoded.replyTo.quote)) rec.reasons.add("forwarded");
       if (m.origin === "telegram" && hasForwardedPart(body)) {
         // Someone else's words: never quoted as the user's opening.
         rec.reasons.add("forwarded");

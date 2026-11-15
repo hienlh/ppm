@@ -38,6 +38,8 @@ export interface FakeSentMessage {
   chat_id: number;
   text: string;
   parse_mode?: string;
+  /** The HTML as sent (`parse_mode: "HTML"`), for drawing the message with its formatting. */
+  html?: string;
   reply_markup?: InlineKeyboardMarkup;
   reply_to?: number;
   /** Sent with `disable_notification: true`: delivered without a sound. */
@@ -316,6 +318,7 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
           chat_id: chatId,
           text: text.text,
           ...(typeof body.parse_mode === "string" ? { parse_mode: body.parse_mode } : {}),
+          ...(body.parse_mode === "HTML" && typeof body.text === "string" ? { html: body.text } : {}),
           ...(body.reply_markup ? { reply_markup: body.reply_markup as InlineKeyboardMarkup } : {}),
           ...(replyTo ? { reply_to: replyTo } : {}),
           silent: body.disable_notification === true,
@@ -338,6 +341,8 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
         }
         message.history.push(message.text);
         message.text = text.text;
+        if (body.parse_mode === "HTML" && typeof body.text === "string") message.html = body.text;
+        else delete message.html;
         // Like Telegram, an edit without a keyboard takes the old one away.
         if (markup) message.reply_markup = markup;
         else delete message.reply_markup;

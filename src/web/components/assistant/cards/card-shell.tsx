@@ -16,6 +16,7 @@ import { ChevronDown } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardMenu } from "./card-menu";
+import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 
 /**
  * Set by the "Waiting on you" bar: there a long card scrolls inside the bar and its button row
@@ -101,11 +102,12 @@ const FOLDED_REM = 11.25;
 const FOLDED_TEXT = "max-h-[11.25rem]";
 
 /**
- * A card's long text. A card that still waits shows all of it (the user answers from it); one
- * that no longer waits folds anything past about eight lines behind "Show more".
+ * A card's long text, as Markdown: the chat's renderer in its card mode (no HTML, nothing loaded
+ * on its own, links in a new tab). A card that still waits shows all of it (the user answers from
+ * it); one that no longer waits folds anything past about eight lines behind "Show more".
  */
-export function CardText({ text, fold, className }: { text: string; fold: boolean; className?: string }) {
-  const box = useRef<HTMLParagraphElement>(null);
+export function CardText({ text, fold, className, projectName }: { text: string; fold: boolean; className?: string; projectName?: string | null }) {
+  const box = useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = useState(false);
   const [open, setOpen] = useState(false);
   // Folded only once the text is known to be longer than the fold, and measured again whenever
@@ -127,14 +129,14 @@ export function CardText({ text, fold, className }: { text: string; fold: boolea
   const folded = fold && !open && overflows;
   return (
     <div className="relative">
-      <p
+      <div
         ref={box}
-        className={cn("whitespace-pre-wrap break-words text-text-secondary", folded && `${FOLDED_TEXT} overflow-hidden`, className)}
+        className={cn("card-markdown break-words text-text-secondary", folded && `${FOLDED_TEXT} overflow-hidden`, className)}
         data-card-text=""
         data-folded={folded ? "" : undefined}
       >
-        {text}
-      </p>
+        <MarkdownRenderer content={text} card projectName={projectName ?? undefined} />
+      </div>
       {folded && <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-surface to-transparent" />}
       {fold && (overflows || open) && (
         <button
@@ -199,7 +201,7 @@ export function CardShell({ card, look, children, actions, secondary, error, met
           <p className="pb-1 text-[11px] font-medium text-text-subtle">
             {"The manager's answer to your reply"} · {cardTime(card.followUp.at)}
           </p>
-          <CardText text={card.followUp.text} fold />
+          <CardText text={card.followUp.text} fold projectName={card.projectName} />
           {card.followUp.truncated && (
             <p className="pt-1 text-xs text-text-subtle">The rest is in the manager chat.</p>
           )}
