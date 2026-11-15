@@ -37,9 +37,6 @@ export function filterVaultTraceRecord(sessionId: string | null, payload: unknow
     return { ...p, input: value === undefined ? input : { ...input, value: "[withheld]" } };
   }
   if (!scrubber.any()) return payload;
-  // Anything else: scrub every string the record holds, wherever it sits.
-  const json = JSON.stringify(payload);
-  const scrubbed = sessionId ? scrubber.scrub(json, sessionId) : scrubber.scrub(json);
-  if (scrubbed === json) return payload;
-  try { return JSON.parse(scrubbed); } catch { return { type: p.type, withheld: true }; }
+  // Anything else: scrub every string the record holds, wherever it sits, one string at a time.
+  return scrubber.scrubIn(payload, sessionId ?? undefined);
 }

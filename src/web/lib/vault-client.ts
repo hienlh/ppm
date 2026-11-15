@@ -16,8 +16,15 @@ export interface VaultItemValue extends VaultItemMeta { value: string; note?: st
 export type VaultPasswords = Partial<Record<VaultLockedTier, string>>;
 
 const item = (id: string) => `/api/vault/items/${encodeURIComponent(id)}`;
+/**
+ * This page's own handle for the Secure tier's Settings unlock: random, kept in memory only, so the
+ * unlock answers to this page and not to anything else holding PPM's auth token. A reload starts
+ * a new one, i.e. locked.
+ */
+const PAGE_HANDLE = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("");
+
 /** Only a non-empty password goes on the wire: an empty one would read as "wrong" and cost an attempt. */
-const pw = (password?: string) => (password ? { password } : {});
+const pw = (password?: string) => ({ handle: PAGE_HANDLE, ...(password ? { password } : {}) });
 
 export const vaultApi = {
   status: () => api.get<VaultStatusResponse>("/api/vault/status"),
@@ -26,7 +33,7 @@ export const vaultApi = {
   changePassword: (tier: VaultLockedTier, oldPassword: string, newPassword: string) =>
     api.post<VaultStatusResponse>(`/api/vault/tiers/${tier}/password`, { oldPassword, newPassword }),
   deleteTier: (tier: VaultLockedTier, password: string) => api.post<{ removed: number }>(`/api/vault/tiers/${tier}/delete`, { password }),
-  unlockSecure: (password: string) => api.post<{ openUntil: number }>("/api/vault/tiers/secure/unlock", { password }),
+  unlockSecure: (password: string) => api.post<{ openUntil: number }>("/api/vault/tiers/secure/unlock", { password, handle: PAGE_HANDLE }),
   lock: (tier?: VaultLockedTier) => api.post<{ closed: number }>("/api/vault/lock", tier ? { tier } : {}),
   addItem: (input: { tier: VaultTier; name: string; kind: VaultItemKind; value: string; note?: string; password?: string }) =>
     api.post<VaultItemMeta>("/api/vault/items", { ...input, ...pw(input.password) }),
@@ -37,7 +44,7 @@ export const vaultApi = {
   move: (id: string, to: VaultTier, passwords: VaultPasswords) => {
     const sent: VaultPasswords = {};
     for (const [tier, value] of Object.entries(passwords) as [VaultLockedTier, string | undefined][]) if (value) sent[tier] = value;
-    return api.post<VaultItemMeta>(`${item(id)}/move`, { to, passwords: sent });
+    return api.post<VaultItemMeta>(`${item(id)}/move`, { to, passwords: sent, handle: PAGE_HANDLE });
   },
   answerCard: (requestId: string, answer: VaultCardAnswer) =>
     api.post<VaultCardAnswerResult>(`/api/vault/cards/${encodeURIComponent(requestId)}`, answer),

@@ -105,6 +105,21 @@ describe("vault tools", () => {
     expect(s.held).toEqual([]);
   });
 
+  it("uses an open window only in a turn a person started in PPM, and refuses a turn of unknown origin", async () => {
+    s.grants.openWindow("secure", "s1", [ids.ni!], 5, (await s.service.unlock("secure", MK2) as { dek: Buffer }).dek);
+    origin = "session";
+    void s.tools.call(caller, "vault_read", { items: [ids.ni!], purpose: "x" }, signal);
+    await Bun.sleep(5);
+    expect(s.shown.length).toBe(1);
+    s.broker.cancelSession("s1", "done");
+    origin = undefined;
+    const r = text(await s.tools.call(caller, "vault_read", { items: [ids.ni!], purpose: "x" }, signal));
+    expect(r).not.toContain("CANARY");
+    expect(s.shown.length).toBe(1);
+    origin = "schedule";
+    expect(text(await s.tools.call(caller, "vault_read", { items: [ids.ni!], purpose: "x" }, signal))).not.toContain("CANARY");
+  });
+
   it("is off by default for an ordinary chat", () => {
     expect(ppmToolOn({}, "vault_read")).toBe(false);
     expect(ppmToolOn({ ppm_tools: { vault_read: true } }, "vault_read")).toBe(true);

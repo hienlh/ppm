@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import "../../../test-setup.ts";
 import { getDb } from "../../../../src/services/db.service.ts";
 import { createVaultAttempts } from "../../../../src/services/vault/vault-attempts.ts";
-import { createVaultGrants, SETTINGS_HOLDER } from "../../../../src/services/vault/vault-grants.ts";
+import { createVaultGrants, settingsHolder } from "../../../../src/services/vault/vault-grants.ts";
 import { createVaultService } from "../../../../src/services/vault/vault.service.ts";
 import { createVaultUnlockBroker, type VaultCardEvent } from "../../../../src/services/vault/vault-unlock-broker.ts";
 import { newDek } from "../../../../src/services/vault/vault-crypto.ts";
@@ -61,7 +61,7 @@ describe("grants", () => {
     expect(g.keyFor("secure", "s1", ["a"])?.equals(copy)).toBe(true);
     expect(g.keyFor("secure", "s1", ["a", "c"])).toBeNull();
     expect(g.keyFor("secure", "s2", ["a"])).toBeNull();
-    expect(g.keyFor("secure", SETTINGS_HOLDER, null)).toBeNull();
+    expect(g.keyFor("secure", settingsHolder("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")!, null)).toBeNull();
     clock += 5 * 60_000;
     expect(g.keyFor("secure", "s1", ["a"])).toBeNull();
     expect(g.list()).toEqual([]);
@@ -70,7 +70,7 @@ describe("grants", () => {
   it("never opens the sealed tier, nor a window of another length", () => {
     const g = createVaultGrants({ now });
     expect(() => g.openWindow("sealed", "s1", ["a"], 5, newDek())).toThrow();
-    expect(() => g.openSettings("sealed", newDek())).toThrow();
+    expect(() => g.openSettings("sealed", newDek(), settingsHolder("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")!)).toThrow();
     expect(() => g.openWindow("secure", "s1", ["a"], 30, newDek())).toThrow();
     expect(g.list()).toEqual([]);
   });
@@ -78,8 +78,14 @@ describe("grants", () => {
   it("lock and lockSession end grants", () => {
     const g = createVaultGrants({ now });
     g.openWindow("secure", "s1", ["a"], 15, newDek());
-    g.openSettings("secure", newDek());
+    const page = settingsHolder("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")!;
+    g.openSettings("secure", newDek(), page);
     expect(g.settingsOpenUntil("secure")).toBe(clock + 5 * 60_000);
+    // Only the page that unlocked holds it: another page, or no page, gets nothing.
+    expect(g.keyFor("secure", page, null)).not.toBeNull();
+    expect(g.keyFor("secure", settingsHolder("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")!, null)).toBeNull();
+    expect(settingsHolder(undefined)).toBeNull();
+    expect(settingsHolder("short")).toBeNull();
     g.lockSession("s1");
     expect(g.keyFor("secure", "s1", ["a"])).toBeNull();
     expect(g.lock()).toBe(1);

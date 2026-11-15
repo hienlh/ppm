@@ -72,13 +72,19 @@ const FILE_PATH_RE = /^[\w-]+(?:\/[\w.-]+)*$/;
  * sealed tier an AI read in the last minutes is replaced by `[vault:<name>]`, whatever chat or
  * relay is sending it. A fallback; the vault's own rules keep those values off Telegram first.
  */
+function scrubText(v: string): string {
+  if (!turnSecretScrubber.any()) return v;
+  // The tag is HTML-safe in a parse_mode HTML message: an item name's own <, > and & are dropped.
+  return turnSecretScrubber.scrub(v).replace(/\[vault:([^\]]*)\]/g, (_m, n: string) => `[vault:${n.replace(/[<>&]/g, "")}]`);
+}
+
 function withoutVaultValues(body: Record<string, unknown>): Record<string, unknown> {
   if (!turnSecretScrubber.any()) return body;
   let out = body;
   for (const key of ["text", "caption"] as const) {
     const v = out[key];
     if (typeof v !== "string") continue;
-    const scrubbed = turnSecretScrubber.scrub(v).replace(/\[vault:([^\]]*)\]/g, (_m, n: string) => `[vault:${n.replace(/[<>&]/g, "")}]`);
+    const scrubbed = scrubText(v);
     if (scrubbed !== v) out = { ...out, [key]: scrubbed };
   }
   return out;
@@ -153,9 +159,10 @@ export class TelegramBotClient {
       return Promise.resolve({ ok: false, errorCode: 400, description: "photo larger than 10 MB" });
     }
     // Cut where a tag or an entity is whole and closed again, never mid-`&amp;`: Telegram refuses
-    // a caption it cannot parse, and the picture with it.
+    // a caption it cannot parse, and the picture with it. Scrubbed of vault values first, so the
+    // cut never splits one.
     const caption = (c?: string) => {
-      const cut = c ? splitTelegramHtml(c, MAX_TELEGRAM_CAPTION)[0] : undefined;
+      const cut = c ? splitTelegramHtml(scrubText(c), MAX_TELEGRAM_CAPTION)[0] : undefined;
       return cut ? { caption: cut, parse_mode: "HTML" } : {};
     };
     const form = (): FormData => {

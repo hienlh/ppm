@@ -17,6 +17,9 @@ export interface TurnOriginEntry {
   turnOrigin?: ChatMessageOrigin;
   /** The owner of the turn a message queued behind the running one will open. */
   nextTurnOrigin?: ChatMessageOrigin;
+  /** The running turn's owner is a person typing (in PPM or on Telegram), not a script or door. */
+  turnByPerson?: boolean;
+  nextTurnByPerson?: boolean;
   phase: string;
   isStreamingActive?: boolean;
 }
@@ -32,6 +35,8 @@ export interface ArrivingMessage {
 
 /** The owner a message would give a turn: a script in an Assistant session is PPM, unattended. */
 export const ownerOf = (m: ArrivingMessage): ChatMessageOrigin => (m.scripted && m.assistant ? "watch" : m.origin);
+/** A person typed it: a browser or Telegram message no script or in-process door sent. */
+const byPerson = (m: ArrivingMessage): boolean => !m.scripted && (m.origin === "ws" || m.origin === "telegram");
 
 /** Whether the chat has a turn running that a message would reach rather than open. */
 export const turnRunning = (entry: TurnOriginEntry): boolean => !!entry.isStreamingActive && entry.phase !== "idle";
@@ -45,19 +50,29 @@ export function claimTurnOrigin(entry: TurnOriginEntry, m: ArrivingMessage): voi
   const joinsAsUser = !m.scripted && m.priority !== "later" && m.origin !== "extension";
   if (!turnRunning(entry)) {
     entry.turnOrigin = ownerOf(m);
+    entry.turnByPerson = byPerson(m);
     // Nothing is queued behind a turn that is not running: an owner left from one is stale.
     entry.nextTurnOrigin = undefined;
-  } else if (joinsAsUser) entry.turnOrigin = ownerOf(m);
+    entry.nextTurnByPerson = undefined;
+  } else if (joinsAsUser) {
+    entry.turnOrigin = ownerOf(m);
+    entry.turnByPerson = byPerson(m);
+  }
 }
 
 /** After the hand-off: a message queued behind the running turn owns the turn it will open. */
 export function noteQueuedTurnOrigin(entry: TurnOriginEntry, m: ArrivingMessage, delivered: SessionDelivery, wasRunning: boolean): void {
-  if (wasRunning && delivered === "queued") entry.nextTurnOrigin ??= ownerOf(m);
+  if (wasRunning && delivered === "queued" && entry.nextTurnOrigin === undefined) {
+    entry.nextTurnOrigin = ownerOf(m);
+    entry.nextTurnByPerson = byPerson(m);
+  }
 }
 
 /** The running turn ended: the owner a queued message was given takes over for the turn it opens. */
 export function turnOriginAfterTurn(entry: TurnOriginEntry): void {
   if (entry.nextTurnOrigin === undefined) return;
   entry.turnOrigin = entry.nextTurnOrigin;
+  entry.turnByPerson = entry.nextTurnByPerson ?? false;
   entry.nextTurnOrigin = undefined;
+  entry.nextTurnByPerson = undefined;
 }

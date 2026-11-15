@@ -155,7 +155,7 @@ export function createVaultUnlockBroker(opts: {
   }
 
   function refusedFor(ctx: VaultRequestContext, tier: VaultLockedTier): VaultRefusal | null {
-    if (UNATTENDED.has(ctx.origin ?? "")) {
+    if (!ctx.origin || UNATTENDED.has(ctx.origin)) {
       return { ok: false, reason: "refused", message: "Nobody started this turn, so the vault's locked tiers cannot be opened in it." };
     }
     if (tier === "secure" && ctx.origin === "telegram") {
@@ -198,7 +198,7 @@ export function createVaultUnlockBroker(opts: {
   function requestPropose(
     sessionId: string, proposal: { name: string; kind: VaultItemKind; tier: VaultTier; value: string | null }, ctx: VaultRequestContext, signal?: AbortSignal,
   ): Promise<VaultProposeOutcome> {
-    if (UNATTENDED.has(ctx.origin ?? "")) {
+    if (!ctx.origin || UNATTENDED.has(ctx.origin)) {
       return Promise.resolve({ ok: false, reason: "refused", message: "Nobody started this turn, so there is no one to confirm saving to the vault." });
     }
     const input: VaultCardInput = {

@@ -128,6 +128,17 @@ describe("vault service", () => {
     }
   });
 
+  it("counts a check against the other tier's password as a try on that tier", async () => {
+    const svc = make();
+    await svc.enableTier("sealed", MK3);
+    for (let i = 0; i < 3; i++) {
+      await svc.enableTier("secure", `guess-number-0${i}-x`);
+      expect((await svc.deleteTier("secure", `guess-number-0${i}-x`)).ok).toBe(true);
+    }
+    // Three checks used Sealed's three free tries: the next attempt waits out the lockout.
+    await expect(svc.enableTier("secure", "guess-number-03-x")).rejects.toThrow(/other tier/);
+  });
+
   it("enforces 12 characters for secure and 16 for sealed", async () => {
     const svc = make();
     await expect(svc.enableTier("secure", "elevenchars")).rejects.toThrow(/12/);
@@ -198,6 +209,9 @@ describe("wrong passwords", () => {
     const svc = createVaultService({ now, kdfParams: FAST, attempts: createVaultAttempts({ now, onAlarm: (a) => alarms.push(`${a.tier}:${a.kind}`) }) });
     await svc.enableTier("secure", MK2);
     await svc.enableTier("sealed", MK3);
+    // Turning Sealed on checked its password against Secure's, one counted try; a right password clears it.
+    expect(svc.status().tiers.secure.attemptsLeft).toBe(4);
+    expect((await svc.unlock("secure", MK2)).ok).toBe(true);
     for (let i = 0; i < 2; i++) expect((await svc.unlock("sealed", "nope-nope-nope-nope")).ok).toBe(false);
     const third = await svc.unlock("sealed", "nope-nope-nope-nope");
     expect(third.ok === false && third.reason === "wrong-password" && third.lockedForMs).toBe(60_000);

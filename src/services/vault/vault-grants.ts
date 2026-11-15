@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { VAULT_SETTINGS_UNLOCK_MS, VAULT_WINDOW_MINUTES, type VaultLockedTier } from "../../shared/vault.ts";
 
 /**
@@ -8,13 +8,26 @@ import { VAULT_SETTINGS_UNLOCK_MS, VAULT_WINDOW_MINUTES, type VaultLockedTier } 
  * the key once and zeroes it.
  *
  * A chat's grant covers only the items the user ticked on the card that opened it (decision A);
- * an item outside it needs a new card. Settings' grant covers the whole tier for five minutes.
+ * an item outside it needs a new card. Settings' grant covers the whole tier for five minutes, and
+ * only for the browser page that typed the password: the page sends a random handle it keeps in
+ * memory, and the grant answers only to that handle's hash. PPM's auth token alone, which every
+ * process of this OS user can read from `ppm.db`, never reaches an open tier.
  *
  * A grant that ends — expired, locked by hand, its chat deleted, the server stopping — has its
  * key zeroed. Nothing here survives a restart.
  */
 
-export const SETTINGS_HOLDER = "settings";
+const SETTINGS_PREFIX = "settings:";
+const isSettings = (holder: string) => holder.startsWith(SETTINGS_PREFIX);
+
+/**
+ * The holder for a Settings page's handle, or null when the handle is missing or malformed (a
+ * page with no handle gets no lasting unlock: each action then needs the password).
+ */
+export function settingsHolder(handle: unknown): string | null {
+  if (typeof handle !== "string" || !/^[A-Za-z0-9_-]{32,128}$/.test(handle)) return null;
+  return SETTINGS_PREFIX + createHash("sha256").update(handle, "utf8").digest("hex");
+}
 
 interface Grant {
   id: string;
@@ -53,10 +66,10 @@ export function createVaultGrants(opts: { now?: () => number; canonical?: (sessi
 
   /** A live grant for `holder` covering every one of `itemIds`, or null. Drops expired ones. */
   function covering(tier: VaultLockedTier, holder: string, itemIds: readonly string[] | null): Grant | null {
-    const h = holder === SETTINGS_HOLDER ? holder : canonical(holder);
+    const h = isSettings(holder) ? holder : canonical(holder);
     for (const g of [...grants.values()]) {
       if (g.expiresAt <= now()) { end(g); continue; }
-      if (g.tier !== tier || (g.holder === SETTINGS_HOLDER ? g.holder : canonical(g.holder)) !== h) continue;
+      if (g.tier !== tier || (isSettings(g.holder) ? g.holder : canonical(g.holder)) !== h) continue;
       if (itemIds === null ? g.itemIds === null : (g.itemIds === null || itemIds.every((i) => g.itemIds!.has(i)))) return g;
     }
     return null;
@@ -73,14 +86,18 @@ export function createVaultGrants(opts: { now?: () => number; canonical?: (sessi
         throw new Error("A window lasts 5, 10 or 15 minutes.");
       }
       // One window per chat: a new one replaces the old.
-      for (const g of [...grants.values()]) if (g.holder !== SETTINGS_HOLDER && canonical(g.holder) === canonical(sessionId)) end(g);
+      for (const g of [...grants.values()]) if (!isSettings(g.holder) && canonical(g.holder) === canonical(sessionId)) end(g);
       return add(tier, sessionId, new Set(itemIds), minutes * 60_000, dek);
     },
 
-    /** Keeps the secure tier open for Settings for five minutes; replaces an earlier one. */
-    openSettings(tier: VaultLockedTier, dek: Buffer): number {
-      for (const g of [...grants.values()]) if (g.holder === SETTINGS_HOLDER && g.tier === tier) end(g);
-      add(tier, SETTINGS_HOLDER, null, VAULT_SETTINGS_UNLOCK_MS, dek);
+    /**
+     * Keeps the secure tier open for one Settings page (`holder` from {@link settingsHolder}) for
+     * five minutes; replaces any earlier Settings unlock, so one page holds it at a time.
+     */
+    openSettings(tier: VaultLockedTier, dek: Buffer, holder: string): number {
+      if (!isSettings(holder)) { dek.fill(0); throw new Error("A Settings unlock needs a page handle."); }
+      for (const g of [...grants.values()]) if (isSettings(g.holder) && g.tier === tier) end(g);
+      add(tier, holder, null, VAULT_SETTINGS_UNLOCK_MS, dek);
       return now() + VAULT_SETTINGS_UNLOCK_MS;
     },
 
@@ -93,9 +110,11 @@ export function createVaultGrants(opts: { now?: () => number; canonical?: (sessi
       return g ? Buffer.from(g.dek) : null;
     },
 
-    /** When Settings' unlock of `tier` ends, or 0. */
-    settingsOpenUntil(tier: VaultLockedTier): number {
-      return covering(tier, SETTINGS_HOLDER, null)?.expiresAt ?? 0;
+    /** When `holder`'s Settings unlock of `tier` ends, or 0; any page's when no holder is named. */
+    settingsOpenUntil(tier: VaultLockedTier, holder?: string | null): number {
+      if (holder) return covering(tier, holder, null)?.expiresAt ?? 0;
+      for (const g of [...grants.values()]) if (isSettings(g.holder) && g.tier === tier && g.expiresAt > now()) return g.expiresAt;
+      return 0;
     },
 
     /** Ends every grant, or every grant of one tier. Answers how many were open. */
@@ -108,13 +127,13 @@ export function createVaultGrants(opts: { now?: () => number; canonical?: (sessi
     /** Ends a chat's grants (the chat was deleted or the user locked it). */
     lockSession(sessionId: string): void {
       const id = canonical(sessionId);
-      for (const g of [...grants.values()]) if (g.holder !== SETTINGS_HOLDER && canonical(g.holder) === id) end(g);
+      for (const g of [...grants.values()]) if (!isSettings(g.holder) && canonical(g.holder) === id) end(g);
     },
 
     /** Open grants as status lists them: never a key. */
-    list(): { tier: VaultLockedTier; holder: string; expiresAt: number; items: number | null }[] {
+    list(): { tier: VaultLockedTier; settings: boolean; expiresAt: number; items: number | null }[] {
       return [...grants.values()].filter((g) => g.expiresAt > now()).map((g) => ({
-        tier: g.tier, holder: g.holder, expiresAt: g.expiresAt, items: g.itemIds ? g.itemIds.size : null,
+        tier: g.tier, settings: isSettings(g.holder), expiresAt: g.expiresAt, items: g.itemIds ? g.itemIds.size : null,
       }));
     },
   };

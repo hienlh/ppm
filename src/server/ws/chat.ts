@@ -52,6 +52,7 @@ import { ppmApprovals } from "./chat-ppm-approvals.ts";
 import { claimTurnOrigin, noteQueuedTurnOrigin, turnOriginAfterTurn, turnRunning, type ArrivingMessage } from "./chat-turn-origin.ts";
 import { setCollabApprovalChat } from "../../services/session-collab/collab-approval-broker.ts";
 import { setVaultCardChat, vaultUnlockBroker, type VaultCardEvent } from "../../services/vault/vault-unlock-broker.ts";
+import { VAULT_CARD_APPROVAL } from "../../shared/vault.ts";
 import { setVaultSessionResolver } from "../../services/vault/vault-grants.ts";
 import { setScrubberSessionResolver } from "../../services/vault/turn-secret-scrubber.ts";
 import { collabWaits, setCollabIdleProbe } from "../../services/session-collab/collab-waits.ts";
@@ -418,6 +419,9 @@ export interface SessionEntry extends BackgroundTaskState {
   turnOrigin?: ChatMessageOrigin;
   /** The owner of the turn a message queued behind the running one will open (`chat-turn-origin.ts`). */
   nextTurnOrigin?: ChatMessageOrigin;
+  /** The running turn was started by a person typing, not by a script through the same door. */
+  turnByPerson?: boolean;
+  nextTurnByPerson?: boolean;
   /**
    * Messages other than a watch report that are on their way in and have not yet started or
    * joined a turn. A cold session's first message spends a while awaiting `resumeSession` with
@@ -541,6 +545,18 @@ function armExtensionApprovalDeadline(sessionId: string, entry: SessionEntry, re
  */
 export function getActiveSessionProjectPath(sessionId: string): string | undefined {
   return activeSessions.get(resolveMigratedSession(sessionId))?.projectPath;
+}
+
+/**
+ * Who started the session's running turn, as the vault weighs it: the origin, except that a
+ * browser-door message a script sent (a schedule's `ctx.ai.chat`) counts as `schedule`, since no
+ * person is there to see it. Undefined with no entry.
+ */
+export function getSessionTurnOwnerForVault(sessionId: string): ChatMessageOrigin | undefined {
+  const entry = activeSessions.get(resolveMigratedSession(sessionId));
+  if (!entry?.turnOrigin) return undefined;
+  if ((entry.turnOrigin === "ws" || entry.turnOrigin === "telegram") && !entry.turnByPerson) return "schedule";
+  return entry.turnOrigin;
 }
 
 /** Whose the session's running (or last) turn is; undefined with no entry. */
@@ -2659,7 +2675,11 @@ function liveChatState(entry: SessionEntry): LiveChatState {
     running: entry.phase !== "idle",
     projectName: entry.projectName ?? "",
     providerId: entry.providerId,
-    ...(entry.pendingApprovalEvent ? { card: liveApprovalCard(entry.pendingApprovalEvent) } : {}),
+    // A vault card is never handed to server-side readers (Telegram's /status, a watch, the
+    // Assistant's chats_attention): its purpose and item names stay in PPM, and nothing there
+    // could answer it. The chat still counts as waiting on the user.
+    ...(entry.pendingApprovalEvent && entry.pendingApprovalEvent.tool !== VAULT_CARD_APPROVAL
+      ? { card: liveApprovalCard(entry.pendingApprovalEvent) } : {}),
     queuedCards: entry.approvalQueue?.length ?? 0,
     ...(entry.turnOrigin ? { turnOrigin: entry.turnOrigin } : {}),
     ...(entry.turnBindings?.length ? { turnId: entry.turnBindings[entry.turnBindings.length - 1]!.turnId } : {}),

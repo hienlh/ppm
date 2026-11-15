@@ -33,6 +33,8 @@ export function parseKdfParams(json: string): KdfParams {
   if (!ok(v.N, 2 ** 10, 2 ** 20) || ((v.N as number) & ((v.N as number) - 1)) !== 0 || !ok(v.r, 1, 32) || !ok(v.p, 1, 4)) {
     throw new Error("Unsupported vault key parameters");
   }
+  // scrypt needs 128 * N * r bytes; a row asking for more than 256 MiB is refused, not run.
+  if (128 * (v.N as number) * (v.r as number) > 256 * 1024 * 1024) throw new Error("Unsupported vault key parameters");
   return { N: v.N as number, r: v.r as number, p: v.p as number };
 }
 

@@ -101,11 +101,22 @@ export function createVaultService(opts: { attempts?: VaultAttempts; now?: () =>
     return password;
   }
 
-  /** Refuses `password` when it also opens the other locked tier. Runs inside `serialized`. */
+  /**
+   * Refuses `password` when it also opens the other locked tier. Runs inside `serialized`.
+   *
+   * The answer tells whoever asked whether their candidate is the other tier's password, so each
+   * check counts as one try against that tier: it waits out the other tier's lockout and records
+   * an attempt, or turning a tier on and off again would be an uncounted way to guess.
+   */
   async function checkOtherTier(tier: VaultLockedTier, password: string): Promise<void> {
     const other: VaultLockedTier = tier === "secure" ? "sealed" : "secure";
     const row = getKeyRow(other);
     if (!row) return;
+    const gate = attempts.gate(other);
+    if (!gate.ok) {
+      throw new VaultError("other-tier-locked-out", `Too many wrong passwords on the other tier. Try again in ${Math.ceil(gate.retryAfterMs / 1000)} seconds.`, 423);
+    }
+    attempts.recordFailure(other);
     const kek = await deriveKek(password, row.salt, parseKdfParams(row.kdf_params));
     const dek = unwrapDek(kek, row.dek_nonce, row.wrapped_dek, other);
     kek.fill(0);
@@ -231,17 +242,18 @@ export function createVaultService(opts: { attempts?: VaultAttempts; now?: () =>
         const opened = await unlockInner(tier, oldPassword);
         if (!opened.ok) return opened;
         const dek = opened.dek;
+        let kek: Buffer | null = null;
         try {
           await checkOtherTier(tier, pw);
           const params = kdfParams();
           const salt = newSalt();
-          const kek = await deriveKek(pw, salt, params);
+          kek = await deriveKek(pw, salt, params);
           const { nonce, wrapped } = wrapDek(kek, dek, tier);
-          kek.fill(0);
           rewrapKeyRow(tier, JSON.stringify(params), salt, nonce, wrapped);
           log.info(`tier=${tier} password changed`);
           return { ok: true } as const;
         } finally {
+          kek?.fill(0);
           dek.fill(0);
         }
       });

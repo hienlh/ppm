@@ -32,6 +32,7 @@ import { dbToolsMcpAccessFor, dbToolsMcpTokens } from "./db-ai-tools/db-ai-tools
 import { extensionMcpAccessFor, extensionMcpTokens } from "./extension-mcp/extension-mcp-tokens.ts";
 import { dbApprovalBroker } from "./db-ai-tools/db-approval-broker.ts";
 import { vaultGrants } from "./vault/vault-grants.ts";
+import { turnSecretScrubber } from "./vault/turn-secret-scrubber.ts";
 import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
 import { anyPpmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
@@ -301,6 +302,7 @@ class ChatService {
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
     // A vault window the chat held ends with it, its key zeroed.
     vaultGrants.lockSession(sessionId);
+    turnSecretScrubber.release(sessionId);
     sessionCollabMcpTokens.revoke(sessionId);
     collabApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing was done.");
     collabWaits.cancelWaiter(sessionId);
@@ -546,7 +548,7 @@ class ChatService {
     // The vault's tools ride on the same server: always for the Assistant, and for an ordinary
     // chat only while the user turned them on (off by default).
     const sessionCollabMcp = (ppmTools || assistantSessionTools)
-      && (manager || assistantSessionTools || anyPpmToolOn(ai, SESSION_TOOLS) || anyPpmToolOn(ai, VAULT_TOOLS))
+      && (manager || assistantSessionTools || anyPpmToolOn(ai, SESSION_TOOLS) || (!bound && anyPpmToolOn(ai, VAULT_TOOLS)))
       ? sessionCollabMcpAccessFor(sessionId) : null;
     const key = `${providerId}:${sessionId}`;
     // The user's shared instructions and memories belong to their own chats: an Assistant

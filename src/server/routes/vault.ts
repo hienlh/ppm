@@ -3,7 +3,7 @@ import { err, ok } from "../../types/api.ts";
 import { createLogger } from "../../services/logger.ts";
 import { isVaultLockedTier, isVaultTier, type VaultCardAnswer, type VaultLockedTier } from "../../shared/vault.ts";
 import { vaultService, VaultError, type UnlockFailure } from "../../services/vault/vault.service.ts";
-import { SETTINGS_HOLDER, vaultGrants } from "../../services/vault/vault-grants.ts";
+import { settingsHolder, vaultGrants } from "../../services/vault/vault-grants.ts";
 import { vaultUnlockBroker } from "../../services/vault/vault-unlock-broker.ts";
 
 /**
@@ -11,8 +11,10 @@ import { vaultUnlockBroker } from "../../services/vault/vault-unlock-broker.ts";
  * and nothing more: the auth token is enough to list names and read the public tier, never to
  * read a locked tier. That takes the tier's password.
  *
- * - The secure tier, once its password is given here, stays open for Settings five minutes
- *   (`POST /tiers/secure/unlock`, or any action carrying the password); `POST /lock` ends it.
+ * - The secure tier, once its password is given here, stays open five minutes for the one
+ *   Settings page that gave it (`POST /tiers/secure/unlock`, or any action carrying the password
+ *   and the page's `handle`, a random value the page keeps in memory); `POST /lock` ends it. A
+ *   request without that handle gets nothing from the open tier, so the auth token is never enough.
  * - The sealed tier is never kept open: every action on it carries its password.
  *
  * No body is ever logged (the access log writes method, path and an error's message only), and
@@ -39,23 +41,27 @@ function fail(c: Context, e: unknown) {
 }
 
 /**
- * A key for `tier` for one Settings action: the secure tier's five-minute unlock when open, else
- * the password in the body (which, for the secure tier, opens that unlock). The caller zeroes it.
+ * A key for `tier` for one Settings action: this page's five-minute secure unlock when open (and
+ * `requirePassword` is not set), else the password in the body, which for the secure tier also
+ * opens that unlock for this page. The caller zeroes the key.
  */
-async function keyFor(tier: VaultLockedTier, password: unknown): Promise<{ ok: true; dek: Buffer } | UnlockFailure | { ok: false; reason: "need-password"; message: string }> {
-  if (tier === "secure") {
-    const open = vaultGrants.keyFor("secure", SETTINGS_HOLDER, null);
+async function keyFor(
+  tier: VaultLockedTier, password: unknown, handle: unknown, requirePassword = false,
+): Promise<{ ok: true; dek: Buffer } | UnlockFailure | { ok: false; reason: "need-password"; message: string }> {
+  const holder = settingsHolder(handle);
+  if (tier === "secure" && holder && !requirePassword) {
+    const open = vaultGrants.keyFor("secure", holder, null);
     if (open) return { ok: true, dek: open };
   }
   if (typeof password !== "string" || !password) return { ok: false, reason: "need-password", message: "Type the tier's password." };
   const r = await vaultService.unlock(tier, password);
-  if (!r.ok || tier !== "secure") return r;
-  vaultGrants.openSettings("secure", Buffer.from(r.dek));
+  if (!r.ok || tier !== "secure" || !holder) return r;
+  vaultGrants.openSettings("secure", Buffer.from(r.dek), holder);
   return r;
 }
 
-async function withKey(c: Context, tier: VaultLockedTier, password: unknown, fn: (dek: Buffer) => unknown) {
-  const k = await keyFor(tier, password);
+async function withKey(c: Context, tier: VaultLockedTier, b: Body, fn: (dek: Buffer) => unknown) {
+  const k = await keyFor(tier, b.password, b.handle);
   if (!k.ok) return k.reason === "need-password" ? c.json(err(k.message), 423) : failure(c, k);
   try {
     return c.json(ok(fn(k.dek)));
@@ -66,7 +72,7 @@ async function withKey(c: Context, tier: VaultLockedTier, password: unknown, fn:
   }
 }
 
-const status = () => ({ ...vaultService.status((t) => vaultGrants.settingsOpenUntil(t)), grants: vaultGrants.list().map((g) => ({ tier: g.tier, expiresAt: g.expiresAt, settings: g.holder === SETTINGS_HOLDER })) });
+const status = () => ({ ...vaultService.status((t) => vaultGrants.settingsOpenUntil(t)), grants: vaultGrants.list().map((g) => ({ tier: g.tier, expiresAt: g.expiresAt, settings: g.settings })) });
 
 vaultRoutes.get("/status", (c) => c.json(ok(status())));
 
@@ -105,9 +111,9 @@ vaultRoutes.post("/tiers/:tier/delete", async (c) => {
   const tier = c.req.param("tier");
   if (!isVaultLockedTier(tier)) return c.json(err("Unknown tier."), 400);
   const b = await body(c);
-  vaultGrants.lock(tier);
   const r = await vaultService.deleteTier(tier, b.password);
   if (!r.ok) return failure(c, r);
+  vaultGrants.lock(tier);
   return c.json(ok({ removed: r.removed, status: status() }));
 });
 
@@ -115,9 +121,11 @@ vaultRoutes.post("/tiers/:tier/delete", async (c) => {
 vaultRoutes.post("/tiers/:tier/unlock", async (c) => {
   if (c.req.param("tier") !== "secure") return c.json(err("Only the Secure tier stays open; the Sealed tier asks for its password at every action."), 400);
   const b = await body(c);
+  const holder = settingsHolder(b.handle);
+  if (!holder) return c.json(err("This page cannot hold an unlock; reload it."), 400);
   const r = await vaultService.unlock("secure", b.password);
   if (!r.ok) return failure(c, r);
-  const until = vaultGrants.openSettings("secure", r.dek);
+  const until = vaultGrants.openSettings("secure", r.dek, holder);
   return c.json(ok({ openUntil: until }));
 });
 
@@ -138,7 +146,7 @@ vaultRoutes.post("/items", async (c) => {
   if (b.tier === "public") {
     try { return c.json(ok(vaultService.addItem(input))); } catch (e) { return fail(c, e); }
   }
-  return withKey(c, b.tier, b.password, (dek) => vaultService.addItem(input, dek));
+  return withKey(c, b.tier, b, (dek) => vaultService.addItem(input, dek));
 });
 
 /** PATCH /items/:id `{ name?, kind?, value?, note?, password? }` */
@@ -150,7 +158,7 @@ vaultRoutes.patch("/items/:id", async (c) => {
   if (meta.tier === "public") {
     try { return c.json(ok(vaultService.updateItem(meta.id, patch))); } catch (e) { return fail(c, e); }
   }
-  return withKey(c, meta.tier, b.password, (dek) => vaultService.updateItem(meta.id, patch, dek));
+  return withKey(c, meta.tier, b, (dek) => vaultService.updateItem(meta.id, patch, dek));
 });
 
 /** POST /items/:id/delete `{ password? }` */
@@ -161,7 +169,7 @@ vaultRoutes.post("/items/:id/delete", async (c) => {
   if (meta.tier === "public") {
     try { vaultService.deleteItem(meta.id); return c.json(ok({ deleted: true })); } catch (e) { return fail(c, e); }
   }
-  return withKey(c, meta.tier, b.password, (dek) => { vaultService.deleteItem(meta.id, dek); return { deleted: true }; });
+  return withKey(c, meta.tier, b, (dek) => { vaultService.deleteItem(meta.id, dek); return { deleted: true }; });
 });
 
 /** POST /items/:id/reveal `{ password? }` — the value, to Settings only (hidden again after 30 s). */
@@ -170,7 +178,7 @@ vaultRoutes.post("/items/:id/reveal", async (c) => {
   if (!meta) return c.json(err("No such vault item."), 404);
   const b = await body(c);
   if (meta.tier === "public") return c.json(ok(vaultService.readPublic([meta.id])[0]));
-  return withKey(c, meta.tier, b.password, (dek) => vaultService.readLocked(meta.tier as VaultLockedTier, [meta.id], dek)[0]);
+  return withKey(c, meta.tier, b, (dek) => vaultService.readLocked(meta.tier as VaultLockedTier, [meta.id], dek)[0]);
 });
 
 /** POST /items/:id/move `{ to, passwords: { secure?, sealed? } }` — both locked tiers involved must open. */
@@ -182,8 +190,9 @@ vaultRoutes.post("/items/:id/move", async (c) => {
   const passwords = (b.passwords ?? {}) as Partial<Record<VaultLockedTier, unknown>>;
   const keys: Buffer[] = [];
   try {
+    // Taking an item out to the public tier always asks for its tier's password.
     const keyOf = async (tier: VaultLockedTier) => {
-      const k = await keyFor(tier, passwords[tier]);
+      const k = await keyFor(tier, passwords[tier], b.handle, b.to === "public" && tier === meta.tier);
       if (!k.ok) return k;
       keys.push(k.dek);
       return k;

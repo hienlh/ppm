@@ -12,7 +12,7 @@ import { isReportingManager, NOT_A_MANAGER, reportToAssistantCall } from "../ass
 import type { CallLimiter } from "../tab-tools-mcp/session-history-rate-limit.ts";
 import { collabToolPolicy } from "./collab-caller-policy.ts";
 import { isVaultTool } from "../../shared/vault.ts";
-import { VAULT_TOOL_DEFINITIONS, vaultTools } from "../vault/vault-tools.ts";
+import { boundToExtension, VAULT_TOOL_DEFINITIONS, vaultTools } from "../vault/vault-tools.ts";
 import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { resolveCaller, type CollabEnv } from "./collab-context.ts";
 import { createSessionTool } from "./collab-create.ts";
@@ -62,7 +62,7 @@ export function createSessionCollabMcpHandler(deps: {
       // A value of the vault's locked tiers read in any chat never leaves it: not in a message to
       // another chat, a new chat's prompt, a report or a scheduled prompt.
       if (!isVaultTool(name)) {
-        const leaked = turnSecretScrubber.find(JSON.stringify(rawArgs ?? {}));
+        const leaked = turnSecretScrubber.findIn(rawArgs);
         if (leaked) return textResult(`Refused: this contains the value of the vault item "${leaked}". Vault values never go to another chat, a report or a schedule; refer to the item by name instead.`, true);
       }
       // The caller's own chat only, delivering nothing to anyone: the send policy, its rate limit
@@ -112,8 +112,10 @@ export function sessionToolOnFor(tool: string, sessionId: string): boolean {
   if (tool === REPORT_TO_ASSISTANT_TOOL) return isReportingManager(sessionId);
   // The PPM Assistant keeps to its own schedule tools, which show the user a card first.
   if (isSessionScheduleTool(tool) && isAssistantSession(sessionId)) return false;
-  // The Assistant always has the vault; an ordinary chat only while the user turned it on.
+  // The Assistant always has the vault; an ordinary chat only while the user turned it on; a chat
+  // an extension bound never, whatever its policy says.
   if (isVaultTool(tool) && isAssistantSession(sessionId)) return true;
+  if (isVaultTool(tool) && boundToExtension(sessionId)) return false;
   return isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool);
 }
 

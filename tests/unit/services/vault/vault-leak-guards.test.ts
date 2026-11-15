@@ -26,8 +26,17 @@ describe("turn scrubber", () => {
     expect(s.scrub("QQ 12 34 56 C", "b")).toBe("QQ 12 34 56 C");
     expect(s.scrub("QQ 12 34 56 C")).toBe("[vault:NI]");
     expect(s.find("q q 1 2 3 4 5 6 c")).toBe("NI");
-    t += 15 * 60_000 + 1;
+    t += 24 * 60 * 60_000 + 1;
     expect(s.find("QQ123456C")).toBeNull();
+  });
+
+  it("catches a multi-line value inside an object, its HTML-escaped form, and keeps $& in a name literal", () => {
+    const s = createTurnSecretScrubber();
+    s.hold("a", [{ name: "Home", value: "1 High St\nLondon" }, { name: "X$&", value: "QQ123456C" }, { name: "Q", value: "a<b&c>d" }]);
+    expect(s.findIn({ message: "my address is 1 High St\nLondon", nested: [1] })).toBe("Home");
+    expect(s.scrubIn({ t: "1 High St\nLondon" })).toEqual({ t: "[vault:Home]" });
+    expect(s.scrub("QQ123456C")).toBe("[vault:X$&]");
+    expect(s.find("a&lt;b&amp;c&gt;d")).toBe("Q");
   });
 
   it("ignores values too short to tell from ordinary text", () => {

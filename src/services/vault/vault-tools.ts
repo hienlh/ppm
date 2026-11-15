@@ -1,4 +1,5 @@
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
+import { getDb, resolveMigratedSession } from "../db.service.ts";
 import { createLogger } from "../logger.ts";
 import {
   isVaultItemKind, isVaultTier, VAULT_KIND_LABELS, VAULT_LIST_TOOL, VAULT_PROPOSE_TOOL, VAULT_READ_TOOL,
@@ -139,8 +140,9 @@ export function createVaultTools(deps: {
 
     const ctx: VaultRequestContext = { origin: await deps.turnOrigin(caller.sessionId), sessionTitle: caller.title, assistant: caller.assistant };
     if (tier === "secure") {
-      // An open window for this chat that covers these items answers without a card.
-      const key = ctx.origin === "telegram" ? null : grants.keyFor("secure", caller.sessionId, ids);
+      // An open window answers without a card only in a turn a person started in PPM; any other
+      // turn (another AI's message, a script, Telegram) goes through the card and its rules.
+      const key = ctx.origin === "ws" ? grants.keyFor("secure", caller.sessionId, ids) : null;
       if (key) {
         try {
           const items = service.readLocked("secure", ids, key);
@@ -189,6 +191,16 @@ export function createVaultTools(deps: {
   };
 }
 
+/** Whether an extension bound the chat (it then never gets the vault, policy or not). */
+export function boundToExtension(sessionId: string): boolean {
+  try {
+    return !!getDb().query("SELECT 1 FROM extension_session_bindings WHERE session_id = ? OR session_id = ?")
+      .get(sessionId, resolveMigratedSession(sessionId));
+  } catch {
+    return true;
+  }
+}
+
 export const vaultTools = createVaultTools({
-  turnOrigin: async (sessionId) => (await import("../../server/ws/chat.ts")).getSessionTurnOrigin(sessionId),
+  turnOrigin: async (sessionId) => (await import("../../server/ws/chat.ts")).getSessionTurnOwnerForVault(sessionId),
 });

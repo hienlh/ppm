@@ -12,8 +12,11 @@
  * held: that tier is not protected.
  */
 
-export const HOLD_MS = 15 * 60_000;
-/** Shorter values would match ordinary text; the scrubber leaves them alone. */
+export const HOLD_MS = 24 * 60 * 60_000;
+/**
+ * Shorter values (a short PIN, a CVV) would match ordinary text, so the scrubber leaves them alone:
+ * nothing but the vault's own rules keeps those out of PPM's other writes.
+ */
 const MIN_VALUE_CHARS = 4;
 
 interface Held { name: string; pattern: RegExp; loose: string }
@@ -21,6 +24,11 @@ interface Entry { items: Held[]; until: number }
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const loosen = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+/** The forms a value takes in text PPM sends on: as typed, and HTML-escaped (Telegram, push). */
+const formsOf = (value: string): string[] => {
+  const html = value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return html === value ? [value] : [value, html];
+};
 
 function patternFor(value: string): RegExp {
   const chars = [...value.replace(/\s+/g, "")].map(escape);
@@ -50,9 +58,11 @@ export function createTurnSecretScrubber(opts: { now?: () => number; canonical?:
       const id = canonical(sessionId);
       const entry = held.get(id) ?? { items: [], until: 0 };
       for (const { name, value } of items) {
-        if (loosen(value).length < MIN_VALUE_CHARS) continue;
-        const loose = loosen(value);
-        if (!entry.items.some((h) => h.loose === loose)) entry.items.push({ name, pattern: patternFor(value), loose });
+        for (const form of formsOf(value)) {
+          const loose = loosen(form);
+          if (loose.length < MIN_VALUE_CHARS) continue;
+          if (!entry.items.some((h) => h.loose === loose)) entry.items.push({ name, pattern: patternFor(form), loose });
+        }
       }
       entry.until = now() + HOLD_MS;
       if (entry.items.length) held.set(id, entry);
@@ -61,7 +71,8 @@ export function createTurnSecretScrubber(opts: { now?: () => number; canonical?:
     /** `text` with every held value replaced by `[vault:<name>]`; every chat's when no session is named. */
     scrub(text: string, sessionId?: string): string {
       let out = text;
-      for (const h of entriesFor(sessionId)) out = out.replace(h.pattern, `[vault:${h.name}]`);
+      // A function, so `$&` or `$1` in an item's name is never read as a replacement pattern.
+      for (const h of entriesFor(sessionId)) out = out.replace(h.pattern, () => `[vault:${h.name}]`);
       return out;
     },
 
@@ -71,6 +82,46 @@ export function createTurnSecretScrubber(opts: { now?: () => number; canonical?:
       const loose = loosen(text);
       for (const h of entriesFor(sessionId)) if (loose.includes(h.loose)) return h.name;
       return null;
+    },
+
+    /**
+     * The name of a held value found in any string inside `value` (an object, an array, a string),
+     * or null. Strings are checked one by one rather than as JSON, where a newline or a quote in a
+     * value is escaped and would no longer match.
+     */
+    findIn(value: unknown, sessionId?: string): string | null {
+      const seen = new Set<unknown>();
+      const walk = (v: unknown, depth: number): string | null => {
+        if (typeof v === "string") return this.find(v, sessionId);
+        if (!v || typeof v !== "object" || depth > 20 || seen.has(v)) return null;
+        seen.add(v);
+        for (const child of Array.isArray(v) ? v : Object.values(v as Record<string, unknown>)) {
+          const hit = walk(child, depth + 1);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      return walk(value, 0);
+    },
+
+    /** Every string inside `value` scrubbed, the same shape returned (unchanged values keep identity). */
+    scrubIn<T>(value: T, sessionId?: string): T {
+      const walk = (v: unknown, depth: number): unknown => {
+        if (typeof v === "string") return this.scrub(v, sessionId);
+        if (!v || typeof v !== "object" || depth > 20) return v;
+        if (Array.isArray(v)) {
+          const next = v.map((c) => walk(c, depth + 1));
+          return next.every((c, i) => c === v[i]) ? v : next;
+        }
+        let changed = false;
+        const next: Record<string, unknown> = {};
+        for (const [k, c] of Object.entries(v as Record<string, unknown>)) {
+          next[k] = walk(c, depth + 1);
+          if (next[k] !== c) changed = true;
+        }
+        return changed ? next : v;
+      };
+      return walk(value, 0) as T;
     },
 
     /** Whether anything is held at all (a cheap check before scrubbing a stream). */

@@ -31,7 +31,7 @@ export function VaultNewPasswordFields({ tier, password, confirm, onPassword, on
   const mismatch = confirm.length > 0 && confirm !== password;
   return (
     <div className="space-y-2">
-      <Input type="password" autoComplete="off" spellCheck={false} aria-label={label} placeholder={label}
+      <Input type="password" autoComplete="new-password" spellCheck={false} aria-label={label} placeholder={label}
         value={password} onChange={(e) => onPassword(e.target.value)} disabled={disabled} className="h-11 md:h-9" />
       <div className="flex items-center gap-2" data-vault-strength={strength.score}>
         <div className="flex flex-1 gap-1" aria-hidden>
@@ -41,7 +41,7 @@ export function VaultNewPasswordFields({ tier, password, confirm, onPassword, on
         </div>
         <span className="w-20 text-right text-[11px] text-text-subtle">{password ? strength.label : `${min}+ characters`}</span>
       </div>
-      <Input type="password" autoComplete="off" spellCheck={false} aria-label="Type it again" placeholder="Type it again"
+      <Input type="password" autoComplete="new-password" spellCheck={false} aria-label="Type it again" placeholder="Type it again"
         value={confirm} onChange={(e) => onConfirm(e.target.value)} disabled={disabled} aria-invalid={mismatch} className="h-11 md:h-9" />
       {mismatch && <p className="text-[11px] text-error">The two passwords differ.</p>}
     </div>
