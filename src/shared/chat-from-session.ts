@@ -17,7 +17,7 @@ export interface FromSessionReference {
   version: 1;
   /** The sending session, by its canonical id. */
   sessionId: string;
-  providerId: "claude" | "codex";
+  providerId: "claude" | "codex" | "antigravity";
   projectName: string;
   /** The sending session's title, collapsed to one line (see {@link normalizeFromSessionTitle}). */
   title: string;
@@ -82,7 +82,7 @@ export function validateFromSession(value: unknown): FromSessionReference | null
   const v = value as Record<string, unknown>;
   if (v.version !== 1) return null;
   if (typeof v.sessionId !== "string" || !SESSION_ID_RE.test(v.sessionId)) return null;
-  if (v.providerId !== "claude" && v.providerId !== "codex") return null;
+  if (v.providerId !== "claude" && v.providerId !== "codex" && v.providerId !== "antigravity") return null;
   if (typeof v.projectName !== "string" || !v.projectName.trim() || Array.from(v.projectName).length > MAX_PROJECT_NAME
     || /[\u0000-\u001f\u007f]/.test(v.projectName)) return null;
   if (typeof v.title !== "string" || normalizeFromSessionTitle(v.title) !== v.title) return null;

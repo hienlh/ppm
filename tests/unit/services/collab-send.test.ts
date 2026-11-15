@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { sendToSessionTool } from "../../../src/services/session-collab/collab-send.ts";
-import { resolveCaller } from "../../../src/services/session-collab/collab-context.ts";
+import { AGY_ANSWER_WITHIN_MS, resolveCaller } from "../../../src/services/session-collab/collab-context.ts";
 import { fakeEnv, OTHER_PATH, PROJECT_PATH, textOf, type FakeSession } from "./session-collab-fake-env.ts";
 
 const A = "session-aaaa";
@@ -183,6 +183,19 @@ describe("send_to_session", () => {
     w.env.waits.targetWaitingForUser(B, card);
     const body = JSON.parse(textOf(await pending));
     expect(body.reply).toEqual({ replied: false, reason: "waiting_for_user", card });
+  });
+
+  it("ends an Antigravity caller's wait before agy cuts the call off, as a timeout and not an error", async () => {
+    const before = Date.now();
+    const w = world({}, {}, { providerId: "antigravity" });
+    expect(w.caller.answerBy! - before).toBeGreaterThanOrEqual(AGY_ANSWER_WITHIN_MS);
+    expect(w.caller.answerBy! - Date.now()).toBeLessThan(180_000);
+    expect(world().caller.answerBy).toBeUndefined();
+    // Nearly out of time already (a card the user took long to answer, say): the wait is that short.
+    const body = JSON.parse(textOf(await sendToSessionTool(w.env, { ...w.caller, answerBy: Date.now() + 20 }, { session_id: B, message: "check", wait: true }, signal())));
+    expect(body.reply).toEqual({ replied: false, reason: "timeout" });
+    expect(w.deliveries).toHaveLength(1);
+    expect(w.env.waits.size()).toBe(0);
   });
 
   it("waits for a reply, and reports the target's status when its turn ends without one", async () => {
