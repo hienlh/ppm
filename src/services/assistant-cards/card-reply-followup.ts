@@ -60,6 +60,7 @@ let sink: CardFollowupSink | null = null;
 export const cardReplyFollowups: FollowupTracker = createFollowupTracker({
   canonical: resolveMigratedSession,
   isIdle: (sessionId) => !(chatControl()?.liveState(sessionId)?.running ?? false),
+  turnId: (sessionId) => chatControl()?.liveState(sessionId)?.turnId,
   now: () => assistantClock.now(),
   setTimer: (fn, ms) => assistantClock.setTimer(fn, ms),
   deliver: (result) => deliverCardFollowup({ cards: assistantCards, now: () => assistantClock.now(), sink: () => sink }, result),

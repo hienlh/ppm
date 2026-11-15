@@ -18,16 +18,24 @@ function setup(opts: { idle?: () => boolean } = {}) {
   const delivered: FollowupResult[] = [];
   const timers: Array<{ fn: () => void; live: boolean }> = [];
   const aliases = new Map<string, string>();
+  // The chat's latest turn id, as `liveState().turnId` keeps it: moved by every `turn_started`.
+  let turn = "turn-0";
+  let turns = 0;
   const t = createFollowupTracker({
     canonical: (id) => aliases.get(id) ?? id,
     isIdle: opts.idle ?? (() => true),
+    turnId: () => turn,
     now: () => 1_000,
     setTimer: (fn) => { const timer = { fn, live: true }; timers.push(timer); return () => { timer.live = false; }; },
     deliver: (r) => delivered.push(r),
   });
   const runTimers = () => { for (const x of timers.splice(0)) if (x.live) x.fn(); };
   const say = (text: string, session = S) => t.onStream(session, { type: "text", content: text });
-  const named = (clientMessageId: string, session = S) => t.onStream(session, { type: "turn_started", turnId: "t", clientMessageId });
+  /** A turn opens; `clientMessageId` names the message that opened it, when the provider says. */
+  const named = (clientMessageId?: string, session = S) => {
+    turn = `turn-${++turns}`;
+    t.onStream(session, { type: "turn_started", turnId: turn, ...(clientMessageId ? { clientMessageId } : {}) });
+  };
   return { t, delivered, runTimers, say, named, aliases };
 }
 
@@ -149,22 +157,69 @@ describe("following the turn a card reply opened", () => {
     expect(delivered.map((d) => d.text)).toEqual(["Unnamed answer."]);
   });
 
-  it("takes an unnamed reply that joined a running turn from after the words, and only once the chat is idle", () => {
-    let idle = false;
-    const { t, delivered, say, runTimers } = setup({ idle: () => idle });
+  it("takes an unnamed reply that joined a running turn from after the words, once the chat is idle on the same turn", () => {
+    const { t, delivered, say, runTimers, named } = setup();
+    named("schedule-1");
     say("before the words arrived");
     const h = t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S });
     say("still before");
     h.attach("inserted");
+    say("After your words: no, it costs 40%.");
+    t.onTurnEnded(S);
+    runTimers();
+    expect(delivered.map((d) => d.text)).toEqual(["After your words: no, it costs 40%."]);
+  });
+
+  it("judges an unnamed inserted reply once: another turn that runs after it never answers it", () => {
+    let idle = false;
+    const { t, delivered, say, runTimers, named } = setup({ idle: () => idle });
+    named("schedule-1");
+    const h = t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S });
+    h.attach("inserted");
     say("After your words: no.");
     t.onTurnEnded(S);
-    runTimers(); // another turn started meanwhile: not judged yet
+    runTimers(); // another turn started meanwhile: the words' turn is not known, so nothing is sent
     expect(delivered).toHaveLength(0);
     say("Second turn answer.");
     t.onTurnEnded(S);
     idle = true;
     runTimers();
-    expect(delivered.map((d) => d.text)).toEqual(["Second turn answer."]);
+    expect(delivered).toHaveLength(0);
+  });
+
+  it("sends nothing when another sender's named turn opens within the grace, though the chat is idle when it ends", () => {
+    let idle = false;
+    const { t, delivered, say, runTimers, named } = setup({ idle: () => idle });
+    named("schedule-1");
+    say("schedule turn A working");
+    t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("inserted");
+    say("A's answer after the words");
+    t.onTurnEnded(S);
+    // Within the grace the Assistant's message opens turn B, named with its own id.
+    named("assistant-xyz");
+    runTimers();
+    say("B: reply to the Assistant about client Foo Ltd tax");
+    t.onTurnEnded(S);
+    idle = true;
+    runTimers();
+    expect(delivered).toHaveLength(0);
+    // Still the reply's own turn may name it later, and that turn answers it.
+    named(ID);
+    say("Answer to your reply: 40%.");
+    t.onTurnEnded(S);
+    expect(delivered.map((d) => d.text)).toEqual(["Answer to your reply: 40%."]);
+  });
+
+  it("sends nothing when the turn that ended is not the one running when the words went in", () => {
+    const { t, delivered, say, runTimers, named } = setup();
+    named("schedule-1");
+    const h = t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S });
+    h.attach("inserted");
+    named("other"); // the provider said a new turn opened, and it is not the reply's
+    say("Someone else's answer.");
+    t.onTurnEnded(S);
+    runTimers();
+    expect(delivered).toHaveLength(0);
   });
 
   it("sends nothing for a turn with no text, a stopped send, or a builtin that left the turn running", () => {

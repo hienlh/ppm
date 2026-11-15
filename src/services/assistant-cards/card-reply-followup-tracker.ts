@@ -7,11 +7,16 @@
  * (a schedule, another session's message) before or between. So a reply is followed by its id:
  * the first turn end after its turn was named carries the answer.
  *
- * A message no provider named (some providers do not name a turn a follow-up joined) is judged as
- * the session tools' waits judge it: after a turn ends, a short grace; if the chat is idle then, the
- * words went into that turn. Words queued behind a turn are never judged that way — they go into a
- * later turn, which is named when it opens, or never (the card is then opened again by the
- * delivery reconciler, and nothing is sent here).
+ * A message no provider named is judged once, against the first turn end after it went in. Claude
+ * names a message only when it opens a turn: one pushed into a running turn is folded in by the
+ * CLI and never named. So that turn's answer is kept, and after a short grace it is sent only if
+ * the reply's own turn has not been named meanwhile, the chat is idle and its latest turn id is
+ * still the one that ended (and the one running when the words went in). Anything else — another
+ * turn opened by a schedule, the Assistant or another chat — sends nothing: that turn may answer
+ * someone else, and later turns are never judged for the reply (its own `turn_started` can still
+ * claim it). Words queued behind a turn are never judged that way — they go into a later turn,
+ * which is named when it opens, or never (the card is then opened again by the delivery
+ * reconciler, and nothing is sent here).
  *
  * The answer is the turn's top-level text from the reply on, never tool output, thinking or a
  * subagent's text. It is kept per reply as blocks split at each top-level tool call, because the
@@ -48,6 +53,8 @@ export interface FollowupTrackerDeps {
   canonical(sessionId: string): string;
   /** Whether the session has no turn running now. */
   isIdle(sessionId: string): boolean;
+  /** The id of the latest turn the session opened, kept past its end; undefined when unknown. */
+  turnId(sessionId: string): string | undefined;
   now(): number;
   setTimer(fn: () => void, ms: number): Cancel;
   deliver(result: FollowupResult): void;
@@ -84,8 +91,12 @@ interface Pending {
   bound: boolean;
   /** The turn's text gathered for this reply; null while it is not in a turn (queued). */
   collect: Collected | null;
-  /** What a turn of the chat ended with while the send had not returned yet. */
-  endedBeforeAttach: Buffer | null;
+  /** What a turn of the chat ended with while the send had not returned yet, and that turn's id. */
+  endedBeforeAttach: (Buffer & { turnId: string | undefined }) | null;
+  /** An unnamed reply was judged against the first turn end after it went in; never again. */
+  judged: boolean;
+  /** For words pushed into a running turn: that turn's id when they went in. */
+  turnAtInsert?: string | undefined;
   at: number;
   newCards: Array<{ id: string; title: string }>;
 }
@@ -157,12 +168,19 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
     deps.deliver({ cardId: p.cardId, origin: p.origin, sessionId: session, text, overflow: buffer!.overflow, newCards: p.newCards });
   }
 
-  /** After the grace, an unnamed reply belongs to the turn that ended if nothing else started. */
-  function judgeLater(p: Pending, buffer: Buffer | undefined): void {
+  /**
+   * The one judgement of an unnamed reply: after the grace, it belongs to the turn that ended only
+   * if its own turn was not named meanwhile and nothing else has run since. Otherwise nothing is
+   * sent, and it waits (until it ages out) for a `turn_started` that names it.
+   */
+  function judgeLater(p: Pending, buffer: Buffer, endedTurn: string | undefined): void {
+    p.judged = true;
+    p.collect = null;
     deps.setTimer(() => {
       if (!live(p) || p.bound) return;
       const session = key(p.sessionId);
-      if (deps.isIdle(session)) finish(p, buffer, session);
+      const sameTurn = deps.turnId(session) === endedTurn && (p.delivered !== "inserted" || p.turnAtInsert === endedTurn);
+      if (deps.isIdle(session) && sameTurn) finish(p, buffer, session);
     }, graceMs);
   }
 
@@ -176,7 +194,7 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
       const p: Pending = {
         cardId: input.cardId, clientMessageId: input.clientMessageId, origin: input.origin, sessionId: input.sessionId,
         // Gathered from the start of the send, in case the words open a turn before it returns.
-        delivered: null, bound: false, collect: collected(), endedBeforeAttach: null, at: deps.now(), newCards: [],
+        delivered: null, bound: false, collect: collected(), endedBeforeAttach: null, judged: false, at: deps.now(), newCards: [],
       };
       pending.set(p.clientMessageId, p);
       return {
@@ -186,11 +204,19 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
           if (p.bound) return;
           // Behind a running turn: nothing is theirs until the turn they open is named.
           if (p.delivered === "queued") { p.collect = null; return; }
-          // The turn the words opened ended before the send returned.
-          if (p.endedBeforeAttach && p.delivered === "started") { judgeLater(p, p.endedBeforeAttach); return; }
+          const ended = p.endedBeforeAttach;
+          // The turn the words went into ended before the send returned: that end was the first.
+          if (ended) {
+            if (p.delivered === "inserted") p.turnAtInsert = ended.turnId;
+            judgeLater(p, ended, ended.turnId);
+            return;
+          }
           // Joined a running turn: the answer is what follows the words, not what came before them.
           // Each reply gathers its own copy, so this starts nobody else's over.
-          if (p.delivered === "inserted") p.collect = collected();
+          if (p.delivered === "inserted") {
+            p.collect = collected();
+            p.turnAtInsert = deps.turnId(key(p.sessionId));
+          }
         },
         abandon() {
           if (live(p)) pending.delete(p.clientMessageId);
@@ -230,11 +256,16 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
       for (const p of inSession(session)) {
         const buffer = answerOf(p.collect);
         if (p.bound) { finish(p, buffer, session); continue; }
-        if (p.delivered === "queued") continue;
-        p.collect = collected();
-        if (p.delivered === null) p.endedBeforeAttach = buffer;
-        // Unnamed, and not queued behind this turn: it went into this turn if nothing else started.
-        else judgeLater(p, buffer);
+        // Queued behind this turn, or judged already against an earlier one: not this turn's.
+        if (p.delivered === "queued" || p.judged) continue;
+        if (p.delivered === null) {
+          // Only the first end counts; a later one before the send returns is not theirs.
+          p.endedBeforeAttach ??= { ...buffer, turnId: deps.turnId(session) };
+          p.collect = null;
+        } else {
+          // Unnamed, and not queued behind this turn: this is the first end after the words went in.
+          judgeLater(p, buffer, deps.turnId(session));
+        }
       }
     },
 
