@@ -418,6 +418,10 @@ app.route("/api/cloud", cloudRoutes);
 // Speech-to-text (Whisper on the host) for the chat mic
 import { speechRoutes } from "./routes/speech.ts";
 app.route("/api/speech", speechRoutes);
+// The secret vault (Settings → Vault, and the answers to its chat cards)
+import { vaultRoutes } from "./routes/vault.ts";
+import { vaultGrants } from "../services/vault/vault-grants.ts";
+app.route("/api/vault", vaultRoutes);
 // Language servers, machine-wide (the Settings pane). The per-project half is project-scoped.
 import { lspGlobalRoutes } from "./routes/lsp.ts";
 app.route("/api/lsp", lspGlobalRoutes);
@@ -1374,6 +1378,8 @@ if (process.argv.includes("__serve__")) {
     // First, while the database is surely still there: a run with no stop is read as a crash.
     try { noteServerStop(trigger); } catch {}
     try { schedulerStop?.(); } catch {}
+    // Every open vault unlock ends with its key zeroed; a restart starts with both tiers locked.
+    try { vaultGrants.lock(); } catch {}
     try { codexCleanupRef?.(); } catch {}
     // Language servers are long-lived children; most exit on stdin EOF, but a
     // resident rust-analyzer holding a crate graph is too expensive to leave

@@ -142,10 +142,10 @@ export function createVaultService(opts: { attempts?: VaultAttempts; now?: () =>
     return { ok: true, dek };
   }
 
-  function lockedRow(id: string): VaultItemRow & { tier: VaultLockedTier } {
+  function existingRow(id: string): VaultItemRow {
     const row = getItemRow(id);
     if (!row) throw new VaultError("not-found", "No such vault item.", 404);
-    return row as VaultItemRow & { tier: VaultLockedTier };
+    return row;
   }
 
   function decryptRow(row: VaultItemRow, dek: Buffer): VaultPayload {
@@ -277,7 +277,7 @@ export function createVaultService(opts: { attempts?: VaultAttempts; now?: () =>
 
     /** Renames, re-kinds or rewrites an item in place. A locked tier needs its data key. */
     updateItem(id: string, patch: { name?: string; kind?: VaultItemKind; value?: string; note?: string }, dek: Buffer | null = null): VaultItemMeta {
-      const row = lockedRow(id);
+      const row = existingRow(id);
       const next: VaultItemRow = { ...row, updated_at: now() };
       if (patch.name !== undefined) next.name = cleanName(patch.name);
       if (patch.kind !== undefined) next.kind = cleanKind(patch.kind);
@@ -301,7 +301,7 @@ export function createVaultService(opts: { attempts?: VaultAttempts; now?: () =>
 
     /** Deletes an item. A locked tier needs its data key, proved by opening the item with it. */
     deleteItem(id: string, dek: Buffer | null = null): void {
-      const row = lockedRow(id);
+      const row = existingRow(id);
       if (row.tier !== "public") {
         if (!dek) throw new VaultError("locked", "Unlock this tier first.", 423);
         decryptRow(row, dek);
@@ -335,7 +335,7 @@ export function createVaultService(opts: { attempts?: VaultAttempts; now?: () =>
      */
     moveItem(id: string, to: VaultTier, keys: { from?: Buffer | null; to?: Buffer | null }): VaultItemMeta {
       if (!isVaultTier(to)) throw new VaultError("bad-tier", "Unknown vault tier.");
-      const row = lockedRow(id);
+      const row = existingRow(id);
       if (row.tier === to) return toMeta(row);
       if (isVaultLockedTier(to) && !getKeyRow(to)) throw new VaultError("not-enabled", "Turn that tier on first.", 409);
       const payload: VaultPayload = row.tier === "public"

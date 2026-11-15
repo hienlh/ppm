@@ -31,6 +31,7 @@ import { forgetSessionInDeviceBrokers } from "./tab-tools-mcp/tab-open-broker.ts
 import { dbToolsMcpAccessFor, dbToolsMcpTokens } from "./db-ai-tools/db-ai-tools-tokens.ts";
 import { extensionMcpAccessFor, extensionMcpTokens } from "./extension-mcp/extension-mcp-tokens.ts";
 import { dbApprovalBroker } from "./db-ai-tools/db-approval-broker.ts";
+import { vaultGrants } from "./vault/vault-grants.ts";
 import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
 import { anyPpmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
@@ -297,6 +298,8 @@ class ChatService {
     dbToolsMcpTokens.revoke(sessionId);
     extensionMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
+    // A vault window the chat held ends with it, its key zeroed.
+    vaultGrants.lockSession(sessionId);
     sessionCollabMcpTokens.revoke(sessionId);
     collabApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing was done.");
     collabWaits.cancelWaiter(sessionId);

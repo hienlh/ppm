@@ -77,3 +77,83 @@ export function looksSecretName(name: string): boolean {
   return /\b(ni|nino|national ?insurance|passport|password|passwd|pass|pin|ssn|tax|bank|iban|sort ?code|card|cvv|secret|token|key|otp|seed|mnemonic|dob|birth)\b/i.test(name)
     || /mật ?khẩu|hộ chiếu|số tài khoản|cmnd|cccd/i.test(name);
 }
+
+// ---------------------------------------------------------------------------
+// The vault's cards in a chat
+// ---------------------------------------------------------------------------
+
+/**
+ * The `tool` of every vault card. Not a provider's tool name, so the chat draws the vault's own
+ * card; `input.kind` says which card. Answered over HTTP (`POST /api/vault/cards/:requestId`),
+ * never over the chat socket, and never from Telegram or by the Assistant on the user's behalf.
+ */
+export const VAULT_CARD_APPROVAL = "ppm:vault";
+
+export interface VaultCardItem { id: string; name: string; kind: VaultItemKind }
+
+export interface VaultCardRequester {
+  /** The chat that asked, as PPM names it. */
+  sessionTitle: string | null;
+  assistant: boolean;
+  /** The turn was started from Telegram: the answer goes back there. */
+  fromTelegram: boolean;
+}
+
+export type VaultCardInput =
+  | {
+    kind: "read-secure";
+    requester: VaultCardRequester;
+    purpose: string;
+    /** Every secure item, so the user can tick more than the AI asked for. */
+    items: VaultCardItem[];
+    /** The items the AI asked for, ticked to begin with. */
+    requested: string[];
+    attemptsLeft: number;
+    lockedUntil: number;
+  }
+  | {
+    kind: "read-sealed";
+    requester: VaultCardRequester;
+    purpose: string;
+    item: VaultCardItem;
+    /** False for a turn started from Telegram: the value is only ever shown to the user then. */
+    allowGiveToAi: boolean;
+    attemptsLeft: number;
+    lockedUntil: number;
+  }
+  | {
+    kind: "propose";
+    requester: VaultCardRequester;
+    name: string;
+    itemKind: VaultItemKind;
+    suggestedTier: VaultTier;
+    /** The AI filled in a value; the card fetches it masked (`GET .../prefill`), never over the socket. */
+    hasPrefill: boolean;
+    enabled: Record<VaultLockedTier, boolean>;
+  };
+
+export interface VaultCardAnswer {
+  approved: boolean;
+  password?: string;
+  /** read-secure: the ticked items. */
+  itemIds?: string[];
+  /** read-secure: once (default) or a window for this chat. */
+  mode?: "once" | "window";
+  minutes?: number;
+  /** read-sealed: give the value to the AI this once (otherwise it is shown to the user only). */
+  giveToAi?: boolean;
+  /** propose: what the user settled on. */
+  tier?: VaultTier;
+  name?: string;
+  itemKind?: VaultItemKind;
+  value?: string;
+}
+
+/** What the card's HTTP answer returns: a sealed value shown to the user travels only here. */
+export interface VaultCardAnswerResult {
+  approved: boolean;
+  shown?: { name: string; value: string };
+}
+
+/** How long a sealed value shown on the card stays visible before it hides itself. */
+export const VAULT_SHOW_MS = 60_000;

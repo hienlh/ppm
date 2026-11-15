@@ -51,6 +51,8 @@ import { dbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
 import { ppmApprovals } from "./chat-ppm-approvals.ts";
 import { claimTurnOrigin, noteQueuedTurnOrigin, turnOriginAfterTurn, turnRunning, type ArrivingMessage } from "./chat-turn-origin.ts";
 import { setCollabApprovalChat } from "../../services/session-collab/collab-approval-broker.ts";
+import { setVaultCardChat, vaultUnlockBroker, type VaultCardEvent } from "../../services/vault/vault-unlock-broker.ts";
+import { setVaultSessionResolver } from "../../services/vault/vault-grants.ts";
 import { collabWaits, setCollabIdleProbe } from "../../services/session-collab/collab-waits.ts";
 import { collabSessionRenamed, collabTargetWaitingForUser, collabTurnEnded } from "../../services/session-collab/collab-turn-events.ts";
 import { cardRaisedFor, waitingCardOf } from "../../services/session-collab/collab-waiting-card.ts";
@@ -1164,6 +1166,16 @@ setCollabApprovalChat({
     collabApprovalGlobal(sessionId, { requestId, state: "resolved", ...(answer ? { answer } : {}) });
   },
 }, resolveMigratedSession);
+
+/** The vault's cards ask here like any PPM approval; answered only over HTTP with a password. */
+export function registerVaultCardChat(): void {
+  setVaultCardChat({
+    announce: (sessionId, event: VaultCardEvent) => announcePpmApproval(sessionId, event),
+    resolved: (sessionId, requestId, approved) => ppmApprovalResolved(sessionId, requestId, approved),
+  }, resolveMigratedSession);
+  setVaultSessionResolver(resolveMigratedSession);
+}
+registerVaultCardChat();
 
 /** What the AI hears when one of PPM's approvals is still waiting as the turn ends. */
 const DB_APPROVAL_TURN_OVER = "The turn ended before the user answered, so nothing ran.";
@@ -2493,6 +2505,9 @@ function answerApprovalCore(
   origin: ChatMessageOrigin,
 ): "answered" | "stale" {
   const approved = answer.approved === true;
+  // A vault card is never answered here — not from Telegram, not by the Assistant answering
+  // another chat's card: it takes the tier's password, typed into PPM by the user.
+  if (vaultUnlockBroker.has(requestId)) return "stale";
   // PPM's own approvals are answered over authenticated HTTP (a `db_execute` change with PPM's
   // password). The one exception is a session tool's card pressed on Telegram, which settles it
   // through its broker, once and never "for the session" (see `chat-collab-approval-relay.ts`).
