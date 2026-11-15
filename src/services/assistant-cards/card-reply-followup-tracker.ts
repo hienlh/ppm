@@ -180,12 +180,36 @@ export function answerOf(c: Collected | null): Buffer {
     const real = kept.filter((b) => !isThrowawayBlock(b));
     blocks = real.length > 0 ? real : kept.slice(-1);
   }
-  let overflow = c.overflow;
-  while (blocks.length > 1 && blocks.join("\n\n").length > CARD_FOLLOWUP_MAX_CHARS) {
-    blocks.shift();
+  return fitAnswer(blocks, c.overflow);
+}
+
+/** Shortest piece of an earlier block worth keeping once cut; below that it goes whole. */
+const MIN_CUT_BLOCK = 40;
+
+/**
+ * Fits the blocks into what the user is shown, keeping the last one — the answer, since the rule
+ * puts it last — whole: earlier blocks go first, the earliest whole and the nearest one cut to fit
+ * with "…". An answer longer than the cap on its own is left for the follow-up's cut, which marks
+ * it "see the chat".
+ */
+function fitAnswer(blocks: string[], overflowIn: boolean): Buffer {
+  if (blocks.length === 0) return { text: "", overflow: overflowIn };
+  const last = blocks[blocks.length - 1]!;
+  const earlier = blocks.slice(0, -1);
+  let overflow = overflowIn || last.length > CARD_FOLLOWUP_MAX_CHARS;
+  const length = (): number => earlier.reduce((n, b) => n + b.length + 2, last.length);
+  while (earlier.length > 0 && length() > CARD_FOLLOWUP_MAX_CHARS) {
     overflow = true;
+    const excess = length() - CARD_FOLLOWUP_MAX_CHARS;
+    const first = earlier[0]!;
+    // The one left beside the answer is cut rather than dropped when enough of it still fits.
+    if (earlier.length === 1 && first.length - excess - 1 >= MIN_CUT_BLOCK) {
+      earlier[0] = `${cutFollowupText(first, first.length - excess - 1).text}…`;
+    } else {
+      earlier.shift();
+    }
   }
-  return { text: blocks.join("\n\n"), overflow };
+  return { text: [...earlier, last].join("\n\n"), overflow };
 }
 
 export function createFollowupTracker(deps: FollowupTrackerDeps) {

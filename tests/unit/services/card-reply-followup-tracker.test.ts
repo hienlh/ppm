@@ -132,8 +132,19 @@ describe("following the turn a card reply opened", () => {
     say("Done: PR #12 updated.");
     t.onTurnEnded(S);
     expect(delivered[0]).toMatchObject({ text: "Tests pass: 40 of 40.\n\nDone: PR #12 updated.", overflow: false });
-    expect(answerOf({ blocks: ["a".repeat(CARD_FOLLOWUP_MAX_CHARS), "", "Answer: 42."], size: 0, sawTool: true, overflow: false }))
-      .toEqual({ text: "Answer: 42.", overflow: true });
+    // The answer (the last real block) stays whole; the block before it is cut to fit, with "…".
+    const fitted = answerOf({ blocks: ["a".repeat(CARD_FOLLOWUP_MAX_CHARS), "", "Answer: 42."], size: 0, sawTool: true, overflow: false });
+    expect(fitted.overflow).toBe(true);
+    expect(fitted.text.endsWith("…\n\nAnswer: 42.")).toBe(true);
+    expect(fitted.text.length).toBeLessThanOrEqual(CARD_FOLLOWUP_MAX_CHARS);
+    // Earliest blocks go whole first.
+    const three = answerOf({ blocks: ["b".repeat(900), "c".repeat(900), "Answer: 7 days."], size: 0, sawTool: true, overflow: false });
+    expect(three).toEqual({ text: `${"c".repeat(900)}\n\nAnswer: 7 days.`, overflow: true });
+    // An answer longer than the cap on its own is kept for the follow-up's cut, marked as cut.
+    const long = `Answer: ${"d".repeat(CARD_FOLLOWUP_MAX_CHARS + 100)}`;
+    expect(answerOf({ blocks: ["Some 12 notes first.", "", long], size: 0, sawTool: true, overflow: false }))
+      .toEqual({ text: long, overflow: true });
+    expect(cutFollowupText(long, CARD_FOLLOWUP_MAX_CHARS, true)).toMatchObject({ truncated: true });
     expect(isThrowawayBlock("Card sent.")).toBe(true);
     expect(isThrowawayBlock("Đúng không?")).toBe(false);
     expect(isThrowawayBlock("Costs 40%.")).toBe(false);
