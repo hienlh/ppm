@@ -1406,7 +1406,8 @@ answer used to stay in the manager chat, which a user on their phone never opens
 - The answer is the turn's top-level text **from the reply on**, gathered per reply as blocks split
   at each top-level tool call (no tool output, thinking or subagent text). With no tool call it is
   the whole text, however short. Around tool calls: a line that only confirms the call ("Card
-  sent.", "Đã gửi card.", "Done.": `isConfirmationBlock`) is always dropped; another short line
+  sent.", "Đã gửi card.", "Done.": `isConfirmationBlock`) is dropped when the turn opened a card,
+  and kept as the answer otherwise ("did you send the mail?" → mail tool → "Đã gửi ạ."); another short line
   (one line, under 40 characters, no digit, no question mark) is dropped only when a longer real
   block is there, and with none the last remaining block is the answer — so "card first, then
   'Được anh.'" arrives, and so does an answer written before the card. The rest is joined. Within

@@ -127,8 +127,9 @@ export function isThrowawayBlock(block: string): boolean {
 }
 
 /**
- * A line that only says a tool call was made ("Card sent.", "Đã gửi card.", "Done."): never an
- * answer, so it is dropped wherever it is. Anything else that is short is judged by
+ * A line that only says a tool call was made ("Card sent.", "Đã gửi card.", "Done."). In a turn
+ * that opened a card it is never the answer and is dropped wherever it is; in any other turn it
+ * is the answer to "did you do it?" and kept. Anything else that is short is judged by
  * {@link isThrowawayBlock}, and only beside a longer block.
  */
 const CONFIRMATION_RE = new RegExp(
@@ -172,12 +173,15 @@ function append(c: Collected, text: string): void {
  * costs more than a stray aside. When they do not fit what the user is shown, the earliest blocks
  * give way, because the rule puts the answer last.
  */
-export function answerOf(c: Collected | null): Buffer {
+export function answerOf(c: Collected | null, openedCard = false): Buffer {
   if (!c) return { text: "", overflow: false };
   let blocks = c.blocks.map((b) => b.trim()).filter(Boolean);
   if (c.sawTool) {
-    const kept = blocks.filter((b) => !isConfirmationBlock(b));
-    const real = kept.filter((b) => !isThrowawayBlock(b));
+    // "Done." / "Đã gửi ạ." confirms the card only in a turn that opened one; after any other tool
+    // (a mail sent, a file written) it is the answer to "did you send it?", and kept as one.
+    const confirms = (b: string): boolean => isConfirmationBlock(b);
+    const kept = openedCard ? blocks.filter((b) => !confirms(b)) : blocks;
+    const real = kept.filter((b) => (!openedCard && confirms(b)) || !isThrowawayBlock(b));
     blocks = real.length > 0 ? real : kept.slice(-1);
   }
   return fitAnswer(blocks, c.overflow);
@@ -337,7 +341,7 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
       const session = sessionId;
       const stopped = (how.outcome ?? "done") !== "done";
       for (const p of inSession(session)) {
-        const buffer: Buffer = stopped ? { text: "", overflow: false, stopped: true } : answerOf(p.collect);
+        const buffer: Buffer = stopped ? { text: "", overflow: false, stopped: true } : answerOf(p.collect, p.newCards.length > 0);
         if (p.bound) { finish(p, buffer, session); continue; }
         // Queued behind this turn, or judged already against an earlier one: not this turn's.
         if (p.delivered === "queued" || p.judged) continue;

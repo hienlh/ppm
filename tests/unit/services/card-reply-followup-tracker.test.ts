@@ -76,6 +76,7 @@ describe("following the turn a card reply opened", () => {
     named(ID);
     say("No: it costs ~40% of the weekly quota (55% left).");
     t.onStream(S, { type: "tool_use", tool: "mcp__ppm-sessions__report_to_assistant" });
+    t.onCardCreated({ id: "n1", title: "Run it?", sessionId: S });
     t.onStream(S, { type: "tool_result", output: "{}" });
     say("Card sent.");
     t.onTurnEnded(S);
@@ -87,6 +88,7 @@ describe("following the turn a card reply opened", () => {
     t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
     named(ID);
     t.onStream(S, { type: "tool_use", tool: "mcp__ppm-sessions__report_to_assistant" });
+    t.onCardCreated({ id: "n1", title: "Run it?", sessionId: S });
     say("Card sent.");
     t.onTurnEnded(S);
     expect(delivered).toHaveLength(0);
@@ -100,6 +102,7 @@ describe("following the turn a card reply opened", () => {
       named(ID);
       say("Để em xem đã…");
       t.onStream(S, { type: "tool_use", tool: "mcp__ppm-sessions__report_to_assistant" });
+      t.onCardCreated({ id: "n1", title: "Run it?", sessionId: S });
       say(answer);
       t.onTurnEnded(S);
       expect(delivered.map((d) => d.text)).toEqual([answer]);
@@ -112,6 +115,7 @@ describe("following the turn a card reply opened", () => {
     named(ID);
     say("Không ạ, đắt lắm.");
     t.onStream(S, { type: "tool_use", tool: "mcp__ppm-sessions__report_to_assistant" });
+    t.onCardCreated({ id: "n1", title: "Run it?", sessionId: S });
     say("Đã gửi card.");
     t.onTurnEnded(S);
     expect(delivered.map((d) => d.text)).toEqual(["Không ạ, đắt lắm."]);
@@ -121,6 +125,24 @@ describe("following the turn a card reply opened", () => {
     for (const line of ["Được anh.", "No, it is expensive.", "Done: PR #12 updated.", "Không ạ, tốn nhiều quota lắm anh."]) {
       expect(isConfirmationBlock(line)).toBe(false);
     }
+  });
+
+  it("keeps a confirmation-like answer when the turn opened no card: 'did you send the mail?' → 'Đã gửi ạ.'", () => {
+    for (const answer of ["Đã gửi ạ.", "Done.", "Sent!"]) {
+      const { t, delivered, named, say } = setup();
+      t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
+      named(ID);
+      say("Để em gửi luôn.");
+      t.onStream(S, { type: "tool_use", tool: "mcp__gmail__send_email" });
+      t.onStream(S, { type: "tool_result", output: "{\"id\":\"m1\"}" });
+      say(answer);
+      t.onTurnEnded(S);
+      expect(delivered.map((d) => d.text)).toEqual([answer]);
+    }
+    // The same line after a card the turn opened is only that card's confirmation.
+    const blocks = { blocks: ["Không ạ, đắt lắm.", "Done."], size: 0, sawTool: true, overflow: false };
+    expect(answerOf(blocks, true).text).toBe("Không ạ, đắt lắm.");
+    expect(answerOf(blocks, false).text).toBe("Done.");
   });
 
   it("joins every real block, and lets the earliest give way when they do not fit", () => {
