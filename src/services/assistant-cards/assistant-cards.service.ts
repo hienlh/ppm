@@ -71,9 +71,12 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
   function toCard(row: CardRow, projects = env.projects()): AssistantCard {
     const { projectName: _stored, ...payload } = row.payload;
     const projectName = nameOf(row, projects);
+    // The stored answer carries the follow-up for rewrites to keep; a card shows it on its own.
+    const { followUp: _inAnswer, ...answer } = (row.answer ?? {}) as AssistantCardAnswer & { followUp?: unknown };
     const card: AssistantCard = {
       id: row.id, kind: row.kind, projectName, projectKey: row.projectKey, sessionId: row.sessionId,
-      title: row.title, body: row.body, payload, status: row.status, answer: row.answer,
+      title: row.title, body: row.body, payload, status: row.status, answer: row.answer ? answer : null,
+      ...(row.followUp ? { followUp: row.followUp } : {}),
       provenance: reportProvenanceLine(row.kind, projectName, payload.subagent === true, payload.detected === true),
       createdAt: row.createdAt, updatedAt: row.updatedAt,
     };

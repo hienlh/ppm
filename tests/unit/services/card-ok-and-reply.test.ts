@@ -167,7 +167,19 @@ describe("a reply", () => {
     expect(cards.setFollowUp(card.id, { text: "x", truncated: false, at: now })).toBe(false);
     cards.transition(card.id, "dismissed", null);
     expect(cards.setFollowUp(card.id, { text: "It costs ~40%.", truncated: false, at: now })).toBe(true);
-    expect(cards.get(card.id)!.answer).toMatchObject({ by: "ppm", followUp: { text: "It costs ~40%.", truncated: false } });
+    // A card nobody answered keeps no answer: the follow-up sits beside it, none is made up.
+    expect(cards.get(card.id)!.answer).toBeNull();
+    expect(cards.get(card.id)!.followUp).toEqual({ text: "It costs ~40%.", truncated: false, at: now });
+  });
+
+  it("keeps the follow-up beside an answer, through a later rewrite of that answer", () => {
+    const card = decision();
+    cards.transition(card.id, "answered", { by: "user", channel: "telegram", at: now, delivery: "pending" });
+    expect(cards.setFollowUp(card.id, { text: "No, 40%.", truncated: false, at: now })).toBe(true);
+    expect(cards.amendAnswer(card.id, { delivery: "delivered" })).toBe(true);
+    const after = cards.get(card.id)!;
+    expect(after.answer).toEqual({ by: "user", channel: "telegram", at: now, delivery: "delivered" });
+    expect(after.followUp).toEqual({ text: "No, 40%.", truncated: false, at: now });
   });
 
   it("asks first on a card answered already, then sends when told to, leaving the card as it was", async () => {

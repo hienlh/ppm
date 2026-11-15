@@ -57,11 +57,6 @@ export interface AssistantCardAnswer {
   clientMessageId?: string;
   /** The manager chat the words went to. */
   deliveredTo?: string;
-  /**
-   * The manager's answer to the user's reply: the final text of the turn the reply opened, cut to
-   * `CARD_FOLLOWUP_MAX_CHARS` (`truncated` then; the rest is in the manager chat).
-   */
-  followUp?: CardFollowUp;
 }
 
 /** The manager's answer to a reply on a card, shown under the card. */
@@ -135,6 +130,13 @@ export interface AssistantCard {
   payload: AssistantCardPayload;
   status: AssistantCardStatus;
   answer: AssistantCardAnswer | null;
+  /**
+   * The manager's answer to the user's reply on this card: the text of the turn the reply opened,
+   * cut to `CARD_FOLLOWUP_MAX_CHARS` (`truncated` then; the rest is in the manager chat). Kept apart
+   * from `answer`, because a card replied to after it closed (a done report) has no answer, and
+   * none may be made up for it.
+   */
+  followUp?: CardFollowUp;
   /** Server-written line separating a manager's own words from PPM's ("Written by the X manager AI"). */
   provenance: string | null;
   /**

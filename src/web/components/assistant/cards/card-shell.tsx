@@ -194,13 +194,13 @@ export function CardShell({ card, look, children, actions, secondary, error, met
       )}
       {children && <div className="space-y-2.5 px-3.5 pb-3 pt-2 text-sm leading-relaxed text-text-primary">{children}</div>}
       {/* The manager's answer to the user's reply on this card, sent here and to where they replied. */}
-      {card.answer?.followUp && (
+      {card.followUp && (
         <div className="mx-3.5 mb-3 rounded-md border border-border bg-panel-2 px-2.5 py-2 text-sm" data-card-followup="">
           <p className="pb-1 text-[11px] font-medium text-text-subtle">
-            {"The manager's answer to your reply"} · {cardTime(card.answer.followUp.at)}
+            {"The manager's answer to your reply"} · {cardTime(card.followUp.at)}
           </p>
-          <CardText text={card.answer.followUp.text} fold />
-          {card.answer.followUp.truncated && (
+          <CardText text={card.followUp.text} fold />
+          {card.followUp.truncated && (
             <p className="pt-1 text-xs text-text-subtle">The rest is in the manager chat.</p>
           )}
         </div>

@@ -238,8 +238,8 @@ describe("the manager's answer to a card reply", () => {
     expect(fake.sent(PHONE).filter((m) => m.text.includes("The manager's answer to your reply"))).toHaveLength(1);
     const stored = assistantCards.get(cardId)!;
     expect(stored.status).toBe("answered");
-    expect(stored.answer?.followUp).toMatchObject({ text: ANSWER, truncated: false });
-    note(`PPM       card ${cardId.slice(0, 8)} in the Assistant window: answered, with “The manager's answer to your reply” under it (${stored.answer!.followUp!.text.length} chars)`);
+    expect(stored.followUp).toMatchObject({ text: ANSWER, truncated: false });
+    note(`PPM       card ${cardId.slice(0, 8)} in the Assistant window: answered, with “The manager's answer to your reply” under it (${stored.followUp!.text.length} chars)`);
   });
 
   it("goes under the card's Telegram copy, silently, when the reply was typed in PPM while the user is there", async () => {
@@ -260,7 +260,7 @@ describe("the manager's answer to a card reply", () => {
     await assistantTelegramBridge.settle();
     logBot();
     expect(followUp.silent).toBe(true);
-    expect(assistantCards.get(cardId)!.answer?.followUp?.text).toContain("tốn nhiều quota");
+    expect(assistantCards.get(cardId)!.followUp?.text).toContain("tốn nhiều quota");
     ppmCardId = cardId;
   });
 
@@ -269,14 +269,14 @@ describe("the manager's answer to a card reply", () => {
     note("── Scenario 3: the same, at 23:00 (quiet hours) ──");
     advance(14 * 60 * 60_000); // 23:00 Asia/Saigon
     const before = fake.sent(PHONE).length;
-    const firstAnswerAt = assistantCards.get(ppmCardId)!.answer!.followUp!.at;
+    const firstAnswerAt = assistantCards.get(ppmCardId)!.followUp!.at;
     const question = "Thế tắt đi thì đỡ bao nhiêu?";
     note(`PPM       Assistant window → another reply on card ${ppmCardId.slice(0, 8)} (Send anyway): “${question}”`);
     const res = await app.request(`/api/assistant/cards/${ppmCardId}/reply`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: question, force: true }),
     });
     expect(res.status).toBe(200);
-    await until(() => (assistantCards.get(ppmCardId)!.answer?.followUp?.at ?? 0) > firstAnswerAt);
+    await until(() => (assistantCards.get(ppmCardId)!.followUp?.at ?? 0) > firstAnswerAt);
     await idle(manager);
     await assistantTelegramBridge.settle();
     expect(fake.sent(PHONE).length).toBe(before);
