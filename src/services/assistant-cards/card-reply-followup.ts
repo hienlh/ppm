@@ -43,14 +43,26 @@ export interface CardFollowupDeps {
 export function deliverCardFollowup(deps: CardFollowupDeps, result: FollowupResult): void {
   const card = deps.cards.get(result.cardId);
   if (!card) return;
+  if (result.stopped) {
+    // Nothing to keep under the card: partial text is not an answer. A reply typed in PPM has the
+    // manager chat a click away; one typed on Telegram is told, since the user waits there.
+    log.info(`card ${card.id}: the manager's turn was stopped before it answered the user's ${result.origin.channel} reply`);
+    if (result.origin.channel !== "telegram") return;
+    handOn(deps, { ...result, card, stored: { text: "", truncated: false, at: deps.now() } });
+    return;
+  }
   const cut = cutFollowupText(result.text, CARD_FOLLOWUP_MAX_CHARS, result.overflow);
   const stored: CardFollowUp = { text: cut.text, truncated: cut.truncated, at: deps.now() };
   if (!deps.cards.setFollowUp(card.id, stored)) log.info(`card ${card.id}: the manager's answer is not kept on it (the card waits again)`);
   log.info(`card ${card.id}: the manager answered the user's ${result.origin.channel} reply (${result.text.length} chars${cut.truncated ? ", cut" : ""})`);
+  handOn(deps, { ...result, card: deps.cards.get(card.id) ?? card, stored });
+}
+
+function handOn(deps: CardFollowupDeps, delivery: CardFollowupDelivery): void {
   try {
-    deps.sink()?.send({ ...result, card: deps.cards.get(card.id) ?? card, stored });
+    deps.sink()?.send(delivery);
   } catch (e) {
-    log.warn(`card ${card.id}: the manager's answer could not be handed on: ${(e as Error).message}`);
+    log.warn(`card ${delivery.card.id}: the manager's answer could not be handed on: ${(e as Error).message}`);
   }
 }
 
@@ -79,7 +91,9 @@ export function detachCardFollowupSink(s?: CardFollowupSink): void {
 export function startCardReplyFollowups(): () => void {
   const offs = [
     chatLifecycle.on("stream", (e) => cardReplyFollowups.onStream(e.sessionId, e.event)),
-    chatLifecycle.on("turn_ended", (e) => cardReplyFollowups.onTurnEnded(e.sessionId, e.turnStillRunning)),
+    chatLifecycle.on("turn_ended", (e) => cardReplyFollowups.onTurnEnded(e.sessionId, {
+      outcome: e.outcome, ...(e.turnStillRunning ? { turnStillRunning: true } : {}),
+    })),
     chatLifecycle.on("migrated", (e) => cardReplyFollowups.onMigrated(e.oldSessionId, e.newSessionId)),
     assistantCards.onChange((card, change) => { if (change === "created") cardReplyFollowups.onCardCreated(card); }),
   ];

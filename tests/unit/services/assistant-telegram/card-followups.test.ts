@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import { clientFor, connectChat, freshChat, queueFor, useFakeTelegram } from "./bridge-test-kit.ts";
 import { AssistantTelegramCardFollowups } from "../../../../src/services/assistant-telegram/assistant-telegram-card-followups.ts";
 import {
-  FOLLOWUP_CUT_NOTE, FOLLOWUP_TITLE_ONLY_NOTE, formatCardFollowup,
+  FOLLOWUP_CUT_NOTE, FOLLOWUP_STOPPED_NOTE, FOLLOWUP_TITLE_ONLY_NOTE, formatCardFollowup,
 } from "../../../../src/services/assistant-telegram/assistant-telegram-followup-format.ts";
 import { TelegramSilence } from "../../../../src/services/assistant-telegram/assistant-telegram-silence.ts";
 import type { CardFollowupDelivery } from "../../../../src/services/assistant-cards/card-reply-followup.ts";
@@ -62,6 +62,16 @@ describe("formatCardFollowup", () => {
     const out = visible(formatCardFollowup({ ...base, detail: "title", text: "client NI number QQ123456C" }).html);
     expect(out).toContain(FOLLOWUP_TITLE_ONLY_NOTE);
     expect(out).not.toContain("QQ123456C");
+  });
+
+  it("says only that the turn stopped, with the link, whatever the project's detail level", () => {
+    for (const detail of ["full", "title"] as const) {
+      const out = formatCardFollowup({ ...base, detail, stopped: true, text: "half a sentence", url: "http://localhost:8080/x" });
+      expect(visible(out.html)).toContain(FOLLOWUP_STOPPED_NOTE);
+      expect(visible(out.html)).not.toContain("half a sentence");
+      expect(visible(out.html)).not.toContain("The manager's answer to your reply");
+      expect(visible(out.html)).toContain("Open in PPM: http://localhost:8080/x");
+    }
   });
 
   it("names the new card the manager opened in that turn, and links back to the chat", () => {
@@ -126,6 +136,17 @@ describe("where the answer goes", () => {
     await fake.waitFor(() => fake.sent(Number(a)).length === 2);
     await away.queue.whenIdle();
     expect(fake.sent(Number(a)).at(-1)).toMatchObject({ reply_to: 3, silent: false });
+  });
+
+  it("tells a Telegram reply that the turn stopped, under the card with a sound, and never a PPM reply's copies", async () => {
+    const chat = connectChat(freshChat());
+    const { s, queue } = sink({ atPpm: true, refs: [{ chatId: chat, messageId: 3 }] });
+    expect(s.targets({ ...delivery({ channel: "ppm" }), text: "", stopped: true })).toEqual([]);
+    s.send({ ...delivery({ channel: "telegram", chatId: chat, replyTo: 3 }), text: "", stopped: true });
+    const msg = await fake.waitFor(() => fake.sent(Number(chat))[0]);
+    await queue.whenIdle();
+    expect(msg).toMatchObject({ reply_to: 3, silent: false });
+    expect(stripTelegramHtml(msg!.text)).toContain(FOLLOWUP_STOPPED_NOTE);
   });
 
   it("keeps a PPM reply's answer in PPM during quiet hours, for a card never sent to Telegram, and for a chat cut off", () => {

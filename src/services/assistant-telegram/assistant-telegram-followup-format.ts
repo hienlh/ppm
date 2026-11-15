@@ -7,6 +7,7 @@
  *
  * - `full`: the answer, cut to {@link CARD_FOLLOWUP_MAX_CHARS} with "see the chat" and a link.
  * - `title`: no answer text at all — only that the manager answered, and the link.
+ * - a stopped or failed turn: only that it stopped before answering, and the link.
  *
  * A card the manager opened in the same turn (asking again) goes out on its own, at once, as every
  * card does; the follow-up names it so the two read together.
@@ -29,6 +30,8 @@ export interface FollowupFormatInput {
   newCards: Array<{ title: string }>;
   /** Opens the manager chat in PPM; null when no link could be made. */
   url: string | null;
+  /** The manager's turn was stopped or failed before it answered: only that is said. */
+  stopped?: boolean;
 }
 
 export interface FormattedFollowup {
@@ -41,10 +44,13 @@ export interface FormattedFollowup {
 export const FOLLOWUP_LABEL = "💬 <b>The manager's answer to your reply</b>";
 export const FOLLOWUP_CUT_NOTE = "… see the chat for the rest.";
 export const FOLLOWUP_TITLE_ONLY_NOTE = "The manager answered your reply; the details stay in PPM for this project.";
+export const FOLLOWUP_STOPPED_NOTE = "The manager's turn was stopped before it answered; see the chat.";
 
 export function formatCardFollowup(input: FollowupFormatInput): FormattedFollowup {
   const counter = { hidden: 0 };
   const project = input.projectName ? ` · ${cleanTelegramText(input.projectName.replace(/\s+/g, " ").trim(), counter)}` : "";
+  // A stopped turn's partial text is never shown: one line, whatever the project's detail level.
+  if (input.stopped) return withLink(`⏹ <i>${escapeTelegramHtml(FOLLOWUP_STOPPED_NOTE)}</i>${project}`, input.url);
   const lines = [`${FOLLOWUP_LABEL}${project}`];
   if (input.detail === "full") {
     const redacted = redactSecretsForTelegram(escapeHiddenCharacters(input.text));
@@ -59,9 +65,13 @@ export function formatCardFollowup(input: FollowupFormatInput): FormattedFollowu
     lines.push(`<i>It also opened a new card: </i><b>${cleanTelegramText(card.title.replace(/\s+/g, " ").trim(), counter)}</b>`);
   }
   if (counter.hidden > 0) lines.push(`<i>🔒 ${counter.hidden} secret-looking value${counter.hidden === 1 ? "" : "s"} hidden.</i>`);
-  const html = lines.join("\n");
-  if (!input.url) return { html };
-  const link = placeLink(input.url);
+  return withLink(lines.join("\n"), input.url);
+}
+
+/** The Open in PPM link: a button where Telegram takes one, else written into the text. */
+function withLink(html: string, url: string | null): FormattedFollowup {
+  if (!url) return { html };
+  const link = placeLink(url);
   if (link.inline) return { html: `${html}\n\n${link.inline}` };
   return {
     html,

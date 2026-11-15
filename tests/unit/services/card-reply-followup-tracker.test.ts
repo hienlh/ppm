@@ -235,11 +235,24 @@ describe("following the turn a card reply opened", () => {
     c.attach("started");
     named("card-c");
     say("partial");
-    t.onTurnEnded(S, true);
+    t.onTurnEnded(S, { turnStillRunning: true });
     expect(delivered).toHaveLength(0);
     say(" answer");
     t.onTurnEnded(S);
     expect(delivered.map((d) => [d.cardId, d.text])).toEqual([["c3", "partial answer"]]);
+  });
+
+  it("sends a stopped turn's partial text as nothing: only that it stopped, for a named or an unnamed reply", () => {
+    const { t, delivered, say, named, runTimers } = setup();
+    t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("inserted");
+    say("half a sentence of an unrelated tas");
+    t.onTurnEnded(S, { outcome: "stopped" });
+    runTimers();
+    t.expect({ cardId: "c2", clientMessageId: "card-b", origin, sessionId: S }).attach("started");
+    named("card-b");
+    say("Partial answer: it co");
+    t.onTurnEnded(S, { outcome: "failed" });
+    expect(delivered.map((d) => [d.cardId, d.text, d.stopped])).toEqual([["c1", "", true], ["c2", "", true]]);
   });
 
   it("names the cards the manager opened in that turn, and no other chat's", () => {
@@ -287,6 +300,18 @@ describe("deliverCardFollowup", () => {
     expect(stored).toEqual([{ text: "y".repeat(CARD_FOLLOWUP_MAX_CHARS), truncated: true, at: 5 }]);
     expect(sent).toHaveLength(1);
     expect(() => deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: () => { throw new Error("boom"); } }) }, result)).not.toThrow();
+  });
+
+  it("keeps nothing on the card for a stopped turn, and tells only a reply typed on Telegram", () => {
+    const stored: CardFollowUp[] = [];
+    const sent: Array<{ stopped?: true; origin: { channel: string } }> = [];
+    const cards = { get: () => card, setFollowUp: (_id: string, f: CardFollowUp) => { stored.push(f); return true; } };
+    const stopped = (o: FollowupResult["origin"]): FollowupResult => ({ cardId: "c1", origin: o, sessionId: S, text: "", overflow: false, newCards: [], stopped: true });
+    deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: (d) => sent.push(d) }) }, stopped({ channel: "ppm" }));
+    deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: (d) => sent.push(d) }) }, stopped(origin));
+    expect(stored).toEqual([]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ stopped: true, origin: { channel: "telegram" } });
   });
 
   it("does nothing for a card that is gone", () => {

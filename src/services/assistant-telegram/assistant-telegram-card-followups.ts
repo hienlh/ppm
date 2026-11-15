@@ -9,6 +9,8 @@
  *   Telegram gets it under each of its copies too, following that card's rules: silent while the
  *   user is at PPM, and not sent at all during quiet hours (they replied in PPM; nothing waits on
  *   the phone, so nothing is saved up for the morning).
+ * - **The turn was stopped** (Stop, an error) before it answered: a Telegram reply gets one line
+ *   saying so, with the link; a PPM reply gets nothing.
  *
  * Every send goes through the bridge's lane for that chat and its access check, like a card.
  */
@@ -67,7 +69,8 @@ export class AssistantTelegramCardFollowups implements CardFollowupSink {
       const replyTo = d.origin.replyTo ?? refs.find((r) => r.chatId === chatId)?.messageId;
       return canSend(chatId) ? [{ chatId, ...(replyTo ? { replyTo } : {}), silent: () => false }] : [];
     }
-    if (refs.length === 0) return [];
+    // A stopped turn is said only to a reply typed on Telegram; a PPM reply has the chat at hand.
+    if (refs.length === 0 || d.stopped) return [];
     if (this.quiet()) {
       log.info(`card ${d.card.id}: the manager's answer stays in PPM (quiet hours)`);
       return [];
@@ -91,7 +94,9 @@ export class AssistantTelegramCardFollowups implements CardFollowupSink {
       : null;
     let detail: CardDetail = "title";
     try { detail = (this.deps.detailOf ?? realDetail)(d.card); } catch { /* unknown: the safe side */ }
-    const formatted = formatCardFollowup({ text: d.text, overflow: d.overflow, detail, projectName: project, newCards: d.newCards, url });
+    const formatted = formatCardFollowup({
+      text: d.text, overflow: d.overflow, detail, projectName: project, newCards: d.newCards, url, ...(d.stopped ? { stopped: true } : {}),
+    });
     for (const t of targets) {
       this.deps.queue.enqueue(t.chatId, sendMessageTask(this.deps.queue, t.chatId, {
         html: formatted.html,

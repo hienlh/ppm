@@ -41,8 +41,14 @@ export interface FollowupResult {
   origin: FollowupOrigin;
   /** The manager chat, as the turn's events named it. */
   sessionId: string;
-  /** The turn's answer ({@link answerOf}), trimmed; never empty. */
+  /** The turn's answer ({@link answerOf}), trimmed; never empty unless `stopped`. */
   text: string;
+  /**
+   * The turn the words went into was stopped or failed before it finished: its partial text is not
+   * an answer (the words may never have been read), so `text` is empty and nothing is kept on the
+   * card — only a reply typed on Telegram is told, since the user waits there for an answer.
+   */
+  stopped?: true;
   /** More text came than was kept: the rest is only in the chat. */
   overflow: boolean;
   /** Cards the manager made during that turn (a new card asking again, say). */
@@ -76,8 +82,11 @@ export const FOLLOWUP_MAX_AGE_MS = 12 * 60 * 60_000;
 export const FOLLOWUP_BUFFER_MAX = 6_000;
 const MAX_PENDING = 200;
 
-/** What a turn said, as it would be sent. */
-interface Buffer { text: string; overflow: boolean }
+/** What a turn said, as it would be sent; `stopped` when it did not end normally. */
+interface Buffer { text: string; overflow: boolean; stopped?: true }
+
+/** How a turn ended (`turn_ended`): only `done` carries an answer. */
+export type TurnOutcome = "done" | "stopped" | "failed";
 
 /** A reply's own copy of the turn's text, one block per stretch between top-level tool calls. */
 interface Collected { blocks: string[]; size: number; sawTool: boolean; overflow: boolean }
@@ -163,9 +172,11 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
   function finish(p: Pending, buffer: Buffer | undefined, session: string): void {
     if (!live(p)) return;
     pending.delete(p.clientMessageId);
+    const base = { cardId: p.cardId, origin: p.origin, sessionId: session, newCards: p.newCards };
+    if (buffer?.stopped) { deps.deliver({ ...base, text: "", overflow: false, stopped: true }); return; }
     const text = buffer?.text.trim() ?? "";
     if (!text) return;
-    deps.deliver({ cardId: p.cardId, origin: p.origin, sessionId: session, text, overflow: buffer!.overflow, newCards: p.newCards });
+    deps.deliver({ ...base, text, overflow: buffer!.overflow });
   }
 
   /**
@@ -249,12 +260,16 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
       }
     },
 
-    /** A chat's turn ended (`chatLifecycle` `turn_ended`). */
-    onTurnEnded(sessionId: string, turnStillRunning?: boolean): void {
-      if (turnStillRunning || pending.size === 0) return;
+    /**
+     * A chat's turn ended (`chatLifecycle` `turn_ended`). A builtin answering a message typed into a
+     * running turn (`turnStillRunning`) is not its end. A turn stopped or failed has no answer.
+     */
+    onTurnEnded(sessionId: string, how: { outcome?: TurnOutcome; turnStillRunning?: boolean } = {}): void {
+      if (how.turnStillRunning || pending.size === 0) return;
       const session = key(sessionId);
+      const stopped = (how.outcome ?? "done") !== "done";
       for (const p of inSession(session)) {
-        const buffer = answerOf(p.collect);
+        const buffer: Buffer = stopped ? { text: "", overflow: false, stopped: true } : answerOf(p.collect);
         if (p.bound) { finish(p, buffer, session); continue; }
         // Queued behind this turn, or judged already against an earlier one: not this turn's.
         if (p.delivered === "queued" || p.judged) continue;
