@@ -2,6 +2,7 @@ import { normalizeFromSessionTitle, type FromSessionReference } from "../../shar
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
 import type { AssistantProvenance } from "../../shared/assistant-provenance.ts";
 import type { SessionDelivery, SessionWaitOutcome, WaitingCard } from "../../shared/session-collab.ts";
+import { neutralizeFences } from "../../shared/untrusted-text.ts";
 import type { CollabCaller, CollabEnv, CollabTarget } from "./collab-context.ts";
 import type { WaitHandle } from "./collab-waits.ts";
 
@@ -15,14 +16,34 @@ export type DeliverOutcome =
   | { ok: true; delivered: SessionDelivery; clientMessageId: string; reply?: SessionWaitOutcome; taken?: boolean }
   | { ok: false; message: string };
 
-/** The sender as the from-session block names it; the PPM Assistant is marked as such. */
-export function fromSessionOf(env: CollabEnv, caller: CollabCaller): FromSessionReference {
+/**
+ * The sender as the from-session block names it; the PPM Assistant is marked as such. A Design
+ * chat is told to answer in its reply, since it has no send_to_session to reply with.
+ */
+export function fromSessionOf(env: CollabEnv, caller: CollabCaller, target?: CollabTarget): FromSessionReference {
   const turnId = env.live(caller.sessionId)?.currentTurnId;
   return {
     version: 1, sessionId: caller.sessionId, providerId: caller.providerId, projectName: caller.projectName,
     title: normalizeFromSessionTitle(caller.title), ...(turnId ? { turnId } : {}), sentAt: new Date().toISOString(),
     ...(caller.kind === "assistant" ? { kind: "assistant" as const } : {}),
+    ...(target?.design ? { replyVia: "answer" as const } : {}),
   };
+}
+
+/** Largest answer a Design chat hands back as a reply, in characters (the tools' message limit). */
+export const MAX_DESIGN_ANSWER_CHARS = 24_000;
+
+/**
+ * A Design chat's reply: the answer of the turn that took the message, matched by the message's
+ * client id. Any other answer — the turn before, or the user's own turn the message waited behind
+ * — is not this message's; a turn that took it and gave no answer, or was stopped, leaves none, so
+ * there is no reply rather than a wrong one.
+ */
+export function designAnswerReply(env: CollabEnv, targetId: string, clientMessageId: string): SessionWaitOutcome | null {
+  const answer = env.live(targetId)?.lastFullAnswer;
+  if (!answer || !answer.clientMessageIds.includes(clientMessageId) || !answer.text.trim()) return null;
+  const text = neutralizeFences(answer.text.length > MAX_DESIGN_ANSWER_CHARS ? `${answer.text.slice(0, MAX_DESIGN_ANSWER_CHARS)}…` : answer.text);
+  return { replied: true, text, sentAt: new Date(answer.at).toISOString() };
 }
 
 export async function deliverAndWait(env: CollabEnv, input: {
@@ -57,8 +78,9 @@ export async function deliverAndWait(env: CollabEnv, input: {
     delivered = await env.deliver({
       targetSessionId: target.sessionId, providerId: target.providerId,
       projectName: target.projectName, projectPath: target.projectPath,
-      body: input.body, fromSession: fromSessionOf(env, caller),
-      ...(input.turnRefs?.length ? { turnRefs: input.turnRefs } : {}),
+      body: input.body, fromSession: fromSessionOf(env, caller, target),
+      // A Design chat has no read_session_turns to follow a turn reference with.
+      ...(input.turnRefs?.length && !target.design ? { turnRefs: input.turnRefs } : {}),
       ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
       ...(input.expectedMode ? { expectedMode: input.expectedMode } : {}),
       ...(input.priority ? { priority: input.priority } : {}),
@@ -78,7 +100,10 @@ export async function deliverAndWait(env: CollabEnv, input: {
   const towardsCaller = !!live?.waitingCardFor && env.canonical(live.waitingCardFor) === env.canonical(caller.sessionId);
   const blocking = live?.waitingFor && !towardsCaller ? live.waitingCard ?? fallbackCard(live.waitingFor) : null;
   handle.attach(delivered.clientMessageId, delivered.delivered, !!delivered.turnBinding, blocking);
-  const reply = await handle.outcome;
+  let reply = await handle.outcome;
+  if (target.design && !reply.replied && reply.reason === "turn_ended_without_reply") {
+    reply = designAnswerReply(env, target.sessionId, delivered.clientMessageId) ?? reply;
+  }
   return { ok: true, delivered: delivered.delivered, clientMessageId: delivered.clientMessageId, reply, taken: handle.taken() };
 }
 

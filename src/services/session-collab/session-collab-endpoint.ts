@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { createMcpHttpHandler, textResult, type Json } from "../mcp-http-endpoint.ts";
 import { isPpmTool, ppmToolOffMessage, ppmToolOn } from "../../shared/ppm-tools.ts";
 import {
-  CREATE_SESSION_TOOL, REPORT_TO_ASSISTANT_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL,
+  CREATE_SESSION_TOOL, DESIGN_SCREENSHOT_TOOL, REPORT_TO_ASSISTANT_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL,
 } from "../../shared/session-collab.ts";
 import { isSessionScheduleTool } from "../../shared/session-schedule-tools.ts";
 import { configService } from "../config.service.ts";
@@ -13,6 +13,7 @@ import type { CallLimiter } from "../tab-tools-mcp/session-history-rate-limit.ts
 import { collabToolPolicy } from "./collab-caller-policy.ts";
 import { resolveCaller, type CollabEnv } from "./collab-context.ts";
 import { createSessionTool } from "./collab-create.ts";
+import { designShotTool } from "./collab-design-shot.ts";
 import { createCollabLimiter } from "./collab-rate-limit.ts";
 import { sendToSessionTool } from "./collab-send.ts";
 import { sessionStatusTool } from "./collab-status.ts";
@@ -76,6 +77,7 @@ export function createSessionCollabMcpHandler(deps: {
       try {
         if (name === CREATE_SESSION_TOOL) return await createSessionTool(env, caller.value, args, signal);
         if (name === SEND_TO_SESSION_TOOL) return await sendToSessionTool(env, caller.value, args, signal);
+        if (name === DESIGN_SCREENSHOT_TOOL) return await designShotTool(env, caller.value, args);
         return sessionStatusTool(env, caller.value, args);
       } finally {
         slot.release();

@@ -7,6 +7,7 @@
  * reply bar under the chat (in a manager chat, under the card), where the user's own words go to the manager chat word for word.
  */
 import { BellRing, Check, ExternalLink, Send, TriangleAlert, Undo2, X } from "@/lib/icons";
+import { CardImages } from "./card-images";
 import { dismissAssistantCard, okAssistantCard } from "@/lib/assistant-cards-api";
 import { escapeHiddenCharacters } from "../../../../shared/reveal-hidden-characters";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
@@ -51,6 +52,7 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
     >
       <h4 className="text-[15px] font-semibold leading-snug text-text-primary" data-card-title="">{card.title}</h4>
       {card.body && <CardText text={card.body} fold={card.status !== "open"} />}
+      <CardImages images={card.payload.images} />
       {draft && (
         <figure className="overflow-hidden rounded-lg border border-border bg-panel-2" data-card-draft="">
           <figcaption className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-[11px] text-text-subtle">

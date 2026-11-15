@@ -2,12 +2,14 @@ import { resolve } from "node:path";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
 import {
   getSessionDesignSlug, getSessionModel, getSessionProjectPath, getSessionProvider, getStoredPermissionModeAnyAlias,
-  getSessionTitle, resolveMigratedSession, sessionIdAliases, setSessionMetadata, setSessionModel,
+  getSessionTitle, resolveMigratedSession, sessionIdAliases, setSessionDesignSlug, setSessionMetadata, setSessionModel,
   setSessionPermissionMode, setSessionTitle,
 } from "../db.service.ts";
 import { configService } from "../config.service.ts";
 import { chatService } from "../chat.service.ts";
 import { createProjectChatSession } from "../chat-session-create.ts";
+import { getDesign } from "../design/design-store.service.ts";
+import { captureDesignShots } from "../design/shots/design-shots.service.ts";
 import { createLogger } from "../logger.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { listSessionTurns } from "../session-turns/session-turn-index.service.ts";
@@ -143,13 +145,29 @@ export const collabEnv: CollabEnv = {
   reserveSpawnSlot: reserveChildSlot,
   markStarting: markChildStarting,
   deliver: deliverToSession,
-  createSession: async (providerId, input) => (input.asUserChat
-    ? await createProjectChatSession({
-      providerId, projectName: input.projectName, projectPath: input.projectPath, title: input.title, adoptWarmSpare: false,
-    })
-    : await chatService.createSession(providerId, {
+  designOf: async (projectPath, slug) => {
+    const design = await getDesign(projectPath, slug);
+    return { slug: design.slug, title: design.title };
+  },
+  captureDesignShots: (projectPath, slug, variants) => captureDesignShots(projectPath, slug, variants),
+  providerRunsDesign: (providerId) => !!(providerRegistry.get(providerId) as { supportsDesignInstructions?: boolean } | undefined)
+    ?.supportsDesignInstructions,
+  createSession: async (providerId, input) => {
+    // Never a warm spare: one was started with an ordinary chat's prompt, not a Design chat's.
+    if (input.asUserChat) {
+      return (await createProjectChatSession({
+        providerId, projectName: input.projectName, projectPath: input.projectPath, title: input.title, adoptWarmSpare: false,
+        ...(input.designSlug ? { designSlug: input.designSlug } : {}),
+      })).id;
+    }
+    const session = await chatService.createSession(providerId, {
       projectName: input.projectName, projectPath: input.projectPath, title: input.title,
-    })).id,
+    });
+    // The slug is what makes it a Design chat: written before the task is delivered, so the first
+    // turn already gets the design instructions, tool policy and snapshot.
+    if (input.designSlug) setSessionDesignSlug(session.id, input.designSlug);
+    return session.id;
+  },
   persistChild: (childId, input) => {
     setSessionMetadata(childId, input.projectName, input.projectPath);
     setSessionTitle(childId, input.title);

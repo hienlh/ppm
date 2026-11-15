@@ -176,13 +176,13 @@ describe("session tools", () => {
   let parent = "";
   let child = "";
 
-  it("lists the three tools", async () => {
+  it("lists the session tools", async () => {
     const token = sessionCollabMcpTokens.mint({ sessionId: await session("Lister") });
     const res = await app.request("/mcp", {
       method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
     const names = ((await res.json()) as any).result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual(["create_session", "send_to_session", "session_status"]);
+    expect(names).toEqual(["create_session", "send_to_session", "session_status", "design_screenshot"]);
   });
 
   it("creates a session behind a card answered over HTTP, and asks no more after Allow for this session", async () => {
@@ -279,11 +279,13 @@ describe("session tools", () => {
     expect(refused.text).toContain("more permissions");
   });
 
-  it("refuses a design session as caller or target, and a session of another project", async () => {
-    const design = await session("Design");
+  it("refuses a design session as a caller but delivers to one, and refuses a session of another project", async () => {
+    const design = await session("Design", "acceptEdits");
     setSessionDesignSlug(design, "landing");
     expect((await call(design, "session_status", {})).text).toContain("design session");
-    expect((await call(parent, "send_to_session", { session_id: design, message: "x" })).text).toContain("design session");
+    const sent = await call(parent, "send_to_session", { session_id: design, message: "make it darker" });
+    expect(sent.isError).toBe(false);
+    expect(sent.json.delivered).toBeDefined();
 
     const far = await session("Far", "default", join(tmpdir(), "ppm-collab-other-project"));
     expect((await call(parent, "send_to_session", { session_id: far, message: "x" })).text).toContain("another project");

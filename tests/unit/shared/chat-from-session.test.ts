@@ -85,4 +85,12 @@ describe("from-session block", () => {
     // A body that is only CLI-looking text still opens a turn: the server wrote the block.
     expect(promptTextOf(encodeMessageBlocks("Continue from where you left off.", { fromSession: from }))).toBe("Continue from where you left off.");
   });
+  it("tells a receiver with no session tools to answer in its reply, and round-trips that", () => {
+    const toDesign = { ...from, replyVia: "answer" as const };
+    expect(fromSessionHeaderLine(toDesign)).toContain("Answer in your reply");
+    expect(fromSessionHeaderLine(toDesign)).not.toContain("send_to_session");
+    expect(decodeFromSession(encodeFromSession("Make it darker", toDesign)).fromSession).toEqual(toDesign);
+    // Any other value is not one PPM writes.
+    expect(() => encodeFromSession("x", { ...from, replyVia: "tool" as never })).toThrow();
+  });
 });

@@ -13,7 +13,9 @@ import { SESSION_SCHEDULE_TOOLS } from "./session-schedule-tools.ts";
 export const CREATE_SESSION_TOOL = "create_session";
 export const SEND_TO_SESSION_TOOL = "send_to_session";
 export const SESSION_STATUS_TOOL = "session_status";
-export const SESSION_COLLAB_TOOLS = [CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL] as const;
+/** PNG screenshots of a design's variants, rendered on the server, to look at and to put on a report card. */
+export const DESIGN_SCREENSHOT_TOOL = "design_screenshot";
+export const SESSION_COLLAB_TOOLS = [CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL, DESIGN_SCREENSHOT_TOOL] as const;
 export type SessionCollabTool = (typeof SESSION_COLLAB_TOOLS)[number];
 
 export const isSessionCollabTool = (name: unknown): name is SessionCollabTool =>
@@ -94,6 +96,8 @@ export interface SessionCollabCreateApproval {
    * messages it without asking, also while the user is away. The task may then be empty.
    */
   manager?: true;
+  /** The new chat is a Design chat for this existing design. */
+  design?: { slug: string; title: string };
 }
 
 /** Two sessions reached their limit of automatic messages; shown in the sending session. */

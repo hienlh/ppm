@@ -22,6 +22,8 @@ export interface FakeSession {
   mode?: string | null;
   model?: string | null;
   design?: boolean;
+  /** The design a created Design chat was opened for. */
+  designSlug?: string;
   live?: Partial<LiveSessionState> | null;
   parent?: string | null;
   depth?: number;
@@ -41,6 +43,10 @@ export function fakeEnv(opts: {
   chatModes?: Record<string, string>;
   /** Runs after each card is answered, before the tool goes on. */
   onApprove?: () => void;
+  /** Designs of the project at PROJECT_PATH, slug → title. */
+  designs?: Record<string, string>;
+  /** Providers that can run a Design chat; both by default. */
+  designProviders?: string[];
 }) {
   const sessions = opts.sessions;
   const asked: SessionCollabApprovalInput[] = [];
@@ -79,6 +85,11 @@ export function fakeEnv(opts: {
     storedProjectPath: (id) => sessions[id]?.projectPath ?? null,
     storedProvider: (id) => sessions[id]?.providerId ?? null,
     isDesignSession: (id) => !!sessions[id]?.design,
+    designOf: async (path, slug) => {
+      const title = path === PROJECT_PATH ? opts.designs?.[slug] : undefined;
+      return title ? { slug, title } : null;
+    },
+    providerRunsDesign: (id) => (opts.designProviders ?? ["claude", "codex"]).includes(id),
     projectNameOf: (path) => (path === PROJECT_PATH ? "app" : path === OTHER_PATH ? "other" : null),
     title: (id) => sessions[id]?.title ?? null,
     providerExists: (id) => id === "claude" || id === "codex",
@@ -154,7 +165,10 @@ export function fakeEnv(opts: {
       const id = `child-session-${nextId++}`;
       // A real create awaits the provider: overlapping creates interleave here.
       await new Promise((r) => setTimeout(r, 1));
-      sessions[id] = { providerId: providerId as "claude" | "codex", projectPath: input.projectPath, title: input.title };
+      sessions[id] = {
+        providerId: providerId as "claude" | "codex", projectPath: input.projectPath, title: input.title,
+        ...(input.designSlug ? { design: true, designSlug: input.designSlug } : {}),
+      };
       created.push(id);
       return id;
     },

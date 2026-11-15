@@ -4,11 +4,12 @@ import type { SessionCollabSettings } from "../../shared/session-collab-settings
 import type {
   SessionCollabApprovalInput, SessionCollabModeSource, SessionCollabRefusal, SessionCreatedEvent, WaitingCard,
 } from "../../shared/session-collab.ts";
-import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
+import { ASSISTANT_PROJECT_NAME, isAssistantProject } from "../../shared/assistant-project.ts";
 import type { TurnReference } from "../../shared/chat-turn-ref.ts";
 import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
 import type { DeliverToSessionInput, DeliverToSessionResult } from "../../server/ws/chat-inject.ts";
 import type { CollabApprovalOutcome } from "./collab-approval-broker.ts";
+import type { CapturedShot as CapturedDesignShot } from "../design/shots/design-shots.service.ts";
 import type { CollabWaits } from "./collab-waits.ts";
 import type { CollabUnread } from "./collab-unread.ts";
 import type { AssistantCollabHooks } from "./collab-assistant-hooks.ts";
@@ -34,6 +35,8 @@ export interface LiveSessionState {
   waitingCardFor?: string;
   /** The last turn's answer, as the "Chat completed" notification quotes it. */
   lastAnswer?: string;
+  /** The last turn that finished with an answer: its whole last text block, when it ended, and the messages it took. */
+  lastFullAnswer?: { text: string; at: number; clientMessageIds: string[] };
   /** Epoch ms of the last activity seen. */
   updatedAt?: number;
   /** The newest turn a message opened (`turn_started`). */
@@ -50,6 +53,12 @@ export interface CollabEnv extends AssistantCollabHooks {
   storedProjectPath(sessionId: string): string | null;
   storedProvider(sessionId: string): string | null;
   isDesignSession(sessionId: string): boolean;
+  /** An existing design of the project, by slug; null when there is none. */
+  designOf?(projectPath: string, slug: string): Promise<{ slug: string; title: string } | null>;
+  /** Whether the provider can run a Design chat (it takes design instructions). */
+  providerRunsDesign?(providerId: string): boolean;
+  /** Renders the design's variants to PNG on the server and keeps them (`design-shots.service.ts`). */
+  captureDesignShots?(projectPath: string, slug: string, variants?: string[]): Promise<CapturedDesignShot[]>;
   projectNameOf(projectPath: string): string | null;
   title(sessionId: string): string | null;
   providerExists(providerId: string): boolean;
@@ -97,8 +106,13 @@ export interface CollabEnv extends AssistantCollabHooks {
   /** A created session counts as running from now until its first turn ends. */
   markStarting(childId: string, projectName: string): void;
   deliver(input: DeliverToSessionInput): Promise<DeliverToSessionResult>;
-  /** `asUserChat`: set up as a chat the user opens in that project (the PPM Assistant's creates). */
-  createSession(providerId: string, input: { projectName: string; projectPath: string; title: string; asUserChat?: boolean }): Promise<string>;
+  /**
+   * `asUserChat`: set up as a chat the user opens in that project (the PPM Assistant's creates).
+   * `designSlug`: a Design chat for that design, set up as the Design tab sets one up.
+   */
+  createSession(providerId: string, input: {
+    projectName: string; projectPath: string; title: string; asUserChat?: boolean; designSlug?: string;
+  }): Promise<string>;
   persistChild(childId: string, input: { title: string; permissionMode: string; model: string | null; projectName: string; projectPath: string }): void;
   /** Names the session in its provider once its first turn has a transcript; never throws. */
   nameInProvider(childId: string, providerId: string, title: string, projectPath: string, clientMessageId: string): void;
@@ -131,6 +145,11 @@ export interface CollabTarget {
   title: string;
   projectName: string;
   projectPath: string;
+  /**
+   * A Design chat: it has no session tools, so it cannot call send_to_session back, and its answer
+   * to the message is what a wait hands back (see `collab-deliver.ts`).
+   */
+  design?: boolean;
 }
 
 export type Resolved<T> = { ok: true; value: T } | { ok: false; refusal: SessionCollabRefusal | "invalid"; message: string };
@@ -175,13 +194,15 @@ export function resolveCaller(env: CollabEnv, tokenSessionId: string): Resolved<
  * Assistant a session of any registered project. A session PPM has no record of is not found, even
  * with a transcript in the project's folder: it may be open in the user's own terminal, where a
  * second process resuming it would write into the same transcript. Nothing here scans a provider's
- * files. No caller may reach a PPM Assistant session or a design session.
+ * files. No caller may reach a PPM Assistant session. A Design chat is reachable; it is marked
+ * `design`, because it answers in its reply rather than through the session tools.
  */
 export function resolveTarget(env: CollabEnv, caller: CollabCaller, rawId: unknown): Resolved<CollabTarget> {
   if (typeof rawId !== "string" || !SESSION_ID_RE.test(rawId)) return { ok: false, refusal: "invalid", message: "`session_id` is not a session id." };
   const sessionId = env.canonical(rawId);
   if (sessionId === caller.sessionId) return { ok: false, refusal: "self", message: "That is your own session; a session cannot message itself." };
-  if (env.isDesignSession(sessionId)) return { ok: false, refusal: "design_session", message: "That is a design session, which does not take messages from other sessions." };
+  // A Design chat may be messaged (it answers in its reply), though it cannot call these tools itself.
+  const design = env.isDesignSession(sessionId);
   if (env.isAssistantSession?.(sessionId)) {
     return { ok: false, refusal: "assistant_session", message: "That is a PPM Assistant chat; the session tools never message the Assistant." };
   }
@@ -205,7 +226,10 @@ export function resolveTarget(env: CollabEnv, caller: CollabCaller, rawId: unkno
     return { ok: false, refusal: "other_project", message: "That session belongs to another project; the session tools reach your own project only." };
   }
   if (!isProvider(providerId)) return { ok: false, refusal: "not_found", message: "That session runs on a provider the session tools do not reach." };
-  return { ok: true, value: { sessionId, providerId, title: titleOf(env, sessionId), projectName, projectPath: targetPath } };
+  return {
+    ok: true,
+    value: { sessionId, providerId, title: titleOf(env, sessionId), projectName, projectPath: targetPath, ...(design ? { design: true } : {}) },
+  };
 }
 
 /**
@@ -235,3 +259,15 @@ export function sanitizeTitle(raw: unknown, max: number): string | null {
 }
 
 export const toEpochIso = (ms: number | undefined): string | null => (ms ? new Date(ms).toISOString() : null);
+
+/** The project a create or a screenshot acts in: the caller's own, or for the Assistant the one it named. */
+export function projectFor(env: CollabEnv, caller: CollabCaller, raw: unknown): { name: string; path: string } | string {
+  if (caller.kind !== "assistant") {
+    if (raw !== undefined && raw !== caller.projectName) return `Sessions are created in your own project only ("${caller.projectName}"). Leave \`project\` out.`;
+    return { name: caller.projectName, path: caller.projectPath };
+  }
+  if (typeof raw !== "string" || !raw.trim()) return "`project` is required: the registered project to open the chat in (see projects_list).";
+  if (isAssistantProject(raw)) return "The Assistant's own chats are not a project. Name one of the user's projects (see projects_list).";
+  const project = env.projectByName?.(raw) ?? null;
+  return project ?? `No registered project is named "${raw.slice(0, 100)}". Call projects_list for the names.`;
+}

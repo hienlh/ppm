@@ -51,7 +51,7 @@ describe("PPM tool switches", () => {
     // Before an answer every sibling shows off, so it is written off.
     expect(patchPpmToolSwitches(undefined, { create_session: true })).toEqual({
       search_sessions: false, list_session_turns: false, read_session_turns: false,
-      create_session: true, send_to_session: false, session_status: false,
+      create_session: true, send_to_session: false, session_status: false, design_screenshot: false,
     });
     // After "Turn on" they are all set already, and only the patched one moves.
     expect(patchPpmToolSwitches({ ...ALL_SESSION_ON, db_query: false }, { session_status: false }))

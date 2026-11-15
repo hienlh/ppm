@@ -1018,7 +1018,11 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   sees in the manager chat itself (`manager-signals.ts`) adds an `approval` or `question` card
   mirroring its own request, and a `failed` card for a turn that failed with no report within
   `FAILED_CARD_GRACE_MS` (a stop the user asked for, a rate limit or an overloaded provider is
-  skipped). Rules events become `rules_note` / `rules_change` cards, and the Assistant pausing its
+  skipped). A report may carry `images`: ids from `design_screenshot` of the manager's own
+  project, checked when the card is filed; the card shows them, and on Telegram they go just
+  before the card as one photo or one album (`assistant-telegram-card-photos.ts`), each captioned
+  with its number (no link: the photo is the picture), under the same quiet hours and silence as the card, and
+  not at all for a project whose cards reach the phone by title only. Rules events become `rules_note` / `rules_change` cards, and the Assistant pausing its
   own messages a `budget` card (`assistant-event-cards.ts`). A child chat's approvals are not
   carded: the manager relays them. A turn another chat or PPM opened is one the user did not
   watch, so the block PPM puts in every manager turn (`MANAGER_USER_ACTION_RULE` in

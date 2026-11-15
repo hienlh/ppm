@@ -799,7 +799,7 @@ started. The UI half (the incoming bubble, the linked-sessions bar, the list bad
 `ppm-sessions` for Claude and `ppm_sessions` for Codex, each tool with its own switch in Settings →
 Tools (off until the install answers; see the next section):
 
-- `create_session { title, task, provider?, model?, wait? }` — a new session in the caller's own
+- `create_session { title, task, provider?, model?, wait?, design? }` — a new session in the caller's own
   project, on the caller's provider and model unless the AI picks others, under the caller's
   permission mode (never more; when the mode cannot be told, nothing is created). A chat given no
   mode and no provider default runs bypass — both providers fall back to it — so its child does too
@@ -808,11 +808,44 @@ Tools (off until the install answers; see the next section):
   loosen it. Its first message is the task, carrying a turn reference to the caller's current turn
   (Claude callers; a Codex caller's turn id rides in the from-session block instead, so no rollout
   is located).
-- `send_to_session { session_id, message, wait? }` — any session of the project except the caller
-  and design sessions. A running target reads it inside its turn (Claude takes it from the input
+- `send_to_session { session_id, message, wait? }` — any session of the project except the caller.
+  A running target reads it inside its turn (Claude takes it from the input
   stream, Codex steers it), an idle one starts a turn.
 
 A task or message may be at most 24 KB in UTF-8 bytes (`MAX_COLLAB_MESSAGE_BYTES`).
+- `design_screenshot { design, variants?, project? }` — PNGs of an existing design's variants
+  (`src/services/design/shots/`): each variant is loaded under a short-lived `standalone` preview
+  token of its own (the page "Open in new tab" shows: design CSP, no bridge, no canvas) by a
+  Chrome, Edge or Chromium already on the host, driven headless over the DevTools protocol with an
+  empty temporary profile and killed by its own pid (`headless-browser.ts`; `PPM_HEADLESS_BROWSER`
+  names one). The browser sits on the server's network, so every request is held (`Fetch`) and let
+  through only to that token's files and the design CDNs, downloads are refused, and a page that
+  navigated anywhere else is not captured. One capture runs at a time, under a 120 s deadline. No
+  browser, no picture: the call says so. DevTools is reached over `--remote-debugging-pipe` on Linux
+  and macOS, so nothing else on the machine can connect and the browser dies with PPM. On Windows
+  Bun hands a child no descriptor past stdio (measured: Edge never answers on the pipe), so there it
+  is a loopback port the browser picks, open only for the seconds a capture runs — which another
+  account on the same machine could reach; a pipe that does not answer at start falls back to the
+  port too. Each shot is kept as `<ppm dir>/design-shots/<id>.png` for seven days (at most 300) and
+  served by `GET /api/design-shots/<id>.png` behind the login like every other route; the card
+  fetches it with the token. No link leaves PPM: the AI gets the pictures inline while they fit and
+  an id for each, and a manager chat passes the ids to `report_to_assistant`'s `images`, which
+  Telegram receives as the pictures themselves.
+
+**Design chats.** `create_session` with `design: "<slug>"` opens a Design chat for an existing
+design of the project (`designs/<slug>/`, checked to exist; the provider must take design
+instructions): the child gets the stored slug before its task is delivered, so every turn of it
+gets what a Design tab's does from `chatService.resolveDesignOptions` — the design instructions,
+`design_check`, the turn snapshot, and the design tool policy when it runs in `acceptEdits`. It runs in its creator's mode
+(the rule below), never the provider default a Design tab takes. A Design chat is never given
+these tools, so it cannot call `send_to_session` back: the from-session block tells it to answer
+in its reply (`replyVia: "answer"`), it gets no turn reference (it has no `read_session_turns`),
+and a wait on it that ends `turn_ended_without_reply` hands back that turn's answer instead
+(`designAnswerReply` in `collab-deliver.ts`: the last top-level text block, up to 24,000
+characters, fences broken — and only the answer of the turn that took this message, matched by
+its client id in `lastFullAnswer.clientMessageIds`; a stopped turn keeps no answer, so neither
+another turn's answer nor half of one is handed back).
+A message sent without `wait` gets no answer back; `session_status` shows its opening.
 - `session_status { session_ids? }` — phase, what it waits on, title, provider, model, creator, the
   opening of its last answer and unread replies; the linked sessions by default. Reads only the
   chat registry and the database, never a transcript. A reply counts as unread only until a turn of
@@ -850,7 +883,8 @@ marks as a browser send (`ensureSessionEntry` / `submitToSession` in `ws/chat.ts
 socket handler), serialized with browser sends by one per-session lock. It reports truthfully what
 happened — `inserted`, `queued` (the target waits on an approval or is compacting) or `started` —
 resumes a cold session first (in the target's own project), never touches a pending approval, and
-refuses a design session, the sender itself and a provider mismatch. A delivered message sets the
+refuses the sender itself and a provider mismatch. A Design chat takes a message like any chat:
+its design identity comes from the stored slug in `chatService`, whoever sends. A delivered message sets the
 chat's `turnOrigin` to `session` and is emitted on the lifecycle bus as `user_message`, the way a
 typed one is. A push that finds the stream already gone (the providers'
 `pushMessage` answers false) is handed over: it waits for the consumer to wind down and starts a
@@ -930,10 +964,11 @@ written by canonical id.
   provider's files, so a session PPM did not open (one running in a terminal, say) is refused —
   a second process resuming it would write into the same transcript.
 - The tools are capabilities: a per-session bearer token minted by `chatService.prepareSendOptions`
-  (`session-collab-tokens.ts`), not given to design sessions, revoked when the session is deleted.
+  (`session-collab-tokens.ts`), not given to Design chats, revoked when the session is deleted.
   A tool switched off is left out of `tools/list` and refused at the endpoint.
 - No silent escalation: a child inherits its creator's mode and keeps it, and a message to a more
-  permissive session asks the user. Design sessions neither call nor receive these tools.
+  permissive session asks the user. A Design chat never calls these tools; it may be created and
+  messaged, under the same cards, pair limit and escalation check as any chat.
 - As with the turn tools, an agent running in bypass mode can still reach other sessions' files
   with its own shell; the boundary is what PPM's tools allow, not the OS.
 

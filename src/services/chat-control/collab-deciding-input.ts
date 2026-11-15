@@ -61,6 +61,20 @@ export function collabDecidingParts(input: SessionCollabApprovalInput): CollabDe
       ...(input.task ? { label: "Task" } : {}),
     };
   }
+  if (input.kind === "create" && input.design) {
+    return {
+      title: `Open a ${providerLabel(input.providerId)} Design chat for "${input.design.title}" and give it this task`,
+      facts: [
+        ...(input.projectName ? [{ label: "Project", value: input.projectName }] : []),
+        { label: "Design", value: `${input.design.title} (designs/${input.design.slug})` },
+        { label: "Title", value: input.title },
+        { label: "Model", value: input.model ?? "the provider's default" },
+        ...modeFacts(input.permissionMode, input.modeSource),
+      ],
+      text: input.task,
+      label: "Task",
+    };
+  }
   if (input.kind === "create") {
     return {
       title: input.projectName

@@ -76,6 +76,10 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Check sessions",
     note: "Reads what the linked sessions are doing: running or idle, waiting on you, and the opening of their last answer.",
   },
+  design_screenshot: {
+    label: "Screenshot designs",
+    note: "Renders a design's pages to pictures on this machine, with a Chrome or Edge it finds here, so the AI can look at them and a manager chat can send them to you with a card.",
+  },
   session_schedule_create: {
     label: "Schedule prompts",
     note: "Schedules a prompt into its own chat on a cron, repeating or once. It survives restarts and is delivered when the chat is idle.",

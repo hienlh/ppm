@@ -131,6 +131,8 @@ function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boole
 
   // Cut as shown (hidden characters revealed first), so the cut body cannot outgrow its room.
   if (full && card.body) lines.push(clean(truncateText(escapeHiddenCharacters(card.body), BODY_MAX), counter));
+  const pictures = card.payload.images?.length ?? 0;
+  if (full && pictures) lines.push(`<i>🖼 ${pictures} picture${pictures === 1 ? "" : "s"} above, numbered as listed.</i>`);
   if (card.kind === "needs_decision" || card.kind === "urgent") {
     const draft = card.payload.draft;
     if (full && draft) {

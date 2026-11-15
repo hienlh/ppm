@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { neutralizeBlockMarkers } from "../../shared/chat-message-blocks.ts";
 import {
-  REPORT_KINDS, type AssistantCard, type AssistantCardKind, type CardDraft, type ReportKind,
+  REPORT_KINDS, type AssistantCard, type AssistantCardKind, type CardDraft, type CardImage, type ReportKind,
 } from "../../shared/assistant-cards.ts";
 import { REPORT_TO_ASSISTANT_TOOL } from "../../shared/session-collab.ts";
 import { REPORTS_PER_MANAGER_PER_HOUR, URGENT_PER_MANAGER_PER_QUIET_WINDOW } from "../../shared/assistant-limits.ts";
@@ -27,6 +27,8 @@ export const DRAFT_TO_MAX = 200;
 export const DRAFT_TEXT_MAX = 4000;
 export const DIGEST_ITEMS_MAX = 12;
 export const DIGEST_ITEM_MAX = 200;
+/** Pictures one card carries at most (one Telegram album holds ten). */
+export const REPORT_IMAGES_MAX = 6;
 const HOUR_MS = 60 * 60_000;
 
 export interface ReportCaller {
@@ -41,6 +43,11 @@ export interface ReportEnv {
   countSince(sessionId: string, kinds: readonly AssistantCardKind[], since: number): number;
   /** An open urgent card of this manager with this exact title since `since`, if any. */
   openUrgentTitled(sessionId: string, title: string, since: number): AssistantCard | null;
+  /**
+   * A design screenshot of this project, by id; null when it is not one (unknown, too old, or of
+   * another project). Absent where no screenshots exist.
+   */
+  shotOf?(id: string, projectPath: string): CardImage | null;
   /** When the current quiet window began; null outside quiet hours. */
   quietWindowStart(): number | null;
   /**
@@ -67,7 +74,7 @@ export function draftSha256(to: string, text: string): string {
 }
 
 function fieldError(args: Record<string, unknown>): string | null {
-  const allowed = new Set(["kind", "title", "body", "draft", "items"]);
+  const allowed = new Set(["kind", "title", "body", "draft", "items", "images"]);
   const extra = Object.keys(args).find((k) => !allowed.has(k));
   if (extra) return `Unknown field \`${extra.slice(0, 40)}\`.`;
   if (!REPORT_KINDS.includes(args.kind as ReportKind)) return `\`kind\` must be one of ${REPORT_KINDS.join(", ")}.`;
@@ -81,6 +88,13 @@ function fieldError(args: Record<string, unknown>): string | null {
     if (Object.keys(d).some((k) => k !== "to" && k !== "text")) return "`draft` has only `to` and `text`.";
     if (d.to.length > DRAFT_TO_MAX) return `\`draft.to\` is at most ${DRAFT_TO_MAX} characters.`;
     if (d.text.length > DRAFT_TEXT_MAX) return `\`draft.text\` is at most ${DRAFT_TEXT_MAX} characters.`;
+  }
+  if (args.images !== undefined) {
+    if (args.kind === "digest") return "`images` do not go with digest.";
+    if (!Array.isArray(args.images) || args.images.length === 0 || args.images.length > REPORT_IMAGES_MAX) {
+      return `\`images\` is a list of 1 to ${REPORT_IMAGES_MAX} screenshot ids from design_screenshot.`;
+    }
+    if (!args.images.every((i) => typeof i === "string")) return "Each of `images` is a screenshot id from design_screenshot.";
   }
   if (args.items !== undefined) {
     if (args.kind !== "digest") return "`items` go only with digest.";
@@ -119,6 +133,18 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     }
   }
 
+  let images: CardImage[] | undefined;
+  if (Array.isArray(args.images)) {
+    images = [];
+    for (const id of new Set(args.images as string[])) {
+      const shot = env.shotOf?.(id, caller.projectPath) ?? null;
+      if (!shot) {
+        return { ok: false, message: `"${id.slice(0, 40)}" is not a screenshot of this project's designs (they last seven days); take one with design_screenshot.` };
+      }
+      images.push(shot);
+    }
+  }
+
   const rawDraft = isObj(args.draft) ? args.draft as { to: string; text: string } : null;
   let draft: CardDraft | undefined;
   if (rawDraft) {
@@ -136,6 +162,7 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     body: cleanCardBody(args.body, REPORT_BODY_MAX),
     payload: {
       ...(draft ? { draft } : {}),
+      ...(images?.length ? { images } : {}),
       ...(kind !== requested ? { urgentCapped: true } : {}),
     },
     // A decision only waits for the user's answer; news wakes the Assistant.
@@ -173,6 +200,12 @@ export function reportToolDefinition() {
           additionalProperties: false,
         },
         items: { type: "array", items: { type: "string" }, maxItems: DIGEST_ITEMS_MAX, description: "digest only: one line each." },
+        images: {
+          type: "array", items: { type: "string" }, maxItems: REPORT_IMAGES_MAX,
+          description: "Screenshot ids from design_screenshot (this project's designs): shown on the card and sent to the "
+            + "user's phone as pictures with it, e.g. the variants to choose between. Number them in the body in the order "
+            + "they are listed here. Not with digest.",
+        },
       },
       required: ["kind", "title"],
       additionalProperties: false,

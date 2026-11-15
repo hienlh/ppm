@@ -23,6 +23,7 @@ import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { cardEndLine, formatManagerCard, type CardDetail } from "./assistant-telegram-card-kinds.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
+import { cardPhotosTask } from "./assistant-telegram-card-photos.ts";
 import { outcomeOf, sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { CardReminders, TelegramSilence } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
@@ -127,6 +128,11 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     }
     const formatted = formatManagerCard(card, detail);
     const group = groupOf(card.id, chatId);
+    // The pictures first, so the card to answer them on comes last; never for a title-only project.
+    const photos = detail === "full"
+      ? cardPhotosTask(chatId, card, { silent: () => card.kind !== "urgent" && this.silent() })
+      : null;
+    if (photos) this.deps.queue.enqueue(chatId, photos);
     const row: InlineKeyboardButton[] = formatted.buttons.map((b) => ({
       text: b.text,
       callback_data: this.deps.codes.mint(chatId, group, {

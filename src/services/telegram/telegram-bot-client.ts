@@ -47,6 +47,18 @@ export interface TelegramBotClientOptions {
 
 const UPDATE_TYPES = ["message", "callback_query"] as const;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 60_000;
+/** Telegram's own limits: 10 MB a photo, 2 to 10 items in one album, 1024 characters of caption. */
+export const MAX_TELEGRAM_PHOTO_BYTES = 10 * 1024 * 1024;
+export const MAX_TELEGRAM_ALBUM = 10;
+export const MAX_TELEGRAM_CAPTION = 1024;
+
+/** One picture to upload: its bytes, a file name Telegram shows, and an HTML caption. */
+export interface TelegramPhotoUpload {
+  bytes: Uint8Array;
+  filename: string;
+  caption?: string;
+}
 /** Edit timestamps older than this are dropped once the map grows: the message is long done. */
 const EDIT_MEMORY_MS = 60_000;
 const EDIT_MEMORY_LIMIT = 500;
@@ -103,6 +115,73 @@ export class TelegramBotClient {
       // Delivered without a sound or vibration: the message is there, the phone stays still.
       ...(options.silent ? { disable_notification: true } : {}),
     });
+  }
+
+  /**
+   * Upload pictures: one as `sendPhoto`, two to ten as one album (`sendMediaGroup`), each with its
+   * own HTML caption. Resolves with the messages Telegram made. A caption Telegram cannot parse
+   * is not retried as plain text here: the caller writes captions from escaped text only.
+   */
+  sendPhotos(
+    chatId: number | string,
+    photos: TelegramPhotoUpload[],
+    options: { silent?: boolean } = {},
+  ): Promise<TelegramCallResult<TelegramMessage[]>> {
+    if (photos.length === 0 || photos.length > MAX_TELEGRAM_ALBUM) {
+      return Promise.resolve({ ok: false, errorCode: 400, description: `between 1 and ${MAX_TELEGRAM_ALBUM} photos per call` });
+    }
+    if (photos.some((p) => p.bytes.byteLength > MAX_TELEGRAM_PHOTO_BYTES)) {
+      return Promise.resolve({ ok: false, errorCode: 400, description: "photo larger than 10 MB" });
+    }
+    const caption = (c?: string) => (c ? { caption: c.slice(0, MAX_TELEGRAM_CAPTION), parse_mode: "HTML" } : {});
+    const form = (): FormData => {
+      const f = new FormData();
+      f.set("chat_id", String(chatId));
+      if (options.silent) f.set("disable_notification", "true");
+      if (photos.length === 1) {
+        const p = photos[0]!;
+        f.set("photo", new Blob([new Uint8Array(p.bytes)], { type: "image/png" }), p.filename);
+        const c = caption(p.caption);
+        if (c.caption) { f.set("caption", c.caption); f.set("parse_mode", "HTML"); }
+        return f;
+      }
+      f.set("media", JSON.stringify(photos.map((p, i) => ({ type: "photo", media: `attach://photo${i}`, ...caption(p.caption) }))));
+      photos.forEach((p, i) => f.set(`photo${i}`, new Blob([new Uint8Array(p.bytes)], { type: "image/png" }), p.filename));
+      return f;
+    };
+    const method = photos.length === 1 ? "sendPhoto" : "sendMediaGroup";
+    return this.upload<TelegramMessage | TelegramMessage[]>(method, form).then((res) =>
+      res.ok ? { ok: true as const, result: Array.isArray(res.result) ? res.result : [res.result] } : res);
+  }
+
+  /** A multipart call, with the same single 429 wait as {@link call}. */
+  private async upload<T>(method: string, form: () => FormData): Promise<TelegramCallResult<T>> {
+    const once = async (): Promise<TelegramCallResult<T>> => {
+      try {
+        const res = await fetch(botMethodUrl(this.token, method), {
+          method: "POST", body: form(), signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+        });
+        let json: TelegramApiResult<T>;
+        try { json = (await res.json()) as TelegramApiResult<T>; } catch {
+          return { ok: false, errorCode: res.status, description: `not a Bot API answer (HTTP ${res.status})` };
+        }
+        if (json.ok) return { ok: true, result: json.result as T };
+        return {
+          ok: false, errorCode: json.error_code ?? res.status, description: json.description ?? "no description",
+          ...(json.parameters?.retry_after !== undefined ? { retryAfter: json.parameters.retry_after } : {}),
+        };
+      } catch (e) {
+        return this.networkFailure(method, e);
+      }
+    };
+    let res = await once();
+    if (!res.ok && res.errorCode === 429 && res.retryAfter !== undefined && res.retryAfter <= this.maxRetryAfterS) {
+      log.warn(`${method} rate-limited: retrying in ${res.retryAfter}s`);
+      await this.sleep(res.retryAfter * 1000);
+      res = await once();
+    }
+    if (!res.ok && res.errorCode !== null) log.warn(`${method} failed: ${res.errorCode} ${res.description}`);
+    return res;
   }
 
   /**

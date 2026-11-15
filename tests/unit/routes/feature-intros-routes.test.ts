@@ -104,7 +104,7 @@ describe("/api/feature-intros", () => {
     expect(res.status).toBe(200);
     expect(configService.get("ai").ppm_tools).toEqual({
       search_sessions: false, list_session_turns: false, read_session_turns: false,
-      create_session: true, send_to_session: false, session_status: false,
+      create_session: true, send_to_session: false, session_status: false, design_screenshot: false,
     });
     expect((await view()).pending).toEqual([]);
     expect(record()).toMatchObject({ answer: "on", via: "settings" });

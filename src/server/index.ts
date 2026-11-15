@@ -239,6 +239,7 @@ app.route("/api/html-preview/content", htmlPreviewRoutes.content);
 import { designPreviewRoutes } from "./routes/design-preview.ts";
 app.route("/api/design-preview/content", designPreviewRoutes.content);
 
+
 // MCP sign-in redirect: reached by a browser navigation from the authorization server,
 // which carries no PPM token. It only completes a flow an authenticated user started.
 import { mcpAuthRoutes, mcpAuthCallbackHandler } from "./routes/mcp-auth.ts";
@@ -283,6 +284,9 @@ import { mountDebugCrashRoute } from "./routes/debug-crash.ts";
 mountDebugCrashRoute(app);
 app.route("/api/html-preview", htmlPreviewRoutes.api);
 app.route("/api/design-preview", designPreviewRoutes.api);
+// Design screenshots, signed in like every other route: Telegram gets the pictures themselves.
+import { designShotRoutes } from "./routes/design-shots.ts";
+app.route("/api/design-shots", designShotRoutes);
 // The Share dialog's public address and sign-in state; the links themselves are per design.
 import { designShareAddressRoutes } from "./routes/design-share-address.ts";
 app.route("/api/design-shares", designShareAddressRoutes);
