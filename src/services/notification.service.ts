@@ -4,8 +4,26 @@ import { resolveNotificationSettings, type NotificationEvent } from "../shared/n
 import { formatPushNotification, notificationPath } from "./notification-format.ts";
 import type { NtfyConfig } from "../types/config.ts";
 import { createLogger } from "./logger.ts";
+import { turnSecretScrubber } from "./vault/turn-secret-scrubber.ts";
 
 const log = createLogger("notify");
+
+/**
+ * The payload with every value of the vault's secure or sealed tier an AI read in the last minutes
+ * replaced by `[vault:<name>]`. "Chat completed" carries the answer's opening as its `detail`, and an
+ * AI that repeated a value would otherwise put it on a lock screen, in ntfy and in a web push;
+ * Telegram's own client scrubs too, but push and ntfy have no such layer. Scrubbed before
+ * `formatPushNotification` cuts `detail`, so a value cut in half cannot slip past the match.
+ */
+function withoutVaultValues(payload: NotificationPayload): NotificationPayload {
+  if (!turnSecretScrubber.any()) return payload;
+  const out = { ...payload };
+  for (const key of ["title", "body", "detail", "sessionTitle"] as const) {
+    const value = out[key];
+    if (typeof value === "string") out[key] = turnSecretScrubber.scrub(value);
+  }
+  return out;
+}
 
 export type NotificationType = NotificationEvent;
 
@@ -122,7 +140,7 @@ export class NotificationService {
 
   private async deliver(type: NotificationType, event: NotificationPayload, coalesceKey?: string, ownTag = false): Promise<void> {
     const settings = resolveNotificationSettings(configService.get("notifications"));
-    const payload: NotificationPayload = { ...event, providerId: event.providerId || providerOf(event.sessionId) };
+    const payload: NotificationPayload = withoutVaultValues({ ...event, providerId: event.providerId || providerOf(event.sessionId) });
     const deviceName = (configService.get("device_name") as string) || "PPM";
     const tasks: Promise<unknown>[] = [];
     // What each channel did, logged as one line once all have answered — never the title or the body.

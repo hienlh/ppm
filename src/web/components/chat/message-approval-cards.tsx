@@ -1,7 +1,8 @@
 /**
  * The cards a waiting tool call puts at the end of the transcript: a plain Allow/Deny for a tool
  * that needs approval (or a PPM Assistant endpoint's card, which says what will happen), the
- * question form for AskUserQuestion, a database change to approve, and a session tool's card.
+ * question form for AskUserQuestion, a database change to approve, a session tool's card, and the
+ * vault's cards (unlock items for the AI, show a sealed item, save what the AI proposes).
  */
 import { dbExecuteApprovalInput } from "../../../shared/db-ai-tools";
 import type { AnswersById } from "../../../shared/approval-questions";
@@ -11,6 +12,8 @@ import { ApprovalCard } from "./approval-card";
 import { DbExecuteApprovalCard } from "./db-execute-approval-card";
 import { sessionCollabApprovalInput } from "../../../shared/session-collab";
 import { CollabApprovalCard } from "./collab-approval-card";
+import { vaultCardInput } from "@/lib/vault-tool-call";
+import { VaultUnlockCard } from "./vault-unlock-card";
 
 /** A question card answers by question id; every other card only says yes or no. */
 type Respond = (requestId: string, approved: boolean, answersById?: AnswersById) => void;
@@ -23,6 +26,8 @@ export function PendingApprovalCard({ approval, onRespond }: { approval: Approva
   if (db) return <DbExecuteApprovalCard requestId={approval.requestId} input={db} />;
   const collab = sessionCollabApprovalInput(approval.tool, approval.input);
   if (collab) return <CollabApprovalCard requestId={approval.requestId} input={collab} />;
+  const vault = vaultCardInput(approval.tool, approval.input);
+  if (vault) return <VaultUnlockCard requestId={approval.requestId} input={vault} />;
   return <ApprovalCard approval={approval} onRespond={(id, approved) => onRespond(id, approved)} />;
 }
 

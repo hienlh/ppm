@@ -1,9 +1,10 @@
 import { dbApprovalBroker } from "../../services/db-ai-tools/db-approval-broker.ts";
 import { collabApprovalBroker } from "../../services/session-collab/collab-approval-broker.ts";
+import { vaultUnlockBroker } from "../../services/vault/vault-unlock-broker.ts";
 
 /**
- * PPM's own approvals, as the chat's one approval slot sees them: a `db_execute` change and the
- * session tools' cards (create, pair limit, escalation). Each is answered over authenticated HTTP,
+ * PPM's own approvals, as the chat's one approval slot sees them: a `db_execute` change, the
+ * session tools' cards (create, pair limit, escalation) and the vault's cards. Each is answered over authenticated HTTP,
  * never over the chat socket, and waits behind a provider's own approval rather than replacing it.
  * The slot code in `ws/chat.ts` treats them alike through this one object, so a new kind needs
  * only its broker added here.
@@ -15,7 +16,7 @@ interface PpmApprovalBroker {
   cancelSession(sessionId: string, message: string): boolean;
 }
 
-const brokers: readonly PpmApprovalBroker[] = [dbApprovalBroker, collabApprovalBroker];
+const brokers: readonly PpmApprovalBroker[] = [dbApprovalBroker, collabApprovalBroker, vaultUnlockBroker];
 
 export const ppmApprovals = {
   /** Whether `requestId` is one of PPM's own approvals, still pending. */

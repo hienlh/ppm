@@ -77,6 +77,9 @@ export async function registerLaterCommandGroups(program: Command): Promise<void
   const { registerSpeechCommands } = await import("./commands/speech-cmd.ts");
   registerSpeechCommands(program);
 
+  const { registerVaultCommands } = await import("./commands/vault-cmd.ts");
+  registerVaultCommands(program);
+
   const { registerDbCommands } = await import("./commands/db-cmd.ts");
   registerDbCommands(program);
 

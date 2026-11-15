@@ -225,6 +225,7 @@ ppm down
 ppm restart
   Restart the server (keeps tunnel alive)
   --force — Force resume from paused state
+  --reason <text> — Why PPM is restarted (watchdog, recycle, or free text); the PPM Assistant is told
 
 ppm status
   Show PPM daemon status
@@ -1082,6 +1083,15 @@ ppm speech install
 
 ppm speech remove
   Remove the Whisper build and models PPM installed
+\`\`\`
+## ppm vault — The secret vault: status and lock (values are read only in PPM)
+\`\`\`
+ppm vault status
+  Show which vault tiers are on, how many items each holds, and what is unlocked
+  --json — Print JSON
+
+ppm vault lock
+  Lock every vault tier now: ends Settings' unlock and every chat's open window
 \`\`\`
 ## ppm db — Manage database connections and execute queries
 \`\`\`

@@ -31,9 +31,13 @@ import { forgetSessionInDeviceBrokers } from "./tab-tools-mcp/tab-open-broker.ts
 import { dbToolsMcpAccessFor, dbToolsMcpTokens } from "./db-ai-tools/db-ai-tools-tokens.ts";
 import { extensionMcpAccessFor, extensionMcpTokens } from "./extension-mcp/extension-mcp-tokens.ts";
 import { dbApprovalBroker } from "./db-ai-tools/db-approval-broker.ts";
+import { vaultGrants } from "./vault/vault-grants.ts";
+import { turnSecretScrubber } from "./vault/turn-secret-scrubber.ts";
+import { transcriptRedactor } from "./vault/transcript-redactor.ts";
 import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
 import { anyPpmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { VAULT_TOOLS } from "../shared/vault.ts";
 import { sessionCollabMcpAccessFor, sessionCollabMcpTokens } from "./session-collab/session-collab-tokens.ts";
 import { collabApprovalBroker } from "./session-collab/collab-approval-broker.ts";
 import { collabWaits } from "./session-collab/collab-waits.ts";
@@ -297,6 +301,10 @@ class ChatService {
     dbToolsMcpTokens.revoke(sessionId);
     extensionMcpTokens.revoke(sessionId);
     dbApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing ran.");
+    // A vault window the chat held ends with it, its key zeroed.
+    vaultGrants.lockSession(sessionId);
+    turnSecretScrubber.release(sessionId);
+    transcriptRedactor.forget(sessionId);
     sessionCollabMcpTokens.revoke(sessionId);
     collabApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing was done.");
     collabWaits.cancelWaiter(sessionId);
@@ -539,7 +547,10 @@ class ChatService {
     // is fixed when a stream starts, so a chat made a manager while its stream is live gets it at
     // its next start; nothing restarts it for this.
     const manager = ppmTools && (await import("./assistant-managers/manager-chats.service.ts")).managerChats.isManagerChat(sessionId);
-    const sessionCollabMcp = (ppmTools || assistantSessionTools) && (manager || anyPpmToolOn(ai, SESSION_TOOLS))
+    // The vault's tools ride on the same server: always for the Assistant, and for an ordinary
+    // chat only while the user turned them on (off by default).
+    const sessionCollabMcp = (ppmTools || assistantSessionTools)
+      && (manager || assistantSessionTools || anyPpmToolOn(ai, SESSION_TOOLS) || (!bound && anyPpmToolOn(ai, VAULT_TOOLS)))
       ? sessionCollabMcpAccessFor(sessionId) : null;
     const key = `${providerId}:${sessionId}`;
     // The user's shared instructions and memories belong to their own chats: an Assistant

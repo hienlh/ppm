@@ -27,6 +27,7 @@ import {
   MonitorSmartphone,
   Sparkles,
   Wrench,
+  Lock,
 } from "@/lib/icons";
 
 /**
@@ -45,6 +46,7 @@ export type SettingsCategoryId =
   | "tools"
   | "accounts"
   | "assistant"
+  | "vault"
   | "design"
   | "voice"
   | "notifications"
@@ -96,6 +98,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
   { id: "tools", group: "ai", label: "Tools", subtitle: "PPM tools the AI can use", icon: Wrench },
   { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude, Codex and Antigravity sign-ins, rotation", icon: KeyRound },
   { id: "assistant", group: "ai", label: "PPM Assistant", subtitle: "Its own model, instructions, MCP servers, Telegram", icon: Sparkles },
+  { id: "vault", group: "ai", label: "Vault", subtitle: "Personal details the AI may read, behind passwords", icon: Lock },
   { id: "design", group: "ai", label: "Design", subtitle: "Design instructions and skills", icon: LayoutGrid },
   { id: "voice", group: "ai", label: "Voice Input", subtitle: "Speech to text for the chat box", icon: Mic },
 

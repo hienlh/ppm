@@ -12,6 +12,7 @@
  * logged as the method, Telegram's error code and its description.
  */
 import { createLogger } from "../logger.ts";
+import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { BOT_TOKEN_RE, botFileUrl, botMethodUrl, scrubToken } from "./telegram-api-base.ts";
 import { splitTelegramHtml, stripTelegramHtml } from "./telegram-html-format.ts";
 import type {
@@ -64,6 +65,30 @@ const EDIT_MEMORY_MS = 60_000;
 const EDIT_MEMORY_LIMIT = 500;
 /** A path `getFile` returns looks like `photos/file_12.jpg`; anything else is not fetched. */
 const FILE_PATH_RE = /^[\w-]+(?:\/[\w.-]+)*$/;
+
+
+/**
+ * Every text PPM sends to Telegram goes through the vault's scrubber: a value of the secure or
+ * sealed tier an AI read in the last minutes is replaced by `[vault:<name>]`, whatever chat or
+ * relay is sending it. A fallback; the vault's own rules keep those values off Telegram first.
+ */
+function scrubText(v: string): string {
+  if (!turnSecretScrubber.any()) return v;
+  // The tag is HTML-safe in a parse_mode HTML message: an item name's own <, > and & are dropped.
+  return turnSecretScrubber.scrub(v).replace(/\[vault:([^\]]*)\]/g, (_m, n: string) => `[vault:${n.replace(/[<>&]/g, "")}]`);
+}
+
+function withoutVaultValues(body: Record<string, unknown>): Record<string, unknown> {
+  if (!turnSecretScrubber.any()) return body;
+  let out = body;
+  for (const key of ["text", "caption"] as const) {
+    const v = out[key];
+    if (typeof v !== "string") continue;
+    const scrubbed = scrubText(v);
+    if (scrubbed !== v) out = { ...out, [key]: scrubbed };
+  }
+  return out;
+}
 
 export class TelegramBotClient {
   private readonly token: string;
@@ -134,9 +159,10 @@ export class TelegramBotClient {
       return Promise.resolve({ ok: false, errorCode: 400, description: "photo larger than 10 MB" });
     }
     // Cut where a tag or an entity is whole and closed again, never mid-`&amp;`: Telegram refuses
-    // a caption it cannot parse, and the picture with it.
+    // a caption it cannot parse, and the picture with it. Scrubbed of vault values first, so the
+    // cut never splits one.
     const caption = (c?: string) => {
-      const cut = c ? splitTelegramHtml(c, MAX_TELEGRAM_CAPTION)[0] : undefined;
+      const cut = c ? splitTelegramHtml(scrubText(c), MAX_TELEGRAM_CAPTION)[0] : undefined;
       return cut ? { caption: cut, parse_mode: "HTML" } : {};
     };
     const form = (): FormData => {
@@ -330,6 +356,7 @@ export class TelegramBotClient {
     body: Record<string, unknown>,
     options: { signal?: AbortSignal; quiet?: boolean; notModifiedIsOk?: boolean; goneIsOk?: boolean } = {},
   ): Promise<TelegramCallResult<T>> {
+    body = withoutVaultValues(body);
     let res = await this.request<T>(method, body, options);
 
     if (!res.ok && res.errorCode === 429 && res.retryAfter !== undefined && res.retryAfter <= this.maxRetryAfterS) {

@@ -23,6 +23,7 @@ export const SECTIONS: Record<SettingsCategoryId, PreloadableComponent<object>> 
   tools: lazyWithPreload(() => import("./tools-settings-section").then((m) => ({ default: m.ToolsSettingsSection }))),
   accounts: lazyWithPreload(() => import("./accounts/accounts-settings-section").then((m) => ({ default: m.AccountsSettingsSection }))),
   assistant: lazyWithPreload(() => import("./assistant-settings-section").then((m) => ({ default: m.AssistantSettingsSection }))),
+  vault: lazyWithPreload(() => import("./vault/vault-settings-section").then((m) => ({ default: m.VaultSettingsSection }))),
   design: lazyWithPreload(() => import("./design-settings-section").then((m) => ({ default: m.DesignSettingsSection }))),
   voice: lazyWithPreload(() => import("./voice-settings-section").then((m) => ({ default: m.VoiceSettingsSection }))),
   notifications: lazyWithPreload(() => import("./notifications-settings-section").then((m) => ({ default: m.NotificationsSettingsSection }))),

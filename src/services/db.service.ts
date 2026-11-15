@@ -15,7 +15,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 72;
+export const CURRENT_SCHEMA_VERSION = 73;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1568,6 +1568,46 @@ export function runMigrations(database: Database): void {
       database.exec("CREATE INDEX IF NOT EXISTS idx_schedules_target_session ON schedules(target_session_id)");
     }
     database.exec(`PRAGMA user_version = 72;`);
+  }
+
+  if (current < 73) {
+    // The secret vault (`src/services/vault/`). `vault_keys` holds one row per locked tier the
+    // user turned on: the tier's data key wrapped by a key derived from its password, plus that
+    // tier's wrong-password counter, so a restart does not reset it. `vault_items` holds every
+    // item: the public tier as plain text, the two locked tiers only as ciphertext. The CHECK
+    // keeps a public row from carrying ciphertext and a locked row from carrying plain text.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS vault_keys (
+        tier TEXT PRIMARY KEY CHECK (tier IN ('secure', 'sealed')),
+        kdf TEXT NOT NULL,
+        kdf_params TEXT NOT NULL,
+        salt BLOB NOT NULL,
+        dek_nonce BLOB NOT NULL,
+        wrapped_dek BLOB NOT NULL,
+        created_at INTEGER NOT NULL,
+        failed_attempts INTEGER NOT NULL DEFAULT 0,
+        locked_until INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS vault_items (
+        id TEXT PRIMARY KEY,
+        tier TEXT NOT NULL CHECK (tier IN ('public', 'secure', 'sealed')),
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        value_plain TEXT,
+        ciphertext BLOB,
+        nonce BLOB,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (
+          (tier = 'public' AND value_plain IS NOT NULL AND ciphertext IS NULL AND nonce IS NULL)
+          OR (tier <> 'public' AND value_plain IS NULL AND ciphertext IS NOT NULL AND nonce IS NOT NULL)
+        )
+      )
+    `);
+    database.exec(`CREATE INDEX IF NOT EXISTS idx_vault_items_tier ON vault_items(tier)`);
+    database.exec(`PRAGMA user_version = 73;`);
   }
 }
 

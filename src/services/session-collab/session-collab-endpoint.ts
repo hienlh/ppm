@@ -11,6 +11,9 @@ import { reportToolDefinition } from "../assistant-cards/manager-report-tool.ts"
 import { isReportingManager, NOT_A_MANAGER, reportToAssistantCall } from "../assistant-cards/manager-report-env.ts";
 import type { CallLimiter } from "../tab-tools-mcp/session-history-rate-limit.ts";
 import { collabToolPolicy } from "./collab-caller-policy.ts";
+import { isVaultTool } from "../../shared/vault.ts";
+import { boundToExtension, VAULT_TOOL_DEFINITIONS, vaultTools } from "../vault/vault-tools.ts";
+import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { resolveCaller, type CollabEnv } from "./collab-context.ts";
 import { createSessionTool } from "./collab-create.ts";
 import { designShotTool } from "./collab-design-shot.ts";
@@ -50,12 +53,18 @@ export function createSessionCollabMcpHandler(deps: {
     serverName: "ppm-sessions",
     tokenRequired: "A chat session token is required",
     resolveToken: deps.resolveToken,
-    tools: [...sessionCollabToolDefinitions(), ...sessionScheduleToolDefinitions(), reportToolDefinition()],
+    tools: [...sessionCollabToolDefinitions(), ...sessionScheduleToolDefinitions(), reportToolDefinition(), ...VAULT_TOOL_DEFINITIONS],
     unavailable: (name, { sessionId }) => {
       if (deps.enabled(name, sessionId)) return null;
       return name === REPORT_TO_ASSISTANT_TOOL ? NOT_A_MANAGER : ppmToolOffMessage(name);
     },
     callTool: async ({ sessionId }, name, rawArgs, signal) => {
+      // A value of the vault's locked tiers read in any chat never leaves it: not in a message to
+      // another chat, a new chat's prompt, a report or a scheduled prompt.
+      if (!isVaultTool(name)) {
+        const leaked = turnSecretScrubber.findIn(rawArgs);
+        if (leaked) return textResult(`Refused: this contains the value of the vault item "${leaked}". Vault values never go to another chat, a report or a schedule; refer to the item by name instead.`, true);
+      }
       // The caller's own chat only, delivering nothing to anyone: the send policy, its rate limit
       // and the session registry have no say here.
       if (isSessionScheduleTool(name)) return sessionScheduleToolCall(schedules, sessionId, name, rawArgs);
@@ -67,6 +76,10 @@ export function createSessionCollabMcpHandler(deps: {
       if (name === REPORT_TO_ASSISTANT_TOOL) {
         if (caller.value.kind === "assistant") return textResult(NOT_A_MANAGER, true);
         return report(caller.value.sessionId, rawArgs);
+      }
+      // The vault decides by itself who may open what (the turn's origin, one card per chat).
+      if (isVaultTool(name)) {
+        return vaultTools.call({ sessionId: caller.value.sessionId, title: caller.value.title ?? null, assistant: caller.value.kind === "assistant" }, name, rawArgs, signal);
       }
       // Decided before anything is asked or delivered: an unattended Assistant turn is refused here.
       const policy = collabToolPolicy(caller.value, name);
@@ -99,6 +112,10 @@ export function sessionToolOnFor(tool: string, sessionId: string): boolean {
   if (tool === REPORT_TO_ASSISTANT_TOOL) return isReportingManager(sessionId);
   // The PPM Assistant keeps to its own schedule tools, which show the user a card first.
   if (isSessionScheduleTool(tool) && isAssistantSession(sessionId)) return false;
+  // The Assistant always has the vault; an ordinary chat only while the user turned it on; a chat
+  // an extension bound never, whatever its policy says.
+  if (isVaultTool(tool) && isAssistantSession(sessionId)) return true;
+  if (isVaultTool(tool) && boundToExtension(sessionId)) return false;
   return isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool);
 }
 

@@ -18,6 +18,7 @@ import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { CARD_FOLLOWUP_MAX_CHARS } from "../../shared/assistant-limits.ts";
 import type { AssistantCard, CardFollowUp } from "../../shared/assistant-cards.ts";
 import { assistantCards, type AssistantCards } from "./assistant-cards.service.ts";
+import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import {
   createFollowupTracker, cutFollowupText, type FollowupResult, type FollowupTracker, type TurnOutcome,
 } from "./card-reply-followup-tracker.ts";
@@ -53,7 +54,10 @@ export function deliverCardFollowup(deps: CardFollowupDeps, result: FollowupResu
     handOn(deps, { ...result, card, stored: { text: "", truncated: false, at: deps.now() } });
     return;
   }
-  const cut = cutFollowupText(result.text, CARD_FOLLOWUP_MAX_CHARS, result.overflow);
+  // The manager's answer is the AI's own text: a vault value it repeats is replaced before the card
+  // keeps it (in `ppm.db`) or it is handed on — and before the cut, so the cut cannot halve one.
+  const text = turnSecretScrubber.scrub(result.text);
+  const cut = cutFollowupText(text, CARD_FOLLOWUP_MAX_CHARS, result.overflow);
   const stored: CardFollowUp = { text: cut.text, truncated: cut.truncated, at: deps.now() };
   if (!deps.cards.setFollowUp(card.id, stored)) {
     // The card waits again ("your answer did not reach the manager chat; send it again"): an answer
@@ -61,8 +65,8 @@ export function deliverCardFollowup(deps: CardFollowupDeps, result: FollowupResu
     log.info(`card ${card.id}: the manager's answer is not sent (the card waits again)`);
     return;
   }
-  log.info(`card ${card.id}: the manager answered the user's ${result.origin.channel} reply (${result.text.length} chars${cut.truncated ? ", cut" : ""})`);
-  handOn(deps, { ...result, card: deps.cards.get(card.id) ?? card, stored });
+  log.info(`card ${card.id}: the manager answered the user's ${result.origin.channel} reply (${text.length} chars${cut.truncated ? ", cut" : ""})`);
+  handOn(deps, { ...result, text, card: deps.cards.get(card.id) ?? card, stored });
 }
 
 function handOn(deps: CardFollowupDeps, delivery: CardFollowupDelivery): void {

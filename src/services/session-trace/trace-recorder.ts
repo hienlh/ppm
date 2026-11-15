@@ -3,6 +3,7 @@ import { TraceCoalescer, type CoalescedRecord } from "./trace-coalescer.ts";
 import { traceWriter } from "./trace-writer.ts";
 import { recordTraceAlias, resolveTraceId } from "./session-trace-store.ts";
 import { trimTracePayload } from "./trace-payload-trim.ts";
+import { filterVaultTraceRecord } from "../vault/vault-trace-filter.ts";
 import type { TraceOrigin, TraceSource } from "../../shared/session-trace.ts";
 import type { SendMessageOpts } from "../../types/chat.ts";
 
@@ -22,6 +23,8 @@ type StreamEvent = { type: string; [key: string]: unknown };
 
 interface RunState {
   traceId: string;
+  /** The session the run started under, for the vault's per-chat scrubber. */
+  sessionId?: string;
   providerId: string;
   origin: TraceOrigin;
   coalescer: TraceCoalescer;
@@ -57,14 +60,15 @@ function safe(what: string, fn: () => void): void {
   try { fn(); } catch (e) { warn(`${what} failed: ${(e as Error)?.message ?? e}`); }
 }
 
-function serialise(payload: unknown): string {
-  const json = JSON.stringify(trimTracePayload(payload)) ?? "null";
+function serialise(payload: unknown, sessionId: string | null = null): string {
+  // The vault's locked values never reach the trace (`vault-trace-filter.ts`).
+  const json = JSON.stringify(trimTracePayload(filterVaultTraceRecord(sessionId, payload))) ?? "null";
   if (json.length <= MAX_ROW_CHARS) return json;
   const type = (payload as { type?: unknown })?.type;
   return JSON.stringify({ type, truncated: true, originalChars: json.length, head: json.slice(0, TRUNCATED_HEAD_CHARS) });
 }
 
-function enqueue(state: Pick<RunState, "traceId" | "providerId" | "origin">, turnId: string | null, source: TraceSource, type: string, ts: number, payload: unknown): void {
+function enqueue(state: Pick<RunState, "traceId" | "providerId" | "origin" | "sessionId">, turnId: string | null, source: TraceSource, type: string, ts: number, payload: unknown): void {
   traceWriter.enqueue({
     traceId: state.traceId,
     turnId,
@@ -74,7 +78,7 @@ function enqueue(state: Pick<RunState, "traceId" | "providerId" | "origin">, tur
     providerId: state.providerId,
     refId: null,
     type,
-    payloadJson: serialise(payload),
+    payloadJson: serialise(payload, state.sessionId ?? state.traceId),
   });
 }
 
@@ -136,6 +140,7 @@ export class TraceRun {
       const turnId = randomUUID();
       const state: RunState = {
         traceId: traceIdFor(start.sessionId),
+        sessionId: start.sessionId,
         providerId: start.providerId,
         origin: start.origin ?? "unknown",
         coalescer: new TraceCoalescer(),

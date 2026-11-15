@@ -37,6 +37,7 @@ import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary"
 import { getChatClientId } from "@/lib/chat-client-id";
 import { CHAT_CLIENT_ID_PARAM } from "../../shared/chat-client-id";
 import { replayActiveTurn } from "@/lib/replay-active-turn";
+import { VAULT_CARD_APPROVAL, VAULT_NOTIFICATION_BODY } from "../../shared/vault";
 
 /** The toast a session-collaboration card raises while its chat is not on screen. */
 function collabApprovalToast(input: SessionCollabApprovalInput): string {
@@ -786,6 +787,7 @@ export function useChat(
             isQuestion ? "AI has a question"
               : dbApproval ? `AI wants to change ${dbApproval.connectionName}`
               : collabApproval ? collabApprovalToast(collabApproval)
+              : ev.tool === VAULT_CARD_APPROVAL ? VAULT_NOTIFICATION_BODY
               : `${ev.tool} needs permission`,
             {
               description: assistant ? ASSISTANT_TAB_TITLE : projectNameRef.current || `Session ${sid.slice(0, 8)}`,

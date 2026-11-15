@@ -1589,6 +1589,62 @@ the instructions are the most trusted text a session gets, and an AI-written mem
 been planted by what it read. Settings → PPM Assistant → General lists them for the user to copy by
 hand. PPMBot's old tables are left in place, unused.
 
+## Secret vault
+
+Things the user wants an AI to be able to use without pasting them into every chat (an NI number,
+an address, a passport number). Three tiers kept apart on purpose (`src/shared/vault.ts`,
+`src/services/vault/`, migration 73):
+
+| | Public | Secure | Sealed |
+|---|---|---|---|
+| Stored | plain text in `ppm.db` | ciphertext, its own data key | ciphertext, a second data key |
+| Password | none | vault password (12+ chars) | its own (16+ chars), never the Secure one |
+| AI reads | at once | card: tick items, once or a 5/10/15 min window for that chat only | card per item; shown to the user by default, given to the AI only when ticked |
+| From a Telegram turn | yes | refused, no card | shown to the user in PPM only |
+| Wrong passwords | — | 5 free, then 30 s doubling to 15 min | 3 free, then 60 s doubling to 1 h |
+
+- **Keys.** Each locked tier's random data key is wrapped by scrypt(password, N=2^17, r=8, p=1) +
+  AES-256-GCM; every item is AES-256-GCM under the data key, its additional data naming tier and
+  item id, so swapping ciphertexts or editing the `tier` column fails to decrypt. No password hash
+  is kept: the wrapped key's tag is the check. Keys live only in memory, in grants
+  (`vault-grants.ts`); a restart locks both tiers. Forgetting a password loses that tier for good.
+- **Cards** (`vault-unlock-broker.ts`, tool `ppm:vault`) sit in the chat's one approval slot and
+  are answered only by `POST /api/vault/cards/:requestId` with the tier's password: never over the
+  socket, from Telegram or by the Assistant (`answerApprovalCore` refuses them). One card per chat;
+  10 secure and 3 sealed an hour.
+- **Tools** `vault_list` / `vault_read` / `vault_propose` ride on the session server
+  (`/api/sessions-mcp`): always for the Assistant, for an ordinary chat only once turned on in
+  Settings → Tools (off by default), never for design or extension-bound chats.
+- **Leaks blocked.** Values handed to an AI are held per chat for a day, or until the chat is
+  deleted (`turn-secret-scrubber.ts`; values under 4 characters are not matched): the session trace stores a locked read as withheld item names and
+  scrubs repeats (`vault-trace-filter.ts`); the notebook and every session-tool call refuse text
+  holding one; Telegram text and every notification are scrubbed; a card is announced only as
+  "Unlock needed". Nothing in `/api/vault` logs a body.
+- **Settings → Vault**: the Secure tier stays open five minutes (Lock now) for the one page that
+  typed the password: the page sends a random handle kept in memory, so PPM's auth token alone never
+  reaches an open tier, and moving an item out to Public always asks for the password. Every Sealed
+  action asks for its password. Checking a new password against the other tier counts as a try on it.
+- **Who started the turn.** An open window answers without a card only in a turn a person started in
+  PPM; a turn another chat or the Assistant started gets a card; scripted, watch, schedule, extension
+  and unknown turns get nothing from the locked tiers. Vault cards never reach Telegram `/status`,
+  watches or `chats_attention`. The CLI has only `ppm vault status` and `ppm vault lock`.
+
+- **History files.** After a turn that handed out a Secure or Sealed value, once the turn has ended
+  and the file has stopped growing, `transcript-redactor.ts` rewrites the provider's history on
+  this machine — Claude's session transcript and its subagents', Codex's rollout — replacing each
+  value with `[vault:<name>]`. Only lines holding a value change; each stays one JSON record with
+  its `uuid`/`parentUuid` links intact; the new file is written beside the old and renamed over it
+  only if the old one did not move meanwhile, else it is tried again. The running CLI or app-server
+  is not restarted, so its prompt cache stays.
+
+**Limits.** A chat that is still open keeps a value it was given in the provider's memory until it
+is reopened, and what was sent to Anthropic or OpenAI cannot be removed. The scrubber is a
+fallback: a value spelled out differently gets past it. The Public tier is not protected at all.
+While a Secure window is open, a process that can read PPM's memory can take that key (the Sealed
+tier never stays open). JavaScript strings cannot be wiped. Deleted items stay in older `ppm.db`
+backups until they expire. Verify with `tests/e2e/vault-canary-e2e.mjs` (Docker, capped), which
+checks every storage place for the marker values.
+
 ## Startup
 
 `startAssistantHub()` (`src/services/assistant-hub/assistant-hub-startup.ts`) starts the watch

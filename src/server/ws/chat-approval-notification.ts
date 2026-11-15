@@ -3,6 +3,7 @@ import { getSessionUnreadCount, incrementSessionUnread } from "../../services/db
 import { collabApprovalTitle, describeApprovalInput } from "../../services/notification-format.ts";
 import { dbExecuteApprovalInput } from "../../shared/db-ai-tools.ts";
 import { sessionCollabApprovalInput } from "../../shared/session-collab.ts";
+import { VAULT_CARD_APPROVAL, VAULT_NOTIFICATION_BODY } from "../../shared/vault.ts";
 import { broadcastGlobalEvent } from "./global.ts";
 import type { PendingApprovalEvent } from "./chat-pending-approval.ts";
 import { isNotificationSuppressed } from "../../services/chat-control/notification-suppressor.ts";
@@ -38,6 +39,14 @@ export function announceApprovalRequest(
       ? { detail: ev.summary.headline, detailStyle: "quote" as const }
       : describeApprovalInput(ev.tool, ev.input);
     const db = dbExecuteApprovalInput(ev.tool, ev.input);
+    // A vault card says only that the vault needs unlocking: never the item, the tier or why,
+    // since a notification lands on a lock screen and in Telegram or ntfy.
+    if (ev.tool === VAULT_CARD_APPROVAL) {
+      notificationService.broadcast(nType, {
+        title: "PPM vault", body: VAULT_NOTIFICATION_BODY, project: projectName, sessionId, providerId: session.providerId,
+      }, { stillUnseen: () => stillShown() && getSessionUnreadCount(sessionId) > 0 });
+      return;
+    }
     notificationService.broadcast(nType, {
       title: isQuestion ? "AI has a question" : collab ? collabApprovalTitle(collab) : "Waiting for approval",
       body: isQuestion || collab

@@ -84,6 +84,7 @@ async function mountRoutersFor(app: import("hono").Hono, path: string): Promise<
     cleanups.push(() => extensionService.shutdown());
   }
   if (under("/lsp")) app.route("/api/lsp", (await import("../../server/routes/lsp.ts")).lspGlobalRoutes);
+  if (under("/vault")) app.route("/api/vault", (await import("../../server/routes/vault.ts")).vaultRoutes);
   if (under("/speech")) app.route("/api/speech", (await import("../../server/routes/speech.ts")).speechRoutes);
   if (under("/group-chat")) app.route("/api/group-chat", (await import("../../server/routes/group-chat.ts")).groupChatRoutes);
   if (under("/teams")) app.route("/api/teams", (await import("../../server/routes/teams.ts")).teamRoutes);

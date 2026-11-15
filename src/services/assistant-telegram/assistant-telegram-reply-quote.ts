@@ -18,6 +18,7 @@ import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
 import { kindName } from "../assistant-cards/forward-verbatim.ts";
 import type { TelegramMessage } from "../telegram/telegram-types.ts";
 import { forwardedFrom } from "./assistant-telegram-inbound-text.ts";
+import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 
 /** At most this many lines and characters of the quoted message's text. */
 export const QUOTE_MAX_LINES = 8;
@@ -53,9 +54,12 @@ const STATUS_TEXT: Record<AssistantCard["status"], string> = {
   open: "still waiting", answered: "answered", dismissed: "dismissed", resolved: "resolved", gone: "no longer waiting", info: "for information",
 };
 
-/** Old content made safe to quote: hidden characters shown, no PPM block or tag can form, no fake header. */
+/**
+ * Old content made safe to quote: no vault value an AI read lately (a card body is PPM's own copy,
+ * never scrubbed on the way out), hidden characters shown, no PPM block or tag can form, no fake header.
+ */
 function defuse(text: string): string {
-  return defuseUserWordsHeader(neutralizePpmTags(neutralizeBlockMarkers(escapeHiddenCharacters(text))));
+  return defuseUserWordsHeader(neutralizePpmTags(neutralizeBlockMarkers(escapeHiddenCharacters(turnSecretScrubber.scrub(text)))));
 }
 
 /** One line, for a label taken from the message (a file name, a card title). */
@@ -105,7 +109,8 @@ function cardLabel(card: QuotedCard): string {
 }
 
 function build(head: string[], body: string): { quote: string; truncated: boolean } {
-  const cut = firstLines(body);
+  // Scrubbed before the cut too, so the cut can never leave half a vault value behind.
+  const cut = firstLines(turnSecretScrubber.scrub(body));
   const lines = [...head, cut.text ? `Text:\n${cut.text}` : "Text: (none)"];
   // The reply block holds at most MAX_REPLY_QUOTE_LENGTH characters; this is far below it.
   return { quote: defuse(lines.join("\n")).slice(0, MAX_REPLY_QUOTE_LENGTH), truncated: cut.truncated };
