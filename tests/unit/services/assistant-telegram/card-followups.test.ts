@@ -24,7 +24,7 @@ import { addCardTelegramRef } from "../../../../src/services/assistant-cards/ass
 import { createAssistantCards } from "../../../../src/services/assistant-cards/assistant-cards.service.ts";
 import { AssistantTelegramManagerCards } from "../../../../src/services/assistant-telegram/assistant-telegram-manager-cards.ts";
 import { sendMessageTask } from "../../../../src/services/assistant-telegram/assistant-telegram-send-queue.ts";
-import { CARD_FOLLOWUP_MAX_CHARS } from "../../../../src/shared/assistant-limits.ts";
+import { CARD_FOLLOWUP_LOUD_MS, CARD_FOLLOWUP_MAX_CHARS } from "../../../../src/shared/assistant-limits.ts";
 
 const fake = useFakeTelegram();
 const client = clientFor(fake);
@@ -90,15 +90,17 @@ describe("formatCardFollowup", () => {
   });
 });
 
+const REPLIED_AT = 50_000_000;
+
 /** A sink with the test's presence, quiet hours and card copies. */
-function sink(opts: { atPpm: boolean; quiet?: boolean; refs?: TelegramCardRef[] }) {
+function sink(opts: { atPpm: boolean; quiet?: boolean; refs?: TelegramCardRef[]; now?: number }) {
   const silence = new TelegramSilence({ enabled: () => true, idleMs: () => (opts.atPpm ? 0 : null), now: () => 1_000_000 });
   const queue = queueFor(client);
   const recorded: Array<{ cardId: string; ref: TelegramCardRef }> = [];
   const s = new AssistantTelegramCardFollowups({
     queue, silence, chatLink: async () => "http://localhost:8080/chat",
     refsOf: () => opts.refs ?? [], detailOf: () => "full", quietEnd: () => (opts.quiet ? 9_999_999 : null),
-    recordRef: (cardId, ref) => recorded.push({ cardId, ref }),
+    recordRef: (cardId, ref) => recorded.push({ cardId, ref }), now: () => opts.now ?? REPLIED_AT,
   });
   return { s, queue, recorded };
 }
@@ -106,6 +108,7 @@ function sink(opts: { atPpm: boolean; quiet?: boolean; refs?: TelegramCardRef[] 
 const card = { id: "card-1", projectName: "ppm", projectKey: "k", status: "answered" } as AssistantCard;
 const delivery = (origin: FollowupOrigin): CardFollowupDelivery => ({
   cardId: card.id, origin, sessionId: "mgr", text: "It will cost a lot: ~40% of this week's quota.", overflow: false, newCards: [], card,
+  repliedAt: REPLIED_AT,
   stored: { text: "", truncated: false, at: 0 },
 });
 
@@ -118,6 +121,16 @@ describe("where the answer goes", () => {
     await queue.whenIdle();
     expect(msg).toMatchObject({ reply_to: 77, silent: false });
     expect(stripTelegramHtml(msg!.text)).toContain("It will cost a lot");
+  });
+
+  it("rings past quiet rules only within 30 minutes of the reply; a later answer comes silently", () => {
+    const chat = connectChat(freshChat());
+    const silentOf = (o: { atPpm: boolean; quiet?: boolean; now: number }) =>
+      sink(o).s.targets(delivery({ channel: "telegram", chatId: chat, replyTo: 7 })).map((t) => t.silent());
+    expect(silentOf({ atPpm: true, quiet: true, now: REPLIED_AT + CARD_FOLLOWUP_LOUD_MS })).toEqual([false]);
+    expect(silentOf({ atPpm: false, quiet: true, now: REPLIED_AT + CARD_FOLLOWUP_LOUD_MS + 1 })).toEqual([true]);
+    expect(silentOf({ atPpm: true, now: REPLIED_AT + 3 * 60 * 60_000 })).toEqual([true]);
+    expect(silentOf({ atPpm: false, now: REPLIED_AT + 3 * 60 * 60_000 })).toEqual([false]);
   });
 
   it("records the answer as the card's follow-up message, so a reply to it reaches the same manager", async () => {

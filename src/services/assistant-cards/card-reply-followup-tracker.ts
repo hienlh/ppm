@@ -53,6 +53,8 @@ export interface FollowupResult {
   overflow: boolean;
   /** Cards the manager made during that turn (a new card asking again, say). */
   newCards: Array<{ id: string; title: string }>;
+  /** When the user replied (the words were sent), on the tracker's clock. */
+  repliedAt: number;
 }
 
 export interface FollowupTrackerDeps {
@@ -181,7 +183,7 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
   function finish(p: Pending, buffer: Buffer | undefined, session: string): void {
     if (!live(p)) return;
     forget(p);
-    const base = { cardId: p.cardId, origin: p.origin, sessionId: session, newCards: p.newCards };
+    const base = { cardId: p.cardId, origin: p.origin, sessionId: session, newCards: p.newCards, repliedAt: p.at };
     if (buffer?.stopped) { deps.deliver({ ...base, text: "", overflow: false, stopped: true }); return; }
     const text = buffer?.text.trim() ?? "";
     if (!text) return;

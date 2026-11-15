@@ -57,7 +57,7 @@ describe("following the turn a card reply opened", () => {
     say("~40% of the weekly quota.");
     t.onTurnEnded(S);
     expect(delivered).toEqual([{
-      cardId: "c1", origin, sessionId: S, text: "It will cost a lot: ~40% of the weekly quota.", overflow: false, newCards: [],
+      cardId: "c1", origin, sessionId: S, text: "It will cost a lot: ~40% of the weekly quota.", overflow: false, newCards: [], repliedAt: 1_000,
     }]);
     // At most one follow-up per reply.
     named(ID); say("again"); t.onTurnEnded(S);
@@ -338,7 +338,7 @@ describe("deliverCardFollowup", () => {
     const stored: CardFollowUp[] = [];
     const sent: unknown[] = [];
     const cards = { get: () => card, setFollowUp: (_id: string, f: CardFollowUp) => { stored.push(f); return true; } };
-    const result: FollowupResult = { cardId: "c1", origin: { channel: "ppm" }, sessionId: S, text: "y".repeat(CARD_FOLLOWUP_MAX_CHARS + 5), overflow: false, newCards: [] };
+    const result: FollowupResult = { cardId: "c1", origin: { channel: "ppm" }, sessionId: S, text: "y".repeat(CARD_FOLLOWUP_MAX_CHARS + 5), overflow: false, newCards: [], repliedAt: 1 };
     deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: (d) => sent.push(d) }) }, result);
     expect(stored).toEqual([{ text: "y".repeat(CARD_FOLLOWUP_MAX_CHARS), truncated: true, at: 5 }]);
     expect(sent).toHaveLength(1);
@@ -349,7 +349,7 @@ describe("deliverCardFollowup", () => {
     const sent: unknown[] = [];
     const reopened = { ...card, status: "open" } as AssistantCard;
     const cards = { get: () => reopened, setFollowUp: () => false };
-    const answer: FollowupResult = { cardId: "c1", origin, sessionId: S, text: "It costs 40%.", overflow: false, newCards: [] };
+    const answer: FollowupResult = { cardId: "c1", origin, sessionId: S, text: "It costs 40%.", overflow: false, newCards: [], repliedAt: 1 };
     deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: (d) => sent.push(d) }) }, answer);
     deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: (d) => sent.push(d) }) }, { ...answer, text: "", stopped: true });
     expect(sent).toEqual([]);
@@ -359,7 +359,7 @@ describe("deliverCardFollowup", () => {
     const stored: CardFollowUp[] = [];
     const sent: Array<{ stopped?: true; origin: { channel: string } }> = [];
     const cards = { get: () => card, setFollowUp: (_id: string, f: CardFollowUp) => { stored.push(f); return true; } };
-    const stopped = (o: FollowupResult["origin"]): FollowupResult => ({ cardId: "c1", origin: o, sessionId: S, text: "", overflow: false, newCards: [], stopped: true });
+    const stopped = (o: FollowupResult["origin"]): FollowupResult => ({ cardId: "c1", origin: o, sessionId: S, text: "", overflow: false, newCards: [], repliedAt: 1, stopped: true });
     deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: (d) => sent.push(d) }) }, stopped({ channel: "ppm" }));
     deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: (d) => sent.push(d) }) }, stopped(origin));
     expect(stored).toEqual([]);
@@ -371,7 +371,7 @@ describe("deliverCardFollowup", () => {
     let called = false;
     deliverCardFollowup({
       cards: { get: () => null, setFollowUp: () => { called = true; return true; } }, now: () => 1, sink: () => null,
-    }, { cardId: "x", origin: { channel: "ppm" }, sessionId: S, text: "t", overflow: false, newCards: [] });
+    }, { cardId: "x", origin: { channel: "ppm" }, sessionId: S, text: "t", overflow: false, newCards: [], repliedAt: 1 });
     expect(called).toBe(false);
   });
 });
