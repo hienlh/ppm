@@ -141,6 +141,12 @@ function append(c: Collected, text: string): void {
 }
 
 /**
+ * Not `turn_ended.finalText`: `ws/chat.ts` keeps its own copy of a turn's last text for the
+ * notification and `session_status` (`entry.finalText`, from the start of the turn, only after its
+ * last tool call, cut to `FINAL_TEXT_KEEP`). A card reply needs a different cut — from where the
+ * words went in, every block rather than the last, and room for `CARD_FOLLOWUP_MAX_CHARS` — so the
+ * text is gathered here a second time rather than stretching that one to serve both.
+ *
  * The answer in what a reply gathered: every block that is not a throwaway line (all of them when
  * the turn made no tool call — a short answer is still the answer), joined. When they do not fit
  * what the user is shown, the earliest blocks give way, because the rule puts the answer last.
