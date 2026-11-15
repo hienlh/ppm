@@ -1404,16 +1404,23 @@ answer used to stay in the manager chat, which a user on their phone never opens
   turn in between goes unseen — but what is sent is always the snapshot taken at the first turn
   end, so no later turn's text can leak. Queued words are never judged this way.
 - The answer is the turn's top-level text **from the reply on**, gathered per reply as blocks split
-  at each top-level tool call (no tool output, thinking or subagent text). Real blocks are joined;
-  a one-line acknowledgement ("Card sent.": one line, under 40 characters, no digit, no question
-  mark) is dropped when the turn made a tool call, so an answer written before the card still
-  arrives; when they do not fit 1500 characters the earliest blocks give way, since the answer
-  comes last. At most one follow-up per reply, nothing for a turn that wrote only acknowledgements.
+  at each top-level tool call (no tool output, thinking or subagent text). With no tool call it is
+  the whole text, however short. Around tool calls: a line that only confirms the call ("Card
+  sent.", "Đã gửi card.", "Done.": `isConfirmationBlock`) is always dropped; another short line
+  (one line, under 40 characters, no digit, no question mark) is dropped only when a longer real
+  block is there, and with none the last remaining block is the answer — so "card first, then
+  'Được anh.'" arrives, and so does an answer written before the card. The rest is joined. Within
+  1500 characters the last real block (the answer, since the rule puts it last) stays whole: earlier
+  blocks go first, the one beside the answer cut with "…"; an answer longer than that on its own is
+  cut by the follow-up with "see the chat". At most one follow-up per reply, nothing for a turn
+  that wrote only confirmations.
   It is kept on the card as `card.followUp` (beside `answer`, never in a made-up one: a done report
   nobody answered keeps `answer: null`), cut to `CARD_FOLLOWUP_MAX_CHARS` = 1500, and shown under
   it in PPM. Nothing is kept or sent when the card waits again (its words were reported lost).
-- **A turn that is stopped or fails** has no answer: its partial text is never sent or kept. A
-  reply typed on Telegram gets one line, "The manager's turn was stopped before it answered; see
+- **A turn that is stopped or fails** has no answer: its partial text is never sent or kept. That
+  includes a Stop reported as a normal end: on the first turn of a fresh Claude subprocess an
+  aborted turn ends with `done`, so `turn_ended` carries `outcome: "done"` with `cancelledBy` set,
+  and `followupOutcome` reads `cancelledBy` as stopped. A reply typed on Telegram gets one line, "The manager's turn was stopped before it answered; see
   the chat.", with the link; a reply typed in PPM gets nothing.
 - On Telegram it goes **under the card's message**: redacted before the cut, hidden characters
   shown, escaped through the Markdown formatter, "… see the chat for the rest." past 1500
@@ -1427,8 +1434,12 @@ answer used to stay in the manager chat, which a user on their phone never opens
   the morning: the answer is already under the card in PPM).
 - The answer's Telegram message is recorded as one of the card's messages, marked `followUp`, so a
   reply to it reaches the same manager like a reply to the card (the card is answered by then, so
-  it asks "send anyway?"). A follow-up is never rewritten when the card changes, nor answered
-  under as one of the card's copies. The acknowledgement says "If the manager answers, it will
+  it asks "send anyway?"). When the answer named exactly one new card, the ref keeps its id
+  (`newCardId`), and a bare OK ("OK", "Được", "yes", "👍") in reply to the answer goes to that new
+  card instead, with its answer threaded under the new card's message. A follow-up is never
+  rewritten when the card changes, nor answered under as one of the card's copies, and follow-up
+  refs are capped apart (the newest 5) from the card's own copies (20), so many replies cannot push
+  the card's copies out. The acknowledgement says "If the manager answers, it will
   come here, under the card." — no promise, since several of the cases above send nothing.
 - A new card the manager opens in that turn is sent at once, as every card is, so on the phone it
   arrives just **before** the answer; the answer names it rather than holding a decision back.
