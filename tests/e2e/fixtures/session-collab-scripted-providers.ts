@@ -33,7 +33,11 @@ export interface CallRecord {
   seq: number; sessionId: string; tool: string; args: Record<string, unknown>;
   startedAt: number; endedAt?: number; status?: number; isError?: boolean; text?: string;
 }
-export interface SendRecord { sessionId: string; kind: "turn" | "read_in_turn"; at: number; content: string }
+export interface SendRecord {
+  sessionId: string; kind: "turn" | "read_in_turn"; at: number; content: string;
+  /** The turn ran as a Design chat's (design instructions given), and the sender's header asked for the answer as the reply. */
+  design?: boolean; replyVia?: string;
+}
 interface Access { url: string; token: string }
 interface Pending { message: string; opts?: SendMessageOpts }
 interface Stream { queue: Pending[]; wake: (() => void) | null; ended: boolean; first?: Access }
@@ -117,7 +121,12 @@ async function* runTurn(input: {
   const { ids, stream, pending, writer } = input;
   const sessionId = ids[0]!;
   const turnId = writer.start(pending.message);
-  sends.push({ sessionId, kind: "turn", at: Date.now(), content: decodeMessageBlocks(pending.message).content });
+  const decoded = decodeMessageBlocks(pending.message);
+  sends.push({
+    sessionId, kind: "turn", at: Date.now(), content: decoded.content,
+    ...(pending.opts?.designSession && pending.opts.designInstructions ? { design: true } : {}),
+    ...(decoded.fromSession?.replyVia ? { replyVia: decoded.fromSession.replyVia } : {}),
+  });
   const access = pending.opts?.sessionCollabMcp ?? stream.first;
   yield { type: "turn_started", turnId, ...(pending.opts?.clientMessageId ? { clientMessageId: pending.opts.clientMessageId } : {}) } as ChatEvent;
   let said = "";

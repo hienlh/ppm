@@ -23,6 +23,8 @@ import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { cardEndLine, formatManagerCard, type CardDetail } from "./assistant-telegram-card-kinds.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
+import { cardPhotosTask } from "./assistant-telegram-card-photos.ts";
+import { notificationLink } from "../notification-link.ts";
 import { outcomeOf, sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { CardReminders, TelegramSilence } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
@@ -45,7 +47,11 @@ export interface ManagerCardsDeps {
   reminders?: CardReminders;
   /** Whether a card still waits on the user (its row is open). */
   isOpen?: (cardId: string) => boolean;
+  /** The link that shows a card's picture full size (`/api/design-shots/<id>.png` on PPM's public address). */
+  shotLink?: (id: string) => Promise<string | null>;
 }
+
+const realShotLink = (id: string): Promise<string> => notificationLink({ project: "", sessionId: "", path: `/api/design-shots/${id}.png` });
 
 const groupOf = (cardId: string, chatId: string): string => `mcard:${cardId}:${chatId}`;
 
@@ -127,6 +133,14 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     }
     const formatted = formatManagerCard(card, detail);
     const group = groupOf(card.id, chatId);
+    // The pictures first, so the card to answer them on comes last; never for a title-only project.
+    const photos = detail === "full"
+      ? cardPhotosTask(chatId, card, {
+        link: this.deps.shotLink ?? realShotLink,
+        silent: () => card.kind !== "urgent" && this.silent(),
+      })
+      : null;
+    if (photos) this.deps.queue.enqueue(chatId, photos);
     const row: InlineKeyboardButton[] = formatted.buttons.map((b) => ({
       text: b.text,
       callback_data: this.deps.codes.mint(chatId, group, {

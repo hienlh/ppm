@@ -42,6 +42,7 @@ export const MANAGER_CREATE_CONSEQUENCE = "After this, PPM Assistant can message
 
 function heading(input: SessionCollabApprovalInput): string {
   if (input.kind === "create" && input.manager) return `Create the manager chat for ${input.projectName ?? "this project"}`;
+  if (input.kind === "create" && input.design) return `The ${input.askedBy === "assistant" ? "Assistant" : "AI"} wants to open a Design chat for ${input.design.title}`;
   if (input.kind === "create") return input.projectName ? `The Assistant wants to open a chat in ${input.projectName}` : "The AI wants to create a session";
   if (input.kind === "pair_limit") return "These sessions reached their message limit";
   if (input.kind === "message") return `The Assistant wants to message a chat in ${input.projectName}`;
@@ -121,6 +122,11 @@ function CollabApprovalBody({ input }: { input: SessionCollabApprovalInput }) {
             {providerLabel(input.providerId)}{input.model ? ` · ${input.model}` : ""} · depth {input.depth}
           </span>
         </div>
+        {input.design && (
+          <p className="text-xs text-text-subtle">
+            Design chat for <span className="font-medium text-text-primary">{input.design.title}</span> (designs/{input.design.slug})
+          </p>
+        )}
         {input.permissionMode && <RunsIn mode={input.permissionMode} />}
         {input.manager && <p className="text-xs font-medium text-text-primary">{MANAGER_CREATE_CONSEQUENCE}</p>}
         {input.task && <WholeText label="The whole task" text={input.task} />}

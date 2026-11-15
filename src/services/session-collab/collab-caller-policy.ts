@@ -1,4 +1,4 @@
-import { CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL } from "../../shared/session-collab.ts";
+import { CREATE_SESSION_TOOL, DESIGN_SCREENSHOT_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL } from "../../shared/session-collab.ts";
 import { UNATTENDED_TURN_REFUSAL } from "../chat-control/chat-control.ts";
 import type { CollabCaller } from "./collab-context.ts";
 
@@ -24,7 +24,8 @@ export type CollabToolPolicy =
 
 /** What `tool` may do for `caller` (see the module comment). */
 export function collabToolPolicy(caller: Pick<CollabCaller, "kind" | "unattended">, tool: string): CollabToolPolicy {
-  if (tool === SESSION_STATUS_TOOL) return { allowed: true, ask: "settings" };
+  // Reads only: it renders a design of a project the caller reaches, and delivers nothing.
+  if (tool === SESSION_STATUS_TOOL || tool === DESIGN_SCREENSHOT_TOOL) return { allowed: true, ask: "settings" };
   if (tool !== CREATE_SESSION_TOOL && tool !== SEND_TO_SESSION_TOOL) {
     return { allowed: false, message: `Unknown session tool: ${tool.slice(0, 60)}` };
   }

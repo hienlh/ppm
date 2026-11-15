@@ -42,10 +42,10 @@ describe("an Assistant caller", () => {
     expect(target).toMatchObject({ ok: true, value: { sessionId: TARGET, projectName: "other", projectPath: OTHER_PATH } });
   });
 
-  it("never reaches an Assistant chat or a design chat", () => {
+  it("never reaches an Assistant chat, and reaches a design chat as one", () => {
     const w = world();
     expect(resolveTarget(w.env, w.caller, OTHER_ASSISTANT)).toMatchObject({ ok: false, refusal: "assistant_session" });
-    expect(resolveTarget(w.env, w.caller, DESIGN)).toMatchObject({ ok: false, refusal: "design_session" });
+    expect(resolveTarget(w.env, w.caller, DESIGN)).toMatchObject({ ok: true, value: { sessionId: DESIGN, design: true } });
   });
 });
 

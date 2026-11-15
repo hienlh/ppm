@@ -66,6 +66,15 @@ export interface CardFollowUp {
   at: number;
 }
 
+/** A design screenshot on a card: the kept shot's id and what it shows. */
+export interface CardImage {
+  id: string;
+  /** The design's title and the variant's file and label, as the card names the picture. */
+  designTitle: string;
+  file: string;
+  label: string;
+}
+
 /** A draft message a manager asks the user to approve sending. */
 export interface CardDraft {
   to: string;
@@ -83,6 +92,11 @@ export interface AssistantCardPayload {
   date?: string;
   /** Digest cards: one section per project that was asked, in the order they were asked. */
   projects?: DigestProject[];
+  /**
+   * Report cards: design screenshots the manager attached (`design_screenshot` ids), shown on the
+   * card and sent to Telegram with it as pictures.
+   */
+  images?: CardImage[];
   /** Report cards: filed by a subagent of the manager rather than the manager itself. */
   subagent?: boolean;
   /** Report cards: the manager asked for urgent, and the per-window cap turned it into a decision. */

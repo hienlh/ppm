@@ -44,6 +44,8 @@ export interface FakeSentMessage {
   silent: boolean;
   /** Earlier texts, oldest first. */
   history: string[];
+  /** A photo the bot sent (`sendPhoto`, or one item of `sendMediaGroup`): its upload; `text` is its caption. */
+  photo?: { bytes: number; filename: string; album?: number };
 }
 
 export interface FakeFailure {
@@ -250,8 +252,53 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
     return ok(deliverable());
   }
 
+  /** One photo message from an uploaded part, checked as Telegram checks it; or the refusal. */
+  const photoMessage = (chatId: number, part: unknown, caption: unknown, silent: boolean, album?: number): FakeSentMessage | Response => {
+    if (!(part instanceof File)) return refuse(400, "Bad Request: there is no photo in the request");
+    if (part.size === 0 || part.size > 10 * 1024 * 1024) return refuse(400, "Bad Request: PHOTO_INVALID_DIMENSIONS");
+    let text = "";
+    if (caption !== undefined) {
+      if (typeof caption !== "string" || caption.length > 1024) return refuse(400, "Bad Request: message caption is too long");
+      const parsed = parseTelegramHtml(caption);
+      if ("error" in parsed) return refuse(400, parsed.error);
+      text = parsed.text;
+    }
+    const sent: FakeSentMessage = {
+      message_id: messageId(chatId), chat_id: chatId, text, ...(caption !== undefined ? { parse_mode: "HTML" } : {}),
+      silent, history: [], photo: { bytes: part.size, filename: part.name, ...(album !== undefined ? { album } : {}) },
+    };
+    return sent;
+  };
+  let nextAlbum = 1;
+
   function handle(method: string, body: Record<string, unknown>): Response | Promise<Response> {
     switch (method) {
+      case "sendPhoto": {
+        const chatId = Number(body.chat_id);
+        if (!Number.isFinite(chatId)) return refuse(400, "Bad Request: chat not found");
+        const sent = photoMessage(chatId, body.photo, body.caption, body.disable_notification === "true");
+        if (sent instanceof Response) return sent;
+        messages.set(chatId, [...(messages.get(chatId) ?? []), sent]);
+        return ok(botMessage(sent));
+      }
+      case "sendMediaGroup": {
+        const chatId = Number(body.chat_id);
+        if (!Number.isFinite(chatId)) return refuse(400, "Bad Request: chat not found");
+        let media: Array<{ type?: string; media?: string; caption?: string }>;
+        try { media = JSON.parse(String(body.media)); } catch { return refuse(400, "Bad Request: can't parse media JSON"); }
+        if (!Array.isArray(media) || media.length < 2 || media.length > 10) return refuse(400, "Bad Request: wrong number of media");
+        const album = nextAlbum++;
+        const made: FakeSentMessage[] = [];
+        for (const item of media) {
+          const ref = /^attach:\/\/(\w+)$/.exec(item.media ?? "");
+          if (item.type !== "photo" || !ref) return refuse(400, "Bad Request: wrong media");
+          const sent = photoMessage(chatId, body[ref[1]!], item.caption, body.disable_notification === "true", album);
+          if (sent instanceof Response) return sent;
+          made.push(sent);
+        }
+        messages.set(chatId, [...(messages.get(chatId) ?? []), ...made]);
+        return ok(made.map(botMessage));
+      }
       case "getMe":
         return ok(bot);
       case "getUpdates":
@@ -360,7 +407,13 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
       let body: Record<string, unknown> = {};
       if (req.method === "POST") {
         try {
-          body = ((await req.json()) ?? {}) as Record<string, unknown>;
+          if ((req.headers.get("content-type") ?? "").startsWith("multipart/form-data")) {
+            // An upload: text fields as strings, files as `File`s, as Telegram reads them.
+            const form = await req.formData();
+            body = Object.fromEntries([...form.keys()].map((k) => [k, form.get(k)]));
+          } else {
+            body = ((await req.json()) ?? {}) as Record<string, unknown>;
+          }
         } catch {
           return refuse(400, "Bad Request: invalid JSON");
         }

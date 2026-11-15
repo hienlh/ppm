@@ -14,6 +14,9 @@ import { USER_WORDS_BLOCK_START } from "../../../src/shared/assistant-provenance
 
 const caller = { sessionId: "mgr-1", projectName: "api", projectPath: "/p/api" };
 
+const SHOT = "c".repeat(32);
+const FOREIGN = "d".repeat(32);
+
 function fakeEnv(opts: { quietStart?: number | null; digest?: boolean } = {}) {
   let now = 1_000_000;
   const made: Array<NewCard & { id: string; at: number }> = [];
@@ -25,6 +28,8 @@ function fakeEnv(opts: { quietStart?: number | null; digest?: boolean } = {}) {
       const c = made.find((m) => m.sessionId === sessionId && m.kind === "urgent" && m.title === title && m.at >= since);
       return c ? ({ id: c.id } as AssistantCard) : null;
     },
+    shotOf: (id, projectPath) => (id === SHOT && projectPath === caller.projectPath
+      ? { id, designTitle: "Kho task", file: "variant-2.html", label: "Dark" } : null),
     quietWindowStart: () => opts.quietStart ?? null,
     digestAnswer: (sessionId, items) => {
       if (!opts.digest) return { ok: false, message: DIGEST_NOT_ASKED };
@@ -117,5 +122,17 @@ describe("caps", () => {
       const r = fileReport(h.env, caller, { kind: "urgent", title: `x${i}` });
       expect(r.ok && r.kind).toBe("urgent");
     }
+  });
+  it("puts this project's design screenshots on the card, and refuses any other id", () => {
+    const w = fakeEnv();
+    const ok = fileReport(w.env, caller, { kind: "needs_decision", title: "Pick a variant", body: "1 or 2?", images: [SHOT, SHOT] });
+    expect(ok.ok).toBe(true);
+    expect(w.made[0]!.payload.images).toEqual([{ id: SHOT, designTitle: "Kho task", file: "variant-2.html", label: "Dark" }]);
+    const foreign = fileReport(w.env, caller, { kind: "needs_decision", title: "x", images: [FOREIGN] });
+    expect(foreign).toMatchObject({ ok: false });
+    expect(fileReport(w.env, caller, { kind: "done", title: "x", images: [] })).toMatchObject({ ok: false });
+    expect(fileReport(w.env, caller, { kind: "done", title: "x", images: Array(7).fill(SHOT) })).toMatchObject({ ok: false });
+    expect(fileReport(w.env, caller, { kind: "digest", title: "x", images: [SHOT] })).toMatchObject({ ok: false });
+    expect(w.made).toHaveLength(1);
   });
 });

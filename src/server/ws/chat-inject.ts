@@ -19,7 +19,7 @@ import {
   SESSION_CREATED_EVENT, SESSION_LINK_CHANGED_EVENT, SESSION_COLLAB_APPROVAL_EVENT,
   type SessionCollabApprovalEvent, type SessionCreatedEvent, type SessionDelivery,
 } from "../../shared/session-collab.ts";
-import { getSessionDesignSlug, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
+import { getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import { countSpawned } from "../../services/session-collab/session-links.service.ts";
 import { chatLifecycle } from "../../services/chat-control/chat-lifecycle.ts";
 import { createLogger } from "../../services/logger.ts";
@@ -158,9 +158,8 @@ export async function deliverToSession(input: DeliverToSessionInput): Promise<De
   if (target === resolveMigratedSession(fromSession.sessionId)) {
     throw new DeliverToSessionError("A session cannot message itself", "invalid");
   }
-  if (getSessionDesignSlug(target)) {
-    throw new DeliverToSessionError("A design session does not take messages from other sessions", "design_session");
-  }
+  // A Design chat takes them too: its design instructions, tool policy and turn snapshot come
+  // from its stored slug in chatService, whoever sends, exactly as for a message typed in its tab.
   if (isAssistantSession(target)) {
     throw new DeliverToSessionError("A PPM Assistant session does not take messages from other sessions", "invalid");
   }

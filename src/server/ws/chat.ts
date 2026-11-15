@@ -251,6 +251,11 @@ const MAX_TURN_EVENTS = 10_000; // memory safety cap
 /** How much of the final answer is kept for the notification that quotes it. */
 const FINAL_TEXT_KEEP = 1_000;
 /**
+ * How much of the final answer is kept whole, as the reply a Design chat gives a waiting session:
+ * one character past what a reply carries, so a longer answer is known to have been cut.
+ */
+const ANSWER_TEXT_KEEP = 24_001;
+/**
  * Share of the turn buffer nested-agent children may take. They are restored
  * from disk on reload anyway; this only keeps a chatty grandchild from evicting
  * the turn's own later events out of a reconnecting client's replay.
@@ -325,6 +330,15 @@ export interface SessionEntry extends BackgroundTaskState {
   finalText?: string;
   /** The last finished turn's `finalText`, kept for `session_status` after the notification took it. */
   lastAnswer?: string;
+  /** The turn's last top-level text block, up to {@link ANSWER_TEXT_KEEP} characters. */
+  answerText?: string;
+  /** Client ids of the messages the running turn took (`turn_started` bindings since the last `done`). */
+  turnClientIds?: string[];
+  /**
+   * The last finished turn's whole answer, when that turn ended (epoch ms), and the messages it
+   * took: a waiting session is handed the answer only of the turn that took its own message.
+   */
+  lastFullAnswer?: { text: string; at: number; clientMessageIds: string[] };
   /** The user message that initiated the current turn (for reconnect replay) */
   currentUserMessage?: string;
   /** The sending browser's own id for that message, so a reconnect replay keeps it bound to its turn. */
@@ -890,6 +904,7 @@ export function collabLiveState(sessionId: string): LiveSessionState | null {
     ...(pending ? { waitingCard: waitingCardOf(pending) } : {}),
     ...(pending && cardRaisedFor(pending) ? { waitingCardFor: cardRaisedFor(pending)! } : {}),
     ...(entry.lastAnswer ? { lastAnswer: entry.lastAnswer } : {}),
+    ...(entry.lastFullAnswer ? { lastFullAnswer: entry.lastFullAnswer } : {}),
     updatedAt: entry.phase !== "idle" ? Date.now() : entry.lastTurnEndedAt ?? entry.turnRequestedAt?.at,
     ...(entry.turnBindings?.length ? { currentTurnId: entry.turnBindings[entry.turnBindings.length - 1]!.turnId } : {}),
   };
@@ -1467,6 +1482,7 @@ function rememberTurnBinding(entry: SessionEntry, ev: { turnId?: unknown; client
   const binding: TurnBinding = { turnId: ev.turnId, ...(typeof ev.clientMessageId === "string" ? { clientMessageId: ev.clientMessageId } : {}) };
   const list = (entry.turnBindings ??= []);
   list.push(binding);
+  if (binding.clientMessageId) (entry.turnClientIds ??= []).push(binding.clientMessageId);
   if (list.length > MAX_TURN_BINDINGS) list.splice(0, list.length - MAX_TURN_BINDINGS);
   for (const listener of turnBindingListeners) {
     try { listener(binding); } catch (e) { log.warn(`turn binding listener failed: ${(e as Error).message}`); }
@@ -1526,6 +1542,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
   entry.turnEvents = [];
   entry.nestedBuffered = 0;
   entry.finalText = undefined;
+  entry.answerText = undefined;
+  entry.turnClientIds = [];
   entry.lastError = undefined;
   setPhase(sessionId, "connecting");
 
@@ -1718,8 +1736,11 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         if (evType === "text" && typeof ev.content === "string") {
           const text: string = (entry.finalText ?? "") + ev.content;
           entry.finalText = text.length > FINAL_TEXT_KEEP ? text.slice(0, FINAL_TEXT_KEEP) : text;
+          const whole: string = (entry.answerText ?? "") + ev.content;
+          entry.answerText = whole.length > ANSWER_TEXT_KEEP ? whole.slice(0, ANSWER_TEXT_KEEP) : whole;
         } else if (evType === "tool_use") {
           entry.finalText = undefined;
+          entry.answerText = undefined;
         }
       }
 
@@ -1877,6 +1898,13 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // the next turn's answer must not start with this one's.
         entry.finalText = undefined;
         if (finalText) entry.lastAnswer = finalText;
+        // Kept with the messages this turn took, and only for a turn that finished: a session
+        // waiting on this one must never get another turn's answer, nor a stopped turn's half of one.
+        if (entry.answerText && !turnStop) {
+          entry.lastFullAnswer = { text: entry.answerText, at: Date.now(), clientMessageIds: entry.turnClientIds ?? [] };
+        }
+        entry.answerText = undefined;
+        entry.turnClientIds = [];
         // An AI-created session finishing is its creator's business, not the user's: no "Chat
         // completed". A turn stopped by an error still says so. Held back too when the user is
         // being told elsewhere (the turn was answered on Telegram); the unread mark above stays.

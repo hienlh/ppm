@@ -1,4 +1,5 @@
 import { SESSION_COLLAB_LIMITS } from "../../shared/session-collab-settings.ts";
+import { designShotToolDefinition } from "./collab-design-shot.ts";
 import {
   CREATE_SESSION_TOOL, MAX_COLLAB_TITLE_CHARS, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL,
 } from "../../shared/session-collab.ts";
@@ -80,7 +81,10 @@ export function sessionCollabToolDefinitions() {
         + "sees your session and current turn as a link it can read with read_session_turns, but nothing else of "
         + "this conversation. It runs with your permission mode, never more. Unless the user switched it off, PPM "
         + "asks them before the session is created. Prefer wait: true when you need the result before going on; "
-        + "the session replies by calling send_to_session.",
+        + "the session replies by calling send_to_session. With `design` it opens a Design chat for an existing design "
+        + "of the project instead (the chat the user gets from that design's tab, with its design instructions and canvas "
+        + "check): give it the brief as `task`. A Design chat cannot call these tools, so its answer to your message is its "
+        + "reply: use wait: true, and send follow-ups with send_to_session.",
       inputSchema: {
         type: "object",
         properties: {
@@ -94,6 +98,11 @@ export function sessionCollabToolDefinitions() {
             description: "A session always creates in its own project: leave this out, or give that project's name. The PPM "
               + "Assistant must name the registered project to open the chat in (see projects_list); its chat starts in "
               + "the provider's default mode and model, and the user is always asked first.",
+          },
+          design: {
+            type: "string",
+            description: "The slug of an existing design of the project (its folder under designs/): opens that design's "
+              + "Design chat instead of an ordinary one. It runs in your permission mode. Not with `manager`.",
           },
           manager: {
             type: "boolean",
@@ -117,7 +126,8 @@ export function sessionCollabToolDefinitions() {
         + "other AI only through this tool: your final answer is not forwarded), to ask a session that already "
         + "holds the context, or to hand a running session more to do. A running session reads the message at its "
         + "next step; an idle one starts a turn. The user sees every message in both sessions. Sending to a session "
-        + "with more permissions than yours, and sending many messages back and forth, asks the user first. The PPM "
+        + "with more permissions than yours, and sending many messages back and forth, asks the user first. A Design "
+        + "chat answers in its reply instead of calling this tool: send to it with wait: true to get that answer. The PPM "
         + "Assistant may message a chat of any registered project: a project's manager chat without asking (within "
         + "limits), every other chat only after the user allows it on a card.",
       inputSchema: {
@@ -153,5 +163,6 @@ export function sessionCollabToolDefinitions() {
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
+    designShotToolDefinition(),
   ];
 }

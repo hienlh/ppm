@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import "../test-setup.ts";
 import { Hono } from "hono";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { providerRegistry } from "../../src/providers/registry.ts";
 import { configService } from "../../src/services/config.service.ts";
@@ -165,6 +165,16 @@ async function report(args: Record<string, unknown>): Promise<string> {
   return (JSON.parse(result.content[0]!.text) as { cardId: string }).cardId;
 }
 
+/** Keeps a design screenshot as `design_screenshot` would, for this test's project. */
+function keepShot(id: string, file: string, label: string): void {
+  const dir = join(home, "design-shots");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${id}.png`), new Uint8Array(64).fill(1));
+  writeFileSync(join(dir, `${id}.json`), JSON.stringify({
+    id, projectPath, slug: "kho-task", designTitle: "Kho task", file, label, width: 1280, height: 900, createdAt: new Date().toISOString(),
+  }));
+}
+
 const DRAFT = { to: "#culi-devs → @Top", text: "Anh Top ơi, lỗi pension kỳ 32 em fix xong ở PR #1301 rồi 🙏" };
 
 describe("OK on a card", () => {
@@ -282,5 +292,30 @@ describe("quiet hours", () => {
     expect(after.slice(header + 1).map((t) => t.split("\n")[0])).toEqual(["✅ Done · tgcards", "🔔 Needs your decision · tgcards"]);
     expect(after.some((t) => t.includes("npm publish"))).toBe(false);
     expect(assistantCards.get(done)!.status).toBe("open");
+  });
+});
+
+describe("a card with design pictures", () => {
+  it("sends the pictures as one album just before the card, numbered, with a full-size link", async () => {
+    const one = "1".repeat(32), two = "2".repeat(32);
+    keepShot(one, "index.html", "Light");
+    keepShot(two, "variant-2.html", "Dark");
+    const before = fake.sent(PHONE).length;
+    await report({ kind: "needs_decision", title: "Pick the Kho task look", body: "Reply 1 or 2.", images: [one, two] });
+    const card = await until(() => lastWith("Pick the Kho task look"));
+    const fresh = fake.sent(PHONE).slice(before);
+    const photos = fresh.filter((m) => m.photo);
+    expect(photos).toHaveLength(2);
+    expect(photos[0]!.photo!.album).toBe(photos[1]!.photo!.album);
+    expect(photos[0]!.text).toContain("1. Kho task — index.html · Light");
+    expect(photos[1]!.text).toContain("2. Kho task — variant-2.html · Dark");
+    expect(photos[1]!.text).toContain("Open full size");
+    // Pictures first, then the card that is answered.
+    expect(fresh.indexOf(photos[1]!)).toBeLessThan(fresh.indexOf(card));
+    expect(card.text).toContain("2 pictures above");
+  });
+
+  it("refuses an id that is not a screenshot of this project", async () => {
+    await expect(report({ kind: "done", title: "x", images: ["9".repeat(32)] })).rejects.toThrow("not a screenshot");
   });
 });

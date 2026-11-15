@@ -10,6 +10,8 @@ import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import { assistantCards } from "./assistant-cards.service.ts";
 import { countSessionCardsSince, findOpenUrgentTitled } from "./assistant-cards-db.ts";
 import { DIGEST_NOT_ASKED, fileReport, type ReportEnv } from "./manager-report-tool.ts";
+import { readShotSync } from "../design/shots/design-shots.service.ts";
+import { projectKey } from "../project-name-for-path.ts";
 
 /** Refused for every chat but a project's current manager chat. */
 export const NOT_A_MANAGER = "Only a project's manager chat can report to PPM Assistant. Answer the user in this chat instead.";
@@ -30,6 +32,11 @@ export const reportEnv: ReportEnv = {
   openUrgentTitled: (sessionId, title, since) => {
     const row = findOpenUrgentTitled(sessionId, title, since);
     return row ? assistantCards.toCard(row) : null;
+  },
+  shotOf: (id, projectPath) => {
+    const shot = readShotSync(id);
+    if (!shot || projectKey(shot.projectPath) !== projectKey(projectPath)) return null;
+    return { id: shot.id, designTitle: shot.designTitle, file: shot.file, label: shot.label };
   },
   quietWindowStart: currentQuietWindowStart,
   digestAnswer: (sessionId, items) => digestAnswers(sessionId, items),

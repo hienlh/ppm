@@ -239,6 +239,10 @@ app.route("/api/html-preview/content", htmlPreviewRoutes.content);
 import { designPreviewRoutes } from "./routes/design-preview.ts";
 app.route("/api/design-preview/content", designPreviewRoutes.content);
 
+// Design screenshots: opened from Telegram on a phone with no PPM login; the random id is the credential.
+import { designShotRoutes } from "./routes/design-shots.ts";
+app.route("/api/design-shots", designShotRoutes);
+
 // MCP sign-in redirect: reached by a browser navigation from the authorization server,
 // which carries no PPM token. It only completes a flow an authenticated user started.
 import { mcpAuthRoutes, mcpAuthCallbackHandler } from "./routes/mcp-auth.ts";

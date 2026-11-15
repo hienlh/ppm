@@ -1,8 +1,8 @@
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
-import { isAssistantProject } from "../../shared/assistant-project.ts";
+import { isValidDesignSlug } from "../design/design-slug.ts";
 import type { CreateSessionResult, SessionCollabCreateApproval } from "../../shared/session-collab.ts";
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
-import { effectivePermissionMode, sanitizeTitle, type CollabCaller, type CollabEnv } from "./collab-context.ts";
+import { effectivePermissionMode, projectFor, sanitizeTitle, type CollabCaller, type CollabEnv } from "./collab-context.ts";
 import { deliverAndWait } from "./collab-deliver.ts";
 import { createManagerSessionTool } from "./collab-create-manager.ts";
 import { jsonResult, noteAiTextRead, statusOf } from "./collab-status.ts";
@@ -25,6 +25,12 @@ import { collabTextTooLarge, MAX_COLLAB_TITLE_CHARS } from "./session-collab-too
  * there: depth 0, not recorded as AI-created, the provider's default mode and model unless a model
  * is given. It always asks, and the card states the project and the mode. With `manager: true` it
  * asks to create the project's manager chat instead (`collab-create-manager.ts`).
+ *
+ * With `design: "<slug>"` the chat is a Design chat for that existing design, set up as the Design
+ * tab sets one up (the stored slug is what gives every later turn the design instructions, the
+ * design tool policy, `design_check` and the turn snapshot). It still runs in the creator's mode,
+ * never the provider default a Design tab would take, so it is never more permissive than its
+ * creator. It cannot call the session tools itself; its answer is what a wait hands back.
  */
 
 const isMode = (mode: string | null): mode is string =>
@@ -39,6 +45,20 @@ interface CreatePlan {
   permissionMode: string;
   wait: boolean;
   project: { name: string; path: string };
+  /** A Design chat for this existing design. */
+  design: { slug: string; title: string } | null;
+}
+
+/** The design a create names, checked to exist in the project; a message for the AI when it cannot be used. */
+async function designFor(
+  env: CollabEnv, raw: unknown, providerId: string, project: { name: string; path: string },
+): Promise<{ slug: string; title: string } | null | string> {
+  if (raw === undefined) return null;
+  if (!isValidDesignSlug(raw)) return "`design` must be a design's slug: the name of its folder under designs/.";
+  if (!env.designOf || !env.providerRunsDesign) return "Design chats cannot be opened from here.";
+  if (!env.providerRunsDesign(providerId)) return `${providerId} cannot run a Design chat; leave \`provider\` out or pick another.`;
+  const found = await env.designOf(project.path, raw).catch(() => null);
+  return found ?? `Project "${project.name}" has no design "${raw}". Create it first (\`ppm design create\`), then open its Design chat.`;
 }
 
 /** Sessions counted against the limit, other than `ownSlots` slots this create already holds. */
@@ -48,18 +68,6 @@ function runningLimitHit(env: CollabEnv, projectName: string, ownSlots: number):
   if (used < max) return null;
   return `${max} AI-created sessions of this project are already running, the most the user allows at once. `
     + "Wait for one to finish (session_status shows which), or do the work yourself.";
-}
-
-/** The project a create goes to: the caller's own, or for the Assistant the one it named. */
-function projectFor(env: CollabEnv, caller: CollabCaller, raw: unknown): { name: string; path: string } | string {
-  if (caller.kind !== "assistant") {
-    if (raw !== undefined && raw !== caller.projectName) return `Sessions are created in your own project only ("${caller.projectName}"). Leave \`project\` out.`;
-    return { name: caller.projectName, path: caller.projectPath };
-  }
-  if (typeof raw !== "string" || !raw.trim()) return "`project` is required: the registered project to open the chat in (see projects_list).";
-  if (isAssistantProject(raw)) return "The Assistant's own chats are not a project. Name one of the user's projects (see projects_list).";
-  const project = env.projectByName?.(raw) ?? null;
-  return project ?? `No registered project is named "${raw.slice(0, 100)}". Call projects_list for the names.`;
 }
 
 /** `manager: true`: the project's manager chat, checked here and created in `collab-create-manager.ts`. */
@@ -78,7 +86,10 @@ async function createManagerFromArgs(env: CollabEnv, caller: CollabCaller, args:
 
 export async function createSessionTool(env: CollabEnv, caller: CollabCaller, args: Json, signal: AbortSignal): Promise<Json> {
   if (args.manager !== undefined && typeof args.manager !== "boolean") return textResult("`manager` must be true or false.", true);
-  if (args.manager === true) return createManagerFromArgs(env, caller, args, signal);
+  if (args.manager === true) {
+    if (args.design !== undefined) return textResult("`design` and `manager` cannot go together.", true);
+    return createManagerFromArgs(env, caller, args, signal);
+  }
   const assistant = caller.kind === "assistant";
   const title = sanitizeTitle(args.title, MAX_COLLAB_TITLE_CHARS);
   if (!title) return textResult("`title` is required: a few words the user will see in the session list.", true);
@@ -96,6 +107,8 @@ export async function createSessionTool(env: CollabEnv, caller: CollabCaller, ar
   if (args.model !== undefined && (typeof args.model !== "string" || !args.model.trim() || args.model.length > 100)) {
     return textResult("`model` must be a model name.", true);
   }
+  const design = await designFor(env, args.design, providerId, project);
+  if (typeof design === "string") return textResult(design, true);
   const callerModel = assistant ? null : env.live(caller.sessionId)?.model ?? env.storedModel(caller.sessionId);
   const model = typeof args.model === "string" ? args.model.trim() : providerId === caller.providerId ? callerModel : null;
 
@@ -118,7 +131,7 @@ export async function createSessionTool(env: CollabEnv, caller: CollabCaller, ar
   const release = env.reserveSpawnSlot(project.name);
   try {
     return await createReserved(env, caller, {
-      title, task, providerId: providerId as "claude" | "codex", model, depth, permissionMode, wait: args.wait === true, project,
+      title, task, providerId: providerId as "claude" | "codex", model, depth, permissionMode, wait: args.wait === true, project, design,
     }, release, signal);
   } finally {
     // Refused, failed or done: the slot goes back (a no-op once the created session took it over).
@@ -127,12 +140,13 @@ export async function createSessionTool(env: CollabEnv, caller: CollabCaller, ar
 }
 
 async function createReserved(env: CollabEnv, caller: CollabCaller, plan: CreatePlan, releaseSlot: () => void, signal: AbortSignal): Promise<Json> {
-  const { title, task, providerId, model, depth, permissionMode, project } = plan;
+  const { title, task, providerId, model, depth, permissionMode, project, design } = plan;
   const assistant = caller.kind === "assistant";
   if (assistant || (env.settings().askBeforeCreate && !env.pairs.canCreateWithoutAsking(caller.sessionId))) {
     const card: SessionCollabCreateApproval = {
       kind: "create", title, providerId, model, task, depth,
       ...(assistant ? { askedBy: "assistant" as const, projectName: project.name, permissionMode, modeSource: "provider-default" as const } : {}),
+      ...(design ? { design: { slug: design.slug, title: design.title }, ...(assistant ? {} : { permissionMode }) } : {}),
     };
     const answer = await env.approve(caller.sessionId, card, signal);
     if (!answer.allowed) return textResult(`The session was not created. ${answer.message}`, true);
@@ -147,6 +161,7 @@ async function createReserved(env: CollabEnv, caller: CollabCaller, plan: Create
   try {
     childId = env.canonical(await env.createSession(providerId, {
       projectName: project.name, projectPath: project.path, title, ...(assistant ? { asUserChat: true } : {}),
+      ...(design ? { designSlug: design.slug } : {}),
     }));
   } catch (e) {
     return textResult(`The session could not be created: ${(e as Error).message}`, true);
@@ -175,7 +190,9 @@ async function createReserved(env: CollabEnv, caller: CollabCaller, plan: Create
 
   // A turn reference points at the creator's turn in its project; the Assistant's chats are in none.
   const turnRef = assistant ? null : await env.currentTurnRef(caller).catch(() => null);
-  const target = { sessionId: childId, providerId, title, projectName: project.name, projectPath: project.path };
+  const target = {
+    sessionId: childId, providerId, title, projectName: project.name, projectPath: project.path, ...(design ? { design: true } : {}),
+  };
   const out = await deliverAndWait(env, {
     caller, target, body: task, wait: plan.wait, signal, permissionMode, turnRefs: turnRef ? [turnRef] : null,
   });
@@ -186,11 +203,12 @@ async function createReserved(env: CollabEnv, caller: CollabCaller, plan: Create
   // The id the chat keeps, so the one the Assistant is told is the one its later news names.
   const settled = assistant ? env.settledSessionId?.(childId, providerId) : undefined;
   const sessionId = settled ? await settled.catch(() => childId) : childId;
-  const result: CreateSessionResult & { project?: string } = {
+  const result: CreateSessionResult & { project?: string; design?: string } = {
     sessionId, title, providerId, model,
     status: statusOf(env, sessionId, providerId, caller.sessionId, !!out.reply),
     ...(out.reply ? { reply: out.reply } : {}),
     ...(assistant ? { project: project.name } : {}),
+    ...(design ? { design: design.slug } : {}),
   };
   noteAiTextRead(env, caller, [result.status], out.reply);
   return jsonResult(result);

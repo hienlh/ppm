@@ -14,7 +14,7 @@ const INTRO = FEATURE_INTROS[0]!;
 /** The features introduced after this one, already answered, so only this one is asked here. */
 const otherIntrosAnswered = () =>
   Object.fromEntries(FEATURE_INTROS.slice(1).map((i) => [i.id, { answer: "off" as const, skips: 0, via: "tour" as const }]));
-const SIX = ["search_sessions", "list_session_turns", "read_session_turns", "create_session", "send_to_session", "session_status"];
+const SIX = ["search_sessions", "list_session_turns", "read_session_turns", "create_session", "send_to_session", "session_status", "design_screenshot"];
 const ai = () => configService.get("ai");
 const onTools = () => PPM_TOOLS.filter((tool) => ppmToolOn(ai(), tool));
 let savedProjects: ProjectConfig[];

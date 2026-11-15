@@ -25,7 +25,7 @@ interface Item { content: string; clientMessageId?: string }
 class ScriptedProvider {
   name = "Scripted";
   sessions = new Map<string, Session>();
-  sends: Array<{ sessionId: string; message: string }> = [];
+  sends: Array<{ sessionId: string; message: string; designSession?: boolean }> = [];
   pushes: Array<{ sessionId: string; message: string }> = [];
   dropped: string[] = [];
   resumed: string[] = [];
@@ -73,8 +73,8 @@ class ScriptedProvider {
     s.wake?.();
   }
 
-  async *sendMessage(sessionId: string, message: string, opts?: { clientMessageId?: string }): AsyncGenerator<ChatEvent> {
-    this.sends.push({ sessionId, message });
+  async *sendMessage(sessionId: string, message: string, opts?: { clientMessageId?: string; designSession?: boolean }): AsyncGenerator<ChatEvent> {
+    this.sends.push({ sessionId, message, ...(opts?.designSession ? { designSession: true } : {}) });
     if (this.streamDelayMs) await Bun.sleep(this.streamDelayMs);
     let id = sessionId;
     const stream = { queue: [{ content: message, clientMessageId: opts?.clientMessageId }] as Item[], wake: undefined as (() => void) | undefined, closed: false };
@@ -331,11 +331,17 @@ describe("deliverToSession", () => {
     }
   });
 
-  it("refuses a design session, another provider's session, and the sender itself", async () => {
+  it("delivers into a design session, whose turn runs as a design turn", async () => {
     const design = await chatService.createSession(claudeLike.id, {});
     setSessionDesignSlug(design.id, "landing-page");
-    await expect(deliver(design.id, claudeLike.id, "hi")).rejects.toMatchObject({ code: "design_session" });
+    const result = await deliver(design.id, claudeLike.id, "make it darker");
+    expect(result.delivered).toBe("started");
+    await until(() => claudeLike.sends.some((s) => s.sessionId === design.id), "the design turn");
+    // The design identity comes from the stored slug in chatService, whoever sends.
+    expect(claudeLike.sends.find((s) => s.sessionId === design.id)?.designSession).toBe(true);
+  });
 
+  it("refuses another provider's session, and the sender itself", async () => {
     const other = await chatService.createSession(codexLike.id, {});
     await expect(deliver(other.id, claudeLike.id, "hi")).rejects.toBeInstanceOf(DeliverToSessionError);
     await expect(deliver(sender.sessionId, claudeLike.id, "hi")).rejects.toMatchObject({ code: "invalid" });

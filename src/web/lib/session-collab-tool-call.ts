@@ -7,7 +7,7 @@
  * anything malformed is dropped rather than trusted: the card then shows the raw text instead.
  */
 import {
-  CLAUDE_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_SERVER, CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL,
+  CLAUDE_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_SERVER, CREATE_SESSION_TOOL, DESIGN_SCREENSHOT_TOOL, SEND_TO_SESSION_TOOL,
   SESSION_STATUS_TOOL, type SessionCollabTool, type SessionStatus, type SessionWaitOutcome, type SessionDelivery,
   type WaitingCard,
 } from "../../shared/session-collab";
@@ -43,8 +43,9 @@ const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 
 const text = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v : undefined);
 
 /** The `ppm-sessions` tool a name is, under either provider's name, or null. */
-export function sessionCollabToolOf(toolName: string): SessionCollabTool | null {
-  return (TOOL_NAME.exec(toolName)?.[1] as SessionCollabTool | undefined) ?? null;
+export function sessionCollabToolOf(toolName: string): Exclude<SessionCollabTool, typeof DESIGN_SCREENSHOT_TOOL> | null {
+  // `design_screenshot` is not matched: its pictures show in the ordinary tool card.
+  return (TOOL_NAME.exec(toolName)?.[1] as Exclude<SessionCollabTool, typeof DESIGN_SCREENSHOT_TOOL> | undefined) ?? null;
 }
 
 /** The call an event is, or null. Codex wraps the arguments as `{ server, tool, arguments }`. */

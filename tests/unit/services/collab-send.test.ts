@@ -29,16 +29,14 @@ describe("send_to_session", () => {
     expect(w.asked).toHaveLength(0);
   });
 
-  it("refuses itself, another project, a design session and an unknown session", async () => {
+  it("refuses itself, another project and an unknown session", async () => {
     const self = world();
     expect(textOf(await sendToSessionTool(self.env, self.caller, { session_id: A, message: "x" }, signal()))).toContain("own session");
     const other = world({ projectPath: OTHER_PATH });
     expect(textOf(await sendToSessionTool(other.env, other.caller, { session_id: B, message: "x" }, signal()))).toContain("another project");
-    const design = world({ design: true });
-    expect(textOf(await sendToSessionTool(design.env, design.caller, { session_id: B, message: "x" }, signal()))).toContain("design session");
     const unknown = world();
     expect(textOf(await sendToSessionTool(unknown.env, unknown.caller, { session_id: "session-zzzz", message: "x" }, signal()))).toContain("No PPM session");
-    for (const w of [self, other, design, unknown]) expect(w.deliveries).toHaveLength(0);
+    for (const w of [self, other, unknown]) expect(w.deliveries).toHaveLength(0);
   });
 
   it("refuses a session PPM has no project record for and that is not open, such as one in a terminal", async () => {
