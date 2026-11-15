@@ -47,7 +47,8 @@ export async function step4(k, s) {
   assert.equal(got.blocks.userWords?.cardId, s.decisionCard.id, "naming the card it answers");
   assert.equal(got.blocks.fromSession, null, "not another session's message");
   await until("card answered", async () => (await k.cards()).find((c) => c.id === s.decisionCard.id)?.status === "answered");
-  await k.body().locator('[data-assistant-card="needs_decision"][data-card-status="answered"]', { hasText: DECISION }).waitFor({ timeout: 15000 });
+  // Answered, the decision folds to one line saying so.
+  await k.body().locator("[data-answered-card]", { hasText: DECISION }).filter({ hasText: "You replied" }).waitFor({ timeout: 15000 });
   const edited = await k.tg.waitFor(k.owner, "the card lost its buttons", (m) => m.message_id === s.decisionMessage && !labelsOf(m).includes("OK, send"));
   assertNoButtons(edited, "no button is left on the answered card");
   await k.tg.waitText(k.owner, "word for word");

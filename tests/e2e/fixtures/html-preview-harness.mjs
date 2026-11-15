@@ -78,9 +78,15 @@ export async function createHtmlPreviewHarness({ serverScript = "tests/e2e/fixtu
     await Promise.all([ready(`${api}/api/health`, backend), ready(web, frontend)]);
     const modulePath = process.env.PPM_PLAYWRIGHT_MODULE;
     const pw = modulePath ? await import(pathToFileURL(modulePath).href) : await import("playwright");
-    // PPM_PLAYWRIGHT_CHANNEL=chrome drives the installed Chrome when Playwright's own build is missing.
+    // PPM_PLAYWRIGHT_CHANNEL=chrome drives the installed Chrome when Playwright's own build is missing;
+    // PPM_PLAYWRIGHT_EXECUTABLE names a browser binary (the ppm-e2e-chromium image's Chromium).
     const channel = process.env.PPM_PLAYWRIGHT_CHANNEL;
-    const browser = await pw.chromium.launch({ headless: true, ...(channel ? { channel } : {}) });
+    const executablePath = process.env.PPM_PLAYWRIGHT_EXECUTABLE;
+    const browser = await pw.chromium.launch({
+      headless: true,
+      ...(channel ? { channel } : {}),
+      ...(executablePath ? { executablePath } : {}),
+    });
     return { browser, sandbox, project, api, web, artifacts, cleanup, restartBackend };
   } catch (error) { await cleanup(); throw error; }
 }

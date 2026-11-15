@@ -547,7 +547,7 @@ export function MessageList({
   const extension = useMemo(() => timeline?.build(filtered) ?? null, [timeline, filtered]);
   const placed = useMemo(() => {
     if (!extension) return null;
-    const { before, trailing } = placeTimelineItems(filtered, extension.items, (i) => i.at, { olderHidden: hasMore });
+    const { before, trailing } = placeTimelineItems(filtered, extension.items, (i) => i.at, { olderHidden: hasMore, keep: (i) => !!i.keep });
     const draw = (item: ChatTimelineItem) => <div key={item.key} className="px-4 pt-4" data-timeline-item="">{item.node}</div>;
     return { before: new Map([...before].map(([i, items]) => [i, items.map(draw)] as const)), trailing: trailing.map(draw) };
   }, [extension, filtered, hasMore]);

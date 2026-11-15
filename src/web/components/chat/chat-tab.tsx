@@ -91,6 +91,8 @@ interface ChatTabProps {
    * mounted underneath, so what was typed in it is still there afterwards.
    */
   composerOverride?: React.ReactNode;
+  /** First on the left of the footer's context row, beside the chat's own chips (the Assistant's "Waiting on you"). */
+  contextChip?: React.ReactNode;
 }
 
 /**
@@ -111,7 +113,7 @@ export function ChatTab(props: ChatTabProps) {
   ) : <ChatTabContent {...props} />;
 }
 
-function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch, historyFilter, timeline, composerOverride }: ChatTabProps) {
+function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch, historyFilter, timeline, composerOverride, contextChip }: ChatTabProps) {
   const minimalMode = useSettingsStore((s) => s.minimalMode);
   const preparation = useNewChatPreparation();
   const metadataRef = useRef(metadata);
@@ -1423,6 +1425,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           {/* Padded so the chips' focus rings and widened touch areas (10px past a 26px phone chip,
               see footer-chip.ts) are not cut by the clip. */}
           <div className="-my-2.5 flex min-w-0 items-center gap-1.5 overflow-hidden py-2.5 @max-[420px]/chat:gap-1 max-md:gap-1">
+            {contextChip}
             <ActivityChip
               projectName={projectName}
               agentProviderId={agentSessionIdentity.providerId}

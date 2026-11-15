@@ -1,13 +1,15 @@
 /**
  * The Assistant: a head (only where no window titlebar carries the name and gear), the chip row,
- * the "Waiting on you" bar holding every card still open, and one stream — the main session's chat with the cards placed among its messages by time.
- * Answering a card in your own words puts the reply-to bar where the composer is.
+ * and one stream — the main session's chat with the cards placed among its messages by time, each
+ * card that still waits drawn there whole with its buttons. In the footer's context row, the
+ * "Waiting on you" chip counts them and jumps the stream to each. Answering a card in your own words puts
+ * the reply-to bar where the composer is.
  *
  * The chat is an ordinary `ChatTab` in the virtual `__assistant__` project, embedded under the
  * Assistant tab's own id so the session it runs persists into the tab's metadata. `/clear` and a
  * fork are folded back into this tab, keyed on the tab's chat epoch.
  */
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Loader2 } from "@/lib/icons";
 import { ChatTab, type ChatForkRequest } from "@/components/chat/chat-tab";
 import { useIsMobile } from "@/hooks/use-is-mobile";
@@ -17,9 +19,10 @@ import { useCardReplyStore } from "@/stores/assistant-card-reply-store";
 import { CardReplyBar } from "./cards/card-reply-bar";
 import { AssistantHead } from "./assistant-head";
 import { ManagerChipRow } from "./manager-chip-row";
-import { AssistantWaitingCards } from "./assistant-waiting-cards";
+import { AssistantWaitingChip, AssistantWaitingList } from "./assistant-waiting-cards";
 import { useAssistantSessionChoice } from "./use-assistant-session-choice";
 import { useAssistantStreamTimeline } from "./use-assistant-stream-timeline";
+import { useWaitingCardJump } from "./use-waiting-card-jump";
 
 export const ONE_OFF_LABEL = "One-off session";
 export const BACK_TO_MAIN_LABEL = "Back to main";
@@ -36,6 +39,8 @@ export function AssistantWindowBody({ tabId, metadata }: { tabId: string; metada
   const timeline = useAssistantStreamTimeline();
   const replying = useCardReplyStore((s) => s.target !== null);
   const closeReply = useCardReplyStore((s) => s.close);
+  const root = useRef<HTMLDivElement>(null);
+  useWaitingCardJump(root);
 
   // Reply-to mode belongs to the session it was opened over.
   useEffect(() => { closeReply(); }, [sessionId, closeReply]);
@@ -48,11 +53,15 @@ export function AssistantWindowBody({ tabId, metadata }: { tabId: string; metada
 
   let chat: React.ReactNode;
   if (providers && providers.length === 0) {
+    // No chat to place the waiting cards in: they are listed under the notice instead.
     chat = (
-      <div className="flex h-full items-center justify-center p-4 text-center text-sm text-text-subtle" role="status">
-        {error
-          ? "Could not load the AI providers. Reopen the Assistant to try again."
-          : "No configured AI provider can run the Assistant. Enable Claude or Codex in Settings → AI Provider."}
+      <div className="flex h-full flex-col">
+        <div className="flex min-h-24 flex-1 items-center justify-center p-4 text-center text-sm text-text-subtle" role="status">
+          {error
+            ? "Could not load the AI providers. Reopen the Assistant to try again."
+            : "No configured AI provider can run the Assistant. Enable Claude or Codex in Settings → AI Provider."}
+        </div>
+        <AssistantWaitingList />
       </div>
     );
   } else if (!providerId) {
@@ -72,16 +81,15 @@ export function AssistantWindowBody({ tabId, metadata }: { tabId: string; metada
         onBranchSwitch={followBranch}
         timeline={timeline}
         composerOverride={replying ? <CardReplyBar /> : undefined}
+        contextChip={<AssistantWaitingChip />}
       />
     );
   }
 
   return (
-    // A size container: the "Waiting on you" bar takes a share of this body's height, not the screen's.
-    <div className="flex h-full min-h-0 flex-col [container-type:size]" data-assistant-body="">
+    <div ref={root} className="flex h-full min-h-0 flex-col" data-assistant-body="">
       {(isMobile || !inWindow) && <AssistantHead sessionId={sessionId} />}
       <ManagerChipRow />
-      <AssistantWaitingCards />
       {oneOff && (
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-accent-wash px-3 text-xs text-text-secondary" data-one-off="">
           <span>{ONE_OFF_LABEL}</span>·

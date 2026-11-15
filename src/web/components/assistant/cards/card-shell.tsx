@@ -8,8 +8,9 @@
  * Buttons come in two groups. The card's own answers (`actions`: OK, Reply, Allow…) lead on a
  * desktop; the rest (`secondary`: Open manager chat, Dismiss) sit at the right. On a phone the
  * answers share the bottom row, the first of them on the right under the thumb, with the rest as
- * one row of two above them. In the "Waiting on you" bar the row sticks to the bar's bottom, so a
- * long card keeps its buttons in view while its text scrolls.
+ * one row of two above them. In the Assistant's stream a card is drawn whole with the row at its
+ * end; only a manager chat's "Waiting on you" bar, which scrolls a card in a box, makes the row
+ * stick to that box's bottom.
  */
 import { createContext, useContext, useLayoutEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { ChevronDown } from "@/lib/icons";
@@ -20,9 +21,9 @@ import { FollowUpNewCards } from "./card-followup-new-cards";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 
 /**
- * Set by the "Waiting on you" bar: there a long card scrolls inside the bar and its button row
- * sticks to the bar's bottom, so OK and Reply stay in view. In the stream it must not stick, or
- * every open card would float its buttons over the messages below it.
+ * Set by a manager chat's "Waiting on you" bar: there a long card scrolls inside the bar and its
+ * button row sticks to the bar's bottom, so OK and Reply stay in view. In the Assistant's stream it
+ * must not stick, or every open card would float its buttons over the messages below it.
  */
 export const CardStickyActionsContext = createContext(false);
 
@@ -154,10 +155,8 @@ export function CardText({ text, fold, className, projectName }: { text: string;
   );
 }
 
-export function CardShell({ card, look, children, actions, secondary, error, meta, pointer }: {
+export function CardShell({ card, look, children, actions, secondary, error, meta }: {
   card: AssistantCard; look: CardLook; children?: ReactNode; error?: string | null;
-  /** Only names a card shown whole elsewhere ("Waiting on you"); see `waiting-card-pointer.tsx`. */
-  pointer?: boolean;
   /** The card's own answers, shown while it waits. */
   actions?: ReactNode;
   /** Lesser actions (Open manager chat, Dismiss), shown while it waits. */
@@ -179,7 +178,6 @@ export function CardShell({ card, look, children, actions, secondary, error, met
       )}
       data-assistant-card={card.kind}
       data-card-status={card.status}
-      data-card-pointer={pointer ? "" : undefined}
     >
       <header className="flex min-w-0 items-center gap-1.5 px-3.5 pt-3 text-xs">
         <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-semibold", TONE_CHIP[look.tone])} data-card-kind-label="">

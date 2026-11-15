@@ -161,7 +161,7 @@ try {
   assert.ok(card, "the card is open");
   ok("a long Markdown card is open");
 
-  /** The card's text box in the bar, read the way the user sees it. */
+  /** The card's text box in the stream, read the way the user sees it. */
   const inspect = (scope) => scope.locator("[data-waiting-card] [data-card-text]").first().evaluate((el) => ({
     strong: [...el.querySelectorAll("strong")].map((n) => n.textContent),
     code: [...el.querySelectorAll("code")].map((n) => n.textContent),
@@ -210,9 +210,11 @@ try {
   // ---- Desktop ----
   await page.goto(`${web}/project/Nxsys/assistant`);
   const body = k.body();
-  await body.locator("[data-waiting-cards]").waitFor({ timeout: 30000 });
-  await page.waitForTimeout(300);
-  await body.locator("[data-waiting-cards]").screenshot({ path: join(shotsDir, `${prefix}-01-desktop-waiting-bar.png`) });
+  await body.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
+  await body.locator("[data-waiting-go]").click();
+  await body.locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: join(shotsDir, `${prefix}-01-desktop-card-in-stream.png`) });
   await wholeCardShot(page, body, "02-desktop-card-whole");
   const deskSeen = await inspect(body);
   check("desktop: headings, bullets, bold and code render; HTML is text; no image; links open a new tab", () => assertMarkdown(deskSeen, "desktop"));
@@ -226,15 +228,14 @@ try {
   const mk = loopKit({ web, fx, tg, page: mob, shotsDir, owner: OWNER, record: () => {} });
   await mob.goto(`${web}/project/Nxsys/assistant`);
   const mbody = mk.body();
-  const msheet = mob.locator("[data-waiting-sheet]");
-  await mbody.locator("[data-waiting-cards]").waitFor({ timeout: 30000 });
-  await mbody.locator("[data-waiting-toggle]").tap();
-  await msheet.waitFor({ timeout: 5000 });
-  await mob.waitForTimeout(300);
-  await mob.screenshot({ path: join(shotsDir, `${prefix}-03-phone-390x844-sheet.png`) });
-  await wholeCardShot(mob, msheet, "04-phone-card-whole");
-  const mobSeen = await inspect(msheet);
-  check("phone: the same Markdown rendering in the full-screen sheet", () => assertMarkdown(mobSeen, "phone"));
+  await mbody.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
+  await mbody.locator("[data-waiting-go]").tap();
+  await mbody.locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
+  await mob.waitForTimeout(700);
+  await mob.screenshot({ path: join(shotsDir, `${prefix}-03-phone-390x844-card-in-stream.png`) });
+  await wholeCardShot(mob, mbody, "04-phone-card-whole");
+  const mobSeen = await inspect(mbody);
+  check("phone: the same Markdown rendering in the stream", () => assertMarkdown(mobSeen, "phone"));
 
   // ---- Telegram (fake Bot API) ----
   const sent = await tg.sent(OWNER);
@@ -261,7 +262,8 @@ try {
   // ---- Once answered, the card folds in the stream ----
   await body.locator("[data-waiting-card]").getByRole("button", { name: "OK", exact: true }).click();
   await until("card no longer waits", async () => (await k.cards()).find((c) => c.id === card.id)?.status !== "open", 15000);
-  await body.locator("[data-waiting-toggle]").click().catch(() => {});
+  // Answered, it folds to one line; opened, the card shows again with its long text folded.
+  await body.locator("[data-answered-card]", { hasText: CARD.title }).locator("[data-answered-toggle]").click();
   const done = body.locator(`[data-assistant-card="needs_decision"]:not([data-card-status="open"])`, { hasText: CARD.title }).last();
   await done.evaluate((el) => {
     let box = el.parentElement;

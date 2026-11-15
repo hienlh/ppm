@@ -60,10 +60,20 @@ function jumpClock(initialOffset = 0): AssistantClock & { advance(ms: number): n
   };
 }
 
+/**
+ * The added lines the rules check was asked about. The prompt lists them as a JSON array after
+ * "numbered from 1):", each a line with the heading it sits under (`{ line, under }`); a plain
+ * string is read too, as the prompt once had it.
+ */
+function addedLines(prompt: string): string[] {
+  const match = prompt.match(/^Added lines[^\n]*\(JSON array, numbered from 1\): (\[.*\])$/m);
+  if (!match) return [];
+  return (JSON.parse(match[1]!) as Array<string | { line: string }>).map((a) => (typeof a === "string" ? a : a.line));
+}
+
 /** Verdicts for the rules check: a restriction, unless the line asks to be read as relaxing. */
 function rulesVerdicts(prompt: string): string {
-  const match = prompt.match(/Added lines \(JSON array, numbered from 1\): (\[.*\])/);
-  const added = match ? (JSON.parse(match[1]!) as string[]) : [];
+  const added = addedLines(prompt);
   return JSON.stringify({
     verdicts: added.map((line, i) => ({ line: i + 1, verdict: line.includes("RELAX") ? "relaxes_or_unclear" : "restriction" })),
   });
@@ -106,8 +116,7 @@ export async function setupManagerLoop(opts: { port: number }): Promise<ManagerL
 
   return {
     async completeOnce({ prompt }) {
-      const added = prompt.match(/Added lines \(JSON array, numbered from 1\): (\[.*\])/)?.[1];
-      rulesChecks.push(added ? JSON.parse(added) as string[] : []);
+      rulesChecks.push(addedLines(prompt));
       return { text: rulesVerdicts(prompt) };
     },
     async route(req, route) {

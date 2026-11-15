@@ -1,12 +1,11 @@
 /**
- * "Waiting on you": the cards that still wait on the user, pinned where the user cannot miss them
- * — above the Assistant's stream, and above a manager chat's composer for that chat's own cards.
- * The stream places a card by the time it was made, so an open one drifts up among later messages;
- * this bar keeps it in view until it is answered.
+ * A manager chat's "Waiting on you": what that chat reported to the PPM Assistant and still waits
+ * on the user, pinned above its composer. Those cards are not part of the chat's own stream, so
+ * they need a place of their own here. (The Assistant itself draws every waiting card in its
+ * stream and has only a dock above its composer: `assistant-waiting-cards.tsx`.)
  *
  * One card shows at a time, whole and with its own buttons, and ‹ › step to the next. A new card
- * moves the bar to itself; a press on a red count (`focus`) opens it on that project's first card.
- * Either way the card it lands on is outlined for a moment, so the eye finds it.
+ * moves the bar to itself, outlined for a moment so the eye finds it.
  *
  * A desktop opens the card under the header, in a box that scrolls. A phone has no room for that:
  * half a screen of card over half a screen of chat read as broken. There the bar is one 44 px row
@@ -18,27 +17,19 @@ import { BellRing, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, X } from "
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
-import { useCardReplyStore } from "@/stores/assistant-card-reply-store";
+import { WAITING_HIGHLIGHT_MS } from "@/stores/assistant-waiting-jump-store";
 import type { AssistantCard as Card } from "../../../shared/assistant-cards";
 import { AssistantCard } from "./cards/assistant-card";
 import { CardStickyActionsContext } from "./cards/card-shell";
 import { WaitingBadge } from "./manager-chip";
 import { MANAGER_CHAT_OPENING_EVENT } from "./open-manager-chat";
 
-/** How long the card the bar lands on stays outlined. */
-export const WAITING_HIGHLIGHT_MS = 1800;
-
-export interface WaitingBarFocus {
-  /** The card to show; null shows the first. */
-  cardId: string | null;
-  nonce: number;
-}
+export { WAITING_HIGHLIGHT_MS };
 
 interface Props {
   /** In the order the user steps through them. */
   cards: readonly Card[];
   label: string;
-  focus?: WaitingBarFocus | null;
   onCard?: (card: Card) => void;
   /** Under the shown card: an inline reply bar, a "more in other projects" line. */
   children?: (card: Card) => ReactNode;
@@ -50,8 +41,8 @@ interface Props {
 
 const NAV = "grid size-11 shrink-0 place-items-center rounded-full text-text-secondary can-hover:hover:bg-surface-elevated can-hover:hover:text-text-primary md:size-7";
 
-/** In the Assistant on a desktop: a share of its own body (a size container), never past half the screen. */
-export const ASSISTANT_SLOT_HEIGHT = "max-h-[min(50dvh,46cqh)]";
+/** Above a chat's composer, in a window or on a phone: room for the card, not the chat. */
+const DEFAULT_SLOT_HEIGHT = "max-h-[min(34dvh,300px)]";
 
 function Pager({ index, count, step }: { index: number; count: number; step: (by: number) => void }) {
   if (count < 2) return null;
@@ -82,7 +73,7 @@ function Title({ label, count }: { label: string; count: number }) {
   );
 }
 
-export function WaitingCardsBar({ cards, label, focus, onCard, children, note, slotHeight = ASSISTANT_SLOT_HEIGHT }: Props) {
+export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeight = DEFAULT_SLOT_HEIGHT }: Props) {
   const phone = useIsMobile();
   const [currentId, setCurrentId] = useState<string | null>(cards[0]?.id ?? null);
   // Unfolded under the header on a desktop; on a phone, whether the full-screen sheet is up. Kept
@@ -126,26 +117,8 @@ export function WaitingCardsBar({ cards, label, focus, onCard, children, note, s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cards]);
 
-  // A press on a red count, or on "Show" beside the card's place in the stream.
-  useEffect(() => {
-    if (!focus) return;
-    land(focus.cardId ?? cards[0]?.id ?? null, true);
-    root.current?.scrollIntoView?.({ block: "nearest" });
-    // Only a new press moves the bar; the list changing under it does not.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focus?.nonce]);
-
-  // Answering a card in the Assistant's own composer: on a phone the sheet steps aside for it, on
-  // every Reply (a second card's included). A manager chat answers in place and never sets this.
-  useEffect(() => {
-    if (!phone) return;
-    return useCardReplyStore.subscribe((s, before) => {
-      if (s.target && s.target !== before.target) { leaving.current = true; setOpenIn({ phone: true, open: false }); }
-    });
-  }, [phone]);
-
-  // Leaving the Assistant: the sheet lives in the app's root, so a hidden tab would leave it
-  // over whatever comes next. It closes when a manager chat opens and when the bar stops being
+  // Leaving the chat: the sheet lives in the app's root, so a hidden tab would leave it over
+  // whatever comes next. It closes when a manager chat opens and when the bar stops being
   // laid out: its tab hidden (`display: none`, no box at all) or parked by the tab pool (a 0×0,
   // invisible box) — either way the row measures nothing.
   useEffect(() => {

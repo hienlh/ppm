@@ -222,7 +222,7 @@ try {
   // ---- Desktop ----
   await page.goto(`${web}/project/Nxsys/assistant`);
   const body = k.body();
-  await body.locator("[data-waiting-cards]").waitFor({ timeout: 30000 });
+  await body.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
   await body.locator("[data-waiting-card] [data-card-choice]").first().waitFor({ timeout: 15000 });
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(shotsDir, "01-desktop-assistant.png") });
@@ -241,15 +241,13 @@ try {
   const mk = loopKit({ web, fx, tg, page: mob, shotsDir, owner: OWNER, record: () => {} });
   await mob.goto(`${web}/project/Nxsys/assistant`);
   const mbody = mk.body();
-  const msheet = mob.locator("[data-waiting-sheet]");
-  await mbody.locator("[data-waiting-cards]").waitFor({ timeout: 30000 });
-  await mbody.locator("[data-waiting-toggle]").tap();
-  await msheet.waitFor({ timeout: 5000 });
-  await msheet.locator("[data-card-choice]").first().waitFor({ timeout: 10000 });
-  await mob.waitForTimeout(300);
-  await mob.screenshot({ path: join(shotsDir, "03-phone-390x844-sheet.png") });
-  await wholeCardShot(mob, msheet, "04-phone-card-three-choices");
-  const mobBoxes = await choiceBoxes(msheet);
+  await mbody.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
+  await mbody.locator("[data-waiting-go]").tap();
+  await mbody.locator("[data-waiting-card][data-highlighted] [data-card-choice]").first().waitFor({ timeout: 10000 });
+  await mob.waitForTimeout(700);
+  await mob.screenshot({ path: join(shotsDir, "03-phone-390x844-card-in-stream.png") });
+  await wholeCardShot(mob, mbody, "04-phone-card-three-choices");
+  const mobBoxes = await choiceBoxes(mbody);
   assertStacked(mobBoxes, "phone");
   for (const b of mobBoxes) assert.ok(b.w >= 300, `phone: ${b.id} spans the card (${b.w}px)`);
   ok("phone: three full-width choice buttons stacked, each at least 44 px");
@@ -298,6 +296,8 @@ try {
   await tgPage.screenshot({ path: join(shotsDir, "06-telegram-after-choice.png"), fullPage: true });
   await k.idle(manager);
   await page.waitForTimeout(500);
+  // Answered, it folds to one line; open it to read how it ended.
+  await body.locator("[data-answered-card]", { hasText: SHIP.title }).locator("[data-answered-toggle]").click();
   const doneCard = body.locator(`[data-assistant-card="needs_decision"][data-card-status="answered"]`, { hasText: SHIP.title }).last();
   await doneCard.waitFor({ timeout: 15000 });
   await doneCard.scrollIntoViewIfNeeded();
@@ -321,6 +321,7 @@ try {
   await tg.waitFor(OWNER, "the freeze copy lost its buttons", (m) => m.message_id === freezeCopy.message_id && !labelsOf(m).some((l) => /^\d\. /.test(l)));
   await k.idle(manager);
   await page.waitForTimeout(500);
+  await body.locator("[data-answered-card]", { hasText: FREEZE.title }).locator("[data-answered-toggle]").click();
   const freezeDone = body.locator(`[data-assistant-card="needs_decision"][data-card-status="answered"]`, { hasText: FREEZE.title }).last();
   await freezeDone.waitFor({ timeout: 15000 });
   await freezeDone.scrollIntoViewIfNeeded();

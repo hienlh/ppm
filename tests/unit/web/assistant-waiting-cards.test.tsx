@@ -1,9 +1,11 @@
 /**
  * "Waiting on you": every red count has exactly its cards behind it, in reach. The list follows
- * the card events and refetches when the counts do not describe it; the bar shows one card at a
- * time with a pager, opens on a new card, and a chip's red count lands it on that project's first
- * card, outlined; a filter that hides cards says so; a manager chat shows its own reports (not its
- * requests) and answers them in place, with a Telegram-style "Replying to card" quote.
+ * the card events and refetches when the counts do not describe it. In the Assistant each waiting
+ * card is drawn once, whole, in the stream, and a chip in the footer counts them and asks for
+ * a jump to each (the arrows, a press on the dock, a chip's red count, which also moves a filter
+ * that hides the card); a filter that hides cards says so. A manager chat's bar shows one card at a
+ * time with a pager, opens on a new card, and answers its own reports (not its requests) in place,
+ * with a Telegram-style "Replying to card" quote.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createElement } from "react";
@@ -15,12 +17,14 @@ afterAll(uninstallDom);
 const store = await import("../../../src/web/stores/assistant-open-cards-store");
 const { applyOpenCard, countsMatch, orderWaitingCards, useOpenCardsStore, focusWaitingCards } = store;
 const { WaitingCardsBar, WAITING_HIGHLIGHT_MS } = await import("../../../src/web/components/assistant/waiting-cards-bar");
-const { AssistantWaitingCards, focusTarget } = await import("../../../src/web/components/assistant/assistant-waiting-cards");
+const { AssistantWaitingChip } = await import("../../../src/web/components/assistant/assistant-waiting-cards");
+const { focusTarget, useWaitingCardJump } = await import("../../../src/web/components/assistant/use-waiting-card-jump");
+const { jumpToWaitingCard, useWaitingJumpStore } = await import("../../../src/web/stores/assistant-waiting-jump-store");
 const { ManagerChatWaitingCards, managerChatWaitingCards } = await import("../../../src/web/components/assistant/manager-chat-waiting-cards");
 const { ManagerChip } = await import("../../../src/web/components/assistant/manager-chip");
 const { setAssistantCardFilter, useAssistantCardsStore } = await import("../../../src/web/stores/assistant-cards-store");
 const { api } = await import("../../../src/web/lib/api-client");
-const { act } = await import("react");
+const { act, useRef } = await import("react");
 type Card = import("../../../src/shared/assistant-cards").AssistantCard;
 type Manager = import("../../../src/shared/assistant-managers").ManagerChatSummary;
 
@@ -58,6 +62,7 @@ afterEach(async () => {
   for (const s of spies.splice(0)) s.mockRestore();
   setAssistantCardFilter(null);
   useOpenCardsStore.setState({ focus: null });
+  useWaitingJumpStore.setState({ request: null, lit: null });
 });
 
 const q = (sel: string) => view!.container.querySelector(sel);
@@ -99,7 +104,7 @@ describe("the list behind the counts", () => {
   });
 });
 
-describe("the bar", () => {
+describe("a manager chat's bar", () => {
   it("shows one card with its count and steps to the next, outlining it", async () => {
     const a = card({ title: "First" }); const b = card({ title: "Second" });
     view = await mount(createElement(WaitingCardsBar, { cards: [a, b], label: "Waiting on you" }));
@@ -147,44 +152,142 @@ describe("the bar", () => {
   });
 });
 
+/** The Assistant's chip plus its jump hook, as the body mounts them. */
+function Assistant() {
+  const root = useRef<HTMLDivElement>(null);
+  useWaitingCardJump(root);
+  return createElement("div", { ref: root }, createElement(AssistantWaitingChip));
+}
+const jumpedTo = () => useWaitingJumpStore.getState().request?.cardId ?? null;
+const dock = () => q("[data-waiting-dock]");
+/** The card the chip is on, as its accessible name says (the chip itself shows no title). */
+const onCard = () => q("[data-waiting-go]")?.getAttribute("aria-label") ?? null;
+
 describe("in the Assistant", () => {
-  it("lists every open card the counts are made of, and says what a filter hides", async () => {
-    openList = [card({ title: "Ship 0.25.6?" }), card({ projectName: "nxsys", title: "Payroll run" })];
-    view = await mount(createElement(AssistantWaitingCards));
+  it("counts every open card in one footer chip and jumps to each, stepping with the arrows", async () => {
+    const a = card({ title: "Ship 0.25.6?" }); const b = card({ projectName: "nxsys", title: "Payroll run" });
+    openList = [a, b];
+    view = await mount(createElement(Assistant));
     await settle();
-    expect(q("[data-waiting-cards]")?.getAttribute("data-waiting-count")).toBe("2");
-    expect(q("[data-waiting-cards]")?.textContent).toContain("Waiting on you");
+    expect(dock()?.getAttribute("data-waiting-count")).toBe("2");
+    expect(dock()?.getAttribute("aria-label")).toBe("Waiting on you");
+    // Simple: an icon, "Waiting", the count and the pager; no card title, no project.
+    expect(dock()?.textContent).toBe("Waiting21/2");
+    expect(onCard()).toBe('Go to "Ship 0.25.6?", waiting on you');
+    // The chip never draws a card: the stream does.
+    expect(q("[data-waiting-card]")).toBeNull();
+    expect(q("[data-card-actions]")).toBeNull();
+    await click(q("[data-waiting-go]"));
+    expect(jumpedTo()).toBe(a.id);
+    await click(q('button[aria-label="Next waiting card"]'));
+    expect(jumpedTo()).toBe(b.id);
+    expect(q("[data-waiting-position]")?.textContent).toBe("2/2");
+    expect(onCard()).toBe('Go to "Payroll run", waiting on you');
+    await click(q('button[aria-label="Next waiting card"]'));
+    expect(jumpedTo()).toBe(a.id);
+    await click(q('button[aria-label="Previous waiting card"]'));
+    expect(jumpedTo()).toBe(b.id);
+    // The footer chips' size, with 44 px hit areas below `md` (an invisible ::after).
+    expect(dock()!.className).toContain("h-7");
+    expect(dock()!.className).toContain("max-md:h-[26px]");
+    expect(q("[data-waiting-go]")!.className).toContain("max-md:after:-inset-y-2.5");
+    for (const label of ["Next waiting card", "Previous waiting card"]) {
+      const step = q(`button[aria-label="${label}"]`)!.className;
+      expect(step).toContain("max-md:size-[22px]");
+      expect(step).toContain("max-md:after:-inset-x-[11px]");
+      expect(step).toContain("max-md:after:-inset-y-[11px]");
+    }
+  });
+
+  it("has no pager for one card, names a new card without jumping, and says what a filter hides", async () => {
+    const a = card({ title: "Ship 0.25.6?" });
+    openList = [a];
+    view = await mount(createElement(Assistant));
+    await settle();
+    expect(q("[data-waiting-pager]")).toBeNull();
+    const fresh = card({ projectName: "nxsys", title: "Payroll run" });
+    await act(async () => { window.dispatchEvent(new CustomEvent("assistant:card", { detail: { card: fresh } })); });
+    expect(onCard()).toBe('Go to "Payroll run", waiting on you');
+    expect(q("[data-waiting-position]")?.textContent).toBe("2/2");
+    // The user may be reading: a card arriving does not move the stream.
+    expect(jumpedTo()).toBeNull();
     await act(async () => { setAssistantCardFilter("nxsys"); });
-    expect(q("[data-waiting-cards]")?.getAttribute("data-waiting-count")).toBe("1");
-    expect(shownTitle()).toBe("Payroll run");
-    expect(q("[data-waiting-elsewhere]")?.textContent).toContain("1 more waiting in other projects");
-    await click([...view.container.querySelectorAll("[data-waiting-elsewhere] button")][0]!);
+    expect(dock()?.getAttribute("data-waiting-count")).toBe("1");
+    expect(q("[data-waiting-elsewhere]")?.textContent).toBe("+1");
+    expect(q("[data-waiting-elsewhere]")?.getAttribute("aria-label")).toBe("1 more waiting in other projects: show all projects");
+    await act(async () => { setAssistantCardFilter("gone"); });
+    expect(q("[data-waiting-go]")).toBeNull();
+    expect(q("[data-waiting-elsewhere]")?.textContent).toBe("+2");
+    await click(q("[data-waiting-elsewhere]"));
     expect(useAssistantCardsStore.getState().filter).toBeNull();
   });
 
-  it("lands on a project's first card when its red count is pressed, moving a filter that hides it", async () => {
-    openList = [card({ title: "Ship 0.25.6?" }), card({ projectName: "nxsys", title: "Payroll run" })];
-    view = await mount(createElement("div", null, createElement(ManagerChip, { manager: manager(), waiting: 1 }), createElement(AssistantWaitingCards)));
+  it("jumps to a project's first card when its red count is pressed, moving a filter that hides it", async () => {
+    const ship = card({ title: "Ship 0.25.6?" });
+    openList = [ship, card({ projectName: "nxsys", title: "Payroll run" })];
+    view = await mount(createElement("div", null, createElement(ManagerChip, { manager: manager(), waiting: 1 }), createElement(Assistant)));
     await settle();
     await act(async () => { setAssistantCardFilter("nxsys"); });
-    expect(shownTitle()).toBe("Payroll run");
     const count = q('[data-manager-chip="ppm"] [data-manager-chip-count]')!;
     expect(count.getAttribute("aria-label")).toBe("Show the 1 card from ppm waiting on you");
-    // 44 × 44 below `md`.
     expect(count.className).toContain("h-11");
     expect(count.className).toContain("min-w-11");
     await click(count);
     await tick();
     expect(useAssistantCardsStore.getState().filter).toBe("ppm");
-    expect(shownTitle()).toBe("Ship 0.25.6?");
-    expect(q("[data-highlighted]")).not.toBeNull();
+    expect(jumpedTo()).toBe(ship.id);
+    // The chip is on the card the stream landed on.
+    expect(onCard()).toBe('Go to "Ship 0.25.6?", waiting on you');
+    await act(async () => { setAssistantCardFilter(null); });
+    await act(async () => { focusWaitingCards("nxsys"); });
+    await tick();
+    expect(onCard()).toBe('Go to "Payroll run", waiting on you');
+    expect(q("[data-waiting-position]")?.textContent).toBe("2/2");
     // Taken once: the press does not linger for the next visit.
     expect(useOpenCardsStore.getState().focus).toBeNull();
-    // Nor for the next filter change, which mounts the bar afresh.
-    await act(async () => { setAssistantCardFilter(null); });
-    await tick();
-    expect(q("[data-highlighted]")).toBeNull();
-    expect(q("[data-waiting-position]")?.textContent).toBe("1/2");
+  });
+
+  it("scrolls only the list holding the card, outlines it, and ignores a jump asked before it mounted", async () => {
+    const a = card({ title: "Ship 0.25.6?" });
+    openList = [a];
+    // A jump asked for while no Assistant was mounted.
+    jumpToWaitingCard(a.id);
+    const { WaitingStreamCard } = await import("../../../src/web/components/assistant/cards/waiting-stream-card");
+    function Body() {
+      const root = useRef<HTMLDivElement>(null);
+      useWaitingCardJump(root);
+      return createElement("div", { ref: root, style: { overflowY: "hidden" } },
+        createElement("div", { "data-list": "", style: { overflowY: "auto" } }, createElement(WaitingStreamCard, { card: a })));
+    }
+    const calls: string[] = [];
+    const list = () => q("[data-list]") as HTMLElement;
+    const original = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = function (this: HTMLElement) { calls.push(this.hasAttribute("data-list") ? "list" : "other"); } as never;
+    try {
+      view = await mount(createElement(Body));
+      await settle();
+      await tick();
+      expect(calls).toEqual([]);
+      expect(q("[data-highlighted]")).toBeNull();
+      let height = 1000;
+      Object.defineProperty(list(), "scrollHeight", { configurable: true, get: () => height });
+      await act(async () => { focusWaitingCards(null, a.id); });
+      await tick();
+      expect(calls).toEqual(["list"]);
+      expect(q("[data-highlighted]")?.getAttribute("data-waiting-card")).toBe(a.id);
+      // An older page loading above it grows the list: the card is put back where it landed.
+      await act(async () => { await new Promise((r) => setTimeout(r, 120)); });
+      height = 2400;
+      await act(async () => { await new Promise((r) => setTimeout(r, 150)); });
+      expect(calls).toEqual(["list", "list"]);
+      // Once the user moves the list themselves, it is theirs.
+      await act(async () => { list().dispatchEvent(new Event("wheel")); });
+      height = 3800;
+      await act(async () => { await new Promise((r) => setTimeout(r, 150)); });
+      expect(calls).toEqual(["list", "list"]);
+    } finally {
+      HTMLElement.prototype.scrollTo = original;
+    }
   });
 
   it("keeps the first list when a card changes while it loads", async () => {
@@ -210,26 +313,61 @@ describe("in the Assistant", () => {
   it("disappears once nothing waits", async () => {
     const only = card({ title: "Last one" });
     openList = [only];
-    view = await mount(createElement(AssistantWaitingCards));
+    view = await mount(createElement(Assistant));
     await settle();
-    expect(q("[data-waiting-cards]")).not.toBeNull();
+    expect(dock()).not.toBeNull();
     await act(async () => { window.dispatchEvent(new CustomEvent("assistant:card", { detail: { card: { ...only, status: "answered" } } })); });
-    expect(q("[data-waiting-cards]")).toBeNull();
+    expect(dock()).toBeNull();
   });
 
   it("refetches when the announced counts do not describe the list", async () => {
     openList = [card()];
-    view = await mount(createElement(AssistantWaitingCards));
+    view = await mount(createElement(Assistant));
     await settle();
     openList = [...openList, card({ title: "Missed while offline" })];
     await act(async () => { window.dispatchEvent(new CustomEvent("assistant:waiting_changed", { detail: { total: 2, byProject: { ppm: 2 } } })); });
     await tick();
-    expect(q("[data-waiting-cards]")?.getAttribute("data-waiting-count")).toBe("2");
+    expect(dock()?.getAttribute("data-waiting-count")).toBe("2");
+  });
+
+  it("lists the waiting cards whole when there is no chat to place them in", async () => {
+    const { AssistantWaitingList } = await import("../../../src/web/components/assistant/assistant-waiting-cards");
+    openList = [card({ title: "Ship 0.25.6?" }), card({ projectName: "nxsys", title: "Payroll run" })];
+    view = await mount(createElement(AssistantWaitingList));
+    await settle();
+    expect(view.container.querySelectorAll("[data-waiting-list] [data-waiting-card]")).toHaveLength(2);
+    expect(view.container.querySelectorAll("[data-waiting-list] [data-card-actions]")).toHaveLength(2);
   });
 
   it("asks the server for focus with no Assistant open as a plain store change", () => {
     focusWaitingCards("ppm");
     expect(useOpenCardsStore.getState().focus).toMatchObject({ projectName: "ppm" });
+  });
+});
+
+describe("in the Assistant's stream", () => {
+  it("draws every waiting card the filter lets in, once, whole, even before its page is loaded", async () => {
+    const { streamCards, useAssistantStreamTimeline } = await import("../../../src/web/components/assistant/use-assistant-stream-timeline");
+    const loaded = card({ title: "On a loaded page" });
+    const older = card({ title: "Older than the loaded pages" });
+    const other = card({ projectName: "nxsys", title: "Other project" });
+    expect(streamCards([loaded], [loaded, older, other], null).map((c) => c.title)).toEqual(["On a loaded page", "Older than the loaded pages", "Other project"]);
+    expect(streamCards([loaded], [loaded, older, other], "ppm").map((c) => c.id)).toEqual([loaded.id, older.id]);
+
+    openList = [older];
+    let keep: boolean[] = [];
+    function Stream() {
+      const items = useAssistantStreamTimeline().build([]).items;
+      keep = items.map((i) => !!i.keep);
+      return createElement("div", null, ...items.map((i) => createElement("div", { key: i.key }, i.node)));
+    }
+    view = await mount(createElement(Stream));
+    await settle();
+    const drawn = view.container.querySelectorAll(`[data-waiting-card="${older.id}"]`);
+    expect(drawn).toHaveLength(1);
+    expect(keep).toEqual([true]);
+    expect(drawn[0]!.querySelector("[data-card-actions]")?.hasAttribute("data-sticky")).toBe(false);
+    expect(view.container.querySelector("[data-card-pointer]")).toBeNull();
   });
 });
 
