@@ -7,7 +7,9 @@
 //       with the design instructions) and its answer comes back as the reply;
 //   D2  a follow-up with send_to_session and wait: the Design chat's answer is again the reply;
 //   D3  design_screenshot renders both variants to PNG with a real Chromium, served by id (the
-//       fixture runs with auth off; the route is behind the login in a real PPM).
+//       fixture runs with auth off; the route is behind the login in a real PPM);
+//   D4–D7 the same Design chat seen from the Design tab the user opens from the sidebar
+//       (fixtures/collab-design-sessions-steps-tab.mjs), on a desktop and a phone.
 //
 // Run it in the capped e2e image (Chromium, Node 20 and playwright-core; see tests/e2e/docker/):
 //
@@ -28,6 +30,7 @@ import { pathToFileURL } from "node:url";
 import { createServer } from "node:net";
 import { createKit, pageInit } from "./fixtures/session-turn-refs-helpers.mjs";
 import { collabKit, resultOf } from "./fixtures/session-collab-helpers.mjs";
+import { runDesignTabSteps } from "./fixtures/collab-design-sessions-steps-tab.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-collab-design-e2e-"));
 const artifacts = process.env.PPM_COLLAB_ARTIFACTS ? resolve(process.env.PPM_COLLAB_ARTIFACTS) : join(sandbox, "artifacts");
@@ -59,9 +62,10 @@ delete env.PPM_ALLOW_PROD_DB;
 const backend = spawn("bun", ["tests/e2e/fixtures/session-collab-server.ts"], { env, cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
 let serverLog = ""; backend.stdout.on("data", (s) => serverLog += s); backend.stderr.on("data", (s) => serverLog += s);
 
-const page = (bg, words) => `<!doctype html><html><head><meta charset="utf-8"><title>${words}</title></head>`
+const page = (bg, words, buttonPx = 14) => `<!doctype html><html><head><meta charset="utf-8"><title>${words}</title></head>`
   + `<body style="margin:0;font-family:sans-serif;background:${bg};color:#fff">`
-  + `<header style="padding:32px 48px;font-size:36px;font-weight:700">Kho task — ${words}</header>`
+  + `<header style="padding:32px 48px;font-size:36px;font-weight:700">Kho task — ${words} `
+  + `<button style="font-size:${buttonPx}px;padding:${buttonPx / 2}px ${buttonPx}px;border-radius:8px;border:0">Add task</button></header>`
   + `<main style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px;padding:0 48px 48px">`
   + ["Inbox", "Doing", "Done"].map((c) => `<section style="background:rgba(255,255,255,.12);border-radius:12px;padding:20px;min-height:420px">`
     + `<h2 style="margin:0 0 12px">${c}</h2><p>Task A</p><p>Task B</p></section>`).join("")
@@ -176,6 +180,8 @@ try {
     await kit.shot(tab, "d3-design-screenshot-card");
     kit.record("D3: design_screenshot renders both variants to PNG, served by id", { shots: shots.map((s) => `${s.file} ${s.width}x${s.height}`) });
   });
+
+  await runDesignTabSteps({ kit, ck, page: tab, browser, web, A, child, pageHtml: page, pageInit, artifacts });
 
   if (failures.length) {
     process.exitCode = 1;

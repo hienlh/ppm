@@ -11,8 +11,8 @@
  * names it a new prompt (`UserPromptSubmit`), Codex steers it into the running turn. One stream per
  * session lives across turns; a new Codex chat takes its thread's own id on its first turn.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ClaudeAgentSdkProvider } from "../../../src/providers/claude-agent-sdk";
 import { CodexAppServerProvider } from "../../../src/providers/codex-app-server/codex-provider";
@@ -27,7 +27,9 @@ export type Step =
   | { say: string; ms?: number }
   | { call: string; args: Record<string, unknown> }
   | { list: true }
-  | { hold: true };
+  | { hold: true }
+  /** Writes a file of the session's project, as the agent's Write tool would (a Design chat editing its page). */
+  | { write: string; content: string };
 export interface TurnPlan { steps: Step[] }
 export interface CallRecord {
   seq: number; sessionId: string; tool: string; args: Record<string, unknown>;
@@ -136,6 +138,17 @@ async function* runTurn(input: {
       const gap = said ? "\n\n" : "";
       said += `${gap}${step.say}`;
       yield* streamText(`${gap}${step.say}`, step.ms);
+    } else if ("write" in step) {
+      const root = getSessionProjectPath(sessionId);
+      const target = root ? resolve(root, step.write) : null;
+      if (!root || !target || relative(root, target).startsWith("..")) throw new Error(`write outside the project: ${step.write}`);
+      const toolUseId = `toolu_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+      const toolInput = { file_path: target, content: step.content };
+      yield { type: "tool_use", tool: "Write", input: toolInput, toolUseId } as ChatEvent;
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, step.content);
+      writer.call(turnId, "Write", toolInput, toolUseId, `Wrote ${step.write}`);
+      yield { type: "tool_result", output: `Wrote ${step.write}`, isError: false, toolUseId } as ChatEvent;
     } else if ("list" in step) {
       const record: CallRecord = { seq: calls.length, sessionId, tool: "tools/list", args: {}, startedAt: Date.now() };
       calls.push(record);
