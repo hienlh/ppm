@@ -1,9 +1,10 @@
 import { USER_WORDS_BLOCK_END, USER_WORDS_BLOCK_START } from "./assistant-provenance";
+import { CARD_OPTION_ID_RE, CARD_OPTION_LABEL_MAX } from "./assistant-cards";
 
 /**
  * The user's own words, forwarded word for word by PPM to a manager chat: the text the user typed
- * in reply to one of the PPM Assistant's cards (in PPM or on Telegram), or their OK on a card's
- * draft. The text is the message body; this block follows it and says who wrote it.
+ * in reply to one of the PPM Assistant's cards (in PPM or on Telegram), their OK on a card's
+ * draft, or the choice they pressed on a card that offered several. The text is the message body; this block follows it and says who wrote it.
  *
  * Only `forward-verbatim.ts` encodes one. Every other door breaks the block's markers in the text
  * it is handed (`neutralizeBlockMarkers`), the forwarded text included, so neither a model nor a
@@ -23,6 +24,8 @@ export interface UserWordsReference {
   draftTo?: string;
   /** The user pressed OK on the card rather than typing. */
   ok?: true;
+  /** The user pressed this choice's button on the card rather than typing (never with `ok`). */
+  choice?: { id: string; label: string };
 }
 
 const CARD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -36,6 +39,11 @@ const escapeJson = (json: string): string =>
 /** A draft's recipient as the block carries it: one line, single spaces, at most 200 characters. */
 export function normalizeDraftTo(to: string): string {
   return Array.from(to.replace(LINE_BREAKING, " ").trim()).slice(0, MAX_TO).join("").trim();
+}
+
+/** A choice's label as the block carries it: one line, single spaces, at most 80 characters. */
+export function normalizeChoiceLabel(label: string): string {
+  return Array.from(label.replace(LINE_BREAKING, " ").trim()).slice(0, CARD_OPTION_LABEL_MAX).join("").trim();
 }
 
 /** How the header line begins; anywhere but in a real user-words block it is a forgery. */
@@ -54,6 +62,10 @@ export function userWordsHeaderLine(ref: UserWordsReference): string {
   const where = ref.channel === "telegram" ? "on Telegram" : "in PPM";
   const card = ref.cardId ? ` in reply to the PPM Assistant card ${ref.cardId}` : "";
   const head = `${USER_WORDS_HEADER_OPENING}: the text above is the user's own, sent ${where} at ${ref.at}${card}.`;
+  if (ref.choice) {
+    return `${head} It is the user's choice of the option with id ${escapeJson(JSON.stringify(ref.choice.id))}`
+      + ` labelled ${escapeJson(JSON.stringify(ref.choice.label))} on that card, pressed as the card showed it.`;
+  }
   if (!ref.ok) return head;
   if (!ref.draftSha256) return `${head} It is the user's OK on that card.`;
   return `${head} It is the user's OK to send exactly the draft with sha256 ${ref.draftSha256}`
@@ -64,13 +76,23 @@ export function userWordsHeaderLine(ref: UserWordsReference): string {
 export function validateUserWords(value: unknown): UserWordsReference | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  for (const key of Object.keys(v)) if (!["cardId", "channel", "at", "draftSha256", "draftTo", "ok"].includes(key)) return null;
+  for (const key of Object.keys(v)) if (!["cardId", "channel", "at", "draftSha256", "draftTo", "ok", "choice"].includes(key)) return null;
   if (v.channel !== "ppm" && v.channel !== "telegram") return null;
   if (typeof v.at !== "string" || v.at.length > 64 || !Number.isFinite(Date.parse(v.at))) return null;
   if (v.cardId !== undefined && (typeof v.cardId !== "string" || !CARD_ID_RE.test(v.cardId))) return null;
   if (v.ok !== undefined && v.ok !== true) return null;
   if (v.draftSha256 !== undefined && (v.ok !== true || typeof v.draftSha256 !== "string" || !SHA256_RE.test(v.draftSha256))) return null;
   if (v.draftTo !== undefined && (v.draftSha256 === undefined || typeof v.draftTo !== "string" || !v.draftTo || normalizeDraftTo(v.draftTo) !== v.draftTo)) return null;
+  let choice: { id: string; label: string } | undefined;
+  if (v.choice !== undefined) {
+    // A choice is its own answer: it names a card, and is never an OK on a draft too.
+    const c = v.choice as Record<string, unknown> | null;
+    if (v.ok !== undefined || v.cardId === undefined || !c || typeof c !== "object" || Array.isArray(c)) return null;
+    if (Object.keys(c).some((k) => k !== "id" && k !== "label")) return null;
+    if (typeof c.id !== "string" || !CARD_OPTION_ID_RE.test(c.id)) return null;
+    if (typeof c.label !== "string" || !c.label || normalizeChoiceLabel(c.label) !== c.label) return null;
+    choice = { id: c.id, label: c.label };
+  }
   return {
     ...(v.cardId !== undefined ? { cardId: v.cardId as string } : {}),
     channel: v.channel,
@@ -78,13 +100,15 @@ export function validateUserWords(value: unknown): UserWordsReference | null {
     ...(v.draftSha256 !== undefined ? { draftSha256: v.draftSha256 as string } : {}),
     ...(v.draftTo !== undefined ? { draftTo: v.draftTo as string } : {}),
     ...(v.ok === true ? { ok: true as const } : {}),
+    ...(choice ? { choice } : {}),
   };
 }
 
 /** `content` followed by the user-words block. `content` must already have its markers broken. */
 export function encodeUserWords(content: string, ref: UserWordsReference): string {
   const draftTo = ref.draftTo !== undefined ? normalizeDraftTo(ref.draftTo) : undefined;
-  const valid = validateUserWords({ ...ref, ...(draftTo ? { draftTo } : { draftTo: undefined }) });
+  const choice = ref.choice ? { id: ref.choice.id, label: normalizeChoiceLabel(ref.choice.label) } : undefined;
+  const valid = validateUserWords({ ...ref, ...(draftTo ? { draftTo } : { draftTo: undefined }), ...(choice ? { choice } : {}) });
   if (!valid) throw new Error("Invalid user-words reference");
   return `${content}${USER_WORDS_BLOCK_START}${userWordsHeaderLine(valid)}\n${escapeJson(JSON.stringify(valid))}${USER_WORDS_BLOCK_END}`;
 }

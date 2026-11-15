@@ -47,6 +47,8 @@ export interface AssistantCardAnswer {
   note?: string;
   /** The user's OK on a needs-decision card, forwarded to its manager. */
   ok?: boolean;
+  /** The option the user picked on a card that offered choices, as the card showed it. */
+  choice?: { id: string; label: string };
   /**
    * The user's words forwarded to the manager chat: `pending` until the chat took them into a turn
    * (they may wait behind an approval), `delivered` once it did. A card whose words never arrive
@@ -75,6 +77,25 @@ export interface CardImage {
   label: string;
 }
 
+/**
+ * One of the choices a manager offers on a decision card: a button of its own, in PPM and on
+ * Telegram. `id` is the manager's short name for it, `label` what the button says.
+ */
+export interface CardOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+/** Fewest and most choices one card offers, and how long their parts may be. */
+export const CARD_OPTIONS_MIN = 2;
+export const CARD_OPTIONS_MAX = 6;
+export const CARD_OPTION_ID_MAX = 32;
+export const CARD_OPTION_LABEL_MAX = 80;
+export const CARD_OPTION_DESCRIPTION_MAX = 300;
+/** A choice's id: short, lower-case, safe to show and to put in a message as it is. */
+export const CARD_OPTION_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+
 /** A draft message a manager asks the user to approve sending. */
 export interface CardDraft {
   to: string;
@@ -86,6 +107,11 @@ export interface CardDraft {
 export interface AssistantCardPayload {
   /** Report cards: the manager's draft. */
   draft?: CardDraft;
+  /**
+   * Decision cards: the choices the manager offers, each a button in place of OK. Never with a
+   * draft: the button the user presses is the whole answer.
+   */
+  options?: CardOption[];
   /** Digest cards before the digest was put together by PPM: one manager's items. */
   items?: string[];
   /** Digest cards: the user's local date the digest belongs to ("YYYY-MM-DD"). */
@@ -154,8 +180,9 @@ export interface AssistantCard {
   /** Server-written line separating a manager's own words from PPM's ("Written by the X manager AI"). */
   provenance: string | null;
   /**
-   * A needs-decision card may take "OK, send" (or "OK"): the title, body and draft are shown whole
-   * and nothing in them was hidden as a secret. Worked out by the server, on every surface alike.
+   * A needs-decision card may take "OK, send" (or "OK"), or on a card with `payload.options` a
+   * press on one of its choices: the title, body, draft and choices are shown whole and nothing in
+   * them was hidden as a secret. Worked out by the server, on every surface alike.
    */
   okOffered?: boolean;
   createdAt: number;

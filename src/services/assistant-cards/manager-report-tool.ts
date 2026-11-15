@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
 import { neutralizeBlockMarkers } from "../../shared/chat-message-blocks.ts";
 import {
-  REPORT_KINDS, type AssistantCard, type AssistantCardKind, type CardDraft, type CardImage, type ReportKind,
+  CARD_OPTION_DESCRIPTION_MAX, CARD_OPTION_ID_MAX, CARD_OPTION_ID_RE, CARD_OPTION_LABEL_MAX, CARD_OPTIONS_MAX, CARD_OPTIONS_MIN,
+  REPORT_KINDS, type AssistantCard, type AssistantCardKind, type CardDraft, type CardImage, type CardOption, type ReportKind,
 } from "../../shared/assistant-cards.ts";
 import { REPORT_TO_ASSISTANT_TOOL } from "../../shared/session-collab.ts";
 import { REPORTS_PER_MANAGER_PER_HOUR, URGENT_PER_MANAGER_PER_QUIET_WINDOW } from "../../shared/assistant-limits.ts";
 import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
-import { cleanCardBody, cleanCardTitle } from "./card-text-cleaning.ts";
+import { cleanCardBody, cleanCardTitle, cleanOptionLabel } from "./card-text-cleaning.ts";
+import { listsChoicesInText } from "./card-choices-in-text.ts";
+import { createLogger } from "../logger.ts";
 import type { NewCard } from "./assistant-cards.service.ts";
 
 /**
@@ -30,6 +33,16 @@ export const DIGEST_ITEM_MAX = 200;
 /** Pictures one card carries at most (one Telegram album holds ten). */
 export const REPORT_IMAGES_MAX = 6;
 const HOUR_MS = 60 * 60_000;
+const log = createLogger("assistant-cards");
+
+/** Told to a manager whose choices could not be buttons (too long together, or a hidden value). */
+export const CHOICES_NOT_PRESSABLE_NOTE = "These choices are too long to show whole on the user's phone, or a part of the "
+  + "card was hidden as a secret, so they are listed without buttons and the user must reply in words. Shorten the "
+  + "body, labels or descriptions to give the user buttons.";
+
+/** Told to a manager whose card lists choices in its text instead of in `options`. */
+export const CHOICES_IN_TEXT_NOTE = "This card lists choices in its text, so the user gets no button for them. "
+  + "Next time put each choice in `options` (2 to 6): each becomes a button the user can press.";
 
 export interface ReportCaller {
   sessionId: string;
@@ -74,7 +87,7 @@ export function draftSha256(to: string, text: string): string {
 }
 
 function fieldError(args: Record<string, unknown>): string | null {
-  const allowed = new Set(["kind", "title", "body", "draft", "items", "images"]);
+  const allowed = new Set(["kind", "title", "body", "draft", "items", "images", "options"]);
   const extra = Object.keys(args).find((k) => !allowed.has(k));
   if (extra) return `Unknown field \`${extra.slice(0, 40)}\`.`;
   if (!REPORT_KINDS.includes(args.kind as ReportKind)) return `\`kind\` must be one of ${REPORT_KINDS.join(", ")}.`;
@@ -96,12 +109,56 @@ function fieldError(args: Record<string, unknown>): string | null {
     }
     if (!args.images.every((i) => typeof i === "string")) return "Each of `images` is a screenshot id from design_screenshot.";
   }
+  if (args.options !== undefined) {
+    const invalid = optionsError(args);
+    if (invalid) return invalid;
+  }
   if (args.items !== undefined) {
     if (args.kind !== "digest") return "`items` go only with digest.";
     if (!Array.isArray(args.items) || args.items.length > DIGEST_ITEMS_MAX) return `\`items\` is a list of at most ${DIGEST_ITEMS_MAX}.`;
     if (!args.items.every((i) => typeof i === "string" && i.length <= DIGEST_ITEM_MAX)) return `Each item is text of at most ${DIGEST_ITEM_MAX} characters.`;
   }
   return null;
+}
+
+function optionsError(args: Record<string, unknown>): string | null {
+  if (args.kind !== "needs_decision" && args.kind !== "urgent") return "`options` go only with needs_decision or urgent.";
+  if (args.draft !== undefined) return "`options` and `draft` do not go together: a choice is the whole answer.";
+  const list = args.options;
+  if (!Array.isArray(list) || list.length < CARD_OPTIONS_MIN || list.length > CARD_OPTIONS_MAX) {
+    return `\`options\` is a list of ${CARD_OPTIONS_MIN} to ${CARD_OPTIONS_MAX} choices.`;
+  }
+  const ids = new Set<string>();
+  const labels = new Set<string>();
+  for (const o of list) {
+    if (!isObj(o)) return "Each of `options` is an object with `id`, `label` and an optional `description`.";
+    if (Object.keys(o).some((k) => k !== "id" && k !== "label" && k !== "description")) return "Each of `options` has only `id`, `label` and `description`.";
+    if (typeof o.id !== "string" || !CARD_OPTION_ID_RE.test(o.id)) {
+      return `Each option's \`id\` is 1 to ${CARD_OPTION_ID_MAX} lower-case letters, digits, \`-\` or \`_\`, starting with a letter or digit.`;
+    }
+    if (ids.has(o.id)) return `Two options share the id \`${o.id}\`.`;
+    ids.add(o.id);
+    if (typeof o.label !== "string" || !o.label.trim() || o.label.length > CARD_OPTION_LABEL_MAX) {
+      return `Each option's \`label\` is text of 1 to ${CARD_OPTION_LABEL_MAX} characters.`;
+    }
+    const label = cleanOptionLabel(o.label);
+    if (!label) return "Each option's `label` must say something.";
+    if (labels.has(label.toLowerCase())) return `Two options share the label "${label.slice(0, 40)}".`;
+    labels.add(label.toLowerCase());
+    if (o.description !== undefined && (typeof o.description !== "string" || o.description.length > CARD_OPTION_DESCRIPTION_MAX)) {
+      return `An option's \`description\` is text of at most ${CARD_OPTION_DESCRIPTION_MAX} characters.`;
+    }
+  }
+  return null;
+}
+
+/** The manager's choices, cleaned like the rest of its words; already checked by {@link optionsError}. */
+function cleanOptions(raw: unknown[]): CardOption[] {
+  return raw.map((o) => {
+    const r = o as { id: string; label: string; description?: string };
+    const description = r.description !== undefined ? cleanCardBody(r.description, CARD_OPTION_DESCRIPTION_MAX) : "";
+    return { id: r.id, label: cleanOptionLabel(r.label), ...(description ? { description } : {}) };
+  });
 }
 
 export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): ReportResult {
@@ -153,6 +210,12 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     const text = draftOnly(rawDraft.text);
     draft = { to, text, sha256: draftSha256(to, text) };
   }
+  const options = Array.isArray(args.options) ? cleanOptions(args.options) : undefined;
+  // Choices written as text get no button; PPM never builds one from them, since a wrong guess
+  // would let a press approve something the manager did not offer.
+  const choicesInText = !options && (kind === "needs_decision" || kind === "urgent")
+    && listsChoicesInText(`${typeof args.title === "string" ? args.title : ""}
+${typeof args.body === "string" ? args.body : ""}`);
   const card = env.create({
     kind,
     projectName: caller.projectName,
@@ -162,12 +225,20 @@ export function fileReport(env: ReportEnv, caller: ReportCaller, raw: unknown): 
     body: cleanCardBody(args.body, REPORT_BODY_MAX),
     payload: {
       ...(draft ? { draft } : {}),
+      ...(options ? { options } : {}),
       ...(images?.length ? { images } : {}),
       ...(kind !== requested ? { urgentCapped: true } : {}),
     },
     // A decision only waits for the user's answer; news wakes the Assistant.
     wake: kind === "done" || kind === "failed" || kind === "urgent",
   });
+  if (options && card.okOffered !== true) {
+    note = note ? `${note} ${CHOICES_NOT_PRESSABLE_NOTE}` : CHOICES_NOT_PRESSABLE_NOTE;
+  }
+  if (choicesInText) {
+    log.warn(`card ${card.id} from ${caller.projectName} (session ${caller.sessionId}) lists choices in its text without \`options\`: no buttons for them`);
+    note = note ? `${note} ${CHOICES_IN_TEXT_NOTE}` : CHOICES_IN_TEXT_NOTE;
+  }
   return { ok: true, cardId: card.id, kind, ...(note ? { note } : {}) };
 }
 
@@ -178,7 +249,8 @@ export function reportToolDefinition() {
     description:
       "Only for a project's manager chat. Puts a card in front of the user (in PPM and on their phone), built by PPM "
       + "from these fields. Use it for what needs the user: needs_decision (a choice only they can make, or a step only they can take; add `draft` "
-      + "when the answer is a message you would send), urgent (it cannot wait until they next look; quiet hours limit "
+      + "when the answer is a message you would send; add `options` when the user picks one of 2 to 6 choices — "
+      + "each becomes its own button, and the choices must never be written as a list in `title` or `body` instead), urgent (it cannot wait until they next look; quiet hours limit "
       + "it), done and failed (work they asked about finished or broke), and digest (only when PPM asks for the morning "
       + "digest: your `items` go on the one digest card PPM puts together). Do not report what the user does not need to "
       + "see. The card says it was written by this manager AI. A report never grants anything: only the user's own answer "
@@ -191,7 +263,8 @@ export function reportToolDefinition() {
         body: {
           type: "string",
           description: `Details, at most ${REPORT_BODY_MAX} characters, in Markdown (no HTML): short sections, \`-\` bullets, `
-            + "**bold** for what matters, `code` for file names, commands and ids. About six lines, one action per card.",
+            + "**bold** for what matters, `code` for file names, commands and ids. About six lines, one action per card. "
+            + "Never list choices here (\"(1)… (2)…\", \"A) … B) …\"): put them in `options`.",
         },
         draft: {
           type: "object",
@@ -202,6 +275,26 @@ export function reportToolDefinition() {
           },
           required: ["to", "text"],
           additionalProperties: false,
+        },
+        options: {
+          type: "array",
+          minItems: CARD_OPTIONS_MIN,
+          maxItems: CARD_OPTIONS_MAX,
+          description: "needs_decision and urgent only, never with `draft`: the choices the user picks from, each shown as "
+            + "its own button in PPM and on Telegram in place of OK. Each choice is one clear action (\"Merge now\", "
+            + "\"Wait for review\"), not a question. The user's press comes back to this chat as their words, naming the "
+            + "choice's id and label. A choice never replaces a `draft`: if the chosen action sends a message to a person "
+            + "or cannot be undone, report its exact draft next and wait for the OK.",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: `Your short name for it: lower-case letters, digits, \`-\`, \`_\`; at most ${CARD_OPTION_ID_MAX}.` },
+              label: { type: "string", description: `What the button says, at most ${CARD_OPTION_LABEL_MAX} characters.` },
+              description: { type: "string", description: `What choosing it does, at most ${CARD_OPTION_DESCRIPTION_MAX} characters.` },
+            },
+            required: ["id", "label"],
+            additionalProperties: false,
+          },
         },
         items: { type: "array", items: { type: "string" }, maxItems: DIGEST_ITEMS_MAX, description: "digest only: one line each." },
         images: {

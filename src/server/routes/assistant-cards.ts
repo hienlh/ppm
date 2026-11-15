@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { assistantCards } from "../../services/assistant-cards/assistant-cards.service.ts";
 import { answerCard, dismissCard, type CardActionResult } from "../../services/assistant-cards/assistant-card-actions.ts";
-import { okCard, replyToCard } from "../../services/assistant-cards/card-reply-actions.ts";
+import { chooseCardOption, okCard, replyToCard } from "../../services/assistant-cards/card-reply-actions.ts";
 import type { CardActor } from "../../services/assistant-cards/forward-verbatim.ts";
 import { createLogger } from "../../services/logger.ts";
 import { ok, err } from "../../types/api.ts";
@@ -93,8 +93,12 @@ function actorOf(c: Context, body: unknown): CardActor {
   };
 }
 
-/** OK on a needs-decision card, or the user's reply to a card: forwarded word for word. */
-for (const action of ["ok", "reply"] as const) {
+/**
+ * OK on a needs-decision card, a press on one of a card's choices (`{ optionId }`), or the user's
+ * reply to a card: forwarded word for word.
+ */
+const PRESS_ACTIONS = { ok: okCard, choose: chooseCardOption, reply: replyToCard } as const;
+for (const action of ["ok", "choose", "reply"] as const) {
   assistantCardRoutes.post(`/cards/:id/${action}`, async (c) => {
     const id = c.req.param("id");
     if (!CARD_ID_RE.test(id)) return c.json(err("No such card"), 404);
@@ -106,7 +110,7 @@ for (const action of ["ok", "reply"] as const) {
     }
     try {
       const actor = actorOf(c, body);
-      const result = action === "ok" ? await okCard(id, body, actor) : await replyToCard(id, body, actor);
+      const result = await PRESS_ACTIONS[action](id, body, actor);
       log.info(`card ${id} ${action}: ${result.ok ? `sent to ${result.to}` : `${result.status} ${result.error}`} (site=${actor.fetchSite ?? "none"})`);
       if (result.ok) return c.json(ok({ card: result.card, to: result.to, ...(result.projectName ? { projectName: result.projectName } : {}) }));
       const data = { ...(result.card ? { card: result.card } : {}), ...(result.question ? { question: result.question } : {}) };

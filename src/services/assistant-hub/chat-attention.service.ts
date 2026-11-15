@@ -65,10 +65,12 @@ export interface AttentionAssistantCard {
   /** The manager chat the card came from, when it came from one. */
   managerSessionId: string | null;
   createdAt: string;
-  /** The card offers the user a one-tap OK (the whole decision fits on it). */
+  /** The card can be answered with one tap (the whole decision fits on it): its OK, or one of its `choices`. */
   okOffered: boolean;
   /** The card carries a draft message the manager wants to send. */
   hasDraft: boolean;
+  /** The choices the card offers the user, one button each (labels shortened for an overview). */
+  choices?: Array<{ id: string; label: string }>;
   /** An approval or question card mirrors this request of its manager chat (listed in needsDecision too). */
   requestId?: string;
 }
@@ -175,6 +177,9 @@ function attentionAssistantCard(card: AssistantCard): AttentionAssistantCard {
     createdAt: new Date(card.createdAt).toISOString(),
     okOffered: card.okOffered === true,
     hasDraft: !!card.payload.draft,
+    ...(card.payload.options?.length
+      ? { choices: card.payload.options.map((o) => ({ id: o.id, label: cleanSummaryText(o.label, TITLE_CHARS) || o.id })) }
+      : {}),
     ...(card.payload.requestId ? { requestId: card.payload.requestId } : {}),
   };
 }

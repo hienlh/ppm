@@ -1,8 +1,9 @@
 /**
- * When a needs-decision card may take the user's OK. An OK is an approval: it tells the manager
- * to send exactly the draft the user saw. So it meets the same bar as Allow on an approval card
+ * When a needs-decision card may take the user's OK, or a press on one of its choices. An OK is an
+ * approval: it tells the manager to send exactly the draft the user saw; a choice tells it which
+ * of the actions the card offered to take. So it meets the same bar as Allow on an approval card
  * (`assistant-telegram-card-format.ts`): the title, body and draft fit a phone message whole, and
- * nothing in them was hidden as a secret — a hidden span is text the user could not read before
+ * nothing in them — the choices included — was hidden as a secret — a hidden span is text the user could not read before
  * agreeing to send it. "Fits" is measured on the Telegram message as it would be sent (hidden
  * characters revealed, the label, provenance and hint around it), not on the raw text, so a card
  * offering OK is never one Telegram refuses as too long. The same rule holds in PPM and on
@@ -11,13 +12,13 @@
 import { REVIEW_FIT_MAX } from "../assistant-telegram/assistant-telegram-card-format.ts";
 import { formatManagerCard } from "../assistant-telegram/assistant-telegram-card-kinds.ts";
 import { redactSecretsForTelegram } from "../telegram/telegram-html-format.ts";
-import { OK_CARD_KINDS, type AssistantCard, type AssistantCardKind, type CardDraft } from "../../shared/assistant-cards.ts";
+import { OK_CARD_KINDS, type AssistantCard, type AssistantCardKind, type CardDraft, type CardOption } from "../../shared/assistant-cards.ts";
 
 interface OkCandidate {
   kind: AssistantCardKind;
   title: string;
   body: string;
-  payload: { draft?: CardDraft } & AssistantCard["payload"];
+  payload: { draft?: CardDraft; options?: CardOption[] } & AssistantCard["payload"];
   projectName?: string | null;
   provenance?: string | null;
 }
@@ -25,7 +26,8 @@ interface OkCandidate {
 /** The parts of a decision card a person must read before an OK means anything. */
 function reviewedParts(card: OkCandidate): string[] {
   const draft = card.payload.draft;
-  return [card.title, card.body, ...(draft ? [draft.to, draft.text] : [])];
+  const options = (card.payload.options ?? []).flatMap((o) => [o.label, o.description ?? ""]);
+  return [card.title, card.body, ...(draft ? [draft.to, draft.text] : []), ...options];
 }
 
 /** Whether the card's whole decision fits and shows nothing hidden. */
@@ -37,10 +39,10 @@ export function cardOkOffered(card: OkCandidate): boolean {
   const length = (xs: string[]) => xs.reduce((n, s) => n + s.length, 0);
   if (hidden !== 0 || length(parts) > REVIEW_FIT_MAX || length(shown) > REVIEW_FIT_MAX) return false;
   // The whole card as Telegram would get it, OK offered: the formatter sends the preview instead,
-  // without the OK, when that would not fit one message.
+  // without the OK or the choices, when that would not fit one message.
   const whole = formatManagerCard({
     kind: card.kind, title: card.title, body: card.body, payload: card.payload, okOffered: true,
     projectName: card.projectName ?? null, provenance: card.provenance ?? null,
   }, "full");
-  return whole.buttons.some((b) => b.op === "ok");
+  return whole.buttons.some((b) => b.op === "ok" || b.op === "choose");
 }

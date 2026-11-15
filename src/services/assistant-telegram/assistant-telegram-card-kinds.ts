@@ -12,8 +12,9 @@
  * The body is Markdown, as the manager writes it: it goes through the same formatter as the chat's
  * answers (`markdownToTelegramHtml`, which escapes before it adds a tag). The draft stays verbatim
  * in a `<pre>`: it is what would be sent, character for character.
- * "OK, send" follows `cardOkOffered` (the whole decision shown, nothing hidden), and "Approve
- * change" the same bar on the rules diff, so neither ever stands for text the user did not see.
+ * "OK, send" follows `cardOkOffered` (the whole decision shown, nothing hidden), and so do the
+ * buttons of a card that offers choices (one per choice, numbered as the text lists them);
+ * "Approve change" meets the same bar on the rules diff. None ever stands for text the user did not see.
  */
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import { DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, type DigestProject } from "../../shared/assistant-digest.ts";
@@ -23,15 +24,18 @@ import { markdownToTelegramHtml, redactSecretsForTelegram, splitTelegramHtml } f
 import { REVIEW_FIT_MAX, TOO_LONG_NOTE } from "./assistant-telegram-card-format.ts";
 
 export type CardDetail = "full" | "title";
-export type CardButtonOp = "ok" | "approve" | "revert";
+export type CardButtonOp = "ok" | "choose" | "approve" | "revert";
 
 export interface FormattedManagerCard {
   html: string;
-  buttons: Array<{ text: string; op: CardButtonOp }>;
+  /** `optionId` names the choice a `choose` button stands for. */
+  buttons: Array<{ text: string; op: CardButtonOp; optionId?: string }>;
 }
 
 const PREVIEW_MAX = 1200;
 const BODY_MAX = 1500;
+/** Said on a card whose choices cannot be pressed here (too long, or a part was hidden). */
+export const CHOICES_IN_PPM_NOTE = "Too long to choose from with a button, or a part was hidden — reply with your choice in your own words.";
 const RULES_IN_PPM_NOTE = "Not the whole change, or too long to review here — open the rules in PPM (Settings → Assistant) to approve it.";
 export const REPLY_HINT = "Reply to this message to answer in your own words.";
 
@@ -155,8 +159,22 @@ function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boole
       lines.push(`<b>To:</b> ${clean(oneLine(draft.to), counter)}`, `<pre>${clean(text, counter)}</pre>`);
       if (!card.okOffered) lines.push(`⚠️ ${escapeTelegramHtml(TOO_LONG_NOTE)}`);
     }
+    const options = card.payload.options ?? [];
+    if (full && options.length) {
+      // Listed in the text as well: a button holds a short label, the text says what each one does.
+      lines.push("<b>Choices</b>");
+      options.forEach((o, i) => {
+        const description = o.description ? ` — ${clean(oneLine(o.description), counter)}` : "";
+        lines.push(`${i + 1}. <b>${clean(oneLine(o.label), counter)}</b>${description}`);
+      });
+      if (card.okOffered) {
+        options.forEach((o, i) => buttons.push({ text: `${i + 1}. ${escapeHiddenCharacters(oneLine(o.label))}`, op: "choose", optionId: o.id }));
+      } else {
+        lines.push(`⚠️ ${escapeTelegramHtml(CHOICES_IN_PPM_NOTE)}`);
+      }
+    }
     if (card.payload.urgentCapped) lines.push("<i>Held for the morning: this manager already raised its urgent reports tonight.</i>");
-    if (full && card.okOffered) buttons.push({ text: draft ? "OK, send" : "OK", op: "ok" });
+    if (full && card.okOffered && !options.length) buttons.push({ text: draft ? "OK, send" : "OK", op: "ok" });
     if (full) lines.push(`<i>${REPLY_HINT}</i>`);
   } else if (card.kind === "digest" && full) {
     if (card.payload.projects) lines.push(...digestLines(card.payload.projects, counter));

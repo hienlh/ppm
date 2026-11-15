@@ -37,6 +37,8 @@ export interface CardActor {
 export interface ForwardHow {
   actor: CardActor;
   ok?: boolean;
+  /** The choice the user pressed on a card that offered several (never with `ok`). */
+  choice?: { id: string; label: string };
   draftSha256?: string;
   draftTo?: string;
   /** The words answer the request the manager chat waits on (a reply to an approval or question card). */
@@ -99,6 +101,7 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
     cardId: card.id, channel: actor.channel, at: new Date(env.now()).toISOString(),
     ...(how.ok ? { ok: true as const } : {}),
     ...(how.ok && how.draftSha256 ? { draftSha256: how.draftSha256, ...(how.draftTo ? { draftTo: how.draftTo } : {}) } : {}),
+    ...(!how.ok && how.choice ? { choice: how.choice } : {}),
   };
   // The id is chosen here, before the send, so the turn it opens can be followed even when the
   // provider names that turn before the send returns.
@@ -125,13 +128,14 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
   env.userWrote(delivered.sessionId);
   env.trace(delivered.sessionId, target.providerId, {
     cardId: card.id, channel: actor.channel, ok: how.ok === true,
+    ...(how.choice ? { choice: how.choice.id } : {}),
     ...(actor.deviceId ? { deviceId: actor.deviceId } : {}),
     ...(actor.fetchSite ? { fetchSite: actor.fetchSite } : {}),
     ...(actor.telegramChatId ? { telegramChatId: actor.telegramChatId } : {}),
   });
   const main = env.mainSession();
   if (main) {
-    const what = how.ok ? "gave their OK on" : "answered";
+    const what = how.ok ? "gave their OK on" : how.choice ? `picked the choice with id "${how.choice.id}" on` : "answered";
     env.note(main, `The user ${what} the ${kindName(card)} card ${card.id} for ${target.projectName} ${where(actor.channel)}; `
       + "PPM forwarded it word for word to that project's manager chat.");
   }

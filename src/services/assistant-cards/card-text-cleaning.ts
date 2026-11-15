@@ -1,4 +1,5 @@
 import { neutralizeBlockMarkers } from "../../shared/chat-message-blocks.ts";
+import { CARD_OPTION_LABEL_MAX } from "../../shared/assistant-cards.ts";
 import { escapeHiddenCharacters } from "../../shared/reveal-hidden-characters.ts";
 import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
 
@@ -49,4 +50,15 @@ export function cleanCardTitle(raw: unknown, fallback = "Report"): string {
 export function cleanCardBody(raw: unknown, max = MAX_CARD_BODY): string {
   if (typeof raw !== "string") return "";
   return cap(escapeHiddenCharacters(NEUTRAL(raw.replace(/\r\n?/g, "\n"))).trim(), max);
+}
+
+
+/**
+ * A choice's label: one line, revealed, neutralized, capped. Unlike a title it keeps a leading
+ * "Approve" or symbol: it sits under the card's provenance line, inside the manager's card, and
+ * "Approve merge" is a choice a manager may well offer.
+ */
+export function cleanOptionLabel(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return cap(escapeHiddenCharacters(NEUTRAL(raw).replace(/\s+/g, " ").trim()), CARD_OPTION_LABEL_MAX);
 }
