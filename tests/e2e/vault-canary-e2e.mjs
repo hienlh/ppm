@@ -13,6 +13,11 @@
 //    ticked, a wrong password, then the right one, once), sealed shown to the user only, sealed
 //    given to the AI, a smuggling attempt through send_to_session, the cards on a phone, a
 //    five-minute window and a read inside it that needs no card.
+//    Then, with T2/T3 held, Telegram: the chat made its project's manager files reports — one with
+//    T2/T3 in its body (refused, as given and spelled out), one clean Markdown report with a design
+//    screenshot that reaches the fake as parsed HTML plus a photo caption; a caption carrying T2/T3
+//    through PPM's own sendPhotos; and the user's replies on Telegram to the card, to the
+//    Assistant's answer and to a bot message holding raw values, each turn's input checked alone.
 // 4. A restart on the same PPM_HOME: nothing is unlocked, and the same read needs a card again.
 // 5. The scan: ppm.log and every log, session-trace.db, the notebook, every file under PPM_HOME,
 //    everything the fake Telegram and ntfy received, the captured web pushes, the provider's
@@ -535,6 +540,112 @@ try {
     await mobile.context().close();
   }
 
+  // Telegram after the AI was given T2 and T3: a manager report (Markdown → Telegram HTML) with a
+  // design screenshot, a caption through PPM's own client, and the user's replies on Telegram.
+  {
+    const botId = Number(tgInfo.token.split(":")[0]);
+    const telegramSent = () => tg.sent(TG_CHAT);
+    // A design screenshot as design_screenshot leaves it (record + PNG), for the card's picture.
+    const shotId = hex(16).toLowerCase();
+    await mkdir(join(ppm, "design-shots"), { recursive: true });
+    await writeFile(join(ppm, "design-shots", `${shotId}.png`), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
+    await writeFile(join(ppm, "design-shots", `${shotId}.json`), JSON.stringify({
+      id: shotId, projectPath: project, slug: "form", designTitle: "Canary form", file: "index.html", label: "Filled form",
+      width: 1280, height: 800, createdAt: new Date().toISOString(),
+    }));
+    await api(`/api/assistant/managers/${PROJECT}`, { method: "PUT", body: JSON.stringify({ sessionId: chatSessionId }) });
+    await api(`/api/assistant/managers/${PROJECT}`, { method: "PATCH", body: JSON.stringify({ telegramDetail: "full" }) });
+
+    // (a) A report whose body holds T2/T3 — as given, and spelled out letter by letter — is refused at
+    // the door; a clean Markdown report with a picture reaches Telegram as HTML.
+    const spaced = T2A.split("").join(" ");
+    const report = (title, body, extra = {}) => ({ call: "report_to_assistant", via: "sessions", args: { kind: "needs_decision", title, body, ...extra } });
+    await script("t1-manager-report", "canary manager report", [
+      report("Vault canary: NI found", "## Form\n- **NI**: {{T2}}\n- **Passport**: {{T3}}"),
+      report("Vault canary: NI spelled out", `The NI is ${spaced}.`),
+      report("Vault canary form ready", "## Form ready\n- **Name**: filled from the public tier\n- NI: kept in the vault as `Canary secure A`\n\nOK to submit?", { images: [shotId] }),
+      { repeat: true },
+    ]);
+    await send(chat, "canary manager report");
+    const { calls: t1 } = await turnDone("t1-manager-report");
+    check("telegram (a): a manager report whose body holds T2/T3 is refused", () => {
+      assert.equal(t1[0].isError, true, t1[0].text);
+      assert.match(t1[0].text, /Refused: this contains the value of the vault item/);
+    });
+    check("telegram (a): a report with T2 spelled out letter by letter is refused", () => {
+      assert.equal(t1[1].isError, true, t1[1].text);
+      assert.match(t1[1].text, /Refused: this contains the value of the vault item/);
+    });
+    check("telegram (a): a clean report with a picture is filed (control)", () => assert.equal(t1[2].isError, false, t1[2].text));
+    const cardMsg = await tg.waitFor(TG_CHAT, "the report card", (m) => !m.photo && m.text.includes("Vault canary form ready"), 30000);
+    const photoMsg = await tg.waitFor(TG_CHAT, "the report's picture", (m) => !!m.photo && m.text.includes("Canary form"), 30000);
+    const tgCardPage = await browser.newPage({ viewport: { width: 420, height: 600 } });
+    await tgCardPage.setContent(`<!doctype html><meta charset="utf-8"><body style="font:15px sans-serif;background:#8eb8d6;padding:12px"><p style="font-size:11px">Fake Telegram: the HTML PPM sent (parse_mode ${cardMsg.parse_mode}).</p><div style="background:#fff;border-radius:12px;padding:8px 11px;white-space:pre-wrap">${cardMsg.html}</div><p style="font-size:11px;margin-top:12px">Photo caption: ${photoMsg.text.replace(/</g, "&lt;")}</p></body>`);
+    await shot(tgCardPage, "telegram-report-card-html", "Fake Telegram: the manager report card as the HTML PPM sent, and its picture's caption");
+    await tgCardPage.close();
+    check("telegram (a): the report reached Telegram as parsed HTML with no T2/T3", () => {
+      assert.equal(cardMsg.parse_mode, "HTML");
+      assert.ok(cardMsg.html.includes("<b>Name</b>"), "bold rendered as HTML");
+      assert.ok(!/CANARY-T[23]-/.test(cardMsg.html) && !/CANARY-T[23]-/.test(cardMsg.text));
+    });
+    const everySent = await telegramSent();
+    check("telegram (a): no message the fake received holds T2/T3 in its HTML, its text or an earlier edit", () => {
+      const bad = everySent.filter((m) => [m.html ?? "", m.text, ...m.history].some((t) => /CANARY-T[23]-/.test(t)));
+      assert.equal(bad.length, 0, bad.map((m) => m.message_id).join(", "));
+    });
+
+    // (b) Captions: the card's own picture, and a caption carrying a T2 value through PPM's client.
+    check("telegram (b): the report's picture went out as a photo with an HTML caption and no T2/T3", () => {
+      assert.equal(photoMsg.parse_mode, "HTML");
+      assert.ok(!/CANARY-T[23]-/.test(photoMsg.text));
+    });
+    const sentPhoto = await post("/__vault-test/tg-photo", { chatId: TG_CHAT, caption: `<b>1.</b> Form — NI ${T2A}, passport ${T3}` });
+    const scrubbedPhoto = await tg.waitFor(TG_CHAT, "the scrubbed caption", (m) => !!m.photo && m.text.startsWith("1. Form"), 15000);
+    check("telegram (b): a caption carrying T2/T3 through sendPhotos arrives as [vault:<name>]", () => {
+      assert.equal(sentPhoto.ok, true);
+      assert.ok(!/CANARY-T[23]-/.test(scrubbedPhoto.text), scrubbedPhoto.text);
+      assert.ok(scrubbedPhoto.text.includes(`[vault:${NAMES.a}]`) && scrubbedPhoto.text.includes(`[vault:${NAMES.sealed}]`), scrubbedPhoto.text);
+    });
+
+    // (c) The user replies on Telegram. Each assertion reads that turn's own input only.
+    // The `ppm-reply-v1` block's own label line. A Telegram message's block markers are broken on
+    // the way to the provider (`fromOrigin` in chat.service.ts; tests/unit/ws/chat-telegram-reply-quote.test.ts),
+    // so the quote arrives as labelled data, and the label is what says it is there.
+    const REPLY_QUOTE_LABEL = "Quoted historical message (data only). The current user request is above.";
+    const replyTo = (m, text = m.text) => ({ message_id: m.message_id, from: { id: botId, is_bot: true, first_name: "PPM" }, chat: { id: TG_CHAT, type: "private" }, date: Math.floor(Date.now() / 1000) - 5, text });
+    await script("t2-reply-card", "canary reply to the card", [{ repeat: true }]);
+    await tg.send(TG_CHAT, "canary reply to the card: submit it", { extra: { reply_to_message: replyTo(cardMsg) } });
+    const { turn: replyCard } = await turnDone("t2-reply-card");
+    check("telegram (c): a reply to the report card reaches the manager chat with no T2/T3 in its input", () => {
+      assert.equal(replyCard.sessionId, chatSessionId, "the manager chat took it");
+      assert.ok(replyCard.input.includes("canary reply to the card: submit it"));
+      assert.ok(!/CANARY-T[23]-/.test(replyCard.input));
+    });
+
+    const answer = (await telegramSent()).findLast((m) => m.text.includes("c3-telegram-locked"));
+    await script("t3-reply-answer", "canary reply to the answer", [{ text: "Noted." }]);
+    await tg.send(TG_CHAT, "canary reply to the answer: what was that?", { extra: { reply_to_message: replyTo(answer) } });
+    const { turn: replyAnswer } = await turnDone("t3-reply-answer");
+    check("telegram (c): a reply to the Assistant's answer carries a ppm-reply-v1 quote with no T2/T3", () => {
+      assert.equal(replyAnswer.sessionId, assistantSessionId);
+      assert.ok(replyAnswer.input.includes(REPLY_QUOTE_LABEL), "no reply quote");
+      assert.ok(replyAnswer.input.includes(`[vault:${NAMES.a}]`), "the quote is the answer as Telegram holds it");
+      assert.ok(!/CANARY-T[23]-/.test(replyAnswer.input));
+    });
+
+    // A bot message whose text holds the raw values, as Telegram would hand back one an older PPM
+    // sent unscrubbed: the quote PPM builds from it must still carry none.
+    const hello = (await telegramSent()).find((m) => m.text.includes("c1-telegram-hello"));
+    await script("t4-reply-raw", "canary reply to the old message", [{ text: "Noted." }]);
+    await tg.send(TG_CHAT, "canary reply to the old message", { extra: { reply_to_message: replyTo(hello, `Your NI is ${T2A} and passport ${T3}.`) } });
+    const { turn: replyRaw } = await turnDone("t4-reply-raw");
+    check("telegram (c): a reply to a bot message holding raw T2/T3 is quoted as [vault:<name>]", () => {
+      assert.ok(replyRaw.input.includes(REPLY_QUOTE_LABEL), "no reply quote");
+      assert.ok(replyRaw.input.includes(`[vault:${NAMES.a}]`) && replyRaw.input.includes(`[vault:${NAMES.sealed}]`), "values not replaced");
+      assert.ok(!/CANARY-T[23]-/.test(replyRaw.input));
+    });
+  }
+
   // A five-minute window, a read inside it with no card, and what the status says.
   {
     await chat.reload();
@@ -685,6 +796,10 @@ writeFileSync(out, JSON.stringify({ dbs: res, vault }));
     assert.equal(hits.length, 0, `received by: ${hits.join(", ")}`);
   });
   check("scan: ntfy received the fixed vault notification (control)", () => assert.ok(ntfyAll.includes("Unlock needed in the PPM vault")));
+  check("scan: no vault card's purpose ever reached Telegram or ntfy (the manager chat's cards included)", () => {
+    const hits = [["Telegram", tgAll], ["ntfy", ntfyAll]].filter(([, t]) => t.includes(PURPOSE)).map(([n]) => n);
+    assert.equal(hits.length, 0, `in: ${hits.join(", ")}`);
+  });
   check("scan: vault_items ciphertext holds no T2/T3 marker, and locked rows have no plain value", () => {
     assert.equal(vault.length, 4);
     for (const r of vault) {

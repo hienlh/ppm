@@ -14,7 +14,9 @@
  *    becomes the first value of that marker family the provider has received in this session;
  *  - `{ text }`: say something;
  *  - `{ repeat: true }`: say every marker value the session has received so far.
- * A posted script runs on the first turn whose message contains its `match`.
+ * A posted script runs on the first turn whose message contains its `match`. Each turn's input
+ * (shared context and message) is kept in `/__vault-test/calls` `turns[].input`, and
+ * `POST /__vault-test/tg-photo` sends one picture through PPM's own Telegram client.
  *
  * With PPM_VAULT_FIXTURE_RESUME=1 it restarts on the same PPM_HOME (the provider's sessions come
  * back from PPM_VAULT_PROVIDER_STATE). The Assistant's Telegram bot points at the fake Bot API
@@ -114,7 +116,8 @@ const state: { sessions: Record<string, StoredSession> } = existsSync(statePath!
 const saveState = () => writeFileSync(statePath!, JSON.stringify(state));
 const scripts: Script[] = [];
 const calls: CallRecord[] = [];
-const turnsSeen: Array<{ label: string; sessionId: string; assistant: boolean; origin: string | null; at: number; done: boolean }> = [];
+/** `input`: what the turn was handed (shared context and message), so a test can check one turn's input alone. */
+const turnsSeen: Array<{ label: string; sessionId: string; assistant: boolean; origin: string | null; at: number; done: boolean; input: string }> = [];
 
 /** Everything the "model" receives or produces, appended as it happens. */
 function transcript(sessionId: string, dir: "in" | "out", kind: string, text: string): void {
@@ -256,7 +259,10 @@ class VaultScriptedProvider {
     const index = scripts.findIndex((sc) => plain.includes(sc.match));
     const script = index >= 0 ? scripts.splice(index, 1)[0]! : { label: `unscripted ${plain.slice(0, 40)}`, match: "", ops: [] };
     const { getSessionTurnOrigin } = await import("../../../src/server/ws/chat");
-    const seen = { label: script.label, sessionId, assistant, origin: getSessionTurnOrigin(sessionId) ?? null, at: Date.now(), done: false };
+    const seen = {
+      label: script.label, sessionId, assistant, origin: getSessionTurnOrigin(sessionId) ?? null, at: Date.now(), done: false,
+      input: `${opts?.sharedContext ?? ""}\n${message}`,
+    };
     turnsSeen.push(seen);
     const events: ChatEvent[] = [];
     const emit = (ev: ChatEvent) => { events.push(ev); return ev; };
@@ -341,6 +347,8 @@ const { chatSocketData, chatWebSocket } = await import("../../../src/server/ws/c
 const { globalWebSocket } = await import("../../../src/server/ws/global");
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
+/** A 1×1 PNG. */
+const TINY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 async function testRoute(req: Request, path: string): Promise<Response> {
   if (path === "/__vault-test/calls") return json({ calls, turns: turnsSeen });
@@ -349,6 +357,16 @@ async function testRoute(req: Request, path: string): Promise<Response> {
     if (typeof body.label !== "string" || typeof body.match !== "string" || !body.match || !Array.isArray(body.ops)) return json({ error: "label, match and ops required" }, 400);
     scripts.push({ label: body.label, match: body.match, ops: body.ops as ScriptOp[] });
     return json({ ok: true });
+  }
+  // One picture sent through PPM's own Telegram client to the fake Bot API, with the caption the
+  // test names: the caption path every caller (a card's design screenshots) shares.
+  if (path === "/__vault-test/tg-photo" && req.method === "POST") {
+    const { chatId, caption } = await req.json() as { chatId: number; caption: string };
+    const { TelegramBotClient } = await import("../../../src/services/telegram/telegram-bot-client");
+    const client = new TelegramBotClient(process.env.PPM_ASSISTANT_FAKE_TELEGRAM_TOKEN!);
+    const png = Uint8Array.from(atob(TINY_PNG), (c) => c.charCodeAt(0));
+    const sent = await client.sendPhotos(chatId, [{ bytes: png, filename: "form.png", caption }]);
+    return json({ ok: sent.ok });
   }
   if (path.startsWith("/__vault-test/tg/")) {
     return (await telegram.route(req, path.slice("/__vault-test/tg/".length))) ?? json({ error: "unknown test route" }, 404);
