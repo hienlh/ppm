@@ -223,6 +223,8 @@ interface LiveRun { id: string; queue: Array<{ message: string; opts?: SendOpts 
 
 class ScriptedProvider {
   readonly supportsAssistantSessions = true;
+  /** `create_session` may open a Design chat (the chat-cards e2e asks for one); off elsewhere. */
+  readonly supportsDesignInstructions = process.env.PPM_ASSISTANT_FIXTURE_DESIGN === "1";
   /** The manager-loop e2e reads the shared-context block as the provider is handed it, apart from the message. */
   readonly supportsSharedContext = managerLoop !== null;
   /** The rules check's one-shot question (manager-loop e2e only). */
@@ -668,6 +670,8 @@ const { globalWebSocket } = await import("../../../src/server/ws/global");
 const { terminalWebSocket } = await import("../../../src/server/ws/terminal");
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
+/** How the cards `/__assistant-test/collab-card` raised ended, by request id. */
+const collabCardOutcomes = new Map<string, unknown>();
 
 async function testRoute(req: Request, path: string): Promise<Response> {
   if (path === "/__assistant-test/calls") return json({ calls, turns: turnsSeen, pendingProviderApprovals: pendingApprovals.size });
@@ -705,6 +709,21 @@ async function testRoute(req: Request, path: string): Promise<Response> {
   if (path.startsWith("/__assistant-test/chat-live/")) {
     const { chatControl } = await import("../../../src/services/chat-control/chat-control");
     return json({ state: chatControl()?.liveState(decodeURIComponent(path.slice("/__assistant-test/chat-live/".length))) ?? null });
+  }
+  // A session tool's card raised in a chat through the real broker, with a wait short enough to see
+  // it run out (the product's is ten minutes): the same card `create_session` raises, minus the AI.
+  // POST answers its request id; GET `collab-card/<requestId>` answers how it ended, once it did.
+  if (path === "/__assistant-test/collab-card" && req.method === "POST") {
+    const { sessionId, waitMs, input } = await req.json() as { sessionId: string; waitMs: number; input: unknown };
+    const { collabApprovalBroker } = await import("../../../src/services/session-collab/collab-approval-broker");
+    const outcome = collabApprovalBroker.request(sessionId, input as never, undefined, waitMs);
+    const requestId = collabApprovalBroker.pendingEvent(sessionId)?.requestId ?? null;
+    if (requestId) void outcome.then((o) => collabCardOutcomes.set(requestId, o));
+    else return json({ error: "the card was not shown", outcome: await outcome }, 409);
+    return json({ requestId });
+  }
+  if (path.startsWith("/__assistant-test/collab-card/")) {
+    return json({ outcome: collabCardOutcomes.get(path.slice("/__assistant-test/collab-card/".length)) ?? null });
   }
   // Shortens or restores the approval wait through the broker's own environment override; the
   // broker reads it each time it asks.

@@ -1024,7 +1024,17 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   with its number (no link: the photo is the picture), under the same quiet hours and silence as the card, and
   not at all for a project whose cards reach the phone by title only. Rules events become `rules_note` / `rules_change` cards, and the Assistant pausing its
   own messages a `budget` card (`assistant-event-cards.ts`). A child chat's approvals are not
-  carded: the manager relays them. A turn another chat or PPM opened is one the user did not
+  carded: the manager relays them. Every other chat of a project, watched or not, gets the same
+  `approval` / `question` mirror (`ordinary-chat-cards.ts` says which: not the Assistant's own, not
+  a manager or a chat a manager opened, not an extension's turn), carrying `payload.chat` (its name
+  and provider) and `payload.expiresAt` for a card that gives up by itself (a session tool's, after
+  ten minutes): such a card used to wait only in its chat and run out while the user was away. Its
+  Telegram copy says when it expires; when it does, `approval_resolved` carries reason `expired`,
+  the copy says so and one line under it tells the phone. A session tool's card is answered from
+  Telegram or from the mirror (origin `telegram` / `assistant_card`, once, never "for the
+  session"; `chat-collab-approval-relay.ts`). A `db_execute` or vault card is only named
+  (`ppm_only_card_shown`, `payload.answerInPpm`): no Allow or Deny anywhere but its chat, and no
+  Telegram copy beyond the notice `assistant-telegram-db-notices.ts` already sends. A turn another chat or PPM opened is one the user did not
   watch, so the block PPM puts in every manager turn (`MANAGER_USER_ACTION_RULE` in
   `manager-context-entry.ts`) tells the manager to report anything that turn leaves the user to do
   or decide; nothing detects such a turn on its own, since every turn a child's progress message

@@ -1,5 +1,6 @@
 /**
- * A manager chat's own approval or question, mirrored. Allow is offered only when the card shows
+ * A chat's approval or question, mirrored: a manager chat's own, or one any other chat of a project
+ * waits on (named, so the user knows which). Allow is offered only when the card shows
  * everything that would run (the same bar Telegram keeps); otherwise the user opens the chat.
  *
  * A question is answered on the card whatever its shape: each option is a tile (A, B, C…) with its
@@ -21,16 +22,49 @@ import { openCardManagerChat, useCardAction } from "./use-card-action";
 type Props = { card: AssistantCard; onCard?: (card: AssistantCard) => void };
 type Question = NonNullable<AssistantCard["payload"]["questions"]>[number];
 
-const OpenChat = ({ card }: { card: AssistantCard }) => (
-  <CardButton variant="ghost" secondary title="Open manager chat" onClick={() => openCardManagerChat(card)} disabled={!card.sessionId}>
-    <ExternalLink className="size-3.5" />Open chat
+const OpenChat = ({ card, primary }: { card: AssistantCard; primary?: boolean }) => (
+  <CardButton
+    variant={primary ? "primary" : "ghost"}
+    secondary={!primary}
+    title={card.payload.chat ? "Open the chat" : "Open manager chat"}
+    onClick={() => openCardManagerChat(card)}
+    disabled={!card.sessionId}
+  >
+    <ExternalLink className="size-3.5" />{primary ? "Open in PPM" : "Open chat"}
   </CardButton>
 );
+
+/** "21:09": a deadline as the person reads a clock. */
+const clockTime = (ms: number): string => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+/** Who is asking: a manager chat, or another chat of the project, named as PPM shows it. */
+function Asker({ card }: { card: AssistantCard }) {
+  const project = card.projectName ?? "project";
+  const chat = card.payload.chat;
+  if (!chat) return <>The {project} manager chat</>;
+  return <>Chat <b className="font-semibold text-text-primary">“{escapeHiddenCharacters(chat.title)}”</b> in {project}</>;
+}
+
+/** A card that gives up by itself says when, while it still waits. */
+function Deadline({ card }: { card: AssistantCard }) {
+  const at = card.payload.expiresAt;
+  if (!at || card.status !== "open") return null;
+  return <p className="text-xs text-warning">Expires at {clockTime(at)}: if nobody answers by then, nothing is done.</p>;
+}
 
 export function ApprovalMirrorCard({ card, onCard }: Props) {
   const { busy, error, run } = useCardAction(onCard);
   const d = card.payload.deciding;
   const complete = d?.complete === true;
+  // A database change or a vault unlock takes a password typed into PPM: there is nothing to press here.
+  if (card.payload.answerInPpm) {
+    return (
+      <CardShell card={card} look={{ label: "Needs you in PPM", Icon: ShieldAlert, tone: "need" }} error={error} actions={<OpenChat card={card} primary />}>
+        <p className="text-[13px] text-text-secondary"><Asker card={card} /> waits: <b className="font-semibold text-text-primary">{card.title}</b>.</p>
+        {d?.incompleteReason && <p className="text-xs text-text-subtle">{d.incompleteReason}</p>}
+      </CardShell>
+    );
+  }
   return (
     <CardShell
       card={card}
@@ -50,7 +84,7 @@ export function ApprovalMirrorCard({ card, onCard }: Props) {
       )}
       secondary={<OpenChat card={card} />}
     >
-      <p className="text-[13px] text-text-secondary">The {card.projectName ?? "project"} manager chat wants to use <b className="font-semibold text-text-primary">{d?.title ?? card.title}</b>:</p>
+      <p className="text-[13px] text-text-secondary"><Asker card={card} /> wants to use <b className="font-semibold text-text-primary">{d?.title ?? card.title}</b>:</p>
       {d && d.facts.length > 0 && (
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
           {d.facts.map((f) => (
@@ -66,7 +100,8 @@ export function ApprovalMirrorCard({ card, onCard }: Props) {
           {d.text}
         </pre>
       )}
-      {!complete && <p className="text-xs text-warning">{d?.incompleteReason ?? "Open the manager chat to see all of it before allowing."}</p>}
+      {!complete && <p className="text-xs text-warning">{d?.incompleteReason ?? `Open the ${card.payload.chat ? "chat" : "manager chat"} to see all of it before allowing.`}</p>}
+      <Deadline card={card} />
     </CardShell>
   );
 }
@@ -129,7 +164,8 @@ export function QuestionMirrorCard({ card, onCard }: Props) {
           )}
         </section>
       ))}
-      {open && !onCardAnswerable && <p className="text-xs text-text-subtle">Answer it in the manager chat.</p>}
+      {open && !onCardAnswerable && <p className="text-xs text-text-subtle">Answer it in the {card.payload.chat ? "chat" : "manager chat"}.</p>}
+      {card.payload.chat && <p className="text-xs text-text-subtle">Asked by <Asker card={card} />.</p>}
     </CardShell>
   );
 }

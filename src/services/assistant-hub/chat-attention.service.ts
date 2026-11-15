@@ -48,6 +48,8 @@ export interface AttentionCard {
   headline: string;
   deciding: { facts: Array<{ label: string; value: string }>; label?: string; text: string; shortened: boolean; complete: boolean; incompleteReason?: string };
   questions?: NormalizedQuestion[];
+  /** When the card gives up by itself if nobody answers; absent when it waits for good. */
+  expiresAt?: string;
 }
 
 /**
@@ -160,6 +162,7 @@ function attentionCard(card: LiveApprovalCard): AttentionCard {
       ...(d.incompleteReason ? { incompleteReason: d.incompleteReason } : {}),
     },
     ...(card.questions ? { questions: card.questions } : {}),
+    ...(card.expiresAt ? { expiresAt: new Date(card.expiresAt).toISOString() } : {}),
   };
 }
 

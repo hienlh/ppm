@@ -11,13 +11,17 @@ import { cleanCardBody, cleanCardTitle } from "./card-text-cleaning.ts";
 import type { AssistantCards } from "./assistant-cards.service.ts";
 import type { CardRow } from "./assistant-cards-db.ts";
 import type { LateReply } from "../assistant-wake/manager-wake-sources.ts";
+import type { ChatCardRef } from "./ordinary-chat-cards.ts";
 
 /**
- * What PPM itself sees in a manager chat, turned into cards and news. Only the manager chat
- * itself: its child chats' approvals and questions are the manager's to relay.
+ * What PPM itself sees in a manager chat, turned into cards and news — and the cards every other
+ * chat of a project waits on (`ordinary-chat-cards.ts` says which), so none waits unseen. A
+ * manager's child chats are left out: their approvals and questions are the manager's to relay.
  *
- * - An approval or question the manager chat shows becomes a card mirroring it; the request
- *   ending anywhere (answered in the chat, on Telegram, by the turn ending) resolves the card.
+ * - An approval or question a chat shows becomes a card mirroring it; the request ending anywhere
+ *   (answered in the chat, on Telegram, by the turn ending, by running out of time) resolves the
+ *   card. A card that takes a password typed into PPM (`db_execute`, vault) is only named: the
+ *   mirror says the chat waits and links to it, with nothing to press.
  * - A manager turn that failed becomes a `failed` card after a grace period, unless the manager
  *   reported in between. A turn the user stopped, or one cut short by a rate limit or an
  *   overloaded provider, is not a failure the user needs a card for.
@@ -41,6 +45,13 @@ export interface ManagerSignalsDeps {
   cards: AssistantCards;
   clock: AssistantClock;
   managerFor(sessionId: string): ManagerRef | null;
+  /** A chat that is not a manager, when its waiting cards are mirrored; none when left out. */
+  chatFor?(p: { sessionId: string; projectName: string; providerId: string }): ChatCardRef | null;
+  /**
+   * Takes out of a mirrored request every vault value its chat's turn read, before the card is
+   * stored, broadcast and backed up (`turnSecretScrubber.scrubIn`); unchanged when left out.
+   */
+  scrub?<T>(value: T, sessionId: string): T;
   openRequestCard(requestId: string): CardRow | null;
   reportsSince(sessionId: string, kinds: readonly AssistantCardKind[], since: number): number;
   lateReply(reply: LateReply): void;
@@ -53,6 +64,16 @@ export interface ManagerSignalsDeps {
   answersCardReply?(sessionId: string): boolean;
   graceMs?: number;
 }
+
+/** The `approval_resolved` reason of a card nobody answered before its deadline. */
+export const EXPIRED_REASON = "expired";
+export const EXPIRED_NOTE = "Expired: nobody answered in time, so nothing was done";
+/** Why a card that takes a password typed into PPM is answered there and nowhere else. */
+export const PPM_ONLY_REASON = "Answer it in the chat in PPM: it needs a password typed there, which is never asked for anywhere else.";
+const PPM_ONLY_TITLES: Record<"db_execute" | "vault", string> = {
+  db_execute: "A database change waits for your approval",
+  vault: "A vault item waits to be unlocked",
+};
 
 const TRANSIENT = /rate.?limit|overloaded|\b429\b|\b529\b|usage limit|too many requests/i;
 const MAX_EXPECTED = 200;
@@ -71,12 +92,24 @@ export function createManagerSignals(deps: ManagerSignalsDeps) {
   const timers = new Set<Cancel>();
   let stops: Array<() => void> = [];
 
-  function onApprovalShown(p: ChatLifecycleEvents["approval_shown"]): void {
+  /** Where a waiting card of this chat goes: its manager's card, or the chat's own; null for none. */
+  function ownerOf(p: { sessionId: string; projectName: string; providerId: string }):
+    { projectName: string; projectPath: string; sessionId: string; chat?: { title: string; providerId: string } } | null {
     const m = deps.managerFor(p.sessionId);
-    if (!m || deps.openRequestCard(p.card.requestId)) return;
-    const deciding = decidingInput(p.card);
+    if (m) return m;
+    let c: ChatCardRef | null = null;
+    try { c = deps.chatFor?.(p) ?? null; } catch (e) { log.warn(`session=${p.sessionId} could not tell whose card this is: ${(e as Error).message}`); }
+    return c ? { projectName: c.projectName, projectPath: c.projectPath, sessionId: c.sessionId, chat: { title: c.title, providerId: c.providerId } } : null;
+  }
+
+  function onApprovalShown(p: ChatLifecycleEvents["approval_shown"]): void {
+    if (deps.openRequestCard(p.card.requestId)) return;
+    const m = ownerOf(p);
+    if (!m) return;
+    const scrub = <T>(v: T): T => (deps.scrub ? deps.scrub(v, p.sessionId) : v);
+    const deciding = scrub(decidingInput(p.card));
     const question = p.card.isQuestion;
-    const questions = question ? (p.card.questions ?? normalizeClaudeQuestions(p.card.input)) : [];
+    const questions = scrub(question ? (p.card.questions ?? normalizeClaudeQuestions(p.card.input)) : []);
     const first = questions[0]?.question;
     deps.cards.create({
       kind: question ? "question" : "approval",
@@ -85,6 +118,27 @@ export function createManagerSignals(deps: ManagerSignalsDeps) {
       payload: {
         requestId: p.card.requestId,
         ...(question ? { questions } : { deciding }),
+        ...(m.chat ? { chat: m.chat } : {}),
+        ...(p.card.expiresAt ? { expiresAt: p.card.expiresAt } : {}),
+      },
+    });
+  }
+
+  function onPpmOnlyCardShown(p: ChatLifecycleEvents["ppm_only_card_shown"]): void {
+    if (deps.openRequestCard(p.requestId)) return;
+    const m = ownerOf(p);
+    if (!m) return;
+    const title = PPM_ONLY_TITLES[p.kind];
+    deps.cards.create({
+      kind: "approval",
+      projectName: m.projectName, projectPath: m.projectPath, sessionId: m.sessionId,
+      title,
+      payload: {
+        requestId: p.requestId,
+        answerInPpm: p.kind,
+        // Nothing of the request itself: the card only says the chat waits, and where.
+        deciding: { kind: p.kind, title, facts: [], text: "", complete: false, incompleteReason: PPM_ONLY_REASON },
+        ...(m.chat ? { chat: m.chat } : {}),
       },
     });
   }
@@ -94,11 +148,15 @@ export function createManagerSignals(deps: ManagerSignalsDeps) {
     if (p.by === "assistant_card") return;
     const row = deps.openRequestCard(p.requestId);
     if (!row) return;
-    const where = p.by === "telegram" ? "on Telegram" : p.by ? "in the manager chat" : null;
+    // Only a person's answer is `answered`; one given in PPM's chat over HTTP (a session tool's or a
+    // database card) names nobody in `by`, and is the chat's all the same.
+    const answered = p.reason === "answered";
+    const chat = row.payload.chat ? "in the chat" : "in the manager chat";
+    const where = p.by === "telegram" ? "on Telegram" : answered ? chat : null;
     deps.cards.transition(row.id, "resolved", {
-      by: p.by ? "user" : "ppm", channel: p.by === "telegram" ? "telegram" : "chat", at: deps.clock.now(),
-      ...(p.by ? { approved: p.approved } : {}),
-      note: where ? `Answered ${where}` : "No longer waiting",
+      by: answered ? "user" : "ppm", channel: p.by === "telegram" ? "telegram" : "chat", at: deps.clock.now(),
+      ...(answered ? { approved: p.approved } : {}),
+      note: where ? `Answered ${where}` : p.reason === EXPIRED_REASON ? EXPIRED_NOTE : "No longer waiting",
     });
   }
 
@@ -150,6 +208,7 @@ export function createManagerSignals(deps: ManagerSignalsDeps) {
       if (stops.length) return;
       stops = [
         deps.lifecycle.on("approval_shown", onApprovalShown),
+        deps.lifecycle.on("ppm_only_card_shown", onPpmOnlyCardShown),
         deps.lifecycle.on("approval_resolved", onApprovalResolved),
         deps.lifecycle.on("turn_ended", onTurnEnded),
       ];

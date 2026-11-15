@@ -135,6 +135,18 @@ export interface AssistantCardPayload {
   urgentCapped?: boolean;
   /** Approval and question cards: the request in the manager chat this mirrors. */
   requestId?: string;
+  /**
+   * Approval and question cards of a chat that is not a manager (`sessionId` is that chat): its
+   * name and provider as PPM recorded them when the card was made. Absent on a manager's card.
+   */
+  chat?: { title: string; providerId: string };
+  /** Approval cards: when the request gives up by itself if nobody answers (ms since the epoch). */
+  expiresAt?: number;
+  /**
+   * Approval cards answered in the chat in PPM only: a `db_execute` change or a vault unlock, both
+   * of which take a password typed into PPM. Such a card has no Allow or Deny anywhere else.
+   */
+  answerInPpm?: "db_execute" | "vault";
   /** Approval cards: the part a person must see before Allow means anything. */
   deciding?: {
     kind: string; title: string; facts: Array<{ label: string; value: string }>; text: string;

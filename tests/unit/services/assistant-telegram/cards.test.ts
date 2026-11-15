@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { clientFor, connectChat, freshChat, memoryState, queueFor, useFakeTelegram } from "./bridge-test-kit.ts";
 import { chatControl, setChatControl, type ApprovalAnswer, type ChatControl, type LiveApprovalCard } from "../../../../src/services/chat-control/chat-control.ts";
 import type { ChatLifecycleEvents } from "../../../../src/services/chat-control/chat-lifecycle.ts";
-import { AssistantTelegramCards } from "../../../../src/services/assistant-telegram/assistant-telegram-cards.ts";
+import { AssistantTelegramCards, expiryLine } from "../../../../src/services/assistant-telegram/assistant-telegram-cards.ts";
 import { ButtonCodes } from "../../../../src/services/assistant-telegram/assistant-telegram-button-codes.ts";
 import type { BridgeAction } from "../../../../src/services/assistant-telegram/assistant-telegram-actions.ts";
 import { HIDDEN_NOTE, TOO_LONG_NOTE } from "../../../../src/services/assistant-telegram/assistant-telegram-card-format.ts";
@@ -165,6 +165,44 @@ describe("approval cards on Telegram", () => {
     expect(after.text).toContain("No longer waiting: the request ended without an answer.");
     expect(after.text).not.toContain("Denied");
     expect(after.reply_markup).toBeUndefined();
+  });
+
+  it("says how long a card that gives up by itself has, and says once, under it, that it expired", async () => {
+    const t = setup();
+    const expiresAt = Date.now() + 9.6 * 60_000;
+    const { message, requestId } = await t.show({
+      tool: "ppm:session_collab", expiresAt,
+      input: { kind: "create", title: "Design kho", providerId: "claude", model: null, task: "Make the design", depth: 1 },
+    });
+    expect(message.text).toContain("Expires in 10 minutes (at ");
+    expect(message.text).toContain("If nobody answers by then, nothing is done.");
+    const before = fake.sent(Number(t.chat)).length;
+    cards.resolved({ sessionId: "s", requestId, approved: false, reason: "expired" });
+    await t.queue.whenIdle();
+    const all = fake.sent(Number(t.chat));
+    const card = all.find((m) => m.message_id === message.message_id)!;
+    expect(card.text).toContain("No longer waiting: it expired — nobody answered in time, so nothing was done.");
+    expect(card.reply_markup).toBeUndefined();
+    const notice = all.slice(before);
+    expect(notice).toHaveLength(1);
+    expect(notice[0]!.text).toStartWith("⌛ This card expired: PPM Assistant wants to.");
+    expect(notice[0]!.reply_to).toBe(message.message_id);
+  });
+
+  it("reads the deadline on the clock of the Assistant's time zone, not the server's", () => {
+    const at = Date.UTC(2026, 10, 15, 14, 19);
+    expect(expiryLine(at, at - 10 * 60_000, "Asia/Ho_Chi_Minh")).toContain("Expires in 10 minutes (at 21:19)");
+    expect(expiryLine(at, at - 30_000, "UTC")).toContain("Expires in 1 minute (at 14:19)");
+  });
+
+  it("says nothing more when a card without a deadline ends", async () => {
+    const t = setup();
+    const { message, requestId } = await t.show({ tool: "Bash", input: { command: "ls" } });
+    expect(message.text).not.toContain("Expires in");
+    const before = fake.sent(Number(t.chat)).length;
+    cards.resolved({ sessionId: "s", requestId, approved: false, reason: "turn_ended" });
+    await t.queue.whenIdle();
+    expect(fake.sent(Number(t.chat)).length).toBe(before);
   });
 
   it("says a card answered elsewhere is no longer waiting", async () => {
