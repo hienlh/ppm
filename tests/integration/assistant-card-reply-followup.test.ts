@@ -8,7 +8,11 @@
  * wrong assumption ("go ahead, surely it won't cost much quota, right?"); the manager answers that
  * it will cost a lot, with numbers, and asks again with a new card. The answer must reach the phone
  * under the card the user replied to — with a sound, though the user was at PPM a moment ago — and
- * sit under the card in PPM. Set `PPM_CARD_FOLLOWUP_DEMO_LOG` to write the exchange as a readable log.
+ * sit under the card in PPM. Then the ways it can go wrong: a manager that answers first and
+ * acknowledges its card after (the answer still arrives, the "Đã gửi card." does not), a turn that
+ * fails halfway (only that it stopped), and a reply pushed into someone else's running turn that
+ * another sender's turn follows (nothing at all — neither turn's text is known to be the answer).
+ * Set `PPM_CARD_FOLLOWUP_DEMO_LOG` to write the exchange as a readable log.
  */
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import "../test-setup.ts";
@@ -29,6 +33,7 @@ import { setAssistantClock } from "../../src/services/assistant-wake/assistant-c
 import { assistantWakeQueue } from "../../src/services/assistant-wake/assistant-wake-queue.ts";
 import { startAssistantCards, stopAssistantCards } from "../../src/services/assistant-cards/assistant-cards-startup.ts";
 import { assistantCards } from "../../src/services/assistant-cards/assistant-cards.service.ts";
+import { FOLLOWUP_GRACE_MS } from "../../src/services/assistant-cards/card-reply-followup-tracker.ts";
 import { assistantTelegramBridge } from "../../src/services/assistant-telegram/assistant-telegram.service.ts";
 import { TelegramSilence } from "../../src/services/assistant-telegram/assistant-telegram-silence.ts";
 import { BRIDGE_STATE_ROW } from "../../src/services/assistant-telegram/assistant-telegram-state.ts";
@@ -69,6 +74,11 @@ const ANSWER = [
   "- Quota tuần còn lại: 55%. Chạy xong còn ~15% cho 4 ngày.",
   "Em chưa chạy gì. Em mở card mới để anh quyết lại.",
 ].join("\n");
+const OTHER_ANSWER = "Gửi Assistant: khách Foo Ltd còn nợ 1.234 £ (ticket NX-77).";
+/** How the manager answers a question in a reply: as the rule says, the other way round, or failing. */
+let script: "card-then-answer" | "answer-then-card" | "fail" = "card-then-answer";
+let releaseLongTurn: (() => void) | null = null;
+let longTurnLive = false;
 const stub = {
   id: "claude", name: "Scripted Claude", supportsAssistantSessions: true, supportsSharedContext: true,
   async createSession() { return { id: crypto.randomUUID(), providerId: "claude", title: "", createdAt: "" }; },
@@ -79,22 +89,49 @@ const stub = {
     received.push({ sessionId, message });
     if (opts?.clientMessageId) yield { type: "turn_started", turnId: crypto.randomUUID(), clientMessageId: opts.clientMessageId };
     const words = decodeMessageBlocks(message);
-    if (sessionId === manager && words.userWords && /nhỉ|\?/.test(words.content)) {
+    if (sessionId === manager && words.content.includes("LONG-TASK")) {
+      // A turn someone else started, still running when the user replies to a card.
+      note(`PPM       manager chat ← another sender's message opens a long turn: “${words.content}”`);
+      yield { type: "text", content: "Đang chạy việc A…" };
+      longTurnLive = true;
+      await new Promise<void>((resolve) => { releaseLongTurn = resolve; });
+      longTurnLive = false;
+      yield { type: "text", content: "Xong việc A: 12 file đã sửa." };
+      note("PPM       manager chat → the long turn ends: “Xong việc A: 12 file đã sửa.” (it never named the pushed reply)");
+    } else if (sessionId === manager && words.content.includes("OTHER-SENDER")) {
+      yield { type: "text", content: OTHER_ANSWER };
+      note(`PPM       manager chat → another sender's turn answers them: “${OTHER_ANSWER}”`);
+    } else if (sessionId === manager && words.userWords && /nhỉ|\?/.test(words.content)) {
       note(`PPM       manager chat ← user's words (card ${words.userWords.cardId?.slice(0, 8)}, via ${words.userWords.channel}): “${words.content}”`);
-      yield { type: "text", content: "Để em kiểm tra quota trước…" };
+      if (script === "fail") {
+        yield { type: "text", content: "Để em kiểm tra quota, chạy cái này sẽ tố" };
+        note("PPM       manager chat → the turn fails halfway (API error) after “Để em kiểm tra quota, chạy cái này sẽ tố”");
+        throw new Error("API overloaded");
+      }
+      // The rule says new card first, answer last; `answer-then-card` is a model that does it the
+      // other way round and then acknowledges the card.
+      if (script === "answer-then-card") yield { type: "text", content: ANSWER };
+      else yield { type: "text", content: "Để em kiểm tra quota trước…" };
       yield { type: "tool_use", tool: "mcp__ppm-sessions__report_to_assistant", toolUseId: "t1", input: {} };
       const cardId = await report({ kind: "needs_decision", title: "Chạy full regression trên Opus? Tốn ~40% quota tuần", body: "Còn 55% quota; chạy xong còn ~15% cho 4 ngày." });
       note(`PPM       manager chat → report_to_assistant: new needs_decision card ${cardId.slice(0, 8)}`);
       yield { type: "tool_result", toolUseId: "t1", output: `{"cardId":"${cardId}"}` };
-      yield { type: "text", content: ANSWER };
-      note(`PPM       manager chat → final answer of that turn:\n      ${ANSWER.replace(/\n/g, "\n      ")}`);
+      if (script === "answer-then-card") {
+        yield { type: "text", content: "Đã gửi card." };
+        note(`PPM       manager chat → it answered first:\n      ${ANSWER.replace(/\n/g, "\n      ")}\n      … then wrote after the card: “Đã gửi card.”`);
+      } else {
+        yield { type: "text", content: ANSWER };
+        note(`PPM       manager chat → final answer of that turn:\n      ${ANSWER.replace(/\n/g, "\n      ")}`);
+      }
     } else {
       yield { type: "text", content: "Noted." };
     }
     yield { type: "done", sessionId };
   },
-  hasStreamingSession() { return false; },
-  pushMessage(sessionId: string, message: string) { received.push({ sessionId, message }); },
+  // Only the long turn has a live stream to push into; every other turn ends before a reply comes.
+  hasStreamingSession(sessionId: string) { return longTurnLive && sessionId === manager; },
+  // A real CLI folds a pushed message into the running turn and never names it.
+  pushMessage(sessionId: string, message: string) { received.push({ sessionId, message }); return true; },
   resolveApproval() {},
   abortQuery() {},
 } as unknown as AIProvider;
@@ -281,5 +318,84 @@ describe("the manager's answer to a card reply", () => {
     await assistantTelegramBridge.settle();
     expect(fake.sent(PHONE).length).toBe(before);
     note("PPM       the manager's new answer replaced the old one under the card in PPM; nothing went to Telegram (quiet hours; its new card is held for 07:00 as every card is)");
+  });
+
+  it("still reaches the phone when the manager answers first and opens its card after, without its 'Đã gửi card.'", async () => {
+    note("");
+    note("── Scenario 4: next morning 08:30; the manager answers first, then opens the card and says so ──");
+    advance(9.5 * 60 * 60_000); // 08:30 Asia/Saigon: the held cards went out at 07:00
+    await assistantTelegramBridge.settle();
+    logBot();
+    script = "answer-then-card";
+    const cardId = await report({ kind: "needs_decision", title: "Bật cache cho CI?", body: "Cần anh OK." });
+    const card = await until(() => lastWith("Bật cache cho CI"));
+    logBot();
+    const question = "bật thì chắc ko tốn gì nhỉ";
+    const typed = replyTo(card.message_id, question);
+    note(`Telegram  phone → PPM bot   (msg #${typed.message?.message_id}, reply_to #${card.message_id}): “${question}”`);
+    const followUp = await until(() => fake.sent(PHONE).find((m) => m.reply_to === card.message_id && m.text.includes("The manager's answer")));
+    await idle(manager);
+    await assistantTelegramBridge.settle();
+    logBot();
+    script = "card-then-answer";
+    expect(followUp.silent).toBe(false);
+    expect(followUp.text).toContain("~1.2M tokens ≈ 40%");
+    expect(followUp.text).not.toContain("Đã gửi card");
+    expect(assistantCards.get(cardId)!.followUp?.text).toBe(ANSWER);
+  });
+
+  it("tells the phone only that the turn stopped when it fails halfway, and keeps nothing on the card", async () => {
+    note("");
+    note("── Scenario 5: the manager's turn fails halfway through its answer ──");
+    script = "fail";
+    const cardId = await report({ kind: "needs_decision", title: "Xoá các nhánh cũ trên origin?", body: "Cần anh OK." });
+    const card = await until(() => lastWith("Xoá các nhánh cũ"));
+    logBot();
+    const question = "xoá hết luôn được không?";
+    const typed = replyTo(card.message_id, question);
+    note(`Telegram  phone → PPM bot   (msg #${typed.message?.message_id}, reply_to #${card.message_id}): “${question}”`);
+    const notice = await until(() => fake.sent(PHONE).find((m) => m.reply_to === card.message_id && m.text.includes("stopped before it answered")));
+    await idle(manager);
+    await assistantTelegramBridge.settle();
+    logBot();
+    script = "card-then-answer";
+    expect(notice.silent).toBe(false);
+    expect(notice.text).not.toContain("sẽ tố");
+    expect(notice.text).not.toContain("The manager's answer to your reply");
+    expect(assistantCards.get(cardId)!.followUp).toBeUndefined();
+    note(`PPM       card ${cardId.slice(0, 8)}: nothing kept under it (a half sentence is not an answer)`);
+  });
+
+  it("sends nothing when a reply pushed into a running turn is followed by another sender's turn", async () => {
+    note("");
+    note("── Scenario 6: the user replies while the manager runs someone else's turn, and another turn follows it ──");
+    const cardId = await report({ kind: "needs_decision", title: "Gộp PR #1400 vào main?", body: "Cần anh OK." });
+    const card = await until(() => lastWith("Gộp PR #1400"));
+    logBot();
+    void ctl().sendUserMessage(manager, "LONG-TASK: sửa 12 file", {
+      origin: "telegram", projectName: "ppm", providerId: "claude", clientMessageId: `long-${crypto.randomUUID()}`,
+    });
+    await until(() => releaseLongTurn !== null && ctl().liveState(manager)?.running);
+    const question = "gộp luôn được không?";
+    const typed = replyTo(card.message_id, question);
+    note(`Telegram  phone → PPM bot   (msg #${typed.message?.message_id}, reply_to #${card.message_id}): “${question}”`);
+    await until(() => received.some((r) => decodeMessageBlocks(r.message).userWords?.cardId === cardId));
+    note("PPM       the reply is pushed into the running turn (inserted); no turn is named with its id");
+    releaseLongTurn!();
+    releaseLongTurn = null;
+    await idle(manager);
+    // Within the grace, another sender's message opens a turn of its own.
+    await ctl().sendUserMessage(manager, "OTHER-SENDER: số dư Foo Ltd?", {
+      origin: "telegram", projectName: "ppm", providerId: "claude", clientMessageId: `other-${crypto.randomUUID()}`,
+    });
+    await until(() => received.some((r) => r.message.includes("OTHER-SENDER")));
+    await idle(manager);
+    advance(FOLLOWUP_GRACE_MS + 1);
+    await assistantTelegramBridge.settle();
+    logBot();
+    expect(fake.sent(PHONE).filter((m) => m.reply_to === card.message_id && m.text.includes("The manager's answer"))).toHaveLength(0);
+    expect(fake.sent(PHONE).some((m) => m.text.includes("Foo Ltd"))).toBe(false);
+    expect(assistantCards.get(cardId)!.followUp).toBeUndefined();
+    note("PPM       nothing sent for that reply: the turn it went into was followed by another sender's turn, so which text answers it is not known");
   });
 });
