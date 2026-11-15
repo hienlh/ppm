@@ -15,6 +15,7 @@
  * deduplicated where it is raised (`db-login-attention.ts`).
  */
 import { dbApprovalBroker } from "../db-ai-tools/db-approval-broker.ts";
+import { onVaultCardShown } from "../vault/vault-unlock-broker.ts";
 import { dbAttentionEvents, type DbAttentionBus, type DbAttentionEvents } from "../db-ai-tools/db-attention-events.ts";
 import { getSessionProjectName, getSessionProvider, getSessionTitle, resolveMigratedSession } from "../db.service.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
@@ -57,6 +58,8 @@ export interface DbNoticesDeps {
   describe?: (sessionId: string) => DescribedChat;
   /** The id a session goes by now: Codex renames a new chat during its first turn. */
   canonical?: (sessionId: string) => string;
+  /** Where vault cards are announced (the vault broker's by default; tests pass their own). */
+  onVaultCard?: (listener: (sessionId: string, requestId: string) => void) => () => void;
   /** Quiet hours, and whether a held approval still waits (tests pass a fake clock and window). */
   quiet?: QuietHoldDeps;
   /** Whether the user is at PPM, so a notice goes out without a sound. */
@@ -134,6 +137,12 @@ export function loginNoticeHtml(chat: DescribedChat, connectionName: string): st
   ].join("\n");
 }
 
+/**
+ * A vault card waits in a chat. One fixed line and the link to the chat: never the item, the tier
+ * or the purpose, and never a way to answer — unlocking takes the tier's password, typed in PPM.
+ */
+export const VAULT_NOTICE_HTML = "🔒 <b>Unlock needed in PPM</b>\n\nOpen PPM to answer the vault card. It cannot be answered here.";
+
 export class AssistantTelegramDbNotices {
   private offs: Array<() => void> = [];
   private readonly connectedChats: () => string[];
@@ -158,6 +167,10 @@ export class AssistantTelegramDbNotices {
       events.on("approval_shown", (p) => this.onShown(p)),
       events.on("approval_reminder", (p) => this.onReminder(p)),
       events.on("login_needed", (p) => this.onLogin(p)),
+      (this.deps.onVaultCard ?? onVaultCardShown)((sessionId) => {
+        if (this.inQuietHours()) return void log.info("vault card: notice not sent in quiet hours");
+        this.send(sessionId, "vault card", () => VAULT_NOTICE_HTML);
+      }),
     ];
   }
 

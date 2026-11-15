@@ -13,6 +13,7 @@ import type { CallLimiter } from "../tab-tools-mcp/session-history-rate-limit.ts
 import { collabToolPolicy } from "./collab-caller-policy.ts";
 import { isVaultTool } from "../../shared/vault.ts";
 import { VAULT_TOOL_DEFINITIONS, vaultTools } from "../vault/vault-tools.ts";
+import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { resolveCaller, type CollabEnv } from "./collab-context.ts";
 import { createSessionTool } from "./collab-create.ts";
 import { designShotTool } from "./collab-design-shot.ts";
@@ -58,6 +59,12 @@ export function createSessionCollabMcpHandler(deps: {
       return name === REPORT_TO_ASSISTANT_TOOL ? NOT_A_MANAGER : ppmToolOffMessage(name);
     },
     callTool: async ({ sessionId }, name, rawArgs, signal) => {
+      // A value of the vault's locked tiers read in any chat never leaves it: not in a message to
+      // another chat, a new chat's prompt, a report or a scheduled prompt.
+      if (!isVaultTool(name)) {
+        const leaked = turnSecretScrubber.find(JSON.stringify(rawArgs ?? {}));
+        if (leaked) return textResult(`Refused: this contains the value of the vault item "${leaked}". Vault values never go to another chat, a report or a schedule; refer to the item by name instead.`, true);
+      }
       // The caller's own chat only, delivering nothing to anyone: the send policy, its rate limit
       // and the session registry have no say here.
       if (isSessionScheduleTool(name)) return sessionScheduleToolCall(schedules, sessionId, name, rawArgs);

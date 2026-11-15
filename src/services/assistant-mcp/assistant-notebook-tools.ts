@@ -4,6 +4,7 @@ import { resolveMigratedSession } from "../db.service.ts";
 import { assistantTurnProvenance } from "../assistant/assistant-turn-provenance.ts";
 import { assistantNotes, type AssistantNotes, type NoteResult } from "../assistant-notes/assistant-notes.service.ts";
 import { errorResult, jsonResult } from "./assistant-tool-output.ts";
+import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 
 /**
  * The Assistant's notebook tools (definitions in `assistant-notebook-tool-definitions.ts`): write
@@ -31,6 +32,12 @@ function unattended(sessionId: string, deps: NotebookToolDeps): boolean {
   return check(sessionId) || check(resolveMigratedSession(sessionId));
 }
 
+/** A value of the vault's locked tiers just read in any chat never goes into the notebook. */
+function vaultRefusal(text: string): Json | null {
+  const name = turnSecretScrubber.find(text);
+  return name ? errorResult(`This text contains the vault item "${name}". Vault values never go into the notebook; write that the user keeps it in the vault instead.`) : null;
+}
+
 const idArg = (value: unknown): number | null =>
   typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= Number.MAX_SAFE_INTEGER ? value : null;
 
@@ -46,6 +53,8 @@ function answer(result: NoteResult, verb: string): Json {
 /** `notebook_add`, for the Assistant session `sessionId`. */
 export function notebookAddTool(sessionId: string, args: Record<string, unknown>, deps: NotebookToolDeps = {}): Json {
   if (typeof args.text !== "string") return errorResult("`text` is required: one short line.");
+  const refused = vaultRefusal(args.text);
+  if (refused) return refused;
   const result = (deps.notes ?? assistantNotes).add(args.text, { by: "assistant", unattended: unattended(sessionId, deps) });
   return answer(result, "added");
 }
@@ -55,6 +64,8 @@ export function notebookEditTool(sessionId: string, args: Record<string, unknown
   const id = idArg(args.id);
   if (id === null) return errorResult("`id` is required: the number after # in your notebook.");
   if (typeof args.text !== "string") return errorResult("`text` is required: the line's new text.");
+  const refusedEdit = vaultRefusal(args.text);
+  if (refusedEdit) return refusedEdit;
   const result = (deps.notes ?? assistantNotes).edit(id, args.text, { by: "assistant", unattended: unattended(sessionId, deps) });
   return answer(result, "edited");
 }

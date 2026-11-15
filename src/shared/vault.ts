@@ -155,6 +155,9 @@ export interface VaultCardAnswerResult {
   shown?: { name: string; value: string };
 }
 
+/** Every notification about a vault card, wherever it lands: no item, tier or purpose. */
+export const VAULT_NOTIFICATION_BODY = "Unlock needed in the PPM vault";
+
 /** How long a sealed value shown on the card stays visible before it hides itself. */
 export const VAULT_SHOW_MS = 60_000;
 
