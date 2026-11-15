@@ -53,6 +53,7 @@ import { claimTurnOrigin, noteQueuedTurnOrigin, turnOriginAfterTurn, turnRunning
 import { setCollabApprovalChat } from "../../services/session-collab/collab-approval-broker.ts";
 import { setVaultCardChat, vaultUnlockBroker, type VaultCardEvent } from "../../services/vault/vault-unlock-broker.ts";
 import { setVaultSessionResolver } from "../../services/vault/vault-grants.ts";
+import { setScrubberSessionResolver } from "../../services/vault/turn-secret-scrubber.ts";
 import { collabWaits, setCollabIdleProbe } from "../../services/session-collab/collab-waits.ts";
 import { collabSessionRenamed, collabTargetWaitingForUser, collabTurnEnded } from "../../services/session-collab/collab-turn-events.ts";
 import { cardRaisedFor, waitingCardOf } from "../../services/session-collab/collab-waiting-card.ts";
@@ -1174,6 +1175,7 @@ export function registerVaultCardChat(): void {
     resolved: (sessionId, requestId, approved) => ppmApprovalResolved(sessionId, requestId, approved),
   }, resolveMigratedSession);
   setVaultSessionResolver(resolveMigratedSession);
+  setScrubberSessionResolver(resolveMigratedSession);
 }
 registerVaultCardChat();
 

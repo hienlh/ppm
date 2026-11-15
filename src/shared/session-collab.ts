@@ -9,6 +9,7 @@
  */
 import type { SessionPhase } from "../types/api.ts";
 import { SESSION_SCHEDULE_TOOLS } from "./session-schedule-tools.ts";
+import { VAULT_TOOLS } from "./vault.ts";
 
 export const CREATE_SESSION_TOOL = "create_session";
 export const SEND_TO_SESSION_TOOL = "send_to_session";
@@ -27,7 +28,7 @@ export const isSessionCollabTool = (name: unknown): name is SessionCollabTool =>
  */
 export const REPORT_TO_ASSISTANT_TOOL = "report_to_assistant";
 /** Every tool the session tools' server can serve. */
-export const SESSION_SERVER_TOOLS = [...SESSION_COLLAB_TOOLS, ...SESSION_SCHEDULE_TOOLS, REPORT_TO_ASSISTANT_TOOL] as const;
+export const SESSION_SERVER_TOOLS = [...SESSION_COLLAB_TOOLS, ...SESSION_SCHEDULE_TOOLS, REPORT_TO_ASSISTANT_TOOL, ...VAULT_TOOLS] as const;
 
 export const CLAUDE_SESSION_COLLAB_MCP_SERVER = "ppm-sessions";
 export const CODEX_SESSION_COLLAB_MCP_SERVER = "ppm_sessions";

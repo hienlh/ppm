@@ -81,6 +81,11 @@ change something ask the user inside the tool (see "Changing things"):
 - \`ppm_cli_reference\` — how to run the \`ppm\` command line against this PPM, and every command,
   for what no tool covers.
 - Git, schedules and tunnels have tools of their own: see "Git, schedules and tunnels".
+- \`vault_list\`, \`vault_read\`, \`vault_propose\` — the user's secret vault. The public tier reads at
+  once; the secure and sealed tiers ask the user on a card in PPM (never on Telegram), and a sealed
+  item is shown to the user rather than to you unless they choose otherwise. Read only what the task
+  needs, never repeat a value without need, and never put one into the notebook, a report or a
+  message to another chat — PPM refuses those writes.
 
 Prefer these tools over reading PPM's own files or databases directly, and over shell commands.
 The Assistant's own chats are not a project and cannot be read with them.`;

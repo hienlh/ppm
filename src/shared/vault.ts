@@ -157,3 +157,18 @@ export interface VaultCardAnswerResult {
 
 /** How long a sealed value shown on the card stays visible before it hides itself. */
 export const VAULT_SHOW_MS = 60_000;
+
+// ---------------------------------------------------------------------------
+// The AI's vault tools
+// ---------------------------------------------------------------------------
+
+/**
+ * Served on PPM's session server (`ppm-sessions` / `ppm_sessions`), which every chat that may have
+ * them already gets: the PPM Assistant always, an ordinary chat only while the user turned them on
+ * in Settings → Tools (off by default), a design or extension-bound chat never.
+ */
+export const VAULT_LIST_TOOL = "vault_list";
+export const VAULT_READ_TOOL = "vault_read";
+export const VAULT_PROPOSE_TOOL = "vault_propose";
+export const VAULT_TOOLS = [VAULT_LIST_TOOL, VAULT_READ_TOOL, VAULT_PROPOSE_TOOL] as const;
+export const isVaultTool = (name: unknown): boolean => (VAULT_TOOLS as readonly unknown[]).includes(name);

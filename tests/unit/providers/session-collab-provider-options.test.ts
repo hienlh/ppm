@@ -27,6 +27,7 @@ describe("session tools provider options", () => {
       "mcp__ppm-sessions__create_session", "mcp__ppm-sessions__send_to_session", "mcp__ppm-sessions__session_status", "mcp__ppm-sessions__design_screenshot",
       "mcp__ppm-sessions__session_schedule_create", "mcp__ppm-sessions__session_schedule_list", "mcp__ppm-sessions__session_schedule_delete",
       "mcp__ppm-sessions__report_to_assistant",
+      "mcp__ppm-sessions__vault_list", "mcp__ppm-sessions__vault_read", "mcp__ppm-sessions__vault_propose",
     ]);
   });
 
@@ -45,7 +46,7 @@ describe("session tools provider options", () => {
     const params = buildThreadParams({ cwd: "/p", permission, sessionCollabMcp: access });
     expect(params.config!["mcp_servers.ppm_sessions"]).toEqual({
       url: access.url, bearer_token_env_var: "PPM_SESSIONS_MCP_TOKEN",
-      enabled_tools: ["create_session", "send_to_session", "session_status", "design_screenshot", "session_schedule_create", "session_schedule_list", "session_schedule_delete"],
+      enabled_tools: ["create_session", "send_to_session", "session_status", "design_screenshot", "session_schedule_create", "session_schedule_list", "session_schedule_delete", "vault_list", "vault_read", "vault_propose"],
       default_tools_approval_mode: "approve", startup_timeout_sec: 10, tool_timeout_sec: Math.ceil(SESSION_COLLAB_TOOLS_TIMEOUT_MS / 1000),
     });
     expect(JSON.stringify(params)).not.toContain("collab-secret");
