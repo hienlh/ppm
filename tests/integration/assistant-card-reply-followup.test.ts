@@ -78,6 +78,8 @@ const OTHER_ANSWER = "Gửi Assistant: khách Foo Ltd còn nợ 1.234 £ (ticket
 /** How the manager answers a question in a reply: as the rule says, the other way round, or failing. */
 let script: "card-then-answer" | "answer-then-card" | "fail" = "card-then-answer";
 let releaseLongTurn: (() => void) | null = null;
+/** Messages pushed into a running turn (`inserted`), as opposed to ones that opened a turn. */
+const pushed: string[] = [];
 let longTurnLive = false;
 const stub = {
   id: "claude", name: "Scripted Claude", supportsAssistantSessions: true, supportsSharedContext: true,
@@ -131,7 +133,7 @@ const stub = {
   // Only the long turn has a live stream to push into; every other turn ends before a reply comes.
   hasStreamingSession(sessionId: string) { return longTurnLive && sessionId === manager; },
   // A real CLI folds a pushed message into the running turn and never names it.
-  pushMessage(sessionId: string, message: string) { received.push({ sessionId, message }); return true; },
+  pushMessage(sessionId: string, message: string) { received.push({ sessionId, message }); pushed.push(message); return true; },
   resolveApproval() {},
   abortQuery() {},
 } as unknown as AIProvider;
@@ -380,6 +382,10 @@ describe("the manager's answer to a card reply", () => {
     const typed = replyTo(card.message_id, question);
     note(`Telegram  phone → PPM bot   (msg #${typed.message?.message_id}, reply_to #${card.message_id}): “${question}”`);
     await until(() => received.some((r) => decodeMessageBlocks(r.message).userWords?.cardId === cardId));
+    // Pushed into the running turn, not queued behind it and not opening a turn of its own.
+    const isTheReply = (message: string) => decodeMessageBlocks(message).userWords?.cardId === cardId;
+    expect(pushed.filter(isTheReply)).toHaveLength(1);
+    expect(received.filter((r) => isTheReply(r.message))).toHaveLength(1);
     note("PPM       the reply is pushed into the running turn (inserted); no turn is named with its id");
     releaseLongTurn!();
     releaseLongTurn = null;
@@ -396,6 +402,8 @@ describe("the manager's answer to a card reply", () => {
     expect(fake.sent(PHONE).filter((m) => m.reply_to === card.message_id && m.text.includes("The manager's answer"))).toHaveLength(0);
     expect(fake.sent(PHONE).some((m) => m.text.includes("Foo Ltd"))).toBe(false);
     expect(assistantCards.get(cardId)!.followUp).toBeUndefined();
+    // The words never opened a turn of their own later either (as queued words would have).
+    expect(received.filter((r) => isTheReply(r.message))).toHaveLength(1);
     note("PPM       nothing sent for that reply: the turn it went into was followed by another sender's turn, so which text answers it is not known");
   });
 });

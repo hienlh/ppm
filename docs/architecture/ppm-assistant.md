@@ -1397,10 +1397,12 @@ answer used to stay in the manager chat, which a user on their phone never opens
   an attachment PPM never sees. Such a reply is judged **once**, against the first turn end after
   it went in: after a 3 s grace it is answered only if its own turn has not been named meanwhile,
   the chat is idle, and `liveState().turnId` is still the turn that ended (and the one running when
-  the words went in). If another sender's turn (a schedule, the Assistant, another chat) opened in
-  between, nothing is sent: that turn may be answering someone else, and later turns are never
-  judged for the reply (its own `turn_started` can still claim it). Queued words are never judged
-  this way.
+  the words went in). If a turn PPM started (a schedule, the Assistant, another chat's message)
+  opened in between, nothing is sent: that turn may be answering someone else, and later turns are
+  never judged for the reply (its own `turn_started` can still claim it). `turnId` moves only for
+  prompts PPM pushed (`claude-prompt-turn-binder.ts`), so a task-notification or CLI-continuation
+  turn in between goes unseen — but what is sent is always the snapshot taken at the first turn
+  end, so no later turn's text can leak. Queued words are never judged this way.
 - The answer is the turn's top-level text **from the reply on**, gathered per reply as blocks split
   at each top-level tool call (no tool output, thinking or subagent text). Real blocks are joined;
   a one-line acknowledgement ("Card sent.": one line, under 40 characters, no digit, no question
