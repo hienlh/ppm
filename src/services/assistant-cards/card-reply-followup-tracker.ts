@@ -13,11 +13,16 @@
  * later turn, which is named when it opens, or never (the card is then opened again by the
  * delivery reconciler, and nothing is sent here).
  *
- * The answer is the turn's final text: the top-level text after its last top-level tool call,
- * never tool output, thinking or a subagent's text. Each reply gets at most one follow-up; a turn
- * with no text gets none. Listeners on the chat lifecycle run on its hot path, so everything here
- * only updates memory; `deliver` is handed the result and must not block.
+ * The answer is the turn's top-level text from the reply on, never tool output, thinking or a
+ * subagent's text. It is kept per reply as blocks split at each top-level tool call, because the
+ * manager is told to open its new card first and answer last, and a model does not always obey:
+ * an answer written before the card's tool call, followed by "Card sent.", must still be the
+ * answer. So the blocks are joined, one-line acknowledgements dropped when a real block exists
+ * ({@link isThrowawayBlock}); a turn that wrote nothing else gets no follow-up. Each reply gets at
+ * most one. Listeners on the chat lifecycle run on its hot path, so everything here only updates
+ * memory; `deliver` is handed the result and must not block.
  */
+import { CARD_FOLLOWUP_MAX_CHARS } from "../../shared/assistant-limits.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import type { Cancel } from "../assistant-wake/assistant-clock.ts";
 
@@ -31,7 +36,7 @@ export interface FollowupResult {
   origin: FollowupOrigin;
   /** The manager chat, as the turn's events named it. */
   sessionId: string;
-  /** The turn's final text, trimmed; never empty. */
+  /** The turn's answer ({@link answerOf}), trimmed; never empty. */
   text: string;
   /** More text came than was kept: the rest is only in the chat. */
   overflow: boolean;
@@ -56,7 +61,19 @@ export interface FollowupHandle {
   abandon(): void;
 }
 
+/** How long after a turn ends an unnamed reply is judged, so a queued turn can start first. */
+export const FOLLOWUP_GRACE_MS = 3_000;
+/** A reply whose turn never came is forgotten after this (a manager turn may run for hours). */
+export const FOLLOWUP_MAX_AGE_MS = 12 * 60 * 60_000;
+/** Text kept per reply; the follow-up shows far less, this only has to tell "cut" from "whole". */
+export const FOLLOWUP_BUFFER_MAX = 6_000;
+const MAX_PENDING = 200;
+
+/** What a turn said, as it would be sent. */
 interface Buffer { text: string; overflow: boolean }
+
+/** A reply's own copy of the turn's text, one block per stretch between top-level tool calls. */
+interface Collected { blocks: string[]; size: number; sawTool: boolean; overflow: boolean }
 
 interface Pending {
   cardId: string;
@@ -65,36 +82,71 @@ interface Pending {
   sessionId: string;
   delivered: SessionDelivery | null;
   bound: boolean;
+  /** The turn's text gathered for this reply; null while it is not in a turn (queued). */
+  collect: Collected | null;
   /** What a turn of the chat ended with while the send had not returned yet. */
   endedBeforeAttach: Buffer | null;
   at: number;
   newCards: Array<{ id: string; title: string }>;
 }
 
-/** How long after a turn ends an unnamed reply is judged, so a queued turn can start first. */
-export const FOLLOWUP_GRACE_MS = 3_000;
-/** A reply whose turn never came is forgotten after this (a manager turn may run for hours). */
-export const FOLLOWUP_MAX_AGE_MS = 12 * 60 * 60_000;
-/** Text kept per turn; the follow-up shows far less, this only has to tell "cut" from "whole". */
-export const FOLLOWUP_BUFFER_MAX = 6_000;
-const MAX_PENDING = 200;
+const collected = (): Collected => ({ blocks: [""], size: 0, sawTool: false, overflow: false });
+
+/**
+ * A line a model writes after a tool call to say it made it ("Card sent.", "Done — see above"):
+ * one short line with no number and no question. Numbers and questions are what an answer to the
+ * user's reply is made of, so a block carrying either is kept however short.
+ */
+export function isThrowawayBlock(block: string): boolean {
+  const b = block.trim();
+  return !b.includes("\n") && b.length < 40 && !/\d/.test(b) && !/[?？]/.test(b);
+}
+
+function append(c: Collected, text: string): void {
+  c.blocks[c.blocks.length - 1] += text;
+  c.size += text.length;
+  // Memory is bounded per reply: the oldest blocks go first, since the answer comes last.
+  while (c.size > FOLLOWUP_BUFFER_MAX && c.blocks.length > 1) {
+    c.size -= c.blocks.shift()!.length;
+    c.overflow = true;
+  }
+  if (c.size > FOLLOWUP_BUFFER_MAX) {
+    c.blocks[0] = c.blocks[0]!.slice(0, FOLLOWUP_BUFFER_MAX);
+    c.size = FOLLOWUP_BUFFER_MAX;
+    c.overflow = true;
+  }
+}
+
+/**
+ * The answer in what a reply gathered: every block that is not a throwaway line (all of them when
+ * the turn made no tool call — a short answer is still the answer), joined. When they do not fit
+ * what the user is shown, the earliest blocks give way, because the rule puts the answer last.
+ */
+export function answerOf(c: Collected | null): Buffer {
+  if (!c) return { text: "", overflow: false };
+  let blocks = c.blocks.map((b) => b.trim()).filter(Boolean);
+  if (c.sawTool) blocks = blocks.filter((b) => !isThrowawayBlock(b));
+  let overflow = c.overflow;
+  while (blocks.length > 1 && blocks.join("\n\n").length > CARD_FOLLOWUP_MAX_CHARS) {
+    blocks.shift();
+    overflow = true;
+  }
+  return { text: blocks.join("\n\n"), overflow };
+}
 
 export function createFollowupTracker(deps: FollowupTrackerDeps) {
   const pending = new Map<string, Pending>();
-  const buffers = new Map<string, Buffer>();
   const graceMs = deps.graceMs ?? FOLLOWUP_GRACE_MS;
   const maxAgeMs = deps.maxAgeMs ?? FOLLOWUP_MAX_AGE_MS;
   const key = (sessionId: string): string => deps.canonical(sessionId);
   const live = (p: Pending): boolean => pending.get(p.clientMessageId) === p;
-  /** The turn's text is only gathered for chats a reply is followed in. */
-  const watched = (session: string): boolean => [...pending.values()].some((p) => key(p.sessionId) === session);
-  const fresh = (session: string): void => { buffers.set(session, { text: "", overflow: false }); };
+  /** The replies followed in a chat. */
+  const inSession = (session: string): Pending[] => [...pending.values()].filter((p) => key(p.sessionId) === session);
 
   function prune(): void {
     const now = deps.now();
     for (const [id, p] of pending) if (now - p.at > maxAgeMs) pending.delete(id);
     while (pending.size > MAX_PENDING) pending.delete(pending.keys().next().value!);
-    for (const s of [...buffers.keys()]) if (!watched(s)) buffers.delete(s);
   }
 
   function finish(p: Pending, buffer: Buffer | undefined, session: string): void {
@@ -123,22 +175,22 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
       prune();
       const p: Pending = {
         cardId: input.cardId, clientMessageId: input.clientMessageId, origin: input.origin, sessionId: input.sessionId,
-        delivered: null, bound: false, endedBeforeAttach: null, at: deps.now(), newCards: [],
+        // Gathered from the start of the send, in case the words open a turn before it returns.
+        delivered: null, bound: false, collect: collected(), endedBeforeAttach: null, at: deps.now(), newCards: [],
       };
-      const session = key(p.sessionId);
-      if (!buffers.has(session)) fresh(session);
       pending.set(p.clientMessageId, p);
       return {
         attach(delivered) {
           if (!live(p)) return;
           p.delivered = delivered ?? "started";
-          if (p.bound || p.delivered === "queued") return;
+          if (p.bound) return;
+          // Behind a running turn: nothing is theirs until the turn they open is named.
+          if (p.delivered === "queued") { p.collect = null; return; }
           // The turn the words opened ended before the send returned.
           if (p.endedBeforeAttach && p.delivered === "started") { judgeLater(p, p.endedBeforeAttach); return; }
-          // Joined a running turn: the answer is what follows the words, not what came before them
-          // (left alone while another reply's named turn is gathering its own answer there).
-          const othersBound = [...pending.values()].some((o) => o !== p && o.bound && key(o.sessionId) === session);
-          if (p.delivered === "inserted" && !othersBound) fresh(session);
+          // Joined a running turn: the answer is what follows the words, not what came before them.
+          // Each reply gathers its own copy, so this starts nobody else's over.
+          if (p.delivered === "inserted") p.collect = collected();
         },
         abandon() {
           if (live(p)) pending.delete(p.clientMessageId);
@@ -150,24 +202,24 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
     onStream(sessionId: string, event: unknown): void {
       if (pending.size === 0 || !event || typeof event !== "object") return;
       const ev = event as { type?: unknown; content?: unknown; parentToolUseId?: unknown; clientMessageId?: unknown };
-      const session = key(sessionId);
       if (ev.type === "turn_started" && typeof ev.clientMessageId === "string") {
         const p = pending.get(ev.clientMessageId);
         if (p) {
           p.bound = true;
           p.sessionId = sessionId;
-          fresh(session);
+          p.collect = collected();
         }
         return;
       }
-      if (ev.parentToolUseId || !watched(session)) return;
-      if (ev.type === "text" && typeof ev.content === "string") {
-        const b = buffers.get(session) ?? { text: "", overflow: false };
-        const text = b.text + ev.content;
-        buffers.set(session, text.length > FOLLOWUP_BUFFER_MAX ? { text: text.slice(0, FOLLOWUP_BUFFER_MAX), overflow: true } : { text, overflow: b.overflow });
-      } else if (ev.type === "tool_use") {
-        // A top-level tool call starts a new block: only the text after the last one is the answer.
-        fresh(session);
+      if (ev.parentToolUseId || (ev.type !== "text" && ev.type !== "tool_use")) return;
+      for (const p of inSession(key(sessionId))) {
+        if (!p.collect) continue;
+        if (ev.type === "text" && typeof ev.content === "string") append(p.collect, ev.content);
+        else if (ev.type === "tool_use") {
+          // A top-level tool call ends a block; the blocks are sorted out when the turn ends.
+          p.collect.blocks.push("");
+          p.collect.sawTool = true;
+        }
       }
     },
 
@@ -175,15 +227,14 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
     onTurnEnded(sessionId: string, turnStillRunning?: boolean): void {
       if (turnStillRunning || pending.size === 0) return;
       const session = key(sessionId);
-      if (!watched(session)) return;
-      const buffer = buffers.get(session);
-      fresh(session);
-      for (const p of [...pending.values()]) {
-        if (key(p.sessionId) !== session) continue;
-        if (p.bound) finish(p, buffer, session);
-        else if (p.delivered === null) p.endedBeforeAttach = buffer ?? { text: "", overflow: false };
+      for (const p of inSession(session)) {
+        const buffer = answerOf(p.collect);
+        if (p.bound) { finish(p, buffer, session); continue; }
+        if (p.delivered === "queued") continue;
+        p.collect = collected();
+        if (p.delivered === null) p.endedBeforeAttach = buffer;
         // Unnamed, and not queued behind this turn: it went into this turn if nothing else started.
-        else if (p.delivered !== "queued") judgeLater(p, buffer);
+        else judgeLater(p, buffer);
       }
     },
 
@@ -198,12 +249,9 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
       }
     },
 
-    /** The provider renamed the chat: what was gathered under the old id moves with it. */
+    /** The provider renamed the chat: the replies followed in it follow it. */
     onMigrated(oldSessionId: string, newSessionId: string): void {
-      const b = buffers.get(oldSessionId);
-      if (!b) return;
-      buffers.delete(oldSessionId);
-      buffers.set(key(newSessionId), b);
+      for (const p of pending.values()) if (p.sessionId === oldSessionId) p.sessionId = newSessionId;
     },
 
     /** Replies still waiting for their answer, for tests and the log. */
@@ -211,7 +259,6 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
 
     clear(): void {
       pending.clear();
-      buffers.clear();
     },
   };
 }

@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  createFollowupTracker, cutFollowupText, FOLLOWUP_BUFFER_MAX, type FollowupResult,
+  answerOf, createFollowupTracker, cutFollowupText, FOLLOWUP_BUFFER_MAX, isThrowawayBlock, type FollowupResult,
 } from "../../../src/services/assistant-cards/card-reply-followup-tracker.ts";
 import { deliverCardFollowup } from "../../../src/services/assistant-cards/card-reply-followup.ts";
 import type { AssistantCard, CardFollowUp } from "../../../src/shared/assistant-cards.ts";
@@ -54,6 +54,60 @@ describe("following the turn a card reply opened", () => {
     named(ID); say("again"); t.onTurnEnded(S);
     expect(delivered).toHaveLength(1);
     expect(t.size()).toBe(0);
+  });
+
+  it("keeps an answer written before the new card's tool call, and drops the 'Card sent.' after it", () => {
+    const { t, delivered, say, named } = setup();
+    t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
+    named(ID);
+    say("No: it costs ~40% of the weekly quota (55% left).");
+    t.onStream(S, { type: "tool_use", tool: "mcp__ppm-sessions__report_to_assistant" });
+    t.onStream(S, { type: "tool_result", output: "{}" });
+    say("Card sent.");
+    t.onTurnEnded(S);
+    expect(delivered.map((d) => d.text)).toEqual(["No: it costs ~40% of the weekly quota (55% left)."]);
+  });
+
+  it("sends nothing when all the turn wrote around its tool calls is an acknowledgement", () => {
+    const { t, delivered, named, say } = setup();
+    t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
+    named(ID);
+    t.onStream(S, { type: "tool_use", tool: "mcp__ppm-sessions__report_to_assistant" });
+    say("Card sent.");
+    t.onTurnEnded(S);
+    expect(delivered).toHaveLength(0);
+    expect(t.size()).toBe(0);
+  });
+
+  it("joins every real block, and lets the earliest give way when they do not fit", () => {
+    const { t, delivered, named, say } = setup();
+    t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
+    named(ID);
+    say("Tests pass: 40 of 40.");
+    t.onStream(S, { type: "tool_use", tool: "Bash" });
+    say("Done: PR #12 updated.");
+    t.onTurnEnded(S);
+    expect(delivered[0]).toMatchObject({ text: "Tests pass: 40 of 40.\n\nDone: PR #12 updated.", overflow: false });
+    expect(answerOf({ blocks: ["a".repeat(CARD_FOLLOWUP_MAX_CHARS), "", "Answer: 42."], size: 0, sawTool: true, overflow: false }))
+      .toEqual({ text: "Answer: 42.", overflow: true });
+    expect(isThrowawayBlock("Card sent.")).toBe(true);
+    expect(isThrowawayBlock("Đúng không?")).toBe(false);
+    expect(isThrowawayBlock("Costs 40%.")).toBe(false);
+  });
+
+  it("gathers each reply's own answer, so a second reply joining the turn does not wipe the first's", () => {
+    const { t, delivered, say, runTimers } = setup();
+    const a = t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S });
+    a.attach("inserted");
+    say("For your first reply: it takes 12 hours. ");
+    const b = t.expect({ cardId: "c2", clientMessageId: "card-b", origin, sessionId: S });
+    b.attach("inserted");
+    say("For the second: 5 minutes.");
+    t.onTurnEnded(S);
+    runTimers();
+    const byCard = Object.fromEntries(delivered.map((d) => [d.cardId, d.text]));
+    expect(byCard.c1).toContain("12 hours");
+    expect(byCard.c2).toBe("For the second: 5 minutes.");
   });
 
   it("waits through other turns when the words were queued, and answers with the turn that opened with them", () => {

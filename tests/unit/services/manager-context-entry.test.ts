@@ -62,6 +62,11 @@ describe("managerContextEntry", () => {
     expect(MANAGER_CARD_REPLY_RULE).toContain("correct the assumption with the numbers");
     expect(MANAGER_CARD_REPLY_RULE).toContain("ask again with a new needs_decision card");
     for (const marker of ["…nhỉ", "…không", "?", "right?"]) expect(MANAGER_CARD_REPLY_RULE).toContain(marker);
+    // The new card first, the answer last: an answer written before a tool call is lost to a
+    // trailing "Card sent.", so the order is part of the rule.
+    expect(MANAGER_CARD_REPLY_RULE).toContain("as the last thing you write in this turn, with no tool call after it");
+    expect(MANAGER_CARD_REPLY_RULE.indexOf("First ask again with a new needs_decision card"))
+      .toBeLessThan(MANAGER_CARD_REPLY_RULE.indexOf("answer the question"));
     // Global, whatever the project and whatever its own rules file says (or leaves out).
     for (const [name, rules] of [["nxsys", "- rule"], ["ppm", ""], ["culi", DEFAULT_MANAGER_RULES_TEMPLATE]] as const) {
       expect(managerContextEntry(name, rules, rules)).toContain(MANAGER_CARD_REPLY_RULE);

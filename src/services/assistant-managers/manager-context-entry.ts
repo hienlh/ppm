@@ -33,14 +33,16 @@ export const MANAGER_USER_ACTION_RULE =
  * A reply to a card is free text, and a user on a phone answers a question with a question, or
  * agrees on a wrong premise ("go ahead, it won't cost much quota, right?"). Read as a yes, the
  * manager acts on a premise the numbers contradict and the user learns of it afterwards. The
- * answer itself reaches the user: PPM sends the final text of the turn the reply opened back to
- * the channel they replied from.
+ * answer itself reaches the user: PPM sends the text of the turn the reply opened back to the
+ * channel they replied from. The card comes first and the answer last because a one-line
+ * acknowledgement after the card ("Card sent.") is what a model writes otherwise, and an answer
+ * buried before a tool call is easy to lose.
  */
 export const MANAGER_CARD_REPLY_RULE =
   "A reply to a card that asks a question (\"…nhỉ\", \"…không\", \"?\", \"right?\") or rests on an assumption the facts "
-  + "or numbers contradict is NOT an OK: do nothing yet. Answer the question and correct the assumption with the numbers "
-  + "in this turn's final answer (PPM sends that answer back to where the user replied), then ask again with a new "
-  + "needs_decision card. Act only on a plain yes to that new card.";
+  + "or numbers contradict is NOT an OK: do nothing yet. First ask again with a new needs_decision card; then answer the "
+  + "question and correct the assumption with the numbers as the last thing you write in this turn, with no tool call "
+  + "after it (PPM sends that answer back to where the user replied). Act only on a plain yes to that new card.";
 
 /** The fixed part: the chat's role, who may authorize what, and how to report. */
 export function buildManagerBlock(projectName: string): string {
