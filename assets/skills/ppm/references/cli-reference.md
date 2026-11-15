@@ -2384,3 +2384,20 @@ Check for and install PPM updates
 
 **Options:**
 - `--check` — Only check for updates, don't install
+
+## `ppm vault`
+
+The secret vault: status and lock (values are read only in PPM)
+
+**Usage:** `ppm vault [options] [command]`
+
+### `ppm vault status`
+
+Show which vault tiers are on, how many items each holds, and what is unlocked
+
+**Options:**
+- `--json` — Print JSON
+
+### `ppm vault lock`
+
+Lock every vault tier now: ends Settings' unlock and every chat's open window
