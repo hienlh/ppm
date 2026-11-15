@@ -103,10 +103,17 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
   const following = how.followUp
     ? env.expectFollowup?.({ cardId: card.id, clientMessageId, origin: how.followUp, sessionId: target.sessionId }) ?? null
     : null;
-  const delivered = await env.deliverUserWords({
-    targetSessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName,
-    projectPath: target.projectPath, text, userWords, supersede: how.supersede, clientMessageId,
-  });
+  let delivered: DeliverUserWordsResult;
+  try {
+    delivered = await env.deliverUserWords({
+      targetSessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName,
+      projectPath: target.projectPath, text, userWords, supersede: how.supersede, clientMessageId,
+    });
+  } catch (e) {
+    // A send that threw delivered nothing: a reply left followed would wait 12 hours for a turn.
+    following?.abandon();
+    throw e;
+  }
   if (!delivered.ok) {
     following?.abandon();
     return delivered;

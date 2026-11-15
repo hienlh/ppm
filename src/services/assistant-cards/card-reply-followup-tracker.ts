@@ -95,6 +95,7 @@ interface Pending {
   cardId: string;
   clientMessageId: string;
   origin: FollowupOrigin;
+  /** The manager chat under its current id: resolved once, then moved by `turn_started` and `migrated`. */
   sessionId: string;
   delivered: SessionDelivery | null;
   bound: boolean;
@@ -158,20 +159,28 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
   const pending = new Map<string, Pending>();
   const graceMs = deps.graceMs ?? FOLLOWUP_GRACE_MS;
   const maxAgeMs = deps.maxAgeMs ?? FOLLOWUP_MAX_AGE_MS;
-  const key = (sessionId: string): string => deps.canonical(sessionId);
+  /**
+   * The chats a reply is followed in. Every streamed event of every chat passes through here, so
+   * the hot path asks this set and nothing else: `canonical` is a database lookup (a chain of
+   * provider renames), paid once per reply when it is registered and once per card made.
+   */
+  let watched = new Set<string>();
+  const rewatch = (): void => { watched = new Set([...pending.values()].map((p) => p.sessionId)); };
   const live = (p: Pending): boolean => pending.get(p.clientMessageId) === p;
   /** The replies followed in a chat. */
-  const inSession = (session: string): Pending[] => [...pending.values()].filter((p) => key(p.sessionId) === session);
+  const inSession = (session: string): Pending[] => [...pending.values()].filter((p) => p.sessionId === session);
+  const forget = (p: Pending): void => { if (live(p)) { pending.delete(p.clientMessageId); rewatch(); } };
 
   function prune(): void {
     const now = deps.now();
     for (const [id, p] of pending) if (now - p.at > maxAgeMs) pending.delete(id);
     while (pending.size > MAX_PENDING) pending.delete(pending.keys().next().value!);
+    rewatch();
   }
 
   function finish(p: Pending, buffer: Buffer | undefined, session: string): void {
     if (!live(p)) return;
-    pending.delete(p.clientMessageId);
+    forget(p);
     const base = { cardId: p.cardId, origin: p.origin, sessionId: session, newCards: p.newCards };
     if (buffer?.stopped) { deps.deliver({ ...base, text: "", overflow: false, stopped: true }); return; }
     const text = buffer?.text.trim() ?? "";
@@ -189,7 +198,7 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
     p.collect = null;
     deps.setTimer(() => {
       if (!live(p) || p.bound) return;
-      const session = key(p.sessionId);
+      const session = p.sessionId;
       const sameTurn = deps.turnId(session) === endedTurn && (p.delivered !== "inserted" || p.turnAtInsert === endedTurn);
       if (deps.isIdle(session) && sameTurn) finish(p, buffer, session);
     }, graceMs);
@@ -203,11 +212,12 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
     expect(input: { cardId: string; clientMessageId: string; origin: FollowupOrigin; sessionId: string }): FollowupHandle {
       prune();
       const p: Pending = {
-        cardId: input.cardId, clientMessageId: input.clientMessageId, origin: input.origin, sessionId: input.sessionId,
+        cardId: input.cardId, clientMessageId: input.clientMessageId, origin: input.origin, sessionId: deps.canonical(input.sessionId),
         // Gathered from the start of the send, in case the words open a turn before it returns.
         delivered: null, bound: false, collect: collected(), endedBeforeAttach: null, judged: false, at: deps.now(), newCards: [],
       };
       pending.set(p.clientMessageId, p);
+      rewatch();
       return {
         attach(delivered) {
           if (!live(p)) return;
@@ -226,11 +236,11 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
           // Each reply gathers its own copy, so this starts nobody else's over.
           if (p.delivered === "inserted") {
             p.collect = collected();
-            p.turnAtInsert = deps.turnId(key(p.sessionId));
+            p.turnAtInsert = deps.turnId(p.sessionId);
           }
         },
         abandon() {
-          if (live(p)) pending.delete(p.clientMessageId);
+          forget(p);
         },
       };
     },
@@ -245,11 +255,12 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
           p.bound = true;
           p.sessionId = sessionId;
           p.collect = collected();
+          rewatch();
         }
         return;
       }
-      if (ev.parentToolUseId || (ev.type !== "text" && ev.type !== "tool_use")) return;
-      for (const p of inSession(key(sessionId))) {
+      if (!watched.has(sessionId) || ev.parentToolUseId || (ev.type !== "text" && ev.type !== "tool_use")) return;
+      for (const p of inSession(sessionId)) {
         if (!p.collect) continue;
         if (ev.type === "text" && typeof ev.content === "string") append(p.collect, ev.content);
         else if (ev.type === "tool_use") {
@@ -265,8 +276,8 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
      * running turn (`turnStillRunning`) is not its end. A turn stopped or failed has no answer.
      */
     onTurnEnded(sessionId: string, how: { outcome?: TurnOutcome; turnStillRunning?: boolean } = {}): void {
-      if (how.turnStillRunning || pending.size === 0) return;
-      const session = key(sessionId);
+      if (how.turnStillRunning || !watched.has(sessionId)) return;
+      const session = sessionId;
       const stopped = (how.outcome ?? "done") !== "done";
       for (const p of inSession(session)) {
         const buffer: Buffer = stopped ? { text: "", overflow: false, stopped: true } : answerOf(p.collect);
@@ -287,9 +298,9 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
     /** A card was made: one the replied-to manager made while answering goes with the answer. */
     onCardCreated(card: { id: string; title: string; sessionId: string | null }): void {
       if (!card.sessionId || pending.size === 0) return;
-      const session = key(card.sessionId);
+      const session = watched.has(card.sessionId) ? card.sessionId : deps.canonical(card.sessionId);
       for (const p of pending.values()) {
-        if (key(p.sessionId) === session && (p.bound || (p.delivered !== null && p.delivered !== "queued"))) {
+        if (p.sessionId === session && (p.bound || (p.delivered !== null && p.delivered !== "queued"))) {
           p.newCards.push({ id: card.id, title: card.title });
         }
       }
@@ -297,7 +308,9 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
 
     /** The provider renamed the chat: the replies followed in it follow it. */
     onMigrated(oldSessionId: string, newSessionId: string): void {
+      if (!watched.has(oldSessionId)) return;
       for (const p of pending.values()) if (p.sessionId === oldSessionId) p.sessionId = newSessionId;
+      rewatch();
     },
 
     /** Replies still waiting for their answer, for tests and the log. */
@@ -305,6 +318,7 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
 
     clear(): void {
       pending.clear();
+      rewatch();
     },
   };
 }

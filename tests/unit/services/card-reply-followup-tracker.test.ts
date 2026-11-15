@@ -8,6 +8,7 @@ import {
   answerOf, createFollowupTracker, cutFollowupText, FOLLOWUP_BUFFER_MAX, isThrowawayBlock, type FollowupResult,
 } from "../../../src/services/assistant-cards/card-reply-followup-tracker.ts";
 import { deliverCardFollowup } from "../../../src/services/assistant-cards/card-reply-followup.ts";
+import { forwardUserWords, type ForwardEnv } from "../../../src/services/assistant-cards/forward-verbatim.ts";
 import type { AssistantCard, CardFollowUp } from "../../../src/shared/assistant-cards.ts";
 import { CARD_FOLLOWUP_MAX_CHARS } from "../../../src/shared/assistant-limits.ts";
 
@@ -276,6 +277,48 @@ describe("following the turn a card reply opened", () => {
     t.onTurnEnded("thread-9");
     expect(delivered[0]).toMatchObject({ overflow: true, sessionId: "thread-9" });
     expect(delivered[0]!.text.length).toBe(FOLLOWUP_BUFFER_MAX);
+  });
+});
+
+describe("cost on the chat stream", () => {
+  it("resolves a chat's id once per reply, never per streamed event, and skips chats nobody follows", () => {
+    let lookups = 0;
+    const delivered: FollowupResult[] = [];
+    const t = createFollowupTracker({
+      canonical: (id) => { lookups++; return id === "old-id" ? S : id; },
+      isIdle: () => true, turnId: () => "turn-1", now: () => 1, setTimer: () => () => {}, deliver: (r) => delivered.push(r),
+    });
+    for (let i = 0; i < 5; i++) t.expect({ cardId: `c${i}`, clientMessageId: `card-${i}`, origin, sessionId: "old-id" }).attach("queued");
+    const h = t.expect({ cardId: "c9", clientMessageId: ID, origin, sessionId: "old-id" });
+    h.attach("started");
+    const before = lookups;
+    t.onStream(S, { type: "turn_started", turnId: "turn-1", clientMessageId: ID });
+    for (let i = 0; i < 200; i++) {
+      t.onStream(S, { type: "text", content: "x" });
+      t.onStream("another-chat", { type: "text", content: "y" });
+    }
+    t.onTurnEnded("another-chat");
+    t.onTurnEnded(S);
+    expect(lookups).toBe(before);
+    expect(delivered.map((d) => [d.cardId, d.text.length])).toEqual([["c9", 200]]);
+  });
+
+  it("stops following a reply whose send threw, and lets the error through", async () => {
+    const t = createFollowupTracker({
+      canonical: (id) => id, isIdle: () => true, turnId: () => undefined, now: () => 1, setTimer: () => () => {}, deliver: () => {},
+    });
+    const card = { id: "c1", kind: "needs_decision", sessionId: S, projectName: "ppm" } as AssistantCard;
+    const env: ForwardEnv = {
+      now: () => 1,
+      managerTarget: () => ({ sessionId: S, providerId: "claude", projectName: "ppm", projectPath: "/p" }),
+      deliverUserWords: async () => { throw new Error("socket gone"); },
+      sendToAssistant: async () => ({ ok: true }),
+      userWrote: () => {}, mainSession: () => null, note: () => {}, trace: () => {},
+      expectFollowup: (input) => t.expect(input),
+    };
+    await expect(forwardUserWords(card, "why?", { actor: { channel: "ppm" }, supersede: false, followUp: { channel: "ppm" } }, env))
+      .rejects.toThrow("socket gone");
+    expect(t.size()).toBe(0);
   });
 });
 
