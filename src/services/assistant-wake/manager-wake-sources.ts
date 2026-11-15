@@ -109,6 +109,8 @@ export interface LateReply {
   project: string;
   text: string;
   at: number;
+  /** The turn also answered the user's reply on a card, and PPM sent them that answer already. */
+  userHasAnswer?: true;
 }
 
 export function createLateReplySource(onNews: (assistantSessionId: string) => void) {
@@ -130,7 +132,10 @@ export function createLateReplySource(onNews: (assistantSessionId: string) => vo
       const id = resolveMigratedSession(sessionId);
       return replies.filter((r) => resolveMigratedSession(r.assistantSessionId) === id).map((r) => ({
         key: r.key, at: r.at,
-        news: { kind: "late_reply", key: r.key, project: r.project, sessionId: r.managerSessionId, at: r.at, text: r.text },
+        news: {
+          kind: "late_reply", key: r.key, project: r.project, sessionId: r.managerSessionId, at: r.at, text: r.text,
+          ...(r.userHasAnswer ? { userHasAnswer: true } : {}),
+        },
       }));
     },
     delivered: (_id, items) => remove(items),

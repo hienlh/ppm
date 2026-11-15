@@ -21,6 +21,19 @@ describe("the send queue", () => {
     expect(queue.lastSentAt(slow)).toBeNumber();
   });
 
+  it("sends a message queued from a refused message's drop exactly once", async () => {
+    const chat = connectChat(freshChat());
+    const queue = queueFor(client);
+    fake.failNext("sendMessage", { code: 400, description: "Bad Request: message is too long" });
+    queue.enqueue(chat, sendMessageTask(queue, chat, { html: "refused" }, {
+      label: "card",
+      onDropped: () => queue.enqueue(chat, sendMessageTask(queue, chat, { html: "instead" }, { label: "pointer" })),
+    }));
+    await fake.waitFor(() => texts(fake, chat).length > 0);
+    await queue.whenIdle();
+    expect(texts(fake, chat)).toEqual(["instead"]);
+  });
+
   it("keeps the order of one chat's messages across a retry", async () => {
     const chat = connectChat(freshChat());
     const queue = queueFor(client);

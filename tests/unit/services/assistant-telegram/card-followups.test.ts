@@ -286,10 +286,38 @@ describe("a manager that answers a Telegram reply with a new card", () => {
     return { queue, managerCards, followups };
   }
 
-  const newCard = (): AssistantCard => {
-    const store = createAssistantCards({ now: () => 1, projects: () => [], announce: () => {} });
+  /** A card the manager made `at` (by default a few seconds after the user's reply). */
+  const newCard = (at = REPLIED_AT + 3_000): AssistantCard => {
+    const store = createAssistantCards({ now: () => at, projects: () => [], announce: () => {} });
     return store.create({ kind: "needs_decision", sessionId: "mgr", title: "Run the full suite? ~40% quota", body: "Quota is at 60%; a full run takes ~40%." });
   };
+
+  it("never threads a card made before the reply — one held overnight that goes out while the turn runs", async () => {
+    const chat = connectChat(freshChat());
+    const { queue, managerCards } = bridge(chat, { answering: true, atPpm: true });
+    const held = newCard(REPLIED_AT - 8 * 60 * 60_000);
+    managerCards.send([held], "While you were away: 1 item");
+    await fake.waitFor(() => fake.sent(Number(chat)).length === 2);
+    await queue.whenIdle();
+    expect(fake.sent(Number(chat)).map((m) => m.reply_to)).toEqual([undefined, undefined]);
+    expect(managerCards.threadedIn(held.id, chat)).toBe(false);
+  });
+
+  it("names the card in one line under the reply when it was refused after the follow-up counted on it", async () => {
+    const chat = connectChat(freshChat());
+    const { queue, managerCards, followups } = bridge(chat, { answering: true, atPpm: true });
+    const made = newCard();
+    fake.failNext("sendMessage", { code: 400, description: "Bad Request: REPLY_MARKUP_TOO_LONG" });
+    managerCards.send([made]);
+    followups.send(answer(chat, made));
+    const pointer = await fake.waitFor(() => fake.sent(Number(chat)).find((m) => !m.failed));
+    await queue.whenIdle();
+    // Exactly once: the line is queued from inside the refused card's drop, which once started a
+    // second loop on the same lane and sent it twice.
+    expect(fake.sent(Number(chat)).filter((m) => !m.failed)).toHaveLength(1);
+    expect(pointer).toMatchObject({ reply_to: USER_MESSAGE });
+    expect(stripTelegramHtml(pointer!.text)).toBe(`${NEW_CARD_POINTER_LABEL} Run the full suite? ~40% quota`);
+  });
   const answer = (chat: string, made: AssistantCard): CardFollowupDelivery => ({
     ...delivery({ channel: "telegram", chatId: chat, replyTo: 77, messageId: USER_MESSAGE }),
     text: "Quota is at 60% and a full run takes ~40%, so I opened a card to ask again.",

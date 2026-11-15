@@ -22,9 +22,10 @@ import type { LateReply } from "../assistant-wake/manager-wake-sources.ts";
  *   reported in between. A turn the user stopped, or one cut short by a rate limit or an
  *   overloaded provider, is not a failure the user needs a card for.
  * - The end of a manager turn that took an Assistant message nothing waited for is a late reply:
- *   news for the Assistant, no card — unless that turn answered the user's reply on a card. Its
- *   answer already went straight to the user (`card-reply-followup.ts`, or as the card it opened),
- *   and news of it would have the Assistant tell the user the same thing a second time.
+ *   news for the Assistant, no card. When that turn also answered the user's reply on a card, its
+ *   answer already went straight to the user (`card-reply-followup.ts`, or as the card it opened):
+ *   the news says so, so the Assistant does not tell the user the same thing a second time — it is
+ *   still told, since the turn may have answered its own message too.
  *
  * Lifecycle listeners only record and enqueue.
  */
@@ -45,8 +46,9 @@ export interface ManagerSignalsDeps {
   lateReply(reply: LateReply): void;
   /**
    * Whether the turn of this chat that is ending answers a reply the user gave on a card
-   * (`cardReplyFollowups.answering`). Asked from this `turn_ended` listener, which is started
-   * before the follow-ups' own, so the reply is still known. Never when left out.
+   * (`cardReplyFollowups.answering`): its late-reply news then says the user has the answer. Asked
+   * from this `turn_ended` listener, which is started before the follow-ups' own, so the reply is
+   * still known. Never when left out.
    */
   answersCardReply?(sessionId: string): boolean;
   graceMs?: number;
@@ -112,10 +114,14 @@ export function createManagerSignals(deps: ManagerSignalsDeps) {
         const text = p.finalText?.trim();
         let answeredUser = false;
         try { answeredUser = deps.answersCardReply?.(id) ?? false; } catch { /* unknown: news as before */ }
-        if (p.outcome === "done" && text && answeredUser) {
-          log.info(`session=${id} the turn answered the user's reply on a card; no late-reply news for the Assistant`);
-        } else if (p.outcome === "done" && text) {
-          deps.lateReply({ assistantSessionId: owed.assistant, managerSessionId: id, project: m.projectName, text, at: deps.clock.now() });
+        if (p.outcome === "done" && text) {
+          // The Assistant still hears its answer (the same turn may answer both), told that the user
+          // has it already.
+          if (answeredUser) log.info(`session=${id} the turn also answered the user's reply on a card; the Assistant is told not to repeat it`);
+          deps.lateReply({
+            assistantSessionId: owed.assistant, managerSessionId: id, project: m.projectName, text, at: deps.clock.now(),
+            ...(answeredUser ? { userHasAnswer: true as const } : {}),
+          });
         }
       }
     }

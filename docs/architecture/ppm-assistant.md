@@ -1512,11 +1512,21 @@ answer used to stay in the manager chat, which a user on their phone never opens
   `newCards` and an empty `text`, and the old card shows "The manager answered your reply with a new
   card" with Show while that card waits. Who answers is asked of `cardReplyFollowups.answering`, a
   pure query, so the order of the listeners that ask it does not matter.
-- **No late-reply news for that turn.** An Assistant message a manager had not answered yet makes
-  its next turn end news for the Assistant (`expectReply`). When that turn is the one answering a
-  card reply, its answer already reached the user, and the news would have the Assistant say it a
-  third time: `manager-signals.ts` drops it (`answersCardReply`, asked before the follow-up
-  tracker's own `turn_ended` listener forgets the reply, since the signals start first).
+- Only a card the manager **reported itself** (`isAnswerCard`: a `REPORT_KINDS` kind, not a
+  failure PPM detected) is the answer, and only one made after the reply (`createdAt >= repliedAt`)
+  is threaded under it or let past quiet hours. An approval or question PPM mirrors from the chat in
+  that turn leaves the text answer as it was, and a card held overnight that goes out while a later
+  reply's turn runs is not threaded under that reply.
+- If the card under the reply is refused after the follow-up already counted on it, the one-line
+  pointer goes out from its `onDropped` instead. (That exposed a send-queue bug, now fixed: a task
+  queued from inside `onDropped` started a second loop on the lane and was sent twice; `pumping`
+  in `assistant-telegram-send-queue.ts` keeps one loop per lane.)
+- **Late-reply news for that turn says the user has the answer.** An Assistant message a manager
+  had not answered yet makes its next turn end news for the Assistant (`expectReply`). When that
+  turn also answers a card reply, its answer already reached the user, so the news carries
+  `userHasAnswer` and tells the Assistant not to repeat it — it still hears it, since the same turn
+  may answer its own message too (`answersCardReply`, asked before the follow-up tracker's own
+  `turn_ended` listener forgets the reply, since the signals start first).
 - The answer's Telegram message is recorded as one of the card's messages, marked `followUp`, so a
   reply to it reaches the same manager like a reply to the card (the card is answered by then, so
   it asks "send anyway?"). That holds for a bare OK too, and for an OK to the "stopped" notice: it

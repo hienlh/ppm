@@ -29,6 +29,7 @@
  * memory; `deliver` is handed the result and must not block.
  */
 import { CARD_FOLLOWUP_MAX_CHARS } from "../../shared/assistant-limits.ts";
+import { REPORT_KINDS } from "../../shared/assistant-cards.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import type { Cancel } from "../assistant-wake/assistant-clock.ts";
 
@@ -43,6 +44,27 @@ export type FollowupOrigin =
     /** The user's own message (their reply): a card the manager opens to answer it is threaded under it. */
     messageId?: number;
   };
+
+/** A card made in a manager chat, as far as the follow-up needs to know it. */
+export interface AnswerCardCandidate {
+  id: string;
+  title: string;
+  sessionId: string | null;
+  /** Left out by tests that only care about the turn; every real card has one. */
+  kind?: string;
+  payload?: { detected?: unknown };
+}
+
+/**
+ * Whether a card can be the manager's answer: one it wrote itself with `report_to_assistant`. Not an
+ * approval or question PPM mirrors from the chat (the manager asked for a tool, it said nothing to
+ * the user), and not a failure PPM detected on its own — a text answer in that turn is still the
+ * answer, and dropping it for such a card would leave the user with none.
+ */
+export function isAnswerCard(card: Pick<AnswerCardCandidate, "kind" | "payload">): boolean {
+  if (card.kind === undefined) return true;
+  return (REPORT_KINDS as readonly string[]).includes(card.kind) && !card.payload?.detected;
+}
 
 /** A reply a card answers: made by the manager chat while the turn that read the reply runs. */
 export interface AnsweredReply {
@@ -387,7 +409,8 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
      * while the reply is gathering its turn — named and running, or pushed into the running turn and
      * not judged yet — so a card a schedule's turn made before or after is never named as its.
      */
-    onCardCreated(card: { id: string; title: string; sessionId: string | null }): void {
+    onCardCreated(card: AnswerCardCandidate): void {
+      if (!isAnswerCard(card)) return;
       for (const p of gathering(card.sessionId)) p.newCards.push({ id: card.id, title: card.title });
     },
 

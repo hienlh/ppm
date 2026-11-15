@@ -25,6 +25,7 @@ import { assistantCards, type AssistantCards } from "./assistant-cards.service.t
 import { getCardRow, type CardOutbound, type CardRow } from "./assistant-cards-db.ts";
 import { listHeldCardRows, listUnsentWaitingCardRows, setCardOutbound } from "./assistant-cards-outbound-db.ts";
 import { cardReplyFollowups } from "./card-reply-followup.ts";
+import { isAnswerCard } from "./card-reply-followup-tracker.ts";
 import { CARD_FOLLOWUP_LOUD_MS } from "../../shared/assistant-limits.ts";
 
 const log = createLogger("assistant-cards");
@@ -59,9 +60,10 @@ export interface CardOutboundDeps {
 
 /** The real {@link CardOutboundDeps.answersPhone}: a reply on Telegram the card's turn is answering. */
 function answersPhoneNow(card: AssistantCard): boolean {
+  if (!isAnswerCard(card)) return false;
   const now = assistantClock.now();
-  return cardReplyFollowups.answering(card.sessionId)
-    .some((a) => a.origin.channel === "telegram" && now - a.repliedAt <= CARD_FOLLOWUP_LOUD_MS);
+  return cardReplyFollowups.answering(card.sessionId).some((a) =>
+    a.origin.channel === "telegram" && card.createdAt >= a.repliedAt && now - a.repliedAt <= CARD_FOLLOWUP_LOUD_MS);
 }
 
 const realDeps: CardOutboundDeps = {

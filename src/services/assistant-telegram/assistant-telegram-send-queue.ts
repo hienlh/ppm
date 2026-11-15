@@ -51,7 +51,12 @@ export function outcomeOf(res: TelegramCallResult<unknown> | TelegramEditResult,
 }
 
 interface Entry { task: SendTask; enqueuedAt: number; attempts: number }
-interface Lane { entries: Entry[]; running: Entry | null; timer: ReturnType<typeof setTimeout> | null }
+/**
+ * `pumping` is set for as long as one `pump` loop owns the lane, including between two entries: a
+ * task enqueued from an `onDropped` callback (which runs inside that loop) must be left to it, or a
+ * second loop starts on the same lane and both send that task.
+ */
+interface Lane { entries: Entry[]; running: Entry | null; timer: ReturnType<typeof setTimeout> | null; pumping?: boolean }
 
 export interface SendQueueOptions {
   canSend(chatId: string): boolean;
@@ -122,7 +127,16 @@ export class AssistantTelegramSendQueue {
 
   private async pump(chatId: string): Promise<void> {
     const lane = this.lanes.get(chatId);
-    if (!lane || lane.running || lane.timer) return;
+    if (!lane || lane.running || lane.timer || lane.pumping) return;
+    lane.pumping = true;
+    try {
+      await this.drain(chatId, lane);
+    } finally {
+      lane.pumping = false;
+    }
+  }
+
+  private async drain(chatId: string, lane: Lane): Promise<void> {
     while (lane.entries.length > 0 && this.lanes.get(chatId) === lane) {
       if (!this.opts.canSend(chatId)) {
         log.info(`Telegram chat ${chatId} is not connected any more: ${lane.entries.length} message(s) dropped`);

@@ -122,16 +122,17 @@ describe("late replies", () => {
     expect(h.late).toHaveLength(1);
   });
 
-  it("hands nothing on for a turn that answered the user's reply on a card: the user has that answer already", () => {
+  it("says the user has the answer already when the turn also answered their reply on a card", () => {
     let answering = true;
     const h = harness({ answersCardReply: (id) => answering && id === MGR });
     h.signals.expectReply("asst-1", MGR, "api", false);
     const end = (finalText: string) => h.lifecycle.emit("turn_ended", { sessionId: MGR, outcome: "done", finalText, projectName: "api", providerId: "claude" });
     end("Quota is at 60%; I opened a card to ask again.");
-    expect(h.late).toHaveLength(0);
-    // The expectation was used by that turn, so a later turn is not news either.
+    expect(h.late).toEqual([expect.objectContaining({ assistantSessionId: "asst-1", text: "Quota is at 60%; I opened a card to ask again.", userHasAnswer: true })]);
+    // An ordinary late reply carries no such mark.
     answering = false;
-    end("an unrelated later turn");
-    expect(h.late).toHaveLength(0);
+    h.signals.expectReply("asst-1", MGR, "api", false);
+    end("Build is green.");
+    expect(h.late[1]).not.toHaveProperty("userHasAnswer");
   });
 });

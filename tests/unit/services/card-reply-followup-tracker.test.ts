@@ -96,6 +96,34 @@ describe("following the turn a card reply opened", () => {
     expect(t.size()).toBe(0);
   });
 
+  it("keeps the text answer when the only card the turn made is one PPM mirrored or detected, not the manager's own", () => {
+    for (const card of [
+      { kind: "approval", payload: { requestId: "r1" } },
+      { kind: "question", payload: { requestId: "r2" } },
+      { kind: "failed", payload: { detected: true } },
+    ]) {
+      const { t, delivered, named, say } = setup();
+      t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
+      named(ID);
+      t.onStream(S, { type: "tool_use", tool: "Bash" });
+      t.onCardCreated({ id: "a1", title: "Run: npm test", sessionId: S, ...card });
+      say("No — that costs about 40% of the weekly quota.");
+      t.onTurnEnded(S);
+      expect(delivered.map((d) => ({ text: d.text, newCards: d.newCards }))).toEqual([{ text: "No — that costs about 40% of the weekly quota.", newCards: [] }]);
+    }
+  });
+
+  it("counts every card the manager reported itself as its answer", () => {
+    for (const kind of ["needs_decision", "urgent", "done", "failed"]) {
+      const { t, delivered, named } = setup();
+      t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
+      named(ID);
+      t.onCardCreated({ id: "n1", title: "T", sessionId: S, kind, payload: {} });
+      t.onTurnEnded(S);
+      expect(delivered.map((d) => d.newCards.map((c) => c.id))).toEqual([["n1"]]);
+    }
+  });
+
   it("sends nothing when a turn with no card wrote nothing", () => {
     const { t, delivered, named } = setup();
     t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");

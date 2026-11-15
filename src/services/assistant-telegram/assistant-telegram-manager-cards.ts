@@ -24,11 +24,12 @@ import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { cardEndLine, formatManagerCard, type CardDetail } from "./assistant-telegram-card-kinds.ts";
 import { placeLink } from "./assistant-telegram-links.ts";
 import { cardPhotosTask } from "./assistant-telegram-card-photos.ts";
+import { formatNewCardPointer } from "./assistant-telegram-followup-format.ts";
 import { outcomeOf, sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { CardReminders, TelegramSilence } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
 import { cardReplyFollowups } from "../assistant-cards/card-reply-followup.ts";
-import type { AnsweredReply } from "../assistant-cards/card-reply-followup-tracker.ts";
+import { isAnswerCard, type AnsweredReply } from "../assistant-cards/card-reply-followup-tracker.ts";
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { CARD_FOLLOWUP_LOUD_MS } from "../../shared/assistant-limits.ts";
 
@@ -79,8 +80,11 @@ function realLiveCard(sessionId: string, requestId: string): LiveApprovalCard | 
 }
 
 export class AssistantTelegramManagerCards implements CardOutboundSink {
-  /** "card\nchat" for each card sent into a chat as the answer to the user's reply there. */
-  private readonly threaded = new Set<string>();
+  /**
+   * "card\nchat" for each card sent into a chat as the answer to the user's reply there, and
+   * whether the follow-up has asked about it already (it then sent nothing, counting on the card).
+   */
+  private readonly threaded = new Map<string, { asked: boolean }>();
 
   constructor(private readonly deps: ManagerCardsDeps) {}
 
@@ -89,7 +93,10 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
    * answer there, and the follow-up sends nothing (`assistant-telegram-card-followups.ts`).
    */
   threadedIn(cardId: string, chatId: string): boolean {
-    return this.threaded.has(`${cardId}\n${chatId}`);
+    const mark = this.threaded.get(`${cardId}\n${chatId}`);
+    if (!mark) return false;
+    mark.asked = true;
+    return true;
   }
 
   /**
@@ -101,12 +108,15 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
    */
   private threadsOf(card: AssistantCard): Map<string, Thread> {
     const threads = new Map<string, Thread>();
-    if (card.kind === "approval" || card.kind === "question") return threads;
+    if (card.kind === "approval" || card.kind === "question" || !isAnswerCard(card)) return threads;
     let answering: AnsweredReply[];
     try { answering = (this.deps.answering ?? ((s) => cardReplyFollowups.answering(s)))(card.sessionId); } catch { return threads; }
     const now = (this.deps.now ?? (() => assistantClock.now()))();
     for (const a of answering) {
       if (a.origin.channel !== "telegram" || threads.has(a.origin.chatId)) continue;
+      // Only a card made after the reply answers it: one held overnight, or sent again, that goes
+      // out while a later reply's turn runs is not its answer.
+      if (card.createdAt < a.repliedAt) continue;
       const replyTo = a.origin.messageId ?? a.origin.replyTo;
       if (replyTo) threads.set(a.origin.chatId, { replyTo, loud: now - a.repliedAt <= CARD_FOLLOWUP_LOUD_MS });
     }
@@ -139,10 +149,10 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     const threads = cards.map((c) => this.threadsOf(c));
     // Marked now, before the link is awaited: the turn may end first, and its follow-up must know.
     cards.forEach((card, i) => {
-      for (const chatId of threads[i]!.keys()) if (chats.includes(chatId)) this.threaded.add(`${card.id}\n${chatId}`);
+      for (const chatId of threads[i]!.keys()) if (chats.includes(chatId)) this.threaded.set(`${card.id}\n${chatId}`, { asked: false });
     });
     // Asked only until the turn's follow-up is sent, so the oldest marks can go.
-    while (this.threaded.size > MAX_THREADED) this.threaded.delete(this.threaded.values().next().value!);
+    while (this.threaded.size > MAX_THREADED) this.threaded.delete(this.threaded.keys().next().value!);
     void this.sendAll(cards, chats, threads, header).catch((e) => log.warn(`cards not sent to Telegram: ${(e as Error).message}`));
   }
 
@@ -227,11 +237,25 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       // Refused (a 400 is never retried), past its deadline or its chat gone: on record, not assumed sent.
       onDropped: (why) => {
         this.deps.codes.dropGroup(group);
-        // Not on the phone after all: a follow-up still to come names it instead.
-        this.threaded.delete(`${card.id}\n${chatId}`);
+        // Not on the phone after all. A follow-up still to come names it instead; one that already
+        // counted on it sent nothing, so the line naming it goes now, under the user's reply.
+        const key = `${card.id}\n${chatId}`;
+        const mark = this.threaded.get(key);
+        this.threaded.delete(key);
+        if (mark?.asked && thread) this.sendPointer(chatId, card, url, thread.replyTo);
         try { setCardOutboundError(card.id, why, Date.now()); } catch (e) { log.warn(`card ${card.id}: could not record the failed send: ${(e as Error).message}`); }
       },
     }));
+  }
+
+  /** The one line naming a card that answered the user's reply but never reached the phone. */
+  private sendPointer(chatId: string, card: AssistantCard, url: string | null, replyTo: number): void {
+    const formatted = formatNewCardPointer({ projectName: card.projectName ?? null, newCards: [card], url });
+    this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, {
+      html: formatted.html, replyTo,
+      ...(formatted.markup ? { markup: formatted.markup } : {}),
+      ...(formatted.fallbackHtml ? { fallbackHtml: formatted.fallbackHtml } : {}),
+    }, { label: "card pointer", silent: () => this.silent() }));
   }
 
   changed(card: AssistantCard): void {
