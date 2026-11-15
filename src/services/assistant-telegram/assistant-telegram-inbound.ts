@@ -27,6 +27,7 @@ import type { BridgeAction, ManagerCardPress } from "./assistant-telegram-action
 import type { CardReplyMessage } from "./assistant-telegram-card-replies.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { forwardedFrom, wrapForwarded, backlogQuestion } from "./assistant-telegram-inbound-text.ts";
+import { quoteTelegramMessage, toReplyReference, type QuotedCard, type TelegramQuote } from "./assistant-telegram-reply-quote.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -37,7 +38,8 @@ const MAX_IMAGES = 5;
 const MAX_PENDING_BACKLOG = 50;
 
 type Image = { data: string; mediaType: string };
-interface Gathered { updateIds: number[]; parts: string[]; images: Image[] }
+/** `quote`: what the user replied to, said once for the whole burst (see `message`). */
+interface Gathered { updateIds: number[]; parts: string[]; images: Image[]; quote: TelegramQuote | null }
 
 export interface InboundDeps {
   client: TelegramBotClient;
@@ -59,6 +61,8 @@ export interface InboundDeps {
   replyToCard?: (chatId: string, m: CardReplyMessage) => Promise<boolean>;
   /** Whether this message of this chat shows one of the Assistant's cards. */
   isCardMessage?: (chatId: string, messageId: number) => boolean;
+  /** The card a message of this chat showed, whatever became of it; for the quote of a reply. */
+  cardOf?: (chatId: string, messageId: number) => QuotedCard | null;
   now?: () => number;
 }
 
@@ -67,7 +71,7 @@ interface ChatLane { chain: Promise<void>; gathered: Gathered | null; timer: Ret
 export class AssistantTelegramInbound {
   private readonly lanes = new Map<string, ChatLane>();
   private readonly refused = new Set<string>();
-  private readonly backlog = new Map<string, { chatId: string; text: string; images: Image[]; card?: CardReplyMessage }>();
+  private readonly backlog = new Map<string, { chatId: string; text: string; images: Image[]; card?: CardReplyMessage; quote?: TelegramQuote }>();
   private readonly now: () => number;
   private stopped = false;
 
@@ -205,24 +209,42 @@ export class AssistantTelegramInbound {
       if (!message.photo?.length) this.reply(chatId, "I can read text and photos only.");
       return false;
     }
+    const quote = this.quoteOf(chatId, message);
 
     if (this.now() - message.date * 1000 > BACKLOG_AGE_MS) {
       await this.flush(chatId);
-      this.askAboutBacklog(chatId, message.date, part, image ? [image] : [], updateId);
+      this.askAboutBacklog(chatId, message.date, part, image ? [image] : [], updateId, undefined, quote);
       return false;
     }
 
+    // A burst answers at most one message: a reply to another one sends what was gathered first.
+    const held = this.lanes.get(chatId)?.gathered?.quote;
+    if (quote && held && held.sourceId !== quote.sourceId) await this.flush(chatId);
     const lane = this.lanes.get(chatId)!;
-    const gathered = lane.gathered ??= { updateIds: [], parts: [], images: [] };
+    const gathered = lane.gathered ??= { updateIds: [], parts: [], images: [], quote: null };
     gathered.updateIds.push(updateId);
     if (part.trim()) gathered.parts.push(part);
     if (image) gathered.images.push(image);
+    gathered.quote ??= quote;
     if (lane.timer) clearTimeout(lane.timer);
     lane.timer = setTimeout(() => {
       lane.timer = null;
       this.onLane(chatId, () => this.flush(chatId));
     }, Math.max(0, this.deps.debounceMs()));
     return true;
+  }
+
+  /** What the message replies to, quoted for the Assistant; null when it replies to nothing. */
+  private quoteOf(chatId: string, message: TelegramMessage): TelegramQuote | null {
+    const replied = message.reply_to_message;
+    if (!replied) return null;
+    let card: QuotedCard | null = null;
+    try {
+      card = this.deps.cardOf?.(chatId, replied.message_id) ?? null;
+    } catch (e) {
+      log.warn(`Telegram chat ${chatId}: the card of a replied message is unreadable: ${(e as Error).message}`);
+    }
+    return quoteTelegramMessage(chatId, replied, card);
   }
 
   /** Sends what the chat gathered as one message. Runs on the chat's lane. */
@@ -233,13 +255,13 @@ export class AssistantTelegramInbound {
     lane.gathered = null;
     if (lane.timer) { clearTimeout(lane.timer); lane.timer = null; }
     try {
-      await this.deliver(chatId, gathered.parts.join("\n\n"), gathered.images);
+      await this.deliver(chatId, gathered.parts.join("\n\n"), gathered.images, gathered.quote);
     } finally {
       for (const id of gathered.updateIds) this.deps.delivered(id);
     }
   }
 
-  private async deliver(chatId: string, text: string, images: Image[]): Promise<void> {
+  private async deliver(chatId: string, text: string, images: Image[], quote: TelegramQuote | null = null): Promise<void> {
     const control = chatControl();
     if (!control) return this.reply(chatId, "⚠️ PPM's chat service is not running.");
     if (images.length > MAX_IMAGES) this.reply(chatId, `Only the first ${MAX_IMAGES} photos were sent.`);
@@ -248,6 +270,7 @@ export class AssistantTelegramInbound {
       const result = await control.sendUserMessage(bound.sessionId, text, {
         origin: "telegram", channel: "telegram", projectName: ASSISTANT_PROJECT_NAME, providerId: bound.providerId,
         ...(images.length ? { images: images.slice(0, MAX_IMAGES) } : {}),
+        ...(quote ? { replyTo: toReplyReference(quote, bound.sessionId, bound.providerId) } : {}),
       });
       if (!result.ok) this.reply(chatId, `⚠️ Not sent: ${escapeTelegramHtml(result.error)}`);
     } catch (e) {
@@ -257,10 +280,12 @@ export class AssistantTelegramInbound {
     }
   }
 
-  private askAboutBacklog(chatId: string, date: number, text: string, images: Image[], updateId: number, card?: CardReplyMessage): void {
+  private askAboutBacklog(
+    chatId: string, date: number, text: string, images: Image[], updateId: number, card?: CardReplyMessage, quote?: TelegramQuote | null,
+  ): void {
     while (this.backlog.size >= MAX_PENDING_BACKLOG) this.backlog.delete(this.backlog.keys().next().value!);
     const pendingId = `${chatId}:${updateId}`;
-    this.backlog.set(pendingId, { chatId, text, images, ...(card ? { card } : {}) });
+    this.backlog.set(pendingId, { chatId, text, images, ...(card ? { card } : {}), ...(quote ? { quote } : {}) });
     const group = `backlog:${pendingId}`;
     const markup = { inline_keyboard: [[
       { text: "Run", callback_data: this.deps.codes.mint(chatId, group, { kind: "backlog", pendingId, run: true }) },
@@ -317,7 +342,7 @@ export class AssistantTelegramInbound {
     if (!pending || !action.run) return;
     // A reply to a card that waited while PPM was off still answers that card.
     if (pending.card && this.deps.replyToCard && await this.deps.replyToCard(chatId, pending.card)) return;
-    await this.deliver(chatId, pending.text, pending.images);
+    await this.deliver(chatId, pending.text, pending.images, pending.quote ?? null);
   }
 
   private removeButtons(chatId: string, messageId: number): void {

@@ -1254,6 +1254,17 @@ A message sent while PPM was off and older than `BACKLOG_AGE_MS` asks *Run* / *S
 running unannounced. A forwarded message is wrapped as someone else's words and never read as a
 command. Photos up to `MAX_PHOTO_BYTES` reach the session; other files do not. `/start <token>`
 goes to the connect code before any access check, since it is how a chat becomes allowed.
+A message sent as a reply to anything but a card the card path takes (a reply to a card still
+answers that card, as before) carries what it replied to, as Telegram's quote does
+(`assistant-telegram-reply-quote.ts`): who sent it (the Assistant, a card of which kind, project
+and state, or the user), when, what it carried (a photo, a file and its name, a caption) and its
+first `QUOTE_MAX_LINES` lines. It goes as the message's `ppm-reply-v1` block, after the user's
+words and labelled data only, through `sendUserMessage`'s `replyTo`, which only a `telegram`
+message may carry and only for the chat it is sent to. The old text is old content, so its block
+markers are broken, its `<ppm-…>` tags defused and the user-words header marked as quoted before
+it is quoted. A burst of messages answers at most one message: a reply to another one sends what
+was gathered first. A card with no manager chat (a digest, a rules or budget card) still sends its
+reply to the Assistant, now with the card quoted.
 
 **Going out** (`assistant-telegram-mirror.ts`, `assistant-telegram-turn-renderer.ts`,
 `assistant-telegram-send-queue.ts`). For each bound session the mirror streams the answer by

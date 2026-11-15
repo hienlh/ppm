@@ -56,6 +56,14 @@ export interface TelegramMessage {
   text?: string;
   caption?: string;
   photo?: TelegramPhotoSize[];
+  /** Attachments PPM only names (when the user replies to one); their files are never fetched. */
+  document?: { file_name?: string; mime_type?: string };
+  video?: { file_name?: string };
+  animation?: { file_name?: string };
+  audio?: { title?: string; file_name?: string };
+  voice?: { duration?: number };
+  video_note?: { duration?: number };
+  sticker?: { emoji?: string };
   reply_to_message?: TelegramMessage;
   reply_markup?: InlineKeyboardMarkup;
   /** Sent through an inline bot: the text is that bot's, not the sender's own. */

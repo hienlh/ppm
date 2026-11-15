@@ -2699,8 +2699,19 @@ setChatControl({
     const ensured = ensureServerEntry(sessionId, opts.projectName, opts.providerId);
     if (!ensured.ok) return ensured;
     const { entry } = ensured;
+    // Only a Telegram message quotes what it replied to, and only into the chat it is for.
+    let replyTo: ReplyReference | undefined;
+    if (opts.replyTo !== undefined) {
+      if (opts.origin !== "telegram") return { ok: false, error: "Only a Telegram message carries a reply reference." };
+      const reply = validateReply(opts.replyTo);
+      if (!reply || resolveMigratedSession(reply.sessionId) !== sessionId || reply.providerId !== entry.providerId) {
+        return { ok: false, error: "Invalid reply reference for this session." };
+      }
+      replyTo = { ...reply, sessionId };
+    }
     const result = await deliverUserMessage(sessionId, entry, text, {
       origin: opts.origin,
+      ...(replyTo ? { replyTo } : {}),
       ...(opts.images?.length ? { images: opts.images } : {}),
       ...(opts.permissionMode ? { permissionMode: opts.permissionMode } : {}),
       ...(opts.clientMessageId ? { clientMessageId: opts.clientMessageId } : {}),

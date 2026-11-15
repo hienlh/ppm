@@ -15,6 +15,8 @@
  * Nothing here runs on its own: `startAssistantHub()` starts it when the Telegram side of the
  * Assistant is switched on.
  */
+import { findCardByTelegramRef } from "../assistant-cards/assistant-cards-outbound-db.ts";
+import { assistantCards } from "../assistant-cards/assistant-cards.service.ts";
 import { TelegramBotClient, type TelegramBotClientOptions } from "../telegram/telegram-bot-client.ts";
 import { BOT_TOKEN_RE } from "../telegram/telegram-api-base.ts";
 import type { TelegramCallbackQuery } from "../telegram/telegram-types.ts";
@@ -190,6 +192,10 @@ export class AssistantTelegramBridge {
       pressManagerCard: (chatId, press, group) => cardReplies.press(chatId, press, group),
       replyToCard: (chatId, m) => cardReplies.reply(chatId, m),
       isCardMessage: (chatId, messageId) => cardReplies.isCardMessage(chatId, messageId),
+      cardOf: (chatId, messageId) => {
+        const row = findCardByTelegramRef(chatId, messageId);
+        return row ? assistantCards.toCard(row) : null;
+      },
     });
     poller = new AssistantTelegramPoller(client, state, (update) => inbound.dispatch(update));
     const offs = [

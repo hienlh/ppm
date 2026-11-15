@@ -1,3 +1,4 @@
+import type { ReplyReference } from "../../shared/chat-reply.ts";
 import type { SessionPhase } from "../../types/api.ts";
 import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import type { AnswersById, NormalizedQuestion } from "../../shared/approval-questions.ts";
@@ -88,6 +89,11 @@ export interface SendUserMessageOpts {
   scheduleRun?: ScheduleRunReference;
   /** The channel the user typed on, when it is not a PPM screen. */
   channel?: "telegram";
+  /**
+   * With `telegram` only: the message the user replied to there, quoted as a reply block after
+   * their words (data, never their words). Its session and provider must be this chat's.
+   */
+  replyTo?: ReplyReference;
   /**
    * With `watch` only, and required by it: what the watched chats did. Rendered into the turn's
    * shared context, never into the stored message.

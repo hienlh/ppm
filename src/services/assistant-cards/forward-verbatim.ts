@@ -49,8 +49,11 @@ export interface ForwardEnv {
   now(): number;
   managerTarget(card: AssistantCard): ForwardTarget | null;
   deliverUserWords(input: DeliverUserWordsInput): Promise<DeliverUserWordsResult>;
-  /** An ordinary message from the user to the main Assistant session, typed on Telegram. */
-  sendToAssistant(text: string): Promise<{ ok: true } | { ok: false; error: string }>;
+  /**
+   * An ordinary message from the user to the main Assistant session, typed on Telegram; `card` is
+   * the card it replies to, quoted after the words.
+   */
+  sendToAssistant(text: string, card?: AssistantCard): Promise<{ ok: true } | { ok: false; error: string }>;
   /** The user wrote to this chat: its pair counts start again. */
   userWrote(sessionId: string): void;
   mainSession(): string | null;
@@ -87,7 +90,7 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
   if (!repliesToManager(card)) {
     if (actor.channel !== "telegram") return { ok: false, error: "This card has no manager chat: write to the Assistant instead." };
     const project = card.projectName ? ` for ${card.projectName}` : "";
-    const sent = await env.sendToAssistant(`(My reply to the ${kindName(card)} card${project}.)\n\n${text}`);
+    const sent = await env.sendToAssistant(`(My reply to the ${kindName(card)} card${project}.)\n\n${text}`, card);
     return sent.ok ? { ok: true, to: "assistant" } : sent;
   }
   const target = env.managerTarget(card);

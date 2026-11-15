@@ -47,12 +47,16 @@ export const realForwardEnv: ForwardEnv = {
   now: () => assistantClock.now(),
   managerTarget: managerTargetOf,
   deliverUserWords: async (input) => (await import("../../server/ws/chat-user-words.ts")).deliverUserWords(input),
-  async sendToAssistant(text) {
+  async sendToAssistant(text, card) {
     const main = mainSessionId();
     const control = chatControl();
     if (!main || !control) return { ok: false, error: "There is no main Assistant session to send it to." };
+    const providerId = getSessionProvider(main) ?? "claude";
+    // Loaded on use: the Telegram bridge's modules import the card services.
+    const replyTo = card ? (await import("../assistant-telegram/assistant-telegram-reply-quote.ts")).cardReplyReference(card, main, providerId) : undefined;
     const result = await control.sendUserMessage(main, text, {
-      origin: "telegram", channel: "telegram", projectName: ASSISTANT_PROJECT_NAME, providerId: getSessionProvider(main) ?? "claude",
+      origin: "telegram", channel: "telegram", projectName: ASSISTANT_PROJECT_NAME, providerId,
+      ...(replyTo ? { replyTo } : {}),
     });
     return result.ok ? { ok: true } : { ok: false, error: result.error };
   },
