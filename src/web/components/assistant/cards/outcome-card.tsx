@@ -33,7 +33,7 @@ export function OutcomeCard({ card, onCard }: Props) {
     >
       <h4 className="text-[15px] font-semibold leading-snug text-text-primary" data-card-title="">{card.title}</h4>
       {/* A report only tells: long text folds even while the card is open. */}
-      {card.body && <CardText text={card.body} fold />}
+      {card.body && <CardText text={card.body} fold projectName={card.projectName} />}
       <CardImages images={card.payload.images} />
       {card.payload.detected && <p className="text-xs text-text-subtle">Seen by PPM: the manager chat has not reported on it.</p>}
     </CardShell>

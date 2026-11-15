@@ -188,7 +188,11 @@ export function reportToolDefinition() {
       properties: {
         kind: { type: "string", enum: [...REPORT_KINDS] },
         title: { type: "string", description: `One line, at most ${REPORT_TITLE_MAX} characters.` },
-        body: { type: "string", description: `Details, at most ${REPORT_BODY_MAX} characters.` },
+        body: {
+          type: "string",
+          description: `Details, at most ${REPORT_BODY_MAX} characters, in Markdown (no HTML): short sections, \`-\` bullets, `
+            + "**bold** for what matters, `code` for file names, commands and ids. About six lines, one action per card.",
+        },
         draft: {
           type: "object",
           description: "needs_decision and urgent only: the message you would send if the user says OK. Sent exactly as written.",

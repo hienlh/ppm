@@ -3,9 +3,9 @@ import { escapeHiddenCharacters } from "../../shared/reveal-hidden-characters.ts
 import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
 
 /**
- * Text a manager chat's AI wrote, made fit for a card the user reads as PPM's. A card is shown as
- * plain text, never as Markdown or HTML, so escaping for markup is the renderer's job; this makes
- * sure the words cannot pass for PPM's own:
+ * Text a manager chat's AI wrote, made fit for a card the user reads as PPM's. A body is shown as
+ * Markdown with no HTML (the chat's renderer in its card mode, and Telegram's formatter), so
+ * escaping for markup is the renderer's job; this makes sure the words cannot pass for PPM's own:
  *
  * - every server-only block marker and loose `<ppm-…>` tag is broken, so the text cannot forge the
  *   user's words or a provenance block anywhere it is later quoted;

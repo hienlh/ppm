@@ -34,6 +34,12 @@ interface MarkdownRendererProps {
    * HTML in the source is shown as text instead.
    */
   rawHtml?: boolean;
+  /**
+   * A PPM Assistant card's text, written by a manager AI: Markdown only (HTML in it is shown as
+   * text), held to the Assistant's rules, no image loaded on its own (a local one included), and
+   * links that leave the app in a new tab. Implies `assistantContent` and no `rawHtml`.
+   */
+  card?: boolean;
 }
 
 /** Plugin arrays — stable references to avoid re-creating on each render */
@@ -58,9 +64,10 @@ const assistantRehypePluginsNoRaw = [rehypeKatex, rehypeBlockExternalResources] 
 /** Component map — stable references; dynamic state flows through MdContext */
 const mdComponents = { a: MdLink, img: MdImage, pre: MdPre, code: MdCode, table: MdTable };
 
-export function MarkdownRenderer({ content, projectName, className = "", codeActions = false, isStreaming = false, assistantContent: assistantProp, rawHtml = true }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, projectName, className = "", codeActions = false, isStreaming = false, assistantContent: assistantProp, rawHtml: rawHtmlProp = true, card = false }: MarkdownRendererProps) {
   const inAssistantChat = useContext(AssistantContentContext);
-  const assistantContent = Boolean(assistantProp || inAssistantChat || isAssistantProject(projectName));
+  const assistantContent = Boolean(card || assistantProp || inAssistantChat || isAssistantProject(projectName));
+  const rawHtml = rawHtmlProp && !card;
   const openImageOverlayFn = useImageOverlay((s) => s.open);
   const openDiagramOverlayFn = useDiagramOverlay((s) => s.open);
   // The Assistant's virtual project has no files: its links name absolute paths, opened as such.
@@ -70,10 +77,10 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
   const source = useMemo(() => normalizeMathDelimiters(content), [content]);
 
   const ctx = useMemo(() => ({
-    projectName, codeActions, isStreaming, assistantContent, openFileOrSearch,
+    projectName, codeActions, isStreaming, assistantContent, card, openFileOrSearch,
     openImageOverlay: openImageOverlayFn,
     openDiagramOverlay: openDiagramOverlayFn,
-  }), [projectName, codeActions, isStreaming, assistantContent, openFileOrSearch, openImageOverlayFn, openDiagramOverlayFn]);
+  }), [projectName, codeActions, isStreaming, assistantContent, card, openFileOrSearch, openImageOverlayFn, openDiagramOverlayFn]);
 
   return (
     <MdContext.Provider value={ctx}>
@@ -99,7 +106,7 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
 
 /** Link — external links open in new tab; file paths open in editor */
 function MdLink({ href, children, node, ...props }: any) {
-  const { openFileOrSearch } = useMdContext();
+  const { openFileOrSearch, card } = useMdContext();
   if (href?.match(/^(https?:)?\/\//i)) {
     return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
   }
@@ -107,20 +114,24 @@ function MdLink({ href, children, node, ...props }: any) {
   if (target) {
     return <a href={href} onClick={(e: React.MouseEvent) => { e.preventDefault(); openFileOrSearch(target.path, target.line); }} {...props}>{children}</a>;
   }
+  // A card's link never replaces the app it is read in. An in-page anchor stays put.
+  if (card && href && !href.startsWith("#")) return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
   return <a href={href} {...props}>{children}</a>;
 }
 
 /** Image — auth-loads local file paths via API, click to open overlay */
 function MdImage({ src, alt, node, ...props }: any) {
-  const { openImageOverlay, assistantContent } = useMdContext();
+  const { openImageOverlay, assistantContent, card } = useMdContext();
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   // `//host/x` passes LOCAL_PATH_RE, and the plain `src` below is rendered while the local
   // load runs — so in Assistant content an external source must never reach the <img>.
   const blocked = assistantContent && typeof src === "string" && isExternalResourceUrl(src);
+  // A card loads no picture at all, not even through PPM's own API: its pictures are `payload.images`.
+  const held = card && !blocked;
 
   useEffect(() => {
-    if (blocked || !src || !LOCAL_PATH_RE.test(src)) return;
+    if (blocked || held || !src || !LOCAL_PATH_RE.test(src)) return;
     setLoading(true);
     let cancelled = false;
     let url: string | null = null;
@@ -137,12 +148,13 @@ function MdImage({ src, alt, node, ...props }: any) {
       })
       .catch(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
-  }, [src, blocked]);
+  }, [src, blocked, held]);
 
   const name = alt || (src ? basename(src) : "");
   if (blocked) {
     return <a href={src} target="_blank" rel="noopener noreferrer" title={`Not loaded automatically: ${src}`}>Image: {alt || src}</a>;
   }
+  if (held) return <span className="md-blocked-resource" title={`Not loaded automatically: ${src ?? ""}`}>Image: {alt || src}</span>;
   const displaySrc = blobUrl || src || "";
 
   return (

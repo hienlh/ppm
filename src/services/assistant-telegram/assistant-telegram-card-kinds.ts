@@ -9,6 +9,9 @@
  *   phone (client or tax data).
  *
  * Every manager-written string is redacted, escaped and has its hidden characters made visible.
+ * The body is Markdown, as the manager writes it: it goes through the same formatter as the chat's
+ * answers (`markdownToTelegramHtml`, which escapes before it adds a tag). The draft stays verbatim
+ * in a `<pre>`: it is what would be sent, character for character.
  * "OK, send" follows `cardOkOffered` (the whole decision shown, nothing hidden), and "Approve
  * change" the same bar on the rules diff, so neither ever stands for text the user did not see.
  */
@@ -16,7 +19,7 @@ import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import { DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, type DigestProject } from "../../shared/assistant-digest.ts";
 import { escapeHiddenCharacters } from "../../shared/reveal-hidden-characters.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
-import { redactSecretsForTelegram } from "../telegram/telegram-html-format.ts";
+import { markdownToTelegramHtml, redactSecretsForTelegram } from "../telegram/telegram-html-format.ts";
 import { REVIEW_FIT_MAX, TOO_LONG_NOTE } from "./assistant-telegram-card-format.ts";
 
 export type CardDetail = "full" | "title";
@@ -54,6 +57,16 @@ function clean(text: string, counter: { hidden: number }): string {
 
 /** The same treatment for any other manager-written line bound for Telegram. */
 export const cleanTelegramText = clean;
+
+/**
+ * A card's body as Telegram HTML. Cut as shown (hidden characters revealed first) before it is
+ * formatted, so the cut lands in the Markdown and the formatter closes every tag it opens.
+ */
+function bodyHtml(text: string, counter: { hidden: number }): string {
+  const r = redactSecretsForTelegram(truncateText(escapeHiddenCharacters(text), BODY_MAX));
+  counter.hidden += r.hidden;
+  return markdownToTelegramHtml(r.text);
+}
 
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 
@@ -129,8 +142,7 @@ function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boole
   const buttons: FormattedManagerCard["buttons"] = [];
   const full = detail === "full";
 
-  // Cut as shown (hidden characters revealed first), so the cut body cannot outgrow its room.
-  if (full && card.body) lines.push(clean(truncateText(escapeHiddenCharacters(card.body), BODY_MAX), counter));
+  if (full && card.body) lines.push(bodyHtml(card.body, counter));
   const pictures = card.payload.images?.length ?? 0;
   if (full && pictures) lines.push(`<i>🖼 ${pictures} picture${pictures === 1 ? "" : "s"} above, numbered as listed.</i>`);
   if (card.kind === "needs_decision" || card.kind === "urgent") {

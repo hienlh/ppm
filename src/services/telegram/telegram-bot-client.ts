@@ -13,7 +13,7 @@
  */
 import { createLogger } from "../logger.ts";
 import { BOT_TOKEN_RE, botFileUrl, botMethodUrl, scrubToken } from "./telegram-api-base.ts";
-import { stripTelegramHtml } from "./telegram-html-format.ts";
+import { splitTelegramHtml, stripTelegramHtml } from "./telegram-html-format.ts";
 import type {
   InlineKeyboardMarkup,
   TelegramApiResult,
@@ -133,7 +133,12 @@ export class TelegramBotClient {
     if (photos.some((p) => p.bytes.byteLength > MAX_TELEGRAM_PHOTO_BYTES)) {
       return Promise.resolve({ ok: false, errorCode: 400, description: "photo larger than 10 MB" });
     }
-    const caption = (c?: string) => (c ? { caption: c.slice(0, MAX_TELEGRAM_CAPTION), parse_mode: "HTML" } : {});
+    // Cut where a tag or an entity is whole and closed again, never mid-`&amp;`: Telegram refuses
+    // a caption it cannot parse, and the picture with it.
+    const caption = (c?: string) => {
+      const cut = c ? splitTelegramHtml(c, MAX_TELEGRAM_CAPTION)[0] : undefined;
+      return cut ? { caption: cut, parse_mode: "HTML" } : {};
+    };
     const form = (): FormData => {
       const f = new FormData();
       f.set("chat_id", String(chatId));

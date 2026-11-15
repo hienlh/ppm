@@ -455,6 +455,8 @@ html, body {
 
 .markdown-content strong { font-weight: 600; }
 .markdown-content em { font-style: italic; }
+/* A PPM Assistant card's text sits in the secondary colour; what its writer marked bold is read first. */
+.card-markdown .markdown-content strong { color: var(--color-text-primary); }
 
 /* Code block action buttons (copy/run) */
 .markdown-content pre .code-actions {

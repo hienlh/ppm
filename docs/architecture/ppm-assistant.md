@@ -1043,7 +1043,12 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   markers are broken in every field (`card-text-cleaning.ts`). A draft is only neutralized, so the
   text the user approves is the text sent; it carries `sha256(to + "\n" + text)`. Every report card
   carries a server-written line, "Written by the {project} manager AI" (or "Marked urgent by…").
-  The browser renders all of it as plain text.
+  A body (and the manager's answer to a reply) is Markdown: the browser draws it with the chat's
+  renderer in its card mode (`MarkdownRenderer card`: no raw HTML, the Assistant's no-fetch rules,
+  no image loaded at all — not even a local one — and every non-file link in a new tab), and
+  Telegram gets it through `markdownToTelegramHtml`, which escapes before it adds a tag. The title,
+  the draft and the rules diff stay plain text: a draft is what would be sent, character for
+  character. The manager is told to write bodies that way (short sections, bullets, bold, code).
 - **Caps.** 20 reports per manager per hour; 2 urgent per manager per quiet window, after which an
   urgent report becomes a decision held for the morning; the same urgent title collapses into one
   card (`src/shared/assistant-limits.ts`).
