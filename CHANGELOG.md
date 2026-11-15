@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.26.0] - 2026-11-15
+
+### Added
+
+- **Secret vault with three tiers** in Settings: public items the AI reads freely, secure items unlocked with a vault password, and sealed items with a second password, shown only to you by default; values stay out of logs, traces, the notebook, Telegram and, after the turn, the chat's history files.
+- **Cards with one button per choice**: a manager's card with `options` shows a button for each choice in PPM and on Telegram.
+- **Cards show Markdown** (bold, lists, `code`) in PPM and on Telegram.
+- **A Telegram reply carries what it replied to**, quoted as data, so the Assistant knows which message you meant.
+- **Restart news lists chats whose background work was stopped**, and asks before rerunning work in an unknown state.
+
+### Fixed
+
+- **A card reply is answered once**: when the manager answers with a new card, that card arrives under your message instead of the card plus the same text.
+
 ## [0.25.9] - 2026-11-15
 
 ### Added
