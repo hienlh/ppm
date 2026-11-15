@@ -1610,18 +1610,24 @@ an address, a passport number). Three tiers kept apart on purpose (`src/shared/v
   (`vault-grants.ts`); a restart locks both tiers. Forgetting a password loses that tier for good.
 - **Cards** (`vault-unlock-broker.ts`, tool `ppm:vault`) sit in the chat's one approval slot and
   are answered only by `POST /api/vault/cards/:requestId` with the tier's password: never over the
-  socket, from Telegram or by the Assistant (`answerApprovalCore` refuses them). Unattended turns
-  (watch, schedule, extension) get none. One card per chat; 10 secure and 3 sealed an hour.
+  socket, from Telegram or by the Assistant (`answerApprovalCore` refuses them). One card per chat;
+  10 secure and 3 sealed an hour.
 - **Tools** `vault_list` / `vault_read` / `vault_propose` ride on the session server
   (`/api/sessions-mcp`): always for the Assistant, for an ordinary chat only once turned on in
   Settings → Tools (off by default), never for design or extension-bound chats.
-- **Leaks blocked.** Values handed to an AI are held per chat for 15 minutes
-  (`turn-secret-scrubber.ts`): the session trace stores a locked read as withheld item names and
+- **Leaks blocked.** Values handed to an AI are held per chat for a day, or until the chat is
+  deleted (`turn-secret-scrubber.ts`; values under 4 characters are not matched): the session trace stores a locked read as withheld item names and
   scrubs repeats (`vault-trace-filter.ts`); the notebook and every session-tool call refuse text
   holding one; Telegram text and every notification are scrubbed; a card is announced only as
   "Unlock needed". Nothing in `/api/vault` logs a body.
-- **Settings → Vault**: the Secure tier stays open five minutes (Lock now); every Sealed action asks
-  for its password. The CLI has only `ppm vault status` and `ppm vault lock`.
+- **Settings → Vault**: the Secure tier stays open five minutes (Lock now) for the one page that
+  typed the password: the page sends a random handle kept in memory, so PPM's auth token alone never
+  reaches an open tier, and moving an item out to Public always asks for the password. Every Sealed
+  action asks for its password. Checking a new password against the other tier counts as a try on it.
+- **Who started the turn.** An open window answers without a card only in a turn a person started in
+  PPM; a turn another chat or the Assistant started gets a card; scripted, watch, schedule, extension
+  and unknown turns get nothing from the locked tiers. Vault cards never reach Telegram `/status`,
+  watches or `chats_attention`. The CLI has only `ppm vault status` and `ppm vault lock`.
 
 **Limits.** What an AI was given is in its provider's transcript for good. The scrubber is a
 fallback: a value spelled out differently gets past it. The Public tier is not protected at all.
