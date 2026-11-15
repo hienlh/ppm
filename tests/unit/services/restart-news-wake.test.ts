@@ -13,7 +13,7 @@ import { AssistantWakeQueue } from "../../../src/services/assistant-wake/assista
 import { setAssistantClock } from "../../../src/services/assistant-wake/assistant-clock.ts";
 import { wakeContextEntry } from "../../../src/services/assistant-wake/wake-news-text.ts";
 import {
-  addRestartNews, createRestartNewsSource, cutOffChatsCarried, pendingRestartNews, RESTART_NEWS_MAX_AGE_MS, restartNewsUrgent, RESTART_SOURCE_NAME, type RestartNewsStore,
+  addRestartNews, createRestartNewsSource, restartChatsCarried, pendingRestartNews, RESTART_NEWS_MAX_AGE_MS, restartNewsUrgent, RESTART_SOURCE_NAME, type RestartNewsStore,
 } from "../../../src/services/restart-news/restart-news-source.ts";
 import { _resetRestartNews, liveInterruptedChatDeps, startRestartNews } from "../../../src/services/restart-news/restart-news-lifecycle.ts";
 import { MAX_RESTART_ENTRY_CHARS, RESTART_OPENER, restartNewsEntry } from "../../../src/services/restart-news/restart-news-text.ts";
@@ -242,7 +242,7 @@ describe("queueing a start", () => {
   it("queues this start once per process, with the chats the scan found", () => {
     const store = memoryStore();
     let scans = 0;
-    const scan = () => { scans++; return { chats: [chat("a")], more: 0 }; };
+    const scan = () => { scans++; return { cutOff: { chats: [chat("a")], more: 0 }, background: { chats: [], more: 0 } }; };
     startRestartNews({ start: start(T), store, scan, enabled: () => true, mainSession: () => MAIN });
     startRestartNews({ start: start(T), store, scan, enabled: () => true, mainSession: () => MAIN });
     expect(scans).toBe(1);
@@ -253,14 +253,14 @@ describe("queueing a start", () => {
     const store = memoryStore();
     let scans = 0;
     const first: ServerStart = { ...start(T), previous: null, restart: restart(T, { kind: "manual" }) };
-    startRestartNews({ start: first, store, scan: () => { scans++; return { chats: [], more: 0 }; }, enabled: () => true, mainSession: () => MAIN });
+    startRestartNews({ start: first, store, scan: () => { scans++; return { cutOff: { chats: [], more: 0 }, background: { chats: [], more: 0 } }; }, enabled: () => true, mainSession: () => MAIN });
     expect(pendingRestartNews(store)).toBeNull();
     expect(scans).toBe(0);
   });
 
   it("queues nothing with the setting off", () => {
     const store = memoryStore();
-    startRestartNews({ start: start(T), store, scan: () => ({ chats: [chat("a")], more: 0 }), enabled: () => false, mainSession: () => MAIN });
+    startRestartNews({ start: start(T), store, scan: () => ({ cutOff: { chats: [chat("a")], more: 0 }, background: { chats: [], more: 0 } }), enabled: () => false, mainSession: () => MAIN });
     expect(pendingRestartNews(store)).toBeNull();
   });
 
@@ -391,7 +391,7 @@ describe("the provenance a manager reads", () => {
     await h.queue.pump(MAIN);
     const t = createTurnProvenanceTracker({
       isAssistant: () => true, liveOrigin: () => "watch",
-      restartChatsFor: (s, project) => cutOffChatsCarried(h.queue, s, project),
+      restartChatsFor: (s, project) => restartChatsCarried(h.queue, s, project),
     });
     return { h, t };
   }

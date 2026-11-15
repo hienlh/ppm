@@ -136,7 +136,9 @@ type ScriptOp =
   | { codexQuestion: { questions: Array<Record<string, unknown>> } }
   | { session: string; args?: Record<string, unknown> }
   | { writeFile: { path: string; text: string } }
-  | { shell: { args: string[] } };
+  | { shell: { args: string[] } }
+  /** A task left running past the turn, reported as the Claude provider reports one (`task_started`). */
+  | { background: { taskId: string; tool?: string; command?: string; description?: string } };
 /**
  * One posted script: the ops of one turn. `match` is looked for in the message and in what PPM put
  * in the shared-context block (a wake turn's news is only there); `sessionId` with `match` keeps
@@ -390,6 +392,14 @@ class ScriptedProvider {
       if (run.abort.signal.aborted) break;
       if ("text" in op) { yield emit({ type: "text", content: op.text }); continue; }
       if ("sleep" in op) { await pause(op.sleep, run.abort.signal); continue; }
+      if ("background" in op) {
+        const b = op.background;
+        const toolUseId = `tu-${crypto.randomUUID()}`;
+        yield emit({ type: "tool_use", tool: b.tool ?? "Bash", input: { command: b.command, description: b.description, run_in_background: true }, toolUseId } as ChatEvent);
+        yield emit({ type: "system", subtype: "task_started", taskId: b.taskId, taskToolUseId: toolUseId } as never);
+        yield emit({ type: "tool_result", output: `Command running in background with ID: ${b.taskId}.`, toolUseId } as ChatEvent);
+        continue;
+      }
       if ("fail" in op) throw new Error(op.fail);
       if ("error" in op) {
         yield emit({ type: "error", message: op.error } as ChatEvent);

@@ -1,13 +1,16 @@
 import { NO_REPLY_TEXT } from "../../shared/assistant-cards.ts";
-import type { InterruptedChat, RestartEntry, RestartNewsPayload, StartReasonKind } from "../../shared/restart-news.ts";
+import type {
+  BackgroundTask, BackgroundWorkChat, InterruptedChat, RestartEntry, RestartNewsPayload, StartReasonKind,
+} from "../../shared/restart-news.ts";
 import { cleanEventText } from "../assistant-watch/watch-event-text.ts";
 
 /**
  * The shared-context entry for restart news: when and why PPM's server restarted, the version
- * change, and the chats a restart cut off mid-turn, grouped by project with each manager chat and
- * the chats it opened. Titles and prompts were written by people and other AIs: cleaned, cut, and
- * JSON-quoted as data. Then what to do: ask each affected project's manager chat to resume its
- * chats, and tell the user about projects that have none.
+ * change, the chats a restart cut off mid-turn, and the chats between turns whose background work
+ * (a shell, an agent, a monitor) it stopped, each grouped by project with each manager chat and the
+ * chats it opened. Titles, prompts and commands were written by people and other AIs: cleaned, cut,
+ * and JSON-quoted as data. Then what to do: ask each affected project's manager chat to get its
+ * chats going again, and tell the user about projects that have none.
  */
 
 /** The message a turn carrying only restart news opens with. Fixed: nothing quoted is in it. */
@@ -33,6 +36,7 @@ const KIND_TEXT: Record<StartReasonKind, string> = {
 export const MAX_RESTART_ENTRY_CHARS = 14_000;
 const MAX_ENTRY_CHARS = MAX_RESTART_ENTRY_CHARS;
 const CUT_NOTE = "…\n(The list was cut short here; ask each manager chat to check its project's chats.)";
+const MAX_TASKS_SHOWN = 5;
 const quote = (text: string) => JSON.stringify(text);
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -71,14 +75,45 @@ function chatLine(c: InterruptedChat, indent: string, role: string): string {
   return lines.join("\n");
 }
 
-/** One project's cut-off chats: its manager first, each chat under the chat that opened it. */
-function projectBlock(project: string, chats: InterruptedChat[], managerId: string | undefined): string {
+const TASK_STATE_TEXT: Record<BackgroundTask["state"], string> = {
+  alive: "still running: its output was written after the restart",
+  stopped: "stopped: it ran inside the chat's Claude process, which ended with the server",
+  unknown: "not known: the shell PPM ran it in ended with the server, but anything it started outside PPM (a container, a detached process) may still run",
+};
+
+function backgroundChatLine(c: BackgroundWorkChat, indent: string, role: string): string {
+  const head = `${indent}- ${role} ${quote(cleanEventText(c.title, 120))} (session ${cleanEventText(c.sessionId, 80)}, ${cleanEventText(c.providerId, 20)})`;
+  const lines = [`${head}: was between turns (last row at ${iso(c.lastAt)}) with background work running:`];
+  for (const t of c.tasks.slice(0, MAX_TASKS_SHOWN)) {
+    const what = [
+      cleanEventText(t.description, 160) ? `for ${quote(cleanEventText(t.description, 160))}` : "",
+      cleanEventText(t.command, 160) ? `command ${quote(cleanEventText(t.command, 160))}` : "",
+    ].filter(Boolean).join(", ");
+    lines.push(`${indent}  - ${cleanEventText(t.tool, 40) || "a tool"} started at ${iso(t.startedAt)}${what ? ` (${what})` : ""}. After the restart: ${TASK_STATE_TEXT[t.state]}.`);
+  }
+  const more = (c.moreTasks ?? 0) + Math.max(0, c.tasks.length - MAX_TASKS_SHOWN);
+  if (more > 0) lines.push(`${indent}  - and ${more} more background task(s).`);
+  if (c.openCards) lines.push(`${indent}  ${c.openCards} PPM Assistant card(s) about it were still open.`);
+  return lines.join("\n");
+}
+
+interface ListedChat {
+  sessionId: string;
+  lastAt: number;
+  manager?: boolean;
+  parentSessionId?: string;
+}
+
+/** One project's listed chats: its manager first, each chat under the chat that opened it. */
+function projectBlock<T extends ListedChat>(
+  project: string, chats: T[], managerId: string | undefined, lineOf: (c: T, indent: string, role: string) => string,
+): string {
   const lines = [`Project ${quote(cleanEventText(project, 100))}: ${managerId
     ? `manager chat is session ${cleanEventText(managerId, 80)}.`
     : "has no manager chat."}`];
   const ids = new Set(chats.map((c) => c.sessionId));
-  const childrenOf = new Map<string, InterruptedChat[]>();
-  const roots: InterruptedChat[] = [];
+  const childrenOf = new Map<string, T[]>();
+  const roots: T[] = [];
   for (const c of chats) {
     if (c.parentSessionId && ids.has(c.parentSessionId) && c.parentSessionId !== c.sessionId) {
       childrenOf.set(c.parentSessionId, [...(childrenOf.get(c.parentSessionId) ?? []), c]);
@@ -86,13 +121,13 @@ function projectBlock(project: string, chats: InterruptedChat[], managerId: stri
   }
   roots.sort((a, b) => Number(!!b.manager) - Number(!!a.manager) || b.lastAt - a.lastAt);
   const placed = new Set<string>();
-  const walk = (c: InterruptedChat, depth: number) => {
+  const walk = (c: T, depth: number) => {
     if (placed.has(c.sessionId) || depth > 6) return;
     placed.add(c.sessionId);
     const role = c.manager ? "Manager chat" : c.parentSessionId && depth > 0 ? "Chat it opened" : c.parentSessionId
       ? `Chat opened by session ${cleanEventText(c.parentSessionId, 80)}`
       : "Chat";
-    lines.push(chatLine(c, "  ".repeat(depth + 1), role));
+    lines.push(lineOf(c, "  ".repeat(depth + 1), role));
     for (const child of childrenOf.get(c.sessionId) ?? []) walk(child, depth + 1);
   };
   for (const r of roots) walk(r, 0);
@@ -102,23 +137,34 @@ function projectBlock(project: string, chats: InterruptedChat[], managerId: stri
 }
 
 function instructions(payload: RestartNewsPayload): string {
-  if (payload.chats.length === 0) {
+  if (payload.chats.length === 0 && !payload.backgroundChats?.length) {
     return [
-      "No chat was cut off mid-turn. There is nothing to resume: if nothing here is worth a line to the user (an",
-      `unexpected crash, a repeated restart, a version change they should know of), answer exactly ${NO_REPLY_TEXT}.`,
+      "No chat was cut off mid-turn, and no chat's background work was stopped. There is nothing to resume: if nothing",
+      "here is worth a line to the user (an unexpected crash, a repeated restart, a version change they should know of),",
+      `answer exactly ${NO_REPLY_TEXT}.`,
     ].join(" ");
   }
   return [
-    "What to do (the cut-off chats are listed after these steps):",
+    "What to do (the chats are listed after these steps: first those cut off mid-turn, then those whose background work",
+    "the restart stopped):",
     "1. For each project listed below that has a manager chat, send that manager chat one message (send_to_session, no card needed)",
-    "naming every cut-off chat of its project by session id, saying PPM restarted, and asking it to check each one and",
-    "resume or restart its work. If the manager chat itself was cut off, that same message resumes it. Never message the",
-    "other cut-off chats yourself.",
+    "naming every listed chat of its project by session id, saying PPM restarted, and asking it to check each one: a",
+    "cut-off chat resumes or restarts its work; a chat whose background work stopped checks whether that work still runs",
+    "and is still needed, and starts it again only if so. Name each background task (what it was for, or its command)",
+    "and what PPM knows of it after the restart. If the manager chat itself is listed, that same message covers it.",
+    "Never message the other listed chats yourself.",
     "2. A chat that was waiting on an approval or question lost it: ask the manager to have it asked again, never answer it.",
-    "3. For a project with no manager chat, tell the user in your answer which of its chats were cut off (title and",
-    "session id), so they can resume them.",
+    "3. For a project with no manager chat, tell the user in your answer which of its chats were cut off or had their",
+    "background work stopped (title, session id, and the work), so they can resume them.",
     "4. If a message to a manager chat is refused (budget, pause, quiet hours), tell the user what you wanted to send.",
   ].join(" ");
+}
+
+/** Chats grouped by project, in first-seen order. */
+function byProject<T extends { projectName: string }>(chats: readonly T[]): Map<string, T[]> {
+  const projects = new Map<string, T[]>();
+  for (const c of chats) projects.set(c.projectName, [...(projects.get(c.projectName) ?? []), c]);
+  return projects;
 }
 
 /** The entry for one or more restart notices merged together; undefined when there is none. */
@@ -129,6 +175,11 @@ export function restartNewsEntry(payloads: readonly RestartNewsPayload[]): strin
   for (const c of payloads.flatMap((p) => p.chats)) byId.set(c.sessionId, c);
   const chats = [...byId.values()];
   const more = payloads.reduce((n, p) => n + (p.moreChats ?? 0), 0);
+  const cutIds = new Set(chats.map((c) => c.sessionId));
+  const bgById = new Map<string, BackgroundWorkChat>();
+  for (const c of payloads.flatMap((p) => p.backgroundChats ?? [])) if (!cutIds.has(c.sessionId)) bgById.set(c.sessionId, c);
+  const background = [...bgById.values()];
+  const moreBackground = payloads.reduce((n, p) => n + (p.moreBackgroundChats ?? 0), 0);
   const managers = new Map<string, string>();
   for (const m of payloads.flatMap((p) => p.managers ?? [])) managers.set(m.projectName, m.sessionId);
 
@@ -136,18 +187,28 @@ export function restartNewsEntry(payloads: readonly RestartNewsPayload[]): strin
   lines.push(...restarts.map(restartLine));
   // The steps go before the list: the cap below cuts from the end, and a long list must lose its
   // last chats, never the instructions the turn exists to carry out.
-  lines.push(instructions({ restarts, chats, ...(more ? { moreChats: more } : {}) }));
+  lines.push(instructions({ restarts, chats, backgroundChats: background }));
   if (chats.length === 0) {
     lines.push("Chats cut off mid-turn: none.");
   } else {
     lines.push(`Chats cut off mid-turn (${chats.length + more}):`);
-    const projects = new Map<string, InterruptedChat[]>();
-    for (const c of chats) projects.set(c.projectName, [...(projects.get(c.projectName) ?? []), c]);
-    for (const [project, list] of projects) {
+    for (const [project, list] of byProject(chats)) {
       const managerId = managers.get(project) ?? list.find((c) => c.manager)?.sessionId;
-      lines.push(projectBlock(project, list, managerId));
+      lines.push(projectBlock(project, list, managerId, chatLine));
     }
     if (more > 0) lines.push(`And ${more} more cut-off chat(s) not listed: ask each manager chat to check its project's chats.`);
+  }
+  if (background.length === 0) {
+    lines.push("Chats whose background work was stopped: none.");
+  } else {
+    lines.push(`Chats whose background work was stopped (${background.length + moreBackground}) — between turns, each had a background shell, agent or monitor running:`);
+    for (const [project, list] of byProject(background)) {
+      const managerId = managers.get(project) ?? list.find((c) => c.manager)?.sessionId;
+      lines.push(projectBlock(project, list, managerId, backgroundChatLine));
+    }
+    if (moreBackground > 0) {
+      lines.push(`And ${moreBackground} more chat(s) with stopped background work not listed: ask each manager chat to check its project's chats.`);
+    }
   }
   const text = lines.join("\n");
   return text.length > MAX_ENTRY_CHARS ? `${text.slice(0, MAX_ENTRY_CHARS - CUT_NOTE.length)}${CUT_NOTE}` : text;

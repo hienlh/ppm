@@ -19,6 +19,9 @@
 //   e  restart news switched off: no wake turn, the run log still written
 //   f  quiet hours with a chat cut off: the news is urgent and goes at once, the send passes too
 //   g  quiet hours, no chat cut off, two restarts: held, merged into one news, sent once quiet ends
+//   h  crash while a chat between turns had two background tasks running: its own section names
+//      each task and what is known of it (one still writing its output), and the manager receives
+//      the Assistant's message with the provenance reason "restart" and exactly that chat's id
 // Then Settings → PPM Assistant → Digest & quiet hours: the switch saves restart_news both ways,
 // screenshotted on a desktop (1440x900) and a phone (390x844).
 //
@@ -39,6 +42,7 @@ import { restartKit } from "./assistant-restart-news/restart-kit.mjs";
 import { scenarioA, scenarioB, scenarioC, scenarioD, scenarioFirstStart } from "./assistant-restart-news/steps-reasons.mjs";
 import { scenarioOff, scenarioQuietUrgent, scenarioQuietMerge } from "./assistant-restart-news/steps-gates.mjs";
 import { settingsScreens } from "./assistant-restart-news/steps-settings.mjs";
+import { scenarioBackground } from "./assistant-restart-news/steps-background.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-restart-news-e2e-"));
 const shotsDir = resolve(process.env.PPM_RESTART_NEWS_SHOTS ?? join(sandbox, "shots"));
@@ -89,7 +93,7 @@ let browser;
 const started = Date.now();
 const STEPS = [
   ["0", scenarioFirstStart], ["a", scenarioA], ["b", scenarioB], ["c", scenarioC], ["d", scenarioD],
-  ["e", scenarioOff], ["f", scenarioQuietUrgent], ["g", scenarioQuietMerge], ["ui", settingsScreens],
+  ["e", scenarioOff], ["f", scenarioQuietUrgent], ["g", scenarioQuietMerge], ["h", scenarioBackground], ["ui", settingsScreens],
 ];
 
 try {

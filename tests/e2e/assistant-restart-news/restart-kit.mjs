@@ -181,7 +181,7 @@ export async function assertCutOffNews(k, s, { turn, label, expect }) {
   assert.match(child, /^\s{2,}- Chat (it opened|opened by session)/, `${label}: the child is listed under its manager: ${child}`);
   assert.ok(child.includes(`"${s.childTitle}"`), `${label}: the child is listed by its title: ${child}`);
   assert.ok(ctx.includes(`The cut-off turn began with: "${s.cutText}`), `${label}: the cut-off turn's first line is quoted\n${ctx}`);
-  assert.ok(ctx.includes("What to do (the cut-off chats are listed after these steps):"), `${label}: the news asks the Assistant to have the manager resume`);
+  assert.ok(ctx.includes("What to do (the chats are listed after these steps: first those cut off mid-turn"), `${label}: the news asks the Assistant to have the manager resume`);
   assert.ok(ctx.indexOf("4. If a message to a manager chat is refused") < ctx.indexOf("Chats cut off mid-turn"), `${label}: the steps come before the list`);
 
   const [send] = await k.answered(label, 1);
