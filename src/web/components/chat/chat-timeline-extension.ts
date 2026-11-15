@@ -12,6 +12,8 @@ export interface ChatTimelineItem {
   /** Epoch ms; see `placeTimelineItems` for where an item lands. */
   at: number;
   node: ReactNode;
+  /** Drawn even when older history is not loaded yet (before the oldest loaded message). */
+  keep?: boolean;
 }
 
 export interface ChatTimelineExtension {

@@ -134,8 +134,8 @@ try {
   ok("Telegram: the card names the chat and project, says what it asks and when it expires, and offers Allow and Deny");
 
   await page.goto(`${web}/project/ppm/assistant`);
-  const bar = k.body().locator("[data-waiting-cards]");
-  await bar.waitFor({ timeout: 30000 });
+  // The card is drawn whole in the stream, and the dock above the composer counts it.
+  await k.body().locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
   const waitingText = await k.body().locator("[data-waiting-card]").innerText();
   assert.match(waitingText, new RegExp(`Chat\\s+“${KHO}”\\s+in ppm wants to use`));
   assert.match(waitingText, /Expires at /);
@@ -154,7 +154,7 @@ try {
   assert.equal(after.answer?.note, "Answered on Telegram");
   const edited = await tg.waitFor(OWNER, "the card answered", (m) => m.message_id === tgCard.message_id && /Allowed here/.test(m.text));
   assert.deepEqual(buttonsOf(edited).filter((t) => t === "Allow" || t === "Deny"), []);
-  await until("the bar is gone", async () => (await k.body().locator("[data-waiting-cards]").count()) === 0, 15000);
+  await until("the dock is gone", async () => (await k.body().locator("[data-waiting-dock]").count()) === 0, 15000);
   await k.shot("02-after-allow-on-telegram-nothing-waits");
   ok(`Allow on Telegram opened the Design chat ${result.sessionId}; the Assistant card and the Telegram card both say it was answered`);
   await k.idle(kho);
@@ -169,7 +169,7 @@ try {
   const lateCard = await tg.waitFor(OWNER, "the second card", (m) => /^🔐 Chat “.+” in ppm needs your decision/.test(m.text) && m.text.includes("Follow up on the kho task"));
   assert.match(lateCard.text, /Expires in 1 minute \(at \d\d:\d\d\)/, lateCard.text);
   await page.reload();
-  await k.body().locator("[data-waiting-cards]").waitFor({ timeout: 30000 });
+  await k.body().locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
   await k.shot("03-second-card-waiting");
   const outcome = await until("the second card expired", async () => (await fx.api(`/__assistant-test/collab-card/${raised.requestId}`)).outcome, 30000);
   assert.equal(outcome.reason, "timeout");
@@ -181,7 +181,7 @@ try {
   const lateRow = (await k.cards()).find((c) => c.payload.requestId === raised.requestId);
   assert.equal(lateRow.status, "resolved");
   assert.match(lateRow.answer.note, /^Expired/);
-  await until("the bar is gone again", async () => (await k.body().locator("[data-waiting-cards]").count()) === 0, 15000);
+  await until("the dock is gone again", async () => (await k.body().locator("[data-waiting-dock]").count()) === 0, 15000);
   await k.shot("04-after-expiry-nothing-waits");
   const newMessages = (await tg.sent(OWNER)).slice(sent).filter((m) => m.text.startsWith("⌛"));
   assert.equal(newMessages.length, 1, "one line, once");

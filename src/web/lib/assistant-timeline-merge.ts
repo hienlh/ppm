@@ -6,7 +6,9 @@
  * the same time keep the message first (the turn that produced a card is already on screen when
  * the card lands). Items newer than every loaded message trail the list. Items older than the
  * oldest loaded message are held back while older history exists, so they never sit above a
- * gap; they come in with the page that reaches their time.
+ * gap; they come in with the page that reaches their time. An item marked `keep` (a card that
+ * still waits on the user) is never held: it goes before the oldest loaded message instead, so it
+ * can always be reached, and moves up to its own place once that page is loaded.
  */
 
 export interface TimelineRow {
@@ -40,7 +42,7 @@ export function placeTimelineItems<T>(
   rows: readonly TimelineRow[],
   items: readonly T[],
   at: (item: T) => number,
-  opts: { olderHidden: boolean },
+  opts: { olderHidden: boolean; keep?: (item: T) => boolean },
 ): TimelinePlaced<T> {
   // Stable: items with the same time keep the order they were given in.
   const sorted = items.map((item, i) => ({ item, i, t: at(item) })).sort((a, b) => a.t - b.t || a.i - b.i);
@@ -53,7 +55,7 @@ export function placeTimelineItems<T>(
     // Times are non-decreasing, so the cursor only moves forward.
     while (row < times.length && times[row]! <= t) row++;
     if (row >= times.length) { trailing.push(item); continue; }
-    if (row === 0 && opts.olderHidden) { held++; continue; }
+    if (row === 0 && opts.olderHidden && !opts.keep?.(item)) { held++; continue; }
     const list = before.get(row);
     if (list) list.push(item);
     else before.set(row, [item]);

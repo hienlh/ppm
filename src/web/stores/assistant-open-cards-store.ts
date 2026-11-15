@@ -1,8 +1,9 @@
 /**
  * The PPM Assistant's cards that still wait on the user: the very cards the red counts are made
  * of (`GET /cards/open` is built from the same server function as `GET /waiting`), so a count on
- * screen always has cards behind it the user can find. The Assistant pins them above its stream
- * ("Waiting on you") and a manager chat shows its own above the composer.
+ * screen always has cards behind it the user can find. The Assistant draws each one whole in its
+ * stream, with a "Waiting on you" dock above the composer that jumps to them, and a manager chat
+ * shows its own above the composer.
  *
  * Fetched once by the first reader, kept current by `assistant:card` (a card that stops waiting
  * leaves, a new one joins), checked against every `assistant:waiting_changed` (counts that do not
@@ -18,7 +19,7 @@ import { WAITING_CARD_KINDS, type AssistantCard } from "../../shared/assistant-c
 /** A press on a red count: show that project's (or every) waiting card. `nonce` makes each press new. */
 export interface WaitingFocus {
   projectName: string | null;
-  /** One card exactly (its "Show" in the stream), rather than the project's first. */
+  /** One card exactly (a follow-up's "Show"), rather than the project's first. */
   cardId?: string;
   nonce: number;
 }
@@ -106,8 +107,8 @@ export function resyncOpenCards(): void {
 }
 
 /**
- * Opens "Waiting on you" on one project's first card (every project's with null), from a press on
- * a red count, or on one card exactly, from its "Show" in the stream.
+ * Scrolls the Assistant's stream to one project's first waiting card (every project's with null),
+ * from a press on a red count, or to one card exactly, from a follow-up's "Show".
  */
 export function focusWaitingCards(projectName: string | null, cardId?: string): void {
   nonce += 1;

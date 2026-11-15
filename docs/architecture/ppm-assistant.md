@@ -84,36 +84,43 @@ long-press menu — stands where the composer is with a Telegram-style quote ove
 ("↩ Replying to card", then "{project} · {title}", and ✕), posts to `/cards/:id/reply` instead
 of the Assistant, and ends on send, Esc, ✕, a session or project switch; it is never stored.
 
-**Waiting on you.** The stream places a card by its time, so an open one drifts up among later
-messages. Every card still waiting (`WAITING_CARD_KINDS`, `status = open`) is therefore also
-pinned between the chip row and the stream (`assistant-waiting-cards.tsx` over
-`waiting-cards-bar.tsx`): one card at a time, whole and with its own buttons, ‹ › and "n/N" to
-step (urgent first, then the oldest), folded to one 44 px row that still names the card. Long
-cards are the norm (a plan runs to 1,500 characters): the card area takes a share of the
-Assistant body (a size container, `ASSISTANT_SLOT_HEIGHT`) and scrolls, and only there the card's
-button row sticks to its bottom (`CardStickyActionsContext`), so OK and Reply stay in view; in the
-stream nothing sticks. A card lays its buttons out by its own width (`@container/card`): one row
-from 27rem, else the answers on one row and Open chat / Dismiss on another, above them on a phone.
-Text of a card that no longer waits folds past eight lines behind "Show more" (`CardText`); a
-waiting card and a draft are always shown whole, since OK approves exactly them. On a phone
-(below `md`) half a screen of card over half a screen of chat read as broken, so there the bar is
-only the 44 px row, and opening it shows the card in a full-height sheet (`BottomSheet`,
-`h-[var(--sheet-vh)]`) with the pager and a 44 px close button, the card scrolling inside with its
-buttons stuck to the sheet's bottom; a new card only renames the row there, and replying in the
-Assistant's composer moves the sheet aside. In the stream, on every screen, a card the bar holds
-is only named (`cards/waiting-card-pointer.tsx`: kind, project, time, title and "Waiting on you,
-in the bar above · Show"), so its buttons never appear twice; once answered it is drawn whole
-again. A new card opens the bar on itself (on a desktop); a chip's red count
-(`focusWaitingCards`) opens it on that project's first card, and "Show" on exactly that card,
-moving a filter that would hide it to that project; the card it lands on is outlined for 1.8 s. It follows the project filter, and "N more waiting in other projects · Show all"
-names what the filter hides. The list is `GET /api/assistant/cards/open`
+**Waiting on you.** Every card still waiting (`WAITING_CARD_KINDS`, `status = open`) is drawn once,
+whole, at its own place in the stream (`cards/waiting-stream-card.tsx`): its body unclipped, its one
+row of buttons at its end, nothing sticky and no scroll box of its own, so a long card (a plan runs
+to 1,500 characters) is read with the chat's own scrollbar. Waiting cards come from the waiting list
+as well as from the loaded pages (`streamCards` in `use-assistant-stream-timeline.tsx`), and are
+marked `keep`, so one older than the loaded history is drawn before the oldest loaded message
+instead of being held back, and moves up to its own place once that page loads
+(`placeTimelineItems`). Right above the composer (`ChatTab`'s `composerDock`) a dock,
+`assistant-waiting-cards.tsx`, says how many wait, names one ("{project} · {title}") and steps with
+‹ "n/N" › (urgent first, then the oldest): a press on the dock or an arrow scrolls the stream to
+that card and outlines it for 1.8 s. The jump is a store request (`stores/assistant-waiting-jump-store.ts`)
+that the Assistant body answers (`use-waiting-card-jump.ts`): it scrolls only the list holding the
+card (`scrollIntoView` would also move the floating window's frame and the app's panels) and leaves
+the card's top 12 px under the list's top. A new card renames the dock without moving the stream.
+The dock is 48 px tall with 44 px arrows below `md`, and disappears when nothing waits. A chip's red
+count (`focusWaitingCards`) jumps to that project's first card, and "Show" under a follow-up to
+exactly that card, moving a filter that would hide it to that project. The dock follows the project
+filter, and "N more in other projects · Show all" names what the filter hides. A card lays its
+buttons out by its own width (`@container/card`): one row from 27rem, else the answers on one row
+and Open chat / Dismiss on another, above them on a phone. A decision that no longer waits (a
+`WAITING_CARD_KINDS` card answered, dismissed, resolved elsewhere or gone) folds to one 44 px line
+in the stream (`cards/answered-card-fold.tsx`): title, project, how it ended ("Chose …", "OK given
+in PPM", "You replied in PPM", "Dismissed") and when, plus "manager answered" once a reply got its
+answer; a press opens the card whole and read-only (its status line, no buttons), a second press
+folds it, and which ones are open is kept by card id so a card re-placed among new messages stays
+as it was. Reports that never asked anything (done, failed, digest, rules notes) are not folded
+this way. Text of a card that no longer waits folds past eight lines behind "Show more"
+(`CardText`); a waiting card and a draft are always shown whole, since OK approves exactly them. The list is `GET /api/assistant/cards/open`
 (`stores/assistant-open-cards-store.ts`), built by `assistantCards.openCards()` — the same
 function `waiting()` counts — so every red count has exactly its cards behind it; the store
 follows `assistant:card` and refetches when an `assistant:waiting_changed` does not describe it.
-A manager chat shows its own open reports the same way above its composer
-(`manager-chat-waiting-cards.tsx`, in `chat-tab.tsx`), leaving out its approvals and questions,
-which the chat already shows as its own cards; there Reply opens the reply bar under the card
-and "Open manager chat" is not offered. `chats_attention` lists the same cards first
+A manager chat's own open reports are not in its stream, so they keep a bar above its composer
+(`manager-chat-waiting-cards.tsx` over `waiting-cards-bar.tsx`, in `chat-tab.tsx`): one card at a
+time in a box that scrolls, its button row stuck to the box's bottom (`CardStickyActionsContext`),
+and on a phone one 44 px row that opens the card in a full-height sheet. It leaves out the chat's
+approvals and questions, which the chat already shows as its own cards; there Reply opens the reply
+bar under the card and "Open manager chat" is not offered. `chats_attention` lists the same cards first
 (`assistantCards`: id, project, kind, title, when sent, whatever `since` says), and Telegram's
 `/status` leads with them, so "nothing waits" is never said while one is open.
 

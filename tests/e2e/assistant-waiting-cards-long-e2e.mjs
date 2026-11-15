@@ -1,9 +1,9 @@
 // The waiting cards with long, real content, on desktop, phone and Telegram: a 1,300-character
 // plan, a review draft, an Nxsys decision and urgent report with long titles and several
 // paragraphs, and a card asking four questions whose options run to two or three lines. Checks
-// that a long card in the "Waiting on you" bar keeps its buttons in view, that four questions are
-// answered on the card, and that a card which no longer waits folds behind "Show more"; and
-// photographs each case. Content: tests/e2e/assistant-waiting-cards/long-cards.mjs.
+// that a long card is drawn whole in the stream with its buttons at its end (the dock above the
+// composer jumps to it), that four questions are answered on the card, and that a card which no
+// longer waits folds to one line and opens behind "Show more"; and photographs each case. Content: tests/e2e/assistant-waiting-cards/long-cards.mjs.
 //
 // Same disposable fixture as the manager loop (no real model, no real PPM data):
 //   PPM_ASSISTANT_WEB_DIR=<web build with Monaco> PPM_WAITING_SHOTS=<dir> node tests/e2e/assistant-waiting-cards-long-e2e.mjs
@@ -147,16 +147,33 @@ try {
   const idOf = (title) => cards.find((c) => c.title === title)?.id;
   ok("5 long cards open: plan, review draft, Nxsys decision, Nxsys urgent, four questions");
 
-  /** Steps the bar until it shows the card `id`. */
-  async function show(body, id) {
+  /** The card the dock last jumped to. */
+  let shownId = null;
+  /** Steps the dock until it names the card `id`, then presses it: the stream lands on the card. */
+  async function show(body, id, tap = false) {
+    const press = (loc) => (tap ? loc.tap() : loc.click());
     for (let i = 0; i < 8; i++) {
-      if ((await body.locator("[data-waiting-card]").getAttribute("data-waiting-card")) === id) return;
-      await body.locator('button[aria-label="Next waiting card"]').click();
+      await press(body.locator("[data-waiting-go]"));
+      const lit = body.locator("[data-waiting-card][data-highlighted]");
+      await lit.waitFor({ timeout: 5000 });
+      if ((await lit.getAttribute("data-waiting-card")) === id) {
+        shownId = id;
+        await body.page().waitForTimeout(700);
+        return;
+      }
+      await press(body.locator('button[aria-label="Next waiting card"]'));
+      await body.page().waitForTimeout(1900); // let the outline go, so the next one is this card's
     }
-    throw new Error(`the bar never showed ${id}`);
+    throw new Error(`the dock never reached ${id}`);
   }
-  /** The bar's slot scrolled to its end, where the sticky buttons sit over the text. */
-  const scrollSlot = (body, to) => body.locator("[data-waiting-slot]").evaluate((el, t) => { el.scrollTop = t === "end" ? el.scrollHeight : 0; }, to);
+  /** The card the dock is on, as the stream draws it. */
+  const cur = (body) => body.locator(`[data-waiting-card="${shownId}"]`);
+  /** The chat's own list scrolled so the card's end (its buttons) is in view. */
+  const toCardEnd = (body) => cur(body).evaluate((el) => {
+    let box = el.parentElement;
+    while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+    if (box) box.scrollTop += el.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom + 12;
+  });
   /**
    * The whole card, for reading it end to end. Shown where it lives, a card is cut three ways: the
    * bar scrolls it, a desktop Assistant window is a fixed-size box, and a phone's bottom tab bar
@@ -166,7 +183,7 @@ try {
    */
   async function wholeCardShot(pg, body, name) {
     const size = pg.viewportSize();
-    const height = await body.locator("[data-waiting-card]").evaluate((el) => {
+    const height = await cur(body).evaluate((el) => {
       const layer = document.createElement("div");
       layer.id = "e2e-whole-card";
       Object.assign(layer.style, {
@@ -204,21 +221,20 @@ try {
   // ---- Desktop ----
   await page.goto(`${web}/project/ppm/assistant`);
   const body = k.body();
-  await body.locator("[data-waiting-cards]").waitFor({ timeout: 30000 });
-  assert.equal(await body.locator("[data-waiting-cards]").getAttribute("data-waiting-count"), "5");
+  await body.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
+  assert.equal(await body.locator("[data-waiting-dock]").getAttribute("data-waiting-count"), "5");
 
   await show(body, idOf(PLAN.title));
-  await k.shot("01-desktop-bar-long-plan-top");
-  const actions = body.locator("[data-waiting-card] [data-card-actions]");
-  assert.ok(await actions.isVisible(), "the buttons are in view at the top of a long card");
-  const slotBox = await body.locator("[data-waiting-slot]").boundingBox();
+  await k.shot("01-desktop-stream-long-plan-top");
+  const actions = cur(body).locator("[data-card-actions]");
+  assert.equal(await actions.getAttribute("data-sticky"), null, "nothing sticks in the stream");
+  const cardBox = await cur(body).boundingBox();
   const actBox = await actions.boundingBox();
-  assert.ok(actBox.y + actBox.height <= slotBox.y + slotBox.height + 1, "the button row sits inside the bar, not below it");
-  await scrollSlot(body, "end");
-  await k.shot("02-desktop-bar-long-plan-scrolled-end");
-  await scrollSlot(body, "top");
+  assert.ok(cardBox.y + cardBox.height - (actBox.y + actBox.height) <= 2, "the button row ends the card");
+  await toCardEnd(body);
+  await k.shot("02-desktop-stream-long-plan-end");
   await wholeCardShot(page, body, "03-desktop-card-plan-whole");
-  ok("desktop: a 1,300-character plan scrolls inside the bar with OK / Reply in view");
+  ok("desktop: a 1,300-character plan is drawn whole in the stream, OK / Reply at its end");
 
   await show(body, idOf(REVIEW_DRAFT.title));
   await wholeCardShot(page, body, "04-desktop-card-review-draft-whole");
@@ -228,18 +244,18 @@ try {
   await wholeCardShot(page, body, "06-desktop-card-nxsys-urgent-whole");
 
   await show(body, question.id);
-  const q = (n, letter) => body.locator(`[data-waiting-card] [data-card-question="q${n}"] [data-card-option="${letter}"]`);
+  const q = (n, letter) => cur(body).locator(`[data-card-question="q${n}"] [data-card-option="${letter}"]`);
   await q(1, "A").click();
   await q(2, "A").click();
-  await k.shot("07-desktop-bar-four-questions-two-picked");
+  await k.shot("07-desktop-stream-four-questions-two-picked");
   await wholeCardShot(page, body, "08-desktop-card-four-questions-whole");
-  const send = body.locator("[data-waiting-card]").getByRole("button", { name: /Send answers/ });
+  const send = cur(body).getByRole("button", { name: /Send answers/ });
   assert.equal(await send.innerText(), "Send answers (2/4)");
   assert.equal(await send.isDisabled(), true);
   ok("desktop: four questions with 2–3-line options are answered on the card, sent together");
 
   await show(body, idOf(REVIEW_DRAFT.title));
-  await body.locator("[data-waiting-card]").getByRole("button", { name: "Reply" }).click();
+  await cur(body).getByRole("button", { name: "Reply" }).click();
   await body.locator("[data-card-reply-quote]").waitFor({ timeout: 5000 });
   await body.locator('textarea[aria-label="Your reply to the card"]').fill("Đăng đi, nhưng thêm câu cảm ơn ở đầu.");
   await k.shot("09-desktop-replying-to-long-card");
@@ -253,31 +269,26 @@ try {
   const mk = loopKit({ web, fx, tg, page: mob, shotsDir, owner: OWNER, record: () => {} });
   await mob.goto(`${web}/project/ppm/assistant`);
   const mbody = mk.body();
-  // On a phone the bar is one row; the card opens full screen in a sheet outside the body.
-  const msheet = mob.locator("[data-waiting-sheet]");
-  await mbody.locator("[data-waiting-cards]").waitFor({ timeout: 30000 });
-  await mbody.locator("[data-waiting-toggle]").tap();
-  await msheet.waitFor({ timeout: 5000 });
-  await show(msheet, idOf(PLAN.title));
-  await mk.shot("10-phone-bar-long-plan-top");
-  await scrollSlot(msheet, "end");
-  await mk.shot("11-phone-bar-long-plan-scrolled-end");
-  await scrollSlot(msheet, "top");
-  const mActions = await msheet.locator("[data-waiting-card] [data-card-actions] button").evaluateAll((bs) => bs.map((b) => [b.textContent.trim(), Math.round(b.getBoundingClientRect().height)]));
+  await mbody.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
+  await show(mbody, idOf(PLAN.title), true);
+  await mk.shot("10-phone-stream-long-plan-top");
+  await toCardEnd(mbody);
+  await mk.shot("11-phone-stream-long-plan-end");
+  const mActions = await cur(mbody).locator("[data-card-actions] button").evaluateAll((bs) => bs.map((b) => [b.textContent.trim(), Math.round(b.getBoundingClientRect().height)]));
   for (const [label, h] of mActions) assert.ok(h >= 44, `${label} is ${h}px tall on a phone`);
   for (const label of ["Reply", "Open chat", "Dismiss"]) assert.ok(mActions.some(([l]) => l === label), `${label} is on the card on a phone (${mActions.map(([l]) => l).join(", ")})`);
-  ok("phone: the long plan scrolls inside the full-screen sheet; OK, Reply, Open chat and Dismiss all on the card, 44px+");
-  await wholeCardShot(mob, msheet, "12-phone-card-plan-whole");
-  await show(msheet, idOf(REVIEW_DRAFT.title));
-  await wholeCardShot(mob, msheet, "13-phone-card-review-draft-whole");
-  await show(msheet, idOf(NXSYS_DECISION.title));
-  await wholeCardShot(mob, msheet, "14-phone-card-nxsys-long-title-whole");
-  await show(msheet, question.id);
-  await msheet.locator('[data-waiting-card] [data-card-question="q1"] [data-card-option="A"]').tap();
-  await mk.shot("15-phone-bar-four-questions");
-  await wholeCardShot(mob, msheet, "16-phone-card-four-questions-whole");
-  await show(msheet, idOf(REVIEW_DRAFT.title));
-  await msheet.locator("[data-waiting-card]").getByRole("button", { name: "Reply" }).tap();
+  ok("phone: the long plan is drawn whole in the stream; OK, Reply, Open chat and Dismiss all at its end, 44px+");
+  await wholeCardShot(mob, mbody, "12-phone-card-plan-whole");
+  await show(mbody, idOf(REVIEW_DRAFT.title), true);
+  await wholeCardShot(mob, mbody, "13-phone-card-review-draft-whole");
+  await show(mbody, idOf(NXSYS_DECISION.title), true);
+  await wholeCardShot(mob, mbody, "14-phone-card-nxsys-long-title-whole");
+  await show(mbody, question.id, true);
+  await cur(mbody).locator('[data-card-question="q1"] [data-card-option="A"]').tap();
+  await mk.shot("15-phone-stream-four-questions");
+  await wholeCardShot(mob, mbody, "16-phone-card-four-questions-whole");
+  await show(mbody, idOf(REVIEW_DRAFT.title), true);
+  await cur(mbody).getByRole("button", { name: "Reply" }).tap();
   await mbody.locator("[data-card-reply-quote]").waitFor({ timeout: 5000 });
   await mk.shot("17-phone-replying-to-long-card");
   await mbody.locator('button[aria-label="Stop replying to this card"]').tap();
@@ -313,25 +324,26 @@ try {
 
   // Answer all four questions on the card, from the desktop.
   await page.goto(`${web}/project/ppm/assistant`);
-  await body.locator("[data-waiting-cards]").waitFor({ timeout: 30000 });
+  await body.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
   await show(body, question.id);
   for (const [n, letter] of [[1, "A"], [2, "A"], [3, "B"], [4, "A"]]) await q(n, letter).click();
-  await body.locator("[data-waiting-card]").getByRole("button", { name: "Send answers (4/4)" }).click();
+  await cur(body).getByRole("button", { name: "Send answers (4/4)" }).click();
   const [asked] = await k.answered("r-questions", 1);
   assert.equal(asked.approved, true, "the manager got its answers");
   ok("the four answers reached the manager chat");
 
-  // A card that no longer waits folds in the stream: OK the plan, then find it there.
+  // A card that no longer waits folds to one line in the stream: OK the plan, then open it there.
   await show(body, idOf(PLAN.title));
-  const okButton = body.locator("[data-waiting-card]").getByRole("button", { name: "OK", exact: true });
+  const okButton = cur(body).getByRole("button", { name: "OK", exact: true });
   if (await okButton.count()) await okButton.click();
-  else await body.locator("[data-waiting-card]").getByRole("button", { name: "Dismiss" }).click();
+  else await cur(body).getByRole("button", { name: "Dismiss" }).click();
   await until("plan no longer waits", async () => (await k.cards()).find((c) => c.id === idOf(PLAN.title))?.status !== "open", 15000);
-  // Fold the bar so the stream has the window's height.
-  await body.locator("[data-waiting-toggle]").click();
+  const line = body.locator("[data-answered-card]", { hasText: PLAN.title }).locator("[data-answered-toggle]");
+  await line.waitFor({ timeout: 15000 });
+  await line.click();
   const done = body.locator(`[data-assistant-card="needs_decision"]:not([data-card-status="open"])`, { hasText: PLAN.title }).last();
   // Scroll only the chat's own list: Playwright's scrollIntoView also scrolls the window's
-  // overflow-hidden boxes, which slides the bar over the stream.
+  // overflow-hidden boxes.
   await done.evaluate((el) => {
     let box = el.parentElement;
     while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
@@ -341,8 +353,8 @@ try {
   await done.screenshot({ path: join(shotsDir, "20-desktop-stream-answered-plan-folded.png") });
   await done.locator("[data-card-text-toggle]").evaluate((b) => b.click());
   await done.screenshot({ path: join(shotsDir, "21-desktop-stream-answered-plan-show-more.png") });
-  assert.equal(await body.locator("[data-card-actions][data-sticky]:not([data-waiting-cards] *)").count(), 0, "no card in the stream sticks its buttons");
-  ok("an answered card folds behind Show more in the stream, and unfolds");
+  assert.equal(await body.locator("[data-card-actions][data-sticky]").count(), 0, "no card in the stream sticks its buttons");
+  ok("an answered card folds to one line in the stream; opened, its long text folds behind Show more, and unfolds");
 
   const unexpected = pageErrors.filter((e) => !/read the 'serviceWorker' property/.test(e));
   if (unexpected.length) throw new Error(`page errors:\n${unexpected.join("\n")}`);

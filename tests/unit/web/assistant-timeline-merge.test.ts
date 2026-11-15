@@ -1,7 +1,7 @@
 /**
  * Cards placed among the Assistant chat's messages by time: stable for equal times, a message
  * before a card of the same time, cards newer than everything at the end, and cards older than the
- * loaded window held back only while older history exists.
+ * loaded window held back only while older history exists (unless marked to keep).
  */
 import { describe, expect, it } from "bun:test";
 import { placeTimelineItems, rowTimes } from "../../../src/web/lib/assistant-timeline-merge";
@@ -40,6 +40,14 @@ describe("placeTimelineItems", () => {
     const old = [{ key: "old", at: ms(-30) }];
     expect(placeTimelineItems(rows, old, (i) => i.at, { olderHidden: true }).held).toBe(1);
     expect(keys(placeTimelineItems(rows, old, (i) => i.at, { olderHidden: false }).before.get(0))).toEqual(["old"]);
+  });
+
+  it("never holds an item marked keep: it goes before the oldest loaded message", () => {
+    type Kept = Item & { keep?: boolean };
+    const items: Kept[] = [{ key: "waiting", at: ms(-60), keep: true }, { key: "old", at: ms(-30) }];
+    const placed = placeTimelineItems(rows, items, (i) => i.at, { olderHidden: true, keep: (i) => !!i.keep });
+    expect(keys(placed.before.get(0))).toEqual(["waiting"]);
+    expect(placed.held).toBe(1);
   });
 
   it("trails everything when no message is loaded", () => {

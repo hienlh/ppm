@@ -1,9 +1,9 @@
 /**
- * "Waiting on you" on a phone, and a waiting card's place in the stream. On a phone the bar is one
- * row and opening it shows the card full screen (a sheet with the pager and a close button), so no
- * half-screen card sits over the chat; a new card does not take the screen by itself; replying in
- * the Assistant's composer moves the sheet aside. In the stream, a card the bar holds is only
- * named, with "Show" opening the bar on exactly that card, so its buttons never appear twice.
+ * A manager chat's "Waiting on you" on a phone, and a waiting card's place in the Assistant's
+ * stream. On a phone the bar is one row and opening it shows the card full screen (a sheet with the
+ * pager and a close button), so no half-screen card sits over the chat; a new card does not take
+ * the screen by itself. In the Assistant's stream a waiting card is drawn whole, its buttons at its
+ * end (never stuck over the messages), and a jump to it outlines it.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createElement } from "react";
@@ -13,10 +13,10 @@ installDom();
 afterAll(uninstallDom);
 
 const { WaitingCardsBar } = await import("../../../src/web/components/assistant/waiting-cards-bar");
-const { WaitingCardPointer, POINTER_NOTE } = await import("../../../src/web/components/assistant/cards/waiting-card-pointer");
-const { focusTarget } = await import("../../../src/web/components/assistant/assistant-waiting-cards");
+const { WaitingStreamCard } = await import("../../../src/web/components/assistant/cards/waiting-stream-card");
+const { focusTarget } = await import("../../../src/web/components/assistant/use-waiting-card-jump");
+const { lightWaitingCard, useWaitingJumpStore } = await import("../../../src/web/stores/assistant-waiting-jump-store");
 const { useOpenCardsStore } = await import("../../../src/web/stores/assistant-open-cards-store");
-const { useCardReplyStore } = await import("../../../src/web/stores/assistant-card-reply-store");
 const { api } = await import("../../../src/web/lib/api-client");
 type Card = import("../../../src/shared/assistant-cards").AssistantCard;
 
@@ -46,7 +46,6 @@ afterEach(async () => {
   await view?.unmount();
   view = null;
   for (const s of spies.splice(0)) s.mockRestore();
-  useCardReplyStore.getState().close();
   useOpenCardsStore.setState({ focus: null });
   setWidth(1024);
 });
@@ -81,33 +80,13 @@ describe("on a phone", () => {
     expect(sheet()).toBeNull();
   });
 
-  it("does not take the screen for a card nobody asked to see, but a press on a count opens it", async () => {
+  it("does not take the screen for a card nobody asked to see", async () => {
     const a = card();
     view = await mount(createElement(WaitingCardsBar, { cards: [a], label: "Waiting on you" }));
     const fresh = card({ title: "Fresh" });
     await view.rerender(createElement(WaitingCardsBar, { cards: [a, fresh], label: "Waiting on you" }));
     expect(sheet()).toBeNull();
     expect(view.container.querySelector("[data-waiting-summary]")?.textContent).toBe("ppm · Fresh");
-    await view.rerender(createElement(WaitingCardsBar, { cards: [a, fresh], label: "Waiting on you", focus: { cardId: a.id, nonce: 1 } }));
-    expect(inSheet("[data-waiting-card]")?.getAttribute("data-waiting-card")).toBe(a.id);
-    expect(inSheet("[data-highlighted]")).not.toBeNull();
-  });
-
-  it("steps aside when the user replies in the Assistant's composer", async () => {
-    const a = card();
-    view = await mount(createElement(WaitingCardsBar, { cards: [a], label: "Waiting on you" }));
-    await click(view.container.querySelector("[data-waiting-toggle]"));
-    await click([...sheet()!.querySelectorAll("button")].find((b) => b.textContent === "Reply")!);
-    expect(useCardReplyStore.getState().target?.cardId).toBe(a.id);
-    expect(sheet()).toBeNull();
-    // A second card's Reply, while the first is still the target, steps aside too.
-    const b = card({ title: "Second" });
-    await view.rerender(createElement(WaitingCardsBar, { cards: [a, b], label: "Waiting on you" }));
-    // The row already names the new card; the sheet opens on it.
-    await click(view.container.querySelector("[data-waiting-toggle]"));
-    await click([...sheet()!.querySelectorAll("button")].find((x) => x.textContent === "Reply")!);
-    expect(useCardReplyStore.getState().target?.cardId).toBe(b.id);
-    expect(sheet()).toBeNull();
   });
 
   it("keeps the sheet's own bottom padding, takes focus and gives it back", async () => {
@@ -146,18 +125,26 @@ describe("on a phone", () => {
   });
 });
 
-describe("a waiting card in the stream", () => {
-  it("is only named, and Show opens the bar on exactly that card", async () => {
-    setWidth(1280);
+describe("a waiting card in the Assistant's stream", () => {
+  it("is drawn whole, its buttons at its end, and a jump outlines it", async () => {
     const a = card({ title: "Duyệt kế hoạch (7 phase)", okOffered: true });
-    view = await mount(createElement(WaitingCardPointer, { card: a }));
-    expect(view.container.querySelector("[data-card-pointer]")).not.toBeNull();
-    expect(view.container.querySelector("[data-card-actions]")).toBeNull();
-    expect([...view.container.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Show"]);
-    expect(view.container.textContent).toContain(POINTER_NOTE);
-    expect(view.container.textContent).not.toContain("A long body");
-    await click(view.container.querySelector("button"));
-    expect(useOpenCardsStore.getState().focus).toMatchObject({ projectName: "ppm", cardId: a.id });
+    view = await mount(createElement(WaitingStreamCard, { card: a }));
+    const box = view.container.querySelector(`[data-waiting-card="${a.id}"]`)!;
+    expect(box.textContent).toContain("A long body");
+    expect(box.querySelector("[data-card-text]")?.hasAttribute("data-folded")).toBe(false);
+    const actions = box.querySelector("[data-card-actions]")!;
+    // At the card's end, and not stuck over the messages below it.
+    expect(actions).not.toBeNull();
+    expect(actions.hasAttribute("data-sticky")).toBe(false);
+    expect([...actions.querySelectorAll("button")].map((b) => b.textContent?.trim())).toContain("OK");
+    // The phone hit area of each button.
+    for (const b of actions.querySelectorAll("button")) expect(b.className).toContain("h-11");
+    expect(box.hasAttribute("data-highlighted")).toBe(false);
+    const { act } = await import("react");
+    await act(async () => { lightWaitingCard(a.id); });
+    expect(box.hasAttribute("data-highlighted")).toBe(true);
+    await act(async () => { useWaitingJumpStore.setState({ lit: null }); });
+    expect(box.hasAttribute("data-highlighted")).toBe(false);
   });
 
   it("lands on the card named, before the project's first", () => {
@@ -167,4 +154,3 @@ describe("a waiting card in the stream", () => {
     expect(focusTarget([first, named], "ppm", "gone")?.id).toBe(first.id);
   });
 });
-

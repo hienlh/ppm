@@ -1,6 +1,6 @@
 /**
  * Under a card the user replied to, when the manager answered with a new card: only the new card
- * is named, with "Show" to open it in "Waiting on you" while it waits. The turn's text is not
+ * is named, with "Show" to scroll the stream to it (drawn whole at its own place) while it waits. The turn's text is not
  * shown — it repeated what the card says, and the two read as the same answer twice.
  */
 import { ArrowRight } from "@/lib/icons";
@@ -15,7 +15,7 @@ export function FollowUpNewCards({ card, newCards, at }: {
   newCards: Array<{ id: string; title: string }>;
   at: number;
 }) {
-  // Read, never loaded from here: the "Waiting on you" bar beside the stream keeps the list.
+  // Read, never loaded from here: the stream and its "Waiting on you" dock keep the list.
   const open = useOpenCards(false);
   const waiting = new Set((open ?? []).map((c) => c.id));
   return (
@@ -33,7 +33,7 @@ export function FollowUpNewCards({ card, newCards, at }: {
                 type="button"
                 onClick={() => focusWaitingCards(card.projectName, c.id)}
                 className="ml-auto inline-flex min-h-11 shrink-0 items-center px-1 text-xs font-medium text-primary md:min-h-7"
-                aria-label={`Show "${c.title}" in Waiting on you`}
+                aria-label={`Go to "${c.title}", waiting on you`}
               >
                 Show
               </button>
