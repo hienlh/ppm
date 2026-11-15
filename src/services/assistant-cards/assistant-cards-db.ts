@@ -34,6 +34,12 @@ export interface CardRow {
 export interface TelegramCardRef {
   chatId: string;
   messageId: number;
+  /**
+   * The message is the manager's answer to a reply on the card, not the card: a reply to it reaches
+   * the card's manager like a reply to the card, but it is never rewritten as the card or answered
+   * under as one of the card's copies.
+   */
+  followUp?: true;
 }
 
 interface Raw {
@@ -48,7 +54,8 @@ function parseRefs(json: string | null): TelegramCardRef[] {
     const value = JSON.parse(json) as unknown;
     if (!Array.isArray(value)) return [];
     return value.filter((r): r is TelegramCardRef =>
-      !!r && typeof r === "object" && typeof r.chatId === "string" && Number.isInteger(r.messageId));
+      !!r && typeof r === "object" && typeof r.chatId === "string" && Number.isInteger(r.messageId))
+      .map((r) => ({ chatId: r.chatId, messageId: r.messageId, ...(r.followUp === true ? { followUp: true as const } : {}) }));
   } catch {
     return [];
   }

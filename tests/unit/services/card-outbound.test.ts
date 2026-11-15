@@ -185,4 +185,12 @@ describe("matching a reply to a card", () => {
     expect(findCardByTelegramRef("200", 7)).toBeNull();
     expect(findCardByTelegramRef("100", 8)).toBeNull();
   });
+
+  it("keeps a follow-up's message marked as one, and a reply to it finds the card", () => {
+    const c = card("needs_decision", "Asked again");
+    addCardTelegramRef(c.id, { chatId: "100", messageId: 20 });
+    addCardTelegramRef(c.id, { chatId: "100", messageId: 21, followUp: true });
+    expect(getCardRow(c.id)!.telegramRefs).toEqual([{ chatId: "100", messageId: 20 }, { chatId: "100", messageId: 21, followUp: true }]);
+    expect(findCardByTelegramRef("100", 21)?.id).toBe(c.id);
+  });
 });

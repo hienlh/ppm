@@ -16,7 +16,8 @@
  */
 import { getSessionProvider } from "../db.service.ts";
 import { projectTelegramDetail } from "../assistant-managers/manager-chats-db.ts";
-import { getCardRow } from "../assistant-cards/assistant-cards-db.ts";
+import { getCardRow, type TelegramCardRef } from "../assistant-cards/assistant-cards-db.ts";
+import { addCardTelegramRef } from "../assistant-cards/assistant-cards-outbound-db.ts";
 import { currentQuietWindowEnd } from "../assistant-wake/wake-quiet-hours.ts";
 import type { CardFollowupDelivery, CardFollowupSink } from "../assistant-cards/card-reply-followup.ts";
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
@@ -33,8 +34,10 @@ export interface CardFollowupsDeps {
   queue: AssistantTelegramSendQueue;
   chatLink: (project: string, providerId: string | null, sessionId: string) => Promise<string>;
   silence?: TelegramSilence;
-  /** The card's copies on Telegram, as (chat, message) pairs. */
-  refsOf?: (cardId: string) => Array<{ chatId: string; messageId: number }>;
+  /** The card's messages on Telegram, as (chat, message) pairs; `followUp` marks an earlier answer. */
+  refsOf?: (cardId: string) => TelegramCardRef[];
+  /** Records a sent follow-up as one of the card's messages, so a reply to it reaches the manager. */
+  recordRef?: (cardId: string, ref: TelegramCardRef) => void;
   detailOf?: (card: AssistantCard) => CardDetail;
   /** When the quiet window now running ends; null outside quiet hours. */
   quietEnd?: () => number | null;
@@ -52,8 +55,9 @@ function realDetail(card: AssistantCard): CardDetail {
 export class AssistantTelegramCardFollowups implements CardFollowupSink {
   constructor(private readonly deps: CardFollowupsDeps) {}
 
-  private refs(cardId: string): Array<{ chatId: string; messageId: number }> {
-    try { return (this.deps.refsOf ?? ((id) => getCardRow(id)?.telegramRefs ?? []))(cardId); } catch { return []; }
+  /** The card's own copies: an earlier follow-up is an answer, never a copy to answer under. */
+  private refs(cardId: string): TelegramCardRef[] {
+    try { return (this.deps.refsOf ?? ((id) => getCardRow(id)?.telegramRefs ?? []))(cardId).filter((r) => !r.followUp); } catch { return []; }
   }
 
   private quiet(): boolean {
@@ -97,13 +101,24 @@ export class AssistantTelegramCardFollowups implements CardFollowupSink {
     const formatted = formatCardFollowup({
       text: d.text, overflow: d.overflow, detail, projectName: project, newCards: d.newCards, url, ...(d.stopped ? { stopped: true } : {}),
     });
+    const record = this.deps.recordRef ?? addCardTelegramRef;
     for (const t of targets) {
       this.deps.queue.enqueue(t.chatId, sendMessageTask(this.deps.queue, t.chatId, {
         html: formatted.html,
         ...(t.replyTo ? { replyTo: t.replyTo } : {}),
         ...(formatted.markup ? { markup: formatted.markup } : {}),
         ...(formatted.fallbackHtml ? { fallbackHtml: formatted.fallbackHtml } : {}),
-      }, { label: "card follow-up", silent: t.silent }));
+      }, {
+        label: "card follow-up",
+        silent: t.silent,
+        // The answer reads like a conversation, so the natural reply is to it: that reply has to
+        // reach the same manager, as a reply to the card does, not the Assistant.
+        onSent: (sent) => {
+          try { record(d.card.id, { chatId: t.chatId, messageId: sent.message_id, followUp: true }); } catch (e) {
+            log.warn(`card ${d.card.id}: the follow-up's message was not recorded: ${(e as Error).message}`);
+          }
+        },
+      }));
     }
   }
 }

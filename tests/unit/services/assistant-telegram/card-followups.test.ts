@@ -19,6 +19,11 @@ import { getDb } from "../../../../src/services/db.service.ts";
 import { stripTelegramHtml } from "../../../../src/services/telegram/telegram-html-format.ts";
 import { parseTelegramHtml } from "../../../helpers/fake-telegram-bot-api.ts";
 import type { AssistantCard } from "../../../../src/shared/assistant-cards.ts";
+import type { TelegramCardRef } from "../../../../src/services/assistant-cards/assistant-cards-db.ts";
+import { addCardTelegramRef } from "../../../../src/services/assistant-cards/assistant-cards-outbound-db.ts";
+import { createAssistantCards } from "../../../../src/services/assistant-cards/assistant-cards.service.ts";
+import { AssistantTelegramManagerCards } from "../../../../src/services/assistant-telegram/assistant-telegram-manager-cards.ts";
+import { sendMessageTask } from "../../../../src/services/assistant-telegram/assistant-telegram-send-queue.ts";
 import { CARD_FOLLOWUP_MAX_CHARS } from "../../../../src/shared/assistant-limits.ts";
 
 const fake = useFakeTelegram();
@@ -86,14 +91,16 @@ describe("formatCardFollowup", () => {
 });
 
 /** A sink with the test's presence, quiet hours and card copies. */
-function sink(opts: { atPpm: boolean; quiet?: boolean; refs?: Array<{ chatId: string; messageId: number }> }) {
+function sink(opts: { atPpm: boolean; quiet?: boolean; refs?: TelegramCardRef[] }) {
   const silence = new TelegramSilence({ enabled: () => true, idleMs: () => (opts.atPpm ? 0 : null), now: () => 1_000_000 });
   const queue = queueFor(client);
+  const recorded: Array<{ cardId: string; ref: TelegramCardRef }> = [];
   const s = new AssistantTelegramCardFollowups({
     queue, silence, chatLink: async () => "http://localhost:8080/chat",
     refsOf: () => opts.refs ?? [], detailOf: () => "full", quietEnd: () => (opts.quiet ? 9_999_999 : null),
+    recordRef: (cardId, ref) => recorded.push({ cardId, ref }),
   });
-  return { s, queue };
+  return { s, queue, recorded };
 }
 
 const card = { id: "card-1", projectName: "ppm", projectKey: "k", status: "answered" } as AssistantCard;
@@ -111,6 +118,46 @@ describe("where the answer goes", () => {
     await queue.whenIdle();
     expect(msg).toMatchObject({ reply_to: 77, silent: false });
     expect(stripTelegramHtml(msg!.text)).toContain("It will cost a lot");
+  });
+
+  it("records the answer as the card's follow-up message, so a reply to it reaches the same manager", async () => {
+    const chat = connectChat(freshChat());
+    const { s, queue, recorded } = sink({ atPpm: false });
+    s.send(delivery({ channel: "telegram", chatId: chat, replyTo: 77 }));
+    const msg = await fake.waitFor(() => fake.sent(Number(chat))[0]);
+    await queue.whenIdle();
+    expect(recorded).toEqual([{ cardId: card.id, ref: { chatId: chat, messageId: msg!.message_id, followUp: true } }]);
+  });
+
+  it("never answers under an earlier answer as if it were a copy of the card", async () => {
+    const a = connectChat(freshChat());
+    const refs: TelegramCardRef[] = [{ chatId: a, messageId: 30, followUp: true }, { chatId: a, messageId: 3 }];
+    const { s } = sink({ atPpm: false, refs });
+    expect(s.targets(delivery({ channel: "ppm" })).map((t) => t.replyTo)).toEqual([3]);
+    expect(s.targets(delivery({ channel: "telegram", chatId: a })).map((t) => t.replyTo)).toEqual([3]);
+    expect(sink({ atPpm: false, refs: [refs[0]!] }).s.targets(delivery({ channel: "ppm" }))).toEqual([]);
+  });
+
+  it("leaves an earlier answer as it is when the card's copies are rewritten on a change", async () => {
+    const chat = connectChat(freshChat());
+    const queue = queueFor(client);
+    for (const html of ["the card", "the manager's answer"]) queue.enqueue(chat, sendMessageTask(queue, chat, { html }, { label: "t" }));
+    await queue.whenIdle();
+    const [cardMsg, answerMsg] = fake.sent(Number(chat));
+    const store = createAssistantCards({ now: () => 1, projects: () => [], announce: () => {} });
+    const made = store.create({ kind: "needs_decision", sessionId: null, title: "Run it?" });
+    addCardTelegramRef(made.id, { chatId: chat, messageId: cardMsg!.message_id });
+    addCardTelegramRef(made.id, { chatId: chat, messageId: answerMsg!.message_id, followUp: true });
+    const dismissed = store.transition(made.id, "dismissed", { by: "user", channel: "ppm", at: 2 }).card!;
+    const managerCards = new AssistantTelegramManagerCards({
+      queue, codes: { dropGroup: () => {} } as never, chatLink: async () => "", sessionLink: async () => "",
+      relayCard: () => {}, isShowing: () => false, detailOf: () => "full",
+    });
+    managerCards.changed(dismissed);
+    await fake.waitFor(() => cardMsg!.history.length === 1);
+    await queue.whenIdle();
+    expect(answerMsg!.history).toEqual([]);
+    expect(answerMsg!.text).toBe("the manager's answer");
   });
 
   it("finds the card's message in that chat when the reply did not name it (Send anyway)", async () => {

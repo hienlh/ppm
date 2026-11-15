@@ -37,12 +37,15 @@ export function addCardTelegramRef(id: string, ref: TelegramCardRef): void {
     const row = db.query(`SELECT ${CARD_COLUMNS} FROM assistant_cards WHERE id = ?`).get(id);
     if (!row) return;
     const refs = rowFromDb(row).telegramRefs.filter((r) => !(r.chatId === ref.chatId && r.messageId === ref.messageId));
-    refs.push({ chatId: ref.chatId, messageId: ref.messageId });
+    refs.push({ chatId: ref.chatId, messageId: ref.messageId, ...(ref.followUp ? { followUp: true as const } : {}) });
     db.query("UPDATE assistant_cards SET telegram_refs_json = ? WHERE id = ?").run(JSON.stringify(refs.slice(-MAX_REFS)), id);
   })();
 }
 
-/** The card a Telegram message in `chatId` shows, if any: the same message id in another chat is another message. */
+/**
+ * The card a Telegram message in `chatId` shows, or answers a reply on (a follow-up ref), if any:
+ * the same message id in another chat is another message.
+ */
 export function findCardByTelegramRef(chatId: string, messageId: number): CardRow | null {
   if (!Number.isInteger(messageId)) return null;
   const row = getDb().query(`SELECT ${CARD_COLUMNS} FROM assistant_cards
