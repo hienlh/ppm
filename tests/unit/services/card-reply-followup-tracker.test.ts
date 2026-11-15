@@ -345,6 +345,16 @@ describe("deliverCardFollowup", () => {
     expect(() => deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: () => { throw new Error("boom"); } }) }, result)).not.toThrow();
   });
 
+  it("sends nothing anywhere when the card waits again (its words were reported lost)", () => {
+    const sent: unknown[] = [];
+    const reopened = { ...card, status: "open" } as AssistantCard;
+    const cards = { get: () => reopened, setFollowUp: () => false };
+    const answer: FollowupResult = { cardId: "c1", origin, sessionId: S, text: "It costs 40%.", overflow: false, newCards: [] };
+    deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: (d) => sent.push(d) }) }, answer);
+    deliverCardFollowup({ cards, now: () => 5, sink: () => ({ send: (d) => sent.push(d) }) }, { ...answer, text: "", stopped: true });
+    expect(sent).toEqual([]);
+  });
+
   it("keeps nothing on the card for a stopped turn, and tells only a reply typed on Telegram", () => {
     const stored: CardFollowUp[] = [];
     const sent: Array<{ stopped?: true; origin: { channel: string } }> = [];

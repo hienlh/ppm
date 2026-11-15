@@ -47,13 +47,18 @@ export function deliverCardFollowup(deps: CardFollowupDeps, result: FollowupResu
     // Nothing to keep under the card: partial text is not an answer. A reply typed in PPM has the
     // manager chat a click away; one typed on Telegram is told, since the user waits there.
     log.info(`card ${card.id}: the manager's turn was stopped before it answered the user's ${result.origin.channel} reply`);
-    if (result.origin.channel !== "telegram") return;
+    if (result.origin.channel !== "telegram" || card.status === "open") return;
     handOn(deps, { ...result, card, stored: { text: "", truncated: false, at: deps.now() } });
     return;
   }
   const cut = cutFollowupText(result.text, CARD_FOLLOWUP_MAX_CHARS, result.overflow);
   const stored: CardFollowUp = { text: cut.text, truncated: cut.truncated, at: deps.now() };
-  if (!deps.cards.setFollowUp(card.id, stored)) log.info(`card ${card.id}: the manager's answer is not kept on it (the card waits again)`);
+  if (!deps.cards.setFollowUp(card.id, stored)) {
+    // The card waits again ("your answer did not reach the manager chat; send it again"): an answer
+    // on the phone would contradict it, and the user would send the same words twice.
+    log.info(`card ${card.id}: the manager's answer is not sent (the card waits again)`);
+    return;
+  }
   log.info(`card ${card.id}: the manager answered the user's ${result.origin.channel} reply (${result.text.length} chars${cut.truncated ? ", cut" : ""})`);
   handOn(deps, { ...result, card: deps.cards.get(card.id) ?? card, stored });
 }
