@@ -22,8 +22,9 @@
  * subagent's text. It is kept per reply as blocks split at each top-level tool call, because the
  * manager is told to open its new card first and answer last, and a model does not always obey:
  * an answer written before the card's tool call, followed by "Card sent.", must still be the
- * answer. So the blocks are joined, one-line acknowledgements dropped when a real block exists
- * ({@link isThrowawayBlock}); a turn that wrote nothing else gets no follow-up. Each reply gets at
+ * answer. So the blocks are joined, lines that only confirm a tool call dropped
+ * ({@link isConfirmationBlock}), short asides dropped only beside a longer real block
+ * ({@link isThrowawayBlock}); a turn that wrote nothing but confirmations gets no follow-up. Each reply gets at
  * most one. Listeners on the chat lifecycle run on its hot path, so everything here only updates
  * memory; `deliver` is handed the result and must not block.
  */
@@ -116,13 +117,31 @@ interface Pending {
 const collected = (): Collected => ({ blocks: [""], size: 0, sawTool: false, overflow: false });
 
 /**
- * A line a model writes after a tool call to say it made it ("Card sent.", "Done — see above"):
- * one short line with no number and no question. Numbers and questions are what an answer to the
- * user's reply is made of, so a block carrying either is kept however short.
+ * A short line: one line, under 40 characters, no number and no question. It may be a model's
+ * aside around a tool call ("Let me check…") — or the whole answer ("No, it is expensive.",
+ * "Được anh."). So it gives way only to a longer real block in the same turn, never on its own.
  */
 export function isThrowawayBlock(block: string): boolean {
   const b = block.trim();
   return !b.includes("\n") && b.length < 40 && !/\d/.test(b) && !/[?？]/.test(b);
+}
+
+/**
+ * A line that only says a tool call was made ("Card sent.", "Đã gửi card.", "Done."): never an
+ * answer, so it is dropped wherever it is. Anything else that is short is judged by
+ * {@link isThrowawayBlock}, and only beside a longer block.
+ */
+const CONFIRMATION_RE = new RegExp(
+  "^(?:(?:the |a |new )?(?:card|report|decision card)(?: has been| was| is)? (?:sent|filed|created|opened|posted)"
+  + "|(?:i(?:'ve| have)? )?(?:sent|filed|opened|created|posted) (?:the |a |it )?(?:new )?(?:card|report)"
+  + "|(?:đã )?(?:gửi|tạo|mở|báo)(?: xong)? (?:card|thẻ|báo cáo)(?: mới)?(?: rồi)?(?: ạ| anh)?"
+  + "|(?:card|thẻ)(?: mới)? đã (?:được )?(?:gửi|tạo|mở)(?: rồi)?(?: ạ)?"
+  + "|done|sent|reported|xong(?: rồi)?(?: ạ)?|đã gửi(?: ạ)?)[\\s.!…]*$",
+  "i",
+);
+
+export function isConfirmationBlock(block: string): boolean {
+  return CONFIRMATION_RE.test(block.trim());
 }
 
 function append(c: Collected, text: string): void {
@@ -147,14 +166,20 @@ function append(c: Collected, text: string): void {
  * words went in, every block rather than the last, and room for `CARD_FOLLOWUP_MAX_CHARS` — so the
  * text is gathered here a second time rather than stretching that one to serve both.
  *
- * The answer in what a reply gathered: every block that is not a throwaway line (all of them when
- * the turn made no tool call — a short answer is still the answer), joined. When they do not fit
- * what the user is shown, the earliest blocks give way, because the rule puts the answer last.
+ * The answer in what a reply gathered. With no tool call it is the whole text, however short.
+ * Around tool calls: lines that only confirm a tool call go; short lines go only when a longer real
+ * block is there to be the answer; with none, the last remaining block is it — a lost short answer
+ * costs more than a stray aside. When they do not fit what the user is shown, the earliest blocks
+ * give way, because the rule puts the answer last.
  */
 export function answerOf(c: Collected | null): Buffer {
   if (!c) return { text: "", overflow: false };
   let blocks = c.blocks.map((b) => b.trim()).filter(Boolean);
-  if (c.sawTool) blocks = blocks.filter((b) => !isThrowawayBlock(b));
+  if (c.sawTool) {
+    const kept = blocks.filter((b) => !isConfirmationBlock(b));
+    const real = kept.filter((b) => !isThrowawayBlock(b));
+    blocks = real.length > 0 ? real : kept.slice(-1);
+  }
   let overflow = c.overflow;
   while (blocks.length > 1 && blocks.join("\n\n").length > CARD_FOLLOWUP_MAX_CHARS) {
     blocks.shift();

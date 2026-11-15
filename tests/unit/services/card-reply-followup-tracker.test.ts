@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  answerOf, createFollowupTracker, cutFollowupText, FOLLOWUP_BUFFER_MAX, isThrowawayBlock, type FollowupResult,
+  answerOf, createFollowupTracker, cutFollowupText, FOLLOWUP_BUFFER_MAX, isConfirmationBlock, isThrowawayBlock, type FollowupResult,
 } from "../../../src/services/assistant-cards/card-reply-followup-tracker.ts";
 import { deliverCardFollowup } from "../../../src/services/assistant-cards/card-reply-followup.ts";
 import { forwardUserWords, type ForwardEnv } from "../../../src/services/assistant-cards/forward-verbatim.ts";
@@ -86,6 +86,36 @@ describe("following the turn a card reply opened", () => {
     t.onTurnEnded(S);
     expect(delivered).toHaveLength(0);
     expect(t.size()).toBe(0);
+  });
+
+  it("delivers a short real answer written after the card, though it has no number and no question", () => {
+    for (const answer of ["Không ạ, tốn nhiều quota lắm anh.", "Được anh.", "No, it is expensive.", "Đúng rồi anh, rẻ thôi."]) {
+      const { t, delivered, named, say } = setup();
+      t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
+      named(ID);
+      say("Để em xem đã…");
+      t.onStream(S, { type: "tool_use", tool: "mcp__ppm-sessions__report_to_assistant" });
+      say(answer);
+      t.onTurnEnded(S);
+      expect(delivered.map((d) => d.text)).toEqual([answer]);
+    }
+  });
+
+  it("drops lines that only confirm the tool call, also after a short answer", () => {
+    const { t, delivered, named, say } = setup();
+    t.expect({ cardId: "c1", clientMessageId: ID, origin, sessionId: S }).attach("started");
+    named(ID);
+    say("Không ạ, đắt lắm.");
+    t.onStream(S, { type: "tool_use", tool: "mcp__ppm-sessions__report_to_assistant" });
+    say("Đã gửi card.");
+    t.onTurnEnded(S);
+    expect(delivered.map((d) => d.text)).toEqual(["Không ạ, đắt lắm."]);
+    for (const line of ["Card sent.", "Đã gửi card.", "Done.", "I've opened a new card.", "Card mới đã gửi rồi ạ", "Sent!"]) {
+      expect(isConfirmationBlock(line)).toBe(true);
+    }
+    for (const line of ["Được anh.", "No, it is expensive.", "Done: PR #12 updated.", "Không ạ, tốn nhiều quota lắm anh."]) {
+      expect(isConfirmationBlock(line)).toBe(false);
+    }
   });
 
   it("joins every real block, and lets the earliest give way when they do not fit", () => {
