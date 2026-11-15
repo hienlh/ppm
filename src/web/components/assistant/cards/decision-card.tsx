@@ -3,12 +3,14 @@
  * one, is shown whole and verbatim, with hidden characters made visible.
  *
  * "OK, send" (or "OK" with no draft) is offered only when the server says the whole decision is on
- * the card and nothing in it was hidden; it names the exact draft by its hash. "Reply" opens the
+ * the card and nothing in it was hidden; it names the exact draft by its hash. A card that offers
+ * choices gets one button per choice in place of OK, under the same rule. "Reply" opens the
  * reply bar under the chat (in a manager chat, under the card), where the user's own words go to the manager chat word for word.
  */
 import { BellRing, Check, ExternalLink, Send, TriangleAlert, Undo2, X } from "@/lib/icons";
 import { CardImages } from "./card-images";
-import { dismissAssistantCard, okAssistantCard } from "@/lib/assistant-cards-api";
+import { chooseAssistantCardOption, dismissAssistantCard, okAssistantCard } from "@/lib/assistant-cards-api";
+import { CardChoices } from "./card-choices";
 import { escapeHiddenCharacters } from "../../../../shared/reveal-hidden-characters";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardButton, CardShell, CardText } from "./card-shell";
@@ -20,6 +22,8 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
   const { replyTo, inManagerChat } = useCardReplyHost();
   const urgent = card.kind === "urgent";
   const draft = card.payload.draft;
+  const options = card.payload.options ?? [];
+  const open = card.status === "open";
   return (
     <CardShell
       card={card}
@@ -27,7 +31,7 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
       error={error}
       actions={(
         <>
-          {card.okOffered && (
+          {card.okOffered && options.length === 0 && (
             <CardButton variant="primary" disabled={busy} onClick={() => void run(() => okAssistantCard(card.id, draft?.sha256 ?? null))}>
               <Check className="size-3.5" />{draft ? "OK, send" : "OK"}
             </CardButton>
@@ -53,6 +57,18 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
       <h4 className="text-[15px] font-semibold leading-snug text-text-primary" data-card-title="">{card.title}</h4>
       {card.body && <CardText text={card.body} fold={card.status !== "open"} projectName={card.projectName} />}
       <CardImages images={card.payload.images} />
+      {options.length > 0 && (
+        <CardChoices
+          options={options}
+          pressable={open && card.okOffered === true}
+          chosenId={card.answer?.choice?.id}
+          disabled={busy}
+          onChoose={(optionId) => void run(() => chooseAssistantCardOption(card.id, optionId))}
+        />
+      )}
+      {options.length > 0 && !card.okOffered && open && (
+        <p className="text-xs text-text-subtle">These choices are too long or hold a hidden value, so they cannot be pressed here. Answer with Reply, or open the manager chat.</p>
+      )}
       {draft && (
         <figure className="overflow-hidden rounded-lg border border-border bg-panel-2" data-card-draft="">
           <figcaption className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-[11px] text-text-subtle">
@@ -64,7 +80,7 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
           <p className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-[12.5px] leading-relaxed text-text-primary">{escapeHiddenCharacters(draft.text)}</p>
         </figure>
       )}
-      {draft && !card.okOffered && card.status === "open" && (
+      {draft && !card.okOffered && open && (
         <p className="text-xs text-text-subtle">This draft is too long or holds a hidden value, so it cannot be approved here. Answer with Reply, or open the manager chat.</p>
       )}
       {card.payload.urgentCapped && (

@@ -5,6 +5,9 @@
  * - **OK** is an approval. It is offered only where the whole decision is shown and nothing hidden
  *   (`card-ok-rule.ts`), names the exact draft by its hash, and is compare-and-set on the card:
  *   the first OK on any surface wins and forwards once; a later one is told who answered, when.
+ * - **A choice** works the same on a card that offers several (`payload.options`): the button names
+ *   one option by its id, the server looks that option up on the stored card, and forwards it with
+ *   its id and label in the user-words block. Such a card takes no OK, and an ordinary card no choice.
  * - **A reply** goes word for word to the card's manager chat. A card that no longer waits, or is
  *   older than {@link STALE_REPLY_MS}, asks first ("send anyway?"). A reply to an approval or
  *   question card refuses that request, as typing in the manager chat would. The manager's answer
@@ -19,7 +22,7 @@ import { assistantCards, type AssistantCards } from "./assistant-cards.service.t
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { getAssistantSettings } from "../assistant/assistant-settings.service.ts";
 import { CARD_REPLY_MAX_CHARS, STALE_REPLY_MS } from "../../shared/assistant-limits.ts";
-import { OK_CARD_KINDS, type AssistantCard } from "../../shared/assistant-cards.ts";
+import { OK_CARD_KINDS, type AssistantCard, type AssistantCardAnswer } from "../../shared/assistant-cards.ts";
 import { cardOkOffered } from "./card-ok-rule.ts";
 import { forwardUserWords, repliesToManager, type CardActor, type ForwardHow, type ForwardResult } from "./forward-verbatim.ts";
 import { realForwardEnv } from "./forward-verbatim-env.ts";
@@ -113,35 +116,90 @@ export function staleQuestion(card: AssistantCard, now: number, zone?: string): 
   return `This card is from ${cardTimeText(card.createdAt, now, zone)} — send anyway?`;
 }
 
-export async function okCard(id: string, body: unknown, actor: CardActor, deps: CardReplyDeps = realDeps): Promise<CardReplyResult> {
-  const card = deps.cards.get(id);
+/** The checks a pressed answer (OK or a choice) shares: a card that takes one, open, shown whole. */
+function pressRefusal(card: AssistantCard | null, deps: CardReplyDeps, what: "an OK" | "a choice"): CardReplyResult | null {
   if (!card) return { ok: false, status: 404, error: "No such card" };
-  if (!OK_CARD_KINDS.includes(card.kind)) return { ok: false, status: 400, error: "This card does not take an OK" };
+  if (!OK_CARD_KINDS.includes(card.kind)) return { ok: false, status: 400, error: `This card does not take ${what}` };
   if (card.status !== "open") return { ok: false, status: 409, error: "already_answered", card, question: alreadyAnsweredText(card, deps.now(), deps.zone()) };
   if (!cardOkOffered(card)) return { ok: false, status: 400, error: "This card is not shown in full here; open the manager chat to decide." };
+  return null;
+}
+
+/** Why a card whose pressed answer never left waits again; the note sends it out once more. */
+export const PRESS_NOT_SENT_NOTE = "Your answer was not sent to the manager chat. Press it again, or reply.";
+
+/**
+ * Marks the card answered, then forwards the pressed answer. Compare-and-set: of two surfaces
+ * pressing at once only the first forwards. A forward that fails (or throws) opens the card again
+ * with a note: every copy lost its buttons when the card was answered, and the note is what sends
+ * the card out again with fresh ones (`card-outbound.ts`) and says why in PPM.
+ */
+async function answerByPress(
+  card: AssistantCard, answer: Pick<AssistantCardAnswer, "ok" | "choice" | "note">, text: string,
+  how: ForwardHow, deps: CardReplyDeps,
+): Promise<CardReplyResult> {
+  if (!repliesToManager(card)) return { ok: false, status: 400, error: "This card has no manager chat" };
+  const moved = deps.cards.transition(card.id, "answered", {
+    by: "user", channel: how.actor.channel, at: deps.now(), ...answer, delivery: "pending",
+  });
+  if (!moved.ok) {
+    const now = moved.card ?? card;
+    return { ok: false, status: 409, error: "already_answered", card: now, question: alreadyAnsweredText(now, deps.now(), deps.zone()) };
+  }
+  let forwarded: ForwardResult;
+  try {
+    forwarded = await deps.forward(card, text, how);
+  } catch (e) {
+    forwarded = { ok: false, error: (e as Error).message || "the send failed" };
+  }
+  if (!forwarded.ok) {
+    deps.cards.reopen(card.id, PRESS_NOT_SENT_NOTE);
+    const current = deps.cards.get(card.id);
+    return { ok: false, status: 502, error: `Not sent: ${forwarded.error}`, ...(current ? { card: current } : {}) };
+  }
+  recordDelivery(deps, card.id, forwarded);
+  return { ok: true, card: moved.card, to: forwarded.to, ...(forwarded.to === "manager" ? { projectName: forwarded.projectName } : {}) };
+}
+
+/** The words forwarded for a choice: what the user said by pressing its button. */
+export const choiceText = (label: string): string => `I choose: ${label}`;
+
+export async function okCard(id: string, body: unknown, actor: CardActor, deps: CardReplyDeps = realDeps): Promise<CardReplyResult> {
+  const card = deps.cards.get(id);
+  const refused = pressRefusal(card, deps, "an OK");
+  if (refused) return refused;
+  if (!card) return { ok: false, status: 404, error: "No such card" };
+  if (card.payload.options?.length) return { ok: false, status: 400, error: "This card asks you to pick one of its choices, not for an OK." };
   const draft = card.payload.draft;
   const sent = body && typeof body === "object" ? (body as Record<string, unknown>).draftSha256 : undefined;
   if (draft ? sent !== draft.sha256 : sent !== undefined && sent !== null) {
     return { ok: false, status: 409, error: "The draft is not the one this OK was given for; look at the card again." };
   }
   if (draft && !SHA256_RE.test(draft.sha256)) return { ok: false, status: 400, error: "This card's draft has no valid hash" };
-  if (!repliesToManager(card)) return { ok: false, status: 400, error: "This card has no manager chat" };
-  const moved = deps.cards.transition(id, "answered", {
-    by: "user", channel: actor.channel, at: deps.now(), ok: true, note: `OK given ${where(actor.channel)}`, delivery: "pending",
-  });
-  if (!moved.ok) {
-    const now = moved.card ?? card;
-    return { ok: false, status: 409, error: "already_answered", card: now, question: alreadyAnsweredText(now, deps.now(), deps.zone()) };
-  }
-  const forwarded = await deps.forward(card, "OK", {
+  return answerByPress(card, { ok: true, note: `OK given ${where(actor.channel)}` }, "OK", {
     actor, ok: true, supersede: false, ...(draft ? { draftSha256: draft.sha256, draftTo: draft.to } : {}),
-  });
-  if (!forwarded.ok) {
-    deps.cards.reopen(id);
-    return { ok: false, status: 502, error: `Not sent: ${forwarded.error}`, ...(deps.cards.get(id) ? { card: deps.cards.get(id)! } : {}) };
-  }
-  recordDelivery(deps, id, forwarded);
-  return { ok: true, card: moved.card, to: forwarded.to, ...(forwarded.to === "manager" ? { projectName: forwarded.projectName } : {}) };
+  }, deps);
+}
+
+/**
+ * The user pressed one of the card's choices. `optionId` names it; the label forwarded is the
+ * stored card's, never one the caller sent, so a press can only pick what the card offered.
+ */
+export async function chooseCardOption(id: string, body: unknown, actor: CardActor, deps: CardReplyDeps = realDeps): Promise<CardReplyResult> {
+  const card = deps.cards.get(id);
+  const refused = pressRefusal(card, deps, "a choice");
+  if (refused) return refused;
+  if (!card) return { ok: false, status: 404, error: "No such card" };
+  const options = card.payload.options ?? [];
+  if (!options.length) return { ok: false, status: 400, error: "This card offers no choices." };
+  const optionId = body && typeof body === "object" ? (body as Record<string, unknown>).optionId : undefined;
+  if (typeof optionId !== "string") return { ok: false, status: 400, error: "optionId is required" };
+  const option = options.find((o) => o.id === optionId);
+  if (!option) return { ok: false, status: 400, error: "That is not one of this card's choices." };
+  const choice = { id: option.id, label: option.label };
+  return answerByPress(card, { choice, note: `Chose "${option.label}" ${where(actor.channel)}` }, choiceText(option.label), {
+    actor, choice, supersede: false,
+  }, deps);
 }
 
 export async function replyToCard(id: string, body: unknown, actor: CardActor, deps: CardReplyDeps = realDeps): Promise<CardReplyResult> {

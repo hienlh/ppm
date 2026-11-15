@@ -1405,7 +1405,20 @@ order, uncut and unaltered: `rulesComplete`); otherwise it is reviewed in Settin
 {draftSha256}` (and the button, whose code carries the hash it showed) must name the card's draft;
 the card goes `open → answered` by compare-and-set first, so the first OK on any surface forwards
 and a later one is told "Already answered on Telegram at 22:41". A forward that fails opens the
-card again. The answer carries `delivery`: words that started or joined a turn are `delivered`;
+card again.
+
+**Choices** (`options` on `report_to_assistant`). A needs-decision or urgent card may offer 2 to 6
+choices (`{id, label, description?}`, never with a draft) instead of an OK: one stacked button per
+choice in PPM (`card-choices.tsx`) and one inline button per row on Telegram, numbered as the text
+lists them. They meet the OK's bar (labels and descriptions are read by `cardOkOffered`); a card
+that misses it lists the choices with no button. `POST /cards/:id/choose {optionId}` (the Telegram
+button's code keeps the id on the server) looks the choice up on the stored card, answers it the
+same compare-and-set way and forwards `I choose: <label>` with `choice: {id, label}` in the
+user-words block; a card with choices takes no OK and a card without takes no choice. A report
+whose title or body lists choices as text ("(1)… (2)…", "A) … B) …") without `options` gets a note
+back and a warning in the log (`card-choices-in-text.ts`); PPM never builds buttons from the text.
+
+The answer carries `delivery`: words that started or joined a turn are `delivered`;
 words queued behind the manager's running turn stay `pending` until a `turn_started` names their
 client id (`card-delivery.ts`). A card still pending two minutes after the turn it waited on
 ended, or at startup, is opened again with "Your answer did not reach the manager chat; send it

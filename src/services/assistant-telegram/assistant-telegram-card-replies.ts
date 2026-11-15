@@ -1,6 +1,6 @@
 /**
- * What the user does to the PPM Assistant's cards from Telegram: a button (OK, Approve change,
- * Revert, Send anyway), or a message sent as a reply to a card's message.
+ * What the user does to the PPM Assistant's cards from Telegram: a button (OK, one of a card's
+ * choices, Approve change, Revert, Send anyway), or a message sent as a reply to a card's message.
  *
  * A reply is matched on the pair (chat, replied-to message id) — Telegram counts message ids per
  * chat, so the same number in another chat is another message. The inbound router has already run
@@ -9,7 +9,7 @@
  * longer waits, or is older than a day, asks first: "send anyway?".
  */
 import { findCardByTelegramRef } from "../assistant-cards/assistant-cards-outbound-db.ts";
-import { okCard, replyToCard, type CardReplyResult } from "../assistant-cards/card-reply-actions.ts";
+import { chooseCardOption, okCard, replyToCard, type CardReplyResult } from "../assistant-cards/card-reply-actions.ts";
 import type { CardActor } from "../assistant-cards/forward-verbatim.ts";
 import { decideManagerRules } from "../assistant-managers/manager-rules.service.ts";
 import { escapeTelegramHtml } from "../notification-format.ts";
@@ -30,6 +30,7 @@ export interface CardRepliesDeps {
   /** A message to the chat (a confirmation, a question, an error). */
   reply: (chatId: string, html: string, markup?: InlineKeyboardMarkup) => void;
   ok?: typeof okCard;
+  choose?: typeof chooseCardOption;
   replyTo?: typeof replyToCard;
   decideRules?: (projectName: string, action: "approve" | "revert", hash: string) => Promise<void>;
   findCard?: typeof findCardByTelegramRef;
@@ -93,9 +94,14 @@ export class AssistantTelegramCardReplies {
 
   /** A button on one of the Assistant's cards: the toast to show, after acting. */
   async press(chatId: string, press: ManagerCardPress, group: string): Promise<string> {
-    if (press.op === "ok") {
-      const result = await (this.deps.ok ?? okCard)(press.cardId, { draftSha256: press.draftSha256 ?? null }, this.actor(chatId));
-      // A forward that failed opened the card again: its button stays usable.
+    if (press.op === "ok" || press.op === "choose") {
+      // The card is checked again here (still open, still offering this choice): a code outlives
+      // nothing but the card's own state.
+      const result = press.op === "ok"
+        ? await (this.deps.ok ?? okCard)(press.cardId, { draftSha256: press.draftSha256 ?? null }, this.actor(chatId))
+        : await (this.deps.choose ?? chooseCardOption)(press.cardId, { optionId: press.optionId ?? null }, this.actor(chatId));
+      // A forward that failed opened the card again, with a note that sends it out once more with
+      // fresh buttons; these codes are spent with the card's old copy either way.
       if (result.ok || result.status !== 502) this.deps.codes.dropGroup(group);
       if (result.ok) return result.to === "manager" ? `Sent to the ${result.projectName ?? "project"} manager.` : "Sent.";
       return (result.question ?? result.error).slice(0, 180);

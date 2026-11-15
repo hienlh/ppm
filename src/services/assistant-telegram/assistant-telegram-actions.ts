@@ -24,8 +24,13 @@ export interface CardPress {
 export interface ManagerCardPress {
   kind: "mcard";
   cardId: string;
-  /** ok: the user's OK on the draft shown; approve/revert: a held rules change; send_anyway: a reply to a stale card. */
-  op: "ok" | "approve" | "revert" | "send_anyway";
+  /**
+   * ok: the user's OK on the draft shown; choose: one of the card's choices; approve/revert: a held
+   * rules change; send_anyway: a reply to a stale card.
+   */
+  op: "ok" | "choose" | "approve" | "revert" | "send_anyway";
+  /** choose: the id of the choice the button stands for (its label is read from the stored card). */
+  optionId?: string;
   /** ok: the hash of the draft the card showed when the button was made. */
   draftSha256?: string;
   /** approve/revert: the held change's hash, and the project it belongs to. */

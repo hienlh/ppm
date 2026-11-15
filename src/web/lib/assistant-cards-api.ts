@@ -36,6 +36,11 @@ export const okAssistantCard = (id: string, draftSha256: string | null) =>
   api.post<{ card: AssistantCard; to: "manager" | "assistant"; projectName?: string }>(
     `/api/assistant/cards/${encodeURIComponent(id)}/ok`, { draftSha256, deviceId: getDeviceId() });
 
+/** The user's press on one of a card's choices, named by its id; the server reads the label from the card. */
+export const chooseAssistantCardOption = (id: string, optionId: string) =>
+  api.post<{ card: AssistantCard; to: "manager" | "assistant"; projectName?: string }>(
+    `/api/assistant/cards/${encodeURIComponent(id)}/choose`, { optionId, deviceId: getDeviceId() });
+
 /** The user's own words to a card's manager chat; `force` after the user confirmed a stale card. */
 export const replyToAssistantCard = (id: string, text: string, force = false) =>
   api.post<{ card: AssistantCard; to: "manager" | "assistant"; projectName?: string }>(

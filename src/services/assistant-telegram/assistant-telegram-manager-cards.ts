@@ -133,18 +133,26 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       ? cardPhotosTask(chatId, card, { silent: () => card.kind !== "urgent" && this.silent() })
       : null;
     if (photos) this.deps.queue.enqueue(chatId, photos);
-    const row: InlineKeyboardButton[] = formatted.buttons.map((b) => ({
-      text: b.text,
-      callback_data: this.deps.codes.mint(chatId, group, {
-        kind: "mcard", cardId: card.id, op: b.op,
-        ...(b.op === "ok" && card.payload.draft ? { draftSha256: card.payload.draft.sha256 } : {}),
-        ...(b.op !== "ok" && card.payload.rulesHash ? { rulesHash: card.payload.rulesHash, projectName: card.projectName ?? "" } : {}),
-      }),
+    const keys = formatted.buttons.map((b) => ({
+      op: b.op,
+      key: {
+        text: b.text,
+        // The code stands for the action; the choice's id stays here, on the server.
+        callback_data: this.deps.codes.mint(chatId, group, {
+          kind: "mcard", cardId: card.id, op: b.op,
+          ...(b.op === "ok" && card.payload.draft ? { draftSha256: card.payload.draft.sha256 } : {}),
+          ...(b.op === "choose" && b.optionId ? { optionId: b.optionId } : {}),
+          ...((b.op === "approve" || b.op === "revert") && card.payload.rulesHash ? { rulesHash: card.payload.rulesHash, projectName: card.projectName ?? "" } : {}),
+        }),
+      } satisfies InlineKeyboardButton,
     }));
+    // One choice per row, so a long label is read whole; any other buttons share a row.
+    const choiceRows = keys.filter((k) => k.op === "choose").map((k) => [k.key]);
+    const row: InlineKeyboardButton[] = keys.filter((k) => k.op !== "choose").map((k) => k.key);
     const link = url ? placeLink(url) : {};
     let html = formatted.html;
     if (link.inline) html += `\n\n${link.inline}`;
-    const rows = [...(row.length ? [row] : []), ...(link.button ? [[link.button]] : [])];
+    const rows = [...choiceRows, ...(row.length ? [row] : []), ...(link.button ? [[link.button]] : [])];
     this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, {
       html,
       ...(rows.length ? { markup: { inline_keyboard: rows } } : {}),
