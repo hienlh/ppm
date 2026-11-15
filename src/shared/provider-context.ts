@@ -13,6 +13,18 @@ export function stripSharedContext(message: string): string {
 }
 
 /**
+ * A session title with the shared-context block taken off, for titles a provider made from the
+ * prompt it was sent: there the block may be cut short or flattened onto one line, which
+ * `stripSharedContext` does not recognise. Empty when nothing but the block was there.
+ */
+export function sessionTitleWithoutContext(title: string): string {
+  const text = title.trimStart();
+  if (!text.startsWith(START)) return title;
+  const end = text.indexOf(END);
+  return end < 0 ? "" : text.slice(end + END.length).trim();
+}
+
+/**
  * One `<ppm-shared-context>` block from several entries — the project's shared instructions,
  * the PPM Assistant's picture of the screen — so every place that strips the block from
  * history, titles and search strips all of them. Undefined when there is nothing to send.
