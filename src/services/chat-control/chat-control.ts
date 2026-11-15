@@ -32,8 +32,12 @@ import type { SessionDelivery } from "../../shared/session-collab.ts";
  * `schedule` is a session schedule sending its prompt into the chat it targets: PPM, not the user,
  * so it answers no card and joins no running turn, but the turn it opens is an ordinary one — its
  * approvals are shown and wait for the user, in the chat's own permission mode.
+ * `ppm_ui` is PPM sending what the user chose on its own screens (PPM Tasks: a decision's option,
+ * "tell the manager now") into the chat it is for, with no browser needed. It answers no card and
+ * never steers a running turn: behind one it waits for that turn to end, and the turn it opens is
+ * an ordinary one.
  */
-export type ServerOrigin = "telegram" | "watch" | "schedule" | "assistant" | "assistant_card" | "delete";
+export type ServerOrigin = "telegram" | "watch" | "schedule" | "ppm_ui" | "assistant" | "assistant_card" | "delete";
 
 /** The server origins that may send a chat a message (see {@link ChatControl.sendUserMessage}). */
 export type MessageServerOrigin = Exclude<ServerOrigin, "assistant" | "assistant_card" | "delete">;
@@ -46,8 +50,8 @@ export type MessageServerOrigin = Exclude<ServerOrigin, "assistant" | "assistant
 export type ChatMessageOrigin = "ws" | ServerOrigin | "session" | "extension";
 
 /**
- * How a message the server sends into a chat went. `delivered` is set for a `schedule` message
- * only: whether it started its turn or waits behind one that began after the quiet check.
+ * How a message the server sends into a chat went. `delivered` is set for a `schedule` or `ppm_ui`
+ * message only: whether it started its turn or waits behind a running one.
  */
 export type DeliverResult = { ok: true; sessionId: string; delivered?: SessionDelivery } | { ok: false; error: string };
 
