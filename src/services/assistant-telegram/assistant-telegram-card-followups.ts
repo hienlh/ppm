@@ -124,9 +124,7 @@ export class AssistantTelegramCardFollowups implements CardFollowupSink {
         // The answer reads like a conversation, so the natural reply is to it: that reply has to
         // reach the same manager, as a reply to the card does, not the Assistant.
         onSent: (sent) => {
-          // With exactly one new card named, a bare OK to this answer is a yes to that card.
-          const newCardId = d.newCards.length === 1 ? d.newCards[0]!.id : undefined;
-          try { record(d.card.id, { chatId: t.chatId, messageId: sent.message_id, followUp: true, ...(newCardId ? { newCardId } : {}) }); } catch (e) {
+          try { record(d.card.id, { chatId: t.chatId, messageId: sent.message_id, followUp: true }); } catch (e) {
             log.warn(`card ${d.card.id}: the follow-up's message was not recorded: ${(e as Error).message}`);
           }
         },

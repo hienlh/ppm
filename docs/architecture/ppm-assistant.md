@@ -1434,9 +1434,10 @@ answer used to stay in the manager chat, which a user on their phone never opens
   the morning: the answer is already under the card in PPM).
 - The answer's Telegram message is recorded as one of the card's messages, marked `followUp`, so a
   reply to it reaches the same manager like a reply to the card (the card is answered by then, so
-  it asks "send anyway?"). When the answer named exactly one new card, the ref keeps its id
-  (`newCardId`), and a bare OK ("OK", "Được", "yes", "👍") in reply to the answer goes to that new
-  card instead, with its answer threaded under the new card's message. A follow-up is never
+  it asks "send anyway?"). That holds for a bare OK too, and for an OK to the "stopped" notice: it
+  is never routed to a new card the answer named. Routing it there once let an "ok, noted" approve
+  a card the user never saw (one named only by title, held back in quiet hours, or behind a notice
+  that named nothing), so a decision on a new card is taken only on that card. A follow-up is never
   rewritten when the card changes, nor answered under as one of the card's copies, and follow-up
   refs are capped apart (the newest 5) from the card's own copies (20), so many replies cannot push
   the card's copies out. The acknowledgement says "If the manager answers, it will

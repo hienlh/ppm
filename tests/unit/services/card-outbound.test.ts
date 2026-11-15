@@ -204,11 +204,4 @@ describe("matching a reply to a card", () => {
     expect(refs.filter((r) => r.followUp).map((r) => r.messageId)).toEqual([125, 126, 127, 128, 129]);
     expect(findCardByTelegramRef("100", 1)?.id).toBe(c.id);
   });
-
-  it("keeps the new card a follow-up named, and only on a follow-up", () => {
-    const c = card("needs_decision", "Named a new card");
-    addCardTelegramRef(c.id, { chatId: "100", messageId: 50, followUp: true, newCardId: "n1" });
-    addCardTelegramRef(c.id, { chatId: "100", messageId: 51, newCardId: "n2" });
-    expect(getCardRow(c.id)!.telegramRefs).toEqual([{ chatId: "100", messageId: 51 }, { chatId: "100", messageId: 50, followUp: true, newCardId: "n1" }]);
-  });
 });

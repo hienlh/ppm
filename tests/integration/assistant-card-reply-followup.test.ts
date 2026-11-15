@@ -414,7 +414,7 @@ describe("the manager's answer to a card reply", () => {
     note("PPM       nothing sent for that reply: the turn it went into was followed by another sender's turn, so which text answers it is not known");
   });
 
-  it("delivers a short answer written after the card, and a bare OK to it reaches the new card it named", async () => {
+  it("delivers a short answer written after the card; an OK to that answer stays with the replied card", async () => {
     note("");
     note("── Scenario 7: the manager opens the card first and answers in one short line; the user says OK to that answer ──");
     script = "card-then-short";
@@ -432,16 +432,16 @@ describe("the manager's answer to a card reply", () => {
     expect(followUp.text).toContain(SHORT_ANSWER);
     expect(followUp.text).not.toContain("Để em kiểm tra quota trước");
     expect(assistantCards.get(cardId)!.followUp?.text).toBe(SHORT_ANSWER);
+    // The answer named a new card, but an OK to the answer is no decision on it: that card was only
+    // named by title here, and it is decided on its own message.
     const newCardId = lastNewCardId;
-    const newCardMsg = fake.sent(PHONE).find((m) => m.text.includes("Tốn ~40% quota tuần") && m.message_id < followUp.message_id && m.message_id > card.message_id)!;
     const ok = replyTo(followUp.message_id, "OK");
     note(`Telegram  phone → PPM bot   (msg #${ok.message?.message_id}, reply_to #${followUp.message_id}, the answer): “OK”`);
-    await until(() => received.some((r) => { const w = decodeMessageBlocks(r.message); return w.userWords?.cardId === newCardId && w.content === "OK"; }));
-    await idle(manager);
+    await until(() => fake.sent(PHONE).find((m) => m.message_id > followUp.message_id && m.text.includes("send anyway")));
     await assistantTelegramBridge.settle();
     logBot();
-    expect(assistantCards.get(newCardId)!.status).toBe("answered");
-    expect(fake.sent(PHONE).some((m) => m.text.includes("send anyway"))).toBe(false);
-    expect(fake.sent(PHONE).some((m) => m.reply_to === newCardMsg.message_id && m.text.includes("The manager's answer"))).toBe(true);
-    note(`PPM       the OK went to the new card ${newCardId.slice(0, 8)} (now answered), not to card ${cardId.slice(0, 8)}; no “send anyway?”`);
-  });});
+    expect(assistantCards.get(newCardId)!.status).toBe("open");
+    expect(received.some((r) => decodeMessageBlocks(r.message).userWords?.cardId === newCardId)).toBe(false);
+    note(`PPM       the OK stayed with card ${cardId.slice(0, 8)}, which is answered already, so it asks “send anyway?”; the new card ${newCardId.slice(0, 8)} still waits on its own message`);
+  });
+});

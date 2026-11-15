@@ -43,11 +43,6 @@ export interface TelegramCardRef {
    * under as one of the card's copies.
    */
   followUp?: true;
-  /**
-   * On a follow-up: the one new card that answer named ("It also opened a new card: X"). A bare OK
-   * in reply to the answer means yes to that card, not to the card the answer sits under.
-   */
-  newCardId?: string;
 }
 
 interface Raw {
@@ -63,11 +58,7 @@ function parseRefs(json: string | null): TelegramCardRef[] {
     if (!Array.isArray(value)) return [];
     return value.filter((r): r is TelegramCardRef =>
       !!r && typeof r === "object" && typeof r.chatId === "string" && Number.isInteger(r.messageId))
-      .map((r) => ({
-        chatId: r.chatId, messageId: r.messageId,
-        ...(r.followUp === true ? { followUp: true as const } : {}),
-        ...(r.followUp === true && typeof r.newCardId === "string" ? { newCardId: r.newCardId } : {}),
-      }));
+      .map((r) => ({ chatId: r.chatId, messageId: r.messageId, ...(r.followUp === true ? { followUp: true as const } : {}) }));
   } catch {
     return [];
   }
