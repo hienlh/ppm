@@ -155,6 +155,9 @@ export interface VaultCardAnswerResult {
   shown?: { name: string; value: string };
 }
 
+/** What happens to a value once the AI was given it: shown on the cards and in Settings. */
+export const VAULT_HISTORY_LIMIT = "After the turn PPM removes the value from the chat's history files on this machine; the open chat keeps it in memory until it is reopened, and what was sent to Anthropic or OpenAI cannot be removed.";
+
 /** Every notification about a vault card, wherever it lands: no item, tier or purpose. */
 export const VAULT_NOTIFICATION_BODY = "Unlock needed in the PPM vault";
 

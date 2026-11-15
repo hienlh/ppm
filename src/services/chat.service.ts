@@ -33,6 +33,7 @@ import { extensionMcpAccessFor, extensionMcpTokens } from "./extension-mcp/exten
 import { dbApprovalBroker } from "./db-ai-tools/db-approval-broker.ts";
 import { vaultGrants } from "./vault/vault-grants.ts";
 import { turnSecretScrubber } from "./vault/turn-secret-scrubber.ts";
+import { transcriptRedactor } from "./vault/transcript-redactor.ts";
 import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
 import { anyPpmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
@@ -303,6 +304,7 @@ class ChatService {
     // A vault window the chat held ends with it, its key zeroed.
     vaultGrants.lockSession(sessionId);
     turnSecretScrubber.release(sessionId);
+    transcriptRedactor.forget(sessionId);
     sessionCollabMcpTokens.revoke(sessionId);
     collabApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing was done.");
     collabWaits.cancelWaiter(sessionId);

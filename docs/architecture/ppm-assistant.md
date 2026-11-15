@@ -1629,7 +1629,16 @@ an address, a passport number). Three tiers kept apart on purpose (`src/shared/v
   and unknown turns get nothing from the locked tiers. Vault cards never reach Telegram `/status`,
   watches or `chats_attention`. The CLI has only `ppm vault status` and `ppm vault lock`.
 
-**Limits.** What an AI was given is in its provider's transcript for good. The scrubber is a
+- **History files.** After a turn that handed out a Secure or Sealed value, once the turn has ended
+  and the file has stopped growing, `transcript-redactor.ts` rewrites the provider's history on
+  this machine — Claude's session transcript and its subagents', Codex's rollout — replacing each
+  value with `[vault:<name>]`. Only lines holding a value change; each stays one JSON record with
+  its `uuid`/`parentUuid` links intact; the new file is written beside the old and renamed over it
+  only if the old one did not move meanwhile, else it is tried again. The running CLI or app-server
+  is not restarted, so its prompt cache stays.
+
+**Limits.** A chat that is still open keeps a value it was given in the provider's memory until it
+is reopened, and what was sent to Anthropic or OpenAI cannot be removed. The scrubber is a
 fallback: a value spelled out differently gets past it. The Public tier is not protected at all.
 While a Secure window is open, a process that can read PPM's memory can take that key (the Sealed
 tier never stays open). JavaScript strings cannot be wiped. Deleted items stay in older `ppm.db`

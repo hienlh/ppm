@@ -8,7 +8,7 @@ import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { useNow } from "@/hooks/use-now";
 import { vaultApi, vaultFailure } from "@/lib/vault-client";
-import { VAULT_LOCKED_TIERS, VAULT_TIER_LABELS, type VaultItemMeta, type VaultLockedTier } from "../../../../shared/vault";
+import { VAULT_HISTORY_LIMIT, VAULT_LOCKED_TIERS, VAULT_TIER_LABELS, type VaultItemMeta, type VaultLockedTier } from "../../../../shared/vault";
 import { useVaultSettings } from "./use-vault-settings";
 import { VaultPublicGroup } from "./vault-public-group";
 import { VaultLockedTierGroup, type VaultTierActions } from "./vault-locked-tier-group";
@@ -109,6 +109,7 @@ export function VaultSettingsSection() {
       <p className="text-xs leading-relaxed text-muted-foreground">
         Personal details the AI may need, kept in three tiers. The Secure and Sealed tiers are encrypted under passwords of their own,
         separate from PPM's password; neither password is stored, and a restart locks both. Deleted items stay in older backups until they expire.
+        {" "}{VAULT_HISTORY_LIMIT}
       </p>
       <VaultPublicGroup
         items={items.filter((i) => i.tier === "public")}

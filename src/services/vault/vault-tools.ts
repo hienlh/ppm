@@ -9,6 +9,7 @@ import { vaultGrants, type VaultGrants } from "./vault-grants.ts";
 import { vaultService, type VaultItemValue, type VaultService } from "./vault.service.ts";
 import { vaultUnlockBroker, type VaultReadOutcome, type VaultRequestContext, type VaultUnlockBroker } from "./vault-unlock-broker.ts";
 import { turnSecretScrubber } from "./turn-secret-scrubber.ts";
+import { transcriptRedactor } from "./transcript-redactor.ts";
 
 /**
  * The AI's three vault tools. `vault_list` names every item (never a value), `vault_read` reads
@@ -97,7 +98,11 @@ export function createVaultTools(deps: {
   const service = deps.service ?? vaultService;
   const grants = deps.grants ?? vaultGrants;
   const broker = deps.broker ?? vaultUnlockBroker;
-  const hold = deps.hold ?? ((sessionId, items) => turnSecretScrubber.hold(sessionId, items));
+  // Held for the scrubber, and noted for the history files to be rewritten once the turn ends.
+  const hold = deps.hold ?? ((sessionId, items) => {
+    turnSecretScrubber.hold(sessionId, items);
+    transcriptRedactor.note(sessionId, items);
+  });
 
   /** Ids or exact names (case-insensitive) to items; an error text for an unknown one. */
   function resolveItems(refs: unknown): { ok: true; items: VaultItemMeta[] } | { ok: false; error: string } {

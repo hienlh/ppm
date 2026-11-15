@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { Lock } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import { VAULT_KIND_LABELS, VAULT_WINDOW_MINUTES, type VaultCardAnswer, type VaultCardInput, type VaultWindowMinutes } from "../../../shared/vault";
+import { VAULT_HISTORY_LIMIT, VAULT_KIND_LABELS, VAULT_WINDOW_MINUTES, type VaultCardAnswer, type VaultCardInput, type VaultWindowMinutes } from "../../../shared/vault";
 import {
   useVaultCardAnswer, VaultCardActions, VaultCardButton, VaultCardFailure, VaultCardRequesterLine, VaultCheckRow, VaultPasswordInput,
 } from "./vault-card-parts";
@@ -67,6 +67,7 @@ function VaultReadSecureCard({ requestId, input }: { requestId: string; input: R
       {windowMinutes !== null && (
         <p className="text-[11px] text-text-subtle">For {windowMinutes} minutes this chat's AI reads the ticked items again without asking.</p>
       )}
+      <p className="text-[11px] text-text-subtle" data-vault-history-limit="">{VAULT_HISTORY_LIMIT}</p>
       <VaultCardFailure failure={failure} />
       <form
         className="flex flex-col gap-2 md:flex-row md:items-center"

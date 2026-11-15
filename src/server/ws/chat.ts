@@ -55,6 +55,7 @@ import { setVaultCardChat, vaultUnlockBroker, type VaultCardEvent } from "../../
 import { VAULT_CARD_APPROVAL } from "../../shared/vault.ts";
 import { setVaultSessionResolver } from "../../services/vault/vault-grants.ts";
 import { setScrubberSessionResolver } from "../../services/vault/turn-secret-scrubber.ts";
+import { setRedactorSessionHooks, transcriptRedactor } from "../../services/vault/transcript-redactor.ts";
 import { collabWaits, setCollabIdleProbe } from "../../services/session-collab/collab-waits.ts";
 import { collabSessionRenamed, collabTargetWaitingForUser, collabTurnEnded } from "../../services/session-collab/collab-turn-events.ts";
 import { cardRaisedFor, waitingCardOf } from "../../services/session-collab/collab-waiting-card.ts";
@@ -1192,8 +1193,17 @@ export function registerVaultCardChat(): void {
   }, resolveMigratedSession);
   setVaultSessionResolver(resolveMigratedSession);
   setScrubberSessionResolver(resolveMigratedSession);
+  setRedactorSessionHooks(resolveMigratedSession, (id) => {
+    const entry = activeSessions.get(resolveMigratedSession(id));
+    return !!entry && turnRunning(entry);
+  });
 }
 registerVaultCardChat();
+// A turn that was handed vault values ends: the provider's history files on disk get them replaced
+// (`transcript-redactor.ts`). The running CLI is not touched, so its cache stays.
+chatLifecycle.on("turn_ended", (p) => {
+  if (!p.turnStillRunning) void transcriptRedactor.turnEnded(p.providerId, p.sessionId);
+});
 
 /** What the AI hears when one of PPM's approvals is still waiting as the turn ends. */
 const DB_APPROVAL_TURN_OVER = "The turn ended before the user answered, so nothing ran.";
