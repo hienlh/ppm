@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.2] - 2026-11-16
+
+### Changed
+
+- **The Assistant's waiting cards sit in the chat**: each card shows once, whole, where it arrived; a Waiting chip above the message box steps between them, and cards you have answered fold to one line you can open again.
+
 ## [0.26.1] - 2026-11-15
 
 ### Fixed
