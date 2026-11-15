@@ -193,4 +193,15 @@ describe("matching a reply to a card", () => {
     expect(getCardRow(c.id)!.telegramRefs).toEqual([{ chatId: "100", messageId: 20 }, { chatId: "100", messageId: 21, followUp: true }]);
     expect(findCardByTelegramRef("100", 21)?.id).toBe(c.id);
   });
+
+  it("never lets the manager's answers push the card's own copies out", () => {
+    const c = card("needs_decision", "Replied to many times");
+    addCardTelegramRef(c.id, { chatId: "100", messageId: 1 });
+    addCardTelegramRef(c.id, { chatId: "200", messageId: 1 });
+    for (let m = 100; m < 130; m++) addCardTelegramRef(c.id, { chatId: "100", messageId: m, followUp: true });
+    const refs = getCardRow(c.id)!.telegramRefs;
+    expect(refs.filter((r) => !r.followUp)).toEqual([{ chatId: "100", messageId: 1 }, { chatId: "200", messageId: 1 }]);
+    expect(refs.filter((r) => r.followUp).map((r) => r.messageId)).toEqual([125, 126, 127, 128, 129]);
+    expect(findCardByTelegramRef("100", 1)?.id).toBe(c.id);
+  });
 });
