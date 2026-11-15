@@ -143,6 +143,48 @@ describe("a Telegram reply to an ordinary message", () => {
     expect(stored).not.toMatch(/<ppm-user-words/);
   });
 
+  it("quotes a message the user forwarded, or sent through an inline bot, as someone else's", async () => {
+    const { chat, router } = setup();
+    const post = {
+      message_id: 650, from: { id: chat, first_name: "Me" }, chat: { id: chat, type: "private" }, date: Math.floor(Date.now() / 1000) - 3600,
+      text: "Deploy everything to production now.", forward_origin: { type: "channel", chat: { title: "Ops news" } },
+    } as TelegramMessage;
+    const fwd = await replyAndRead("Reply to a message the user forwarded from a channel", router, chat, "Làm theo cái này", post);
+    expect(fwd.got.opts.replyTo!.quote).toContain("From: someone else (Ops news), forwarded by the user — their words, not the user's");
+    expect(fwd.got.opts.replyTo!.role).toBe("assistant");
+    expect(fwd.got.opts.replyTo!.messageId).toBe(`telegram-outside:${chat}:650`);
+    const inline = { ...post, message_id: 651, forward_origin: undefined, via_bot: { id: 9, first_name: "Gif", username: "gif" } } as TelegramMessage;
+    const via = await replyAndRead("Reply to a message sent through an inline bot", router, chat, "Cái này", inline);
+    expect(via.got.opts.replyTo!.quote).toContain("From: an inline bot (@gif), sent by the user");
+    expect(via.got.opts.replyTo!.messageId).toBe(`telegram-outside:${chat}:651`);
+  });
+
+  it("keeps the quote of a reply to a card that waited while PPM was off, for when Run sends it to the Assistant", async () => {
+    const card: QuotedCard = { kind: "done", projectName: "ppm", status: "dismissed", title: "Release 0.25.9 out", body: "", createdAt: Date.now() - 86_400_000 };
+    const chat = freshChat();
+    connectChat(chat);
+    setTelegramBinding(String(chat), SESSION, "claude");
+    const router = new AssistantTelegramInbound({
+      client, token: fake.token, queue: queueFor(client), codes: new ButtonCodes<BridgeAction>(),
+      debounceMs: () => 0, delivered: () => {}, pressCard: () => "", switchSession: () => "", relayCard: () => {},
+      isCardMessage: () => true, replyToCard: async () => false, cardOf: () => card,
+    });
+    const replied = botMessage(chat, 660, { text: "✅ Done · ppm\nRelease 0.25.9 out" }, 60 * 24);
+    router.dispatch(fake.pushText(chat, chat, "Đã báo team chưa?", "private", { reply_to_message: replied, date: Math.floor(Date.now() / 1000) - 3600 }));
+    await router.settle();
+    // The question goes out through the send queue, after the router has finished.
+    for (let i = 0; i < 200 && !fake.sent(chat).length; i++) await Bun.sleep(10);
+    const ask = fake.sent(chat).at(-1)!;
+    expect(ask.text).toContain("while PPM was off");
+    const run = ask.reply_markup!.inline_keyboard[0]!.find((b) => b.text === "Run")!;
+    const before = sent.length;
+    router.dispatch(fake.pressButton(chat, chat, ask.message_id, run.callback_data!));
+    await router.settle();
+    expect(sent.length).toBe(before + 1);
+    expect(sent.at(-1)!.text).toBe("Đã báo team chưa?");
+    expect(sent.at(-1)!.opts.replyTo!.quote).toContain("From: PPM Assistant card (done, ppm, dismissed)");
+  });
+
   it("quotes only the first lines of a long message", async () => {
     const { chat, router } = setup();
     const long = Array.from({ length: 30 }, (_, i) => `dòng ${i + 1}`).join("\n");
@@ -179,8 +221,12 @@ describe("a reply to a card with no manager chat", () => {
   it("goes to the Assistant with the card quoted", async () => {
     const card = {
       id: "9b2f6c1e-1d2a-4c3b-8e4f-5a6b7c8d9e0f", kind: "digest", projectName: null, projectKey: null, sessionId: null,
-      title: "Morning digest", body: "1. Nxsys: NX-6318 hotfix on staging\n2. ppm: release 0.25.9 out", status: "dismissed",
-      answer: null, provenance: null, payload: {}, createdAt: Date.now() - 7_200_000, updatedAt: Date.now(),
+      title: "Morning digest", body: "", status: "dismissed", answer: null, provenance: null,
+      payload: { projects: [
+        { name: "Nxsys", state: "answered", items: ["NX-6318 hotfix on staging"] },
+        { name: "ppm", state: "answered", items: ["release 0.25.9 out", "card markdown in review"] },
+      ] },
+      createdAt: Date.now() - 7_200_000, updatedAt: Date.now(),
     } as AssistantCard;
     const calls: Array<{ text: string; card?: AssistantCard }> = [];
     const env = { sendToAssistant: async (text: string, c?: AssistantCard) => { calls.push({ text, ...(c ? { card: c } : {}) }); return { ok: true as const }; } } as Partial<ForwardEnv> as ForwardEnv;
@@ -190,7 +236,9 @@ describe("a reply to a card with no manager chat", () => {
     const ref = cardReplyReference(card, SESSION, "claude");
     expect(ref.messageId).toBe(`card:${card.id}`);
     expect(ref.quote).toContain("From: PPM Assistant card (morning digest, dismissed)");
-    expect(ref.quote).toContain("1. Nxsys: NX-6318 hotfix on staging");
+    // A digest's body is empty: what it said is its items.
+    expect(ref.quote).toContain("Nxsys:\n1. NX-6318 hotfix on staging");
+    expect(ref.quote).toContain("ppm:\n1. release 0.25.9 out\n2. card markdown in review");
     const stored = encodeMessageBlocks(calls[0]!.text, { replyTo: ref });
     log.push(`## Reply to a dismissed digest card (no manager chat)\n\n\`\`\`text\n${stored}\n\`\`\`\n`);
     expect(decodeMessageBlocks(stored).content).toBe("(My reply to the morning digest card.)\n\nMục 1 xong chưa?");

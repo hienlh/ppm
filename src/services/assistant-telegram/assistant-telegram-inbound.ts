@@ -192,7 +192,8 @@ export class AssistantTelegramInbound {
       const card: CardReplyMessage = { text, replyToMessageId: repliedTo, notTheUsers: !!from || !!message.via_bot };
       await this.flush(chatId);
       if (this.now() - message.date * 1000 > BACKLOG_AGE_MS) {
-        this.askAboutBacklog(chatId, message.date, from ? wrapForwarded(from, text) : text, [], updateId, card);
+        // Quoted too: when Run comes, the card may no longer take replies and the words go to the Assistant.
+        this.askAboutBacklog(chatId, message.date, from ? wrapForwarded(from, text) : text, [], updateId, card, this.quoteOf(chatId, message));
         return false;
       }
       if (await this.deps.replyToCard(chatId, card)) return false;

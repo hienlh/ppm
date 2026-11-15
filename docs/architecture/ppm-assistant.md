@@ -1262,9 +1262,13 @@ first `QUOTE_MAX_LINES` lines. It goes as the message's `ppm-reply-v1` block, af
 words and labelled data only, through `sendUserMessage`'s `replyTo`, which only a `telegram`
 message may carry and only for the chat it is sent to. The old text is old content, so its block
 markers are broken, its `<ppm-…>` tags defused and the user-words header marked as quoted before
-it is quoted. A burst of messages answers at most one message: a reply to another one sends what
-was gathered first. A card with no manager chat (a digest, a rules or budget card) still sends its
-reply to the Assistant, now with the card quoted.
+it is quoted. A message the user forwarded or sent through an inline bot is quoted as someone
+else's, and a quote of a card or of such a message (`OUTSIDE_QUOTE_PREFIXES` on the block's
+`messageId`) marks the turn `forwarded` in its provenance, like a forwarded message does; a quote
+of the Assistant's own message or the user's does not. A burst of messages answers at most one
+message: a reply to another one sends what was gathered first. A card with no manager chat (a
+digest — its items — a rules or budget card) still sends its reply to the Assistant, now with the
+card quoted; a reply to a card that waited while PPM was off keeps its quote for when *Run* sends it.
 
 **Going out** (`assistant-telegram-mirror.ts`, `assistant-telegram-turn-renderer.ts`,
 `assistant-telegram-send-queue.ts`). For each bound session the mirror streams the answer by

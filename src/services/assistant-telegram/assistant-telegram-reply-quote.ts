@@ -17,13 +17,26 @@ import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
 import { kindName } from "../assistant-cards/forward-verbatim.ts";
 import type { TelegramMessage } from "../telegram/telegram-types.ts";
+import { forwardedFrom } from "./assistant-telegram-inbound-text.ts";
 
 /** At most this many lines and characters of the quoted message's text. */
 export const QUOTE_MAX_LINES = 8;
 export const QUOTE_MAX_CHARS = 600;
 
 /** The parts of a card the quote names; the card a replied message showed, if PPM still has it. */
-export type QuotedCard = Pick<AssistantCard, "kind" | "projectName" | "status" | "title" | "body" | "createdAt">;
+export type QuotedCard = Pick<AssistantCard, "kind" | "projectName" | "status" | "title" | "body" | "createdAt">
+  & Partial<Pick<AssistantCard, "payload">>;
+
+/**
+ * How a quote's `messageId` begins when the quoted text is not the user's or the Assistant's own:
+ * a card (a manager AI's words, or a rules file's), a message the user forwarded from someone else,
+ * or one sent through an inline bot. Such a quote marks the turn as carrying outside text, the way
+ * a forwarded message does (`assistant-turn-provenance.ts`).
+ */
+export const OUTSIDE_QUOTE_PREFIXES = ["card:", "telegram-outside:"] as const;
+
+/** Whether a reply block quotes text from outside the user and the Assistant. */
+export const quotesOutsideText = (messageId: string): boolean => OUTSIDE_QUOTE_PREFIXES.some((p) => messageId.startsWith(p));
 
 /** A quote ready to send, before it is tied to the session it goes to. */
 export interface TelegramQuote {
@@ -93,11 +106,17 @@ function build(head: string[], body: string): { quote: string; truncated: boolea
 
 /**
  * The quote of a Telegram message the user replied to. `card` is the PPM Assistant card that
- * message showed, when PPM still knows it; `fromBot` says the bot sent it.
+ * message showed, when PPM still knows it. A message the user forwarded, or sent through an inline
+ * bot, is someone else's words even though Telegram names the user as its sender.
  */
 export function quoteTelegramMessage(chatId: string, replied: TelegramMessage, card: QuotedCard | null): TelegramQuote {
   const fromBot = replied.from?.is_bot === true;
-  const sender = card ? cardLabel(card) : fromBot ? "PPM Assistant" : "the user";
+  const forwarded = forwardedFrom(replied);
+  const viaBot = replied.via_bot ? oneLine(replied.via_bot.username ? `@${replied.via_bot.username}` : replied.via_bot.first_name, 60) : null;
+  const sender = card ? cardLabel(card)
+    : forwarded ? `someone else (${oneLine(forwarded, 60)}), forwarded by the user — their words, not the user's`
+    : viaBot ? `an inline bot (${viaBot}), sent by the user — the bot's words, not the user's`
+    : fromBot ? "PPM Assistant" : "the user";
   const at = new Date(replied.date * 1000).toISOString();
   const attachment = attachmentOf(replied);
   const head = [
@@ -108,14 +127,28 @@ export function quoteTelegramMessage(chatId: string, replied: TelegramMessage, c
     ...(attachment ? [`Attachment: ${attachment}${replied.caption ? " with a caption, below" : ""}`] : []),
   ];
   const { quote, truncated } = build(head, replied.text ?? replied.caption ?? "");
-  return { sourceId: `telegram:${chatId}:${replied.message_id}`, role: fromBot || card ? "assistant" : "user", at, quote, truncated };
+  const outside = !!card || !!forwarded || !!viaBot;
+  const userOwn = !fromBot && !outside;
+  return { sourceId: `${outside ? "telegram-outside" : "telegram"}:${chatId}:${replied.message_id}`, role: userOwn ? "user" : "assistant", at, quote, truncated };
+}
+
+/** What a card says: its body, or for the morning digest, its items. */
+function cardText(card: QuotedCard): string {
+  if (card.body) return card.body;
+  const projects = card.payload?.projects;
+  if (projects?.length) {
+    return projects.map((p) => p.titleOnly || !p.items.length
+      ? `${p.name}: ${p.titleOnly ? `${p.items.length} item(s), details in PPM` : "nothing new"}`
+      : `${p.name}:\n${p.items.map((item, i) => `${i + 1}. ${item}`).join("\n")}`).join("\n");
+  }
+  return (card.payload?.items ?? []).map((item) => `- ${item}`).join("\n");
 }
 
 /** The quote of a card the user replied to, for a card that has no manager chat to answer it. */
 export function quoteCard(card: QuotedCard & { id: string }): TelegramQuote {
   const at = new Date(card.createdAt).toISOString();
   const head = ["The PPM Assistant card the user replied to on Telegram.", `From: ${cardLabel(card)}`, `Sent: ${at}`, `Card title: ${oneLine(card.title)}`];
-  const { quote, truncated } = build(head, card.body ?? "");
+  const { quote, truncated } = build(head, cardText(card));
   return { sourceId: `card:${card.id}`, role: "assistant", at, quote, truncated };
 }
 
