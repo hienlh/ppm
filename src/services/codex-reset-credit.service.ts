@@ -81,7 +81,8 @@ export async function spendCodexResetCredit(
       throw new ResetCreditRefusedError(`${account.label} has no free reset left.`, 409);
     }
     const listed = live.resetCredits?.credits;
-    if (creditId && listed && !listed.some((c) => c.id === creditId)) {
+    // A picked credit must be one the live read lists; a read that lists none by id cannot vouch for it.
+    if (creditId && !listed?.some((c) => c.id === creditId)) {
       throw new ResetCreditRefusedError(`${account.label} no longer has that reset. The list has been refreshed.`, 409);
     }
     // Unless one was picked, the soonest-expiring credit: the others outlive it.

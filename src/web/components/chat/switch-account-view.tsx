@@ -17,6 +17,7 @@
 import { useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronLeft, Loader2, Lock, Plus, RotateCcw, Search, Settings, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 import { matchesAccountQuery, orderSwitchAccounts, type SwitchAccount } from "@/lib/chat-account-switch";
 import { UsageTrack } from "./usage-meters";
 import { formatResetLine } from "@/components/settings/accounts/account-usage-format";
@@ -256,7 +257,7 @@ function AccountCard({ account: a, active, picking, onPick, onOpenResets }: {
  * are listed one by one and spent; nothing is spent from the chat.
  */
 function ResetsLine({ resets, onOpen }: { resets: NonNullable<SwitchAccount["resets"]>; onOpen?: () => void }) {
-  const box = "-mt-1 mx-1 mb-1 flex min-h-6 items-center gap-1 self-start rounded-md px-1.5 text-[11px] max-md:min-h-11";
+  const box = `-mt-1 mx-1 mb-1 flex ${TEXT_CONTROL_HEIGHT} items-center gap-1 self-start rounded-md px-1.5 text-[11px]`;
   if (resets.count === 0 || !onOpen) {
     return (
       <span data-account-resets="" className={cn(box, "text-text-3")}>

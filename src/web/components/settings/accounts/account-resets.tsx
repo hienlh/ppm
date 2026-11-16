@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { useIsMobile } from "@/hooks/use-is-mobile";
+import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 
 /** "Dec 11, 5:00 AM", with the year when it is not this one. */
 export function resetWhen(iso: string): string {
@@ -72,7 +73,7 @@ export function ResetsSection({ count, lines, usable, onOpen }: {
             type="button"
             data-testid="resets-use"
             onClick={onOpen}
-            className={`-my-3 md:-my-0.5 inline-flex min-h-11 md:min-h-0 items-center gap-0.5 rounded px-1 -mr-1 font-medium cursor-pointer hover:bg-surface-elevated transition-colors ${usable ? "text-primary" : "text-text-secondary"}`}
+            className={`-my-1.5 inline-flex ${TEXT_CONTROL_HEIGHT} items-center gap-0.5 rounded px-1 -mr-1 font-medium cursor-pointer hover:bg-surface-elevated transition-colors ${usable ? "text-primary" : "text-text-secondary"}`}
           >
             Use<ChevronRight className="size-3 shrink-0" aria-hidden />
           </button>
@@ -120,7 +121,7 @@ export function ResetRow({ title, detail, expiresAt, action, blockedReason, onUs
         <Button
           size="sm"
           variant={blockedReason ? "outline" : "default"}
-          className="min-h-11 md:min-h-0 md:h-8 shrink-0"
+          className={`${TEXT_CONTROL_HEIGHT} shrink-0`}
           disabled={!!blockedReason}
           onClick={onUse}
         >

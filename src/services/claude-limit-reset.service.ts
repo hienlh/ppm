@@ -138,7 +138,10 @@ export async function spendClaudeLimitReset(accountId: string, grantId: unknown,
     const answer = await ports.claim(token, organization, grant.id, randomUUID());
     console.log(`[claude] account ${accountId} limit reset ${grant.id} → ${answer.result}${answer.reason ? ` (${answer.reason})` : ""}`);
     // The selector parked this account until the limit reset; it just did.
-    if (answer.result === "reset" && account.status === "cooldown") accountService.setEnabled(accountId);
+    // The reset is spent by now: failing to lift the park must not report the reset as failed.
+    if (answer.result === "reset" && account.status === "cooldown") {
+      try { accountService.setEnabled(accountId); } catch (e) { console.warn(`[claude] account ${accountId} reset but stays parked: ${(e as Error).message}`); }
+    }
     const usage = await ports.refresh(accountId).catch(() => live);
     return { ...answer, weeklyResetsAt: answer.weeklyResetsAt ?? resets.weeklyResetsAt ?? null, kind: grant.kind, usage };
   } finally {

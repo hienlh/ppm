@@ -69,7 +69,9 @@ describe("groups and reasons", () => {
     const blocked = resets([grant({ usable_now: false, blocking: ["seven_day"] })]);
     expect(claudeResetBlockedReason(blocked.grants[0]!, blocked)).toBe("can't be used while you're at your weekly limit");
     const cooling = resets([grant()], { cooldown_until: "2026-11-13T00:01:00Z" });
-    expect(claudeResetBlockedReason(cooling.grants[0]!, cooling)).toBe("a reset was just used, try again in a minute");
+    expect(claudeResetBlockedReason(cooling.grants[0]!, cooling, NOW)).toBe("a reset was just used, try again in a minute");
+    // A stored reading keeps the cooldown after it ends; once past, it blocks nothing.
+    expect(claudeResetBlockedReason(cooling.grants[0]!, cooling, Date.parse("2026-11-13T00:02:00Z"))).toBeNull();
     const stuck = resets([fable("f1")].map((f) => ({ ...f, usable_now: false })), { at_limit: true, exhausted: ["seven_day_opus"] });
     expect(claudeResetBlockedReason(stuck.grants[0]!, stuck)).toBe("doesn't refill the limit you've reached");
   });

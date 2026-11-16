@@ -13,6 +13,7 @@ import { useState } from "react";
 import { Loader2, RotateCcw } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
+import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 import { usageLimitReached } from "../../../../shared/usage-extra.ts";
 import type { LimitBucket, ResetCredits } from "../../../../types/chat";
 import { ResetRow, ResetsSection, ResetsSheet, resetWhen } from "./account-resets";
@@ -79,8 +80,8 @@ export function CodexResetCreditButton({ account, usage, onDone }: {
         {confirm.expiresAt && <li>This reset expires {resetWhen(confirm.expiresAt)}.</li>}
       </ul>
       <div className="flex flex-col-reverse md:flex-row gap-2 md:justify-end pt-1">
-        <Button variant="outline" onClick={() => setConfirm(null)} disabled={busy} className="min-h-11">Keep it</Button>
-        <Button onClick={() => void spend(confirm)} disabled={busy} className="min-h-11 gap-1.5">
+        <Button variant="outline" onClick={() => setConfirm(null)} disabled={busy} className={TEXT_CONTROL_HEIGHT}>Keep it</Button>
+        <Button onClick={() => void spend(confirm)} disabled={busy} className={`${TEXT_CONTROL_HEIGHT} gap-1.5`}>
           {busy ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
           Use reset
         </Button>

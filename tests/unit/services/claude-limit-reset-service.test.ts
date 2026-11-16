@@ -71,6 +71,20 @@ describe("spendClaudeLimitReset", () => {
     expect(accountService.list().find((a) => a.id === accountId)!.status).toBe("active");
   });
 
+  it("reports a spent reset as spent even when the account cannot be put back in rotation", async () => {
+    accountService.setCooldown(accountId, Date.now() + 3_600_000);
+    const original = accountService.setEnabled;
+    accountService.setEnabled = () => { throw new Error("Cannot re-enable expired temporary account."); };
+    try {
+      const f = fakes(usage([grant()]));
+      const r = await spendClaudeLimitReset(accountId, "full-reset-2611", f.ports);
+      expect(r.result).toBe("reset");
+      expect(f.claims).toHaveLength(1);
+    } finally {
+      accountService.setEnabled = original;
+    }
+  });
+
   it("refuses, without claiming, a grant the live read no longer offers or calls unusable", async () => {
     const gone = fakes(usage([grant({ id: "other" })]));
     expect((await refusal(spendClaudeLimitReset(accountId, "full-reset-2611", gone.ports))).message).toBe("Work no longer has that reset. The list has been refreshed.");

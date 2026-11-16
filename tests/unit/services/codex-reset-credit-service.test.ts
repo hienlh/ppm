@@ -79,6 +79,11 @@ describe("spending a Codex reset credit", () => {
     expect(e).toBeInstanceOf(ResetCreditRefusedError);
     expect((e as ResetCreditRefusedError).message).toContain("no longer has that reset");
     expect(consumed).toHaveLength(1);
+    // A read that lists no credit by id cannot vouch for a picked one.
+    liveUsage = { session: bucket(1), weekly: bucket(0.6), resetCredits: { available: 1, nextCreditId: "c-soonest" } };
+    const unlisted = await spendWith(a.id, fakeCodex, "c-later").then(() => null, (x) => x);
+    expect(unlisted).toBeInstanceOf(ResetCreditRefusedError);
+    expect(consumed).toHaveLength(1);
   });
 
   it("treats a quota refusal Codex already gave as a reached limit, and lifts the park on success", async () => {

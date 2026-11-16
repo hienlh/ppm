@@ -107,12 +107,14 @@ const refills = (g: ClaudeLimitResetGrant, limit: string) =>
   g.clears.includes(limit) || (limit === "seven_day" && g.givesBackWeekly);
 
 /** Why a grant cannot be used now, in Claude Code's words; null when it can. */
-export function claudeResetBlockedReason(g: ClaudeLimitResetGrant, r: ClaudeLimitResets): string | null {
-  if (g.usableNow && !g.paused && g.resetsLeft > 0 && !r.cooldownUntil) return null;
+export function claudeResetBlockedReason(g: ClaudeLimitResetGrant, r: ClaudeLimitResets, now = Date.now()): string | null {
+  // A stored reading keeps its cooldown after it has passed; only one still running blocks.
+  const coolingDown = !!r.cooldownUntil && Date.parse(r.cooldownUntil) > now;
+  if (g.usableNow && !g.paused && g.resetsLeft > 0 && !coolingDown) return null;
   if (g.paused) return "it is paused";
   if (g.resetsLeft === 0) return "none left";
   const reason = g.unavailableReason
-    ?? (r.cooldownUntil ? "cooldown" : undefined)
+    ?? (coolingDown ? "cooldown" : undefined)
     ?? g.blocking.map((b) => ({ five_hour: "blocked_five_hour", seven_day: "blocked_seven_day", seven_day_opus: "blocked_opus", seven_day_sonnet: "blocked_sonnet" })[b]).find(Boolean)
     ?? (g.blocking.length ? "blocked_other" : undefined)
     ?? (r.atLimit && !r.exhausted.some((e) => refills(g, e)) ? "cannot_clear" : undefined)
@@ -183,10 +185,10 @@ export function claudeResetGroups(r: ClaudeLimitResets, now = Date.now()): Claud
     group.grants.push(g);
     group.resetsLeft += g.resetsLeft;
     const lapsed = g.endsAt ? Date.parse(g.endsAt) <= now : false;
-    if (!group.target && !lapsed && claudeResetBlockedReason(g, r) === null) group.target = g;
+    if (!group.target && !lapsed && claudeResetBlockedReason(g, r, now) === null) group.target = g;
   }
   for (const group of groups.values()) {
-    if (!group.target) group.blockedReason = claudeResetBlockedReason(group.grants[0]!, r) ?? "can't be used right now";
+    if (!group.target) group.blockedReason = claudeResetBlockedReason(group.grants[0]!, r, now) ?? "can't be used right now";
   }
   return [...groups.values()].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
 }
