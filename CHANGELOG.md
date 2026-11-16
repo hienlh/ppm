@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.26.6] - 2026-11-17
+
+### Added
+
+- **Answer waiting decisions together**: the Assistant's decision cards gather into one set at the end of the chat, one tab per card; send one answer or all of them after a review, and the frame takes the colour of the card that is open.
+- **Reply to a card with pictures**: paste or attach up to 5 images to a card reply in PPM, or reply to a card with a photo on Telegram.
+- **Task codes everywhere**: every task shows its code (`#12`, `alpha/12`) beside its title; click it to copy, and search the Tasks list or the command palette by it.
+- **Tasks open in a window**: on a desktop a task opens in a floating window you can turn into a tab; on a phone it opens in a bottom sheet.
+- **The Assistant runs read-only commands without asking**: `git status`, listing files, process and memory info run without a card, new read tools cover PPM's status, logs, memory and Jira config, and a Permissions block in Settings controls it; edits stay off unless you let it act on its own.
+- **Who ran `ppm restart`**: `ppm restart`, `stop` and `upgrade` record the process and chat that ran them in `ppm.log`.
+
+### Fixed
+
+- **Command palette path results**: whole file names, real file icons, and the folder shown once.
+- **Telegram card replies**: a reply to a card already decided is refused instead of being sent anyway.
+
 ## [0.26.5] - 2026-11-16
 
 ### Added
