@@ -35,7 +35,7 @@ export function tasksKit({ web, fx, tg, browser, shotsDir, videoDir, owner, reco
   }
 
   const kit = {
-    web, fx, tg, owner, record, video: !!videoDir,
+    web, fx, tg, owner, record, shotsDir, video: !!videoDir,
     get page() { return current.page; },
     pageErrors: () => errors,
 
@@ -164,8 +164,9 @@ export function tasksKit({ web, fx, tg, browser, shotsDir, videoDir, owner, reco
     /** A pause a person watching can follow; nothing in test mode. */
     beat: (ms = 900) => (videoDir ? sleep(Math.round(ms * 2.2)) : Promise.resolve()),
 
-    async shot(name) {
-      await kit.page.screenshot({ path: `${shotsDir}/${name}.png` });
+    /** A screenshot of the page, or of one element of it (a floating window). */
+    async shot(name, element = null) {
+      await (element ?? kit.page).screenshot({ path: `${shotsDir}/${name}.png` });
     },
     async failureShots(id) {
       for (const p of pages) await p.page.screenshot({ path: `${shotsDir}/failure-${id}-${p.kind}.png` }).catch(() => {});

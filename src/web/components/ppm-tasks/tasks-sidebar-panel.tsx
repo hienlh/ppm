@@ -2,11 +2,13 @@
  * The Tasks section of the project sidebar (variant-3 screen 01), on a desktop and in the phone
  * drawer. It owns the data (one list query per scope and filters, the projects' settings, live
  * link states) and the actions; the list it renders only draws. Selecting a row previews the task
- * in the main area, and the selection follows the task tab that is active.
+ * in the main area, and the selection follows the task tab that is active. Searching for a code
+ * the chats use (`#82`, `ppm/82`) shows that one task and jumps to it.
  *
  * Below `md` the phone list draws the same props (`mobile/task-list-mobile.tsx`).
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
@@ -19,6 +21,8 @@ import { ppmTasksClient } from "@/lib/ppm-tasks/ppm-tasks-client";
 import { childProgress, countingQueryFor, groupTasks, listQueryFor, visibleTasks } from "@/lib/ppm-tasks/task-list-view";
 import { openTaskChat, openTaskTab, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
 import { taskIdOfTab } from "@/lib/ppm-tasks/task-tab-preview";
+import { lookupTasksByCode, tasksMatchingCode } from "@/lib/ppm-tasks/task-code-lookup";
+import { parseTaskCodeQuery } from "../../../shared/ppm-tasks-refs";
 import type { TaskMember } from "../../../shared/ppm-tasks";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
 import { TaskListDesktop } from "./task-list-desktop";
@@ -35,7 +39,8 @@ import type { TaskListViewProps } from "./task-list-view-props";
 import { TaskListMobile } from "./mobile/task-list-mobile";
 
 export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
-  const ListView: (p: TaskListViewProps) => React.ReactNode = useIsMobile() ? TaskListMobile : TaskListDesktop;
+  const isMobile = useIsMobile();
+  const ListView: (p: TaskListViewProps) => React.ReactNode = isMobile ? TaskListMobile : TaskListDesktop;
   const activeProject = useProjectStore(useShallow((s) => s.activeProject?.name ?? null));
   const { scope, filters, query, hiddenProjects } = useTaskViewStore(useShallow((s) => ({ scope: s.scope, filters: s.filters, query: s.query, hiddenProjects: s.hiddenProjects })));
   const { projects, refresh: refreshProjects } = usePpmTaskProjects();
@@ -46,14 +51,19 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
   // Typing in search asks the server once it pauses, not on every key.
   const [searched, setSearched] = useState(query);
   useEffect(() => { const t = setTimeout(() => setSearched(query), 250); return () => clearTimeout(t); }, [query]);
-  const listQuery = showList ? listQueryFor(scope, activeProject, filters, searched) : null;
+  // A code search (`#82`, `ppm/82`) asks for the whole scope and picks one task out of it, so it
+  // need not wait for the pause.
+  // While the pause runs out after leaving a code (`#82` → `#82x`), the filtered list without text
+  // stands in, rather than the whole scope a code asks for.
+  const codeQuery = parseTaskCodeQuery(query) ? query : "";
+  const listQuery = showList ? listQueryFor(scope, activeProject, filters, codeQuery || (parseTaskCodeQuery(searched) ? "" : searched)) : null;
   const { tasks, loading, error } = usePpmTaskList(listQuery);
   // Child progress and the tag/field pickers count the whole scope, not what the filters let
   // through (a status filter would otherwise turn 1/3 into 0/2). Same request when no filter is on.
   const counting = usePpmTaskList(showList ? countingQueryFor(scope, activeProject) : null);
   const everyTask = counting.loading || counting.error ? tasks : counting.tasks;
   const filtersOn = !!(filters.groups.length || filters.types.length || filters.person || filters.tag || filters.field || query.trim());
-  const shown = useMemo(() => visibleTasks(tasks, filters, hiddenProjects, scope), [tasks, filters, hiddenProjects, scope]);
+  const shown = useMemo(() => visibleTasks(tasks, filters, hiddenProjects, scope, codeQuery), [tasks, filters, hiddenProjects, scope, codeQuery]);
 
   const activeTaskId = useTabStore((s) => { const t = s.tabs.find((x) => x.id === s.activeTabId); return t ? taskIdOfTab(t) : null; });
   const storeSelected = usePpmTasksStore((s) => s.selectedId);
@@ -84,6 +94,41 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
     onNavigate?.();
   }, [live, onNavigate]);
   const onStartChat = useCallback((task: TaskDto) => void write.startChat(task), [write]);
+
+  // A code that names one task in the list previews it at once on a desktop (the search field keeps
+  // the focus); Enter keeps its tab. A phone waits for Enter: opening the task closes the drawer.
+  // Only a code typed here jumps: one still in the search when the panel comes back, or when the
+  // project changes under it, opens nothing by itself.
+  const contextProject = scope === "all" ? null : activeProject;
+  const code = codeQuery ? parseTaskCodeQuery(codeQuery) : null;
+  const codeMatch = code && !loading ? tasksMatchingCode(shown, code, contextProject) : [];
+  const jumpTo = codeMatch.length === 1 ? codeMatch[0]! : null;
+  const lastQuery = useRef(query);
+  const jumpPending = useRef(false);
+  useEffect(() => {
+    if (query === lastQuery.current) return;
+    lastQuery.current = query;
+    jumpPending.current = !!parseTaskCodeQuery(query);
+  }, [query]);
+  useEffect(() => {
+    if (!jumpPending.current || !jumpTo || isMobile) return;
+    jumpPending.current = false;
+    ppmTasksStore.getState().select(jumpTo.id);
+    openTaskTab(jumpTo);
+  }, [jumpTo, isMobile, query]);
+  // `beta/3` typed in alpha's list names a task the list cannot hold: Enter looks it up.
+  const codeNamesElsewhere = !!code?.project && code.project.toLowerCase() !== contextProject?.toLowerCase();
+  const onSubmitSearch = useCallback(async () => {
+    const typed = parseTaskCodeQuery(query);
+    if (!typed) return;
+    if (codeMatch.length > 1) {
+      toast.error(`${codeMatch.length} projects have a task ${query.trim()}: type it as project/${typed.number}`);
+      return;
+    }
+    const found = codeMatch[0] ?? (typed.project ? (await lookupTasksByCode(query, contextProject))?.[0] : undefined);
+    if (found) onSelect(found, true);
+    else toast.error(`No task ${query.trim()}${contextProject && !typed.project ? ` in ${contextProject}` : ""}`);
+  }, [query, codeMatch, contextProject, onSelect]);
   const onMove = useCallback<TaskListViewProps["onMove"]>((task, to) => {
     void write.run(null, () => ("urgency" in to ? write.actions.update(task, { urgency: to.urgency }) : write.actions.reorder(task, to.reorder)));
   }, [write]);
@@ -116,7 +161,7 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <div className="flex min-h-full flex-col" data-tasks-panel="">
-      <TasksSidebarHeader project={settingsProject} enabled={showList} filterFields={filterFields}
+      <TasksSidebarHeader project={settingsProject} enabled={showList} filterFields={filterFields} onSubmitSearch={() => void onSubmitSearch()}
         onNewTask={() => setNewOpen(true)} onSettings={() => setSettingsOpen(true)} onTurnOff={() => void turnOff()} />
       <TaskListFilters project={activeProject} projects={enabledProjects} members={members} tags={tags} />
       {!activeProject && scope === "project" ? (
@@ -132,7 +177,7 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
         <p className="px-4 py-6 text-center text-xs text-text-3">Loading tasks…</p>
       ) : shown.length === 0 ? (
         <div className="px-4 py-8 text-center text-xs text-text-3">
-          {tasks.length || filtersOn ? "No task matches these filters" : "No tasks yet. Add one with +, or ask a chat to."}
+          {codeQuery ? (codeNamesElsewhere ? `${codeQuery.trim()} is not in this list. Press Enter to open it.` : `No task ${codeQuery.trim()} here.`) : tasks.length || filtersOn ? "No task matches these filters" : "No tasks yet. Add one with +, or ask a chat to."}
           {filtersOn && <button type="button" onClick={() => { useTaskViewStore.getState().clearFilters(); useTaskViewStore.getState().setQuery(""); }} className="mt-2 block w-full text-primary hover:underline">Clear filters</button>}
         </div>
       ) : (

@@ -85,7 +85,7 @@ export function TaskDetailDesktop({ detail, settings, preview }: TaskDetailViewP
             onUndo={async (e) => { await run(task.id, () => actions.undo(task.id, e.id)); }} />
         </main>
         <aside className="space-y-4 border-t border-border-soft bg-panel px-4 py-4 @[760px]:overflow-y-auto @[760px]:border-l @[760px]:border-t-0">
-          <TaskWorkingSessionBlock working={task.workingSession} check={task.check} onOpen={openWorkingChat} onStartChat={() => void write.startChat(task)} />
+          <TaskWorkingSessionBlock task={task} working={task.workingSession} check={task.check} onOpen={openWorkingChat} onStartChat={() => void write.startChat(task)} />
           <TaskPropertiesPanel task={task} settings={settings} onPatch={patch} onStatus={setStatus}
             onOpenTask={(id) => openTaskTab({ id, project: task.project, title: "Task" })} onManageFields={() => setFieldsOpen(true)} />
         </aside>

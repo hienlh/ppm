@@ -1,5 +1,6 @@
 /**
- * The Tasks section's header row: "Tasks", New task, Search (opens a search field under it), and
+ * The Tasks section's header row: "Tasks", New task, Search (opens a search field under it, which
+ * also takes a task's code: `#82` or `ppm/82` jumps to that task), and
  * ··· with Task settings…, Filter by field (the project's declared select and date fields),
  * Clear filters, and Turn off tasks for <project>.
  */
@@ -22,9 +23,11 @@ export interface TasksSidebarHeaderProps {
   onNewTask(): void;
   onSettings(): void;
   onTurnOff(): void;
+  /** Enter in the search field: opens the task a code (`#82`, `ppm/82`) names. */
+  onSubmitSearch?(): void;
 }
 
-export function TasksSidebarHeader({ project, enabled, filterFields, onNewTask, onSettings, onTurnOff }: TasksSidebarHeaderProps) {
+export function TasksSidebarHeader({ project, enabled, filterFields, onNewTask, onSettings, onTurnOff, onSubmitSearch }: TasksSidebarHeaderProps) {
   const { searchOpen, query, setSearchOpen, setQuery, setFilters, clearFilters } = useTaskViewStore();
   return (
     <div className="sticky top-0 z-10 bg-panel">
@@ -63,8 +66,8 @@ export function TasksSidebarHeader({ project, enabled, filterFields, onNewTask, 
       {searchOpen && (
         <div className="relative px-2.5 pb-1.5">
           <Search aria-hidden className="pointer-events-none absolute left-5 top-2 size-3.5 text-text-3 max-md:top-[15px]" />
-          <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search titles and notes"
-            onKeyDown={(e) => { if (e.key === "Escape") setSearchOpen(false); }} aria-label="Search tasks"
+          <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search, or #12 to jump to a task"
+            onKeyDown={(e) => { if (e.key === "Escape") setSearchOpen(false); if (e.key === "Enter") { e.preventDefault(); onSubmitSearch?.(); } }} aria-label="Search tasks"
             className="h-8 max-md:h-11 max-md:text-base w-full rounded-md border border-border-soft bg-surface pl-7 pr-7 text-xs text-text outline-none placeholder:text-text-3 focus:border-ring" />
           {query && <button type="button" aria-label="Clear search" onClick={() => setQuery("")} className="absolute right-4 top-1.5 grid size-5 place-items-center rounded text-text-3 hover:text-text max-md:right-2.5 max-md:top-0 max-md:size-11"><X className="size-3" /></button>}
         </div>

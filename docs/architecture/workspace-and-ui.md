@@ -372,6 +372,20 @@ list. Task settings (`settings/task-project-settings-dialog.tsx`, a bottom sheet
 `md`) holds the switch, the check interval for handed-off work, statuses, members and custom
 fields; each change saves on its own and the server applies it all or nothing.
 
+**A task's code sits beside its title, everywhere.** The chats name tasks by code, so every place
+that shows a title shows the code too (`kit/task-code.tsx`, `taskCode` in
+`src/shared/ppm-tasks-refs.ts`): `#12` in a view of the task's own project, `ppm/12` where the view
+spans projects (All projects, the Assistant, Telegram) or belongs to another project. That covers the
+list rows (the code replaces the all-projects project chip), the task page's breadcrumb and title,
+the Working session block, child and parent tasks, the task tab's name ("#12 Fix login"), the
+manager chat's Tasks list, the composer's and the sent bubble's task chip, the long-press sheet and
+the Assistant's task cards; Telegram sets it as `<code>`. It is small, muted and monospace, never
+wraps and never shrinks, so a long title is cut first. A click on it copies the full code (`ppm/12`)
+with a "Copied" toast and does nothing else. Typing a code into the list's search (`#12`, `ppm/12`,
+`ppm/#12`, any case; bare digits stay a title search) shows that one task whatever the filters say
+and, on a desktop, opens it at once; Enter keeps its tab and also finds another project's task. The
+command palette puts the task a code names first (`command-palette-task-code.ts`).
+
 **The task tab** (tab type `task`, `task-tab.tsx`, address `/project/<project>/task/<id>`).
 Selecting a row opens the task in a *preview* tab, VS Code style (`task-tab-preview.ts`): italic
 title, replaced by the next selection, one per panel; editing the task or double-clicking the row
@@ -391,7 +405,7 @@ chip in its composer and sends nothing.
 **The task travels with Open chat.** A manager chat works on many tasks, so a message typed there
 says nothing about which one is meant. Open chat on a task (the working-session block, a row's
 session chip, the manager chat's Tasks chip, a handed-off task on an Assistant card) therefore leaves
-a removable chip "Task #N · title" in the opened chat's composer, kept in the tab's metadata
+a removable chip "#N title" (`ppm/N` in a chat of another project) in the opened chat's composer, kept in the tab's metadata
 (`pendingTaskRefs`, `src/web/lib/ppm-tasks/composer-task-chip.ts`) until the next message takes it.
 That message carries the task's **id only** (`taskRefs` on the chat socket); the server reads the
 task from the store, refuses a deleted one, one whose project has Tasks off, and one of another

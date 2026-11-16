@@ -38,29 +38,48 @@ describe("CardTaskChanges", () => {
   it("undoes exactly the change pressed, then shows it undone", async () => {
     serve(() => ({ status: 200, json: { ok: true, data: { task: taskDto(), managerPrompt: false } } }));
     view = await mount(<CardTaskChanges changes={CHANGES} />);
-    const buttons = [...document.querySelectorAll("[data-card-task-change] button")];
+    const buttons = [...document.querySelectorAll("[data-card-task-change] button:not([data-task-code])")];
     expect(buttons).toHaveLength(2);
     expect(document.querySelector('[data-card-task-change="settings"]')?.textContent).toContain("cannot be undone");
     await click(buttons[1]!);
     await settle();
     expect(posts).toEqual(["/api/tasks/history/12/undo"]);
     expect(document.querySelector('[data-card-task-change="12"]')?.getAttribute("data-undone")).toBe("true");
-    expect(document.querySelector('[data-card-task-change="11"] button')).not.toBeNull();
+    expect(document.querySelector('[data-card-task-change="11"] button:not([data-task-code])')).not.toBeNull();
   });
 
   it("stops offering an undo the server says was already made", async () => {
     serve(() => ({ status: 403, json: { ok: false, code: "forbidden", error: "This change was already undone" } }));
     view = await mount(<CardTaskChanges changes={CHANGES.slice(0, 1)} />);
-    await click(document.querySelector("[data-card-task-change] button"));
+    await click(document.querySelector("[data-card-task-change] button:not([data-task-code])"));
     await settle();
     expect(document.querySelector('[data-card-task-change="11"]')?.getAttribute("data-undone")).toBe("true");
   });
 });
 
 describe("CardHandedOffTasks", () => {
-  it("lists each task with its own Open chat", async () => {
-    view = await mount(<CardHandedOffTasks projectName="demo" tasks={[{ taskId: "t1", sessionId: "s1", ref: "demo/1" }, { taskId: "t2", sessionId: "s2", ref: "demo/2" }]} />);
+  it("lists each task with its code, its title when the card carries it, and its own Open chat", async () => {
+    view = await mount(<CardHandedOffTasks projectName="demo" tasks={[{ taskId: "t1", sessionId: "s1", ref: "demo/1", title: "Pay run" }, { taskId: "t2", sessionId: "s2", ref: "demo/2" }]} />);
     const items = [...document.querySelectorAll("[data-card-tasks] li")];
-    expect(items.map((li) => li.textContent)).toEqual(["demo/1Open chat", "demo/2Open chat"]);
+    expect(items.map((li) => li.textContent)).toEqual(["demo/1Pay runOpen chat", "demo/2Open chat"]);
+    expect([...document.querySelectorAll("[data-card-tasks] [data-task-code]")].map((e) => e.textContent)).toEqual(["demo/1", "demo/2"]);
+  });
+});
+
+describe("a change's code", () => {
+  it("is drawn as a code (spanning projects: project/N) ahead of the rest of the sentence", async () => {
+    serve(() => ({ status: 200, json: { ok: true, data: [] } }));
+    view = await mount(<CardTaskChanges changes={CHANGES} />);
+    expect(document.querySelector('[data-card-task-change="11"] [data-task-code]')?.textContent).toBe("demo/1");
+    expect(document.querySelector('[data-card-task-change="11"] p')?.textContent).toBe('demo/1"Pay run": closed');
+    // A settings change names no task: its summary is left as it is.
+    expect(document.querySelector('[data-card-task-change="settings"] [data-task-code]')).toBeNull();
+  });
+
+  it("splits only a summary that starts with its own code", async () => {
+    const { splitChangeSummary } = await import("../../../../src/web/components/assistant/cards/card-task-items");
+    expect(splitChangeSummary({ ref: "demo/1", summary: 'demo/1 "Pay run": closed' })).toEqual({ ref: "demo/1", rest: '"Pay run": closed' });
+    expect(splitChangeSummary({ ref: "demo/1", summary: "settings changed" })).toBeNull();
+    expect(splitChangeSummary({ ref: null, summary: "demo/1 x" })).toBeNull();
   });
 });

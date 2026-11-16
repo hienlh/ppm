@@ -1,7 +1,7 @@
 /**
  * The `task` tab: one task's page in the main area. It reads the task (kept current by the store),
  * the project's task settings, and whether the tab is still a preview; keeps the tab's title in
- * step with the task's; and renders the page for the viewport.
+ * step with the task's ("#12 Fix login"); and renders the page for the viewport.
  *
  * Below `md` the phone page draws the same props (`mobile/task-detail-mobile.tsx`).
  */
@@ -25,7 +25,7 @@ export function TaskTab({ metadata, tabId }: { metadata?: Record<string, unknown
   const active = useTabStore((s) => !!tabId && s.activeTabId === tabId);
   const DetailView: (p: TaskDetailViewProps) => React.ReactNode = useIsMobile() ? TaskDetailMobile : TaskDetailDesktop;
 
-  useEffect(() => { if (detail) syncTaskTabTitle(tabId, detail.task.title); }, [detail?.task.title, tabId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (detail) syncTaskTabTitle(tabId, detail.task); }, [detail?.task.title, detail?.task.number, detail?.task.project, tabId]); // eslint-disable-line react-hooks/exhaustive-deps
   // The list's selection follows the task shown in front.
   useEffect(() => { if (active && taskId) ppmTasksStore.getState().select(taskId); }, [active, taskId]);
 

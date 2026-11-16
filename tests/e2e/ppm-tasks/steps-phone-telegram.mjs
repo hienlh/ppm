@@ -5,10 +5,14 @@ import assert from "node:assert/strict";
 import { until } from "./tasks-kit.mjs";
 import { buttonsOf } from "../assistant-telegram/harness.mjs";
 
-/** Buttons in `sel` drawn smaller than 44 px (a hit area widened by an absolute ::after counts). */
+/**
+ * Buttons in `sel` drawn smaller than 44 px (a hit area widened by an absolute ::after counts). A
+ * task's code (`#12` beside a title) is not held to 44 px: it is text in its title's line, and
+ * steps-task-codes.mjs checks it at that size (one line tall, never padded) at 1440 and 390.
+ */
 function smallTargets(page, sel) {
   return page.evaluate((s) => [...document.querySelectorAll(`${s} button, ${s} [role=button]`)].filter((b) => {
-    if (b.tabIndex < 0) return false;
+    if (b.tabIndex < 0 || b.hasAttribute("data-task-code")) return false;
     const r = b.getBoundingClientRect();
     if (!r.width || !r.height) return false;
     const after = getComputedStyle(b, "::after");

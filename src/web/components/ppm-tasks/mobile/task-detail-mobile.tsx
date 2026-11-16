@@ -26,6 +26,7 @@ import { useTaskWrite } from "../use-task-write";
 import { TaskDetailMobileDetails } from "./task-detail-mobile-details";
 import { TaskFieldEditorSheet, type TaskSheetKind } from "./task-field-editor-sheet";
 import { changeTaskStatus } from "./task-status-change";
+import { TaskCode } from "../kit/task-code";
 
 const NO_PROJECTS: never[] = [];
 const AWAY_NOTICE_MS = 24 * 3_600_000;
@@ -59,8 +60,11 @@ export function TaskDetailMobile({ detail, settings }: TaskDetailViewProps) {
       <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border-soft bg-panel px-1">
         <button type="button" aria-label="Back to tasks" onClick={() => revealTaskInSidebar(task, { openList: true })}
           className="grid size-11 place-items-center rounded-full text-text-2 active:bg-surface-hover"><ArrowLeft className="size-5" /></button>
-        <span className="max-w-[45%] truncate rounded bg-surface px-1.5 text-[13px] font-medium text-text">{task.project}</span>
-        <span className="shrink-0 font-mono text-xs text-text-3">· {task.number}</span>
+        <span data-task-code-pair="" className="flex min-w-0 max-w-[60%] items-baseline gap-1">
+          <span data-task-code-title="" className="min-w-0 truncate rounded bg-surface px-1.5 text-[13px] font-medium text-text">{task.project}</span>
+          <span aria-hidden className="shrink-0 text-xs text-text-3">/</span>
+          <TaskCode task={task} viewProject={task.project} className="text-[13px]" />
+        </span>
         <span className="flex-1" />
         <button type="button" aria-label="Task actions" onClick={() => setSheet("more")}
           className="grid size-11 place-items-center rounded-full text-text-2 active:bg-surface-hover"><MoreHorizontal className="size-5" /></button>

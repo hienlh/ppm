@@ -61,7 +61,7 @@ export function TaskListMobile(p: TaskListViewProps) {
           </div>
         </section>
       ))}
-      <TaskRowActionSheet task={pressed} statuses={pressed ? p.settings[pressed.project]?.statuses : undefined}
+      <TaskRowActionSheet task={pressed} showProject={p.showProject} statuses={pressed ? p.settings[pressed.project]?.statuses : undefined}
         neighbours={cellNeighbours(p.groups, pressed)} hasManager={!!(pressed && managerOf(pressed.project, managers))}
         onClose={() => setPressedId(null)}
         onStatus={(t, id) => changeTaskStatus(write, t, id, p.settings[t.project]?.statuses)}

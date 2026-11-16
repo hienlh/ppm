@@ -24,6 +24,7 @@ import { seedDemo } from "./ppm-tasks/tasks-seed.mjs";
 import { DESKTOP_STEPS } from "./ppm-tasks/steps-desktop.mjs";
 import { CHECK_STEPS } from "./ppm-tasks/steps-checks.mjs";
 import { PHONE_STEPS } from "./ppm-tasks/steps-phone-telegram.mjs";
+import { CODE_STEPS } from "./ppm-tasks/steps-task-codes.mjs";
 import { cutVideo } from "./ppm-tasks/video-cut.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-tasks-e2e-"));
@@ -85,7 +86,9 @@ try {
   const s = await seedDemo(kit, dirs);
   await kit.openDesktop();
 
-  const steps = [...DESKTOP_STEPS, ...CHECK_STEPS, ...PHONE_STEPS];
+  // PPM_TASKS_ONLY=codes runs the task-code steps alone, on the seeded data (a quick re-check).
+  const only = process.env.PPM_TASKS_ONLY;
+  const steps = only === "codes" ? CODE_STEPS : [...DESKTOP_STEPS, ...CHECK_STEPS, ...PHONE_STEPS, ...CODE_STEPS];
   for (const step of steps) {
     try {
       await step.run(kit, s);

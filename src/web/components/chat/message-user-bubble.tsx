@@ -119,7 +119,7 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
       {/* Drawn from the message's own block: no request, and the same size on every render. */}
       {turnRefs && prompt && <TurnRefChipRow refs={turnRefs} currentProject={projectName} />}
       {/* The task PPM attached (the chat was opened from it, or the task was picked on Telegram). */}
-      {taskRefs && prompt && <TaskRefChipRow refs={taskRefs} />}
+      {taskRefs && prompt && <TaskRefChipRow refs={taskRefs} currentProject={projectName} />}
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
 

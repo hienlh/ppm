@@ -13,10 +13,13 @@ import { copyTaskLink } from "@/lib/ppm-tasks/open-task-tab";
 import { URGENCIES, type Urgency } from "../../../../shared/ppm-tasks";
 import type { TaskDto, TaskProjectSettings } from "../../../../shared/ppm-tasks-api";
 import { TaskStatusGrid } from "./task-status-grid";
+import { TaskCode } from "../kit/task-code";
 
 export interface TaskRowActionSheetProps {
   /** The pressed task; null keeps the sheet closed. */
   task: TaskDto | null;
+  /** The list spans projects: the header's code names the project (`ppm/12`). */
+  showProject?: boolean;
   statuses: TaskProjectSettings["statuses"] | undefined;
   /** The rows above and below in the task's own cell (the only places Reorder can move it). */
   neighbours: { up: TaskDto | null; down: TaskDto | null };
@@ -51,7 +54,10 @@ export function TaskRowActionSheet(p: TaskRowActionSheetProps) {
     <BottomSheet open={!!task} onClose={p.onClose} className="flex max-h-[88%] flex-col">
       {task && (
         <div role="dialog" aria-label={`Actions for ${task.title}`} data-task-action-sheet={task.id} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-2">
-          <p className="truncate px-1 pb-2 text-sm font-medium text-text">{task.title}</p>
+          <p data-task-code-pair="" className="flex min-w-0 items-baseline gap-1.5 px-1 pb-2 text-sm font-medium text-text">
+            <TaskCode task={task} viewProject={p.showProject ? null : task.project} className="text-[12.5px]" />
+            <span data-task-code-title="" className="min-w-0 flex-1 truncate">{task.title}</span>
+          </p>
           <TaskStatusGrid project={task.project} statuses={p.statuses ?? []} currentId={task.statusId}
             onPick={(id) => act((t) => p.onStatus(t, id))} />
           <div className="my-2 h-px bg-border-soft" />

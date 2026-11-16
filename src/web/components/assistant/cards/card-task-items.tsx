@@ -1,7 +1,7 @@
 /**
  * The task rows two "Waiting on you" cards carry:
  * - the handed-off work card (a chat stalled, or finished without reporting, and the manager could
- *   not be woken): each task with "Open chat" on the chat working on it;
+ *   not be woken): each task's code and title with "Open chat" on the chat working on it;
  * - "PPM Assistant made N task changes while you were away": each change with a real Undo, which
  *   undoes that history row exactly as Undo in the task's History does.
  * Opening a chat goes through the card's usual window (`openManagerChat`), under the chat's own
@@ -15,6 +15,9 @@ import { offerTaskManagerPrompt } from "@/components/ppm-tasks/task-manager-prom
 import type { AssistantCardPayload } from "../../../../shared/assistant-cards";
 import { attachTaskChip, type ComposerTaskChip } from "@/lib/ppm-tasks/composer-task-chip";
 import { openManagerChat } from "../open-manager-chat";
+import { cn } from "@/lib/utils";
+import { TASK_CODE_CLASS, TaskCode } from "@/components/ppm-tasks/kit/task-code";
+import { parseTaskRef } from "../../../../shared/ppm-tasks-refs";
 
 /** A row action: never full width (the card's own buttons are on a phone), 44px tall below md. */
 function RowButton({ children, onClick, disabled, title }: { children: React.ReactNode; onClick(): void; disabled?: boolean; title?: string }) {
@@ -56,7 +59,10 @@ export function CardHandedOffTasks({ projectName, tasks }: { projectName: string
     <ul className="space-y-1.5" data-card-tasks="">
       {tasks.map((t) => (
         <li key={`${t.taskId}:${t.sessionId}`} className="flex items-center gap-2 rounded-md border border-border bg-panel-2 px-2.5 py-1.5">
-          <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-text-primary">{t.ref}</span>
+          <span className="flex min-w-0 flex-1 items-baseline gap-1.5" data-card-task-ref={t.ref} data-task-code-pair="">
+            <TaskCodeText code={t.ref} />
+            {t.title && <span data-task-code-title="" className="min-w-0 flex-1 truncate text-[13px] text-text-primary">{t.title}</span>}
+          </span>
           <RowButton disabled={!projectName} title={`Open the chat working on ${t.ref}`}
             onClick={() => { if (projectName) void openHandedOffChat(projectName, t); }}>
             <ExternalLink className="size-3.5" />Open chat
@@ -67,8 +73,25 @@ export function CardHandedOffTasks({ projectName, tasks }: { projectName: string
   );
 }
 
+/**
+ * A change's summary starts with its task's code (`ppm/12 "Title": closed`): the code is drawn as
+ * one, the rest as the sentence. Null when the summary does not start with it (a settings change).
+ */
+export function splitChangeSummary(change: Pick<Change, "ref" | "summary">): { ref: string; rest: string } | null {
+  if (!change.ref || !change.summary.startsWith(change.ref)) return null;
+  return { ref: change.ref, rest: change.summary.slice(change.ref.length).trimStart() };
+}
+
+/** A task's full code (the card spans projects) in the task-code style, a click copying it. */
+export function TaskCodeText({ code, className }: { code: string; className?: string }) {
+  const parsed = parseTaskRef(code);
+  if (!parsed?.project) return <span className={cn(TASK_CODE_CLASS, "cursor-text", className)}>{code}</span>;
+  return <TaskCode task={{ number: parsed.number, project: parsed.project }} viewProject={null} className={cn("text-[12px]", className)} />;
+}
+
 function ChangeRow({ change }: { change: Change }) {
   const [state, setState] = useState<"idle" | "busy" | "undone">("idle");
+  const code = splitChangeSummary(change);
   const undo = async () => {
     if (change.historyId === null) return;
     setState("busy");
@@ -87,7 +110,9 @@ function ChangeRow({ change }: { change: Change }) {
   };
   return (
     <li className="flex items-start gap-2 py-1.5" data-card-task-change={change.historyId ?? "settings"} data-undone={state === "undone" || undefined}>
-      <p className={`min-w-0 flex-1 break-words text-[13px] ${state === "undone" ? "text-text-subtle line-through" : "text-text-secondary"}`}>{change.summary}</p>
+      <p className={`min-w-0 flex-1 break-words text-[13px] ${state === "undone" ? "text-text-subtle line-through" : "text-text-secondary"}`}>
+        {code ? <span data-task-code-pair=""><TaskCodeText code={code.ref} className="mr-1" /><span data-task-code-title="">{code.rest}</span></span> : change.summary}
+      </p>
       {change.historyId === null ? (
         <span className="shrink-0 text-xs text-text-subtle">settings · cannot be undone</span>
       ) : state === "undone" ? (

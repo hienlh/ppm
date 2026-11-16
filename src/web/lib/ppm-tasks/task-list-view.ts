@@ -6,15 +6,21 @@
  */
 import { cellKey } from "../../../shared/ppm-tasks-order";
 import { URGENCIES, type Urgency } from "../../../shared/ppm-tasks";
+import { matchesTaskCode, parseTaskCodeQuery } from "../../../shared/ppm-tasks-refs";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
 import type { TaskListQuery } from "./ppm-tasks-client";
 import { orderTasks } from "./ppm-tasks-list-logic";
 import type { TaskScope, TaskViewFilters } from "@/stores/ppm-tasks-view-store";
 
-/** The server query for a scope and the filters (closed tasks always come, for child progress). */
+/**
+ * The server query for a scope and the filters (closed tasks always come, for child progress).
+ * A search that is a task code (`#82`, `ppm/82`) asks for the whole scope, filters left out: the
+ * code names one task, which `visibleTasks` then picks whatever the filters say.
+ */
 export function listQueryFor(scope: TaskScope, project: string | null, f: TaskViewFilters, q: string): TaskListQuery | null {
   const name = scope === "all" ? "all" : project;
   if (!name) return null;
+  if (parseTaskCodeQuery(q)) return { project: name, closed: true };
   return {
     project: name,
     ...(f.groups.length ? { groups: f.groups } : {}),
@@ -35,8 +41,14 @@ export function countingQueryFor(scope: TaskScope, project: string | null): Task
   return listQueryFor(scope, project, { groups: [], types: [], person: null, tag: null, field: null }, "");
 }
 
-/** What the list shows: the server's answer less closed tasks (unless asked), hidden projects and a field filter. */
-export function visibleTasks(tasks: readonly TaskDto[], f: TaskViewFilters, hiddenProjects: readonly string[], scope: TaskScope): TaskDto[] {
+/**
+ * What the list shows: the server's answer less closed tasks (unless asked), hidden projects and a
+ * field filter. A search that is a task code shows the task it names and nothing else, closed or
+ * not: the code was typed to find that one task.
+ */
+export function visibleTasks(tasks: readonly TaskDto[], f: TaskViewFilters, hiddenProjects: readonly string[], scope: TaskScope, q = ""): TaskDto[] {
+  const code = parseTaskCodeQuery(q);
+  if (code) return tasks.filter((t) => t.deletedAt === null && matchesTaskCode(t, code));
   const closedAsked = f.groups.includes("closed");
   return tasks.filter((t) => {
     if (t.baseGroup === "closed" && !closedAsked) return false;

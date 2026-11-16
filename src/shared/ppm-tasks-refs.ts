@@ -21,6 +21,29 @@ export function formatTaskRef(number: number, project?: string | null): string {
   return project ? `${project}/${number}` : `#${number}`;
 }
 
+/**
+ * The code a view shows next to a task's title: `#12` inside a view of the task's own project,
+ * `ppm/12` in a view that spans projects (`viewProject` null) or belongs to another project.
+ */
+export function taskCode(task: { number: number; project: string }, viewProject: string | null): string {
+  return viewProject !== null && viewProject === task.project ? formatTaskRef(task.number) : formatTaskRef(task.number, task.project);
+}
+
+/**
+ * A search box's text read as a task code: `#82`, `ppm/82` or `ppm/#82`, any case. Bare digits are
+ * not a code here (they search titles, where "2026" or "404" are words), nor is anything else.
+ */
+export function parseTaskCodeQuery(input: string): ParsedTaskRef | null {
+  const s = input.trim();
+  if (!s.startsWith("#") && !s.includes("/")) return null;
+  return parseTaskRef(s);
+}
+
+/** Whether a task is the one a parsed code names; the project compares without case. */
+export function matchesTaskCode(task: { number: number; project: string }, code: ParsedTaskRef): boolean {
+  return task.number === code.number && (code.project === null || code.project.toLowerCase() === task.project.toLowerCase());
+}
+
 const JIRA_KEY = /^[A-Z][A-Z0-9]{0,19}-\d{1,9}$/;
 
 /** A Jira key such as `NX-6318`, upper-cased; null when it is not one. */

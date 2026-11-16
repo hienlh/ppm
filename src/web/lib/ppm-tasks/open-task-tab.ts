@@ -11,18 +11,30 @@ import { usePanelStore } from "@/stores/panel-store";
 import { openSessionAnywhere } from "@/lib/open-session-anywhere";
 import { attachTaskChip, taskChipOf } from "./composer-task-chip";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
+import { taskCode } from "../../../shared/ppm-tasks-refs";
 
 export interface TaskTabTarget {
   id: string;
   project: string;
   title: string;
+  /** The task's number, when the caller has it: the tab then reads "#12 Fix login" at once. */
+  number?: number;
+}
+
+/**
+ * A task tab's name: its code, then its title ("#12 Fix login"; "ppm/12 Fix login" in a panel of
+ * another project). The code comes first, so the tab's ellipsis only ever cuts the title.
+ */
+export function taskTabTitle(task: { number: number; project: string; title: string }, tabProject: string | null): string {
+  return `${taskCode(task, tabProject)} ${task.title}`;
 }
 
 export function openTaskTab(task: TaskTabTarget, opts: { keep?: boolean } = {}): string {
+  const projectId = usePanelStore.getState().currentProject ?? task.project;
   return usePanelStore.getState().openTab({
     type: "task",
-    title: task.title,
-    projectId: usePanelStore.getState().currentProject ?? task.project,
+    title: task.number !== undefined ? taskTabTitle({ number: task.number, project: task.project, title: task.title }, projectId) : task.title,
+    projectId,
     closable: true,
     metadata: { taskId: task.id, projectName: task.project, ...(opts.keep ? {} : { preview: true }) },
   });
@@ -30,12 +42,14 @@ export function openTaskTab(task: TaskTabTarget, opts: { keep?: boolean } = {}):
 
 export { keepTaskTab } from "./keep-task-tab";
 
-/** Keeps the title of an open task tab in step with the task. */
-export function syncTaskTabTitle(tabId: string | undefined, title: string): void {
+/** Keeps the name of an open task tab in step with the task's code and title. */
+export function syncTaskTabTitle(tabId: string | undefined, task: { number: number; project: string; title: string }): void {
   if (!tabId) return;
   const store = usePanelStore.getState();
   const tab = Object.values(store.panels).flatMap((p) => p.tabs).find((t) => t.id === tabId);
-  if (tab && tab.title !== title) store.updateTab(tabId, { title });
+  if (!tab) return;
+  const title = taskTabTitle(task, tab.projectId ?? null);
+  if (tab.title !== title) store.updateTab(tabId, { title });
 }
 
 /**

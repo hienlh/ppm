@@ -19,6 +19,7 @@ import {
   enabledTaskProjects, openChildren, showableTask, taskDetail, taskFacts, taskProjectName, todayYmd, type Deck,
 } from "./assistant-telegram-tasks-deck.ts";
 import { buttonText } from "./assistant-telegram-task-common.ts";
+import { formatTaskRef } from "../../shared/ppm-tasks-refs.ts";
 import { MESSAGE_ABOUT_TASK_LABEL } from "./assistant-telegram-task-message.ts";
 
 export type KeyMaker = (text: string, press: Omit<TaskPress, "kind" | "ref">) => InlineKeyboardButton;
@@ -74,7 +75,8 @@ export function drawDeck(deck: Deck, key: KeyMaker, now: number): { html: string
   }
   if (view.kind === "children") {
     const task = showableTask(view.taskId);
-    return { html: childrenHtml(task?.title ?? "this task", openChildren(view.taskId)), rows: [[key("‹ Back", { op: "back" })]] };
+    const parent = task ? { ref: formatTaskRef(task.number, taskProjectName(task.projectKey)), title: task.title } : { ref: null, title: "this task" };
+    return { html: childrenHtml(parent, openChildren(view.taskId)), rows: [[key("‹ Back", { op: "back" })]] };
   }
   const name = deck.projectKey ? taskProjectName(deck.projectKey) : null;
   return { html: deckEmptyHtml(name, view.finished), rows: [...undoRow, ...filterRows(deck, key)] };

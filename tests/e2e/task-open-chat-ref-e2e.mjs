@@ -19,6 +19,7 @@ import { buttonsOf, fixtureApi, phone, startChild } from "./assistant-telegram/h
 import { tasksKit, until } from "./ppm-tasks/tasks-kit.mjs";
 import { seedDemo } from "./ppm-tasks/tasks-seed.mjs";
 import { telegramFrame } from "./ppm-tasks/steps-phone-telegram.mjs";
+import { assertCodesOnBaseline, assertHeights, ICON_HEIGHT, TEXT_HEIGHT } from "./ppm-tasks/steps-task-codes.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-task-chat-ref-"));
 const shotsDir = resolve(process.env.PPM_TASKS_SHOTS ?? join(sandbox, "shots"));
@@ -71,7 +72,10 @@ async function desktop(k, s) {
   await block.getByRole("button", { name: "Open chat" }).click();
   const chip = page.locator("[data-composer-task-refs] [data-task-chip]:visible").first();
   await chip.waitFor({ timeout: 30000 });
-  assert.match(await chip.innerText(), new RegExp(`Task #${s.t.login.number} · ${s.t.login.title}`));
+  assert.match(await chip.innerText(), new RegExp(`#${s.t.login.number}\\s*${s.t.login.title}`));
+  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "composer chip"), 1, "the chip's code sits on its title's baseline");
+  await assertHeights(page, "[data-composer-task-refs] [data-task-chip]", TEXT_HEIGHT(false), "composer chip");
+  await assertHeights(page, "[data-composer-task-refs] [data-task-chip-remove]", ICON_HEIGHT(false), "composer chip's remove button");
   await k.shot("01-desktop-chip-in-composer");
 
   const typed = "Is this one still blocked on QA?";
@@ -79,7 +83,9 @@ async function desktop(k, s) {
   await page.locator(COMPOSER).first().press("Enter");
   const bubbleChip = page.locator("[data-user-message] [data-task-ref]:visible").first();
   await bubbleChip.waitFor({ timeout: 30000 });
-  assert.match(await bubbleChip.innerText(), new RegExp(`Task #${s.t.login.number}`));
+  assert.match(await bubbleChip.innerText(), new RegExp(`#${s.t.login.number}\\b`));
+  assert.equal(await assertCodesOnBaseline(page, "[data-user-message]", "sent chip"), 1, "the sent chip's code sits on its title's baseline");
+  await assertHeights(page, "[data-user-message] [data-task-ref]", TEXT_HEIGHT(false), "sent chip");
   assert.equal(await page.locator("[data-composer-task-refs]:visible").count(), 0, "the chip left the composer");
   const msg = await entered(k, s.managers.alpha, typed);
   assert.match(msg.text, /<ppm-taskref-v1>/);
@@ -112,9 +118,11 @@ async function phoneFlow(k, s) {
   await open.tap();
   const chip = page.locator("[data-composer-task-refs] [data-task-chip]:visible").first();
   await chip.waitFor({ timeout: 30000 });
-  assert.match(await chip.innerText(), new RegExp(`Task #${s.t.release.number}`));
-  const box = await chip.boundingBox();
-  assert(box && box.height >= 43.5, `the chip is a 44 px target on a phone: ${JSON.stringify(box)}`);
+  assert.match(await chip.innerText(), new RegExp(`#${s.t.release.number}\\b`));
+  // The chip row's phone size (docs/design-guidelines.md rule 3), not a 44 px target.
+  await assertHeights(page, "[data-composer-task-refs] [data-task-chip]", TEXT_HEIGHT(true), "phone composer chip");
+  await assertHeights(page, "[data-composer-task-refs] [data-task-chip-remove]", ICON_HEIGHT(true), "phone composer chip's remove button");
+  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "phone composer chip"), 1);
   await k.shot("04-phone-390-chip-in-composer");
 
   const typed = "Can staging take this tonight?";
@@ -123,8 +131,9 @@ async function phoneFlow(k, s) {
   await page.locator("[data-user-message] [data-task-ref]:visible").first().waitFor({ timeout: 30000 });
   const msg = await entered(k, s.managers.alpha, typed);
   assert(msg.text.includes(`task_id ${s.t.release.id}`));
+  await assertHeights(page, "[data-user-message] [data-task-ref]", TEXT_HEIGHT(true), "phone sent chip");
   await k.shot("05-phone-390-sent-with-task-chip");
-  record("phone", "390 px: Open chat → 44 px chip → sent with the task's block");
+  record("phone", "390 px: Open chat → 26 px chip (22 px remove) → sent with the task's block in a 26 px chip");
 }
 
 async function telegram(k, s) {

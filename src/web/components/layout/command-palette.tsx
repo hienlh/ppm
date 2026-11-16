@@ -25,6 +25,7 @@ import { NewDesignDialogHost, useDesignCommands } from "./command-palette-design
 import { useDbPaletteCommands } from "./command-palette-db-commands";
 import { paletteItemFromCommand, type CommandItem } from "./command-palette-items";
 import { PathModeHeader, PathResultRow } from "./command-palette-path-results";
+import { useTaskCodeCommands } from "./command-palette-task-code";
 
 /** Max results to display — prevents rendering thousands of matches */
 const MAX_RESULTS = 100;
@@ -332,11 +333,15 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     return counts;
   }, [filtered]);
 
+  // A task code (`#82`, `ppm/82`) puts that task first, so Enter opens it.
+  const { items: taskCodeItems, pending: taskCodePending } = useTaskCodeCommands(query, activeProject?.name ?? null, onClose);
+
   // Final display list — apply group filters as post-process
   const displayItems = useMemo(() => {
-    if (activeFilters.size === 0) return filtered;
-    return filtered.filter((cmd) => activeFilters.has(cmd.group));
-  }, [filtered, activeFilters]);
+    const items = taskCodeItems.length ? [...taskCodeItems, ...filtered] : filtered;
+    if (activeFilters.size === 0) return items;
+    return items.filter((cmd) => activeFilters.has(cmd.group));
+  }, [taskCodeItems, filtered, activeFilters]);
 
   const toggleFilter = useCallback((group: string) => {
     setActiveFilters((prev) => {
@@ -407,6 +412,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         break;
       case "Enter":
         e.preventDefault();
+        if (taskCodePending) break;
         if (len > 0) {
           displayItems[selectedIdx]?.action();
         } else if (query.trim()) {
