@@ -386,9 +386,8 @@ with a "Copied" toast and does nothing else. Typing a code into the list's searc
 and, on a desktop, opens it at once; Enter keeps its tab and also finds another project's task. The
 command palette puts the task a code names first (`command-palette-task-code.ts`).
 
-**Where a task opens.** Every way to open a task — a list row, a task chip in a chat or the
-composer, the manager chat's Tasks list, the palette, a child or linked task on a task's page — goes
-through `openTask` (`src/web/lib/ppm-tasks/open-task.ts`; the rules are the pure `planTaskOpen` in
+**Where a task opens.** Every way to open a task — a list row, the palette, a child or linked task
+on a task's page, the quick view's Open in window (below) — goes through `openTask` (`src/web/lib/ppm-tasks/open-task.ts`; the rules are the pure `planTaskOpen` in
 `task-open-plan.ts`). On a desktop the task opens in a floating `tab-host` window that is its home
 (closing the window closes the task), so the tab the user was working in stays as it was. One
 window per task: opening a task that already has a window, or that the user turned into a tab,
@@ -455,10 +454,29 @@ while the user was away) and keeps the status button and Done (Reopen once close
 **The manager chat's Tasks chip** (`chip/`, mounted by `chat-tab.tsx`). Only a project's manager
 chat, and only while that project has Tasks on, shows "<n> tasks · <k> now" in its context row, with
 a red dot while something is at Now; a narrow chat keeps the count and icon. It opens the project's
-"what to do first" list as a popover above the row, or a bottom sheet on a phone; a row opens the
-task's tab and reveals it in the sidebar section (`reveal-task-in-sidebar.ts`). In a manager chat
+"what to do first" list as a popover above the row, or a bottom sheet on a phone. Only "Show in
+sidebar" at its foot touches the sidebar (`reveal-task-in-sidebar.ts`). In a manager chat
 the activity chip gives up its place to this one when the chat is narrow, except while a linked
 session needs the user.
+
+**The task quick view** (`peek/`). A row of that list, and a task chip in the composer or on a sent
+message (`chat/task-ref-chip.tsx`), show the task without leaving the chat: its code and title, the
+fields a glance ends in changing — status, urgency, importance, assignee, waiting on, due, next step —
+and **Open chat** (the working chat, with the task as a chip) plus the task's full page. The fields
+are the task page's own (`task-property-fields.tsx`, shared with the properties panel) and every
+write goes through `useTaskWrite`; selects save on change, the due date and the next step when left,
+and also when the view closes or moves to another task with something unsaved in them (browsers send
+no blur to a removed field). On a desktop it is a popover portalled to the opener's document
+(`task-peek-popover.tsx`), placed by the pure `placeTaskPeek` (`src/web/lib/ppm-tasks/task-peek-placement.ts`):
+beside the list (right, else left, else below or above; a chip tries above first), smaller on a side
+with some room before it would cover the list, and never off screen. The list stays open: another row
+moves the view to that task, a click on the row already shown hides it, Escape closes the view and
+only the next Escape the list (`task-peek-state.ts`; the list's popover leaves a press and the first
+Escape alone while a `role=dialog` with `data-state=open` is on the page), and a press outside both
+closes both. Open in window calls `openTask` and nothing else. Below `md` no second sheet is stacked:
+the list's own sheet turns into the task's page, with a back button to the list and **Full screen**
+(`openTaskFullScreen`); a chip there opens the same page in a bottom sheet. The buttons follow the
+chip row's sizes (28 / 26 px with text, 24 / 22 px icon). Checked by `tests/e2e/task-peek-e2e.mjs`.
 
 **`?openTask=<id>`** on a project address (Telegram's *Open in PPM* on a task card) opens that
 task's tab once the project is open, then removes the parameter so a reload does not open it again
