@@ -48,7 +48,7 @@ export const realForwardEnv: ForwardEnv = {
   now: () => assistantClock.now(),
   managerTarget: managerTargetOf,
   deliverUserWords: async (input) => (await import("../../server/ws/chat-user-words.ts")).deliverUserWords(input),
-  async sendToAssistant(text, card) {
+  async sendToAssistant(text, card, images) {
     const main = mainSessionId();
     const control = chatControl();
     if (!main || !control) return { ok: false, error: "There is no main Assistant session to send it to." };
@@ -58,6 +58,7 @@ export const realForwardEnv: ForwardEnv = {
     const result = await control.sendUserMessage(main, text, {
       origin: "telegram", channel: "telegram", projectName: ASSISTANT_PROJECT_NAME, providerId,
       ...(replyTo ? { replyTo } : {}),
+      ...(images?.length ? { images: images.map((i) => ({ data: i.data, mediaType: i.mediaType })) } : {}),
     });
     return result.ok ? { ok: true } : { ok: false, error: result.error };
   },

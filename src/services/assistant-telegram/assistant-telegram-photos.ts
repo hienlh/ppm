@@ -21,6 +21,29 @@ export function pickPhotoSize(sizes: readonly TelegramPhotoSize[]): TelegramPhot
   return fitting.reduce((best, s) => (s.width * s.height > best.width * best.height ? s : best));
 }
 
+/**
+ * The photos of one message or album, at most `max` of them, in order: what was fetched, why each
+ * photo that was not failed, and how many were left out over the limit. Never throws: a network
+ * error is one more failure to tell the user about.
+ */
+export async function fetchPhotos(
+  client: TelegramBotClient, photos: ReadonlyArray<readonly TelegramPhotoSize[]>, max: number,
+): Promise<{ images: Array<{ data: string; mediaType: string }>; failures: string[]; dropped: number }> {
+  const images: Array<{ data: string; mediaType: string }> = [];
+  const failures: string[] = [];
+  for (const sizes of photos.slice(0, max)) {
+    let result: PhotoResult;
+    try {
+      result = await fetchPhoto(client, sizes);
+    } catch {
+      result = { ok: false, reason: "The photo could not be downloaded." };
+    }
+    if (result.ok) images.push(result.image);
+    else failures.push(result.reason);
+  }
+  return { images, failures, dropped: Math.max(0, photos.length - max) };
+}
+
 export async function fetchPhoto(client: TelegramBotClient, sizes: readonly TelegramPhotoSize[]): Promise<PhotoResult> {
   const size = pickPhotoSize(sizes);
   if (!size) return { ok: false, reason: "The photo is larger than 5 MB." };

@@ -12,6 +12,7 @@ import { defuseUserWordsHeader, type UserWordsReference } from "../../shared/use
 import type { TaskReference } from "../../shared/chat-task-ref.ts";
 import { neutralizePpmTags } from "../../services/assistant-watch/watch-event-text.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
+import type { ReplyImage } from "../../services/assistant-cards/card-reply-images.ts";
 import { getSessionDesignSlug, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import { isAssistantSession } from "../../services/assistant/assistant-session.ts";
 import { chatLifecycle } from "../../services/chat-control/chat-lifecycle.ts";
@@ -25,8 +26,14 @@ export interface DeliverUserWordsInput {
   providerId: string;
   projectName: string;
   projectPath: string;
-  /** What the user typed, exactly; "OK" for an OK. */
+  /** What the user typed, exactly; "OK" for an OK. May be empty when `images` carries the reply. */
   text: string;
+  /**
+   * Images sent with a reply, each already checked and written by the server under a name it
+   * chose (`card-reply-images.ts`): the payload goes to Claude, the file to Codex, and a marker
+   * naming the file opens the message so the chat draws it as the composer's images are drawn.
+   */
+  images?: readonly ReplyImage[];
   userWords: UserWordsReference;
   /**
    * The task the words are about (a Telegram message sent to a task's chat), read from the task
@@ -60,21 +67,43 @@ const CARD_CLIENT_ID_RE = /^card-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}
 /** A leading `/` would run as a slash command the user never typed into that chat. */
 const defuseCommand = (text: string): string => (text.trimStart().startsWith("/") ? `${String.fromCharCode(0x200b)}${text}` : text);
 
+/**
+ * Text that opens with something shaped like an attachment marker would be drawn, and read by the
+ * model, as an image PPM attached; a zero-width space in front keeps it the user's own text.
+ */
+const defuseAttachmentMarker = (text: string): string => (/^\s*\[Attached (?:image|file)/.test(text) ? `${String.fromCharCode(0x200b)}${text}` : text);
+
+/** The marker the composer writes for an image whose payload rides along with the message. */
+const inlineImageMarker = (path: string): string => `[Attached image (contents included in this message): ${path}]`;
+
+/**
+ * The stored message: one marker per image (built by the server from the paths it wrote, after
+ * the text was neutralized, so the text can neither forge nor alter them), then the user's words,
+ * then the user-words block — the only block that decodes.
+ */
+export function userWordsContent(input: Pick<DeliverUserWordsInput, "text" | "images" | "userWords" | "taskRefs" | "projectName">): string {
+  // Pasted text (an email, a log) may carry a loose PPM-looking tag or a copy of the user-words
+  // header: both are defused, so the one block PPM builds below is the only one there.
+  const words = defuseCommand(defuseAttachmentMarker(defuseUserWordsHeader(neutralizePpmTags(input.text))));
+  const markers = (input.images ?? []).map((img) => inlineImageMarker(img.path));
+  const body = markers.length ? `${markers.join("\n\n")}\n\n${words}` : words;
+  return encodeMessageBlocks(body, { userWords: input.userWords, taskRefs: input.taskRefs ?? null, ownProject: input.projectName || undefined });
+}
+
 /** For the log: the card the words answer, or the task they are about. */
 const wordsFrom = (input: DeliverUserWordsInput): string =>
   input.userWords.cardId ? `from card ${input.userWords.cardId}` : input.taskRefs?.length ? `about task ${input.taskRefs[0]!.ref}` : "(no card)";
 
 export async function deliverUserWords(input: DeliverUserWordsInput): Promise<DeliverUserWordsResult> {
-  if (!input.text.trim()) return { ok: false, error: "The message is empty" };
+  const images = input.images ?? [];
+  if (!input.text.trim() && !images.length) return { ok: false, error: "The message is empty" };
   const target = resolveMigratedSession(input.targetSessionId);
   if (isAssistantSession(target)) return { ok: false, error: "A PPM Assistant session takes the user's words from its own chat" };
   if (getSessionDesignSlug(target)) return { ok: false, error: "A design chat does not take forwarded words" };
   const stored = getSessionProvider(target);
   if (stored && stored !== input.providerId) return { ok: false, error: `That chat runs on ${stored}, not ${input.providerId}` };
 
-  // Pasted text (an email, a log) may carry a loose PPM-looking tag or a copy of the user-words
-  // header: both are defused, so the one block PPM builds below is the only one there.
-  const content = encodeMessageBlocks(defuseCommand(defuseUserWordsHeader(neutralizePpmTags(input.text))), { userWords: input.userWords, taskRefs: input.taskRefs ?? null, ownProject: input.projectName || undefined });
+  const content = userWordsContent(input);
   const clientMessageId = input.clientMessageId && CARD_CLIENT_ID_RE.test(input.clientMessageId)
     ? input.clientMessageId : `card-${crypto.randomUUID()}`;
   return withSessionLock(target, async () => {
@@ -92,6 +121,11 @@ export async function deliverUserWords(input: DeliverUserWordsInput): Promise<De
       receivedAt: Date.now(),
       supersedePendingApproval: input.supersede,
       echoOnHandOff: true,
+      // As the composer sends them: the payloads for Claude, the files for Codex.
+      ...(images.length ? {
+        images: images.map(({ data, mediaType }) => ({ data, mediaType })),
+        imagePaths: images.map((img) => img.path),
+      } : {}),
     });
     if (!result.ok) {
       entry.turnOrigin = previousOrigin;
@@ -101,7 +135,7 @@ export async function deliverUserWords(input: DeliverUserWordsInput): Promise<De
     }
     log.info(`session=${target} the user's words ${wordsFrom(input)} ${result.delivered} (${input.userWords.channel})`);
     chatLifecycle.emit("user_message", {
-      sessionId: target, text: content, origin: "session", imageCount: 0,
+      sessionId: target, text: content, origin: "session", imageCount: images.length,
       projectName: entry.projectName ?? input.projectName, providerId: entry.providerId,
     });
     return { ok: true, content, sessionId: target, delivered: result.delivered, clientMessageId };

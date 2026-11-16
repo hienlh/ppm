@@ -20,7 +20,7 @@ import { checkAccess, refusalText } from "./assistant-telegram-access.ts";
 import { BindingError, ensureBoundSession } from "./assistant-telegram-binding.ts";
 import { parseCommand, quietStatusHtml, runCommand } from "./assistant-telegram-commands.ts";
 import { setQuietWhileInPpm } from "./assistant-telegram-silence.ts";
-import { fetchPhoto } from "./assistant-telegram-photos.ts";
+import { fetchPhoto, fetchPhotos } from "./assistant-telegram-photos.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 import type { BridgeAction, ManagerCardPress, TaskPress } from "./assistant-telegram-actions.ts";
@@ -38,10 +38,21 @@ const log = createLogger("assistant-telegram");
 export const BACKLOG_AGE_MS = 10 * 60_000;
 const MAX_IMAGES = 5;
 const MAX_PENDING_BACKLOG = 50;
+/**
+ * How long an album replying to a card waits for its next photo. Telegram sends each photo of an
+ * album as its own update, close together; the reply is sent once, with all of them.
+ */
+export const CARD_ALBUM_DEBOUNCE_MS = 1200;
+/** What a photo-only reply to a card sent while PPM was off is told: such a reply is not kept. */
+export const BACKLOG_PHOTO_ONLY_NOTE = "A photo sent while PPM was off cannot answer a card. Send it again as a reply to the card.";
+/** Said beside the backlog question when such a reply also had words: only they are kept. */
+export const BACKLOG_PHOTO_DROPPED_NOTE = "The photo sent with it while PPM was off is not kept; only the words can be sent. Send the photo again as a reply to the card if it matters.";
 
 type Image = { data: string; mediaType: string };
 /** `quote`: what the user replied to, said once for the whole burst (see `message`). */
 interface Gathered { updateIds: number[]; parts: string[]; images: Image[]; quote: TelegramQuote | null }
+/** An album replying to a card, gathered until its last photo has arrived. */
+interface CardAlbum { groupId: string; replyTo: number; updateIds: number[]; messages: TelegramMessage[]; timer: ReturnType<typeof setTimeout> | null }
 
 export interface InboundDeps {
   client: TelegramBotClient;
@@ -79,9 +90,11 @@ export interface InboundDeps {
   /** The session the chat talks to now, for telling this conversation's answers from another's. */
   boundSessionOf?: (chatId: string) => string | null;
   now?: () => number;
+  /** How long an album replying to a card waits for its next photo; {@link CARD_ALBUM_DEBOUNCE_MS} by default. */
+  albumDebounceMs?: () => number;
 }
 
-interface ChatLane { chain: Promise<void>; gathered: Gathered | null; timer: ReturnType<typeof setTimeout> | null }
+interface ChatLane { chain: Promise<void>; gathered: Gathered | null; timer: ReturnType<typeof setTimeout> | null; album: CardAlbum | null }
 
 export class AssistantTelegramInbound {
   private readonly lanes = new Map<string, ChatLane>();
@@ -105,7 +118,7 @@ export class AssistantTelegramInbound {
     for (let i = 0; i < 50; i++) {
       const pending = [...this.lanes.values()];
       await Promise.all(pending.map((l) => l.chain));
-      if ([...this.lanes.values()].every((l) => !l.gathered && !l.timer)) return;
+      if ([...this.lanes.values()].every((l) => !l.gathered && !l.timer && !l.album)) return;
       await Bun.sleep(10);
     }
   }
@@ -119,8 +132,9 @@ export class AssistantTelegramInbound {
   forgetChat(chatId: string): void {
     const lane = this.lanes.get(chatId);
     if (lane?.timer) clearTimeout(lane.timer);
-    for (const id of lane?.gathered?.updateIds ?? []) this.deps.delivered(id);
-    if (lane) { lane.gathered = null; lane.timer = null; }
+    if (lane?.album?.timer) clearTimeout(lane.album.timer);
+    for (const id of [...lane?.gathered?.updateIds ?? [], ...lane?.album?.updateIds ?? []]) this.deps.delivered(id);
+    if (lane) { lane.gathered = null; lane.timer = null; lane.album = null; }
     for (const [id, b] of this.backlog) if (b.chatId === chatId) this.backlog.delete(id);
     this.forgetRefusals(chatId);
   }
@@ -130,7 +144,7 @@ export class AssistantTelegramInbound {
   }
 
   private onLane(chatId: string, work: () => Promise<void>): void {
-    const lane = this.lanes.get(chatId) ?? { chain: Promise.resolve(), gathered: null, timer: null };
+    const lane = this.lanes.get(chatId) ?? { chain: Promise.resolve(), gathered: null, timer: null, album: null };
     this.lanes.set(chatId, lane);
     const chain = lane.chain.then(work).catch((e) => log.warn(`Telegram chat ${chatId}: ${(e as Error)?.message ?? e}`));
     lane.chain = chain;
@@ -139,7 +153,7 @@ export class AssistantTelegramInbound {
     // Nothing queued after this work and nothing gathered means the next update starts a fresh
     // lane, and order still holds because this one has finished.
     void chain.then(() => {
-      if (lane.chain === chain && !lane.gathered && !lane.timer && this.lanes.get(chatId) === lane) this.lanes.delete(chatId);
+      if (lane.chain === chain && !lane.gathered && !lane.timer && !lane.album && this.lanes.get(chatId) === lane) this.lanes.delete(chatId);
     });
   }
 
@@ -150,6 +164,7 @@ export class AssistantTelegramInbound {
   private async handle(chatId: string, update: TelegramUpdate): Promise<void> {
     try {
       if (update.callback_query) {
+        await this.flushAlbum(chatId);
         await this.flush(chatId);
         await this.press(chatId, update.callback_query);
       } else if (update.message) {
@@ -185,6 +200,16 @@ export class AssistantTelegramInbound {
     // Allowed again (reconnected): a later refusal is worth saying once more.
     this.forgetRefusals(chatId);
 
+    // The next photo of an album replying to a card joins it; anything else sends that album first.
+    const album = this.lanes.get(chatId)?.album;
+    if (album && message.media_group_id === album.groupId) {
+      album.updateIds.push(updateId);
+      album.messages.push(message);
+      this.armAlbum(chatId, album);
+      return true;
+    }
+    if (album) await this.flushAlbum(chatId);
+
     // Text a forward or an inline bot wrote is someone else's, whoever Telegram names as sender.
     const from = forwardedFrom(message) ?? viaInlineBot(message);
     // A forwarded "/stop" is someone else's text, not the owner's command.
@@ -206,16 +231,16 @@ export class AssistantTelegramInbound {
     // into a gathered message. One sent while PPM was off is asked about first, like any other.
     const repliedTo = message.reply_to_message?.message_id;
     if (repliedTo !== undefined && this.deps.replyToCard && this.deps.isCardMessage?.(chatId, repliedTo)) {
-      const card: CardReplyMessage = {
-        text, replyToMessageId: repliedTo, messageId: message.message_id, notTheUsers: !!from || !!message.via_bot,
-      };
       await this.flush(chatId);
-      if (this.now() - message.date * 1000 > BACKLOG_AGE_MS) {
-        // Quoted too: when Run comes, the card may no longer take replies and the words go to the Assistant.
-        this.askAboutBacklog(chatId, message.date, from ? wrapForwarded(from, text) : text, [], updateId, card, this.quoteOf(chatId, message));
-        return false;
+      if (message.media_group_id && message.photo?.length) {
+        // The first photo of an album: the rest arrive as updates of their own, and the reply goes
+        // once with all of them.
+        const lane = this.lanes.get(chatId)!;
+        lane.album = { groupId: message.media_group_id, replyTo: repliedTo, updateIds: [updateId], messages: [message], timer: null };
+        this.armAlbum(chatId, lane.album);
+        return true;
       }
-      if (await this.deps.replyToCard(chatId, card)) return false;
+      if ((await this.answerCard(chatId, [message], repliedTo, updateId)).handled) return false;
     }
 
     // A reply to a task card, or the message after "Message about this task", goes to the chat
@@ -266,6 +291,73 @@ export class AssistantTelegramInbound {
       this.onLane(chatId, () => this.flush(chatId));
     }, Math.max(0, this.deps.debounceMs()));
     return true;
+  }
+
+  /**
+   * A reply to a card (one message, or every photo of an album) with its photos fetched. `handled`
+   * is true when the card took it or the user was told why not; otherwise the card could not be
+   * found after all, and the caller sends the words, with `images`, to the Assistant.
+   */
+  private async answerCard(
+    chatId: string, messages: readonly TelegramMessage[], repliedTo: number, updateId: number,
+  ): Promise<{ handled: boolean; text: string; images: Image[] }> {
+    const first = messages[0]!;
+    const from = forwardedFrom(first) ?? viaInlineBot(first);
+    const text = messages.map((m) => m.text ?? m.caption ?? "").filter((t) => t.trim()).join("\n\n");
+    const photos = messages.flatMap((m) => (m.photo?.length ? [m.photo] : []));
+    const card: CardReplyMessage = {
+      text, replyToMessageId: repliedTo, messageId: first.message_id, notTheUsers: !!from || !!first.via_bot,
+    };
+    if (this.now() - first.date * 1000 > BACKLOG_AGE_MS) {
+      // A backlog reply is asked about with its words only: its photos are not held for hours.
+      if (photos.length && !text.trim()) {
+        this.reply(chatId, BACKLOG_PHOTO_ONLY_NOTE);
+        return { handled: true, text, images: [] };
+      }
+      if (photos.length) this.reply(chatId, BACKLOG_PHOTO_DROPPED_NOTE);
+      // Quoted too: when Run comes, the card may no longer take replies and the words go to the Assistant.
+      this.askAboutBacklog(chatId, first.date, from ? wrapForwarded(from, text) : text, [], updateId, card, this.quoteOf(chatId, first));
+      return { handled: true, text, images: [] };
+    }
+    let images: Image[] = [];
+    // A forwarded photo is refused along with its words, so it is not downloaded first.
+    if (photos.length && !card.notTheUsers) {
+      const fetched = await fetchPhotos(this.deps.client, photos, MAX_IMAGES);
+      images = fetched.images;
+      for (const reason of fetched.failures) this.reply(chatId, `⚠️ ${escapeTelegramHtml(reason)}`);
+      if (fetched.dropped) this.reply(chatId, `Only the first ${MAX_IMAGES} photos were sent.`);
+      // Nothing left to send: the user was told why, and an empty reply is never sent.
+      if (!text.trim() && !images.length) return { handled: true, text, images };
+      if (images.length) card.images = images;
+    }
+    return { handled: await this.deps.replyToCard!(chatId, card), text, images };
+  }
+
+  /** (Re)starts the wait for an album's next photo; a timer outliving its album does nothing. */
+  private armAlbum(chatId: string, album: CardAlbum): void {
+    if (album.timer) clearTimeout(album.timer);
+    album.timer = setTimeout(() => {
+      album.timer = null;
+      this.onLane(chatId, async () => {
+        if (this.lanes.get(chatId)?.album === album) await this.flushAlbum(chatId);
+      });
+    }, Math.max(0, this.deps.albumDebounceMs?.() ?? CARD_ALBUM_DEBOUNCE_MS));
+  }
+
+  /** Sends a gathered album as one reply to its card. Runs on the chat's lane. */
+  private async flushAlbum(chatId: string): Promise<void> {
+    const lane = this.lanes.get(chatId);
+    const album = lane?.album;
+    if (!lane || !album) return;
+    lane.album = null;
+    if (album.timer) { clearTimeout(album.timer); album.timer = null; }
+    try {
+      const messages = [...album.messages].sort((a, b) => a.message_id - b.message_id);
+      const answered = await this.answerCard(chatId, messages, album.replyTo, album.updateIds[0]!);
+      if (!answered.handled) await this.deliver(chatId, answered.text, answered.images, this.quoteOf(chatId, messages[0]!));
+    } finally {
+      for (const id of album.updateIds) this.deps.delivered(id);
+    }
   }
 
   /** What the message replies to, quoted for the Assistant; null when it replies to nothing. */

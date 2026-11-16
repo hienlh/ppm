@@ -19,6 +19,11 @@ import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 
 const MAX_PENDING = 50;
 /**
+ * The base64 the "send anyway?" questions may hold between them (~45 MB of images): fifty waiting
+ * replies of five photos each would otherwise keep over a gigabyte in memory. The oldest go first.
+ */
+const MAX_PENDING_IMAGE_CHARS = 60_000_000;
+/**
  * The manager's answer to the reply comes back here — under the card (`assistant-telegram-card-followups.ts`),
  * or, when the manager answers with a new card, as that card under the user's own message
  * (`assistant-telegram-manager-cards.ts`) — if there is one: a turn with no text, a stopped turn's
@@ -38,8 +43,12 @@ export interface CardRepliesDeps {
   findCard?: typeof findCardByTelegramRef;
 }
 
+type Image = { data: string; mediaType: string };
+
 export interface CardReplyMessage {
   text: string;
+  /** The photos sent with the reply, already fetched from Telegram (at most five). */
+  images?: Image[];
   replyToMessageId: number;
   /** The user's message itself. */
   messageId?: number;
@@ -48,7 +57,7 @@ export interface CardReplyMessage {
 }
 
 export class AssistantTelegramCardReplies {
-  private readonly pending = new Map<string, { chatId: string; cardId: string; text: string; messageId?: number }>();
+  private readonly pending = new Map<string, { chatId: string; cardId: string; text: string; images: Image[]; messageId?: number }>();
 
   constructor(private readonly deps: CardRepliesDeps) {}
 
@@ -76,19 +85,28 @@ export class AssistantTelegramCardReplies {
       this.deps.reply(chatId, "A forwarded message cannot answer a card. Reply to the card with your own words.");
       return true;
     }
-    if (!m.text.trim()) {
-      this.deps.reply(chatId, "To answer a card, reply to it with text.");
+    const images = m.images ?? [];
+    if (!m.text.trim() && !images.length) {
+      this.deps.reply(chatId, "To answer a card, reply to it with text or a photo.");
       return true;
     }
     this.answer(
       chatId, row.id,
-      await (this.deps.replyTo ?? replyToCard)(row.id, { text: m.text }, this.actor(chatId, m.replyToMessageId, m.messageId)),
-      m.text, m.messageId,
+      await (this.deps.replyTo ?? replyToCard)(row.id, { text: m.text, ...(images.length ? { images } : {}) }, this.actor(chatId, m.replyToMessageId, m.messageId)),
+      m.text, images, m.messageId,
     );
     return true;
   }
 
-  private answer(chatId: string, cardId: string, result: CardReplyResult, text: string, messageId?: number): void {
+  /** Drops the oldest questions until both the count and the images they hold fit. */
+  private makeRoom(incomingChars: number): void {
+    const held = () => [...this.pending.values()].reduce((n, p) => n + p.images.reduce((m, i) => m + i.data.length, 0), 0);
+    while (this.pending.size && (this.pending.size >= MAX_PENDING || held() + incomingChars > MAX_PENDING_IMAGE_CHARS)) {
+      this.pending.delete(this.pending.keys().next().value!);
+    }
+  }
+
+  private answer(chatId: string, cardId: string, result: CardReplyResult, text: string, images: Image[], messageId?: number): void {
     if (result.ok) {
       this.deps.reply(chatId, result.to === "manager"
         ? `Sent to the <b>${escapeTelegramHtml(result.projectName ?? "project")}</b> manager, word for word. ${ANSWER_FOLLOWS}`
@@ -96,9 +114,10 @@ export class AssistantTelegramCardReplies {
       return;
     }
     if (result.error === "confirm" && result.question) {
-      while (this.pending.size >= MAX_PENDING) this.pending.delete(this.pending.keys().next().value!);
+      this.makeRoom(images.reduce((n, i) => n + i.data.length, 0));
       const pendingId = crypto.randomUUID();
-      this.pending.set(pendingId, { chatId, cardId, text, ...(messageId ? { messageId } : {}) });
+      // The photos are kept with the words: "Send anyway" sends the reply as it was written.
+      this.pending.set(pendingId, { chatId, cardId, text, images, ...(messageId ? { messageId } : {}) });
       const code = this.deps.codes.mint(chatId, `anyway:${pendingId}`, { kind: "mcard", cardId, op: "send_anyway", pendingId });
       this.deps.reply(chatId, escapeTelegramHtml(result.question), { inline_keyboard: [[{ text: "Send anyway", callback_data: code }]] });
       return;
@@ -126,9 +145,10 @@ export class AssistantTelegramCardReplies {
       if (!waiting || waiting.chatId !== chatId || waiting.cardId !== press.cardId) return "This button is no longer valid.";
       this.pending.delete(press.pendingId!);
       const result = await (this.deps.replyTo ?? replyToCard)(
-        press.cardId, { text: waiting.text, force: true }, this.actor(chatId, undefined, waiting.messageId),
+        press.cardId, { text: waiting.text, force: true, ...(waiting.images.length ? { images: waiting.images } : {}) },
+        this.actor(chatId, undefined, waiting.messageId),
       );
-      this.answer(chatId, press.cardId, result, waiting.text, waiting.messageId);
+      this.answer(chatId, press.cardId, result, waiting.text, waiting.images, waiting.messageId);
       return result.ok ? "Sent." : "Not sent.";
     }
     if (!press.rulesHash || !press.projectName) return "This button is no longer valid.";

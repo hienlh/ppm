@@ -18,6 +18,8 @@ import type { TaskFollowupContext } from "./task-words-followup.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import type { DeliverUserWordsInput, DeliverUserWordsResult } from "../../server/ws/chat-user-words.ts";
 import type { FollowupHandle, FollowupOrigin } from "./card-reply-followup-tracker.ts";
+import { writeReplyImages, type ReplyImage, type ValidReplyImage } from "./card-reply-images.ts";
+import { unlinkSync } from "node:fs";
 
 export interface ForwardTarget {
   sessionId: string;
@@ -49,6 +51,8 @@ export interface ForwardHow {
   supersede: boolean;
   /** The manager's answer to these words goes back here once its turn ends (a reply, not an OK). */
   followUp?: FollowupOrigin;
+  /** Images sent with a reply, already checked (`validateReplyImages`); written to disk only here. */
+  images?: readonly ValidReplyImage[];
 }
 
 export interface ForwardEnv {
@@ -59,7 +63,7 @@ export interface ForwardEnv {
    * An ordinary message from the user to the main Assistant session, typed on Telegram; `card` is
    * the card it replies to, quoted after the words.
    */
-  sendToAssistant(text: string, card?: AssistantCard): Promise<{ ok: true } | { ok: false; error: string }>;
+  sendToAssistant(text: string, card?: AssistantCard, images?: ReadonlyArray<{ data: string; mediaType: string }>): Promise<{ ok: true } | { ok: false; error: string }>;
   /** The user wrote to this chat: its pair counts start again. */
   userWrote(sessionId: string): void;
   mainSession(): string | null;
@@ -69,6 +73,19 @@ export interface ForwardEnv {
   expectFollowup?(input: { cardId: string; clientMessageId: string; origin: FollowupOrigin; sessionId: string }): FollowupHandle;
   /** Likewise for words about a task, whose answer goes back under the user's own message. */
   expectTaskFollowup?(input: { clientMessageId: string; sessionId: string; context: TaskFollowupContext }): FollowupHandle;
+  /** Writes a reply's images where the manager chat can read them; PPM's uploads folder by default. */
+  writeImages?(images: readonly ValidReplyImage[]): ReplyImage[];
+  /** Removes images written for words that never went out; nothing refers to them. */
+  discardImages?(paths: readonly string[]): void;
+}
+
+function discardWritten(env: ForwardEnv, written: readonly ReplyImage[]): void {
+  if (!written.length) return;
+  const paths = written.map((w) => w.path);
+  if (env.discardImages) return env.discardImages(paths);
+  for (const p of paths) {
+    try { unlinkSync(p); } catch { /* already gone */ }
+  }
 }
 
 export type ForwardResult =
@@ -98,7 +115,8 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
   if (!repliesToManager(card)) {
     if (actor.channel !== "telegram") return { ok: false, error: "This card has no manager chat: write to the Assistant instead." };
     const project = card.projectName ? ` for ${card.projectName}` : "";
-    const sent = await env.sendToAssistant(`(My reply to the ${kindName(card)} card${project}.)\n\n${text}`, card);
+    const images = how.images?.map(({ data, mediaType }) => ({ data, mediaType }));
+    const sent = await env.sendToAssistant(`(My reply to the ${kindName(card)} card${project}.)\n\n${text}`, card, images?.length ? images : undefined);
     return sent.ok ? { ok: true, to: "assistant" } : sent;
   }
   const target = env.managerTarget(card);
@@ -109,6 +127,16 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
     ...(how.ok && how.draftSha256 ? { draftSha256: how.draftSha256, ...(how.draftTo ? { draftTo: how.draftTo } : {}) } : {}),
     ...(!how.ok && how.choice ? { choice: how.choice } : {}),
   };
+  // Written only now, with every check passed and the chat found: a reply that goes nowhere leaves
+  // no file behind, and one whose send fails below has its files removed again.
+  let written: ReplyImage[] = [];
+  if (how.images?.length) {
+    try {
+      written = (env.writeImages ?? writeReplyImages)(how.images);
+    } catch (e) {
+      return { ok: false, error: `the images could not be saved (${(e as Error).message || "write failed"})` };
+    }
+  }
   // The id is chosen here, before the send, so the turn it opens can be followed even when the
   // provider names that turn before the send returns.
   const clientMessageId = `card-${crypto.randomUUID()}`;
@@ -120,14 +148,17 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
     delivered = await env.deliverUserWords({
       targetSessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName,
       projectPath: target.projectPath, text, userWords, supersede: how.supersede, clientMessageId,
+      ...(written.length ? { images: written } : {}),
     });
   } catch (e) {
     // A send that threw delivered nothing: a reply left followed would wait 12 hours for a turn.
     following?.abandon();
+    discardWritten(env, written);
     throw e;
   }
   if (!delivered.ok) {
     following?.abandon();
+    discardWritten(env, written);
     return delivered;
   }
   following?.attach(delivered.delivered);
@@ -135,6 +166,7 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
   env.trace(delivered.sessionId, target.providerId, {
     cardId: card.id, channel: actor.channel, ok: how.ok === true,
     ...(how.choice ? { choice: how.choice.id } : {}),
+    ...(written.length ? { imageCount: written.length } : {}),
     ...(actor.deviceId ? { deviceId: actor.deviceId } : {}),
     ...(actor.fetchSite ? { fetchSite: actor.fetchSite } : {}),
     ...(actor.telegramChatId ? { telegramChatId: actor.telegramChatId } : {}),

@@ -27,6 +27,7 @@ import { cardOkOffered } from "./card-ok-rule.ts";
 import { forwardUserWords, repliesToManager, type CardActor, type ForwardHow, type ForwardResult } from "./forward-verbatim.ts";
 import { realForwardEnv } from "./forward-verbatim-env.ts";
 import { cardDelivery } from "./card-delivery.ts";
+import { validateReplyImages } from "./card-reply-images.ts";
 import type { FollowupOrigin } from "./card-reply-followup-tracker.ts";
 
 export type CardReplyResult =
@@ -206,9 +207,17 @@ export async function chooseCardOption(id: string, body: unknown, actor: CardAct
   }, deps);
 }
 
+/**
+ * The user's reply to a card: words, images, or both (`{ text, images?, force? }`). Images are
+ * checked whole here, before the card is touched; they are written to disk only by the forward,
+ * right before the words leave, so a refused reply leaves nothing behind.
+ */
 export async function replyToCard(id: string, body: unknown, actor: CardActor, deps: CardReplyDeps = realDeps): Promise<CardReplyResult> {
   const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-  if (typeof b.text !== "string" || !b.text.trim()) return { ok: false, status: 400, error: "text is required" };
+  if (typeof b.text !== "string") return { ok: false, status: 400, error: "text is required" };
+  const images = validateReplyImages(b.images);
+  if (!images.ok) return { ok: false, status: 400, error: images.error };
+  if (!b.text.trim() && !images.images.length) return { ok: false, status: 400, error: "text is required" };
   if (b.text.length > CARD_REPLY_MAX_CHARS) return { ok: false, status: 400, error: `A reply may be at most ${CARD_REPLY_MAX_CHARS} characters` };
   if (b.force !== undefined && typeof b.force !== "boolean") return { ok: false, status: 400, error: "force must be true or false" };
   const card = deps.cards.get(id);
@@ -232,7 +241,9 @@ export async function replyToCard(id: string, body: unknown, actor: CardActor, d
   }
   const supersede = answered && (card.kind === "approval" || card.kind === "question");
   const followUp = followupOrigin(actor);
-  const forwarded = await deps.forward(card, b.text, { actor, supersede, ...(followUp ? { followUp } : {}) });
+  const forwarded = await deps.forward(card, b.text, {
+    actor, supersede, ...(followUp ? { followUp } : {}), ...(images.images.length ? { images: images.images } : {}),
+  });
   if (!forwarded.ok) {
     if (answered) deps.cards.reopen(id);
     return { ok: false, status: 502, error: `Not sent: ${forwarded.error}` };
