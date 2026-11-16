@@ -6,9 +6,9 @@
  * never stops the cards after it.
  *
  * A reply to a card older than a day is asked about on the server ("send anyway?"). The review
- * step shows that before anything leaves, so "Send all" confirms it — but only while the card still
- * waits: a reply forced onto a card someone answered meanwhile would reach the manager as a second
- * answer. A single send asks in the card instead.
+ * step shows that before anything leaves, so "Send all" confirms it; a single send asks in the card
+ * instead. Either way the confirmation is `confirmAge`, which the server honours only while the
+ * card still waits: a card someone answered meanwhile is refused, never answered twice.
  */
 import type { AssistantCard } from "../../../shared/assistant-cards";
 import type { DecisionAnswer, ReplyImage } from "./decision-set-model";
@@ -16,7 +16,8 @@ import type { DecisionAnswer, ReplyImage } from "./decision-set-model";
 export interface DecisionSendApi {
   ok(cardId: string, draftSha256: string | null): Promise<{ card: AssistantCard }>;
   choose(cardId: string, optionId: string): Promise<{ card: AssistantCard }>;
-  reply(cardId: string, text: string, force: boolean, images: readonly ReplyImage[]): Promise<{ card: AssistantCard }>;
+  /** `confirmAge`: the user confirmed the card's age (it must still wait). */
+  reply(cardId: string, text: string, confirmAge: boolean, images: readonly ReplyImage[]): Promise<{ card: AssistantCard }>;
   /** What a refused request said: the error, the question to ask, the card as it is now. */
   refusal(e: unknown): { error: string; question?: string; card?: AssistantCard };
 }
@@ -34,18 +35,18 @@ export type SendOutcome =
 const ELSEWHERE = "This card was already answered elsewhere.";
 const CHANGED = /not the one this OK was given for|not one of this card's choices|not shown in full/i;
 
-function call(card: AssistantCard, answer: DecisionAnswer, api: DecisionSendApi, force: boolean): Promise<{ card: AssistantCard }> {
+function call(card: AssistantCard, answer: DecisionAnswer, api: DecisionSendApi, confirmAge: boolean): Promise<{ card: AssistantCard }> {
   if (answer.kind === "ok") return api.ok(card.id, answer.draftSha256);
   if (answer.kind === "choose") return api.choose(card.id, answer.optionId);
-  return api.reply(card.id, answer.text, force, answer.images);
+  return api.reply(card.id, answer.text, confirmAge, answer.images);
 }
 
 /** Sends one card's answer and says how it went. Never throws. */
 export async function sendDecision(
-  card: AssistantCard, answer: DecisionAnswer, api: DecisionSendApi, opts: { force?: boolean; confirmStale?: boolean } = {},
+  card: AssistantCard, answer: DecisionAnswer, api: DecisionSendApi, opts: { confirmAge?: boolean; confirmStale?: boolean } = {},
 ): Promise<SendOutcome> {
   try {
-    return { status: "sent", card: (await call(card, answer, api, opts.force === true)).card };
+    return { status: "sent", card: (await call(card, answer, api, opts.confirmAge === true)).card };
   } catch (e) {
     const refusal = api.refusal(e);
     const now = refusal.card;
@@ -53,9 +54,9 @@ export async function sendDecision(
     if (refusal.error === "confirm") {
       // The question is about the card's age only while it still waits; otherwise it was answered.
       if (now && now.status !== "open") return { status: "elsewhere", message: refusal.question ?? ELSEWHERE, card: now };
-      // Forced only on the server's word that the card still waits: never on a guess.
-      if (opts.confirmStale && !opts.force && answer.kind === "reply" && now?.status === "open") {
-        return sendDecision(card, answer, api, { force: true });
+      // Asked again only on the server's word that the card still waits; the server checks again.
+      if (opts.confirmStale && !opts.confirmAge && answer.kind === "reply" && now?.status === "open") {
+        return sendDecision(card, answer, api, { confirmAge: true });
       }
       return { status: "confirm", question: refusal.question ?? "Send anyway?", ...(now ? { card: now } : {}) };
     }

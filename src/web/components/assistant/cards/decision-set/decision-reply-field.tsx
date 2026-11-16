@@ -11,6 +11,7 @@ import { Paperclip, X } from "@/lib/icons";
 import { cn, randomId } from "@/lib/utils";
 import { downscaleImage } from "@/lib/image-resize";
 import { MAX_REPLY_IMAGES, type ReplyImage } from "@/lib/decision-set/decision-set-model";
+import { INLINE_IMAGE_LIMITS } from "@/lib/image-resize-limits";
 import { QuestionOtherRow, questionInputClass, type QuestionTone } from "@/components/chat/question-form-parts";
 import { SET_ICON_BUTTON } from "./decision-set-buttons";
 
@@ -36,7 +37,10 @@ async function readPicture(file: File): Promise<ReplyImage | string> {
   // Unmeasured, it could be larger than the server takes: the composer sends such a file by path,
   // which a card reply does not do.
   if (scaled.kind === "asis") return `${file.name} could not be read. Try a PNG or JPEG.`;
-  return { id: randomId(), name: file.name || "pasted image", data: await toBase64(scaled.file), mediaType: scaled.file.type };
+  const data = await toBase64(scaled.file);
+  // The server's ceiling, the same as an image sent inline from the composer.
+  if (data.length > INLINE_IMAGE_LIMITS.maxBase64PerImage) return `${file.name} is too large even after scaling. Try a smaller picture.`;
+  return { id: randomId(), name: file.name || "pasted image", data, mediaType: scaled.file.type };
 }
 
 export function DecisionReplyField({ value, onChange, tone, focused, onFocus, inputRef, onKeyDown, placeholder, disabled }: {
@@ -55,13 +59,16 @@ export function DecisionReplyField({ value, onChange, tone, focused, onFocus, in
   // The latest value, for a picture that finishes reading after the user typed on.
   const latest = useRef(value);
   latest.current = value;
+  // Pictures still being read: two quick pastes must not make room for more than five together.
+  const reading = useRef(0);
 
   async function add(files: readonly File[]) {
     setError(null);
-    const room = MAX_REPLY_IMAGES - latest.current.images.length;
+    const room = MAX_REPLY_IMAGES - latest.current.images.length - reading.current;
     if (room <= 0) { setError(`At most ${MAX_REPLY_IMAGES} pictures in one reply.`); return; }
     const taken = files.slice(0, room);
-    const read = await Promise.all(taken.map(readPicture));
+    reading.current += taken.length;
+    const read = await Promise.all(taken.map(readPicture)).finally(() => { reading.current -= taken.length; });
     const images = read.filter((r): r is ReplyImage => typeof r !== "string");
     const problems = read.filter((r): r is string => typeof r === "string");
     if (files.length > room) problems.push(`Only ${MAX_REPLY_IMAGES} pictures fit in one reply.`);
@@ -125,7 +132,7 @@ export function DecisionReplyField({ value, onChange, tone, focused, onFocus, in
                   type="button"
                   onClick={() => onChange({ ...value, images: value.images.filter((i) => i.id !== img.id) })}
                   aria-label={`Remove ${img.name}`}
-                  className="absolute right-0.5 top-0.5 grid size-[18px] place-items-center rounded-full bg-black/70 text-white [&_svg]:size-3"
+                  className="absolute right-0.5 top-0.5 grid size-6 place-items-center rounded-full bg-black/70 text-white max-md:size-[22px] [&_svg]:size-3.5"
                 >
                   <X />
                 </button>

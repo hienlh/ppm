@@ -131,6 +131,8 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
       if (e.key === "Escape") (e.target as HTMLElement).blur();
       return;
     }
+    // While its answer is out, a card's pick stays as sent.
+    if (busy && (e.key === " " || (e.key >= "0" && e.key <= "9") || e.key === "o" || e.key === "O")) return;
     if (e.key === "ArrowLeft") { e.preventDefault(); set.go(-1); return; }
     if (e.key === "ArrowRight") { e.preventDefault(); set.go(1); return; }
     if (!rows) return;
@@ -143,7 +145,7 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
       return;
     }
     if (e.key === "o" || e.key === "O" || e.key === "0") { e.preventDefault(); setFocusedRow(rows - 1); replyRef.current?.focus(); }
-  }, [plan.length, set, rows, focusedRow, pickRow]);
+  }, [plan.length, set, rows, focusedRow, pickRow, busy]);
 
   const tabStrip = useMemo(() => tabs.map((tab, i) => {
     const answered = tab.kind === "waiting" && !!currentPick(tab.card, picks);
@@ -241,7 +243,8 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
               onDismiss={() => void dismiss()}
               busy={busy}
               notice={dismissError ?? notices[card.id]}
-              confirm={confirms[card.id]}
+              // "Send anyway" sends the pick; with none left there is nothing to confirm.
+              confirm={pick ? confirms[card.id] : undefined}
               onConfirm={() => pick && void set.sendOne(card, pick.answer, true)}
             />
           )}

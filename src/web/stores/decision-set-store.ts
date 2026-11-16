@@ -104,5 +104,9 @@ export function setOrder(order: string[]): void {
 
 /** Nothing waits any more: the set starts clean next time. */
 export function resetDecisionSet(): void {
+  // Already clean: no new state, so nothing subscribed runs again for it.
+  const s = useDecisionSetStore.getState();
+  const empty = (r: Record<string, unknown>) => Object.keys(r).length === 0;
+  if (empty(s.picks) && empty(s.notices) && empty(s.confirms) && empty(s.done) && empty(s.sending) && s.order.length === 0) return;
   useDecisionSetStore.setState(initial());
 }

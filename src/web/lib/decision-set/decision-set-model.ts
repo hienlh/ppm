@@ -8,6 +8,7 @@
  * screen from offering it in the first place.
  */
 import { STALE_REPLY_MS } from "../../../shared/assistant-limits";
+import { escapeHiddenCharacters } from "../../../shared/reveal-hidden-characters";
 import type { AssistantCard } from "../../../shared/assistant-cards";
 
 /** Most pictures one reply carries; the server refuses more. */
@@ -45,10 +46,16 @@ export interface DecisionTile {
 export const isDecisionCard = (card: Pick<AssistantCard, "kind">): boolean =>
   card.kind === "needs_decision" || card.kind === "urgent";
 
-/** What a pick depends on: a change to any of it takes the pick away. */
+/**
+ * What a pick depends on, and only that: the words the user read, the draft and who it goes to,
+ * the choices, and whether the server lets them be pressed. Not `updatedAt`: the server moves it
+ * for things the user never sees (the Telegram copy's state, a wake flag), and a pick taken back
+ * over those would wipe a typed reply for nothing.
+ */
 export function cardVersion(card: AssistantCard): string {
-  const options = (card.payload.options ?? []).map((o) => `${o.id}=${o.label}`).join(",");
-  return `${card.updatedAt}|${card.payload.draft?.sha256 ?? ""}|${options}|${card.okOffered === true ? 1 : 0}`;
+  const options = (card.payload.options ?? []).map((o) => [o.id, o.label, o.description ?? ""]);
+  const draft = card.payload.draft;
+  return JSON.stringify([card.title, card.body, draft ? [draft.sha256, draft.to] : null, options, card.okOffered === true]);
 }
 
 /**
@@ -67,7 +74,7 @@ export function decisionTiles(card: AssistantCard): DecisionTile[] {
   if (draft) {
     return [{
       key: "ok", label: "OK, send this draft",
-      description: `Sends the draft above to ${draft.to}, character for character.`,
+      description: `Sends the draft above to ${escapeHiddenCharacters(draft.to)}, character for character.`,
       answer: { kind: "ok", draftSha256: draft.sha256 }, draftSha256: draft.sha256,
     }];
   }
@@ -122,7 +129,7 @@ export function answerLabel(card: AssistantCard, answer: DecisionAnswer): string
     const label = card.payload.options?.find((o) => o.id === answer.optionId)?.label ?? answer.optionId;
     return `Chose “${label}”`;
   }
-  if (answer.kind === "ok") return card.payload.draft ? `OK — send the draft to ${card.payload.draft.to}` : "OK — go ahead";
+  if (answer.kind === "ok") return card.payload.draft ? `OK — send the draft to ${escapeHiddenCharacters(card.payload.draft.to)}` : "OK — go ahead";
   const pictures = answer.images.length ? ` + ${answer.images.length} picture${answer.images.length === 1 ? "" : "s"}` : "";
   const text = answer.text.trim();
   return text ? `Reply: “${text}”${pictures}` : `Reply with ${answer.images.length} picture${answer.images.length === 1 ? "" : "s"}`;

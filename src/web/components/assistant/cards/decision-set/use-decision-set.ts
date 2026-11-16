@@ -42,20 +42,25 @@ function takeCard(card: AssistantCard): void {
 function useDepartures(waiting: readonly AssistantCard[] | null): void {
   const seen = useRef<Map<string, AssistantCard> | null>(null);
   const history = useAssistantCardsStore((s) => s.cards);
+  const sending = useDecisionSetStore((s) => s.sending);
   useEffect(() => {
     if (!waiting) return;
     const now = new Map(waiting.map((c) => [c.id, c]));
     const before = seen.current;
     seen.current = now;
-    if (!before) return;
-    const { done } = useDecisionSetStore.getState();
-    for (const [id, card] of before) {
-      if (now.has(id) || done[id]) continue;
-      const latest = history?.find((c) => c.id === id) ?? card;
-      markDone({ card: latest, how: "elsewhere", note: latest.status === "open" ? "No longer waiting" : answerSummary(latest), at: Date.now() });
+    const { done, sending: inFlight } = useDecisionSetStore.getState();
+    if (before) {
+      for (const [id, card] of before) {
+        // A card being sent from here leaves the list before the answer comes back (the server
+        // marks it answered, then forwards): its own send says how it went, and keeps the pick
+        // if the forward fails and the card waits again.
+        if (now.has(id) || done[id] || inFlight[id]) continue;
+        const latest = history?.find((c) => c.id === id) ?? card;
+        markDone({ card: latest, how: "elsewhere", note: latest.status === "open" ? "No longer waiting" : answerSummary(latest), at: Date.now() });
+      }
     }
-    if (now.size === 0) resetDecisionSet();
-  }, [waiting, history]);
+    if (now.size === 0 && Object.keys(inFlight).length === 0) resetDecisionSet();
+  }, [waiting, history, sending]);
 }
 
 export function useDecisionSet(scope: (card: AssistantCard) => boolean) {
@@ -145,13 +150,15 @@ export function useDecisionSet(scope: (card: AssistantCard) => boolean) {
     }
   }, []);
 
-  const sendOne = useCallback(async (card: AssistantCard, answer: DecisionAnswer, force = false) => {
+  const sendOne = useCallback(async (card: AssistantCard, answer: DecisionAnswer, confirmAge = false) => {
+    // One send per card at a time: a second press while the first is out does nothing.
+    if (useDecisionSetStore.getState().sending[card.id]) return;
     // Held on this card's tab, so what the server says about it (answered elsewhere, a question)
     // is read where it was sent from.
     setActiveId(card.id);
     setSending(card.id, true);
     setConfirm(card.id, null);
-    const outcome = await sendDecision(card, answer, decisionSendApi, { force });
+    const outcome = await sendDecision(card, answer, decisionSendApi, { confirmAge });
     land(card, answer, outcome);
     if (outcome.status === "sent") {
       const next = nextWaiting(card.id);
@@ -162,10 +169,14 @@ export function useDecisionSet(scope: (card: AssistantCard) => boolean) {
   const plan = useMemo(() => sendPlan(waiting, picks), [waiting, picks]);
 
   const sendAll = useCallback(async () => {
-    const answers = new Map(plan.map((p) => [p.card.id, p.answer]));
-    for (const { card } of plan) setSending(card.id, true);
-    await sendAllDecisions(plan, decisionSendApi, (id, outcome) => {
-      const card = plan.find((p) => p.card.id === id)!.card;
+    // A second press (or a card's own send) must not send any of these twice.
+    const inFlight = useDecisionSetStore.getState().sending;
+    const todo = plan.filter((p) => !inFlight[p.card.id]);
+    if (!todo.length) return;
+    const answers = new Map(todo.map((p) => [p.card.id, p.answer]));
+    for (const { card } of todo) setSending(card.id, true);
+    await sendAllDecisions(todo, decisionSendApi, (id, outcome) => {
+      const card = todo.find((p) => p.card.id === id)!.card;
       land(card, answers.get(id)!, outcome);
     });
   }, [plan, land]);

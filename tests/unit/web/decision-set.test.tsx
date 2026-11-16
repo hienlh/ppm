@@ -35,6 +35,8 @@ const card = (over: Partial<Card> = {}, payload: Card["payload"] = {}): Card => 
 let openList: Card[] = [];
 let posts: Array<{ url: string; body: Record<string, unknown> }> = [];
 let refuse: Record<string, { status: number; error: string; question?: string; card?: Card }> = {};
+/** Runs while a card's answer is out, before the server answers (its card event arriving first). */
+let during: Record<string, () => Promise<void>> = {};
 let view: Mounted | null = null;
 const spies: Array<{ mockRestore(): void }> = [];
 
@@ -52,6 +54,7 @@ beforeEach(async () => {
   spies.push(spyOn(api, "post").mockImplementation((async (url: string, body: Record<string, unknown>) => {
     posts.push({ url, body });
     const id = url.split("/")[4]!;
+    await during[id]?.();
     const no = refuse[id];
     if (no) throw new ApiError(no.error, no.status, { ok: false, error: no.error, data: { ...(no.question ? { question: no.question } : {}), ...(no.card ? { card: no.card } : {}) } });
     const done = openList.find((c) => c.id === id)!;
@@ -62,7 +65,7 @@ afterEach(async () => {
   await view?.unmount();
   view = null;
   for (const s of spies.splice(0)) s.mockRestore();
-  posts = []; refuse = {}; openList = [];
+  posts = []; refuse = {}; during = {}; openList = [];
   // The waiting list is the app's, not the set's: a test must not inherit the last one's cards.
   await act(async () => { openStore.useOpenCardsStore.setState({ cards: null, focus: null }); });
   resetDecisionSet();
@@ -78,6 +81,14 @@ const shown = () => q("[data-decision-card] [data-card-title]")?.textContent ?? 
 const key = async (el: Element, k: string, init: KeyboardEventInit = {}) => {
   await act(async () => { el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init })); });
 };
+
+async function typeReply(text: string) {
+  const field = q("[data-decision-reply]") as HTMLTextAreaElement;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!.call(field, text);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
 
 async function open(cards: Card[]) {
   openList = cards;
@@ -158,6 +169,24 @@ describe("the set", () => {
     expect(q("[data-decision-done-note]")?.textContent).toBe("Already answered on Telegram at 21:16.");
   });
 
+  it("its own card leaving the list mid-send is not 'answered elsewhere'; a failed forward keeps the reply", async () => {
+    const a = card({ title: "First" });
+    const b = card({ title: "Second" });
+    await open([a, b]);
+    await typeReply("Ship it on Monday");
+    // The server marks the card answered (the event arrives) and then the forward fails: it reopens.
+    during[a.id] = async () => { openList = [b]; openStore.applyOpenCardResult({ ...a, status: "answered" }); };
+    refuse[a.id] = { status: 502, error: "Not sent: the manager chat cannot be found", card: { ...a, answer: { by: "user", channel: "ppm", at: Date.now(), note: "Your answer was not sent to the manager chat. Press it again, or reply." } } };
+    await click(q("[data-decision-send-one]"));
+    await tick();
+    openList = [a, b];
+    expect(q("[data-decision-done]")).toBeNull();
+    expect(shown()).toBe("First");
+    expect((q("[data-decision-reply]") as HTMLTextAreaElement).value).toBe("Ship it on Monday");
+    expect(q("[data-decision-notice]")?.textContent).toContain("Not sent");
+    expect(q("[data-decision-send-one]")?.hasAttribute("disabled")).toBe(false);
+  });
+
   it("a draft that changes after the OK was picked takes the pick back and says so", async () => {
     const d = card({ title: "Weekly status" }, { draft: { to: "#alpha-team", text: "v1", sha256: SHA } });
     await open([d]);
@@ -187,7 +216,8 @@ describe("the set", () => {
     delete refuse[old.id];
     await click(q("[data-decision-confirm] button"));
     await tick();
-    expect(posts.map((p) => p.body.force)).toEqual([undefined, true]);
+    // Its age is confirmed, never forced: a card answered meanwhile would still be refused.
+    expect(posts.map((p) => [p.body.force, p.body.confirmAge])).toEqual([[undefined, undefined], [undefined, true]]);
     expect(posts[1]!.body.text).toBe("Roll back please");
   });
 

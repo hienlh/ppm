@@ -7,6 +7,6 @@ import type { DecisionSendApi } from "@/lib/decision-set/decision-set-send";
 export const decisionSendApi: DecisionSendApi = {
   ok: (id, sha) => okAssistantCard(id, sha),
   choose: (id, optionId) => chooseAssistantCardOption(id, optionId),
-  reply: (id, text, force, images) => replyToAssistantCard(id, text, force, images),
+  reply: (id, text, confirmAge, images) => replyToAssistantCard(id, text, false, images, { confirmAge }),
   refusal: cardRefusal,
 };

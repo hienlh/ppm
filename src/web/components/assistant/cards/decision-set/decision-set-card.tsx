@@ -147,7 +147,8 @@ export function DecisionSetCard({
           inputRef={replyRef}
           onKeyDown={onReplyKeyDown}
           placeholder={tiles.length ? "Other — your own words go to the manager chat as written…" : "Your answer, to the manager chat word for word…"}
-          onChange={(next) => onAnswer(next.text.trim() || next.images.length ? { kind: "reply", text: next.text, images: next.images } : null)}
+          // Kept as typed (a first space included); whether it is enough to send is `answerIsReady`'s.
+          onChange={(next) => onAnswer(next.text.length || next.images.length ? { kind: "reply", text: next.text, images: next.images } : null)}
         />
       </div>
       {tiles.length === 0 && (

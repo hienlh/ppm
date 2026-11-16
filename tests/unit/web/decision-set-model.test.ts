@@ -66,6 +66,19 @@ describe("a stale draft", () => {
     expect(sendPlan([redrafted], picks)).toEqual([]);
   });
 
+  it("a change the user cannot see (the card's updatedAt alone) keeps the pick", () => {
+    const picks = { d: pickOf(withDraft, { kind: "ok", draftSha256: "a".repeat(64) }) };
+    const touched = { ...withDraft, updatedAt: withDraft.updatedAt + 60_000 };
+    expect(currentPick(touched, picks)).not.toBeNull();
+    expect(outdatedPicks([touched], picks)).toEqual([]);
+  });
+
+  it("a new recipient for the same draft text is a change", () => {
+    const picks = { d: pickOf(withDraft, { kind: "ok", draftSha256: "a".repeat(64) }) };
+    const elsewhere = { ...withDraft, payload: { draft: { ...withDraft.payload.draft!, to: "#all-hands" } } };
+    expect(outdatedPicks([elsewhere], picks)).toEqual(["d"]);
+  });
+
   it("a card filtered out of view keeps its pick", () => {
     const picks = { d: pickOf(withDraft, { kind: "ok", draftSha256: "a".repeat(64) }) };
     expect(outdatedPicks([], picks)).toEqual([]);
@@ -113,7 +126,7 @@ describe("tab order and counts", () => {
 
 /** A fake of the cards' routes: each call answers from `script`, in order. */
 function fakeApi(script: Array<{ ok: AssistantCard } | { error: string; question?: string; card?: AssistantCard }>) {
-  const calls: Array<{ op: string; id: string; arg?: unknown; force?: boolean; images?: number }> = [];
+  const calls: Array<{ op: string; id: string; arg?: unknown; confirmAge?: boolean; images?: number }> = [];
   const next = () => {
     const step = script.shift();
     if (!step) throw new Error("no more answers");
@@ -123,7 +136,7 @@ function fakeApi(script: Array<{ ok: AssistantCard } | { error: string; question
   const api: DecisionSendApi = {
     ok: (id, sha) => { calls.push({ op: "ok", id, arg: sha }); return next(); },
     choose: (id, optionId) => { calls.push({ op: "choose", id, arg: optionId }); return next(); },
-    reply: (id, text, force, images) => { calls.push({ op: "reply", id, arg: text, force, images: images.length }); return next(); },
+    reply: (id, text, confirmAge, images) => { calls.push({ op: "reply", id, arg: text, confirmAge, images: images.length }); return next(); },
     refusal: (e) => {
       const step = (e as { step: { error: string; question?: string; card?: AssistantCard } }).step;
       return { error: step.error, ...(step.question ? { question: step.question } : {}), ...(step.card ? { card: step.card } : {}) };
@@ -153,7 +166,7 @@ describe("send one", () => {
     expect(out.status).toBe("changed");
   });
 
-  it("a day-old card asks first, and Send anyway forces it", async () => {
+  it("a day-old card asks first, and Send anyway confirms its age", async () => {
     const old = { ...plain, createdAt: NOW - 2 * DAY };
     const { api, calls } = fakeApi([
       { error: "confirm", question: "This card is from 14 Nov 09:00 — send anyway?", card: old },
@@ -161,11 +174,11 @@ describe("send one", () => {
     ]);
     const answer: DecisionAnswer = { kind: "reply", text: "Roll back", images: [] };
     expect(await sendDecision(old, answer, api)).toEqual({ status: "confirm", question: "This card is from 14 Nov 09:00 — send anyway?", card: old });
-    expect((await sendDecision(old, answer, api, { force: true })).status).toBe("sent");
-    expect(calls.map((c) => c.force)).toEqual([false, true]);
+    expect((await sendDecision(old, answer, api, { confirmAge: true })).status).toBe("sent");
+    expect(calls.map((c) => c.confirmAge)).toEqual([false, true]);
   });
 
-  it("a confirm about a card that was answered meanwhile is answered elsewhere, never forced", async () => {
+  it("a confirm about a card that was answered meanwhile is answered elsewhere, never asked again", async () => {
     const closed = { ...plain, status: "answered" as const };
     const { api, calls } = fakeApi([{ error: "confirm", question: "This card was answered at 21:16 — send anyway?", card: closed }]);
     const out = await sendDecision(plain, { kind: "reply", text: "Roll back", images: [] }, api, { confirmStale: true });
@@ -177,7 +190,7 @@ describe("send one", () => {
     const { api, calls } = fakeApi([{ ok: { ...plain, status: "answered" } }]);
     const images = [{ id: "1", name: "a.png", data: "AA==", mediaType: "image/png" }];
     await sendDecision(plain, { kind: "reply", text: "", images }, api);
-    expect(calls[0]).toEqual({ op: "reply", id: "p", arg: "", force: false, images: 1 });
+    expect(calls[0]).toEqual({ op: "reply", id: "p", arg: "", confirmAge: false, images: 1 });
   });
 });
 
@@ -197,7 +210,7 @@ describe("send all after the review", () => {
       { card: withDraft, answer: { kind: "ok", draftSha256: "a".repeat(64) } },
     ], api, (id, outcome) => seen.push(`${id}:${outcome.status}`));
     expect(seen).toEqual(["o:elsewhere", "p:sent", "d:sent"]);
-    expect(calls.map((c) => `${c.op}:${c.id}${c.force ? ":force" : ""}`)).toEqual(["choose:o", "reply:p", "reply:p:force", "ok:d"]);
+    expect(calls.map((c) => `${c.op}:${c.id}${c.confirmAge ? ":confirmAge" : ""}`)).toEqual(["choose:o", "reply:p", "reply:p:confirmAge", "ok:d"]);
     expect(results.size).toBe(3);
   });
 
