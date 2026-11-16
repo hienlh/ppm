@@ -13,11 +13,15 @@ export interface AssistantSettingsResponse {
 }
 
 /**
- * Keys each saved by a sub-pane of their own (digest, quiet hours and restart news; manager chats).
- * The General pane leaves them out of its save, so a draft it loaded earlier never puts an old
- * value back: the server keeps the stored value of any key a save does not name.
+ * Keys each saved by a pane of their own (digest, quiet hours and restart news; manager chats;
+ * the permission switches, saved the moment they flip). The General pane's Save leaves them
+ * out, so a draft it loaded earlier never puts an old value back: the server keeps the stored
+ * value of any key a save does not name.
  */
-export const KEYS_SAVED_ELSEWHERE = ["digest", "quiet_hours", "timezone", "manager_default_mode", "manager_template", "restart_news"] as const;
+export const KEYS_SAVED_ELSEWHERE = [
+  "digest", "quiet_hours", "timezone", "manager_default_mode", "manager_template", "restart_news",
+  "auto_readonly_commands", "act_on_own",
+] as const;
 type KeySavedElsewhere = (typeof KEYS_SAVED_ELSEWHERE)[number];
 
 /** Every answer carries the persona: the name shown across the app follows it at once. */

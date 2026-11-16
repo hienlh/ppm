@@ -12,7 +12,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getPpmDir } from "../../../src/services/ppm-dir.ts";
-import { assistantToolDecision, cliPath } from "../../../src/services/assistant/assistant-tool-policy.ts";
+import { assistantToolDecision, assistantToolTouchesPrivate, assistantWritableRoots, cliPath } from "../../../src/services/assistant/assistant-tool-policy.ts";
 import { assistantPrivateScope, isAssistantPrivatePath, privateRootWithin } from "../../../src/services/assistant/assistant-private-paths.ts";
 import { designToolDecision, isWindowsNonDrivePath, patternLeavesRoot } from "../../../src/services/design/design-tool-policy.ts";
 
@@ -322,5 +322,63 @@ describe("links below a Glob or Grep folder", () => {
     expect(glob).toEqual([join(tree, "src", "in.txt")]);
     expect(grep).toEqual([join(tree, "src", "in.txt")]);
     expect(followed.some((line) => line.includes("dirlink"))).toBe(true); // the link itself works
+  });
+});
+
+describe("PPM's own install folder", () => {
+  it("is readable like a project, its credential-free tree only", () => {
+    const install = join(base, "install");
+    mkdirSync(join(install, "src"), { recursive: true });
+    writeFileSync(join(install, "src", "index.ts"), "x");
+    const withInstall = { ...ctx([project]), installRoot: install };
+    expect(assistantToolDecision("Read", { file_path: join(install, "src", "index.ts") }, withInstall)).toBe("allow");
+    expect(assistantToolDecision("Grep", { pattern: "x", path: install }, withInstall)).toBe("allow");
+    expect(assistantToolDecision("Read", { file_path: join(install, "src", "index.ts") }, { ...ctx([project]), installRoot: null })).toBe("ask");
+  });
+
+  it("is not a read root when it lies inside a private folder", () => {
+    const hidden = join(home, ".ssh", "ppm-install");
+    mkdirSync(join(hidden, "src"), { recursive: true });
+    writeFileSync(join(hidden, "src", "index.ts"), "x");
+    expect(assistantToolDecision("Read", { file_path: join(hidden, "src", "index.ts") }, { ...ctx([project]), installRoot: hidden })).toBe("ask");
+  });
+});
+
+describe("assistantWritableRoots", () => {
+  it("keeps projects as their real paths and drops the PPM dir, a credential store and a folder holding either", () => {
+    const real = (p: string) => fs.realpathSync.native(p);
+    const dotfiles = join(home, ".dotfiles");
+    mkdirSync(dotfiles, { recursive: true });
+    const roots = assistantWritableRoots([
+      project, join(project, "..", "project"), dotfiles, getPpmDir(), join(home, ".ssh"), home, base, join(base, "missing"),
+    ], { home, env: {} });
+    expect(roots).toEqual([real(project), real(dotfiles), join(real(base), "missing")]);
+    expect(roots).toContain(real(project));
+    expect(roots).toContain(real(dotfiles));
+    for (const refused of [getPpmDir(), join(home, ".ssh"), home, base]) expect(roots).not.toContain(real(refused));
+    expect(new Set(roots).size).toBe(roots.length);
+  });
+
+  it.if(isWindows)("drops a project on a network share without resolving it", () => {
+    expect(assistantWritableRoots(["\\\\ppm-test-host.invalid\\share"], { home, env: {} })).toEqual([]);
+  });
+});
+
+describe("assistantToolTouchesPrivate", () => {
+  const c = () => ({ ...ctx([project]), installRoot: null });
+  it("is false for reads and writes away from every private folder, inside a project or not", () => {
+    expect(assistantToolTouchesPrivate("Read", { file_path: join(base, "elsewhere.txt") }, c())).toBe(false);
+    expect(assistantToolTouchesPrivate("Write", { file_path: join(project, "src", "new.ts") }, c())).toBe(false);
+    expect(assistantToolTouchesPrivate("NotebookEdit", { notebook_path: join(project, "n.ipynb") }, c())).toBe(false);
+  });
+
+  it("is true for a private folder, a search holding one, a link into one, and anything it cannot resolve", () => {
+    expect(assistantToolTouchesPrivate("Read", { file_path: join(home, ".ssh", "id_ed25519") }, c())).toBe(true);
+    expect(assistantToolTouchesPrivate("Edit", { file_path: join(getPpmDir(), "ppm.db") }, c())).toBe(true);
+    expect(assistantToolTouchesPrivate("Grep", { pattern: "x", path: home }, c())).toBe(true);
+    expect(assistantToolTouchesPrivate("Read", { file_path: join(project, "keys", "id_ed25519") }, c())).toBe(true);
+    expect(assistantToolTouchesPrivate("Write", { file_path: 42 }, c())).toBe(true);
+    expect(assistantToolTouchesPrivate("Write", {}, c())).toBe(true);
+    expect(assistantToolTouchesPrivate("Bash", { command: "ls" }, c())).toBe(true);
   });
 });

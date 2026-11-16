@@ -473,7 +473,11 @@ export type ChatEvent =
        *  merged back into arrival order instead of concatenated. */
       arrivalSeq?: number;
     }
-  | { type: "tool_result"; output: string; isError?: boolean; exitCode?: number; toolUseId?: string; parentToolUseId?: string; arrivalSeq?: number }
+  | {
+      type: "tool_result"; output: string; isError?: boolean; exitCode?: number; toolUseId?: string; parentToolUseId?: string; arrivalSeq?: number;
+      /** A PPM Assistant command that ran without a card because PPM showed it only reads. */
+      autoApproved?: "readonly";
+    }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown; questions?: import("../shared/approval-questions").NormalizedQuestion[] }
   | { type: "error"; message: string }
   | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; costUsd?: number; lastMessageUuid?: string; usage?: import("../shared/turn-usage").TurnUsage }

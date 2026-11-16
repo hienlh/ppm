@@ -35,7 +35,7 @@ const SERVERS: AssistantMcpServer[] = [
   { id: "3", name: "off", enabled: false, transport: "stdio", command: "x", args: [], env: {} },
 ];
 const ISOLATION = {
-  web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, notify: [], "features.tool_call_mcp_elicitation": true,
+  web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, notify: [], project_doc_max_bytes: 0, "features.tool_call_mcp_elicitation": true,
   "skills.include_instructions": false, "skills.bundled.enabled": false,
 };
 

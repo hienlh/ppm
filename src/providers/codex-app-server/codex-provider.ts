@@ -42,7 +42,10 @@ import { holdTokens } from "../../services/mcp-session-tokens.ts";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { CodexJsonRpcClient, CHAT_INITIALIZE_TIMEOUT_MS, CONTROL_REQUEST_TIMEOUT_MS, codexCommand } from "./codex-jsonrpc-client.ts";
-import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
+import { assistantTurnPolicy, permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
+import { codexAssistantApprovalAnswer } from "./codex-assistant-command-unwrap.ts";
+import { assistantMayActOnOwn, logAssistantDecision, recordAssistantAutoAllow } from "../../services/assistant/assistant-shell-decision.ts";
+import { assistantWritableRoots } from "../../services/assistant/assistant-tool-policy.ts";
 import {
   assistantMcpEnv, buildThreadParams, dbToolsMcpEnv, designMcpEnv, joinDeveloperInstructions, requestWithInstructionsFallback, RequiredInstructionsError,
   sessionCollabMcpEnv, tabToolsMcpEnv, type CodexAssistantSession, type CodexThreadParams,
@@ -198,6 +201,9 @@ interface LiveSession {
   /** Set for a PPM Assistant session (web search off, its own tools and servers, none of the
    *  user's); kept for the same reason. */
   assistant?: CodexAssistantSession;
+  /** Commands an Assistant session ran with no card because PPM showed they only read, by item
+   *  id: their results carry the badge. */
+  autoApprovedItems?: Set<string>;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
   /** Rollout history snapshot at connect — lets live message ids continue the
@@ -550,6 +556,13 @@ export class CodexAppServerProvider implements AIProvider {
     }
     live.checkingDailyGuard = true;
     const guardError = await this.dailyGuardError(live);
+    // An Assistant session names its policy on every turn: an override persists into later turns.
+    // Acting on its own, it may write in the registered projects as they are this turn.
+    const turnPolicy = live.assistant && !guardError
+      ? assistantTurnPolicy((await assistantMayActOnOwn(this.sessionIdsOf(live)))
+        ? assistantWritableRoots(configService.get("projects").map((p) => p.path))
+        : null)
+      : undefined;
     live.checkingDailyGuard = false;
     if (guardError) {
       log.warn(`session=${live.threadId} turn refused by daily guard account=${getSessionCodexAccount(live.threadId) ?? "ambient"}`);
@@ -593,6 +606,7 @@ export class CodexAppServerProvider implements AIProvider {
       input,
       ...(turnModel ? { model: turnModel } : {}),
       ...(turnEffort ? { effort: turnEffort } : {}),
+      ...(turnPolicy ?? {}),
       summary: thinkingEnabled ? "detailed" : "none",
     }).then((res) => {
       // Backup for the `turn/started` notification, which is what normally names
@@ -1173,7 +1187,10 @@ export class CodexAppServerProvider implements AIProvider {
         ev.usage = live.lastUsage;
         this.recordTurnUsage(live, live.lastUsage);
       }
-      const nested = parentToolUseId ? { ...ev, parentToolUseId } as ChatEvent : ev;
+      let nested = parentToolUseId ? { ...ev, parentToolUseId } as ChatEvent : ev;
+      if (nested.type === "tool_result" && nested.toolUseId && live.autoApprovedItems?.delete(nested.toolUseId)) {
+        nested = { ...nested, autoApproved: "readonly" };
+      }
       live.channel.push(nested);
       // Accumulate tool calls into the turn so getMessages (live) keeps them.
       if ((!isChild || live.turnInFlight) && (nested.type === "tool_use" || nested.type === "tool_result")) live.currentEvents.push(nested);
@@ -1283,6 +1300,10 @@ export class CodexAppServerProvider implements AIProvider {
       live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: mcpApproval.tool, input: redactFields(mcpApproval.input) });
       return;
     }
+    if (live.assistant && isApprovalMethod(method)) {
+      void this.answerAssistantApproval(live, req);
+      return;
+    }
     if (isApprovalMethod(method)) {
       const ppmReqId = crypto.randomUUID();
       live.pendingApprovals.set(ppmReqId, { codexId: req.id, method });
@@ -1302,6 +1323,40 @@ export class CodexAppServerProvider implements AIProvider {
     // permissions/* response is a granted-profile, not a decision → decline.
     // Any other server request → decline so codex never hangs waiting.
     this.respondOnce(live, req.id, null, "unsupported server request");
+  }
+
+  /**
+   * An Assistant session's command or file-change approval: a command the read-only check passes
+   * is accepted and a file change it may not make is declined, both without a card; anything else
+   * becomes the card it always was.
+   */
+  private async answerAssistantApproval(live: LiveSession, req: ServerRequest): Promise<void> {
+    const method = req.method as ApprovalMethod;
+    const ids = this.sessionIdsOf(live);
+    const sessionId = live.threadId ?? ids[0] ?? "?";
+    const outcome = await codexAssistantApprovalAnswer(method, req.params, ids);
+    if (live.client.isClosed || live.answeredCodexIds.has(req.id)) return;
+    if (outcome.answer === "accept") {
+      if (outcome.itemId) (live.autoApprovedItems ??= new Set()).add(outcome.itemId);
+      this.respondOnce(live, req.id, decisionFor(method, true));
+      recordAssistantAutoAllow(sessionId, this.id, approvalToolLabel(method, req.params), "readonly", outcome.reason, outcome.itemId);
+      return;
+    }
+    logAssistantDecision(sessionId, approvalToolLabel(method, req.params), outcome.answer, outcome.reason);
+    if (outcome.answer === "decline") {
+      this.respondOnce(live, req.id, decisionFor(method, false));
+      return;
+    }
+    const ppmReqId = crypto.randomUUID();
+    live.pendingApprovals.set(ppmReqId, { codexId: req.id, method });
+    live.channel.push({ type: "approval_request", requestId: ppmReqId, tool: approvalToolLabel(method, req.params), input: approvalInput(method, req.params) });
+  }
+
+  /** Every id the provider holds this session under: the one it was created with and Codex's thread id. */
+  private sessionIdsOf(live: LiveSession): string[] {
+    const ids: string[] = [];
+    for (const [id, v] of this.live) if (v === live) ids.push(id);
+    return ids;
   }
 
   resolveApproval(requestId: string, approved: boolean, data?: unknown): void {

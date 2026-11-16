@@ -13,6 +13,7 @@ import { IconButton, SectionHeader } from "./settings-rows";
 import { AssistantLegacyMemories, appendToInstructions } from "./assistant-legacy-memories";
 import { AssistantPersonaSettings, personaDraftTooLong } from "./assistant-persona-settings";
 import { DEFAULT_ASSISTANT_PERSONA } from "../../../shared/assistant-persona";
+import { AssistantPermissionsSettings } from "./assistant/assistant-permissions-settings";
 
 const CHAT_DEFAULT = "__chat__";
 
@@ -29,7 +30,8 @@ const generalFields = (s: AssistantSettingsView) => JSON.stringify([s.default_pr
  * The Assistant's own provider, model, effort, name and personality, instructions and MCP servers. Assistant sessions
  * use none of the settings, MCP servers, hooks, plugins or memory of ordinary chats, so
  * everything they run with is set here. One Save for the whole panel, which leaves the keys the
- * other sub-tabs save (digest, quiet hours, manager defaults) to them.
+ * other sub-tabs save (digest, quiet hours, manager defaults) to them, and the permission
+ * switches below it, which save as they flip.
  */
 export function AssistantGeneralSettings() {
   const [loaded, setLoaded] = useState<AssistantSettingsResponse | null>(null);
@@ -152,6 +154,9 @@ export function AssistantGeneralSettings() {
           {saving ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
         </Button>
       </div>
+
+      {/* Saved as each switch flips, so it sits below the Save that covers everything above. */}
+      <AssistantPermissionsSettings />
 
       <AssistantMcpServerDialog
         open={editing !== null}

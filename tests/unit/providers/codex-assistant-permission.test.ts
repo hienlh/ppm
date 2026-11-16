@@ -104,7 +104,7 @@ describe("Codex Assistant session", () => {
     // The one key every thread carries stays: the Assistant asks the user questions too.
     expect(start.config).toEqual({
       "features.default_mode_request_user_input": true,
-      web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, notify: [], "features.tool_call_mcp_elicitation": true,
+      web_search: "disabled", "features.apps": false, "features.plugins": false, "features.hooks": false, notify: [], project_doc_max_bytes: 0, "features.tool_call_mcp_elicitation": true,
       "skills.include_instructions": false, "skills.bundled.enabled": false,
     });
     expect(live.requireInstructions).toBe(true);

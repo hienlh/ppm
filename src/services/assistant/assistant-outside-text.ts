@@ -12,17 +12,20 @@ import {
   PPM_CLI_REFERENCE_TOOL, PROJECT_ADD_TOOL, PROJECTS_LIST_TOOL, TERMINAL_TYPE_TOOL,
 } from "../../shared/assistant-tool-names.ts";
 import { CLAUDE_SESSION_COLLAB_MCP_SERVER, CODEX_SESSION_COLLAB_MCP_SERVER } from "../../shared/session-collab.ts";
+import { JIRA_CONFIG_GET_TOOL, PPM_STATUS_TOOL, SYSTEM_RESOURCES_TOOL } from "../../shared/assistant-system-tool-names.ts";
 
 /**
  * The Assistant's own tools that answer only with PPM's own data or the user's: the project list
  * (names the user registered), adding a project (it answers with the folder and name the user just
  * approved), PPM's fixed CLI reference, the notebook (whose lines are already in every turn's
- * context, marked by who wrote them), and typing into a terminal (it answers with PPM's own words,
- * the project and folder, never what the shell printed).
+ * context, marked by who wrote them), typing into a terminal (it answers with PPM's own words,
+ * the project and folder, never what the shell printed), and PPM's status, the machine's resources
+ * and the Jira settings, which answer in fields PPM formats. The log and memory reports are not
+ * here: a log line can quote anything, a chat's words included.
  */
 const OWN_TOOLS_WITHOUT_OUTSIDE_TEXT: ReadonlySet<string> = new Set([
   PROJECTS_LIST_TOOL, PROJECT_ADD_TOOL, PPM_CLI_REFERENCE_TOOL, NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,
-  TERMINAL_TYPE_TOOL,
+  TERMINAL_TYPE_TOOL, PPM_STATUS_TOOL, SYSTEM_RESOURCES_TOOL, JIRA_CONFIG_GET_TOOL,
 ]);
 
 /**

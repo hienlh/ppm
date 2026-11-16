@@ -52,11 +52,13 @@ export function DialogActions({ children }: { children: ReactNode }) {
 
 export const DIALOG_BUTTON = "min-h-11 md:min-h-9";
 
-export function ConfirmDialog({ open, title, confirmLabel, destructive, onConfirm, onClose, children }: {
+export function ConfirmDialog({ open, title, confirmLabel, destructive, buttonClassName = DIALOG_BUTTON, onConfirm, onClose, children }: {
   open: boolean;
   title: string;
   confirmLabel: string;
   destructive?: boolean;
+  /** The two buttons' size; a dialog moved onto the chip-row standard passes its classes here. */
+  buttonClassName?: string;
   onConfirm: () => void;
   onClose: () => void;
   children: ReactNode;
@@ -65,8 +67,8 @@ export function ConfirmDialog({ open, title, confirmLabel, destructive, onConfir
     <AssistantSettingsDialog open={open} title={title} onClose={onClose}>
       <p className="text-sm text-text-secondary">{children}</p>
       <DialogActions>
-        <Button type="button" variant="outline" onClick={onClose} className={DIALOG_BUTTON}>Cancel</Button>
-        <Button type="button" variant={destructive ? "destructive" : "default"} onClick={onConfirm} className={DIALOG_BUTTON}>
+        <Button type="button" variant="outline" onClick={onClose} className={buttonClassName}>Cancel</Button>
+        <Button type="button" variant={destructive ? "destructive" : "default"} onClick={onConfirm} className={buttonClassName}>
           {confirmLabel}
         </Button>
       </DialogActions>

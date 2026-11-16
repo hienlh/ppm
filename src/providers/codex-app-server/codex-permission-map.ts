@@ -38,9 +38,35 @@ const DESIGN_ACCEPT_EDITS: CodexPermission = { sandbox: "workspace-write", appro
  * its own. Residual, and accepted: codex still runs its trusted read-only commands (`cat`,
  * `ls`, …) unasked and can read outside the registered projects with them — there is no
  * per-path rule to give it — so with codex the guard against leaking what it reads is that
- * every way out (web, shell, writes, messages) asks first.
+ * every way out (web, shell, writes, messages) asks first. A command approval the read-only
+ * check (`assistant-shell-decision.ts`) shows only reads is accepted without a card, and a file
+ * change is declined without one unless the user lets the Assistant act on its own.
  */
 export const ASSISTANT_PERMISSION: CodexPermission = { sandbox: "read-only", approvalPolicy: "untrusted" };
+
+/**
+ * `TurnStartParams.sandboxPolicy`, in the shape codex-cli 0.163's app-server schema gives it
+ * (`codex app-server generate-json-schema`): `readOnly`, or `workspaceWrite` with absolute
+ * `writableRoots` and `networkAccess` (both optional there, both always sent here).
+ */
+export type CodexTurnSandboxPolicy =
+  | { type: "readOnly" }
+  | { type: "workspaceWrite"; writableRoots: string[]; networkAccess: false };
+
+/**
+ * The approval and sandbox policy an Assistant session sends with every `turn/start`. A turn's
+ * override persists into later turns, so each turn names its own. `writableRoots` is non-null
+ * only for "act on its own" (a turn the user started, with the switch on): the turn may then
+ * write in those folders — the registered projects that hold nothing private — and asks only to
+ * escalate. Every other turn, and one with no such project, is back on the profile above.
+ * Neither has network access. Codex also keeps the session's own working folder (the
+ * Assistant's empty scratch folder) and the temp folder writable under `workspaceWrite`.
+ */
+export function assistantTurnPolicy(writableRoots: readonly string[] | null): { approvalPolicy: AskForApproval; sandboxPolicy: CodexTurnSandboxPolicy } {
+  return writableRoots && writableRoots.length > 0
+    ? { approvalPolicy: "on-request", sandboxPolicy: { type: "workspaceWrite", writableRoots: [...writableRoots], networkAccess: false } }
+    : { approvalPolicy: ASSISTANT_PERMISSION.approvalPolicy, sandboxPolicy: { type: "readOnly" } };
+}
 
 /** Pure map from PPM permissionMode → codex {sandbox, approvalPolicy}. Unknown → bypass. */
 export function permissionModeToCodex(mode?: string, opts?: { designSession?: boolean; assistantSession?: boolean }): CodexPermission {
