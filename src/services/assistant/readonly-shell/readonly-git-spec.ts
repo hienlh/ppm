@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { canonicalPath, isInside } from "../../design/design-tool-policy.ts";
 import { entryExists } from "../../tool-path-scope.ts";
-import { hasFlag, parseArgv, type FlagSpec } from "./readonly-argv-parser.ts";
+import { flagValues, hasFlag, parseArgv, type FlagSpec } from "./readonly-argv-parser.ts";
 import { assistantReadRoots, judgeReadPath, type ReadonlyShellContext } from "./readonly-path-check.ts";
 import { ask, isAsk, readonly, type ShellVerdict } from "./shell-verdict.ts";
 
@@ -77,6 +77,25 @@ function staysInRepository(arg: string): boolean {
   return !arg.split("/").includes("..");
 }
 
+/** `--pretty=<name>` formats git defines itself; any other bare name is a `pretty.<name>` from git config. */
+const BUILTIN_PRETTY = new Set(["oneline", "short", "medium", "full", "fuller", "reference", "email", "mboxrd", "raw"]);
+
+/**
+ * Why a `--pretty`/`--format` value is not only a read, or null. The signature placeholders
+ * (`%G?`, `%GG`, `%GS`… and for-each-ref's `%(signature…)`) make git verify each commit by running
+ * `gpg.program` — a program named by the repository's config, and gpg itself can fetch keys from
+ * the network. A bare name other than git's own is an alias the config defines, unseen here.
+ */
+function judgeFormats(values: readonly string[]): string | null {
+  for (const value of values) {
+    if (/%G/.test(value) || /%\(\s*signature/i.test(value)) return "a signature placeholder makes git run gpg to verify commits";
+    if (!value.includes("%") && !/^t?format:/.test(value) && !BUILTIN_PRETTY.has(value)) {
+      return `the format "${value}" is not one git defines itself (a name from git config)`;
+    }
+  }
+  return null;
+}
+
 export function judgeGitArgv(args: readonly string[], ctx: ReadonlyShellContext): ShellVerdict {
   const env = ctx.env ?? process.env;
   const override = GIT_ENV_OVERRIDES.find((key) => env[key]);
@@ -94,6 +113,8 @@ export function judgeGitArgv(args: readonly string[], ctx: ReadonlyShellContext)
   const spec = SUBCOMMANDS[sub]!;
   const result = parseArgv(args.slice(i + 1), spec);
   if (!result.ok) return ask(`git ${sub}: ${result.reason}`);
+  const formatRefusal = judgeFormats(flagValues(result.parsed, "--pretty", "--format"));
+  if (formatRefusal) return ask(`git ${sub}: ${formatRefusal}`);
   const { positionals } = result.parsed;
   if (positionals.length > 0 && spec.positionalsNeed && !hasFlag(result.parsed, ...spec.positionalsNeed)) return ask(`git ${sub} with an argument changes the repository`);
   const leaving = positionals.find((p) => !staysInRepository(p));

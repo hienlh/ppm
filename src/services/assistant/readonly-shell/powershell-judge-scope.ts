@@ -59,11 +59,13 @@ export const READABLE_ENV = new Set(["userprofile", "home", "appdata", "localapp
  * Member names that reach a secret wherever they appear: a process's command line, a service's
  * (`BinaryPathName` in PowerShell 7 — a tunnel service installed with `--token …` carries its
  * token there), the environment `Process.StartInfo` copies from PowerShell's own process on
- * Windows PowerShell, credentials, and the reflection doors (`psobject`) through which a name
- * can be reached by a string the judge cannot see.
+ * Windows PowerShell, credentials, a window's title (a terminal names its window after the command
+ * it runs, `--token …` included), and the reflection doors (`psobject`) through which a name can
+ * be reached by a string the judge cannot see.
  */
 const DENIED_MEMBERS = new Set([
   "commandline", "binarypathname", "pathname", "startinfo", "environment", "environmentvariables", "password", "securepassword", "credential",
+  "mainwindowtitle",
   "psobject", "psbase", "psadapted", "psextended", "ciminstanceproperties",
 ]);
 

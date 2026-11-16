@@ -44,7 +44,8 @@ Assistant sessions never adopt a warm spare and get no tab tools.
 lives in the PreToolUse hook and bypass mode installs no hook; `assistantToolDecision`
 (`src/services/assistant/assistant-tool-policy.ts`) decides there, with the same check as a
 `canUseTool` backstop. It allows only Read, Glob and Grep that resolve inside a registered
-project and outside the private roots (`assistant-private-paths.ts`: PPM's own credential
+project (or PPM's own installed source, the public npm package — never offered for a compiled
+binary, which has no `src`) and outside the private roots (`assistant-private-paths.ts`: PPM's own credential
 folders, the login and key stores common tools keep under the home folder, and `/proc`, `/sys`
 and `/dev` on Linux — `/dev` on macOS), ToolSearch, TodoWrite, and the Assistant's own MCP
 tools by exact name. While the only registered project holding a path is the home folder or
@@ -52,12 +53,53 @@ one above it (`/` included), the home folder's application-state area — every 
 (`.config`, `.local/share`, `.zsh_history`, `.pgpass`…), `Library`, and `AppData` on Windows —
 counts as private too, because too many tools keep logins there for a list to cover; a project
 registered inside that area (`~/.dotfiles`) reads its own tree as usual. A Glob or Grep whose
-folder holds the home folder asks. Everything else asks: web, shell, writes, subagents, skills,
-other MCP servers, reads anywhere else. A target is judged as the CLI will read it — trimmed,
-`~` expanded, `/c/…` taken as `C:` on Windows. It fails closed: a path that cannot be resolved,
-a relative path with no working directory, or a Windows network path (answered without touching
-the disk) asks.
+folder holds the home folder asks. Everything else asks: web, shell commands PPM cannot show only
+read, writes, subagents, skills, other MCP servers, reads anywhere else. A target is judged as the
+CLI will read it — trimmed, `~` expanded, `/c/…` taken as `C:` on Windows. It fails closed: a path
+that cannot be resolved, a relative path with no working directory, or a Windows network path
+(answered without touching the disk) asks.
 Codex gets its own profile (below).
+
+**Read-only commands, edits, and acting on its own** (`assistant-shell-decision.ts`, Settings →
+PPM Assistant → General → Permissions; both switches are read on every tool call):
+- *Run read-only commands without asking* (`auto_readonly_commands`, on by default). A Bash or
+  PowerShell command runs with no card when PPM can show it only reads inside the read roots above
+  (`src/services/assistant/readonly-shell/`). Bash goes through a lexer that rejects anything it
+  does not fully understand (expansion, substitution, globs, redirection other than to
+  `/dev/null`, escapes) and a per-program allowlist of flags (`readonly-command-specs.ts`,
+  `readonly-git-spec.ts`, `readonly-tool-specs.ts`); PowerShell is parsed by PowerShell's own
+  parser in a long-lived helper (`powershell-ast-helper.ts`) and the tree is judged against an
+  allowlist of cmdlets, parameters, members and types. Unknown program, flag, node or member,
+  a parse error, a timeout (5 s), a background run or a request to leave the sandbox: a card.
+  Every path a command touches goes through the same rule as Read (`readonly-path-check.ts`),
+  real path resolved, and a recursive walk also refuses a folder holding a private root. No
+  working directory is trusted — the Assistant's starts inside the PPM dir and an earlier `cd`
+  moves it unseen — so `git status` without `-C <project>` asks, and the instructions tell the
+  Assistant to name the project. The result is badged "Read-only · ran without asking", and the
+  session trace gets an `assistant_auto_allowed` row (tool, reason, call id, never the command).
+  Codex: a command approval whose wrapper is exactly Codex's own (`/bin/bash -lc '<one word>'`,
+  `"…\powershell.exe" -Command <script>`, the legacy `execCommandApproval` argv;
+  `codex-assistant-command-unwrap.ts`) is unwrapped and judged the same way, and accepted with no
+  card; Codex's own parse (`commandActions`) is never trusted; a network grant, extra permissions
+  or input to a running terminal is a card.
+- *Let the Assistant act on its own* (`act_on_own`, off by default, turned on through a
+  confirmation). Off: Claude is not offered Edit, Write, MultiEdit or NotebookEdit
+  (`disallowedTools`, fixed when the CLI starts — so turning it on reaches a session from its next
+  start, and the hook still asks for an edit in a session started while it was on), and Codex's
+  file changes are declined with no card. On, and only in a turn the user opened in PPM or on
+  Telegram (`assistant-turn-provenance.ts`; a watch, wake, schedule, forwarded text or a turn the
+  tracker never saw open does not count), the provider's own tools run with no card. Still asked:
+  a Read/Glob/Grep/Edit/Write whose target is private, and a command whose *text* names a private
+  root, `ppm*.db` or a `..` step (`commandMentionsPrivateRoot` — a tripwire, not a boundary: a
+  glob or a variable can spell a private path; the read-only shortcut is the one that resolves
+  paths). PPM's own endpoint cards (database writes, git, messages to chats that are not
+  managers, `chat_answer_approval`) keep asking. Codex turns carry their own `approvalPolicy` and
+  `sandboxPolicy` on every `turn/start`: `untrusted` + `readOnly`, or under this switch in a
+  user-started turn `on-request` + `workspaceWrite` with the registered projects as writable roots
+  (`assistantWritableRoots`: canonical paths, minus any that is, sits in or holds a private root)
+  and no network. Codex also keeps its own cwd (the Assistant's empty folder in the PPM dir) and
+  the temp folder writable, which is why the Assistant's thread sets `project_doc_max_bytes = 0`:
+  an `AGENTS.md` one steered turn left there is never read as instructions.
 
 **The UI.** One tab type, `assistant` (`src/web/components/assistant/`): on a desktop it opens
 inside a `tab-host` floating window — portrait, top right, about 470×620, then wherever the user
@@ -500,6 +542,18 @@ session. The names, in order, are `ASSISTANT_TOOLS` in `src/shared/assistant-too
   `chat_list_watches`, and the read half of the git, schedule and tunnel families
   (`git_status`, `git_log`, `git_diff`, `git_branches`, `schedules_list`, `schedule_get`,
   `tunnels_status`; see [Git, schedules and tunnels](#git-schedules-and-tunnels)).
+- **Read PPM and the machine, never ask** (the `system` family,
+  `src/services/assistant-mcp/assistant-system-*.ts`): `ppm_status` (version, install folder,
+  pid, uptime, last restart, database profile and file name, whether a supervisor runs it),
+  `ppm_logs_search` (`ppm.log` through the Logs window's reader, every line redacted with the
+  Logs switches on and cut to 500 characters; literal text by default, a checked regex on request),
+  `ppm_memory_report` (`mem-diag*.log` thinned to 40 rows per window plus a summary per run and the
+  `[mem]` warnings), `system_resources` (RAM, commit and page files on Windows, drives, the top
+  processes by name, pid and memory — never a command line or environment) and `jira_config_get`
+  (per project: base URL, e-mail, whether a token is saved, watchers; `test: true` tries the
+  saved login, 6 per 10 minutes, and answers ok or a status in PPM's words — never the token or
+  Jira's body). These replace the shell scripts and log greps that used to raise most of the
+  Assistant's cards.
 - **Remember, never ask**: `chat_watch` and `chat_unwatch` — a watch only reads and reports, like
   setting a reminder (see [Watches](#watches)); `notebook_add`, `notebook_edit` and
   `notebook_delete`, which only touch the Assistant's own notebook (see [Notebook](#notebook)).
@@ -1892,6 +1946,33 @@ the database directly. That risk is accepted, and nothing here claims more. The 
 every rules write through a route posts a `rules_note` with its diff, and the reply, OK and rules
 routes record the device and `Sec-Fetch-Site` in the session trace.
 
+**Commands that run without a card.** The classifier, not the model, decides; what it has to
+withstand is a model talked into a command that looks like a read:
+- *Parser differential* — PPM reading a command differently from the shell that runs it. PowerShell
+  is judged on its own parser's tree, with the node count checked against the parser's and any
+  value the helper could not serialise refused; bash goes through a lexer that refuses rather than
+  guesses. Where Windows PowerShell 5.1 passes a native argument other than as written (empty,
+  `"`, trailing `\`, leading `~`, `--`, `-x:v`), it asks.
+- *Side doors in reading programs* — `find -exec/-fls/-follow`, `rg --pre/-f/--ignore-file`,
+  `git -c/--output/--ext-diff/--textconv`, signature placeholders (`%G?`, `%(signature)`, which run
+  `gpg.program`) and `--pretty=<name>` from config, `sort -o/-T`, `--files0-from`,
+  `sqlite3` dot-commands, `-A`, `edit()`/`readfile()`/`load_extension()` and non-SELECT SQL,
+  `ps` command-line and environment columns, docker's `-H/--context`, `Get-Content -Stream/-Wait`,
+  provider drives (`Env:`, `HKCU:`, `Cert:`), methods that act (`Kill()`, `Delete()`, `MoveTo()`),
+  and members that carry secrets (`CommandLine`, `StartInfo`, `BinaryPathName`, `MainWindowTitle`).
+  Each is a flag or member not on an allowlist, so it asks; never widen an entry by its name alone.
+- *Secrets outside the private roots* — a process's command line, a window title, the environment,
+  `docker inspect`, `git remote -v` URLs, `ppm.db` itself (`sqlite3 -readonly ~/.ppm/ppm.db` asks:
+  the PPM dir is private). What runs unasked can reach Telegram in the answer, so these ask.
+- *Residuals, same exposure as any approved command:* configuration the repository or the user
+  already has runs inside an allowed read — a repo's `core.fsmonitor`, a textconv or
+  `diff.external` driver on plain `git diff`/`git status`, `~/.sqliterc` for every `sqlite3`, and
+  an alias or function in the shell snapshot Claude's Bash or Codex's `bash -lc` loads, shadowing
+  an allowed name (`-l` reads the login profile), and a function in a PowerShell profile, should
+  the shell running the command load one (PPM's own parser helper starts with `-NoProfile`; what
+  the provider's shell loads is not PPM's to set). Codex's own trusted read-only set (Known
+  limitations) is unchanged: it runs those without asking PPM.
+
 Two message blocks are written by the server only — `<ppm-assistant-provenance-v1>` (how the
 Assistant's turn started) and `<ppm-user-words-v1>` (the user's own words, by card id). Every other
 door breaks their markers: a `send_to_session` body, every `report_to_assistant` field, Telegram text
@@ -2010,6 +2091,24 @@ and runs in bypass mode:
 - **Only `.ppm/manager.md` is guarded.** A guide the rules point to is the manager's own file.
 - **A subagent's report looks like its manager's.** An MCP call carries nothing that ties it to the
   CLI's tool call, so PPM cannot label it.
+- **The read-only badge is live only.** A result's `autoApproved` reaches the browser as it streams
+  and on a replay of the running turn; after a history reload — or on a device that opens the chat
+  once the turn is over — the result comes from the provider's transcript, which does not carry it,
+  so the badge is not shown (the trace row stays). Seen in the e2e: a phone opened mid-session
+  showed turn 1's results without it.
+- **Commands that act on the current folder ask.** No working directory is trusted, so `git
+  status`, `ls`, `find`, `grep -r` with no path ask; with `git -C <project>` or a path they do not.
+- **No Windows low-memory events.** `system_resources` and `ppm_memory_report` do not read the
+  Windows event log; they say so instead.
+- **"Act on its own" reaches Claude at the next CLI start.** Edit/Write are offered or not when the
+  CLI starts; a session started before the switch was turned on keeps asking for edits, one
+  started while it was on asks again once it is off.
+- **Codex follow-ups queued behind a turn do not act on their own.** The turn they start was not
+  opened by a message the tracker saw, so it gets the read-only policy.
+- **Recursive walkers and links were checked on one Windows host.** PowerShell 5.1 `-Recurse`,
+  Git Bash's `grep -r`, `du`, `find` and `ls -R` did not walk into a junction to `~/.ssh` (phase-06
+  probe); PowerShell 7 and other MSYS builds were not tried, and `-FollowSymlink`, `-L`, `-R`,
+  `-follow` ask everywhere.
 
 ## Verify
 
@@ -2017,6 +2116,23 @@ and runs in bypass mode:
 Assistant on the production bundle, on a desktop and a phone viewport, against a scripted
 provider (`tests/e2e/fixtures/assistant-server.ts`) that calls the real endpoint with each turn's
 token and an isolated `PPM_HOME`. The header of the test file lists its scenarios and options.
+
+`node tests/e2e/assistant-readonly-commands-e2e.mjs` runs the read-only-command policy through the
+**real** Claude CLI and PPM's real hook (`fixtures/assistant-readonly-commands-server.ts`), the CLI
+talking to `fixtures/bash-script-anthropic-api.ts`, which turns `RUN:` (Bash), `PS:` (PowerShell)
+and `EDIT:` (Read then Edit) lines into tool calls and records the tools each request offered.
+The bash leg (POSIX; run it in the capped `ppm-e2e-chromium` image, command in the file's header)
+checks in a browser that `git -C`/`ls -la` run unasked, badged and traced, that `rm`, a private
+key, `sqlite3` on `ppm.db`, `git -c`, `; touch` and `$(…)` each raise one card with nothing run
+before the answer, that the switch off makes a read ask, and that Edit is not offered until *act on
+its own* is on (then a new session edits with no card); it saves screenshots of the Permissions
+block, its confirmation on a desktop and as a phone bottom sheet, and a badge beside a card. The
+PowerShell leg (`PPM_RO_LEGS=powershell`, Windows only) drives a bare chat socket:
+`Get-Process | Select-Object …` unasked, `… | Out-File` asks. The Codex half is
+`tests/integration/codex-assistant-command-approval.test.ts` (recorded approval payloads, real
+settings, classifiers and PowerShell parser); the classifiers' corpora are
+`tests/unit/services/readonly-shell/adversarial-{bash,powershell}-corpus.ts`, PowerShell's trees
+recorded by `bun scripts/record-powershell-ast-fixtures.ts` on Windows.
 
 `PPM_ASSISTANT_WEB_DIR=<web build> node tests/e2e/assistant-manager-loop-e2e.mjs` runs the
 manager-chat loop end to end in eleven steps on one desktop: a manager assigned from the chat menu
