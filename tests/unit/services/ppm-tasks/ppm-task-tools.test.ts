@@ -227,6 +227,8 @@ describe("unattended Assistant turns", () => {
     expect(cards[0]!.title).toBe("PPM Assistant made 2 task changes while you were away");
     expect(cards[0]!.body).toContain(`undo #${rows[0]!.id}`);
     expect(cards[0]!.body).toContain(`undo #${rows[1]!.id}`);
+    // The same changes as rows, so a surface can offer Undo per change.
+    expect(cards[0]!.taskChanges.map((c) => [c.historyId, c.taskId, c.ref])).toEqual([[rows[0]!.id, ids[0], "demo/1"], [rows[1]!.id, ids[1], "demo/2"]]);
     chatLifecycle.emit("turn_ended", { sessionId: "asst-1", outcome: "done", projectName: "__assistant__", providerId: "claude" });
     expect(cards).toHaveLength(1);
   });
