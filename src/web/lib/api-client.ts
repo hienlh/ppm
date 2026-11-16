@@ -201,6 +201,11 @@ export class ApiClient {
     await this.send<void>("DELETE", path, body);
   }
 
+  /** A DELETE whose answer the caller reads (`del` drops it). */
+  async delete<T>(path: string, body?: unknown): Promise<T> {
+    return this.send<T>("DELETE", path, body);
+  }
+
   /**
    * A POST answered with a stream rather than one `{ok, data}` envelope: the response itself, its
    * body still to be read, once its status says the request was taken. A refusal comes back as
