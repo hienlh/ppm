@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.26.7] - 2026-11-17
+
+### Changed
+
+- **A task's quick view from the chat**: clicking a task in the chat's Tasks list or a task chip shows it beside the list to read and edit its status, urgency, people, due date and next step, with the list kept open; "Open in window" opens the full task without opening the sidebar, and a phone shows it in the same sheet.
+
+### Fixed
+
+- **Task fields keep unsaved text**: a due date or next step that failed to save is sent again, and closing the view keeps what you typed.
+
 ## [0.26.6] - 2026-11-17
 
 ### Added
