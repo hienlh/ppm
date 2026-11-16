@@ -264,4 +264,29 @@ describe("prepareSendOptions with PPM memory", () => {
     expect(third).toContain(second);
     expect((await send("and again")).opts?.sharedContext).toBeUndefined();
   });
+
+  test("the guide goes with memory on even when nothing is listed, naming Claude's full tool names", async () => {
+    setAi({ share_provider_context: true, memory: { enabled: true } });
+    const opts = await chatService.prepareSendOptions(provider.id, sessionId, "hello");
+    expect(opts.sharedContext).toContain("<ppm_memory_guide>");
+    for (const tool of ["memory_search", "memory_read", "memory_write", "memory_forget"]) {
+      expect(opts.sharedContext).toContain(`mcp__ppm-tabs__${tool}`);
+    }
+    expect(opts.sharedContext).not.toContain("<ppm_memory>");
+  });
+
+  test("the guide comes before the list, and is sent once with it", async () => {
+    setAi({ share_provider_context: true, memory: { enabled: true } });
+    await addMemory("Deploy steps", "how the app is deployed");
+    const first = (await send("hello")).opts?.sharedContext ?? "";
+    expect(first.indexOf("<ppm_memory_guide>")).toBeGreaterThan(-1);
+    expect(first.indexOf("<ppm_memory_guide>")).toBeLessThan(first.indexOf("<ppm_memory>"));
+    expect((await send("again")).opts?.sharedContext).toBeUndefined();
+  });
+
+  test("memory off: no guide", async () => {
+    setAi({ share_provider_context: true, memory: { enabled: false } });
+    const opts = await chatService.prepareSendOptions(provider.id, sessionId, "hello");
+    expect(opts.sharedContext ?? "").not.toContain("<ppm_memory_guide>");
+  });
 });
