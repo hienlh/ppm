@@ -93,7 +93,9 @@ export function useAssistantStreamTimeline(): ChatTimelineExtension {
       });
       // The set itself, always the stream's last item, as the chat's own question form is.
       if ((open ?? []).some((c) => isDecisionCard(c) && (!filter || c.projectName === filter))) {
-        items.push({ key: "decision-set", at: Number.MAX_SAFE_INTEGER, node: <DecisionSet scope={setScope} />, keep: true });
+        // Room under it for the message navigator, which always floats in the list's bottom-right
+        // corner: at the stream's end it would otherwise sit on "Send all".
+        items.push({ key: "decision-set", at: Number.MAX_SAFE_INTEGER, node: <div className="pb-11"><DecisionSet scope={setScope} /></div>, keep: true });
       }
       const hidden = new Set<string>();
       for (const turn of collapsedWakeTurns(rows)) {

@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { BellRing, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Send } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { revealInScrollList } from "@/lib/reveal-in-scroll-list";
 import { dismissAssistantCard } from "@/lib/assistant-cards-api";
 import { useWaitingJumpStore } from "@/stores/assistant-waiting-jump-store";
 import { markDone, pickAnswer, useDecisionSetStore } from "@/stores/decision-set-store";
@@ -72,6 +73,13 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
   useEffect(() => { setFocusedRow(0); setDismissError(null); }, [card?.id]);
   // Nothing left to send: the review has nothing to show.
   useEffect(() => { if (reviewing && plan.length === 0 && !anySending) setReviewing(false); }, [reviewing, plan.length, anySending]);
+  // The review is laid out in place of the card, often taller: bring its Send button into view.
+  useEffect(() => {
+    if (!reviewing || !root.current) return;
+    const el = root.current;
+    const frame = requestAnimationFrame(() => revealInScrollList(el, "land"));
+    return () => cancelAnimationFrame(frame);
+  }, [reviewing]);
 
   const answer = useCallback((target: AssistantCard, next: DecisionAnswer | null) => pickAnswer(target, next), []);
 
