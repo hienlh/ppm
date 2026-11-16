@@ -34,6 +34,8 @@ function codesIn(page, scope = "body") {
       wrapped: el.getClientRects().length > 1 || r.height > (parseFloat(getComputedStyle(el).lineHeight) || parseFloat(getComputedStyle(el).fontSize) * 1.5) * 1.5,
       cut: el.scrollWidth > el.clientWidth + 1,
       outside: c ? r.left < c.left - 1 || r.right > c.right + 1 : false,
+      // A code is text in a line: as tall as its own line box, never padded to a button's size.
+      padded: Math.abs(r.height - (parseFloat(getComputedStyle(el).lineHeight) || r.height)) > 1,
       at: `${el.parentElement?.tagName}.${(el.parentElement?.className || "").toString().slice(0, 40)} h=${Math.round(r.height)} lh=${getComputedStyle(el).lineHeight} fs=${getComputedStyle(el).fontSize} rects=${el.getClientRects().length}`,
     };
   }), scope);
@@ -78,10 +80,31 @@ async function assertCodesFit(page, scope, where) {
   await assertCodesOnBaseline(page, scope, where);
   const codes = await codesIn(page, scope);
   assert(codes.length > 0, `${where}: some task code is shown`);
-  const bad = codes.filter((c) => c.wrapped || c.cut || c.outside);
-  assert.deepEqual(bad, [], `${where}: codes that wrap, are cut or overflow: ${JSON.stringify(bad)}`);
+  const bad = codes.filter((c) => c.wrapped || c.cut || c.outside || c.padded);
+  assert.deepEqual(bad, [], `${where}: codes that wrap, are cut, overflow or are padded past their line: ${JSON.stringify(bad)}`);
   return codes.map((c) => c.text);
 }
+
+/**
+ * The chip row's sizes (docs/design-guidelines.md rule 3): a chip or button with text is 28 px tall
+ * on a desktop and 26 px on a phone, a small icon button 24 / 22 px; a list row is sized by its
+ * content. `TEXT`/`ICON` give the height for the page's width, ±1 px.
+ */
+const TEXT = (phone) => (phone ? [25, 27] : [27, 29]);
+const ICON = (phone) => (phone ? [21, 23] : [23, 25]);
+
+/** Fails when a visible element matching `sel` is outside `[min, max]` px tall; answers how many were measured. */
+export async function assertHeights(page, sel, [min, max], where) {
+  const hs = await page.evaluate((s) => [...document.querySelectorAll(s)].filter((el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }).map((el) => ({ h: Math.round(el.getBoundingClientRect().height * 10) / 10, what: (el.getAttribute("aria-label") || el.textContent || "").trim().slice(0, 30) })), sel);
+  assert(hs.length > 0, `${where}: something to measure (${sel})`);
+  const off = hs.filter((x) => x.h < min || x.h > max);
+  assert.deepEqual(off, [], `${where}: ${sel} should be ${min}–${max} px tall: ${JSON.stringify(off)}`);
+  return hs.length;
+}
+export { TEXT as TEXT_HEIGHT, ICON as ICON_HEIGHT };
 
 /** The text of the codes under `locator`. */
 const codesOf = (locator) => locator.locator("[data-task-code]").allInnerTexts();
@@ -109,6 +132,7 @@ async function codesInListAndDetail(k, s) {
   const header = await codesOf(detail.locator("header").first());
   assert.deepEqual(header, [`#${login.number}`, `#${login.number}`], `breadcrumb and title carry the code: ${header}`);
   assert.deepEqual(await codesOf(detail.locator("[data-working-session]").first()), [`#${login.number}`], "the Working session block names the task");
+  await assertHeights(page, "[data-task-detail] [data-task-child]", TEXT(false), "1440 child rows");
   const children = await codesOf(detail.locator('[data-task-card="children"]'));
   assert.deepEqual(children.sort(), kids.map((x) => `#${x.number}`).sort(), `each child shows its code: ${children}`);
   await page.locator(`[title^="#${login.number} ${login.title}"]`).first().waitFor({ timeout: 10000 });
@@ -126,6 +150,8 @@ async function codesInListAndDetail(k, s) {
   // A child's page links its parent by code and title.
   await k.selectTask(kids[1].title);
   assert.deepEqual(await codesOf(k.detail().locator("[data-task-parent]")), [`#${login.number}`], "the parent link carries the parent's code");
+  await assertHeights(page, "[data-task-detail] [data-task-parent]", TEXT(false), "1440 parent link");
+  await assertCodesOnBaseline(page, "[data-task-detail]", "1440 parent link");
   await k.shot("c03-child-parent-1440");
 
   // All projects: every code names its project; the project chip it replaced is gone.
@@ -205,6 +231,7 @@ async function managerChatCodes(k, s) {
   const codes = await codesOf(page.locator("[data-manager-tasks-list]:visible"));
   assert(codes.includes(`#${login.number}`) && codes.every((c) => /^#\d+$/.test(c)), `the chip's list shows #N codes: ${codes}`);
   await assertCodesFit(page, "[data-manager-tasks-list]", "1440 chip list");
+  await assertHeights(page, "[data-manager-tasks-list] [data-chip-task-open]", TEXT(false), "1440 chip list rows");
   await k.shot("c07-manager-chip-1440");
   await page.keyboard.press("Escape");
 
@@ -215,6 +242,8 @@ async function managerChatCodes(k, s) {
   await taskChip.waitFor({ timeout: 20000 });
   assert.deepEqual(await codesOf(taskChip), [`#${login.number}`], "the composer's chip shows the task's code");
   assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "1440 composer chip"), 1, "the composer chip's code is measured");
+  await assertHeights(page, "[data-composer-task-refs] [data-task-chip]", TEXT(false), "1440 composer chip");
+  await assertHeights(page, "[data-composer-task-refs] [data-task-chip-remove]", ICON(false), "1440 composer chip's remove button");
   await k.shot("c08-composer-chip-1440");
   k.record("codes-3", "manager Tasks chip list rows #N; composer task chip #N");
 }
@@ -314,6 +343,8 @@ async function phoneCodes(k, s) {
   assert.deepEqual(await codesOf(phoneChip), [`#${login.number}`]);
   assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "phone 390 composer chip"), 1);
   await assertCodesFit(page, "[data-composer-task-refs]", "phone 390 composer chip");
+  await assertHeights(page, "[data-composer-task-refs] [data-task-chip]", TEXT(true), "390 composer chip");
+  await assertHeights(page, "[data-composer-task-refs] [data-task-chip-remove]", ICON(true), "390 composer chip's remove button");
   await k.shot("c16-phone-composer-chip-390");
   await page.setViewportSize({ width: 320, height: 640 });
   await page.goto(`${k.web}/project/alpha/chat/claude/${s.managers.alpha}`);
@@ -322,9 +353,40 @@ async function phoneCodes(k, s) {
   await chip.tap();
   await page.locator("[data-chip-task]:visible").first().waitFor({ timeout: 15000 });
   await assertCodesFit(page, "[data-manager-tasks-list]", "phone 320 chip sheet");
+  // A row there is two lines (title, then status and due date): sized by them, never held at 44 px.
+  await assertHeights(page, "[data-manager-tasks-list] [data-chip-task-open]", [25, 43], "320 chip sheet rows");
   await k.shot("c14-phone-chip-sheet-320");
   await page.setViewportSize({ width: 390, height: 844 });
-  k.record("codes-5", "phone 390/360/320: list, long title ellipsized with its code whole, sheet, detail (tap copies), chip sheet — no code wraps or is cut");
+  await page.reload();
+  await page.locator("[data-manager-tasks-chip]:visible").first().tap();
+  await page.locator("[data-chip-task]:visible").first().waitFor({ timeout: 15000 });
+  await assertHeights(page, "[data-manager-tasks-list] [data-chip-task-open]", [25, 43], "390 chip sheet rows");
+  await k.shot("c14-phone-chip-sheet-390");
+  await page.keyboard.press("Escape");
+
+  // Child tasks and the parent link, in the task page's sheets.
+  await page.goto(`${k.web}/project/alpha`);
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("ppm:open-navigation", { detail: { tab: "tasks" } })));
+  await page.locator("[data-task-list-mobile]:visible").waitFor({ timeout: 30000 });
+  await page.locator("[data-task-row]").getByText(login.title).first().tap();
+  const parentPage = page.locator("[data-task-detail-mobile]:visible");
+  await parentPage.waitFor({ timeout: 15000 });
+  await parentPage.getByRole("button", { name: /Child tasks/ }).tap();
+  const kidsSheet = page.locator('[data-task-sheet="children"]');
+  await kidsSheet.waitFor({ timeout: 10000 });
+  await assertHeights(page, '[data-task-sheet="children"] [data-task-child]', TEXT(true), "390 child rows");
+  await assertCodesFit(page, '[data-task-sheet="children"]', "390 child rows");
+  await k.shot("c17-phone-children-390");
+  const kid = (await k.task(s.t.kids[1].id));
+  await kidsSheet.locator(`[data-task-child="${kid.id}"]`).tap();
+  const kidPage = page.locator(`[data-task-detail="${kid.id}"]:visible`);
+  await kidPage.waitFor({ timeout: 15000 });
+  await kidPage.getByRole("button", { name: /All properties/ }).tap();
+  await page.locator('[data-task-sheet="properties"] [data-task-parent]').waitFor({ timeout: 10000 });
+  await assertHeights(page, '[data-task-sheet="properties"] [data-task-parent]', TEXT(true), "390 parent link");
+  await assertCodesFit(page, '[data-task-sheet="properties"] [data-task-parent]', "390 parent link");
+  await k.shot("c18-phone-parent-390");
+  k.record("codes-5", "phone 390/360/320: list, long title ellipsized with its code whole, sheet, detail (tap copies), chip sheet — no code wraps or is cut; composer chip 26 px, its remove button 22 px, child rows and parent link 26 px, chip sheet rows content-sized under 44 px");
 }
 
 /** Telegram `/tasks`: the deck card leads with the code, in monospace. */

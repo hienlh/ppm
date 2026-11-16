@@ -12,9 +12,14 @@ import { openTaskTab } from "@/lib/ppm-tasks/open-task-tab";
 import { taskChipLabel, type ComposerTaskChip } from "@/lib/ppm-tasks/composer-task-chip-logic";
 import type { TaskReference } from "../../../shared/chat-task-ref";
 import { TaskCode } from "@/components/ppm-tasks/kit/task-code";
+import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 
-/** As tall as a turn chip, so the two kinds line up in one row. */
-const CHIP_BOX = "inline-flex h-[44px] max-w-[18rem] items-center gap-1.5 rounded-md border border-primary/30 bg-accent-wash text-xs text-text md:h-7";
+/**
+ * A chip with text: 28px, 26px on a phone (`TEXT_CONTROL_HEIGHT`, docs/design-guidelines.md rule 3,
+ * the chip row above the composer); there is no 44px minimum. `min-h-0!` keeps a card that grows
+ * every button inside it to thumb size from growing this one.
+ */
+const CHIP_BOX = cn("inline-flex min-h-0! max-w-[18rem] items-center gap-1.5 rounded-md border border-primary/30 bg-accent-wash text-xs text-text", TEXT_CONTROL_HEIGHT);
 
 /** The composer's chips, above the input. `currentProject` is the chat's: its own tasks read `#12`. */
 export function ComposerTaskChipRow({ chips, currentProject, onRemove }: { chips: readonly ComposerTaskChip[]; currentProject?: string; onRemove: (taskId: string) => void }) {
@@ -34,7 +39,8 @@ export function ComposerTaskChipRow({ chips, currentProject, onRemove }: { chips
               onClick={(e) => { e.stopPropagation(); onRemove(chip.taskId); }}
               aria-label={`Remove task #${chip.number}`}
               title="Remove"
-              className="flex size-[44px] shrink-0 items-center justify-center rounded-md text-text-subtle hover:text-text-primary md:size-7"
+              data-task-chip-remove=""
+              className="flex size-6 min-h-0! shrink-0 items-center justify-center rounded-md text-text-subtle hover:text-text-primary max-md:size-[22px]"
             >
               <X className="size-3.5" />
             </button>

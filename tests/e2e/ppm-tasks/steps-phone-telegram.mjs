@@ -7,8 +7,8 @@ import { buttonsOf } from "../assistant-telegram/harness.mjs";
 
 /**
  * Buttons in `sel` drawn smaller than 44 px (a hit area widened by an absolute ::after counts). A
- * task's code (`#12` beside a title) is text that copies on a tap, not a button of the layout: it
- * keeps the size of the text it sits in, and the row around it is the thumb's target.
+ * task's code (`#12` beside a title) is not held to 44 px: it is text in its title's line, and
+ * steps-task-codes.mjs checks it at that size (one line tall, never padded) at 1440 and 390.
  */
 function smallTargets(page, sel) {
   return page.evaluate((s) => [...document.querySelectorAll(`${s} button, ${s} [role=button]`)].filter((b) => {

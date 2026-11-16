@@ -11,6 +11,7 @@ import { TaskStatusGlyph } from "./kit/task-status-glyph";
 import { TaskMemberAvatar } from "./kit/task-member-avatar";
 import { TaskCode } from "./kit/task-code";
 import { CardTextButton, TaskCard } from "./task-card";
+import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 
 export interface TaskChildrenCardProps {
   children: readonly TaskDto[];
@@ -33,7 +34,8 @@ export function TaskChildrenCard({ children, members, onOpen, onAdd }: TaskChild
             const closed = c.baseGroup === "closed";
             return (
               <li key={c.id}>
-                <button type="button" onClick={() => onOpen(c)} className="flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-left hover:bg-surface-hover">
+                <button type="button" onClick={() => onOpen(c)} data-task-child={c.id}
+                  className={cn("flex min-h-0! w-full min-w-0 items-center gap-2 px-3 text-left hover:bg-surface-hover", TEXT_CONTROL_HEIGHT)}>
                   <TaskStatusGlyph baseGroup={c.baseGroup} closedAs={c.closedAs} name={c.statusName} />
                   <span data-task-code-pair="" className="flex min-w-0 flex-1 items-baseline gap-1.5">
                     <TaskCode task={c} viewProject={c.project} nested inRow className="text-[12px]" />
