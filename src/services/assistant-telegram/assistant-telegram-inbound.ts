@@ -23,7 +23,7 @@ import { setQuietWhileInPpm } from "./assistant-telegram-silence.ts";
 import { fetchPhoto } from "./assistant-telegram-photos.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
-import type { BridgeAction, ManagerCardPress } from "./assistant-telegram-actions.ts";
+import type { BridgeAction, ManagerCardPress, TaskPress } from "./assistant-telegram-actions.ts";
 import type { CardReplyMessage } from "./assistant-telegram-card-replies.ts";
 import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { forwardedFrom, wrapForwarded, backlogQuestion, viaInlineBot } from "./assistant-telegram-inbound-text.ts";
@@ -58,6 +58,10 @@ export interface InboundDeps {
   relayCard: (chatId: string, card: RelayedCard) => void;
   /** A button on one of the Assistant's own cards: the toast to show, after acting. */
   pressManagerCard?: (chatId: string, press: ManagerCardPress, group: string) => Promise<string>;
+  /** A PPM Tasks button (`/tasks`, a created task, an Undo on a task card): the toast to show, after acting. */
+  pressTask?: (chatId: string, press: TaskPress, group: string, cq: TelegramCallbackQuery) => Promise<string>;
+  /** `/tasks [project]`. */
+  showTasks?: (chatId: string, args: string, reply: (html: string) => void) => void;
   /** A message sent as a reply to a card's message: true when it answered the card. */
   replyToCard?: (chatId: string, m: CardReplyMessage) => Promise<boolean>;
   /** Whether this message of this chat shows one of the Assistant's cards. */
@@ -187,6 +191,7 @@ export class AssistantTelegramInbound {
         switchCode: (sessionId) => this.deps.codes.mint(chatId, `switch:${chatId}:${updateId}`, { kind: "switch", sessionId }),
         quietCode: (on) => this.deps.codes.mint(chatId, `quiet:${chatId}:${updateId}`, { kind: "quiet", on }),
         relayCard: (card) => this.deps.relayCard(chatId, card),
+        ...(this.deps.showTasks ? { tasks: (args: string) => this.deps.showTasks!(chatId, args, (html) => this.reply(chatId, html)) } : {}),
       });
       return false;
     }
@@ -321,6 +326,11 @@ export class AssistantTelegramInbound {
     if (action.kind === "card") {
       // Answered first and quickly: the toast says what happened, and the spinner stops.
       await this.deps.client.answerCallbackQuery(cq.id, this.deps.pressCard(chatId, action, found.group, cq));
+      return;
+    }
+    if (action.kind === "task") {
+      const toast = this.deps.pressTask ? await this.deps.pressTask(chatId, action, found.group, cq) : "This button is no longer valid.";
+      await this.deps.client.answerCallbackQuery(cq.id, toast);
       return;
     }
     if (action.kind === "mcard") {

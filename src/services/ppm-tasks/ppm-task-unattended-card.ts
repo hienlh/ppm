@@ -29,7 +29,7 @@ export interface UnattendedCard {
   title: string;
   body: string;
   /** The listed changes, for an Undo per change on the card. */
-  taskChanges: Array<{ historyId: number | null; taskId: string | null; ref: string | null; summary: string }>;
+  taskChanges: Array<{ historyId: number | null; taskId: string | null; ref: string | null; summary: string; projectKey: string }>;
   /** How many changes the card does not list. */
   taskChangesMore: number;
 }
@@ -84,7 +84,7 @@ export function unattendedCard(changes: readonly UnattendedChange[]): Unattended
         : []),
     ].join("\n"),
     taskChangesMore: Math.max(0, n - MAX_LISTED),
-    taskChanges: changes.slice(0, MAX_LISTED).map((c) => ({ historyId: c.historyId, taskId: c.taskId ?? null, ref: c.ref ?? null, summary: c.summary })),
+    taskChanges: changes.slice(0, MAX_LISTED).map((c) => ({ historyId: c.historyId, taskId: c.taskId ?? null, ref: c.ref ?? null, summary: c.summary, projectKey: c.projectKey })),
   };
 }
 

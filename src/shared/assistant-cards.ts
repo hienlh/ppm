@@ -183,7 +183,11 @@ export interface AssistantCardPayload {
    * undoes it (null for a settings change, which cannot be undone), so a surface can offer Undo
    * per change.
    */
-  taskChanges?: Array<{ historyId: number | null; taskId: string | null; ref: string | null; summary: string }>;
+  taskChanges?: Array<{
+    historyId: number | null; taskId: string | null; ref: string | null; summary: string;
+    /** The change's project, so a surface can keep a title-only project's details off a phone. */
+    projectKey?: string;
+  }>;
   /** Changes past the ones listed in `taskChanges` (each task's History in PPM has them). */
   taskChangesMore?: number;
 }

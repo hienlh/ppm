@@ -59,6 +59,9 @@ import { currentQuietWindowEnd } from "../assistant-wake/wake-quiet-hours.ts";
 import type { InlineKeyboardMarkup } from "../telegram/telegram-types.ts";
 import type { AssistantClock } from "../assistant-wake/assistant-clock.ts";
 import { CardReminders, quietWhileInPpm, TelegramSilence } from "./assistant-telegram-silence.ts";
+import { AssistantTelegramTasks, type TaskTelegramDeps } from "./assistant-telegram-task-actions.ts";
+import { AssistantTelegramTaskCreated, type TaskCreatedDeps } from "./assistant-telegram-task-created.ts";
+import { pressTaskCardUndo } from "./assistant-telegram-task-card-extras.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -114,6 +117,8 @@ export interface BridgeStartOptions {
   silence?: TelegramSilence;
   /** When a silent card's reminder is due, and whether quiet hours are on then (tests). */
   reminders?: { clock?: AssistantClock; quietEnd?: () => number | null; delayMs?: number };
+  /** `/tasks` and the created-task cards: their clock, the manager wake, the task link (tests). */
+  tasks?: Partial<Pick<TaskTelegramDeps, "clock" | "wake" | "hasManager">> & Partial<Pick<TaskCreatedDeps, "taskLink" | "chatsOf">>;
 }
 
 function bridgeConfig(): Pick<PPMBotConfig, "enabled" | "show_tool_calls" | "debounce_ms"> & { quiet_while_in_ppm: boolean } {
@@ -138,6 +143,8 @@ interface Running {
   cards: BridgeCards;
   codes: ButtonCodes<BridgeAction>;
   reminders: CardReminders;
+  tasks: AssistantTelegramTasks;
+  taskCreated: AssistantTelegramTaskCreated;
   offs: Array<() => void>;
 }
 
@@ -189,6 +196,8 @@ export class AssistantTelegramBridge {
     const replyTo = (chatId: string, html: string, markup?: InlineKeyboardMarkup) =>
       queue.enqueue(chatId, sendMessageTask(queue, chatId, { html, ...(markup ? { markup } : {}) }, { label: "card reply" }));
     const cardReplies = new AssistantTelegramCardReplies({ codes, reply: replyTo });
+    const tasks = new AssistantTelegramTasks({ queue, codes, ...opts.tasks });
+    const taskCreated = new AssistantTelegramTaskCreated({ queue, codes, ...opts.tasks });
     let poller: AssistantTelegramPoller | null = null;
     const inbound = new AssistantTelegramInbound({
       client, token, queue, codes, now,
@@ -198,6 +207,12 @@ export class AssistantTelegramBridge {
       switchSession: (chatId, sessionId) => this.switchSession(chatId, sessionId),
       relayCard: (chatId, card) => cards.relayed(chatId, card),
       pressManagerCard: (chatId, press, group) => cardReplies.press(chatId, press, group),
+      pressTask: async (chatId, press, group, cq) => {
+        if (press.op === "undo_history") return pressTaskCardUndo(chatId, press, group, cq, { codes, queue });
+        if (taskCreated.owns(press.ref)) return taskCreated.press(chatId, press, group);
+        return tasks.press(chatId, press, group, cq);
+      },
+      showTasks: (chatId, args, reply) => tasks.showDeck(chatId, args, reply),
       replyToCard: (chatId, m) => cardReplies.reply(chatId, m),
       isCardMessage: (chatId, messageId) => cardReplies.isCardMessage(chatId, messageId),
       cardOf: (chatId, messageId) => {
@@ -216,11 +231,14 @@ export class AssistantTelegramBridge {
       // hours hold it): its push would say the same thing twice. Nothing else is held back.
       addNotificationSuppressor((sessionId, kind) => kind === "approval" && managerCardReachesPhone(sessionId, managerCards)),
       () => cardOutbound.detach(managerCards),
+      () => taskCreated.detach(),
+      () => tasks.stop(),
       () => detachCardFollowupSink(cardFollowups),
     ];
     cardOutbound.attach(managerCards);
     attachCardFollowupSink(cardFollowups);
-    this.run = { poller, queue, state, inbound, mirror, relay, dbNotices, cards, codes, reminders, offs };
+    taskCreated.attach();
+    this.run = { poller, queue, state, inbound, mirror, relay, dbNotices, cards, codes, reminders, tasks, taskCreated, offs };
 
     recoverInterrupted(queue, state);
     mirror.attach();
@@ -256,6 +274,8 @@ export class AssistantTelegramBridge {
     run.queue.forget(chatId, "chat disconnected");
     run.mirror.forgetChat(chatId);
     run.cards.forgetChat(chatId);
+    run.tasks.forgetChat(chatId);
+    run.taskCreated.forgetChat(chatId);
     run.codes.dropChat(chatId);
     run.inbound.forgetChat(chatId);
     run.state.forgetChat(chatId);

@@ -1,5 +1,5 @@
 /**
- * The bot's commands: `/start`, `/new [claude|codex]`, `/sessions`, `/status`, `/stop`, `/quiet [on|off]`, `/help`. There is no
+ * The bot's commands: `/start`, `/new [claude|codex]`, `/sessions`, `/status`, `/tasks [project]`, `/stop`, `/quiet [on|off]`, `/help`. There is no
  * `/restart`: restarting PPM is a change, and a change goes through an approval card (the
  * Assistant can run `ppm restart` in a shell, which asks).
  *
@@ -26,6 +26,7 @@ export const BOT_COMMANDS: TelegramBotCommand[] = [
   { command: "new", description: "Start a new conversation (optionally: claude or codex)" },
   { command: "sessions", description: "Switch to another conversation" },
   { command: "status", description: "Which chats need you today" },
+  { command: "tasks", description: "What to do first, across projects (optionally: a project)" },
   { command: "stop", description: "Stop the answer in progress" },
   { command: "quiet", description: "Silence the phone while you are at PPM (on/off)" },
   { command: "help", description: "What this bot can do" },
@@ -53,6 +54,8 @@ export interface CommandContext {
   relayCard(card: RelayedCard): void;
   /** A button code that turns "quiet while at PPM" on or off when pressed. */
   quietCode?(on: boolean): string;
+  /** `/tasks [project]`: the task deck, with no AI turn. */
+  tasks?(args: string): void;
 }
 
 export interface CommandDeps {
@@ -75,6 +78,7 @@ const HELP_BODY = [
   "/new — start a new conversation (<code>/new claude</code> or <code>/new codex</code>)",
   "/sessions — switch to another conversation",
   "/status — which chats need you today, with the cards they wait on",
+  "/tasks — what to do first across your projects, one task at a time, with buttons to change its status (<code>/tasks &lt;project&gt;</code> for one project)",
   "/stop — stop the answer in progress",
   "/quiet — while you are at PPM, messages here arrive without a sound (<code>/quiet on</code>, <code>/quiet off</code>)",
   "/help — this message",
@@ -100,6 +104,8 @@ export async function runCommand(cmd: ParsedCommand, ctx: CommandContext, deps: 
         return await listSessions(ctx);
       case "status":
         return await showStatus(ctx, deps.status);
+      case "tasks":
+        return ctx.tasks ? ctx.tasks(cmd.args) : ctx.reply("Tasks are not available here.");
       case "stop":
         return stopTurn(ctx);
       case "quiet":
