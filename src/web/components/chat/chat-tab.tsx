@@ -1613,6 +1613,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
 
         <QueuedMessagesStack
           messages={queuedMessages}
+          projectName={projectName}
           onSendNow={sendQueuedNow}
           onEdit={takeBackQueued}
           onRemove={removeQueued}
