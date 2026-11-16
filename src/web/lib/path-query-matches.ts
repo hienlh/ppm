@@ -114,6 +114,9 @@ function matchTier(entry: PathEntry, filter: string): number | null {
   return null;
 }
 
+/** `shot-2` before `shot-10`, case ignored — the order a file browser shows. */
+const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
 const depthOf = (e: PathEntry) => (e.relDir.match(/\//g) ?? []).length;
 
 /**
@@ -127,7 +130,8 @@ const depthOf = (e: PathEntry) => (e.relDir.match(/\//g) ?? []).length;
  */
 export function rankPathEntries(entries: PathEntry[], filter: string): PathEntry[] {
   if (!filter) {
-    const own = entries.filter((e) => !e.relDir);
+    // By name: the host lists in its filesystem's order, which on Linux is hash order.
+    const own = entries.filter((e) => !e.relDir).sort((a, b) => byName.compare(a.name, b.name));
     return [...own.filter((e) => e.kind === "folder"), ...own.filter((e) => e.kind === "file")];
   }
   const ranked: Array<{ entry: PathEntry; tier: number }> = [];

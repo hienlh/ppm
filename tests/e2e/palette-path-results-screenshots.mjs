@@ -62,11 +62,11 @@ try {
       };
     }, { api: harness.api });
     const page = await context.newPage();
-    await page.goto(harness.web, { waitUntil: "networkidle" });
-    await page.waitForTimeout(1500);
+    await page.goto(harness.web, { waitUntil: "load", timeout: 180000 });
+    await page.waitForTimeout(4000);
     for (const shot of shots) {
       await page.evaluate((q) => window.dispatchEvent(new CustomEvent("open-command-palette", { detail: q })), shot.query);
-      await page.waitForSelector("input[placeholder^='Search actions']");
+      await page.waitForSelector("input[placeholder^='Search actions']", { timeout: 60000 });
       await page.waitForTimeout(1200);
       const file = join(OUT, `${PREFIX}-${device.name}-${shot.name}.png`);
       await page.screenshot({ path: file });

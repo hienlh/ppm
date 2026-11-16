@@ -96,6 +96,15 @@ describe("a folder", () => {
     expect(rows(`${EVIDENCE}\\`)).toEqual(["raw", ...NAMES]);
   });
 
+  test("lists its own entries by name whatever order the host read them in", () => {
+    const shuffled: PathListing = {
+      dir: "/d", dirs: ["/d/b-dir", "/d/A-dir"],
+      files: ["/d/shot-10.png", "/d/Shot-2.png", "/d/notes.md", "/d/sub/deep.png"],
+    };
+    expect(rankPathEntries(pathListingEntries(shuffled), "").map((e) => e.name))
+      .toEqual(["A-dir", "b-dir", "notes.md", "Shot-2.png", "shot-10.png"]);
+  });
+
   test("with a trailing / lists the same", () => {
     expect(rows("C:/Users/PC/.agents/skills/nxsys-e2e-test/evidence/NX-6641/")).toEqual(["raw", ...NAMES]);
   });
