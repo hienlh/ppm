@@ -131,7 +131,8 @@ async function decision(k, s) {
   await k.beat(1000);
   // Show where it went: the manager chat, from the working-session block.
   await k.detail().getByRole("button", { name: "Open chat" }).first().click();
-  await page.getByText("One plan with a usage slider").last().waitFor({ timeout: 20000 });
+  // The chat's copy: the task's own (its decision card) is in a window that went to the dock.
+  await page.getByText("One plan with a usage slider").and(page.locator("*:visible")).last().waitFor({ timeout: 20000 });
   await k.beat(2000);
   await k.endScene();
   // The same with no browser on that chat: the route alone sends it to beta's manager.
@@ -180,9 +181,12 @@ async function managerChip(k, s) {
   await page.goto(`${k.web}/project/alpha`);
   await k.selectTask(s.t.release.title);
   await k.scene("s5", "The Tasks chip in the manager chat", "Above the composer: open tasks and how many are Now; it opens a short list, one tap away from each task.");
+  const taskWindow = page.locator('[aria-roledescription="window"]', { has: page.locator(`[data-task-detail="${s.t.release.id}"]`) });
   await k.detail().getByRole("button", { name: "Open chat" }).first().click();
   const chip = page.locator("[data-manager-tasks-chip]:visible").first();
   await chip.waitFor({ timeout: 20000 });
+  // The task's window went to the dock, so nothing covers the chat it opened.
+  await until("the task window went to the dock", async () => !(await taskWindow.isVisible()), 10000);
   assert.match(await chip.getAttribute("aria-label"), /^Tasks: \d+ open, \d+ now$/);
   await k.beat(1000);
   await chip.click();

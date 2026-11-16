@@ -164,6 +164,8 @@ export function FloatingWindow({
       role="group"
       aria-roledescription="window"
       aria-label={title}
+      // The window in front; windows stay in open order in the DOM, so this is how to find it.
+      data-front={focused ? "" : undefined}
       style={{ zIndex: windowZIndex(win.rank) }}
       className={cn(
         "@container/window absolute left-0 top-0 flex flex-col pointer-events-auto",

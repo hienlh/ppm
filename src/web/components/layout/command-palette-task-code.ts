@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ListTodo } from "@/lib/icons";
 import { lookupTasksByCode } from "@/lib/ppm-tasks/task-code-lookup";
-import { openTaskTab } from "@/lib/ppm-tasks/open-task-tab";
+import { openTask } from "@/lib/ppm-tasks/open-task";
 import { parseTaskCodeQuery, taskCode } from "../../../shared/ppm-tasks-refs";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
 import type { CommandItem } from "./command-palette-items";
@@ -22,7 +22,7 @@ export function taskCodeItem(task: TaskDto, activeProject: string | null, onClos
     hint: `Task · ${task.project} · ${task.statusName}`,
     icon: ListTodo,
     group: "action",
-    action: () => { openTaskTab(task, { keep: true }); onClose(); },
+    action: () => { openTask(task, { keep: true }); onClose(); },
   };
 }
 

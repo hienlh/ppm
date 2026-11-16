@@ -1,6 +1,7 @@
 /**
  * Opening tasks and their chats from the task views.
  *
+ * Callers open a task with `openTask` (`open-task.ts`), which picks a window, a sheet or this tab.
  * `openTaskTab` shows a task in the main area: a plain selection opens a *preview* tab (replaced
  * by the next selection), `keep` opens or turns it into a kept tab. `keepTaskTab` keeps the tab of
  * a task the user just edited. `openTaskChat` opens a task's working chat in whatever project it
@@ -8,6 +9,7 @@
  */
 import { toast } from "sonner";
 import { usePanelStore } from "@/stores/panel-store";
+import type { Tab } from "@/stores/tab-store";
 import { openSessionAnywhere } from "@/lib/open-session-anywhere";
 import { attachTaskChip, taskChipOf } from "./composer-task-chip";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
@@ -29,15 +31,24 @@ export function taskTabTitle(task: { number: number; project: string; title: str
   return `${taskCode(task, tabProject)} ${task.title}`;
 }
 
-export function openTaskTab(task: TaskTabTarget, opts: { keep?: boolean } = {}): string {
+/** The tab that shows a task, as a preview unless `keep`. A window holds the same tab. */
+export function taskTabDef(task: TaskTabTarget, opts: { keep?: boolean } = {}): Omit<Tab, "id"> {
   const projectId = usePanelStore.getState().currentProject ?? task.project;
-  return usePanelStore.getState().openTab({
+  return {
     type: "task",
     title: task.number !== undefined ? taskTabTitle({ number: task.number, project: task.project, title: task.title }, projectId) : task.title,
     projectId,
     closable: true,
     metadata: { taskId: task.id, projectName: task.project, ...(opts.keep ? {} : { preview: true }) },
-  });
+  };
+}
+
+/**
+ * Opens a task as a tab in the grid. Most callers want `openTask` (a window on a desktop, a sheet
+ * on a phone); this is for a tab on purpose: the deep link, "Open as tab", "Full screen".
+ */
+export function openTaskTab(task: TaskTabTarget, opts: { keep?: boolean } = {}): string {
+  return usePanelStore.getState().openTab(taskTabDef(task, opts));
 }
 
 export { keepTaskTab } from "./keep-task-tab";

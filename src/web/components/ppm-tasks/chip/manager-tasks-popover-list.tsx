@@ -13,7 +13,8 @@ import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { usePpmTaskLinkStates, usePpmTaskList } from "@/hooks/use-ppm-tasks";
 import { URGENCY_LABEL } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
 import { groupTasks } from "@/lib/ppm-tasks/task-list-view";
-import { openTaskChat, openTaskTab, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
+import { openTaskChat, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
+import { openTask as openTaskAnywhere } from "@/lib/ppm-tasks/open-task";
 import { revealTaskInSidebar } from "@/lib/ppm-tasks/reveal-task-in-sidebar";
 import type { Urgency } from "../../../../shared/ppm-tasks";
 import type { TaskDto } from "../../../../shared/ppm-tasks-api";
@@ -57,9 +58,10 @@ export function ManagerTasksPopoverList({ project, total, onClose }: { project: 
 
   const openTask = (task: TaskDto) => {
     onClose();
-    // A phone pushes into the task; its back button then lands on this list, already selected.
+    // A desktop opens the task in a window beside the chat; a phone in a sheet over it. Either way
+    // the task is selected in the Tasks list.
     revealTaskInSidebar(task, { openList: !isMobileDevice() });
-    openTaskTab(task);
+    openTaskAnywhere(task);
   };
   const showInSidebar = () => { onClose(); revealTaskInSidebar({ project }, { openList: true }); };
 

@@ -11,6 +11,7 @@ import type { ComponentType } from "react";
 import type { Tab, TabType } from "@/stores/tab-store";
 import { AssistantTitleExtras } from "@/components/assistant/assistant-title-extras";
 import { OpenInProjectTitleExtras } from "@/components/assistant/open-in-project-button";
+import { TaskWindowTitleExtras } from "@/components/ppm-tasks/task-window-title-extras";
 import { useAssistantWaitingStore } from "@/stores/assistant-waiting-store";
 import { assistantTitlebarTitle } from "@/stores/assistant-name-store";
 
@@ -48,6 +49,8 @@ function build(): Partial<Record<TabType, TabWindowExtras>> {
     },
     // Renders only for a manager chat opened in a window of its own (see `openManagerChat`).
     chat: { TitleExtras: OpenInProjectTitleExtras },
+    // A task opened from anywhere lives in a window of its own; this turns it into a tab.
+    task: { TitleExtras: TaskWindowTitleExtras },
   };
 }
 

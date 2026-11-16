@@ -91,8 +91,15 @@ export function tasksKit({ web, fx, tg, browser, shotsDir, videoDir, owner, reco
       await current.page.locator("[data-tasks-panel], button:has(> span:text-is('Tasks'))").first().waitFor({ timeout: 60000 });
       return current.page;
     },
-    async openPhone() {
-      current = await newPage("phone", { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    /** Another desktop page at `width` × `height` (the 800 px check); `kit.desktop` stays the 1440 one. */
+    async openDesktopAt(width, height) {
+      current = await newPage(`desktop-${width}`, { viewport: { width, height } });
+      await current.page.goto(`${web}/project/alpha`);
+      await current.page.locator("[data-tasks-panel], button:has(> span:text-is('Tasks'))").first().waitFor({ timeout: 60000 });
+      return current.page;
+    },
+    async openPhone(width = 390, height = 844) {
+      current = await newPage(width === 390 ? "phone" : `phone-${width}`, { viewport: { width, height }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
       kit.phonePage = current;
       await current.page.goto(`${web}/project/alpha`);
       await current.page.waitForLoadState("domcontentloaded");
@@ -118,7 +125,15 @@ export function tasksKit({ web, fx, tg, browser, shotsDir, videoDir, owner, reco
       await panel.waitFor({ timeout: 10000 });
     },
     row: (title) => kit.page.locator("[data-task-row]", { hasText: title }).first(),
-    detail: () => kit.page.locator("[data-task-detail]:visible").first(),
+    /**
+     * The task page in front: a desktop opens tasks in windows, and the DOM keeps windows in the
+     * order they opened, so the front one (`data-front`) wins over an older window behind it.
+     */
+    detail: () => kit.page
+      // A page in the front window, else one in the grid; the window layer comes after the grid
+      // in the DOM, so `last()` prefers the window.
+      .locator('xpath=//*[@data-task-detail][ancestor::*[@data-front] or not(ancestor::*[@aria-roledescription="window"])] >> visible=true')
+      .last(),
     async selectTask(title) {
       await kit.openTasks();
       // The title, not the row's middle: the row also holds chips (its working chat) that open other tabs.
