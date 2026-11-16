@@ -305,6 +305,16 @@ describe("ActivityChip: sessions", () => {
     expect(view.container.querySelector('[data-activity-tab="sessions"]')!.getAttribute("aria-selected")).toBe("true");
   });
 
+  it("in a manager chat, yields the narrow row to the Tasks chip, but never while a session needs the person", async () => {
+    view = await mount(<ActivityChip projectName="ppm" agentProviderId="claude" sessionId={CHAT}
+      messages={[fromPeer("2026-11-06T00:00:00.000Z")]} teamName={CHAT} teamMembers={[]} yieldNarrow />);
+    const chip = view.container.querySelector("[data-activity-chip]")!;
+    expect(chip.className).toContain("@max-[340px]/chat:hidden");
+    await act(async () => { useSessionCollabStore.setState({ pendingApprovals: { [PEER]: "r1" } }); });
+    expect(chip.getAttribute("data-activity-dot")).toBe("needs_approval");
+    expect(chip.className).not.toContain("@max-[340px]/chat:hidden");
+  });
+
   it("keeps an unlinked session hidden, and shows it again once it messages this chat after the unlink", async () => {
     const first = fromPeer("2026-11-06T00:00:00.000Z");
     useSettingsStore.setState({ unlinkedSessions: { [CHAT]: { [PEER]: Date.parse("2026-11-07T00:00:00.000Z") } } });

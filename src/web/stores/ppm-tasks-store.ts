@@ -2,7 +2,10 @@
  * The one PPM Tasks store of the page (logic in `lib/ppm-tasks/ppm-tasks-store-core.ts`). It
  * follows `/ws/global`: `tasks:changed` re-reads the shown lists and details it names,
  * `tasks:project_changed` everything of that project, and a reconnect everything shown, since a
- * change announced while the socket was down never arrived. Link states have their own hook.
+ * change announced while the socket was down never arrived. `tasks:link_states` re-reads that
+ * project too: a check of handed-off work ("stalled", "finished, no report") changes no task, and
+ * rows and details read it from the task (`check`), so without this it showed only after an
+ * unrelated edit. Link states themselves have their own hook.
  */
 import { toast } from "sonner";
 import { useStore } from "zustand";
@@ -25,6 +28,10 @@ export function ensurePpmTasksEvents(): void {
   window.addEventListener("tasks:changed", (event) => {
     const d = (event as CustomEvent<Extract<TasksGlobalEvent, { type: "tasks:changed" }>>).detail;
     if (d && typeof d.project === "string" && Array.isArray(d.taskIds)) ppmTasksStore.getState().onTasksChanged(d.project, d.taskIds);
+  });
+  window.addEventListener("tasks:link_states", (event) => {
+    const d = (event as CustomEvent<Extract<TasksGlobalEvent, { type: "tasks:link_states" }>>).detail;
+    if (d && typeof d.project === "string") ppmTasksStore.getState().onProjectChanged(d.project);
   });
   window.addEventListener("tasks:project_changed", (event) => {
     const d = (event as CustomEvent<Extract<TasksGlobalEvent, { type: "tasks:project_changed" }>>).detail;

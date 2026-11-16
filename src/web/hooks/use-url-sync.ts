@@ -30,6 +30,11 @@ export interface UrlState {
   assistant: AssistantDeepLink | null;
   /** A chat URL's `?turn=`: the turn a turn link points at, when it is a turn id at all. */
   turnId?: string | null;
+  /**
+   * `?openTask=<id>` on a project address (Telegram's "Open in PPM" on a task card): the task to
+   * open in its tab once the project is open, when it is a task id at all.
+   */
+  openTask?: string | null;
 }
 
 /** A task id as the server mints them (`TASK_ID_PATTERN` in the task routes). */
@@ -89,8 +94,13 @@ export function parseUrlState(location: Pick<Location, "pathname" | "search"> = 
   const tabType = VALID_TAB_TYPES.includes(rawType as TabType) ? (rawType as TabType) : null;
   const turn = tabType === "chat" ? params.get("turn") : null;
   const turnId = turn && TURN_ID_RE.test(turn) ? turn : null;
+  const task = params.get("openTask");
+  const openTask = task && TASK_ID_RE.test(task) ? task : null;
 
-  return { projectName, tabType, tabIdentifier: rawIdentifier, openChat, assistant: null, ...(turnId ? { turnId } : {}) };
+  return {
+    projectName, tabType, tabIdentifier: rawIdentifier, openChat, assistant: null,
+    ...(turnId ? { turnId } : {}), ...(openTask ? { openTask } : {}),
+  };
 }
 
 /**

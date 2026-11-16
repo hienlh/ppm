@@ -32,6 +32,8 @@
  * refuses to start unless `<PPM_HOME>/bin/cloudflared` is `tests/fixtures/fake-cloudflared.ts`.
  * With PPM_ASSISTANT_MANAGER_LOOP=1 the Assistant's clock is one the e2e moves, the rules check
  * gets a scripted answer, and a project chat can be typed into (`assistant-manager-fixture.ts`).
+ * With PPM_ASSISTANT_TASKS=1 (and the manager loop) the task store's events reach browsers and its
+ * handed-off work checker runs on a clock the e2e moves (`ppm-tasks-fixture.ts`).
  * With PPM_ASSISTANT_RESTART_NEWS=1 each run is recorded as a server run and becomes restart news
  * (`assistant-restart-news-fixture.ts`); PPM_ASSISTANT_BOOT_SCRIPTS (JSON) posts match scripts
  * before the hub starts, since a wake turn can begin at its first tick.
@@ -88,6 +90,11 @@ configService.set("ai", {
 });
 const managerLoop = process.env.PPM_ASSISTANT_MANAGER_LOOP === "1"
   ? await (await import("./assistant-manager-fixture")).setupManagerLoop({ port })
+  : null;
+// The task store's events and its handed-off work checker on a clock the e2e moves (ppm-tasks-e2e.mjs).
+if (process.env.PPM_ASSISTANT_TASKS === "1" && !managerLoop) throw new Error("PPM_ASSISTANT_TASKS needs PPM_ASSISTANT_MANAGER_LOOP=1");
+const tasksFixture = process.env.PPM_ASSISTANT_TASKS === "1"
+  ? await (await import("./ppm-tasks-fixture")).setupTasksFixture()
   : null;
 // This run recorded at boot as the server records it, before anything can start a turn: the hub
 // startup below turns it into restart news (assistant-restart-news-e2e.mjs only).
@@ -686,6 +693,9 @@ async function testRoute(req: Request, path: string): Promise<Response> {
     const key = body.sessionId ?? "*";
     scripts.set(key, [...(scripts.get(key) ?? []), { label: body.label, ops: body.ops as ScriptOp[], ...reply }]);
     return json({ ok: true });
+  }
+  if (tasksFixture && path.startsWith("/__assistant-test/tasks/")) {
+    return (await tasksFixture.route(req, path.slice("/__assistant-test/tasks/".length))) ?? json({ error: "unknown test route" }, 404);
   }
   if (managerLoop && path.startsWith("/__assistant-test/")) {
     const answered = await managerLoop.route(req, path.slice("/__assistant-test/".length));

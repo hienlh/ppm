@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  childProgress, dropIsNoop, groupTasks, listQueryFor, planDrop, visibleTasks,
+  childProgress, countingQueryFor, dropIsNoop, groupTasks, listQueryFor, planDrop, visibleTasks,
 } from "../../../../src/web/lib/ppm-tasks/task-list-view.ts";
 import { EMPTY_FILTERS } from "../../../../src/web/stores/ppm-tasks-view-store.ts";
 import { taskDto } from "./task-fixture.ts";
@@ -58,6 +58,14 @@ describe("filters", () => {
     const p = taskDto();
     const kids = [taskDto({ parentId: p.id, baseGroup: "closed", closedAs: "done" }), taskDto({ parentId: p.id }), taskDto({ parentId: p.id })];
     expect(childProgress([p, ...kids]).get(p.id)).toEqual({ done: 1, total: 3 });
+  });
+
+  it("counts children and tags over the whole scope, whatever the filters and search", () => {
+    const filtered = listQueryFor("project", "demo", { ...EMPTY_FILTERS, groups: ["active"], tag: "billing", person: "me" }, "pay");
+    expect(countingQueryFor("project", "demo")).toEqual({ project: "demo", closed: true });
+    expect(countingQueryFor("project", "demo")).not.toEqual(filtered);
+    // With no filter on it is the list's own query, so the store fetches it once.
+    expect(countingQueryFor("all", null)).toEqual(listQueryFor("all", null, EMPTY_FILTERS, ""));
   });
 });
 

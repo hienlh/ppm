@@ -3,7 +3,7 @@
  * the answer is offered to "Tell the manager now?", a stale write has already been re-read by the
  * store (null back, nothing more to say) and any other failure is a toast. Also the two flows with
  * their own words: a Decision choice (where it went; "Send again" when it was recorded but not
- * sent; Start chat when nobody can take it) and Start chat (confirmed when a chat already works on
+ * sent; Start chat when nobody can take it, which then sends the choice to the new chat) and Start chat (confirmed when a chat already works on
  * the task, since the new chat replaces it).
  */
 import { useCallback, useMemo, useRef } from "react";
@@ -14,7 +14,7 @@ import { ppmTasksStore } from "@/stores/ppm-tasks-store";
 import { keepTaskTab, openTaskChat } from "@/lib/ppm-tasks/open-task-tab";
 import { offerTaskManagerPrompt } from "./task-manager-prompt-toast";
 import type { ConfirmRequest } from "./task-confirm-dialog";
-import type { TaskDecideResponse, TaskDto, TaskWorkingSession, TaskWriteResponse } from "../../../shared/ppm-tasks-api";
+import type { TaskDecideResponse, TaskDto, TaskStartChatResponse, TaskWorkingSession, TaskWriteResponse } from "../../../shared/ppm-tasks-api";
 
 /** Where a choice went, in the words the toast uses. */
 export function decisionDeliveredMessage(r: Pick<TaskDecideResponse, "delivered" | "task">): string {
@@ -51,7 +51,7 @@ export function useTaskWrite(confirm?: (req: ConfirmRequest) => Promise<boolean>
     }
   }, []);
 
-  const startChat = useCallback(async (task: TaskDto): Promise<string | null> => {
+  const startChatWith = useCallback(async (task: TaskDto): Promise<TaskStartChatResponse | null> => {
     if (startChatReplaces(task.workingSession) && confirm) {
       const w = task.workingSession as Extract<TaskWorkingSession, { kind: "session" }>;
       const yes = await confirm({
@@ -63,8 +63,10 @@ export function useTaskWrite(confirm?: (req: ConfirmRequest) => Promise<boolean>
     }
     const r = await run(task.id, () => actions.startChat(task));
     if (r) openTaskChat(task.project, r.sessionId, "claude");
-    return r?.sessionId ?? null;
+    return r;
   }, [actions, confirm, run]);
+
+  const startChat = useCallback(async (task: TaskDto): Promise<string | null> => (await startChatWith(task))?.sessionId ?? null, [startChatWith]);
 
   const decide = useCallback(async (task: TaskDto, optionId: string): Promise<TaskDecideResponse | null> => {
     keepTaskTab(task.id);
@@ -73,8 +75,13 @@ export function useTaskWrite(confirm?: (req: ConfirmRequest) => Promise<boolean>
       r = await actions.decide(task, optionId);
     } catch (e) {
       if (e instanceof NoSessionError) {
+        // Nothing was recorded, so once the new chat is the working session the choice goes to it:
+        // from the task as Start chat left it, since starting the chat moved its revision.
         toast.error("No chat can take this choice: start a chat for the task first", {
-          action: { label: "Start chat", onClick: () => void startChat(task) },
+          action: {
+            label: "Start chat and send",
+            onClick: () => void startChatWith(task).then((started) => started && decideRef.current(started.task, optionId)),
+          },
           duration: 15_000,
         });
       } else {
@@ -95,7 +102,7 @@ export function useTaskWrite(confirm?: (req: ConfirmRequest) => Promise<boolean>
       toast.success(decisionDeliveredMessage(r));
     }
     return r;
-  }, [actions, startChat]);
+  }, [actions, startChatWith]);
 
   decideRef.current = decide;
 

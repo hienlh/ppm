@@ -16,7 +16,7 @@ import { ppmTasksStore, usePpmTasksStore } from "@/stores/ppm-tasks-store";
 import { usePpmTaskLinkStates, usePpmTaskList } from "@/hooks/use-ppm-tasks";
 import { usePpmTaskProjects } from "@/hooks/use-ppm-task-projects";
 import { ppmTasksClient } from "@/lib/ppm-tasks/ppm-tasks-client";
-import { childProgress, groupTasks, listQueryFor, visibleTasks } from "@/lib/ppm-tasks/task-list-view";
+import { childProgress, countingQueryFor, groupTasks, listQueryFor, visibleTasks } from "@/lib/ppm-tasks/task-list-view";
 import { openTaskChat, openTaskTab, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
 import { taskIdOfTab } from "@/lib/ppm-tasks/task-tab-preview";
 import type { TaskMember } from "../../../shared/ppm-tasks";
@@ -48,6 +48,10 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
   useEffect(() => { const t = setTimeout(() => setSearched(query), 250); return () => clearTimeout(t); }, [query]);
   const listQuery = showList ? listQueryFor(scope, activeProject, filters, searched) : null;
   const { tasks, loading, error } = usePpmTaskList(listQuery);
+  // Child progress and the tag/field pickers count the whole scope, not what the filters let
+  // through (a status filter would otherwise turn 1/3 into 0/2). Same request when no filter is on.
+  const counting = usePpmTaskList(showList ? countingQueryFor(scope, activeProject) : null);
+  const everyTask = counting.loading || counting.error ? tasks : counting.tasks;
   const filtersOn = !!(filters.groups.length || filters.types.length || filters.person || filters.tag || filters.field || query.trim());
   const shown = useMemo(() => visibleTasks(tasks, filters, hiddenProjects, scope), [tasks, filters, hiddenProjects, scope]);
 
@@ -59,7 +63,7 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
     return new Set([selectedId, sel?.parentId].filter((x): x is string => !!x));
   }, [shown, selectedId]);
   const groups = useMemo(() => groupTasks(shown, expanded), [shown, expanded]);
-  const progress = useMemo(() => childProgress(tasks), [tasks]);
+  const progress = useMemo(() => childProgress(everyTask), [everyTask]);
 
   const shownProjects = useMemo(() => (scope === "all" ? enabledProjects.map((p) => p.name) : activeProject && own?.enabled ? [activeProject] : []), [scope, enabledProjects, activeProject, own]);
   const settings = useTaskProjectSettingsMap(shownProjects);
@@ -99,14 +103,14 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
     for (const s of Object.values(settings)) for (const m of s.members) if (!byId.has(m.id)) byId.set(m.id, m);
     return [...byId.values()];
   }, [settings]);
-  const tags = useMemo(() => [...new Set(tasks.flatMap((t) => t.tags))].sort(), [tasks]);
+  const tags = useMemo(() => [...new Set(everyTask.flatMap((t) => t.tags))].sort(), [everyTask]);
   const filterFields = useMemo(() => {
     const defs = activeProject ? settings[activeProject]?.fieldDefs ?? [] : [];
     return defs.filter((d) => d.type === "select" || d.type === "date").map((def) => ({
       def,
-      values: def.type === "select" && def.options?.length ? def.options : [...new Set(tasks.map((t) => t.fields[def.key]).filter((v) => v != null).map(String))].sort(),
+      values: def.type === "select" && def.options?.length ? def.options : [...new Set(everyTask.map((t) => t.fields[def.key]).filter((v) => v != null).map(String))].sort(),
     }));
-  }, [activeProject, settings, tasks]);
+  }, [activeProject, settings, everyTask]);
 
   const settingsProject = activeProject && projects.some((p) => p.name === activeProject) ? activeProject : null;
 

@@ -134,6 +134,11 @@ describe("listing and counts", () => {
     expect(reported.provenance).toBe("Written by the api manager AI");
     expect(approval().provenance).toBeNull();
   });
+
+  it("names the PPM Assistant on a report card the Assistant wrote, not a manager", () => {
+    const away = cards.create({ kind: "done", projectName: null, projectPath: null, sessionId: null, title: "PPM Assistant made 2 task changes while you were away", payload: { byAssistant: true, taskChanges: [] } });
+    expect(away.provenance).toBe("Written by the PPM Assistant");
+  });
 });
 
 describe("the restart sweep", () => {

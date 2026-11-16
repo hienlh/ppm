@@ -7,7 +7,7 @@ import { Hono } from "hono";
 import { ok } from "../../types/api.ts";
 import { createProjectChatSession } from "../../services/chat-session-create.ts";
 import { chatService } from "../../services/chat.service.ts";
-import { getSessionProjectPath, setSessionMetadata } from "../../services/db.service.ts";
+import { deleteSessionMetadata, deleteSessionTitle, getSessionProjectPath, setSessionMetadata, setSessionTitle } from "../../services/db.service.ts";
 import { projectNameForPath } from "../../services/project-name-for-path.ts";
 import { decideTask, getTask, updateTask } from "../../services/ppm-tasks/ppm-tasks.service.ts";
 import { deliverDecision, wakeManager } from "../../services/ppm-tasks/ppm-tasks-deliver.ts";
@@ -98,12 +98,20 @@ ppmTasksActionRoutes.post(`/${ID}/start-chat`, async (c) => {
     });
     sessionId = session.id;
     if (!getSessionProjectPath(session.id)) setSessionMetadata(session.id, projectName, projectPath);
+    // Recorded now: a provider writes its own title only later, if at all, and the task's
+    // working-session chip reads this one, so the new chat would otherwise show as "Chat".
+    setSessionTitle(session.id, task.title.slice(0, 120));
     const view = updateTask(task.id, { workingSessionId: session.id }, revision, USER_CTX);
     const answer: TaskStartChatResponse = { task: toTaskDto(view), managerPrompt: managerPromptFor(task.projectKey), sessionId: session.id };
     return c.json(ok(answer));
   } catch (e) {
     // A chat the task does not point at would be an orphan nobody asked for.
-    if (sessionId) await chatService.deleteSession(startChatProvider, sessionId).catch(() => {});
+    if (sessionId) {
+      const orphan = sessionId;
+      await chatService.deleteSession(startChatProvider, orphan).catch(() => {});
+      // PPM's own records of it too (two Start chats at once: the loser's chat goes whole).
+      try { deleteSessionTitle(orphan); deleteSessionMetadata(orphan); } catch { /* nothing more to drop */ }
+    }
     return failFrom(c, e);
   }
 });

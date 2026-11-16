@@ -288,6 +288,86 @@ belong inline in `manager.md`. The guard targets text a model wrote or a reposit
 process running as the same OS user can write the file and the database anyway, just as it can
 read PPM's auth token ("PPM's password" in `CLAUDE.md`).
 
+### Tasks
+
+A project with a manager chat has PPM Tasks on: assigning a manager switches the project's task
+store on and starts the manager's news from that moment, so a new manager is not handed the
+project's whole past ([Data & Storage → PPM Tasks store](data-and-storage.md#ppm-tasks-store)). While
+the store is on and the chat has the task tools, the manager block in its shared-context entry
+(`MANAGER_TASKS_BLOCK` in `manager-context-entry.ts`) tells it the list lives in PPM, that it decides
+itself what to create, close or re-prioritise (always with `reason` and the `revision` it read), to
+set `working_session` when it hands a task to a chat and record the `result`, and what to do when PPM
+reports trouble with handed-off work. The PPM Assistant writes tasks of any project with Tasks on
+directly, even one with a manager; the manager is told.
+
+**Being told.** At the start of each manager turn, `ppmTaskNewsEntry`
+(`src/services/ppm-tasks/ppm-task-manager-news.ts`) adds a news-once entry to the
+`<ppm-shared-context>` block: one line per change made since the manager was last told by anyone but
+a manager (its own changes are not news), plus the links whose live state changed, at most 20 lines,
+labelled as data written by PPM. The cursor in `task_projects` moves only once the turn carrying the
+entry is on its way, so each change is told once and a turn the chat never took leaves the news for
+the next. Never the system prompt, for the reason the rules are not.
+
+**"Tell the manager now?"** After the user changes a task of a project with a manager chat — in the
+PPM UI, or with a Telegram status button — PPM asks whether to tell the manager now (the write's
+`managerPrompt`; a decision already sent to the manager does not ask). Yes calls
+`POST /api/tasks/notify-manager`, which runs `wakeManager` (`ppm-tasks-deliver.ts`): one turn into
+the manager chat, origin `ppm_ui`, carrying the same lines the news entry would (and moving the same
+cursor, so the next turn gets no entry for them). No leaves the news for the manager's next turn. The
+Assistant asks the user with `AskUserQuestion` and calls `ppm_task_notify_manager` only on a yes; an
+unattended Assistant turn cannot ask, so it never wakes the manager. Wakes are charged to their own
+budget (`ppm-tasks-wake-budget.ts`): the same hourly, daily and per-manager limits as the Assistant's
+unattended messages to managers (`assistant-send-guards.ts`), counted per project under sender
+`ppm-tasks:<project key>` and kept in the config row `ppm_tasks_wake_budget_state`. Quiet hours do
+not hold a wake, since the user asked for it; the user asking, or writing in that manager chat,
+restarts the project's count and lifts its pause. A refused wake sends nothing and leaves the news
+for the next turn. Only one wake of a project is on its way at a time.
+
+**Checks of handed-off work** (`src/services/ppm-tasks/child-check/`). A task whose working session
+is a chat other than the manager (handed off) and that has no result is checked by PPM code, not by
+the manager: the manager scheduling a check of its own would be one full manager turn every interval
+while any handed-off task is open. One unref'd timer ticks every minute; a task is looked at when its
+project's interval has passed since its last check (30 minutes by default, 5 to 240, set in the
+project's task settings or by `ppm_task_project_update`). A look reads the child's live state, the
+bytes its transcript gained since the last look (one positioned read of at most 256 KB) and its
+subagents' transcript times. It never sends the child anything: no turn, no answer to a card. Lines
+are compared in a normal form with times, long hex runs and numbers stripped, so a wait loop printing
+"memory 86% committed; waiting" is not progress. Each look puts the child in one of four states
+(`child-check-classifier.ts`), stored in `task_child_checks`:
+
+- **running** — a turn runs and wrote something new within the interval; also a chat that ended a
+  turn less than five minutes ago, or has not started yet but was handed the task less than an
+  interval ago;
+- **waiting on a card** — a card is on screen in the child: the user is needed, not the manager;
+- **stalled** — a turn runs and nothing new was written for a whole interval;
+- **finished without reporting** — no turn runs, the last ended at least five minutes ago and the
+  task has no result; or the chat never started on the task within an interval, or was deleted.
+
+Only stalled and finished without reporting are told: once when the state starts, once more after
+three intervals with no change, at most four times per hand-off; handing the task to another chat
+starts a new count. A project's findings go out together as one wake of its manager, sent as an
+unattended `watch` turn (nobody asked for it, so nothing in it may raise a card for the user, and it
+enters only a quiet chat). Each finding names the task and the chat and quotes up to three of the
+child's own latest lines — its words and tool calls, never tool output — redacted with the log
+secret rules, cut to 200 characters and labelled as data (`child-check-findings.ts`); the wake ends
+by pointing at `session_status`, `read_session_turns`, `send_to_session`, `ppm_task_update`
+(`result`) and `report_to_assistant`. A busy manager is asked again each tick. When there is no
+manager chat, its wake budget is spent, or it stayed busy for 15 tries, one Assistant card for the
+project says the same instead ("N handed-off tasks need a look", `payload.detected` and
+`payload.tasks`, with an Open chat per task on Telegram); its phone copy waits out quiet hours like
+any card. Checks stop, and the stored check goes, once the task has a result, is closed or deleted,
+or is no longer handed off. The task shows the last finding on its working-session chip ("stalled 40
+min", "finished, no report").
+
+**Writes nobody watched.** An Assistant turn PPM started (a watch, a wake) may write tasks. Each such
+write is recorded `unattended`, shown as "while you were away" in the task's history, and listed on
+one card per turn, posted when the turn ends (`src/services/ppm-tasks/ppm-task-unattended-card.ts`):
+"PPM Assistant made N task changes while you were away", up to 25 changes each with the history id
+that undoes it ("undo #…" to the Assistant, or Undo in the task's History). The card's provenance
+line is "Written by the PPM Assistant" (`payload.byAssistant`, `reportProvenanceLine` in
+`src/shared/assistant-cards.ts`), not a manager's. On Telegram it carries an Undo and an Open chat
+per change it shows ([Commands, links and settings](#commands-links-and-settings)).
+
 ## Isolation
 
 The Assistant inherits none of the user's own agent setup or of ordinary chats' settings.
@@ -955,7 +1035,8 @@ turns: the Assistant's messages into chats come through the session tools' door
 (`deliverToSession`) as origin `session`, like any other session's, so the guards main keys on that
 origin (waiting for a starting consumer, the from-session block decoding) hold for it too. That door
 emits the lifecycle `user_message` and sets the chat's `turnOrigin` the way a typed message does.
-These are trace origins too (`TraceOrigin` in `src/shared/session-trace.ts`).
+`ppm_ui` is PPM Tasks sending what the user chose on its own screens; it only ever sends a message
+([AI chat → PPM task tools](ai-chat-and-providers.md#ppm-task-tools)). These are trace origins too (`TraceOrigin` in `src/shared/session-trace.ts`).
 
 Only a message that owns a turn sets `turnOrigin` (`src/server/ws/chat-turn-origin.ts`): one that
 opens a turn, or the user typing into a running one. A scheduled script posting into an Assistant
@@ -1608,10 +1689,35 @@ PPM asks every manager chat whose digest switch is on (`PATCH /api/assistant/man
 ### Commands, links and settings
 
 Commands are `BOT_COMMANDS` in `assistant-telegram-commands.ts` (`/new`, `/sessions`, `/status`,
-`/stop`, `/quiet [on|off]`, `/help`, plus `/start`). `/quiet` alone shows the quiet switch with a
-button that flips it. `/status` is `chats_attention` in a message
+`/tasks [project]`, `/stop`, `/quiet [on|off]`, `/help`, plus `/start`). `/quiet` alone shows the
+quiet switch with a button that flips it. `/status` is `chats_attention` in a message
 (`assistant-telegram-status.ts`), followed by the cards it lists with working buttons. There is no
 `/restart`: a restart is a change, and the Assistant can run `ppm restart` in a shell, which asks.
+
+**`/tasks`** pages the open tasks of every project with Tasks on (or one named project) in "what to
+do first" order, one task per card, with no AI turn (`assistant-telegram-tasks-deck*.ts`,
+`assistant-telegram-task-actions.ts`, card wording in `assistant-telegram-task-card.ts`). A deck is
+a snapshot of task ids held in memory beside the button codes, gone after a restart like them; a
+task whose project was switched off or that was deleted drops out when it comes up. The status
+buttons are that project's own statuses. A press writes the task as the user (`via: telegram`)
+against the revision the card showed, so a change made elsewhere in between is never overwritten:
+the card is redrawn as "Changed elsewhere". After a status change in a project with a manager chat
+the card asks "Tell manager now / Next turn" once per task per deck and moves on only when answered
+(the same wake and budget as [Tasks](#tasks)); otherwise it moves to the next task after two
+seconds. Undo of the last press stays on top of the next card, "Show open children" lists a task's
+open children, and a project filter narrows the deck. Every redraw mints a new group of button codes
+and drops the old one, so a press on an old keyboard is "no longer valid". A project whose details
+stay off the phone (`telegram_detail: title`) shows title, project and urgency only.
+
+**A task from a plain message.** Creating a task is a message to the Assistant, which guesses the
+project and asks only when it is unclear. A task it created in a turn the user wrote from Telegram
+comes back as a card of its own when the turn ends (`assistant-telegram-task-created.ts`): the task,
+what came of the manager ("was told" once the manager's news moved past the creation, else "will see
+it on its next turn" — the card never asks again), and buttons for urgency, importance, due date,
+Undo and Open in PPM (`/project/<name>?openTask=<id>`). The buttons act as the user against the
+revision the card last showed. `assistant-telegram-task-card-extras.ts` adds Open chat per task to
+the handed-off work card and Open chat plus a real Undo per change to the "while you were away"
+card, only for changes whose line the Telegram copy actually shows.
 
 "Open in PPM" links point to `/assistant?session=<provider>/<id>` (`notificationPath` in
 `src/services/notification-format.ts`, parsed by `src/web/lib/assistant-deep-link.ts`), which
@@ -1854,6 +1960,15 @@ the digest with a busy manager, and the notebook. The fixture runs with
 `PPM_ASSISTANT_MANAGER_LOOP=1` (`tests/e2e/fixtures/assistant-manager-fixture.ts`): a clock the
 script moves forward, a scripted rules check, and a route that types into a project chat. It runs
 on Node 20 in the `ppm-e2e-chromium` image.
+
+`PPM_ASSISTANT_WEB_DIR=<web build with Monaco staged> node tests/e2e/ppm-tasks-e2e.mjs` runs PPM
+Tasks end to end in the same image: desktop, handed-off work checks and phone plus Telegram steps
+(`tests/e2e/ppm-tasks/steps-*.mjs`), each on the state the previous ones left. It starts the same
+fixture with `PPM_ASSISTANT_MANAGER_LOOP=1 PPM_ASSISTANT_TASKS=1 PPM_ASSISTANT_FAKE_TELEGRAM=1` and a
+fake Bot API; `tests/e2e/fixtures/ppm-tasks-fixture.ts` gives the checker a clock the script moves
+and never starts the live checker or the link-state refresher, so no Jira or GitHub is asked.
+Screenshots go to `PPM_TASKS_SHOTS`; with `PPM_TASKS_VIDEO=<dir>` the run is also recorded as the
+walkthrough video, cut by `tests/e2e/ppm-tasks/video-cut.mjs`.
 
 `PPM_PLAYWRIGHT_MODULE=<playwright>/index.mjs node tests/e2e/assistant-telegram-e2e.mjs` does the
 same for Telegram, with a fake Bot API in place of the phone. It needs Node 22.5+, Bun and a web

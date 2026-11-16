@@ -26,6 +26,15 @@ export function listQueryFor(scope: TaskScope, project: string | null, f: TaskVi
   };
 }
 
+/**
+ * The scope's every task, filters and search left out: what child progress (`1/3`) and the tag
+ * and field pickers count, so neither shrinks to whatever the filters let through. With no
+ * server-side filter on it is the same list as `listQueryFor`'s, so one request serves both.
+ */
+export function countingQueryFor(scope: TaskScope, project: string | null): TaskListQuery | null {
+  return listQueryFor(scope, project, { groups: [], types: [], person: null, tag: null, field: null }, "");
+}
+
 /** What the list shows: the server's answer less closed tasks (unless asked), hidden projects and a field filter. */
 export function visibleTasks(tasks: readonly TaskDto[], f: TaskViewFilters, hiddenProjects: readonly string[], scope: TaskScope): TaskDto[] {
   const closedAsked = f.groups.includes("closed");

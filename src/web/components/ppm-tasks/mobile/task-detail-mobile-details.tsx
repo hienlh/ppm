@@ -69,9 +69,10 @@ function Title({ title, closed, onRename }: { title: string; closed: boolean; on
       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } }}
       className="w-full resize-none rounded-lg border border-ring bg-surface px-2 py-1.5 text-[19px] font-semibold leading-snug text-text outline-none" />;
   }
+  // At least 44px tall like every other control on a phone, even when the title fits one line.
   return (
-    <h2 role="button" tabIndex={0} aria-label={`Rename: ${title}`} onClick={() => setEditing(true)} onKeyDown={(e) => { if (e.key === "Enter") setEditing(true); }} data-task-title="" className="break-words text-[19px] font-semibold leading-snug text-text">
-      <span className={cn(closed && "text-text-2 line-through decoration-text-3")}>{title}</span>
+    <h2 role="button" tabIndex={0} aria-label={`Rename: ${title}`} onClick={() => setEditing(true)} onKeyDown={(e) => { if (e.key === "Enter") setEditing(true); }} data-task-title="" className="flex min-h-11 items-center break-words text-[19px] font-semibold leading-snug text-text">
+      <span className={cn("min-w-0 [overflow-wrap:anywhere]", closed && "text-text-2 line-through decoration-text-3")}>{title}</span>
     </h2>
   );
 }
