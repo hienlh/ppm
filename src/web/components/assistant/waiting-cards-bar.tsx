@@ -37,6 +37,14 @@ interface Props {
   note?: ReactNode;
   /** How tall the card area may grow before it scrolls on a desktop; the host knows its room. */
   slotHeight?: string;
+  /**
+   * Draws one entry in place of the card (a manager chat shows its decisions as one set, which
+   * stands in the list as its first card). `entryKey` keeps that entry mounted while its first
+   * card changes, and `summary` names it on the folded row.
+   */
+  renderCard?: (card: Card) => ReactNode;
+  entryKey?: (card: Card) => string;
+  summary?: (card: Card) => string;
 }
 
 const NAV = "grid size-11 shrink-0 place-items-center rounded-full text-text-secondary can-hover:hover:bg-surface-elevated can-hover:hover:text-text-primary md:size-7";
@@ -73,7 +81,7 @@ function Title({ label, count }: { label: string; count: number }) {
   );
 }
 
-export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeight = DEFAULT_SLOT_HEIGHT }: Props) {
+export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeight = DEFAULT_SLOT_HEIGHT, renderCard, entryKey, summary }: Props) {
   const phone = useIsMobile();
   const [currentId, setCurrentId] = useState<string | null>(cards[0]?.id ?? null);
   // Unfolded under the header on a desktop; on a phone, whether the full-screen sheet is up. Kept
@@ -163,13 +171,13 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
       {/* The landing outline is drawn just inside the card's edge: a ring outside it is cut by
           the scroll box, and an inset one is painted under the card. */}
       <div
-        key={current.id}
+        key={entryKey?.(current) ?? current.id}
         className={cn("rounded-xl transition-shadow duration-300", lit && "outline-2 -outline-offset-2 outline-error")}
         data-waiting-card={current.id}
         data-highlighted={lit ? "" : undefined}
       >
         <CardStickyActionsContext.Provider value>
-          <AssistantCard card={current} onCard={onCard} />
+          {renderCard ? renderCard(current) : <AssistantCard card={current} onCard={onCard} />}
         </CardStickyActionsContext.Provider>
       </div>
       {children?.(current)}
@@ -196,7 +204,7 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
         >
           <Title label={label} count={cards.length} />
           <span className="min-w-0 flex-1 truncate text-xs text-text-secondary" data-waiting-summary="">
-            {current.projectName ? `${current.projectName} · ` : ""}{current.title}
+            {summary ? summary(current) : `${current.projectName ? `${current.projectName} · ` : ""}${current.title}`}
           </span>
           <span aria-hidden className="grid size-11 shrink-0 place-items-center text-text-secondary">
             <ChevronUp className="size-4" />
@@ -250,7 +258,7 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
           <Title label={label} count={cards.length} />
           {!open && (
             <span className="min-w-0 truncate text-xs text-text-secondary" data-waiting-summary="">
-              {current.projectName ? `${current.projectName} · ` : ""}{current.title}
+              {summary ? summary(current) : `${current.projectName ? `${current.projectName} · ` : ""}${current.title}`}
             </span>
           )}
         </button>

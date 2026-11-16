@@ -128,6 +128,30 @@ bar under the card and "Open manager chat" is not offered. `chats_attention` lis
 (`assistantCards`: id, project, kind, title, when sent, whatever `since` says), and Telegram's
 `/status` leads with them, so "nothing waits" is never said while one is open.
 
+**The set of decisions.** Waiting decisions (`needs_decision` and `urgent`; approvals, questions,
+held rules changes and the budget card are not in it) are answered together, in one form drawn the
+way the chat's AskUserQuestion card is (`cards/decision-set/`, sharing `chat/question-form-parts.tsx`
+with `question-card.tsx`): amber where the chat's question is blue, red for an urgent card's tab.
+In the Assistant it is the stream's last item, drawn whole like every card (no scroll box of its own,
+nothing sticky), and each decision keeps a one-line stub at its own place ("waiting in the set
+below") that jumps to its tab; the Waiting chip, a red count and a follow-up's "Show" land on the
+set the same way (`data-waiting-set` in `use-waiting-card-jump.ts`). A manager chat's bar shows the
+set (its own decisions only) as one page among its other cards. One tab per card, in a stable order
+(`nextTabOrder`: a new card goes to the end and never moves the tab shown); each card offers a
+numbered tile per choice, one "OK, send this draft" tile naming the draft's hash, or one "OK, go
+ahead" — none where the server does not show the card whole (`okOffered`) — and "Other", the user's
+own words plus up to five pictures (pasted or attached, scaled like the composer's). "Send this one"
+sends the card shown through its own route (`ok`, `choose`, `reply`); "Send all answered (n/m)"
+first shows a review of every answer (a draft OK with its recipient, first line and hash; a reply to
+a card over a day old marked as confirmed), then sends them one by one, so a card answered elsewhere
+is skipped and named without stopping the rest (`lib/decision-set/`). A pick remembers the card as
+picked (`cardVersion`: last change, draft hash, choices, `okOffered`) and is taken back with a word
+on its tab if the card changes. A card that stops waiting while the set is open keeps its tab, ✓ when
+sent from here and struck through otherwise, and leaves "Send all". Enter moves to the next card and
+never sends; Ctrl+Enter (⌘+Enter) opens the review. Picks live in memory only
+(`stores/decision-set-store.ts`), shared by the Assistant and a manager chat's bar. Telegram keeps
+one message per card.
+
 A chip or "Open manager chat" opens that chat in a window of its
 own without switching project (`open-manager-chat.ts`: a `projectId: null` tab placed straight
 into a new window panel by `openTabInNewWindow`, never through a grid, and the project's slash
@@ -1160,7 +1184,11 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   the card whatever its number of questions: each option is a lettered tile (A, B, C…) with its
   whole description and a "Recommended" tag taken from "(Recommended)" in its label, the user picks
   one per question (several where allowed) and sends them together; a question with no options or
-  a secret is answered in the chat (`cards/question-options.tsx`). `POST …/dismiss` takes reports
+  a secret is answered in the chat (`cards/question-options.tsx`). `POST …/reply` may carry
+  `images` (at most five PNG/JPEG/GIF/WebP, 5 MB each, as base64): the server checks the type
+  against the bytes, writes its own copy under the uploads folder and forwards them with the words
+  as a composer message does (inline for Claude, by that path for Codex); it takes no path from the
+  browser. A Telegram photo (or album) sent as a reply to a card goes the same way. `POST …/dismiss` takes reports
   and the budget card. Status changes are compare-and-set, so a second answer gets
   `already_answered`; a request answered anywhere else resolves its card; a request that no longer
   waits resolves it with nothing run.

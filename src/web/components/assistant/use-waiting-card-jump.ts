@@ -42,7 +42,9 @@ export function scrollCardIntoView(card: HTMLElement, root: HTMLElement, smooth:
 
 /** The waiting card `id` in `root`, looked up afresh (a re-placed card is a new element). */
 function findCard(root: HTMLElement, id: string): HTMLElement | undefined {
-  return [...root.querySelectorAll<HTMLElement>("[data-waiting-card]")].find((n) => n.dataset.waitingCard === id);
+  return [...root.querySelectorAll<HTMLElement>("[data-waiting-card]")].find((n) => n.dataset.waitingCard === id)
+    // A decision is answered in the set of decisions, which shows the card's tab on the same jump.
+    ?? [...root.querySelectorAll<HTMLElement>("[data-waiting-set]")].find((n) => n.dataset.waitingSet?.split(" ").includes(id));
 }
 
 /**

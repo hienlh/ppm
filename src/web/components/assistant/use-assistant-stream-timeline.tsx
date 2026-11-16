@@ -9,6 +9,10 @@
  * from the waiting list the red counts are made of, and placed before the oldest loaded message
  * until the page that reaches its time comes in. The dock above the composer jumps to it. Once
  * answered (or set aside) it folds to one line that opens it again, read-only.
+ *
+ * Decisions (needs-decision and urgent reports) are the exception: they are answered together in
+ * one set drawn after the last message (`cards/decision-set/`), like the chat's own question form,
+ * and each keeps a one-line stub at its own place that leads there.
  */
 import { useEffect, useMemo } from "react";
 import { useManagerChats } from "@/hooks/use-manager-chats";
@@ -21,6 +25,9 @@ import type { ChatTimelineExtension, ChatTimelineItem } from "@/components/chat/
 import { REPORT_KINDS, type AssistantCard as Card } from "../../../shared/assistant-cards";
 import { AssistantCard } from "./cards/assistant-card";
 import { WaitingStreamCard } from "./cards/waiting-stream-card";
+import { DecisionSet } from "./cards/decision-set/decision-set";
+import { DecisionSetStub } from "./cards/decision-set/decision-set-stub";
+import { isDecisionCard } from "@/lib/decision-set/decision-set-model";
 import { AnsweredCardFold, isAnsweredDecision } from "./cards/answered-card-fold";
 import { applyAssistantCard } from "@/stores/assistant-cards-store";
 import { applyOpenCardResult, isWaitingCard, useOpenCards } from "@/stores/assistant-open-cards-store";
@@ -63,6 +70,7 @@ export function useAssistantStreamTimeline(): ChatTimelineExtension {
   const nextBefore = useAssistantCardsStore((s) => s.nextBefore);
   const managers = useManagerChats();
   const open = useOpenCards();
+  const setScope = useMemo(() => (filter ? (c: Card) => c.projectName === filter : () => true), [filter]);
   const managerSession = filter ? managers?.find((m) => m.projectName === filter)?.sessionId ?? null : null;
 
   return useMemo<ChatTimelineExtension>(() => ({
@@ -70,15 +78,23 @@ export function useAssistantStreamTimeline(): ChatTimelineExtension {
       const list = cards ?? [];
       const items: ChatTimelineItem[] = streamCards(list, open ?? [], filter).map((card) => {
         const waiting = isWaitingCard(card);
+        // A waiting decision is answered in the set after the last message; its own place keeps a line.
+        const inSet = waiting && isDecisionCard(card);
         return {
           key: `card:${card.id}`,
           at: card.createdAt,
-          node: waiting
-            ? <WaitingStreamCard card={card} onCard={takeCard} />
-            : isAnsweredDecision(card) ? <AnsweredCardFold card={card} /> : <AssistantCard card={card} />,
+          node: inSet
+            ? <DecisionSetStub card={card} />
+            : waiting
+              ? <WaitingStreamCard card={card} onCard={takeCard} />
+              : isAnsweredDecision(card) ? <AnsweredCardFold card={card} /> : <AssistantCard card={card} />,
           keep: waiting,
         };
       });
+      // The set itself, always the stream's last item, as the chat's own question form is.
+      if ((open ?? []).some((c) => isDecisionCard(c) && (!filter || c.projectName === filter))) {
+        items.push({ key: "decision-set", at: Number.MAX_SAFE_INTEGER, node: <DecisionSet scope={setScope} />, keep: true });
+      }
       const hidden = new Set<string>();
       for (const turn of collapsedWakeTurns(rows)) {
         for (const id of turn.ids) hidden.add(id);
@@ -95,5 +111,5 @@ export function useAssistantStreamTimeline(): ChatTimelineExtension {
     manualPaging: !!filter,
     hasEarlier: nextBefore !== null,
     onLoadEarlier: () => void loadEarlierAssistantCards(),
-  }), [cards, filter, managerSession, nextBefore, open]);
+  }), [cards, filter, managerSession, nextBefore, open, setScope]);
 }
