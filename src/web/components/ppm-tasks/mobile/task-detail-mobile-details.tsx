@@ -32,6 +32,8 @@ export interface TaskDetailMobileDetailsProps {
   onPatch(patch: TaskPatch & { decision?: { question?: string | null; options: string[] } }): void;
   onDecide(optionId: string): void;
   onOpenChat(sessionId: string): void;
+  /** The working session block's Open chat: the chat opens with this task as a chip. */
+  onOpenWorkingChat(sessionId: string): void;
   onStartChat(): void;
   onAddLink(link: { kind: LinkKind; ref: string; label: string | null }): Promise<boolean>;
   onRemoveLink(link: TaskLink): void;
@@ -121,7 +123,7 @@ export function TaskDetailMobileDetails(p: TaskDetailMobileDetailsProps) {
       )}
       <TaskNotesCard task={task} onSave={p.onPatch} />
       <TaskLinksCard task={task} linkStates={linkStates} onOpenChat={p.onOpenChat} onAdd={p.onAddLink} onRemove={p.onRemoveLink} />
-      <TaskWorkingSessionBlock working={task.workingSession} check={task.check} onOpen={p.onOpenChat} onStartChat={p.onStartChat} />
+      <TaskWorkingSessionBlock working={task.workingSession} check={task.check} onOpen={p.onOpenWorkingChat} onStartChat={p.onStartChat} />
       <div className="divide-y divide-border-soft overflow-hidden rounded-lg border border-border-soft bg-panel" data-task-summary="">
         <Row icon={<Layers />} aside={children.length ? `${done} of ${children.length}` : "None"} onClick={() => p.onSheet("children")}>Child tasks</Row>
         <Row icon={<Users />} aside="Assignee" onClick={() => p.onSheet("properties")}>{assignee ?? "Nobody"}</Row>

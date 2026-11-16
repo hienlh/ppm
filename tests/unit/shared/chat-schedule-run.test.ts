@@ -36,7 +36,7 @@ describe("schedule-run block", () => {
     expect(header).toContain("in Asia/Saigon");
     expect(encoded.endsWith("Check the deploy")).toBe(true);
     expect(decodeMessageBlocks(encoded)).toEqual({
-      content: "Check the deploy", scheduleRun: run, replyTo: null, turnRefs: null, fromSession: null, provenance: null, userWords: null,
+      content: "Check the deploy", scheduleRun: run, replyTo: null, turnRefs: null, taskRefs: null, fromSession: null, provenance: null, userWords: null,
     });
   });
 
@@ -114,7 +114,7 @@ describe("a scheduled slash command", () => {
     expect(header).toStartWith('Automatic scheduled run from PPM schedule "Morning check"');
     expect(header).toContain("PPM sent the schedule's command above on its own");
     expect(decodeMessageBlocks(encoded)).toEqual({
-      content: "/review-pr 42", scheduleRun: run, replyTo: null, turnRefs: null, fromSession: null, provenance: null, userWords: null,
+      content: "/review-pr 42", scheduleRun: run, replyTo: null, turnRefs: null, taskRefs: null, fromSession: null, provenance: null, userWords: null,
     });
     // A multi-line command keeps its lines; a reply block still goes last.
     const withReply = encodeMessageBlocks("/plan\nstep one\nstep two", { scheduleRun: run, scheduleRunPlacement: "after", replyTo: reply });

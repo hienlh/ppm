@@ -101,6 +101,8 @@ export interface SendMessageOptions {
   replyTo?: ReplyReference;
   /** The composer's turn chips; sent as their own field, which the server validates and grants. */
   turnRefs?: TurnReference[];
+  /** Ids of the tasks the message is about; the server reads them and writes their block. */
+  taskRefs?: string[];
 }
 
 interface UseChatReturn {
@@ -1588,6 +1590,8 @@ export function useChat(
       // elsewhere — stays text, here and on the server, which breaks its markers.
       const content = typed;
       const turnRefs = opts?.turnRefs?.length ? opts.turnRefs : undefined;
+      // Ids only: the task block is the server's to write, and `message_accepted` brings it here.
+      const taskRefs = opts?.taskRefs?.length ? opts.taskRefs : undefined;
       // The bubble drawn now; the server's `message_accepted` replaces it with the stored text.
       const encodedContent = encodeMessageBlocks(content, { replyTo: opts?.replyTo, turnRefs });
       historyActivityRef.current++;
@@ -1622,7 +1626,7 @@ export function useChat(
       // must never match a message another tab sent in the same millisecond.
       const optimisticId = `user-${Date.now()}-${++sendOrdinalRef.current}-${randomId()}`;
       pendingSendsRef.current = pendingSendsRef.current.filter((pending) => Date.now() - pending.sentAt < 60_000);
-      if (opts?.replyTo || turnRefs) pendingSendsRef.current.push({
+      if (opts?.replyTo || turnRefs || taskRefs) pendingSendsRef.current.push({
         id: optimisticId, content, encoded: encodedContent, replyTo: opts?.replyTo, turnRefs, sentAt: Date.now(),
         wasIdle: !isFollowUp, streamingContent: streamingContentRef.current,
         streamingEvents: [...streamingEventsRef.current],
@@ -1668,6 +1672,7 @@ export function useChat(
         imagePaths: opts?.imagePaths,
         replyTo: opts?.replyTo,
         ...(turnRefs ? { turnRefs } : {}),
+        ...(taskRefs ? { taskRefs } : {}),
         ...turnSettings(),
         // An Assistant session tells the agent what this device shows, with every message.
         ...(isAssistantProject(projectNameRef.current) ? { uiSummary: readUiSummary() } : {}),

@@ -24,18 +24,18 @@ const reply: ReplyReference = {
 describe("from-session block", () => {
   it("round-trips through the message codec", () => {
     const encoded = encodeMessageBlocks("Please check the tests", { fromSession: from });
-    expect(decodeMessageBlocks(encoded)).toEqual({ content: "Please check the tests", fromSession: from, turnRefs: null, replyTo: null, provenance: null, userWords: null, scheduleRun: null });
+    expect(decodeMessageBlocks(encoded)).toEqual({ content: "Please check the tests", fromSession: from, turnRefs: null, taskRefs: null, replyTo: null, provenance: null, userWords: null, scheduleRun: null });
   });
 
   it("sits after the text and before turn references and a reply, which stays last", () => {
-    const encoded = encodeMessageBlocks("body", { fromSession: from, turnRefs: [ref], replyTo: reply });
+    const encoded = encodeMessageBlocks("body", { fromSession: from, turnRefs: [ref], taskRefs: null, replyTo: reply });
     const fromAt = encoded.indexOf("<ppm-from-session-v1>");
     const refsAt = encoded.indexOf("<ppm-turnrefs-v1>");
     const replyAt = encoded.indexOf("<ppm-reply-v1>");
     expect(fromAt).toBeGreaterThan(encoded.indexOf("body"));
     expect(refsAt).toBeGreaterThan(fromAt);
     expect(replyAt).toBeGreaterThan(refsAt);
-    expect(decodeMessageBlocks(encoded)).toEqual({ content: "body", fromSession: from, turnRefs: [ref], replyTo: reply, provenance: null, userWords: null, scheduleRun: null });
+    expect(decodeMessageBlocks(encoded)).toEqual({ content: "body", fromSession: from, turnRefs: [ref], taskRefs: null, replyTo: reply, provenance: null, userWords: null, scheduleRun: null });
     // A build that only knows reply blocks still finds its own.
     expect(decodeReply(encoded).replyTo).toEqual(reply);
   });

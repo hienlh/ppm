@@ -25,6 +25,8 @@ import { useFileStore } from "@/stores/file-store";
 import { ReplyCard } from "./reply-card";
 import type { ReplyReference } from "../../../shared/chat-reply";
 import { ComposerTurnRefRow } from "./composer-turn-ref-row";
+import { ComposerTaskChipRow } from "./task-ref-chip";
+import type { ComposerTaskChip } from "@/lib/ppm-tasks/composer-task-chip-logic";
 import type { ComposerTurnChip } from "@/hooks/use-composer-turn-refs";
 import type { ParsedTurnLink } from "@/lib/turn-link";
 import type { TurnReference } from "../../../shared/chat-turn-ref";
@@ -102,6 +104,9 @@ interface MessageInputProps {
   onRemoveTurnChip?: (key: string) => void;
   /** Why the send waits on the turn chips (one still loading, one gone); null when it does not. */
   turnChipsBlockedReason?: string | null;
+  /** The task the chat was opened from ("Open chat" on a task): the next message says it is about it. */
+  taskChips?: readonly ComposerTaskChip[];
+  onRemoveTaskChip?: (taskId: string) => void;
   /** Tab id of the owning chat tab — addresses "Send to Chat" at this tab only. */
   tabId?: string;
   onSend: (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => boolean | void;
@@ -200,6 +205,8 @@ export const MessageInput = memo(function MessageInput({
   onRecallTurnRefs,
   onRemoveTurnChip,
   turnChipsBlockedReason,
+  taskChips,
+  onRemoveTaskChip,
   draftReady = true,
   onSend,
   isStreaming,
@@ -1072,6 +1079,7 @@ export const MessageInput = memo(function MessageInput({
         {!!turnChips?.length && onRemoveTurnChip && (
           <ComposerTurnRefRow chips={turnChips} currentProject={projectName} blockedReason={turnChipsBlockedReason} onRemove={onRemoveTurnChip} />
         )}
+        {!!taskChips?.length && onRemoveTaskChip && <ComposerTaskChipRow chips={taskChips} onRemove={onRemoveTaskChip} />}
         {/* Selected agent chip — composed into a delegation prompt on send */}
         {agentTag && (
           <div className="px-2 md:px-4 pt-2">

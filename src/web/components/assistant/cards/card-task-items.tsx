@@ -13,6 +13,7 @@ import { Check, ExternalLink, Undo2 } from "@/lib/icons";
 import { ppmTasksClient } from "@/lib/ppm-tasks/ppm-tasks-client";
 import { offerTaskManagerPrompt } from "@/components/ppm-tasks/task-manager-prompt-toast";
 import type { AssistantCardPayload } from "../../../../shared/assistant-cards";
+import { attachTaskChip, type ComposerTaskChip } from "@/lib/ppm-tasks/composer-task-chip";
 import { openManagerChat } from "../open-manager-chat";
 
 /** A row action: never full width (the card's own buttons are on a phone), 44px tall below md. */
@@ -28,10 +29,14 @@ function RowButton({ children, onClick, disabled, title }: { children: React.Rea
 type HandedOff = NonNullable<AssistantCardPayload["tasks"]>[number];
 type Change = NonNullable<AssistantCardPayload["taskChanges"]>[number];
 
-/** Opens the chat a handed-off task works in, under that chat's provider. */
+/**
+ * Opens the chat a handed-off task works in, under that chat's provider, with the task as a chip
+ * in its composer so the next message says which task it is about.
+ */
 export async function openHandedOffChat(projectName: string, item: HandedOff): Promise<void> {
   let providerId = "claude";
   let title = item.ref;
+  let chip: ComposerTaskChip | null = null;
   try {
     const { task } = await ppmTasksClient.get(item.taskId);
     const w = task.workingSession;
@@ -39,8 +44,10 @@ export async function openHandedOffChat(projectName: string, item: HandedOff): P
       providerId = w.session.providerId ?? providerId;
       title = w.session.title?.trim() || title;
     }
-  } catch { /* the task is gone or off: the chat still opens, as Claude */ }
+    chip = { taskId: task.id, number: task.number, ref: task.ref, title: task.title, project: task.project };
+  } catch { /* the task is gone or off: the chat still opens, as Claude, with no chip */ }
   await openManagerChat({ projectName, sessionId: item.sessionId, chat: { title, providerId } });
+  if (chip) void attachTaskChip(item.sessionId, chip);
 }
 
 export function CardHandedOffTasks({ projectName, tasks }: { projectName: string | null; tasks: readonly HandedOff[] }) {

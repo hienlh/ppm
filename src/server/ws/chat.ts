@@ -2,6 +2,7 @@ import { validateReply } from "../../shared/chat-reply.ts";
 import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
 import { scheduleRunPlacement, validateScheduleRun, type ScheduleRunReference } from "../../shared/chat-schedule-run.ts";
 import { validateTurnRefs } from "../../shared/chat-turn-ref.ts";
+import { validateTaskIds, type TaskReference } from "../../shared/chat-task-ref.ts";
 import { recordTurnGrants } from "../../services/session-turns/turn-grant-ledger.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
@@ -2230,6 +2231,8 @@ interface DeliverOpts {
   clientMessageId?: string;
   /** Turns of other chats the person referenced, already validated; granted to this session's AI. */
   turnRefs?: TurnReference[] | null;
+  /** The PPM tasks the message is about, read from the store by the server (never sent ready-made). */
+  taskRefs?: TaskReference[] | null;
   /**
    * The door an in-process caller of the chat socket named (`scheduler` for a script schedule),
    * recorded in the trace in place of `origin`. Such a message is not a person writing: it grants
@@ -2318,7 +2321,7 @@ async function deliverMessage(sessionId: string, entry: SessionEntry, text: stri
   if (runPlacement === "after") parsed.content = parsed.content.trimStart();
   // The typed text has its block markers broken, so the only blocks that decode are these.
   parsed.content = encodeMessageBlocks(parsed.content, {
-    turnRefs: opts.turnRefs ?? null, replyTo: opts.replyTo ?? null, ownProject: entry.projectName || undefined,
+    turnRefs: opts.turnRefs ?? null, taskRefs: opts.taskRefs ?? null, replyTo: opts.replyTo ?? null, ownProject: entry.projectName || undefined,
     ...(opts.origin === "schedule" && opts.scheduleRun ? { scheduleRun: opts.scheduleRun, scheduleRunPlacement: runPlacement } : {}),
   });
   // The sender drew its own copy of this message before sending. Hand it the text as it now
@@ -3421,6 +3424,24 @@ export const chatWebSocket = {
       parsed.turnRefs = refs;
     }
 
+    // Task references arrive as ids alone. Checked for shape here; read from the store and checked
+    // against this chat's project below, once the session's entry is known.
+    if (parsed.type === "message" && Array.isArray(parsed.taskRefs) && parsed.taskRefs.length === 0) parsed.taskRefs = null;
+    let taskIds: string[] | null = null;
+    if (parsed.type === "message" && parsed.taskRefs != null) {
+      const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128 ? parsed.clientMessageId : undefined;
+      taskIds = validateTaskIds(parsed.taskRefs);
+      const slash = typeof parsed.content === "string" ? parsed.content.trimStart().match(/^\/(\S+)/) : null;
+      const builtin = slash ? (await import("../../services/slash-discovery/index.ts")).isPpmHandled(slash[1]!) : false;
+      if (!taskIds || builtin) {
+        ws.send(JSON.stringify({
+          type: "message_rejected", clientMessageId, content: parsed.content, replyTo: parsed.replyTo ?? null, turnRefs: parsed.turnRefs ?? null,
+          message: taskIds ? "Remove the task before running a built-in command" : "Invalid task reference",
+        }));
+        return;
+      }
+    }
+
     let entry = activeSessions.get(sessionId);
 
     // Auto-create entry if missing — handles: message before open (Bun race), or session cleaned up
@@ -3532,6 +3553,20 @@ export const chatWebSocket = {
       // The browser's own id for this message, handed back on the `turn_started` it opens.
       const clientMessageId = typeof parsed.clientMessageId === "string" && parsed.clientMessageId.length <= 128
         ? parsed.clientMessageId : undefined;
+      // The task block is the server's: each id is read from the store and must be this chat's
+      // project's (any project for the PPM Assistant). A refusal sends nothing, so the user is never
+      // left thinking the AI was told which task they meant.
+      let taskRefs: TaskReference[] | null = null;
+      if (taskIds) {
+        const { resolveTaskRefs } = await import("../../services/ppm-tasks/task-chat-ref.ts");
+        const resolved = await resolveTaskRefs(taskIds, isAssistantSession(sessionId, entry.projectPath)
+          ? { anyProject: true } : { anyProject: false, projectPath: entry.projectPath });
+        if (!resolved.ok) {
+          ws.send(JSON.stringify({ type: "message_rejected", clientMessageId, content: parsed.content, replyTo: parsed.replyTo ?? null, turnRefs: parsed.turnRefs ?? null, message: resolved.error }));
+          return;
+        }
+        taskRefs = resolved.refs;
+      }
       const delivered = await deliverUserMessage(sessionId, entry, parsed.content, {
         origin: "ws",
         sender: ws,
@@ -3539,6 +3574,7 @@ export const chatWebSocket = {
         imagePaths: parsed.imagePaths,
         replyTo: parsed.replyTo ?? undefined,
         turnRefs: parsed.turnRefs ?? null,
+        taskRefs,
         priority: parsed.priority,
         uiSummary: (parsed as { uiSummary?: UiSummary }).uiSummary,
         receivedAt: messageReceivedAt,
