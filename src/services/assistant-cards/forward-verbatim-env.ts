@@ -17,6 +17,7 @@ import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import { noteCardAnswered } from "./card-answer-notes.ts";
 import { cardReplyFollowups } from "./card-reply-followup.ts";
+import { taskWordsFollowups } from "./task-words-followup.ts";
 import type { ForwardEnv, ForwardTarget } from "./forward-verbatim.ts";
 
 function mainSessionId(): string | null {
@@ -68,4 +69,5 @@ export const realForwardEnv: ForwardEnv = {
   note: noteCardAnswered,
   trace: (sessionId, providerId, payload) => traceServerEvent(sessionId, providerId, "user_words_forwarded", payload),
   expectFollowup: (input) => cardReplyFollowups.expect(input),
+  expectTaskFollowup: (input) => taskWordsFollowups.expect(input),
 };

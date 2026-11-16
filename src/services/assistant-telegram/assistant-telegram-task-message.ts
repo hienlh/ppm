@@ -76,7 +76,7 @@ const clean = (text: string, counter = { hidden: 0 }, max = TITLE_MAX): string =
   cleanTelegramText(truncateText(text.replace(/\s+/g, " ").trim(), max), counter);
 
 /** "the ppm manager chat", "the chat “Fix login” working on it", or (titles only) "the chat working on it". */
-export function chatLabelHtml(chat: Pick<TaskChat, "kind" | "chatTitle" | "detail" | "target">): string {
+export function chatLabelHtml(chat: Pick<TaskChat, "kind" | "chatTitle" | "detail"> & { target: Pick<ForwardTarget, "projectName"> }): string {
   if (chat.kind === "manager") return `the <b>${clean(chat.target.projectName, undefined, 60)}</b> manager chat`;
   if (chat.detail === "full" && chat.chatTitle) return `the chat <b>“${clean(chat.chatTitle, undefined, 80)}”</b> working on it`;
   return "the chat working on it";
@@ -258,8 +258,11 @@ export class AssistantTelegramTaskMessages {
     this.deps.codes.dropGroup(`${armed.id}:cancel`);
   }
 
-  /** A reply to the prompt is about its task, even once it stopped waiting. Bounded per chat. */
-  private remember(chatId: string, messageId: number, taskId: string): void {
+  /**
+   * A reply to this bot message is about `taskId`: the prompt (even once it stopped waiting), and
+   * the chat's answer sent back under the user's message. Bounded.
+   */
+  remember(chatId: string, messageId: number, taskId: string): void {
     while (this.prompts.size >= ARMED_CHATS_MAX * 5) this.prompts.delete(this.prompts.keys().next().value!);
     this.prompts.set(`${chatId}:${messageId}`, taskId);
   }
@@ -276,6 +279,15 @@ export class AssistantTelegramTaskMessages {
       const result = await (this.deps.forward ?? realForward)({
         text: m.text, target: chat.target, taskRef: ref.ref,
         actor: { channel: "telegram", telegramChatId: chatId, telegramMessageId: m.messageId },
+        // The chat's answer comes back here, under the user's own message.
+        followUp: {
+          origin: { channel: "telegram", chatId, messageId: m.messageId },
+          taskRef: { taskId: ref.ref.taskId, ref: ref.ref.ref, title: ref.ref.title },
+          chat: {
+            kind: chat.kind, chatTitle: chat.chatTitle, detail: chat.detail, projectKey: task.projectKey,
+            projectName: chat.target.projectName, providerId: chat.target.providerId,
+          },
+        },
       });
       return result.ok ? { ok: true, html: sentHtml(chat) } : { ok: false, html: notSentHtml(chat, result.error) };
     } catch (e) {

@@ -20,7 +20,9 @@ import { CARD_RETENTION_MS, countSessionCardsSince, findOpenCardsBy, findOpenReq
 import { budgetEventCard, rulesEventCard, type EventCardsDeps } from "./assistant-event-cards.ts";
 import { sweepGoneRequestCards } from "./assistant-card-actions.ts";
 import { startCardDelivery } from "./card-delivery.ts";
-import { cardReplyFollowups, startCardReplyFollowups } from "./card-reply-followup.ts";
+import { startCardReplyFollowups } from "./card-reply-followup.ts";
+import { startTaskWordsFollowups } from "./task-words-followup.ts";
+import { repliesBeingAnswered } from "./replies-being-answered.ts";
 import { createManagerSignals, type ManagerSignals } from "./manager-signals.ts";
 import { setManagerAskedHook } from "./manager-reply-expectations.ts";
 import { ordinaryChatFor, type OrdinaryChatDeps } from "./ordinary-chat-cards.ts";
@@ -74,7 +76,7 @@ export function startAssistantCards(): void {
     reportsSince: (sessionId, kinds, since) => countSessionCardsSince([sessionId], kinds, since),
     lateReply: (reply) => lateReplies.add(reply),
     // Started before the follow-ups below, so a turn's reply is still known when it ends.
-    answersCardReply: (sessionId) => cardReplyFollowups.answering(sessionId).length > 0,
+    answersCardReply: (sessionId) => repliesBeingAnswered(sessionId).length > 0,
   });
   signals.start();
   const live = signals;
@@ -104,6 +106,8 @@ export function startAssistantCards(): void {
   stops.push(startCardDelivery());
   // The manager's answer to a reply on a card goes back to where the user replied.
   stops.push(startCardReplyFollowups());
+  // So does the answer to words the user sent a task's chat from Telegram.
+  stops.push(startTaskWordsFollowups());
   try {
     const pruned = pruneOldCardRows(assistantClock.now() - CARD_RETENTION_MS);
     if (pruned > 0) log.info(`${pruned} card(s) older than 90 days and no longer waiting removed`);
