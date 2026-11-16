@@ -5,7 +5,8 @@
  * small control API on a second port:
  *
  *   POST /push   { chatId, userId, text, chatType?, extra? }  → the update (`extra.date` backdates it)
- *   POST /photo  { chatId, userId, caption? }                 → the update
+ *   POST /photo  { chatId, userId, caption?, extra?, bytesBase64? } → the update (`extra.reply_to_message`
+ *                answers a card; `extra.media_group_id` makes one photo of an album)
  *   POST /press  { chatId, userId, messageId, data, stale? }  → the update, or 400 when no such button
  *   POST /fail   { method, failure: { code, retryAfter?, description? } }
  *   GET  /chat?id=<chat>   → { sent, deleted } for that chat
@@ -44,7 +45,11 @@ const control = Bun.serve({
         }
         case "POST /photo": {
           const b = await body(req);
-          return json(fake.pushPhoto(Number(b.chatId), Number(b.userId), typeof b.caption === "string" ? { caption: b.caption } : {}));
+          return json(fake.pushPhoto(Number(b.chatId), Number(b.userId), {
+            ...(typeof b.caption === "string" ? { caption: b.caption } : {}),
+            ...(b.extra && typeof b.extra === "object" ? { extra: b.extra as Record<string, unknown> } : {}),
+            ...(typeof b.bytesBase64 === "string" ? { bytes: new Uint8Array(Buffer.from(b.bytesBase64, "base64")) } : {}),
+          }));
         }
         case "POST /press": {
           const b = await body(req);

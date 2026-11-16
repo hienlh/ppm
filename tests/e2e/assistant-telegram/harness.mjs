@@ -84,7 +84,8 @@ export function phone(control) {
   const get = async (path) => (await fetch(control + path)).json();
   const tg = {
     send: (chatId, text, { userId = chatId, chatType, extra } = {}) => post("/push", { chatId, userId, text, chatType, extra }),
-    photo: (chatId, caption, { userId = chatId } = {}) => post("/photo", { chatId, userId, caption }),
+    photo: (chatId, caption, { userId = chatId, extra, bytes } = {}) =>
+      post("/photo", { chatId, userId, caption, ...(extra ? { extra } : {}), ...(bytes ? { bytesBase64: Buffer.from(bytes).toString("base64") } : {}) }),
     press: (chatId, messageId, data, { userId = chatId, stale = false } = {}) => post("/press", { chatId, userId, messageId, data, stale }),
     fail: (method, failure) => post("/fail", { method, failure }),
     chat: (chatId) => get(`/chat?id=${chatId}`),
