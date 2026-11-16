@@ -18,6 +18,7 @@ import { listTasksNeedingCheck } from "../ppm-tasks-read.ts";
 import { getTaskProject } from "../ppm-tasks-projects.service.ts";
 import { managerSessionFor } from "../ppm-tasks-write.ts";
 import type { ChildCheckState, TaskView } from "../../../shared/ppm-tasks.ts";
+import { formatTaskRef } from "../../../shared/ppm-tasks-refs.ts";
 import { checkDue, classifyChildCheck, shouldAlert, type CheckMemory } from "./child-check-classifier.ts";
 import { judgeProgress, parseRecentForms, readAppended } from "./transcript-progress-reader.ts";
 import { cardText, quotableLines, wakeLines, type Finding } from "./child-check-findings.ts";
@@ -105,7 +106,8 @@ export function createChildCheckRunner(env: ChildCheckEnv = liveChildCheckEnv) {
 
   function card(projectKey: string, projectName: string, findings: Finding[], now: number, why: string, manager: string | null): void {
     const { title, body } = cardText(findings, projectName, now, why);
-    env.postCard(projectKey, projectName, manager, title, body);
+    const tasks = findings.map((f) => ({ taskId: f.task.id, sessionId: f.sessionId, ref: formatTaskRef(f.task.number, projectName) }));
+    env.postCard(projectKey, projectName, manager, title, body, tasks);
     recordAlerts(findings, now);
   }
 

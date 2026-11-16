@@ -24,7 +24,7 @@ let live: LiveChatState | null;
 let exists: boolean;
 let wakes: Array<{ at: number; projectKey: string; lines: string[] }>;
 let wakeAnswer: DeliverOutcome;
-let cards: Array<{ title: string; body: string; manager: string | null }>;
+let cards: Array<{ title: string; body: string; manager: string | null; tasks: Array<{ taskId: string; sessionId: string; ref: string }> }>;
 let emitted: string[][];
 let subagents: number | null;
 
@@ -38,7 +38,7 @@ function env(over: Partial<ChildCheckEnv> = {}): ChildCheckEnv {
     locate: async () => ({ path: file, subagentsDir: join(dir, "subagents") }),
     subagentActivity: async () => subagents,
     wake: async (projectKey, lines) => { wakes.push({ at: clock, projectKey, lines }); return wakeAnswer; },
-    postCard: (_k, _n, manager, title, body) => { cards.push({ title, body, manager }); },
+    postCard: (_k, _n, manager, title, body, tasks) => { cards.push({ title, body, manager, tasks }); },
     emit: (keys) => { emitted.push(keys); },
     ...over,
   };
@@ -177,6 +177,9 @@ describe("child checks", () => {
     expect(cards[0]!.body).toContain('"First"');
     expect(cards[0]!.body).toContain('"Second"');
     expect(cards[0]!.manager).toBe("mgr-1");
+    // Each task travels with its chat, so the card can offer "Open chat" per task.
+    expect(cards[0]!.tasks.map((t) => [t.sessionId, t.ref])).toEqual([["child-1", "demo/1"], ["child-2", "demo/2"]]);
+    expect(cards[0]!.tasks.every((t) => typeof t.taskId === "string" && t.taskId.length === 36)).toBe(true);
   });
 
   it("asks a busy manager again at the next tick and counts one alert", async () => {

@@ -130,6 +130,8 @@ const MAP: Record<string, string | null> = {
   History: "history",
   CalendarClock: "calendar-clock",
   CalendarX2: "calendar-cancel",
+  // A task's due date.
+  Calendar: "calendar-ltr",
 
   // --- Files and folders (the *chrome* ones; real file icons are elsewhere)
   File: "document",
@@ -158,6 +160,10 @@ const MAP: Record<string, string | null> = {
   List: "text-bullet-list-ltr",
   ListChecks: "task-list-square-ltr",
   ListTodo: "task-list-square-ltr",
+  // PPM Tasks: a Reply task (someone waits for an answer), a Decision task, a Jira link.
+  Reply: "arrow-reply",
+  Scale: "scales",
+  Ticket: "ticket-diagonal",
   ListOrdered: "text-number-list-ltr",
   Table: "table",
   // DBGate's Switch to table and Switch to form on a table's data, and a foreign key's "open the
