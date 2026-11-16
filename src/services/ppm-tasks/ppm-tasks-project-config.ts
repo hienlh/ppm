@@ -13,12 +13,13 @@ import { invalid, notFound } from "./ppm-tasks-errors.ts";
 import { writeHistory } from "./ppm-tasks-history.ts";
 import { getTaskProject, seedStatuses } from "./ppm-tasks-projects.service.ts";
 import { ppmTasksEvents, type PpmTasksEvent } from "./ppm-tasks-events.ts";
-import { FIELD_KEY_RE } from "./ppm-tasks-validate.ts";
+import { checkContext, isFieldKey } from "./ppm-tasks-validate.ts";
 import { applyChanges, kindForChanges } from "./ppm-tasks-write.ts";
 
 type ConfigWhat = Extract<PpmTasksEvent, { type: "project" }>["what"];
 
 function configChange<T>(projectKey: string, what: ConfigWhat, ctx: WriteContext, now: number, body: () => { result: T; change?: { field: string; before: unknown; after: unknown } }): T {
+  checkContext(ctx);
   if (!getTaskProject(projectKey)) throw notFound("Project");
   let result!: T;
   getDb().transaction(() => {
@@ -78,6 +79,7 @@ export function updateStatus(id: string, patch: { name?: string; baseGroup?: Bas
   if (!before) throw notFound("Status");
   return configChange(before.projectKey, "statuses", ctx, now, () => {
     const n = patch.name !== undefined ? name(patch.name, L.statusName) : before.name;
+    if (statusRows(before.projectKey).some((s) => s.id !== id && s.name.toLowerCase() === n.toLowerCase())) throw invalid(`A status named ${n} already exists`);
     const g = patch.baseGroup !== undefined || patch.closedAs !== undefined
       ? checkGroup(patch.baseGroup ?? before.baseGroup, patch.closedAs ?? before.closedAs) : { baseGroup: before.baseGroup, closedAs: before.closedAs };
     if (g.baseGroup !== before.baseGroup) {
@@ -157,7 +159,7 @@ export function updateMember(id: string, patch: MemberInput & { archived?: boole
 export const listFieldDefs = (projectKey: string): FieldDef[] => fieldDefRows(projectKey);
 
 export function upsertFieldDef(projectKey: string, input: { key: string; label: string; type: FieldType; options?: string[] | null; position?: number }, ctx: WriteContext, now = Date.now()): FieldDef {
-  if (typeof input.key !== "string" || !FIELD_KEY_RE.test(input.key)) throw invalid("A field key may use letters, digits, _ . - and at most 64 characters");
+  if (!isFieldKey(input.key)) throw invalid("A field key may use letters, digits, _ . - and at most 64 characters");
   if (!FIELD_TYPES.includes(input.type)) throw invalid(`type must be one of ${FIELD_TYPES.join(", ")}`);
   const label = name(input.label, L.statusName);
   let options: string[] | null = null;

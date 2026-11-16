@@ -16,7 +16,7 @@ import { getTaskProject } from "./ppm-tasks-projects.service.ts";
 import { ppmTasksEvents } from "./ppm-tasks-events.ts";
 import { getTask } from "./ppm-tasks-read.ts";
 import { endOfCellRank, rankForMove } from "./ppm-tasks-rank.ts";
-import { normalizePatch } from "./ppm-tasks-validate.ts";
+import { checkContext, normalizePatch } from "./ppm-tasks-validate.ts";
 import { applyChanges, diffValues, kindForChanges } from "./ppm-tasks-write.ts";
 
 export { getTask, listTasks, taskChildren, listTasksNeedingCheck, childCheckFor, toViews } from "./ppm-tasks-read.ts";
@@ -41,6 +41,7 @@ function mutate(
   id: string, expectedRevision: number, ctx: WriteContext, now: number,
   build: (task: Task) => { changes: HistoryChange[]; kind?: HistoryKind },
 ): TaskView {
+  checkContext(ctx);
   let written: { historyId: number; kind: HistoryKind; task: Task } | null = null;
   getDb().transaction(() => {
     const task = loadTask(id);

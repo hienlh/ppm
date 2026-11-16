@@ -16,12 +16,13 @@ import type { SessionDelivery } from "../../shared/session-collab.ts";
 import { formatTaskRef } from "../../shared/ppm-tasks-refs.ts";
 import { listLinkStateChangesSince, loadTask, rowToHistory, type HistoryRow } from "./ppm-tasks-db.ts";
 import { managerSessionFor } from "./ppm-tasks-write.ts";
+import { workingSessionRefusal } from "./ppm-tasks-session-check.ts";
 import { getTaskProject } from "./ppm-tasks-projects.service.ts";
 import { reserveManagerWake, type WakeReservation } from "./ppm-tasks-wake-budget.ts";
 
 export interface PpmTasksDeliverEnv {
   chat(): ChatControl | null;
-  reserveWake(managerSessionId: string): WakeReservation;
+  reserveWake(managerSessionId: string, projectKey: string, byUser: boolean): WakeReservation;
   now(): number;
 }
 
@@ -47,17 +48,27 @@ const providerOf = (sessionId: string): string => getSessionProvider(sessionId) 
 async function send(sessionId: string, projectName: string, providerId: string, text: string): Promise<DeliverOutcome> {
   const chat = env.chat();
   if (!chat) return { ok: false, reason: "no_chat", error: "No chat layer runs in this process" };
-  const result = await chat.sendUserMessage(sessionId, text, { origin: "ppm_ui", projectName, providerId });
-  if (!result.ok) return { ok: false, reason: "error", error: result.error };
-  return { ok: true, sessionId: result.sessionId, delivered: result.delivered ?? "started" };
+  try {
+    const result = await chat.sendUserMessage(sessionId, text, { origin: "ppm_ui", projectName, providerId });
+    if (!result.ok) return { ok: false, reason: "error", error: result.error };
+    return { ok: true, sessionId: result.sessionId, delivered: result.delivered ?? "started" };
+  } catch (e) {
+    return { ok: false, reason: "error", error: (e as Error).message };
+  }
 }
+
+/** One line of task text: PPM tags defused and line breaks folded, so it cannot forge lines of its own. */
+export const oneLine = (text: string): string => neutralizePpmTags(text.replace(/\s+/g, " ").trim());
+
+/** Most news lines one wake carries; the rest is counted. */
+const MAX_WAKE_LINES = 60;
 
 /** The text a decision choice is sent as. */
 export function decisionText(task: Task, ref: string, optionId: string): string | null {
   const index = task.decision?.options.findIndex((o) => o.id === optionId) ?? -1;
   if (!task.decision || index < 0) return null;
   const option = task.decision.options[index]!;
-  return `Decision on ${ref} "${neutralizePpmTags(task.title)}": ${String.fromCharCode(65 + index)} — ${neutralizePpmTags(option.label)}`;
+  return `Decision on ${ref} "${oneLine(task.title)}": ${String.fromCharCode(65 + index)} — ${oneLine(option.label)}`;
 }
 
 /** Sends the chosen option to the working chat, else the project's manager chat. */
@@ -69,6 +80,8 @@ export async function deliverDecision(taskId: string, optionId: string): Promise
   if (!text) return { ok: false, reason: "no_option" };
   const target = task.workingSessionId ?? managerSessionFor(task.projectKey);
   if (!target) return { ok: false, reason: "no_session" };
+  // Asked again at delivery: the chat may have moved or become an Assistant session since.
+  if (task.workingSessionId && workingSessionRefusal(task.projectKey, task.workingSessionId)) return { ok: false, reason: "no_session" };
   return send(target, projectName, providerOf(target), text);
 }
 
@@ -126,13 +139,27 @@ export function setManagerNewsFormatter(next: ManagerNewsFormatter | null): void
  * `extraLines` (the checker's findings). Charged to the wake budget; refused, nothing is sent and
  * the news stays for the manager's next turn. The cursor moves only once the chat took the turn.
  */
+/** Projects with a wake on its way: a second one would read and send the same news again. */
+const waking = new Set<string>();
+
 export async function wakeManager(projectKey: string, actor: Actor, extraLines: string[] = []): Promise<DeliverOutcome> {
+  if (waking.has(projectKey)) return { ok: false, reason: "error", error: "A wake of this manager is already on its way" };
+  waking.add(projectKey);
+  try {
+    return await wakeOnce(projectKey, actor, extraLines);
+  } finally {
+    waking.delete(projectKey);
+  }
+}
+
+async function wakeOnce(projectKey: string, actor: Actor, extraLines: string[]): Promise<DeliverOutcome> {
   const manager = managerSessionFor(projectKey);
   if (!manager) return { ok: false, reason: "no_session" };
   const news = pendingManagerNews(projectKey);
-  const lines = [...formatter(news, projectKey), ...extraLines].map(neutralizePpmTags);
+  let lines = [...formatter(news, projectKey), ...extraLines].map(oneLine).filter(Boolean);
   if (lines.length === 0) return { ok: false, reason: "nothing" };
-  const reserved = env.reserveWake(manager);
+  if (lines.length > MAX_WAKE_LINES) lines = [...lines.slice(0, MAX_WAKE_LINES), `- …and ${lines.length - MAX_WAKE_LINES} more`];
+  const reserved = env.reserveWake(manager, projectKey, actor.kind === "user");
   if (!reserved.ok) return { ok: false, reason: "budget", error: reserved.message };
   const projectName = projectNameOf(projectKey);
   const where = neutralizePpmTags(projectName);

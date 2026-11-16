@@ -11,6 +11,7 @@ import {
 import { invalid, notFound } from "./ppm-tasks-errors.ts";
 import { writeHistory } from "./ppm-tasks-history.ts";
 import { ppmTasksEvents } from "./ppm-tasks-events.ts";
+import { checkContext } from "./ppm-tasks-validate.ts";
 
 export interface TaskProject {
   projectKey: string;
@@ -66,6 +67,7 @@ function upsertProjectRow(projectKey: string, projectPath: string): void {
 
 /** Turns the store on or off for a project folder. Returns the project as it now stands. */
 export function setTasksEnabled(projectPath: string, enabled: boolean, ctx: WriteContext, now: number = Date.now()): TaskProject {
+  checkContext(ctx);
   const key = keyOf(projectPath);
   const db = getDb();
   let changed = false;
@@ -110,6 +112,7 @@ export function setCheckInterval(projectKey: string, minutes: number, ctx: Write
   if (!Number.isInteger(minutes) || minutes < CHECK_INTERVAL_MIN_MIN || minutes > CHECK_INTERVAL_MAX_MIN) {
     throw invalid(`The check interval must be a whole number of minutes from ${CHECK_INTERVAL_MIN_MIN} to ${CHECK_INTERVAL_MAX_MIN}`);
   }
+  checkContext(ctx);
   const db = getDb();
   let changed = false;
   db.transaction(() => {

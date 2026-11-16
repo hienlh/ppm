@@ -4,7 +4,7 @@
  * parent) must belong to the task's project, a parent may not make a cycle, and links are stored
  * canonically (Jira keys upper-cased, PRs as `owner/repo#n`).
  */
-import { getDb } from "../db.service.ts";
+import { getDb, resolveMigratedSession } from "../db.service.ts";
 import {
   IMPORTANCES, LINK_KINDS, ME_MEMBER_ID, PPM_TASK_LIMITS as L, TASK_TYPES, URGENCIES,
   type TaskLink, type TaskPatch, type TaskResult, type WriteContext,
@@ -12,8 +12,14 @@ import {
 import { canonicalPrRef, parseJiraKey } from "../../shared/ppm-tasks-refs.ts";
 import { statusById } from "./ppm-tasks-db.ts";
 import { invalid } from "./ppm-tasks-errors.ts";
+import { workingSessionRefusal } from "./ppm-tasks-session-check.ts";
 
 export const FIELD_KEY_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+/** Keys that would name an object's prototype rather than a field. */
+const RESERVED_FIELD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/** Whether `key` may name a custom field. */
+export const isFieldKey = (key: unknown): key is string => typeof key === "string" && FIELD_KEY_RE.test(key) && !RESERVED_FIELD_KEYS.has(key);
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function text(name: string, value: unknown, max: number, nullable: boolean): string | null {
@@ -114,7 +120,14 @@ export function normalizePatch(
     out.set("parentId", patch.parentId);
   }
   if (patch.workingSessionId !== undefined) {
-    out.set("workingSessionId", patch.workingSessionId === null ? null : text("workingSessionId", patch.workingSessionId, 200, false));
+    if (patch.workingSessionId === null) out.set("workingSessionId", null);
+    else {
+      const asked = text("workingSessionId", patch.workingSessionId, 200, false)!;
+      const refusal = workingSessionRefusal(projectKey, asked);
+      if (refusal) throw invalid(refusal);
+      // Stored under the id the chat answers to now, so a provider's rename is no change.
+      out.set("workingSessionId", resolveMigratedSession(asked));
+    }
   }
   if (patch.links !== undefined) {
     if (!Array.isArray(patch.links) || patch.links.length > L.links) throw invalid(`links must be a list of at most ${L.links}`);
@@ -136,7 +149,7 @@ export function normalizePatch(
     if (!patch.fields || typeof patch.fields !== "object" || Array.isArray(patch.fields)) throw invalid("fields must be an object");
     const keys = new Set(Object.keys(currentFields));
     for (const [key, value] of Object.entries(patch.fields)) {
-      if (!FIELD_KEY_RE.test(key)) throw invalid(`Field name "${key}" may use letters, digits, _ . - and at most 64 characters`);
+      if (!isFieldKey(key)) throw invalid(`Field name "${key}" may use letters, digits, _ . - and at most 64 characters`);
       if (value !== null && typeof value !== "string" && typeof value !== "number") throw invalid(`Field ${key} must be text, a number or null`);
       if (typeof value === "number" && !Number.isFinite(value)) throw invalid(`Field ${key} must be a finite number`);
       if (typeof value === "string" && value.length > L.fieldValue) throw invalid(`Field ${key} is longer than ${L.fieldValue} characters`);
@@ -146,8 +159,15 @@ export function normalizePatch(
     }
     if (keys.size > L.fieldKeys) throw invalid(`A task holds at most ${L.fieldKeys} fields`);
   }
+  checkContext(ctx);
+  return out;
+}
+
+/** Bounds what a write context carries; every write path calls it. */
+export function checkContext(ctx: WriteContext): void {
+  if (!ctx?.actor || typeof ctx.actor.label !== "string" || !ctx.actor.label.trim()) throw invalid("A write needs an actor with a label");
+  if (ctx.actor.label.length > 200) throw invalid("The actor label is longer than 200 characters");
   if (ctx.reason !== undefined && ctx.reason !== null && (typeof ctx.reason !== "string" || ctx.reason.length > L.reason)) {
     throw invalid(`reason is longer than ${L.reason} characters`);
   }
-  return out;
 }

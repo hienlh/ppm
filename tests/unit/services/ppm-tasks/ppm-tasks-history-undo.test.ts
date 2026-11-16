@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import "../../../test-setup.ts";
 import { getDb } from "../../../../src/services/db.service.ts";
-import { createTask, getTask, listTasks, updateTask } from "../../../../src/services/ppm-tasks/ppm-tasks.service.ts";
+import { createTask, getTask, listTasks, softDeleteTask, updateTask } from "../../../../src/services/ppm-tasks/ppm-tasks.service.ts";
+import { addStatus, deleteStatus } from "../../../../src/services/ppm-tasks/ppm-tasks-project-config.ts";
+import { setTasksEnabled } from "../../../../src/services/ppm-tasks/ppm-tasks-projects.service.ts";
 import { taskHistory, undoChange, undoRefusal, historyRow } from "../../../../src/services/ppm-tasks/ppm-tasks-history.ts";
 import { compactHistory } from "../../../../src/services/ppm-tasks/ppm-tasks-compaction.ts";
-import { ASSISTANT, freshProject, MANAGER, USER, type Fixture } from "./ppm-tasks-fixture.ts";
+import { ASSISTANT, freshProject, MANAGER, PROJECT_PATH, USER, type Fixture } from "./ppm-tasks-fixture.ts";
 
 let f: Fixture;
 beforeEach(() => { f = freshProject(); });
@@ -70,7 +72,44 @@ describe("undo", () => {
   });
 });
 
+describe("undo, guarded", () => {
+  it("brings back a task the AI deleted", () => {
+    const t = createTask({ projectKey: f.projectKey, title: "deleted by ai" }, USER);
+    softDeleteTask(t.id, 1, ASSISTANT);
+    undoChange(taskHistory(t.id)[0]!.id, USER);
+    expect(getTask(t.id)!.deletedAt).toBeNull();
+    expect(listTasks({}).map((x) => x.title)).toEqual(["deleted by ai"]);
+  });
+
+  it("refuses to put back a status that no longer exists", () => {
+    const review = addStatus(f.projectKey, { name: "Review", baseGroup: "active" }, USER);
+    const t = createTask({ projectKey: f.projectKey, title: "x", statusId: review.id }, USER);
+    updateTask(t.id, { statusId: f.status("In progress").id }, 1, MANAGER);
+    const ai = taskHistory(t.id)[0]!;
+    deleteStatus(review.id, null, USER);
+    expect(() => undoChange(ai.id, USER)).toThrow(/Cannot undo: No status/);
+    expect(getTask(t.id)!.statusId).toBe(f.status("In progress").id);
+  });
+
+  it("refuses to undo in a project whose tasks are switched off", () => {
+    const t = createTask({ projectKey: f.projectKey, title: "x" }, USER);
+    updateTask(t.id, { why: "ai" }, 1, MANAGER);
+    setTasksEnabled(PROJECT_PATH, false, USER);
+    expect(() => undoChange(taskHistory(t.id)[0]!.id, USER)).toThrow(/switched off/);
+  });
+});
+
 describe("compaction", () => {
+  it("drops an undone key event together with its undo once both are old", () => {
+    const t = createTask({ projectKey: f.projectKey, title: "x" }, USER);
+    updateTask(t.id, { statusId: f.status("Done").id }, 1, MANAGER);
+    undoChange(taskHistory(t.id)[0]!.id, USER);
+    const now = Date.now();
+    getDb().query("UPDATE task_history SET at = ?").run(now - 91 * DAY);
+    compactHistory(now);
+    expect(taskHistory(t.id).map((h) => h.kind)).toEqual(["created"]);
+  });
+
   it("keeps only key events past 90 days", () => {
     const t = createTask({ projectKey: f.projectKey, title: "old" }, USER);
     updateTask(t.id, { why: "detail" }, 1, MANAGER);

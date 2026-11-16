@@ -4,6 +4,8 @@
  */
 import { createLogger } from "../logger.ts";
 import { compactHistory } from "./ppm-tasks-compaction.ts";
+// Registers the listener that lifts a paused wake budget when the user writes in a manager chat.
+import "./ppm-tasks-wake-budget.ts";
 
 const log = createLogger("ppm-tasks");
 const DAY = 86_400_000;

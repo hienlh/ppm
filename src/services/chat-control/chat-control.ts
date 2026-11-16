@@ -39,6 +39,9 @@ import type { SessionDelivery } from "../../shared/session-collab.ts";
  */
 export type ServerOrigin = "telegram" | "watch" | "schedule" | "ppm_ui" | "assistant" | "assistant_card" | "delete";
 
+/** The server origins that may answer a card or stop a turn: `ppm_ui` only ever sends a message. */
+export type ActingServerOrigin = Exclude<ServerOrigin, "ppm_ui">;
+
 /** The server origins that may send a chat a message (see {@link ChatControl.sendUserMessage}). */
 export type MessageServerOrigin = Exclude<ServerOrigin, "assistant" | "assistant_card" | "delete">;
 
@@ -170,9 +173,9 @@ export interface ChatControl {
    * Answers to questions the card does not ask are dropped; check them first with
    * `answersByIdError` when they come from anywhere but a person's own form.
    */
-  answerApproval(sessionId: string, requestId: string, answer: ApprovalAnswer, origin: ServerOrigin): "answered" | "stale";
+  answerApproval(sessionId: string, requestId: string, answer: ApprovalAnswer, origin: ActingServerOrigin): "answered" | "stale";
   /** Stops the running turn; false when the chat has no live entry. */
-  cancelTurn(sessionId: string, origin: ServerOrigin): boolean;
+  cancelTurn(sessionId: string, origin: ActingServerOrigin): boolean;
   /** What a live chat is doing now; null when it has no entry in this process. */
   liveState(sessionId: string): LiveChatState | null;
   /**

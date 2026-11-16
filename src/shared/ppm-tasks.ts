@@ -21,6 +21,7 @@ export type Importance = "must" | "should" | "nice";
 export const IMPORTANCES: readonly Importance[] = ["must", "should", "nice"];
 
 export * from "./ppm-tasks-history.ts";
+export * from "./ppm-tasks-config.ts";
 
 /** Known task types. The column takes any string so the list can grow; writes are checked against this. */
 export const TASK_TYPES = ["task", "decision", "reply"] as const;
@@ -31,9 +32,6 @@ export const LINK_KINDS: readonly LinkKind[] = ["jira", "pr", "session", "url"];
 
 /** The reserved member id meaning the user ("You"); never stored as a member row. */
 export const ME_MEMBER_ID = "me";
-
-export type FieldType = "text" | "number" | "select" | "date" | "link";
-export const FIELD_TYPES: readonly FieldType[] = ["text", "number", "select", "date", "link"];
 
 /** Size limits, checked on every write. */
 export const PPM_TASK_LIMITS = {
@@ -60,37 +58,6 @@ export const PPM_TASK_LIMITS = {
 export const CHECK_INTERVAL_DEFAULT_MIN = 30;
 export const CHECK_INTERVAL_MIN_MIN = 5;
 export const CHECK_INTERVAL_MAX_MIN = 240;
-
-export interface TaskStatusDef {
-  id: string;
-  projectKey: string;
-  name: string;
-  baseGroup: BaseGroup;
-  /** Set on closed statuses only. */
-  closedAs: ClosedAs | null;
-  position: number;
-}
-
-export interface TaskMember {
-  id: string;
-  projectKey: string;
-  name: string;
-  jiraAccountId: string | null;
-  githubLogin: string | null;
-  slackUserId: string | null;
-  position: number;
-  archivedAt: number | null;
-}
-
-export interface FieldDef {
-  projectKey: string;
-  key: string;
-  label: string;
-  type: FieldType;
-  /** The choices of a `select` field; null for the other types. */
-  options: string[] | null;
-  position: number;
-}
 
 export interface TaskLink {
   kind: LinkKind;

@@ -9,7 +9,8 @@ import { TaskConflictError, PpmTaskError } from "../../../../src/services/ppm-ta
 import { taskHistory } from "../../../../src/services/ppm-tasks/ppm-tasks-history.ts";
 import { setTasksEnabled } from "../../../../src/services/ppm-tasks/ppm-tasks-projects.service.ts";
 import { ppmTasksEvents, type PpmTasksEvent } from "../../../../src/services/ppm-tasks/ppm-tasks-events.ts";
-import { freshProject, MANAGER, PROJECT_PATH, USER, type Fixture } from "./ppm-tasks-fixture.ts";
+import { chatOf, freshProject, MANAGER, PROJECT_PATH, USER, type Fixture } from "./ppm-tasks-fixture.ts";
+import { setSessionAssistant } from "../../../../src/services/db.service.ts";
 
 let f: Fixture;
 beforeEach(() => { f = freshProject(); });
@@ -169,10 +170,28 @@ describe("order", () => {
   });
 });
 
+describe("working session", () => {
+  it("must be a PPM chat of the task's own project, never an Assistant session", () => {
+    const t = createTask({ projectKey: f.projectKey, title: "x" }, USER);
+    expect(() => updateTask(t.id, { workingSessionId: "unknown-chat" }, 1, MANAGER)).toThrow(/No PPM chat/);
+    chatOf("other-project-chat", process.platform === "win32" ? "C:\\elsewhere" : "/elsewhere");
+    expect(() => updateTask(t.id, { workingSessionId: "other-project-chat" }, 1, MANAGER)).toThrow(/own project/);
+    setSessionAssistant(chatOf("assistant-chat"));
+    expect(() => updateTask(t.id, { workingSessionId: "assistant-chat" }, 1, MANAGER)).toThrow(/Assistant/);
+    expect(updateTask(t.id, { workingSessionId: chatOf("good-chat") }, 1, MANAGER).workingSessionId).toBe("good-chat");
+  });
+
+  it("refuses reserved custom field names", () => {
+    expect(() => createTask({ projectKey: f.projectKey, title: "x", fields: JSON.parse('{"__proto__":"1"}') }, USER)).toThrow(/Field name/);
+  });
+});
+
 describe("handed-off work", () => {
   it("is handed off only to a chat that is not the manager, and needs checking until it has a result", () => {
     getDb().query("INSERT INTO manager_chats (project_key, project_path, session_id, provider_id, assigned_by, assigned_at) VALUES (?, ?, 'mgr-1', 'claude', 'user', 1)")
       .run(f.projectKey, PROJECT_PATH);
+    chatOf("mgr-1");
+    chatOf("child-1");
     const t = createTask({ projectKey: f.projectKey, title: "Delegated" }, USER);
     const toManager = updateTask(t.id, { workingSessionId: "mgr-1" }, 1, USER);
     expect(toManager.handedOffAt).toBeNull();

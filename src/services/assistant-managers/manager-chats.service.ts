@@ -195,7 +195,9 @@ export function createManagerChats(env: ManagerChatsEnv = realEnv) {
       });
       invalidate();
       await env.ensureRules?.({ projectKey: target.key, projectPath: target.path, projectName: target.name, sessionId: current });
-      await env.managerAssigned?.({ projectKey: target.key, projectPath: target.path });
+      // Only a new manager switches tasks on: re-assigning the same chat leaves a store the user
+      // switched off alone.
+      if (previous?.sessionId !== current) await env.managerAssigned?.({ projectKey: target.key, projectPath: target.path });
       env.changed([...touched]);
       return { row: getManagerChatRow(target.key)!, replaced: previous && previous.sessionId !== current ? previous.sessionId : null };
     },

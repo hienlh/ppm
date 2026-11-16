@@ -2732,6 +2732,10 @@ setChatControl({
     }
     // A scheduled run uses the chat's own mode: a mode sent with it would become the chat's sticky
     // one. Its run block is checked here, since only this door may put one in front of a prompt.
+    // PPM's own screens send what the user chose, not a mode: one sent with it would become the
+    // chat's sticky mode. Its text is defused here too, whatever the caller already did.
+    if (opts.origin === "ppm_ui" && opts.permissionMode) return { ok: false, error: "A ppm_ui message uses the chat's own permission mode." };
+    if (opts.origin === "ppm_ui") text = neutralizePpmTags(text);
     let scheduleRun: ScheduleRunReference | undefined;
     if (opts.origin === "schedule") {
       if (opts.permissionMode) return { ok: false, error: "A scheduled run uses the chat's own permission mode." };
@@ -2800,12 +2804,15 @@ setChatControl({
     return { ok: true, sessionId: result.sessionId, ...(tracked && result.delivered ? { delivered: result.delivered } : {}) };
   },
   answerApproval(asked, requestId, answer, origin) {
+    // PPM's own screens never answer a card on the user's behalf.
+    if ((origin as string) === "ppm_ui") return "stale";
     const sessionId = resolveMigratedSession(asked);
     const entry = activeSessions.get(sessionId);
     if (!entry || typeof requestId !== "string" || !requestId) return "stale";
     return answerApprovalCore(sessionId, entry, requestId, answer, origin);
   },
   cancelTurn(asked, origin) {
+    if ((origin as string) === "ppm_ui") return false;
     const sessionId = resolveMigratedSession(asked);
     const entry = activeSessions.get(sessionId);
     if (!entry) return false;
