@@ -774,6 +774,27 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `POST   /api/tailscale/login/cancel`
 - `POST   /api/tailscale/service`
 
+## /api/tasks
+
+- `GET    /api/tasks/projects`
+- `GET    /api/tasks/projects/:name/settings`
+- `PUT    /api/tasks/projects/:name/settings`
+- `POST   /api/tasks/${ID}/decide`
+- `POST   /api/tasks/${ID}/start-chat`
+- `POST   /api/tasks/notify-manager`
+- `POST   /api/tasks/${ID}/links`
+- `DELETE /api/tasks/${ID}/links/:linkId`
+- `GET    /api/tasks/${ID}/history`
+- `POST   /api/tasks/history/:historyId{[0-9]+}/undo`
+- `GET    /api/tasks/link-states`
+- `GET    /api/tasks`
+- `GET    /api/tasks/:id{${TASK_ID_PATTERN}}`
+- `POST   /api/tasks`
+- `PATCH  /api/tasks/:id{${TASK_ID_PATTERN}}`
+- `POST   /api/tasks/:id{${TASK_ID_PATTERN}}/close`
+- `POST   /api/tasks/:id{${TASK_ID_PATTERN}}/reopen`
+- `POST   /api/tasks/:id{${TASK_ID_PATTERN}}/reorder`
+
 ## /api/teams
 
 - `GET    /api/teams`
@@ -864,4 +885,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.2 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.3 -->
