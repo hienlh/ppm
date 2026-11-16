@@ -122,7 +122,7 @@ export function TaskDetailMobileDetails(p: TaskDetailMobileDetailsProps) {
         </button>
       )}
       <TaskNotesCard task={task} onSave={p.onPatch} />
-      <TaskLinksCard task={task} linkStates={linkStates} onOpenChat={p.onOpenChat} onAdd={p.onAddLink} onRemove={p.onRemoveLink} />
+      <TaskLinksCard task={task} linkStates={linkStates} jiraSite={p.detail.jiraSite} onOpenChat={p.onOpenChat} onAdd={p.onAddLink} onRemove={p.onRemoveLink} />
       <TaskWorkingSessionBlock working={task.workingSession} check={task.check} onOpen={p.onOpenWorkingChat} onStartChat={p.onStartChat} />
       <div className="divide-y divide-border-soft overflow-hidden rounded-lg border border-border-soft bg-panel" data-task-summary="">
         <Row icon={<Layers />} aside={children.length ? `${done} of ${children.length}` : "None"} onClick={() => p.onSheet("children")}>Child tasks</Row>

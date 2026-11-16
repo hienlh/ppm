@@ -77,7 +77,7 @@ export function TaskDetailDesktop({ detail, settings, preview }: TaskDetailViewP
           )}
           <TaskResultCard task={task} onSave={(result) => patch({ result })} />
           <TaskNotesCard task={task} onSave={patch} />
-          <TaskLinksCard task={task} linkStates={linkStates} onOpenChat={openChat}
+          <TaskLinksCard task={task} linkStates={linkStates} jiraSite={detail.jiraSite} onOpenChat={openChat}
             onAdd={async (link) => !!(await run(task.id, () => actions.addLink(task, link)))}
             onRemove={(link) => void run(task.id, () => actions.removeLink(task, link))} />
           <TaskChildrenCard children={children} members={settings?.members} onOpen={(c) => openTaskTab(c)} onAdd={() => setChildOpen(true)} />

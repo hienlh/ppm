@@ -128,6 +128,15 @@ describe("list and detail", () => {
     expect([missing.status, missing.json.code]).toEqual([404, "not_found"]);
   });
 
+  it("names the project's Jira site, from its Jira config, so a Jira key can open", async () => {
+    const task = createTask({ projectKey: key, title: "Alpha", links: [{ kind: "jira", ref: "AL-7" }] }, USER);
+    expect((await call<TaskDetailResponse>("GET", `/${task.id}`)).json.data!.jiraSite).toBeNull();
+    const projectId = (getDb().query("SELECT id FROM projects WHERE path = ?").get(root) as { id: number }).id;
+    getDb().query("INSERT INTO jira_config (project_id, base_url, email, api_token_encrypted) VALUES (?, ?, ?, ?)")
+      .run(projectId, "https://alpha.atlassian.net/", "alpha@example.com", "not-a-real-token");
+    expect((await call<TaskDetailResponse>("GET", `/${task.id}`)).json.data!.jiraSite).toBe("https://alpha.atlassian.net");
+  });
+
   it("names an unknown project and a switched-off one", async () => {
     expect((await call("GET", "/?project=nope")).json.code).toBe("project_not_found");
     const off = await call("GET", "/?project=other");

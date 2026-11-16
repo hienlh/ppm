@@ -10,7 +10,8 @@
  */
 import type { Importance, Urgency } from "../../shared/ppm-tasks.ts";
 import { daysBetween } from "../../shared/ppm-tasks-urgency.ts";
-import { truncateText } from "../notification-format.ts";
+import { safeWebUrl } from "../../shared/ppm-task-link-href.ts";
+import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
 import { cleanTelegramText, telegramVisibleLength, TELEGRAM_CARD_ROOM, type CardDetail } from "./assistant-telegram-card-kinds.ts";
 
 export const URGENCY_LABEL: Record<Urgency, string> = { now: "Now", today: "Today", week: "This week", later: "Later" };
@@ -22,6 +23,9 @@ const TITLE_MAX = 200;
 const LINE_MAX = 300;
 const LINKS_SHOWN = 3;
 const CHILDREN_SHOWN = 10;
+
+/** A link line, worded ("NX-6318 In Progress"), with the address its text opens when it has one. */
+export type TaskCardLinkLine = string | { text: string; href: string | null };
 
 /** One task's facts as the card shows them; the caller looks names up, the card only words them. */
 export interface TaskCardFacts {
@@ -43,7 +47,7 @@ export interface TaskCardFacts {
   waitingSince: number | null;
   nextStep: string | null;
   /** Live states of its Jira and PR links, already worded ("NX-6318 In Progress"). */
-  linkLines: string[];
+  linkLines: TaskCardLinkLine[];
 }
 
 export interface CardContext {
@@ -85,6 +89,14 @@ function fit(lines: string[]): string {
   return out.join("\n");
 }
 
+/** A link line, as a tapable link when its address is an `http:`/`https:` one. */
+function linkLineHtml(link: TaskCardLinkLine, counter: { hidden: number }): string {
+  const { text, href } = typeof link === "string" ? { text: link, href: null } : link;
+  const safe = href ? safeWebUrl(href) : null;
+  const shown = clean(text, counter);
+  return safe ? `<a href="${escapeTelegramHtml(safe)}">${shown}</a>` : shown;
+}
+
 /** The task's facts, without the header line: what the deck card and the created card share. */
 function factLines(f: TaskCardFacts, ctx: CardContext, counter: { hidden: number }, opts: { withStatus: boolean }): string[] {
   const project = clean(f.projectName, counter, 100);
@@ -102,7 +114,7 @@ function factLines(f: TaskCardFacts, ctx: CardContext, counter: { hidden: number
     const since = f.waitingSince ? ` for ${waitedFor(f.waitingSince, ctx.now)}` : "";
     lines.push(`Waiting on ${clean(f.waitingOn, counter, 80)}${since}`);
   }
-  for (const link of f.linkLines.slice(0, LINKS_SHOWN)) lines.push(clean(link, counter));
+  for (const link of f.linkLines.slice(0, LINKS_SHOWN)) lines.push(linkLineHtml(link, counter));
   if (f.nextStep) lines.push(`<i>Next: ${clean(f.nextStep, counter)}</i>`);
   return lines;
 }

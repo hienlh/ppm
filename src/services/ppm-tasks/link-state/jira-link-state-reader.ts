@@ -13,6 +13,7 @@ import { getConfigByProjectId, getDecryptedCredentials } from "../../jira-config
 import { getIssue, getRateLimitState, JiraApiError, searchIssues } from "../../jira-api-client.ts";
 import type { JiraCredentials, JiraIssue } from "../../../types/jira.ts";
 import { parseJiraKey } from "../../../shared/ppm-tasks-refs.ts";
+import { jiraSiteUrl } from "../../../shared/ppm-task-link-href.ts";
 import type { ReadResult } from "./github-pr-link-state-reader.ts";
 
 export const JIRA_BATCH = 50;
@@ -38,6 +39,19 @@ export interface JiraTransport {
 function projectIdFor(projectKey: string): number | null {
   const rows = getDb().query("SELECT id, path FROM projects").all() as Array<{ id: number; path: string }>;
   return rows.find((r) => keyOf(r.path) === projectKey)?.id ?? null;
+}
+
+/**
+ * The project's Jira site (from its Jira config, credentials not read), where a Jira link opens in
+ * a browser; null when the project has no Jira config or its base URL is not a web address.
+ */
+export function jiraSiteFor(projectKey: string): string | null {
+  try {
+    const id = projectIdFor(projectKey);
+    return id === null ? null : jiraSiteUrl(getConfigByProjectId(id)?.baseUrl);
+  } catch {
+    return null;
+  }
 }
 
 export const liveJiraTransport: JiraTransport = {
