@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Loader2, ShieldCheck } from "@/lib/icons";
 import { Switch } from "@/components/ui/switch";
 import { getAssistantSettings, patchAssistantSettings, type AssistantSettingsResponse } from "@/lib/assistant-settings-api";
+import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 import { SettingLine, SettingsCard } from "./assistant-settings-card";
 import { ConfirmDialog } from "./assistant-settings-dialog";
 
@@ -19,8 +20,12 @@ export const ACT_ON_OWN_LABEL = "Let the Assistant act on its own";
 export const ACT_ON_OWN_HINT = "Edits files and runs commands without asking, in conversations you start. PPM's own approvals and your private folders still ask.";
 export const ACT_ON_OWN_CONFIRM = "The Assistant will edit files in your projects and run any command without asking, in conversations you start (not in watch or scheduled turns). It reads other chats, logs and web results, and text in them can try to steer it. PPM's own approvals (database changes, git, messages to chats) and your private folders still ask. Edits become available from the Assistant's next session start.";
 
-/** The switch is 20px tall; an invisible margin around it makes a 44px touch target. */
-const TOUCH_SWITCH = "relative after:absolute after:-inset-3 after:content-['']";
+/**
+ * The confirm's buttons follow the chip-row standard (docs/design-guidelines.md rule 3): 28px with
+ * text on a desktop, 26px on a phone. The switches keep their own size and get no invisible
+ * press area, which the standard asks not to add.
+ */
+const CONFIRM_BUTTON = `${TEXT_CONTROL_HEIGHT} px-2.5 text-xs`;
 
 interface Switches { readonly: boolean; actOnOwn: boolean }
 
@@ -62,15 +67,15 @@ export function AssistantPermissionsSettings() {
     <div data-testid="assistant-permissions">
       <SettingsCard icon={ShieldCheck} title="Permissions">
         <SettingLine label={READONLY_COMMANDS_LABEL} note={READONLY_COMMANDS_HINT}>
-          <Switch className={TOUCH_SWITCH} aria-label={READONLY_COMMANDS_LABEL} checked={saved.readonly} disabled={saving}
+          <Switch aria-label={READONLY_COMMANDS_LABEL} checked={saved.readonly} disabled={saving}
             onCheckedChange={(on) => void save({ auto_readonly_commands: on })} />
         </SettingLine>
         <SettingLine label={ACT_ON_OWN_LABEL} note={ACT_ON_OWN_HINT}>
-          <Switch className={TOUCH_SWITCH} aria-label={ACT_ON_OWN_LABEL} checked={saved.actOnOwn} disabled={saving}
+          <Switch aria-label={ACT_ON_OWN_LABEL} checked={saved.actOnOwn} disabled={saving}
             onCheckedChange={(on) => { if (on) setConfirming(true); else void save({ act_on_own: false }); }} />
         </SettingLine>
       </SettingsCard>
-      <ConfirmDialog open={confirming} title={`${ACT_ON_OWN_LABEL}?`} confirmLabel="Turn on"
+      <ConfirmDialog open={confirming} title={`${ACT_ON_OWN_LABEL}?`} confirmLabel="Turn on" buttonClassName={CONFIRM_BUTTON}
         onClose={() => setConfirming(false)}
         onConfirm={() => { setConfirming(false); void save({ act_on_own: true }); }}>
         {ACT_ON_OWN_CONFIRM}

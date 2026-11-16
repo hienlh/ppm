@@ -139,7 +139,13 @@ describe("Permissions", () => {
     await settle();
     const sheet = document.body.querySelector(`[role="dialog"][aria-label="${ACT_ON_OWN_LABEL}?"]`);
     expect(sheet?.textContent).toContain(ACT_ON_OWN_CONFIRM);
-    expect(button("Turn on")?.className).toContain("min-h-11");
+    // The chip-row standard: 28px on a desktop, 26px on a phone, and no 44px minimum.
+    for (const name of ["Turn on", "Cancel"]) {
+      const cls = button(name)?.className ?? "";
+      expect(cls).toContain("h-7");
+      expect(cls).toContain("max-md:h-[26px]");
+      expect(cls).not.toContain("min-h-11");
+    }
     await click(button("Turn on"));
     await settle();
     expect(puts()[0]!.act_on_own).toBe(true);

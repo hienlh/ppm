@@ -129,7 +129,12 @@ async function bashLeg(pw) {
     });
     return dev;
   }
-  const desktop = { viewport: { width: 1366, height: 900 }, serviceWorkers: "block" };
+  const desktop = { viewport: { width: 1440, height: 900 }, serviceWorkers: "block" };
+  // Buttons with text follow the chat footer's chip row (docs/design-guidelines.md rule 3).
+  async function assertButtonHeight(dev, name, want) {
+    const box = await dev.page.getByRole("button", { name, exact: true }).boundingBox();
+    assert(box && Math.abs(box.height - want) <= 1, `"${name}" is ${box?.height}px tall, the standard is ${want}px`);
+  }
   const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, serviceWorkers: "block" };
   const root = (dev) => dev.page.locator("[data-assistant-body]:visible").first();
   const composer = (dev) => root(dev).locator(COMPOSER).first();
@@ -287,6 +292,8 @@ async function bashLeg(pw) {
   await tick(block, ACT_LABEL).click();
   const confirm = dev.page.getByRole("button", { name: "Turn on", exact: true });
   await confirm.waitFor({ timeout: 10000 });
+  await assertButtonHeight(dev, "Turn on", 28);
+  await assertButtonHeight(dev, "Cancel", 28);
   await shot(dev, "b-act-on-own-confirm-dialog");
   await confirm.click();
   await until("act_on_own saved on", async () => (await settings()).act_on_own === true, 10000);
@@ -313,13 +320,13 @@ async function bashLeg(pw) {
   await tick(phoneBlock, ACT_LABEL).click();
   const phoneConfirm = phone.page.getByRole("button", { name: "Turn on", exact: true });
   await phoneConfirm.waitFor({ timeout: 10000 });
-  const box = await phoneConfirm.boundingBox();
-  assert(box && box.height >= 44, `the confirm button is a 44px touch target (${box?.height})`);
   await sleep(400); // let the sheet finish sliding in
+  await assertButtonHeight(phone, "Turn on", 26);
+  await assertButtonHeight(phone, "Cancel", 26);
   await shot(phone, "c-act-on-own-confirm-phone-bottom-sheet");
   await phone.page.getByRole("button", { name: "Cancel", exact: true }).click();
   assert.equal((await settings()).act_on_own, false, "Cancel turned it on");
-  pass("bash", "phone: confirm is a bottom sheet with 44px buttons; Cancel leaves it off");
+  pass("bash", "confirm buttons are 28px on desktop and 26px in the phone bottom sheet; Cancel leaves it off");
 
   assert.deepEqual(errors, [], "page errors");
 }
