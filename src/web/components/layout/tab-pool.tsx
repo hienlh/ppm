@@ -58,6 +58,7 @@ export const TAB_COMPONENTS: Record<TabType, PreloadableComponent<{ metadata?: R
   "web-preview": lazyWithPreload(() => import("@/components/web-preview/web-preview-tab").then((m) => ({ default: m.WebPreviewTab }))),
   logs: lazyWithPreload(() => import("@/components/logs/logs-tab").then((m) => ({ default: m.LogsTab }))),
   assistant: lazyWithPreload(() => import("@/components/assistant/assistant-tab").then((m) => ({ default: m.AssistantTab }))),
+  task: lazyWithPreload(() => import("@/components/ppm-tasks/task-tab").then((m) => ({ default: m.TaskTab }))),
 };
 
 /** The tabs opened most, loaded first by `preloadWhenIdle`. */

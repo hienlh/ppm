@@ -10,6 +10,7 @@ import {
   Globe,
   Users,
   Palette,
+  ListTodo,
 } from "@/lib/icons";
 import type { SidebarActiveTab } from "@/stores/settings-store";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
@@ -26,6 +27,11 @@ export interface SidebarTabDef {
   icon: React.ElementType;
   /** Feature tag ("new"/"beta") looked up in `lib/feature-badges.ts`; rendered on the rail + mobile bar. */
   badge?: FeatureBadgeId;
+  /**
+   * The section's own count on the rail (open Now tasks for Tasks), filled in by the rail from
+   * live state; a static definition leaves it unset.
+   */
+  count?: number;
 }
 
 /**
@@ -35,6 +41,7 @@ export interface SidebarTabDef {
  */
 export const BUILTIN_SIDEBAR_TABS: SidebarTabDef[] = [
   { id: "history", label: "Chat History", shortLabel: "History", icon: BotMessageSquare },
+  { id: "tasks", label: "Tasks", icon: ListTodo },
   { id: "teams", label: "Teams", icon: Users, badge: "teams" },
   { id: "designs", label: "Designs", icon: Palette, badge: "designs" },
   { id: "explorer", label: "Explorer", icon: FolderOpen },

@@ -40,6 +40,7 @@ import { isAssistantProject } from "../../shared/assistant-project";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { tabSessionId } from "@/lib/tab-session-id";
 import { randomId } from "@/lib/utils";
+import { keptMetadata, planTaskTabOpen, replaceTabInPlace, taskTabId } from "@/lib/ppm-tasks/task-tab-preview";
 import { hydrateProjectCache } from "@/lib/browser-cache/project-cache-hydration";
 import { projectCacheId } from "@/lib/browser-cache/cache-keys";
 import { readChatPreparationSettings, readChatProviders } from "@/lib/chat-preference-local-cache";
@@ -341,6 +342,40 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
    */
   function focusAfterActivate(pid: string): string {
     return isWindowPanelId(pid) ? get().focusedPanelId : pid;
+  }
+
+  /**
+   * A task tab: focus the open one (keeping it when this open is an edit or a double-click),
+   * or swap the panel's preview tab for it in place. Null means "add it the ordinary way".
+   */
+  function openTaskTab(tabDef: Omit<Tab, "id">, pid: string, mobile: boolean): string | null {
+    const taskId = tabDef.metadata!.taskId as string;
+    const keep = tabDef.metadata?.preview !== true;
+    const windows = mobile ? [] : Object.keys(get().panels).filter(isWindowPanelId);
+    const onScreen = [...get().grid.flat(), ...windows].map((id) => get().panels[id]).filter((p): p is Panel => !!p);
+    const plan = planTaskTabOpen(onScreen, pid, taskId, keep);
+    if (plan.kind === "add") return null;
+    const p = get().panels[plan.panelId]!;
+    if (plan.kind === "focus") {
+      const tabs = (plan.keep ? p.tabs.map((t) => (t.id === plan.tabId ? { ...t, metadata: keptMetadata(t.metadata) } : t)) : p.tabs);
+      set((s) => ({
+        focusedPanelId: focusAfterActivate(p.id),
+        panels: { ...s.panels, [p.id]: { ...p, tabs: stampActive(tabs, plan.tabId), activeTabId: plan.tabId, tabHistory: pushHistory(p.tabHistory, plan.tabId) } },
+      }));
+      raiseWindowOf(p.id);
+      persist();
+      return plan.tabId;
+    }
+    // Replace the preview in place: the new tab takes its slot and its place in history.
+    const id = taskTabId(taskId);
+    const tab: Tab = { ...tabDef, id, metadata: { ...tabDef.metadata, lastActiveAt: Date.now() } };
+    const history = p.tabHistory.filter((h) => h !== plan.tabId);
+    set((s) => ({
+      focusedPanelId: focusAfterActivate(p.id),
+      panels: { ...s.panels, [p.id]: { ...p, tabs: stampActive(replaceTabInPlace(p.tabs, plan.tabId, tab), id), activeTabId: id, tabHistory: pushHistory(history, id) } },
+    }));
+    persist();
+    return id;
   }
 
   return {
@@ -685,6 +720,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
             return existing.id;
           }
         }
+      }
+
+      // A task opens as a preview tab (italic) that the next selection replaces in place; an
+      // edit or a double-click keeps it. Rules in `task-tab-preview.ts`; only panels on screen
+      // count, as for the one-per-workspace types below.
+      if (tabDef.type === "task" && typeof tabDef.metadata?.taskId === "string") {
+        const opened = openTaskTab(tabDef, pid, mobile);
+        if (opened) return opened;
       }
 
       // The grid and the floating windows only: other projects' keep-alive panels are not on

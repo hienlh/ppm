@@ -7,6 +7,8 @@ import { notificationColor } from "@/stores/notification-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { tabButtonClass } from "@/lib/tab-bar-style";
 import { isDbTabDirty } from "@/lib/db-tabs";
+import { isPreviewTab } from "@/lib/ppm-tasks/task-tab-preview";
+import { keepTaskTab } from "@/lib/ppm-tasks/keep-task-tab";
 import { tabUnsavedRows, useUnsavedGridRows } from "@/stores/unsaved-grid-rows-store";
 import {
   ContextMenu,
@@ -160,9 +162,11 @@ export function DraggableTab({
         />
       ) : (
         <span
-          className="max-w-[120px] truncate"
-          title={tab.title}
+          className={cn("max-w-[120px] truncate", isPreviewTab(tab) && "italic")}
+          title={isPreviewTab(tab) ? `${tab.title} (preview: double-click to keep)` : tab.title}
           onDoubleClick={(e) => {
+            // A task preview is kept by a double-click, as in VS Code; it has no rename.
+            if (isPreviewTab(tab)) { e.stopPropagation(); keepTaskTab(String(tab.metadata?.taskId)); return; }
             if (onRename) { e.stopPropagation(); setEditing(true); }
           }}
         >

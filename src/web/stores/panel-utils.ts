@@ -280,6 +280,9 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     // One tab per design: the chat, the canvas and its history all belong to the design.
     case "design":
       return `design:${metadata?.designSlug ?? "unknown"}`;
+    // One tab per task; whether it is a preview is metadata, never part of the id.
+    case "task":
+      return `task:${metadata?.taskId ?? "unknown"}`;
     // One tab per forwarded page: forwarding the same port again focuses it.
     case "web-preview":
       return `web-preview:${metadata?.url ?? "unknown"}`;
