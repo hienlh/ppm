@@ -511,6 +511,8 @@ try {
     // Telegram re-encodes every photo as JPEG, so the fake's own JPEG bytes stand for it: PNG bytes
     // under a .jpg name would be refused (rightly) as not the image they say they are.
     extra: { reply_to_message: { message_id: onPhone.message_id, chat: { id: OWNER, type: "private" }, date: 0 } },
+    // A real (1x1) JPEG: the server reads its pixel size, which the fake's 4-byte stand-in has none of.
+    bytes: Buffer.from("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=", "base64"),
   });
   try {
     await tg.waitText(OWNER, "Sent to the", 20000);
