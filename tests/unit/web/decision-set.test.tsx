@@ -54,10 +54,11 @@ beforeEach(async () => {
   spies.push(spyOn(api, "post").mockImplementation((async (url: string, body: Record<string, unknown>) => {
     posts.push({ url, body });
     const id = url.split("/")[4]!;
+    // The card as the server held it when the answer came in, before any event moved it.
+    const done = openList.find((c) => c.id === id)!;
     await during[id]?.();
     const no = refuse[id];
     if (no) throw new ApiError(no.error, no.status, { ok: false, error: no.error, data: { ...(no.question ? { question: no.question } : {}), ...(no.card ? { card: no.card } : {}) } });
-    const done = openList.find((c) => c.id === id)!;
     return { card: { ...done, status: url.endsWith("/dismiss") ? "dismissed" : "answered", answer: { by: "user", channel: "ppm", at: Date.now() } } };
   }) as never));
 });
@@ -167,6 +168,20 @@ describe("the set", () => {
     await click(q("[data-decision-send-one]"));
     await tick();
     expect(q("[data-decision-done-note]")?.textContent).toBe("Already answered on Telegram at 21:16.");
+  });
+
+  it("a sent card keeps its ✓ tab when the server's card event arrives before its answer", async () => {
+    const a = card({ title: "First" }, { options: [{ id: "x", label: "X" }, { id: "y", label: "Y" }] });
+    const b = card({ title: "Second" });
+    await open([a, b]);
+    await click(all("[data-question-option]")[0]!);
+    // As the real server does: the card is marked answered (and announced) before the forward returns.
+    during[a.id] = async () => { openList = [b]; openStore.applyOpenCardResult({ ...a, status: "answered" }); };
+    await click(q("[data-decision-send-one]"));
+    await tick();
+    expect(tabTitles()).toEqual(["alpha · First", "alpha · Second"]);
+    await click(all("[data-question-tab]")[0]!);
+    expect(q("[data-decision-done='sent'] [data-decision-done-note]")?.textContent).toBe("Chose “X”");
   });
 
   it("its own card leaving the list mid-send is not 'answered elsewhere'; a failed forward keeps the reply", async () => {

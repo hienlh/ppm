@@ -78,8 +78,10 @@ export function useDecisionSet(scope: (card: AssistantCard) => boolean) {
   // marked done by `useDepartures` just above, and must keep its place.
   useEffect(() => {
     if (!allWaiting) return;
-    const { order: before, done: finished } = useDecisionSetStore.getState();
-    setOrder(nextTabOrder(before, allWaiting.map((c) => c.id), new Set(Object.keys(finished))));
+    // A card being sent keeps its place too: the server takes it off the waiting list before its
+    // answer comes back, and its tab must be there to show how the send went.
+    const { order: before, done: finished, sending: inFlight } = useDecisionSetStore.getState();
+    setOrder(nextTabOrder(before, allWaiting.map((c) => c.id), new Set([...Object.keys(finished), ...Object.keys(inFlight)])));
   }, [allWaiting, done]);
 
   // A card that changed since it was picked loses its pick.
