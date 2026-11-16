@@ -90,7 +90,8 @@ describe("wakeManager", () => {
     expect(sent[0]!.sessionId).toBe("mgr-1");
     expect(sent[0]!.opts.origin).toBe("ppm_ui");
     expect(sent[0]!.text).toContain("You asked PPM to tell you now");
-    expect(sent[0]!.text).toContain('#1 "Review PR": created by Assistant');
+    // The wording is the registered formatter's (the AI tools phase registers its own): "#1" or "demo/1".
+    expect(sent[0]!.text).toContain('1 "Review PR": created by Assistant');
     expect(sent[0]!.text).toContain("child-1 stalled 40 min");
     expect(pendingManagerNews(f.projectKey).history).toHaveLength(0);
     expect(await wakeManager(f.projectKey, USER.actor)).toEqual({ ok: false, reason: "nothing" });

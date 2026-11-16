@@ -36,7 +36,8 @@ import { turnSecretScrubber } from "./vault/turn-secret-scrubber.ts";
 import { transcriptRedactor } from "./vault/transcript-redactor.ts";
 import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
-import { anyPpmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { anyPpmToolOn, ppmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { PPM_TASK_LIST_TOOL } from "../shared/ppm-task-tools.ts";
 import { VAULT_TOOLS } from "../shared/vault.ts";
 import { sessionCollabMcpAccessFor, sessionCollabMcpTokens } from "./session-collab/session-collab-tokens.ts";
 import { collabApprovalBroker } from "./session-collab/collab-approval-broker.ts";
@@ -184,6 +185,11 @@ class ChatService {
    */
   turnActivity(sessionId: string): { running: boolean; lastEndedAt?: number } {
     return { running: (this.turnLogs.get(sessionId)?.startedAt ?? null) !== null, lastEndedAt: this.turnEnds.get(sessionId) };
+  }
+
+  /** Where the Assistant session's user last wrote from in this process, or null when not known. */
+  turnChannelOf(providerId: string, sessionId: string): "telegram" | "ppm" | null {
+    return this.lastChannel.get(`${providerId}:${sessionId}`) ?? null;
   }
 
   private noteChannel(key: string, channel: "telegram" | "ppm"): void {
@@ -430,9 +436,10 @@ class ChatService {
       yield event;
       return;
     }
-    const { opts: prepared, sent } = await this.prepareSend(providerId, sessionId, message, opts);
+    const { opts: prepared, sent, told } = await this.prepareSend(providerId, sessionId, message, opts);
     run.contextAdded(prepared.sharedContext, provider.supportsSharedContext ? "provider" : "message");
     this.rememberSharedContext(providerId, sessionId, sent);
+    told?.();
     let finished = false;
     let activeSessionId = sessionId;
     try {
@@ -496,7 +503,7 @@ class ChatService {
     sessionId: string,
     message: string,
     opts?: SendMessageOpts,
-  ): Promise<{ opts: SendMessageOpts; sent: SentContext }> {
+  ): Promise<{ opts: SendMessageOpts; sent: SentContext; told?: () => void }> {
     if (!providerRegistry.get(providerId)) throw new Error(`Provider "${providerId}" not found`);
     // An extension's binding is only ever server-built too: a caller's copy is dropped here and
     // rebuilt from the session's binding below.
@@ -549,8 +556,19 @@ class ChatService {
     const manager = ppmTools && (await import("./assistant-managers/manager-chats.service.ts")).managerChats.isManagerChat(sessionId);
     // The vault's tools ride on the same server: always for the Assistant, and for an ordinary
     // chat only while the user turned them on (off by default).
+    // The task store's tools too: for an ordinary chat while its project has Tasks on and a task
+    // tool is on in Settings → Tools (never a chat an extension bound).
+    let taskTools = false;
+    if (ppmTools && !bound) {
+      try {
+        taskTools = (await import("./ppm-tasks/tools/ppm-task-tool-caller.ts")).ppmTasksAttachFor(
+          this.getSession(sessionId)?.projectPath ?? (await import("./db.service.ts")).getSessionProjectPath(sessionId), ai);
+      } catch (e) {
+        log.warn(`could not read the task switch for ${sessionId}: ${(e as Error).message}`);
+      }
+    }
     const sessionCollabMcp = (ppmTools || assistantSessionTools)
-      && (manager || assistantSessionTools || anyPpmToolOn(ai, SESSION_TOOLS) || (!bound && anyPpmToolOn(ai, VAULT_TOOLS)))
+      && (manager || assistantSessionTools || anyPpmToolOn(ai, SESSION_TOOLS) || (!bound && anyPpmToolOn(ai, VAULT_TOOLS)) || taskTools)
       ? sessionCollabMcpAccessFor(sessionId) : null;
     const key = `${providerId}:${sessionId}`;
     // The user's shared instructions and memories belong to their own chats: an Assistant
@@ -606,6 +624,17 @@ class ChatService {
       managerEntry = await managerRulesEntryFor(sessionId);
       if (managerEntry && this.sharedSnapshots.unchanged(key, "manager", managerEntry)) managerEntry = undefined;
     }
+    // Task changes the manager has not heard of: news once, never compared with a previous entry,
+    // and marked told (`told`) only once the message is on its way.
+    let taskNews: { text: string; commit(): void } | undefined;
+    if (manager && !slash) {
+      try {
+        const { ppmTaskNewsEntry } = await import("./ppm-tasks/ppm-task-manager-news.ts");
+        taskNews = ppmTaskNewsEntry(sessionId, ppmToolOn(ai, PPM_TASK_LIST_TOOL), message);
+      } catch (e) {
+        log.warn(`could not build the task news for ${sessionId}: ${(e as Error).message}`);
+      }
+    }
     // The Assistant's list of manager chats, sent when it changes (and after a compaction).
     let managersEntry: string | undefined;
     if (design.assistantSession && !slash) {
@@ -617,7 +646,7 @@ class ChatService {
     // Cards the user answered themselves since the Assistant's last turn: news once, never compared.
     const cardNotes = design.assistantSession && !slash ? takeCardAnswerNotes(sessionId) : undefined;
     // Every entry is server-built: a caller's own `sharedContext` is dropped here.
-    const sharedContext = joinSharedContextEntries(managerEntry, shared, ui, channelEntry, managersEntry, notebookEntry, cardNotes);
+    const sharedContext = joinSharedContextEntries(managerEntry, taskNews?.text, shared, ui, channelEntry, managersEntry, notebookEntry, cardNotes);
     return {
       opts: {
         ...design, ...bound, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
@@ -629,6 +658,7 @@ class ChatService {
         sharedContext,
       },
       sent: { shared, ui, manager: managerEntry, managers: managersEntry, notebook: notebookEntry },
+      ...(taskNews ? { told: taskNews.commit } : {}),
     };
   }
 
@@ -777,7 +807,7 @@ class ChatService {
     if (!streaming.pushMessage) return false;
     const { origin, ...sendOpts } = opts ?? {};
     message = fromOrigin(message, origin);
-    const { opts: prepared, sent } = await this.prepareSend(providerId, sessionId, message, sendOpts);
+    const { opts: prepared, sent, told } = await this.prepareSend(providerId, sessionId, message, sendOpts);
     if (provider.hasStreamingSession && !provider.hasStreamingSession(sessionId)) {
       log.warn(`session=${sessionId} follow-up not pushed: the stream closed before it could take it`);
       return false;
@@ -803,6 +833,7 @@ class ChatService {
       live.origin = origin ?? live.origin;
     }
     this.rememberSharedContext(providerId, sessionId, sent);
+    told?.();
     return true;
   }
 

@@ -23,6 +23,7 @@ import { observeFile } from "../services/session-file-baselines/session-file-his
 import { beginShellCommand, endShellCommand, noteFileToolWrite } from "../services/session-file-baselines/shell-change-tracker.ts";
 import { WarmSpares, spawnFingerprint } from "./claude-warm-spare.ts";
 import { hiddenBuiltinCronTools } from "./claude-builtin-cron.ts";
+import { ppmTasksAttachFor } from "../services/ppm-tasks/tools/ppm-task-tool-caller.ts";
 import { PromptTurnBinder } from "./claude-prompt-turn-binder.ts";
 import { CONTINUE_NUDGE } from "../shared/user-prompt-kind.ts";
 import { APPROVAL_WAKE, ApprovalQueue } from "./claude-approval-queue.ts";
@@ -1091,7 +1092,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const dbTools = dbBase ? { url: `${dbBase}${DB_TOOLS_MCP_PATH}`, token: "" } : null;
     // And the session tools: a spare is never a design session, which is the only chat without
     // them besides minimal mode, which runs no PPM tools at all.
-    const sessionBase = !isMinimalMode() && anyPpmToolOn(ai, SESSION_TOOLS) ? localServerBaseUrl() : null;
+    // The task store's tools put the same server on a chat of a project with Tasks on.
+    const sessionBase = !isMinimalMode() && (anyPpmToolOn(ai, SESSION_TOOLS) || ppmTasksAttachFor(projectPath, ai)) ? localServerBaseUrl() : null;
     const sessionTools = sessionBase ? { url: `${sessionBase}${SESSION_COLLAB_MCP_PATH}`, token: "" } : null;
     const options = this.buildQueryOptions({
       cwd: projectPath,

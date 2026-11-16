@@ -15,6 +15,7 @@ import { SESSION_COLLAB_TOOLS } from "../../../shared/session-collab";
 import { SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_TOOLS } from "../../../shared/session-schedule-tools";
 import type { SessionCollabSettings } from "../../../shared/session-collab-settings";
 import { VAULT_TOOLS } from "../../../shared/vault";
+import { PPM_TASK_TOOLS } from "../../../shared/ppm-task-tools";
 import { SectionHeader, SwitchRow } from "./settings-rows";
 import { SessionCollabSettingsControls } from "./session-collab-settings-controls";
 
@@ -105,6 +106,46 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Propose vault items",
     note: "Asks you to save something to the vault. You pick the tier and confirm with its password.",
   },
+  ppm_task_list: {
+    label: "List tasks",
+    note: "Lists a project's tasks in “what to do first” order, with filters.",
+  },
+  ppm_task_get: {
+    label: "Read tasks",
+    note: "Reads one task: its fields, links, children, recent history and the check of the chat it was handed to.",
+  },
+  ppm_task_project: {
+    label: "Read task settings",
+    note: "Reads a project's statuses, members and custom fields.",
+  },
+  ppm_task_create: {
+    label: "Create tasks",
+    note: "Adds a task. It is recorded in the task's history and you can undo it.",
+  },
+  ppm_task_update: {
+    label: "Change tasks",
+    note: "Changes a task's fields, links or result, with a reason shown in its history. You can undo it.",
+  },
+  ppm_task_close: {
+    label: "Close tasks",
+    note: "Closes a task as done or dropped. You can undo it.",
+  },
+  ppm_task_reorder: {
+    label: "Reorder tasks",
+    note: "Moves a task up or down among tasks of the same urgency and importance.",
+  },
+  ppm_task_undo: {
+    label: "Undo task changes",
+    note: "Undoes a change an AI made, within 90 days, while nobody changed the same fields since.",
+  },
+  ppm_task_project_update: {
+    label: "Change task settings",
+    note: "Adds or edits a project's members, statuses and custom fields, and how often handed-off work is checked.",
+  },
+  ppm_task_notify_manager: {
+    label: "Tell the manager now",
+    note: "The PPM Assistant only: wakes a project's manager chat about task changes, after you said yes.",
+  },
 };
 
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [
@@ -129,6 +170,11 @@ const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }>
     title: "Schedules",
     intro: "Prompts a chat schedules into itself. Each one is listed in Settings → Schedules, where you can turn it off or delete it.",
     tools: SESSION_SCHEDULE_TOOLS,
+  },
+  {
+    title: "Tasks",
+    intro: "Every chat, including manager chats and the PPM Assistant, in projects with Tasks on. A chat started before a change gets it at its next start.",
+    tools: PPM_TASK_TOOLS,
   },
   {
     title: "Vault",
