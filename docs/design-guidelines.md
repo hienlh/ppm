@@ -49,8 +49,9 @@ chat footer's context row in a production build:
 
 - Pick the row by what the control is, not by the device: a toolbar button is 34/32px wherever
   it sits, a chip 30/28px. Do not add a taller variant "for touch".
-- The press area is the button as drawn. Do not widen it with an invisible `::after` or extra
-  padding to reach a bigger size.
+- The press area does not have to reach 44px. Some small controls still widen theirs with an
+  invisible `::after` (the chat footer's chips and its History/`···` buttons, the Waiting chip);
+  whether those stay is still open, so do not add new ones until it is decided.
 - The same sizes apply under a coarse pointer at desktop width (iPad, touch laptop); the composer
   switches at the `md` breakpoint only.
 - Icons are 16px in buttons and chips, 14px in the dense row.
@@ -610,7 +611,7 @@ Start with mobile styles, add complexity for larger screens:
 
 - **Button height:** the chat composer's toolbar, not 44px — icon buttons 34px (32px on a phone),
   chips 30px (28px), primary actions 36px (32px). Full table: Mobile-First rule 3.
-- **Touch target:** the button as drawn; no invisible widening.
+- **Touch target:** no 44px minimum; see rule 3 for the invisible press areas still in use.
 - **Spacing:** 16px minimum between interactive elements
 
 ```tsx
