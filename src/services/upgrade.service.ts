@@ -211,7 +211,7 @@ export async function applyUpgrade(deps?: {
 
 /** Signal supervisor to trigger self-replace after upgrade.
  *  Unix: SIGUSR1. Windows: command file (supervisor polls every 1s). */
-export function signalSupervisorUpgrade(): { sent: boolean; error?: string } {
+export function signalSupervisorUpgrade(requestedBy?: string): { sent: boolean; error?: string } {
   try {
     const data = JSON.parse(readFileSync(resolve(getPpmDir(), "status.json"), "utf-8"));
     const pid = data.supervisorPid;
@@ -220,7 +220,7 @@ export function signalSupervisorUpgrade(): { sent: boolean; error?: string } {
 
     if (process.platform === "win32") {
       const cmdFile = resolve(getPpmDir(), ".supervisor-cmd");
-      writeFileSync(cmdFile, JSON.stringify({ action: "upgrade" }));
+      writeFileSync(cmdFile, JSON.stringify({ action: "upgrade", ...(requestedBy ? { requestedBy } : {}) }));
     } else {
       process.kill(pid, "SIGUSR1");
     }

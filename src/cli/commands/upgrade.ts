@@ -1,4 +1,6 @@
 import { VERSION } from "../../version.ts";
+import { getPpmDir } from "../../services/ppm-dir.ts";
+import { recordRestartCaller } from "../../services/restart-news/restart-caller.ts";
 import {
   checkForUpdate,
   applyUpgrade,
@@ -32,7 +34,8 @@ export async function upgradeCmd(options: { check?: boolean }) {
 
   console.log(`  ✓  Upgraded to v${result.newVersion}`);
 
-  const signal = signalSupervisorUpgrade();
+  // Only an upgrade that restarts PPM is recorded; `--check` and "already latest" stop above.
+  const signal = signalSupervisorUpgrade(await recordRestartCaller(getPpmDir(), "upgrade"));
   if (signal.sent) {
     console.log("  Restarting PPM...");
   } else {

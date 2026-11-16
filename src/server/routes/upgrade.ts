@@ -78,8 +78,8 @@ upgradeRoutes.post("/apply", async (c) => {
     return c.json(err(result.error ?? "Upgrade failed"), 500);
   }
 
-  // Signal supervisor to self-replace
-  const signal = signalSupervisorUpgrade();
+  // Signal supervisor to self-replace; named so its log line does not read as an unknown sender.
+  const signal = signalSupervisorUpgrade(`the upgrade route of the PPM server (pid ${process.pid})`);
   if (!signal.sent) {
     log.warn(`Supervisor signal failed after upgrade to v${result.newVersion} (was v${VERSION}, method=${getInstallMethod()}): ${signal.error ?? "unknown"} — needs a manual restart`);
     return c.json(ok({

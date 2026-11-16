@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { readFileSync, writeFileSync, existsSync, openSync, unlinkSync, renameSync } from "node:fs";
 import { getPpmDir } from "../../services/ppm-dir.ts";
 import { clearRestartRequest, parseReasonArg, writeRestartRequest } from "../../services/restart-news/start-reason.ts";
+import { recordRestartCaller } from "../../services/restart-news/restart-caller.ts";
 
 const statusFile = () => resolve(getPpmDir(), "status.json");
 const pidFile = () => resolve(getPpmDir(), "ppm.pid");
@@ -12,6 +13,9 @@ const restartResult = () => resolve(getPpmDir(), ".restart-result");
 export async function restartServer(options: { force?: boolean; reason?: string }) {
   // Ignore SIGHUP so this process survives when PPM terminal dies
   process.on("SIGHUP", () => {});
+  // Who ran this, in ppm.log, before anything can exit: restarts nobody remembered asking for
+  // could not be traced when only the supervisor's "restart server only" line was left.
+  const requestedBy = await recordRestartCaller(getPpmDir(), "restart", options.reason);
 
   if (!existsSync(statusFile())) {
     console.log("No PPM daemon running. Use 'ppm start' instead.");
@@ -32,16 +36,16 @@ export async function restartServer(options: { force?: boolean; reason?: string 
     // Left for the supervisor's next spawn (a fresh supervisor's too, in the recovery below): it
     // tells the restarted server why, and the server tells the PPM Assistant. Written only once
     // this command is about to ask for the restart, and removed when the ask fails, so a later
-    // spawn for some other cause never wears these words.
+    // spawn for some other cause never wears these words. Left without `--reason` too, carrying
+    // only who asked: the supervisor then keeps its own words and adds the asker.
     const leaveReason = () => {
-      if (options.reason === undefined) return;
       try {
-        writeRestartRequest(getPpmDir(), parseReasonArg(options.reason));
+        writeRestartRequest(getPpmDir(), { ...parseReasonArg(options.reason), requestedBy });
       } catch (e) {
         console.warn(`  ⚠  Could not record the restart reason: ${(e as Error).message}`);
       }
     };
-    const dropReason = () => { if (options.reason !== undefined) clearRestartRequest(getPpmDir()); };
+    const dropReason = () => clearRestartRequest(getPpmDir());
     let supervisorAlive = true;
     try { process.kill(supervisorPid, 0); } catch { supervisorAlive = false; }
 
@@ -57,7 +61,7 @@ export async function restartServer(options: { force?: boolean; reason?: string 
       const port = status.port as number | undefined;
       const profile = status.profile as string | undefined;
       const { stopServer } = await import("./stop.ts");
-      await stopServer({ kill: true });
+      await stopServer({ kill: true, requestedBy });
       leaveReason();
       const { startServer } = await import("../../server/index.ts");
       await startServer({ port: port ? String(port) : undefined, profile, minimal: status.minimalMode === true });
@@ -77,7 +81,7 @@ export async function restartServer(options: { force?: boolean; reason?: string 
       console.log("\n  Server is stopped. Resuming via supervisor...\n");
       leaveReason();
       const cmdFile = resolve(getPpmDir(), ".supervisor-cmd");
-      writeFileSync(cmdFile, JSON.stringify({ action: "resume" }));
+      writeFileSync(cmdFile, JSON.stringify({ action: "resume", requestedBy }));
       // Signal supervisor (Windows: polling picks up command file)
       if (process.platform !== "win32") {
         try { process.kill(supervisorPid, "SIGUSR2"); } catch (e) {
@@ -111,7 +115,7 @@ export async function restartServer(options: { force?: boolean; reason?: string 
     if (process.platform === "win32") {
       // Write restart command file — new supervisors (v0.13.31+) handle it
       const cmdFile = resolve(getPpmDir(), ".supervisor-cmd");
-      writeFileSync(cmdFile, JSON.stringify({ action: "restart" }));
+      writeFileSync(cmdFile, JSON.stringify({ action: "restart", requestedBy }));
 
       // Wait up to 5s for new supervisor to handle the command
       const cmdStart = Date.now();

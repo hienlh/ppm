@@ -33,10 +33,22 @@ export type ServerExitDecision =
   /** A crash: backed off, and paused after too many in a row (`resumeAfterPauseReason`). */
   | { action: "respawn_after_backoff"; reason: StartReason };
 
+/**
+ * A request that says only who asked (a `ppm restart` with no `--reason`) keeps the words the
+ * supervisor would have used and adds the asker; one with a reason of its own replaces them.
+ */
+export function mergeRequest(requested: StartReason | null, fallback: StartReason): StartReason {
+  if (!requested) return fallback;
+  if (requested.kind === "manual" && !requested.detail && fallback.kind === "manual") {
+    return requested.requestedBy ? { ...fallback, requestedBy: requested.requestedBy } : fallback;
+  }
+  return requested;
+}
+
 /** The restart a person or script asked for, else `fallback`. */
 const requestedOr = (take: TakeRequest, fallback: StartReason): StartReason => {
   try {
-    return take() ?? fallback;
+    return mergeRequest(take(), fallback);
   } catch {
     return fallback;
   }
@@ -130,9 +142,11 @@ export function initialStartReason(opts: { isUpgrade: boolean; uptimeS: number |
   if (opts.isUpgrade) return { kind: "upgrade" };
   let requested: StartReason | null = null;
   try { requested = opts.takeRequest(); } catch { /* none */ }
-  if (requested) return requested;
+  const started: StartReason = { kind: "manual", detail: "PPM was started (ppm start, or its service starting it again)" };
+  // A `ppm restart` that found the supervisor dead and started PPM again: it asked, so not a boot.
+  if (requested) return mergeRequest(requested, started);
   if (opts.uptimeS !== null && opts.uptimeS < BOOT_WINDOW_S) {
     return { kind: "boot", detail: `the machine started ${Math.round(opts.uptimeS / 60)} min earlier` };
   }
-  return { kind: "manual", detail: "PPM was started (ppm start, or its service starting it again)" };
+  return started;
 }

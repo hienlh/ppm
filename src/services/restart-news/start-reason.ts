@@ -15,6 +15,7 @@ import { START_REASON_KINDS, type StartReasonKind } from "../../shared/restart-n
 
 export const START_REASON_ENV = "PPM_START_REASON";
 export const START_DETAIL_ENV = "PPM_START_DETAIL";
+export const START_REQUESTED_BY_ENV = "PPM_START_REQUESTED_BY";
 
 /** A request older than this is a leftover of a restart that never happened, not this one's. */
 export const RESTART_REQUEST_MAX_AGE_MS = 5 * 60_000;
@@ -26,6 +27,11 @@ export interface StartReason {
   kind: StartReasonKind;
   /** A short, single-line note: an exit code and signal, a user's words. */
   detail?: string;
+  /**
+   * Who asked, when a `ppm restart`/`stop`/`upgrade` did: the command, its pid and the processes
+   * above it, and the AI chat it ran in (`restart-caller.ts`). Never the user's words.
+   */
+  requestedBy?: string;
 }
 
 export const isStartReasonKind = (v: unknown): v is StartReasonKind =>
@@ -42,7 +48,12 @@ export function cleanDetail(text: unknown): string | undefined {
 /** The two variables a spawned server is given. */
 export function startReasonEnv(reason: StartReason): Record<string, string> {
   const detail = cleanDetail(reason.detail);
-  return { [START_REASON_ENV]: reason.kind, ...(detail ? { [START_DETAIL_ENV]: detail } : {}) };
+  const by = cleanDetail(reason.requestedBy);
+  return {
+    [START_REASON_ENV]: reason.kind,
+    ...(detail ? { [START_DETAIL_ENV]: detail } : {}),
+    ...(by ? { [START_REQUESTED_BY_ENV]: by } : {}),
+  };
 }
 
 /** What the supervisor said, or null when the server was not started by one (or by an older one). */
@@ -50,7 +61,8 @@ export function readStartReasonEnv(env: Record<string, string | undefined>): Sta
   const kind = env[START_REASON_ENV];
   if (!isStartReasonKind(kind)) return null;
   const detail = cleanDetail(env[START_DETAIL_ENV]);
-  return { kind, ...(detail ? { detail } : {}) };
+  const by = cleanDetail(env[START_REQUESTED_BY_ENV]);
+  return { kind, ...(detail ? { detail } : {}), ...(by ? { requestedBy: by } : {}) };
 }
 
 /**
@@ -78,7 +90,8 @@ export function writeRestartRequest(ppmDir: string, reason: StartReason, now = D
   const file = requestPath(ppmDir);
   const tmp = `${file}.${process.pid}.tmp`;
   const detail = cleanDetail(reason.detail);
-  writeFileSync(tmp, JSON.stringify({ kind: reason.kind, ...(detail ? { detail } : {}), at: now }), { mode: 0o600 });
+  const by = cleanDetail(reason.requestedBy);
+  writeFileSync(tmp, JSON.stringify({ kind: reason.kind, ...(detail ? { detail } : {}), ...(by ? { requestedBy: by } : {}), at: now }), { mode: 0o600 });
   renameSync(tmp, file);
 }
 
@@ -104,6 +117,30 @@ export function dropStaleRestartRequest(ppmDir: string, now = Date.now()): void 
 }
 
 /**
+ * Who the pending request says asked, without consuming it: the supervisor names the asker in its
+ * log line when the restart command arrives, and the request is taken later, at the spawn.
+ */
+export function peekRestartRequester(ppmDir: string, now = Date.now()): string | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(requestPath(ppmDir), "utf8").replace(/^﻿/, "")) as { requestedBy?: unknown; at?: unknown };
+    if (typeof parsed.at !== "number" || now - parsed.at > RESTART_REQUEST_MAX_AGE_MS || parsed.at - now > 60_000) return undefined;
+    return cleanDetail(parsed.requestedBy);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The tail of the supervisor's line for a restart, stop or upgrade command. "No caller recorded"
+ * is itself a finding: whatever sent it was not a `ppm` command that records its caller (a
+ * hand-written command file, a bare signal, an older `ppm`).
+ */
+export function requesterNote(requestedBy: unknown): string {
+  const by = cleanDetail(requestedBy);
+  return by ? ` (requested by ${by})` : " (no caller recorded: not sent by a ppm command that records one)";
+}
+
+/**
  * The request the CLI left, consumed: read once and deleted, so a later spawn for another reason
  * never wears it. Null when there is none, it is stale, or it cannot be read.
  */
@@ -117,11 +154,12 @@ export function takeRestartRequest(ppmDir: string, now = Date.now()): StartReaso
   }
   try { unlinkSync(file); } catch { /* another reader took it */ }
   try {
-    const parsed = JSON.parse(raw.replace(/^﻿/, "")) as { kind?: unknown; detail?: unknown; at?: unknown };
+    const parsed = JSON.parse(raw.replace(/^﻿/, "")) as { kind?: unknown; detail?: unknown; requestedBy?: unknown; at?: unknown };
     if (!isStartReasonKind(parsed.kind) || typeof parsed.at !== "number") return null;
     if (now - parsed.at > RESTART_REQUEST_MAX_AGE_MS || parsed.at - now > 60_000) return null;
     const detail = cleanDetail(parsed.detail);
-    return { kind: parsed.kind, ...(detail ? { detail } : {}) };
+    const by = cleanDetail(parsed.requestedBy);
+    return { kind: parsed.kind, ...(detail ? { detail } : {}), ...(by ? { requestedBy: by } : {}) };
   } catch {
     return null;
   }
