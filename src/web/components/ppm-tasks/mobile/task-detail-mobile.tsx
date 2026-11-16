@@ -81,8 +81,11 @@ export function TaskDetailMobile({ detail, settings, sheet: inSheet }: TaskDetai
             <Maximize2 aria-hidden />Full screen
           </button>
         )}
-        <button type="button" aria-label="Task actions" onClick={() => setSheet("more")}
-          className="grid size-11 place-items-center rounded-full text-text-2 active:bg-surface-hover"><MoreHorizontal className="size-5" /></button>
+        {/* In the sheet ··· is the chip row's icon button, the size of × beside it (22 px). */}
+        <button type="button" aria-label="Task actions" data-task-actions="" onClick={() => setSheet("more")}
+          className={inSheet
+            ? "inline-flex h-[22px] min-w-[24px] shrink-0 items-center justify-center rounded-full text-text-2 active:bg-surface-hover [&_svg]:size-3.5"
+            : "grid size-11 place-items-center rounded-full text-text-2 active:bg-surface-hover"}><MoreHorizontal className={inSheet ? undefined : "size-5"} /></button>
         {inSheet && (
           <button type="button" aria-label="Close" data-task-sheet-close="" onClick={inSheet.onClose}
             className="mr-1 inline-flex h-[22px] min-w-[22px] shrink-0 items-center justify-center rounded-full text-text-2 active:bg-surface-hover [&_svg]:size-3.5">

@@ -109,6 +109,19 @@ export { TEXT as TEXT_HEIGHT, ICON as ICON_HEIGHT };
 /** The text of the codes under `locator`. */
 const codesOf = (locator) => locator.locator("[data-task-code]").allInnerTexts();
 
+/**
+ * Removes the composer's task chips other than `keep` (a code like "#1"): chips earlier steps left
+ * on the same chat stay with its tab until a message is sent, and the checks here count one chip.
+ */
+async function dropOtherChips(page, keep) {
+  for (let i = 0; i < 10; i++) {
+    const others = page.locator("[data-composer-task-refs] [data-task-chip]:visible").filter({ hasNot: page.locator("[data-task-code]", { hasText: new RegExp(`^${keep}$`) }) });
+    if (!(await others.count())) return;
+    await others.first().locator("[data-task-chip-remove]").click();
+    await page.waitForTimeout(150);
+  }
+}
+
 /** The list, its rows and the task's page at 1440; the all-projects scope; copy; the task tab. */
 async function codesInListAndDetail(k, s) {
   const page = k.use(k.desktop);
@@ -242,10 +255,10 @@ async function managerChatCodes(k, s) {
   await k.detail().locator("[data-working-session]").getByRole("button", { name: /Open chat/ }).click();
   const taskChip = page.locator("[data-task-chip]:visible").first();
   await taskChip.waitFor({ timeout: 20000 });
+  await page.locator("[data-composer-task-refs] [data-task-code]", { hasText: `#${login.number}` }).first().waitFor({ timeout: 20000 });
+  await dropOtherChips(page, `#${login.number}`);
   assert.deepEqual(await codesOf(taskChip), [`#${login.number}`], "the composer's chip shows the task's code");
-  // Earlier steps may have left chips of other tasks there too: every one of them is measured.
-  const chipCount = await page.locator("[data-composer-task-refs] [data-task-chip]:visible").count();
-  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "1440 composer chip"), chipCount, "every composer chip's code is measured");
+  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "1440 composer chip"), 1, "the composer chip's code is measured");
   await assertHeights(page, "[data-composer-task-refs] [data-task-chip]", TEXT(false), "1440 composer chip");
   await assertHeights(page, "[data-composer-task-refs] [data-task-chip-remove]", ICON(false), "1440 composer chip's remove button");
   await k.shot("c08-composer-chip-1440");
@@ -364,10 +377,10 @@ async function phoneCodes(k, s) {
   await detail.locator("[data-working-session]").getByRole("button", { name: /Open chat/ }).tap();
   const phoneChip = page.locator("[data-composer-task-refs] [data-task-chip]:visible").first();
   await phoneChip.waitFor({ timeout: 20000 });
+  await page.locator("[data-composer-task-refs] [data-task-code]", { hasText: `#${login.number}` }).first().waitFor({ timeout: 20000 });
+  await dropOtherChips(page, `#${login.number}`);
   assert.deepEqual(await codesOf(phoneChip), [`#${login.number}`]);
-  // The manager chat keeps chips earlier steps left (other tasks): every one of them is measured.
-  const phoneChips = await page.locator("[data-composer-task-refs] [data-task-chip]:visible").count();
-  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "phone 390 composer chip"), phoneChips);
+  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "phone 390 composer chip"), 1);
   await assertCodesFit(page, "[data-composer-task-refs]", "phone 390 composer chip");
   await assertHeights(page, "[data-composer-task-refs] [data-task-chip]", TEXT(true), "390 composer chip");
   await assertHeights(page, "[data-composer-task-refs] [data-task-chip-remove]", ICON(true), "390 composer chip's remove button");

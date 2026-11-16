@@ -205,10 +205,16 @@ async function desktop800(k, s) {
   const login = await k.task(s.t.login.id);
   await k.row(login.title).waitFor({ timeout: 20000 });
   await k.scene("w07", "An 800 px desktop", "The window fits a narrow screen; the task page stacks its two columns.");
+  // A remembered place hanging over the list (where a window was once dragged): the new window
+  // still opens right of the open list, narrowed to the room there.
+  await page.evaluate(() => localStorage.setItem("ppm-task-window-rect", JSON.stringify({ x: -220, y: 24, w: 700, h: 640 })));
   await k.row(login.title).getByText(login.title, { exact: true }).click();
   const win = windowOf(page, login.id);
   await win.waitFor({ timeout: 20000 });
+  await page.waitForTimeout(400); // the window slides into place
   const box = await win.boundingBox();
+  const listRight = await page.locator("[data-tasks-panel]:visible").first().evaluate((el) => el.getBoundingClientRect().right);
+  assert(box.x >= listRight - 1, `the window opens right of the Tasks list: window x ${box.x}, list ends at ${listRight}`);
   assert(box.x >= 0 && box.x + box.width <= 800 + 1, `the window fits the 800 px screen: ${JSON.stringify(box)}`);
   const overflow = await win.locator("[data-task-detail]").evaluate((el) => el.scrollWidth - el.clientWidth);
   assert(overflow <= 1, `nothing in the task page overflows sideways (${overflow} px)`);
@@ -216,7 +222,7 @@ async function desktop800(k, s) {
   await k.beat(1200);
   await k.shot("w07-window-800");
   await k.endScene();
-  k.record("window-3", "800: the task window fits the screen, nothing overflows, Open as tab is 28 px", { openAsTabHeight: h });
+  k.record("window-3", "800: the task window opens right of the open Tasks list (even from a remembered place over it) and fits the screen, nothing overflows, Open as tab is 28 px", { openAsTabHeight: h });
 }
 
 /** 390 and 320: the sheet over the list, × and Full screen at the chip row's sizes. */
@@ -233,6 +239,7 @@ async function phoneSheet(k, s) {
   await sheet.locator("[data-task-detail-mobile]").waitFor({ timeout: 20000 });
   const full = await assertHeight(page, "[data-task-sheet-full-screen]", 26, "Full screen");
   const close = await assertHeight(page, "[data-task-sheet-close]", 22, "× in the sheet");
+  const more = await assertHeight(page, "[data-task-open-sheet] [data-task-actions]", 22, "··· in the sheet");
   assert.equal(await page.getByRole("button", { name: "Back to tasks" }).count(), 0, "the sheet has × rather than a back arrow");
   await k.beat(1200);
   await k.shot("w08-sheet-390");
@@ -257,7 +264,7 @@ async function phoneSheet(k, s) {
   await k.beat(1200);
   await k.shot("w09-full-screen-390");
   await k.endScene();
-  k.record("window-4", "390: a task opens in a sheet over the list (Full screen 26 px, × 22 px); × goes back to the list; Full screen opens the task's page as a tab and closes the drawer", { fullScreenHeight: full, closeHeight: close });
+  k.record("window-4", "390: a task opens in a sheet over the list (Full screen 26 px, ··· and × 22 px); × goes back to the list; Full screen opens the task's page as a tab and closes the drawer", { fullScreenHeight: full, closeHeight: close, moreHeight: more });
 
   const narrow = await k.openPhone(320, 640);
   await narrow.evaluate(() => window.dispatchEvent(new CustomEvent("ppm:open-navigation", { detail: { tab: "tasks" } })));
@@ -271,16 +278,17 @@ async function phoneSheet(k, s) {
   const header = sheet320.locator("[data-task-detail-mobile] > header");
   const spill = await header.evaluate((el) => el.scrollWidth - el.clientWidth);
   assert(spill <= 1, `the sheet's header fits 320 px (${spill} px over)`);
-  for (const sel of ["[data-task-sheet-full-screen]", "[data-task-sheet-close]"]) {
+  for (const sel of ["[data-task-sheet-full-screen]", "[data-task-open-sheet] [data-task-actions]", "[data-task-sheet-close]"]) {
     const r = await narrow.locator(sel).boundingBox();
     assert(r && r.x >= 0 && r.x + r.width <= 320 + 1, `${sel} is on screen at 320: ${JSON.stringify(r)}`);
   }
   await assertHeight(narrow, "[data-task-sheet-full-screen]", 26, "Full screen at 320");
   await assertHeight(narrow, "[data-task-sheet-close]", 22, "× at 320");
+  await assertHeight(narrow, "[data-task-open-sheet] [data-task-actions]", 22, "··· at 320");
   await k.beat(1200);
   await k.shot("w10-sheet-320");
   await k.endScene();
-  k.record("window-5", "320: the sheet's header fits, its buttons stay on screen at 26 / 22 px");
+  k.record("window-5", "320: the sheet's header fits, its three buttons stay on screen (Full screen 26 px, ··· and × 22 px)");
 }
 
 export const WINDOW_STEPS = [

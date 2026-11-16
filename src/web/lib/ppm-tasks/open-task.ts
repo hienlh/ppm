@@ -16,10 +16,18 @@ import type { Tab } from "@/stores/tab-store";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { MAX_WINDOWS } from "@/components/floating-window/window-geometry";
 import { openTaskTab, taskTabDef, type TaskTabTarget } from "./open-task-tab";
-import { planTaskOpen } from "./task-open-plan";
+import { keepClearOfList, planTaskOpen } from "./task-open-plan";
 import { keptMetadata, taskIdOfTab } from "./task-tab-preview";
 import { CLOSE_NAVIGATION } from "./close-navigation";
 import { loadTaskWindowRect, openTaskWindowRects, taskWindowSpawnRect, watchTaskWindowRects } from "./task-window-rect";
+
+/** The Tasks list's right edge in the window layer's coordinates, when the list is on screen. */
+function tasksListRight(): number | null {
+  const layer = document.querySelector("[data-window-layer]");
+  const list = [...document.querySelectorAll("[data-tasks-panel]")].find((el) => el.getClientRects().length > 0);
+  if (!layer || !list) return null;
+  return Math.round(list.getBoundingClientRect().right - layer.getBoundingClientRect().left);
+}
 
 export function openTask(task: TaskTabTarget, opts: { keep?: boolean } = {}): void {
   const store = usePanelStore.getState();
@@ -50,7 +58,8 @@ export function openTask(task: TaskTabTarget, opts: { keep?: boolean } = {}): vo
     }
     case "new-window": {
       watchTaskWindowRects();
-      const rect = taskWindowSpawnRect(useWindowStore.getState().bounds, openTaskWindowRects(), loadTaskWindowRect());
+      const bounds = useWindowStore.getState().bounds;
+      const rect = keepClearOfList(taskWindowSpawnRect(bounds, openTaskWindowRects(), loadTaskWindowRect()), bounds, tasksListRight());
       if (!store.openTabInNewWindow(taskTabDef(task, opts), { rect })) openTaskTab(task, opts);
     }
   }

@@ -8,7 +8,7 @@
  * - Anything else gets a window of its own; at the window cap it falls back to a tab.
  */
 import { isPreviewTab, taskIdOfTab, type PanelTabs } from "./task-tab-preview";
-import { clampRect, type Bounds, type Rect } from "@/components/floating-window/window-geometry";
+import { clampRect, MIN_SIZE, type Bounds, type Rect } from "@/components/floating-window/window-geometry";
 
 export type TaskOpenPlan =
   | { kind: "sheet" }
@@ -58,4 +58,18 @@ export function taskWindowSpawnRect(bounds: Bounds, open: readonly Rect[], remem
   const w = Math.min(DEFAULT_SIZE.w, bounds.w - MARGIN * 2);
   const h = Math.min(DEFAULT_SIZE.h, bounds.h - MARGIN * 2);
   return clampRect({ x: bounds.w - RIGHT - w, y: MARGIN, w, h }, bounds);
+}
+
+/**
+ * A new task window keeps clear of the Tasks list while the list is open. `listRight` is the list's
+ * right edge in the layer's coordinates (null when the list is not on screen). The layer starts at
+ * the sidebar's edge, so this only bites a rect that hangs off the layer's left edge (where a
+ * window was dragged, remembered or cascaded from). The window moves right of the list and, if
+ * needed, narrows to fit; when what is left is narrower than a window can be, it may cover the list.
+ */
+export function keepClearOfList(rect: Rect, bounds: Bounds, listRight: number | null): Rect {
+  if (listRight === null || rect.x >= listRight) return rect;
+  const room = bounds.w - listRight;
+  if (room < MIN_SIZE.w) return rect;
+  return { ...rect, x: listRight, w: Math.min(rect.w, room) };
 }

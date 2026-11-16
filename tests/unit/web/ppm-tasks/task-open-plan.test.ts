@@ -6,7 +6,7 @@
 import { describe, expect, it } from "bun:test";
 import { planTaskOpen, type TaskOpenState } from "../../../../src/web/lib/ppm-tasks/task-open-plan.ts";
 import { taskTabId } from "../../../../src/web/lib/ppm-tasks/task-tab-preview.ts";
-import { taskWindowSpawnRect } from "../../../../src/web/lib/ppm-tasks/task-open-plan.ts";
+import { keepClearOfList, taskWindowSpawnRect } from "../../../../src/web/lib/ppm-tasks/task-open-plan.ts";
 
 const tab = (taskId: string, preview: boolean) => ({ id: taskTabId(taskId), type: "task" as const, metadata: { taskId, ...(preview ? { preview: true } : {}) } });
 const chat = { id: "chat:claude/1", type: "chat" as const, metadata: { sessionId: "1" } };
@@ -80,5 +80,38 @@ describe("taskWindowSpawnRect", () => {
   it("steps off the front task window when one is open", () => {
     const r = taskWindowSpawnRect(bounds, [{ x: 10, y: 10, w: 500, h: 500 }, { x: 100, y: 100, w: 600, h: 500 }], { x: 0, y: 0, w: 300, h: 300 });
     expect(r).toEqual({ x: 128, y: 128, w: 600, h: 500 });
+  });
+});
+
+describe("keepClearOfList", () => {
+  const bounds = { w: 520, h: 800 }; // an 800 px desktop: the layer starts at the sidebar's edge
+
+  it("leaves a rect alone when the list is not on screen", () => {
+    const r = { x: -200, y: 20, w: 488, h: 600 };
+    expect(keepClearOfList(r, bounds, null)).toEqual(r);
+  });
+
+  it("leaves a rect alone that is already right of the list", () => {
+    const r = { x: 4, y: 16, w: 488, h: 600 };
+    expect(keepClearOfList(r, bounds, 0)).toEqual(r);
+  });
+
+  it("moves a rect hanging over the list to its right edge, narrowing it to what is left", () => {
+    expect(keepClearOfList({ x: -150, y: 40, w: 600, h: 600 }, bounds, 0)).toEqual({ x: 0, y: 40, w: 520, h: 600 });
+    expect(keepClearOfList({ x: -150, y: 40, w: 400, h: 600 }, bounds, 0)).toEqual({ x: 0, y: 40, w: 400, h: 600 });
+  });
+
+  it("keeps clear of a list that reaches into the layer", () => {
+    expect(keepClearOfList({ x: 10, y: 0, w: 500, h: 500 }, { w: 1160, h: 800 }, 120)).toEqual({ x: 120, y: 0, w: 500, h: 500 });
+  });
+
+  it("may cover the list when what is left is narrower than a window can be", () => {
+    const r = { x: -100, y: 0, w: 400, h: 400 };
+    expect(keepClearOfList(r, { w: 340, h: 800 }, 0)).toEqual(r);
+    expect(keepClearOfList(r, { w: 520, h: 800 }, 200)).toEqual(r); // 320 px left of 520
+  });
+
+  it("keeps the room exactly as wide as a window can be", () => {
+    expect(keepClearOfList({ x: -100, y: 0, w: 500, h: 400 }, { w: 560, h: 800 }, 200)).toEqual({ x: 200, y: 0, w: 360, h: 400 });
   });
 });
