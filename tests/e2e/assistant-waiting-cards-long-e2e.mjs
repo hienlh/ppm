@@ -1,9 +1,11 @@
 // The waiting cards with long, real content, on desktop, phone and Telegram: a 1,300-character
 // plan, a review draft, an Nxsys decision and urgent report with long titles and several
-// paragraphs, and a card asking four questions whose options run to two or three lines. Checks
-// that a long card is drawn whole in the stream with its buttons at its end (the dock above the
-// composer jumps to it), that four questions are answered on the card, and that a card which no
-// longer waits folds to one line and opens behind "Show more"; and photographs each case. Content: tests/e2e/assistant-waiting-cards/long-cards.mjs.
+// paragraphs (the four decisions, answered in the decision set drawn as the stream's last item),
+// and a card asking four questions whose options run to two or three lines (drawn whole in the
+// stream). Checks that a long decision is drawn whole in its set's tab with its buttons at the
+// set's end (the dock above the composer jumps to its tab), that the "Other" field takes a reply,
+// that four questions are answered on the card, and that a card which no longer waits folds to one
+// line and opens behind "Show more"; and photographs each case. Content: tests/e2e/assistant-waiting-cards/long-cards.mjs.
 //
 // Same disposable fixture as the manager loop (no real model, no real PPM data):
 //   PPM_ASSISTANT_WEB_DIR=<web build with Monaco> PPM_WAITING_SHOTS=<dir> node tests/e2e/assistant-waiting-cards-long-e2e.mjs
@@ -149,25 +151,28 @@ try {
 
   /** The card the dock last jumped to. */
   let shownId = null;
-  /** Steps the dock until it names the card `id`, then presses it: the stream lands on the card. */
+  /** The four decisions, which the set holds; the question is drawn whole in the stream instead. */
+  const DECISIONS = new Set([PLAN, REVIEW_DRAFT, NXSYS_DECISION, NXSYS_URGENT].map((c) => idOf(c.title)));
+  const titleOf = (id) => cards.find((c) => c.id === id)?.title;
+  /** Where the dock's press for `id` lands: the card's tab in the set, or the question in the stream. */
+  const landedOn = (body, id) => (DECISIONS.has(id)
+    ? body.locator(`[data-decision-set][data-highlighted] [data-decision-card="${id}"]`)
+    : body.locator(`[data-waiting-card="${id}"][data-highlighted]`));
+  /** Steps the dock until it names the card `id` (its "Go to" label), then presses it: the stream lands on the card. */
   async function show(body, id, tap = false) {
     const press = (loc) => (tap ? loc.tap() : loc.click());
-    for (let i = 0; i < 8; i++) {
-      await press(body.locator("[data-waiting-go]"));
-      const lit = body.locator("[data-waiting-card][data-highlighted]");
-      await lit.waitFor({ timeout: 5000 });
-      if ((await lit.getAttribute("data-waiting-card")) === id) {
-        shownId = id;
-        await body.page().waitForTimeout(700);
-        return;
-      }
+    const go = body.locator("[data-waiting-go]");
+    for (let i = 0; i < 8 && (await go.getAttribute("aria-label")) !== `Go to "${titleOf(id)}", waiting on you`; i++) {
       await press(body.locator('button[aria-label="Next waiting card"]'));
-      await body.page().waitForTimeout(1900); // let the outline go, so the next one is this card's
+      await body.page().waitForTimeout(50);
     }
-    throw new Error(`the dock never reached ${id}`);
+    await press(go);
+    await landedOn(body, id).waitFor({ timeout: 5000 });
+    await body.page().waitForTimeout(700); // the smooth scroll, then the outline
+    shownId = id;
   }
-  /** The card the dock is on, as the stream draws it. */
-  const cur = (body) => body.locator(`[data-waiting-card="${shownId}"]`);
+  /** The whole card the dock is on: the set for a decision, the question's own card in the stream. */
+  const cur = (body) => (DECISIONS.has(shownId) ? body.locator("[data-decision-set]") : body.locator(`[data-waiting-card="${shownId}"]`));
   /** The chat's own list scrolled so the card's end (its buttons) is in view. */
   const toCardEnd = (body) => cur(body).evaluate((el) => {
     let box = el.parentElement;
@@ -226,15 +231,17 @@ try {
 
   await show(body, idOf(PLAN.title));
   await k.shot("01-desktop-stream-long-plan-top");
-  const actions = cur(body).locator("[data-card-actions]");
-  assert.equal(await actions.getAttribute("data-sticky"), null, "nothing sticks in the stream");
-  const cardBox = await cur(body).boundingBox();
+  // The set's own row of buttons ends it, inside the set's padding; nothing in it sticks.
+  const actions = cur(body).locator("[data-decision-actions]");
+  assert.equal(await actions.evaluate((el) => getComputedStyle(el).position), "static", "nothing sticks in the stream");
+  const setBox = await cur(body).boundingBox();
   const actBox = await actions.boundingBox();
-  assert.ok(cardBox.y + cardBox.height - (actBox.y + actBox.height) <= 2, "the button row ends the card");
+  const padBottom = await cur(body).evaluate((el) => parseFloat(getComputedStyle(el).paddingBottom));
+  assert.ok(setBox.y + setBox.height - (actBox.y + actBox.height) <= padBottom + 2, "the button row ends the set");
   await toCardEnd(body);
   await k.shot("02-desktop-stream-long-plan-end");
   await wholeCardShot(page, body, "03-desktop-card-plan-whole");
-  ok("desktop: a 1,300-character plan is drawn whole in the stream, OK / Reply at its end");
+  ok("desktop: a 1,300-character plan is drawn whole in its set, its buttons at the set's end");
 
   await show(body, idOf(REVIEW_DRAFT.title));
   await wholeCardShot(page, body, "04-desktop-card-review-draft-whole");
@@ -255,11 +262,12 @@ try {
   ok("desktop: four questions with 2–3-line options are answered on the card, sent together");
 
   await show(body, idOf(REVIEW_DRAFT.title));
-  await cur(body).getByRole("button", { name: "Reply" }).click();
-  await body.locator("[data-card-reply-quote]").waitFor({ timeout: 5000 });
-  await body.locator('textarea[aria-label="Your reply to the card"]').fill("Đăng đi, nhưng thêm câu cảm ơn ở đầu.");
+  // "Other" is the set's own field: what is typed there is the card's answer; clearing it takes that back.
+  const other = cur(body).locator("[data-decision-reply]");
+  await other.fill("Đăng đi, nhưng thêm câu cảm ơn ở đầu.");
+  assert.equal(await other.inputValue(), "Đăng đi, nhưng thêm câu cảm ơn ở đầu.", "the reply is typed in the set");
   await k.shot("09-desktop-replying-to-long-card");
-  await body.locator('button[aria-label="Stop replying to this card"]').click();
+  await other.fill("");
 
   // ---- Phone ----
   const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: "block" });
@@ -274,10 +282,20 @@ try {
   await mk.shot("10-phone-stream-long-plan-top");
   await toCardEnd(mbody);
   await mk.shot("11-phone-stream-long-plan-end");
-  const mActions = await cur(mbody).locator("[data-card-actions] button").evaluateAll((bs) => bs.map((b) => [b.textContent.trim(), Math.round(b.getBoundingClientRect().height)]));
-  for (const [label, h] of mActions) assert.ok(h >= 44, `${label} is ${h}px tall on a phone`);
-  for (const label of ["Reply", "Open chat", "Dismiss"]) assert.ok(mActions.some(([l]) => l === label), `${label} is on the card on a phone (${mActions.map(([l]) => l).join(", ")})`);
-  ok("phone: the long plan is drawn whole in the stream; OK, Reply, Open chat and Dismiss all at its end, 44px+");
+  // The answer tile is a touch target of 44px+; the set's text buttons keep the app's phone standard (26px).
+  const tiles = await cur(mbody).locator("[data-question-option]").evaluateAll((els) => els.map((el) => [
+    el.querySelector("span.font-medium")?.textContent ?? "", Math.round(el.getBoundingClientRect().height),
+  ]));
+  assert.deepEqual(tiles.map(([l]) => l), ["OK, go ahead"], "the plan offers its one OK tile on a phone");
+  for (const [label, h] of tiles) assert.ok(h >= 44, `${label} is ${h}px tall on a phone`);
+  for (const [label, sel] of [["Open chat", 'button[title="Open manager chat"]'], ["Dismiss", 'button[title="Dismiss this card"]']]) {
+    const loc = cur(mbody).locator(sel);
+    assert.equal(await loc.count(), 1, `${label} is on the card on a phone`);
+    const h = Math.round((await loc.boundingBox()).height);
+    assert.equal(h, 26, `${label} is at the set's phone button standard (${h}px)`);
+  }
+  assert.equal(await cur(mbody).locator("[data-decision-reply]").count(), 1, "the Other answer is on the card on a phone");
+  ok("phone: the long plan is drawn whole in its set: its OK tile is 44px+; Other, Open chat and Dismiss are on the card");
   await wholeCardShot(mob, mbody, "12-phone-card-plan-whole");
   await show(mbody, idOf(REVIEW_DRAFT.title), true);
   await wholeCardShot(mob, mbody, "13-phone-card-review-draft-whole");
@@ -288,10 +306,10 @@ try {
   await mk.shot("15-phone-stream-four-questions");
   await wholeCardShot(mob, mbody, "16-phone-card-four-questions-whole");
   await show(mbody, idOf(REVIEW_DRAFT.title), true);
-  await cur(mbody).getByRole("button", { name: "Reply" }).tap();
-  await mbody.locator("[data-card-reply-quote]").waitFor({ timeout: 5000 });
+  const otherPhone = cur(mbody).locator("[data-decision-reply]");
+  await otherPhone.fill("Đăng đi.");
   await mk.shot("17-phone-replying-to-long-card");
-  await mbody.locator('button[aria-label="Stop replying to this card"]').tap();
+  await otherPhone.fill("");
 
   // The manager chat with its long report.
   await mbody.locator('[data-manager-chip="Nxsys"] button').first().tap();
@@ -334,9 +352,9 @@ try {
 
   // A card that no longer waits folds to one line in the stream: OK the plan, then open it there.
   await show(body, idOf(PLAN.title));
-  const okButton = cur(body).getByRole("button", { name: "OK", exact: true });
-  if (await okButton.count()) await okButton.click();
-  else await cur(body).getByRole("button", { name: "Dismiss" }).click();
+  // Its one answer tile (OK, go ahead), sent on its own.
+  await body.locator(`[data-decision-set] [data-decision-card="${idOf(PLAN.title)}"] [data-question-option]`).first().click();
+  await body.locator("[data-decision-send-one]").click();
   await until("plan no longer waits", async () => (await k.cards()).find((c) => c.id === idOf(PLAN.title))?.status !== "open", 15000);
   const line = body.locator("[data-answered-card]", { hasText: PLAN.title }).locator("[data-answered-toggle]");
   await line.waitFor({ timeout: 15000 });
@@ -353,7 +371,7 @@ try {
   await done.screenshot({ path: join(shotsDir, "20-desktop-stream-answered-plan-folded.png") });
   await done.locator("[data-card-text-toggle]").evaluate((b) => b.click());
   await done.screenshot({ path: join(shotsDir, "21-desktop-stream-answered-plan-show-more.png") });
-  assert.equal(await body.locator("[data-card-actions][data-sticky]").count(), 0, "no card in the stream sticks its buttons");
+  assert.equal(await body.locator("[data-decision-actions]").evaluate((el) => getComputedStyle(el).position), "static", "the set's buttons do not stick");
   ok("an answered card folds to one line in the stream; opened, its long text folds behind Show more, and unfolds");
 
   const unexpected = pageErrors.filter((e) => !/read the 'serviceWorker' property/.test(e));

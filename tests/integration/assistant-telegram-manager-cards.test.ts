@@ -24,6 +24,7 @@ import { assistantWakeQueue } from "../../src/services/assistant-wake/assistant-
 import { startAssistantCards, stopAssistantCards } from "../../src/services/assistant-cards/assistant-cards-startup.ts";
 import { assistantCards } from "../../src/services/assistant-cards/assistant-cards.service.ts";
 import { assistantTelegramBridge } from "../../src/services/assistant-telegram/assistant-telegram.service.ts";
+import { CLOSED_CARD_NOT_SENT } from "../../src/services/assistant-telegram/assistant-telegram-card-replies.ts";
 import { BRIDGE_STATE_ROW } from "../../src/services/assistant-telegram/assistant-telegram-state.ts";
 import { TELEGRAM_API_BASE_ENV } from "../../src/services/telegram/telegram-api-base.ts";
 import { decodeMessageBlocks } from "../../src/shared/chat-message-blocks.ts";
@@ -222,20 +223,64 @@ describe("a reply on Telegram", () => {
     await idle(manager);
   });
 
-  it("to a card answered two days ago asks first, and Send anyway forwards it", async () => {
-    const cardId = await report({ kind: "done", title: "Nightly build green" });
+  it("to a card from two days ago that still waits asks first, and Send anyway forwards it", async () => {
+    await report({ kind: "done", title: "Nightly build green" });
     const shown = await until(() => lastWith("Nightly build green"));
-    await app.request(`/api/assistant/cards/${cardId}/dismiss`, { method: "POST" });
     advance(2 * 24 * 60 * 60_000);
     const before = toManager().length;
     replyTo(shown.message_id, "Run it again tonight");
     const ask = await until(() => lastWith("send anyway?"));
-    expect(ask.text).toMatch(/^This card was closed at .* — send anyway\?$/);
+    expect(ask.text).toMatch(/^This card is from .* — send anyway\?$/);
     expect(toManager().length).toBe(before);
     fake.pressButton(PHONE, PHONE, ask.message_id, button(ask.message_id, "Send anyway")!);
     await until(() => toManager().length > before);
     expect(decodeMessageBlocks(toManager().at(-1)!.message).content).toBe("Run it again tonight");
     await idle(manager);
+  });
+
+  it("to a card answered only in words asks first, and Send anyway goes on with that conversation", async () => {
+    await report({ kind: "needs_decision", title: "Which day for the demo?" });
+    const shown = await until(() => lastWith("Which day for the demo?"));
+    const before = toManager().length;
+    replyTo(shown.message_id, "Thursday, if the build is green");
+    await until(() => toManager().length > before);
+    await idle(manager);
+    // The card is answered by those words, not decided: more words continue the conversation.
+    const seen = Math.max(...fake.sent(PHONE).map((m) => m.message_id));
+    replyTo(shown.message_id, "Make it Friday instead");
+    // This reply's own question, not one an earlier test left in the chat.
+    const ask = await until(() => fake.sent(PHONE).find((m) => m.message_id > seen && m.text.includes("send anyway?")));
+    fake.pressButton(PHONE, PHONE, ask.message_id, button(ask.message_id, "Send anyway")!);
+    await until(() => toManager().length > before + 1);
+    expect(decodeMessageBlocks(toManager().at(-1)!.message).content).toBe("Make it Friday instead");
+    await idle(manager);
+  });
+
+  it("to a card that was decided (dismissed) is refused at once, with no Send anyway", async () => {
+    const cardId = await report({ kind: "done", title: "Nightly build red" });
+    const shown = await until(() => lastWith("Nightly build red"));
+    await app.request(`/api/assistant/cards/${cardId}/dismiss`, { method: "POST" });
+    const before = toManager().length;
+    replyTo(shown.message_id, "Run it again tonight");
+    const said = await until(() => lastWith(CLOSED_CARD_NOT_SENT));
+    expect(button(said.message_id, "Send anyway")).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(toManager().length).toBe(before);
+  });
+
+  it("Send anyway on a waiting card decided elsewhere after the question was asked is refused, and nothing is forwarded", async () => {
+    const cardId = await report({ kind: "needs_decision", title: "Rotate the staging keys?" });
+    const shown = await until(() => lastWith("Rotate the staging keys?"));
+    advance(2 * 24 * 60 * 60_000);
+    const before = toManager().length;
+    replyTo(shown.message_id, "Yes, tonight");
+    const ask = await until(() => lastWith("send anyway?"));
+    // Answered in PPM while the question waited on the phone.
+    await app.request(`/api/assistant/cards/${cardId}/dismiss`, { method: "POST" });
+    fake.pressButton(PHONE, PHONE, ask.message_id, button(ask.message_id, "Send anyway")!);
+    await until(() => lastWith(CLOSED_CARD_NOT_SENT));
+    await new Promise((r) => setTimeout(r, 200));
+    expect(toManager().length).toBe(before);
   });
 
   it("to an approval card refuses that request, and the words arrive", async () => {

@@ -27,6 +27,7 @@ import { cardOkOffered } from "./card-ok-rule.ts";
 import { forwardUserWords, repliesToManager, type CardActor, type ForwardHow, type ForwardResult } from "./forward-verbatim.ts";
 import { realForwardEnv } from "./forward-verbatim-env.ts";
 import { cardDelivery } from "./card-delivery.ts";
+import { validateReplyImages } from "./card-reply-images.ts";
 import type { FollowupOrigin } from "./card-reply-followup-tracker.ts";
 
 export type CardReplyResult =
@@ -206,17 +207,42 @@ export async function chooseCardOption(id: string, body: unknown, actor: CardAct
   }, deps);
 }
 
+/** A card answered (or closed) before this answer: it is told who answered, and nothing is sent. */
+function alreadyAnswered(card: AssistantCard, deps: CardReplyDeps): CardReplyResult {
+  return { ok: false, status: 409, error: "already_answered", card, question: alreadyAnsweredText(card, deps.now(), deps.zone()) };
+}
+
+/**
+ * The user's reply to a card: words, images, or both (`{ text, images?, force?, confirmAge? }`).
+ * Images are checked whole here, before the card is touched; they are written to disk only by the
+ * forward, right before the words leave, so a refused reply leaves nothing behind.
+ *
+ * Without either flag, a card that no longer waits or is older than {@link STALE_REPLY_MS} is asked
+ * about first. `force` (Telegram's "Send anyway") sends regardless. `confirmAge` (an answer given
+ * with the card's age in view) skips only the age question: a card answered or closed meanwhile,
+ * or answered by someone else in the same moment, is `already_answered` and nothing is sent.
+ */
 export async function replyToCard(id: string, body: unknown, actor: CardActor, deps: CardReplyDeps = realDeps): Promise<CardReplyResult> {
   const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-  if (typeof b.text !== "string" || !b.text.trim()) return { ok: false, status: 400, error: "text is required" };
+  if (typeof b.text !== "string") return { ok: false, status: 400, error: "text is required" };
   if (b.text.length > CARD_REPLY_MAX_CHARS) return { ok: false, status: 400, error: `A reply may be at most ${CARD_REPLY_MAX_CHARS} characters` };
   if (b.force !== undefined && typeof b.force !== "boolean") return { ok: false, status: 400, error: "force must be true or false" };
+  if (b.confirmAge !== undefined && typeof b.confirmAge !== "boolean") return { ok: false, status: 400, error: "confirmAge must be true or false" };
   const card = deps.cards.get(id);
   if (!card) return { ok: false, status: 404, error: "No such card" };
+  // Decoding the images is the costly check, so it comes after the cheap ones.
+  const images = validateReplyImages(b.images);
+  if (!images.ok) return { ok: false, status: 400, error: images.error };
+  if (!b.text.trim() && !images.images.length) return { ok: false, status: 400, error: "text is required" };
   if (actor.channel === "ppm" && !repliesToManager(card)) return { ok: false, status: 400, error: "This card has no manager chat: write to the Assistant instead." };
   const now = deps.now();
+  // `force` sends whatever the card's state ("Send anyway"). `confirmAge` only says the user saw
+  // how old the card is: it answers an open card, and never one answered or closed meanwhile.
+  const force = b.force === true;
+  const confirmAge = !force && b.confirmAge === true;
+  if (confirmAge && card.status !== "open") return alreadyAnswered(card, deps);
   const stale = card.status !== "open" || now - card.createdAt > STALE_REPLY_MS;
-  if (stale && b.force !== true) return { ok: false, status: 409, error: "confirm", card, question: staleQuestion(card, now, deps.zone()) };
+  if (stale && !force && !confirmAge) return { ok: false, status: 409, error: "confirm", card, question: staleQuestion(card, now, deps.zone()) };
 
   // An open card is answered by the reply; one closed already is left as it was.
   let answered = false;
@@ -225,14 +251,17 @@ export async function replyToCard(id: string, body: unknown, actor: CardActor, d
       by: "user", channel: actor.channel, at: now, note: `You replied ${where(actor.channel)}`, delivery: "pending",
     });
     if (moved.ok) answered = true;
-    else if (b.force !== true) {
+    else if (confirmAge) return alreadyAnswered(moved.card ?? card, deps);
+    else if (!force) {
       const current = moved.card ?? card;
       return { ok: false, status: 409, error: "confirm", card: current, question: staleQuestion(current, now, deps.zone()) };
     }
   }
   const supersede = answered && (card.kind === "approval" || card.kind === "question");
   const followUp = followupOrigin(actor);
-  const forwarded = await deps.forward(card, b.text, { actor, supersede, ...(followUp ? { followUp } : {}) });
+  const forwarded = await deps.forward(card, b.text, {
+    actor, supersede, ...(followUp ? { followUp } : {}), ...(images.images.length ? { images: images.images } : {}),
+  });
   if (!forwarded.ok) {
     if (answered) deps.cards.reopen(id);
     return { ok: false, status: 502, error: `Not sent: ${forwarded.error}` };

@@ -14,7 +14,7 @@ import { useEffect, useRef, type RefObject } from "react";
 import { setAssistantCardFilter, useAssistantCardsStore } from "@/stores/assistant-cards-store";
 import { orderWaitingCards, useOpenCards, useOpenCardsStore } from "@/stores/assistant-open-cards-store";
 import { jumpToWaitingCard, lightWaitingCard, useWaitingJumpStore } from "@/stores/assistant-waiting-jump-store";
-import { revealInScrollList } from "@/lib/reveal-in-scroll-list";
+import { revealInScrollList, scrollParent } from "@/lib/reveal-in-scroll-list";
 import type { AssistantCard } from "../../../shared/assistant-cards";
 
 /** How long a jump keeps looking for a card that is not in the page yet. */
@@ -37,12 +37,22 @@ export function focusTarget(ordered: readonly AssistantCard[], projectName: stri
 
 /** Scrolls only the list that holds the card, so the card can be read and answered. */
 export function scrollCardIntoView(card: HTMLElement, root: HTMLElement, smooth: boolean): HTMLElement | null {
+  // The set of decisions is the stream's last item: landing on it is reaching the stream's end,
+  // which shows its buttons just above the footer and leaves no room for the message navigator
+  // (it hides at the end) to sit on "Send all".
+  if (card.dataset.waitingSet !== undefined) {
+    const list = scrollParent(card, root);
+    list?.scrollTo({ top: list.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    return list;
+  }
   return revealInScrollList(card, "land", { stop: root, smooth });
 }
 
 /** The waiting card `id` in `root`, looked up afresh (a re-placed card is a new element). */
 function findCard(root: HTMLElement, id: string): HTMLElement | undefined {
-  return [...root.querySelectorAll<HTMLElement>("[data-waiting-card]")].find((n) => n.dataset.waitingCard === id);
+  return [...root.querySelectorAll<HTMLElement>("[data-waiting-card]")].find((n) => n.dataset.waitingCard === id)
+    // A decision is answered in the set of decisions, which shows the card's tab on the same jump.
+    ?? [...root.querySelectorAll<HTMLElement>("[data-waiting-set]")].find((n) => n.dataset.waitingSet?.split(" ").includes(id));
 }
 
 /**

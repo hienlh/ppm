@@ -41,10 +41,21 @@ export const chooseAssistantCardOption = (id: string, optionId: string) =>
   api.post<{ card: AssistantCard; to: "manager" | "assistant"; projectName?: string }>(
     `/api/assistant/cards/${encodeURIComponent(id)}/choose`, { optionId, deviceId: getDeviceId() });
 
-/** The user's own words to a card's manager chat; `force` after the user confirmed a stale card. */
-export const replyToAssistantCard = (id: string, text: string, force = false) =>
+/**
+ * The user's own words to a card's manager chat; `force` after the user confirmed a stale card
+ * (it is sent even if the card closed meanwhile). `confirmAge` confirms only the card's age: a card
+ * someone answered meanwhile is still refused, so a confirmed reply never becomes a second answer.
+ * Pictures go as their bytes (base64): the server checks and stores them itself, and takes no path.
+ */
+export const replyToAssistantCard = (
+  id: string, text: string, force = false, images: ReadonlyArray<{ data: string; mediaType: string }> = [],
+  opts: { confirmAge?: boolean } = {},
+) =>
   api.post<{ card: AssistantCard; to: "manager" | "assistant"; projectName?: string }>(
-    `/api/assistant/cards/${encodeURIComponent(id)}/reply`, { text, ...(force ? { force: true } : {}), deviceId: getDeviceId() });
+    `/api/assistant/cards/${encodeURIComponent(id)}/reply`, {
+      text, ...(force ? { force: true } : {}), ...(opts.confirmAge ? { confirmAge: true } : {}), deviceId: getDeviceId(),
+      ...(images.length ? { images: images.map(({ data, mediaType }) => ({ data, mediaType })) } : {}),
+    });
 
 /** What a refused OK or reply said back: the card as it is now, and a question to ask the user. */
 export function cardRefusal(e: unknown): { error: string; question?: string; card?: AssistantCard } {

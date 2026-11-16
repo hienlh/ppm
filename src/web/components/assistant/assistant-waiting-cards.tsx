@@ -8,7 +8,7 @@
  * cards the filter hides are a "+N" on the chip that clears it, so a count on the rail always has
  * its cards in reach. Nothing waiting, no chip.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BellRing, ChevronLeft, ChevronRight } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { applyAssistantCard, setAssistantCardFilter, useAssistantCardsStore } from "@/stores/assistant-cards-store";
@@ -16,6 +16,8 @@ import { applyOpenCardResult, orderWaitingCards, useOpenCards } from "@/stores/a
 import { jumpToWaitingCard, useWaitingJumpStore } from "@/stores/assistant-waiting-jump-store";
 import type { AssistantCard } from "../../../shared/assistant-cards";
 import { WaitingStreamCard } from "./cards/waiting-stream-card";
+import { DecisionSet } from "./cards/decision-set/decision-set";
+import { isDecisionCard } from "@/lib/decision-set/decision-set-model";
 import { WaitingBadge } from "./manager-chip";
 
 export const WAITING_LABEL = "Waiting on you";
@@ -159,6 +161,7 @@ function takeCard(card: AssistantCard): void {
 export function AssistantWaitingList() {
   const all = useOpenCards();
   const filter = useAssistantCardsStore((s) => s.filter);
+  const scope = useMemo(() => (filter ? (c: AssistantCard) => c.projectName === filter : () => true), [filter]);
   if (!all?.length) return null;
   const ordered = orderWaitingCards(all);
   const shown = filter ? ordered.filter((c) => c.projectName === filter) : ordered;
@@ -166,7 +169,9 @@ export function AssistantWaitingList() {
   return (
     <section aria-label={WAITING_LABEL} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-4" data-waiting-list="">
       <h3 className="text-[13px] font-semibold text-text-primary">{WAITING_LABEL} · {shown.length}</h3>
-      {shown.map((card) => <WaitingStreamCard key={card.id} card={card} onCard={takeCard} />)}
+      {/* Decisions are answered together, in the set; every other waiting card is drawn whole. */}
+      {shown.filter((card) => !isDecisionCard(card)).map((card) => <WaitingStreamCard key={card.id} card={card} onCard={takeCard} />)}
+      {shown.some(isDecisionCard) && <DecisionSet scope={scope} />}
     </section>
   );
 }

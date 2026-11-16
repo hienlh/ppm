@@ -69,7 +69,8 @@ export interface FakeTelegram {
   deleted: FakeSentMessage[];
   /** `extra` is merged into the message: `date` (seconds) for a backlog message, `forward_origin`. */
   pushText(chatId: number, userId: number, text: string, chatType?: TelegramMessage["chat"]["type"], extra?: Record<string, unknown>): TelegramUpdate;
-  pushPhoto(chatId: number, userId: number, options?: { bytes?: Uint8Array; caption?: string; chatType?: TelegramMessage["chat"]["type"] }): TelegramUpdate;
+  /** `extra` is merged into the message, as for `pushText` (`reply_to_message`, `media_group_id`, `date`). */
+  pushPhoto(chatId: number, userId: number, options?: { bytes?: Uint8Array; caption?: string; chatType?: TelegramMessage["chat"]["type"]; extra?: Record<string, unknown> }): TelegramUpdate;
   /**
    * Press a button the bot put under one of its messages; throws if there is no such button.
    * With `stale`, a button the message showed at any point counts, taken away since or not.
@@ -463,7 +464,7 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
       } as TelegramMessage;
       return enqueue({ message });
     },
-    pushPhoto(chatId, userId, { bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), caption, chatType = "private" } = {}) {
+    pushPhoto(chatId, userId, { bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), caption, chatType = "private", extra = {} } = {}) {
       // Telegram sends every size it made, smallest first; the last is the original.
       const n = nextFile++;
       const sizes: TelegramPhotoSize[] = [["thumb", 90, 90], ["full", 1280, 720]].map(([kind, w, h]) => {
@@ -478,7 +479,8 @@ export function startFakeTelegram(options: { token?: string; username?: string; 
         date: Math.floor(Date.now() / 1000),
         photo: sizes,
         ...(caption ? { caption } : {}),
-      };
+        ...extra,
+      } as TelegramMessage;
       return enqueue({ message });
     },
     pressButton(chatId, userId, messageId, data, { stale = false } = {}) {

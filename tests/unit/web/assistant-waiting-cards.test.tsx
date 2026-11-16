@@ -24,6 +24,7 @@ const { ManagerChatWaitingCards, managerChatWaitingCards } = await import("../..
 const { ManagerChip } = await import("../../../src/web/components/assistant/manager-chip");
 const { setAssistantCardFilter, useAssistantCardsStore } = await import("../../../src/web/stores/assistant-cards-store");
 const { api } = await import("../../../src/web/lib/api-client");
+const { resetDecisionSet } = await import("../../../src/web/stores/decision-set-store");
 const { act, useRef } = await import("react");
 type Card = import("../../../src/shared/assistant-cards").AssistantCard;
 type Manager = import("../../../src/shared/assistant-managers").ManagerChatSummary;
@@ -63,6 +64,10 @@ afterEach(async () => {
   setAssistantCardFilter(null);
   useOpenCardsStore.setState({ focus: null });
   useWaitingJumpStore.setState({ request: null, lit: null });
+  // The set of decisions keeps finished tabs while it is open, and counts a card that leaves the
+  // waiting list as answered elsewhere: each test starts with neither the last one's list nor tabs.
+  await act(async () => { useOpenCardsStore.setState({ cards: null }); });
+  resetDecisionSet();
 });
 
 const q = (sel: string) => view!.container.querySelector(sel);
@@ -330,13 +335,17 @@ describe("in the Assistant", () => {
     expect(dock()?.getAttribute("data-waiting-count")).toBe("2");
   });
 
-  it("lists the waiting cards whole when there is no chat to place them in", async () => {
+  it("lists the waiting cards when there is no chat to place them in: decisions in their set, the rest whole", async () => {
     const { AssistantWaitingList } = await import("../../../src/web/components/assistant/assistant-waiting-cards");
-    openList = [card({ title: "Ship 0.25.6?" }), card({ projectName: "nxsys", title: "Payroll run" })];
+    openList = [
+      card({ title: "Ship 0.25.6?" }), card({ projectName: "nxsys", title: "Payroll run" }),
+      card({ kind: "approval", title: "Bash", payload: { requestId: "r" } }),
+    ];
     view = await mount(createElement(AssistantWaitingList));
     await settle();
-    expect(view.container.querySelectorAll("[data-waiting-list] [data-waiting-card]")).toHaveLength(2);
-    expect(view.container.querySelectorAll("[data-waiting-list] [data-card-actions]")).toHaveLength(2);
+    expect(view.container.querySelectorAll("[data-waiting-list] [data-waiting-card]")).toHaveLength(1);
+    expect(view.container.querySelectorAll("[data-waiting-list] [data-card-actions]")).toHaveLength(1);
+    expect(view.container.querySelectorAll("[data-waiting-list] [data-decision-set] [data-question-tab]")).toHaveLength(2);
   });
 
   it("asks the server for focus with no Assistant open as a plain store change", () => {
@@ -346,7 +355,7 @@ describe("in the Assistant", () => {
 });
 
 describe("in the Assistant's stream", () => {
-  it("draws every waiting card the filter lets in, once, whole, even before its page is loaded", async () => {
+  it("draws every waiting card the filter lets in, once, even before its page is loaded: decisions in the set at the end", async () => {
     const { streamCards, useAssistantStreamTimeline } = await import("../../../src/web/components/assistant/use-assistant-stream-timeline");
     const loaded = card({ title: "On a loaded page" });
     const older = card({ title: "Older than the loaded pages" });
@@ -354,39 +363,49 @@ describe("in the Assistant's stream", () => {
     expect(streamCards([loaded], [loaded, older, other], null).map((c) => c.title)).toEqual(["On a loaded page", "Older than the loaded pages", "Other project"]);
     expect(streamCards([loaded], [loaded, older, other], "ppm").map((c) => c.id)).toEqual([loaded.id, older.id]);
 
-    openList = [older];
+    const approval = card({ kind: "approval", title: "Bash", payload: { requestId: "r" } });
+    openList = [older, approval];
     let keep: boolean[] = [];
+    let keys: string[] = [];
     function Stream() {
       const items = useAssistantStreamTimeline().build([]).items;
       keep = items.map((i) => !!i.keep);
+      keys = items.map((i) => i.key);
       return createElement("div", null, ...items.map((i) => createElement("div", { key: i.key }, i.node)));
     }
     view = await mount(createElement(Stream));
     await settle();
-    const drawn = view.container.querySelectorAll(`[data-waiting-card="${older.id}"]`);
+    // Any other waiting card is drawn whole at its place.
+    const drawn = view.container.querySelectorAll(`[data-waiting-card="${approval.id}"]`);
     expect(drawn).toHaveLength(1);
-    expect(keep).toEqual([true]);
     expect(drawn[0]!.querySelector("[data-card-actions]")?.hasAttribute("data-sticky")).toBe(false);
+    // A decision keeps a stub at its place and is answered in the set, the stream's last item.
+    expect(view.container.querySelectorAll(`[data-decision-stub="${older.id}"]`)).toHaveLength(1);
+    expect(view.container.querySelectorAll(`[data-waiting-card="${older.id}"]`)).toHaveLength(0);
+    expect(keys.at(-1)).toBe("decision-set");
+    expect(view.container.querySelector(`[data-decision-set] [data-decision-card="${older.id}"]`)).not.toBeNull();
+    expect(keep).toEqual([true, true, true]);
     expect(view.container.querySelector("[data-card-pointer]")).toBeNull();
   });
 });
 
 describe("in a manager chat", () => {
-  it("shows its own open report and answers it in place, with a Telegram-style quote", async () => {
+  it("shows its own decisions as the set, its own only, and leaves its requests out", async () => {
     managers = [manager()];
-    openList = [card({ title: "Release 0.25.6 now?" }), card({ kind: "approval", title: "Bash", payload: { requestId: "r" } })];
+    openList = [
+      card({ title: "Release 0.25.6 now?" }), card({ kind: "urgent", title: "Staging down" }),
+      card({ sessionId: "mgr-other", projectName: "other", title: "Not this chat's" }),
+      card({ kind: "approval", title: "Bash", payload: { requestId: "r" } }),
+    ];
     const { refreshManagerChats } = await import("../../../src/web/hooks/use-manager-chats");
     await refreshManagerChats();
     view = await mount(createElement(ManagerChatWaitingCards, { sessionId: "mgr-ppm" }));
     await settle();
+    // One page: the set of this chat's two decisions.
     expect(q("[data-manager-waiting-cards] [data-waiting-cards]")?.getAttribute("data-waiting-count")).toBe("1");
-    const labels = [...view.container.querySelectorAll("[data-waiting-card] button")].map((b) => b.textContent?.trim());
-    expect(labels).toEqual(["Reply", "Dismiss"]);
-    await click([...view.container.querySelectorAll("button")].find((b) => b.textContent === "Reply")!);
-    expect(q("[data-card-reply-quote]")?.textContent).toContain("Replying to card");
-    expect(q("[data-card-reply-title]")?.textContent).toBe("ppm · Release 0.25.6 now?");
-    await click(q('button[aria-label="Stop replying to this card"]'));
-    expect(q("[data-card-reply-bar]")).toBeNull();
+    const tabs = [...view.container.querySelectorAll("[data-decision-set] [data-question-tab]")].map((t) => t.getAttribute("title"));
+    expect(tabs).toEqual(["ppm · Staging down", "ppm · Release 0.25.6 now?"]);
+    expect(view.container.textContent).not.toContain("Bash");
   });
 
   it("shows nothing in a chat that is not a manager", async () => {

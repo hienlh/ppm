@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import type { AnswersById, NormalizedQuestion, QuestionOption } from "../../../shared/approval-questions";
 import { QuestionOptionPreview, hasOptionPreviews, previewOptionIndex } from "./question-option-preview";
+import { QuestionOptionTile, QuestionOtherRow, QuestionTabStrip, questionFrameClass, questionInputClass } from "./question-form-parts";
 
 /* ── Types ── */
 // One shape for Claude's and Codex's questions; the answer goes back by question id and the
@@ -204,7 +205,7 @@ export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: 
   return (
     <div
       ref={kb.containerRef}
-      className="rounded-lg border-2 border-primary/30 bg-primary/5 p-3 space-y-3 outline-none animate-in slide-in-from-bottom-2"
+      className={`${questionFrameClass("question")} animate-in slide-in-from-bottom-2`}
     >
       {/* Header */}
       <div className="flex items-center justify-between text-sm font-medium text-text-primary">
@@ -218,35 +219,17 @@ export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: 
 
       {/* Tabs */}
       {hasMultiple && (
-        <div className="flex gap-1 p-1 bg-background rounded-md overflow-x-auto border border-border">
-          {questions.map((q, i) => (
-            <button
-              key={i}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs whitespace-nowrap transition-all ${
-                form.activeTab === i
-                  ? "bg-primary text-primary-foreground"
-                  : form.hasAnswer(i)
-                    ? "text-primary bg-transparent"
-                    : "text-text-secondary hover:bg-surface-elevated"
-              }`}
-              onClick={() => { form.setActiveTab(i); kb.setFocusedOption(0); }}
-              tabIndex={-1}
-            >
-              <span
-                className={`flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-semibold ${
-                  form.activeTab === i
-                    ? "bg-white/20"
-                    : form.hasAnswer(i)
-                      ? "bg-primary/20 text-primary"
-                      : "bg-surface-elevated text-text-secondary"
-                }`}
-              >
-                {form.hasAnswer(i) ? "✓" : i + 1}
-              </span>
-              <span className="max-w-[100px] overflow-hidden text-ellipsis">{q.header || `Q${i + 1}`}</span>
-            </button>
-          ))}
-        </div>
+        <QuestionTabStrip
+          tone="question"
+          active={form.activeTab}
+          onSelect={(i) => { form.setActiveTab(i); kb.setFocusedOption(0); }}
+          tabs={questions.map((q, i) => ({
+            key: String(i),
+            answered: form.hasAnswer(i),
+            mark: form.hasAnswer(i) ? "✓" : i + 1,
+            label: <span className="max-w-[100px] overflow-hidden text-ellipsis">{q.header || `Q${i + 1}`}</span>,
+          }))}
+        />
       )}
 
       {/* Current question */}
@@ -263,55 +246,34 @@ export function QuestionCard({ questions, onSubmit, onSkip, autoFocus = true }: 
           <div className={hasPreview ? "@container" : undefined}>
           <div className={hasPreview ? "flex flex-col gap-2 @2xl:flex-row @2xl:items-start" : undefined}>
           <div className={`flex flex-col gap-1.5 ${hasPreview ? "@2xl:w-2/5 @2xl:shrink-0" : ""}`}>
-            {currentQ.options.map((opt, oi) => {
-              const isSelected = (form.answers[form.activeTab] || []).includes(opt.label);
-              const isFocused = kb.focusedOption === oi;
-              return (
-                <div
-                  key={oi}
-                  role="button"
-                  onClick={() => selectWithFocus(oi)}
-                  className={`text-left flex items-start gap-2.5 rounded px-2.5 py-2 text-xs border transition-all cursor-pointer select-text ${
-                    isSelected
-                      ? "border-primary bg-primary/10 text-text-primary"
-                      : "border-border bg-background text-text-secondary hover:border-primary/40 hover:bg-primary/5"
-                  } ${isFocused ? "ring-2 ring-primary/40 ring-offset-1 ring-offset-background" : ""}`}
-                >
-                  <span className={`flex items-center justify-center w-4.5 h-4.5 rounded text-[10px] font-semibold shrink-0 mt-px ${
-                    isSelected ? "bg-primary/20 text-primary" : "bg-surface-elevated text-text-secondary"
-                  }`}>
-                    {oi + 1}
-                  </span>
-                  <div className="flex flex-col gap-0.5 flex-1">
-                    <span className="font-medium text-text-primary">{opt.label}</span>
-                    {opt.description && <span className="text-[11px] text-text-secondary">{opt.description}</span>}
-                  </div>
-                </div>
-              );
-            })}
+            {currentQ.options.map((opt, oi) => (
+              <QuestionOptionTile
+                key={oi}
+                index={oi}
+                tone="question"
+                label={opt.label}
+                description={opt.description}
+                selected={(form.answers[form.activeTab] || []).includes(opt.label)}
+                focused={kb.focusedOption === oi}
+                onSelect={() => selectWithFocus(oi)}
+              />
+            ))}
 
             {/* Other / custom input */}
             {hasCustom && (
-              <div
-                className={`flex items-start gap-2.5 rounded px-2.5 py-2 text-xs border border-dashed transition-all border-border bg-transparent ${
-                  kb.focusedOption === totalOptions - 1 ? "ring-2 ring-primary/40 ring-offset-1 ring-offset-background" : ""
-                }`}
-              >
-                <span className="flex items-center justify-center w-4.5 h-4.5 rounded bg-surface-elevated text-text-secondary text-[10px] font-semibold shrink-0 mt-px">
-                  O
-                </span>
+              <QuestionOtherRow tone="question" focused={kb.focusedOption === totalOptions - 1}>
                 <input
                   ref={customInputRef}
                   // A secret (a token Codex asks for) is typed unseen, like any password field.
                   type={currentQ.secret ? "password" : "text"}
                   autoComplete="off"
-                  className="flex-1 px-2 py-1 text-xs bg-surface border border-border rounded text-text-primary outline-none placeholder:text-text-subtle focus:border-primary"
+                  className={questionInputClass("question")}
                   placeholder={optionCount > 0 ? "Other (press O to type)..." : "Type your answer..."}
                   value={form.customInputs[form.activeTab] || ""}
                   onChange={(e) => form.handleCustomInput(form.activeTab, e.target.value)}
                   onFocus={() => kb.setFocusedOption(totalOptions - 1)}
                 />
-              </div>
+              </QuestionOtherRow>
             )}
           </div>
           {hasPreview && (

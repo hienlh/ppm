@@ -7,11 +7,11 @@
  * choices gets one button per choice in place of OK, under the same rule. "Reply" opens the
  * reply bar under the chat (in a manager chat, under the card), where the user's own words go to the manager chat word for word.
  */
-import { BellRing, Check, ExternalLink, Send, TriangleAlert, Undo2, X } from "@/lib/icons";
+import { BellRing, Check, ExternalLink, TriangleAlert, Undo2, X } from "@/lib/icons";
+import { CardDraft } from "./card-draft";
 import { CardImages } from "./card-images";
 import { chooseAssistantCardOption, dismissAssistantCard, okAssistantCard } from "@/lib/assistant-cards-api";
 import { CardChoices } from "./card-choices";
-import { escapeHiddenCharacters } from "../../../../shared/reveal-hidden-characters";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardButton, CardShell, CardText } from "./card-shell";
 import { openCardManagerChat, useCardAction } from "./use-card-action";
@@ -71,17 +71,7 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
       {options.length > 0 && !card.okOffered && open && (
         <p className="text-xs text-text-subtle">These choices are too long or hold a hidden value, so they cannot be pressed here. Answer with Reply, or open the manager chat.</p>
       )}
-      {draft && (
-        <figure className="overflow-hidden rounded-lg border border-border bg-panel-2" data-card-draft="">
-          <figcaption className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-[11px] text-text-subtle">
-            <Send className="size-3 shrink-0" />
-            <span className="shrink-0 font-medium uppercase tracking-wide">Draft</span>
-            <span className="min-w-0 truncate">to {escapeHiddenCharacters(draft.to)}</span>
-          </figcaption>
-          {/* Shown whole: "OK, send" approves exactly this text. */}
-          <p className="whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-[12.5px] leading-relaxed text-text-primary">{escapeHiddenCharacters(draft.text)}</p>
-        </figure>
-      )}
+      {draft && <CardDraft draft={draft} />}
       {draft && !card.okOffered && open && (
         <p className="text-xs text-text-subtle">This draft is too long or holds a hidden value, so it cannot be approved here. Answer with Reply, or open the manager chat.</p>
       )}

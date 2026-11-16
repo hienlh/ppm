@@ -1,9 +1,10 @@
 // A manager's card offering three choices (`options` on report_to_assistant), on desktop, phone
-// and Telegram: one button per choice in place of OK, stacked and at least 44 px tall; on Telegram
-// one inline button per choice, each its own row. A press on Telegram and one in PPM each reach the
-// manager chat as the user's words naming the choice, the card says which choice was made, and the
-// Telegram copy loses its buttons. A card that writes its choices as text gets no button and the
-// manager is told to use `options`. Photographs each step.
+// and Telegram: in the decision set, one tile per choice in place of OK, stacked and at least 44 px
+// tall, answered with Send this one; on Telegram one inline button per choice, each its own row. A
+// press on Telegram and one in PPM each reach the manager chat as the user's words naming the
+// choice, the card says which choice was made, and the Telegram copy loses its buttons. A card that
+// writes its choices as text gets no button and the manager is told to use `options`. Photographs
+// each step.
 //
 // Same disposable fixture as the manager loop (no real model, no real PPM data):
 //   PPM_ASSISTANT_WEB_DIR=<web build with Monaco> PPM_CARD_OPTIONS_SHOTS=<dir> node tests/e2e/assistant-card-options-e2e.mjs
@@ -183,7 +184,7 @@ try {
   /** The whole card copied onto a layer and photographed, as in the long-cards e2e. */
   async function wholeCardShot(pg, scope, name) {
     const size = pg.viewportSize();
-    const height = await scope.locator("[data-waiting-card]").first().evaluate((el) => {
+    const height = await scope.locator("[data-decision-set]").first().evaluate((el) => {
       const layer = document.createElement("div");
       layer.id = "e2e-whole-card";
       Object.assign(layer.style, {
@@ -202,20 +203,27 @@ try {
     await layer.evaluate((el) => el.remove());
     if (height > size.height) await pg.setViewportSize(size);
   }
-  /** The card's choice buttons as laid out: label, box, and whether they can be pressed. */
-  const choiceBoxes = (scope) => scope.locator("[data-waiting-card] [data-card-choice]").evaluateAll((els) => els.map((el) => {
+  /** The shown card's answer tiles as laid out: label, box, and whether they can be pressed. */
+  const choiceBoxes = (scope) => scope.locator("[data-decision-set] [data-question-option]").evaluateAll((els) => els.map((el) => {
     const r = el.getBoundingClientRect();
-    return { id: el.getAttribute("data-card-choice"), x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), disabled: el.disabled };
+    return {
+      label: el.querySelector("span.font-medium")?.textContent ?? "",
+      x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height),
+      disabled: el.getAttribute("aria-disabled") === "true",
+    };
   }));
+  /** A card's own answer area inside the set (only the shown tab's card is drawn). */
+  const shown = (scope, card) => scope.locator(`[data-decision-set] [data-decision-card="${card.id}"]`);
+  const SHIP_LABELS = SHIP.options.map((o) => o.label);
   const assertStacked = (boxes, where) => {
-    assert.deepEqual(boxes.map((b) => b.id), ["merge-now", "staging-first", "hold"], `${where}: one button per choice, in order`);
+    assert.deepEqual(boxes.map((b) => b.label), SHIP_LABELS, `${where}: one tile per choice, in order`);
     for (const b of boxes) {
-      assert.ok(b.h >= 44, `${where}: ${b.id} is ${b.h}px tall`);
-      assert.equal(b.disabled, false, `${where}: ${b.id} can be pressed`);
+      assert.ok(b.h >= 44, `${where}: "${b.label}" is ${b.h}px tall`);
+      assert.equal(b.disabled, false, `${where}: "${b.label}" can be pressed`);
     }
     for (let i = 1; i < boxes.length; i++) {
       assert.equal(boxes[i].x, boxes[0].x, `${where}: stacked in one column`);
-      assert.ok(boxes[i].y >= boxes[i - 1].y + boxes[i - 1].h, `${where}: ${boxes[i].id} sits below ${boxes[i - 1].id}`);
+      assert.ok(boxes[i].y >= boxes[i - 1].y + boxes[i - 1].h, `${where}: "${boxes[i].label}" sits below "${boxes[i - 1].label}"`);
     }
   };
 
@@ -223,15 +231,15 @@ try {
   await page.goto(`${web}/project/Nxsys/assistant`);
   const body = k.body();
   await body.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
-  await body.locator("[data-waiting-card] [data-card-choice]").first().waitFor({ timeout: 15000 });
+  await shown(body, ship).locator("[data-question-option]").first().waitFor({ timeout: 15000 });
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(shotsDir, "01-desktop-assistant.png") });
   await wholeCardShot(page, body, "02-desktop-card-three-choices");
   const deskBoxes = await choiceBoxes(body);
   assertStacked(deskBoxes, "desktop");
-  assert.equal(await body.locator("[data-waiting-card]").getByRole("button", { name: /^OK/ }).count(), 0, "desktop: no OK button");
-  assert.equal(await body.locator("[data-waiting-card]").getByRole("button", { name: "Reply" }).count(), 1, "desktop: Reply is kept");
-  ok("desktop: three stacked choice buttons, each at least 44 px, no OK, Reply kept");
+  assert.ok(!deskBoxes.some((b) => /^OK\b/.test(b.label)), "desktop: no OK tile");
+  assert.equal(await body.locator("[data-decision-set] [data-decision-reply]").count(), 1, "desktop: the Other answer is kept");
+  ok("desktop: three stacked choice tiles, each at least 44 px, no OK, the Other answer kept");
 
   // ---- Phone ----
   const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: "block" });
@@ -243,14 +251,15 @@ try {
   const mbody = mk.body();
   await mbody.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
   await mbody.locator("[data-waiting-go]").tap();
-  await mbody.locator("[data-waiting-card][data-highlighted] [data-card-choice]").first().waitFor({ timeout: 10000 });
+  await mbody.locator("[data-decision-set][data-highlighted]").waitFor({ timeout: 10000 });
+  await shown(mbody, ship).locator("[data-question-option]").first().waitFor({ timeout: 10000 });
   await mob.waitForTimeout(700);
   await mob.screenshot({ path: join(shotsDir, "03-phone-390x844-card-in-stream.png") });
   await wholeCardShot(mob, mbody, "04-phone-card-three-choices");
   const mobBoxes = await choiceBoxes(mbody);
   assertStacked(mobBoxes, "phone");
   for (const b of mobBoxes) assert.ok(b.w >= 300, `phone: ${b.id} spans the card (${b.w}px)`);
-  ok("phone: three full-width choice buttons stacked, each at least 44 px");
+  ok("phone: three full-width choice tiles stacked, each at least 44 px");
   await phoneCtx.close();
 
   // ---- Telegram (fake Bot API) ----
@@ -311,8 +320,15 @@ try {
   await report("r-freeze", FREEZE);
   const freeze = await k.cardOf("needs_decision", "NX-6410");
   const freezeCopy = await tg.waitText(OWNER, "NX-6410");
-  await body.locator("[data-waiting-card]", { hasText: FREEZE.title }).locator('[data-card-choice="one"]').waitFor({ timeout: 15000 });
-  await body.locator("[data-waiting-card]", { hasText: FREEZE.title }).locator('[data-card-choice="one"]').click();
+  // The set shows the card itself when it is the only decision waiting, and a tab strip (one tab per
+  // card, the shown one by hand) once it holds two or more. Wait for whichever the page draws, open
+  // its tab only when a strip exists, then pick its tile and send it on its own.
+  const freezeTab = body.locator(`[data-decision-set] [data-question-tab="${freeze.id}"]`);
+  await body.locator(`[data-decision-set] [data-decision-card="${freeze.id}"], [data-decision-set] [data-question-tab="${freeze.id}"]`).first().waitFor({ timeout: 15000 });
+  if (await freezeTab.count() && !(await shown(body, freeze).count())) await freezeTab.click();
+  await shown(body, freeze).waitFor({ timeout: 15000 });
+  await shown(body, freeze).locator("[data-question-option]", { hasText: "Ship NX-6398 only" }).click();
+  await body.locator("[data-decision-send-one]").click();
   const gotPpm = await until("the manager got the PPM choice", async () =>
     (await k.turnsIn(manager)).find((t) => t.blocks.userWords?.choice?.id === "one"), 30000);
   assert.equal(gotPpm.blocks.content, "I choose: Ship NX-6398 only");

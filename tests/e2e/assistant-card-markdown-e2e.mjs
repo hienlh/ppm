@@ -1,8 +1,10 @@
 // A long PPM Assistant card written in Markdown (sections, bullets, bold, code, a fenced block, a
-// link, an outside image and some raw HTML), on desktop, phone and Telegram. Checks that the body
-// is drawn by the chat's renderer in its card mode — bold, code and lists render, the HTML is shown
-// as text, no image is loaded, links open in a new tab — that the card still folds once it no
-// longer waits, and that the Telegram copy is formatted HTML Telegram parses; and photographs each.
+// link, an outside image and some raw HTML), on desktop, phone and Telegram. The waiting decision
+// is answered in the decision set, drawn as the stream's last item. Checks that the body is drawn
+// by the chat's renderer in its card mode — bold, code and lists render, the HTML is shown as text,
+// no image is loaded, links open in a new tab — that its answer goes out from the set and the card
+// still folds once it no longer waits, and that the Telegram copy is formatted HTML Telegram parses;
+// and photographs each.
 //
 // Same disposable fixture as the manager loop (no real model, no real PPM data):
 //   PPM_ASSISTANT_WEB_DIR=<web build with Monaco> PPM_CARD_MD_SHOTS=<dir> node tests/e2e/assistant-card-markdown-e2e.mjs
@@ -161,8 +163,8 @@ try {
   assert.ok(card, "the card is open");
   ok("a long Markdown card is open");
 
-  /** The card's text box in the stream, read the way the user sees it. */
-  const inspect = (scope) => scope.locator("[data-waiting-card] [data-card-text]").first().evaluate((el) => ({
+  /** The card's text box in the set, read the way the user sees it. */
+  const inspect = (scope) => scope.locator("[data-decision-card] [data-card-text]").first().evaluate((el) => ({
     strong: [...el.querySelectorAll("strong")].map((n) => n.textContent),
     code: [...el.querySelectorAll("code")].map((n) => n.textContent),
     items: el.querySelectorAll("li").length,
@@ -184,10 +186,10 @@ try {
     for (const l of seen.links) assert.equal(l.target, "_blank", `${where}: ${l.text} opens in a new tab`);
     assert.ok(seen.links.some((l) => l.text === "PR #11203"), `${where}: the link is there`);
   };
-  /** The whole card copied onto a layer and photographed, as in the long-cards e2e. */
+  /** The whole set (its card, answers and buttons) copied onto a layer and photographed, as in the long-cards e2e. */
   async function wholeCardShot(pg, scope, name) {
     const size = pg.viewportSize();
-    const height = await scope.locator("[data-waiting-card]").evaluate((el) => {
+    const height = await scope.locator("[data-decision-set]").evaluate((el) => {
       const layer = document.createElement("div");
       layer.id = "e2e-whole-card";
       Object.assign(layer.style, {
@@ -212,7 +214,7 @@ try {
   const body = k.body();
   await body.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
   await body.locator("[data-waiting-go]").click();
-  await body.locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
+  await body.locator("[data-decision-set][data-highlighted]").waitFor({ timeout: 5000 });
   await page.waitForTimeout(700);
   await page.screenshot({ path: join(shotsDir, `${prefix}-01-desktop-card-in-stream.png`) });
   await wholeCardShot(page, body, "02-desktop-card-whole");
@@ -230,7 +232,7 @@ try {
   const mbody = mk.body();
   await mbody.locator("[data-waiting-dock]").waitFor({ timeout: 30000 });
   await mbody.locator("[data-waiting-go]").tap();
-  await mbody.locator("[data-waiting-card][data-highlighted]").waitFor({ timeout: 5000 });
+  await mbody.locator("[data-decision-set][data-highlighted]").waitFor({ timeout: 5000 });
   await mob.waitForTimeout(700);
   await mob.screenshot({ path: join(shotsDir, `${prefix}-03-phone-390x844-card-in-stream.png`) });
   await wholeCardShot(mob, mbody, "04-phone-card-whole");
@@ -260,7 +262,12 @@ try {
   });
 
   // ---- Once answered, the card folds in the stream ----
-  await body.locator("[data-waiting-card]").getByRole("button", { name: "OK", exact: true }).click();
+  // The card's one answer is the OK tile (no choices, no draft); it goes out with Send this one.
+  const okTile = body.locator("[data-decision-set] [data-question-option]");
+  assert.equal(await okTile.count(), 1, "the card offers one answer tile");
+  assert.match(await okTile.innerText(), /OK, go ahead/);
+  await okTile.click();
+  await body.locator("[data-decision-send-one]").click();
   await until("card no longer waits", async () => (await k.cards()).find((c) => c.id === card.id)?.status !== "open", 15000);
   // Answered, it folds to one line; opened, the card shows again with its long text folded.
   await body.locator("[data-answered-card]", { hasText: CARD.title }).locator("[data-answered-toggle]").click();

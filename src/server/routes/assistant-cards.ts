@@ -94,14 +94,23 @@ function actorOf(c: Context, body: unknown): CardActor {
 }
 
 /**
+ * The largest body a reply may send: five images of 5 MB as base64 (~6.7 MB each) and the words,
+ * with room to spare. Refused before parsing, so an oversized body is never read into memory whole
+ * when the client says up front how big it is; `replyToCard` checks each image itself either way.
+ */
+const MAX_REPLY_BODY_BYTES = 40 * 1024 * 1024;
+
+/**
  * OK on a needs-decision card, a press on one of a card's choices (`{ optionId }`), or the user's
- * reply to a card: forwarded word for word.
+ * reply to a card (`{ text, images?, force? }`): forwarded word for word, with any images.
  */
 const PRESS_ACTIONS = { ok: okCard, choose: chooseCardOption, reply: replyToCard } as const;
 for (const action of ["ok", "choose", "reply"] as const) {
   assistantCardRoutes.post(`/cards/:id/${action}`, async (c) => {
     const id = c.req.param("id");
     if (!CARD_ID_RE.test(id)) return c.json(err("No such card"), 404);
+    const declared = Number(c.req.header("content-length") ?? 0);
+    if (Number.isFinite(declared) && declared > MAX_REPLY_BODY_BYTES) return c.json(err("The reply is too large"), 413);
     let body: unknown;
     try {
       body = await c.req.json();

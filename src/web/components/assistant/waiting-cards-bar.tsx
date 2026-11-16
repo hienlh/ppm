@@ -37,6 +37,14 @@ interface Props {
   note?: ReactNode;
   /** How tall the card area may grow before it scrolls on a desktop; the host knows its room. */
   slotHeight?: string;
+  /**
+   * Draws one entry in place of the card (a manager chat shows its decisions as one set, which
+   * stands in the list as its first card). `entryKey` keeps that entry mounted while its first
+   * card changes, and `summary` names it on the folded row.
+   */
+  renderCard?: (card: Card) => ReactNode;
+  entryKey?: (card: Card) => string;
+  summary?: (card: Card) => string;
 }
 
 const NAV = "grid size-11 shrink-0 place-items-center rounded-full text-text-secondary can-hover:hover:bg-surface-elevated can-hover:hover:text-text-primary md:size-7";
@@ -73,9 +81,12 @@ function Title({ label, count }: { label: string; count: number }) {
   );
 }
 
-export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeight = DEFAULT_SLOT_HEIGHT }: Props) {
+export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeight = DEFAULT_SLOT_HEIGHT, renderCard, entryKey, summary }: Props) {
+  // An entry is known by its key: the set of decisions stays the same entry while its first card
+  // changes (one answered), instead of arriving anew each time.
+  const keyOf = (card: Card) => entryKey?.(card) ?? card.id;
   const phone = useIsMobile();
-  const [currentId, setCurrentId] = useState<string | null>(cards[0]?.id ?? null);
+  const [currentId, setCurrentId] = useState<string | null>(cards[0] ? keyOf(cards[0]) : null);
   // Unfolded under the header on a desktop; on a phone, whether the full-screen sheet is up. Kept
   // with the layout it was set in: crossing the md width (a tablet rotating, a split view) starts
   // the other layout at rest in the same render, so a desktop's unfolded box never flashes up as a
@@ -93,7 +104,7 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
   const row = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
 
-  let index = cards.findIndex((c) => c.id === currentId);
+  let index = cards.findIndex((c) => keyOf(c) === currentId);
   // The shown card was answered: stay at its place in the list, which now holds the next one.
   if (index < 0) index = Math.min(lastIndex.current, cards.length - 1);
   lastIndex.current = Math.max(index, 0);
@@ -108,12 +119,12 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
   // A card that was not there before: the bar moves to it. A desktop unfolds; a phone's screen
   // is not taken over by a card nobody asked to see, so there only the row names it.
   useEffect(() => {
-    const ids = new Set(cards.map((c) => c.id));
+    const ids = new Set(cards.map(keyOf));
     const before = known.current;
     known.current = ids;
     if (!before) return;
-    const fresh = [...cards].reverse().find((c) => !before.has(c.id));
-    if (fresh) land(fresh.id, !phone);
+    const fresh = [...cards].reverse().find((c) => !before.has(keyOf(c)));
+    if (fresh) land(keyOf(fresh), !phone);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cards]);
 
@@ -156,20 +167,20 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
   }, [flash]);
 
   if (!current) return null;
-  const step = (by: number) => land(cards[(index + by + cards.length) % cards.length]!.id, true);
+  const step = (by: number) => land(keyOf(cards[(index + by + cards.length) % cards.length]!), true);
 
   const card = (
     <>
       {/* The landing outline is drawn just inside the card's edge: a ring outside it is cut by
           the scroll box, and an inset one is painted under the card. */}
       <div
-        key={current.id}
+        key={keyOf(current)}
         className={cn("rounded-xl transition-shadow duration-300", lit && "outline-2 -outline-offset-2 outline-error")}
         data-waiting-card={current.id}
         data-highlighted={lit ? "" : undefined}
       >
         <CardStickyActionsContext.Provider value>
-          <AssistantCard card={current} onCard={onCard} />
+          {renderCard ? renderCard(current) : <AssistantCard card={current} onCard={onCard} />}
         </CardStickyActionsContext.Provider>
       </div>
       {children?.(current)}
@@ -196,7 +207,7 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
         >
           <Title label={label} count={cards.length} />
           <span className="min-w-0 flex-1 truncate text-xs text-text-secondary" data-waiting-summary="">
-            {current.projectName ? `${current.projectName} · ` : ""}{current.title}
+            {summary ? summary(current) : `${current.projectName ? `${current.projectName} · ` : ""}${current.title}`}
           </span>
           <span aria-hidden className="grid size-11 shrink-0 place-items-center text-text-secondary">
             <ChevronUp className="size-4" />
@@ -250,7 +261,7 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
           <Title label={label} count={cards.length} />
           {!open && (
             <span className="min-w-0 truncate text-xs text-text-secondary" data-waiting-summary="">
-              {current.projectName ? `${current.projectName} · ` : ""}{current.title}
+              {summary ? summary(current) : `${current.projectName ? `${current.projectName} · ` : ""}${current.title}`}
             </span>
           )}
         </button>

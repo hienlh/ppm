@@ -56,6 +56,8 @@ export interface TelegramMessage {
   text?: string;
   caption?: string;
   photo?: TelegramPhotoSize[];
+  /** Shared by the messages of one album; each photo of an album arrives as its own update. */
+  media_group_id?: string;
   /** Attachments PPM only names (when the user replies to one); their files are never fetched. */
   document?: { file_name?: string; mime_type?: string };
   video?: { file_name?: string };
