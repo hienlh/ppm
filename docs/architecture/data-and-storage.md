@@ -258,6 +258,15 @@ the network: it answers from the cache and queues anything missing or older than
 tasks' Jira and PR links in switched-on projects are refreshed every 15 minutes. Nothing here changes a task: what
 changed outside is news for the manager chat to act on.
 
+**Where a link opens** (`src/shared/ppm-task-link-href.ts`, used by the Links card and the Telegram
+`/tasks` card alike). A Jira key opens at `<site>/browse/<KEY>`, the site being the project's Jira
+config base URL (`jiraSiteFor`, sent as `jiraSite` with a task's detail; no credentials are read),
+a PR on GitHub, a URL as stored; only `http:`/`https:` ever reaches an `href`. A Jira key whose
+project has no Jira config cannot open and its chip says "no Jira site". A web chip is an
+`<a target=_blank rel="noopener noreferrer">`, never `window.open`, so no popup blocker stands in
+the way; a chat chip opens inside PPM. On Telegram a line becomes a link only for a public https
+address (`isPublicHttpsUrl`), so a self-hosted Jira on an intranet name stays plain text.
+
 **Events.** `src/server/ws/ppm-tasks-broadcast.ts` sends `tasks:changed` (task ids),
 `tasks:project_changed` and `tasks:link_states` on `/ws/global`, ids only, gathered per project for
 100 ms so an AI editing twenty tasks sends one push; each view re-reads what it shows.

@@ -79,8 +79,12 @@ describe("deck card", () => {
     expect(shown(html).split("\n")).toContain("AL-7");
   });
 
-  it("never makes a non-web address tapable", () => {
-    const html = deckCardHtml(facts({ linkLines: [{ text: "AL-1", href: "javascript:alert(1)" }, { text: "AL-2", href: "data:text/html,x" }] }), POS, CTX);
+  it("never makes a non-web or private address tapable", () => {
+    const html = deckCardHtml(facts({ linkLines: [
+      { text: "AL-1", href: "javascript:alert(1)" }, { text: "AL-2", href: "data:text/html,x" },
+      { text: "AL-3", href: "http://jira.alpha.example/browse/AL-3" }, { text: "AL-4", href: "https://jira:8080/browse/AL-4" },
+      { text: "AL-5", href: "https://10.0.0.5/browse/AL-5" },
+    ] }), POS, CTX);
     expect(html).not.toContain("<a ");
     expect(shown(html)).toContain("AL-1");
   });

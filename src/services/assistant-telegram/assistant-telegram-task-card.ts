@@ -10,8 +10,8 @@
  */
 import type { Importance, Urgency } from "../../shared/ppm-tasks.ts";
 import { daysBetween } from "../../shared/ppm-tasks-urgency.ts";
-import { safeWebUrl } from "../../shared/ppm-task-link-href.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
+import { isPublicHttpsUrl } from "./assistant-telegram-links.ts";
 import { cleanTelegramText, telegramVisibleLength, TELEGRAM_CARD_ROOM, type CardDetail } from "./assistant-telegram-card-kinds.ts";
 
 export const URGENCY_LABEL: Record<Urgency, string> = { now: "Now", today: "Today", week: "This week", later: "Later" };
@@ -89,12 +89,14 @@ function fit(lines: string[]): string {
   return out.join("\n");
 }
 
-/** A link line, as a tapable link when its address is an `http:`/`https:` one. */
+/**
+ * A link line, as a tapable link when its address is public https — the only kind Telegram is sure
+ * to take, as for buttons; a self-hosted Jira on an intranet name or plain http stays plain text.
+ */
 function linkLineHtml(link: TaskCardLinkLine, counter: { hidden: number }): string {
   const { text, href } = typeof link === "string" ? { text: link, href: null } : link;
-  const safe = href ? safeWebUrl(href) : null;
   const shown = clean(text, counter);
-  return safe ? `<a href="${escapeTelegramHtml(safe)}">${shown}</a>` : shown;
+  return href && isPublicHttpsUrl(href) ? `<a href="${escapeTelegramHtml(new URL(href).href)}">${shown}</a>` : shown;
 }
 
 /** The task's facts, without the header line: what the deck card and the created card share. */
