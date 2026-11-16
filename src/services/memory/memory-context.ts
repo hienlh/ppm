@@ -87,3 +87,25 @@ export function buildMemoryList(
   }
   return render(rows, kept);
 }
+
+/**
+ * How to use the store, sent to every chat while memory is on, whatever is listed. Without it the
+ * AIs had the tools and a list and never called one (2026-11-12/13: 0 calls in 9 real chats across
+ * Claude and Codex); Claude saw no list at all, since every memory then was its own, and its MCP
+ * tools sit behind ToolSearch until something names them.
+ *
+ * The AI searches; PPM does not search for it. Matching each user message against the store was
+ * measured on 109 real memories and 40 real messages (2026-11-13) and was noise: chat is mostly
+ * Vietnamese filler the store's word weights take for rare words (38 of 40 "strong", nearly all
+ * wrong), and by meaning no message stood out (z ≤ 3.4, right and wrong answers in the same band).
+ * Keyword queries an AI writes are what `memory_search` is calibrated on (12 of 12 found).
+ */
+export const MEMORY_GUIDE = [
+  "<ppm_memory_guide>",
+  "PPM keeps one memory store shared by Claude, Codex and Antigravity: what earlier chats learned about this user and this project, and what holds in every project. Treat it as your own long-term memory.",
+  "- Before starting a task, and whenever the user refers to something from before (\"like last time\", \"as we agreed\", \"again\", a name or a project you do not know), call memory_search. Search with a few keywords naming the subject (\"deploy restart\", \"android emulator\", \"payroll certificate\"), in English and in the user's language when they differ, not with the user's sentence. Read a memory with memory_read before relying on it.",
+  "- Call memory_write when the user corrects you or states a preference, when a decision is settled, or when you learn a non-obvious fact a later chat would need (a trap, a command that works, where something lives). One fact per memory; search first and update the memory that exists rather than adding a duplicate. Never store a secret.",
+  "- When a memory turns out to be wrong, rewrite it with memory_write or archive it with memory_forget.",
+  "The tools are on PPM's tab tools MCP server: ppm-tabs in Claude, where they are named mcp__ppm-tabs__memory_search, mcp__ppm-tabs__memory_read, mcp__ppm-tabs__memory_write and mcp__ppm-tabs__memory_forget (load them with ToolSearch if they are deferred); ppm_tabs in Codex.",
+  "</ppm_memory_guide>",
+].join("\n");

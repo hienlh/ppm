@@ -18,7 +18,7 @@ import { createLogger, installFileLogSink } from "../logger.ts";
 import { createMemoryTools, type MemoryToolsBinding } from "../tab-tools-mcp/memory-tools.ts";
 import type { Json } from "../mcp-http-endpoint.ts";
 import { getMemoryIndex } from "./memory-index.ts";
-import { buildMemoryList } from "./memory-context.ts";
+import { buildMemoryList, MEMORY_GUIDE } from "./memory-context.ts";
 import { currentEmbedder, type MemoryAi } from "./memory-settings.ts";
 import { memorySync, setMemorySyncSources } from "./memory-sync.ts";
 import {
@@ -34,7 +34,7 @@ export interface MemoryHostConfig {
 
 export interface MemoryHostRequests {
   configure: { args: MemoryHostConfig; result: null };
-  /** Sync the project's stores, then its `<ppm_memory>` block ("" when there is nothing to list). */
+  /** Sync the project's stores, then the `<ppm_memory_guide>` and the `<ppm_memory>` list when there is anything to list. */
   prepareChat: { args: { projectPath: string; providerId: string }; result: string };
   syncAll: { args: Record<string, never>; result: Awaited<ReturnType<typeof memorySync.syncAll>> };
   syncStatus: { args: { projectPath: string }; result: Awaited<ReturnType<typeof memorySync.status>> };
@@ -71,7 +71,8 @@ export function createMemoryHostHandler(emit: (event: MemoryRuntimeEvent) => voi
       // A failing sync never stops the message: it goes out with whatever list there is.
       try { await memorySync.ensureSynced(projectPath); }
       catch (e) { log.warn(`memory sync of ${projectPath} failed, listing what there is: ${errorText(e)}`); }
-      return buildMemoryList(projectPath, providerId);
+      const list = buildMemoryList(projectPath, providerId);
+      return list ? [MEMORY_GUIDE, list].join("\n\n") : MEMORY_GUIDE;
     },
     syncAll: () => memorySync.syncAll(),
     syncStatus: ({ projectPath }) => memorySync.status(projectPath),

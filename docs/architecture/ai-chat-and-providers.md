@@ -321,7 +321,11 @@ instruction files are still shared as before. Code: `src/services/memory/`
   and every Antigravity knowledge item (global). Native folders and databases
   are only read. A source item that disappears archives its copy; a provider
   that reports an error keeps its copies.
-- **What a chat gets.** A `<ppm_memory>` list of ids, names and descriptions
+- **What a chat gets.** A `<ppm_memory_guide>` saying when to search (before a
+  task, when the user refers to earlier work), how (a few keywords, not the
+  user's sentence) and when to save, with Claude's full tool names, since its
+  MCP tools are deferred behind ToolSearch; it is sent whenever memory is on,
+  even with nothing to list. Then a `<ppm_memory>` list of ids, names and descriptions
   (project then global, newest first, 6,000 characters, the recipient's own
   provider left out because it loads those itself), and `memory_search`,
   `memory_read`, `memory_write`, `memory_forget` on the `ppm-tabs` MCP server.
