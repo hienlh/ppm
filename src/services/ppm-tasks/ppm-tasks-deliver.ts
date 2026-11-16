@@ -7,7 +7,7 @@
  * behind a running turn it waits for that turn to end.
  */
 import { basename } from "node:path";
-import { chatControl, type ChatControl } from "../chat-control/chat-control.ts";
+import { CHAT_BUSY, chatControl, type ChatControl, type MessageServerOrigin } from "../chat-control/chat-control.ts";
 import { getDb, getSessionProvider } from "../db.service.ts";
 import { projectNameForPath } from "../project-name-for-path.ts";
 import { neutralizePpmTags } from "../assistant-watch/watch-event-text.ts";
@@ -36,7 +36,7 @@ export function setPpmTasksDeliverEnv(next: Partial<PpmTasksDeliverEnv> | null):
 
 export type DeliverOutcome =
   | { ok: true; sessionId: string; delivered: SessionDelivery }
-  | { ok: false; reason: "not_found" | "no_option" | "no_session" | "no_chat" | "budget" | "nothing" | "error"; error?: string };
+  | { ok: false; reason: "not_found" | "no_option" | "no_session" | "no_chat" | "budget" | "busy" | "nothing" | "error"; error?: string };
 
 function projectNameOf(projectKey: string): string {
   const path = getTaskProject(projectKey)?.projectPath ?? projectKey;
@@ -45,12 +45,12 @@ function projectNameOf(projectKey: string): string {
 
 const providerOf = (sessionId: string): string => getSessionProvider(sessionId) ?? "claude";
 
-async function send(sessionId: string, projectName: string, providerId: string, text: string): Promise<DeliverOutcome> {
+async function send(sessionId: string, projectName: string, providerId: string, text: string, origin: MessageServerOrigin = "ppm_ui"): Promise<DeliverOutcome> {
   const chat = env.chat();
   if (!chat) return { ok: false, reason: "no_chat", error: "No chat layer runs in this process" };
   try {
-    const result = await chat.sendUserMessage(sessionId, text, { origin: "ppm_ui", projectName, providerId });
-    if (!result.ok) return { ok: false, reason: "error", error: result.error };
+    const result = await chat.sendUserMessage(sessionId, text, { origin, projectName, providerId });
+    if (!result.ok) return { ok: false, reason: result.error === CHAT_BUSY ? "busy" : "error", error: result.error };
     return { ok: true, sessionId: result.sessionId, delivered: result.delivered ?? "started" };
   } catch (e) {
     return { ok: false, reason: "error", error: (e as Error).message };
@@ -134,39 +134,54 @@ export function setManagerNewsFormatter(next: ManagerNewsFormatter | null): void
   formatter = next ?? defaultFormatter;
 }
 
-/**
- * Wakes the project's manager chat with one `ppm_ui` turn carrying its pending news plus
- * `extraLines` (the checker's findings). Charged to the wake budget; refused, nothing is sent and
- * the news stays for the manager's next turn. The cursor moves only once the chat took the turn.
- */
+export interface WakeOptions {
+  /**
+   * Nobody asked for this wake and nobody is there: the handed-off work checker found trouble on
+   * its own. The turn is then sent as a `watch` turn — unattended, so nothing in it can show the
+   * user an approval card — and, like any watch message, only into a quiet chat: a manager that is
+   * mid-turn or showing a card answers `busy` and is asked again later.
+   */
+  unattended?: boolean;
+}
+
 /** Projects with a wake on its way: a second one would read and send the same news again. */
 const waking = new Set<string>();
 
-export async function wakeManager(projectKey: string, actor: Actor, extraLines: string[] = []): Promise<DeliverOutcome> {
+/**
+ * Wakes the project's manager chat with one turn carrying its pending news plus `extraLines` (the
+ * checker's findings): a `ppm_ui` turn by default (the user pressed "Tell manager now"), a `watch`
+ * turn with `unattended`. Charged to the wake budget; refused, nothing is sent and the news stays
+ * for the manager's next turn. The cursor moves only once the chat took the turn.
+ */
+export async function wakeManager(projectKey: string, actor: Actor, extraLines: string[] = [], opts: WakeOptions = {}): Promise<DeliverOutcome> {
   if (waking.has(projectKey)) return { ok: false, reason: "error", error: "A wake of this manager is already on its way" };
   waking.add(projectKey);
   try {
-    return await wakeOnce(projectKey, actor, extraLines);
+    return await wakeOnce(projectKey, actor, extraLines, opts);
   } finally {
     waking.delete(projectKey);
   }
 }
 
-async function wakeOnce(projectKey: string, actor: Actor, extraLines: string[]): Promise<DeliverOutcome> {
+async function wakeOnce(projectKey: string, actor: Actor, extraLines: string[], opts: WakeOptions): Promise<DeliverOutcome> {
   const manager = managerSessionFor(projectKey);
   if (!manager) return { ok: false, reason: "no_session" };
   const news = pendingManagerNews(projectKey);
-  let lines = [...formatter(news, projectKey), ...extraLines].map(oneLine).filter(Boolean);
+  // The caller's lines (the checker's findings) first: when the cap cuts, it cuts the news, which
+  // stays for the manager's next turn anyway, not the findings the wake is for.
+  let lines = [...extraLines, ...formatter(news, projectKey)].map(oneLine).filter(Boolean);
   if (lines.length === 0) return { ok: false, reason: "nothing" };
   if (lines.length > MAX_WAKE_LINES) lines = [...lines.slice(0, MAX_WAKE_LINES), `- …and ${lines.length - MAX_WAKE_LINES} more`];
-  const reserved = env.reserveWake(manager, projectKey, actor.kind === "user");
+  const reserved = env.reserveWake(manager, projectKey, actor.kind === "user" && !opts.unattended);
   if (!reserved.ok) return { ok: false, reason: "budget", error: reserved.message };
   const projectName = projectNameOf(projectKey);
   const where = neutralizePpmTags(projectName);
   const header = actor.kind === "ppm"
     ? `PPM Tasks — handed-off work in ${where} needs you:`
     : `PPM Tasks — ${neutralizePpmTags(actor.label)} asked PPM to tell you now about changes in ${where}:`;
-  const outcome = await send(manager, projectName, providerOf(manager), [header, ...lines].join("\n"));
+  // A watch message is not defused by the chat door the way a ppm_ui one is: every line already went
+  // through `oneLine`, and the header's only outside text (the project's name) through neutralizePpmTags.
+  const outcome = await send(manager, projectName, providerOf(manager), [header, ...lines].join("\n"), opts.unattended ? "watch" : "ppm_ui");
   if (!outcome.ok) {
     reserved.release();
     return outcome;
