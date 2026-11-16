@@ -117,7 +117,8 @@ async function dropOtherChips(page, keep) {
   for (let i = 0; i < 10; i++) {
     const others = page.locator("[data-composer-task-refs] [data-task-chip]:visible").filter({ hasNot: page.locator("[data-task-code]", { hasText: new RegExp(`^${keep}$`) }) });
     if (!(await others.count())) return;
-    await others.first().locator("[data-task-chip-remove]").click();
+    // Tidying, not what is checked: a task window from an earlier step may lie over the composer.
+    await others.first().locator("[data-task-chip-remove]").dispatchEvent("click");
     await page.waitForTimeout(150);
   }
 }
