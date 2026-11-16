@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue } from "react";
-import { MessageSquare, Database, Search, FolderOpen, Loader2 } from "@/lib/icons";
+import { MessageSquare, Database, Search, Loader2, File, Folder } from "@/lib/icons";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -10,10 +10,12 @@ import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useRemoteFileSearch } from "@/hooks/use-remote-file-search";
 import { useExtensionStore } from "@/stores/extension-store";
 import { api } from "@/lib/api-client";
-import { basename } from "@/lib/utils";
 import { scoreFileSearchFast, compareScores, getFilename, type FileSearchScore } from "@/lib/score-file-search";
 import { splitSourceLocation, type SourceLine } from "@/lib/source-location";
-import { pathQueryFileFilter, rankPathQueryMatches } from "@/lib/path-query-matches";
+import {
+  isPathQuery, normalizePathQuery, pathQueryDir, pathQueryFileFilter, pathQueryIntoFolder,
+  pathListingEntries, rankPathEntries, type PathListing,
+} from "@/lib/path-query-matches";
 import { CommandPaletteFilterChips } from "@/components/layout/command-palette-filter-chips";
 import { fileIconElement } from "@/lib/file-icons";
 import { composeCommands, type CommandContext } from "@/lib/commands/command-registry";
@@ -22,6 +24,7 @@ import { openTableTab } from "@/components/database/explorer/open-db-tabs";
 import { NewDesignDialogHost, useDesignCommands } from "./command-palette-design-commands";
 import { useDbPaletteCommands } from "./command-palette-db-commands";
 import { paletteItemFromCommand, type CommandItem } from "./command-palette-items";
+import { PathModeHeader, PathResultRow } from "./command-palette-path-results";
 
 /** Max results to display — prevents rendering thousands of matches */
 const MAX_RESULTS = 100;
@@ -49,29 +52,20 @@ function flattenFiles(nodes: FileNode[]): { name: string; path: string }[] {
   return result;
 }
 
-/** Check if query looks like an absolute path (Unix: /, ~/ | Windows: C:\, ~\) */
-function isPathQuery(q: string): boolean {
-  if (!q) return false;
-  return q.startsWith("/") || q.startsWith("~/") || q.startsWith("~\\") || /^[A-Za-z]:[/\\]/.test(q);
-}
+// Cache: dir path → what the host listed there, and the listings still on their way
+const fsCache = new Map<string, PathListing>();
+const fsInflight = new Map<string, Promise<PathListing>>();
 
-/** Extract the directory portion of a path for API call */
-function extractDir(q: string): string {
-  // Normalize to forward slash for splitting
-  const normalized = q.replace(/\\/g, "/");
-  if (normalized.endsWith("/")) return q;
-  const lastSlash = Math.max(normalized.lastIndexOf("/"), q.lastIndexOf("\\"));
-  return lastSlash > 0 ? q.slice(0, lastSlash + 1) : q;
-}
-
-// Cache: dir path → file list
-const fsCache = new Map<string, string[]>();
+/** A listing together with the directory query it answers, so it is never shown for another one. */
+interface FsListingFor { dir: string; listing: PathListing }
 
 export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boolean; onClose: () => void; initialQuery?: string }) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [selectedIdx, setSelectedIdx] = useState(0);
-  const [fsFiles, setFsFiles] = useState<string[]>([]);
+  const [fsState, setFsState] = useState<FsListingFor | null>(null);
+  /** The directory last asked for; a listing that answers an older one is dropped. */
+  const fsWantedRef = useRef("");
   const [fsLoading, setFsLoading] = useState(false);
   const [dbResults, setDbResults] = useState<DbSearchResult[]>([]);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
@@ -100,11 +94,14 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
    * The suffix has to come off before searching, or it is matched against filenames that
    * never contain it and the query finds nothing at all.
    */
-  const typed = useMemo(() => splitSourceLocation(query) ?? { path: query }, [query]);
-  const searchPath = useMemo(
-    () => splitSourceLocation(deferredQuery)?.path ?? deferredQuery,
-    [deferredQuery],
-  );
+  const typed = useMemo(() => {
+    const text = normalizePathQuery(query);
+    return splitSourceLocation(text) ?? { path: text };
+  }, [query]);
+  const searchPath = useMemo(() => {
+    const text = normalizePathQuery(deferredQuery);
+    return splitSourceLocation(text)?.path ?? text;
+  }, [deferredQuery]);
   // A project too long to send is searched on the server as the query changes. What comes back
   // is ranked below with everything else, exactly as the list itself would have been.
   const remoteFiles = useRemoteFileSearch(activeProject?.name, searchPath, {
@@ -133,35 +130,44 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
 
   // Fetch filesystem files when path query changes directory
   const fetchFsFiles = useCallback(async (dir: string) => {
-    if (fsCache.has(dir)) {
-      setFsFiles(fsCache.get(dir)!);
+    fsWantedRef.current = dir;
+    const cached = fsCache.get(dir);
+    if (cached) {
+      setFsState({ dir, listing: cached });
+      setFsLoading(false);
       return;
     }
     setFsLoading(true);
+    // Every keystroke inside one directory asks for it again; one recursive listing serves them all.
+    let request = fsInflight.get(dir);
+    if (!request) {
+      request = api.get<PathListing>(`/api/fs/list?dir=${encodeURIComponent(dir)}&withDirs=1`);
+      fsInflight.set(dir, request);
+      request.then((listing) => fsCache.set(dir, listing), () => {}).finally(() => fsInflight.delete(dir));
+    }
     try {
-      const files = await api.get<string[]>(`/api/fs/list?dir=${encodeURIComponent(dir)}`);
-      fsCache.set(dir, files);
-      setFsFiles(files);
+      const listing = await request;
+      if (fsWantedRef.current === dir) setFsState({ dir, listing });
     } catch {
-      setFsFiles([]);
+      if (fsWantedRef.current === dir) setFsState(null);
     } finally {
-      setFsLoading(false);
+      if (fsWantedRef.current === dir) setFsLoading(false);
     }
   }, []);
 
   // When query changes and looks like a path, fetch files
   useEffect(() => {
     if (!isPathQuery(typed.path)) {
-      setFsFiles([]);
+      fsWantedRef.current = "";
+      setFsState(null);
       return;
     }
-    const dir = extractDir(typed.path);
-    fetchFsFiles(dir);
+    fetchFsFiles(pathQueryDir(typed.path));
   }, [typed.path, fetchFsFiles]);
 
   // Debounced DB table search
   useEffect(() => {
-    if (isPathQuery(query) || query.trim().length < 2) { setDbResults([]); return; }
+    if (isPathQuery(normalizePathQuery(query)) || query.trim().length < 2) { setDbResults([]); return; }
     const timer = setTimeout(async () => {
       try {
         const data = await api.get<DbSearchResult[]>(`/api/db/search?q=${encodeURIComponent(query.trim())}`);
@@ -208,24 +214,38 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     }));
   }, [indexStatus, indexProject, indexRemote, remoteFiles, fileIndex, fileTree, activeProject, openFileTab]);
 
-  // Filesystem commands — from cached API results
+  /**
+   * The listing of the directory the query names now — never the previous directory's while the
+   * next one loads, or a folder row from the old list would step into a folder of the new one.
+   */
+  const fsListing = fsState && isPathQuery(typed.path) && fsState.dir === pathQueryDir(typed.path) ? fsState : null;
+
+  // Filesystem commands — from cached API results. A folder steps into itself; a file opens.
   const fsCommands = useMemo<CommandItem[]>(() => {
+    if (!fsListing) return [];
+    const { dir, listing } = fsListing;
     const projectId = activeProject?.name ?? null;
     const meta = activeProject ? { projectName: activeProject.name } : undefined;
 
-    return fsFiles.map((fp) => {
-      const name = basename(fp);
-      return {
-        id: `fs:${fp}`,
-        label: name,
-        hint: fp,
-        icon: FolderOpen,
-        group: "fs" as const,
-        keywords: fp,
-        action: () => openFileTab(fp, name, projectId, meta),
-      };
-    });
-  }, [fsFiles, activeProject, openFileTab]);
+    return pathListingEntries(listing).map((entry) => ({
+      id: `fs:${entry.kind}:${entry.path}`,
+      label: entry.name,
+      hint: entry.path,
+      // Drawn by PathResultRow with the entry's own type icon; this is only the item's fallback.
+      icon: entry.kind === "folder" ? Folder : File,
+      group: "fs" as const,
+      keywords: entry.path,
+      pathEntry: entry,
+      action: entry.kind === "folder"
+        ? () => {
+          setQuery(pathQueryIntoFolder(dir, entry.name));
+          setSelectedIdx(0);
+          // On a phone, focusing would raise the keyboard over the rows the next tap needs.
+          if (!isTouchOnly) inputRef.current?.focus();
+        }
+        : () => openFileTab(entry.path, entry.name, projectId, meta),
+    }));
+  }, [fsListing, activeProject, openFileTab, isTouchOnly]);
 
   const dbCommands = useMemo<CommandItem[]>(() => dbResults.map((r) => ({
     id: `db:${r.connectionId}:${r.schemaName}.${r.tableName}`,
@@ -275,7 +295,10 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const filtered = useMemo(() => {
     // Path mode — match the directory's entries by the name typed after the last separator
     if (isPathQuery(searchPath)) {
-      return rankPathQueryMatches(fsCommands, pathQueryFileFilter(searchPath), (c) => c.label).slice(0, 50);
+      const byEntry = new Map(fsCommands.map((c) => [c.pathEntry!, c]));
+      return rankPathEntries(fsCommands.map((c) => c.pathEntry!), pathQueryFileFilter(searchPath))
+        .slice(0, MAX_RESULTS)
+        .map((entry) => byEntry.get(entry)!);
     }
 
     // Normal mode
@@ -298,9 +321,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     const groups = new Set<string>();
     for (const cmd of allCommands) groups.add(cmd.group);
     if (dbResults.length > 0) groups.add("db");
-    if (fsFiles.length > 0) groups.add("fs");
+    if (fsCommands.length > 0) groups.add("fs");
     return Array.from(groups);
-  }, [allCommands, dbResults.length, fsFiles.length]);
+  }, [allCommands, dbResults.length, fsCommands.length]);
 
   // Per-group counts from search-filtered results (updates with query)
   const groupCounts = useMemo(() => {
@@ -337,7 +360,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     if (open) {
       setQuery(initialQuery || "");
       setSelectedIdx(0);
-      setFsFiles([]);
+      setFsState(null);
       setDbResults([]);
       setActiveFilters(new Set());
       requestAnimationFrame(() => inputRef.current?.focus());
@@ -402,6 +425,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   if (!open) return <><NewDesignDialogHost /></>;
 
   const pathMode = isPathQuery(typed.path);
+  const ownEntries = pathMode ? fsCommands.filter((c) => !c.pathEntry!.relDir) : [];
 
   return (
     <>
@@ -409,7 +433,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     <div className="fixed inset-0 z-50 flex items-end md:items-start justify-center md:pt-[20vh]" onClick={onClose}>
       <div className="fixed inset-0 bg-black/50" />
       <div
-        className="relative z-10 w-full max-w-md rounded-t-xl md:rounded-xl border border-border bg-background shadow-2xl overflow-hidden max-h-[80vh] md:max-h-none"
+        className={`relative z-10 w-full ${pathMode ? "max-w-md md:max-w-2xl" : "max-w-md"} rounded-t-xl md:rounded-xl border border-border bg-background shadow-2xl overflow-hidden max-h-[80vh] md:max-h-none flex flex-col`}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
@@ -431,10 +455,20 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         </div>
 
         {/* Path mode hint */}
-        {pathMode && !fsLoading && fsFiles.length === 0 && query.length < 4 && (
+        {pathMode && !fsLoading && fsCommands.length === 0 && query.length < 4 && (
           <div className="px-3 py-2 text-xs text-text-subtle border-b border-border/50">
             Type a directory path to browse files (e.g. ~/Projects/)
           </div>
+        )}
+
+        {/* Path mode: the directory once, instead of on every row */}
+        {pathMode && fsListing && (
+          <PathModeHeader
+            dir={fsListing.listing.dir}
+            truncated={!!fsListing.listing.truncated}
+            folders={ownEntries.filter((c) => c.pathEntry!.kind === "folder").length}
+            files={ownEntries.filter((c) => c.pathEntry!.kind === "file").length}
+          />
         )}
 
         {/* Index status hints — non-blocking, muted */}
@@ -467,7 +501,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         )}
 
         {/* Results */}
-        <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
+        <div ref={listRef} className={`${pathMode ? "max-h-72 md:max-h-96" : "max-h-72"} min-h-0 overflow-y-auto py-1`}>
           {displayItems.length === 0 ? (
             fsLoading ? (
               <p className="px-3 py-4 text-sm text-text-subtle text-center">Searching...</p>
@@ -486,6 +520,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
             )
           ) : (
             displayItems.map((cmd, i) => {
+              if (cmd.pathEntry) {
+                return <PathResultRow key={cmd.id} entry={cmd.pathEntry} selected={i === selectedIdx} onClick={cmd.action} />;
+              }
               const Icon = cmd.icon;
               return (
                 <button

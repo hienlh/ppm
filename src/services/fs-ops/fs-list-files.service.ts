@@ -31,16 +31,37 @@ async function readDirSafe(dirPath: string): Promise<Dirent[]> {
   }
 }
 
+/** What the palette needs to draw a directory: where it is, its folders, and the files under it. */
+export interface FsListing {
+  /** The directory as the host resolved it (`~` expanded, separators and `..` normalised). */
+  dir: string;
+  /** Its direct subfolders, absolute — empty ones included, which the file list cannot show. */
+  dirs: string[];
+  /** Files under it, breadth-first, at most `LIST_MAX_FILES`. */
+  files: string[];
+  /** The cap was reached, so files further on were never listed. */
+  truncated: boolean;
+}
+
 /**
  * Breadth-first file listing for the command palette. Lists all files at each
  * level before descending, so root-level files (e.g. ~/.npmrc) are always
  * found before the limit is reached.
  */
 export async function list(dir: string): Promise<string[]> {
+  return (await listWithDirs(dir)).files;
+}
+
+/**
+ * `list`, plus the resolved directory and its direct subfolders. The palette names each entry
+ * relative to `dir`; without it the browser would have to guess what `~` or `..` became.
+ */
+export async function listWithDirs(dir: string): Promise<FsListing> {
   const resolved = resolvePath(dir);
   assertAllowed(resolved);
 
   const files: string[] = [];
+  let dirs: string[] = [];
   let level = [resolved];
 
   for (let depth = 0; depth <= LIST_MAX_DEPTH && level.length && files.length < LIST_MAX_FILES; depth++) {
@@ -59,10 +80,12 @@ export async function list(dir: string): Promise<string[]> {
           }
         }
       });
-      if (files.length >= LIST_MAX_FILES) return files.slice(0, LIST_MAX_FILES);
+      if (depth === 0) dirs = next.slice(0, LIST_MAX_FILES);
+      if (files.length >= LIST_MAX_FILES) return { dir: resolved, dirs, files: files.slice(0, LIST_MAX_FILES), truncated: true };
     }
     level = next;
   }
 
-  return files;
+  // Stopped by the depth limit with folders still unread: their files were never listed either.
+  return { dir: resolved, dirs, files, truncated: level.length > 0 };
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { Hono } from "hono";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
@@ -64,6 +64,14 @@ describe("GET /fs/list — query validation", () => {
     const res = await createApp().request(`/fs/list?dir=${q(dir)}`);
     expect(res.status).toBe(200);
     expect((await res.json()).data.length).toBe(1);
+  });
+
+  it("answers the resolved directory and its folders when asked withDirs", async () => {
+    writeFileSync(join(dir, "a.txt"), "a");
+    mkdirSync(join(dir, "sub"));
+    const res = await createApp().request(`/fs/list?dir=${q(dir)}&withDirs=1`);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data).toEqual({ dir: resolve(dir), dirs: [join(resolve(dir), "sub")], files: [join(resolve(dir), "a.txt")], truncated: false });
   });
 });
 
