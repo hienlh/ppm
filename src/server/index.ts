@@ -383,6 +383,15 @@ app.route("/api/jira", jiraRoutes);
 import { schedulesRoutes } from "./routes/schedules.ts";
 app.route("/api/schedules", schedulesRoutes);
 
+// PPM Tasks. The literal paths (`/projects`, `/link-states`, `/notify-manager`, `/history/…`) are
+// mounted before the router whose `/:id` would otherwise be asked first.
+import { ppmTasksProjectRoutes } from "./routes/ppm-tasks-projects.ts";
+import { ppmTasksActionRoutes } from "./routes/ppm-tasks-actions.ts";
+import { ppmTasksRoutes } from "./routes/ppm-tasks.ts";
+app.route("/api/tasks", ppmTasksProjectRoutes);
+app.route("/api/tasks", ppmTasksActionRoutes);
+app.route("/api/tasks", ppmTasksRoutes);
+
 // Session trace — browser logs in, a session's timeline out
 import { traceRoutes } from "./routes/trace.ts";
 app.route("/api/trace", traceRoutes);
@@ -1338,6 +1347,12 @@ if (process.argv.includes("__serve__")) {
       .then(({ startPpmTasks }) => startPpmTasks())
       .catch((e) => {
         console.error("[ppm-tasks] Startup error:", e);
+      });
+    // ...and its changes pushed to every open PPM over /ws/global
+    import("./ws/ppm-tasks-broadcast.ts")
+      .then(({ startPpmTasksBroadcast }) => startPpmTasksBroadcast())
+      .catch((e) => {
+        console.error("[ppm-tasks] Broadcast startup error:", e);
       });
 
     // Start Jira watchers (non-blocking, cleanup on exit)
