@@ -11,10 +11,11 @@
  *   "Fable" arrives. Read by name, so the next model shows up without a code change.
  * - Codex's free rate-limit reset credits (`rateLimitResetCredits`), which say how many
  *   "reset my limits" grants the account still holds and when they lapse.
+ * - Claude's free limit resets (`cedar_ember`), parsed in `claude-limit-resets.ts`.
  *
  * Pure and dependency-free so both the server and the browser can use it.
  */
-import type { ResetCredits, ScopedLimitBucket } from "../types/chat.ts";
+import type { ClaudeLimitResets, ResetCredits, ScopedLimitBucket } from "../types/chat.ts";
 
 /** A per-model limit as stored: no countdown fields, those are recomputed on read. */
 export interface StoredScopedLimit {
@@ -26,6 +27,7 @@ export interface StoredScopedLimit {
 export interface UsageExtra {
   scoped?: StoredScopedLimit[];
   resetCredits?: ResetCredits;
+  limitResets?: ClaudeLimitResets;
   activeAccountId?: string;
   activeAccountLabel?: string;
 }
@@ -87,6 +89,15 @@ export function parseCodexResetCredits(raw: unknown): ResetCredits | undefined {
     ...(typeof next?.expiresAt === "number" ? { nextExpiresAt: new Date(next.expiresAt * 1000).toISOString() } : {}),
     ...(typeof next?.title === "string" ? { title: next.title } : {}),
     ...(typeof next?.id === "string" ? { nextCreditId: next.id } : {}),
+    ...(available.some((c) => typeof c.id === "string")
+      ? {
+        credits: available.filter((c) => typeof c.id === "string").map((c) => ({
+          id: c.id as string,
+          ...(typeof c.title === "string" ? { title: c.title } : {}),
+          ...(typeof c.expiresAt === "number" ? { expiresAt: new Date(c.expiresAt * 1000).toISOString() } : {}),
+        })),
+      }
+      : {}),
   };
 }
 
@@ -112,6 +123,7 @@ export function canUseResetCredit(u: { session?: { utilization: number }; weekly
 export function serializeUsageExtra(u: {
   weeklyScoped?: ScopedLimitBucket[];
   resetCredits?: ResetCredits;
+  limitResets?: ClaudeLimitResets;
   activeAccountId?: string;
   activeAccountLabel?: string;
 }): string | null {
@@ -120,9 +132,10 @@ export function serializeUsageExtra(u: {
     extra.scoped = u.weeklyScoped.map((b) => ({ label: b.label, utilization: b.utilization, resetsAt: b.resetsAt }));
   }
   if (u.resetCredits) extra.resetCredits = u.resetCredits;
+  if (u.limitResets) extra.limitResets = u.limitResets;
   if (u.activeAccountId) extra.activeAccountId = u.activeAccountId;
   if (u.activeAccountLabel) extra.activeAccountLabel = u.activeAccountLabel;
-  return extra.scoped || extra.resetCredits || extra.activeAccountId || extra.activeAccountLabel
+  return extra.scoped || extra.resetCredits || extra.limitResets || extra.activeAccountId || extra.activeAccountLabel
     ? JSON.stringify(extra)
     : null;
 }
@@ -131,6 +144,7 @@ export function serializeUsageExtra(u: {
 export function deserializeUsageExtra(json: string | null | undefined): {
   weeklyScoped?: ScopedLimitBucket[];
   resetCredits?: ResetCredits;
+  limitResets?: ClaudeLimitResets;
   activeAccountId?: string;
   activeAccountLabel?: string;
 } {
@@ -140,6 +154,7 @@ export function deserializeUsageExtra(json: string | null | undefined): {
   return {
     ...(extra.scoped?.length ? { weeklyScoped: extra.scoped.map(scopedBucket) } : {}),
     ...(extra.resetCredits ? { resetCredits: extra.resetCredits } : {}),
+    ...(extra.limitResets?.grants?.length ? { limitResets: extra.limitResets } : {}),
     ...(extra.activeAccountId ? { activeAccountId: extra.activeAccountId } : {}),
     ...(extra.activeAccountLabel ? { activeAccountLabel: extra.activeAccountLabel } : {}),
   };
@@ -157,5 +172,12 @@ export function usageExtraSignature(json: string | null | undefined): string {
   const scoped = (e.weeklyScoped ?? []).map((b) => `${b.label}:${b.utilization.toFixed(3)}`).sort().join(",");
   const credits = e.resetCredits ? `${e.resetCredits.available}@${e.resetCredits.nextExpiresAt ?? ""}` : "";
   const account = e.activeAccountId || e.activeAccountLabel ? `${e.activeAccountId ?? ""}:${e.activeAccountLabel ?? ""}` : "";
-  return `${scoped}|${credits}${account ? `|${account}` : ""}`;
+  // Whether each Claude reset can be used is part of it: the button follows the stored row.
+  const resets = e.limitResets
+    ? [
+      e.limitResets.atLimit ? "at" : "", e.limitResets.cooldownUntil ?? "",
+      ...e.limitResets.grants.map((g) => `${g.id}:${g.resetsLeft}:${g.usableNow ? 1 : 0}:${g.blocking.join("+")}:${g.unavailableReason ?? ""}`),
+    ].join(",")
+    : "";
+  return `${scoped}|${credits}${account ? `|${account}` : ""}${resets ? `|${resets}` : ""}`;
 }

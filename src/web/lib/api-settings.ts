@@ -138,6 +138,8 @@ export interface AccountUsageEntry {
     weeklySonnet?: import("../../types/chat").LimitBucket;
     /** Per-model weekly limits ("Fable", …). */
     weeklyScoped?: import("../../types/chat").ScopedLimitBucket[];
+    /** Free limit resets the account holds. */
+    limitResets?: import("../../types/chat").ClaudeLimitResets;
   };
 }
 

@@ -69,6 +69,23 @@ describe("spending a Codex reset credit", () => {
     expect(consumed[0]!.key).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it("spends the credit picked in the list, and refuses one the live read no longer lists", async () => {
+    const a = mk();
+    const credits = [{ id: "c-soonest" }, { id: "c-later" }];
+    liveUsage = { session: bucket(1), weekly: bucket(0.6), resetCredits: { available: 2, nextCreditId: "c-soonest", credits } };
+    expect((await spendWith(a.id, fakeCodex, "c-later")).outcome).toBe("reset");
+    expect(consumed.map((c) => c.creditId)).toEqual(["c-later"]);
+    const e = await spendWith(a.id, fakeCodex, "c-gone").then(() => null, (x) => x);
+    expect(e).toBeInstanceOf(ResetCreditRefusedError);
+    expect((e as ResetCreditRefusedError).message).toContain("no longer has that reset");
+    expect(consumed).toHaveLength(1);
+    // A read that lists no credit by id cannot vouch for a picked one.
+    liveUsage = { session: bucket(1), weekly: bucket(0.6), resetCredits: { available: 1, nextCreditId: "c-soonest" } };
+    const unlisted = await spendWith(a.id, fakeCodex, "c-later").then(() => null, (x) => x);
+    expect(unlisted).toBeInstanceOf(ResetCreditRefusedError);
+    expect(consumed).toHaveLength(1);
+  });
+
   it("treats a quota refusal Codex already gave as a reached limit, and lifts the park on success", async () => {
     const a = mk();
     liveUsage = { weekly: bucket(0.97), resetCredits: { available: 1 } };

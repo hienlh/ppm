@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Use Claude's free limit resets from PPM, as on claude.ai**: a Claude account holding resets shows them on its card in Settings → Accounts, each kind with how many are left, when they expire and what one refills; PPM asks before spending one and checks with Anthropic again right before it does. Free resets (Claude and Codex) are listed with their expiry on every card and in the chat's Switch account.
+
 ## [0.26.7] - 2026-11-17
 
 ### Changed
