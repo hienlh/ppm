@@ -10,6 +10,7 @@ import { useCallback, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { usePpmTaskActions } from "@/hooks/use-ppm-tasks";
 import { NoSessionError } from "@/lib/ppm-tasks/ppm-tasks-client";
+import { ppmTasksStore } from "@/stores/ppm-tasks-store";
 import { keepTaskTab, openTaskChat } from "@/lib/ppm-tasks/open-task-tab";
 import { offerTaskManagerPrompt } from "./task-manager-prompt-toast";
 import type { ConfirmRequest } from "./task-confirm-dialog";
@@ -86,7 +87,8 @@ export function useTaskWrite(confirm?: (req: ConfirmRequest) => Promise<boolean>
     if (r.deliveryError || !r.delivered) {
       const answered = r;
       toast.error(`Choice recorded, but not sent: ${r.deliveryError ?? "the chat did not take it"}`, {
-        action: { label: "Send again", onClick: () => void decideRef.current(answered.task, optionId) },
+        // From the task as it stands then (it may have changed since), not as this answer left it.
+        action: { label: "Send again", onClick: () => void decideRef.current(ppmTasksStore.getState().details[answered.task.id]?.data?.task ?? answered.task, optionId) },
         duration: 30_000,
       });
     } else {

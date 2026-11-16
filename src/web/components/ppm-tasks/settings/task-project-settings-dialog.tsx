@@ -3,7 +3,7 @@
  * members and custom fields. Every change saves on its own (the server applies a settings write
  * all or nothing) and the dialog shows what the server answered. A bottom sheet below `md`.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
@@ -31,6 +31,7 @@ export interface TaskProjectSettingsDialogProps {
 export function TaskProjectSettingsDialog({ open, onOpenChange, project, initialSection = "general" }: TaskProjectSettingsDialogProps) {
   const { settings, error, save } = usePpmTaskProjectSettings(open ? project : null);
   const [section, setSection] = useState<Section>(initialSection);
+  useEffect(() => { if (open) setSection(initialSection); }, [open, initialSection]);
   const apply = (update: TaskProjectSettingsUpdate) => {
     save(update).catch((e: Error) => toast.error(`Could not save: ${e.message}`));
   };

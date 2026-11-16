@@ -184,6 +184,8 @@ export interface AssistantCardPayload {
    * per change.
    */
   taskChanges?: Array<{ historyId: number | null; taskId: string | null; ref: string | null; summary: string }>;
+  /** Changes past the ones listed in `taskChanges` (each task's History in PPM has them). */
+  taskChangesMore?: number;
 }
 
 export interface AssistantCard {

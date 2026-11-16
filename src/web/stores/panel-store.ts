@@ -364,10 +364,16 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       }));
       raiseWindowOf(p.id);
       persist();
+      // A window panel is in no project's layout, so `persist` skips it.
+      if (plan.keep && isWindowPanelId(p.id)) saveWindowPanels(get().panels);
       return plan.tabId;
     }
     // Replace the preview in place: the new tab takes its slot and its place in history.
-    const id = taskTabId(taskId);
+    // The same id may live in another project's kept-alive panel (all-projects scope): suffix it
+    // as the ordinary add path does, so keep, title sync and close never reach that other tab.
+    const base = taskTabId(taskId);
+    const taken = Object.values(get().panels).some((other) => other.id !== p.id && other.tabs.some((t) => t.id === base));
+    const id = taken ? `${base}@${p.id}` : base;
     const tab: Tab = { ...tabDef, id, metadata: { ...tabDef.metadata, lastActiveAt: Date.now() } };
     const history = p.tabHistory.filter((h) => h !== plan.tabId);
     set((s) => ({

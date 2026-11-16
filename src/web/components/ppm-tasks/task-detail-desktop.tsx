@@ -7,7 +7,7 @@
 import { useCallback, useState } from "react";
 import { useManagerChats } from "@/hooks/use-manager-chats";
 import { askManagerAboutTask, managerOf } from "@/lib/ppm-tasks/ask-manager-about-task";
-import { openTaskChat, openTaskTab, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
+import { keepTaskTab, openTaskChat, openTaskTab, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
 import type { TaskPatch } from "../../../shared/ppm-tasks";
 import type { TaskDetailResponse, TaskProjectSettings } from "../../../shared/ppm-tasks-api";
 import { TaskDetailHeader } from "./task-detail-header";
@@ -24,6 +24,8 @@ import { TaskProjectSettingsDialog } from "./settings/task-project-settings-dial
 import { TaskManagerPromptHost } from "./task-manager-prompt-toast";
 import { useTaskConfirm } from "./task-confirm-dialog";
 import { useTaskWrite } from "./use-task-write";
+
+const NO_PROJECTS: never[] = [];
 
 /** A write's fields, the decision's options included. */
 type TaskEdit = TaskPatch & { decision?: { question?: string | null; options: string[] } };
@@ -57,7 +59,9 @@ export function TaskDetailDesktop({ detail, settings, preview }: TaskDetailViewP
   const openChat = useCallback((sid: string) => openTaskChat(task.project, sid, workingProvider(task)), [task]);
 
   return (
-    <div className="@container h-full bg-background" data-task-detail={task.id}>
+    // Typing into any field keeps the preview tab: an arrow key in the list must not drop a draft.
+    <div className="@container h-full bg-background" data-task-detail={task.id}
+      onFocusCapture={(e) => { if ((e.target as HTMLElement).matches("textarea, input")) keepTaskTab(task.id); }}>
       <div className="h-full overflow-y-auto @[760px]:grid @[760px]:grid-cols-[minmax(0,1fr)_300px] @[760px]:overflow-hidden">
         <main className="min-w-0 space-y-3 px-5 py-4 @[760px]:overflow-y-auto">
           <TaskDetailHeader task={task} members={settings?.members} preview={preview} hasManager={!!managerOf(task.project, managers)}
@@ -84,7 +88,7 @@ export function TaskDetailDesktop({ detail, settings, preview }: TaskDetailViewP
             onOpenTask={(id) => openTaskTab({ id, project: task.project, title: "Task" })} onManageFields={() => setFieldsOpen(true)} />
         </aside>
       </div>
-      <TaskNewDialog open={childOpen} onOpenChange={setChildOpen} scope="project" project={task.project} projects={[]}
+      <TaskNewDialog open={childOpen} onOpenChange={setChildOpen} scope="project" project={task.project} projects={NO_PROJECTS}
         parent={task} onCreated={(c) => openTaskTab(c, { keep: true })} />
       <TaskProjectSettingsDialog open={fieldsOpen} onOpenChange={setFieldsOpen} project={task.project} initialSection="fields" />
       {confirmElement}

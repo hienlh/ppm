@@ -104,11 +104,13 @@ export function resolveSelectedChatTabId(projectName?: string | null): string | 
 export function sendToChat(opts: {
   text: string; label?: string; projectName?: string | null; newTab?: boolean;
   imageDataUrl?: string; imageName?: string; asContext?: boolean; autoSend?: boolean;
+  /** The chat tab to deliver to, when the caller just opened it; otherwise the selected chat. */
+  targetTabId?: string | null;
 }): void {
   const { text, label, projectName } = opts;
   if (!text.trim()) return;
 
-  const targetTabId = opts.newTab ? null : resolveSelectedChatTabId(projectName);
+  const targetTabId = opts.targetTabId ?? (opts.newTab ? null : resolveSelectedChatTabId(projectName));
   const store = usePanelStore.getState();
 
   if (targetTabId) {

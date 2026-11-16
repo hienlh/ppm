@@ -7,7 +7,7 @@
  * P6 seam: the phone list plugs in at `ListView` below (`useIsMobile()` branch), taking the same
  * `TaskListViewProps`.
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
@@ -44,8 +44,12 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
   const enabledProjects = useMemo(() => projects.filter((p) => p.enabled), [projects]);
   const showList = scope === "all" ? enabledProjects.length > 0 : !!own?.enabled;
 
-  const listQuery = showList ? listQueryFor(scope, activeProject, filters, query) : null;
+  // Typing in search asks the server once it pauses, not on every key.
+  const [searched, setSearched] = useState(query);
+  useEffect(() => { const t = setTimeout(() => setSearched(query), 250); return () => clearTimeout(t); }, [query]);
+  const listQuery = showList ? listQueryFor(scope, activeProject, filters, searched) : null;
   const { tasks, loading, error } = usePpmTaskList(listQuery);
+  const filtersOn = !!(filters.groups.length || filters.types.length || filters.person || filters.tag || filters.field || query.trim());
   const shown = useMemo(() => visibleTasks(tasks, filters, hiddenProjects, scope), [tasks, filters, hiddenProjects, scope]);
 
   const activeTaskId = useTabStore((s) => { const t = s.tabs.find((x) => x.id === s.activeTabId); return t ? taskIdOfTab(t) : null; });
@@ -124,7 +128,10 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
       ) : loading ? (
         <p className="px-4 py-6 text-center text-xs text-text-3">Loading tasks…</p>
       ) : shown.length === 0 ? (
-        <p className="px-4 py-8 text-center text-xs text-text-3">{tasks.length ? "No task matches these filters" : "No tasks yet. Add one with +, or ask a chat to."}</p>
+        <div className="px-4 py-8 text-center text-xs text-text-3">
+          {tasks.length || filtersOn ? "No task matches these filters" : "No tasks yet. Add one with +, or ask a chat to."}
+          {filtersOn && <button type="button" onClick={() => { useTaskViewStore.getState().clearFilters(); useTaskViewStore.getState().setQuery(""); }} className="mt-2 block w-full text-primary hover:underline">Clear filters</button>}
+        </div>
       ) : (
         <ListView groups={groups} progress={progress} showProject={scope === "all"} selectedId={selectedId} settings={settings} live={live}
           onSelect={onSelect} onOpenChat={onOpenChat} onStartChat={onStartChat} onMove={onMove} />

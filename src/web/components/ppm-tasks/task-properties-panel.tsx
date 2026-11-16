@@ -15,6 +15,7 @@ import type { TaskDto, TaskProjectSettings } from "../../../shared/ppm-tasks-api
 import { TaskStatusGlyph } from "./kit/task-status-glyph";
 import { TaskCustomFields } from "./task-custom-fields";
 import { TaskTagsEditor } from "./task-tags-editor";
+import { TaskDateInput } from "./task-date-input";
 
 const sel = "h-7 w-full min-w-0 rounded-md border border-transparent bg-transparent px-1 text-[13px] text-text outline-none hover:border-border-soft focus:border-ring focus:bg-surface";
 
@@ -84,7 +85,7 @@ export function TaskPropertiesPanel({ task, settings, onPatch, onStatus, onOpenT
         </select>
       </Prop>
       <Prop label="Due">
-        <input aria-label="Due date" type="date" className={sel} value={task.dueDate ?? ""} onChange={(e) => onPatch({ dueDate: e.target.value || null })} />
+        <TaskDateInput label="Due date" className={sel} value={task.dueDate} onSave={(dueDate) => onPatch({ dueDate })} />
       </Prop>
       <Prop label="Assignee">
         <select aria-label="Assignee" className={sel} value={task.assigneeMemberId ?? ""} onChange={(e) => onPatch({ assigneeMemberId: e.target.value || null })}>

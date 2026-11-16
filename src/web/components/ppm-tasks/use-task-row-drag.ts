@@ -59,6 +59,8 @@ export function useTaskRowDrag(containerRef: RefObject<HTMLElement | null>, onDr
     const move = (e: globalThis.PointerEvent) => {
       const s = start.current;
       if (!s) return;
+      // The button came up somewhere this window never heard about (an iframe): end, not drop.
+      if (e.buttons === 0) { finish(false); return; }
       if (!s.active) {
         if (Math.abs(e.clientX - s.x) < THRESHOLD && Math.abs(e.clientY - s.y) < THRESHOLD) return;
         s.active = true;

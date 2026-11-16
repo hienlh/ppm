@@ -2,7 +2,7 @@
  * New task: title, the project (in the all-projects scope), type, urgency, importance and due
  * date. Everything else is edited on the task once it exists. A new task opens in a kept tab.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -37,12 +37,17 @@ export function TaskNewDialog({ open, onOpenChange, scope, project, projects, pa
   const [due, setDue] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Reset when the dialog opens only: the project list is re-read on every task change, and a
+  // reset on that would wipe what the user is typing.
+  const latest = useRef({ fixedProject, project, projects });
+  latest.current = { fixedProject, project, projects };
   useEffect(() => {
     if (!open) return;
+    const l = latest.current;
     setTitle(""); setType("task"); setUrgency("week"); setImportance("should"); setDue("");
-    const enabled = projects.map((p) => p.name);
-    setTarget(fixedProject ?? (project && enabled.includes(project) ? project : enabled[0] ?? ""));
-  }, [open, fixedProject, project, projects]);
+    const enabled = l.projects.map((p) => p.name);
+    setTarget(l.fixedProject ?? (l.project && enabled.includes(l.project) ? l.project : enabled[0] ?? ""));
+  }, [open]);
 
   const submit = async () => {
     if (!title.trim() || !target) return;

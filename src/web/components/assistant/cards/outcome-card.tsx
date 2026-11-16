@@ -39,6 +39,7 @@ export function OutcomeCard({ card, onCard }: Props) {
       {!!card.payload.taskChanges?.length && <p className="text-xs text-text-subtle">Made in a turn PPM started, not one you wrote in.</p>}
       <CardImages images={card.payload.images} />
       {card.payload.taskChanges && <CardTaskChanges changes={card.payload.taskChanges} />}
+      {!!card.payload.taskChangesMore && <p className="text-xs text-text-subtle">…and {card.payload.taskChangesMore} more: see each task's History in PPM.</p>}
       {card.payload.detected && <p className="text-xs text-text-subtle">Seen by PPM: the manager chat has not reported on it.</p>}
     </CardShell>
   );

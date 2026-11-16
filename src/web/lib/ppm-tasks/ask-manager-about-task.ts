@@ -6,6 +6,8 @@
 import { toast } from "sonner";
 import { openSessionAnywhere } from "@/lib/open-session-anywhere";
 import { sendToChat } from "@/lib/send-to-chat";
+import { tabSessionId } from "@/lib/tab-session-id";
+import { usePanelStore } from "@/stores/panel-store";
 import type { ManagerChatSummary } from "../../../shared/assistant-managers";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
 import { taskLink } from "./open-task-tab";
@@ -33,5 +35,7 @@ export async function askManagerAboutTask(task: TaskDto, managers: readonly Mana
     toast.error(`${task.project} is not a project in this PPM any more.`);
     return;
   }
-  sendToChat({ text: taskChipText(task), label: task.ref, projectName: task.project, asContext: true });
+  // The manager chat's own tab, wherever it opened: the "selected" chat may be another one.
+  const tab = Object.values(usePanelStore.getState().panels).flatMap((p) => p.tabs).find((t) => tabSessionId(t) === manager.sessionId);
+  sendToChat({ text: taskChipText(task), label: task.ref, projectName: task.project, asContext: true, targetTabId: tab?.id ?? null });
 }

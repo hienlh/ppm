@@ -63,7 +63,7 @@ export function TaskListRow(p: TaskListRowProps) {
   return (
     <div role="option" aria-selected={p.selected} tabIndex={-1} data-task-row={task.id} data-depth={p.depth}
       onClick={() => p.onSelect(task, false)} onDoubleClick={() => p.onSelect(task, true)}
-      onPointerDown={p.onPointerDown ? (e) => p.onPointerDown!(e, task) : undefined}
+      onPointerDown={p.onPointerDown && p.depth === 0 ? (e) => p.onPointerDown!(e, task) : undefined}
       onDragStart={(e: DragEvent) => e.preventDefault()}
       className={cn(
         "group relative grid cursor-pointer select-none grid-cols-[16px_minmax(0,1fr)_auto] gap-x-2 rounded-md py-1.5 pr-2 text-left",

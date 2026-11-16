@@ -6,6 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { TaskDateInput } from "./task-date-input";
 import type { FieldDef, FieldValue } from "../../../shared/ppm-tasks";
 
 const input = "h-7 w-full min-w-0 rounded-md border border-transparent bg-transparent px-1.5 text-[13px] text-text outline-none hover:border-border-soft focus:border-ring focus:bg-surface";
@@ -27,6 +28,7 @@ function FieldInput({ def, value, onSave }: { def: FieldDef; value: FieldValue |
     onSave(t);
   };
   const label = `${def.label} (${def.type})`;
+  if (def.type === "date") return <TaskDateInput label={label} className={input} value={shown || null} onSave={onSave} />;
   if (def.type === "select") {
     return (
       <select aria-label={label} className={cn(input, "pr-1")} value={draft} onChange={(e) => { setDraft(e.target.value); commit(e.target.value); }}>
@@ -38,8 +40,8 @@ function FieldInput({ def, value, onSave }: { def: FieldDef; value: FieldValue |
   }
   return (
     <input aria-label={label} className={input} value={draft} inputMode={def.type === "number" ? "decimal" : undefined}
-      type={def.type === "date" ? "date" : "text"} placeholder="—"
-      onChange={(e) => { setDraft(e.target.value); if (def.type === "date") commit(e.target.value); }}
+      type="text" placeholder="—"
+      onChange={(e) => setDraft(e.target.value)}
       onBlur={() => commit()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
   );
 }
