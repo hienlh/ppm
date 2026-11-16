@@ -4,6 +4,8 @@
  * Every write goes through the guard's per-project queue, so it never interleaves with a check.
  */
 import { createLogger } from "../logger.ts";
+import { configService } from "../config.service.ts";
+import { ppmTasksAttachFor } from "../ppm-tasks/tools/ppm-task-tool-caller.ts";
 import { RULES_FILE_MAX_BYTES } from "../../shared/assistant-limits.ts";
 import { managerChats, ManagerChatError } from "./manager-chats.service.ts";
 import { managerContextEntry } from "./manager-context-entry.ts";
@@ -52,7 +54,17 @@ export async function managerRulesEntryFor(sessionId: string, guard: ManagerRule
     rules = getManagerRules(row.projectKey);
   }
   const approved = rules?.approved ?? managerRulesTemplate();
-  return managerContextEntry(row.projectName, approved, rules?.accepted ?? approved);
+  return managerContextEntry(row.projectName, approved, rules?.accepted ?? approved, { tasks: managerTasksOn(row.projectPath) });
+}
+
+/** Whether the manager is told about PPM Tasks: its project has Tasks on and a task tool is on. */
+function managerTasksOn(projectPath: string): boolean {
+  try {
+    return ppmTasksAttachFor(projectPath, configService.get("ai"));
+  } catch (e) {
+    log.warn(`could not read the task switch for ${projectPath}: ${(e as Error).message}`);
+    return false;
+  }
 }
 
 export function managerRulesView(projectName: string): ManagerRulesView {

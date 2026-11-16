@@ -6,6 +6,7 @@ import {
 import { SESSION_HISTORY_TOOLS } from "../../../src/shared/session-history-tools.ts";
 import { SESSION_COLLAB_TOOLS } from "../../../src/shared/session-collab.ts";
 import { SESSION_SCHEDULE_TOOLS } from "../../../src/shared/session-schedule-tools.ts";
+import { PPM_TASK_TOOLS } from "../../../src/shared/ppm-task-tools.ts";
 
 const onOf = (ai: Parameters<typeof ppmToolOn>[0]) => PPM_TOOLS.filter((tool) => ppmToolOn(ai, tool));
 const ALL_TAB_TOOLS_OFF = Object.fromEntries(TAB_TOOLS.map((tool) => [tool, false]));
@@ -16,7 +17,8 @@ describe("PPM tool switches", () => {
   // The six session tools are introduced by the tour and stay off until the user answers; before
   // that they defaulted to on like the other tools, which is what these expectations used to say.
   it("defaults open_file and open_preview to the older single switch, the introduced session tools to off, and every other tool to on", () => {
-    const others = ["open_url", ...TERMINAL_TOOLS, ...DB_TOOLS];
+    // The task tools default to on: the per-project Tasks switch is the opt-in.
+    const others = ["open_url", ...TERMINAL_TOOLS, ...DB_TOOLS, ...PPM_TASK_TOOLS];
     expect(onOf({})).toEqual(others);
     expect(onOf({ tab_tools: false })).toEqual(others);
     expect(onOf({ tab_tools: true })).toEqual(["open_file", "open_preview", ...others]);
@@ -24,15 +26,15 @@ describe("PPM tool switches", () => {
 
   it("takes a tool's own switch over its default, one tool at a time", () => {
     expect(onOf({ tab_tools: true, ppm_tools: { open_preview: false, read_terminal: false, db_execute: false, ...ALL_SESSION_ON } }))
-      .toEqual(["open_file", "open_url", "run_in_terminal", ...SESSION_HISTORY_TOOLS, "db_query", "open_query", ...SESSION_TOOLS]);
-    expect(onOf({ ppm_tools: { ...ALL_TAB_TOOLS_OFF, open_file: true } })).toEqual(["open_file", ...DB_TOOLS]);
+      .toEqual(["open_file", "open_url", "run_in_terminal", ...SESSION_HISTORY_TOOLS, "db_query", "open_query", ...SESSION_TOOLS, ...PPM_TASK_TOOLS]);
+    expect(onOf({ ppm_tools: { ...ALL_TAB_TOOLS_OFF, open_file: true } })).toEqual(["open_file", ...DB_TOOLS, ...PPM_TASK_TOOLS]);
   });
 
   it("lets an introduced tool's unset switch follow the feature's set ones: on if any is on", () => {
     expect(onOf({ ppm_tools: { search_sessions: true } })).toContain("create_session");
     expect(onOf({ ppm_tools: { search_sessions: false } }).filter((t) => SESSION_TOOLS_AND_HISTORY.includes(t))).toEqual([]);
     expect(onOf({ ppm_tools: { search_sessions: false, session_status: true } })).toEqual(
-      ["open_url", ...TERMINAL_TOOLS, "list_session_turns", "read_session_turns", ...DB_TOOLS, ...SESSION_COLLAB_TOOLS]);
+      ["open_url", ...TERMINAL_TOOLS, "list_session_turns", "read_session_turns", ...DB_TOOLS, ...SESSION_COLLAB_TOOLS, ...PPM_TASK_TOOLS]);
   });
 
   it("keeps the schedule tools off until their own question is answered, whatever the session tools' answer", () => {

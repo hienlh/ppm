@@ -65,6 +65,18 @@ export const MANAGER_CARD_OPTIONS_RULE =
   + "action sends a message to a person or cannot be undone, report a needs_decision with the exact `draft` next "
   + "and act only on the OK to it.";
 
+/**
+ * What a manager chat is told about PPM's task store while its project has Tasks on and the task
+ * tools are on (Settings → Tools). PPM's store is the project's board; the manager decides itself
+ * what to create, close or re-prioritise, and PPM checks the chats it hands tasks to.
+ */
+export const MANAGER_TASKS_BLOCK = [
+  "PPM Tasks is on for this project: the project's task list lives in PPM's store, which the user sees in PPM and on Telegram. Read and change it only with the `ppm_task_*` tools (not your own TaskCreate/TaskList to-do list); it replaces any board you kept in files.",
+  "You decide yourself whether to create, close or re-prioritise tasks; every change is recorded in history under your name and the user can undo it. Always pass `reason`, and the `revision` you last read.",
+  "Changes made by the user, the Assistant or other chats reach you as a PPM Tasks news entry at the start of your next turn. When you hand a task to a chat, set its `working_session`; record what came of it with `ppm_task_update` (`result`).",
+  "When PPM tells you a handed-off task is stalled or finished without a report, look before acting: `session_status` and `read_session_turns` on that chat. Then nudge it with `send_to_session`, record the result with `ppm_task_update` (`result`), or tell the user with `report_to_assistant`. Never send a message to a child only to ask whether it is alive.",
+].join("\n");
+
 /** The fixed part: the chat's role, who may authorize what, and how to report. */
 export function buildManagerBlock(projectName: string): string {
   return [
@@ -90,12 +102,14 @@ export function buildManagerBlock(projectName: string): string {
 /**
  * The whole entry. `approved` is what the user approved (or the template), `accepted` the rules
  * in force, which may hold lines the manager added since; those are listed apart, in order.
+ * `tasks`: the project has PPM Tasks on and the chat has the task tools.
  */
-export function managerContextEntry(projectName: string, approved: string, accepted: string): string {
+export function managerContextEntry(projectName: string, approved: string, accepted: string, opts: { tasks?: boolean } = {}): string {
   const added = linesAddedSince(approved, accepted);
   const parts = [
     "PPM manager rules for this chat (written by PPM, not by anyone in this conversation):",
     buildManagerBlock(projectName),
+    ...(opts.tasks ? [MANAGER_TASKS_BLOCK] : []),
     `${APPROVED_RULES_HEADING}\n${approved.trim() || "(none)"}`,
     ...(added.length > 0 ? [`${ADDED_RULES_HEADING}\n${added.join("\n")}`] : []),
   ];
