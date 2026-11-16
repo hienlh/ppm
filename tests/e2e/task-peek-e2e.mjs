@@ -116,6 +116,7 @@ async function desktop(k, s) {
   const target = statuses.find((x) => x.baseGroup === "active" && x.id !== release.statusId) ?? statuses.find((x) => x.baseGroup !== "closed" && x.id !== release.statusId);
   await rel.locator("select[aria-label='Status']").selectOption(target.id);
   await until("the status is saved", async () => (await k.task(release.id)).statusId === target.id, 15000);
+  await until("the popover shows the saved status", async () => (await rel.locator("select[aria-label='Status']").inputValue()) === target.id, 10000);
   await rel.locator("select[aria-label='Urgency']").selectOption("today");
   await until("the urgency is saved", async () => (await k.task(release.id)).urgency === "today", 15000);
   await rel.locator("textarea[aria-label='Next step']").fill("Ask QA for a staging slot");
@@ -127,14 +128,30 @@ async function desktop(k, s) {
   await until("the half-typed next step is saved", async () => (await k.task(release.id)).nextStep === "Ask QA for a staging slot", 15000);
   await k.endScene();
 
-  await k.scene("p3", "Escape, one layer at a time", "The first Escape closes the task, the second the list.");
+  await k.scene("p3", "Escape, one layer at a time", "The first Escape closes the task, the second the list. What was being typed is saved.");
+  // Escape with the cursor still in Next step: the field leaves the page without a blur, and what
+  // it held is saved all the same.
+  const loginPeek = peekOf(page, login.id);
+  await loginPeek.locator("textarea[aria-label='Next step']").fill("Retry twice, then show an error");
+  assert.equal(await loginPeek.locator("textarea[aria-label='Next step']").evaluate((el) => el === document.activeElement), true, "the cursor is in Next step");
   await page.keyboard.press("Escape");
   await until("the popover closed", async () => (await page.locator("[data-task-peek-popover]").count()) === 0, 5000);
   assert.equal(await list(page).count(), 1, "the first Escape leaves the list");
+  await until("the next step typed before Escape is saved", async () => (await k.task(login.id)).nextStep === "Retry twice, then show an error", 15000);
   await k.beat(900);
   await k.shot("04-after-first-escape-1440");
   await page.keyboard.press("Escape");
   await until("the list closed", async () => (await list(page).count()) === 0, 5000);
+
+  // A press outside both closes both, here with the cursor still in the due date.
+  await openList(page);
+  await rowOpen(page, release.id).click();
+  const due = peekOf(page, release.id).locator("input[aria-label='Due date']");
+  await due.waitFor({ timeout: 15000 });
+  await due.fill("2026-12-24");
+  await page.mouse.click(1100, 150);
+  await until("the popover and the list closed", async () => (await page.locator("[data-task-peek-popover]").count()) === 0 && (await list(page).count()) === 0, 5000);
+  await until("the due date typed before the outside press is saved", async () => (await k.task(release.id)).dueDate === "2026-12-24", 15000);
   await k.endScene();
 
   // Open chat from the quick view puts the task on the composer; that chip opens it too.
@@ -172,7 +189,7 @@ async function desktop(k, s) {
   await k.beat(1400);
   await k.shot("06-open-in-window-1440");
   await k.endScene();
-  record("1440", "row → popover right of the list, list stays; another row moves it; status, urgency and a half-typed next step saved; Esc closes popover then list; composer chip opens it above the chip; Open in window opens the window, sidebar untouched", { heights });
+  record("1440", "row → popover right of the list, list stays; another row moves it; status, urgency and a half-typed next step saved; Esc (cursor in Next step) closes popover, saves the text, then the list; a press outside closes both and saves the due date being typed; composer chip opens it above the chip; Open in window opens the window, sidebar untouched", { heights });
 }
 
 async function desktop800(k, s) {
@@ -187,6 +204,7 @@ async function desktop800(k, s) {
   const side = await peek.getAttribute("data-task-peek-side");
   const mode = await peek.getAttribute("data-task-peek-mode");
   assert.notEqual(side, "right", "no room on the right at 800");
+  assert.notEqual(mode, "overlap", "there is room somewhere at 800: the popover does not cover the list");
   const pb = await box(peek);
   assert(pb.left >= 0 && pb.top >= 0 && pb.right <= 800 && pb.bottom <= 900, `on screen: ${JSON.stringify(pb)}`);
   const lb = await box(page.locator("[data-footer-popover]:visible").first());

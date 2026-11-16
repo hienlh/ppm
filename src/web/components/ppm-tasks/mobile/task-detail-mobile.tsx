@@ -50,7 +50,7 @@ export function TaskDetailMobile({ detail, settings, sheet: inSheet }: TaskDetai
   const closed = task.baseGroup === "closed";
 
   const patch = useCallback((p: TaskPatch & { decision?: { question?: string | null; options: string[] } }) =>
-    void run(task.id, () => actions.update(task, p)), [actions, run, task]);
+    run(task.id, () => actions.update(task, p)), [actions, run, task]);
   // In the sheet, a chat the page opens shows behind it: the sheet (and the drawer) go first.
   const leave = inSheet?.onLeave;
   const openChat = useCallback((sid: string) => { leave?.(); openTaskChat(task.project, sid, workingProvider(task)); }, [task, leave]);

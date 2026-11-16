@@ -4,31 +4,19 @@
  * change; the due date and the next step save when the field is left, and also when the quick view
  * closes or moves to another task while they hold something unsaved, so nothing typed is lost.
  */
-import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { PPM_TASK_LIMITS, type TaskPatch } from "../../../../shared/ppm-tasks";
 import type { TaskDto, TaskProjectSettings } from "../../../../shared/ppm-tasks-api";
 import { TaskDateInput } from "../task-date-input";
+import { useSavedDraft } from "../use-saved-draft";
 import { PROP_SELECT, TaskImportanceField, TaskMemberField, TaskProp, TaskStatusField, TaskUrgencyField, taskPeople } from "../task-property-fields";
 
 /** The phone's fields: tall enough to read and tap, 15px so a focused field does not zoom the page. */
 const PHONE_FIELDS = "max-md:[&_select]:h-9 max-md:[&_select]:text-[15px] max-md:[&_input]:h-9 max-md:[&_input]:text-[15px] max-md:[&_textarea]:text-[15px]";
 
-/** The next step as a draft that saves on blur, and on unmount when it changed. */
-export function TaskNextStepField({ value, onSave }: { value: string | null; onSave(nextStep: string | null): void }) {
-  const shown = value ?? "";
-  const [draft, setDraft] = useState(shown);
-  const saved = useRef<string | null>(null);
-  useEffect(() => { setDraft(shown); saved.current = null; }, [shown]);
-  const commit = () => {
-    const next = draft.trim();
-    if (next === shown.trim() || next === saved.current) return;
-    saved.current = next;
-    onSave(next || null);
-  };
-  const latest = useRef(commit);
-  latest.current = commit;
-  useEffect(() => () => latest.current(), []);
+/** The next step as a draft that saves when left or removed (`useSavedDraft`). */
+export function TaskNextStepField({ value, onSave }: { value: string | null; onSave(nextStep: string | null): unknown }) {
+  const { draft, setDraft, commit } = useSavedDraft({ shown: value ?? "", normalize: (v) => v.trim(), onSave: (v) => onSave(v || null) });
   return (
     <TaskProp label="Next step">
       <textarea aria-label="Next step" rows={2} maxLength={PPM_TASK_LIMITS.nextStep} value={draft} placeholder="What happens next"
@@ -39,7 +27,7 @@ export function TaskNextStepField({ value, onSave }: { value: string | null; onS
 }
 
 export function TaskPeekFields({ task, settings, onPatch, onStatus, className }: {
-  task: TaskDto; settings: TaskProjectSettings | null; onPatch(patch: TaskPatch): void; onStatus(statusId: string): void; className?: string;
+  task: TaskDto; settings: TaskProjectSettings | null; onPatch(patch: TaskPatch): unknown; onStatus(statusId: string): void; className?: string;
 }) {
   const people = taskPeople(task, settings?.members);
   return (

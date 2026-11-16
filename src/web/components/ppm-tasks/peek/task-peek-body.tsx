@@ -8,7 +8,7 @@
  * the phone's page inside the list's own sheet; `layout` decides the header and the buttons.
  * Every write goes through `useTaskWrite`, the task page's own.
  */
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { AppWindow, ChevronLeft, Loader2, Maximize2, MessageCircle, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { usePpmTask } from "@/hooks/use-ppm-tasks";
@@ -50,16 +50,23 @@ export function TaskPeekBody({ target, layout, onLeave, onOpenPage, onBack, onCl
   const { settings } = usePpmTaskProjectSettings(task?.project ?? target.project);
   const write = useTaskWrite();
   const { actions, run } = write;
-  // From the task as the store holds it when the write goes out: a field saved on the way out
-  // (the next step, the due date) must not carry the revision of a render two writes ago.
+  // One write at a time, each from the task as the store holds it once the one before has
+  // answered: two edits inside one round trip (leave Next step by picking an urgency) would
+  // otherwise both carry the same revision and the second be refused as stale.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
   const current = useCallback((t: TaskDto) => ppmTasksStore.getState().details[t.id]?.data?.task ?? t, []);
-  const patch = useCallback((p: TaskPatch) => {
-    if (!task) return;
-    void run(task.id, () => actions.update(current(task), p));
-  }, [actions, current, run, task]);
+  const enqueue = useCallback(<T,>(write: () => Promise<T>): Promise<T> => {
+    const next = queue.current.then(write, write);
+    queue.current = next;
+    return next;
+  }, []);
+  const patch = useCallback((p: TaskPatch): Promise<unknown> => {
+    if (!task) return Promise.resolve(null);
+    return enqueue(() => run(task.id, () => actions.update(current(task), p)));
+  }, [actions, current, enqueue, run, task]);
   const setStatus = useCallback((statusId: string) => {
-    if (task) changeTaskStatus(write, current(task), statusId, settings?.statuses);
-  }, [current, settings, task, write]);
+    if (task) void enqueue(() => changeTaskStatus(write, current(task), statusId, settings?.statuses));
+  }, [current, enqueue, settings, task, write]);
 
   const page: TaskTabTarget = task ? { id: task.id, project: task.project, title: task.title, number: task.number } : target;
   const chat = task ? sessionChipView(task.workingSession, task.check, Date.now()) : null;

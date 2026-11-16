@@ -56,7 +56,7 @@ export function TaskDetailDesktop({ detail, settings, preview }: TaskDetailViewP
   const [deciding, setDeciding] = useState(false);
   const { actions, run } = write;
 
-  const patch = useCallback((p: TaskEdit) => void run(task.id, () => actions.update(task, p)), [actions, run, task]);
+  const patch = useCallback((p: TaskEdit) => run(task.id, () => actions.update(task, p)), [actions, run, task]);
   const setStatus = useCallback((statusId: string) => {
     if (statusId === task.statusId) return;
     const target = settings?.statuses.find((s) => s.id === statusId);

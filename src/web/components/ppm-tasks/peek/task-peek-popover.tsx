@@ -53,6 +53,8 @@ export function TaskPeekPopover({ target, avoidRef, alignRef, sides, onClose, on
     const panel = panelRef.current;
     const avoid = avoidRef.current;
     const view = panel?.ownerDocument.defaultView;
+    // What it was opened from left the page (a composer chip removed): nothing to show it beside.
+    if (avoid && !avoid.isConnected) { onCloseRef.current(); return; }
     if (!panel || !avoid || !view) return;
     const align = alignRef?.current;
     if (align?.isConnected) lastAlign.current = align.getBoundingClientRect();

@@ -70,4 +70,22 @@ describe("task chips", () => {
     await click($(`[data-task-chip="${task.id}"] [data-task-chip-remove]`));
     expect(removed).toEqual([task.id]);
   });
+
+  it("a composer chip removed while its quick view is open takes the quick view with it", async () => {
+    task = taskDto({ project: "alpha", title: "Call the bank" });
+    const other = taskDto({ project: "alpha", title: "Draw the sprite" });
+    serve();
+    const { useState } = await import("react");
+    const chipOf = (t: TaskDto) => ({ taskId: t.id, number: t.number, ref: t.ref, title: t.title, project: "alpha" });
+    function Host() {
+      const [chips, setChips] = useState([chipOf(task), chipOf(other)]);
+      return <ComposerTaskChipRow currentProject="alpha" chips={chips} onRemove={(id) => setChips((c) => c.filter((x) => x.taskId !== id))} />;
+    }
+    view = await mount(<Host />);
+    await click($(`[data-task-chip="${task.id}"] [data-task-chip-open]`));
+    expect(peek()).not.toBeNull();
+    await click($(`[data-task-chip="${task.id}"] [data-task-chip-remove]`));
+    expect($(`[data-task-chip="${task.id}"]`)).toBeNull();
+    expect(peek()).toBeNull();
+  });
 });

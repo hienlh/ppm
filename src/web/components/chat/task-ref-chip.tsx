@@ -8,7 +8,7 @@
  * (`TaskChipPeek`): a popover anchored to the chip on a desktop, a bottom sheet on a phone, with
  * the task's window (or full screen) one button away.
  */
-import { useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { ListTodo, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { taskChipLabel, type ComposerTaskChip } from "@/lib/ppm-tasks/composer-task-chip-logic";
@@ -25,22 +25,25 @@ import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
  */
 const CHIP_BOX = cn("inline-flex min-h-0! max-w-[18rem] items-center gap-1.5 rounded-md border border-primary/30 bg-accent-wash text-xs text-text", TEXT_CONTROL_HEIGHT);
 
-/** One chip's quick view at a time: which task, and the chip it is anchored to. */
-function useChipPeek() {
+/** One chip's quick view at a time: which task, and the chip it is anchored to. A chip removed
+ * while its quick view is open takes the quick view with it. */
+function useChipPeek(ids: readonly string[]) {
   const [target, setTarget] = useState<TaskTabTarget | null>(null);
+  const gone = !!target && !ids.includes(target.id);
+  useEffect(() => { if (gone) setTarget(null); }, [gone]);
   const anchorRef = useRef<HTMLElement | null>(null);
   const toggle = (e: MouseEvent<HTMLElement>, next: TaskTabTarget) => {
     e.stopPropagation();
     anchorRef.current = e.currentTarget.closest<HTMLElement>("[data-task-chip]") ?? e.currentTarget;
     setTarget((t) => (t?.id === next.id ? null : next));
   };
-  const peek = target && <TaskChipPeek key={target.id} target={target} anchorRef={anchorRef} onClose={() => setTarget(null)} />;
+  const peek = target && !gone && <TaskChipPeek key={target.id} target={target} anchorRef={anchorRef} onClose={() => setTarget(null)} />;
   return { openId: target?.id ?? null, toggle, peek };
 }
 
 /** The composer's chips, above the input. `currentProject` is the chat's: its own tasks read `#12`. */
 export function ComposerTaskChipRow({ chips, currentProject, onRemove }: { chips: readonly ComposerTaskChip[]; currentProject?: string; onRemove: (taskId: string) => void }) {
-  const { openId, toggle, peek } = useChipPeek();
+  const { openId, toggle, peek } = useChipPeek(chips.map((c) => c.taskId));
   return (
     <div className="px-2 pt-2 md:px-4">
       <div className="flex flex-wrap gap-2" data-composer-task-refs="">
@@ -82,7 +85,7 @@ export function ComposerTaskChipRow({ chips, currentProject, onRemove }: { chips
 
 /** The sent message's chips, drawn from its own block: no request, the same size on every render. */
 export function TaskRefChipRow({ refs, currentProject }: { refs: readonly TaskReference[]; currentProject?: string }) {
-  const { openId, toggle, peek } = useChipPeek();
+  const { openId, toggle, peek } = useChipPeek(refs.map((r) => r.taskId));
   return (
     <div className="mb-1 flex flex-wrap gap-1.5" data-task-refs="">
       {refs.map((ref) => (

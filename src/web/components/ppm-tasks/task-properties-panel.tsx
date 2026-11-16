@@ -25,7 +25,8 @@ const Prop = TaskProp;
 export interface TaskPropertiesPanelProps {
   task: TaskDto;
   settings: TaskProjectSettings | null;
-  onPatch(patch: TaskPatch): void;
+  /** May answer the write: `null` when it did not land (a field then saves again when left). */
+  onPatch(patch: TaskPatch): unknown;
   onStatus(statusId: string): void;
   onOpenTask(id: string): void;
   onManageFields(): void;
