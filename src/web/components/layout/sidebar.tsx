@@ -21,6 +21,9 @@ import { NavSectionRail } from "./nav-section-rail";
 // Lazy so the design UI stays out of the entry bundle until the section is opened.
 const DesignsSidebarPanel = lazy(() =>
   import("@/components/design/designs-sidebar-panel").then((m) => ({ default: m.DesignsSidebarPanel })));
+// Lazy for the same reason: the task list loads with the section.
+const TasksSidebarPanel = lazy(() =>
+  import("@/components/ppm-tasks/tasks-sidebar-panel").then((m) => ({ default: m.TasksSidebarPanel })));
 
 function ResizeHandle({ onResize }: { onResize: (width: number) => void }) {
   const dragging = useRef(false);
@@ -140,6 +143,9 @@ export const Sidebar = memo(function Sidebar() {
             {sidebarActiveTab === "teams" && <GroupList />}
             {sidebarActiveTab === "designs" && (
               <Suspense fallback={null}><DesignsSidebarPanel /></Suspense>
+            )}
+            {sidebarActiveTab === "tasks" && (
+              <Suspense fallback={null}><TasksSidebarPanel /></Suspense>
             )}
             {sidebarActiveTab === "database" && <DatabaseSidebar />}
             {sidebarActiveTab === "tunnels" && <PortForwardingPanel />}

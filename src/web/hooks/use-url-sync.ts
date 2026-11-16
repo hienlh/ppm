@@ -32,10 +32,13 @@ export interface UrlState {
   turnId?: string | null;
 }
 
+/** A task id as the server mints them (`TASK_ID_PATTERN` in the task routes). */
+const TASK_ID_RE = /^[0-9a-f-]{8,64}$/i;
+
 const VALID_TAB_TYPES: TabType[] = [
   "terminal", "chat", "editor", "database", "db-structure", "db-sql", "sqlite",
   "git-diff", "settings",
-  "extension", "group", "design", "assistant",
+  "extension", "group", "design", "assistant", "task",
 ];
 
 // ---------------------------------------------------------------------------
@@ -200,6 +203,8 @@ export function buildMetadataFromUrl(
     case "design": return isValidDesignSlug(identifier)
       ? designTabMetadata({ projectName, designSlug: identifier })
       : null;
+    // A task named by the address opens kept, not as a preview: someone asked for it.
+    case "task": return identifier && TASK_ID_RE.test(identifier) ? { taskId: identifier, projectName } : null;
     default: return null;
   }
 }
@@ -226,6 +231,7 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
     }
     case "group": return "Group";
     case "design": return "Design";
+    case "task": return "Task";
     default: return type;
   }
 }

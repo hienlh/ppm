@@ -20,11 +20,18 @@ export interface UnattendedChange {
   projectKey: string;
   /** "ppm/12 "Title": closed" — already cleaned for display. */
   summary: string;
+  /** The task changed, and its `ppm/12`; absent for a settings change. */
+  taskId?: string;
+  ref?: string;
 }
 
 export interface UnattendedCard {
   title: string;
   body: string;
+  /** The listed changes, for an Undo per change on the card. */
+  taskChanges: Array<{ historyId: number | null; taskId: string | null; ref: string | null; summary: string }>;
+  /** How many changes the card does not list. */
+  taskChangesMore: number;
 }
 
 /** Where a finished turn's card goes; the hub's card service by default. */
@@ -39,7 +46,7 @@ const liveSink: UnattendedCardSink = (card) => {
   // Loaded on first use: the card service reaches the hub, which loads after the task store.
   void import("../assistant-cards/assistant-cards.service.ts")
     .then(({ assistantCards }) => {
-      assistantCards.create({ kind: "done", projectName: null, projectPath: null, sessionId: null, title: card.title, body: card.body });
+      assistantCards.create({ kind: "done", projectName: null, projectPath: null, sessionId: null, title: card.title, body: card.body, payload: { taskChanges: card.taskChanges, ...(card.taskChangesMore ? { taskChangesMore: card.taskChangesMore } : {}) } });
     })
     .catch((e) => log.warn(`could not post the "while you were away" task card: ${(e as Error).message}`));
 };
@@ -76,6 +83,8 @@ export function unattendedCard(changes: readonly UnattendedChange[]): Unattended
         ? ["", `To undo one, tell the Assistant (for example "undo #${example}") or press Undo on it in the task's History in PPM.`]
         : []),
     ].join("\n"),
+    taskChangesMore: Math.max(0, n - MAX_LISTED),
+    taskChanges: changes.slice(0, MAX_LISTED).map((c) => ({ historyId: c.historyId, taskId: c.taskId ?? null, ref: c.ref ?? null, summary: c.summary })),
   };
 }
 

@@ -109,7 +109,12 @@ function afterWrite(env: WriteToolsEnv, caller: TaskCaller, w: Written): string 
   const lines = [`${w.kind}: ${refOf(w.task, lookup)} "${clean(w.task.title, 200)}" — now revision ${w.task.revision}.`];
   if (caller.unattended) {
     const last = taskHistory(w.task.id, { limit: 1 })[0];
-    if (last) env.noteUnattended(caller.sessionId, { historyId: last.id, projectKey: w.task.projectKey, summary: changeSummary(w.kind.toLowerCase(), w.task, lookup) });
+    if (last) {
+      env.noteUnattended(caller.sessionId, {
+        historyId: last.id, projectKey: w.task.projectKey, summary: changeSummary(w.kind.toLowerCase(), w.task, lookup),
+        taskId: w.task.id, ref: refOf(w.task, lookup),
+      });
+    }
     lines.push("This turn was started by PPM, not by the user: the change is marked as made while the user was away and listed on a card the user gets when this turn ends.");
   }
   if (caller.kind === "assistant" && managerSessionFor(w.task.projectKey)) {

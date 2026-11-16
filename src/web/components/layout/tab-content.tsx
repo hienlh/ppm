@@ -144,6 +144,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.AssistantTab,
     })),
   ),
+  task: lazy(() =>
+    import("@/components/ppm-tasks/task-tab").then((m) => ({
+      default: m.TaskTab,
+    })),
+  ),
 };
 
 function LoadingFallback() {

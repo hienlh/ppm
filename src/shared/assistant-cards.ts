@@ -178,6 +178,14 @@ export interface AssistantCardPayload {
    * so every surface can offer "Open chat" per task (and open the task by id).
    */
   tasks?: Array<{ taskId: string; sessionId: string; ref: string }>;
+  /**
+   * The "made N task changes while you were away" card: each change with the history row that
+   * undoes it (null for a settings change, which cannot be undone), so a surface can offer Undo
+   * per change.
+   */
+  taskChanges?: Array<{ historyId: number | null; taskId: string | null; ref: string | null; summary: string }>;
+  /** Changes past the ones listed in `taskChanges` (each task's History in PPM has them). */
+  taskChangesMore?: number;
 }
 
 export interface AssistantCard {

@@ -29,6 +29,7 @@ import { useLogsBadgeCount } from "@/components/logs/use-logs-badge";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
+import { usePpmTasksRailCount } from "@/hooks/use-ppm-tasks-rail-count";
 
 /**
  * The rail's own hover label, standing in for a tooltip on an icon-only button.
@@ -131,10 +132,13 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
   );
   const jiraUnreadCount = useJiraStore((s) => s.unreadCount);
   const historyUnreadCount = useNotificationStore(selectProjectUnread(activeProject?.name));
+  const tasksNowCount = usePpmTasksRailCount(activeProject?.name ?? null);
 
   const TABS = useMemo(
-    () => resolveTabOrder(getAvailableTabs({ jiraEnabled, contributions }), sidebarTabOrder).filter((tab) => !minimalMode || isMinimalSidebarTab(tab.id)),
-    [contributions, jiraEnabled, sidebarTabOrder, minimalMode],
+    () => resolveTabOrder(getAvailableTabs({ jiraEnabled, contributions }), sidebarTabOrder)
+      .filter((tab) => !minimalMode || isMinimalSidebarTab(tab.id))
+      .map((tab) => (tab.id === "tasks" ? { ...tab, count: tasksNowCount } : tab)),
+    [contributions, jiraEnabled, sidebarTabOrder, minimalMode, tasksNowCount],
   );
 
   // Drag-to-reorder — writes the full resolved id list so mobile/desktop stay in sync.
@@ -206,7 +210,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
             icon={tab.icon}
             label={tab.label}
             active={sidebarActiveTab === tab.id}
-            badge={tab.id === "git" ? gitChangesCount : tab.id === "jira" ? jiraUnreadCount : tab.id === "history" ? historyUnreadCount : undefined}
+            badge={tab.count ?? (tab.id === "git" ? gitChangesCount : tab.id === "jira" ? jiraUnreadCount : tab.id === "history" ? historyUnreadCount : undefined)}
             featureBadge={tab.badge}
             onClick={() => handleTabClick(tab.id)}
             dragging={dragId === tab.id}
