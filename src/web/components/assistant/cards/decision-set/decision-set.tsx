@@ -19,7 +19,7 @@ import { revealInScrollList } from "@/lib/reveal-in-scroll-list";
 import { dismissAssistantCard } from "@/lib/assistant-cards-api";
 import { useWaitingJumpStore } from "@/stores/assistant-waiting-jump-store";
 import { markDone, pickAnswer, useDecisionSetStore } from "@/stores/decision-set-store";
-import { QuestionTabStrip, questionFrameClass } from "@/components/chat/question-form-parts";
+import { QuestionTabStrip, questionFrameClass, questionTone } from "@/components/chat/question-form-parts";
 import { currentPick, decisionTiles, projectCounts, type DecisionAnswer } from "@/lib/decision-set/decision-set-model";
 import type { AssistantCard } from "../../../../../shared/assistant-cards";
 import { openCardManagerChat } from "../use-card-action";
@@ -28,7 +28,7 @@ import { applyOpenCardResult } from "@/stores/assistant-open-cards-store";
 import { cardRefusal } from "@/lib/assistant-cards-api";
 import { DecisionSetCard, DoneTabBody, toneOf } from "./decision-set-card";
 import { DecisionSetReview } from "./decision-set-review";
-import { SET_BUTTON, SET_ICON_BUTTON } from "./decision-set-buttons";
+import { SET_BUTTON, SET_ICON_BUTTON, toneButtons } from "./decision-set-buttons";
 import { useDecisionSet, type SetTab } from "./use-decision-set";
 
 const ALL = () => true;
@@ -174,16 +174,25 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
   const litHere = !!lit && ids.includes(lit);
   const count = waiting.length;
   const heading = `${count} ${count === 1 ? label.replace(/s$/, "") : label} waiting`;
+  // The frame takes the colour of the card open in it: red for an urgent card, amber otherwise.
+  // Folded, and in the review, nothing is open: red while an urgent card still has no answer.
+  const urgentUnanswered = waiting.some((c) => c.kind === "urgent" && !plan.some((p) => p.card.id === c.id));
+  const tone = folded || reviewing || !card ? (urgentUnanswered ? "urgent" : "decision") : toneOf(card);
+  const frameMotion = "transition-[border-color,background-color,box-shadow] duration-300 motion-reduce:transition-none";
+  const iconInk = tone === "urgent" ? "[&_svg]:text-error-ink" : "[&_svg]:text-warning-ink";
+  const litRing = tone === "urgent" ? "ring-2 ring-error" : "ring-2 ring-warning";
+  const buttons = toneButtons(tone);
 
   if (folded) {
     const picked = plan.length;
     return (
       <div
-        className={cn("@container/set flex min-w-0 items-center gap-2 rounded-lg border-2 border-warning/40 bg-warning/5 py-1 pl-3 pr-1", litHere && "ring-2 ring-warning")}
+        className={cn("@container/set flex min-w-0 items-center gap-2 rounded-lg border-2 py-1 pl-3 pr-1", questionTone(tone).frame, frameMotion, litHere && litRing)}
+        data-set-tone={tone}
         data-waiting-set={ids.join(" ")}
         data-decision-set="folded"
       >
-        <span className="flex shrink-0 items-center gap-1.5 text-[13px] font-semibold text-text-primary [&_svg]:size-3.5 [&_svg]:text-warning-ink"><BellRing />{heading}</span>
+        <span className={cn("flex shrink-0 items-center gap-1.5 text-[13px] font-semibold text-text-primary [&_svg]:size-3.5", iconInk)}><BellRing />{heading}</span>
         <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
           {projectCounts(waiting)}{picked ? ` · ${picked} picked, not sent` : ""}
         </span>
@@ -199,13 +208,14 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
       tabIndex={-1}
       role="group"
       aria-label={`Decisions waiting on you: ${count}`}
-      className={cn("@container/set min-w-0 transition-shadow duration-300", questionFrameClass("decision"), litHere && "ring-2 ring-warning")}
+      className={cn("@container/set min-w-0", questionFrameClass(tone), frameMotion, litHere && litRing)}
+      data-set-tone={tone}
       data-waiting-set={ids.join(" ")}
       data-decision-set="open"
       data-highlighted={litHere ? "" : undefined}
     >
       <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-text-primary">
-        <span className="flex shrink-0 items-center gap-1.5 [&_svg]:size-3.5 [&_svg]:text-warning-ink"><BellRing />{heading}</span>
+        <span className={cn("flex shrink-0 items-center gap-1.5 [&_svg]:size-3.5", iconInk)}><BellRing />{heading}</span>
         <span className="min-w-0 flex-1 truncate text-right text-[10px] font-normal text-text-secondary @max-[34rem]/set:hidden">
           ←→ cards · 1–9 choose · O other · Ctrl+Enter send all
         </span>
@@ -224,6 +234,7 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
           busy={anySending}
           onBack={() => setReviewing(false)}
           onSend={() => void set.sendAll()}
+          tone={tone}
         />
       ) : (
         <>
@@ -259,7 +270,7 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
             <span className="flex-1 @max-[26rem]/set:hidden" />
             <button
               type="button"
-              className={cn(SET_BUTTON.outline, "@max-[26rem]/set:flex-1")}
+              className={cn(buttons.outline, "@max-[26rem]/set:flex-1")}
               onClick={sendThis}
               disabled={!pick || busy || active?.kind !== "waiting"}
               data-decision-send-one=""
@@ -268,7 +279,7 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
             </button>
             <button
               type="button"
-              className={cn(SET_BUTTON.primary, "@max-[26rem]/set:flex-1")}
+              className={cn(buttons.primary, "@max-[26rem]/set:flex-1")}
               onClick={() => setReviewing(true)}
               disabled={plan.length === 0 || anySending}
               data-decision-send-all=""

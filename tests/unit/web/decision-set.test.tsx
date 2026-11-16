@@ -262,6 +262,29 @@ describe("the set", () => {
     expect(posts).toEqual([]);
   });
 
+  it("the frame takes the colour of the card open in it, and of the unanswered urgent card when folded or reviewing", async () => {
+    const u = card({ kind: "urgent", title: "Staging down" });
+    const d = card({ title: "Release window" });
+    await open([u, d]);
+    const tone = () => q("[data-decision-set]")?.getAttribute("data-set-tone");
+    expect(tone()).toBe("urgent");
+    // The colour change is a transition, off for anyone who asks for less motion.
+    expect(q("[data-decision-set]")?.className).toContain("motion-reduce:transition-none");
+    await click(all("[data-question-tab]")[1]!);
+    expect(tone()).toBe("decision");
+    await click(all("[data-question-option]")[0]!);
+    // Folded, an urgent card with no answer keeps the frame red…
+    await click(q("[data-decision-fold]"));
+    expect(tone()).toBe("urgent");
+    await click(q("[data-decision-unfold]"));
+    // …and once it has one, the folded set and the review are amber.
+    await click(all("[data-question-tab]")[0]!);
+    await click(all("[data-question-option]")[0]!);
+    await click(q("[data-decision-send-all]"));
+    expect(q("[data-decision-review]")).not.toBeNull();
+    expect(tone()).toBe("decision");
+  });
+
   it("folds to one bar naming where the cards come from, and opens again", async () => {
     await open([card(), card({ projectName: "beta" })]);
     await click(q("[data-decision-fold]"));

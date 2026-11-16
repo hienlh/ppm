@@ -9,9 +9,9 @@ import { cn } from "@/lib/utils";
 import { answerLabel, isStaleForReply, type DecisionAnswer } from "@/lib/decision-set/decision-set-model";
 import type { AssistantCard } from "../../../../../shared/assistant-cards";
 import { escapeHiddenCharacters } from "../../../../../shared/reveal-hidden-characters";
-import { SET_BUTTON } from "./decision-set-buttons";
+import { SET_BUTTON, toneButtons } from "./decision-set-buttons";
 
-export function DecisionSetReview({ cards, plan, now, busy, onBack, onSend }: {
+export function DecisionSetReview({ cards, plan, now, busy, onBack, onSend, tone = "decision" }: {
   /** Every card that still waits, in the set's order. */
   cards: readonly AssistantCard[];
   plan: ReadonlyArray<{ card: AssistantCard; answer: DecisionAnswer }>;
@@ -19,6 +19,8 @@ export function DecisionSetReview({ cards, plan, now, busy, onBack, onSend }: {
   busy: boolean;
   onBack: () => void;
   onSend: () => void;
+  /** The set's frame colour: red while an urgent card still has no answer. */
+  tone?: "decision" | "urgent";
 }) {
   const answers = new Map(plan.map((p) => [p.card.id, p.answer]));
   return (
@@ -66,7 +68,7 @@ export function DecisionSetReview({ cards, plan, now, busy, onBack, onSend }: {
       <div className="flex items-center gap-2 border-t border-border-soft pt-2.5">
         <button type="button" className={SET_BUTTON.plain} onClick={onBack} disabled={busy}><ArrowLeft />Back</button>
         <span className="flex-1" />
-        <button type="button" className={SET_BUTTON.primary} onClick={onSend} disabled={busy || plan.length === 0} data-decision-send-reviewed="">
+        <button type="button" className={toneButtons(tone).primary} onClick={onSend} disabled={busy || plan.length === 0} data-decision-send-reviewed="">
           <Check />Send {plan.length} answer{plan.length === 1 ? "" : "s"}
         </button>
       </div>

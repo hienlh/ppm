@@ -17,12 +17,12 @@ import { CardImages } from "../card-images";
 import { CardDraft } from "../card-draft";
 import { CardHandedOffTasks } from "../card-task-items";
 import { DecisionReplyField, type ReplyValue } from "./decision-reply-field";
-import { SET_BUTTON } from "./decision-set-buttons";
+import { SET_BUTTON, toneButtons } from "./decision-set-buttons";
 import type { SetTab } from "./use-decision-set";
 
 const EMPTY_REPLY: ReplyValue = { text: "", images: [] };
 
-export const toneOf = (card: Pick<AssistantCard, "kind">): QuestionTone => (card.kind === "urgent" ? "urgent" : "decision");
+export const toneOf = (card: Pick<AssistantCard, "kind">): Extract<QuestionTone, "decision" | "urgent"> => (card.kind === "urgent" ? "urgent" : "decision");
 
 function Head({ card, onOpenChat, onDismiss, busy }: { card: AssistantCard; onOpenChat?: () => void; onDismiss?: () => void; busy: boolean }) {
   const urgent = card.kind === "urgent";
@@ -163,7 +163,7 @@ export function DecisionSetCard({
       {confirm && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-xs" role="alert" data-decision-confirm="">
           <span className="min-w-0 flex-1">{confirm}</span>
-          <button type="button" className={SET_BUTTON.primary} onClick={onConfirm} disabled={busy}>Send anyway</button>
+          <button type="button" className={toneButtons(tone).primary} onClick={onConfirm} disabled={busy}>Send anyway</button>
         </div>
       )}
       {notice && <p className="text-xs text-error-ink" role="alert" data-decision-notice="">{notice}</p>}
