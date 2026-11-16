@@ -9,6 +9,7 @@
  */
 import { encodeMessageBlocks } from "../../shared/chat-message-blocks.ts";
 import { defuseUserWordsHeader, type UserWordsReference } from "../../shared/user-words-block.ts";
+import type { TaskReference } from "../../shared/chat-task-ref.ts";
 import { neutralizePpmTags } from "../../services/assistant-watch/watch-event-text.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import { getSessionDesignSlug, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
@@ -27,6 +28,11 @@ export interface DeliverUserWordsInput {
   /** What the user typed, exactly; "OK" for an OK. */
   text: string;
   userWords: UserWordsReference;
+  /**
+   * The task the words are about (a Telegram message sent to a task's chat), read from the task
+   * store by the caller; written as its own block after the user-words block.
+   */
+  taskRefs?: readonly TaskReference[] | null;
   /**
    * Whether the words answer the request the chat waits on (a reply to an approval or question
    * card): it is then refused, the way typing in that chat refuses it. Otherwise the words wait
@@ -54,6 +60,10 @@ const CARD_CLIENT_ID_RE = /^card-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}
 /** A leading `/` would run as a slash command the user never typed into that chat. */
 const defuseCommand = (text: string): string => (text.trimStart().startsWith("/") ? `${String.fromCharCode(0x200b)}${text}` : text);
 
+/** For the log: the card the words answer, or the task they are about. */
+const wordsFrom = (input: DeliverUserWordsInput): string =>
+  input.userWords.cardId ? `from card ${input.userWords.cardId}` : input.taskRefs?.length ? `about task ${input.taskRefs[0]!.ref}` : "(no card)";
+
 export async function deliverUserWords(input: DeliverUserWordsInput): Promise<DeliverUserWordsResult> {
   if (!input.text.trim()) return { ok: false, error: "The message is empty" };
   const target = resolveMigratedSession(input.targetSessionId);
@@ -64,7 +74,7 @@ export async function deliverUserWords(input: DeliverUserWordsInput): Promise<De
 
   // Pasted text (an email, a log) may carry a loose PPM-looking tag or a copy of the user-words
   // header: both are defused, so the one block PPM builds below is the only one there.
-  const content = encodeMessageBlocks(defuseCommand(defuseUserWordsHeader(neutralizePpmTags(input.text))), { userWords: input.userWords, ownProject: input.projectName || undefined });
+  const content = encodeMessageBlocks(defuseCommand(defuseUserWordsHeader(neutralizePpmTags(input.text))), { userWords: input.userWords, taskRefs: input.taskRefs ?? null, ownProject: input.projectName || undefined });
   const clientMessageId = input.clientMessageId && CARD_CLIENT_ID_RE.test(input.clientMessageId)
     ? input.clientMessageId : `card-${crypto.randomUUID()}`;
   return withSessionLock(target, async () => {
@@ -86,10 +96,10 @@ export async function deliverUserWords(input: DeliverUserWordsInput): Promise<De
     if (!result.ok) {
       entry.turnOrigin = previousOrigin;
       if (entry.clients.size === 0 && !entry.isStreamingActive) startCleanupTimer(target);
-      log.warn(`session=${target} the user's words from card ${input.userWords.cardId ?? "-"} were not delivered: ${result.error}`);
+      log.warn(`session=${target} the user's words ${wordsFrom(input)} were not delivered: ${result.error}`);
       return { ok: false, error: result.error };
     }
-    log.info(`session=${target} the user's words from card ${input.userWords.cardId ?? "-"} ${result.delivered} (${input.userWords.channel})`);
+    log.info(`session=${target} the user's words ${wordsFrom(input)} ${result.delivered} (${input.userWords.channel})`);
     chatLifecycle.emit("user_message", {
       sessionId: target, text: content, origin: "session", imageCount: 0,
       projectName: entry.projectName ?? input.projectName, providerId: entry.providerId,

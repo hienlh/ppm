@@ -210,6 +210,14 @@ export class DeckStore {
     return deck;
   }
 
+  /** The task the deck at this message shows now (a card, a status result, its children). */
+  taskAt(chatId: string, messageId: number): string | null {
+    for (const deck of this.decks.values()) {
+      if (deck.chatId === chatId && deck.messageId === messageId) return deck.view.kind === "empty" ? null : deck.view.taskId;
+    }
+    return null;
+  }
+
   get(id: string, chatId: string): Deck | null {
     const deck = this.decks.get(id);
     return deck && deck.chatId === chatId ? deck : null;

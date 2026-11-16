@@ -29,6 +29,7 @@ import type { RelayedCard } from "./assistant-telegram-cards.ts";
 import { forwardedFrom, wrapForwarded, backlogQuestion, viaInlineBot } from "./assistant-telegram-inbound-text.ts";
 import { quoteTelegramMessage, toReplyReference, type BotSource, type QuotedCard, type TelegramQuote } from "./assistant-telegram-reply-quote.ts";
 import type { AnswerTurn } from "./assistant-telegram-own-answers.ts";
+import type { TaskWordsMessage } from "./assistant-telegram-task-message.ts";
 import { createLogger } from "../logger.ts";
 
 const log = createLogger("assistant-telegram");
@@ -62,6 +63,11 @@ export interface InboundDeps {
   pressTask?: (chatId: string, press: TaskPress, group: string, cq: TelegramCallbackQuery) => Promise<string>;
   /** `/tasks [project]`. */
   showTasks?: (chatId: string, args: string, reply: (html: string) => void) => void;
+  /**
+   * Words for the chat working on a task: a reply to a task card, or the next message after
+   * "Message about this task". `wants` decides, `take` sends and answers in the chat.
+   */
+  taskWords?: { wants(chatId: string, replyToMessageId?: number): string | null; take(chatId: string, m: TaskWordsMessage, taskId: string): Promise<void> };
   /** A message sent as a reply to a card's message: true when it answered the card. */
   replyToCard?: (chatId: string, m: CardReplyMessage) => Promise<boolean>;
   /** Whether this message of this chat shows one of the Assistant's cards. */
@@ -210,6 +216,20 @@ export class AssistantTelegramInbound {
         return false;
       }
       if (await this.deps.replyToCard(chatId, card)) return false;
+    }
+
+    // A reply to a task card, or the message after "Message about this task", goes to the chat
+    // working on that task rather than to the Assistant. One sent while PPM was off is not: it is
+    // asked about below, like any other, and goes to the Assistant if run.
+    const recent = this.now() - message.date * 1000 <= BACKLOG_AGE_MS;
+    const aboutTask = recent ? this.deps.taskWords?.wants(chatId, repliedTo) ?? null : null;
+    if (aboutTask && this.deps.taskWords) {
+      await this.flush(chatId);
+      await this.deps.taskWords.take(chatId, {
+        text, messageId: message.message_id, ...(repliedTo !== undefined ? { replyToMessageId: repliedTo } : {}),
+        notTheUsers: !!from || !!message.via_bot, hasPhoto: !!message.photo?.length,
+      }, aboutTask);
+      return false;
     }
 
     let image: Image | null = null;

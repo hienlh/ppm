@@ -13,6 +13,7 @@
  */
 import { MANAGER_REPLY_CARD_KINDS, type AssistantCard } from "../../shared/assistant-cards.ts";
 import type { UserWordsReference } from "../../shared/user-words-block.ts";
+import type { TaskReference } from "../../shared/chat-task-ref.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import type { DeliverUserWordsInput, DeliverUserWordsResult } from "../../server/ws/chat-user-words.ts";
 import type { FollowupHandle, FollowupOrigin } from "./card-reply-followup-tracker.ts";
@@ -145,4 +146,48 @@ export async function forwardUserWords(card: AssistantCard, text: string, how: F
     ok: true, to: "manager", projectName: target.projectName, sessionId: delivered.sessionId,
     delivered: delivered.delivered, clientMessageId: delivered.clientMessageId,
   };
+}
+
+/** The user's words about one task, sent to the chat working on it (Telegram's "Message about this task"). */
+export interface TaskWordsInput {
+  text: string;
+  /** The chat working on the task: its handed-off chat, else the project's manager chat. */
+  target: ForwardTarget;
+  /** The task, as the store has it now (`resolveTaskRef`); written as the message's task block. */
+  taskRef: TaskReference;
+  actor: CardActor;
+}
+
+export type TaskWordsResult =
+  | { ok: true; sessionId: string; delivered?: SessionDelivery }
+  | { ok: false; error: string };
+
+/**
+ * Forwards what the user typed about a task, word for word, to the chat working on it. Like a card
+ * reply it carries a user-words block (no card is named, the channel and time are), and after it
+ * the task's block, so the chat knows which of its tasks the words are about. The words wait behind
+ * any request the chat has open rather than answering it: the user wrote about the task, not to
+ * that request.
+ */
+export async function forwardUserWordsAboutTask(input: TaskWordsInput, env: ForwardEnv): Promise<TaskWordsResult> {
+  const { actor, target, taskRef } = input;
+  const userWords: UserWordsReference = { channel: actor.channel, at: new Date(env.now()).toISOString() };
+  const delivered = await env.deliverUserWords({
+    targetSessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName,
+    projectPath: target.projectPath, text: input.text, userWords, taskRefs: [taskRef], supersede: false,
+    clientMessageId: `card-${crypto.randomUUID()}`,
+  });
+  if (!delivered.ok) return delivered;
+  env.userWrote(delivered.sessionId);
+  env.trace(delivered.sessionId, target.providerId, {
+    taskId: taskRef.taskId, channel: actor.channel,
+    ...(actor.telegramChatId ? { telegramChatId: actor.telegramChatId } : {}),
+    ...(actor.deviceId ? { deviceId: actor.deviceId } : {}),
+  });
+  const main = env.mainSession();
+  if (main) {
+    env.note(main, `The user wrote about task ${taskRef.ref} (${taskRef.taskId}) ${where(actor.channel)}; `
+      + `PPM forwarded it word for word to the chat working on it in ${target.projectName}.`);
+  }
+  return { ok: true, sessionId: delivered.sessionId, delivered: delivered.delivered };
 }

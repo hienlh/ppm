@@ -100,7 +100,7 @@ async function phoneChip(k, s) {
 const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /** A Telegram chat screen drawn from what the fake Bot API holds: bubbles with their buttons. */
-function telegramFrame(messages, title) {
+export function telegramFrame(messages, title) {
   const bubbles = messages.map((m) => {
     const rows = (m.reply_markup?.inline_keyboard ?? []).map((row) => `<div class="row">${row.map((b) => `<span class="btn">${esc(b.text)}</span>`).join("")}</div>`).join("");
     const cls = m.from_user ? "me" : "bot";
