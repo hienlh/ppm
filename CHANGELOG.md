@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.5] - 2026-11-16
+
+### Added
+
+- **The answer comes back to Telegram**: when you message a task's chat from Telegram, its reply arrives under your message, and you are told when it is waiting on an approval or a question instead.
+- **Task links open their web page**: Jira, PR and URL chips open in a new tab; pasting one full Jira issue URL is enough for a project with no Jira set up, and Telegram task cards link them too.
+
 ## [0.26.4] - 2026-11-16
 
 ### Added
