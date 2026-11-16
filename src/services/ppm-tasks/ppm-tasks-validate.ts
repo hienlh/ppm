@@ -2,7 +2,8 @@
  * Checks a patch and turns it into the values a write stores, one entry per change field
  * (`title`, `links`, `result`, `fields.<key>`, …). Sizes are bounded, references (status, members,
  * parent) must belong to the task's project, a parent may not make a cycle, and links are stored
- * canonically (Jira keys upper-cased, PRs as `owner/repo#n`).
+ * canonically (Jira keys upper-cased, PRs as `owner/repo#n`). A Jira link given as its issue URL
+ * is stored as its key, and the URL's site is kept as the project's fallback Jira site.
  */
 import { getDb, resolveMigratedSession } from "../db.service.ts";
 import {
@@ -10,6 +11,9 @@ import {
   type TaskLink, type TaskPatch, type TaskResult, type WriteContext,
 } from "../../shared/ppm-tasks.ts";
 import { canonicalPrRef, parseJiraKey } from "../../shared/ppm-tasks-refs.ts";
+import { parseJiraIssueUrl } from "../../shared/ppm-task-link-href.ts";
+import { rememberPastedJiraSite } from "./link-state/ppm-tasks-jira-site.ts";
+import { ppmTasksEvents } from "./ppm-tasks-events.ts";
 import { statusById } from "./ppm-tasks-db.ts";
 import { invalid } from "./ppm-tasks-errors.ts";
 import { workingSessionRefusal } from "./ppm-tasks-session-check.ts";
@@ -64,11 +68,23 @@ export function canonicalLink(link: { kind: unknown; ref: unknown; label?: unkno
   const kind = oneOf("link kind", link.kind, LINK_KINDS);
   const raw = text("link ref", link.ref, L.linkRef, false)!;
   let ref: string | null = raw;
-  if (kind === "jira") ref = parseJiraKey(raw);
+  if (kind === "jira") ref = parseJiraKey(raw) ?? parseJiraIssueUrl(raw)?.key ?? null;
   else if (kind === "pr") ref = canonicalPrRef(raw);
   else if (kind === "url" && !/^https?:\/\/\S+$/i.test(raw)) ref = null;
   if (!ref) throw invalid(`Not a valid ${kind} link: ${raw}`);
   return { kind, ref, label: text("link label", link.label ?? null, L.linkLabel, true) };
+}
+
+/**
+ * Keeps the site of the last Jira link given as its issue URL, so the project's keys open in a
+ * browser without a Jira config. Runs inside the write's transaction (a refused write keeps
+ * nothing); browsers re-read the project once the write has returned.
+ */
+function rememberPastedSite(projectKey: string, links: ReadonlyArray<{ kind?: unknown; ref?: unknown }>, ctx: WriteContext): void {
+  const site = links.map((l) => (l?.kind === "jira" && typeof l.ref === "string" ? parseJiraIssueUrl(l.ref)?.site : null)).filter(Boolean).at(-1);
+  if (site && rememberPastedJiraSite(projectKey, site)) {
+    queueMicrotask(() => ppmTasksEvents.emit({ type: "project", projectKey, what: "settings", actor: ctx.actor, via: ctx.via }));
+  }
 }
 
 /** Whether making `parentId` the parent of `taskId` would make a cycle. */
@@ -139,6 +155,7 @@ export function normalizePatch(
       return true;
     });
     out.set("links", links);
+    rememberPastedSite(projectKey, patch.links, ctx);
   }
   if (patch.result !== undefined) {
     const result: TaskResult | null = patch.result === null ? null

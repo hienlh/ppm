@@ -10,16 +10,18 @@
 import { basename } from "node:path";
 import { ME_MEMBER_ID, type TaskView } from "../../shared/ppm-tasks.ts";
 import { formatTaskRef } from "../../shared/ppm-tasks-refs.ts";
+import { taskLinkWebHref } from "../../shared/ppm-task-link-href.ts";
 import { projectTelegramDetail } from "../assistant-managers/manager-chats-db.ts";
 import { projectNameForPath } from "../project-name-for-path.ts";
 import { memberRows } from "../ppm-tasks/ppm-tasks-db.ts";
 import { taskLinkStateSource } from "../ppm-tasks/ppm-tasks-link-state-source.ts";
+import { jiraSiteFor } from "../ppm-tasks/link-state/ppm-tasks-jira-site.ts";
 import { listStatuses } from "../ppm-tasks/ppm-tasks-project-config.ts";
 import { getTaskProject, listTaskProjects } from "../ppm-tasks/ppm-tasks-projects.service.ts";
 import { getTask, listTasks, taskChildren } from "../ppm-tasks/ppm-tasks.service.ts";
 import { todayYmd, userTimeZone } from "../ppm-tasks/ppm-tasks-today.ts";
 import type { CardDetail } from "./assistant-telegram-card-kinds.ts";
-import type { ChildLine, TaskCardFacts } from "./assistant-telegram-task-card.ts";
+import type { ChildLine, TaskCardFacts, TaskCardLinkLine } from "./assistant-telegram-task-card.ts";
 
 /** Most decks held at once; the oldest goes first. */
 export const MAX_DECKS = 100;
@@ -80,26 +82,35 @@ function memberName(projectKey: string, id: string | null): string | null {
   return id === ME_MEMBER_ID ? "You" : null;
 }
 
-/** A Jira or PR link's live state as one line; nothing is fetched here, only the cache is read. */
-export function linkLines(task: TaskView): string[] {
+type LinkStates = ReturnType<ReturnType<typeof taskLinkStateSource>["states"]>;
+
+/**
+ * A Jira or PR link's live state as one line, opening the issue or the PR; nothing is fetched
+ * here, only the cache is read.
+ */
+export function linkLines(task: TaskView): TaskCardLinkLine[] {
   const links = task.links.filter((l) => l.kind === "jira" || l.kind === "pr");
   if (!links.length) return [];
-  let states: ReturnType<ReturnType<typeof taskLinkStateSource>["states"]>;
+  let states: LinkStates;
   try {
     states = taskLinkStateSource().states(task.projectKey, links);
   } catch {
     states = [];
   }
-  return links.map((l) => {
-    const s = states.find((x) => x.kind === l.kind && x.ref === l.ref)?.state as Record<string, unknown> | null | undefined;
-    if (l.kind === "jira") return typeof s?.status === "string" ? `${l.ref} ${s.status}` : l.ref;
-    const number = /#(\d+)$/.exec(l.ref)?.[1];
-    const name = number ? `PR #${number}` : `PR ${l.ref}`;
-    if (!s || typeof s.state !== "string") return `${name} · state unknown`;
-    const checks = s.checks as { total?: number; failing?: number; pending?: number } | undefined;
-    const ci = !checks?.total ? null : checks.failing ? "CI failing" : checks.pending ? "CI running" : "CI passing";
-    return [`${name} ${s.state}`, ci].filter(Boolean).join(" · ");
-  });
+  const jiraSite = links.some((l) => l.kind === "jira") ? jiraSiteFor(task.projectKey) : null;
+  return links.map((l) => ({ text: linkText(l, states), href: taskLinkWebHref(l, { jiraSite }) }));
+}
+
+/** "NX-6318 In Progress", "PR #2231 open · CI failing". */
+function linkText(l: TaskView["links"][number], states: LinkStates): string {
+  const s = states.find((x) => x.kind === l.kind && x.ref === l.ref)?.state as Record<string, unknown> | null | undefined;
+  if (l.kind === "jira") return typeof s?.status === "string" ? `${l.ref} ${s.status}` : l.ref;
+  const number = /#(\d+)$/.exec(l.ref)?.[1];
+  const name = number ? `PR #${number}` : `PR ${l.ref}`;
+  if (!s || typeof s.state !== "string") return `${name} · state unknown`;
+  const checks = s.checks as { total?: number; failing?: number; pending?: number } | undefined;
+  const ci = !checks?.total ? null : checks.failing ? "CI failing" : checks.pending ? "CI running" : "CI passing";
+  return [`${name} ${s.state}`, ci].filter(Boolean).join(" · ");
 }
 
 /** The facts a card shows for this task. */

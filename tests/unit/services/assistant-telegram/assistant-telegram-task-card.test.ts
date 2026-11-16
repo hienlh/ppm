@@ -68,6 +68,33 @@ describe("deck card", () => {
     shown(html);
   });
 
+  it("makes a link line open the issue or the PR, escaping the address", () => {
+    const html = deckCardHtml(facts({ linkLines: [
+      { text: "AL-6284 Dev Failed", href: "https://alpha.atlassian.net/browse/AL-6284" },
+      { text: "PR #2424 open", href: "https://github.com/alpha/beta-web/pull/2424?a=1&b=<2>" },
+      { text: "AL-7", href: null },
+    ] }), POS, CTX);
+    expect(html).toContain('<a href="https://alpha.atlassian.net/browse/AL-6284">AL-6284 Dev Failed</a>');
+    expect(html).toContain('<a href="https://github.com/alpha/beta-web/pull/2424?a=1&amp;b=%3C2%3E">PR #2424 open</a>');
+    expect(shown(html).split("\n")).toContain("AL-7");
+  });
+
+  it("never makes a non-web or private address tapable", () => {
+    const html = deckCardHtml(facts({ linkLines: [
+      { text: "AL-1", href: "javascript:alert(1)" }, { text: "AL-2", href: "data:text/html,x" },
+      { text: "AL-3", href: "http://jira.alpha.example/browse/AL-3" }, { text: "AL-4", href: "https://jira:8080/browse/AL-4" },
+      { text: "AL-5", href: "https://10.0.0.5/browse/AL-5" },
+    ] }), POS, CTX);
+    expect(html).not.toContain("<a ");
+    expect(shown(html)).toContain("AL-1");
+  });
+
+  it("keeps a title-only project's links, tapable or not, off the phone", () => {
+    const text = shown(deckCardHtml(facts({ linkLines: [{ text: "AL-6284 Dev Failed", href: "https://alpha.atlassian.net/browse/AL-6284" }] }), POS, TITLE_ONLY));
+    expect(text).not.toContain("AL-6284");
+    expect(deckCardHtml(facts({ linkLines: [{ text: "AL-6284", href: "https://alpha.atlassian.net/browse/AL-6284" }] }), POS, TITLE_ONLY)).not.toContain("<a ");
+  });
+
   it("puts PPM's note above the card", () => {
     expect(shown(deckCardHtml(facts(), POS, CTX, "Changed elsewhere — here is the current state.")).split("\n")[0]).toBe("⚠️ Changed elsewhere — here is the current state.");
   });

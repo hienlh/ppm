@@ -70,6 +70,33 @@ export async function setupTasksFixture(): Promise<TasksFixture> {
         return json({ ok: true, path, at });
       }
       if (route === "messages") return json(messages);
+      // A project's Jira site and its links' cached states, as a Jira config and the link checker
+      // would leave them (the checker never runs here, and no Jira or GitHub is asked).
+      if (route === "link-world" && req.method === "POST") {
+        const b = await req.json() as { projectPath?: unknown; jiraBaseUrl?: unknown; states?: unknown };
+        if (typeof b.projectPath !== "string" || !Array.isArray(b.states)) return json({ error: "projectPath and states are required" }, 400);
+        const { getDb } = await import("../../../src/services/db.service");
+        const { projectKey } = await import("../../../src/services/project-name-for-path");
+        // The real link-state source over this cache, whose reads never leave the machine: a Jira
+        // read answers "paused" and a PR read answers nothing, so the rows below are what shows.
+        const { createLinkStateService, liveLinkStateEnv } = await import("../../../src/services/ppm-tasks/link-state/ppm-tasks-link-state.service");
+        const { setTaskLinkStateSource } = await import("../../../src/services/ppm-tasks/ppm-tasks-link-state-source");
+        setTaskLinkStateSource(createLinkStateService({ ...liveLinkStateEnv, readJira: async () => null, readPrs: async () => new Map() }).source);
+        const db = getDb();
+        const project = db.query("SELECT id FROM projects WHERE path = ?").get(b.projectPath) as { id: number } | null;
+        if (!project) return json({ error: "no such project" }, 404);
+        if (typeof b.jiraBaseUrl === "string") {
+          db.query("INSERT OR REPLACE INTO jira_config (project_id, base_url, email, api_token_encrypted) VALUES (?, ?, 'alpha@example.com', 'e2e-not-a-token')")
+            .run(project.id, b.jiraBaseUrl);
+        }
+        const key = projectKey(b.projectPath);
+        const now = Date.now();
+        for (const s of b.states as Array<{ kind: string; ref: string; state: unknown }>) {
+          db.query("INSERT OR REPLACE INTO task_link_state (kind, ref, project_key, state_json, error, checked_at, changed_at) VALUES (?, ?, ?, ?, NULL, ?, ?)")
+            .run(s.kind, s.ref, key, JSON.stringify(s.state), now, now);
+        }
+        return json({ ok: true, projectKey: key });
+      }
       // A turn PPM starts itself (`watch`), as a watch or a wake does: nobody wrote in it, so an
       // Assistant turn begun this way is unattended.
       if (route === "watch-turn" && req.method === "POST") {

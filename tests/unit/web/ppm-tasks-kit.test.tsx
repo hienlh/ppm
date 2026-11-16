@@ -139,6 +139,49 @@ describe("due, people, links, result", () => {
     expect(opened).toEqual(["NX-6318"]);
   });
 
+  it("opens every link with a web address in a new tab, with the open-externally icon", async () => {
+    const { TaskLinksCard } = await import("../../../src/web/components/ppm-tasks/task-links-card");
+    const links = [
+      { kind: "jira" as const, ref: "AL-6284", label: null },
+      { kind: "pr" as const, ref: "alpha/beta-web#2424", label: null },
+      { kind: "url" as const, ref: "https://example.com/spec", label: null },
+      { kind: "session" as const, ref: "c0ffee", label: null },
+    ];
+    const task = { links } as unknown as import("../../../src/shared/ppm-tasks-api.ts").TaskDto;
+    const opened: string[] = [];
+    const card = (jiraSite: string | null) => (
+      <TaskLinksCard task={task} linkStates={[{ kind: "jira", ref: "AL-6284", state: { status: "Dev Failed", category: "indeterminate" }, error: null, checkedAt: 1, changedAt: 1 }]}
+        jiraSite={jiraSite} onAdd={async () => true} onRemove={() => {}} onOpenChat={(id) => opened.push(id)} />
+    );
+    mounted = await mount(card("https://alpha.atlassian.net"));
+    const anchors = [...mounted.container.querySelectorAll("a")];
+    expect(anchors.map((a) => [a.getAttribute("data-link-kind"), a.getAttribute("href"), a.getAttribute("target"), a.getAttribute("rel")])).toEqual([
+      ["jira", "https://alpha.atlassian.net/browse/AL-6284", "_blank", "noopener noreferrer"],
+      ["pr", "https://github.com/alpha/beta-web/pull/2424", "_blank", "noopener noreferrer"],
+      ["url", "https://example.com/spec", "_blank", "noopener noreferrer"],
+    ]);
+    expect(anchors.every((a) => a.querySelector("[data-link-external]"))).toBe(true);
+    // The live state stays on the chip beside the icon.
+    expect(anchors[0]!.textContent).toContain("Dev Failed");
+    await click(mounted.container.querySelector('button[data-link-kind="session"]'));
+    expect(opened).toEqual(["c0ffee"]);
+    await mounted.unmount();
+
+    mounted = await mount(card(null));
+    expect(mounted.container.querySelector('a[data-link-kind="jira"]')).toBeNull();
+    expect(mounted.container.querySelector('span[data-link-kind="jira"]')).not.toBeNull();
+    expect(mounted.container.querySelector("[data-link-hint]")?.textContent).toContain("no Jira site");
+    expect(mounted.container.querySelector("[data-jira-site-hint]")?.textContent).toContain("full URL");
+  });
+
+  it("never puts a non-web URL in an href", async () => {
+    const { TaskLinksCard } = await import("../../../src/web/components/ppm-tasks/task-links-card");
+    const task = { links: [{ kind: "url", ref: "javascript:alert(1)", label: null }] } as unknown as import("../../../src/shared/ppm-tasks-api.ts").TaskDto;
+    mounted = await mount(<TaskLinksCard task={task} linkStates={[]} onAdd={async () => true} onRemove={() => {}} onOpenChat={() => {}} />);
+    expect(mounted.container.querySelector("a")).toBeNull();
+    expect(mounted.container.querySelector("[href]")).toBeNull();
+  });
+
   it("shows a result only when there is one, and the away badge", async () => {
     mounted = await mount(<div><TaskResultBlock result={null} /><TaskResultBlock result={{ text: "Merged #412", at: NOW, by: "Manager ppm" }} /><TaskUnattendedBadge /></div>);
     expect(mounted.container.querySelectorAll("[data-task-result]")).toHaveLength(1);

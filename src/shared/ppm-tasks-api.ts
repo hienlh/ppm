@@ -72,6 +72,11 @@ export interface TaskDetailResponse {
   task: TaskDto;
   children: TaskDto[];
   linkStates: LinkState[];
+  /**
+   * The project's Jira site, where its Jira links open (`<site>/browse/NX-6284`); null when the
+   * project has no Jira config. Missing from answers of an older server.
+   */
+  jiraSite?: string | null;
 }
 
 /** Every write answers with the task as it now stands. */
