@@ -1,8 +1,9 @@
 /**
  * The Tasks section of the project sidebar (variant-3 screen 01), on a desktop and in the phone
  * drawer. It owns the data (one list query per scope and filters, the projects' settings, live
- * link states) and the actions; the list it renders only draws. Selecting a row previews the task
- * in the main area, and the selection follows the task tab that is active. Searching for a code
+ * link states) and the actions; the list it renders only draws. Selecting a row opens the task
+ * (`openTask`: its window on a desktop, a sheet on a phone), and the selection follows the task tab
+ * that is active. Searching for a code
  * the chats use (`#82`, `ppm/82`) shows that one task and jumps to it.
  *
  * Below `md` the phone list draws the same props (`mobile/task-list-mobile.tsx`).
@@ -19,7 +20,8 @@ import { usePpmTaskLinkStates, usePpmTaskList } from "@/hooks/use-ppm-tasks";
 import { usePpmTaskProjects } from "@/hooks/use-ppm-task-projects";
 import { ppmTasksClient } from "@/lib/ppm-tasks/ppm-tasks-client";
 import { childProgress, countingQueryFor, groupTasks, listQueryFor, visibleTasks } from "@/lib/ppm-tasks/task-list-view";
-import { openTaskChat, openTaskTab, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
+import { openTaskChat, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
+import { openTask } from "@/lib/ppm-tasks/open-task";
 import { taskIdOfTab } from "@/lib/ppm-tasks/task-tab-preview";
 import { lookupTasksByCode, tasksMatchingCode } from "@/lib/ppm-tasks/task-code-lookup";
 import { parseTaskCodeQuery } from "../../../shared/ppm-tasks-refs";
@@ -86,9 +88,10 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
 
   const onSelect = useCallback((task: TaskDto, keep: boolean) => {
     ppmTasksStore.getState().select(task.id);
-    openTaskTab(task, { keep });
-    onNavigate?.();
-  }, [onNavigate]);
+    // A window on a desktop, a sheet on a phone: the drawer stays open under the sheet, so
+    // closing it goes back to the list.
+    openTask(task, { keep });
+  }, []);
   const onOpenChat = useCallback((task: TaskDto, sessionId: string) => {
     openTaskChat(task.project, sessionId, workingProvider(live[task.id] ? { workingSession: live[task.id]!.workingSession } : task), task);
     onNavigate?.();
@@ -114,7 +117,7 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
     if (!jumpPending.current || !jumpTo || isMobile) return;
     jumpPending.current = false;
     ppmTasksStore.getState().select(jumpTo.id);
-    openTaskTab(jumpTo);
+    openTask(jumpTo);
   }, [jumpTo, isMobile, query]);
   // `beta/3` typed in alpha's list names a task the list cannot hold: Enter looks it up.
   const codeNamesElsewhere = !!code?.project && code.project.toLowerCase() !== contextProject?.toLowerCase();

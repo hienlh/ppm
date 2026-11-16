@@ -7,6 +7,8 @@ import { TabPool } from "@/components/layout/tab-pool";
 import { Sidebar } from "@/components/layout/sidebar";
 import { StatusBar } from "@/components/layout/status-bar";
 import { WindowLayer } from "@/components/floating-window/window-layer";
+import { TaskSheetHost } from "@/components/ppm-tasks/mobile/task-sheet-host";
+import { CLOSE_NAVIGATION } from "@/lib/ppm-tasks/close-navigation";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { MobileDrawer } from "@/components/layout/mobile-drawer";
 import { ProjectBottomSheet } from "@/components/layout/project-bottom-sheet";
@@ -92,6 +94,12 @@ export function App() {
     };
     window.addEventListener(OPEN_NAVIGATION, open);
     return () => window.removeEventListener(OPEN_NAVIGATION, open);
+  }, []);
+  // A task's sheet turned into a full-screen tab on a phone: the drawer it was opened from closes.
+  useEffect(() => {
+    const close = () => { setDrawerOpen(false); setDrawerTab(undefined); };
+    window.addEventListener(CLOSE_NAVIGATION, close);
+    return () => window.removeEventListener(CLOSE_NAVIGATION, close);
   }, []);
 
   const [mountedProjects, setMountedProjects] = useState<Set<string>>(
@@ -478,6 +486,8 @@ export function App() {
         <Suspense fallback={null}>
           <AgentSessionSheet />
         </Suspense>
+        {/* Phone: a task opened from anywhere shows in a bottom sheet (no windows below md) */}
+        <TaskSheetHost />
 
         <TabCloseConfirmHost />
 

@@ -364,7 +364,7 @@ scope is this project or all projects (each project a chip that can be left out)
 for type, status group (Open by default), person and tag, a declared field from ··· *Filter by
 field*, and search; scope and filters are kept per device (`ppm-tasks-view-store.ts`). Rows are
 grouped Now / Today / This week / Later; each carries its links' state, who it waits on, child
-progress and its working-session chip (`task-list-row.tsx`). On a desktop ↑/↓ move the selection with the main area following, Enter keeps the tab,
+progress and its working-session chip (`task-list-row.tsx`). On a desktop ↑/↓ move the selection with the task's window following, Enter keeps it,
 and dragging a row (mouse or pen) reorders it inside its cell or, dropped in another group, changes
 its urgency. The header holds New task, Search and ··· (Task settings…, Filter by field, Clear
 filters, Turn off tasks for the project). A project with Tasks off shows *Turn on tasks* instead of a
@@ -386,11 +386,33 @@ with a "Copied" toast and does nothing else. Typing a code into the list's searc
 and, on a desktop, opens it at once; Enter keeps its tab and also finds another project's task. The
 command palette puts the task a code names first (`command-palette-task-code.ts`).
 
+**Where a task opens.** Every way to open a task — a list row, a task chip in a chat or the
+composer, the manager chat's Tasks list, the palette, a child or linked task on a task's page — goes
+through `openTask` (`src/web/lib/ppm-tasks/open-task.ts`; the rules are the pure `planTaskOpen` in
+`task-open-plan.ts`). On a desktop the task opens in a floating `tab-host` window that is its home
+(closing the window closes the task), so the tab the user was working in stays as it was. One
+window per task: opening a task that already has a window, or that the user turned into a tab,
+brings that window or tab forward. A plain selection (a click, ↑/↓ in the list) swaps the task in
+the window that still shows a *preview*, so walking the list never stacks windows; an edit, a
+double-click or Enter keeps it, and the next task gets a window of its own (stepping off the front
+one). The window's titlebar has **Open as tab** (`task-window-title-extras.tsx`): the task moves
+into the grid as a kept tab and the window closes. A chat the window opens (Open chat, Start chat
+once it has started one, Ask manager when the project has a manager) shows in the grid, so the window
+goes down to the dock first (`minimizeTaskWindow`); the task stays open and its dock chip, or opening
+the task again, brings it back. Windows keep their place across a reload like any
+other; a new task window with none open comes back where the last one was moved or resized to
+(`task-window-rect.ts`, localStorage `ppm-task-window-rect`, per device). At the window cap the task
+opens as a tab. Below `md` there are no windows: the task opens in a bottom sheet
+(`mobile/task-sheet.tsx`, mounted by `TaskSheetHost` from `useTaskSheetStore`) holding the phone
+page, with × and **Full screen**, which closes the sheet and the navigation drawer and opens the
+task as a tab. Opened from the drawer's list, the drawer stays open under the sheet, so closing the
+sheet goes back to the list. The address (`/project/<p>/task/<id>`, `?openTask=`) still opens a tab.
+
 **The task tab** (tab type `task`, `task-tab.tsx`, address `/project/<project>/task/<id>`).
-Selecting a row opens the task in a *preview* tab, VS Code style (`task-tab-preview.ts`): italic
-title, replaced by the next selection, one per panel; editing the task or double-clicking the row
-or the tab keeps it, and the next selection opens a new preview beside it. The list's selection
-follows the task tab in front. On a desktop (`task-detail-desktop.tsx`) content and history sit on
+The same page is the tab and the window. A task opened as a tab follows the *preview* rules, VS
+Code style (`task-tab-preview.ts`): italic title, replaced by the next selection, one per panel;
+editing the task or double-clicking the row or the tab keeps it, and the next selection opens a new
+preview beside it. The list's selection follows the task tab in front. On a desktop (`task-detail-desktop.tsx`) content and history sit on
 the left, the working session and every property on the right, stacked below 760px of the page's own
 width. A Decision task lists its options; *Choose* calls `decide` and nothing else — the server
 records the choice and sends it to the chat ([`ppm_ui`](ai-chat-and-providers.md#ppm-task-tools)),

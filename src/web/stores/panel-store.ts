@@ -381,6 +381,9 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       panels: { ...s.panels, [p.id]: { ...p, tabs: stampActive(replaceTabInPlace(p.tabs, plan.tabId, tab), id), activeTabId: id, tabHistory: pushHistory(history, id) } },
     }));
     persist();
+    // A task window's preview is replaced in its window panel, which `persist` skips: without this
+    // a reload brought the window back on the task it showed before.
+    if (isWindowPanelId(p.id)) saveWindowPanels(get().panels);
     return id;
   }
 

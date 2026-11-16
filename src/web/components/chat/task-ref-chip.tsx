@@ -8,7 +8,7 @@
  */
 import { ListTodo, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import { openTaskTab } from "@/lib/ppm-tasks/open-task-tab";
+import { openTask } from "@/lib/ppm-tasks/open-task";
 import { taskChipLabel, type ComposerTaskChip } from "@/lib/ppm-tasks/composer-task-chip-logic";
 import type { TaskReference } from "../../../shared/chat-task-ref";
 import { TaskCode } from "@/components/ppm-tasks/kit/task-code";
@@ -61,7 +61,7 @@ export function TaskRefChipRow({ refs, currentProject }: { refs: readonly TaskRe
           type="button"
           data-task-ref={ref.taskId}
           title={`${taskChipLabel({ ...ref, project: ref.projectName }, currentProject)} · ${ref.status}. Open the task.`}
-          onClick={(e) => { e.stopPropagation(); openTaskTab({ id: ref.taskId, project: ref.projectName, title: ref.title, number: ref.number }); }}
+          onClick={(e) => { e.stopPropagation(); openTask({ id: ref.taskId, project: ref.projectName, title: ref.title, number: ref.number }); }}
           className={cn(CHIP_BOX, "px-2 hover:border-primary/60")}
         >
           <ListTodo className="size-3.5 shrink-0 text-primary" />

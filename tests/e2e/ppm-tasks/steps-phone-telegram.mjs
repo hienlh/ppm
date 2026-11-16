@@ -12,7 +12,9 @@ import { buttonsOf } from "../assistant-telegram/harness.mjs";
  */
 function smallTargets(page, sel) {
   return page.evaluate((s) => [...document.querySelectorAll(`${s} button, ${s} [role=button]`)].filter((b) => {
-    if (b.tabIndex < 0 || b.hasAttribute("data-task-code")) return false;
+    // The task sheet's × and Full screen follow the chat footer's row (22 / 26 px, no 44 px
+    // minimum): steps-task-window.mjs measures them.
+    if (b.tabIndex < 0 || b.hasAttribute("data-task-code") || b.matches("[data-task-sheet-close], [data-task-sheet-full-screen]")) return false;
     const r = b.getBoundingClientRect();
     if (!r.width || !r.height) return false;
     const after = getComputedStyle(b, "::after");
@@ -66,7 +68,8 @@ async function phoneViews(k, s) {
   await k.beat(800);
   if (!(await list.count())) await openDrawerTasks(page);
   await page.locator("[data-task-row]").getByText(s.t.login.title).first().tap();
-  const detail = page.locator("[data-task-detail-mobile]:visible");
+  // The task opens in a bottom sheet over the list.
+  const detail = page.locator("[data-task-open-sheet] [data-task-detail-mobile]:visible");
   await detail.waitFor({ timeout: 15000 });
   assert.deepEqual(await smallTargets(page, "[data-task-detail-mobile]"), [], "every control in the detail is at least 44 px");
   await k.beat(1500);

@@ -135,7 +135,9 @@ async function codesInListAndDetail(k, s) {
   await assertHeights(page, "[data-task-detail] [data-task-child]", TEXT(false), "1440 child rows");
   const children = await codesOf(detail.locator('[data-task-card="children"]'));
   assert.deepEqual(children.sort(), kids.map((x) => `#${x.number}`).sort(), `each child shows its code: ${children}`);
-  await page.locator(`[title^="#${login.number} ${login.title}"]`).first().waitFor({ timeout: 10000 });
+  // The task opens in a window, whose titlebar carries the tab's name ("#12 Fix login").
+  await page.locator('[aria-roledescription="window"]', { has: page.locator(`[data-task-detail="${login.id}"]`) })
+    .getByText(`#${login.number} ${login.title}`, { exact: true }).first().waitFor({ timeout: 10000 });
   await assertCodesFit(page, "[data-tasks-panel]", "1440 list");
   await assertCodesFit(page, "[data-task-detail]", "1440 detail");
   await k.shot("c01-list-and-detail-1440");
