@@ -40,7 +40,7 @@ export function TaskListMobile(p: TaskListViewProps) {
   const actions = useCallback((task: TaskDto) => setPressedId(task.id), []);
 
   return (
-    <div role="list" aria-label="Tasks" data-task-list="" data-task-list-mobile="" className="pb-4">
+    <div aria-label="Tasks" data-task-list="" data-task-list-mobile="" className="pb-4">
       {p.groups.filter((g) => g.rows.length > 0).map((g) => (
         <section key={g.urgency} data-task-group={g.urgency} aria-label={URGENCY_LABEL[g.urgency]}>
           <h3 className="flex items-center gap-2 bg-panel px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-text-3">
@@ -50,7 +50,7 @@ export function TaskListMobile(p: TaskListViewProps) {
             {g.rows.map(({ task, depth }) => {
               const live = p.live[task.id];
               return (
-                <div role="listitem" key={task.id}>
+                <div key={task.id}>
                   <TaskRowMobile task={task} depth={depth} selected={task.id === p.selectedId} showProject={p.showProject}
                     progress={p.progress.get(task.id)} members={p.settings[task.project]?.members}
                     linkStates={live?.linkStates} working={live?.workingSession}

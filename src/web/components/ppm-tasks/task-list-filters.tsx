@@ -26,7 +26,7 @@ export function groupFilterLabel(groups: readonly BaseGroup[]): string {
 
 function Chip({ on, children, onClear }: { on: boolean; children: ReactNode; onClear?: () => void }) {
   return (
-    <span className={cn("inline-flex h-7 max-md:h-11 max-w-full items-center rounded-full border text-xs",
+    <span className={cn("inline-flex h-7 max-md:h-[46px] max-w-full items-center rounded-full border text-xs",
       on ? "border-accent-wash-border bg-accent-wash text-primary" : "border-border-soft text-text-2")}>
       <DropdownMenuTrigger className="inline-flex h-full min-w-0 items-center gap-1 rounded-full pl-2.5 pr-2 outline-none hover:text-text">
         {children}<ChevronDown aria-hidden className="size-3 shrink-0" />

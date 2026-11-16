@@ -62,11 +62,11 @@ export function TasksSidebarHeader({ project, enabled, filterFields, onNewTask, 
       </div>
       {searchOpen && (
         <div className="relative px-2.5 pb-1.5">
-          <Search aria-hidden className="pointer-events-none absolute left-5 top-2 size-3.5 text-text-3" />
+          <Search aria-hidden className="pointer-events-none absolute left-5 top-2 size-3.5 text-text-3 max-md:top-[15px]" />
           <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search titles and notes"
             onKeyDown={(e) => { if (e.key === "Escape") setSearchOpen(false); }} aria-label="Search tasks"
             className="h-8 max-md:h-11 max-md:text-base w-full rounded-md border border-border-soft bg-surface pl-7 pr-7 text-xs text-text outline-none placeholder:text-text-3 focus:border-ring" />
-          {query && <button type="button" aria-label="Clear search" onClick={() => setQuery("")} className="absolute right-4 top-1.5 grid size-5 place-items-center rounded text-text-3 hover:text-text"><X className="size-3" /></button>}
+          {query && <button type="button" aria-label="Clear search" onClick={() => setQuery("")} className="absolute right-4 top-1.5 grid size-5 place-items-center rounded text-text-3 hover:text-text max-md:right-2.5 max-md:top-0 max-md:size-11"><X className="size-3" /></button>}
         </div>
       )}
     </div>

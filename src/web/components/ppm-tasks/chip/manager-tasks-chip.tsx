@@ -41,8 +41,8 @@ export function ManagerTasksChip({ summary }: { summary: Pick<TaskProjectSummary
         <span className={HIDE_NARROW}>{count === 1 ? "task" : "tasks"}</span>
         {now > 0 && <span className={cn("text-error", HIDE_NARROW)}>· {now} now</span>}
       </button>
-      <FooterPopover open={open} onClose={() => setOpen(false)} label="Tasks" anchorRef={chipRef} className="w-[min(100%,460px)]">
-        {open && <ManagerTasksPopoverList project={name} total={count} onClose={() => setOpen(false)} />}
+      <FooterPopover open={open} onClose={() => setOpen(false)} label="Tasks" anchorRef={chipRef} className="w-[min(100%,520px)]">
+        <ManagerTasksPopoverList project={name} total={count} onClose={() => setOpen(false)} />
       </FooterPopover>
     </>
   );

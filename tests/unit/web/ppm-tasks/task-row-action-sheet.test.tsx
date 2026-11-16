@@ -98,6 +98,7 @@ describe("Long-press on a phone row", () => {
     const e = new Event(type, { bubbles: true, cancelable: true });
     Object.defineProperty(e, "touches", { value: type === "touchend" || type === "touchcancel" ? [] : [{ clientX: 10, clientY: y }] });
     el.dispatchEvent(e);
+    return e;
   };
   const wait = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 
@@ -112,7 +113,10 @@ describe("Long-press on a phone row", () => {
     const el = document.querySelector("[data-task-row]")!;
     await act(async () => { touch("touchstart", el); });
     await wait(LONG_PRESS_MS + 60);
-    await act(async () => { touch("touchend", el); });
+    let end: Event | null = null;
+    await act(async () => { end = touch("touchend", el); });
+    // A cancelled touchend makes the browser skip the click that would close the sheet just opened.
+    expect(end!.defaultPrevented).toBe(true);
     await click(el);
     expect(calls).toEqual(["actions"]);
     await click(el);
@@ -123,6 +127,9 @@ describe("Long-press on a phone row", () => {
     const calls: string[] = [];
     view = await mount(row(taskDto(), calls));
     const el = document.querySelector("[data-task-row]")!;
+    let quickEnd: Event | null = null;
+    await act(async () => { touch("touchstart", el); quickEnd = touch("touchend", el); });
+    expect(quickEnd!.defaultPrevented).toBe(false);
     await act(async () => { touch("touchstart", el); touch("touchcancel", el); });
     await wait(LONG_PRESS_MS + 60);
     await act(async () => { touch("touchstart", el); touch("touchmove", el, 40); });

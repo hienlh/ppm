@@ -5,8 +5,10 @@
  * `touchcancel`: once the browser takes the gesture for a scroll it sends that and nothing else,
  * so a timer it did not clear would open the sheet over a list the finger is already moving.
  *
- * The tap that a finger lifting after a long-press still produces is swallowed: `swallowClick()`
- * answers true once for it.
+ * Lifting the finger after the sheet opened is no tap. A browser whose own long-press is slower
+ * than ours still makes a click of it, and that click would land on the sheet's backdrop and close
+ * it, so the `touchend` is cancelled (which makes the browser skip the click). A click that still
+ * reaches the row is swallowed: `swallowClick()` answers true once for it.
  */
 import { useCallback, useEffect, useMemo, useRef, type MouseEvent, type TouchEvent } from "react";
 
@@ -52,7 +54,7 @@ export function useTaskRowLongPress(onLongPress: () => void) {
       if (!t || !origin.current) return;
       if (Math.abs(t.clientX - origin.current.x) > MOVE_TOLERANCE_PX || Math.abs(t.clientY - origin.current.y) > MOVE_TOLERANCE_PX) disarm();
     },
-    onTouchEnd: () => { disarm(); },
+    onTouchEnd: (e: TouchEvent) => { disarm(); if (fired.current && e.cancelable) e.preventDefault(); },
     onTouchCancel: () => { disarm(); touching.current = false; },
     onContextMenu: (e: MouseEvent) => { e.preventDefault(); fire(); },
   }), [disarm, fire]);

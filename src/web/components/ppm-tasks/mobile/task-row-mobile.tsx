@@ -39,7 +39,8 @@ export function TaskRowMobile(p: TaskRowMobileProps) {
   return (
     <div role="button" tabIndex={0} aria-current={p.selected || undefined} data-task-row={task.id} data-depth={p.depth}
       onClick={() => { if (!press.swallowClick()) p.onOpen(task); }}
-      onKeyDown={(e) => { if (e.key === "Enter") p.onOpen(task); }}
+      // Only the row's own keys: Enter on the status button or the chat chip inside is theirs.
+      onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); p.onOpen(task); } }}
       {...press.handlers}
       className={cn(
         "grid min-h-[62px] cursor-pointer select-none grid-cols-[44px_minmax(0,1fr)_18px] items-center pr-3 [-webkit-touch-callout:none] active:bg-surface-hover",
@@ -52,9 +53,12 @@ export function TaskRowMobile(p: TaskRowMobileProps) {
         <TaskStatusGlyph baseGroup={task.baseGroup} closedAs={task.closedAs} size="lg" />
       </button>
       <div className="min-w-0 py-2">
-        <div className={cn("truncate text-[15px] leading-snug text-text", closed && "text-text-3 line-through")}>{task.title}</div>
+        {/* A button only so a touch on the title stays here: the browser's touch adjustment would
+            otherwise hand a tap near the chat chip's 44px hit area to the chip. The row opens it. */}
+        <button type="button" tabIndex={-1} className={cn("block w-full truncate text-left text-[15px] leading-snug text-text", closed && "text-text-3 line-through")}>{task.title}</button>
+        {/* The meta line is not clipped: the chat chip's 44px hit area reaches past it; its items shrink instead. */}
         {p.depth === 0 && (
-          <div className="mt-1 flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden whitespace-nowrap text-xs text-text-3">
+          <div className="mt-1 flex min-w-0 flex-nowrap items-center gap-2 whitespace-nowrap text-xs text-text-3">
             {p.showProject && <span className="max-w-[80px] truncate rounded bg-surface px-1 text-[11px] font-medium text-text-2">{task.project}</span>}
             {(task.type === "decision" || task.type === "reply") && <TaskTypeBadge type={task.type} className="text-[11px]" />}
             {externalMeta(task, p.linkStates)}

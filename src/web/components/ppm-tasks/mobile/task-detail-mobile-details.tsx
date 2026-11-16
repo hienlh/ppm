@@ -39,8 +39,8 @@ export interface TaskDetailMobileDetailsProps {
   onShowActivity(): void;
 }
 
-/** The desktop cards' small buttons, grown to thumb size (the working-session chip keeps its own). */
-const THUMB_CARDS = "[&_[data-task-card]_button:not([data-session-tone])]:min-h-11";
+/** The desktop cards' small buttons and the working-session block's, grown to thumb size (the chip keeps its own). */
+const THUMB_CARDS = "[&_[data-task-card]_button:not([data-session-tone])]:min-h-11 [&_[data-task-card]_button:not([data-session-tone])]:min-w-11 [&_[data-working-session]_button]:min-h-11";
 
 function Row({ icon, children, aside, onClick }: { icon: ReactNode; children: ReactNode; aside?: ReactNode; onClick(): void }) {
   return (
@@ -70,7 +70,7 @@ function Title({ title, closed, onRename }: { title: string; closed: boolean; on
       className="w-full resize-none rounded-lg border border-ring bg-surface px-2 py-1.5 text-[19px] font-semibold leading-snug text-text outline-none" />;
   }
   return (
-    <h2 onClick={() => setEditing(true)} data-task-title="" className="break-words text-[19px] font-semibold leading-snug text-text">
+    <h2 role="button" tabIndex={0} aria-label={`Rename: ${title}`} onClick={() => setEditing(true)} onKeyDown={(e) => { if (e.key === "Enter") setEditing(true); }} data-task-title="" className="break-words text-[19px] font-semibold leading-snug text-text">
       <span className={cn(closed && "text-text-2 line-through decoration-text-3")}>{title}</span>
     </h2>
   );

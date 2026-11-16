@@ -50,6 +50,8 @@ export function chipListView(tasks: readonly TaskDto[], limit = CHIP_LIST_LIMIT)
 export function ManagerTasksPopoverList({ project, total, onClose }: { project: string; total: number; onClose(): void }) {
   const { tasks, loading, error } = usePpmTaskList({ project, closed: false });
   const view = useMemo(() => chipListView(tasks), [tasks]);
+  // The chip counts child tasks too; whatever the list leaves out is "more" in the sidebar.
+  const more = Math.max(view.more, total - view.ids.length);
   const live = usePpmTaskLinkStates(view.ids, project);
 
   const openTask = (task: TaskDto) => {
@@ -87,8 +89,8 @@ export function ManagerTasksPopoverList({ project, total, onClose }: { project: 
       </div>
       <FooterPopoverFooter>
         <span className="min-w-0 truncate px-1 text-text-3 max-md:text-xs">
-          {view.more > 0 ? `${view.more} more` : ""}
-          <span className="md:hidden">{view.more > 0 ? " · " : ""}tap a task to open it</span>
+          {more > 0 ? `${more} more` : ""}
+          <span className="md:hidden">{more > 0 ? " · " : ""}tap a task to open it</span>
         </span>
         <FooterButton className="ml-auto" onClick={showInSidebar}><PanelRight />Show in sidebar</FooterButton>
       </FooterPopoverFooter>

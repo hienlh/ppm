@@ -65,7 +65,7 @@ export function TaskNewDialog({ open, onOpenChange, scope, project, projects, pa
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md" data-task-new-dialog="">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md max-md:bottom-0 max-md:top-auto max-md:max-w-full max-md:translate-y-0 max-md:rounded-b-none" data-task-new-dialog="">
         <DialogHeader><DialogTitle>{parent ? `New child of ${parent.ref}` : "New task"}</DialogTitle></DialogHeader>
         <form className="grid gap-3" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
           <div>

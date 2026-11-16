@@ -28,6 +28,7 @@ import { TaskFieldEditorSheet, type TaskSheetKind } from "./task-field-editor-sh
 import { changeTaskStatus } from "./task-status-change";
 
 const NO_PROJECTS: never[] = [];
+const AWAY_NOTICE_MS = 24 * 3_600_000;
 const TAB = "relative inline-flex h-11 flex-1 items-center justify-center gap-1.5 border-b-2 text-[15px]";
 
 export function TaskDetailMobile({ detail, settings }: TaskDetailViewProps) {
@@ -42,7 +43,8 @@ export function TaskDetailMobile({ detail, settings }: TaskDetailViewProps) {
   const { actions, run } = write;
   const managers = useManagerChats();
   const history = usePpmTaskHistory(task.id, "all");
-  const away = history.items.filter((e) => e.unattended && e.undoneBy === null).length;
+  // Recent unattended changes: older ones keep their badge in Activity, without the Details notice.
+  const away = history.items.filter((e) => e.unattended && e.undoneBy === null && e.at > Date.now() - AWAY_NOTICE_MS).length;
   const closed = task.baseGroup === "closed";
 
   const patch = useCallback((p: TaskPatch & { decision?: { question?: string | null; options: string[] } }) =>
