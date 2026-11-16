@@ -36,6 +36,8 @@ export type TraceOrigin =
    * prompt or script schedule posting into a chat of its own through the chat socket.
    */
   | "schedule"
+  /** PPM sending what the user chose on its own screens (PPM Tasks) into a chat. */
+  | "ppm_ui"
   /** A chat's running turn stopped so that the chat could be deleted. */
   | "delete"
   | "unknown";

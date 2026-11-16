@@ -42,6 +42,8 @@ export interface ManagerChatsEnv {
   now(): number;
   /** A project got a manager: its rules files are ensured (template, `.gitignore`). Never throws. */
   ensureRules?(target: { projectKey: string; projectPath: string; projectName: string; sessionId: string }): Promise<void>;
+  /** A project got a manager: its task store is switched on (PPM Tasks). Never throws. */
+  managerAssigned?(target: { projectKey: string; projectPath: string }): Promise<void>;
 }
 
 const log = createLogger("assistant-managers");
@@ -74,6 +76,15 @@ const realEnv: ManagerChatsEnv = {
     } catch (e) {
       // The next manager turn seeds them instead.
       log.warn(`could not set up the rules of ${target.projectName}: ${(e as Error).message}`);
+    }
+  },
+  managerAssigned: async (target) => {
+    try {
+      const { enableOnManagerAssigned } = await import("../ppm-tasks/ppm-tasks-projects.service.ts");
+      enableOnManagerAssigned(target.projectKey, target.projectPath);
+    } catch (e) {
+      // The user can switch the store on in the project's settings instead.
+      log.warn(`could not switch tasks on for ${target.projectPath}: ${(e as Error).message}`);
     }
   },
 };
@@ -184,6 +195,9 @@ export function createManagerChats(env: ManagerChatsEnv = realEnv) {
       });
       invalidate();
       await env.ensureRules?.({ projectKey: target.key, projectPath: target.path, projectName: target.name, sessionId: current });
+      // Only a new manager switches tasks on: re-assigning the same chat leaves a store the user
+      // switched off alone.
+      if (previous?.sessionId !== current) await env.managerAssigned?.({ projectKey: target.key, projectPath: target.path });
       env.changed([...touched]);
       return { row: getManagerChatRow(target.key)!, replaced: previous && previous.sessionId !== current ? previous.sessionId : null };
     },
