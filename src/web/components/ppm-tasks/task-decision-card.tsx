@@ -20,9 +20,11 @@ export interface TaskDecisionCardProps {
   onEditOptions(input: { question: string | null; options: string[] }): void;
 }
 
-const letter = (id: string, i: number) => (/^[a-z]$/i.test(id) ? id.toUpperCase() : String.fromCharCode(65 + i));
+/** An option's letter: its own one-letter id, else its place (A, B, …). Shared with the phone. */
+export const letter = (id: string, i: number) => (/^[a-z]$/i.test(id) ? id.toUpperCase() : String.fromCharCode(65 + i));
 
-function sentTo(task: TaskDto): string {
+/** Where a choice goes, in the card's words. Shared with the phone. */
+export function sentTo(task: TaskDto): string {
   const w = task.workingSession;
   if (w.kind === "manager") return "the manager chat";
   if (w.kind === "session") return `"${w.session.title?.trim() || "the working chat"}"`;

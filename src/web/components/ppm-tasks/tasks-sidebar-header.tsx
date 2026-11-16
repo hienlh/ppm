@@ -11,7 +11,7 @@ import {
 import { useTaskViewStore } from "@/stores/ppm-tasks-view-store";
 import type { FieldDef } from "../../../shared/ppm-tasks";
 
-const iconBtn = "grid size-7 place-items-center rounded-md text-text-3 hover:bg-surface-hover hover:text-text disabled:opacity-40";
+const iconBtn = "grid size-7 max-md:size-11 place-items-center rounded-md text-text-3 hover:bg-surface-hover hover:text-text disabled:opacity-40";
 
 export interface TasksSidebarHeaderProps {
   /** The project the settings and the switch act on; null in all-projects with no active project. */
@@ -28,8 +28,8 @@ export function TasksSidebarHeader({ project, enabled, filterFields, onNewTask, 
   const { searchOpen, query, setSearchOpen, setQuery, setFilters, clearFilters } = useTaskViewStore();
   return (
     <div className="sticky top-0 z-10 bg-panel">
-      <div className="flex h-9 items-center gap-0.5 pl-3 pr-1.5">
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-2">
+      <div className="flex h-9 items-center gap-0.5 pl-3 pr-1.5 max-md:h-12 max-md:pl-4 max-md:pr-1">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-2 max-md:text-base max-md:normal-case max-md:tracking-normal max-md:text-text">
           <ListTodo aria-hidden className="size-3.5" />Tasks
         </span>
         <button type="button" className={iconBtn} title="New task" aria-label="New task" disabled={!enabled} onClick={onNewTask}><Plus className="size-3.5" /></button>
@@ -65,7 +65,7 @@ export function TasksSidebarHeader({ project, enabled, filterFields, onNewTask, 
           <Search aria-hidden className="pointer-events-none absolute left-5 top-2 size-3.5 text-text-3" />
           <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search titles and notes"
             onKeyDown={(e) => { if (e.key === "Escape") setSearchOpen(false); }} aria-label="Search tasks"
-            className="h-8 w-full rounded-md border border-border-soft bg-surface pl-7 pr-7 text-xs text-text outline-none placeholder:text-text-3 focus:border-ring" />
+            className="h-8 max-md:h-11 max-md:text-base w-full rounded-md border border-border-soft bg-surface pl-7 pr-7 text-xs text-text outline-none placeholder:text-text-3 focus:border-ring" />
           {query && <button type="button" aria-label="Clear search" onClick={() => setQuery("")} className="absolute right-4 top-1.5 grid size-5 place-items-center rounded text-text-3 hover:text-text"><X className="size-3" /></button>}
         </div>
       )}
