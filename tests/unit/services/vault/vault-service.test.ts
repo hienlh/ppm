@@ -32,7 +32,7 @@ async function dekOf(svc: ReturnType<typeof make>, tier: "secure" | "sealed", pw
 
 describe("migration 73", () => {
   it("creates both tables at the current schema version", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(73);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(73);
     const names = (getDb().query("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map((r) => r.name);
     expect(names).toEqual(expect.arrayContaining(["vault_keys", "vault_items"]));
   });
@@ -52,7 +52,7 @@ describe("migration 73", () => {
     db.exec("DROP TABLE vault_items; DROP TABLE vault_keys; PRAGMA user_version = 72");
     db.query("INSERT INTO config (key, value) VALUES ('kept', '1')").run();
     runMigrations(db);
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(73);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(CURRENT_SCHEMA_VERSION);
     expect(db.query("SELECT value FROM config WHERE key='kept'").get()).toEqual({ value: "1" });
     db.close();
   });
