@@ -12,7 +12,7 @@ import { join } from "node:path";
 import "../../test-setup.ts";
 import { app } from "../../../src/server/index.ts";
 import { configService } from "../../../src/services/config.service.ts";
-import { getDb, openTestDb, setDb } from "../../../src/services/db.service.ts";
+import { getDb, getSessionTitle, openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { chatService } from "../../../src/services/chat.service.ts";
 import { providerRegistry } from "../../../src/providers/registry.ts";
 import { projectKey as keyOf } from "../../../src/services/project-name-for-path.ts";
@@ -294,6 +294,8 @@ describe("decide, start chat, notify manager", () => {
     expect(provider.sessions.get(sessionId)?.title).toBe("Write the release notes");
     expect(json.data!.task.workingSessionId).toBe(sessionId);
     expect(json.data!.task.workingSession).toMatchObject({ kind: "session", session: { sessionId } });
+    // PPM's own record, which the working-session chip reads, carries the task's title at once.
+    expect(getSessionTitle(sessionId)).toBe("Write the release notes");
     const stale = await call("POST", `/${t.id}/start-chat`, { revision: t.revision });
     expect(stale.json.code).toBe("stale");
     expect(provider.sessions.size).toBeGreaterThan(0);
