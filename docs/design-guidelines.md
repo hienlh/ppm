@@ -33,30 +33,32 @@ These rules MUST be followed when creating or modifying any UI component. PPM is
 - For `hidden`/`flex` toggles: `flex can-hover:hidden can-hover:group-hover:flex`
 - **DO NOT** use `md:opacity-0 md:group-hover:opacity-100` — iPad matches `md:` but has no hover
 
-### 3. Button Heights — the Chat Composer's Toolbar Is the Standard
+### 3. Button Heights — the Chat Footer's Chip Row Is the Standard
 There is **no 44px minimum**, on desktop or on a phone. Every button, chip and toolbar button
-takes its height from the toolbar inside the chat composer (Attach, mode, model, mic, Send), which
-is compact and reads well at both sizes. The numbers below are measured from that toolbar and the
-chat footer's context row in a production build:
+takes its height from the row of chips just above the chat composer (the Tasks/Waiting chips on
+its left, the History and `···` buttons on its right), which is compact and reads well at both
+sizes. The numbers are the drawn sizes, measured in a production build:
 
 | Kind | Desktop (`md` and up) | Phone (below `md`) | Defined in |
 |---|---|---|---|
-| Icon-only button (toolbar, header, row action) | **34×34px**, radius 10px, 16px icon | **32×32px** | `SQUARE_BUTTON`, `message-input.tsx` |
-| Chip or small labelled button (mode, model, Queue) | **30px** tall, 9px side padding, 11.5px text, 16px icon | **28px** | `BAR_CHIP`, `message-input.tsx` |
-| Primary action (Send, Stop) | **36×36px**, radius 11px | **32×32px**, radius 10px | the Send button, `message-input.tsx` |
-| Dense row under content (the chat footer's chips) | **28px** (32px in a chat narrower than 420px) | **26px** | `FOOTER_CHIP`, `footer-chip.ts` |
-| Buttons inside one shared pill (usage, History, `···`) | **24px** (28px in a narrow chat) | **22px** | `FOOTER_CLUSTER` / `FOOTER_GHOST`, `footer-chip.ts` |
+| Chip or button with text | **28px** tall, 10px side padding, 11.5px text, 14px icon, fully rounded | **26px** tall, 5px side padding | `FOOTER_CHIP`, `footer-chip.ts` |
+| Small icon button | **24px** tall, at least 26px wide (History 26×24, `···` 28×24), 14px icon | **22px** tall, at least 22px wide (History 22×22, `···` 24×22) | `FOOTER_GHOST`, `footer-chip.ts` |
 
-- Pick the row by what the control is, not by the device: a toolbar button is 34/32px wherever
-  it sits, a chip 30/28px. Do not add a taller variant "for touch".
+- In a chat narrower than 420px on desktop the row grows to 32px chips and 28px icon buttons
+  (`@max-[420px]/chat`); a phone keeps 26 / 22px.
+- Pick the size by what the control is, not by the device: a button with text is 28 / 26px
+  wherever it sits, an icon button 24 / 22px. Do not add a taller variant "for touch".
 - The press area does not have to reach 44px. Some small controls still widen theirs with an
   invisible `::after` (the chat footer's chips and its History/`···` buttons, the Waiting chip);
   whether those stay is still open, so do not add new ones until it is decided.
-- The same sizes apply under a coarse pointer at desktop width (iPad, touch laptop); the composer
+- The same sizes apply under a coarse pointer at desktop width (iPad, touch laptop); the row
   switches at the `md` breakpoint only.
-- Icons are 16px in buttons and chips, 14px in the dense row.
-- One known exception today: the model chip keeps 30px on a phone (it has no `max-md:h-7`), so
-  the phone bar mixes 28px and 30px chips. New chips follow `BAR_CHIP` (28px on a phone).
+
+**The composer's own toolbar is not the reference.** The bar inside the composer is larger than
+the standard today: Attach and the mic are 34×34px (32×32 on a phone), the mode and model chips
+30px (28px on a phone, the model chip 30px), Send 36×36px (32×32). Whether it shrinks to the
+standard is still open; until then leave it as it is, and do not copy its sizes into new
+controls.
 
 These numbers cover buttons, chips and toolbar buttons. List rows, menu items in a sheet and text
 inputs are sized by their content and are not covered here.
@@ -152,8 +154,8 @@ not by any one kind. Any future floating-window feature must follow the same con
 - **Picture-in-Picture** is a titlebar capability of every window kind, not just a detached tab:
   every skin renders the same PiP button, absent (not disabled, never a dead control that only
   explains itself) on browsers without `documentPictureInPicture`. The "Bring back" control shown
-  while a window plays in PiP is sized like any other primary action (36px on desktop, 32px on a
-  phone; Mobile-First rule 3).
+  while a window plays in PiP is a button with text like any other: 28px on desktop, 26px on a
+  phone (Mobile-First rule 3).
 - **Portrait default for reading windows**: a window whose body is a live, scrolling read-only
   feed (an agent/teammate's transcript) spawns portrait (9:16), pinned top-right, instead of the
   landscape cascade every other kind uses — a step list reads top-to-bottom and wastes width in
@@ -609,17 +611,17 @@ Start with mobile styles, add complexity for larger screens:
 
 ### Touch-Friendly Sizes
 
-- **Button height:** the chat composer's toolbar, not 44px — icon buttons 34px (32px on a phone),
-  chips 30px (28px), primary actions 36px (32px). Full table: Mobile-First rule 3.
+- **Button height:** the chat footer's chip row, not 44px — buttons and chips with text 28px
+  (26px on a phone), small icon buttons 24px (22px). Full table: Mobile-First rule 3.
 - **Touch target:** no 44px minimum; see rule 3 for the invisible press areas still in use.
 - **Spacing:** 16px minimum between interactive elements
 
 ```tsx
-// Icon button, like Attach in the composer
-<button className="flex size-[34px] items-center justify-center rounded-[10px] max-md:size-8">…</button>
+// Chip or button with text, like the footer's Tasks chip (FOOTER_CHIP)
+<button className="inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[11.5px] max-md:h-[26px] max-md:px-[5px]">…</button>
 
-// Chip, like the mode chip in the composer
-<button className="inline-flex h-[30px] items-center gap-1.5 rounded-full px-[9px] text-[11.5px] max-md:h-7">…</button>
+// Small icon button, like History in the footer (FOOTER_GHOST)
+<button className="inline-flex h-6 min-w-[26px] items-center justify-center rounded-full px-1.5 max-md:h-[22px] max-md:min-w-[22px] max-md:px-1">…</button>
 
 // Avoid: a 44px button "for touch"
 <button className="h-11 px-4">Click</button>

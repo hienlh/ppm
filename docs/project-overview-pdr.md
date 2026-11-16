@@ -127,7 +127,7 @@ For the user-facing feature list, see the [README](../README.md). For per-releas
 | **Security** | Token auth on HTTP *and* WebSocket, path-traversal protection, PPM-dir shield, single-use download tokens, secret redaction in logs | Middleware, `fs-path-guard.service.ts`, `redact-secrets.ts` |
 | **Accessibility** | WCAG 2.1 AA | Radix UI primitives, semantic HTML |
 | **Cross-platform** | macOS, Linux, Windows | Bun + per-OS providers for PTY, metrics, host info, autostart |
-| **Mobile** | iOS Safari, Android Chrome | Responsive design, bottom sheets, long-press menus, compact buttons sized like the chat composer's toolbar (no 44px minimum) |
+| **Mobile** | iOS Safari, Android Chrome | Responsive design, bottom sheets, long-press menus, compact buttons sized like the chip row above the chat composer (no 44px minimum) |
 | **Offline** | Basic file browsing, editor | Service worker caching (PWA) |
 | **Resource safety** | No unbounded watches or spawns | Pruned watch tree (never recursive on a project root), one long-lived metrics collector, bounded transcode slots |
 
