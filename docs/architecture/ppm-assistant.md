@@ -1299,6 +1299,21 @@ chat resume them. Code in `src/services/restart-news/`.
   is about to ask, and removed again when its ask fails — which the supervisor consumes once at its
   next manual spawn and ignores after 5 minutes (every spawn deletes one that old, unread); an external RAM watchdog that
   says nothing shows up as `manual`.
+- **Who asked.** `ppm restart`, `ppm stop` and `ppm upgrade` first append one `[restart-caller]`
+  line to `ppm.log` (`restart-caller.ts`): the command's pid, its parent, grandparent and up to two
+  more ancestors with their command lines (one PowerShell CIM walk on Windows, `/proc` on Linux,
+  `ps` on macOS — `restart-caller-process-chain.ts`), the working folder, `PPM_AI_CHAT`,
+  `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, `CODEX_THREAD_ID`, `AI_AGENT`, and the `--reason`. Command
+  lines go through `redactLogText` plus a rule for `--token value`-style arguments first. A short
+  form (`ppm restart (pid N) under <name pid> ← …, from an AI chat (session …)`) rides as
+  `requestedBy` in the Windows command file and in `.restart-reason` — now written by every
+  `ppm restart`, `--reason` or not; one with no reason keeps the supervisor's own words and only adds
+  the asker — and reaches the server as `PPM_START_REQUESTED_BY`, so the supervisor's
+  "Windows command: restart server only" / "SIGUSR2 received" line, the server's "Server run started"
+  line and the restart news all say who asked. A command the supervisor receives with no
+  `requestedBy` is logged as "no caller recorded": a hand-written `.supervisor-cmd`, a bare signal or
+  an older `ppm`. Git Bash (MSYS) processes report a Windows parent that has already exited, so the
+  walk often stops at the shell; `CLAUDE_PID` and the session id still name the chat.
 - **The run log.** The server records `{pid, version, startedAt}` at boot and `stoppedAt` with the
   trigger on a graceful shutdown (`restart-news-run.ts`, config row `server_run_log`, last 20 runs —
   a row of the database the server runs on, so a dev server never reads the live one's runs). The next

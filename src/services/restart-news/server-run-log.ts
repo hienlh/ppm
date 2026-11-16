@@ -77,6 +77,7 @@ export function describeStart(
   return {
     at: now, kind, toVersion: version,
     ...(detail ? { detail } : {}),
+    ...(given?.requestedBy ? { requestedBy: given.requestedBy } : {}),
     ...(previous && previous.version !== version ? { fromVersion: previous.version } : {}),
     ...(cleanStop !== undefined ? { cleanStop } : {}),
     ...(previous && !wroteStop && orderedStop ? { stopOrderedBy: orderedStop.slice(0, 100) } : {}),

@@ -53,6 +53,8 @@ function restartLine(r: RestartEntry): string {
     const detail = cleanEventText(r.detail, 200);
     if (detail) parts[0] += ` (${quote(detail)})`;
     parts[0] += ".";
+    const by = cleanEventText(r.requestedBy, 200);
+    if (by) parts.push(`Requested by ${quote(by)}.`);
     parts.push(from ? `Version ${from} → ${to}.` : `Version ${to}.`);
   }
   // Only a stop nothing explains is called unclean. An ordered stop is named, but not credited to the

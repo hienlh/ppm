@@ -1,7 +1,7 @@
 import { VERSION } from "../../version.ts";
 import { createLogger } from "../logger.ts";
 import { getConfigValue, setConfigValue } from "../db.service.ts";
-import { readStartReasonEnv, START_DETAIL_ENV, START_REASON_ENV } from "./start-reason.ts";
+import { readStartReasonEnv, START_DETAIL_ENV, START_REASON_ENV, START_REQUESTED_BY_ENV } from "./start-reason.ts";
 import { getPpmDir } from "../ppm-dir.ts";
 import { takeOrderedStop } from "./ordered-stop-note.ts";
 import { recordServerStart, recordServerStop, SERVER_RUN_LOG_ROW, type ServerStart } from "./server-run-log.ts";
@@ -29,12 +29,14 @@ export function noteServerStart(now = Date.now()): ServerStart | null {
     const given = readStartReasonEnv(process.env);
     delete process.env[START_REASON_ENV];
     delete process.env[START_DETAIL_ENV];
+    delete process.env[START_REQUESTED_BY_ENV];
     current = recordServerStart(runLog, {
       now, pid: process.pid, version: VERSION, given,
       orderedStopOf: (previous) => takeOrderedStop(getPpmDir(), previous, now),
     });
     const r = current.restart;
     log.info(`Server run started: ${r.kind}${r.detail ? ` (${r.detail})` : ""}`
+      + `${r.requestedBy ? `, requested by ${r.requestedBy}` : ""}`
       + `${r.fromVersion ? `, ${r.fromVersion} → ${r.toVersion}` : ""}`
       + `${r.stopOrderedBy ? `, previous run stopped by the supervisor (${r.stopOrderedBy})` : r.cleanStop === false ? ", previous run did not stop cleanly" : ""}`);
   } catch (e) {

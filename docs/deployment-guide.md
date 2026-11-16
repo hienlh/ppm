@@ -288,6 +288,12 @@ tunnel; if the URL has not appeared it warns and tells you to check `ppm status`
 The split exists so a restart does not rotate the public URL. Use `down` for a real shutdown; use
 `stop --all` only when something is wedged — it kills by scan, not by tracked PID.
 
+To find out who ran a restart, stop or upgrade nobody remembers, search `ppm.log` for
+`[restart-caller]`: each `ppm restart`, `ppm stop` and `ppm upgrade` writes the processes above it
+(command lines with secrets taken out), the folder it ran in, the AI-chat mark and chat session it
+carried, and its `--reason`. The supervisor's own line then ends `(requested by …)`, or
+`(no caller recorded …)` when the command did not come from a `ppm` command that records one.
+
 ### Logs
 
 The daemon writes to `~/.ppm/ppm.log` (inside `getPpmDir()`), one line per event:

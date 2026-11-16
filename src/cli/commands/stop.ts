@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { getPpmDir, isIsolatedPpmHome } from "../../services/ppm-dir.ts";
 import { reapTrackedDescendants } from "../../services/windows-process-tree.ts";
 import { writeOrderedStop } from "../../services/restart-news/ordered-stop-note.ts";
+import { recordRestartCaller } from "../../services/restart-news/restart-caller.ts";
 
 const pidFile = () => resolve(getPpmDir(), "ppm.pid");
 const statusFile = () => resolve(getPpmDir(), "status.json");
@@ -95,7 +96,10 @@ function killAllByName(name: string): number {
   return killed;
 }
 
-export async function stopServer(options?: { all?: boolean; kill?: boolean }) {
+/** `requestedBy`: a `ppm restart` that stops first has already recorded who ran it. */
+export async function stopServer(options?: { all?: boolean; kill?: boolean; requestedBy?: string }) {
+  const requestedBy = options?.requestedBy
+    ?? await recordRestartCaller(getPpmDir(), "stop", options?.all ? "--all" : options?.kill ? "--kill" : undefined);
   if (options?.all) {
     console.log("  Stopping all PPM and cloudflared processes...\n");
     // Stop via system service manager first (prevents Restart=always from restarting)
@@ -150,11 +154,11 @@ export async function stopServer(options?: { all?: boolean; kill?: boolean }) {
   }
 
   // Default: soft stop — kill server only, supervisor stays alive
-  return softStopCmd();
+  return softStopCmd(requestedBy);
 }
 
 /** Soft stop: write command file + signal supervisor → kills server only */
-async function softStopCmd() {
+async function softStopCmd(requestedBy: string) {
   let status: Record<string, unknown> | null = null;
   if (existsSync(statusFile())) {
     try { status = JSON.parse(readFileSync(statusFile(), "utf-8")); } catch {}
@@ -182,7 +186,7 @@ async function softStopCmd() {
   }
 
   // Write soft stop command file + signal supervisor (Windows: polling picks it up)
-  writeFileSync(cmdFile(), JSON.stringify({ action: "soft_stop" }));
+  writeFileSync(cmdFile(), JSON.stringify({ action: "soft_stop", requestedBy }));
   if (process.platform !== "win32") {
     try { process.kill(supervisorPid, "SIGUSR2"); } catch (e) {
       console.error(`  Failed to signal supervisor: ${e}`);

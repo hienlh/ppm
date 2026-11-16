@@ -78,8 +78,11 @@ export function writeStatus(data: Record<string, unknown>) {
 // here so the type matches what's actually read/written on disk.
 export type CmdAction = "soft_stop" | "resume" | "restart" | "retunnel" | "reshare" | "upgrade";
 
-/** Atomically claim + read command file (rename to .claimed, read, delete) */
-export function readAndDeleteCmd(): { action: CmdAction } | null {
+/**
+ * Atomically claim + read command file (rename to .claimed, read, delete). `requestedBy`: who ran
+ * the `ppm` command that wrote it (`restart-caller.ts`); absent from older writers.
+ */
+export function readAndDeleteCmd(): { action: CmdAction; requestedBy?: unknown } | null {
   const claimed = CMD_FILE() + ".claimed";
   try {
     renameSync(CMD_FILE(), claimed); // atomic claim — second caller gets ENOENT

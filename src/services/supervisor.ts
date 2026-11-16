@@ -54,7 +54,7 @@ import { waitForReplacement } from "./supervisor-self-replace-wait.ts";
 import { readThreadSnapshot, describeThreadSnapshot, type ThreadSnapshot } from "./process-thread-snapshot.ts";
 import { readMachineCpuTimes, machineBusyFraction, type MachineCpuTimes } from "./machine-cpu.ts";
 import { uptime as osUptime } from "node:os";
-import { dropStaleRestartRequest, startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
+import { dropStaleRestartRequest, peekRestartRequester, requesterNote, startReasonEnv, takeRestartRequest, type StartReason } from "./restart-news/start-reason.ts";
 import { dropOrderedStop, writeOrderedStop } from "./restart-news/ordered-stop-note.ts";
 import {
   decideServerExit, healthKillApplies, healthProbeAnswered, initialStartReason, restartWithoutChildReason, resumeAfterPauseReason, resumeAfterStopReason,
@@ -2424,12 +2424,12 @@ export async function runSupervisor(opts: {
     const cmd = readAndDeleteCmd();
     if (cmd) {
       if (cmd.action === "soft_stop") {
-        log("INFO", "SIGUSR2: soft_stop command received");
+        log("INFO", `SIGUSR2: soft_stop command received${requesterNote(cmd.requestedBy)}`);
         softStop();
         return;
       }
       if (cmd.action === "resume") {
-        log("INFO", "SIGUSR2: resume command received");
+        log("INFO", `SIGUSR2: resume command received${requesterNote(cmd.requestedBy)}`);
         if (getState() === "stopped" || getState() === "paused") {
           triggerResume();
         }
@@ -2486,7 +2486,8 @@ export async function runSupervisor(opts: {
       triggerResume();
       return;
     }
-    log("INFO", "SIGUSR2 received, restarting server only");
+    // A bare signal carries no words: `ppm restart` leaves its caller in the restart request.
+    log("INFO", `SIGUSR2 received, restarting server only${requesterNote(peekRestartRequester(getPpmDir()))}`);
     if (serverChild) {
       serverRestartRequested = true; // flag so spawnServer skips backoff
       requestServerShutdown(serverChild, "ppm restart").catch(() => {});
@@ -2586,12 +2587,16 @@ export async function runSupervisor(opts: {
     setInterval(() => {
       const cmd = readAndDeleteCmd();
       if (!cmd) return;
-      if (cmd.action === "soft_stop") { softStop(); }
+      if (cmd.action === "soft_stop") {
+        log("INFO", `Windows command: soft_stop${requesterNote(cmd.requestedBy)}`);
+        softStop();
+      }
       else if (cmd.action === "resume") {
+        log("INFO", `Windows command: resume${requesterNote(cmd.requestedBy)}`);
         if (getState() === "stopped" || getState() === "paused") triggerResume();
       }
       else if (cmd.action === "restart") {
-        log("INFO", "Windows command: restart server only");
+        log("INFO", `Windows command: restart server only${requesterNote(cmd.requestedBy ?? peekRestartRequester(getPpmDir()))}`);
         if (getState() === "paused" || getState() === "stopped") {
           triggerResume();
         } else if (serverChild) {
@@ -2634,7 +2639,7 @@ export async function runSupervisor(opts: {
         void reloadShareHost();
       }
       else if (cmd.action === "upgrade") {
-        log("INFO", "Windows command: upgrade, starting self-replace");
+        log("INFO", `Windows command: upgrade, starting self-replace${requesterNote(cmd.requestedBy)}`);
         selfReplace().then((result) => {
           if (!result.success) {
             log("ERROR", `Self-replace failed: ${result.error}, restarting children`);
