@@ -19,6 +19,7 @@ import {
   enabledTaskProjects, openChildren, showableTask, taskDetail, taskFacts, taskProjectName, todayYmd, type Deck,
 } from "./assistant-telegram-tasks-deck.ts";
 import { buttonText } from "./assistant-telegram-task-common.ts";
+import { MESSAGE_ABOUT_TASK_LABEL } from "./assistant-telegram-task-message.ts";
 
 export type KeyMaker = (text: string, press: Omit<TaskPress, "kind" | "ref">) => InlineKeyboardButton;
 
@@ -59,7 +60,8 @@ export function drawDeck(deck: Deck, key: KeyMaker, now: number): { html: string
     const statuses = statusChoices(listStatuses(task.projectKey), task.statusId)
       .map((s) => key(buttonText(s.name, 24), { op: "status", taskId: task.id, statusId: s.id }));
     const paging = total > 1 ? [[key("‹", { op: "prev" }), key(`${pos.index + 1} / ${total}`, { op: "position" }), key("›", { op: "next_page" })]] : [];
-    return { html, rows: [...undoRow, ...inRows(statuses, 3), ...paging, ...filterRows(deck, key)] };
+    const about = [[key(MESSAGE_ABOUT_TASK_LABEL, { op: "about", taskId: task.id })]];
+    return { html, rows: [...undoRow, ...inRows(statuses, 3), ...about, ...paging, ...filterRows(deck, key)] };
   }
   if (view.kind === "result") {
     const task = showableTask(view.taskId)!;

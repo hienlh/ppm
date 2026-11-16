@@ -81,7 +81,7 @@ export function ManagerTasksPopoverList({ project, total, onClose }: { project: 
                 {g.tasks.map((t) => (
                   <ChipRow key={t.id} task={t} working={live[t.id]?.workingSession ?? t.workingSession}
                     onOpen={() => openTask(t)}
-                    onOpenChat={(sid) => { onClose(); openTaskChat(t.project, sid, workingProvider(live[t.id] ? { workingSession: live[t.id]!.workingSession } : t)); }} />
+                    onOpenChat={(sid) => { onClose(); openTaskChat(t.project, sid, workingProvider(live[t.id] ? { workingSession: live[t.id]!.workingSession } : t), t); }} />
                 ))}
               </ul>
             </section>

@@ -5,6 +5,9 @@
  * Assistant's two task cards. The manager chat is scripted at the delivery door, so "Tell manager
  * now" is seen arriving there; the Assistant is a scripted Claude behind the real chat layer.
  *
+ * "Message about this task" and a reply to a task card send the user's next words to the chat
+ * working on the task (its handed-off chat, else the manager chat), through the real chat layer.
+ *
  * Set `PPM_TG_TASKS_DUMP=<file>` to write every message the fake Telegram received to a file.
  */
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
@@ -212,6 +215,7 @@ describe("/tasks", () => {
     // The project's own statuses, its added one too, without the current one, closed-as-done last.
     expect(buttonsOf(deck)).toEqual([
       ["To do", "Waiting", "Dropped"], ["In review", "Done"],
+      ["💬 Message about this task"],
       ["‹", "1 / 5", "›"],
       ["● All", "nxsys", "pex", "ppm"],
     ]);
@@ -376,7 +380,7 @@ describe("a task the Assistant created from Telegram", () => {
       "ppm · This week",
       "The ppm manager will see it on its next turn.",
     ]);
-    expect(buttonsOf(card)).toEqual([["Urgency", "Importance", "Due"], ["↶ Undo", "Open in PPM"]]);
+    expect(buttonsOf(card)).toEqual([["Urgency", "Importance", "Due"], ["↶ Undo", "Open in PPM"], ["💬 Message about this task"]]);
     expect(button(card, "Open in PPM").url).toStartWith(`${LINK}/project/ppm?openTask=`);
   });
 
@@ -444,5 +448,129 @@ describe("the Assistant's task cards", () => {
     });
     const card = await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.includes("Handed-off work needs you")));
     expect(button(card, "Open chat · nxsys/1").url).toBe(`${LINK}/project/nxsys?openChat=claude/child-1`);
+  });
+});
+
+describe("writing to the chat working on a task", () => {
+  const taskBlock = (id: string) => `task_id ${id}`;
+  const lastCallWith = (text: string) => fake.waitFor(() => providerCalls.findLast((c) => c.startsWith(text)));
+  /** Types words meant for a task's chat: the bot answers by editing its prompt, not with a new message. */
+  async function typeWords(text: string): Promise<string> {
+    fake.pushText(PHONE, PHONE, text);
+    const call = await lastCallWith(text);
+    await settle();
+    return call;
+  }
+  /** A fresh `/tasks <project>` deck, paged to the card of the task titled `title`. */
+  async function cardOf(project: string, title: string): Promise<FakeSentMessage> {
+    await send(`/tasks ${project}`);
+    for (let i = 0; i < 8 && !deckMessage().text.includes(title); i++) await press(deckMessage(), "›");
+    const deck = deckMessage();
+    expect(deck.text).toContain(title);
+    return deck;
+  }
+  const psrCard = () => cardOf("nxsys", "PSR Ireland bỏ sót payslip");
+
+  it("arms the next message for the manager chat, says which task and chat, and sends it there with the task's block", async () => {
+    const deck = await psrCard();
+    const before = fake.sent(PHONE).length;
+    const toast = await press(deck, "💬 Message about this task");
+    expect(toast).toBe("Your next message goes to the chat working on nxsys/1");
+    const prompt = await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.includes("Your next message goes to")));
+    expect(prompt.text).toContain("Your next message goes to the nxsys manager chat, about nxsys/1 · PSR Ireland bỏ sót payslip.");
+    expect(buttonsOf(prompt)).toEqual([["Cancel"]]);
+
+    const call = await typeWords("sửa ngay task này giúp anh");
+    expect(call).toContain("<ppm-user-words-v1>");
+    expect(call).toContain("sent on Telegram");
+    expect(call).toContain("<ppm-taskref-v1>");
+    expect(call).toContain(taskBlock(ids.psr));
+    expect(call).toContain('"PSR Ireland bỏ sót payslip"');
+    const after = await fake.waitFor(() => fake.sent(PHONE).find((m) => m.message_id === prompt.message_id && m.text.startsWith("✅")));
+    expect(after.text).toBe("✅ Sent to the nxsys manager chat, about nxsys/1 · PSR Ireland bỏ sót payslip.");
+    expect(buttonsOf(after)).toEqual([]);
+
+    // One message only: the next goes to the Assistant as usual.
+    const calls = providerCalls.length;
+    await send("cảm ơn");
+    await fake.waitFor(() => providerCalls.length > calls);
+    expect(providerCalls.at(-1)).not.toContain("<ppm-taskref-v1>");
+  });
+
+  it("a handed-off task's words go to its own chat, named only where the project shows details", async () => {
+    const task = getTask(ids.psr)!;
+    updateTask(ids.psr, { workingSessionId: "child-1" }, task.revision, USER);
+    try {
+      const deck = await psrCard();
+      const before = fake.sent(PHONE).length;
+      await press(deck, "💬 Message about this task");
+      const prompt = await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.includes("Your next message goes to")));
+      expect(prompt.text).toContain("the chat “child-1” working on it, about nxsys/1");
+      expect(await typeWords("child, check the period-13 filter")).toContain(taskBlock(ids.psr));
+      const said = await fake.waitFor(() => fake.sent(PHONE).find((m) => m.message_id === prompt.message_id && m.text.startsWith("✅")));
+      expect(said.text).toContain("Sent to the chat “child-1” working on it");
+    } finally {
+      const t = getTask(ids.psr)!;
+      updateTask(ids.psr, { workingSessionId: null }, t.revision, USER);
+    }
+  });
+
+  it("a title-only project shows the ref and title, nothing more", async () => {
+    const deck = await cardOf("ppm", "Secret client payroll fix");
+    const before = fake.sent(PHONE).length;
+    await press(deck, "💬 Message about this task");
+    const prompt = await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.includes("Your next message goes to")));
+    expect(prompt.text).toContain("the ppm manager chat, about ppm/");
+    expect(prompt.text).toContain("Secret client payroll fix");
+    expect(prompt.text).not.toContain("ACME");
+    expect(await press(prompt, "Cancel")).toBe("Cancelled");
+  });
+
+  it("Cancel and the time limit both send nothing and say so", async () => {
+    const deck = await psrCard();
+    let before = fake.sent(PHONE).length;
+    await press(deck, "💬 Message about this task");
+    const prompt = await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.includes("Your next message goes to")));
+    expect(await press(prompt, "Cancel")).toBe("Cancelled");
+    const cancelled = fake.sent(PHONE).find((m) => m.message_id === prompt.message_id)!;
+    expect(cancelled.text).toBe("Cancelled. Nothing was sent about nxsys/1 · PSR Ireland bỏ sót payslip.");
+    const calls = providerCalls.length;
+    await send("đi ngủ thôi");
+    await fake.waitFor(() => providerCalls.length > calls);
+    expect(providerCalls.at(-1)).not.toContain("<ppm-taskref-v1>");
+
+    before = fake.sent(PHONE).length;
+    await press(deckMessage(), "💬 Message about this task");
+    const second = await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.includes("Your next message goes to")));
+    advance(10 * 60_000 + 1);
+    await settle();
+    const expired = await fake.waitFor(() => fake.sent(PHONE).find((m) => m.message_id === second.message_id && m.text.startsWith("Not waiting")));
+    expect(expired.text).toBe("Not waiting any more. Nothing was sent about nxsys/1 · PSR Ireland bỏ sót payslip.");
+    expect(buttonsOf(expired)).toEqual([]);
+  });
+
+  it("a reply to a task card goes to that task's chat, with nothing to arm", async () => {
+    const deck = await psrCard();
+    const before = fake.sent(PHONE).length;
+    fake.pushText(PHONE, PHONE, "reply about this one", "private", {
+      reply_to_message: { message_id: deck.message_id, chat: { id: PHONE, type: "private" }, date: Math.floor(Date.now() / 1000), text: deck.text },
+    });
+    const call = await lastCallWith("reply about this one");
+    expect(call).toContain(taskBlock(ids.psr));
+    const said = await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.startsWith("✅ Sent to")));
+    expect(said.text).toBe("✅ Sent to the nxsys manager chat, about nxsys/1 · PSR Ireland bỏ sót payslip.");
+  });
+
+  it("a forwarded message is not the user's words, and is not sent", async () => {
+    const deck = await psrCard();
+    const before = fake.sent(PHONE).length;
+    await press(deck, "💬 Message about this task");
+    await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.includes("Your next message goes to")));
+    const calls = providerCalls.length;
+    const shown = fake.sent(PHONE).length;
+    fake.pushText(PHONE, PHONE, "someone else's text", "private", { forward_origin: { type: "hidden_user", sender_user_name: "Bob", date: 1 } });
+    const said = await fake.waitFor(() => fake.sent(PHONE).slice(shown).find((m) => m.text.includes("forwarded message")));
+    expect(said.text).toContain("not sent to the task's chat");
+    expect(providerCalls.length).toBe(calls);
   });
 });

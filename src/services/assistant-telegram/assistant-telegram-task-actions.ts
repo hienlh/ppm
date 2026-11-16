@@ -79,6 +79,11 @@ export class AssistantTelegramTasks {
     }));
   }
 
+  /** The task a `/tasks` message of this chat shows now; null when it shows none or is no deck. */
+  taskAt(chatId: string, messageId: number): string | null {
+    return this.decks.taskAt(chatId, messageId);
+  }
+
   /** The chat was disconnected: its decks and their buttons go. */
   forgetChat(chatId: string): void {
     for (const deck of this.decks.dropChat(chatId)) this.deps.codes.dropGroup(groupOf(deck));

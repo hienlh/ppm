@@ -52,7 +52,9 @@ export interface TaskPress {
     | "status" | "prev" | "next_page" | "position" | "filter" | "next" | "undo"
     | "tell" | "later" | "children" | "back"
     | "menu" | "set" | "undo_created"
-    | "undo_history";
+    | "undo_history"
+    /** about: the user's next message goes to the chat working on `taskId`; about_cancel: not any more. */
+    | "about" | "about_cancel";
   taskId?: string;
   statusId?: string;
   /** filter: the project, or null for All. */

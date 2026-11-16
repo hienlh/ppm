@@ -10,6 +10,7 @@ import type { ReplyReference } from "../../../shared/chat-reply";
 import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
 import { ReplyCard } from "./reply-card";
 import { TurnRefChipRow } from "./turn-ref-chip";
+import { TaskRefChipRow } from "./task-ref-chip";
 import { CopyTurnLinkButton } from "./copy-turn-link-button";
 import type { ChatMessage } from "../../../types/chat";
 import { useCallback, useMemo, useState } from "react";
@@ -90,7 +91,7 @@ export function UserBubble(props: UserBubbleProps) {
 function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projectName, onFork, onEdit, onReply, onJumpToReply, replyAvailable, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: UserBubbleProps & {
   parsed: ParsedUserMessage;
 }) {
-  const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo, turnRefs } = parsed;
+  const { files, text, tags, command, terminalBlocks, idePath, agent, replyTo, turnRefs, taskRefs } = parsed;
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
 
@@ -117,6 +118,8 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
       )}
       {/* Drawn from the message's own block: no request, and the same size on every render. */}
       {turnRefs && prompt && <TurnRefChipRow refs={turnRefs} currentProject={projectName} />}
+      {/* The task PPM attached (the chat was opened from it, or the task was picked on Telegram). */}
+      {taskRefs && prompt && <TaskRefChipRow refs={taskRefs} />}
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
 

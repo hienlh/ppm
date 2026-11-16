@@ -52,6 +52,7 @@ import { NewChatProviderGate, useNewChatPreparation } from "./new-chat-provider-
 import { UserBubble } from "./message-user-bubble";
 import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
 import { currentTabMetadata, patchTabMetadata } from "@/lib/patch-tab-metadata";
+import { readTaskChips, setTaskChips, TASK_CHIP_META_KEY, taskChipsFromRefs, withTaskChip, type ComposerTaskChip } from "@/lib/ppm-tasks/composer-task-chip";
 import { useSessionListStore } from "@/stores/session-list-store";
 import { projectRefForName } from "@/stores/session-list-sync-triggers";
 
@@ -104,6 +105,8 @@ interface ChatTabProps {
  * "forever, silently" is not an option.
  */
 const SESSION_CREATE_TIMEOUT_MS = 30_000;
+/** How long a send's task chips wait for a refusal before they count as sent. */
+const SENT_TASK_CHIPS_KEEP_MS = 15_000;
 const PENDING_SEND_TIMEOUT_MS = 45_000;
 
 export function ChatTab(props: ChatTabProps) {
@@ -220,6 +223,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     imagePaths?: string[];
     replyTo?: ReplyReference | null;
     turnRefs?: TurnReference[] | null;
+    taskRefs?: string[] | null;
   } | null>(null);
   const pendingSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -332,6 +336,27 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
   const turnRefsRef = turnChips.refsRef;
   const replaceTurnChips = turnChips.replace;
   const mergeTurnChips = turnChips.merge;
+  // The task the chat was opened from ("Open chat" on a task), kept in the tab's metadata until
+  // the next message takes it: that message tells the AI which task it is about.
+  const taskChips = useMemo(() => readTaskChips(metadata), [metadata]);
+  const taskChipsRef = useRef(taskChips);
+  taskChipsRef.current = taskChips;
+  /**
+   * The chips the last send took, put back if the server refuses that message. A refusal comes
+   * at once, so they are kept only briefly: a later refusal of another message must not bring
+   * back chips whose message went through.
+   */
+  const lastSentTaskChipsRef = useRef<ComposerTaskChip[] | null>(null);
+  const lastSentTaskChipsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rememberSentTaskChips = useCallback((chips: ComposerTaskChip[] | null) => {
+    lastSentTaskChipsRef.current = chips;
+    if (lastSentTaskChipsTimer.current) clearTimeout(lastSentTaskChipsTimer.current);
+    lastSentTaskChipsTimer.current = chips ? setTimeout(() => { lastSentTaskChipsRef.current = null; }, SENT_TASK_CHIPS_KEEP_MS) : null;
+  }, []);
+  useEffect(() => () => { if (lastSentTaskChipsTimer.current) clearTimeout(lastSentTaskChipsTimer.current); }, []);
+  const removeTaskChip = useCallback((taskId: string) => {
+    if (tabId) setTaskChips(tabId, taskChipsRef.current.filter((c) => c.taskId !== taskId));
+  }, [tabId]);
   /** Everything the draft keeps besides the text, as it stands now. */
   const draftBlocks = useCallback(() => ({ replyTo: replyToRef.current, turnRefs: turnRefsRef.current }), [turnRefsRef]);
   const composerDraftRef = useRef<{ owner: string; text: string; observed?: boolean; attachments?: DraftAttachment[] }>({ owner: replyOwner, text: "" });
@@ -748,6 +773,12 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
   }, [replyOwner, saveDraft, mergeTurnChips, turnRefsRef]);
 
   rejectedSendRef.current = (event) => {
+    // The task chips that went with it come back too, joining any added since.
+    const sentTasks = lastSentTaskChipsRef.current;
+    lastSentTaskChipsRef.current = null;
+    if (sentTasks?.length && tabId) {
+      setTaskChips(tabId, sentTasks.reduceRight((chips, chip) => withTaskChip(chips, chip), [...taskChipsRef.current]));
+    }
     const current = composerDraftRef.current;
     const unsent = encodeMessageBlocks(event.content, { replyTo: event.replyTo, turnRefs: event.turnRefs });
     if ((current.owner !== replyOwner || (!current.text.trim() && !current.attachments?.length && !draft?.content.trim()))
@@ -802,10 +833,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
   // Flush pending message once WS connects (replaces unreliable setTimeout)
   useEffect(() => {
     if (isConnected && pendingSendRef.current) {
-      const { content, draftId, permissionMode: pm, images: pendingImages, imagePaths: pendingPaths, replyTo: pendingReply, turnRefs: pendingRefs } = pendingSendRef.current;
+      const { content, draftId, permissionMode: pm, images: pendingImages, imagePaths: pendingPaths, replyTo: pendingReply, turnRefs: pendingRefs, taskRefs: pendingTasks } = pendingSendRef.current;
       pendingSendRef.current = null;
       if (pendingSendTimerRef.current) { clearTimeout(pendingSendTimerRef.current); pendingSendTimerRef.current = null; }
-      sendMessage(content, { permissionMode: pm, replyTo: pendingReply ?? undefined, ...(pendingRefs?.length && { turnRefs: pendingRefs }), ...(pendingImages?.length && { images: pendingImages }), ...(pendingPaths?.length && { imagePaths: pendingPaths }) });
+      sendMessage(content, { permissionMode: pm, replyTo: pendingReply ?? undefined, ...(pendingRefs?.length && { turnRefs: pendingRefs }), ...(pendingTasks?.length && { taskRefs: pendingTasks }), ...(pendingImages?.length && { images: pendingImages }), ...(pendingPaths?.length && { imagePaths: pendingPaths }) });
       firstSendLocked.current = false;
       firstSendContent.current = null;
       setFirstSendPreview(null);
@@ -887,6 +918,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     setForkDraft(undefined);
     setEditFork(null);
     setClearInputSignal((signal) => signal + 1);
+    // A task chip was put here for the chat that was open; it is not about the one picked.
+    if (tabId) setTaskChips(tabId, []);
     setSessionId(session.id);
     setProviderId(session.providerId);
     if (tabId && !designSlug && !assistant) updateTab(tabId, { title: session.title || "Chat" });
@@ -919,7 +952,11 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
       useTabStore.getState().openTab({
         type: "chat",
         title: `Fork: ${body.slice(0, 30)}`,
-        metadata: { projectName, sessionId: forked.id, providerId, pendingMessage: userMessage },
+        metadata: {
+          projectName, sessionId: forked.id, providerId, pendingMessage: userMessage,
+          // The forked message's task comes back as a chip, as its reply and turn chips do.
+          ...(decodeMessageBlocks(userMessage).taskRefs ? { [TASK_CHIP_META_KEY]: taskChipsFromRefs(decodeMessageBlocks(userMessage).taskRefs) } : {}),
+        },
         projectId: projectName || null,
         closable: true,
       });
@@ -948,8 +985,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     replyToRef.current = reply;
     setReplySelection({ owner: replyOwner, reply });
     replaceTurnChips(decoded.turnRefs);
+    if (tabId) setTaskChips(tabId, taskChipsFromRefs(decoded.taskRefs));
     setEditFork({ anchorMsgId: messageId, ownMsgId });
-  }, [replyOwner, sessionId, replaceTurnChips]);
+  }, [replyOwner, sessionId, replaceTurnChips, tabId]);
 
   /** Abandon an armed edit: disarm the fork, drop the prefill, clear the input. */
   const handleCancelEdit = useCallback(() => {
@@ -958,14 +996,15 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     replyToRef.current = null;
     setReplySelection({ owner: replyOwner, reply: null });
     replaceTurnChips(null);
+    if (tabId) setTaskChips(tabId, []);
     setEditForking(false);
     clearDraft();
     setClearInputSignal((n) => n + 1);
-  }, [clearDraft, replyOwner, replaceTurnChips]);
+  }, [clearDraft, replyOwner, replaceTurnChips, tabId]);
 
   /** Fork at the edit anchor, swap THIS tab to the forked session, queue the edited message */
   const handleEditSend = useCallback(
-    async (fullContent: string, anchorMsgId?: string, reply?: ReplyReference | null, turnRefs?: TurnReference[] | null) => {
+    async (fullContent: string, anchorMsgId?: string, reply?: ReplyReference | null, turnRefs?: TurnReference[] | null, taskIds?: string[] | null) => {
       if (!fullContent.trim() || !sessionId || !projectName) return;
       // Surface a working indicator immediately — the fork API and the forked
       // session's codex connect can take ~10s; don't await in silence.
@@ -990,7 +1029,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
         // source session, so that is the one to clear when it goes. The edit continues in the
         // fork, so its reply is the fork's — sent beside the text, where the server checks it,
         // and handed back as the fork's if the queued message is dropped before it goes.
-        queuePendingSend({ content: fullContent, draftId: sessionId, permissionMode, replyTo: reply && { ...reply, sessionId: forked.id }, turnRefs });
+        queuePendingSend({ content: fullContent, draftId: sessionId, permissionMode, replyTo: reply && { ...reply, sessionId: forked.id }, turnRefs, taskRefs: taskIds?.length ? taskIds : null });
         moveDraft(forked.id);
         // Swap the current tab to the forked session (no new tab).
         setStaleSwap(true);
@@ -1033,8 +1072,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
   );
 
   const handleSend = useCallback(
-    async (content: string, attachments: ChatAttachment[] = [], priority?: MessagePriority, selectedReply?: ReplyReference | null, selectedRefs?: TurnReference[] | null) => {
+    async (content: string, attachments: ChatAttachment[] = [], priority?: MessagePriority, selectedReply?: ReplyReference | null, selectedRefs?: TurnReference[] | null, selectedTaskIds?: string[] | null) => {
       const turnRefs = selectedRefs?.length ? selectedRefs : null;
+      const taskRefs = selectedTaskIds?.length ? selectedTaskIds : null;
       const images = selectInlineImages(attachments);
       const fullContent = buildMessageWithAttachments(content, attachments, images);
       // Providers that take a file rather than a payload (codex) read these instead.
@@ -1105,7 +1145,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           setProviderId(session.providerId);
           // Queue message — will be sent by effect when WS reports isConnected. It was
           // composed under the new-tab draft, which is what to clear once it goes.
-          queuePendingSend({ content: fullContent, draftId: "__new__", permissionMode: selectedPermission, images, imagePaths, replyTo: selectedReply, turnRefs });
+          queuePendingSend({ content: fullContent, draftId: "__new__", permissionMode: selectedPermission, images, imagePaths, replyTo: selectedReply, turnRefs, taskRefs });
           return;
         } catch (e) {
           if (attempt !== firstSendAttempt.current) return;
@@ -1117,7 +1157,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           return;
         }
       }
-      sendMessage(fullContent, { permissionMode, priority, replyTo: selectedReply ?? undefined, ...(turnRefs && { turnRefs }), ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
+      sendMessage(fullContent, { permissionMode, priority, replyTo: selectedReply ?? undefined, ...(turnRefs && { turnRefs }), ...(taskRefs && { taskRefs }), ...(images.length > 0 && { images }), ...(imagePaths.length > 0 && { imagePaths }) });
       // Only now: the message is on (or queued for) a live session's socket.
       clearDraft();
     },
@@ -1142,6 +1182,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
     (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => {
       const selectedReply = replyToRef.current;
       const selectedRefs = turnRefsRef.current.length ? [...turnRefsRef.current] : null;
+      const selectedTasks = taskChipsRef.current.length ? [...taskChipsRef.current] : null;
       // Client-handled built-ins act on the UI, so they must not reach the SDK.
       const slash = content.trim().match(/^\/(\S+)(?:\s+([\s\S]+))?$/);
       if (slash) {
@@ -1160,6 +1201,10 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
           toast.error("Remove the referenced turns before running this command");
           return false;
         }
+        if (selectedTasks && builtin) {
+          toast.error("Remove the task before running this command");
+          return false;
+        }
         if (slash[1] === "clear" || item?.name === "clear") {
           clearDraft();
           handleNewSession(slash[2]?.trim(), sessionId ?? undefined);
@@ -1176,15 +1221,19 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
       setReplySelection({ owner: replyOwner, reply: null });
       replaceTurnChips(null);
       composerDraftRef.current = { owner: replyOwner, text: "", observed: true };
+      // The task chips go with this message and leave the composer, so a reload does not bring them back.
+      rememberSentTaskChips(selectedTasks);
+      if (selectedTasks && tabId) setTaskChips(tabId, []);
+      const selectedTaskIds = selectedTasks?.map((c) => c.taskId) ?? null;
       if (editFork && sessionId && projectName) {
         const anchor = editFork.anchorMsgId;
         setEditFork(null);
-        void handleEditSend(buildMessageWithAttachments(content, attachments), anchor, selectedReply, selectedRefs);
+        void handleEditSend(buildMessageWithAttachments(content, attachments), anchor, selectedReply, selectedRefs, selectedTaskIds);
         return;
       }
-      void handleSend(content, attachments, priority, selectedReply, selectedRefs);
+      void handleSend(content, attachments, priority, selectedReply, selectedRefs, selectedTaskIds);
     },
-    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, handleNewSession, replyOwner, turnRefsRef, replaceTurnChips],
+    [handleSend, clearDraft, saveDraft, cancelPendingSave, editFork, sessionId, projectName, handleEditSend, handleNewSession, replyOwner, turnRefsRef, replaceTurnChips, tabId, rememberSentTaskChips],
   );
 
   // Past user messages for the composer's ArrowUp/Down recall. Read through a ref
@@ -1542,6 +1591,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
             onRecallTurnRefs={replaceTurnChips}
             onRemoveTurnChip={turnChips.remove}
             turnChipsBlockedReason={turnChips.blockedReason}
+            taskChips={taskChips}
+            onRemoveTaskChip={removeTaskChip}
             disabled={firstSendPending}
             isStreaming={isStreaming}
             onCancel={cancelStreaming}

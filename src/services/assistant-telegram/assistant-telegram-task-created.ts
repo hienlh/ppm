@@ -36,6 +36,7 @@ import { GONE_TOAST, editCard, telegramUserCtx } from "./assistant-telegram-task
 import { showableTask, taskDetail, taskFacts, taskProjectName, todayYmd } from "./assistant-telegram-tasks-deck.ts";
 import { getTask } from "../ppm-tasks/ppm-tasks.service.ts";
 import { createLogger } from "../logger.ts";
+import { MESSAGE_ABOUT_TASK_LABEL } from "./assistant-telegram-task-message.ts";
 
 const log = createLogger("assistant-telegram");
 
@@ -236,8 +237,15 @@ export class AssistantTelegramTaskCreated {
       rows: [
         [key("Urgency", { op: "menu", field: "urgency" }), key("Importance", { op: "menu", field: "importance" }), key("Due", { op: "menu", field: "due" })],
         [key("↶ Undo", { op: "undo_created" }), ...linkRow],
+        [key(MESSAGE_ABOUT_TASK_LABEL, { op: "about", taskId: card.taskId })],
       ],
     };
+  }
+
+  /** The task a created card of this chat shows; null when that message is no such card. */
+  taskAt(chatId: string, messageId: number): string | null {
+    for (const card of this.cards.values()) if (card.chatId === chatId && card.messageId === messageId && !card.undone) return card.taskId;
+    return null;
   }
 
   /** Whether this press belongs to a created-task card. */

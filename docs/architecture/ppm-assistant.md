@@ -1719,6 +1719,19 @@ revision the card last showed. `assistant-telegram-task-card-extras.ts` adds Ope
 the handed-off work card and Open chat plus a real Undo per change to the "while you were away"
 card, only for changes whose line the Telegram copy actually shows.
 
+**Writing about a task.** A `/tasks` card and a created-task card carry "💬 Message about this task"
+(`assistant-telegram-task-message.ts`). It arms the chat: the user's next message goes to the chat
+working on that task — its handed-off chat, else the project's manager chat — instead of to the
+Assistant. The bot names the task and the chat, offers Cancel, and stops waiting after ten minutes;
+commands still go to the Assistant. A reply to a task card (or to that "next message goes to…" line)
+does the same for one message with nothing to arm. Before this, a reply to a `/tasks` card reached
+the Assistant as an ordinary message with the card quoted (`reply_to_message` → `quoteOf`), never
+the task's chat. The words go through `forwardUserWordsAboutTask` (`forward-verbatim.ts`): word for
+word, with a user-words block that names no card and the task block the server renders from the
+store, behind any request the chat has open rather than answering it, and with no chatting device
+left behind. A forwarded message is refused (someone else's words), a photo is not sent, and a
+title-only project shows the task's ref and title but never its chat's title.
+
 "Open in PPM" links point to `/assistant?session=<provider>/<id>` (`notificationPath` in
 `src/services/notification-format.ts`, parsed by `src/web/lib/assistant-deep-link.ts`), which
 opens the Assistant on whatever project is on screen; the old `/project/__assistant__?openChat=…`

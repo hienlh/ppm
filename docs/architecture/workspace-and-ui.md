@@ -388,6 +388,22 @@ changes / Status only, marks AI changes and "while you were away", strikes undon
 Undo where one is still possible. *Ask manager* opens the project's manager chat with the task as a
 chip in its composer and sends nothing.
 
+**The task travels with Open chat.** A manager chat works on many tasks, so a message typed there
+says nothing about which one is meant. Open chat on a task (the working-session block, a row's
+session chip, the manager chat's Tasks chip, a handed-off task on an Assistant card) therefore leaves
+a removable chip "Task #N · title" in the opened chat's composer, kept in the tab's metadata
+(`pendingTaskRefs`, `src/web/lib/ppm-tasks/composer-task-chip.ts`) until the next message takes it.
+That message carries the task's **id only** (`taskRefs` on the chat socket); the server reads the
+task from the store, refuses a deleted one, one whose project has Tasks off, and one of another
+project (any project is fine for the PPM Assistant), and writes the `<ppm-taskref-v1>` block itself
+(`src/services/ppm-tasks/task-chat-ref.ts`, codec `src/shared/chat-task-ref.ts`): ref, id, title,
+status, effective urgency, due date and a link. A refusal sends nothing and gives the chip back. The
+sent bubble draws the chip from that block; sending clears it from the tab, so a reload does not
+bring it back. Edit and Fork bring a sent message's task back as a chip; switching the tab to
+another chat drops it. The link's base (tunnel, else Tailscale Service, else localhost) is never
+waited on: the last one found is used and refreshed in the background every five minutes, because
+working it out runs the Tailscale CLI.
+
 **"Tell the manager now?"** After the user changes a task of a project with a manager chat, a burst
 of edits asks once, 1.5 s after the last (`use-ppm-task-manager-prompt.ts`): a toast at the bottom
 right on a desktop (`task-manager-prompt-toast.tsx`), a bottom sheet on a phone. *Tell now* wakes the

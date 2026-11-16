@@ -9,6 +9,7 @@
 import { toast } from "sonner";
 import { usePanelStore } from "@/stores/panel-store";
 import { openSessionAnywhere } from "@/lib/open-session-anywhere";
+import { attachTaskChip, taskChipOf } from "./composer-task-chip";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
 
 export interface TaskTabTarget {
@@ -37,10 +38,18 @@ export function syncTaskTabTitle(tabId: string | undefined, title: string): void
   if (tab && tab.title !== title) store.updateTab(tabId, { title });
 }
 
-/** Opens a chat of the task's project by id (the working chat, a linked chat). */
-export function openTaskChat(project: string, sessionId: string, providerId?: string | null): void {
+/**
+ * Opens a chat of the task's project by id (the working chat, a linked chat). Given `task`, the
+ * chat's composer also shows it as a chip, so the next message says which task it is about: the
+ * working chat is often the manager chat, which works on many tasks at once.
+ */
+export function openTaskChat(
+  project: string, sessionId: string, providerId?: string | null,
+  task?: Pick<TaskDto, "id" | "number" | "ref" | "title" | "project">,
+): void {
   void openSessionAnywhere(project, sessionId, providerId || "claude").then((ok) => {
     if (!ok) toast.error(`${project} is not a project in this PPM any more.`);
+    else if (task) void attachTaskChip(sessionId, taskChipOf(task));
   });
 }
 

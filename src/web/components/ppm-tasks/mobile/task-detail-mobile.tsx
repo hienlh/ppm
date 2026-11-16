@@ -50,6 +50,8 @@ export function TaskDetailMobile({ detail, settings }: TaskDetailViewProps) {
   const patch = useCallback((p: TaskPatch & { decision?: { question?: string | null; options: string[] } }) =>
     void run(task.id, () => actions.update(task, p)), [actions, run, task]);
   const openChat = useCallback((sid: string) => openTaskChat(task.project, sid, workingProvider(task)), [task]);
+  // The working chat is often the manager chat, busy with many tasks: it opens with this one as a chip.
+  const openWorkingChat = useCallback((sid: string) => openTaskChat(task.project, sid, workingProvider(task), task), [task]);
   const startChat = useCallback(() => void write.startChat(task), [task, write]);
 
   return (
@@ -77,7 +79,7 @@ export function TaskDetailMobile({ detail, settings }: TaskDetailViewProps) {
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {tab === "details" ? (
           <TaskDetailMobileDetails detail={detail} settings={settings} deciding={deciding} awayChanges={away}
-            onPatch={patch} onOpenChat={openChat} onStartChat={startChat} onSheet={setSheet} onShowActivity={() => setTab("activity")}
+            onPatch={patch} onOpenChat={openChat} onOpenWorkingChat={openWorkingChat} onStartChat={startChat} onSheet={setSheet} onShowActivity={() => setTab("activity")}
             onDecide={(optionId) => { setDeciding(true); void write.decide(task, optionId).finally(() => setDeciding(false)); }}
             onAddLink={async (link) => !!(await run(task.id, () => actions.addLink(task, link)))}
             onRemoveLink={(link) => void run(task.id, () => actions.removeLink(task, link))} />
