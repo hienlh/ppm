@@ -75,9 +75,9 @@ function Title({ task, title, closed, onRename }: { task: { number: number; proj
   // At least 44px tall like every other control on a phone, even when the title fits one line.
   return (
     <h2 role="button" tabIndex={0} aria-label={`Rename: ${title}`} onClick={() => setEditing(true)} onKeyDown={(e) => { if (e.key === "Enter") setEditing(true); }} data-task-title="" className="flex min-h-11 items-center break-words text-[19px] font-semibold leading-snug text-text">
-      <span className="min-w-0 [overflow-wrap:anywhere]">
+      <span data-task-code-pair="" className="min-w-0 [overflow-wrap:anywhere]">
         <TaskCode task={task} viewProject={task.project} nested className="mr-1.5 text-[13px]" />
-        <span className={cn(closed && "text-text-2 line-through decoration-text-3")}>{title}</span>
+        <span data-task-code-title="" className={cn(closed && "text-text-2 line-through decoration-text-3")}>{title}</span>
       </span>
     </h2>
   );

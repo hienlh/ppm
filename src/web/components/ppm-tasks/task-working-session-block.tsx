@@ -33,8 +33,8 @@ export interface TaskWorkingSessionBlockProps {
 /** "WORKING SESSION #82": the heading names the task, so a chat that says "#82" can be matched here. */
 function Heading({ task }: { task: TaskWorkingSessionBlockProps["task"] }) {
   return (
-    <p className="flex min-w-0 items-baseline gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-3">
-      <span className="min-w-0 truncate">Working session</span>
+    <p data-task-code-pair="" className="flex min-w-0 items-baseline gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-3">
+      <span data-task-code-title="" className="min-w-0 truncate">Working session</span>
       <TaskCode task={task} viewProject={task.project} className="normal-case text-[11.5px]" />
     </p>
   );

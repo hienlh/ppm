@@ -46,9 +46,11 @@ export function TaskDetailHeader({ task, members, preview, hasManager, onRename,
   return (
     <header className="space-y-2.5">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[13px] text-text-2">
-        <span className="rounded bg-surface px-1.5 text-xs font-medium text-text">{task.project}</span>
-        <span className="text-text-3">/</span>
-        <TaskCode task={task} viewProject={task.project} className="text-[13px]" />
+        <span data-task-code-pair="" className="flex items-baseline gap-x-2">
+          <span data-task-code-title="" className="rounded bg-surface px-1.5 text-xs font-medium text-text">{task.project}</span>
+          <span className="text-text-3">/</span>
+          <TaskCode task={task} viewProject={task.project} className="text-[13px]" />
+        </span>
         {preview && <span className="text-xs text-text-3">Preview · edit to keep the tab</span>}
         <span className="flex-1" />
         <Button size="sm" variant="ghost" onClick={() => void copyTaskLink(task)}><Link className="size-3.5" />Copy link</Button>
@@ -63,9 +65,9 @@ export function TaskDetailHeader({ task, members, preview, hasManager, onRename,
           className="w-full resize-none rounded-md border border-ring bg-surface px-2 py-1 text-xl font-semibold leading-snug text-text outline-none" />
       ) : (
         <h1 className="cursor-text break-words rounded-md text-xl font-semibold leading-snug text-text hover:bg-surface-hover" title="Click to rename"
-          onClick={() => setEditing(true)} data-task-title="">
+          onClick={() => setEditing(true)} data-task-title="" data-task-code-pair="">
           <TaskCode task={task} viewProject={task.project} className="mr-1.5 text-[0.7em]" />
-          <span className={cn(closed && "text-text-2 line-through decoration-text-3")}>{task.title}</span>
+          <span data-task-code-title="" className={cn(closed && "text-text-2 line-through decoration-text-3")}>{task.title}</span>
         </h1>
       )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">

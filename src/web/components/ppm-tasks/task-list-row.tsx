@@ -75,8 +75,8 @@ export function TaskListRow(p: TaskListRowProps) {
       )}>
       <span className="pt-[3px]"><TaskStatusGlyph baseGroup={task.baseGroup} closedAs={task.closedAs} name={task.statusName} /></span>
       <div className="min-w-0">
-        <div className={cn("line-clamp-2 break-words text-[13px] leading-snug text-text", closed && "text-text-3 line-through", p.depth === 1 && "text-[12.5px]")}>
-          <TaskCode task={task} viewProject={p.showProject ? null : task.project} inRow tabIndex={-1} className="mr-1" /><span>{task.title}</span>
+        <div data-task-code-pair="" className={cn("line-clamp-2 break-words text-[13px] leading-snug text-text", closed && "text-text-3 line-through", p.depth === 1 && "text-[12.5px]")}>
+          <TaskCode task={task} viewProject={p.showProject ? null : task.project} inRow tabIndex={-1} className="mr-1" /><span data-task-code-title="">{task.title}</span>
         </div>
         {p.depth === 0 && (
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-text-3">

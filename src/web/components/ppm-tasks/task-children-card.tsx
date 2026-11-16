@@ -35,8 +35,10 @@ export function TaskChildrenCard({ children, members, onOpen, onAdd }: TaskChild
               <li key={c.id}>
                 <button type="button" onClick={() => onOpen(c)} className="flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-left hover:bg-surface-hover">
                   <TaskStatusGlyph baseGroup={c.baseGroup} closedAs={c.closedAs} name={c.statusName} />
-                  <TaskCode task={c} viewProject={c.project} nested inRow className="text-[12px]" />
-                  <span className={cn("min-w-0 flex-1 truncate text-[13px] text-text", closed && "text-text-3 line-through")}>{c.title}</span>
+                  <span data-task-code-pair="" className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                    <TaskCode task={c} viewProject={c.project} nested inRow className="text-[12px]" />
+                    <span data-task-code-title="" className={cn("min-w-0 flex-1 truncate text-[13px] text-text", closed && "text-text-3 line-through")}>{c.title}</span>
+                  </span>
                   <span className="shrink-0 font-mono text-[11px] text-text-3">{c.statusName}</span>
                   {who && <TaskMemberAvatar name={who} memberId={c.assigneeMemberId} size="sm" />}
                 </button>

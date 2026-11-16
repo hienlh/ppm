@@ -59,9 +59,9 @@ export function CardHandedOffTasks({ projectName, tasks }: { projectName: string
     <ul className="space-y-1.5" data-card-tasks="">
       {tasks.map((t) => (
         <li key={`${t.taskId}:${t.sessionId}`} className="flex items-center gap-2 rounded-md border border-border bg-panel-2 px-2.5 py-1.5">
-          <span className="flex min-w-0 flex-1 items-baseline gap-1.5" data-card-task-ref={t.ref}>
+          <span className="flex min-w-0 flex-1 items-baseline gap-1.5" data-card-task-ref={t.ref} data-task-code-pair="">
             <TaskCodeText code={t.ref} />
-            {t.title && <span className="min-w-0 flex-1 truncate text-[13px] text-text-primary">{t.title}</span>}
+            {t.title && <span data-task-code-title="" className="min-w-0 flex-1 truncate text-[13px] text-text-primary">{t.title}</span>}
           </span>
           <RowButton disabled={!projectName} title={`Open the chat working on ${t.ref}`}
             onClick={() => { if (projectName) void openHandedOffChat(projectName, t); }}>
@@ -111,7 +111,7 @@ function ChangeRow({ change }: { change: Change }) {
   return (
     <li className="flex items-start gap-2 py-1.5" data-card-task-change={change.historyId ?? "settings"} data-undone={state === "undone" || undefined}>
       <p className={`min-w-0 flex-1 break-words text-[13px] ${state === "undone" ? "text-text-subtle line-through" : "text-text-secondary"}`}>
-        {code ? <><TaskCodeText code={code.ref} className="mr-1" />{code.rest}</> : change.summary}
+        {code ? <span data-task-code-pair=""><TaskCodeText code={code.ref} className="mr-1" /><span data-task-code-title="">{code.rest}</span></span> : change.summary}
       </p>
       {change.historyId === null ? (
         <span className="shrink-0 text-xs text-text-subtle">settings · cannot be undone</span>

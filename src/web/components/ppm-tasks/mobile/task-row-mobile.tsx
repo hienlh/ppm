@@ -56,9 +56,9 @@ export function TaskRowMobile(p: TaskRowMobileProps) {
       <div className="min-w-0 py-2">
         {/* A button only so a touch on the title stays here: the browser's touch adjustment would
             otherwise hand a tap near the chat chip's 44px hit area to the chip. The row opens it. */}
-        <div className="flex min-w-0 items-baseline gap-1">
+        <div data-task-code-pair="" className="flex min-w-0 items-baseline gap-1">
           <TaskCode task={task} viewProject={p.showProject ? null : task.project} inRow className="text-[12.5px]" />
-          <button type="button" tabIndex={-1} className={cn("block min-w-0 flex-1 truncate text-left text-[15px] leading-snug text-text", closed && "text-text-3 line-through")}>{task.title}</button>
+          <button type="button" tabIndex={-1} data-task-code-title="" className={cn("block min-w-0 flex-1 truncate text-left text-[15px] leading-snug text-text", closed && "text-text-3 line-through")}>{task.title}</button>
         </div>
         {/* The meta line is not clipped: the chat chip's 44px hit area reaches past it; its items shrink instead. */}
         {p.depth === 0 && (

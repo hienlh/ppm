@@ -19,6 +19,7 @@ import { buttonsOf, fixtureApi, phone, startChild } from "./assistant-telegram/h
 import { tasksKit, until } from "./ppm-tasks/tasks-kit.mjs";
 import { seedDemo } from "./ppm-tasks/tasks-seed.mjs";
 import { telegramFrame } from "./ppm-tasks/steps-phone-telegram.mjs";
+import { assertCodesOnBaseline } from "./ppm-tasks/steps-task-codes.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-task-chat-ref-"));
 const shotsDir = resolve(process.env.PPM_TASKS_SHOTS ?? join(sandbox, "shots"));
@@ -72,6 +73,7 @@ async function desktop(k, s) {
   const chip = page.locator("[data-composer-task-refs] [data-task-chip]:visible").first();
   await chip.waitFor({ timeout: 30000 });
   assert.match(await chip.innerText(), new RegExp(`#${s.t.login.number}\\s*${s.t.login.title}`));
+  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "composer chip"), 1, "the chip's code sits on its title's baseline");
   await k.shot("01-desktop-chip-in-composer");
 
   const typed = "Is this one still blocked on QA?";
@@ -80,6 +82,7 @@ async function desktop(k, s) {
   const bubbleChip = page.locator("[data-user-message] [data-task-ref]:visible").first();
   await bubbleChip.waitFor({ timeout: 30000 });
   assert.match(await bubbleChip.innerText(), new RegExp(`#${s.t.login.number}\\b`));
+  assert.equal(await assertCodesOnBaseline(page, "[data-user-message]", "sent chip"), 1, "the sent chip's code sits on its title's baseline");
   assert.equal(await page.locator("[data-composer-task-refs]:visible").count(), 0, "the chip left the composer");
   const msg = await entered(k, s.managers.alpha, typed);
   assert.match(msg.text, /<ppm-taskref-v1>/);
@@ -115,6 +118,7 @@ async function phoneFlow(k, s) {
   assert.match(await chip.innerText(), new RegExp(`#${s.t.release.number}\\b`));
   const box = await chip.boundingBox();
   assert(box && box.height >= 43.5, `the chip is a 44 px target on a phone: ${JSON.stringify(box)}`);
+  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "phone composer chip"), 1);
   await k.shot("04-phone-390-chip-in-composer");
 
   const typed = "Can staging take this tonight?";

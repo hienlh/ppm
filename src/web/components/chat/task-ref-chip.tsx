@@ -25,8 +25,10 @@ export function ComposerTaskChipRow({ chips, currentProject, onRemove }: { chips
           <span key={chip.taskId} data-task-chip={chip.taskId} title={`${taskChipLabel(chip, currentProject)}. This message will say it is about this task.`}
             className={cn(CHIP_BOX, "pl-2")}>
             <ListTodo className="size-3.5 shrink-0 text-primary" />
-            <TaskCode task={chip} viewProject={currentProject ?? null} className="text-[11.5px]" />
-            <span className="min-w-0 flex-1 truncate">{chip.title}</span>
+            <span data-task-code-pair="" className="flex min-w-0 flex-1 items-baseline gap-1.5">
+              <TaskCode task={chip} viewProject={currentProject ?? null} className="text-[11.5px]" />
+              <span data-task-code-title="" className="min-w-0 flex-1 truncate">{chip.title}</span>
+            </span>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onRemove(chip.taskId); }}
@@ -57,8 +59,10 @@ export function TaskRefChipRow({ refs, currentProject }: { refs: readonly TaskRe
           className={cn(CHIP_BOX, "px-2 hover:border-primary/60")}
         >
           <ListTodo className="size-3.5 shrink-0 text-primary" />
-          <TaskCode task={{ number: ref.number, project: ref.projectName }} viewProject={currentProject ?? null} nested inRow className="text-[11.5px]" />
-          <span className="min-w-0 truncate">{ref.title}</span>
+          <span data-task-code-pair="" className="flex min-w-0 items-baseline gap-1.5">
+            <TaskCode task={{ number: ref.number, project: ref.projectName }} viewProject={currentProject ?? null} nested inRow className="text-[11.5px]" />
+            <span data-task-code-title="" className="min-w-0 truncate">{ref.title}</span>
+          </span>
         </button>
       ))}
     </div>

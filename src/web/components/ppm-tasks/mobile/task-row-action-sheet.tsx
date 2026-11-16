@@ -54,9 +54,9 @@ export function TaskRowActionSheet(p: TaskRowActionSheetProps) {
     <BottomSheet open={!!task} onClose={p.onClose} className="flex max-h-[88%] flex-col">
       {task && (
         <div role="dialog" aria-label={`Actions for ${task.title}`} data-task-action-sheet={task.id} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-2">
-          <p className="flex min-w-0 items-baseline gap-1.5 px-1 pb-2 text-sm font-medium text-text">
+          <p data-task-code-pair="" className="flex min-w-0 items-baseline gap-1.5 px-1 pb-2 text-sm font-medium text-text">
             <TaskCode task={task} viewProject={p.showProject ? null : task.project} className="text-[12.5px]" />
-            <span className="min-w-0 flex-1 truncate">{task.title}</span>
+            <span data-task-code-title="" className="min-w-0 flex-1 truncate">{task.title}</span>
           </p>
           <TaskStatusGrid project={task.project} statuses={p.statuses ?? []} currentId={task.statusId}
             onPick={(id) => act((t) => p.onStatus(t, id))} />

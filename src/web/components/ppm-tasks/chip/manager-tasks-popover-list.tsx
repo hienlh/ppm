@@ -107,9 +107,9 @@ function ChipRow({ task, working, onOpen, onOpenChat }: {
       <TaskStatusGlyph baseGroup={task.baseGroup} closedAs={task.closedAs} name={task.statusName} size="md" className="shrink-0 pl-1 max-md:pl-0" />
       <button type="button" onClick={onOpen} title={`Open #${task.number} ${task.title}`}
         className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left can-hover:hover:bg-surface-hover max-md:min-h-11 max-md:flex-col max-md:items-start max-md:justify-center max-md:gap-0.5">
-        <span className="flex min-w-0 flex-1 items-baseline gap-1 max-md:w-full max-md:flex-none">
+        <span data-task-code-pair="" className="flex min-w-0 flex-1 items-baseline gap-1 max-md:w-full max-md:flex-none">
           <TaskCode task={task} viewProject={task.project} nested inRow className="text-[12px] max-md:text-[12.5px]" />
-          <span className="min-w-0 flex-1 truncate text-[13px] text-text max-md:text-sm">{task.title}</span>
+          <span data-task-code-title="" className="min-w-0 flex-1 truncate text-[13px] text-text max-md:text-sm">{task.title}</span>
         </span>
         <span className="flex min-w-0 shrink-0 items-center gap-2 text-[11.5px] text-text-3 max-md:max-w-full max-md:text-xs">
           <span className="max-w-[110px] truncate">{task.statusName}</span>

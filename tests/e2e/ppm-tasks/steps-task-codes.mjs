@@ -39,8 +39,43 @@ function codesIn(page, scope = "body") {
   }), scope);
 }
 
-/** Fails when any visible code under `scope` wraps, is cut or overflows its clip. */
+/**
+ * How far each visible code under `scope` sits off the baseline of the text beside it (the
+ * `data-task-code-title` of its `data-task-code-pair`), in px. A zero-height inline-block put first
+ * in each element lands on that element's first baseline, whatever its font, size or line-height;
+ * its bottom is the baseline. The probes are removed again before anything else reads the page.
+ */
+export function codeBaselineOffsets(page, scope = "body") {
+  return page.evaluate((sel) => {
+    const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const baseline = (el) => {
+      const probe = document.createElement("span");
+      probe.style.cssText = "display:inline-block;width:0;height:0;padding:0;margin:0;border:0;vertical-align:baseline";
+      el.insertBefore(probe, el.firstChild);
+      const y = probe.getBoundingClientRect().bottom;
+      probe.remove();
+      return y;
+    };
+    return [...document.querySelectorAll(`${sel} [data-task-code-pair]`)].flatMap((pair) => {
+      const code = pair.querySelector("[data-task-code]");
+      const title = pair.querySelector("[data-task-code-title]");
+      if (!code || !title || !visible(code) || !visible(title)) return [];
+      return [{ code: code.textContent, title: (title.textContent ?? "").slice(0, 32), off: Math.round((baseline(code) - baseline(title)) * 10) / 10 }];
+    });
+  }, scope);
+}
+
+/** Fails when a code under `scope` is more than 1 px off its title's baseline; answers how many were measured. */
+export async function assertCodesOnBaseline(page, scope, where) {
+  const offsets = await codeBaselineOffsets(page, scope);
+  const off = offsets.filter((o) => Math.abs(o.off) > 1);
+  assert.deepEqual(off, [], `${where}: codes off their title's baseline by more than 1 px: ${JSON.stringify(off)}`);
+  return offsets.length;
+}
+
+/** Fails when any visible code under `scope` wraps, is cut, overflows its clip or leaves its title's baseline. */
 async function assertCodesFit(page, scope, where) {
+  await assertCodesOnBaseline(page, scope, where);
   const codes = await codesIn(page, scope);
   assert(codes.length > 0, `${where}: some task code is shown`);
   const bad = codes.filter((c) => c.wrapped || c.cut || c.outside);
@@ -179,6 +214,7 @@ async function managerChatCodes(k, s) {
   const taskChip = page.locator("[data-task-chip]:visible").first();
   await taskChip.waitFor({ timeout: 20000 });
   assert.deepEqual(await codesOf(taskChip), [`#${login.number}`], "the composer's chip shows the task's code");
+  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "1440 composer chip"), 1, "the composer chip's code is measured");
   await k.shot("c08-composer-chip-1440");
   k.record("codes-3", "manager Tasks chip list rows #N; composer task chip #N");
 }
@@ -196,6 +232,7 @@ async function assistantCodes(k, s) {
     await away.waitFor({ timeout: 30000 });
     const awayCodes = await codesOf(away);
     assert(awayCodes.length >= 2 && awayCodes.every((c) => /^(alpha|beta)\/\d+$/.test(c)), `the away card's changes show project/N: ${awayCodes}`);
+    await assertCodesOnBaseline(page, "[data-assistant-body]", "1440 Assistant cards");
   }
   const gamma = full ? await k.task(s.t.gammaDecision.id) : null;
   const handed = page.locator("[data-card-tasks]:visible").first();
@@ -249,6 +286,7 @@ async function phoneCodes(k, s) {
   const sheet = page.locator("[data-task-action-sheet]");
   await sheet.waitFor({ timeout: 10000 });
   assert.deepEqual(await codesOf(sheet), [`#${login.number}`], "the long-press sheet names the task by code");
+  await assertCodesOnBaseline(page, "[data-task-action-sheet]", "phone sheet");
   await k.shot("c12-phone-sheet-390");
   await page.keyboard.press("Escape");
   await page.locator("[data-task-action-sheet]").waitFor({ state: "detached", timeout: 5000 }).catch(() => page.mouse.click(5, 5));
@@ -267,6 +305,16 @@ async function phoneCodes(k, s) {
     await page.waitForTimeout(300);
     await assertCodesFit(page, "[data-task-detail-mobile]", `phone ${width} detail`);
   }
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Open chat from the task page: the manager composer takes the task as a chip.
+  await detail.locator("[data-working-session]").scrollIntoViewIfNeeded();
+  await detail.locator("[data-working-session]").getByRole("button", { name: /Open chat/ }).tap();
+  const phoneChip = page.locator("[data-composer-task-refs] [data-task-chip]:visible").first();
+  await phoneChip.waitFor({ timeout: 20000 });
+  assert.deepEqual(await codesOf(phoneChip), [`#${login.number}`]);
+  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "phone 390 composer chip"), 1);
+  await assertCodesFit(page, "[data-composer-task-refs]", "phone 390 composer chip");
+  await k.shot("c16-phone-composer-chip-390");
   await page.setViewportSize({ width: 320, height: 640 });
   await page.goto(`${k.web}/project/alpha/chat/claude/${s.managers.alpha}`);
   const chip = page.locator("[data-manager-tasks-chip]:visible").first();

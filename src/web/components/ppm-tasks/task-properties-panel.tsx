@@ -107,10 +107,10 @@ export function TaskPropertiesPanel({ task, settings, onPatch, onStatus, onOpenT
       <Prop label="Parent">
         {task.parentId
           ? (
-            <button type="button" onClick={() => onOpenTask(task.parentId!)} data-task-parent=""
+            <button type="button" onClick={() => onOpenTask(task.parentId!)} data-task-parent="" data-task-code-pair=""
               className="flex w-full min-w-0 items-baseline gap-1 rounded px-1 text-left text-primary [&>span:last-child]:hover:underline">
               {parent && <TaskCode task={parent} viewProject={task.project} nested inRow className="text-[12px]" />}
-              <span className="min-w-0 flex-1 truncate">{parent ? parent.title : "Open parent"}</span>
+              <span data-task-code-title="" className="min-w-0 flex-1 truncate">{parent ? parent.title : "Open parent"}</span>
             </button>
           )
           : <p className="px-1 text-text-3">None</p>}
