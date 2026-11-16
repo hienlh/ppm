@@ -180,6 +180,90 @@ ppm db driver list | install <id> | remove <id>
 
 ---
 
+## PPM Tasks store
+
+A per-project task list kept in `ppm.db`. AI chats read and write it only through the
+`ppm_task_*` tools ([AI chat → PPM task tools](ai-chat-and-providers.md#ppm-task-tools)); people
+use the Tasks sidebar section and task tabs ([Workspace & UI → PPM Tasks](workspace-and-ui.md#ppm-tasks))
+and Telegram `/tasks` ([PPM Assistant → Commands, links and settings](ppm-assistant.md#commands-links-and-settings)).
+Everything is named `ppm-tasks` / `ppm_task_*` because `TaskItem`, `use-tasks.ts`,
+`task-status-aggregator.ts` and the model's built-in `TaskCreate`/`TaskList` already mean Claude's
+own to-do list, which is something else.
+
+**Where things are.** Tables: migration 74, `src/services/ppm-tasks/ppm-tasks-schema.ts` (it only
+adds tables, so an older binary ignores them). Shapes: `src/shared/ppm-tasks.ts` (with
+`ppm-tasks-config.ts` and `ppm-tasks-history.ts`); REST shapes and `/ws/global` events:
+`src/shared/ppm-tasks-api.ts`. Service: `src/services/ppm-tasks/`. Routes: `/api/tasks`
+(`src/server/routes/ppm-tasks.ts` for lists and plain writes, `ppm-tasks-actions.ts` for decide,
+start chat, notify manager, links, history and undo, link states, `ppm-tasks-projects.ts` for the
+per-project switch and settings). Background work (daily compaction, link states, handed-off work
+checks) starts in `ppm-tasks-startup.ts`.
+
+**One write, one transaction.** Every change goes through `ppm-tasks.service.ts`: the revision
+check, the row change (`ppm-tasks-write.ts`, the one place a task row is changed) and its history
+row commit together. A write names the revision it read; a stale one changes nothing and fails as
+`conflict` naming the current revision (REST 409 `stale` with `revision`; the AI tools tell the model
+to read the task again). A write that changes nothing writes no history and keeps the revision.
+Events go out only after the commit. Deleting is soft (`deleted_at`); the row and its history stay.
+Derived columns are kept in step by the write itself: `closed_at` from the status's group,
+`waiting_since` from "waiting on", and `handed_off_at`, set while the working session is a chat
+other than the project's manager chat. A working session must be a chat of the task's own project
+that is neither a PPM Assistant nor a design chat (`ppm-tasks-session-check.ts`), checked on write
+and again when a decision is sent to it.
+
+**Statuses and fields.** Each project edits its own status list, seeded with To do / In progress /
+Waiting / Done / Dropped on first use, but every status belongs to one of four base groups
+(`not_started`, `active`, `waiting`, `closed`), so all-projects views can merge projects; a closed
+status says whether it closes the task as `done` or `dropped`. Members are per project (`me` is the
+user and never a row); custom fields have a declared type the UI renders and filters on, and a key
+nobody declared is kept as free key–value and shown raw.
+
+**Urgency is derived, never written by a timer.** A task stores its own urgency (Now / Today /
+This week / Later) and importance (Must / Should / Nice to have); the due date raises the urgency
+when a list is read (`src/shared/ppm-tasks-urgency.ts`): overdue or due today → Now, due tomorrow →
+Today, due within six days → This week. It only raises, never lowers, and nothing is stored, so
+history carries no "raised by date" noise. "What to do first" (`src/shared/ppm-tasks-order.ts`)
+sorts by effective urgency, then importance, then a manual `rank` inside the cell (project + stored
+urgency + importance), set by drag or by the AI; changing urgency or importance moves the task to
+the end of its new cell.
+
+**History and undo.** Each history row records the actor (`user` "You", `manager` "Manager
+<project>", `assistant`, `chat` with the chat's title, `ppm`), the channel (`ppm`, `telegram`,
+`tool`, `api`), the changes field by field, an optional reason, and `unattended` for a write made in
+a PPM Assistant turn nobody was watching ([PPM Assistant → Tasks](ppm-assistant.md#tasks)). A row
+with no task is a project-settings event (statuses, members, fields, the switch) and is never
+undoable. Undo (`ppm-tasks-history.ts`) takes only AI changes (manager, Assistant, chat), within 90
+days, and only while every field the change touched still holds what it wrote — a field changed
+since means someone acted on it, and undo would silently discard that. Undoing an AI creation
+soft-deletes the task, only while nothing else has changed it. References an undo would put back
+(status, parent, members, working session) are checked again.
+
+**Compaction.** One minute after start and then daily (`ppm-tasks-compaction.ts`), history older
+than 90 days is deleted except the key events: created, status moves, closed and reopened. A key
+event that was undone goes as well once its undo is past the window, so no half pair is left showing
+a status move that did not stick.
+
+**The per-project switch** (`ppm-tasks-projects.service.ts`, table `task_projects`). Off by default.
+It turns on by itself when a project gets a manager chat (`enableOnManagerAssigned`, called from
+`manager-chats.service.ts`), and the migration turned it on for every project that already had one
+(`enabled_by = migration`). Off hides the project's tasks from lists, tools and Telegram and deletes
+nothing; the settings routes still answer for it, which is where it is switched back on. The same
+row holds the project's check interval for handed-off work (`check_interval_min`, 30 by default,
+5–240) and how far its manager chat has been told about changes.
+
+**Live link states** (`link-state/`, cache table `task_link_state`). Jira keys are read with the
+task's own project's Jira config only, PRs through the `gh` CLI (without it, or signed out, every PR
+reads "gh not available"), chats live from the chat layer and never cached. A read never waits on
+the network: it answers from the cache and queues anything missing or older than two minutes; open
+tasks' Jira and PR links in switched-on projects are refreshed every 15 minutes. Nothing here changes a task: what
+changed outside is news for the manager chat to act on.
+
+**Events.** `src/server/ws/ppm-tasks-broadcast.ts` sends `tasks:changed` (task ids),
+`tasks:project_changed` and `tasks:link_states` on `/ws/global`, ids only, gathered per project for
+100 ms so an AI editing twenty tasks sends one push; each view re-reads what it shows.
+
+---
+
 ## Browser cache layer
 
 The chat startup path (see [New chat preparation](ai-chat-and-providers.md#new-chat-preparation))

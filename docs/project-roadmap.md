@@ -14,6 +14,25 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ## Completed Milestones
 
+### PPM Tasks — a task store built into PPM (next release)
+
+- A per-project task list in PPM's database, replacing hand-built boards: urgency raised by the
+  due date, importance, Task / Decision / Reply types, links with their live state (Jira, PRs,
+  chats), the chat working on each task, people, custom fields and parent/child tasks. Switched on
+  per project, automatically when the project gets a manager chat.
+- AI chats read and write it only through the `ppm_task_*` tools (one switch each in Settings →
+  Tools); every change is in history with who made it and from where, and AI changes can be undone
+  for 90 days.
+- A Tasks section in the project sidebar (one project or all), task tabs with preview, phone
+  views, and a Tasks chip in manager chats. After the user changes tasks, PPM asks whether to tell
+  the manager now.
+- PPM checks work handed off to a chat on a timer and wakes the manager only when that chat
+  stalled or finished without reporting; it never messages the chat itself.
+- Telegram `/tasks` pages "what to do first" across projects with status buttons, without an AI
+  turn; a plain message to the Assistant creates a task.
+- See `docs/architecture/data-and-storage.md` → "PPM Tasks store" and
+  `docs/architecture/ppm-assistant.md` → "Tasks". Verified by `tests/e2e/ppm-tasks-e2e.mjs`.
+
 ### Design mode (Claude Design port) (next release)
 
 - A Design tab per design: the design chat beside a live, sandboxed canvas that reloads as the

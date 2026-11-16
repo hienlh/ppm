@@ -1012,6 +1012,61 @@ scripted Claude and Codex providers that call the real endpoint (fixture server
 `tests/e2e/fixtures/session-collab-server.ts`, a fake ntfy server for the notifications), run in the
 capped image built from `tests/e2e/docker/Dockerfile`.
 
+### PPM task tools
+
+The same `ppm-sessions` server (`ppm_sessions` for Codex, through `enabled_tools`) serves the AI's
+tools on PPM's own task store ([Data & Storage → PPM Tasks store](data-and-storage.md#ppm-tasks-store)),
+named `ppm_task_*` so the model does not confuse them with its built-in `TaskCreate`/`TaskList`
+to-do list. Names in `src/shared/ppm-task-tools.ts`, definitions and handlers in
+`src/services/ppm-tasks/tools/`: reads `ppm_task_list` ("what to do first", with filters),
+`ppm_task_get` (every field, links with their last known state, children, the last 20 history rows,
+the check of the chat it was handed to, the revision) and `ppm_task_project` (statuses, members,
+fields, the check interval); writes `ppm_task_create`, `ppm_task_update`, `ppm_task_close`,
+`ppm_task_reorder`, `ppm_task_undo`, `ppm_task_project_update` and, for the PPM Assistant only,
+`ppm_task_notify_manager`.
+
+**Who is calling** comes from the token's chat, never from anything the model says about itself
+(`ppm-task-tool-caller.ts`):
+
+- **the PPM Assistant** reaches every project with Tasks on and names the project; its changes are
+  signed "Assistant", via `telegram` while its turn came from Telegram, and marked `unattended` in a
+  turn PPM started ([PPM Assistant → Tasks](ppm-assistant.md#tasks));
+- **a manager chat** acts on its own project only, signed "Manager <project>";
+- **an ordinary chat** acts on its own project only, signed with its title.
+
+A design chat or a chat an extension bound never gets them. A task outside the caller's scope reads
+exactly like one that does not exist. Update, close and reorder name the task's `revision` as last
+read (a stale one is refused, naming the current revision, and nothing is written) and a `reason`,
+shown to the user in the task's history; undo takes a history id and is refused when the change can
+no longer be undone. Writes are limited to 60 a minute per
+chat. `working_session: "self"` hands the task to the calling chat (never an Assistant session);
+`result` records what came of the task, which any chat working on it may do, and stops the checks
+of a handed-off task. After an Assistant write in a project with a manager chat, the answer tells it
+to ask the user "Tell the <project> manager now?" and call `ppm_task_notify_manager` only on a yes;
+an unattended turn is told never to.
+
+**Switches.** Settings → Tools has one switch per tool in the group **Tasks**, on until the user
+turns one off, and they govern every chat — manager chats and the Assistant included. The server is
+attached to an ordinary chat while a task tool is on and the chat's project has Tasks on
+(`ppmTasksAttachFor`); a manager chat always has it attached
+([PPM Assistant → Manager chats](ppm-assistant.md#manager-chats)). A call to a tool switched off
+since the chat started is refused at the endpoint (`ppmTaskToolOffReason`). The Tasks UI and
+Telegram `/tasks` are not tools and are not affected.
+
+**The `ppm_ui` origin.** PPM Tasks needs the server itself to put a message into a chat when the user
+acts on its screens, with no browser of that chat open: a decision's chosen option, sent word for
+word to the task's working chat (else the manager), and the "tell the manager now" wake
+(`src/services/ppm-tasks/ppm-tasks-deliver.ts`). That is the chat-control origin `ppm_ui`
+(`MessageServerOrigin` in `src/services/chat-control/chat-control.ts`, `SERVER_ORIGINS` in
+`src/server/ws/chat.ts`). It only sends: it answers no card and stops no turn. It never steers a
+running turn either — behind one, a card-blocked one included, it is queued `later` and opens an
+ordinary turn of its own in the chat's own permission mode (a mode sent with it is refused, since it
+would become the chat's sticky mode). Its text goes through `neutralizePpmTags` at that door
+whatever the caller did, because only the server writes `ppm-…-v1` blocks, and like every message
+with no socket behind it, it clears the chat's last sender, so the screen tools answer "no device".
+The caller is told whether the message started a turn or waits behind one. A decision is recorded
+only when there is a chat to send it to (else 409 `no_session`, and the UI offers Start chat).
+
 ## Session changes and review
 
 The changes chip in the chat footer lists every file one chat session has changed, across all
@@ -1036,7 +1091,8 @@ Settings → Tools (`tools-settings-section.tsx`) turns each of PPM's own AI too
 `create_session`, `send_to_session`, `session_status`, `session_schedule_create`,
 `session_schedule_list`, `session_schedule_delete`, in the groups Tabs, Terminal, Session history,
 Database, Session collaboration (whose limits and "Ask before creating sessions" sit under its
-switches) and Schedules (with "Hide Claude's built-in cron tools" under it) — for Claude and Codex alike. Claude's and Codex's built-in tools and MCP servers are not there. The switches are
+switches) and Schedules (with "Hide Claude's built-in cron tools" under it), plus the `ppm_task_*`
+tools in the group Tasks ([PPM task tools](#ppm-task-tools)) — for Claude and Codex alike. Claude's and Codex's built-in tools and MCP servers are not there. The switches are
 `ai.ppm_tools` (`PUT /api/settings/ai` merges one tool at a time and refuses any other name), and
 `src/shared/ppm-tools.ts` answers for the server and the pane alike: a tool never switched takes
 its default — `open_file` and `open_preview` follow the single switch that came before

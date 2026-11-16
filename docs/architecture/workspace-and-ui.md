@@ -348,6 +348,73 @@ sessions" and the four limits, each number clamped to the server's range before 
 
 `tests/e2e/session-collab-e2e.mjs` drives all of it in Chromium, desktop and phone.
 
+## PPM Tasks
+
+The browser half of the [task store](data-and-storage.md#ppm-tasks-store); code in
+`src/web/components/ppm-tasks/`, `src/web/lib/ppm-tasks/`, `src/web/stores/ppm-tasks-*.ts` and
+`src/web/hooks/use-ppm-task*.ts`. One store per page (`ppm-tasks-store.ts`) follows `/ws/global`:
+`tasks:changed` re-reads the lists and details it names, `tasks:project_changed` everything of that
+project, and a reconnect everything shown, since a change announced while the socket was down never
+arrived. Every write goes through `use-task-write.ts`, which keeps the task's tab and offers "Tell
+the manager now?".
+
+**The Tasks section of the sidebar** (`tasks-sidebar-panel.tsx`, sidebar tab `tasks`; on a phone the
+same section in the navigation drawer). Its rail icon counts open tasks at Now in the scope shown. The
+scope is this project or all projects (each project a chip that can be left out), with filter chips
+for type, status group (Open by default), person and tag, a declared field from ··· *Filter by
+field*, and search; scope and filters are kept per device (`ppm-tasks-view-store.ts`). Rows are
+grouped Now / Today / This week / Later; each carries its links' state, who it waits on, child
+progress and its working-session chip (`task-list-row.tsx`). On a desktop ↑/↓ move the selection with the main area following, Enter keeps the tab,
+and dragging a row (mouse or pen) reorders it inside its cell or, dropped in another group, changes
+its urgency. The header holds New task, Search and ··· (Task settings…, Filter by field, Clear
+filters, Turn off tasks for the project). A project with Tasks off shows *Turn on tasks* instead of a
+list. Task settings (`settings/task-project-settings-dialog.tsx`, a bottom sheet below
+`md`) holds the switch, the check interval for handed-off work, statuses, members and custom
+fields; each change saves on its own and the server applies it all or nothing.
+
+**The task tab** (tab type `task`, `task-tab.tsx`, address `/project/<project>/task/<id>`).
+Selecting a row opens the task in a *preview* tab, VS Code style (`task-tab-preview.ts`): italic
+title, replaced by the next selection, one per panel; editing the task or double-clicking the row
+or the tab keeps it, and the next selection opens a new preview beside it. The list's selection
+follows the task tab in front. On a desktop (`task-detail-desktop.tsx`) content and history sit on
+the left, the working session and every property on the right, stacked below 760px of the page's own
+width. A Decision task lists its options; *Choose* calls `decide` and nothing else — the server
+records the choice and sends it to the chat ([`ppm_ui`](ai-chat-and-providers.md#ppm-task-tools)),
+with *Send again* when it was recorded but not sent. The working-session block shows the chat, its
+live state and the last check of handed-off work, with Open chat, and *Start chat* (a new Claude chat
+titled after the task, made its working session; with one already set it asks first). The result
+card records what came of the task, which also stops the checks. History has tabs History / AI
+changes / Status only, marks AI changes and "while you were away", strikes undone rows and offers
+Undo where one is still possible. *Ask manager* opens the project's manager chat with the task as a
+chip in its composer and sends nothing.
+
+**"Tell the manager now?"** After the user changes a task of a project with a manager chat, a burst
+of edits asks once, 1.5 s after the last (`use-ppm-task-manager-prompt.ts`): a toast at the bottom
+right on a desktop (`task-manager-prompt-toast.tsx`), a bottom sheet on a phone. *Tell now* wakes the
+manager; *Next turn* or closing it leaves the news for its next turn
+([PPM Assistant → Tasks](ppm-assistant.md#tasks)).
+
+**On a phone** (`mobile/`): the list's rows are 62px; a tap opens the task full screen, and a
+long-press or a tap on the status cell opens the row's sheet — the project's statuses as big
+buttons, urgency, Reorder… (Move up / Move down inside the cell, in place of drag), Ask manager and
+Copy link. The task page has Details and Activity tabs (Activity with a dot when something changed
+while the user was away) and keeps the status button and Done (Reopen once closed) in the bottom bar.
+
+**The manager chat's Tasks chip** (`chip/`, mounted by `chat-tab.tsx`). Only a project's manager
+chat, and only while that project has Tasks on, shows "<n> tasks · <k> now" in its context row, with
+a red dot while something is at Now; a narrow chat keeps the count and icon. It opens the project's
+"what to do first" list as a popover above the row, or a bottom sheet on a phone; a row opens the
+task's tab and reveals it in the sidebar section (`reveal-task-in-sidebar.ts`). In a manager chat
+the activity chip gives up its place to this one when the chat is narrow, except while a linked
+session needs the user.
+
+**`?openTask=<id>`** on a project address (Telegram's *Open in PPM* on a task card) opens that
+task's tab once the project is open, then removes the parameter so a reload does not open it again
+(`parseUrlState` in `use-url-sync.ts`, `app.tsx`). *Copy link* gives the task-tab address instead.
+
+Checked end to end by `tests/e2e/ppm-tasks-e2e.mjs`
+([PPM Assistant → Verify](ppm-assistant.md#verify)).
+
 ## File Service & Filtering (Lazy-Load Tree, Palette Index)
 
 **Component:** FileFilterService + API endpoints `/files/list`, `/files/index`, settings endpoints
