@@ -15,12 +15,13 @@ export function statusMove(task: Pick<TaskDto, "statusId" | "baseGroup">, status
   return task.baseGroup === "closed" ? "reopen" : "update";
 }
 
-export function changeTaskStatus(write: ReturnType<typeof useTaskWrite>, task: TaskDto, statusId: string, statuses: TaskProjectSettings["statuses"] | undefined): void {
+/** Runs the write; answers it (`null` when it did not land, nothing when there was none to make). */
+export function changeTaskStatus(write: ReturnType<typeof useTaskWrite>, task: TaskDto, statusId: string, statuses: TaskProjectSettings["statuses"] | undefined): Promise<unknown> {
   const { actions, run } = write;
   switch (statusMove(task, statusId, statuses)) {
-    case "close": void run(task.id, () => actions.close(task, { statusId })); break;
-    case "reopen": void run(task.id, () => actions.reopen(task, statusId)); break;
-    case "update": void run(task.id, () => actions.update(task, { statusId })); break;
-    default: break;
+    case "close": return run(task.id, () => actions.close(task, { statusId }));
+    case "reopen": return run(task.id, () => actions.reopen(task, statusId));
+    case "update": return run(task.id, () => actions.update(task, { statusId }));
+    default: return Promise.resolve(undefined);
   }
 }

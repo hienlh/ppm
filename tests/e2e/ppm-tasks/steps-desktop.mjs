@@ -175,7 +175,7 @@ async function startChat(k, s) {
   k.record("4b", "no_session choice → Start chat and send → new chat titled after the task gets the choice (ppm_ui) and answers");
 }
 
-/** Scenario 9 desktop (scene 5): the manager chat's Tasks chip and its popover; a row reveals the task. */
+/** Scenario 9 desktop (scene 5): the manager chat's Tasks chip and its popover; a row shows the task's quick view. */
 async function managerChip(k, s) {
   const page = k.page;
   await page.goto(`${k.web}/project/alpha`);
@@ -194,11 +194,16 @@ async function managerChip(k, s) {
   await rows.first().waitFor({ timeout: 15000 });
   await k.beat(1500);
   await k.shot("09-manager-chip-popover-1440");
-  await rows.filter({ hasText: s.t.login.title }).first().click();
+  await rows.filter({ hasText: s.t.login.title }).locator("[data-chip-task-open]").first().click();
+  // The row shows the task's quick view beside the list, which stays open; its window is a button away.
+  const peek = page.locator(`[data-task-peek-popover="${s.t.login.id}"]`);
+  await peek.waitFor({ timeout: 15000 });
+  assert(await page.locator("[data-manager-tasks-list]:visible").count(), "the list stays open beside the quick view");
+  await peek.locator("[data-task-peek-page]").click();
   await k.detail().getByText(s.t.login.title).first().waitFor({ timeout: 15000 });
   await k.beat(1200);
   await k.endScene();
-  k.record("9a", "manager chat Tasks chip with counts; popover lists tasks; a row opens the task");
+  k.record("9a", "manager chat Tasks chip with counts; popover lists tasks; a row shows the task's quick view, Open in window opens the task");
 }
 
 /** Scenarios 4, 5: a stale save is refused whole; an AI change shows in History and Undo restores it. */

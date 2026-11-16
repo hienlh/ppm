@@ -4,18 +4,24 @@
  * and working-session chip, at most `CHIP_LIST_LIMIT` rows with "<m> more" and "Show in sidebar"
  * at the foot. One line per row in the desktop popover, two lines (60px) in the phone's sheet.
  *
- * A row opens the task: its tab in the main area — full screen on a phone — with the Tasks
- * section of the sidebar made current and the task selected in it, so the list is one tap away.
+ * A row shows the task's quick view and the list stays open: on a desktop a popover beside the
+ * list (`TaskPeekPopover`), below `md` a page of this same sheet with a back button to the list.
+ * The quick view edits the usual fields in place and has Open chat and the task's full page (a
+ * window on a desktop, Full screen on a phone); neither touches the sidebar. Another row moves
+ * the quick view to that task, Escape closes it before the list, a press outside both closes both.
  */
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ListTodo, PanelRight } from "@/lib/icons";
-import { isMobileDevice } from "@/hooks/use-is-mobile";
+import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { usePpmTaskLinkStates, usePpmTaskList } from "@/hooks/use-ppm-tasks";
 import { URGENCY_LABEL } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
 import { groupTasks } from "@/lib/ppm-tasks/task-list-view";
-import { openTaskChat, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
-import { openTask as openTaskAnywhere } from "@/lib/ppm-tasks/open-task";
+import { openTaskChat, workingProvider, type TaskTabTarget } from "@/lib/ppm-tasks/open-task-tab";
+import { openTask as openTaskAnywhere, openTaskFullScreen } from "@/lib/ppm-tasks/open-task";
 import { revealTaskInSidebar } from "@/lib/ppm-tasks/reveal-task-in-sidebar";
+import { NO_PEEK, taskPeekStep, type TaskPeekEvent } from "@/lib/ppm-tasks/task-peek-state";
+import type { PeekSide } from "@/lib/ppm-tasks/task-peek-placement";
 import type { Urgency } from "../../../../shared/ppm-tasks";
 import type { TaskDto } from "../../../../shared/ppm-tasks-api";
 import { FooterButton, FooterPopoverFooter, FooterPopoverHeader } from "@/components/chat/footer-popover";
@@ -23,8 +29,13 @@ import { TaskStatusGlyph } from "../kit/task-status-glyph";
 import { TaskDueLabel } from "../kit/task-due-label";
 import { TaskWorkingSessionChip } from "../kit/task-working-session-chip";
 import { TaskCode } from "../kit/task-code";
+import { TaskPeekPopover } from "../peek/task-peek-popover";
+import { TaskPeekBody } from "../peek/task-peek-body";
 
 export const CHIP_LIST_LIMIT = 8;
+
+/** Beside the list, then below or above it when the chat leaves no room at either side. */
+const LIST_PEEK_SIDES: readonly PeekSide[] = ["right", "left", "bottom", "top"];
 
 export interface ChipListView {
   groups: Array<{ urgency: Urgency; tasks: TaskDto[] }>;
@@ -49,21 +60,49 @@ export function chipListView(tasks: readonly TaskDto[], limit = CHIP_LIST_LIMIT)
   return { groups, more: total - shown, ids: groups.flatMap((g) => g.tasks.map((t) => t.id)) };
 }
 
+const targetOf = (t: TaskDto): TaskTabTarget => ({ id: t.id, project: t.project, title: t.title, number: t.number });
+
 export function ManagerTasksPopoverList({ project, total, onClose }: { project: string; total: number; onClose(): void }) {
   const { tasks, loading, error } = usePpmTaskList({ project, closed: false });
   const view = useMemo(() => chipListView(tasks), [tasks]);
   // The chip counts child tasks too; whatever the list leaves out is "more" in the sidebar.
   const more = Math.max(view.more, total - view.ids.length);
   const live = usePpmTaskLinkStates(view.ids, project);
+  const mobile = useIsMobile();
 
-  const openTask = (task: TaskDto) => {
-    onClose();
-    // A desktop opens the task in a window beside the chat; a phone in a sheet over it. Either way
-    // the task is selected in the Tasks list.
-    revealTaskInSidebar(task, { openList: !isMobileDevice() });
-    openTaskAnywhere(task);
+  const [peek, setPeek] = useState(NO_PEEK);
+  const step = (event: TaskPeekEvent) => {
+    const next = taskPeekStep(peek, event);
+    setPeek(next.state);
+    if (next.closeList) onClose();
   };
+  // The task the quick view shows, as the list last had it: a task closed from the quick view
+  // leaves this open-tasks list, and the quick view keeps showing it.
+  const lastTarget = useRef<TaskTabTarget | null>(null);
+  const listed = peek.taskId ? tasks.find((t) => t.id === peek.taskId) : undefined;
+  if (listed) lastTarget.current = targetOf(listed);
+  const target: TaskTabTarget | null = !peek.taskId ? null
+    : lastTarget.current?.id === peek.taskId ? lastTarget.current : { id: peek.taskId, project, title: "Task" };
+
+  const listRef = useRef<HTMLDivElement>(null);
+  // The popover the list sits in: what the quick view stays clear of.
+  const panelRef = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => { panelRef.current = listRef.current?.closest<HTMLElement>("[data-footer-popover]") ?? listRef.current; });
+  // The row clicked: what the quick view lines up with.
+  const rowRef = useRef<HTMLElement | null>(null);
+
+  const showTask = (task: TaskDto, row: HTMLElement | null) => {
+    rowRef.current = row;
+    step({ type: "row", taskId: task.id, toggle: !mobile });
+  };
+  // The task's full page; the sidebar is left as it is.
+  const openWindow = (task: TaskTabTarget) => { onClose(); openTaskAnywhere(task); };
+  const openFullScreen = (task: TaskTabTarget) => { onClose(); openTaskFullScreen(task); };
   const showInSidebar = () => { onClose(); revealTaskInSidebar({ project }, { openList: true }); };
+
+  if (mobile && target) {
+    return <TaskPeekBody key={target.id} target={target} layout="sheet" onBack={() => step({ type: "back" })} onLeave={onClose} onOpenPage={openFullScreen} />;
+  }
 
   return (
     <>
@@ -73,7 +112,7 @@ export function ManagerTasksPopoverList({ project, total, onClose }: { project: 
         <span className="rounded bg-surface px-1.5 font-mono text-[11px] text-text-3">{total}</span>
         <span className="min-w-0 truncate text-text-3 max-md:text-xs">{project} · what to do first</span>
       </FooterPopoverHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1" data-manager-tasks-list="">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1" data-manager-tasks-list="">
         {error ? <p className="px-3 py-3 text-error">{error}</p>
           : loading && tasks.length === 0 ? <p className="px-3 py-3 text-text-3">Loading tasks…</p>
           : view.groups.length === 0 ? <p className="px-3 py-3 text-text-3 max-md:px-4">No open tasks</p>
@@ -82,8 +121,8 @@ export function ManagerTasksPopoverList({ project, total, onClose }: { project: 
               <h4 className="px-3 pb-0.5 pt-2 text-[10.5px] font-semibold uppercase tracking-wide text-text-3 max-md:px-4">{URGENCY_LABEL[g.urgency]}</h4>
               <ul>
                 {g.tasks.map((t) => (
-                  <ChipRow key={t.id} task={t} working={live[t.id]?.workingSession ?? t.workingSession}
-                    onOpen={() => openTask(t)}
+                  <ChipRow key={t.id} task={t} working={live[t.id]?.workingSession ?? t.workingSession} selected={!mobile && peek.taskId === t.id}
+                    onOpen={(row) => showTask(t, row)}
                     onOpenChat={(sid) => { onClose(); openTaskChat(t.project, sid, workingProvider(live[t.id] ? { workingSession: live[t.id]!.workingSession } : t), t); }} />
                 ))}
               </ul>
@@ -93,23 +132,30 @@ export function ManagerTasksPopoverList({ project, total, onClose }: { project: 
       <FooterPopoverFooter>
         <span className="min-w-0 truncate px-1 text-text-3 max-md:text-xs">
           {more > 0 ? `${more} more` : ""}
-          <span className="md:hidden">{more > 0 ? " · " : ""}tap a task to open it</span>
+          <span className="md:hidden">{more > 0 ? " · " : ""}tap a task to see it</span>
         </span>
         <FooterButton className="ml-auto" onClick={showInSidebar}><PanelRight />Show in sidebar</FooterButton>
       </FooterPopoverFooter>
+      {!mobile && target && (
+        <TaskPeekPopover target={target} avoidRef={panelRef} alignRef={rowRef} sides={LIST_PEEK_SIDES}
+          onClose={() => step({ type: "escape" })} onLeave={onClose} onOpenWindow={openWindow} />
+      )}
     </>
   );
 }
 
-function ChipRow({ task, working, onOpen, onOpenChat }: {
-  task: TaskDto; working: TaskDto["workingSession"]; onOpen(): void; onOpenChat(sessionId: string): void;
+function ChipRow({ task, working, selected, onOpen, onOpenChat }: {
+  task: TaskDto; working: TaskDto["workingSession"]; selected: boolean; onOpen(row: HTMLElement | null): void; onOpenChat(sessionId: string): void;
 }) {
   return (
-    <li className="flex min-w-0 items-center gap-2 px-2 max-md:gap-3 max-md:px-4 max-md:py-0.5" data-chip-task={task.id}>
+    <li className="flex min-w-0 items-center gap-2 px-2 max-md:gap-3 max-md:px-4 max-md:py-0.5" data-chip-task={task.id} data-chip-task-selected={selected ? "" : undefined}>
       <TaskStatusGlyph baseGroup={task.baseGroup} closedAs={task.closedAs} name={task.statusName} size="md" className="shrink-0 pl-1 max-md:pl-0" />
-      <button type="button" onClick={onOpen} title={`Open #${task.number} ${task.title}`}
-        data-chip-task-open=""
-        className="flex min-h-7 min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left can-hover:hover:bg-surface-hover max-md:min-h-[26px] max-md:flex-col max-md:items-start max-md:justify-center max-md:gap-0.5">
+      <button type="button" onClick={(e) => onOpen(e.currentTarget.closest("li"))} title={`Show #${task.number} ${task.title}`}
+        data-chip-task-open="" aria-expanded={selected} aria-haspopup="dialog"
+        className={cn(
+          "flex min-h-7 min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left can-hover:hover:bg-surface-hover max-md:min-h-[26px] max-md:flex-col max-md:items-start max-md:justify-center max-md:gap-0.5",
+          selected && "bg-accent-wash can-hover:hover:bg-accent-wash",
+        )}>
         <span data-task-code-pair="" className="flex min-w-0 flex-1 items-baseline gap-1 max-md:w-full max-md:flex-none">
           <TaskCode task={task} viewProject={task.project} nested inRow className="text-[12px] max-md:text-[12.5px]" />
           <span data-task-code-title="" className="min-w-0 flex-1 truncate text-[13px] text-text max-md:text-sm">{task.title}</span>

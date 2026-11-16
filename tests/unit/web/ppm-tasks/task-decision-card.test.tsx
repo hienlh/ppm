@@ -33,6 +33,9 @@ afterEach(async () => {
   toast.dismiss();
 });
 
+// The task writes only: a tab test that ran before this file can leave the panel store's
+// debounced workspace save (`PUT /api/project/<p>/workspace`, 1.5s) to land in these stubs.
+const taskWrites = () => requests.filter((r) => r.method !== "GET" && r.url.startsWith("/api/tasks"));
 const settle = async () => {
   for (let i = 0; i < 6; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 };
@@ -69,7 +72,7 @@ describe("TaskDecisionCard", () => {
     view = await mount(<Harness task={task} />);
     await click([...document.querySelectorAll("button")].find((b) => b.textContent === "Choose B")!);
     await settle();
-    expect(requests.filter((r) => r.method !== "GET")).toEqual([{ url: `/api/tasks/${task.id}/decide`, method: "POST", body: { optionId: "b", revision: 1 } }]);
+    expect(taskWrites()).toEqual([{ url: `/api/tasks/${task.id}/decide`, method: "POST", body: { optionId: "b", revision: 1 } }]);
     expect(sentToChat).toBe(0);
     expect(toasts().some((t) => t.title === "Choice sent to the manager chat: it started working on it")).toBe(true);
   });
@@ -100,7 +103,7 @@ describe("TaskDecisionCard", () => {
     expect(sentToChat).toBe(0);
     await act(async () => { t!.action!.onClick(); });
     await settle();
-    const writes = requests.filter((r) => r.method !== "GET").map((r) => [r.url.split("/").pop(), (r.body as { revision?: number; optionId?: string } | null)]);
+    const writes = taskWrites().map((r) => [r.url.split("/").pop(), (r.body as { revision?: number; optionId?: string } | null)]);
     // Decided at revision 1 (refused), started the chat, then decided again from the revision Start chat left.
     expect(writes).toEqual([["decide", { optionId: "a", revision: 1 }], ["start-chat", { revision: 1 }], ["decide", { optionId: "a", revision: 2 }]]);
     expect(toasts().some((x) => x.title === 'Choice sent to "' + task.title + '": it started working on it')).toBe(true);

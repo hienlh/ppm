@@ -25,7 +25,7 @@ export interface TaskFieldEditorSheetProps {
   hasManager: boolean;
   onClose(): void;
   onStatus(statusId: string): void;
-  onPatch(patch: TaskPatch): void;
+  onPatch(patch: TaskPatch): unknown;
   onOpenTask(task: Pick<TaskDto, "id" | "project" | "title">): void;
   onAddChild(): void;
   onManageFields(): void;
