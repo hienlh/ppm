@@ -29,7 +29,7 @@ import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { outcomeOf, sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { CardReminders, TelegramSilence } from "./assistant-telegram-silence.ts";
 import { createLogger } from "../logger.ts";
-import { cardReplyFollowups } from "../assistant-cards/card-reply-followup.ts";
+import { repliesBeingAnswered } from "../assistant-cards/replies-being-answered.ts";
 import { isAnswerCard, type AnsweredReply } from "../assistant-cards/card-reply-followup-tracker.ts";
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { CARD_FOLLOWUP_LOUD_MS } from "../../shared/assistant-limits.ts";
@@ -53,7 +53,7 @@ export interface ManagerCardsDeps {
   reminders?: CardReminders;
   /** Whether a card still waits on the user (its row is open). */
   isOpen?: (cardId: string) => boolean;
-  /** The replies on cards a turn of this chat is answering now (`cardReplyFollowups.answering`). */
+  /** The replies a turn of this chat is answering now: card replies and task words (`repliesBeingAnswered`). */
   answering?: (sessionId: string | null) => AnsweredReply[];
   /** The clock the reply's time was taken on (the Assistant's). */
   now?: () => number;
@@ -112,7 +112,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     const threads = new Map<string, Thread>();
     if (card.kind === "approval" || card.kind === "question" || !isAnswerCard(card)) return threads;
     let answering: AnsweredReply[];
-    try { answering = (this.deps.answering ?? ((s) => cardReplyFollowups.answering(s)))(card.sessionId); } catch { return threads; }
+    try { answering = (this.deps.answering ?? repliesBeingAnswered)(card.sessionId); } catch { return threads; }
     const now = (this.deps.now ?? (() => assistantClock.now()))();
     for (const a of answering) {
       if (a.origin.channel !== "telegram" || threads.has(a.origin.chatId)) continue;

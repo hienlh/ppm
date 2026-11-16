@@ -1732,6 +1732,22 @@ store, behind any request the chat has open rather than answering it, and with n
 left behind. A forwarded message is refused (someone else's words), a photo is not sent, and a
 title-only project shows the task's ref and title but never its chat's title.
 
+**The chat's answer comes back.** The bot's "✅ Sent to …" is not the end: the turn that reads the
+words is followed like a card reply's (`task-words-followup.ts`, a second instance of
+`card-reply-followup-tracker.ts`, bound to the turn named by the words' `card-…` client id, never a
+later one) and its final text goes back to Telegram **as a reply to the user's own message**
+(`assistant-telegram-task-followups.ts`): which chat answered and which task, the answer redacted
+and escaped and cut to one message with an Open link, or — on a title-only project — only that it
+answered, with the link. A turn that stops on an approval, a question or a PPM-only card says so
+once ("⏳ The alpha manager chat is waiting for your approval…"), so the phone never goes quiet; a
+turn stopped or ended by an error says that (the error's first line, on a project that shows
+details). Words queued behind a card that is already showing are told so at once. A turn that wrote
+nothing, or one PPM cannot tell apart from another that ran first, points at the chat rather than
+staying silent. A card the manager makes in that turn goes under the user's message like a card
+reply's answer (`repliesBeingAnswered`), and is not named again. The detail level is read when the
+message goes, so a project switched to titles only mid-turn shows no content. A reply to that answer
+is about the same task. It rings within `CARD_FOLLOWUP_LOUD_MS` of the user's message.
+
 "Open in PPM" links point to `/assistant?session=<provider>/<id>` (`notificationPath` in
 `src/services/notification-format.ts`, parsed by `src/web/lib/assistant-deep-link.ts`), which
 opens the Assistant on whatever project is on screen; the old `/project/__assistant__?openChat=…`

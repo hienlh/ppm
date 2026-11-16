@@ -36,6 +36,7 @@ import type { ChatControl } from "../../src/services/chat-control/chat-control.t
 import { ASSISTANT_PROJECT_NAME } from "../../src/shared/assistant-project.ts";
 import type { WriteContext } from "../../src/shared/ppm-tasks.ts";
 import { startFakeTelegram, type FakeSentMessage } from "../helpers/fake-telegram-bot-api.ts";
+import { FOLLOWUP_GRACE_MS } from "../../src/services/assistant-cards/card-reply-followup-tracker.ts";
 import type { AIProvider, ChatEvent } from "../../src/types/chat.ts";
 import type { PpmConfig } from "../../src/types/config.ts";
 
@@ -559,6 +560,47 @@ describe("writing to the chat working on a task", () => {
     expect(call).toContain(taskBlock(ids.psr));
     const said = await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.startsWith("✅ Sent to")));
     expect(said.text).toBe("✅ Sent to the nxsys manager chat, about nxsys/1 · PSR Ireland bỏ sót payslip.");
+  });
+
+  it("the chat's answer comes back under the user's own message, once, naming the chat and the task", async () => {
+    const deck = await psrCard();
+    const before = fake.sent(PHONE).length;
+    await press(deck, "💬 Message about this task");
+    await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.includes("Your next message goes to")));
+    const update = fake.pushText(PHONE, PHONE, "is it still blocked?");
+    const userMessageId = update.message!.message_id;
+    await lastCallWith("is it still blocked?");
+    // The scripted provider never names its turn (Claude does), so the follower judges it after its grace.
+    await settle();
+    advance(FOLLOWUP_GRACE_MS + 100);
+    const answer = await fake.waitFor(() => fake.sent(PHONE).find((m) => m.reply_to === userMessageId && m.text.includes("answered")));
+    expect(answer.text.split("\n").slice(0, 2)).toEqual([
+      "💬 The nxsys manager chat answered, about nxsys/1 · PSR Ireland bỏ sót payslip:", "Noted.",
+    ]);
+    expect(JSON.stringify(answer)).toContain("openChat=claude/mgr-nxsys");
+    // The next message goes to the Assistant, and its answer is not sent under the old message.
+    const calls = providerCalls.length;
+    await send("cảm ơn nhé");
+    await fake.waitFor(() => providerCalls.length > calls);
+    await settle();
+    expect(fake.sent(PHONE).filter((m) => m.reply_to === userMessageId)).toHaveLength(1);
+  });
+
+  it("a title-only project's answer stays in PPM: only that the chat answered, and the link", async () => {
+    const deck = await cardOf("ppm", "Secret client payroll fix");
+    const before = fake.sent(PHONE).length;
+    await press(deck, "💬 Message about this task");
+    await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.includes("Your next message goes to")));
+    const update = fake.pushText(PHONE, PHONE, "status of the ACME salaries?");
+    const userMessageId = update.message!.message_id;
+    await lastCallWith("status of the ACME salaries?");
+    await settle();
+    advance(FOLLOWUP_GRACE_MS + 100);
+    const answer = await fake.waitFor(() => fake.sent(PHONE).find((m) => m.reply_to === userMessageId && m.text.includes("answered")));
+    expect(answer.text).toContain("The ppm manager chat answered, about ppm/");
+    expect(answer.text).toContain("details stay in PPM");
+    expect(answer.text).not.toContain("Noted.");
+    expect(answer.text).not.toContain("ACME");
   });
 
   it("a forwarded message is not the user's words, and is not sent", async () => {

@@ -62,6 +62,8 @@ import { CardReminders, quietWhileInPpm, TelegramSilence } from "./assistant-tel
 import { AssistantTelegramTasks, type TaskTelegramDeps } from "./assistant-telegram-task-actions.ts";
 import { AssistantTelegramTaskCreated, type TaskCreatedDeps } from "./assistant-telegram-task-created.ts";
 import { AssistantTelegramTaskMessages, type TaskMessageDeps } from "./assistant-telegram-task-message.ts";
+import { AssistantTelegramTaskFollowups } from "./assistant-telegram-task-followups.ts";
+import { attachTaskFollowupSink, detachTaskFollowupSink } from "../assistant-cards/task-words-followup.ts";
 import { pressTaskCardUndo } from "./assistant-telegram-task-card-extras.ts";
 import { createLogger } from "../logger.ts";
 
@@ -205,6 +207,12 @@ export class AssistantTelegramBridge {
       queue, codes, ...(opts.tasks?.clock ? { clock: opts.tasks.clock } : {}), ...(opts.tasks?.forward ? { forward: opts.tasks.forward } : {}),
       taskAt: (chatId, messageId) => tasks.taskAt(chatId, messageId) ?? taskCreated.taskAt(chatId, messageId),
     });
+    // The chat's answer to those words comes back under the user's message.
+    const taskFollowups = new AssistantTelegramTaskFollowups({
+      queue, chatLink: links.chatLink, silence,
+      remember: (chatId, messageId, taskId) => taskMessages.remember(chatId, messageId, taskId),
+      threadedIn: (cardId, chatId) => managerCards.threadedIn(cardId, chatId),
+    });
     let poller: AssistantTelegramPoller | null = null;
     const inbound = new AssistantTelegramInbound({
       client, token, queue, codes, now,
@@ -244,10 +252,12 @@ export class AssistantTelegramBridge {
       () => taskCreated.detach(),
       () => tasks.stop(),
       () => taskMessages.stop(),
+      () => detachTaskFollowupSink(taskFollowups),
       () => detachCardFollowupSink(cardFollowups),
     ];
     cardOutbound.attach(managerCards);
     attachCardFollowupSink(cardFollowups);
+    attachTaskFollowupSink(taskFollowups);
     taskCreated.attach();
     this.run = { poller, queue, state, inbound, mirror, relay, dbNotices, cards, codes, reminders, tasks, taskCreated, taskMessages, offs };
 

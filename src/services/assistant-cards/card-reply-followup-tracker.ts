@@ -85,6 +85,8 @@ export interface FollowupResult {
    * card — only a reply typed on Telegram is told, since the user waits there for an answer.
    */
   stopped?: true;
+  /** With `stopped`: the error the turn ended on, when it was not stopped on request. */
+  error?: string;
   /** More text came than was kept: the rest is only in the chat. */
   overflow: boolean;
   /**
@@ -107,6 +109,13 @@ export interface FollowupTrackerDeps {
   deliver(result: FollowupResult): void;
   graceMs?: number;
   maxAgeMs?: number;
+  /** Hand over a turn that wrote nothing and made no card too (its `text` is then empty). */
+  deliverEmpty?: boolean;
+  /**
+   * An unnamed reply whose judgement failed (another turn ran first): without this it waits for a
+   * `turn_started` that may never come and says nothing; with it, it is given up and reported.
+   */
+  onUnanswered?(reply: { cardId: string; origin: FollowupOrigin; sessionId: string; repliedAt: number }): void;
 }
 
 /** What `expect` hands back: how the words went in, or that they never did. */
@@ -123,8 +132,8 @@ export const FOLLOWUP_MAX_AGE_MS = 12 * 60 * 60_000;
 export const FOLLOWUP_BUFFER_MAX = 6_000;
 const MAX_PENDING = 200;
 
-/** What a turn said, as it would be sent; `stopped` when it did not end normally. */
-interface Buffer { text: string; overflow: boolean; stopped?: true }
+/** What a turn said, as it would be sent; `stopped` when it did not end normally, with its error. */
+interface Buffer { text: string; overflow: boolean; stopped?: true; error?: string }
 
 /** How a turn ended (`turn_ended`): only `done` carries an answer. */
 export type TurnOutcome = "done" | "stopped" | "failed";
@@ -290,10 +299,10 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
     if (!live(p)) return;
     forget(p);
     const base = { cardId: p.cardId, origin: p.origin, sessionId: session, newCards: p.newCards, repliedAt: p.at };
-    if (buffer?.stopped) { deps.deliver({ ...base, text: "", overflow: false, stopped: true }); return; }
+    if (buffer?.stopped) { deps.deliver({ ...base, text: "", overflow: false, stopped: true, ...(buffer.error ? { error: buffer.error } : {}) }); return; }
     const text = buffer?.text.trim() ?? "";
     // A turn that answered with a card and wrote nothing else still answered.
-    if (!text && p.newCards.length === 0) return;
+    if (!text && p.newCards.length === 0 && !deps.deliverEmpty) return;
     deps.deliver({ ...base, text, overflow: buffer!.overflow });
   }
 
@@ -310,6 +319,10 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
       const session = p.sessionId;
       const sameTurn = deps.turnId(session) === endedTurn && (p.delivered !== "inserted" || p.turnAtInsert === endedTurn);
       if (deps.isIdle(session) && sameTurn) finish(p, buffer, session);
+      else if (deps.onUnanswered) {
+        forget(p);
+        deps.onUnanswered({ cardId: p.cardId, origin: p.origin, sessionId: session, repliedAt: p.at });
+      }
     }, graceMs);
   }
 
@@ -384,12 +397,14 @@ export function createFollowupTracker(deps: FollowupTrackerDeps) {
      * A chat's turn ended (`chatLifecycle` `turn_ended`). A builtin answering a message typed into a
      * running turn (`turnStillRunning`) is not its end. A turn stopped or failed has no answer.
      */
-    onTurnEnded(sessionId: string, how: { outcome?: TurnOutcome; turnStillRunning?: boolean } = {}): void {
+    onTurnEnded(sessionId: string, how: { outcome?: TurnOutcome; turnStillRunning?: boolean; error?: string | null } = {}): void {
       if (how.turnStillRunning || !watched.has(sessionId)) return;
       const session = sessionId;
       const stopped = (how.outcome ?? "done") !== "done";
       for (const p of inSession(session)) {
-        const buffer: Buffer = stopped ? { text: "", overflow: false, stopped: true } : answerOf(p.collect, p.newCards.length > 0);
+        const buffer: Buffer = stopped
+          ? { text: "", overflow: false, stopped: true, ...(how.error ? { error: how.error } : {}) }
+          : answerOf(p.collect, p.newCards.length > 0);
         if (p.bound) { finish(p, buffer, session); continue; }
         // Queued behind this turn, or judged already against an earlier one: not this turn's.
         if (p.delivered === "queued" || p.judged) continue;

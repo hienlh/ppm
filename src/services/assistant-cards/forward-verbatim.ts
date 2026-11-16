@@ -14,6 +14,7 @@
 import { MANAGER_REPLY_CARD_KINDS, type AssistantCard } from "../../shared/assistant-cards.ts";
 import type { UserWordsReference } from "../../shared/user-words-block.ts";
 import type { TaskReference } from "../../shared/chat-task-ref.ts";
+import type { TaskFollowupContext } from "./task-words-followup.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import type { DeliverUserWordsInput, DeliverUserWordsResult } from "../../server/ws/chat-user-words.ts";
 import type { FollowupHandle, FollowupOrigin } from "./card-reply-followup-tracker.ts";
@@ -66,6 +67,8 @@ export interface ForwardEnv {
   trace(sessionId: string, providerId: string, payload: Record<string, unknown>): void;
   /** Starts following the turn that will answer words sent under `clientMessageId`. */
   expectFollowup?(input: { cardId: string; clientMessageId: string; origin: FollowupOrigin; sessionId: string }): FollowupHandle;
+  /** Likewise for words about a task, whose answer goes back under the user's own message. */
+  expectTaskFollowup?(input: { clientMessageId: string; sessionId: string; context: TaskFollowupContext }): FollowupHandle;
 }
 
 export type ForwardResult =
@@ -156,6 +159,8 @@ export interface TaskWordsInput {
   /** The task, as the store has it now (`resolveTaskRef`); written as the message's task block. */
   taskRef: TaskReference;
   actor: CardActor;
+  /** Where the chat's answer goes back once the turn that reads the words ends (Telegram). */
+  followUp?: TaskFollowupContext;
 }
 
 export type TaskWordsResult =
@@ -172,12 +177,27 @@ export type TaskWordsResult =
 export async function forwardUserWordsAboutTask(input: TaskWordsInput, env: ForwardEnv): Promise<TaskWordsResult> {
   const { actor, target, taskRef } = input;
   const userWords: UserWordsReference = { channel: actor.channel, at: new Date(env.now()).toISOString() };
-  const delivered = await env.deliverUserWords({
-    targetSessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName,
-    projectPath: target.projectPath, text: input.text, userWords, taskRefs: [taskRef], supersede: false,
-    clientMessageId: `card-${crypto.randomUUID()}`,
-  });
-  if (!delivered.ok) return delivered;
+  // Chosen before the send, so the turn the words open can be followed even when the provider
+  // names it before the send returns.
+  const clientMessageId = `card-${crypto.randomUUID()}`;
+  const following = input.followUp
+    ? env.expectTaskFollowup?.({ clientMessageId, sessionId: target.sessionId, context: input.followUp }) ?? null
+    : null;
+  let delivered: DeliverUserWordsResult;
+  try {
+    delivered = await env.deliverUserWords({
+      targetSessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName,
+      projectPath: target.projectPath, text: input.text, userWords, taskRefs: [taskRef], supersede: false, clientMessageId,
+    });
+  } catch (e) {
+    following?.abandon();
+    throw e;
+  }
+  if (!delivered.ok) {
+    following?.abandon();
+    return delivered;
+  }
+  following?.attach(delivered.delivered);
   env.userWrote(delivered.sessionId);
   env.trace(delivered.sessionId, target.providerId, {
     taskId: taskRef.taskId, channel: actor.channel,

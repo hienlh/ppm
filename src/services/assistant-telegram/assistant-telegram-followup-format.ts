@@ -32,6 +32,10 @@ export interface FollowupFormatInput {
   url: string | null;
   /** The manager's turn was stopped or failed before it answered: only that is said. */
   stopped?: boolean;
+  /** The first line, already HTML, in place of the manager's ("The X chat's answer about task Y"). */
+  labelHtml?: string;
+  /** What a title-only project says in place of the answer. */
+  titleOnlyNote?: string;
 }
 
 export interface FormattedFollowup {
@@ -51,7 +55,7 @@ export function formatCardFollowup(input: FollowupFormatInput): FormattedFollowu
   const project = input.projectName ? ` · ${cleanTelegramText(input.projectName.replace(/\s+/g, " ").trim(), counter)}` : "";
   // A stopped turn's partial text is never shown: one line, whatever the project's detail level.
   if (input.stopped) return withLink(`⏹ <i>${escapeTelegramHtml(FOLLOWUP_STOPPED_NOTE)}</i>${project}`, input.url);
-  const lines = [`${FOLLOWUP_LABEL}${project}`];
+  const lines = [input.labelHtml ?? `${FOLLOWUP_LABEL}${project}`];
   if (input.detail === "full") {
     const redacted = redactSecretsForTelegram(escapeHiddenCharacters(input.text));
     counter.hidden += redacted.hidden;
@@ -59,7 +63,7 @@ export function formatCardFollowup(input: FollowupFormatInput): FormattedFollowu
     lines.push(markdownToTelegramHtml(cut.text));
     if (cut.truncated) lines.push(`<i>${escapeTelegramHtml(FOLLOWUP_CUT_NOTE)}</i>`);
   } else {
-    lines.push(`<i>${escapeTelegramHtml(FOLLOWUP_TITLE_ONLY_NOTE)}</i>`);
+    lines.push(`<i>${escapeTelegramHtml(input.titleOnlyNote ?? FOLLOWUP_TITLE_ONLY_NOTE)}</i>`);
   }
   if (counter.hidden > 0) lines.push(`<i>🔒 ${counter.hidden} secret-looking value${counter.hidden === 1 ? "" : "s"} hidden.</i>`);
   return withLink(lines.join("\n"), input.url);
@@ -85,7 +89,7 @@ export function formatNewCardPointer(input: {
 }
 
 /** The Open in PPM link: a button where Telegram takes one, else written into the text. */
-function withLink(html: string, url: string | null): FormattedFollowup {
+export function withLink(html: string, url: string | null): FormattedFollowup {
   if (!url) return { html };
   const link = placeLink(url);
   if (link.inline) return { html: `${html}\n\n${link.inline}` };
