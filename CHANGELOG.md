@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.4] - 2026-11-16
+
+### Added
+
+- **Open chat from a task brings the task along**: the chat's message box shows the task as a chip, and the message you send carries the task's reference, so a chat handling many tasks knows which one you mean.
+- **Message about a task from Telegram**: a "Message about this task" button on `/tasks` cards, and a reply to a task card, send your next message to the chat working on that task.
+
 ## [0.26.3] - 2026-11-16
 
 ### Added
