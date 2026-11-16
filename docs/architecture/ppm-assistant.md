@@ -1192,7 +1192,11 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   takes no path from the browser, and a line of the user's text that looks like an attachment
   marker is defused wherever it is. `confirmAge: true` confirms only a card's age (the "send
   anyway?" asked of a day-old card) and is refused with `already_answered` once the card no longer
-  waits; `force` still sends to a closed card (Telegram's "Send anyway"). A Telegram photo (or an
+  waits; `force` sends to a closed card. On Telegram a reply to a card that was decided (an OK, a
+  choice, an Allow or Deny, dismissed, resolved, gone) is refused in one line ("Not sent: this card
+  was already decided or closed"); a card answered only in words still takes more, after "send
+  anyway?" (`force`), so the conversation under the card goes on; and "Send anyway" for a card still
+  waiting sends `confirmAge` (`cardDecided` in `assistant-telegram-card-replies.ts`). A Telegram photo (or an
   album, gathered by `media_group_id`) sent as a reply to a card goes the same way, the largest copy
   under those limits. `POST …/dismiss` takes reports
   and the budget card. Status changes are compare-and-set, so a second answer gets
@@ -1567,7 +1571,8 @@ a reply to a card's message — goes to the card's manager chat **word for word*
 channel and the time, and for an OK the draft's hash and recipient. Its header reads "Typed by the
 user, forwarded word for word by PPM". Only `forward-verbatim.ts` builds one; every other door,
 the forwarded text included, breaks its markers, and a unit test checks the source for any second
-writer. A card that stopped waiting or is older than `STALE_REPLY_MS` asks "send anyway?" first. A
+writer. A card that stopped waiting or is older than `STALE_REPLY_MS` asks "send anyway?" first
+(on Telegram a card that was decided is refused instead, see Answering above). A
 reply to an approval or question card refuses that request, as typing in the manager chat would;
 any other forward waits behind a pending request. Forwarding resets the pair counts, leaves a line
 for the Assistant's next turn (no turn is started for it) and records the device and fetch site, or
@@ -1665,7 +1670,7 @@ answer used to stay in the manager chat, which a user on their phone never opens
   `turn_ended` listener forgets the reply, since the signals start first).
 - The answer's Telegram message is recorded as one of the card's messages, marked `followUp`, so a
   reply to it reaches the same manager like a reply to the card (the card is answered by then, so
-  it asks "send anyway?"). That holds for a bare OK too, and for an OK to the "stopped" notice: it
+  it asks "send anyway?"; a card that was decided rather than answered in words is refused). That holds for a bare OK too, and for an OK to the "stopped" notice: it
   is never routed to a new card the answer named. Routing it there once let an "ok, noted" approve
   a card the user never saw (one named only by title, held back in quiet hours, or behind a notice
   that named nothing), so a decision on a new card is taken only on that card. A follow-up is never

@@ -5,17 +5,41 @@
  * A reply is matched on the pair (chat, replied-to message id) — Telegram counts message ids per
  * chat, so the same number in another chat is another message. The inbound router has already run
  * its access and backlog checks and flushed the chat's gathered messages; a forwarded message, or
- * one sent through an inline bot, is someone else's words and never answers a card. A card that no
- * longer waits, or is older than a day, asks first: "send anyway?".
+ * one sent through an inline bot, is someone else's words and never answers a card.
+ *
+ * A card that was DECIDED (an OK, a choice, an Allow or Deny, dismissed, expired, no longer
+ * waiting) takes no more words: they would reach its manager as a second answer to a settled
+ * question, so they are refused in one line. A card that was only answered in words (a reply)
+ * still takes more: that is the conversation with its manager going on, which is how a reply to the
+ * manager's answer under the card works. Either of those, or a card older than a day, asks first:
+ * "send anyway?". For a card still waiting, Send anyway confirms its age only (`confirmAge`), the
+ * same as PPM's set of decisions, so a card decided while the question waited is refused.
  */
 import { findCardByTelegramRef } from "../assistant-cards/assistant-cards-outbound-db.ts";
 import { chooseCardOption, okCard, replyToCard, type CardReplyResult } from "../assistant-cards/card-reply-actions.ts";
+import { assistantCards } from "../assistant-cards/assistant-cards.service.ts";
+import type { AssistantCard } from "../../shared/assistant-cards.ts";
 import type { CardActor } from "../assistant-cards/forward-verbatim.ts";
 import { decideManagerRules } from "../assistant-managers/manager-rules.service.ts";
 import { escapeTelegramHtml } from "../notification-format.ts";
 import type { InlineKeyboardMarkup } from "../telegram/telegram-types.ts";
 import type { BridgeAction, ManagerCardPress } from "./assistant-telegram-actions.ts";
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
+
+/** What a reply to a card that was already decided is told: nothing is forwarded. */
+export const CLOSED_CARD_NOT_SENT = "Not sent: this card was already decided or closed.";
+
+/**
+ * Whether a card that no longer waits was settled by a decision, rather than only answered in
+ * words: an OK, a choice, an Allow or Deny, dismissed, resolved or gone. Only words leave the card
+ * open to more words.
+ */
+export function cardDecided(card: Pick<AssistantCard, "status" | "answer">): boolean {
+  if (card.status === "open" || card.status === "info") return false;
+  if (card.status !== "answered") return true;
+  const a = card.answer;
+  return !a || a.ok === true || !!a.choice || a.approved !== undefined;
+}
 
 const MAX_PENDING = 50;
 /**
@@ -41,6 +65,8 @@ export interface CardRepliesDeps {
   replyTo?: typeof replyToCard;
   decideRules?: (projectName: string, action: "approve" | "revert", hash: string) => Promise<void>;
   findCard?: typeof findCardByTelegramRef;
+  /** The card as it is now, to choose how "Send anyway" confirms (default: the card store). */
+  getCard?: (id: string) => AssistantCard | null;
 }
 
 type Image = { data: string; mediaType: string };
@@ -113,6 +139,11 @@ export class AssistantTelegramCardReplies {
         : "Sent to the Assistant.");
       return;
     }
+    // A decided card is not asked about: more words would be a second answer.
+    if (result.error === "already_answered" || (result.error === "confirm" && result.card && cardDecided(result.card))) {
+      this.deps.reply(chatId, CLOSED_CARD_NOT_SENT);
+      return;
+    }
     if (result.error === "confirm" && result.question) {
       this.makeRoom(images.reduce((n, i) => n + i.data.length, 0));
       const pendingId = crypto.randomUUID();
@@ -144,8 +175,18 @@ export class AssistantTelegramCardReplies {
       const waiting = press.pendingId ? this.pending.get(press.pendingId) : undefined;
       if (!waiting || waiting.chatId !== chatId || waiting.cardId !== press.cardId) return "This button is no longer valid.";
       this.pending.delete(press.pendingId!);
+      // Looked at as it is now, not as it was when the question was asked.
+      const now = (this.deps.getCard ?? ((id) => assistantCards.get(id)))(press.cardId);
+      if (now && cardDecided(now)) {
+        this.answer(chatId, press.cardId, { ok: false, status: 409, error: "already_answered", card: now }, waiting.text, waiting.images, waiting.messageId);
+        return "Not sent.";
+      }
+      // A card still waiting: the same confirmation as PPM's set of decisions, its age only, so a
+      // card decided in the meantime is refused by the server too. A card answered only in words:
+      // the conversation goes on, which only `force` sends.
+      const confirm = now && now.status !== "open" ? { force: true } : { confirmAge: true };
       const result = await (this.deps.replyTo ?? replyToCard)(
-        press.cardId, { text: waiting.text, force: true, ...(waiting.images.length ? { images: waiting.images } : {}) },
+        press.cardId, { text: waiting.text, ...confirm, ...(waiting.images.length ? { images: waiting.images } : {}) },
         this.actor(chatId, undefined, waiting.messageId),
       );
       this.answer(chatId, press.cardId, result, waiting.text, waiting.images, waiting.messageId);

@@ -192,7 +192,7 @@ describe("the card side of a Telegram reply", () => {
     if (!press.ok || press.action.kind !== "mcard") throw new Error("no Send anyway button");
     answer = { ok: true, card, to: "manager", projectName: "nxsys" };
     expect(await replies.press("42", press.action, press.group)).toBe("Sent.");
-    expect(calls[1]).toEqual({ id: "c1", body: { text: "", force: true, images: [image] } });
+    expect(calls[1]).toEqual({ id: "c1", body: { text: "", confirmAge: true, images: [image] } });
   });
 
   it("asks for words or a photo when the reply has neither", async () => {
