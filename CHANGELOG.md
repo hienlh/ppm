@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.26.3] - 2026-11-16
+
+### Added
+
+- **A task store for each project**: tasks with status, urgency, due dates, live links and the chat working on each, in the project sidebar beside the open task, on the phone, and as a Tasks chip in the manager chat.
+- **`/tasks` on Telegram**: go through what to do first and change a task's status from your phone.
+- **The manager checks on handed-off work**: a chat that stalls or finishes without reporting wakes the project's manager, or puts a card in front of you when there is none.
+
 ## [0.26.2] - 2026-11-16
 
 ### Changed
