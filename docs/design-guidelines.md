@@ -33,20 +33,32 @@ These rules MUST be followed when creating or modifying any UI component. PPM is
 - For `hidden`/`flex` toggles: `flex can-hover:hidden can-hover:group-hover:flex`
 - **DO NOT** use `md:opacity-0 md:group-hover:opacity-100` — iPad matches `md:` but has no hover
 
-### 3. Touch Targets
-- Minimum touch target: **44×44px** (Apple HIG)
-- Minimum spacing between interactive elements: **8px**
-- Prefer `py-3 px-4` over `py-1 px-2` for buttons on mobile
-- Icon-only buttons: minimum `size-10` (40px) with padding
+### 3. Button Heights — the Chat Composer's Toolbar Is the Standard
+There is **no 44px minimum**, on desktop or on a phone. Every button, chip and toolbar button
+takes its height from the toolbar inside the chat composer (Attach, mode, model, mic, Send), which
+is compact and reads well at both sizes. The numbers below are measured from that toolbar and the
+chat footer's context row in a production build:
 
-**Exception — icon buttons packed into one group.** Three or more icon buttons sharing a single
-pill (the chat footer's right-hand cluster: usage, History, `···`) cannot each claim 44px
-sideways: the invisible `::after` press areas would overlap, and the button later in the DOM
-takes a press meant for its neighbour. Such a group keeps the full **44px vertically** and
-narrows only across — 30px for the footer cluster, whose drawn buttons are 22px. The group is
-deliberately small on a phone; widening it to satisfy this rule is a regression, not a fix. See
-`FOOTER_GHOST` in `src/web/components/chat/footer-chip.ts`, which spells out the arithmetic, and
-`tests/e2e/chat-footer-e2e.mjs`, which measures the vertical reach.
+| Kind | Desktop (`md` and up) | Phone (below `md`) | Defined in |
+|---|---|---|---|
+| Icon-only button (toolbar, header, row action) | **34×34px**, radius 10px, 16px icon | **32×32px** | `SQUARE_BUTTON`, `message-input.tsx` |
+| Chip or small labelled button (mode, model, Queue) | **30px** tall, 9px side padding, 11.5px text, 16px icon | **28px** | `BAR_CHIP`, `message-input.tsx` |
+| Primary action (Send, Stop) | **36×36px**, radius 11px | **32×32px**, radius 10px | the Send button, `message-input.tsx` |
+| Dense row under content (the chat footer's chips) | **28px** (32px in a chat narrower than 420px) | **26px** | `FOOTER_CHIP`, `footer-chip.ts` |
+| Buttons inside one shared pill (usage, History, `···`) | **24px** (28px in a narrow chat) | **22px** | `FOOTER_CLUSTER` / `FOOTER_GHOST`, `footer-chip.ts` |
+
+- Pick the row by what the control is, not by the device: a toolbar button is 34/32px wherever
+  it sits, a chip 30/28px. Do not add a taller variant "for touch".
+- The press area is the button as drawn. Do not widen it with an invisible `::after` or extra
+  padding to reach a bigger size.
+- The same sizes apply under a coarse pointer at desktop width (iPad, touch laptop); the composer
+  switches at the `md` breakpoint only.
+- Icons are 16px in buttons and chips, 14px in the dense row.
+- One known exception today: the model chip keeps 30px on a phone (it has no `max-md:h-7`), so
+  the phone bar mixes 28px and 30px chips. New chips follow `BAR_CHIP` (28px on a phone).
+
+These numbers cover buttons, chips and toolbar buttons. List rows, menu items in a sheet and text
+inputs are sized by their content and are not covered here.
 
 ### 4. Context Menus → Long-Press or Inline Actions
 - **NEVER** use right-click context menus as the only way to access actions on mobile
@@ -134,12 +146,13 @@ not by any one kind. Any future floating-window feature must follow the same con
     breakpoint alone, since a touch laptop or iPad can be ≥768px wide with no mouse.
   - `draggable` (HTML5 drag-and-drop) is never set on a coarse pointer — there is no touch
     equivalent, and the guideline reserves long-press for the context menu instead.
-  - Row/tile height and toolbar buttons still need the 44×44px minimum on a coarse pointer even
-    at desktop width, gated the same way.
+  - Toolbar buttons keep the sizes in Mobile-First rule 3 (Button Heights) on a coarse pointer
+    too; there is no separate, taller coarse-pointer size.
 - **Picture-in-Picture** is a titlebar capability of every window kind, not just a detached tab:
   every skin renders the same PiP button, absent (not disabled, never a dead control that only
   explains itself) on browsers without `documentPictureInPicture`. The "Bring back" control shown
-  while a window plays in PiP is a full ≥44×44px touch target like any other primary action.
+  while a window plays in PiP is sized like any other primary action (36px on desktop, 32px on a
+  phone; Mobile-First rule 3).
 - **Portrait default for reading windows**: a window whose body is a live, scrolling read-only
   feed (an agent/teammate's transcript) spawns portrait (9:16), pinned top-right, instead of the
   landscape cascade every other kind uses — a step list reads top-to-bottom and wastes width in
@@ -595,16 +608,20 @@ Start with mobile styles, add complexity for larger screens:
 
 ### Touch-Friendly Sizes
 
-- **Button height:** 44px minimum (iOS guideline)
-- **Touch target:** 44×44px or larger
+- **Button height:** the chat composer's toolbar, not 44px — icon buttons 34px (32px on a phone),
+  chips 30px (28px), primary actions 36px (32px). Full table: Mobile-First rule 3.
+- **Touch target:** the button as drawn; no invisible widening.
 - **Spacing:** 16px minimum between interactive elements
 
 ```tsx
-// Good: Touch-friendly
-<button className="px-4 py-3 rounded-lg">Click</button>
+// Icon button, like Attach in the composer
+<button className="flex size-[34px] items-center justify-center rounded-[10px] max-md:size-8">…</button>
 
-// Avoid: Too small
-<button className="px-2 py-1">Click</button>
+// Chip, like the mode chip in the composer
+<button className="inline-flex h-[30px] items-center gap-1.5 rounded-full px-[9px] text-[11.5px] max-md:h-7">…</button>
+
+// Avoid: a 44px button "for touch"
+<button className="h-11 px-4">Click</button>
 ```
 
 ### Viewport Configuration
