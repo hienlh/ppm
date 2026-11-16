@@ -140,7 +140,7 @@ export function DecisionReplyField({ value, onChange, tone, focused, onFocus, in
             ))}
           </ul>
         )}
-        {error && <p className="text-[11px] text-error" role="alert">{error}</p>}
+        {error && <p className="text-[11px] text-error-ink" role="alert">{error}</p>}
       </div>
     </QuestionOtherRow>
   );

@@ -14,6 +14,8 @@ export type QuestionTone = "question" | "decision" | "urgent";
 
 interface ToneClasses {
   frame: string;
+  /** Every tab's own frame: a tinted tone's chosen tab is outlined, so the others keep its size. */
+  tabBase: string;
   tabOn: string;
   tabMarkOn: string;
   tabAnswered: string;
@@ -28,6 +30,7 @@ interface ToneClasses {
 const TONES: Record<QuestionTone, ToneClasses> = {
   question: {
     frame: "border-primary/30 bg-primary/5",
+    tabBase: "",
     tabOn: "bg-primary text-primary-foreground",
     tabMarkOn: "bg-white/20",
     tabAnswered: "text-primary bg-transparent",
@@ -40,25 +43,29 @@ const TONES: Record<QuestionTone, ToneClasses> = {
   },
   decision: {
     frame: "border-warning/40 bg-warning/5",
-    tabOn: "bg-warning text-neutral-950",
-    tabMarkOn: "bg-black/15",
-    tabAnswered: "text-warning bg-transparent",
-    tabMarkAnswered: "bg-warning/20 text-warning",
+    // Tinted, outlined and inked, never dark text on a solid fill: that read as heavy and, in red,
+    // as an alarm. The ink colours are measured against these tints in every built-in theme.
+    tabBase: "border border-transparent",
+    tabOn: "border-warning bg-warning/15 text-warning-ink font-medium",
+    tabMarkOn: "bg-warning/25 text-warning-ink",
+    tabAnswered: "text-warning-ink bg-transparent",
+    tabMarkAnswered: "bg-warning/20 text-warning-ink",
     tileOn: "border-warning bg-warning/10 text-text-primary",
     tileHover: "hover:border-warning/40 hover:bg-warning/5",
-    badgeOn: "bg-warning text-neutral-950",
+    badgeOn: "border border-warning bg-warning/15 text-warning-ink",
     ring: "ring-warning/40",
     inputFocus: "focus:border-warning",
   },
   urgent: {
     frame: "border-error/40 bg-error/5",
-    tabOn: "bg-error text-neutral-950",
-    tabMarkOn: "bg-black/15",
-    tabAnswered: "text-error bg-transparent",
-    tabMarkAnswered: "bg-error/20 text-error",
+    tabBase: "border border-transparent",
+    tabOn: "border-error bg-error/12 text-error-ink font-medium",
+    tabMarkOn: "bg-error/20 text-error-ink",
+    tabAnswered: "text-error-ink bg-transparent",
+    tabMarkAnswered: "bg-error/20 text-error-ink",
     tileOn: "border-error bg-error/10 text-text-primary",
     tileHover: "hover:border-error/40 hover:bg-error/5",
-    badgeOn: "bg-error text-neutral-950",
+    badgeOn: "border border-error bg-error/12 text-error-ink",
     ring: "ring-error/40",
     inputFocus: "focus:border-error",
   },
@@ -109,6 +116,7 @@ export function QuestionTabStrip({ tabs, active, tone, onSelect, className }: {
             title={tab.title}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded text-xs whitespace-nowrap transition-all",
+              t.tabBase,
               on ? t.tabOn : tab.answered ? t.tabAnswered : "text-text-secondary hover:bg-surface-elevated",
               tab.className,
             )}

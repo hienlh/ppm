@@ -39,7 +39,7 @@ export function DecisionSetReview({ cards, plan, now, busy, onBack, onSend }: {
             >
               <span className={cn(
                 "mt-px grid size-4.5 shrink-0 place-items-center rounded-full text-[10px] font-semibold",
-                !answer ? "bg-surface-elevated text-text-secondary" : card.kind === "urgent" ? "bg-error/20 text-error" : "bg-warning/20 text-warning",
+                !answer ? "bg-surface-elevated text-text-secondary" : card.kind === "urgent" ? "bg-error/20 text-error-ink" : "bg-warning/20 text-warning-ink",
               )}>{i + 1}</span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-text-secondary">{card.projectName ? `${card.projectName} · ` : ""}{card.title}</p>
@@ -52,7 +52,7 @@ export function DecisionSetReview({ cards, plan, now, busy, onBack, onSend }: {
                       </p>
                     )}
                     {answer.kind === "reply" && isStaleForReply(card, now) && (
-                      <p className="text-[11px] text-warning">From over a day ago: sending confirms it anyway.</p>
+                      <p className="text-[11px] text-warning-ink">From over a day ago: sending confirms it anyway.</p>
                     )}
                   </>
                 ) : (

@@ -31,7 +31,7 @@ function Head({ card, onOpenChat, onDismiss, busy }: { card: AssistantCard; onOp
     <div className="flex min-w-0 items-center gap-1.5 text-xs">
       <span className={cn(
         "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-semibold [&_svg]:size-3.5",
-        urgent ? "bg-error/10 text-error" : "bg-warning/10 text-warning",
+        urgent ? "bg-error/10 text-error-ink" : "bg-warning/10 text-warning-ink",
       )} data-card-kind-label="">
         <Icon />
         {urgent ? "Urgent" : <><span className="@max-[26rem]/set:hidden">Needs your decision</span><span className="@[26rem]/set:hidden">Decision</span></>}
@@ -113,7 +113,7 @@ export function DecisionSetCard({
         <p className="text-xs text-text-subtle">Held for the morning: this manager already raised its urgent reports tonight.</p>
       )}
       {/* Why a card that was answered waits again (the answer never reached the manager chat). */}
-      {card.answer?.note && <p className="rounded-md bg-error/10 px-2.5 py-1.5 text-xs text-error" data-card-notice="">{card.answer.note}</p>}
+      {card.answer?.note && <p className="rounded-md bg-error/10 px-2.5 py-1.5 text-xs text-error-ink" data-card-notice="">{card.answer.note}</p>}
 
       <p className="pt-1 text-[11px] font-semibold uppercase tracking-wide text-text-subtle">
         {tiles.length > 1 ? "Choose one" : "Your answer"}
@@ -166,7 +166,7 @@ export function DecisionSetCard({
           <button type="button" className={SET_BUTTON.primary} onClick={onConfirm} disabled={busy}>Send anyway</button>
         </div>
       )}
-      {notice && <p className="text-xs text-error" role="alert" data-decision-notice="">{notice}</p>}
+      {notice && <p className="text-xs text-error-ink" role="alert" data-decision-notice="">{notice}</p>}
     </div>
   );
 }

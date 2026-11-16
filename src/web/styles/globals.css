@@ -31,6 +31,14 @@
      2.07:1 on the dark ones. This mix measures 3.59–5.21:1 across all six.
      See tests/unit/web/explorer-ignored-contrast.test.ts. */
   --color-text-dim: color-mix(in srgb, var(--text-2) 50%, var(--text-3));
+  /*
+   * Amber and red as TEXT on their own pale tint (the set of decisions: a chosen tab, a badge,
+   * a button): the hue pulled toward the theme's text so it reads at 4.5:1 or better in every
+   * built-in theme, light or dark. Raw --warning on a light theme is about 2.5:1.
+   * tests/unit/web/decision-set-colour-contrast.test.ts measures both.
+   */
+  --color-warning-ink: color-mix(in srgb, var(--warning) 50%, var(--text));
+  --color-error-ink: color-mix(in srgb, var(--error) 60%, var(--text));
   /* Row hover and meter tracks. `bg-surface-hover` was written against a token
      that only ever existed in the webview panels, so Tailwind emitted NO rule
      for it and every use was a silent no-op — 21 of them in the System Monitor

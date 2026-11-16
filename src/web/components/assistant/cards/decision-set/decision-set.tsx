@@ -152,7 +152,8 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
     return {
       key: tab.card.id,
       answered: tab.kind === "done" ? tab.done.how === "sent" : answered,
-      tone: tab.kind === "done" ? (tab.done.how === "sent" ? "question" as const : undefined) : toneOf(tab.card),
+      // A finished tab keeps the set's tint; only its mark and colour say how it ended.
+      tone: tab.kind === "done" ? undefined : toneOf(tab.card),
       mark: tabMark(tab, i, answered),
       title: `${tab.card.projectName ? `${tab.card.projectName} · ` : ""}${tab.card.title}`,
       className: cn(
@@ -182,7 +183,7 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
         data-waiting-set={ids.join(" ")}
         data-decision-set="folded"
       >
-        <span className="flex shrink-0 items-center gap-1.5 text-[13px] font-semibold text-text-primary [&_svg]:size-3.5 [&_svg]:text-warning"><BellRing />{heading}</span>
+        <span className="flex shrink-0 items-center gap-1.5 text-[13px] font-semibold text-text-primary [&_svg]:size-3.5 [&_svg]:text-warning-ink"><BellRing />{heading}</span>
         <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
           {projectCounts(waiting)}{picked ? ` · ${picked} picked, not sent` : ""}
         </span>
@@ -204,7 +205,7 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
       data-highlighted={litHere ? "" : undefined}
     >
       <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-text-primary">
-        <span className="flex shrink-0 items-center gap-1.5 [&_svg]:size-3.5 [&_svg]:text-warning"><BellRing />{heading}</span>
+        <span className="flex shrink-0 items-center gap-1.5 [&_svg]:size-3.5 [&_svg]:text-warning-ink"><BellRing />{heading}</span>
         <span className="min-w-0 flex-1 truncate text-right text-[10px] font-normal text-text-secondary @max-[34rem]/set:hidden">
           ←→ cards · 1–9 choose · O other · Ctrl+Enter send all
         </span>

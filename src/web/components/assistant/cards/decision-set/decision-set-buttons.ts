@@ -7,10 +7,10 @@ const BASE =
   "transition-colors disabled:cursor-not-allowed disabled:opacity-40 max-md:h-[26px] max-md:px-2 [&_svg]:size-3.5 [&_svg]:shrink-0";
 
 export const SET_BUTTON = {
-  /** The one answer that goes out: amber, dark text. */
-  primary: `${BASE} bg-warning text-neutral-950 can-hover:enabled:hover:bg-warning/90`,
-  /** Sends one card: amber outline. */
-  outline: `${BASE} border border-warning/70 text-warning can-hover:enabled:hover:bg-warning/10`,
+  /** Send all, Send anyway: amber tint, a full amber outline and amber ink, set in bold. */
+  primary: `${BASE} border border-warning bg-warning/20 font-semibold text-warning-ink can-hover:enabled:hover:bg-warning/30`,
+  /** Sends one card: amber outline, no fill. */
+  outline: `${BASE} border border-warning/70 text-warning-ink can-hover:enabled:hover:bg-warning/10`,
   /** Prev, Next, Back. */
   plain: `${BASE} border border-border bg-background text-text-primary can-hover:enabled:hover:bg-surface-elevated`,
   /** Open chat, Dismiss: quiet. */

@@ -19,7 +19,7 @@ export function DecisionSetStub({ card }: { card: AssistantCard }) {
       className="flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-xl border border-dashed border-warning/40 bg-warning/5 px-3 py-1.5 text-left can-hover:hover:bg-warning/10"
       data-decision-stub={card.id}
     >
-      <span aria-hidden className={cn("grid size-6 shrink-0 place-items-center rounded-full [&_svg]:size-3.5", urgent ? "bg-error/10 text-error" : "bg-warning/10 text-warning")}>
+      <span aria-hidden className={cn("grid size-6 shrink-0 place-items-center rounded-full [&_svg]:size-3.5", urgent ? "bg-error/10 text-error-ink" : "bg-warning/10 text-warning-ink")}>
         <Icon />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
@@ -29,7 +29,7 @@ export function DecisionSetStub({ card }: { card: AssistantCard }) {
         </span>
       </span>
       <time className="shrink-0 text-[11px] tabular-nums text-text-subtle">{cardTime(card.createdAt)}</time>
-      <span className="shrink-0 text-[11.5px] font-medium text-warning max-md:hidden">Answer ↓</span>
+      <span className="shrink-0 text-[11.5px] font-medium text-warning-ink max-md:hidden">Answer ↓</span>
     </button>
   );
 }
