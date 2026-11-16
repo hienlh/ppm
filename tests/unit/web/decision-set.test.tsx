@@ -108,6 +108,19 @@ describe("the set", () => {
     expect(q("[data-decision-set]")?.getAttribute("data-waiting-set")).toBe(`${u.id} ${a.id}`);
   });
 
+  it("the head names the task a card is about by its code, beside the project", async () => {
+    const one = card({ title: "Stalled release" }, { tasks: [{ taskId: "t1", sessionId: "s1", ref: "alpha/12", title: "Release" }, { taskId: "t2", sessionId: "s2", ref: "alpha/14" }] });
+    await open([one]);
+    expect(all("[data-decision-card] [data-decision-task-codes] [data-task-code]").map((e) => e.textContent)).toEqual(["alpha/12"]);
+    expect(q("[data-decision-card] [data-decision-task-codes]")?.textContent).toBe("alpha/12+1");
+    expect(q("[data-decision-card] [data-task-code-pair] > [data-task-code-title]")?.textContent).toBe("alpha");
+  });
+
+  it("a card that names no task has no code in its head", async () => {
+    await open([card({ title: "Pick a name" })]);
+    expect(q("[data-decision-card] [data-decision-task-codes]")).toBeNull();
+  });
+
   it("send this one: the choice goes alone, its tab is marked sent and the next card shows", async () => {
     const a = card({ title: "Release window" }, { options: [{ id: "tonight", label: "Ship tonight" }, { id: "monday", label: "Monday" }] });
     const b = card({ title: "Second" });

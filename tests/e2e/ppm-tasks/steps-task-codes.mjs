@@ -241,7 +241,9 @@ async function managerChatCodes(k, s) {
   const taskChip = page.locator("[data-task-chip]:visible").first();
   await taskChip.waitFor({ timeout: 20000 });
   assert.deepEqual(await codesOf(taskChip), [`#${login.number}`], "the composer's chip shows the task's code");
-  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "1440 composer chip"), 1, "the composer chip's code is measured");
+  // Earlier steps may have left chips of other tasks there too: every one of them is measured.
+  const chipCount = await page.locator("[data-composer-task-refs] [data-task-chip]:visible").count();
+  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "1440 composer chip"), chipCount, "every composer chip's code is measured");
   await assertHeights(page, "[data-composer-task-refs] [data-task-chip]", TEXT(false), "1440 composer chip");
   await assertHeights(page, "[data-composer-task-refs] [data-task-chip-remove]", ICON(false), "1440 composer chip's remove button");
   await k.shot("c08-composer-chip-1440");
@@ -270,6 +272,26 @@ async function assistantCodes(k, s) {
     assert.match(await handed.innerText(), new RegExp(gamma.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   await k.shot("c09-assistant-1440");
+
+  // The set of waiting decisions: the handed-off work card's head names its task by code.
+  if (gamma) {
+    const shootSet = async (pg, name) => {
+      const set = pg.locator("[data-decision-set]:visible").first();
+      await set.waitFor({ timeout: 30000 });
+      const tab = set.locator('[data-question-tab][title^="gamma ·"]').first();
+      if (await tab.isVisible().catch(() => false)) await tab.click();
+      const head = set.locator("[data-decision-task-codes]").first();
+      await head.waitFor({ timeout: 15000 });
+      assert.deepEqual(await codesOf(head), [`gamma/${gamma.number}`], "the set's head names the task by code");
+      await assertCodesFit(pg, "[data-decision-set]", `${name} decision set`);
+      await set.screenshot({ path: `${k.shotsDir}/${name}.png` });
+    };
+    await shootSet(page, "c19-decision-set-1440");
+    const phonePage = await k.openPhone();
+    await phonePage.goto(`${k.web}/project/alpha/assistant`);
+    await shootSet(phonePage, "c19-decision-set-390");
+    k.use(k.desktop);
+  }
 
   // The same window floating at 800 px wide (its saved rect, as a drag of its edge would leave it).
   const win = page.locator('[aria-roledescription="window"]', { has: page.locator("[data-assistant-body]") }).first();
@@ -341,7 +363,9 @@ async function phoneCodes(k, s) {
   const phoneChip = page.locator("[data-composer-task-refs] [data-task-chip]:visible").first();
   await phoneChip.waitFor({ timeout: 20000 });
   assert.deepEqual(await codesOf(phoneChip), [`#${login.number}`]);
-  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "phone 390 composer chip"), 1);
+  // The manager chat keeps chips earlier steps left (other tasks): every one of them is measured.
+  const phoneChips = await page.locator("[data-composer-task-refs] [data-task-chip]:visible").count();
+  assert.equal(await assertCodesOnBaseline(page, "[data-composer-task-refs]", "phone 390 composer chip"), phoneChips);
   await assertCodesFit(page, "[data-composer-task-refs]", "phone 390 composer chip");
   await assertHeights(page, "[data-composer-task-refs] [data-task-chip]", TEXT(true), "390 composer chip");
   await assertHeights(page, "[data-composer-task-refs] [data-task-chip-remove]", ICON(true), "390 composer chip's remove button");

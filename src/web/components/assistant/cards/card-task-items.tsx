@@ -83,7 +83,7 @@ export function splitChangeSummary(change: Pick<Change, "ref" | "summary">): { r
 }
 
 /** A task's full code (the card spans projects) in the task-code style, a click copying it. */
-function TaskCodeText({ code, className }: { code: string; className?: string }) {
+export function TaskCodeText({ code, className }: { code: string; className?: string }) {
   const parsed = parseTaskRef(code);
   if (!parsed?.project) return <span className={cn(TASK_CODE_CLASS, "cursor-text", className)}>{code}</span>;
   return <TaskCode task={{ number: parsed.number, project: parsed.project }} viewProject={null} className={cn("text-[12px]", className)} />;

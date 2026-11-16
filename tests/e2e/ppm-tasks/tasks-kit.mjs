@@ -35,7 +35,7 @@ export function tasksKit({ web, fx, tg, browser, shotsDir, videoDir, owner, reco
   }
 
   const kit = {
-    web, fx, tg, owner, record, video: !!videoDir,
+    web, fx, tg, owner, record, shotsDir, video: !!videoDir,
     get page() { return current.page; },
     pageErrors: () => errors,
 

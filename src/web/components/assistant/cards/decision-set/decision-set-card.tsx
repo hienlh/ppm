@@ -1,6 +1,6 @@
 /**
- * One card of the set, as its tab shows it: the head (decision or urgent, project, time, Open chat,
- * Dismiss), the manager's words whole (Markdown, pictures, draft, the tasks it handed off), then
+ * One card of the set, as its tab shows it: the head (decision or urgent, project and the code of
+ * the task the card is about, time, Open chat, Dismiss), the manager's words whole (Markdown, pictures, draft, the tasks it handed off), then
  * the answers as the chat's question form draws them — a numbered tile per choice (or one OK), and
  * "Other" for the user's own words and pictures.
  *
@@ -15,7 +15,7 @@ import type { AssistantCard } from "../../../../../shared/assistant-cards";
 import { CardText, cardTime } from "../card-shell";
 import { CardImages } from "../card-images";
 import { CardDraft } from "../card-draft";
-import { CardHandedOffTasks } from "../card-task-items";
+import { CardHandedOffTasks, TaskCodeText } from "../card-task-items";
 import { DecisionReplyField, type ReplyValue } from "./decision-reply-field";
 import { SET_BUTTON, toneButtons } from "./decision-set-buttons";
 import type { SetTab } from "./use-decision-set";
@@ -23,6 +23,22 @@ import type { SetTab } from "./use-decision-set";
 const EMPTY_REPLY: ReplyValue = { text: "", images: [] };
 
 export const toneOf = (card: Pick<AssistantCard, "kind">): Extract<QuestionTone, "decision" | "urgent"> => (card.kind === "urgent" ? "urgent" : "decision");
+
+/**
+ * The code of the task the card is about, beside its project, as every other Assistant card shows
+ * it (`ppm/12`: the set spans projects). Only a card that names its tasks has one — the handed-off
+ * work card does; with several, the first and "+N".
+ */
+function HeadTaskCodes({ card }: { card: AssistantCard }) {
+  const refs = [...new Set((card.payload.tasks ?? []).map((t) => t.ref))];
+  if (!refs.length) return null;
+  return (
+    <span className="inline-flex shrink-0 items-baseline gap-1" data-decision-task-codes="">
+      <TaskCodeText code={refs[0]!} className="text-[11.5px]" />
+      {refs.length > 1 && <span className="text-[11px] text-text-subtle" title={refs.slice(1).join(", ")}>+{refs.length - 1}</span>}
+    </span>
+  );
+}
 
 function Head({ card, onOpenChat, onDismiss, busy }: { card: AssistantCard; onOpenChat?: () => void; onDismiss?: () => void; busy: boolean }) {
   const urgent = card.kind === "urgent";
@@ -37,8 +53,12 @@ function Head({ card, onOpenChat, onDismiss, busy }: { card: AssistantCard; onOp
         {urgent ? "Urgent" : <><span className="@max-[26rem]/set:hidden">Needs your decision</span><span className="@[26rem]/set:hidden">Decision</span></>}
       </span>
       {card.projectName && (
-        <span className="min-w-0 max-w-[40%] shrink-0 truncate rounded-full border border-border bg-panel-2 px-2 py-0.5 font-medium text-text-primary">{card.projectName}</span>
+        <span className="flex min-w-0 max-w-[60%] shrink-0 items-baseline gap-1.5" data-task-code-pair="">
+          <span data-task-code-title="" className="min-w-0 truncate rounded-full border border-border bg-panel-2 px-2 py-0.5 font-medium text-text-primary">{card.projectName}</span>
+          <HeadTaskCodes card={card} />
+        </span>
       )}
+      {!card.projectName && <HeadTaskCodes card={card} />}
       <span className="flex-1" />
       <time className="shrink-0 text-[11px] tabular-nums text-text-subtle">{cardTime(card.createdAt)}</time>
       {onOpenChat && (
