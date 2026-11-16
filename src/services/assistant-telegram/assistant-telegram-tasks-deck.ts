@@ -15,7 +15,7 @@ import { projectTelegramDetail } from "../assistant-managers/manager-chats-db.ts
 import { projectNameForPath } from "../project-name-for-path.ts";
 import { memberRows } from "../ppm-tasks/ppm-tasks-db.ts";
 import { taskLinkStateSource } from "../ppm-tasks/ppm-tasks-link-state-source.ts";
-import { jiraSiteFor } from "../ppm-tasks/link-state/jira-link-state-reader.ts";
+import { jiraSiteFor } from "../ppm-tasks/link-state/ppm-tasks-jira-site.ts";
 import { listStatuses } from "../ppm-tasks/ppm-tasks-project-config.ts";
 import { getTaskProject, listTaskProjects } from "../ppm-tasks/ppm-tasks-projects.service.ts";
 import { getTask, listTasks, taskChildren } from "../ppm-tasks/ppm-tasks.service.ts";

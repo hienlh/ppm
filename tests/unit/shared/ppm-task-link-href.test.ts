@@ -4,7 +4,7 @@
  * an `href`.
  */
 import { describe, expect, it } from "bun:test";
-import { jiraSiteUrl, safeWebUrl, taskLinkWebHref } from "../../../src/shared/ppm-task-link-href.ts";
+import { jiraSiteUrl, parseJiraIssueUrl, safeWebUrl, taskLinkWebHref } from "../../../src/shared/ppm-task-link-href.ts";
 
 describe("taskLinkWebHref", () => {
   it("opens a Jira key on the project's Jira site", () => {
@@ -53,5 +53,22 @@ describe("taskLinkWebHref", () => {
   it("reads a web address the way the browser would", () => {
     expect(safeWebUrl("https://example.com")).toBe("https://example.com/");
     expect(safeWebUrl("not a url")).toBeNull();
+  });
+});
+
+describe("parseJiraIssueUrl", () => {
+  it("reads a pasted issue URL as its key and its site", () => {
+    expect(parseJiraIssueUrl("https://alpha.atlassian.net/browse/AL-6284")).toEqual({ key: "AL-6284", site: "https://alpha.atlassian.net" });
+    expect(parseJiraIssueUrl(" https://alpha.atlassian.net/browse/al-7/?focusedCommentId=1#c ")).toEqual({ key: "AL-7", site: "https://alpha.atlassian.net" });
+    // A Jira Server under a context path keeps the path in its site.
+    expect(parseJiraIssueUrl("http://beta.example:8080/jira/browse/BE-2")).toEqual({ key: "BE-2", site: "http://beta.example:8080/jira" });
+  });
+
+  it("refuses anything that is not an issue's own address", () => {
+    for (const input of [
+      "AL-1", "https://alpha.atlassian.net/jira/software/projects/AL/boards/1", "https://alpha.atlassian.net/browse/",
+      "https://alpha.atlassian.net/browse/AL-1/comments", "javascript:alert('/browse/AL-1')", "ftp://alpha.example/browse/AL-1",
+      "https://u:p@alpha.atlassian.net/browse/AL-1",
+    ]) expect(parseJiraIssueUrl(input)).toBeNull();
   });
 });

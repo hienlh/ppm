@@ -260,9 +260,13 @@ changed outside is news for the manager chat to act on.
 
 **Where a link opens** (`src/shared/ppm-task-link-href.ts`, used by the Links card and the Telegram
 `/tasks` card alike). A Jira key opens at `<site>/browse/<KEY>`, the site being the project's Jira
-config base URL (`jiraSiteFor`, sent as `jiraSite` with a task's detail; no credentials are read),
-a PR on GitHub, a URL as stored; only `http:`/`https:` ever reaches an `href`. A Jira key whose
-project has no Jira config cannot open and its chip says "no Jira site". A web chip is an
+config base URL, else the site of the last Jira link added as its issue URL
+(`…/browse/NX-6284`, stored as its key; the site is kept as `taskJiraSite` in the project's
+settings JSON), so a project nobody connected to Jira still opens its keys (`jiraSiteFor` in
+`link-state/ppm-tasks-jira-site.ts`, sent as `jiraSite` with a task's detail; no credentials are
+read). A PR opens on GitHub, a URL as stored; only `http:`/`https:` ever reaches an `href`. A Jira
+key with no site from either source cannot open: its chip says "no Jira site" and the card says
+to add one issue by its full URL. A web chip is an
 `<a target=_blank rel="noopener noreferrer">`, never `window.open`, so no popup blocker stands in
 the way; a chat chip opens inside PPM. On Telegram a line becomes a link only for a public https
 address (`isPublicHttpsUrl`), so a self-hosted Jira on an intranet name stays plain text.

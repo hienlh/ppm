@@ -2,7 +2,9 @@
  * Links: Jira keys, PRs, PPM chats and plain URLs, each with its live state beside it and when PPM
  * last checked. "+ Add" takes a kind and a reference; the server checks the reference's shape.
  * A Jira key opens on the project's Jira site, a PR on GitHub, a URL as it is (each in a new
- * browser tab), and a chat opens in PPM. A Jira key whose project has no Jira site says so instead.
+ * browser tab), and a chat opens in PPM. A Jira link may be added as its issue URL: the key is
+ * stored and the URL's site becomes the project's, so its keys open with no Jira config. A Jira key
+ * with no site anywhere says so, and how to give it one.
  */
 import { useState } from "react";
 import { Plus, X } from "@/lib/icons";
@@ -15,7 +17,7 @@ import { TaskLinkStatePill } from "./kit/task-link-state-pill";
 import { CardTextButton, TaskCard } from "./task-card";
 
 const KIND_LABEL: Record<LinkKind, string> = { jira: "Jira key", pr: "Pull request", session: "PPM chat", url: "URL" };
-const PLACEHOLDER: Record<LinkKind, string> = { jira: "NX-6318", pr: "owner/repo#123", session: "chat session id", url: "https://…" };
+const PLACEHOLDER: Record<LinkKind, string> = { jira: "NX-6318 or https://…/browse/NX-6318", pr: "owner/repo#123", session: "chat session id", url: "https://…" };
 
 export interface TaskLinksCardProps {
   task: TaskDto;
@@ -51,11 +53,7 @@ export function TaskLinksCard({ task, linkStates, jiraSite, onAdd, onRemove, onO
               <TaskLinkStatePill link={l} state={linkStates.find((s) => s.kind === l.kind && s.ref === l.ref)} href={href}
                 onOpen={l.kind === "session" ? (link) => onOpenChat(link.ref) : undefined} className="min-w-0 max-w-full" />
               {l.label && l.kind !== "session" && <span className="min-w-0 truncate text-xs text-text-3">{l.label}</span>}
-              {l.kind === "jira" && !href && (
-                <span data-link-hint className="shrink-0 text-xs text-text-3" title="Connect this project to Jira (Jira panel) and its keys open on that site">
-                  no Jira site
-                </span>
-              )}
+              {l.kind === "jira" && !href && <span data-link-hint className="shrink-0 text-xs text-text-3">no Jira site</span>}
               <span className="flex-1" />
               <button type="button" aria-label={`Remove ${l.ref}`} onClick={() => onRemove(l)}
                 className="grid size-7 shrink-0 place-items-center rounded-md text-text-3 opacity-0 hover:bg-surface-hover hover:text-text focus:opacity-100 group-hover:opacity-100 max-md:opacity-100">
@@ -65,6 +63,11 @@ export function TaskLinksCard({ task, linkStates, jiraSite, onAdd, onRemove, onO
           );
         })}
       </ul>
+      {!jiraSite && task.links.some((l) => l.kind === "jira") && (
+        <p data-jira-site-hint className="mt-2 text-xs text-text-3">
+          To open Jira keys, add one issue by its full URL (https://…/browse/NX-6318): its site is kept for this project.
+        </p>
+      )}
       {adding && (
         <form className="mt-2 flex flex-wrap gap-1.5" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
           <select aria-label="Link kind" value={kind} onChange={(e) => setKind(e.target.value as LinkKind)}

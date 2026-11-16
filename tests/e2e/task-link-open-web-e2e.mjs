@@ -4,7 +4,8 @@
 // Telegram `/tasks` card. The production Vite bundle against the disposable server of
 // tests/e2e/ppm-tasks-e2e.mjs (scripted chats, a fake Telegram Bot API), with its neutral demo
 // data (projects alpha and beta). No Jira or GitHub is asked: the Jira site and the links' states
-// are written the way a Jira config and the link checker leave them, and the pages a click opens
+// are written the way a Jira config and the link checker leave them (project beta has no Jira
+// config: its key opens once an issue is added by its full URL), and the pages a click opens
 // are answered by the browser context, which records the address it was asked for.
 //
 //   PPM_ASSISTANT_WEB_DIR=<web build with Monaco staged> PPM_TASKS_SHOTS=<dir> node tests/e2e/task-link-open-web-e2e.mjs
@@ -35,6 +36,8 @@ for (const [name, dir] of Object.entries(dirs)) await writeFile(join(dir, "READM
 const OWNER = 1001;
 const JIRA_SITE = "https://alpha-demo.atlassian.net";
 const TITLE = "Ship the export fix to staging";
+const BETA_TITLE = "Polish the beta onboarding copy";
+const BETA_SITE = "https://beta-demo.atlassian.net";
 const EXPECTED = [
   ["jira", `${JIRA_SITE}/browse/AL-6284`],
   ["pr", "https://github.com/alpha/beta-backend/pull/11195"],
@@ -58,7 +61,7 @@ const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 
 /** Answers every outside page in this context with a page naming the address the browser asked for. */
 async function answerOutsidePages(context, opened) {
-  await context.route(/^https:\/\/(alpha-demo\.atlassian\.net|github\.com|example\.com)\//, (route) => {
+  await context.route(/^https:\/\/((?:alpha|beta)-demo\.atlassian\.net|github\.com|example\.com)\//, (route) => {
     const url = route.request().url();
     opened.push(url);
     return route.fulfill({ contentType: "text/html", body: `<!doctype html><meta charset="utf-8"><title>Opened</title><style>
@@ -120,6 +123,38 @@ async function desktop(k, s) {
   await until("the manager chat opened in PPM", async () => (await page.locator("textarea[aria-label='Message']:visible").count()) > 0, 20000);
   assert.equal(page.context().pages().length, pagesBefore, "no new browser tab for a chat");
   record("desktop", "Jira, both PRs and the URL are new-tab links with the icon and their state; clicks open the right pages; the chat opens in PPM", { opened });
+}
+
+/** Project beta has no Jira config: the hint says how to fix it, and a pasted issue URL does. */
+async function pasted(k) {
+  const page = k.use(k.desktop);
+  await page.goto(`${web}/project/beta`);
+  await k.selectTask(BETA_TITLE);
+  const card = k.detail().locator('[data-task-card="links"]');
+  await card.scrollIntoViewIfNeeded();
+  const hint = card.locator("[data-jira-site-hint]");
+  await hint.waitFor({ timeout: 20000 });
+  assert.match(await hint.innerText(), /full URL/);
+  assert.equal(await card.locator('a[data-link-kind="jira"]').count(), 0, "a key with no site anywhere cannot open");
+  await card.screenshot({ path: `${shotsDir}/07-desktop-no-jira-site-hint.png` });
+
+  await card.getByRole("button", { name: "Add", exact: true }).click();
+  await card.getByLabel("Link kind").selectOption("jira");
+  await card.getByLabel("Link reference").fill(`${BETA_SITE}/browse/BE-77`);
+  await card.locator('form button[type="submit"]').click();
+  // The pasted URL is stored as its key, and both keys now open on its site.
+  await until("both beta keys open", async () => (await card.locator('a[data-link-kind="jira"]').count()) === 2, 20000);
+  const hrefs = await card.locator('a[data-link-kind="jira"]').evaluateAll((as) => as.map((a) => [a.textContent, a.getAttribute("href")]));
+  assert.deepEqual(hrefs.map(([, h]) => h), [`${BETA_SITE}/browse/BE-12`, `${BETA_SITE}/browse/BE-77`]);
+  assert(hrefs.every(([t]) => !t.includes("https://")), `the chip shows the key, not the URL: ${JSON.stringify(hrefs)}`);
+  assert.equal(await hint.count(), 0, "the hint is gone");
+  await card.screenshot({ path: `${shotsDir}/08-desktop-pasted-jira-url-both-keys-open.png` });
+  const [tab] = await Promise.all([page.context().waitForEvent("page"), card.locator('a[data-link-kind="jira"]').first().click()]);
+  await tab.waitForURL(`${BETA_SITE}/browse/BE-12`, { timeout: 15000 });
+  await tab.setViewportSize({ width: 1100, height: 420 });
+  await tab.screenshot({ path: `${shotsDir}/09-desktop-pasted-site-opens-other-key.png` });
+  await tab.close();
+  record("pasted", "No Jira config: the hint says to paste an issue URL; pasting one stores the key and opens every key of the project on that site", { hrefs });
 }
 
 async function phoneFlow(k) {
@@ -225,8 +260,9 @@ try {
       { kind: "pr", ref: "alpha/beta-frontend#2424", state: { state: "open", checks: { total: 3, failing: 0, pending: 0 } } },
     ],
   });
+  await kit.createTask({ project: "beta", title: BETA_TITLE, urgency: "today", importance: "should", links: [{ kind: "jira", ref: "BE-12" }] });
   await kit.openDesktop();
-  for (const [id, run] of [["desktop", desktop], ["phone", phoneFlow], ["telegram", telegram]]) {
+  for (const [id, run] of [["desktop", desktop], ["pasted", pasted], ["phone", phoneFlow], ["telegram", telegram]]) {
     try {
       await run(kit, s);
     } catch (error) {

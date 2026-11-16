@@ -171,6 +171,7 @@ describe("due, people, links, result", () => {
     expect(mounted.container.querySelector('a[data-link-kind="jira"]')).toBeNull();
     expect(mounted.container.querySelector('span[data-link-kind="jira"]')).not.toBeNull();
     expect(mounted.container.querySelector("[data-link-hint]")?.textContent).toContain("no Jira site");
+    expect(mounted.container.querySelector("[data-jira-site-hint]")?.textContent).toContain("full URL");
   });
 
   it("never puts a non-web URL in an href", async () => {

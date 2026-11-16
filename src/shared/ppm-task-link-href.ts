@@ -32,6 +32,23 @@ export function jiraSiteUrl(baseUrl: string | null | undefined): string | null {
   return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
 }
 
+const BROWSE_PATH = /^(.*?)\/browse\/([A-Za-z][A-Za-z0-9]{0,19}-\d{1,9})\/?$/;
+
+/**
+ * A Jira issue's own address (`https://x.atlassian.net/browse/NX-6284`, or under a Jira Server's
+ * context path) as its key and its site; null for anything else.
+ */
+export function parseJiraIssueUrl(input: string): { key: string; site: string } | null {
+  const href = safeWebUrl(input);
+  if (!href) return null;
+  const url = new URL(href);
+  const m = BROWSE_PATH.exec(url.pathname);
+  if (!m) return null;
+  const key = parseJiraKey(m[2]!);
+  const site = jiraSiteUrl(`${url.origin}${m[1]}`);
+  return key && site && !url.username && !url.password ? { key, site } : null;
+}
+
 export interface LinkHrefContext {
   /** The task's project's Jira site; without it a Jira key has nowhere to open. */
   jiraSite?: string | null;

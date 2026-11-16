@@ -12,7 +12,7 @@ import {
 import { getDb } from "../../services/db.service.ts";
 import { getTaskProject } from "../../services/ppm-tasks/ppm-tasks-projects.service.ts";
 import { taskLinkStateSource } from "../../services/ppm-tasks/ppm-tasks-link-state-source.ts";
-import { jiraSiteFor } from "../../services/ppm-tasks/link-state/jira-link-state-reader.ts";
+import { jiraSiteFor } from "../../services/ppm-tasks/link-state/ppm-tasks-jira-site.ts";
 import { BASE_GROUPS, CLOSED_AS, type BaseGroup, type ClosedAs, type TaskFilter, type TaskPatch } from "../../shared/ppm-tasks.ts";
 import type { TaskDetailResponse, TaskListResponse } from "../../shared/ppm-tasks-api.ts";
 import { enabledProjectSummaries, projectSummary, toTaskDto, toTaskDtos } from "./ppm-tasks-dto.ts";

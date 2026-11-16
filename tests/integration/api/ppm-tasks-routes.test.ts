@@ -137,6 +137,28 @@ describe("list and detail", () => {
     expect((await call<TaskDetailResponse>("GET", `/${task.id}`)).json.data!.jiraSite).toBe("https://alpha.atlassian.net");
   });
 
+  it("takes a Jira link pasted as its issue URL: stores the key, keeps the site for the project", async () => {
+    const plain = createTask({ projectKey: key, title: "Beta key", links: [{ kind: "jira", ref: "BE-12" }] }, USER);
+    expect((await call<TaskDetailResponse>("GET", `/${plain.id}`)).json.data!.jiraSite).toBeNull();
+    const created = await call<TaskWriteResponse>("POST", "/", {
+      project: "demo", title: "Beta pasted", links: [{ kind: "jira", ref: "https://beta-demo.atlassian.net/browse/be-77?x=1" }],
+    });
+    expect(created.status).toBe(200);
+    expect(created.json.data!.task.links).toEqual([{ kind: "jira", ref: "BE-77", label: null }]);
+    // Every Jira key of the project opens there now, the one added as a plain key too.
+    expect((await call<TaskDetailResponse>("GET", `/${plain.id}`)).json.data!.jiraSite).toBe("https://beta-demo.atlassian.net");
+    // A Jira config, when the project has one, still wins.
+    const projectId = (getDb().query("SELECT id FROM projects WHERE path = ?").get(root) as { id: number }).id;
+    getDb().query("INSERT INTO jira_config (project_id, base_url, email, api_token_encrypted) VALUES (?, ?, ?, ?)")
+      .run(projectId, "https://alpha.atlassian.net", "alpha@example.com", "not-a-real-token");
+    expect((await call<TaskDetailResponse>("GET", `/${plain.id}`)).json.data!.jiraSite).toBe("https://alpha.atlassian.net");
+  });
+
+  it("refuses a Jira link that is neither a key nor an issue URL", async () => {
+    const res = await call("POST", "/", { project: "demo", title: "Bad", links: [{ kind: "jira", ref: "https://beta-demo.atlassian.net/jira/boards/1" }] });
+    expect(res.status).toBe(400);
+  });
+
   it("names an unknown project and a switched-off one", async () => {
     expect((await call("GET", "/?project=nope")).json.code).toBe("project_not_found");
     const off = await call("GET", "/?project=other");
