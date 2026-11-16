@@ -13,6 +13,7 @@ import { cellKey } from "../../../shared/ppm-tasks-order";
 import { IMPORTANCES, ME_MEMBER_ID, TASK_TYPES, URGENCIES, type TaskPatch } from "../../../shared/ppm-tasks";
 import type { TaskDto, TaskProjectSettings } from "../../../shared/ppm-tasks-api";
 import { TaskStatusGlyph } from "./kit/task-status-glyph";
+import { TaskCode } from "./kit/task-code";
 import { TaskCustomFields } from "./task-custom-fields";
 import { TaskTagsEditor } from "./task-tags-editor";
 import { TaskDateInput } from "./task-date-input";
@@ -105,7 +106,13 @@ export function TaskPropertiesPanel({ task, settings, onPatch, onStatus, onOpenT
       <Prop label="Project"><p className="px-1">{task.project}</p></Prop>
       <Prop label="Parent">
         {task.parentId
-          ? <button type="button" onClick={() => onOpenTask(task.parentId!)} className="w-full truncate rounded px-1 text-left text-primary hover:underline">{parent ? `${parent.ref} · ${parent.title}` : "Open parent"}</button>
+          ? (
+            <button type="button" onClick={() => onOpenTask(task.parentId!)} data-task-parent=""
+              className="flex w-full min-w-0 items-baseline gap-1 rounded px-1 text-left text-primary [&>span:last-child]:hover:underline">
+              {parent && <TaskCode task={parent} viewProject={task.project} nested inRow className="text-[12px]" />}
+              <span className="min-w-0 flex-1 truncate">{parent ? parent.title : "Open parent"}</span>
+            </button>
+          )
           : <p className="px-1 text-text-3">None</p>}
       </Prop>
       <Prop label="Tags"><TaskTagsEditor tags={task.tags} onSave={(tags) => onPatch({ tags })} /></Prop>

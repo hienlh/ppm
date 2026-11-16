@@ -83,7 +83,7 @@ export function chatLabelHtml(chat: Pick<TaskChat, "kind" | "chatTitle" | "detai
 }
 
 /** "<b>ppm/12 · Fix login</b>": the ref and the title only, whatever the project's detail level. */
-export const taskLabelHtml = (chat: Pick<TaskChat, "ref" | "title">): string => `<b>${clean(chat.ref, undefined, 60)} · ${clean(chat.title)}</b>`;
+export const taskLabelHtml = (chat: Pick<TaskChat, "ref" | "title">): string => `<code>${clean(chat.ref, undefined, 60)}</code> · <b>${clean(chat.title)}</b>`;
 
 export function armedHtml(chat: TaskChat, minutes: number): string {
   return `💬 Your next message goes to ${chatLabelHtml(chat)}, about ${taskLabelHtml(chat)}.\n`

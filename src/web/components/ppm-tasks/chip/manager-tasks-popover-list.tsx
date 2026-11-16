@@ -1,6 +1,6 @@
 /**
  * The compact "what to do first" list the manager chat's Tasks chip opens (variant-3 screen 00):
- * the project's open tasks grouped by urgency, each row its status glyph, title, status, due date
+ * the project's open tasks grouped by urgency, each row its status glyph, code (`#12`), title, status, due date
  * and working-session chip, at most `CHIP_LIST_LIMIT` rows with "<m> more" and "Show in sidebar"
  * at the foot. One line per row in the desktop popover, two lines (60px) in the phone's sheet.
  *
@@ -21,6 +21,7 @@ import { FooterButton, FooterPopoverFooter, FooterPopoverHeader } from "@/compon
 import { TaskStatusGlyph } from "../kit/task-status-glyph";
 import { TaskDueLabel } from "../kit/task-due-label";
 import { TaskWorkingSessionChip } from "../kit/task-working-session-chip";
+import { TaskCode } from "../kit/task-code";
 
 export const CHIP_LIST_LIMIT = 8;
 
@@ -104,9 +105,12 @@ function ChipRow({ task, working, onOpen, onOpenChat }: {
   return (
     <li className="flex min-w-0 items-center gap-2 px-2 max-md:min-h-[60px] max-md:gap-3 max-md:px-4" data-chip-task={task.id}>
       <TaskStatusGlyph baseGroup={task.baseGroup} closedAs={task.closedAs} name={task.statusName} size="md" className="shrink-0 pl-1 max-md:pl-0" />
-      <button type="button" onClick={onOpen} title={`Open ${task.title}`}
+      <button type="button" onClick={onOpen} title={`Open #${task.number} ${task.title}`}
         className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left can-hover:hover:bg-surface-hover max-md:min-h-11 max-md:flex-col max-md:items-start max-md:justify-center max-md:gap-0.5">
-        <span className="min-w-0 flex-1 truncate text-[13px] text-text max-md:w-full max-md:flex-none max-md:text-sm">{task.title}</span>
+        <span className="flex min-w-0 flex-1 items-baseline gap-1 max-md:w-full max-md:flex-none">
+          <TaskCode task={task} viewProject={task.project} nested inRow className="text-[12px] max-md:text-[12.5px]" />
+          <span className="min-w-0 flex-1 truncate text-[13px] text-text max-md:text-sm">{task.title}</span>
+        </span>
         <span className="flex min-w-0 shrink-0 items-center gap-2 text-[11.5px] text-text-3 max-md:max-w-full max-md:text-xs">
           <span className="max-w-[110px] truncate">{task.statusName}</span>
           {task.dueDate ? <TaskDueLabel dueDate={task.dueDate} className="text-[11.5px] max-md:text-xs" /> : <span aria-hidden>—</span>}

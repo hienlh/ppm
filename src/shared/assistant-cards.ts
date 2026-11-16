@@ -177,7 +177,11 @@ export interface AssistantCardPayload {
    * Cards the handed-off work checker raised: the tasks it found, each with the chat working on it,
    * so every surface can offer "Open chat" per task (and open the task by id).
    */
-  tasks?: Array<{ taskId: string; sessionId: string; ref: string }>;
+  tasks?: Array<{
+    taskId: string; sessionId: string; ref: string;
+    /** The task's title when the card was made; absent on cards made before it was carried. */
+    title?: string;
+  }>;
   /**
    * The "made N task changes while you were away" card: each change with the history row that
    * undoes it (null for a settings change, which cannot be undone), so a surface can offer Undo

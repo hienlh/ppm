@@ -5,6 +5,7 @@
  */
 import { tabSessionId } from "@/lib/tab-session-id";
 import { MAX_TASK_REFS, TASK_ID_RE, type TaskReference } from "../../../shared/chat-task-ref";
+import { taskCode } from "../../../shared/ppm-tasks-refs";
 
 /** The least of a tab this needs; the panel store's `Tab` fits it. */
 interface TabLike { id: string; type: string; metadata?: Record<string, unknown> }
@@ -45,9 +46,13 @@ export function taskChipsFromRefs(refs: readonly TaskReference[] | null | undefi
   return (refs ?? []).map((r) => ({ taskId: r.taskId, number: r.number, ref: r.ref, title: r.title, project: r.projectName }));
 }
 
-/** "Task #12 · Fix login". */
-export function taskChipLabel(chip: Pick<ComposerTaskChip, "number" | "title">): string {
-  return `Task #${chip.number} · ${chip.title}`;
+/**
+ * "Task #12 · Fix login" in a chat of the task's own project; "Task ppm/12 · Fix login" in a chat
+ * of another project, or when the chat's project is not known.
+ */
+export function taskChipLabel(chip: Pick<ComposerTaskChip, "number" | "title"> & { project?: string }, chatProject?: string | null): string {
+  const code = chip.project === undefined ? `#${chip.number}` : taskCode({ number: chip.number, project: chip.project }, chatProject ?? null);
+  return `Task ${code} · ${chip.title}`;
 }
 
 /** The chip list once `chip` is added: the newest task first, each task once, at most the cap. */

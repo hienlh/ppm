@@ -99,11 +99,19 @@ function linkLineHtml(link: TaskCardLinkLine, counter: { hidden: number }): stri
   return href && isPublicHttpsUrl(href) ? `<a href="${escapeTelegramHtml(new URL(href).href)}">${shown}</a>` : shown;
 }
 
+/**
+ * The task's code and title as one line: `<code>ppm/12</code> <b>Title</b>`. Telegram sets the code
+ * in monospace and copies it on a tap, so the code the chats use is one tap from the clipboard.
+ */
+function codeTitleHtml(ref: string, titleHtml: string, counter: { hidden: number }): string {
+  return `<code>${clean(ref, counter, 60)}</code> ${titleHtml}`;
+}
+
 /** The task's facts, without the header line: what the deck card and the created card share. */
 function factLines(f: TaskCardFacts, ctx: CardContext, counter: { hidden: number }, opts: { withStatus: boolean }): string[] {
   const project = clean(f.projectName, counter, 100);
   const urgency = `<b>${URGENCY_LABEL[f.urgency]}</b>${f.urgencyRaised ? " (due date)" : ""}`;
-  const lines = [`<b>${clean(f.title, counter, TITLE_MAX)}</b>`];
+  const lines = [codeTitleHtml(f.ref, `<b>${clean(f.title, counter, TITLE_MAX)}</b>`, counter)];
   if (ctx.detail === "title") {
     lines.push(`${project} · ${urgency}`);
     return lines;
@@ -152,7 +160,7 @@ export function statusResultHtml(f: TaskCardFacts, pos: { index: number; total: 
     : "";
   const lines = [
     `<i>${pos.index + 1} of ${pos.total} · What to do first</i>`,
-    `<b>${f.closed ? `<s>${title}</s>` : title}</b>`,
+    codeTitleHtml(f.ref, `<b>${f.closed ? `<s>${title}</s>` : title}</b>`, counter),
     `Status: ${clean(change.from, counter, 60)} → <b>${clean(change.to, counter, 60)}</b>`,
     `<i>By you from Telegram, ${change.at}.${children}</i>`,
     ...(change.managerLine ? [`<i>${clean(change.managerLine, counter)}</i>`] : []),
@@ -175,12 +183,13 @@ export interface ChildLine {
   statusName: string;
 }
 
-/** The open children of a task, listed under its title. */
-export function childrenHtml(parentTitle: string, children: readonly ChildLine[]): string {
+/** The open children of a task, listed under its code and title. */
+export function childrenHtml(parent: { ref: string | null; title: string }, children: readonly ChildLine[]): string {
   const counter = { hidden: 0 };
-  const lines = [`<b>Open child tasks of ${clean(parentTitle, counter, TITLE_MAX)}</b>`];
+  const of = clean(parent.title, counter, TITLE_MAX);
+  const lines = [`<b>Open child tasks of</b> ${parent.ref ? codeTitleHtml(parent.ref, `<b>${of}</b>`, counter) : `<b>${of}</b>`}`];
   for (const c of children.slice(0, CHILDREN_SHOWN)) {
-    lines.push(`• ${clean(c.ref, counter, 60)} ${clean(c.title, counter, 120)} — ${clean(c.statusName, counter, 60)}`);
+    lines.push(`• ${codeTitleHtml(c.ref, clean(c.title, counter, 120), counter)} — ${clean(c.statusName, counter, 60)}`);
   }
   if (children.length > CHILDREN_SHOWN) lines.push(`<i>…and ${children.length - CHILDREN_SHOWN} more in PPM.</i>`);
   if (!children.length) lines.push("<i>None are open any more.</i>");
@@ -191,9 +200,8 @@ export function childrenHtml(parentTitle: string, children: readonly ChildLine[]
 export function createdCardHtml(f: TaskCardFacts, ctx: CardContext, extra: { managerLine: string | null; note?: string; undone?: boolean }): string {
   const counter = { hidden: 0 };
   const project = clean(f.projectName, counter, 100);
-  const number = f.ref.slice(f.ref.lastIndexOf("/") + 1);
   if (extra.undone) {
-    return fit([`<i>Created in ${project} · task ${clean(number, counter, 20)}</i>`, `<b><s>${clean(f.title, counter, TITLE_MAX)}</s></b>`, "<i>Undone: the task was removed.</i>"]);
+    return fit([`<i>Created in ${project}</i>`, codeTitleHtml(f.ref, `<b><s>${clean(f.title, counter, TITLE_MAX)}</s></b>`, counter), "<i>Undone: the task was removed.</i>"]);
   }
   const facts = factLines(f, ctx, counter, { withStatus: false });
   if (ctx.detail === "full") {
@@ -202,7 +210,7 @@ export function createdCardHtml(f: TaskCardFacts, ctx: CardContext, extra: { man
   }
   const lines = [
     ...(extra.note ? [`⚠️ <i>${clean(extra.note, counter)}</i>`] : []),
-    `<i>Created in ${project} · task ${clean(number, counter, 20)}</i>`,
+    `<i>Created in ${project}</i>`,
     ...facts,
     ...(extra.managerLine ? [`<i>${clean(extra.managerLine, counter)}</i>`] : []),
     ...hiddenLine(counter),

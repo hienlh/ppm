@@ -210,7 +210,7 @@ describe("/tasks", () => {
   it("deals the open tasks of every project with Tasks on, in what-to-do-first order, with no AI turn", async () => {
     await send("/tasks");
     const deck = deckMessage();
-    expect(deck.text.split("\n").slice(0, 3)).toEqual(["1 of 5 · What to do first", "PSR Ireland bỏ sót payslip", "nxsys · Now · Must · In progress"]);
+    expect(deck.text.split("\n").slice(0, 3)).toEqual(["1 of 5 · What to do first", "nxsys/1 PSR Ireland bỏ sót payslip", "nxsys · Now · Must · In progress"]);
     expect(deck.text).toContain("Next: fix period-13 filter");
     expect(providerCalls).toEqual([]);
     // The project's own statuses, its added one too, without the current one, closed-as-done last.
@@ -230,7 +230,7 @@ describe("/tasks", () => {
     expect(deck.text).toContain("Pex sprite sheet");
     await press(deck, "›");
     deck = deckMessage();
-    expect(deck.text.split("\n").slice(1)).toEqual(["Secret client payroll fix", "ppm · Today"]);
+    expect(deck.text.split("\n").slice(1)).toEqual([expect.stringMatching(/^ppm\/\d+ Secret client payroll fix$/), "ppm · Today"]);
     expect(deck.text).not.toContain("Should");
     await press(deck, "‹");
     await press(deckMessage(), "‹");
@@ -269,7 +269,7 @@ describe("/tasks", () => {
     expect(deckMessage().text).toContain("Status: In progress → Done");
 
     await press(result, "Show open children (1)");
-    expect(deckMessage().text).toContain("Open child tasks of PSR Ireland bỏ sót payslip");
+    expect(deckMessage().text).toContain("Open child tasks of nxsys/1 PSR Ireland bỏ sót payslip");
     await press(deckMessage(), "‹ Back");
 
     expect(await press(deckMessage(), "Tell manager now")).toBe("Sent to the nxsys manager");
@@ -376,8 +376,8 @@ describe("a task the Assistant created from Telegram", () => {
     expect(cards).toHaveLength(1);
     // ppm shows titles only on the phone.
     expect(card.text.split("\n")).toEqual([
-      expect.stringMatching(/^Created in ppm · task \d+$/),
-      "Viết lại hướng dẫn cài đặt cho bản mới",
+      "Created in ppm",
+      expect.stringMatching(/^ppm\/\d+ Viết lại hướng dẫn cài đặt cho bản mới$/),
       "ppm · This week",
       "The ppm manager will see it on its next turn.",
     ]);

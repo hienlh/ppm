@@ -31,13 +31,18 @@ describe("deck card", () => {
   it("reads like the design: position, title, the facts, links and the next step", () => {
     expect(shown(deckCardHtml(facts(), POS, CTX)).split("\n")).toEqual([
       "1 of 14 · What to do first",
-      "PSR Ireland bỏ sót payslip",
+      "nxsys/12 PSR Ireland bỏ sót payslip",
       "nxsys · Now · Must · In progress",
       "Due tomorrow · Minh Anh",
       "NX-6318 In Progress",
       "PR #2231 open · CI failing",
       "Next: fix period-13 filter, get #2231 green.",
     ]);
+  });
+
+  it("sets the task's code in monospace before the title, so a tap on the phone copies it", () => {
+    expect(deckCardHtml(facts(), POS, CTX)).toContain("<code>nxsys/12</code> <b>PSR Ireland bỏ sót payslip</b>");
+    expect(deckCardHtml(facts({ ref: "a&b/3" }), POS, CTX)).toContain("<code>a&amp;b/3</code>");
   });
 
   it("escapes every text a person or an AI wrote before formatting it", () => {
@@ -57,7 +62,7 @@ describe("deck card", () => {
 
   it("shows only the title, project and urgency for a title-only project", () => {
     const text = shown(deckCardHtml(facts(), POS, TITLE_ONLY));
-    expect(text.split("\n")).toEqual(["1 of 14 · What to do first", "PSR Ireland bỏ sót payslip", "nxsys · Now"]);
+    expect(text.split("\n")).toEqual(["1 of 14 · What to do first", "nxsys/12 PSR Ireland bỏ sót payslip", "nxsys · Now"]);
     for (const hidden of ["Must", "In progress", "Minh Anh", "NX-6318", "PR #2231", "Next:"]) expect(text).not.toContain(hidden);
   });
 
@@ -116,7 +121,7 @@ describe("status change", () => {
     expect(html).toContain("<s>PSR Ireland bỏ sót payslip</s>");
     expect(shown(html).split("\n")).toEqual([
       "1 of 14 · What to do first",
-      "PSR Ireland bỏ sót payslip",
+      "nxsys/12 PSR Ireland bỏ sót payslip",
       "Status: In progress → Done",
       "By you from Telegram, 14:02. 2 child tasks are still open.",
     ]);
@@ -131,8 +136,10 @@ describe("status change", () => {
 describe("children", () => {
   it("lists open children and caps the list", () => {
     const many = Array.from({ length: 12 }, (_, i) => ({ ref: `nxsys/${i + 20}`, title: `Child ${i}`, statusName: "To do" }));
-    const text = shown(childrenHtml("Parent & co", many));
-    expect(text).toContain("Open child tasks of Parent & co");
+    const html = childrenHtml({ ref: "nxsys/19", title: "Parent & co" }, many);
+    const text = shown(html);
+    expect(text).toContain("Open child tasks of nxsys/19 Parent & co");
+    expect(html).toContain("<code>nxsys/20</code> Child 0");
     expect(text).toContain("• nxsys/20 Child 0 — To do");
     expect(text).toContain("…and 2 more in PPM.");
   });
@@ -142,8 +149,8 @@ describe("created card", () => {
   it("reads like the design", () => {
     const f = facts({ ref: "ppm/88", projectName: "ppm", title: "Viết lại hướng dẫn cài đặt cho bản mới", urgency: "week", importance: "should", statusName: "Backlog", dueDate: null, assignee: null, linkLines: [], nextStep: null });
     expect(shown(createdCardHtml(f, CTX, { managerLine: "The ppm manager chat was told." })).split("\n")).toEqual([
-      "Created in ppm · task 88",
-      "Viết lại hướng dẫn cài đặt cho bản mới",
+      "Created in ppm",
+      "ppm/88 Viết lại hướng dẫn cài đặt cho bản mới",
       "Task · This week · Should · Backlog",
       "The ppm manager chat was told.",
     ]);
@@ -151,7 +158,7 @@ describe("created card", () => {
 
   it("keeps a title-only project's details off the phone", () => {
     const text = shown(createdCardHtml(facts(), TITLE_ONLY, { managerLine: null }));
-    expect(text.split("\n")).toEqual(["Created in nxsys · task 12", "PSR Ireland bỏ sót payslip", "nxsys · Now"]);
+    expect(text.split("\n")).toEqual(["Created in nxsys", "nxsys/12 PSR Ireland bỏ sót payslip", "nxsys · Now"]);
   });
 
   it("says the creation was undone", () => {

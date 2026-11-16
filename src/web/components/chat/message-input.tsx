@@ -1079,7 +1079,7 @@ export const MessageInput = memo(function MessageInput({
         {!!turnChips?.length && onRemoveTurnChip && (
           <ComposerTurnRefRow chips={turnChips} currentProject={projectName} blockedReason={turnChipsBlockedReason} onRemove={onRemoveTurnChip} />
         )}
-        {!!taskChips?.length && onRemoveTaskChip && <ComposerTaskChipRow chips={taskChips} onRemove={onRemoveTaskChip} />}
+        {!!taskChips?.length && onRemoveTaskChip && <ComposerTaskChipRow chips={taskChips} currentProject={projectName} onRemove={onRemoveTaskChip} />}
         {/* Selected agent chip — composed into a delegation prompt on send */}
         {agentTag && (
           <div className="px-2 md:px-4 pt-2">

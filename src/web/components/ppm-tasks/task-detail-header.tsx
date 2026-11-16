@@ -1,6 +1,7 @@
 /**
- * The top of a task's page (variant-3 screen 02): `<project> / <number>`, the preview hint, Copy
- * link, Ask manager and Mark done (Reopen once closed); the title, edited in place; and the chips
+ * The top of a task's page (variant-3 screen 02): `<project> / #<number>`, the preview hint, Copy
+ * link, Ask manager and Mark done (Reopen once closed); the code and title, the title edited in
+ * place (a click on the code copies it instead); and the chips
  * (status, urgency with its "auto" mark, importance, due, who it waits on).
  */
 import { useEffect, useRef, useState } from "react";
@@ -14,6 +15,7 @@ import { TaskUrgencyPill } from "./kit/task-urgency-pill";
 import { TaskImportanceBars } from "./kit/task-importance-bars";
 import { TaskDueLabel } from "./kit/task-due-label";
 import { TaskTypeBadge } from "./kit/task-type-badge";
+import { TaskCode } from "./kit/task-code";
 import type { TaskMember } from "../../../shared/ppm-tasks";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
 
@@ -46,7 +48,7 @@ export function TaskDetailHeader({ task, members, preview, hasManager, onRename,
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[13px] text-text-2">
         <span className="rounded bg-surface px-1.5 text-xs font-medium text-text">{task.project}</span>
         <span className="text-text-3">/</span>
-        <span className="font-mono text-text-3">{task.number}</span>
+        <TaskCode task={task} viewProject={task.project} className="text-[13px]" />
         {preview && <span className="text-xs text-text-3">Preview · edit to keep the tab</span>}
         <span className="flex-1" />
         <Button size="sm" variant="ghost" onClick={() => void copyTaskLink(task)}><Link className="size-3.5" />Copy link</Button>
@@ -62,6 +64,7 @@ export function TaskDetailHeader({ task, members, preview, hasManager, onRename,
       ) : (
         <h1 className="cursor-text break-words rounded-md text-xl font-semibold leading-snug text-text hover:bg-surface-hover" title="Click to rename"
           onClick={() => setEditing(true)} data-task-title="">
+          <TaskCode task={task} viewProject={task.project} className="mr-1.5 text-[0.7em]" />
           <span className={cn(closed && "text-text-2 line-through decoration-text-3")}>{task.title}</span>
         </h1>
       )}

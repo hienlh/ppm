@@ -22,6 +22,7 @@ import { TaskLinksCard } from "../task-links-card";
 import { TaskWorkingSessionBlock } from "../task-working-session-block";
 import { TaskDecisionMobile } from "./task-decision-mobile";
 import type { TaskSheetKind } from "./task-field-editor-sheet";
+import { TaskCode } from "../kit/task-code";
 
 export interface TaskDetailMobileDetailsProps {
   detail: TaskDetailResponse;
@@ -55,7 +56,7 @@ function Row({ icon, children, aside, onClick }: { icon: ReactNode; children: Re
   );
 }
 
-function Title({ title, closed, onRename }: { title: string; closed: boolean; onRename(title: string): void }) {
+function Title({ task, title, closed, onRename }: { task: { number: number; project: string }; title: string; closed: boolean; onRename(title: string): void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -74,7 +75,10 @@ function Title({ title, closed, onRename }: { title: string; closed: boolean; on
   // At least 44px tall like every other control on a phone, even when the title fits one line.
   return (
     <h2 role="button" tabIndex={0} aria-label={`Rename: ${title}`} onClick={() => setEditing(true)} onKeyDown={(e) => { if (e.key === "Enter") setEditing(true); }} data-task-title="" className="flex min-h-11 items-center break-words text-[19px] font-semibold leading-snug text-text">
-      <span className={cn("min-w-0 [overflow-wrap:anywhere]", closed && "text-text-2 line-through decoration-text-3")}>{title}</span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">
+        <TaskCode task={task} viewProject={task.project} nested className="mr-1.5 text-[13px]" />
+        <span className={cn(closed && "text-text-2 line-through decoration-text-3")}>{title}</span>
+      </span>
     </h2>
   );
 }
@@ -98,7 +102,7 @@ export function TaskDetailMobileDetails(p: TaskDetailMobileDetailsProps) {
           <span className="shrink-0 text-xs text-primary">See activity</span>
         </button>
       )}
-      <Title title={task.title} closed={task.baseGroup === "closed"} onRename={(title) => p.onPatch({ title })} />
+      <Title task={task} title={task.title} closed={task.baseGroup === "closed"} onRename={(title) => p.onPatch({ title })} />
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {task.type !== "task" && <TaskTypeBadge type={task.type} />}
         <TaskUrgencyPill urgency={task.effectiveUrgency} raised={task.urgencyRaised} />
@@ -123,7 +127,7 @@ export function TaskDetailMobileDetails(p: TaskDetailMobileDetailsProps) {
       )}
       <TaskNotesCard task={task} onSave={p.onPatch} />
       <TaskLinksCard task={task} linkStates={linkStates} jiraSite={p.detail.jiraSite} onOpenChat={p.onOpenChat} onAdd={p.onAddLink} onRemove={p.onRemoveLink} />
-      <TaskWorkingSessionBlock working={task.workingSession} check={task.check} onOpen={p.onOpenWorkingChat} onStartChat={p.onStartChat} />
+      <TaskWorkingSessionBlock task={task} working={task.workingSession} check={task.check} onOpen={p.onOpenWorkingChat} onStartChat={p.onStartChat} />
       <div className="divide-y divide-border-soft overflow-hidden rounded-lg border border-border-soft bg-panel" data-task-summary="">
         <Row icon={<Layers />} aside={children.length ? `${done} of ${children.length}` : "None"} onClick={() => p.onSheet("children")}>Child tasks</Row>
         <Row icon={<Users />} aside="Assignee" onClick={() => p.onSheet("properties")}>{assignee ?? "Nobody"}</Row>

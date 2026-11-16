@@ -9,7 +9,7 @@ const chip = (n: number): ComposerTaskChip => ({
 
 describe("composer task chip", () => {
   it("reads as Task #N · title", () => {
-    expect(taskChipLabel(chip(12))).toBe("Task #12 · Task 12");
+    expect(taskChipLabel(chip(12), "alpha")).toBe("Task #12 · Task 12");
     expect(taskChipOf({ id: chip(3).taskId, number: 3, ref: "alpha/3", title: "Task 3", project: "alpha", ...{ extra: 1 } } as never)).toEqual(chip(3));
   });
 

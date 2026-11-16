@@ -1,7 +1,8 @@
 /**
- * One task in the Tasks sidebar list (variant-3 screen 01): status glyph, title on up to two lines,
- * a meta line (Jira key or PR/CI dot, who it waits on and for how long, a Decision/Reply badge,
- * child progress, the project in the all-projects scope, the working-session chip) and importance
+ * One task in the Tasks sidebar list (variant-3 screen 01): status glyph, the task's code (`#12`, or
+ * `ppm/12` in the all-projects scope, where the code names the project) and title on up to two
+ * lines, a meta line (Jira key or PR/CI dot, who it waits on and for how long, a Decision/Reply
+ * badge, child progress, the working-session chip) and importance
  * bars with the assignee on the right. A click previews the task, a double-click keeps its tab.
  */
 import type { DragEvent, PointerEvent } from "react";
@@ -14,6 +15,7 @@ import { TaskImportanceBars } from "./kit/task-importance-bars";
 import { TaskMemberAvatar } from "./kit/task-member-avatar";
 import { TaskWorkingSessionChip } from "./kit/task-working-session-chip";
 import { TaskDueLabel } from "./kit/task-due-label";
+import { TaskCode } from "./kit/task-code";
 import type { LinkState, TaskMember } from "../../../shared/ppm-tasks";
 import type { TaskDto, TaskWorkingSession } from "../../../shared/ppm-tasks-api";
 
@@ -74,11 +76,10 @@ export function TaskListRow(p: TaskListRowProps) {
       <span className="pt-[3px]"><TaskStatusGlyph baseGroup={task.baseGroup} closedAs={task.closedAs} name={task.statusName} /></span>
       <div className="min-w-0">
         <div className={cn("line-clamp-2 break-words text-[13px] leading-snug text-text", closed && "text-text-3 line-through", p.depth === 1 && "text-[12.5px]")}>
-          {task.title}
+          <TaskCode task={task} viewProject={p.showProject ? null : task.project} inRow tabIndex={-1} className="mr-1" /><span>{task.title}</span>
         </div>
         {p.depth === 0 && (
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-text-3">
-            {p.showProject && <span className="max-w-[90px] truncate rounded bg-surface px-1 text-[10.5px] font-medium text-text-2">{task.project}</span>}
             {(task.type === "decision" || task.type === "reply") && <TaskTypeBadge type={task.type} className="text-[11px]" />}
             {externalMeta(task, p.linkStates)}
             {waiting && task.waitingSince ? <span className="truncate text-warning">{waiting} · {ageShort(task.waitingSince)}</span> : null}

@@ -106,7 +106,9 @@ export function createChildCheckRunner(env: ChildCheckEnv = liveChildCheckEnv) {
 
   function card(projectKey: string, projectName: string, findings: Finding[], now: number, why: string, manager: string | null): void {
     const { title, body } = cardText(findings, projectName, now, why);
-    const tasks = findings.map((f) => ({ taskId: f.task.id, sessionId: f.sessionId, ref: formatTaskRef(f.task.number, projectName) }));
+    const tasks = findings.map((f) => ({
+      taskId: f.task.id, sessionId: f.sessionId, ref: formatTaskRef(f.task.number, projectName), title: f.task.title.replace(/\s+/g, " ").trim().slice(0, 200),
+    }));
     env.postCard(projectKey, projectName, manager, title, body, tasks);
     recordAlerts(findings, now);
   }

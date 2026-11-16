@@ -71,7 +71,7 @@ async function desktop(k, s) {
   await block.getByRole("button", { name: "Open chat" }).click();
   const chip = page.locator("[data-composer-task-refs] [data-task-chip]:visible").first();
   await chip.waitFor({ timeout: 30000 });
-  assert.match(await chip.innerText(), new RegExp(`Task #${s.t.login.number} · ${s.t.login.title}`));
+  assert.match(await chip.innerText(), new RegExp(`#${s.t.login.number}\\s*${s.t.login.title}`));
   await k.shot("01-desktop-chip-in-composer");
 
   const typed = "Is this one still blocked on QA?";
@@ -79,7 +79,7 @@ async function desktop(k, s) {
   await page.locator(COMPOSER).first().press("Enter");
   const bubbleChip = page.locator("[data-user-message] [data-task-ref]:visible").first();
   await bubbleChip.waitFor({ timeout: 30000 });
-  assert.match(await bubbleChip.innerText(), new RegExp(`Task #${s.t.login.number}`));
+  assert.match(await bubbleChip.innerText(), new RegExp(`#${s.t.login.number}\\b`));
   assert.equal(await page.locator("[data-composer-task-refs]:visible").count(), 0, "the chip left the composer");
   const msg = await entered(k, s.managers.alpha, typed);
   assert.match(msg.text, /<ppm-taskref-v1>/);
@@ -112,7 +112,7 @@ async function phoneFlow(k, s) {
   await open.tap();
   const chip = page.locator("[data-composer-task-refs] [data-task-chip]:visible").first();
   await chip.waitFor({ timeout: 30000 });
-  assert.match(await chip.innerText(), new RegExp(`Task #${s.t.release.number}`));
+  assert.match(await chip.innerText(), new RegExp(`#${s.t.release.number}\\b`));
   const box = await chip.boundingBox();
   assert(box && box.height >= 43.5, `the chip is a 44 px target on a phone: ${JSON.stringify(box)}`);
   await k.shot("04-phone-390-chip-in-composer");

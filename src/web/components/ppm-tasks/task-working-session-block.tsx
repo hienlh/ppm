@@ -1,5 +1,5 @@
 /**
- * The working-session block at the top of a task's properties: the chat doing the task, its live
+ * The working-session block at the top of a task's properties, headed with the task's code: the chat doing the task, its live
  * state, what the handed-off work check last found ("stalled 40 min", "finished, no report", with
  * when progress was last seen), and Open chat. With no chat it offers Start chat; with one it also
  * offers a new chat, which the caller confirms before it replaces the current one.
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { sessionChipView } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
 import { ageShort, whenShort } from "@/lib/ppm-tasks/task-format";
+import { TaskCode } from "./kit/task-code";
 import type { TaskCheckSummary, TaskWorkingSession } from "../../../shared/ppm-tasks-api";
 
 const STATE_LABEL: Record<string, string> = {
@@ -21,18 +22,30 @@ export function checkTooltip(check: TaskCheckSummary | null | undefined): string
 }
 
 export interface TaskWorkingSessionBlockProps {
+  /** The task the block belongs to: its code sits beside the heading. */
+  task: { number: number; project: string };
   working: TaskWorkingSession;
   check: TaskCheckSummary | null;
   onOpen(sessionId: string): void;
   onStartChat(): void;
 }
 
-export function TaskWorkingSessionBlock({ working, check, onOpen, onStartChat }: TaskWorkingSessionBlockProps) {
+/** "WORKING SESSION #82": the heading names the task, so a chat that says "#82" can be matched here. */
+function Heading({ task }: { task: TaskWorkingSessionBlockProps["task"] }) {
+  return (
+    <p className="flex min-w-0 items-baseline gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-3">
+      <span className="min-w-0 truncate">Working session</span>
+      <TaskCode task={task} viewProject={task.project} className="normal-case text-[11.5px]" />
+    </p>
+  );
+}
+
+export function TaskWorkingSessionBlock({ task, working, check, onOpen, onStartChat }: TaskWorkingSessionBlockProps) {
   const view = sessionChipView(working, check, Date.now());
   if (working.kind === "start_chat") {
     return (
       <div className="rounded-lg border border-dashed border-border p-3" data-working-session="none">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-text-3">Working session</p>
+        <Heading task={task} />
         <p className="mt-1 text-[13px] text-text-2">No chat works on this task and the project has no manager chat.</p>
         <Button size="sm" className="mt-2.5 w-full" onClick={onStartChat}><Plus className="size-3.5" />Start chat</Button>
       </div>
@@ -52,7 +65,7 @@ export function TaskWorkingSessionBlock({ working, check, onOpen, onStartChat }:
           {isManager ? <Bot className="size-4" /> : <MessageCircle className="size-4" />}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-text-3">Working session</p>
+          <Heading task={task} />
           <p className="truncate text-[13.5px] font-semibold text-text" title={s.title ?? undefined}>{isManager ? `Manager${s.title ? ` · ${s.title}` : ""}` : name}</p>
           <p className={cn("mt-0.5 text-xs font-medium", tone)} title={checkTooltip(check)}>
             {live}{view.tone === "stalled" && view.detail ? ` · ${view.detail.replace(/^stalled /, "")}` : ""}

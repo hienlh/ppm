@@ -1,7 +1,7 @@
 /**
  * One task in the phone list (variant-3 screen 03): a 62px row with a 44px status cell (a tap there
- * opens the same sheet as a long-press), the title on one line, a meta line (project in the
- * all-projects scope, Decision/Reply badge, Jira key or PR/CI dot, who it waits on and for how
+ * opens the same sheet as a long-press), the task's code and title on one line (the title gives
+ * way, never the code; in the all-projects scope the code names the project), a meta line (Decision/Reply badge, Jira key or PR/CI dot, who it waits on and for how
  * long, child progress, the working-session chip) and a chevron. The meta line never wraps or
  * widens the row: the working-session chip gives way first, then the waiting text.
  */
@@ -13,6 +13,7 @@ import type { TaskDto, TaskWorkingSession } from "../../../../shared/ppm-tasks-a
 import { TaskStatusGlyph } from "../kit/task-status-glyph";
 import { TaskTypeBadge } from "../kit/task-type-badge";
 import { TaskWorkingSessionChip } from "../kit/task-working-session-chip";
+import { TaskCode } from "../kit/task-code";
 import { externalMeta } from "../task-list-row";
 import { useTaskRowLongPress } from "./use-task-row-long-press";
 
@@ -55,11 +56,13 @@ export function TaskRowMobile(p: TaskRowMobileProps) {
       <div className="min-w-0 py-2">
         {/* A button only so a touch on the title stays here: the browser's touch adjustment would
             otherwise hand a tap near the chat chip's 44px hit area to the chip. The row opens it. */}
-        <button type="button" tabIndex={-1} className={cn("block w-full truncate text-left text-[15px] leading-snug text-text", closed && "text-text-3 line-through")}>{task.title}</button>
+        <div className="flex min-w-0 items-baseline gap-1">
+          <TaskCode task={task} viewProject={p.showProject ? null : task.project} inRow className="text-[12.5px]" />
+          <button type="button" tabIndex={-1} className={cn("block min-w-0 flex-1 truncate text-left text-[15px] leading-snug text-text", closed && "text-text-3 line-through")}>{task.title}</button>
+        </div>
         {/* The meta line is not clipped: the chat chip's 44px hit area reaches past it; its items shrink instead. */}
         {p.depth === 0 && (
           <div className="mt-1 flex min-w-0 flex-nowrap items-center gap-2 whitespace-nowrap text-xs text-text-3">
-            {p.showProject && <span className="max-w-[80px] truncate rounded bg-surface px-1 text-[11px] font-medium text-text-2">{task.project}</span>}
             {(task.type === "decision" || task.type === "reply") && <TaskTypeBadge type={task.type} className="text-[11px]" />}
             {externalMeta(task, p.linkStates)}
             {waiting && task.waitingSince ? <span className="min-w-0 shrink-[2] truncate text-warning">{waiting} {ageShort(task.waitingSince)}</span> : null}
