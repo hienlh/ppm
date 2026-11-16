@@ -23,6 +23,19 @@ async function assertHeight(page, selector, want, what) {
 /** Front-most first: the windows' z-index as the layer sets it. */
 const zOf = (loc) => loc.evaluate((el) => Number(getComputedStyle(el).zIndex) || 0);
 
+/**
+ * The saved rect of the window showing `taskId` (layer coordinates, as `ppm-windows` keeps it),
+ * and the rect remembered for the next task window. Read from storage, not from the screen: a
+ * window that just opened is still sliding into place.
+ */
+const savedRects = (page, taskId) => page.evaluate((id) => {
+  const panels = JSON.parse(localStorage.getItem("ppm-window-panels") ?? "{}");
+  const panelId = Object.keys(panels).find((k) => panels[k]?.tabs?.some((t) => t.metadata?.taskId === id));
+  const win = panelId ? JSON.parse(localStorage.getItem("ppm-windows") ?? "[]").find((w) => `__win__:${w.id}` === panelId) : null;
+  return { window: win?.rect ?? null, remembered: JSON.parse(localStorage.getItem("ppm-task-window-rect") ?? "null") };
+}, taskId);
+const sameRect = (a, b) => !!a && !!b && ["x", "y", "w", "h"].every((k) => Math.abs(a[k] - b[k]) <= 1);
+
 /** No task windows or task tabs left from earlier steps, and the Assistant's window out of the way. */
 async function cleanDesktop(page, web) {
   await page.evaluate(() => {
@@ -126,14 +139,17 @@ async function desktopWindow(k, s) {
   await page.mouse.down();
   await page.mouse.move(head.x + 120, head.y + 60, { steps: 8 });
   await page.mouse.up();
-  const moved = await reviewWin.boundingBox();
-  assert(Math.abs(moved.x - (head.x - 80)) <= 4 && Math.abs(moved.y - (head.y + 46)) <= 4, `the window moved: ${JSON.stringify(head)} → ${JSON.stringify(moved)}`);
+  const movedBox = await reviewWin.boundingBox();
+  assert(Math.abs(movedBox.x - (head.x - 80)) <= 4 && Math.abs(movedBox.y - (head.y + 46)) <= 4, `the window moved: ${JSON.stringify(head)} → ${JSON.stringify(movedBox)}`);
+  const saved = await until("the moved rect saved", async () => { const r = await savedRects(page, review.id); return sameRect(r.window, r.remembered) ? r : null; }, 5000)
+    .catch(async () => assert.fail(`the moved rect is remembered for the next task window: ${JSON.stringify(await savedRects(page, review.id))}`));
+  const moved = saved.window;
   await page.reload();
   // #1's preview window was reused for #8 above, so #8's is the one task window there is.
   await windowOf(page, review.id).waitFor({ timeout: 30000 });
   assert.equal(await taskWindows(page).count(), 1, "the one task window came back");
-  const restored = await windowOf(page, review.id).boundingBox();
-  assert(Math.abs(restored.x - moved.x) <= 2 && Math.abs(restored.y - moved.y) <= 2 && Math.abs(restored.width - moved.width) <= 2, `restored where it was: ${JSON.stringify(moved)} vs ${JSON.stringify(restored)}`);
+  const restored = (await savedRects(page, review.id)).window;
+  assert(sameRect(restored, moved), `restored where it was: ${JSON.stringify(moved)} vs ${JSON.stringify(restored)}`);
   await k.beat();
   // Close it, then open another task: it lands where the moved one was.
   await windowOf(page, review.id).getByRole("button", { name: "Close window" }).click();
@@ -142,8 +158,9 @@ async function desktopWindow(k, s) {
   await k.openTasks();
   await k.row(copy.title).getByText(copy.title, { exact: true }).click();
   await windowOf(page, copy.id).waitFor({ timeout: 20000 });
-  const reopened = await windowOf(page, copy.id).boundingBox();
-  assert(Math.abs(reopened.x - moved.x) <= 2 && Math.abs(reopened.y - moved.y) <= 2, `the next task window opens where the last one was: ${JSON.stringify(moved)} vs ${JSON.stringify(reopened)}`);
+  const reopened = await savedRects(page, copy.id);
+  assert(sameRect(reopened.window, moved), `the next task window opens where the last one was: moved ${JSON.stringify(moved)}, opened ${JSON.stringify(reopened.window)}, remembered ${JSON.stringify(reopened.remembered)}`);
+  await page.waitForTimeout(400);
   await k.beat(1200);
   await k.shot("w04-reopened-at-remembered-place-1440");
   await k.endScene();
@@ -210,7 +227,7 @@ async function phoneSheet(k, s) {
   const list = page.locator("[data-task-list-mobile]:visible");
   await list.waitFor({ timeout: 30000 });
   await k.scene("w08", "A phone opens a task in a sheet", "On a phone the task opens in a bottom sheet over the list. Swipe it down or tap × to go back to the list.");
-  await list.locator("[data-task-row]", { hasText: login.title }).first().tap();
+  await list.locator("[data-task-row]", { hasText: login.title }).first().getByText(login.title, { exact: true }).tap();
   const sheet = page.locator(`[data-task-open-sheet="${login.id}"]`);
   await sheet.waitFor({ timeout: 20000 });
   await sheet.locator("[data-task-detail-mobile]").waitFor({ timeout: 20000 });
@@ -227,7 +244,7 @@ async function phoneSheet(k, s) {
   await k.endScene();
 
   await k.scene("w09", "Full screen", "\"Full screen\" turns the sheet into the task's page, as a tab.");
-  await list.locator("[data-task-row]", { hasText: review.title }).first().tap();
+  await list.locator("[data-task-row]", { hasText: review.title }).first().getByText(review.title, { exact: true }).tap();
   await page.locator(`[data-task-open-sheet="${review.id}"]`).waitFor({ timeout: 20000 });
   await k.beat();
   await page.locator("[data-task-sheet-full-screen]").tap();
@@ -235,7 +252,8 @@ async function phoneSheet(k, s) {
   const pageView = page.locator(`[data-task-detail="${review.id}"][data-task-detail-mobile]:visible`);
   await pageView.waitFor({ timeout: 20000 });
   await page.getByRole("button", { name: "Back to tasks" }).waitFor({ timeout: 10000 });
-  assert.equal(await list.count(), 0, "the drawer closed");
+  // The drawer stays mounted and slides off the left edge when it closes.
+  await until("the drawer closed", async () => (await page.locator("[data-task-list-mobile]").evaluateAll((els) => els.every((el) => el.getBoundingClientRect().right <= 0 || !el.getClientRects().length))), 10000);
   await k.beat(1200);
   await k.shot("w09-full-screen-390");
   await k.endScene();
@@ -246,7 +264,7 @@ async function phoneSheet(k, s) {
   const list320 = narrow.locator("[data-task-list-mobile]:visible");
   await list320.waitFor({ timeout: 30000 });
   await k.scene("w10", "A 320 px phone", "The sheet's header fits the narrowest phone.");
-  await list320.locator("[data-task-row]", { hasText: login.title }).first().tap();
+  await list320.locator("[data-task-row]", { hasText: login.title }).first().getByText(login.title, { exact: true }).tap();
   const sheet320 = narrow.locator(`[data-task-open-sheet="${login.id}"]`);
   await sheet320.waitFor({ timeout: 20000 });
   await sheet320.locator("[data-task-detail-mobile]").waitFor({ timeout: 20000 });

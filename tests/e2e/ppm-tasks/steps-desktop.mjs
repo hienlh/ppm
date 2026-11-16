@@ -131,7 +131,8 @@ async function decision(k, s) {
   await k.beat(1000);
   // Show where it went: the manager chat, from the working-session block.
   await k.detail().getByRole("button", { name: "Open chat" }).first().click();
-  await page.getByText("One plan with a usage slider").last().waitFor({ timeout: 20000 });
+  // The chat's copy: the task's own (its decision card) is in a window that went to the dock.
+  await page.getByText("One plan with a usage slider").and(page.locator("*:visible")).last().waitFor({ timeout: 20000 });
   await k.beat(2000);
   await k.endScene();
   // The same with no browser on that chat: the route alone sends it to beta's manager.
