@@ -68,10 +68,15 @@ const CARD_CLIENT_ID_RE = /^card-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}
 const defuseCommand = (text: string): string => (text.trimStart().startsWith("/") ? `${String.fromCharCode(0x200b)}${text}` : text);
 
 /**
- * Text that opens with something shaped like an attachment marker would be drawn, and read by the
- * model, as an image PPM attached; a zero-width space in front keeps it the user's own text.
+ * A line of the user's text shaped like an attachment marker would be drawn, and read by the
+ * model, as an image PPM attached. Not only at the very start: the display strips a leading code
+ * fence or `<ide_opened_file>` tag before it looks for markers, which can bring a later line to
+ * the front. A zero-width space before the bracket of every such line keeps it the user's text
+ * (it survives the display's trim, which removes whitespace only).
  */
-const defuseAttachmentMarker = (text: string): string => (/^\s*\[Attached (?:image|file)/.test(text) ? `${String.fromCharCode(0x200b)}${text}` : text);
+const defuseAttachmentMarkers = (text: string): string =>
+  // Any whitespace but a line break before the bracket: the display's trim removes all of it.
+  text.replace(/^([^\S\r\n]*)\[Attached (image|file)/gm, `$1${String.fromCharCode(0x200b)}[Attached $2`);
 
 /** The marker the composer writes for an image whose payload rides along with the message. */
 const inlineImageMarker = (path: string): string => `[Attached image (contents included in this message): ${path}]`;
@@ -84,7 +89,7 @@ const inlineImageMarker = (path: string): string => `[Attached image (contents i
 export function userWordsContent(input: Pick<DeliverUserWordsInput, "text" | "images" | "userWords" | "taskRefs" | "projectName">): string {
   // Pasted text (an email, a log) may carry a loose PPM-looking tag or a copy of the user-words
   // header: both are defused, so the one block PPM builds below is the only one there.
-  const words = defuseCommand(defuseAttachmentMarker(defuseUserWordsHeader(neutralizePpmTags(input.text))));
+  const words = defuseCommand(defuseAttachmentMarkers(defuseUserWordsHeader(neutralizePpmTags(input.text))));
   const markers = (input.images ?? []).map((img) => inlineImageMarker(img.path));
   const body = markers.length ? `${markers.join("\n\n")}\n\n${words}` : words;
   return encodeMessageBlocks(body, { userWords: input.userWords, taskRefs: input.taskRefs ?? null, ownProject: input.projectName || undefined });

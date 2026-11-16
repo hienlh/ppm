@@ -13,11 +13,20 @@
 import { unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ensureUploadsDir } from "../chat-upload-storage.service.ts";
+import { readImageDimensions } from "../image-dimensions.ts";
+import { MAX_IMAGE_DIMENSION } from "../../shared/image-limits.ts";
 
 export const MAX_REPLY_IMAGES = 5;
-export const MAX_REPLY_IMAGE_BYTES = 5 * 1024 * 1024;
-/** The longest base64 that can decode to at most {@link MAX_REPLY_IMAGE_BYTES}; checked before decoding. */
-const MAX_BASE64_CHARS = Math.ceil(MAX_REPLY_IMAGE_BYTES / 3) * 4;
+/**
+ * The longest base64 one image may be. The API measures its 5 MB per image on the base64, not on
+ * the bytes, so this is the composer's own inline cap (`INLINE_IMAGE_LIMITS.maxBase64PerImage`),
+ * repeated here because server code does not import the browser's.
+ */
+export const MAX_REPLY_IMAGE_BASE64_CHARS = 5_000_000;
+/** What that many base64 characters decode to at most: 3,750,000 bytes. */
+export const MAX_REPLY_IMAGE_BYTES = (MAX_REPLY_IMAGE_BASE64_CHARS / 4) * 3;
+/** How that cap is said to a person. */
+export const REPLY_IMAGE_SIZE_TEXT = "3.7 MB";
 
 const EXTENSIONS: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
 
@@ -50,7 +59,8 @@ export function bytesMatchMediaType(bytes: Buffer, mediaType: string): boolean {
 
 /**
  * Checks the `images` of a reply body: absent or empty is fine; otherwise at most five, each a
- * supported type whose base64 decodes cleanly to at most 5 MB of bytes that really are that type.
+ * supported type, at most {@link MAX_REPLY_IMAGE_BASE64_CHARS} of base64 that decodes cleanly to
+ * bytes that really are that type, under {@link MAX_IMAGE_DIMENSION} pixels on its longer side.
  * Only `data` and `mediaType` are read from each entry; anything else on it (a `path`) is ignored.
  */
 export function validateReplyImages(raw: unknown): ReplyImagesCheck {
@@ -66,13 +76,21 @@ export function validateReplyImages(raw: unknown): ReplyImagesCheck {
       return { ok: false, error: `${n} must be a PNG, JPEG, GIF or WebP image` };
     }
     if (typeof data !== "string" || !data) return { ok: false, error: `${n} has no data` };
-    if (data.length > MAX_BASE64_CHARS) return { ok: false, error: `${n} is larger than 5 MB` };
+    // Checked before decoding; strict base64 of at most this length cannot decode to more bytes.
+    if (data.length > MAX_REPLY_IMAGE_BASE64_CHARS) return { ok: false, error: `${n} is larger than ${REPLY_IMAGE_SIZE_TEXT}` };
     if (data.length % 4 !== 0 || !STRICT_BASE64_RE.test(data)) return { ok: false, error: `${n} is not valid base64` };
     const bytes = Buffer.from(data, "base64");
     // Round-tripping catches what the pattern lets through (stray bits after the last byte).
     if (bytes.toString("base64") !== data) return { ok: false, error: `${n} is not valid base64` };
-    if (bytes.length > MAX_REPLY_IMAGE_BYTES) return { ok: false, error: `${n} is larger than 5 MB` };
     if (!bytesMatchMediaType(bytes, mediaType)) return { ok: false, error: `${n} is not the ${EXTENSIONS[mediaType]!.toUpperCase()} image it says it is` };
+    // Once a request carries several images the API refuses any of them this large on a side,
+    // and that refusal would fail every later turn of the chat; one whose size cannot be read
+    // could be that large too, so it is refused as well.
+    const size = readImageDimensions(bytes);
+    if (!size || !(size.w > 0) || !(size.h > 0)) return { ok: false, error: `${n}'s size in pixels cannot be read` };
+    if (Math.max(size.w, size.h) >= MAX_IMAGE_DIMENSION) {
+      return { ok: false, error: `${n} is ${size.w}×${size.h} pixels; each side must be under ${MAX_IMAGE_DIMENSION} pixels` };
+    }
     images.push({ data, mediaType, bytes });
   }
   return { ok: true, images };

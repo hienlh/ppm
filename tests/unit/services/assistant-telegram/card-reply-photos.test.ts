@@ -11,6 +11,7 @@ import {
 } from "../../../../src/services/assistant-telegram/assistant-telegram-inbound.ts";
 import { AssistantTelegramCardReplies, type CardReplyMessage } from "../../../../src/services/assistant-telegram/assistant-telegram-card-replies.ts";
 import { ButtonCodes } from "../../../../src/services/assistant-telegram/assistant-telegram-button-codes.ts";
+import { pickPhotoSize } from "../../../../src/services/assistant-telegram/assistant-telegram-photos.ts";
 import type { BridgeAction } from "../../../../src/services/assistant-telegram/assistant-telegram-actions.ts";
 import type { CardReplyResult } from "../../../../src/services/assistant-cards/card-reply-actions.ts";
 import type { AssistantCard } from "../../../../src/shared/assistant-cards.ts";
@@ -137,6 +138,35 @@ describe("a photo replying to a card, from Telegram", () => {
     expect(said).toContain(BACKLOG_PHOTO_ONLY_NOTE);
     expect(said).toContain(BACKLOG_PHOTO_DROPPED_NOTE);
     expect(said.some((t) => t.includes("B please"))).toBe(true);
+  });
+});
+
+describe("which copy of a photo is fetched", () => {
+  const size = (id: string, width: number, height: number, file_size?: number) =>
+    ({ file_id: id, file_unique_id: `u-${id}`, width, height, ...(file_size !== undefined ? { file_size } : {}) });
+
+  it("the largest under 2000 pixels on its longer side and under the byte cap", () => {
+    const sizes = [size("s", 320, 180, 20_000), size("m", 1280, 720, 200_000), size("l", 2560, 1440, 900_000)];
+    expect(pickPhotoSize(sizes)?.file_id).toBe("m");
+    expect(pickPhotoSize([size("tall", 1000, 1999), size("x", 2000, 100)])?.file_id).toBe("tall");
+    expect(pickPhotoSize([size("m", 1280, 720, 4_000_000), size("s", 320, 180, 20_000)], 3_750_000)?.file_id).toBe("s");
+    expect(pickPhotoSize([size("l", 2560, 1440)])).toBeNull();
+  });
+
+  it("is downloaded once when the card turns out not to take the reply", async () => {
+    const chat = freshChat();
+    connectChat(chat);
+    const queue = queueFor(client);
+    const inbound = new AssistantTelegramInbound({
+      client, token: fake.token, queue, codes: new ButtonCodes<BridgeAction>(),
+      debounceMs: () => 0, delivered: () => {}, pressCard: () => "", switchSession: () => "", relayCard: () => {},
+      isCardMessage: () => true, replyToCard: async () => false,
+    });
+    const before = fake.calls.filter((c) => c.method === "getFile").length;
+    inbound.dispatch(fake.pushPhoto(chat, chat, { bytes: JPEG, caption: "hm", ...replyingTo() }));
+    await inbound.settle();
+    await queue.whenIdle();
+    expect(fake.calls.filter((c) => c.method === "getFile").length - before).toBe(1);
   });
 });
 

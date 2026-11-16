@@ -13,17 +13,40 @@ import { createAssistantCards } from "../../../src/services/assistant-cards/assi
 import { replyToCard, type CardReplyDeps } from "../../../src/services/assistant-cards/card-reply-actions.ts";
 import { forwardUserWords, type ForwardEnv, type ForwardHow, type ForwardResult } from "../../../src/services/assistant-cards/forward-verbatim.ts";
 import {
-  bytesMatchMediaType, MAX_REPLY_IMAGE_BYTES, validateReplyImages, writeReplyImages, type ValidReplyImage,
+  bytesMatchMediaType, MAX_REPLY_IMAGE_BASE64_CHARS, MAX_REPLY_IMAGE_BYTES, validateReplyImages, writeReplyImages, type ValidReplyImage,
 } from "../../../src/services/assistant-cards/card-reply-images.ts";
 import { getUploadsDir } from "../../../src/services/chat-upload-storage.service.ts";
 import type { DeliverUserWordsInput } from "../../../src/server/ws/chat-user-words.ts";
 import { STALE_REPLY_MS } from "../../../src/shared/assistant-limits.ts";
 import type { AssistantCard } from "../../../src/shared/assistant-cards.ts";
 
-const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
-const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
-const GIF = Buffer.from("GIF89a\x01\x00\x01\x00", "latin1");
-const WEBP = Buffer.concat([Buffer.from("RIFF"), Buffer.from([4, 0, 0, 0]), Buffer.from("WEBPVP8 ")]);
+/** Headers real enough for the signature check and the dimension reader. */
+function pngOf(w: number, h: number): Buffer {
+  const b = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]).copy(b);
+  b.write("IHDR", 12, "latin1");
+  b.writeUInt32BE(w, 16);
+  b.writeUInt32BE(h, 20);
+  return b;
+}
+function jpegOf(w: number, h: number): Buffer {
+  const b = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0, 0, 0, 0, 0x03]);
+  b.writeUInt16BE(h, 7);
+  b.writeUInt16BE(w, 9);
+  return b;
+}
+function webpOf(w: number, h: number): Buffer {
+  const b = Buffer.alloc(30);
+  b.write("RIFF", 0, "latin1");
+  b.write("WEBPVP8X", 8, "latin1");
+  b.writeUIntLE(w - 1, 24, 3);
+  b.writeUIntLE(h - 1, 27, 3);
+  return b;
+}
+const PNG = pngOf(800, 600);
+const JPEG = jpegOf(1280, 720);
+const GIF = Buffer.from("GIF89a\x40\x00\x20\x00", "latin1");
+const WEBP = webpOf(1999, 10);
 const b64 = (b: Buffer) => b.toString("base64");
 const png = { data: b64(PNG), mediaType: "image/png" };
 const jpeg = { data: b64(JPEG), mediaType: "image/jpeg" };
@@ -36,7 +59,20 @@ describe("checking a reply's images", () => {
     expect(validateReplyImages([])).toEqual({ ok: true, images: [] });
     const r = validateReplyImages([png, jpeg, { data: b64(GIF), mediaType: "image/gif" }, { data: b64(WEBP), mediaType: "image/webp" }]);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.images.map((i) => [i.mediaType, i.bytes.length])).toEqual([["image/png", 12], ["image/jpeg", 7], ["image/gif", 10], ["image/webp", 16]]);
+    if (r.ok) expect(r.images.map((i) => [i.mediaType, i.bytes.length])).toEqual([["image/png", 33], ["image/jpeg", 12], ["image/gif", 10], ["image/webp", 30]]);
+  });
+
+  it("refuses an image 2000 pixels or more on its longer side, and one whose size cannot be read", () => {
+    expect(validateReplyImages([{ data: b64(pngOf(2000, 10)), mediaType: "image/png" }]))
+      .toEqual({ ok: false, error: "Image 1 is 2000×10 pixels; each side must be under 2000 pixels" });
+    expect(validateReplyImages([png, { data: b64(jpegOf(1200, 3000)), mediaType: "image/jpeg" }]))
+      .toEqual({ ok: false, error: "Image 2 is 1200×3000 pixels; each side must be under 2000 pixels" });
+    expect(validateReplyImages([{ data: b64(webpOf(2001, 2001)), mediaType: "image/webp" }]).ok).toBe(false);
+    expect(validateReplyImages([{ data: b64(pngOf(1999, 1999)), mediaType: "image/png" }]).ok).toBe(true);
+    // A real JPEG signature with no frame header: the size is unknown, so it is refused.
+    expect(validateReplyImages([{ data: b64(Buffer.from([0xff, 0xd8, 0xff, 0xd9])), mediaType: "image/jpeg" }]))
+      .toEqual({ ok: false, error: "Image 1's size in pixels cannot be read" });
+    expect(validateReplyImages([{ data: b64(pngOf(0, 10)), mediaType: "image/png" }]).ok).toBe(false);
   });
 
   it("refuses more than five, an unsupported type, and something that is not a list", () => {
@@ -47,13 +83,15 @@ describe("checking a reply's images", () => {
     expect(validateReplyImages([{ mediaType: "image/png" }])).toEqual({ ok: false, error: "Image 1 has no data" });
   });
 
-  it("refuses an image over 5 MB, decoded or as base64", () => {
-    const big = Buffer.alloc(MAX_REPLY_IMAGE_BYTES + 1);
-    PNG.copy(big);
-    expect(validateReplyImages([{ data: b64(big), mediaType: "image/png" }])).toEqual({ ok: false, error: "Image 1 is larger than 5 MB" });
+  it("refuses an image over 5,000,000 base64 characters (3.7 MB), the composer's own cap", () => {
+    expect(MAX_REPLY_IMAGE_BASE64_CHARS).toBe(5_000_000);
     const exact = Buffer.alloc(MAX_REPLY_IMAGE_BYTES);
     PNG.copy(exact);
+    expect(b64(exact).length).toBe(5_000_000);
     expect(validateReplyImages([{ data: b64(exact), mediaType: "image/png" }]).ok).toBe(true);
+    const big = Buffer.alloc(MAX_REPLY_IMAGE_BYTES + 1);
+    PNG.copy(big);
+    expect(validateReplyImages([{ data: b64(big), mediaType: "image/png" }])).toEqual({ ok: false, error: "Image 1 is larger than 3.7 MB" });
   });
 
   it("refuses base64 that does not decode cleanly, a data: URL included", () => {
@@ -159,6 +197,53 @@ describe("a reply with images", () => {
     const sent = await replyToCard(card.id, { text: "", images: [png], force: true }, web, deps);
     expect(sent.ok).toBe(true);
     expect(forwards[0]!.how.images![0]!.data).toBe(png.data);
+  });
+});
+
+describe("a reply that confirms the card's age only", () => {
+  const answerElsewhere = (id: string) =>
+    cards.transition(id, "answered", { by: "user", channel: "telegram", at: now, note: "You replied on Telegram", delivery: "delivered" });
+
+  it("answers an old card that still waits, without asking", async () => {
+    const card = decision();
+    now += STALE_REPLY_MS + 1;
+    const r = await replyToCard(card.id, { text: "B", confirmAge: true }, web, deps);
+    expect(r.ok).toBe(true);
+    expect(forwards).toHaveLength(1);
+    expect(cards.get(card.id)!.status).toBe("answered");
+  });
+
+  it("refuses a card answered meanwhile as already answered, and sends nothing", async () => {
+    const card = decision();
+    answerElsewhere(card.id);
+    const r = await replyToCard(card.id, { text: "B", confirmAge: true, images: [png] }, web, deps);
+    expect(r).toMatchObject({ ok: false, status: 409, error: "already_answered", card: { id: card.id, status: "answered" } });
+    expect(!r.ok && r.question).toMatch(/^Already answered on Telegram at \d\d:\d\d\.$/);
+    expect(forwards).toHaveLength(0);
+  });
+
+  it("refuses when another surface answers between the read and the answer", async () => {
+    const card = decision();
+    const snapshot = cards.get(card.id)!;
+    answerElsewhere(card.id);
+    // The read still sees it open; only the compare-and-set finds it answered.
+    const racing: CardReplyDeps = { ...deps, cards: Object.assign(Object.create(cards), { get: () => snapshot }) };
+    const r = await replyToCard(card.id, { text: "B", confirmAge: true }, web, racing);
+    expect(r).toMatchObject({ ok: false, status: 409, error: "already_answered", card: { status: "answered" } });
+    expect(forwards).toHaveLength(0);
+  });
+
+  it("leaves force as it was: a closed card is still sent to", async () => {
+    const card = decision();
+    answerElsewhere(card.id);
+    expect(await replyToCard(card.id, { text: "B" }, web, deps)).toMatchObject({ ok: false, status: 409, error: "confirm" });
+    expect((await replyToCard(card.id, { text: "B", force: true }, web, deps)).ok).toBe(true);
+    expect(forwards).toHaveLength(1);
+  });
+
+  it("must be true or false", async () => {
+    expect(await replyToCard(decision().id, { text: "B", confirmAge: "yes" }, web, deps))
+      .toMatchObject({ ok: false, status: 400, error: "confirmAge must be true or false" });
   });
 });
 

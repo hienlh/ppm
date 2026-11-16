@@ -21,6 +21,7 @@ import { BindingError, ensureBoundSession } from "./assistant-telegram-binding.t
 import { parseCommand, quietStatusHtml, runCommand } from "./assistant-telegram-commands.ts";
 import { setQuietWhileInPpm } from "./assistant-telegram-silence.ts";
 import { fetchPhoto, fetchPhotos } from "./assistant-telegram-photos.ts";
+import { MAX_REPLY_IMAGE_BYTES, REPLY_IMAGE_SIZE_TEXT } from "../assistant-cards/card-reply-images.ts";
 import { sendMessageTask, type AssistantTelegramSendQueue } from "./assistant-telegram-send-queue.ts";
 import type { ButtonCodes } from "./assistant-telegram-button-codes.ts";
 import type { BridgeAction, ManagerCardPress, TaskPress } from "./assistant-telegram-actions.ts";
@@ -230,6 +231,8 @@ export class AssistantTelegramInbound {
     // A reply to one of the Assistant's cards answers that card, word for word, and is never merged
     // into a gathered message. One sent while PPM was off is asked about first, like any other.
     const repliedTo = message.reply_to_message?.message_id;
+    /** The photo, when the card-reply path already tried to fetch it (null: it could not be). */
+    let prefetched: Image | null | undefined;
     if (repliedTo !== undefined && this.deps.replyToCard && this.deps.isCardMessage?.(chatId, repliedTo)) {
       await this.flush(chatId);
       if (message.media_group_id && message.photo?.length) {
@@ -240,7 +243,11 @@ export class AssistantTelegramInbound {
         this.armAlbum(chatId, lane.album);
         return true;
       }
-      if ((await this.answerCard(chatId, [message], repliedTo, updateId)).handled) return false;
+      const answered = await this.answerCard(chatId, [message], repliedTo, updateId);
+      if (answered.handled) return false;
+      // The card could not be found after all: the message goes on to the Assistant below, with
+      // the photo already fetched here rather than downloaded (and its failure reported) twice.
+      if (answered.photosTried) prefetched = answered.images[0] ?? null;
     }
 
     // A reply to a task card, or the message after "Message about this task", goes to the chat
@@ -257,8 +264,8 @@ export class AssistantTelegramInbound {
       return false;
     }
 
-    let image: Image | null = null;
-    if (message.photo?.length) {
+    let image: Image | null = prefetched ?? null;
+    if (message.photo?.length && prefetched === undefined) {
       const photo = await fetchPhoto(this.deps.client, message.photo);
       if (photo.ok) image = photo.image;
       else this.reply(chatId, `⚠️ ${escapeTelegramHtml(photo.reason)}`);
@@ -300,7 +307,7 @@ export class AssistantTelegramInbound {
    */
   private async answerCard(
     chatId: string, messages: readonly TelegramMessage[], repliedTo: number, updateId: number,
-  ): Promise<{ handled: boolean; text: string; images: Image[] }> {
+  ): Promise<{ handled: boolean; text: string; images: Image[]; photosTried: boolean }> {
     const first = messages[0]!;
     const from = forwardedFrom(first) ?? viaInlineBot(first);
     const text = messages.map((m) => m.text ?? m.caption ?? "").filter((t) => t.trim()).join("\n\n");
@@ -312,25 +319,28 @@ export class AssistantTelegramInbound {
       // A backlog reply is asked about with its words only: its photos are not held for hours.
       if (photos.length && !text.trim()) {
         this.reply(chatId, BACKLOG_PHOTO_ONLY_NOTE);
-        return { handled: true, text, images: [] };
+        return { handled: true, text, images: [], photosTried: false };
       }
       if (photos.length) this.reply(chatId, BACKLOG_PHOTO_DROPPED_NOTE);
       // Quoted too: when Run comes, the card may no longer take replies and the words go to the Assistant.
       this.askAboutBacklog(chatId, first.date, from ? wrapForwarded(from, text) : text, [], updateId, card, this.quoteOf(chatId, first));
-      return { handled: true, text, images: [] };
+      return { handled: true, text, images: [], photosTried: false };
     }
     let images: Image[] = [];
+    let photosTried = false;
     // A forwarded photo is refused along with its words, so it is not downloaded first.
     if (photos.length && !card.notTheUsers) {
-      const fetched = await fetchPhotos(this.deps.client, photos, MAX_IMAGES);
+      // A card reply's images are held to the card reply's own cap, smaller than the Assistant's.
+      const fetched = await fetchPhotos(this.deps.client, photos, MAX_IMAGES, { maxBytes: MAX_REPLY_IMAGE_BYTES, sizeText: REPLY_IMAGE_SIZE_TEXT });
+      photosTried = true;
       images = fetched.images;
       for (const reason of fetched.failures) this.reply(chatId, `⚠️ ${escapeTelegramHtml(reason)}`);
       if (fetched.dropped) this.reply(chatId, `Only the first ${MAX_IMAGES} photos were sent.`);
       // Nothing left to send: the user was told why, and an empty reply is never sent.
-      if (!text.trim() && !images.length) return { handled: true, text, images };
+      if (!text.trim() && !images.length) return { handled: true, text, images, photosTried };
       if (images.length) card.images = images;
     }
-    return { handled: await this.deps.replyToCard!(chatId, card), text, images };
+    return { handled: await this.deps.replyToCard!(chatId, card), text, images, photosTried };
   }
 
   /** (Re)starts the wait for an album's next photo; a timer outliving its album does nothing. */

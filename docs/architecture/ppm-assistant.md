@@ -1185,10 +1185,16 @@ in `assistant_cards` (migration 65) and announced on `/ws/global` as `assistant:
   whole description and a "Recommended" tag taken from "(Recommended)" in its label, the user picks
   one per question (several where allowed) and sends them together; a question with no options or
   a secret is answered in the chat (`cards/question-options.tsx`). `POST …/reply` may carry
-  `images` (at most five PNG/JPEG/GIF/WebP, 5 MB each, as base64): the server checks the type
-  against the bytes, writes its own copy under the uploads folder and forwards them with the words
-  as a composer message does (inline for Claude, by that path for Codex); it takes no path from the
-  browser. A Telegram photo (or album) sent as a reply to a card goes the same way. `POST …/dismiss` takes reports
+  `images` (at most five PNG/JPEG/GIF/WebP as base64, each at most 5,000,000 base64 characters,
+  the composer's inline cap, and under 2000 px on its longer side): the server checks the type
+  against the bytes and the pixel size, writes its own copy under the uploads folder and forwards
+  them with the words as a composer message does (inline for Claude, by that path for Codex); it
+  takes no path from the browser, and a line of the user's text that looks like an attachment
+  marker is defused wherever it is. `confirmAge: true` confirms only a card's age (the "send
+  anyway?" asked of a day-old card) and is refused with `already_answered` once the card no longer
+  waits; `force` still sends to a closed card (Telegram's "Send anyway"). A Telegram photo (or an
+  album, gathered by `media_group_id`) sent as a reply to a card goes the same way, the largest copy
+  under those limits. `POST …/dismiss` takes reports
   and the budget card. Status changes are compare-and-set, so a second answer gets
   `already_answered`; a request answered anywhere else resolves its card; a request that no longer
   waits resolves it with nothing run.
