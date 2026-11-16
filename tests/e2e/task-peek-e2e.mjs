@@ -200,6 +200,9 @@ async function desktop800(k, s) {
   await rowOpen(page, s.t.login.id).click();
   const peek = peekOf(page, s.t.login.id);
   await peek.waitFor({ timeout: 15000 });
+  // Placed again once the task's fields have arrived and the popover has its real height.
+  await peek.locator("[data-task-peek-fields]").waitFor({ timeout: 15000 });
+  await page.waitForTimeout(300);
   await until("the popover is placed", async () => (await peek.getAttribute("data-task-peek-side")) !== null, 10000);
   const side = await peek.getAttribute("data-task-peek-side");
   const mode = await peek.getAttribute("data-task-peek-mode");

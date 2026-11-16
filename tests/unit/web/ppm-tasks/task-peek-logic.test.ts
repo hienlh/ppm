@@ -86,6 +86,12 @@ describe("placeTaskPeek", () => {
     expect(p.left + p.width).toBeLessThanOrEqual(296 - 8);
   });
 
+  it("shrinks into the roomier of above and below, not the first in order", () => {
+    // A list low in an 800 px chat: 204px below it (over the composer), 275px above it.
+    const p = placeTaskPeek({ avoid: box(292, 291, 496, 389), align: box(292, 360, 496, 28), size: { width: 340, height: 500 }, viewport: { width: 800, height: 900 }, sides: LIST_SIDES });
+    expect(p).toMatchObject({ side: "top", mode: "shrink", maxHeight: 275, top: 8 });
+  });
+
   it("covers part of what it sits beside rather than leave the viewport when nothing has room", () => {
     const p = placeTaskPeek({ avoid: box(20, 20, 380, 600), align: box(20, 40, 380, 28), size, viewport: { width: 420, height: 640 }, sides: LIST_SIDES });
     expect(p.mode).toBe("overlap");

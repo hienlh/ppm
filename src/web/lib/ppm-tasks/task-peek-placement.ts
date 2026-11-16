@@ -5,8 +5,9 @@
  *
  * The sides are tried in the caller's order, three times over:
  *   1. the side has room for the whole peek;
- *   2. the side has room for a smaller peek (narrower beside, shorter above or below), which then
- *      scrolls inside;
+ *   2. some sides have room for a smaller peek (narrower beside, shorter above or below, which
+ *      then scrolls inside): the one with the most room for what it needs, so a list at the bottom
+ *      of the chat gets the taller space above it rather than the strip over the composer;
  *   3. nothing has room: the side with the most of it, the peek pushed back into the viewport even
  *      where that covers part of what it sits beside.
  * The peek never leaves the viewport, and a peek taller than the viewport scrolls inside.
@@ -83,10 +84,11 @@ export function placeTaskPeek(input: PeekPlacementInput): PeekPlacement {
 
   const whole = sides.find((s) => room[s] >= need(s));
   if (whole) return at(whole, "fit");
-  const smaller = sides.find((s) => room[s] >= least(s));
-  if (smaller) return at(smaller, "shrink");
-  const roomiest = sides.reduce((best, s) => (room[s] / need(s) > room[best] / need(best) ? s : best), sides[0] ?? "right");
-  return at(roomiest, "overlap");
+  const share = (s: PeekSide) => room[s] / need(s);
+  const roomiest = (from: readonly PeekSide[]) => from.reduce((best, s) => (share(s) > share(best) ? s : best), from[0] ?? "right");
+  const smaller = sides.filter((s) => room[s] >= least(s));
+  if (smaller.length) return at(roomiest(smaller), "shrink");
+  return at(roomiest(sides), "overlap");
 }
 
 /** A DOM rect as a `PeekBox`. */
