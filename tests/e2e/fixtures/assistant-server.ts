@@ -92,8 +92,9 @@ const managerLoop = process.env.PPM_ASSISTANT_MANAGER_LOOP === "1"
   ? await (await import("./assistant-manager-fixture")).setupManagerLoop({ port })
   : null;
 // The task store's events and its handed-off work checker on a clock the e2e moves (ppm-tasks-e2e.mjs).
+if (process.env.PPM_ASSISTANT_TASKS === "1" && !managerLoop) throw new Error("PPM_ASSISTANT_TASKS needs PPM_ASSISTANT_MANAGER_LOOP=1");
 const tasksFixture = process.env.PPM_ASSISTANT_TASKS === "1"
-  ? (() => { if (!managerLoop) throw new Error("PPM_ASSISTANT_TASKS needs PPM_ASSISTANT_MANAGER_LOOP=1"); return import("./ppm-tasks-fixture").then((m) => m.setupTasksFixture()); })()
+  ? await (await import("./ppm-tasks-fixture")).setupTasksFixture()
   : null;
 // This run recorded at boot as the server records it, before anything can start a turn: the hub
 // startup below turns it into restart news (assistant-restart-news-e2e.mjs only).
@@ -694,7 +695,7 @@ async function testRoute(req: Request, path: string): Promise<Response> {
     return json({ ok: true });
   }
   if (tasksFixture && path.startsWith("/__assistant-test/tasks/")) {
-    return (await (await tasksFixture).route(req, path.slice("/__assistant-test/tasks/".length))) ?? json({ error: "unknown test route" }, 404);
+    return (await tasksFixture.route(req, path.slice("/__assistant-test/tasks/".length))) ?? json({ error: "unknown test route" }, 404);
   }
   if (managerLoop && path.startsWith("/__assistant-test/")) {
     const answered = await managerLoop.route(req, path.slice("/__assistant-test/".length));

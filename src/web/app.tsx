@@ -276,7 +276,7 @@ export function App() {
       }
       // ?openTask=<id> (Telegram's "Open in PPM" on a task card): the task's own tab, then the
       // address is left without it so a reload does not open it again.
-      if (urlState.openTask) {
+      if (urlState.openTask && (!useSettingsStore.getState().minimalMode || isMinimalTab("task"))) {
         autoOpenFromUrl("task", urlState.openTask, target!.name);
         const url = new URL(window.location.href);
         url.searchParams.delete("openTask");

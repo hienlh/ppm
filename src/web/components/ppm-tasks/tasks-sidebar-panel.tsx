@@ -51,7 +51,7 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
   // Child progress and the tag/field pickers count the whole scope, not what the filters let
   // through (a status filter would otherwise turn 1/3 into 0/2). Same request when no filter is on.
   const counting = usePpmTaskList(showList ? countingQueryFor(scope, activeProject) : null);
-  const everyTask = counting.loading ? tasks : counting.tasks;
+  const everyTask = counting.loading || counting.error ? tasks : counting.tasks;
   const filtersOn = !!(filters.groups.length || filters.types.length || filters.person || filters.tag || filters.field || query.trim());
   const shown = useMemo(() => visibleTasks(tasks, filters, hiddenProjects, scope), [tasks, filters, hiddenProjects, scope]);
 

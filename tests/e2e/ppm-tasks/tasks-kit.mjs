@@ -138,16 +138,16 @@ export function tasksKit({ web, fx, tg, browser, shotsDir, videoDir, owner, reco
         document.getElementById("ppm-e2e-label")?.remove();
         const card = document.createElement("div");
         card.id = "ppm-e2e-caption";
-        card.style.cssText = "position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(10,12,16,.88);color:#fff;font:600 30px/1.3 system-ui,sans-serif;text-align:center;padding:24px;pointer-events:none";
-        card.innerHTML = `<div style="max-width:900px">${title}</div><div style="max-width:900px;font:400 18px/1.4 system-ui,sans-serif;opacity:.85">${line}</div>`;
+        card.style.cssText = "position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(10,12,16,.88);color:#fff;font:600 32px/1.3 \"Liberation Sans\",Arial,sans-serif;text-align:center;padding:24px;pointer-events:none";
+        card.innerHTML = `<div style="max-width:900px">${title}</div><div style="max-width:900px;font:400 19px/1.45 'Liberation Sans',Arial,sans-serif;opacity:.85">${line}</div>`;
         document.body.appendChild(card);
       }, { title, line });
-      await sleep(2800);
+      await sleep(4200);
       await entry.page.evaluate((title) => {
         document.getElementById("ppm-e2e-caption")?.remove();
         const label = document.createElement("div");
         label.id = "ppm-e2e-label";
-        label.style.cssText = "position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:2147483647;max-width:90%;background:rgba(10,12,16,.78);color:#fff;font:500 13px/1.3 system-ui,sans-serif;padding:5px 12px;border-radius:999px;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+        label.style.cssText = "position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:2147483647;max-width:90%;background:rgba(10,12,16,.78);color:#fff;font:500 13px/1.3 \"Liberation Sans\",Arial,sans-serif;padding:5px 12px;border-radius:999px;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
         label.textContent = title;
         document.body.appendChild(label);
       }, title);
@@ -155,14 +155,14 @@ export function tasksKit({ web, fx, tg, browser, shotsDir, videoDir, owner, reco
     /** Ends the open scene of the current page (a beat after what it showed). */
     async endScene() {
       if (!videoDir) return;
-      await sleep(1200);
+      await sleep(2200);
       const entry = current;
       const open = entry.scenes.findLast((x) => x.to === null);
       if (open) open.to = (Date.now() - entry.startedAt) / 1000;
       await entry.page.evaluate(() => document.getElementById("ppm-e2e-label")?.remove()).catch(() => {});
     },
     /** A pause a person watching can follow; nothing in test mode. */
-    beat: (ms = 900) => (videoDir ? sleep(ms) : Promise.resolve()),
+    beat: (ms = 900) => (videoDir ? sleep(Math.round(ms * 2.2)) : Promise.resolve()),
 
     async shot(name) {
       await kit.page.screenshot({ path: `${shotsDir}/${name}.png` });

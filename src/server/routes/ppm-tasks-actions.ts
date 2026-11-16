@@ -7,7 +7,7 @@ import { Hono } from "hono";
 import { ok } from "../../types/api.ts";
 import { createProjectChatSession } from "../../services/chat-session-create.ts";
 import { chatService } from "../../services/chat.service.ts";
-import { getSessionProjectPath, setSessionMetadata, setSessionTitle } from "../../services/db.service.ts";
+import { deleteSessionMetadata, deleteSessionTitle, getSessionProjectPath, setSessionMetadata, setSessionTitle } from "../../services/db.service.ts";
 import { projectNameForPath } from "../../services/project-name-for-path.ts";
 import { decideTask, getTask, updateTask } from "../../services/ppm-tasks/ppm-tasks.service.ts";
 import { deliverDecision, wakeManager } from "../../services/ppm-tasks/ppm-tasks-deliver.ts";
@@ -106,7 +106,12 @@ ppmTasksActionRoutes.post(`/${ID}/start-chat`, async (c) => {
     return c.json(ok(answer));
   } catch (e) {
     // A chat the task does not point at would be an orphan nobody asked for.
-    if (sessionId) await chatService.deleteSession(startChatProvider, sessionId).catch(() => {});
+    if (sessionId) {
+      const orphan = sessionId;
+      await chatService.deleteSession(startChatProvider, orphan).catch(() => {});
+      // PPM's own records of it too (two Start chats at once: the loser's chat goes whole).
+      try { deleteSessionTitle(orphan); deleteSessionMetadata(orphan); } catch { /* nothing more to drop */ }
+    }
     return failFrom(c, e);
   }
 });
