@@ -198,6 +198,15 @@ export function preToolUseDecision(decision: "allow" | "deny", reason?: string) 
  */
 export const FILE_WRITE_TOOLS_MATCHER = "Write|Edit|MultiEdit|NotebookEdit";
 
+/**
+ * The built-in tools a PPM Assistant session is not offered: the file writers, unless the user
+ * lets it act on its own. Its permission hook still asks before any of them runs, in a turn PPM
+ * started or once the switch is turned off mid-session (the list is fixed when the CLI starts).
+ */
+export function assistantDisallowedTools(switches: { actOnOwn: boolean }): string[] {
+  return switches.actOnOwn ? [] : FILE_WRITE_TOOLS_MATCHER.split("|");
+}
+
 /** The file a Write/Edit/MultiEdit/NotebookEdit call is about to change, or null for any other call. */
 export function fileWriteTarget(toolName: unknown, toolInput: unknown, cwd?: string): string | null {
   const input = toolInput && typeof toolInput === "object" ? (toolInput as Record<string, unknown>) : {};

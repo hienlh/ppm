@@ -39,6 +39,21 @@ export function assistantProviderDefaults(providerId: string): AssistantProvider
   return getAssistantSettings().providers[providerId] ?? {};
 }
 
+/**
+ * The two switches the Assistant's permission policy reads, fresh on every tool call so turning
+ * one off takes effect at the next call rather than the next session. A settings row that cannot
+ * be read gives the strict answer — no read-only shortcut, no acting on its own — since a policy
+ * must not loosen because its configuration failed.
+ */
+export function assistantPolicySwitches(): { autoReadonlyCommands: boolean; actOnOwn: boolean } {
+  try {
+    const s = getAssistantSettings();
+    return { autoReadonlyCommands: s.auto_readonly_commands, actOnOwn: s.act_on_own };
+  } catch {
+    return { autoReadonlyCommands: false, actOnOwn: false };
+  }
+}
+
 /** The servers an Assistant session runs with, secrets included. Server-side only. */
 export function enabledAssistantMcpServers(): AssistantMcpServer[] {
   return getAssistantSettings().mcp_servers.filter((s) => s.enabled);
@@ -103,7 +118,8 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
   // The main session is PPM's to pick and the user's to change through its own route; a pane
   // opened before the change would otherwise put the old one back. A body naming no default mode
   // for manager chats, no rules template, no quiet hours, no digest, no time zone or no persona
-  // or no restart-news switch (a pane that predates them) keeps the saved one.
+  // or no restart-news, read-only-commands or act-on-its-own switch (a pane that predates them)
+  // keeps the saved one.
   const sentKey = (key: string) => typeof input === "object" && input !== null && key in input;
   const { main_session: _ignored, timezone: _zone, ...sent } = value;
   const timezone = sentKey("timezone") ? value.timezone : saved.timezone;
@@ -116,6 +132,8 @@ export function saveAssistantSettings(input: unknown, isProvider: (id: string) =
     digest: sentKey("digest") ? value.digest : saved.digest,
     persona: sentKey("persona") ? value.persona : saved.persona,
     restart_news: sentKey("restart_news") ? value.restart_news : saved.restart_news,
+    auto_readonly_commands: sentKey("auto_readonly_commands") ? value.auto_readonly_commands : saved.auto_readonly_commands,
+    act_on_own: sentKey("act_on_own") ? value.act_on_own : saved.act_on_own,
     ...(timezone ? { timezone } : {}),
   };
   configService.set("assistant", next);

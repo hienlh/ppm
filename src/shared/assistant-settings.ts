@@ -98,6 +98,18 @@ export interface AssistantSettings {
   timezone?: string;
   /** After every server restart, wake the Assistant with why it restarted and which chats it cut off. */
   restart_news: boolean;
+  /**
+   * Shell commands PPM can show only read inside a registered project or PPM's install folder
+   * (and nowhere private) run without a card. Any other command still asks.
+   */
+  auto_readonly_commands: boolean;
+  /**
+   * "Let the Assistant act on its own": in turns the user started, the provider's own tools
+   * (file edits, commands, web) run without a card, except a read, search, edit or command that
+   * reaches a private folder. PPM's own cards (database writes, git, schedules, messages) still
+   * ask, and turns PPM started (watch news, wake-ups, schedules) behave as if it were off.
+   */
+  act_on_own: boolean;
 }
 
 /**
@@ -117,6 +129,8 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   quiet_hours: { ...DEFAULT_QUIET_HOURS },
   digest: { ...DEFAULT_DIGEST },
   restart_news: true,
+  auto_readonly_commands: true,
+  act_on_own: false,
 };
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -279,11 +293,9 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
     } else managerTemplate = raw.manager_template;
   }
 
-  let restartNews = DEFAULT_ASSISTANT_SETTINGS.restart_news;
-  if (raw.restart_news !== undefined && raw.restart_news !== null) {
-    if (typeof raw.restart_news === "boolean") restartNews = raw.restart_news;
-    else errors.push("restart_news must be true or false");
-  }
+  const restartNews = readSwitch(raw, "restart_news", errors);
+  const autoReadonlyCommands = readSwitch(raw, "auto_readonly_commands", errors);
+  const actOnOwn = readSwitch(raw, "act_on_own", errors);
 
   const timezone = readTimeZone(raw.timezone, errors);
   return {
@@ -298,9 +310,22 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
       digest: readDigestSettings(raw.digest, errors),
       ...(timezone ? { timezone } : {}),
       restart_news: restartNews,
+      auto_readonly_commands: autoReadonlyCommands,
+      act_on_own: actOnOwn,
     },
     errors,
   };
+}
+
+type SwitchKey = "restart_news" | "auto_readonly_commands" | "act_on_own";
+
+/** A true/false setting; absent or null keeps its default, anything else is reported. */
+function readSwitch(raw: Record<string, unknown>, key: SwitchKey, errors: string[]): boolean {
+  const value = raw[key];
+  if (value === undefined || value === null) return DEFAULT_ASSISTANT_SETTINGS[key];
+  if (typeof value === "boolean") return value;
+  errors.push(`${key} must be true or false`);
+  return DEFAULT_ASSISTANT_SETTINGS[key];
 }
 
 /** A stored main session, or null for anything else: it is never typed by a person. */

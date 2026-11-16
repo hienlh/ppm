@@ -5,15 +5,16 @@ import { ASSISTANT_TOOLS, CLAUDE_ASSISTANT_MCP_PREFIX, CLAUDE_ASSISTANT_MCP_SERV
 import { CLAUDE_SESSION_COLLAB_MCP_SERVER, SESSION_COLLAB_TOOLS } from "../../shared/session-collab.ts";
 import { VAULT_TOOLS } from "../../shared/vault.ts";
 import { PPM_TASK_TOOLS } from "../../shared/ppm-task-tools.ts";
-import { assistantPrivateScope, isAssistantPrivatePath, privateRootWithin } from "./assistant-private-paths.ts";
+import { assistantPrivateScope, isAssistantPrivatePath, privateRootWithin, type AssistantPrivateScope } from "./assistant-private-paths.ts";
+import { assistantReadRoots } from "./readonly-shell/readonly-path-check.ts";
 
 /**
  * Permission policy for a PPM Assistant session's Claude tools. The Assistant reads content it
  * did not write (other chats, database rows, terminal output), so anything that could carry
  * that content off the machine or change something asks first, whatever mode the composer
  * shows. Answers "allow" only for:
- *  - Read, Glob and Grep whose target resolves inside a registered project and outside every
- *    private root (`assistant-private-paths.ts`: the PPM dir, `~/.cloudflared`, the database
+ *  - Read, Glob and Grep whose target resolves inside a registered project (or PPM's own install
+ *    folder, `assistantReadRoots`) and outside every private root (`assistant-private-paths.ts`: the PPM dir, `~/.cloudflared`, the database
  *    snapshots, the credential stores common tools keep under the home folder, `/proc`, `/sys`
  *    and `/dev`, and — while the only project holding them is the home folder or above — the
  *    home folder's dot-entries, `Library` and `AppData`) — a project registered at the home
@@ -83,6 +84,25 @@ export interface AssistantPolicyContext {
   home?: string;
   /** The environment the CLI inherits; this process's unless a test names another. */
   env?: NodeJS.ProcessEnv;
+  /** PPM's install folder: undefined → found from this module's location, null → none (tests). */
+  installRoot?: string | null;
+}
+
+/** The file tools' input field naming the file they write. */
+const WRITE_TOOLS: Record<string, string> = {
+  Write: "file_path",
+  Edit: "file_path",
+  MultiEdit: "file_path",
+  NotebookEdit: "notebook_path",
+};
+
+interface ResolvedTarget {
+  resolved: string;
+  /** Registered projects plus the install folder when it qualifies, as real paths. */
+  roots: string[];
+  scope: AssistantPrivateScope;
+  /** Glob and Grep walk the whole tree below their folder; Read on a file walks nothing. */
+  recursive: boolean;
 }
 
 export function assistantToolDecision(
@@ -91,38 +111,80 @@ export function assistantToolDecision(
   ctx: AssistantPolicyContext,
 ): AssistantToolDecision {
   if (ALWAYS_ALLOWED.has(toolName) || OWN_MCP_TOOLS.has(toolName)) return "allow";
+  const target = readTarget(toolName, input, ctx);
+  if (!target) return "ask";
+  const { resolved, roots, scope, recursive } = target;
+  if (isAssistantPrivatePath(resolved, scope)) return "ask";
+  if (recursive && privateRootWithin(resolved, scope)) return "ask";
+  return roots.some((root) => isInside(resolved, root)) ? "allow" : "ask";
+}
+
+/**
+ * Whether a Read, Glob, Grep or file write may reach a private root: what still asks when the
+ * user has let the Assistant act on its own, wherever else the target lies. True for every other
+ * tool and for any target that cannot be resolved with certainty, since unsure means private.
+ */
+export function assistantToolTouchesPrivate(toolName: string, input: unknown, ctx: AssistantPolicyContext): boolean {
+  const field = WRITE_TOOLS[toolName];
+  const target = field ? writeTarget(field, input, ctx) : readTarget(toolName, input, ctx);
+  if (!target) return true;
+  return isAssistantPrivatePath(target.resolved, target.scope) || (target.recursive && !!privateRootWithin(target.resolved, target.scope));
+}
+
+/** Where a Read, Glob or Grep call reads, resolved; null when that cannot be told with certainty. */
+function readTarget(toolName: string, input: unknown, ctx: AssistantPolicyContext): ResolvedTarget | null {
   const spec = READ_TOOLS[toolName];
-  if (!spec || !input || typeof input !== "object") return "ask";
+  if (!spec || !input || typeof input !== "object") return null;
   const record = input as Record<string, unknown>;
 
   // A Glob pattern is itself a path expression: `/etc/*`, `../**` or `{..,x}/**` enumerates
   // outside whatever `path` names.
   // A ripgrep config may turn on `--follow`, after which links below the folder lead anywhere.
-  if (toolName !== "Read" && (ctx.env ?? process.env).RIPGREP_CONFIG_PATH) return "ask";
+  if (toolName !== "Read" && (ctx.env ?? process.env).RIPGREP_CONFIG_PATH) return null;
   if (toolName === "Glob") {
     const pattern = record.pattern;
-    if (typeof pattern !== "string" || !pattern || patternLeavesRoot(pattern)) return "ask";
+    if (typeof pattern !== "string" || !pattern || patternLeavesRoot(pattern)) return null;
   }
+  return resolveTarget(record[spec.field], spec.optional, toolName !== "Read", ctx);
+}
 
+/** Where a file write lands; a file that does not exist yet resolves through its nearest folder. */
+function writeTarget(field: string, input: unknown, ctx: AssistantPolicyContext): ResolvedTarget | null {
+  if (!input || typeof input !== "object") return null;
+  return resolveTarget((input as Record<string, unknown>)[field], false, false, ctx);
+}
+
+function resolveTarget(raw: unknown, optional: boolean, recursive: boolean, ctx: AssistantPolicyContext): ResolvedTarget | null {
   const home = ctx.home ?? homedir();
-  const raw = record[spec.field];
-  if (raw !== undefined && raw !== null && typeof raw !== "string") return "ask";
+  if (raw !== undefined && raw !== null && typeof raw !== "string") return null;
   let target = typeof raw === "string" ? cliPath(raw, home) : null;
   if (target === null) {
-    if (!spec.optional) return "ask";
+    if (!optional) return null;
     target = ctx.cwd ?? null;
   }
-  if (!target) return "ask";
-  if (!isAbsolute(target) && !ctx.cwd) return "ask";
+  if (!target) return null;
+  if (!isAbsolute(target) && !ctx.cwd) return null;
 
   const resolved = canonicalPath(ctx.cwd ? resolve(ctx.cwd, target) : resolve(target));
-  if (!resolved) return "ask";
-  const projectRoots = ctx.projectRoots.map(canonicalPath).filter((r): r is string => !!r);
-  const scope = assistantPrivateScope({ projectRoots, home });
-  if (isAssistantPrivatePath(resolved, scope)) return "ask";
-  // Glob and Grep walk the whole tree below their folder; Read on a file walks nothing.
-  if (toolName !== "Read" && privateRootWithin(resolved, scope)) return "ask";
-  return projectRoots.some((root) => isInside(resolved, root)) ? "allow" : "ask";
+  if (!resolved) return null;
+  const roots = assistantReadRoots(ctx.projectRoots, { home, installRoot: ctx.installRoot });
+  // The install folder counts as a project for the home-state rule too, so PPM installed under
+  // `~/.bun` stays readable while a project registered at the home folder keeps the rest of
+  // `~/.bun` private.
+  const scope = assistantPrivateScope({ projectRoots: roots, home });
+  return { resolved, roots, scope, recursive };
+}
+
+/**
+ * The folders a Codex turn acting on its own may write in: each registered project as its real
+ * path, minus any that is, lies inside or holds a private root (the PPM dir, a credential store,
+ * the home folder's application state) and any that cannot be resolved. Read per turn, so a
+ * project added or removed counts from the next one.
+ */
+export function assistantWritableRoots(projectRoots: readonly string[], opts: { home?: string; env?: NodeJS.ProcessEnv } = {}): string[] {
+  const real = [...new Set(projectRoots.map(canonicalPath).filter((r): r is string => !!r))];
+  const scope = assistantPrivateScope({ projectRoots: real, home: opts.home ?? homedir(), ...(opts.env ? { env: opts.env } : {}) });
+  return real.filter((root) => !isAssistantPrivatePath(root, scope) && !privateRootWithin(root, scope));
 }
 
 /**

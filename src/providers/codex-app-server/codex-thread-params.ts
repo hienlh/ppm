@@ -179,6 +179,10 @@ export function assistantSessionConfig(assistant: ThreadParamsInput["assistant"]
     "features.plugins": false,
     "features.hooks": false,
     notify: [],
+    // An "act on its own" turn may write in the Assistant's working folder (Codex always keeps
+    // its cwd writable), and Codex reads an AGENTS.md found there as instructions: without this,
+    // one steered turn could leave orders for every later Assistant session.
+    project_doc_max_bytes: 0,
     "features.tool_call_mcp_elicitation": true,
     "skills.include_instructions": false,
     "skills.bundled.enabled": false,

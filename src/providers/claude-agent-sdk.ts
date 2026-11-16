@@ -8,7 +8,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { readSessionMessages } from "./claude-transcript-tail.ts";
 import { query } from "./claude-cli-process-group.ts";
-import { allowedToolsFor, assistantMcpServers, buildModelQueryOptions, CLAUDE_SETTING_SOURCES, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_SESSION_COLLAB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, extensionMcpServers, fileWriteTarget, moveMcpServersToConfigFile, preToolUseDecision, READ_ONLY_TOOLS, sessionCollabMcpServers, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
+import { allowedToolsFor, assistantDisallowedTools, assistantMcpServers, buildModelQueryOptions, CLAUDE_SETTING_SOURCES, buildSystemPromptOption, buildToolHooks, CLAUDE_DB_TOOLS, CLAUDE_SESSION_COLLAB_TOOLS, CLAUDE_TAB_TOOLS, dbToolsMcpServers, designMcpServers, extensionMcpServers, fileWriteTarget, moveMcpServersToConfigFile, preToolUseDecision, READ_ONLY_TOOLS, sessionCollabMcpServers, shellHookCall, tabToolsMcpServers, withSessionTokenMasked } from "./claude-agent-sdk-query-options.ts";
 import { SESSION_COLLAB_MCP_PATH, sessionCollabMcpAccessFor } from "../services/session-collab/session-collab-tokens.ts";
 import { localServerBaseUrl } from "../services/server-listen-address.ts";
 import { TAB_TOOLS_MCP_PATH, tabToolsMcpAccessFor } from "../services/tab-tools-mcp/tab-tools-mcp-tokens.ts";
@@ -32,7 +32,8 @@ import type { EffortStatus } from "../shared/effort-status.ts";
 import { withTimeout } from "../services/mcp-oauth/mcp-control-query.ts";
 import { CLAUDE_DESIGN_CHECK_TOOL } from "../services/design/mcp/design-mcp-tool.ts";
 import { designToolDecision } from "../services/design/design-tool-policy.ts";
-import { assistantToolDecision } from "../services/assistant/assistant-tool-policy.ts";
+import { assistantClaudeDecision, logAssistantDecision, recordAssistantAutoAllow, type AssistantDecision } from "../services/assistant/assistant-shell-decision.ts";
+import { assistantPolicySwitches } from "../services/assistant/assistant-settings.service.ts";
 import { assistantShellEnv } from "../services/assistant/assistant-shell-env.ts";
 import { clampBoundPermissionMode, extensionToolDecision } from "./extension-tool-policy.ts";
 import { CLAUDE_MODELS } from "../types/claude-models.ts";
@@ -1274,8 +1275,39 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const allowedTools = allowedToolsFor({
       isBypass, agentTeams: providerConfig.agent_teams, designPolicy, designCheckTool, assistantPolicy, extensionPolicy: !!extensionPolicy,
     });
-    // An Assistant session has the session tools' server but never PPM's schedule tools.
-    const disallowedTools = hiddenBuiltinCronTools(configService.get("ai"), !!sessionCollabMcp && !assistantPolicy);
+    // An Assistant session has the session tools' server but never PPM's schedule tools, and is
+    // offered no file edits unless the user lets it act on its own. Fixed for the life of the CLI,
+    // so the permission hook still asks for an edit in a session started while it was allowed.
+    const disallowedTools = [
+      ...hiddenBuiltinCronTools(configService.get("ai"), !!sessionCollabMcp && !assistantPolicy),
+      ...(assistantPolicy ? assistantDisallowedTools(assistantPolicySwitches()) : []),
+    ];
+
+    /** Calls the Assistant ran with no card because PPM showed they only read; their results are badged. */
+    const autoApprovedCalls = new Set<string>();
+    const autoApprovedMark = (toolUseId: unknown): { autoApproved?: "readonly" } => {
+      if (typeof toolUseId !== "string" || !autoApprovedCalls.delete(toolUseId)) return {};
+      return { autoApproved: "readonly" };
+    };
+    /**
+     * The Assistant policy's answer for one call: the path rules, then the read-only command check
+     * and "act on its own". Every call it lets through without a card is recorded in the trace.
+     */
+    const assistantDecide = async (toolName: string, input: unknown, cwd: unknown, toolUseId: unknown): Promise<AssistantDecision> => {
+      let decision: AssistantDecision;
+      try {
+        decision = await assistantClaudeDecision(sessionId, toolName, input, assistantContext(cwd));
+      } catch (err) {
+        decision = { decision: "ask", reason: `the policy failed: ${(err as Error)?.message ?? String(err)}` };
+      }
+      const callId = typeof toolUseId === "string" ? toolUseId : undefined;
+      if (decision.decision === "ask") logAssistantDecision(sessionId, toolName, "ask", decision.reason);
+      else if (decision.via !== "policy") {
+        if (decision.via === "readonly" && callId) autoApprovedCalls.add(callId);
+        recordAssistantAutoAllow(sessionId, this.id, toolName, decision.via, decision.reason, callId);
+      }
+      return decision;
+    };
 
     /** Approval requests from canUseTool and the PreToolUse hook, handed out by the main loop. */
     const approvals = new ApprovalQueue<ChatEvent>();
@@ -1324,7 +1356,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         if (!result.approved) return { behavior: "deny" as const, message: "User denied tool execution" };
       }
       // The same backstop for the Assistant policy.
-      if (assistantPolicy && assistantToolDecision(toolName, input, assistantContext()) !== "allow") {
+      if (assistantPolicy && (await assistantDecide(toolName, input, undefined, undefined)).decision !== "allow") {
         const result = await waitForApproval(toolName, input);
         if (!result.approved) return { behavior: "deny" as const, message: "User denied tool execution" };
       }
@@ -1367,9 +1399,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // everything else — the web tools from READ_ONLY_TOOLS included — asks. Relative paths
       // are judged against the cwd the CLI reports, which is the one it resolves them against.
       if (assistantPolicy) {
-        if (assistantToolDecision(toolName, hookInput?.tool_input, assistantContext(hookInput?.cwd)) === "allow") {
-          return preToolUseDecision("allow");
-        }
+        const decision = await assistantDecide(toolName, hookInput?.tool_input, hookInput?.cwd, hookInput?.tool_use_id);
+        if (decision.decision === "allow") return preToolUseDecision("allow");
       } else if (designPolicy) {
         if (designToolDecision(toolName, hookInput?.tool_input, designRoot) === "allow") {
           return preToolUseDecision("allow");
@@ -1967,6 +1998,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   isError: !!block.is_error,
                   toolUseId: block.tool_use_id as string | undefined,
                   ...(parentId && { parentToolUseId: parentId }),
+                  ...autoApprovedMark(block.tool_use_id),
                 };
                 if (!parentId && pendingToolCount > 0) pendingToolCount--;
               }
@@ -2002,6 +2034,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                     output: stringifyToolResultContent(output),
                     isError: !!block.is_error,
                     toolUseId: block.tool_use_id as string | undefined,
+                    ...autoApprovedMark(block.tool_use_id),
                   };
                 }
               }
@@ -2453,6 +2486,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                       output: stringifyToolResultContent(output),
                       isError: !!block.is_error,
                       toolUseId: block.tool_use_id as string | undefined,
+                      ...autoApprovedMark(block.tool_use_id),
                     };
                   }
                 }
