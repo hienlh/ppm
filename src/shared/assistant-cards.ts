@@ -173,6 +173,11 @@ export interface AssistantCardPayload {
   assistantSessionId?: string;
   /** Failed cards PPM raised: how the turn ended. */
   detected?: boolean;
+  /**
+   * Cards the handed-off work checker raised: the tasks it found, each with the chat working on it,
+   * so every surface can offer "Open chat" per task (and open the task by id).
+   */
+  tasks?: Array<{ taskId: string; sessionId: string; ref: string }>;
 }
 
 export interface AssistantCard {
