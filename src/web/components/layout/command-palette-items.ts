@@ -1,5 +1,6 @@
 import type { ElementType } from "react";
 import { runCommandInBackground, type AppCommand, type CommandContext } from "@/lib/commands/command-registry";
+import type { PathEntry } from "@/lib/path-query-matches";
 
 /** One row of the command palette: an action, a project file, a filesystem path or a table. */
 export interface CommandItem {
@@ -14,6 +15,8 @@ export interface CommandItem {
   shortcut?: string;
   /** True if gitignored — rendered with muted style for visual cue */
   isIgnored?: boolean;
+  /** Path mode's file or folder — drawn as its own row, named relative to the listed directory. */
+  pathEntry?: PathEntry;
 }
 
 /**

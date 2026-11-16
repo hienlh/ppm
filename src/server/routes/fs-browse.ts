@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 import mammoth from "mammoth";
 import { browse } from "../../services/fs-browse.service.ts";
-import { list } from "../../services/fs-ops/fs-list-files.service.ts";
+import { list, listWithDirs } from "../../services/fs-ops/fs-list-files.service.ts";
 import {
   assertAllowed,
   assertNotPpmDir,
@@ -49,11 +49,16 @@ fsBrowseRoutes.get("/browse", async (c) => {
   }
 });
 
-/** GET /api/fs/list?dir=/some/dir — recursive file listing (command palette) */
+/**
+ * GET /api/fs/list?dir=/some/dir — recursive file listing (command palette).
+ * `&withDirs=1` answers `{ dir, dirs, files }` instead of the bare file list: the directory as
+ * resolved and its direct subfolders, so the palette can name entries relative to it.
+ */
 fsBrowseRoutes.get("/list", async (c) => {
   try {
     const dir = c.req.query("dir");
     if (!dir) return c.json(err("dir is required"), 400);
+    if (c.req.query("withDirs") === "1") return c.json(ok(await listWithDirs(dir)));
     return c.json(ok(await list(dir)));
   } catch (e) {
     const { body, status } = fail(e);

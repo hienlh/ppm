@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { list } from "../../../../src/services/fs-ops/fs-list-files.service.ts";
+import { list, listWithDirs } from "../../../../src/services/fs-ops/fs-list-files.service.ts";
 import { isAllowedPath } from "../../../../src/services/fs-path-guard.service.ts";
 
 let dir: string;
@@ -59,6 +59,14 @@ describe("list", () => {
 
   it.skipIf(process.platform !== "win32")("refuses it through the listing too, where the shape survives resolution", async () => {
     await expect(list("\\\\server\\share")).rejects.toThrow("Access denied");
+  });
+
+  it("with dirs, names the directory as resolved and its direct subfolders — empty ones too", async () => {
+    mkdirSync(join(dir, "empty"), { recursive: true });
+    const listing = await listWithDirs(join(dir, "nested", ".."));
+    expect(listing.dir).toBe(dir);
+    expect([...listing.dirs].sort()).toEqual([join(dir, "empty"), join(dir, "nested")]);
+    expect(listing.files).toEqual(await list(dir));
   });
 
   it("survives an unreadable directory instead of failing the listing", async () => {

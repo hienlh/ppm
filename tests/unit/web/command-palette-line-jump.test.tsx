@@ -60,7 +60,9 @@ it("opens an indexed project file at the line the query names", async () => {
 });
 
 it("opens an absolute path from filesystem mode at its line", async () => {
-  const get = spyOn(apiClient.api, "get").mockResolvedValue(["D:/repo/src/PaymentForm.tsx"] as never);
+  const get = spyOn(apiClient.api, "get").mockResolvedValue(
+    { dir: "D:/repo/src", dirs: [], files: ["D:/repo/src/PaymentForm.tsx"] } as never,
+  );
   const open = spyOn(useTabStore.getState(), "openTab").mockReturnValue("tab-2");
   const update = spyOn(useTabStore.getState(), "updateTab").mockImplementation(() => {});
   const view = await mount(
@@ -69,7 +71,7 @@ it("opens an absolute path from filesystem mode at its line", async () => {
   try {
     // The directory is listed without the suffix, or the host is asked for a folder that
     // does not exist and the palette has nothing to offer.
-    expect(get).toHaveBeenCalledWith(`/api/fs/list?dir=${encodeURIComponent("D:/repo/src/")}`);
+    expect(get).toHaveBeenCalledWith(`/api/fs/list?dir=${encodeURIComponent("D:/repo/src/")}&withDirs=1`);
     await click(row(view.container, "PaymentForm.tsx"));
     expect(open).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({ filePath: "D:/repo/src/PaymentForm.tsx", lineNumber: 160 }),
