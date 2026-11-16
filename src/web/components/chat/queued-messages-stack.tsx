@@ -3,15 +3,21 @@
  * (Claude Code's queue). The list is the server's (`queue_state`), so every device shows the same
  * stack. Send now has the AI read the queue at once; Edit puts a message back into the composer;
  * Remove drops it. A message the AI has already started on cannot be taken back, and the server
- * says so.
+ * says so. Attached images show as the same thumbnails the sent bubble draws, from the paths in
+ * the message's attachment markers, never as the markers' text.
  */
 import { memo } from "react";
-import { Clock, Image, Pencil, Send, X } from "@/lib/icons";
-import { decodeMessageBlocks } from "../../../shared/chat-message-blocks";
+import { Clock, FileText, Image, Pencil, Send, X } from "@/lib/icons";
+import { GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
+import { basename } from "@/lib/utils";
+import { parseUserMessage, typedText } from "../../../shared/user-message-parse";
 import type { QueuedMessage } from "../../../shared/chat-queue";
+import { AuthImageThumbnail, isImagePath } from "./message-media";
 
 interface QueuedMessagesStackProps {
   messages: QueuedMessage[];
+  /** The chat's project, which an attached image's preview is read through. */
+  projectName?: string;
   onSendNow: () => void;
   onEdit: (id: string) => void;
   onRemove: (id: string) => void;
@@ -21,7 +27,9 @@ const ROW_BUTTON =
   "inline-flex shrink-0 items-center justify-center rounded-md text-text-3 transition-colors " +
   "can-hover:hover:bg-surface-hover can-hover:hover:text-text size-11 md:size-7 [&_svg]:size-3.5";
 
-export const QueuedMessagesStack = memo(function QueuedMessagesStack({ messages, onSendNow, onEdit, onRemove }: QueuedMessagesStackProps) {
+const imagesLabel = (n: number) => (n === 1 ? "1 image" : `${n} images`);
+
+export const QueuedMessagesStack = memo(function QueuedMessagesStack({ messages, projectName, onSendNow, onEdit, onRemove }: QueuedMessagesStackProps) {
   if (messages.length === 0) return null;
   return (
     <div className="mx-2 mb-1.5 overflow-hidden rounded-xl border border-border-soft bg-panel-2" data-testid="queued-messages">
@@ -40,16 +48,39 @@ export const QueuedMessagesStack = memo(function QueuedMessagesStack({ messages,
       </div>
       <ul className="max-h-40 overflow-y-auto border-t border-border-soft">
         {messages.map((message) => {
-          const text = decodeMessageBlocks(message.content).content.trim();
+          const parsed = parseUserMessage(message.content);
+          const text = typedText(parsed).trim();
+          // Images sent with no path in the message have nothing to draw a thumbnail from.
+          const unshown = Math.max(0, message.imageCount - parsed.files.filter(isImagePath).length);
           return (
             <li key={message.id} className="flex items-center gap-1 py-0.5 pl-3 pr-1 text-[13px] text-text-2 [&+&]:border-t [&+&]:border-border-soft">
-              <span className="min-w-0 flex-1 line-clamp-2 whitespace-pre-wrap break-words">
-                {text || <span className="text-text-3">(no text)</span>}
-              </span>
-              {message.imageCount > 0 && (
-                <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-text-3" title={`${message.imageCount} image${message.imageCount === 1 ? "" : "s"}`}>
+              <div className="min-w-0 flex-1 py-1">
+                {parsed.files.length > 0 && (
+                  <div className="mb-0.5 flex flex-wrap gap-1.5" {...{ [GALLERY_ROOT_ATTR]: "" }}>
+                    {parsed.files.map((filePath, i) =>
+                      isImagePath(filePath) ? (
+                        <AuthImageThumbnail key={i} filePath={filePath} projectName={projectName} />
+                      ) : (
+                        <span key={i} className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[11px] text-text-secondary">
+                          <FileText className="size-3 shrink-0" />
+                          <span className="max-w-32 truncate">{basename(filePath)}</span>
+                        </span>
+                      ),
+                    )}
+                  </div>
+                )}
+                {text ? (
+                  <span className="line-clamp-2 whitespace-pre-wrap break-words">{text}</span>
+                ) : parsed.terminalBlocks.length > 0 ? (
+                  <span className="text-text-3">(terminal output)</span>
+                ) : parsed.files.length === 0 ? (
+                  <span className="text-text-3">(no text)</span>
+                ) : null}
+              </div>
+              {unshown > 0 && (
+                <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-text-3" title={imagesLabel(unshown)}>
                   <Image className="size-3.5" />
-                  {message.imageCount}
+                  {unshown}
                 </span>
               )}
               <button type="button" onClick={() => onEdit(message.id)} className={ROW_BUTTON} title="Edit — move back to the input" aria-label="Edit queued message">
