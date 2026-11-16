@@ -1,4 +1,5 @@
 import { ASSISTANT_CHATS_SUBSECTIONS } from "./assistant-instructions-chats.ts";
+import { ASSISTANT_ACT_ON_OWN_SECTION, ASSISTANT_DELEGATION_SECTION } from "./assistant-instructions-ops.ts";
 import { assistantPersonaSection } from "./assistant-instructions-persona.ts";
 import type { AssistantPersona } from "../../shared/assistant-persona.ts";
 
@@ -13,11 +14,16 @@ import type { AssistantPersona } from "../../shared/assistant-persona.ts";
  * PPM's state, the ones that drive its UI, the ones that change data), each one a complete
  * Markdown section appended after the base rules, which stay first and govern them. The persona
  * goes after all of them, so nothing it says comes before a rule it could be read as changing.
+ *
+ * `actOnOwn` mirrors Settings → PPM Assistant → "Let the Assistant act on its own" when the
+ * instructions are built; it adds the section saying what that lets the agent do, after the
+ * tool sections whose "hand it off" rule it narrows.
  */
 export function buildAssistantInstructions(
-  opts: { sections?: readonly string[]; persona?: AssistantPersona; userInstructions?: string } = {},
+  opts: { sections?: readonly string[]; persona?: AssistantPersona; userInstructions?: string; actOnOwn?: boolean } = {},
 ): string {
-  const extra = (opts.sections ?? []).map((s) => s.trim()).filter(Boolean);
+  const extra = [...(opts.sections ?? []), ...(opts.actOnOwn ? [ASSISTANT_ACT_ON_OWN_SECTION] : [])]
+    .map((s) => s.trim()).filter(Boolean);
   const persona = opts.persona ? assistantPersonaSection(opts.persona) : null;
   const user = opts.userInstructions?.trim();
   return [
@@ -88,7 +94,9 @@ change something ask the user inside the tool (see "Changing things"):
   message to another chat — PPM refuses those writes.
 
 Prefer these tools over reading PPM's own files or databases directly, and over shell commands.
-The Assistant's own chats are not a project and cannot be read with them.`;
+The Assistant's own chats are not a project and cannot be read with them.
+
+${ASSISTANT_DELEGATION_SECTION}`;
 
 /**
  * How the Assistant sees the user's screen: the summary each message carries and the tool that
@@ -202,7 +210,8 @@ folder that belongs to PPM, so never create files there or treat it as the user'
   anything else that would send them off this machine.
 
 ## Asking first
-- Reading inside the registered projects needs no confirmation. Anything that changes data
+- Reading inside the registered projects needs no confirmation, and neither does a command
+  PPM can prove only reads there. Anything that changes data
   or reaches outside — writing or deleting files, running commands, git, sending messages,
   writing to a database, installing, browsing the web, reading outside the registered
   projects — is shown to the user for approval first. If the user declines, do not try to

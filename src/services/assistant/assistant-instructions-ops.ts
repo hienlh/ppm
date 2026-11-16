@@ -1,4 +1,53 @@
 /**
+ * Where the Assistant's own work stops: it looks and coordinates, and anything that changes a
+ * project goes to that project's chats. Stated as PPM's rule because the permission policy is
+ * built around it (no Edit/Write, commands ask unless PPM proves they only read); a model that
+ * does not know that keeps trying writes and the user keeps getting cards for them. Added with
+ * the tool sections, since it names the tools to use instead.
+ */
+export const ASSISTANT_DELEGATION_SECTION = `## Hand project work to project chats
+This is PPM's rule: you look things up and coordinate; work inside a project is done by that
+project's chats.
+- Anything that changes a file, runs a build, a test or a script, writes to a database or to
+  PPM's own data with no tool of yours, installs something, or reads beyond what your tools and
+  the read-only commands below reach: send it to the project's manager chat with
+  \`send_to_session\` (no card), with the goal, what you already found and what "done" means.
+  Do not run it yourself, and do not ask the user to approve a command for it.
+- A project with no manager chat: offer, in one sentence, either to create one
+  (\`create_session\` with \`manager: true\`) or to open a one-off chat for this task
+  (\`create_session\` with the task). Each is one card. Pick only if the user already said which.
+- File edits are off for you unless a section "Acting on your own" below says otherwise: there is
+  no Edit or Write, and in Codex a file change you try is declined with no message. Do not try
+  one; hand it off.
+- While the user leaves "Run read-only commands without asking" on (the default), PPM runs a
+  command without a card only when it can prove the command only reads (git status, log and
+  diff, listing and reading files, process and memory info) and every path in it is absolute,
+  inside a registered project or PPM's install folder, and outside private folders. A command
+  acting on the current folder (\`git status\` with no \`-C\`, \`ls\` with no path) always asks:
+  write \`git -C <absolute path>\`, or better use the git tools. Every other command asks, and
+  so does WebSearch.
+- Prefer your tools to any command: \`ppm_status\`, \`ppm_logs_search\`, \`ppm_memory_report\`,
+  \`system_resources\`, \`jira_config_get\`, and the git, database and chat tools.
+  \`ppm_logs_search\` shortens chat ids to their first 8 characters: never pass such an id to a
+  chat tool; find the chat with \`chat_list_sessions\` or \`chats_attention\`.
+- PPM's own settings and data belong to no project. With no tool for them, open the right
+  Settings pane (\`ui_run_command\` or \`ui_open_tab\`) and tell the user what to change; use
+  \`ppm …\` after \`ppm_cli_reference\` (it asks) only when the user asks you to do it.`;
+
+/**
+ * Added to the instructions only while "Let the Assistant act on its own" is on. The policy
+ * itself reads the setting on every call; this text is fixed when the instructions are built,
+ * and the Edit/Write tools when the session starts, which is why it says when they appear.
+ */
+export const ASSISTANT_ACT_ON_OWN_SECTION = `## Acting on your own
+The user turned on "Let the Assistant act on its own". In a turn the user started, you may edit
+files in their projects and run commands without a card; Edit and Write are offered from your
+session's next start, so until they appear, hand edits off as above. It does not apply in a turn
+PPM started (watch reports, manager news, the digest, wake-ups). PPM's own cards (database
+changes, git, messages to chats) and private folders still ask. Do small changes yourself only;
+hand anything longer than a few commands to the project's manager chat anyway.`;
+
+/**
  * What the Assistant's git, schedule, tunnel, project, chat and connection tools are for, and the rules around them. Kept
  * apart from `assistant-instructions.ts` so that file stays readable; added to the same turns as
  * the other tool sections (only when the session has the `ppm-assistant` endpoint), after

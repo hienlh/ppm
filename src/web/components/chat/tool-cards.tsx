@@ -40,7 +40,7 @@ import {
   Database,
   DatabaseZap,
 } from "@/lib/icons";
-import { ImagePlus } from "@/lib/icons";
+import { ImagePlus, ShieldCheck } from "@/lib/icons";
 
 /**
  * Handle of an agent that can be addressed later, or null for a one-shot subagent.
@@ -169,6 +169,8 @@ function imageReadPath(tool: ChatEvent): string | null {
 }
 
 /** Unified tool card: shows tool-specific summary + expandable details */
+export const READONLY_UNASKED_NOTE = "Read-only · ran without asking";
+
 export function ToolCard({
   tool,
   result,
@@ -224,6 +226,9 @@ export function ToolCard({
   const exitCode = hasResult && typeof (result as any).exitCode === "number"
     ? (result as any).exitCode as number
     : undefined;
+  // A PPM Assistant command that ran with no card because PPM proved it only reads: say so, so
+  // the user can see what ran unasked without opening every card.
+  const ranReadOnlyUnasked = result?.type === "tool_result" && result.autoApproved === "readonly";
   const hasAnswers = toolName === "AskUserQuestion" && !!(input as any)?.answers;
   const wasApproved = approvalAnswer === true;
   const isSubagent = (toolName === "Agent" || toolName === "Task") && tool.type === "tool_use";
@@ -384,6 +389,11 @@ export function ToolCard({
           {expanded ? <ChevronDown className="size-3 text-text-3" /> : <ChevronRight className="size-3 text-text-3" />}
         </span>
       </button>
+      {ranReadOnlyUnasked && (
+        <p className="-mt-1 flex items-center gap-1 px-2.5 pb-1.5 text-[10px] text-text-3" data-testid="tool-ran-readonly">
+          <ShieldCheck className="size-3 shrink-0" />{READONLY_UNASKED_NOTE}
+        </p>
+      )}
       {expanded && (
         <div className="px-2 pb-2 space-y-1.5 select-text">
           {(tool.type === "tool_use" || tool.type === "approval_request") && (
