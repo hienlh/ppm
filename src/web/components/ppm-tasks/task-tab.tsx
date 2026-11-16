@@ -3,8 +3,7 @@
  * the project's task settings, and whether the tab is still a preview; keeps the tab's title in
  * step with the task's; and renders the page for the viewport.
  *
- * P6 seam: the phone page plugs in at `DetailView` below (`useIsMobile()` branch), taking the
- * same `TaskDetailViewProps`.
+ * Below `md` the phone page draws the same props (`mobile/task-detail-mobile.tsx`).
  */
 import { useEffect } from "react";
 import { Loader2 } from "@/lib/icons";
@@ -13,10 +12,9 @@ import { usePpmTaskProjectSettings } from "@/hooks/use-ppm-task-projects";
 import { ppmTasksStore } from "@/stores/ppm-tasks-store";
 import { useTabStore } from "@/stores/tab-store";
 import { syncTaskTabTitle } from "@/lib/ppm-tasks/open-task-tab";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { TaskDetailDesktop, type TaskDetailViewProps } from "./task-detail-desktop";
-
-/** The page a viewport draws (P6 adds the phone page here). */
-const DetailView: (p: TaskDetailViewProps) => React.ReactNode = TaskDetailDesktop;
+import { TaskDetailMobile } from "./mobile/task-detail-mobile";
 
 export function TaskTab({ metadata, tabId }: { metadata?: Record<string, unknown>; tabId?: string }) {
   const taskId = typeof metadata?.taskId === "string" ? metadata.taskId : null;
@@ -25,6 +23,7 @@ export function TaskTab({ metadata, tabId }: { metadata?: Record<string, unknown
   const project = detail?.task.project ?? (typeof metadata?.projectName === "string" ? metadata.projectName : null);
   const { settings } = usePpmTaskProjectSettings(project);
   const active = useTabStore((s) => !!tabId && s.activeTabId === tabId);
+  const DetailView: (p: TaskDetailViewProps) => React.ReactNode = useIsMobile() ? TaskDetailMobile : TaskDetailDesktop;
 
   useEffect(() => { if (detail) syncTaskTabTitle(tabId, detail.task.title); }, [detail?.task.title, tabId]); // eslint-disable-line react-hooks/exhaustive-deps
   // The list's selection follows the task shown in front.

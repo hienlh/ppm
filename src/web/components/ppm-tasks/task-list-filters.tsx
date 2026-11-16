@@ -26,13 +26,13 @@ export function groupFilterLabel(groups: readonly BaseGroup[]): string {
 
 function Chip({ on, children, onClear }: { on: boolean; children: ReactNode; onClear?: () => void }) {
   return (
-    <span className={cn("inline-flex h-7 max-w-full items-center rounded-full border text-xs",
+    <span className={cn("inline-flex h-7 max-md:h-[46px] max-w-full items-center rounded-full border text-xs",
       on ? "border-accent-wash-border bg-accent-wash text-primary" : "border-border-soft text-text-2")}>
       <DropdownMenuTrigger className="inline-flex h-full min-w-0 items-center gap-1 rounded-full pl-2.5 pr-2 outline-none hover:text-text">
         {children}<ChevronDown aria-hidden className="size-3 shrink-0" />
       </DropdownMenuTrigger>
       {onClear && on && (
-        <button type="button" aria-label="Clear filter" onClick={onClear} className="-ml-1 mr-1 grid size-5 place-items-center rounded-full hover:bg-surface-hover">
+        <button type="button" aria-label="Clear filter" onClick={onClear} className="-ml-1 mr-1 grid size-5 max-md:size-11 place-items-center rounded-full hover:bg-surface-hover">
           <X className="size-3" />
         </button>
       )}
@@ -52,7 +52,7 @@ export function TaskListFilters({ project, projects, members, tags }: TaskListFi
   const { scope, filters: f, hiddenProjects, setScope, setFilters, toggleProject } = useTaskViewStore();
   const scopeBtn = (s: TaskScope, label: ReactNode) => (
     <button type="button" role="tab" aria-selected={scope === s} onClick={() => setScope(s)}
-      className={cn("h-7 min-w-0 flex-1 truncate rounded-md px-2 text-xs", scope === s ? "bg-panel font-medium text-text shadow-sm" : "text-text-2 hover:text-text")}>
+      className={cn("h-7 min-w-0 flex-1 truncate rounded-md px-2 text-xs max-md:h-11 max-md:text-sm", scope === s ? "bg-panel font-medium text-text shadow-sm" : "text-text-2 hover:text-text")}>
       {label}
     </button>
   );
@@ -69,7 +69,7 @@ export function TaskListFilters({ project, projects, members, tags }: TaskListFi
             const on = !hiddenProjects.includes(p.name);
             return (
               <button key={p.name} type="button" aria-pressed={on} onClick={() => toggleProject(p.name)}
-                className={cn("inline-flex h-7 max-w-full items-center gap-1 rounded-full border px-2.5 text-xs",
+                className={cn("inline-flex h-7 max-md:h-11 max-w-full items-center gap-1 rounded-full border px-2.5 text-xs",
                   on ? "border-accent-wash-border bg-accent-wash text-primary" : "border-border-soft text-text-3 line-through")}>
                 <span className="truncate">{p.name}</span><span className="font-mono text-[10.5px] opacity-80">{p.open}</span>
               </button>
@@ -120,9 +120,9 @@ export function TaskListFilters({ project, projects, members, tags }: TaskListFi
           </DropdownMenuContent>
         </DropdownMenu>
         {f.field && (
-          <span className="inline-flex h-7 max-w-full items-center gap-1 rounded-full border border-accent-wash-border bg-accent-wash pl-2.5 pr-1 text-xs text-primary">
+          <span className="inline-flex h-7 max-md:h-11 max-w-full items-center gap-1 rounded-full border border-accent-wash-border bg-accent-wash pl-2.5 pr-1 text-xs text-primary">
             <span className="truncate">{f.field.key}: {f.field.value}</span>
-            <button type="button" aria-label="Clear field filter" onClick={() => setFilters({ field: null })} className="grid size-5 place-items-center rounded-full hover:bg-surface-hover"><X className="size-3" /></button>
+            <button type="button" aria-label="Clear field filter" onClick={() => setFilters({ field: null })} className="grid size-5 max-md:size-11 place-items-center rounded-full hover:bg-surface-hover"><X className="size-3" /></button>
           </span>
         )}
       </div>

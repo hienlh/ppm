@@ -3,12 +3,15 @@
  * page. Any task view hands a write's answer to `offerTaskManagerPrompt`; the one mounted host
  * (`TaskManagerPromptHost`, first mounted wins, as the sidebar and the task tab both mount one)
  * runs P3's `usePpmTaskManagerPrompt`, which asks once per burst of edits. Tell now wakes the
- * manager; Next turn or closing it leaves the news for the manager's next turn.
+ * manager; Next turn or closing it leaves the news for the manager's next turn. Below `md` the
+ * question is a bottom sheet instead (`mobile/task-manager-prompt-sheet.tsx`).
  */
 import { useEffect, useId, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { Bot, X } from "@/lib/icons";
 import { usePpmTaskManagerPrompt } from "@/hooks/use-ppm-task-manager-prompt";
+import { useIsMobile } from "@/hooks/use-is-mobile";
+import { TaskManagerPromptSheet } from "./mobile/task-manager-prompt-sheet";
 import type { TaskWriteResponse } from "../../../shared/ppm-tasks-api";
 
 const OFFER_EVENT = "ppm-tasks:manager-prompt-offer";
@@ -48,12 +51,14 @@ export function TaskManagerPromptHost() {
 
 function LeaderHost() {
   const { asking, sending, offer, answer } = usePpmTaskManagerPrompt();
+  const isMobile = useIsMobile();
   useEffect(() => {
     const on = (e: Event) => offer((e as CustomEvent<Offer>).detail);
     window.addEventListener(OFFER_EVENT, on);
     return () => window.removeEventListener(OFFER_EVENT, on);
   }, [offer]);
   if (!asking) return null;
+  if (isMobile) return <TaskManagerPromptSheet project={asking} sending={sending} onAnswer={(yes) => void answer(yes)} />;
   return createPortal(<TaskManagerPromptToast project={asking} sending={sending} onAnswer={(yes) => void answer(yes)} />, document.body);
 }
 

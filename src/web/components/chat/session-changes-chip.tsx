@@ -55,7 +55,7 @@ export function ReviewedToggle({ count, shown, dense, onToggle }: {
   );
 }
 
-export function SessionChangesChip({ files, loaded = true, loading = false, unloadedCount = 0, projectName, providerId, onReview, onOpen, onRefresh, onSetReviewed }: {
+export function SessionChangesChip({ files, loaded = true, loading = false, unloadedCount = 0, projectName, providerId, onReview, onOpen, onRefresh, onSetReviewed, yieldNarrow = false }: {
   files: SessionFileChange[];
   /**
    * Whether `files` is the server's answer. The list is worked out only when opened, so until
@@ -74,6 +74,11 @@ export function SessionChangesChip({ files, loaded = true, loading = false, unlo
   onRefresh?: () => void;
   /** Mark files reviewed (hidden until they change again), or bring them back. */
   onSetReviewed?: (files: SessionFileChange[], reviewed: boolean) => void;
+  /**
+   * Leave the row whole when the chat is narrow, so a chip that matters more (the manager chat's
+   * Tasks chip) keeps its place: off by default, so other chats are unchanged.
+   */
+  yieldNarrow?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [showReviewed, setShowReviewed] = useState(false);
@@ -116,7 +121,7 @@ export function SessionChangesChip({ files, loaded = true, loading = false, unlo
         aria-haspopup="dialog"
         title={`${heading} — open the list`}
         data-testid="session-changes-chip"
-        className={FOOTER_CHIP}
+        className={cn(FOOTER_CHIP, yieldNarrow && "@max-[400px]/chat:hidden")}
       >
         {allReviewed ? <CheckCircle2 className="text-success" /> : <FilePen />}
         <b className="font-medium tabular-nums text-text">{count}</b>

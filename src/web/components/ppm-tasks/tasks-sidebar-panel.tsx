@@ -4,13 +4,13 @@
  * link states) and the actions; the list it renders only draws. Selecting a row previews the task
  * in the main area, and the selection follows the task tab that is active.
  *
- * P6 seam: the phone list plugs in at `ListView` below (`useIsMobile()` branch), taking the same
- * `TaskListViewProps`.
+ * Below `md` the phone list draws the same props (`mobile/task-list-mobile.tsx`).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useTaskViewStore } from "@/stores/ppm-tasks-view-store";
 import { ppmTasksStore, usePpmTasksStore } from "@/stores/ppm-tasks-store";
 import { usePpmTaskLinkStates, usePpmTaskList } from "@/hooks/use-ppm-tasks";
@@ -32,11 +32,10 @@ import { useTaskConfirm } from "./task-confirm-dialog";
 import { useTaskWrite } from "./use-task-write";
 import { useTaskProjectSettingsMap } from "./use-task-project-settings-map";
 import type { TaskListViewProps } from "./task-list-view-props";
-
-/** The list a viewport draws (P6 adds the phone list here). */
-const ListView: (p: TaskListViewProps) => React.ReactNode = TaskListDesktop;
+import { TaskListMobile } from "./mobile/task-list-mobile";
 
 export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
+  const ListView: (p: TaskListViewProps) => React.ReactNode = useIsMobile() ? TaskListMobile : TaskListDesktop;
   const activeProject = useProjectStore(useShallow((s) => s.activeProject?.name ?? null));
   const { scope, filters, query, hiddenProjects } = useTaskViewStore(useShallow((s) => ({ scope: s.scope, filters: s.filters, query: s.query, hiddenProjects: s.hiddenProjects })));
   const { projects, refresh: refreshProjects } = usePpmTaskProjects();

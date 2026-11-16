@@ -38,8 +38,8 @@ export interface TaskListRowProps {
   onPointerDown?(e: PointerEvent<HTMLDivElement>, task: TaskDto): void;
 }
 
-/** The meta line's external state: the first Jira key, else the first PR's state as a dot. */
-function externalMeta(task: TaskDto, states: readonly LinkState[] | undefined) {
+/** The meta line's external state: the first Jira key, else the first PR's state as a dot (the phone row too). */
+export function externalMeta(task: TaskDto, states: readonly LinkState[] | undefined) {
   const jira = task.links.filter((l) => l.kind === "jira");
   if (jira.length) return <span className="font-mono text-[11px]">{jira[0]!.ref}{jira.length > 1 ? ` +${jira.length - 1}` : ""}</span>;
   const pr = task.links.find((l) => l.kind === "pr");
