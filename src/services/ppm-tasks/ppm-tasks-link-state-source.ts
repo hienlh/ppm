@@ -3,19 +3,32 @@
  * default answers "unknown" for everything; the link-state checker registers the real source at
  * startup, so the REST layer and the UI can be built against this interface alone.
  */
-import type { LinkKind, LinkState } from "../../shared/ppm-tasks.ts";
+import type { ChildCheckState, LinkKind, LinkState, Task } from "../../shared/ppm-tasks.ts";
 
 /** A working session's live state as a task row shows it. */
 export interface SessionLinkState {
   sessionId: string;
-  state: "running" | "waiting_card" | "idle" | "unknown";
+  /** `gone`: PPM has no record of the chat any more (deleted). */
+  state: "running" | "waiting_card" | "idle" | "gone" | "unknown";
   title: string | null;
+  providerId?: string | null;
+  /** When the running turn started (ms since the epoch), while one runs. */
+  runningSince?: number;
+  /**
+   * The handed-off work checker's last finding for the task this state was asked for ("stalled 40
+   * min", "finished, no report"); null when the task is not handed off or was not checked yet.
+   */
+  check?: { state: ChildCheckState; since: number; lastProgressAt: number | null } | null;
 }
 
 export interface TaskLinkStateSource {
-  /** The cached states of these links in this project; a link never checked reads as unknown. */
+  /**
+   * The states of these links in this project: Jira and PR links from the cache (a stale or missing
+   * one is refreshed in the background and pushed as a `link_states` event), session links live.
+   */
   states(projectKey: string, links: ReadonlyArray<{ kind: LinkKind; ref: string }>): LinkState[];
-  sessionState(sessionId: string): SessionLinkState;
+  /** A chat's live state; with `task`, the last check of that task's handed-off chat as well. */
+  sessionState(sessionId: string, task?: Pick<Task, "id" | "workingSessionId" | "handedOffAt"> | null): SessionLinkState;
 }
 
 export const unknownLinkStateSource: TaskLinkStateSource = {
