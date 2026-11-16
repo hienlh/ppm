@@ -74,14 +74,36 @@ describe("TaskDecisionCard", () => {
     expect(toasts().some((t) => t.title === "Choice sent to the manager chat: it started working on it")).toBe(true);
   });
 
-  it("offers Start chat when no chat can take the choice", async () => {
-    serve(() => ({ status: 409, json: { ok: false, code: "no_session", error: "No chat works on this task" } }));
-    view = await mount(<Harness task={decisionTask({ workingSession: { kind: "start_chat" } })} />);
+  it("offers Start chat when no chat can take the choice, then sends the choice to the new chat", async () => {
+    const task = decisionTask({ workingSession: { kind: "start_chat" } });
+    const started = { ...task, revision: 2, workingSession: { kind: "session" as const, session: { sessionId: "new1", state: "idle" as const, title: task.title } } };
+    let decides = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      const url = String(input);
+      requests.push({ url, method: init?.method ?? "GET", body });
+      let r: { status: number; json: unknown } = { status: 200, json: { ok: true, data: [] } };
+      if (url.endsWith("/decide")) {
+        r = decides++ === 0
+          ? { status: 409, json: { ok: false, code: "no_session", error: "No chat works on this task" } }
+          : { status: 200, json: { ok: true, data: { task: { ...started, revision: 3 }, managerPrompt: false, delivered: "started", sessionId: "new1" } } };
+      } else if (url.endsWith("/start-chat")) {
+        r = { status: 200, json: { ok: true, data: { task: started, managerPrompt: false, sessionId: "new1" } } };
+      }
+      return new Response(JSON.stringify(r.json), { status: r.status, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    view = await mount(<Harness task={task} />);
     await click([...document.querySelectorAll("button")].find((b) => b.textContent === "Choose A")!);
     await settle();
-    const t = toasts().find((x) => x.action?.label === "Start chat");
+    const t = toasts().find((x) => x.action?.label === "Start chat and send");
     expect(t).toBeDefined();
     expect(sentToChat).toBe(0);
+    await act(async () => { t!.action!.onClick(); });
+    await settle();
+    const writes = requests.filter((r) => r.method !== "GET").map((r) => [r.url.split("/").pop(), (r.body as { revision?: number; optionId?: string } | null)]);
+    // Decided at revision 1 (refused), started the chat, then decided again from the revision Start chat left.
+    expect(writes).toEqual([["decide", { optionId: "a", revision: 1 }], ["start-chat", { revision: 1 }], ["decide", { optionId: "a", revision: 2 }]]);
+    expect(toasts().some((x) => x.title === 'Choice sent to "' + task.title + '": it started working on it')).toBe(true);
   });
 
   it("offers Send again when the choice was recorded but not sent, deciding from the new revision", async () => {

@@ -37,7 +37,8 @@ export function ActivityChip({ projectName, agentProviderId, sessionId, messages
   teamMembers: TeamMemberActivity[];
   /**
    * Leave the row whole when the chat is narrow, so a chip that matters more (the manager chat's
-   * Tasks chip) keeps its place: off by default, so other chats are unchanged.
+   * Tasks chip) keeps its place: off by default, so other chats are unchanged. Never while a
+   * linked session needs the user: in a manager chat this chip is the only sign of that.
    */
   yieldNarrow?: boolean;
 }) {
@@ -91,7 +92,7 @@ export function ActivityChip({ projectName, agentProviderId, sessionId, messages
         aria-label={title}
         data-activity-chip=""
         data-activity-dot={dot}
-        className={cn(FOOTER_CHIP, "gap-[7px] @max-[420px]/chat:gap-[5px] max-md:gap-[5px]", needsYou && "border-error/35 can-hover:hover:border-error/60", yieldNarrow && "@max-[340px]/chat:hidden")}
+        className={cn(FOOTER_CHIP, "gap-[7px] @max-[420px]/chat:gap-[5px] max-md:gap-[5px]", needsYou && "border-error/35 can-hover:hover:border-error/60", yieldNarrow && !needsYou && "@max-[340px]/chat:hidden")}
       >
         <LinkedStatusDot status={dot} />
         {hasAgents && (

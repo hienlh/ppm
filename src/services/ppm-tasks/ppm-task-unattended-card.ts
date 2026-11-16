@@ -46,7 +46,7 @@ const liveSink: UnattendedCardSink = (card) => {
   // Loaded on first use: the card service reaches the hub, which loads after the task store.
   void import("../assistant-cards/assistant-cards.service.ts")
     .then(({ assistantCards }) => {
-      assistantCards.create({ kind: "done", projectName: null, projectPath: null, sessionId: null, title: card.title, body: card.body, payload: { taskChanges: card.taskChanges, ...(card.taskChangesMore ? { taskChangesMore: card.taskChangesMore } : {}) } });
+      assistantCards.create({ kind: "done", projectName: null, projectPath: null, sessionId: null, title: card.title, body: card.body, payload: { byAssistant: true, taskChanges: card.taskChanges, ...(card.taskChangesMore ? { taskChangesMore: card.taskChangesMore } : {}) } });
     })
     .catch((e) => log.warn(`could not post the "while you were away" task card: ${(e as Error).message}`));
 };

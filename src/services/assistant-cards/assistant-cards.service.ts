@@ -77,7 +77,7 @@ export function createAssistantCards(env: CardsEnv = realEnv) {
       id: row.id, kind: row.kind, projectName, projectKey: row.projectKey, sessionId: row.sessionId,
       title: row.title, body: row.body, payload, status: row.status, answer: row.answer ? answer : null,
       ...(row.followUp ? { followUp: row.followUp } : {}),
-      provenance: reportProvenanceLine(row.kind, projectName, payload.subagent === true, payload.detected === true),
+      provenance: reportProvenanceLine(row.kind, projectName, payload.subagent === true, payload.detected === true, payload.byAssistant === true),
       createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
     // Judged on the card as shown (its project and provenance lines count towards what must fit).
