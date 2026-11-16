@@ -30,7 +30,8 @@ export type TabType =
   | "android"
   | "web-preview"
   | "logs"
-  | "assistant";
+  | "assistant"
+  | "task";
 
 export interface Tab {
   id: string;

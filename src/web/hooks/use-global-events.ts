@@ -16,6 +16,7 @@ import { resyncManagerChats } from "./use-manager-chats";
 import { resyncAssistantCards } from "@/stores/assistant-cards-store";
 import { resyncOpenCards } from "@/stores/assistant-open-cards-store";
 import { resyncAssistantWaiting } from "@/stores/assistant-waiting-store";
+import { resyncPpmTasks } from "@/stores/ppm-tasks-store";
 import { useProjectStore } from "@/stores/project-store";
 import { PROJECTS_CHANGED_EVENT } from "../../shared/projects-events";
 import { SESSIONS_LIST_CHANGED_EVENT, parseRenamedChat } from "../../shared/chat-list-events";
@@ -73,6 +74,8 @@ const IDLE_TIMEOUT_MS = 45_000;
  * - `jira:*` → re-dispatched as window events.
  * - `schedules:*` → re-dispatched as window events (`schedules:changed` after any write to
  *   `/api/schedules`, from this device, another one or the Assistant's tools).
+ * - `tasks:*` → re-dispatched as window events (`tasks:changed` with task ids,
+ *   `tasks:project_changed`, `tasks:link_states`), which the PPM Tasks store re-reads on.
  * - `tunnel:*` → re-dispatched as window events (named-tunnel setup flow —
  *   login URL/state, setup progress/done/pending/error).
  * - `git:*` → re-dispatched as window events (`git:changed` after any write PPM
@@ -141,6 +144,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         resyncAssistantCards();
         resyncOpenCards();
         resyncAssistantWaiting();
+        resyncPpmTasks();
         notifyGlobalReady();
         return;
       }
@@ -233,6 +237,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         || type.startsWith("logs:")
         || type.startsWith("assistant:")
         || type.startsWith("schedules:")
+        || type.startsWith("tasks:")
         || type.startsWith("feature-intros:")
         || type === "agent-activity"
         || type === SESSION_FILE_CHANGES_PUSH

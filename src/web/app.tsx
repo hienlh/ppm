@@ -274,6 +274,14 @@ export function App() {
         // A turn link: the chat just opened shows that turn once it has loaded.
         requestTurnJumpFromUrl(urlState, target!.name);
       }
+      // ?openTask=<id> (Telegram's "Open in PPM" on a task card): the task's own tab, then the
+      // address is left without it so a reload does not open it again.
+      if (urlState.openTask && (!useSettingsStore.getState().minimalMode || isMinimalTab("task"))) {
+        autoOpenFromUrl("task", urlState.openTask, target!.name);
+        const url = new URL(window.location.href);
+        url.searchParams.delete("openTask");
+        window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+      }
       // Legacy: ?openChat= query param
       if (urlState.openChat) {
         autoOpenFromUrl("chat", urlState.openChat, target!.name);

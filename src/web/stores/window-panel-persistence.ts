@@ -58,6 +58,8 @@ const POPPABLE_TAB_TYPES: Record<TabType, boolean> = {
   logs: false,
   // The Assistant lives in a floating window on a desktop and comes back in one after a reload.
   assistant: true,
+  // A task is a page of fields: it reads as well in a window as in the grid.
+  task: true,
 };
 
 export function isPoppableTabType(type: unknown): type is TabType {

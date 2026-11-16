@@ -10,6 +10,7 @@ import { SESSION_HISTORY_TOOLS } from "./session-history-tools.ts";
 import { SESSION_COLLAB_TOOLS } from "./session-collab.ts";
 import { SESSION_SCHEDULE_TOOLS } from "./session-schedule-tools.ts";
 import { VAULT_TOOLS } from "./vault.ts";
+import { PPM_TASK_TOOLS } from "./ppm-task-tools.ts";
 import { answerFromSwitches, featureIntroOfTool } from "./feature-intros.ts";
 
 export const TERMINAL_TOOLS = [READ_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL] as const;
@@ -24,7 +25,7 @@ export const TAB_TOOLS = [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL, OPEN_URL_TOOL, ...T
  * ordinary one the user sees, can open and can stop.
  */
 export const SESSION_TOOLS = [...SESSION_COLLAB_TOOLS, ...SESSION_SCHEDULE_TOOLS] as const;
-export const PPM_TOOLS = [...TAB_TOOLS, ...DB_TOOLS, ...SESSION_TOOLS, ...VAULT_TOOLS] as const;
+export const PPM_TOOLS = [...TAB_TOOLS, ...DB_TOOLS, ...SESSION_TOOLS, ...VAULT_TOOLS, ...PPM_TASK_TOOLS] as const;
 /** The two the single switch before these (`tab_tools`) turned on and off. */
 const LEGACY_TAB_TOOLS: readonly string[] = [OPEN_FILE_TOOL, OPEN_PREVIEW_TOOL];
 export type PpmTool = (typeof PPM_TOOLS)[number];

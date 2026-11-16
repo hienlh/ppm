@@ -16,6 +16,7 @@ import { managerChats } from "../../../src/services/assistant-managers/manager-c
 import { createSessionCollabMcpHandler, sessionToolOnFor } from "../../../src/services/session-collab/session-collab-endpoint.ts";
 import { SESSION_TOOLS } from "../../../src/shared/ppm-tools.ts";
 import { REPORT_TO_ASSISTANT_TOOL } from "../../../src/shared/session-collab.ts";
+import { PPM_TASK_TOOLS } from "../../../src/shared/ppm-task-tools.ts";
 import type { AIProvider } from "../../../src/types/chat.ts";
 
 const project = { name: "mgr-tools", path: join(process.env.PPM_HOME!, "mgr-tools") };
@@ -37,7 +38,9 @@ beforeEach(() => {
   projectsBefore = configService.get("projects");
   (configService as any).config.projects = [...projectsBefore, project];
   managerChats.unassign(project.name);
-  configService.get("ai").ppm_tools = Object.fromEntries(SESSION_TOOLS.map((tool) => [tool, false]));
+  // The task tools ride on the same server, and assigning a manager switches Tasks on for the
+  // project: they are switched off too, so "every one switched off" holds.
+  configService.get("ai").ppm_tools = Object.fromEntries([...SESSION_TOOLS, ...PPM_TASK_TOOLS].map((tool) => [tool, false]));
 });
 afterEach(() => {
   managerChats.unassign(project.name);
@@ -87,10 +90,20 @@ it("lists the tools by the switches for the manager as for any chat, plus the re
   };
   expect(await list(manager)).toEqual([REPORT_TO_ASSISTANT_TOOL]);
   expect(await list(ordinary)).toEqual([]);
-  configService.get("ai").ppm_tools = Object.fromEntries(SESSION_TOOLS.map((tool) => [tool, true]));
+  configService.get("ai").ppm_tools = { ...configService.get("ai").ppm_tools, ...Object.fromEntries(SESSION_TOOLS.map((tool) => [tool, true])) };
   expect((await list(manager)).sort()).toEqual([...SESSION_TOOLS, REPORT_TO_ASSISTANT_TOOL].sort());
   expect((await list(ordinary)).sort()).toEqual([...SESSION_TOOLS].sort());
   // Unassigned, the chat loses the report tool at its next listing.
   managerChats.unassign(project.name);
   expect((await list(manager)).sort()).toEqual([...SESSION_TOOLS].sort());
+});
+
+it("attaches the server to an ordinary chat once its project has Tasks on and a task tool is on", async () => {
+  const manager = chat();
+  const ordinary = chat();
+  // Assigning the manager switches Tasks on for the project.
+  await managerChats.assign(project.name, manager);
+  expect(await chatService.prepareSendOptions("claude", ordinary, "hi")).not.toHaveProperty("sessionCollabMcp");
+  configService.get("ai").ppm_tools = { ...configService.get("ai").ppm_tools, ppm_task_list: true };
+  expect((await chatService.prepareSendOptions("claude", ordinary, "hi")).sessionCollabMcp?.url).toBe("http://127.0.0.1:8126/api/sessions-mcp");
 });

@@ -2715,7 +2715,7 @@ function liveChatState(entry: SessionEntry): LiveChatState {
 }
 
 /** The server's own message doors; the PPM Assistant's messages go through the session tools instead. */
-const SERVER_ORIGINS: readonly MessageServerOrigin[] = ["telegram", "watch", "schedule"];
+const SERVER_ORIGINS: readonly MessageServerOrigin[] = ["telegram", "watch", "schedule", "ppm_ui"];
 
 /** A client message id a server sender names its message with: printable, short, no spaces. */
 const SERVER_CLIENT_MESSAGE_ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
@@ -2732,6 +2732,10 @@ setChatControl({
     }
     // A scheduled run uses the chat's own mode: a mode sent with it would become the chat's sticky
     // one. Its run block is checked here, since only this door may put one in front of a prompt.
+    // PPM's own screens send what the user chose, not a mode: one sent with it would become the
+    // chat's sticky mode. Its text is defused here too, whatever the caller already did.
+    if (opts.origin === "ppm_ui" && opts.permissionMode) return { ok: false, error: "A ppm_ui message uses the chat's own permission mode." };
+    if (opts.origin === "ppm_ui") text = neutralizePpmTags(text);
     let scheduleRun: ScheduleRunReference | undefined;
     if (opts.origin === "schedule") {
       if (opts.permissionMode) return { ok: false, error: "A scheduled run uses the chat's own permission mode." };
@@ -2782,6 +2786,10 @@ setChatControl({
       // Its own turn, never joined to one: if a turn started after the quiet check, `later` waits
       // for that turn to end instead of steering it.
       ...(scheduleRun ? { scheduleRun, priority: "later" as const } : {}),
+      // PPM's own screens (a decision's option, "tell the manager now"): not the user typing, so
+      // it answers no card and steers no turn — behind a running turn, a card-blocked one
+      // included, it waits for that turn to end and opens its own.
+      ...(opts.origin === "ppm_ui" ? { priority: "later" as const } : {}),
       ...(opts.channel ? { channel: opts.channel } : {}),
       ...(watchEvents ? { watchEvents } : {}),
       ...(wakeNews ? { wakeNews } : {}),
@@ -2790,17 +2798,21 @@ setChatControl({
     // Nobody is watching: the entry goes once it is idle (a running turn re-arms this when it ends).
     if (entry.clients.size === 0) startCleanupTimer(sessionId);
     if (!result.ok) return result;
-    // Only a schedule's sender tracks its turn, so only it is told whether the message started one
-    // or waits behind a turn that began after the quiet check.
-    return { ok: true, sessionId: result.sessionId, ...(scheduleRun && result.delivered ? { delivered: result.delivered } : {}) };
+    // Only a schedule's and PPM's own senders track the turn, so only they are told whether the
+    // message started one or waits behind a running turn.
+    const tracked = !!scheduleRun || opts.origin === "ppm_ui";
+    return { ok: true, sessionId: result.sessionId, ...(tracked && result.delivered ? { delivered: result.delivered } : {}) };
   },
   answerApproval(asked, requestId, answer, origin) {
+    // PPM's own screens never answer a card on the user's behalf.
+    if ((origin as string) === "ppm_ui") return "stale";
     const sessionId = resolveMigratedSession(asked);
     const entry = activeSessions.get(sessionId);
     if (!entry || typeof requestId !== "string" || !requestId) return "stale";
     return answerApprovalCore(sessionId, entry, requestId, answer, origin);
   },
   cancelTurn(asked, origin) {
+    if ((origin as string) === "ppm_ui") return false;
     const sessionId = resolveMigratedSession(asked);
     const entry = activeSessions.get(sessionId);
     if (!entry) return false;

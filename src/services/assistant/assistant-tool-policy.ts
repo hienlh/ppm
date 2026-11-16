@@ -4,6 +4,7 @@ import { canonicalPath, isInside, patternLeavesRoot } from "../design/design-too
 import { ASSISTANT_TOOLS, CLAUDE_ASSISTANT_MCP_PREFIX, CLAUDE_ASSISTANT_MCP_SERVER, claudeAssistantToolName } from "../../shared/assistant-tool-names.ts";
 import { CLAUDE_SESSION_COLLAB_MCP_SERVER, SESSION_COLLAB_TOOLS } from "../../shared/session-collab.ts";
 import { VAULT_TOOLS } from "../../shared/vault.ts";
+import { PPM_TASK_TOOLS } from "../../shared/ppm-task-tools.ts";
 import { assistantPrivateScope, isAssistantPrivatePath, privateRootWithin } from "./assistant-private-paths.ts";
 
 /**
@@ -62,6 +63,8 @@ const OWN_MCP_TOOLS: ReadonlySet<string> = new Set([
   ...SESSION_COLLAB_TOOLS.map((tool) => `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${tool}`),
   // The vault's tools, which ask the user on a card (with the tier's password) before any locked read.
   ...VAULT_TOOLS.map((tool) => `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${tool}`),
+  // PPM's task store, whose every change is recorded, undoable and (unattended) put on a card.
+  ...PPM_TASK_TOOLS.map((tool) => `mcp__${CLAUDE_SESSION_COLLAB_MCP_SERVER}__${tool}`),
 ]);
 
 /** Tool → the input field naming its target; Glob and Grep default to the working directory. */

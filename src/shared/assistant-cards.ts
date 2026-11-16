@@ -173,6 +173,28 @@ export interface AssistantCardPayload {
   assistantSessionId?: string;
   /** Failed cards PPM raised: how the turn ended. */
   detected?: boolean;
+  /**
+   * Cards the handed-off work checker raised: the tasks it found, each with the chat working on it,
+   * so every surface can offer "Open chat" per task (and open the task by id).
+   */
+  tasks?: Array<{ taskId: string; sessionId: string; ref: string }>;
+  /**
+   * The "made N task changes while you were away" card: each change with the history row that
+   * undoes it (null for a settings change, which cannot be undone), so a surface can offer Undo
+   * per change.
+   */
+  taskChanges?: Array<{
+    historyId: number | null; taskId: string | null; ref: string | null; summary: string;
+    /** The change's project, so a surface can keep a title-only project's details off a phone. */
+    projectKey?: string;
+  }>;
+  /** Changes past the ones listed in `taskChanges` (each task's History in PPM has them). */
+  taskChangesMore?: number;
+  /**
+   * A report card the PPM Assistant wrote (the "while you were away" task changes card), not a
+   * manager: its provenance line names the Assistant.
+   */
+  byAssistant?: boolean;
 }
 
 export interface AssistantCard {
@@ -226,6 +248,9 @@ export function isNoReplyText(text: string | null | undefined): boolean {
   return typeof text === "string" && text.trim().toLowerCase() === NO_REPLY_TEXT;
 }
 
+/** The server-written line on a report card the PPM Assistant wrote itself. */
+export const ASSISTANT_PROVENANCE = "Written by the PPM Assistant";
+
 /** The server-written line on the morning digest PPM put together. */
 export const DIGEST_PROVENANCE = "Put together by PPM; each item was written by that project's manager AI";
 
@@ -233,8 +258,9 @@ export const DIGEST_PROVENANCE = "Put together by PPM; each item was written by 
  * The server-written line on a card filed by a manager chat; null for PPM's own cards, a failure
  * PPM saw itself (`detected`) included.
  */
-export function reportProvenanceLine(kind: AssistantCardKind, projectName: string | null, subagent: boolean, detected = false): string | null {
+export function reportProvenanceLine(kind: AssistantCardKind, projectName: string | null, subagent: boolean, detected = false, byAssistant = false): string | null {
   if (detected || !(REPORT_KINDS as readonly string[]).includes(kind)) return null;
+  if (byAssistant) return ASSISTANT_PROVENANCE;
   // The digest is PPM's card; only its items are the managers' words.
   if (kind === "digest" && !projectName) return DIGEST_PROVENANCE;
   const project = projectName ?? "project";

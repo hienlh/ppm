@@ -40,11 +40,13 @@ import { OPEN_NAVIGATION } from "@/components/database/db-sidebar-reveal";
 // Lazy so the design UI stays out of the entry bundle until the section is opened.
 const DesignsSidebarPanel = lazy(() =>
   import("@/components/design/designs-sidebar-panel").then((m) => ({ default: m.DesignsSidebarPanel })));
+const TasksSidebarPanel = lazy(() =>
+  import("@/components/ppm-tasks/tasks-sidebar-panel").then((m) => ({ default: m.TasksSidebarPanel })));
 
 // Tab ids the mobile drawer can render content for;
 // ext views are supported via the `ext:` prefix.
 const MOBILE_SUPPORTED = new Set<string>([
-  "history", "teams", "designs", "explorer", "search", "git", "database", "tunnels", "ai-resources", "jira",
+  "history", "tasks", "teams", "designs", "explorer", "search", "git", "database", "tunnels", "ai-resources", "jira",
 ]);
 const isMobileSupported = (id: SidebarActiveTab) => MOBILE_SUPPORTED.has(id) || id.startsWith("ext:");
 
@@ -210,6 +212,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           {activeTab === "history" && (activeProject
             ? <SessionHistoryList variant="sidebar" projectName={activeProject.name} onNavigate={onClose} />
             : noProject)}
+          {activeTab === "tasks" && <Suspense fallback={null}><TasksSidebarPanel onNavigate={onClose} /></Suspense>}
           {activeTab === "teams" && (activeProject ? <GroupList /> : noProject)}
           {activeTab === "designs" && (activeProject
             ? <Suspense fallback={null}><DesignsSidebarPanel onNavigate={onClose} /></Suspense>

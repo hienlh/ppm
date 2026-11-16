@@ -36,6 +36,8 @@ import { AgentSessionProvider, normalizeProviderId } from "./agent-session-conte
 import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
 import { ManagerChatWaitingCards } from "@/components/assistant/manager-chat-waiting-cards";
 import { SessionChangesChip } from "./session-changes-chip";
+import { ManagerTasksChip } from "@/components/ppm-tasks/chip/manager-tasks-chip";
+import { useManagerTasksSummary } from "@/components/ppm-tasks/chip/use-manager-tasks-summary";
 import { SessionSchedulesChip } from "./session-schedules-chip";
 import { CONTINUE_AFTER_STOP, TurnStopBar } from "./turn-stop-bar";
 import { SessionChangesContext, useSessionChangesValue } from "./session-changes-context";
@@ -233,6 +235,8 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
   // A PPM Assistant chat: its virtual project answers only the chat routes, so everything here
   // that reaches a project's files, terminals, MCP sign-in or change review is left out.
   const assistant = isAssistantProject(projectName);
+  // A manager chat's Tasks chip: its project's open tasks, while that project's task store is on.
+  const tasksSummary = useManagerTasksSummary(assistant ? null : sessionId);
 
   /**
    * Every sessionless chat tab (new, `/clear`, a design's chat, a reload mid-resolution)
@@ -1426,7 +1430,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
               see footer-chip.ts) are not cut by the clip. */}
           <div className="-my-2.5 flex min-w-0 items-center gap-1.5 overflow-hidden py-2.5 @max-[420px]/chat:gap-1 max-md:gap-1">
             {contextChip}
+            {tasksSummary && <ManagerTasksChip summary={tasksSummary} />}
             <ActivityChip
+              yieldNarrow={!!tasksSummary}
               projectName={projectName}
               agentProviderId={agentSessionIdentity.providerId}
               sessionId={sessionId}
@@ -1435,6 +1441,7 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
               teamMembers={teamMembers}
             />
             {!minimalMode && !assistant && <SessionChangesChip
+              yieldNarrow={!!tasksSummary}
               files={sessionChanges.files}
               loaded={sessionChanges.loaded}
               loading={sessionChanges.loading}

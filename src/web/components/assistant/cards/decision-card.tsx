@@ -16,6 +16,7 @@ import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardButton, CardShell, CardText } from "./card-shell";
 import { openCardManagerChat, useCardAction } from "./use-card-action";
 import { useCardReplyHost } from "./card-reply-host";
+import { CardHandedOffTasks } from "./card-task-items";
 
 export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (card: AssistantCard) => void }) {
   const { busy, error, run } = useCardAction(onCard);
@@ -57,6 +58,7 @@ export function DecisionCard({ card, onCard }: { card: AssistantCard; onCard?: (
       <h4 className="text-[15px] font-semibold leading-snug text-text-primary" data-card-title="">{card.title}</h4>
       {card.body && <CardText text={card.body} fold={card.status !== "open"} projectName={card.projectName} />}
       <CardImages images={card.payload.images} />
+      {card.payload.tasks && <CardHandedOffTasks projectName={card.projectName} tasks={card.payload.tasks} />}
       {options.length > 0 && (
         <CardChoices
           options={options}

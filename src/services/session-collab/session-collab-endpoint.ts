@@ -24,6 +24,10 @@ import { sessionScheduleToolDefinitions } from "./collab-schedule-tool-definitio
 import { liveSessionScheduleToolEnv, sessionScheduleToolCall, type SessionScheduleToolEnv } from "./collab-schedules.ts";
 import { sessionCollabToolDefinitions } from "./session-collab-tool.ts";
 import { sessionCollabMcpTokens, type SessionCollabTokenBinding } from "./session-collab-tokens.ts";
+import { isPpmTaskTool } from "../../shared/ppm-task-tools.ts";
+import { PPM_TASK_TOOL_DEFINITIONS } from "../ppm-tasks/tools/ppm-task-tool-definitions.ts";
+import { callPpmTaskTool, livePpmTaskToolsEnv, type PpmTaskToolsEnv } from "../ppm-tasks/tools/ppm-task-tools.ts";
+import { ppmTaskToolOffReason } from "../ppm-tasks/tools/ppm-task-tool-caller.ts";
 
 /**
  * `/api/sessions-mcp` — serves `create_session`, `send_to_session` and `session_status`, and the
@@ -45,18 +49,25 @@ export function createSessionCollabMcpHandler(deps: {
   report?: (sessionId: string, args: unknown) => Json;
   /** What the schedule tools save through (the live database by default). */
   schedules?: SessionScheduleToolEnv;
+  /** What the task tools act through (the live task store by default). */
+  tasks?: PpmTaskToolsEnv;
+  /** Why a task tool is off for the chat; Settings → Tools' message by default. */
+  taskOff?: (tool: string, sessionId: string) => string | null;
 }) {
   const limiter = deps.limiter ?? createCollabLimiter();
   const report = deps.report ?? reportToAssistantCall;
   const schedules = deps.schedules ?? liveSessionScheduleToolEnv;
+  const tasks = deps.tasks ?? livePpmTaskToolsEnv();
   return createMcpHttpHandler<SessionCollabTokenBinding>({
     serverName: "ppm-sessions",
     tokenRequired: "A chat session token is required",
     resolveToken: deps.resolveToken,
-    tools: [...sessionCollabToolDefinitions(), ...sessionScheduleToolDefinitions(), reportToolDefinition(), ...VAULT_TOOL_DEFINITIONS],
+    tools: [...sessionCollabToolDefinitions(), ...sessionScheduleToolDefinitions(), reportToolDefinition(), ...VAULT_TOOL_DEFINITIONS, ...PPM_TASK_TOOL_DEFINITIONS],
     unavailable: (name, { sessionId }) => {
       if (deps.enabled(name, sessionId)) return null;
-      return name === REPORT_TO_ASSISTANT_TOOL ? NOT_A_MANAGER : ppmToolOffMessage(name);
+      if (name === REPORT_TO_ASSISTANT_TOOL) return NOT_A_MANAGER;
+      if (isPpmTaskTool(name)) return deps.taskOff?.(name, sessionId) ?? ppmToolOffMessage(name);
+      return ppmToolOffMessage(name);
     },
     callTool: async ({ sessionId }, name, rawArgs, signal) => {
       // A value of the vault's locked tiers read in any chat never leaves it: not in a message to
@@ -81,6 +92,9 @@ export function createSessionCollabMcpHandler(deps: {
       if (isVaultTool(name)) {
         return vaultTools.call({ sessionId: caller.value.sessionId, title: caller.value.title ?? null, assistant: caller.value.kind === "assistant" }, name, rawArgs, signal);
       }
+      // The task store decides by itself what each caller may reach (its own project; the
+      // Assistant any project with Tasks on) and signs every change with the caller.
+      if (isPpmTaskTool(name)) return callPpmTaskTool(tasks, caller.value, name, rawArgs);
       // Decided before anything is asked or delivered: an unattended Assistant turn is refused here.
       const policy = collabToolPolicy(caller.value, name);
       if (!policy.allowed) return textResult(policy.message, true);
@@ -110,6 +124,8 @@ let collabEnvRef: CollabEnv | null = null;
  */
 export function sessionToolOnFor(tool: string, sessionId: string): boolean {
   if (tool === REPORT_TO_ASSISTANT_TOOL) return isReportingManager(sessionId);
+  // Settings → Tools for every chat, the Assistant and manager chats included, then the project's switch.
+  if (isPpmTaskTool(tool)) return liveTaskOffReason(tool, sessionId) === null;
   // The PPM Assistant keeps to its own schedule tools, which show the user a card first.
   if (isSessionScheduleTool(tool) && isAssistantSession(sessionId)) return false;
   // The Assistant always has the vault; an ordinary chat only while the user turned it on; a chat
@@ -119,8 +135,24 @@ export function sessionToolOnFor(tool: string, sessionId: string): boolean {
   return isPpmTool(tool) && ppmToolOn(configService.get("ai"), tool);
 }
 
+/** Why a task tool is off for the chat now, from the live settings, sessions and task store. */
+function liveTaskOffReason(tool: string, sessionId: string): string | null {
+  if (!isPpmTaskTool(tool)) return null;
+  try {
+    return ppmTaskToolOffReason(tool, sessionId, {
+      ai: () => configService.get("ai"),
+      isAssistantSession: (id) => isAssistantSession(id),
+      boundToExtension,
+    });
+  } catch {
+    // A failed read takes the task tools away, never the whole tool list with them.
+    return `${tool} did nothing: PPM could not read the task store.`;
+  }
+}
+
 const handler = createSessionCollabMcpHandler({
   resolveToken: (token) => sessionCollabMcpTokens.resolve(token),
+  taskOff: liveTaskOffReason,
   env: () => {
     if (!collabEnvRef) throw new Error("The session tools are not ready yet");
     return collabEnvRef;

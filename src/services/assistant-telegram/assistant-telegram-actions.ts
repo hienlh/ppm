@@ -40,6 +40,30 @@ export interface ManagerCardPress {
   pendingId?: string;
 }
 
+/**
+ * A button of PPM Tasks on Telegram: a `/tasks` deck, the card of a task the Assistant created, or
+ * an Undo / Open on one of the Assistant's task cards. `ref` names the deck or created card held in
+ * memory (`assistant-telegram-task-actions.ts`); a press on one that is gone says "send /tasks again".
+ */
+export interface TaskPress {
+  kind: "task";
+  ref: string;
+  op:
+    | "status" | "prev" | "next_page" | "position" | "filter" | "next" | "undo"
+    | "tell" | "later" | "children" | "back"
+    | "menu" | "set" | "undo_created"
+    | "undo_history";
+  taskId?: string;
+  statusId?: string;
+  /** filter: the project, or null for All. */
+  projectKey?: string | null;
+  /** menu/set: which field of a created task. */
+  field?: "urgency" | "importance" | "due";
+  value?: string;
+  /** undo_history: the history row to undo. */
+  historyId?: number;
+}
+
 export type BridgeAction =
   /** `/sessions`: talk to this session from now on. */
   | { kind: "switch"; sessionId: string }
@@ -48,4 +72,5 @@ export type BridgeAction =
   /** `/quiet`: turn "quiet while I'm at PPM" on or off. */
   | { kind: "quiet"; on: boolean }
   | CardPress
-  | ManagerCardPress;
+  | ManagerCardPress
+  | TaskPress;

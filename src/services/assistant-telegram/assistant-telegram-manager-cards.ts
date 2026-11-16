@@ -33,6 +33,7 @@ import { cardReplyFollowups } from "../assistant-cards/card-reply-followup.ts";
 import { isAnswerCard, type AnsweredReply } from "../assistant-cards/card-reply-followup-tracker.ts";
 import { assistantClock } from "../assistant-wake/assistant-clock.ts";
 import { CARD_FOLLOWUP_LOUD_MS } from "../../shared/assistant-limits.ts";
+import { cardForTelegram, taskCardExtras, taskCardRows, type TaskCardExtras } from "./assistant-telegram-task-card-extras.ts";
 
 const log = createLogger("assistant-telegram");
 
@@ -160,9 +161,14 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
   private async sendAll(cards: AssistantCard[], chats: string[], threads: Array<Map<string, Thread>>, header?: string): Promise<void> {
     // Links first, so every chat's lane gets the header and the cards in order.
     const links = await Promise.all(cards.map((c) => this.linkFor(c).catch(() => null)));
+    // A task card's Open chat links and Undo buttons (PPM Tasks); null for every other card.
+    const extras = await Promise.all(cards.map((c) => taskCardExtras(c, this.deps.chatLink).catch((e) => {
+      log.warn(`card ${c.id}: its task buttons could not be made: ${(e as Error).message}`);
+      return null;
+    })));
     for (const chatId of chats) {
       if (header) this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, { html: `<b>${escapeTelegramHtml(header)}</b>` }, { label: "away header", silent: () => this.silent() }));
-      cards.forEach((card, i) => this.sendOne(chatId, card, links[i] ?? null, threads[i]!.get(chatId) ?? null));
+      cards.forEach((card, i) => this.sendOne(chatId, card, links[i] ?? null, threads[i]!.get(chatId) ?? null, extras[i] ?? null));
     }
   }
 
@@ -174,7 +180,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     return main ? this.deps.sessionLink(main.providerId, main.sessionId) : null;
   }
 
-  private sendOne(chatId: string, card: AssistantCard, url: string | null, thread: Thread | null = null): void {
+  private sendOne(chatId: string, card: AssistantCard, url: string | null, thread: Thread | null = null, extras: TaskCardExtras | null = null): void {
     const record = (messageId: number) => addCardTelegramRef(card.id, { chatId, messageId });
     const detail = this.detail(card);
     if (card.kind === "approval" || card.kind === "question") {
@@ -193,7 +199,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
       });
       return;
     }
-    const formatted = formatManagerCard(card, detail);
+    const formatted = formatManagerCard(cardForTelegram(card), detail);
     const group = groupOf(card.id, chatId);
     // The pictures first, so the card to answer them on comes last; never for a title-only project.
     const photos = detail === "full"
@@ -218,8 +224,10 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     const row: InlineKeyboardButton[] = keys.filter((k) => k.op !== "choose").map((k) => k.key);
     const link = url ? placeLink(url) : {};
     let html = formatted.html;
+    const tasks = extras ? taskCardRows(extras, card.id, chatId, formatted.html, this.deps.codes) : { rows: [], inline: [] };
+    if (tasks.inline.length) html += `\n\n${tasks.inline.join("\n")}`;
     if (link.inline) html += `\n\n${link.inline}`;
-    const rows = [...choiceRows, ...(row.length ? [row] : []), ...(link.button ? [[link.button]] : [])];
+    const rows = [...choiceRows, ...(row.length ? [row] : []), ...tasks.rows, ...(link.button ? [[link.button]] : [])];
     this.deps.queue.enqueue(chatId, sendMessageTask(this.deps.queue, chatId, {
       html,
       ...(rows.length ? { markup: { inline_keyboard: rows } } : {}),
@@ -275,7 +283,7 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
     if (card.kind === "approval" || card.kind === "question") return;
     // A follow-up message is the manager's answer to a reply, not a copy of the card: left as it is.
     const refs = (getCardRow(card.id)?.telegramRefs ?? []).filter((r) => !r.followUp);
-    const html = `${formatManagerCard(card, this.detail(card)).html}\n\n${cardEndLine(card)}`;
+    const html = `${formatManagerCard(cardForTelegram(card), this.detail(card)).html}\n\n${cardEndLine(card)}`;
     for (const ref of refs) {
       this.deps.codes.dropGroup(groupOf(card.id, ref.chatId));
       if (!canSendTo(ref.chatId)) continue;

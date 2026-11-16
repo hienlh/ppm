@@ -26,7 +26,7 @@ import { FOOTER_CHIP, HIDE_NARROW } from "./footer-chip";
 
 type Tab = "agents" | "sessions";
 
-export function ActivityChip({ projectName, agentProviderId, sessionId, messages, teamName, teamMembers }: {
+export function ActivityChip({ projectName, agentProviderId, sessionId, messages, teamName, teamMembers, yieldNarrow = false }: {
   projectName: string;
   /** The provider whose agent transcripts feed the Agents tab. */
   agentProviderId: AgentTranscriptProviderId;
@@ -35,6 +35,12 @@ export function ActivityChip({ projectName, agentProviderId, sessionId, messages
   /** The session's implicit team name, for a teammate row's source. */
   teamName: string;
   teamMembers: TeamMemberActivity[];
+  /**
+   * Leave the row whole when the chat is narrow, so a chip that matters more (the manager chat's
+   * Tasks chip) keeps its place: off by default, so other chats are unchanged. Never while a
+   * linked session needs the user: in a manager chat this chip is the only sign of that.
+   */
+  yieldNarrow?: boolean;
 }) {
   const agents = useRunningAgents({ projectName, providerId: agentProviderId, sessionId, messages, teamName, teamMembers });
   const groups = useLinkedSessionGroups(projectName, sessionId, messages);
@@ -86,7 +92,7 @@ export function ActivityChip({ projectName, agentProviderId, sessionId, messages
         aria-label={title}
         data-activity-chip=""
         data-activity-dot={dot}
-        className={cn(FOOTER_CHIP, "gap-[7px] @max-[420px]/chat:gap-[5px] max-md:gap-[5px]", needsYou && "border-error/35 can-hover:hover:border-error/60")}
+        className={cn(FOOTER_CHIP, "gap-[7px] @max-[420px]/chat:gap-[5px] max-md:gap-[5px]", needsYou && "border-error/35 can-hover:hover:border-error/60", yieldNarrow && !needsYou && "@max-[340px]/chat:hidden")}
       >
         <LinkedStatusDot status={dot} />
         {hasAgents && (
