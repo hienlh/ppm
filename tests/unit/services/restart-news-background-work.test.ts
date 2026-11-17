@@ -178,7 +178,8 @@ describe("finding the chats whose background work a restart stopped", () => {
 });
 
 const memoryStore = (): RestartNewsStore => { let json: string | null = null; return { load: () => json, save: (j) => { json = j; } }; };
-const T = Date.UTC(2026, 10, 15, 10, 18, 55);
+// Recent, so the 24-hour expiry never drops it whenever the suite runs.
+const T = Math.floor(Date.now() / 1000) * 1000 - 60_000;
 const bgChat = (sessionId: string, over: Partial<BackgroundWorkChat> = {}): BackgroundWorkChat => ({
   sessionId, providerId: "claude", projectName: "api", title: `Chat ${sessionId}`, lastAt: T - 30_000, restartAt: T,
   tasks: [{ taskId: `t-${sessionId}`, tool: "PowerShell", description: "Resume benchmark", command: "powershell -File run-batch.ps1", startedAt: T - 55_000, state: "unknown" }],
@@ -255,7 +256,7 @@ describe("in the restart news", () => {
     expect(text).toContain("Chats whose background work was stopped (2)");
     expect(text).toContain('Project "api": manager chat is session mgr.');
     expect(text).toContain('"Chat bench" (session bench, claude): was between turns');
-    expect(text).toContain('PowerShell started at 2026-11-15T10:18:00.000Z (for "Resume benchmark", command "powershell -File run-batch.ps1")');
+    expect(text).toContain(`PowerShell started at ${new Date(T - 55_000).toISOString()} (for "Resume benchmark", command "powershell -File run-batch.ps1")`);
     expect(text).toContain("After the restart: not known");
     expect(text).toContain("It must not be started again without the user's OK");
     expect(text).toContain("and 2 more background task(s)");
