@@ -2,9 +2,9 @@
  * What an ordinary chat — neither the project's manager chat nor the PPM Assistant — may do with
  * the `ppm_task_*` tools. The manager checks the chats it hands tasks to by their status, due date
  * and urgency, so the chat doing a task must not be able to switch those checks off: it records
- * its result, next step, notes and links, says whom it waits on and moves the status between the
- * In progress and Waiting groups, and that is all. Closing is the manager's: the chat proposes it
- * (`propose_close` on `ppm_task_update`).
+ * its result, next step, notes and links, says whom it waits on, starts the task (To do → In
+ * progress) and moves it between the In progress and Waiting groups, and that is all. Closing is
+ * the manager's: the chat proposes it (`propose_close` on `ppm_task_update`).
  *
  * A task some other chat works on (or the manager does) is read-only to it, and so are the order
  * and the project's settings (the check interval): otherwise they would be a side door to what it
@@ -20,9 +20,10 @@ export const CHAT_EDITABLE_FIELDS: ReadonlyArray<keyof TaskPatch> = ["result", "
 /** The status groups an ordinary chat may move a task between: In progress and Waiting. */
 export const CHAT_STATUS_GROUPS: readonly BaseGroup[] = ["active", "waiting"];
 
-/** Whether a chat may move its task from group `from` to group `to`: only within the two. */
+/** Whether a chat may move its task from group `from` to group `to`: within the two, or To do → In progress (starting). */
 export function chatMayMove(from: BaseGroup, to: BaseGroup | undefined): boolean {
   if (!to) return false;
+  if (from === "not_started") return to === "active";
   return CHAT_STATUS_GROUPS.includes(from) && CHAT_STATUS_GROUPS.includes(to);
 }
 
@@ -56,7 +57,7 @@ export function askWhom(hasManager: boolean): string {
     : "This project has no manager chat: tell the user, who can do it in PPM.";
 }
 
-const RULE = "A chat other than the project's manager chat may change only result, next_step, notes, links and waiting_on of a task it works on, and move it between the In progress and Waiting groups.";
+const RULE = "A chat other than the project's manager chat may change only result, next_step, notes, links and waiting_on of a task it works on, start it (To do to In progress) and move it between the In progress and Waiting groups.";
 
 /**
  * Why an ordinary chat may not write to `task` at all, or null when the task is handed to it

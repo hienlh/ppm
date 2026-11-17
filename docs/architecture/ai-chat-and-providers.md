@@ -1038,8 +1038,8 @@ or "back from snooze today".
 - **an ordinary chat** acts on its own project only, signed with its title, and is limited
   (`src/services/ppm-tasks/tools/ppm-task-chat-scope.ts`). The manager checks the chats it hands
   tasks to by their status, due date and urgency, so a chat may not switch those checks off: on a
-  task handed to it (its working session) it may change only `result`, `next_step`, `notes`, links and `waiting_on`, and move the status
-  between the In progress and Waiting groups. Closing (also by moving into a closed status),
+  task handed to it (its working session) it may change only `result`, `next_step`, `notes`, links and `waiting_on`, start it (To do to In
+  progress) and move it between the In progress and Waiting groups. Closing (also by moving into a closed status),
   urgency, importance, due date, assignee, snooze, working session, title and the other fields,
   reordering, the project's set-up (`ppm_task_project_update`, the check interval included) and
   undoing anyone's change but its own are refused, the answer saying to ask the manager chat (or the

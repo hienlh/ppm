@@ -22,7 +22,7 @@ const PROJECT = str("The project's name in PPM. A manager or ordinary chat may o
 const TASK = str("The task: `project/123`, `#123` or `123` within the project, or the task's id.");
 const REVISION: Json = { type: "integer", minimum: 0, description: "The task's revision as you last read it (ppm_task_get or ppm_task_list). A stale revision is refused and nothing is written." };
 /** What every write tool tells an ordinary chat about its limits. */
-const CHAT_LIMITS = "A chat that is not the project's manager chat (nor the PPM Assistant) may only change result, next_step, notes, links and waiting_on of a task handed to it (its working session), and move the status between the In progress and Waiting groups; every other task it only reads, and anything else is the manager's to do.";
+const CHAT_LIMITS = "A chat that is not the project's manager chat (nor the PPM Assistant) may only change result, next_step, notes, links and waiting_on of a task handed to it (its working session), start it (To do to In progress) and move it between the In progress and Waiting groups; every other task it only reads, and anything else is the manager's to do.";
 
 const REASON = str("Why you make this change, in a few words. Shown to the user in the task's history.", L.reason);
 const LINK: Json = {

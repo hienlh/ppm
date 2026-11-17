@@ -152,12 +152,24 @@ describe("the chat doing the task", () => {
     expect([after.urgency, after.importance, after.workingSessionId, after.snoozedUntil]).toEqual(["week", "should", "child-1", null]);
   });
 
-  it("may not move a task out of To do, reorder, change the project's set-up or undo the manager's change", async () => {
+  it("starts its task (To do to In progress) but moves it nowhere else from To do", async () => {
+    addManager();
+    const todo = createTask({ projectKey: f.projectKey, title: "Later", workingSessionId: chatOf("child-1") }, MANAGER);
+    const toWaiting = await call(CHILD, "ppm_task_update", { task: "#1", revision: todo.revision, reason: "blocked", status: "Waiting" });
+    expect(text(toWaiting)).toContain("from the Not started group to the Waiting group");
+    expect(text(await call(CHILD, "ppm_task_update", { task: "#1", revision: todo.revision, reason: "done", status: "Done" }))).toContain("to a closed status");
+    const start = await call(CHILD, "ppm_task_update", { task: "#1", revision: todo.revision, reason: "starting now", status: "In progress" });
+    expect(start.isError).toBeFalsy();
+    expect(getTask(todo.id)!.baseGroup).toBe("active");
+    expect(taskHistory(todo.id)[0]).toMatchObject({ kind: "status", actor: { kind: "chat", sessionId: "child-1" }, reason: "starting now" });
+    // Started, it cannot go back to To do.
+    expect(text(await call(CHILD, "ppm_task_update", { task: "#1", revision: rev(todo.id), reason: "later", status: "To do" }))).toContain("from the In progress group to the Not started group");
+  });
+
+  it("may not reorder, change the project's set-up or undo the manager's change", async () => {
     addManager();
     const t = handedTask();
     const todo = createTask({ projectKey: f.projectKey, title: "Later", workingSessionId: "child-1" }, MANAGER);
-    const start = await call(CHILD, "ppm_task_update", { task: "#2", revision: todo.revision, reason: "start", status: "In progress" });
-    expect(text(start)).toContain("from the Not started group to the In progress group");
     expect(text(await call(CHILD, "ppm_task_reorder", { task: "#2", revision: todo.revision, reason: "first", before: "#1" }))).toContain("may not reorder");
     const interval = await call(CHILD, "ppm_task_project_update", { check_interval_min: 240, reason: "fewer checks" });
     expect(interval.isError).toBe(true);
