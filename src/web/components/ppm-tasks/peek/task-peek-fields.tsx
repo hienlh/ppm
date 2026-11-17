@@ -3,11 +3,11 @@
  * waiting on and due as one wrapping row of chips, then the next step folded to two lines.
  *
  * A press on a chip edits that field where it is: the five pickers open a small menu of the task
- * page's own choices (`statusChoices`… in `task-property-fields.tsx`) and save on the pick; Due
- * opens the browser's date picker. So every edit the task page's fields allow is still here. An
- * empty field keeps a faint dashed chip, the place to set it. The due date and the next step save
- * when the field is left, and also when the quick view closes or moves to another task while they
- * hold something unsaved, so nothing typed is lost.
+ * page's own choices (`statusChoices`… in `task-property-fields.tsx`) and save on the pick; Due's
+ * menu offers a few dates, the browser's date picker and No due date. So every edit the task
+ * page's fields allow is still here. An empty field keeps a faint dashed chip, the place to set it.
+ * The next step saves when its field is left, and also when the quick view closes or moves to
+ * another task while it holds something unsaved, so nothing typed is lost.
  *
  * The menus are not modal: a press elsewhere in the quick view only closes the menu, and the
  * quick view leaves a press or an Escape inside a Radix menu to the menu (`task-peek-popover.tsx`).
@@ -16,12 +16,12 @@
  * the rows 14px apart so neighbouring targets do not overlap; a menu row is 44px
  * (docs/design-guidelines.md, rule 3).
  */
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Calendar, Clock, Hand, UserPlus } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { IMPORTANCE_LABEL, URGENCY_LABEL, dueView, localYmd } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
-import { peekChipTitle, peekMemberName } from "@/lib/ppm-tasks/task-peek-compact";
+import { peekChipTitle, peekDuePresets, peekMemberName } from "@/lib/ppm-tasks/task-peek-compact";
 import { PPM_TASK_LIMITS, type Importance, type TaskPatch, type Urgency } from "../../../../shared/ppm-tasks";
 import type { TaskDto, TaskProjectSettings } from "../../../../shared/ppm-tasks-api";
 import { isSaveableDate } from "../task-date-input";
@@ -45,11 +45,6 @@ const EMPTY = "border-dashed border-border-soft text-text-3";
  * 7px past the padding box, which the absolute `::after` is placed from, inside the 1px border.
  */
 const PHONE_REACH = "max-md:after:absolute max-md:after:inset-x-0 max-md:after:-inset-y-[7px] max-md:after:content-['']";
-/**
- * Due's date input over its chip: invisible, the chip's whole size and on a phone 6px more above
- * and below. 16px text, or iOS zooms the page when it takes focus.
- */
-const OVERLAY = "absolute inset-x-0 top-0 h-full w-full min-h-0! cursor-pointer appearance-none border-0 p-0 text-[16px] opacity-0 max-md:-top-1.5 max-md:h-[calc(100%+12px)]";
 /** A menu row: the app's menu row, 44px on a phone. */
 const MENU_ROW = "gap-2 text-[13px] max-md:min-h-11 max-md:text-[15px]";
 
@@ -84,80 +79,92 @@ function MenuChip({ field, label, value, title, empty, choices, renderChoice, on
   );
 }
 
-/** Due's chip: a label over the date input, which takes the presses. */
-function Chip({ field, title, empty, children }: { field: ChipField; title: string; empty: boolean; children: ReactNode }) {
-  return (
-    <label className={cn(CHIP, "focus-within:border-ring", empty ? EMPTY : SET)} title={title} data-task-peek-chip={field} data-empty={empty || undefined}>
-      {children}
-    </label>
-  );
-}
-
 /**
- * Due: a press opens the browser's date picker, and a date picked there (or the picker's Clear)
- * saves at once. A date typed from the keyboard saves on blur or Enter, as the task page's field
- * does, so the half-typed years a date input passes through are never written.
+ * Due: a press opens a small menu — Today, Tomorrow, In a week, Pick a date… (the browser's own
+ * date picker, anchored on the chip) and, when a date is set, No due date. A pick saves at once.
+ *
+ * The date input sits under the chip, invisible and out of the tab order, so it never takes a
+ * press itself (Firefox would otherwise put its clear button there) and is only ever filled by its
+ * picker: no half-typed year ever reaches it, so a whole date saves on change.
  */
 function DueChip({ value, onSave }: { value: string | null; onSave(dueDate: string | null): unknown }) {
-  const { draft, setDraft, commit } = useSavedDraft({ shown: value ?? "", accept: isSaveableDate, onSave: (v) => onSave(v || null) });
+  const input = useRef<HTMLInputElement & { showPicker?(): void }>(null);
   const picking = useRef(false);
-  const view = dueView(draft || null, localYmd());
+  const label = value ? dueView(value, localYmd())?.label ?? value : null;
+  const title = value ? `Due date: ${label} (${value})` : peekChipTitle("Due date", null);
+  const choose = (ymd: string | null) => { if (ymd !== value) onSave(ymd); };
   return (
-    <Chip field="due" title={peekChipTitle("Due date", draft || null)} empty={!draft}>
-      {draft ? <TaskDueLabel dueDate={draft} className="text-[length:inherit]" /> : <><Calendar className="size-3.5" aria-hidden />Due</>}
-      <input type="date" aria-label="Due date" title={view ? `Due ${draft}` : "Add due date"} value={draft} className={OVERLAY}
-        onClick={(e) => {
-          const input = e.currentTarget as HTMLInputElement & { showPicker?(): void };
-          try { input.showPicker?.(); picking.current = true; } catch { /* not allowed here: the field still takes typing */ }
-        }}
-        onKeyDown={(e) => {
-          picking.current = false;
-          if (e.key === "Enter") e.currentTarget.blur();
-        }}
-        onChange={(e) => {
-          setDraft(e.target.value);
-          // Picked rather than typed: leave the field, which saves it.
-          if (picking.current) { picking.current = false; const input = e.currentTarget; setTimeout(() => input.blur(), 0); }
-        }}
-        onBlur={() => { picking.current = false; commit(); }} />
-    </Chip>
+    <span className="relative inline-flex min-w-0 max-w-full shrink-0">
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <button type="button" aria-label={title} title={title} data-task-peek-chip="due" data-empty={!value || undefined}
+            className={cn(CHIP, PHONE_REACH, value ? SET : EMPTY, "data-[state=open]:border-ring data-[state=open]:bg-surface-hover")}>
+            {value ? <TaskDueLabel dueDate={value} className="text-[length:inherit]" /> : <><Calendar className="size-3.5" aria-hidden />Due</>}
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" aria-label="Due date" data-task-peek-menu="due" className="min-w-[11rem] outline-none"
+          // The picker opens once the menu has closed; focus going back to the chip would close it.
+          onCloseAutoFocus={(e) => { if (picking.current) e.preventDefault(); }}>
+          {peekDuePresets(localYmd()).map((p) => (
+            <DropdownMenuItem key={p.label} className={MENU_ROW} data-task-peek-choice={p.label} onSelect={() => choose(p.ymd)}>
+              {p.label}<span className="ml-auto pl-3 text-xs text-text-3">{p.hint}</span>
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuItem className={MENU_ROW} data-task-peek-choice="pick"
+            onSelect={() => {
+              picking.current = true;
+              // Still inside the press's user activation, which `showPicker` needs.
+              setTimeout(() => {
+                picking.current = false;
+                try { input.current?.showPicker?.(); } catch { /* no picker here: the presets remain */ }
+              }, 0);
+            }}>
+            <Calendar className="size-3.5 text-text-3" aria-hidden />Pick a date…
+          </DropdownMenuItem>
+          {value && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className={MENU_ROW} data-task-peek-choice="none" onSelect={() => choose(null)}>No due date</DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <input ref={input} type="date" tabIndex={-1} aria-label="Due date" value={value ?? ""}
+        onChange={(e) => { const v = e.target.value; if (v === "") choose(null); else if (isSaveableDate(v)) choose(v); }}
+        className="pointer-events-none absolute inset-0 size-full min-h-0! border-0 p-0 opacity-0" />
+    </span>
   );
 }
 
-/** The next step as a draft that saves when left or removed (`useSavedDraft`). */
-export function TaskNextStepField({ value, onSave, autoFocus, onDone }: {
-  value: string | null; onSave(nextStep: string | null): unknown;
-  /** Takes the cursor when shown (the quick view's folded next step was pressed). */
-  autoFocus?: boolean;
-  /** Called once the field is left, after it saved. */
-  onDone?(): void;
-}) {
-  const { draft, setDraft, commit } = useSavedDraft({ shown: value ?? "", normalize: (v) => v.trim(), onSave: (v) => onSave(v || null) });
+/** The next step's text field, saved by whoever owns its draft. */
+function NextStepInput({ draft, setDraft, onBlur, autoFocus }: { draft: string; setDraft(v: string): void; onBlur(): void; autoFocus?: boolean }) {
   return (
     <TaskProp label="Next step">
       <textarea aria-label="Next step" rows={autoFocus ? 3 : 2} maxLength={PPM_TASK_LIMITS.nextStep} value={draft} placeholder="What happens next"
         autoFocus={autoFocus} onFocus={autoFocus ? (e) => e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length) : undefined}
-        onChange={(e) => setDraft(e.target.value)} onBlur={() => { commit(); onDone?.(); }}
+        onChange={(e) => setDraft(e.target.value)} onBlur={onBlur}
         className="block w-full resize-y rounded-md border border-border-soft bg-surface px-1.5 py-1 text-[13px] leading-snug text-text outline-none placeholder:text-text-3 focus:border-ring" />
     </TaskProp>
   );
 }
 
+/** The next step as a draft that saves when left or removed (`useSavedDraft`). */
+export function TaskNextStepField({ value, onSave }: { value: string | null; onSave(nextStep: string | null): unknown }) {
+  const { draft, setDraft, commit } = useSavedDraft({ shown: value ?? "", normalize: (v) => v.trim(), onSave: (v) => onSave(v || null) });
+  return <NextStepInput draft={draft} setDraft={setDraft} onBlur={commit} />;
+}
+
 /**
- * The next step folded to two lines; a press unfolds it into the field, and leaving the field
- * folds it again. What was just typed shows folded until the saved task comes back with it.
+ * The next step folded to two lines; a press unfolds it into its field, and leaving the field
+ * saves it and folds it again. The draft lives here rather than in the field, so folding loses
+ * nothing: the folded text is what was typed, and a save that did not land keeps the text, shows
+ * it, and is sent again the next time the field is left (`useSavedDraft`).
  */
 function TaskNextStepPeek({ value, onSave }: { value: string | null; onSave(nextStep: string | null): unknown }) {
   const [editing, setEditing] = useState(false);
-  const [sent, setSent] = useState<string | null | undefined>(undefined);
-  useEffect(() => setSent(undefined), [value]);
-  // A save that did not land (`null`) shows the stored text again rather than the unsaved one.
-  const save = (v: string | null) => {
-    setSent(v);
-    return Promise.resolve(onSave(v)).then((answer) => { if (answer === null) setSent(undefined); return answer; });
-  };
-  if (editing) return <TaskNextStepField value={value} onSave={save} autoFocus onDone={() => setEditing(false)} />;
-  const text = sent !== undefined ? sent : value;
+  const { draft, setDraft, commit } = useSavedDraft({ shown: value ?? "", normalize: (v) => v.trim(), onSave: (v) => onSave(v || null) });
+  if (editing) return <NextStepInput draft={draft} setDraft={setDraft} autoFocus onBlur={() => { commit(); setEditing(false); }} />;
+  const text = draft.trim();
   return (
     <button type="button" onClick={() => setEditing(true)} aria-label={text ? `Next step: ${text}` : "Add the next step"} data-task-peek-next-step=""
       className="-mx-1.5 block min-h-0! w-[calc(100%+12px)] rounded-md px-1.5 py-1 text-left can-hover:hover:bg-surface-hover">
@@ -173,8 +180,10 @@ export function TaskPeekFields({ task, settings, onPatch, onStatus, className }:
   task: TaskDto; settings: TaskProjectSettings | null; onPatch(patch: TaskPatch): unknown; onStatus(statusId: string): void; className?: string;
 }) {
   const people = taskPeople(task, settings?.members);
-  const assignee = peekMemberName(task.assigneeMemberId, people);
-  const waiting = peekMemberName(task.waitingOnMemberId, people);
+  // Until the project's members have been read, a member is not "unknown", only not named yet.
+  const unnamed = settings ? "Unknown member" : "…";
+  const assignee = peekMemberName(task.assigneeMemberId, people, unnamed);
+  const waiting = peekMemberName(task.waitingOnMemberId, people, unnamed);
   const urgency = URGENCY_LABEL[task.effectiveUrgency];
   const urgencyTitle = task.urgencyRaised
     ? `Urgency: ${urgency} (raised from ${URGENCY_LABEL[task.urgency]} by the due date)`

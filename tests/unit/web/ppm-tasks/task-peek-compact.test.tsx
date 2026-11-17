@@ -6,7 +6,8 @@
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { click, installGlobal, mount, uninstallDom, type Mounted } from "../../../helpers/react-dom.tsx";
 import { taskDto } from "./task-fixture.ts";
-import { PEEK_LINK_LIMIT, peekChipTitle, peekLinks, peekMemberName } from "../../../../src/web/lib/ppm-tasks/task-peek-compact";
+import { PEEK_LINK_LIMIT, addDaysYmd, peekChipTitle, peekDuePresets, peekLinks, peekMemberName } from "../../../../src/web/lib/ppm-tasks/task-peek-compact";
+import { localYmd } from "../../../../src/web/lib/ppm-tasks/ppm-tasks-kit-logic";
 import type { LinkState, TaskLink, TaskPatch } from "../../../../src/shared/ppm-tasks.ts";
 import type { TaskProjectSettings } from "../../../../src/shared/ppm-tasks-api.ts";
 
@@ -34,10 +35,20 @@ describe("peekLinks", () => {
 
 describe("chip words", () => {
   const people = [{ id: "me", name: "You" }, { id: "m1", name: "Minh Anh" }];
-  it("names the member picked, nobody as null, and one no longer listed as such", () => {
+  it("names the member picked, nobody as null, and one not listed as such", () => {
     expect(peekMemberName("m1", people)).toBe("Minh Anh");
     expect(peekMemberName(null, people)).toBeNull();
     expect(peekMemberName("gone", people)).toBe("Unknown member");
+    expect(peekMemberName("m1", [], "…")).toBe("…");
+  });
+  it("offers today, tomorrow and a week on as due dates, across a month and a year", () => {
+    expect(addDaysYmd("2026-12-31", 1)).toBe("2027-01-01");
+    expect(addDaysYmd("2026-02-28", 1)).toBe("2026-03-01");
+    expect(peekDuePresets("2026-11-27")).toEqual([
+      { label: "Today", ymd: "2026-11-27", hint: "Fri 27 Nov" },
+      { label: "Tomorrow", ymd: "2026-11-28", hint: "Sat 28 Nov" },
+      { label: "In a week", ymd: "2026-12-04", hint: "Fri 4 Dec" },
+    ]);
   });
   it("says the field and its value, or how to set an empty one", () => {
     expect(peekChipTitle("Urgency", "Today")).toBe("Urgency: Today");
@@ -68,7 +79,7 @@ async function openChip(field: string): Promise<HTMLElement[]> {
   await settle();
   const menu = document.querySelector<HTMLElement>(`[data-task-peek-menu=${field}]`);
   if (!menu) throw new Error(`the ${field} menu did not open`);
-  return [...menu.querySelectorAll<HTMLElement>("[role=menuitemradio]")];
+  return [...menu.querySelectorAll<HTMLElement>("[role=menuitemradio], [role=menuitem]")];
 }
 
 async function pick(field: string, value: string) {
@@ -123,15 +134,52 @@ describe("TaskPeekFields", () => {
     expect($<HTMLInputElement>("input[aria-label='Due date']")?.value).toBe("2026-11-20");
   });
 
-  it("saves a typed due date when the field is left, not per keystroke", async () => {
+  it("sets the due date from its menu: a date offered, one picked, or none", async () => {
     const patches: TaskPatch[] = [];
-    view = await mount(<TaskPeekFields task={taskDto()} settings={SETTINGS} onPatch={(p) => { patches.push(p); }} onStatus={() => {}} />);
-    const due = $<HTMLInputElement>("input[aria-label='Due date']")!;
+    view = await mount(<TaskPeekFields task={taskDto({ dueDate: "2026-11-20" })} settings={SETTINGS} onPatch={(p) => { patches.push(p); }} onStatus={() => {}} />);
+    expect($("[data-task-peek-chip=due]")?.getAttribute("title")).toMatch(/^Due date: .+ \(2026-11-20\)$/);
+    expect((await openChip("due")).map((i) => i.getAttribute("data-task-peek-choice"))).toEqual(["Today", "Tomorrow", "In a week", "pick", "none"]);
+    await click(document.querySelector("[data-task-peek-menu=due] [data-task-peek-choice=Tomorrow]"));
+    await settle();
+    await pick("due", "none");
+    // What the browser's picker fills in saves at once: the input takes nothing typed.
+    const input = $<HTMLInputElement>("input[aria-label='Due date']")!;
+    expect(input.tabIndex).toBe(-1);
     const setValue = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => { setValue.call(due, "2026-12-01"); due.dispatchEvent(new Event("input", { bubbles: true })); });
-    expect(patches).toEqual([]);
-    await act(async () => { due.focus(); due.blur(); });
-    expect(patches).toEqual([{ dueDate: "2026-12-01" }]);
+    await act(async () => { setValue.call(input, "2026-12-01"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    expect(patches).toEqual([{ dueDate: addDaysYmd(localYmd(), 1) }, { dueDate: null }, { dueDate: "2026-12-01" }]);
+  });
+
+  it("offers no 'No due date' for a task without one", async () => {
+    view = await mount(<TaskPeekFields task={taskDto()} settings={SETTINGS} onPatch={() => {}} onStatus={() => {}} />);
+    expect((await openChip("due")).map((i) => i.getAttribute("data-task-peek-choice"))).toEqual(["Today", "Tomorrow", "In a week", "pick"]);
+  });
+
+  it("keeps a next step whose save did not land, shows it folded, and sends it again when next left", async () => {
+    const sent: Array<string | null> = [];
+    let answer: unknown = null;
+    view = await mount(<TaskPeekFields task={taskDto({ nextStep: "A" })} settings={SETTINGS} onPatch={(p) => { sent.push(p.nextStep ?? null); return Promise.resolve(answer); }} onStatus={() => {}} />);
+    await click($("[data-task-peek-next-step]"));
+    const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+    let field = $<HTMLTextAreaElement>("textarea[aria-label='Next step']")!;
+    await act(async () => { setValue.call(field, "B"); field.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => { field.blur(); });
+    await settle();
+    expect(sent).toEqual(["B"]);
+    expect($("[data-task-peek-next-step-text]")?.textContent).toBe("B");
+    // Unfolded again, it holds what was typed, not the stored "A"; leaving it sends that again.
+    await click($("[data-task-peek-next-step]"));
+    field = $<HTMLTextAreaElement>("textarea[aria-label='Next step']")!;
+    expect(field.value).toBe("B");
+    answer = { ok: true };
+    await act(async () => { field.blur(); });
+    await settle();
+    expect(sent).toEqual(["B", "B"]);
+  });
+
+  it("shows a member not named yet while the project's members are being read", async () => {
+    view = await mount(<TaskPeekFields task={taskDto({ assigneeMemberId: "m1" })} settings={null} onPatch={() => {}} onStatus={() => {}} />);
+    expect($("[data-task-peek-chip=assignee]")?.getAttribute("title")).toBe("Assignee: …");
   });
 
   it("folds the next step to two lines, unfolds it into the field on a press, and folds it again once left, saved", async () => {
