@@ -943,7 +943,9 @@ PPM's approvals share one generalized slot with `db_execute` (`chat-ppm-approval
 notifies as `collab_approval` ("Sessions need you"); an AI-created session finishing its turn sends
 no "Chat completed" (a turn stopped by an error still does). `POST /chat/sessions/:id/stop-children`
 stops a session's running direct children, and `GET /chat/sessions/:id/links` lists its creator,
-children and the sessions it messaged.
+children and the sessions it messaged, each with `lastInteractionAt` when the pair has one: the
+pair's `lastAt`, moved by a create, a message either way (a refused one included, since its card was
+about the two) and a wait that ended because the target finished its turn (`pairs.touch`).
 
 **The from-session block** (`src/shared/chat-from-session.ts`). A delivered message carries
 `<ppm-from-session-v1>` after the body (then turn refs, then any reply block): the sender's
