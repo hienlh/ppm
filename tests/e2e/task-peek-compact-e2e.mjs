@@ -136,6 +136,19 @@ async function desktopAt(k, s, width, height) {
     await page.locator("[data-task-peek-menu=urgency] [data-task-peek-choice=today]").click();
     await until("the urgency is saved again", async () => (await k.task(s.full.id)).urgency === "today", 15000);
 
+    // Due's menu: a date it offers saves at once (then the seeded date is put back for the phone's shots).
+    const dueBefore = (await k.task(s.full.id)).dueDate;
+    await peek.locator("[data-task-peek-chip=due]").click();
+    const dueMenu = page.locator("[data-task-peek-menu=due]");
+    await dueMenu.waitFor({ timeout: 5000 });
+    assert.deepEqual(await dueMenu.locator("[data-task-peek-choice]").evaluateAll((els) => els.map((e) => e.getAttribute("data-task-peek-choice"))), ["Today", "Tomorrow", "In a week", "pick", "none"]);
+    await dueMenu.locator("[data-task-peek-choice=Tomorrow]").click();
+    await until("the due date picked from the menu is saved", async () => (await k.task(s.full.id)).dueDate === dayFromNow(1), 15000);
+    await until("the chip shows it", async () => /Tomorrow/.test(await peek.locator("[data-task-peek-chip=due]").innerText()), 10000);
+    const t = await k.task(s.full.id);
+    assert.equal((await k.patch(s.full.id, { revision: t.revision, dueDate: dueBefore })).ok, true);
+    await until("the seeded due date is back", async () => (await k.task(s.full.id)).dueDate === dueBefore, 15000);
+
     // The folded next step unfolds into its field and folds back once left.
     await peek.locator("[data-task-peek-next-step]").click();
     const field = peek.locator("textarea[aria-label='Next step']");
@@ -149,7 +162,7 @@ async function desktopAt(k, s, width, height) {
     await page.locator(`[data-task-peek-popover="${s.full.id}"] [data-task-peek-links] button[data-link-kind=session]`).click();
     await until("the quick view closed for the chat", async () => (await page.locator("[data-task-peek-popover]").count()) === 0, 5000);
   }
-  record(String(width), `six chips in ${layout.rows} rows, on screen (${layout.width}×${layout.height}), 3 links + "+3"${width === 1440 ? ", +3 shows six, urgency menu saves, next step unfolds and saves, chat link opens the chat" : ""}`, layout);
+  record(String(width), `six chips in ${layout.rows} rows, on screen (${layout.width}×${layout.height}), 3 links + "+3"${width === 1440 ? ", +3 shows six, urgency menu saves, Due menu saves, next step unfolds and saves, chat link opens the chat" : ""}`, layout);
 }
 
 async function phoneAt(k, s, width) {
