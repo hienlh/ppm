@@ -449,6 +449,16 @@ right on a desktop (`task-manager-prompt-toast.tsx`), a bottom sheet on a phone.
 manager; *Next turn* or closing it leaves the news for its next turn
 ([PPM Assistant → Tasks](ppm-assistant.md#tasks)).
 
+**Waiting rows say on whom and until when** (`kit/task-waiting-label.tsx`, rules in
+`src/shared/ppm-tasks-waiting.ts`). A task in a Waiting-group status, or with someone in "waiting on",
+reads "Waiting on you", "Waiting on Việt" or just "Waiting", then its due date, else how long it has
+waited (since the status moved into Waiting, from history; else since someone was named). A wait on
+the user is marked with a raised hand in the accent colour. The label never wraps: the words give way
+with "…", the date or age does not. The sidebar, the phone list, the task header and the Tasks chip's
+list all draw it; the chip's list holds no member list, so the server sends `waitingOnName`. **Waiting
+on you** (`kit/task-waiting-on-me-toggle.tsx`) is a chip in the sidebar's filter row and in the Tasks
+chip's header that narrows the list to the open tasks waiting on the user, children included.
+
 **On a phone** (`mobile/`): the list's rows are 62px; a tap opens the task full screen, and a
 long-press or a tap on the status cell opens the row's sheet — the project's statuses as big
 buttons, urgency, Reorder… (Move up / Move down inside the cell, in place of drag), Ask manager and

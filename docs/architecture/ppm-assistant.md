@@ -1818,13 +1818,18 @@ PPM asks every manager chat whose digest switch is on (`PATCH /api/assistant/man
   chat that was not asked, or after the digest was put together, is refused with a hint to report
   it as `done` or `needs_decision` instead.
 - **The card** is made when every asked project answered or `DIGEST_ANSWER_WINDOW_MS` (60 min)
-  passed: kind `digest`, no project, payload `{date, projects: [{name, state, items, titleOnly?}]}`,
+  passed: kind `digest`, no project, payload `{date, projects: [{name, state, items, titleOnly?, waiting?, waitingMore?, waitingMine?}]}`,
   title "Morning digest · N projects, M items", provenance "Put together by PPM; each item was
   written by that project's manager AI". A project with no answer shows "No answer yet (busy)";
   nothing is retried that day. The card goes out through the quiet-hours gate like any other
   (held, then sent at the window's end) and wakes the main Assistant session once, with the items
   (prefixed by project, at most 12) as quoted news. On Telegram a project at the `title` detail
   level shows only how many items it has.
+- **Waiting tasks.** Under the manager's items each section lists the project's waiting tasks, read
+  by PPM itself from the task store when the card is made (`digest-waiting-tasks.ts`), so this part
+  is never a model's words: code, title, on whom and until when, the user's own first, at most
+  `DIGEST_WAITING_MAX` (8) with the rest counted. On Telegram a `title`-level project gives only the
+  count. The ask also asks the managers to say on whom and until when for anything waiting.
 - **Restarts.** At startup a run past its deadline is put together at once; before the deadline,
   an ask no turn took (a `later` message dies with the CLI's input queue) is handed over once more,
   and never a second time. A digest whose time passed while PPM was off runs at startup when it is
@@ -1842,7 +1847,9 @@ quiet switch with a button that flips it. `/status` is `chats_attention` in a me
 do first" order, one task per card, with no AI turn (`assistant-telegram-tasks-deck*.ts`,
 `assistant-telegram-task-actions.ts`, card wording in `assistant-telegram-task-card.ts`). A deck is
 a snapshot of task ids held in memory beside the button codes, gone after a restart like them; a
-task whose project was switched off or that was deleted drops out when it comes up. The status
+task whose project was switched off or that was deleted drops out when it comes up. A waiting task's
+card carries the app's waiting line ("✋ **Waiting on you** · Due tomorrow", "⏳ Waiting on Việt · for
+2 days"), its due date moved onto that line. The status
 buttons are that project's own statuses. A press writes the task as the user (`via: telegram`)
 against the revision the card showed, so a change made elsewhere in between is never overwritten:
 the card is redrawn as "Changed elsewhere". After a status change in a project with a manager chat

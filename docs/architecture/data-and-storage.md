@@ -207,7 +207,10 @@ to read the task again). A write that changes nothing writes no history and keep
 Events go out only after the commit. Deleting is soft (`deleted_at`); the row and its history stay.
 Derived columns are kept in step by the write itself: `closed_at` from the status's group,
 `waiting_since` from "waiting on", and `handed_off_at`, set while the working session is a chat
-other than the project's manager chat. A working session must be a chat of the task's own project
+other than the project's manager chat. When a task's stay in the Waiting group began is not a
+column: `toViews` reads it from the status moves in history (kept past compaction) as
+`waitingStartedAt`, so a task moved into Waiting before this existed, or with nobody named in
+"waiting on", still has an age. How a wait is worded everywhere is `src/shared/ppm-tasks-waiting.ts`. A working session must be a chat of the task's own project
 that is neither a PPM Assistant nor a design chat (`ppm-tasks-session-check.ts`), checked on write
 and again when a decision is sent to it.
 
