@@ -198,6 +198,17 @@ describe("task reminders", () => {
     expect(late.json.problems).toEqual(["This task is closed: it needs no reminder"]);
   });
 
+  it("says which chat is full when the manager chat already holds as many schedules as a chat may", async () => {
+    const manager = await chatIn("alpha", root);
+    assignManager(manager);
+    for (let i = 0; i < 20; i++) createSessionSchedule({ target_session_id: manager, name: `s${i}`, cron_expr: "0 9 * * *", prompt: "p" });
+    const task = createTask({ projectKey: key, title: "T" }, USER);
+    const res = await call("POST", `/api/tasks/${task.id}/reminders`, { at: ahead(2, "UTC"), timezone: "UTC" });
+    expect(res.status).toBe(409);
+    expect(res.json.error).toBe("The manager chat already has 20 schedules, the most a chat can hold. Delete one, then try again.");
+    expect(listSchedulesForTask(task.id)).toHaveLength(0);
+  });
+
   it("refuses when the project has no chat to remind", async () => {
     const task = createTask({ projectKey: key, title: "T" }, USER);
     const res = await call("POST", `/api/tasks/${task.id}/reminders`, { at: ahead(2, "UTC"), timezone: "UTC" });

@@ -8,10 +8,11 @@
 import { ScheduleEditError } from "../scheduler-edit.ts";
 import { nextFireAt } from "../scheduler-timing.ts";
 import { createSessionSchedule } from "../session-schedules/session-schedule-save.ts";
+import { SessionScheduleRefusal } from "../session-schedules/session-schedule-lifecycle.ts";
 import { getTask } from "../ppm-tasks/ppm-tasks-read.ts";
 import { managerSessionFor } from "../ppm-tasks/ppm-tasks-write.ts";
 import { taskProjectName } from "./task-project-name.ts";
-import { timezoneProblem } from "../../shared/session-schedule-input.ts";
+import { MAX_SCHEDULES_PER_SESSION, timezoneProblem } from "../../shared/session-schedule-input.ts";
 import {
   localMomentText, localMomentToEpoch, parseLocalMoment, REMINDER_MAX_AHEAD_MS, REMINDER_NOTE_MAX, reminderCron, reminderName,
   reminderPrompt,
@@ -73,13 +74,27 @@ export function createTaskReminder(taskId: string, input: TaskReminderInput, now
   if (!target) throw new ScheduleEditError(["This project has no manager chat and nobody is working on the task, so there is no chat to remind"]);
   const project = taskProjectName(task.projectKey);
   const named = { number: task.number, project, title: task.title };
-  return createSessionSchedule({
-    target_session_id: target,
-    cron_expr: cron,
-    timezone: zone,
-    recurring: false,
-    name: reminderName(named),
-    prompt: reminderPrompt(named, (note as string).trim() || null),
-    task_id: task.id,
-  }, { now });
+  try {
+    return createSessionSchedule({
+      target_session_id: target,
+      cron_expr: cron,
+      timezone: zone,
+      recurring: false,
+      name: reminderName(named),
+      prompt: reminderPrompt(named, (note as string).trim() || null),
+      task_id: task.id,
+    }, { now });
+  } catch (e) {
+    // The chat-wide limit, said in the task page's terms: which chat is full, and what to do.
+    if (e instanceof SessionScheduleRefusal && e.code === "limit") {
+      throw new SessionScheduleRefusal("limit", reminderLimitMessage(target === managerSessionFor(task.projectKey)));
+    }
+    throw e;
+  }
+}
+
+/** What the task page says when the chat a reminder goes to already holds as many schedules as a chat may. */
+export function reminderLimitMessage(toManager: boolean): string {
+  const chat = toManager ? "The manager chat" : "The chat working on this task";
+  return `${chat} already has ${MAX_SCHEDULES_PER_SESSION} schedules, the most a chat can hold. Delete one, then try again.`;
 }
