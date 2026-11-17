@@ -42,6 +42,10 @@ const VARIANT = process.env.PPM_SCROLL_VARIANT ?? "replay";
 const AT_BOTTOM_PX = 80;
 /** Longer than three frames with the answer gone from under its prompt is visible to a reader. */
 const ANSWER_GONE_TOLERANCE_MS = 50;
+/** A streamed answer is drawn in at least this many steps (flushes are ~100 ms apart). */
+const MIN_DRAW_STEPS = 4;
+/** Variants that drop the chat socket mid-run. */
+const DROPS_SOCKET = new Set(["replay", "end-reconnect", "midturn-reconnect", "idle-reconnect"]);
 let failures = 0;
 const check = (ok, label, detail = "") => { console.log(`${ok ? "PASS" : "FAIL"} ${label}${detail ? ` — ${detail}` : ""}`); if (!ok) failures++; };
 
@@ -108,7 +112,9 @@ async function sampleFrames(page, tabId, prompt) {
         const lastIsPrompt = !!rows.length && (rows[rows.length - 1].textContent ?? "").includes(prompt);
         // Only the last few rows: the prompt is near the end whenever it is in the list at all.
         const hasPrompt = [...rows].slice(-4).some((r) => (r.textContent ?? "").includes(prompt));
-        probe.frames.push({ t: performance.now(), top: el.scrollTop, sh: el.scrollHeight, ch: el.clientHeight, dist: el.scrollHeight - el.scrollTop - el.clientHeight, trailing, rows: rows.length, lastIsPrompt, hasPrompt });
+        // How much of the answer is drawn: grows step by step while it streams.
+        const answerLen = hasPrompt && !lastIsPrompt ? (rows[rows.length - 1].textContent ?? "").length : 0;
+        probe.frames.push({ t: performance.now(), top: el.scrollTop, sh: el.scrollHeight, ch: el.clientHeight, dist: el.scrollHeight - el.scrollTop - el.clientHeight, trailing, rows: rows.length, lastIsPrompt, hasPrompt, answerLen });
       }
       requestAnimationFrame(tick);
     };
@@ -325,14 +331,24 @@ try {
     // Once drawn, the answer stays: a list that drops it, even for a moment, puts the reader's
     // own previous message at the bottom of the view — the "jump back" that was reported.
     const gone = answerGoneMs(trace.frames);
-    extra += ` answerGoneMs=${gone.longest}`;
-    const ok = after && after.dist <= AT_BOTTOM_PX && answerShown && gone.longest <= ANSWER_GONE_TOLERANCE_MS;
+    // The answer is drawn as it is written, not once at the end: count the frames, while the turn
+    // streamed, in which the drawn answer got longer.
+    let growth = 0;
+    for (let i = 1; i < trace.frames.length; i++) {
+      const [a, b] = [trace.frames[i - 1], trace.frames[i]];
+      if (b.trailing && a.answerLen > 0 && b.answerLen > a.answerLen) growth++;
+    }
+    extra += ` answerGoneMs=${gone.longest} drawnInSteps=${growth}`;
+    // Enforced on turns streamed without a drop: after a drop the rest of a turn is short, and the
+    // count says more about where the drop fell than about how the answer is drawn.
+    const drawnOk = DROPS_SOCKET.has(VARIANT) || growth >= MIN_DRAW_STEPS;
+    const ok = after && after.dist <= AT_BOTTOM_PX && answerShown && gone.longest <= ANSWER_GONE_TOLERANCE_MS && drawnOk;
     // The scroller's own height over the run: a bar above or below it coming and going shows here.
     const chs = trace.frames.map((f) => f.ch);
     extra += ` ch=${Math.min(...chs)}..${Math.max(...chs)} maxDist=${Math.max(...trace.frames.map((f) => Math.round(f.dist)))}`;
-    results.push({ run, ok, after, followedWhileStreaming, answerGoneMs: gone.longest });
+    results.push({ run, ok, after, followedWhileStreaming, answerGoneMs: gone.longest, drawnInSteps: growth });
     console.log(`  run ${run}: dist=${after?.dist} top=${after?.top} sh=${after?.sh} ch=${after?.ch} rowAtTop=${after?.rowAtTop} followedWhileStreaming=${followedWhileStreaming} ${extra}`);
-    if (!ok) {
+    if (!ok || gone.longest > 0) {
       // The last frames before and after the turn ended, and every position write meanwhile.
       // Times are relative to the last frame the turn was still streaming in. Frames are kept
       // where something moved (offset, height or row count), with the frame before each.
@@ -355,7 +371,7 @@ try {
   const jumped = results.filter((r) => !r.ok);
   await writeFile(join(OUT, "summary.json"), JSON.stringify(results, null, 2));
   check(jumped.length === 0, `the view stays on the answer, at the bottom, through every turn (${RUNS - jumped.length}/${RUNS})`,
-    jumped.map((r) => `run ${r.run}: ${r.after?.dist}px from the bottom, answer gone ${r.answerGoneMs} ms`).join("; "));
+    jumped.map((r) => `run ${r.run}: ${r.after?.dist}px from the bottom, answer gone ${r.answerGoneMs} ms, drawn in ${r.drawnInSteps} steps`).join("; "));
   await context.close();
 } catch (error) {
   console.log(`FAIL harness — ${error?.stack ?? error}`);
