@@ -82,6 +82,31 @@ class PairCounter {
     return p.auto;
   }
 
+  /**
+   * The two exchanged something without a message being counted: a wait on the other ended
+   * because its turn ended. The pair's last-interaction time moves; no count does.
+   */
+  touch(a: string, b: string): void {
+    const key = this.key(a, b);
+    if (!key) return;
+    const p = this.pairs.get(key) ?? { auto: 0, extra: 0, lastAt: 0 };
+    p.lastAt = Date.now();
+    this.pairs.delete(key);
+    this.pairs.set(key, p);
+    this.trim();
+    this.schedule();
+  }
+
+  /**
+   * When the two last interacted (epoch ms): a create, a message either way, a wait on the other
+   * ending. Undefined for a pair with nothing recorded. A message refused at a card still moved it:
+   * the card about the two was the interaction.
+   */
+  lastInteraction(a: string, b: string): number | undefined {
+    const at = this.pair(a, b)?.lastAt;
+    return at ? at : undefined;
+  }
+
   /** Takes back one message `record` counted that was then refused or never delivered. */
   unrecord(a: string, b: string): void {
     const key = this.key(a, b);

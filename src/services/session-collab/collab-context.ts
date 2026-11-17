@@ -87,6 +87,8 @@ export interface CollabEnv extends AssistantCollabHooks {
     record(a: string, b: string): number;
     /** Takes back a message `record` counted that was never delivered. */
     unrecord(a: string, b: string): void;
+    /** The two interacted without a counted message (a wait on the other ended with its turn). */
+    touch(a: string, b: string): void;
     grant(a: string, b: string, n: number): void;
     setAllowCreate(sessionId: string): void;
     canCreateWithoutAsking(sessionId: string): boolean;

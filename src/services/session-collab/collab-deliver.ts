@@ -104,6 +104,11 @@ export async function deliverAndWait(env: CollabEnv, input: {
   if (target.design && !reply.replied && reply.reason === "turn_ended_without_reply") {
     reply = designAnswerReply(env, target.sessionId, delivered.clientMessageId) ?? reply;
   }
+  // The target finishing its turn is it reporting back, though no message was counted for it. The
+  // PPM Assistant's chats belong to no project, so its pairs are never recorded.
+  if (!reply.replied && reply.reason === "turn_ended_without_reply" && caller.kind !== "assistant") {
+    env.pairs.touch(caller.sessionId, target.sessionId);
+  }
   return { ok: true, delivered: delivered.delivered, clientMessageId: delivered.clientMessageId, reply, taken: handle.taken() };
 }
 

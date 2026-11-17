@@ -70,7 +70,8 @@ export const isSpawned = (sessionId: string): boolean => parentOf(sessionId) !==
 
 /**
  * Every session linked to this one: its creator, the sessions it created, and the sessions it has
- * exchanged messages with, each once with every relation that applies.
+ * exchanged messages with, each once with every relation that applies and, when known, when the
+ * two last interacted.
  */
 export function linkedSessions(sessionId: string): SessionLink[] {
   const self = resolveMigratedSession(sessionId);
@@ -83,7 +84,10 @@ export function linkedSessions(sessionId: string): SessionLink[] {
   if (parent) add(parent, "parent");
   for (const child of childrenOf(self)) add(child, "child");
   for (const other of pairCounter.messagedWith(self)) add(other, "messaged");
-  return [...byId].map(([id, relations]) => ({ sessionId: id, relations: [...relations] }));
+  return [...byId].map(([id, relations]) => {
+    const at = pairCounter.lastInteraction(self, id);
+    return { sessionId: id, relations: [...relations], ...(at ? { lastInteractionAt: at } : {}) };
+  });
 }
 
 /**
