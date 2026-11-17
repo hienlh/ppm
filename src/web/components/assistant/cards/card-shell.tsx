@@ -15,6 +15,7 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { ChevronDown } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { CHAT_MESSAGE_TEXT } from "@/lib/chat-message-text";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
 import { CardMenu } from "./card-menu";
 import { FollowUpNewCards } from "./card-followup-new-cards";
@@ -105,7 +106,7 @@ const FOLDED_TEXT = "max-h-[11.25rem]";
 
 /**
  * A card's long text, as Markdown: the chat's renderer in its card mode (no HTML, nothing loaded
- * on its own, links in a new tab). A card that still waits shows all of it (the user answers from
+ * on its own, links in a new tab), at a chat message's size wherever the card is drawn. A card that still waits shows all of it (the user answers from
  * it); one that no longer waits folds anything past about eight lines behind "Show more".
  */
 export function CardText({ text, fold, className, projectName }: { text: string; fold: boolean; className?: string; projectName?: string | null }) {
@@ -133,7 +134,7 @@ export function CardText({ text, fold, className, projectName }: { text: string;
     <div className="relative">
       <div
         ref={box}
-        className={cn("card-markdown break-words text-text-secondary", folded && `${FOLDED_TEXT} overflow-hidden`, className)}
+        className={cn("card-markdown break-words text-text-secondary", CHAT_MESSAGE_TEXT, folded && `${FOLDED_TEXT} overflow-hidden`, className)}
         data-card-text=""
         data-folded={folded ? "" : undefined}
       >
