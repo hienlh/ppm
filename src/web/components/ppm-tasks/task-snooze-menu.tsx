@@ -59,7 +59,7 @@ export function TaskSnoozePicker({ task, open, onOpenChange, onSnooze, anchorRef
         <Popover.Content side="bottom" align="end" sideOffset={6} collisionPadding={8} aria-label="Snooze until" data-task-snooze-popover=""
           // The trigger toggles it itself: its own press must not close it first and reopen it.
           onPointerDownOutside={(e) => { if (anchorRef?.current?.contains(e.target as Node)) e.preventDefault(); }}
-          className="z-50 w-[260px] max-w-[calc(100vw-24px)] rounded-xl border border-border bg-panel-2 p-1.5 font-sans shadow-lg">
+          className="z-50 w-[320px] max-w-[calc(100vw-24px)] rounded-xl border border-border bg-panel-2 p-1.5 font-sans shadow-lg">
           <Heading />
           <TaskSnoozeOptions task={task} onPick={pick} pickingDate={pickingDate} />
         </Popover.Content>

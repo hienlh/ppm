@@ -43,8 +43,8 @@ export function TaskSnoozeOptions({ task, onPick, today = localYmd(), pickingDat
             aria-expanded={c.id === "date" ? picking : undefined}
             onClick={() => (c.patch ? onPick(c.patch) : setPicking((v) => !v))}>
             <Icon aria-hidden className="size-4 shrink-0 text-text-3" />
-            <span className={cn("min-w-0 flex-1 truncate", c.id === "clear" && "text-primary")}>{c.label}</span>
-            {c.detail && <span className="shrink-0 text-[11.5px] text-text-3">{c.detail}</span>}
+            <span className={cn("shrink-0 whitespace-nowrap", c.id === "clear" && "text-primary")}>{c.label}</span>
+            {c.detail && <span className="min-w-0 shrink truncate text-right text-[11.5px] text-text-3">{c.detail}</span>}
           </button>
         );
       })}
