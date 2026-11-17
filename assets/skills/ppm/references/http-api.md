@@ -660,6 +660,7 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 
 - `GET    /api/schedules`
 - `GET    /api/schedules/:id{[0-9]+}`
+- `POST   /api/schedules/:id{[0-9]+}/dismiss`
 - `POST   /api/schedules`
 - `PATCH  /api/schedules/:id{[0-9]+}`
 - `DELETE /api/schedules/:id{[0-9]+}`
@@ -788,6 +789,7 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `GET    /api/tasks/${ID}/history`
 - `POST   /api/tasks/history/:historyId{[0-9]+}/undo`
 - `GET    /api/tasks/link-states`
+- `POST   /api/tasks/:id/reminders`
 - `GET    /api/tasks`
 - `GET    /api/tasks/:id{${TASK_ID_PATTERN}}`
 - `POST   /api/tasks`
@@ -886,4 +888,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.8 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.9 -->
