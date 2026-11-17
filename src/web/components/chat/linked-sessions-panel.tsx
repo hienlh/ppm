@@ -148,7 +148,8 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
           />
         </label>
       )}
-      <div className="max-h-64 min-h-0 overflow-y-auto overscroll-contain p-1 max-md:max-h-none max-md:flex-1">
+      {/* Only the list scrolls and gives way when the popover runs out of room; the filter and the foot stay put. */}
+      <div data-linked-list="" className="max-h-[min(60vh,30rem)] min-h-0 overflow-y-auto overscroll-contain p-1 max-md:max-h-none max-md:flex-1">
         {grouped.length === 0 && (
           <p className="px-2 py-3 text-center text-xs text-text-3">
             {searched
@@ -201,7 +202,7 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
       )}
 
       {undo && (
-        <div role="status" data-undo-bar="" className="footer-pop-in mx-2 mb-2 mt-1 flex items-center gap-2 rounded-lg bg-surface-hover py-1 pl-2.5 pr-1 text-xs text-text max-md:text-sm">
+        <div role="status" data-undo-bar="" className="footer-pop-in mx-2 mb-2 mt-1 flex shrink-0 items-center gap-2 rounded-lg bg-surface-hover py-1 pl-2.5 pr-1 text-xs text-text max-md:text-sm">
           <span className="min-w-0 flex-1 truncate">{undo.text}</span>
           <FooterButton onClick={() => doRelink(undo.ids)} className="font-medium !text-primary">
             <RotateCcw />

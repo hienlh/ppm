@@ -201,6 +201,27 @@ try {
       check(time("Brainstorm: GI Group Ireland") === "5d ago", `${tag}: a child with no later interaction shows its creation`, time("Brainstorm: GI Group Ireland"));
       check(time("NX-6612 pension auto-enrolment") === "3h ago", `${tag}: a messaged session shows the server's time`, time("NX-6612 pension auto-enrolment"));
       check(await page.locator("[data-linked-filter]:visible").count() === 1, `${tag}: a filter past eight rows`);
+      if (!phone) {
+        // Only the list scrolls: it grows to min(60vh, 30rem) and gives way to the popover's own cap,
+        // while the filter and the foot stay whole inside the popover.
+        const m = await page.evaluate(() => {
+          const vis = (sel) => [...document.querySelectorAll(sel)].find((el) => el.getClientRects().length);
+          const box = (el) => el?.getBoundingClientRect();
+          const list = vis("[data-linked-list]");
+          const pop = box(vis("[data-footer-popover]"));
+          const filter = box(vis("[data-linked-filter]")?.closest("label"));
+          const foot = box(vis("[data-unlink-finished]")?.parentElement);
+          return {
+            list: Math.round(box(list).height), scrolls: list.scrollHeight > list.clientHeight, maxHeight: getComputedStyle(list).maxHeight,
+            inside: !!pop && [filter, foot].every((b) => b && b.top >= pop.top - 0.5 && b.bottom <= pop.bottom + 0.5), pop: Math.round(pop.height),
+            vh: innerHeight,
+          };
+        });
+        const cap = Math.min(0.6 * m.vh, 480);
+        check(m.list > 256 && m.list <= cap + 0.5, `${tag}: the list is taller than before and within min(60vh, 30rem)`, `list ${m.list}px, cap ${cap}px, max-height ${m.maxHeight}, popover ${m.pop}px`);
+        check(m.scrolls, `${tag}: the list scrolls inside`);
+        check(m.inside, `${tag}: the filter and the foot stay whole inside the popover`);
+      }
       await shot(page, tabId, `${tag}-long-list`);
 
       await page.locator("[data-linked-filter]:visible").fill("nx");
