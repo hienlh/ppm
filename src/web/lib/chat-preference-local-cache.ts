@@ -39,9 +39,11 @@ function sanitizeSettings(input: unknown): ChatPreparationSettings | null {
   if (isPlainObject(input.providers)) {
     for (const [id, value] of Object.entries(input.providers)) {
       if (!isPlainObject(value)) continue;
-      providers[id] = typeof value.permission_mode === "string"
-        ? { permission_mode: value.permission_mode }
-        : {};
+      const kept: ChatPreparationProviderSettings = {};
+      if (typeof value.permission_mode === "string") kept.permission_mode = value.permission_mode;
+      if (typeof value.model === "string") kept.model = value.model;
+      if (typeof value.effort === "string") kept.effort = value.effort;
+      providers[id] = kept;
     }
   }
   return { default_provider: input.default_provider, new_chat_provider_mode: mode, providers };
