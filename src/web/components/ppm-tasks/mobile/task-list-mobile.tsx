@@ -17,6 +17,8 @@ import { useTaskWrite } from "../use-task-write";
 import { TaskRowMobile } from "./task-row-mobile";
 import { TaskRowActionSheet } from "./task-row-action-sheet";
 import { changeTaskStatus } from "./task-status-change";
+import { TaskSnoozedSection } from "../task-snoozed-section";
+import { UNSNOOZE_PATCH } from "@/lib/ppm-tasks/task-snooze-choices";
 
 /** The rows above and below `task` in its own cell, in list order: where Reorder can move it. */
 export function cellNeighbours(groups: readonly TaskListGroup[], task: TaskDto | null): { up: TaskDto | null; down: TaskDto | null } {
@@ -33,8 +35,8 @@ export function TaskListMobile(p: TaskListViewProps) {
   const managers = useManagerChats();
   const pressed = useMemo(() => {
     for (const g of p.groups) for (const r of g.rows) if (r.task.id === pressedId) return r.task;
-    return null;
-  }, [p.groups, pressedId]);
+    return p.snoozed.find((t) => t.id === pressedId) ?? null;
+  }, [p.groups, p.snoozed, pressedId]);
 
   const open = useCallback((task: TaskDto) => p.onSelect(task, true), [p]);
   const actions = useCallback((task: TaskDto) => setPressedId(task.id), []);
@@ -61,13 +63,24 @@ export function TaskListMobile(p: TaskListViewProps) {
           </div>
         </section>
       ))}
+      <TaskSnoozedSection tasks={p.snoozed} mobile row={(task) => {
+        const live = p.live[task.id];
+        return (
+          <TaskRowMobile task={task} depth={0} selected={task.id === p.selectedId} showProject={p.showProject}
+            progress={p.progress.get(task.id)} members={p.settings[task.project]?.members}
+            linkStates={live?.linkStates} working={live?.workingSession}
+            onOpen={open} onActions={actions} onOpenChat={p.onOpenChat} onStartChat={p.onStartChat}
+            onUnsnooze={(t) => p.onSnooze(t, UNSNOOZE_PATCH)} />
+        );
+      }} />
       <TaskRowActionSheet task={pressed} showProject={p.showProject} statuses={pressed ? p.settings[pressed.project]?.statuses : undefined}
         neighbours={cellNeighbours(p.groups, pressed)} hasManager={!!(pressed && managerOf(pressed.project, managers))}
         onClose={() => setPressedId(null)}
         onStatus={(t, id) => changeTaskStatus(write, t, id, p.settings[t.project]?.statuses)}
         onUrgency={(t, urgency) => p.onMove(t, { urgency })}
         onReorder={(t, to) => p.onMove(t, { reorder: to })}
-        onAskManager={(t) => void askManagerAboutTask(t, managers)} />
+        onAskManager={(t) => void askManagerAboutTask(t, managers)}
+        onSnooze={p.onSnooze} />
     </div>
   );
 }

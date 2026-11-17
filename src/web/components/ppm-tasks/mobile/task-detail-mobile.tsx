@@ -141,7 +141,7 @@ export function TaskDetailMobile({ detail, settings, sheet: inSheet }: TaskDetai
       <TaskFieldEditorSheet kind={sheet} task={task} childTasks={children} settings={settings} hasManager={!!managerOf(task.project, managers)}
         onClose={() => setSheet(null)} onPatch={patch} onStatus={(id) => changeTaskStatus(write, task, id, settings?.statuses)}
         onOpenTask={(t) => openTask(t, { keep: true })} onAddChild={() => setChildOpen(true)} onManageFields={() => setFieldsOpen(true)}
-        onAskManager={askManager} onStartChat={startChat} />
+        onAskManager={askManager} onStartChat={startChat} onOpenSheet={setSheet} />
       <TaskNewDialog open={childOpen} onOpenChange={setChildOpen} scope="project" project={task.project} projects={NO_PROJECTS}
         parent={task} onCreated={(c) => openTask(c, { keep: true })} />
       <TaskProjectSettingsDialog open={fieldsOpen} onOpenChange={setFieldsOpen} project={task.project} initialSection="fields" />

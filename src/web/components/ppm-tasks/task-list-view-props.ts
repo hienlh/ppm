@@ -7,6 +7,7 @@ import type { TaskListGroup } from "@/lib/ppm-tasks/task-list-view";
 import type { LinkState, Urgency } from "../../../shared/ppm-tasks";
 import type { TaskDto, TaskWorkingSession } from "../../../shared/ppm-tasks-api";
 import type { SettingsMap } from "./use-task-project-settings-map";
+import type { SnoozePatch } from "./task-snooze-options";
 
 export interface TaskListViewProps {
   groups: TaskListGroup[];
@@ -24,4 +25,8 @@ export interface TaskListViewProps {
   onStartChat(task: TaskDto): void;
   /** A reorder inside the task's cell, or a new urgency (desktop drag; phone "Reorder…"). */
   onMove(task: TaskDto, to: { reorder: { beforeId: string } | { afterId: string } } | { urgency: Urgency }): void;
+  /** Snoozed tasks the filters let through, for the "Snoozed (N)" section at the bottom. */
+  snoozed: readonly TaskDto[];
+  /** Snooze or unsnooze (row menu, phone sheet, a snoozed row's Unsnooze). */
+  onSnooze(task: TaskDto, patch: SnoozePatch): void;
 }

@@ -5,8 +5,17 @@
  * how long — with a wait on the user standing out, a Decision/Reply
  * badge, child progress, the working-session chip) and importance
  * bars with the assignee on the right. A click previews the task, a double-click keeps its tab.
+ * A right-click opens the row's menu, "Snooze until…" (the picker's date choice opens beside the
+ * row); a snoozed row says until when and has its own Unsnooze, a returned one says "Back today".
  */
-import type { DragEvent, PointerEvent } from "react";
+import { useRef, useState, type DragEvent, type PointerEvent, type ReactNode } from "react";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
+import { localYmd } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
+import { UNSNOOZE_PATCH, snoozeChoices } from "@/lib/ppm-tasks/task-snooze-choices";
+import { TaskSnoozeBadge } from "./kit/task-snooze-badge";
+import { TaskSnoozePicker } from "./task-snooze-menu";
+import { UnsnoozeButton } from "./task-snoozed-section";
+import type { SnoozePatch } from "./task-snooze-options";
 import { cn } from "@/lib/utils";
 import { linkStateView } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
 import { memberName, taskWaiting } from "@/lib/ppm-tasks/task-format";
@@ -40,6 +49,41 @@ export interface TaskListRowProps {
   onOpenChat(task: TaskDto, sessionId: string): void;
   onStartChat(task: TaskDto): void;
   onPointerDown?(e: PointerEvent<HTMLDivElement>, task: TaskDto): void;
+  /** Snooze or unsnooze the task; absent, the row has no menu. */
+  onSnooze?(task: TaskDto, patch: SnoozePatch): void;
+}
+
+/** The row's right-click menu: the snooze choices, "Pick a date…" opening the picker beside the row. */
+function SnoozeRowMenu({ task, onSnooze, children }: { task: TaskDto; onSnooze(task: TaskDto, patch: SnoozePatch): void; children: ReactNode }) {
+  const anchor = useRef<HTMLDivElement>(null);
+  const [picking, setPicking] = useState(false);
+  if (task.baseGroup === "closed") return <>{children}</>;
+  const choices = snoozeChoices(task, localYmd());
+  return (
+    <div ref={anchor}>
+      <ContextMenu>
+        {/* A plain box: the row keeps its own handlers (drag, click) and the right-click bubbles here. */}
+        <ContextMenuTrigger asChild><div data-task-row-menu-trigger="">{children}</div></ContextMenuTrigger>
+        <ContextMenuContent data-task-row-menu={task.id} className="min-w-[220px]">
+          <ContextMenuLabel className="text-[11px] uppercase tracking-wide text-text-3">Snooze until…</ContextMenuLabel>
+          {choices.filter((c) => c.id !== "clear").map((c) => (
+            <ContextMenuItem key={c.id} disabled={c.disabled} data-snooze-choice={c.id}
+              onSelect={() => (c.patch ? onSnooze(task, c.patch) : setPicking(true))}>
+              <span className="flex-1">{c.label}</span>
+              {c.detail && <span className="ml-3 text-[11px] text-text-3">{c.detail}</span>}
+            </ContextMenuItem>
+          ))}
+          {choices.some((c) => c.id === "clear") && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem data-snooze-choice="clear" onSelect={() => onSnooze(task, UNSNOOZE_PATCH)}>Unsnooze</ContextMenuItem>
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
+      <TaskSnoozePicker task={task} open={picking} onOpenChange={setPicking} anchorRef={anchor} onSnooze={(patch) => onSnooze(task, patch)} />
+    </div>
+  );
 }
 
 /** The meta line's external state: the first Jira key, else the first PR's state as a dot (the phone row too). */
@@ -60,6 +104,11 @@ export function externalMeta(task: TaskDto, states: readonly LinkState[] | undef
 }
 
 export function TaskListRow(p: TaskListRowProps) {
+  const row = <TaskListRowBody {...p} />;
+  return p.onSnooze ? <SnoozeRowMenu task={p.task} onSnooze={p.onSnooze}>{row}</SnoozeRowMenu> : row;
+}
+
+function TaskListRowBody(p: TaskListRowProps) {
   const { task } = p;
   const waiting = taskWaiting(task, p.members);
   const assignee = memberName(task.assigneeMemberId, p.members);
@@ -67,7 +116,8 @@ export function TaskListRow(p: TaskListRowProps) {
   return (
     <div role="option" aria-selected={p.selected} tabIndex={-1} data-task-row={task.id} data-depth={p.depth}
       onClick={() => p.onSelect(task, false)} onDoubleClick={() => p.onSelect(task, true)}
-      onPointerDown={p.onPointerDown && p.depth === 0 ? (e) => p.onPointerDown!(e, task) : undefined}
+      // A snoozed row sits outside the urgency groups: there is nowhere to drag it.
+      onPointerDown={p.onPointerDown && p.depth === 0 && !task.snoozed ? (e) => p.onPointerDown!(e, task) : undefined}
       onDragStart={(e: DragEvent) => e.preventDefault()}
       className={cn(
         "group relative grid cursor-pointer select-none grid-cols-[16px_minmax(0,1fr)_auto] gap-x-2 rounded-md py-1.5 pr-2 text-left",
@@ -86,9 +136,11 @@ export function TaskListRow(p: TaskListRowProps) {
             {externalMeta(task, p.linkStates)}
             {waiting ? <TaskWaitingLabel detail={waiting} untilApart className="text-[11.5px]" />
               : task.dueDate ? <TaskDueLabel dueDate={task.dueDate} className="text-[11px]" /> : null}
+            <TaskSnoozeBadge task={task} />
             {p.progress && p.progress.total > 0 && <span className="font-mono text-[11px]">{p.progress.done}/{p.progress.total}</span>}
             <TaskWorkingSessionChip working={p.working ?? task.workingSession} check={task.check}
               onOpen={(sid) => p.onOpenChat(task, sid)} onStartChat={() => p.onStartChat(task)} />
+            {task.snoozed && p.onSnooze && <UnsnoozeButton onClick={() => p.onSnooze!(task, UNSNOOZE_PATCH)} />}
           </div>
         )}
       </div>

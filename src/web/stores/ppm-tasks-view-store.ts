@@ -31,17 +31,20 @@ interface TaskViewState {
   searchOpen: boolean;
   /** Projects left out of the all-projects list (their chips are off). */
   hiddenProjects: string[];
+  /** The list's "Snoozed (N)" section is unfolded. */
+  snoozedOpen: boolean;
   setScope(scope: TaskScope): void;
   setFilters(patch: Partial<TaskViewFilters>): void;
   clearFilters(): void;
   setQuery(query: string): void;
   setSearchOpen(open: boolean): void;
   toggleProject(project: string): void;
+  setSnoozedOpen(open: boolean): void;
 }
 
 const KEY = "ppm:tasks-view";
 
-function read(): Partial<Pick<TaskViewState, "scope" | "filters" | "hiddenProjects">> {
+function read(): Partial<Pick<TaskViewState, "scope" | "filters" | "hiddenProjects" | "snoozedOpen">> {
   try {
     const raw = globalThis.localStorage?.getItem(KEY);
     if (!raw) return {};
@@ -60,15 +63,16 @@ function read(): Partial<Pick<TaskViewState, "scope" | "filters" | "hiddenProjec
         waitingOnMe: f.waitingOnMe === true,
       },
       hiddenProjects: strings(v.hiddenProjects),
+      snoozedOpen: v.snoozedOpen === true,
     };
   } catch {
     return {};
   }
 }
 
-function write(s: Pick<TaskViewState, "scope" | "filters" | "hiddenProjects">): void {
+function write(s: Pick<TaskViewState, "scope" | "filters" | "hiddenProjects" | "snoozedOpen">): void {
   try {
-    globalThis.localStorage?.setItem(KEY, JSON.stringify({ scope: s.scope, filters: s.filters, hiddenProjects: s.hiddenProjects }));
+    globalThis.localStorage?.setItem(KEY, JSON.stringify({ scope: s.scope, filters: s.filters, hiddenProjects: s.hiddenProjects, snoozedOpen: s.snoozedOpen }));
   } catch { /* storage unavailable: the view just does not survive a reload */ }
 }
 
@@ -81,6 +85,7 @@ export const useTaskViewStore = create<TaskViewState>()((set, get) => {
     query: "",
     searchOpen: false,
     hiddenProjects: saved.hiddenProjects ?? [],
+    snoozedOpen: saved.snoozedOpen ?? false,
     setScope: (scope) => { set({ scope }); save(); },
     setFilters: (patch) => { set((s) => ({ filters: { ...s.filters, ...patch } })); save(); },
     clearFilters: () => { set({ filters: EMPTY_FILTERS }); save(); },
@@ -90,5 +95,6 @@ export const useTaskViewStore = create<TaskViewState>()((set, get) => {
       set((s) => ({ hiddenProjects: s.hiddenProjects.includes(project) ? s.hiddenProjects.filter((p) => p !== project) : [...s.hiddenProjects, project] }));
       save();
     },
+    setSnoozedOpen: (snoozedOpen) => { set({ snoozedOpen }); save(); },
   };
 });

@@ -16,6 +16,8 @@ import { TaskWorkingSessionChip } from "../kit/task-working-session-chip";
 import { TaskCode } from "../kit/task-code";
 import { TaskWaitingLabel } from "../kit/task-waiting-label";
 import { externalMeta } from "../task-list-row";
+import { TaskSnoozeBadge } from "../kit/task-snooze-badge";
+import { UnsnoozeButton } from "../task-snoozed-section";
 import { useTaskRowLongPress } from "./use-task-row-long-press";
 
 export interface TaskRowMobileProps {
@@ -31,12 +33,15 @@ export interface TaskRowMobileProps {
   onActions(task: TaskDto): void;
   onOpenChat(task: TaskDto, sessionId: string): void;
   onStartChat(task: TaskDto): void;
+  /** A snoozed row's Unsnooze. */
+  onUnsnooze?(task: TaskDto): void;
 }
 
 export function TaskRowMobile(p: TaskRowMobileProps) {
   const { task } = p;
   const press = useTaskRowLongPress(() => p.onActions(task));
   const waiting = taskWaiting(task, p.members);
+  const snoozeShown = task.snoozed || task.resurfacedToday;
   const closed = task.baseGroup === "closed";
   return (
     <div role="button" tabIndex={0} aria-current={p.selected || undefined} data-task-row={task.id} data-depth={p.depth}
@@ -67,9 +72,12 @@ export function TaskRowMobile(p: TaskRowMobileProps) {
             {(task.type === "decision" || task.type === "reply") && <TaskTypeBadge type={task.type} className="text-[11px]" />}
             {externalMeta(task, p.linkStates)}
             {waiting ? <TaskWaitingLabel detail={waiting} className="shrink" /> : null}
+            {/* Beside the wait, never over it: both give way with "…", the chat chip before either. */}
+            {snoozeShown && <TaskSnoozeBadge task={task} className="shrink text-xs" />}
             {p.progress && p.progress.total > 0 && <span className="font-mono text-[11px]">{p.progress.done}/{p.progress.total}</span>}
-            <TaskWorkingSessionChip working={p.working ?? task.workingSession} check={task.check} className={waiting ? "shrink-[8]" : "shrink-[3]"}
+            <TaskWorkingSessionChip working={p.working ?? task.workingSession} check={task.check} className={waiting || snoozeShown ? "shrink-[8]" : "shrink-[3]"}
               onOpen={(sid) => p.onOpenChat(task, sid)} onStartChat={() => p.onStartChat(task)} />
+            {task.snoozed && p.onUnsnooze && <UnsnoozeButton onClick={() => p.onUnsnooze!(task)} />}
           </div>
         )}
       </div>

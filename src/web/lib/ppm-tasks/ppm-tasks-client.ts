@@ -74,6 +74,8 @@ export interface TaskListQuery {
   tag?: string;
   q?: string;
   closed?: boolean;
+  /** Snoozed tasks too (each says `snoozed`); left out otherwise. */
+  snoozed?: boolean;
 }
 
 export function taskListPath(query: TaskListQuery): string {
@@ -84,6 +86,7 @@ export function taskListPath(query: TaskListQuery): string {
   if (query.tag) p.set("tag", query.tag);
   if (query.q?.trim()) p.set("q", query.q.trim());
   if (query.closed) p.set("closed", "1");
+  if (query.snoozed) p.set("snoozed", "1");
   return `${BASE}?${p.toString()}`;
 }
 

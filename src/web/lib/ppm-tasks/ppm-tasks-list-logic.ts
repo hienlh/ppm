@@ -11,7 +11,7 @@ import type { TaskListQuery } from "./ppm-tasks-client";
 /** One stable key per distinct list query (field order and list order do not matter). */
 export function listKey(q: TaskListQuery): string {
   const sorted = (xs?: string[]) => (xs?.length ? [...xs].sort().join(",") : "");
-  return [q.project, sorted(q.groups), sorted(q.types), q.person ?? "", q.tag ?? "", q.q?.trim().toLowerCase() ?? "", q.closed ? "1" : "0"].join("|");
+  return [q.project, sorted(q.groups), sorted(q.types), q.person ?? "", q.tag ?? "", q.q?.trim().toLowerCase() ?? "", q.closed ? "1" : "0", q.snoozed ? "z" : ""].join("|");
 }
 
 /** "What to do first": effective urgency, importance, manual order. Returns a new array. */
@@ -23,6 +23,7 @@ export function matchesQuery(t: TaskDto, q: TaskListQuery): boolean {
   if (q.project !== "all" && t.project !== q.project) return false;
   const closedAsked = q.closed || q.groups?.includes("closed");
   if (!closedAsked && t.baseGroup === "closed") return false;
+  if (!q.snoozed && t.snoozed) return false;
   if (q.groups?.length && !q.groups.includes(t.baseGroup as BaseGroup)) return false;
   if (q.types?.length && !q.types.includes(t.type)) return false;
   if (q.person && t.assigneeMemberId !== q.person && t.waitingOnMemberId !== q.person) return false;
@@ -44,9 +45,9 @@ export function foldTask(tasks: readonly TaskDto[], changed: TaskDto, q: TaskLis
 /** Whether a change in `project` concerns a list asked for with `q`. */
 export const listCovers = (q: TaskListQuery, project: string): boolean => q.project === "all" || q.project === project;
 
-/** The first `limit` open tasks in "what to do first" order. */
+/** The first `limit` open tasks in "what to do first" order (snoozed ones are out of it). */
 export function whatToDoFirst(tasks: readonly TaskDto[], limit = 10): TaskDto[] {
-  return orderTasks(tasks.filter((t) => t.baseGroup !== "closed" && t.deletedAt === null)).slice(0, limit);
+  return orderTasks(tasks.filter((t) => t.baseGroup !== "closed" && t.deletedAt === null && !t.snoozed)).slice(0, limit);
 }
 
 /** Tasks grouped by project, projects in first-appearance order (for the all-projects view). */

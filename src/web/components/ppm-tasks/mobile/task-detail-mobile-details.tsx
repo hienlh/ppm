@@ -23,6 +23,8 @@ import { TaskWorkingSessionBlock } from "../task-working-session-block";
 import { TaskDecisionMobile } from "./task-decision-mobile";
 import type { TaskSheetKind } from "./task-field-editor-sheet";
 import { TaskCode } from "../kit/task-code";
+import { TaskSnoozeBadge } from "../kit/task-snooze-badge";
+import { TaskSnoozeButton } from "../task-snooze-menu";
 
 export interface TaskDetailMobileDetailsProps {
   detail: TaskDetailResponse;
@@ -109,6 +111,8 @@ export function TaskDetailMobileDetails(p: TaskDetailMobileDetailsProps) {
         <TaskImportanceBars importance={task.importance} />
         <TaskDueLabel dueDate={task.dueDate} />
         {task.tags.map((t) => <span key={t} className="rounded bg-surface px-1.5 text-xs text-text-2">{t}</span>)}
+        {task.resurfacedToday && <TaskSnoozeBadge task={task} className="text-xs" />}
+        <TaskSnoozeButton task={task} onSnooze={(patch) => p.onPatch(patch)} />
       </div>
       {(task.type === "decision" || task.decision) && (
         <TaskDecisionMobile task={task} busy={p.deciding} onChoose={p.onDecide} onEditOptions={(decision) => p.onPatch({ decision })} />
