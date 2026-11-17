@@ -118,11 +118,16 @@ describe("the Tasks list's quick view (desktop)", () => {
     serve();
     await openList();
     await click(row(b.id));
-    const status = $<HTMLSelectElement>("[data-task-peek] select[aria-label='Status']")!;
-    await act(async () => { status.value = "prog"; status.dispatchEvent(new Event("change", { bubbles: true })); });
+    // The status chip opens a menu of the project's statuses (Radix opens it on pointerdown).
+    const status = $("[data-task-peek] [data-task-peek-chip=status]")!;
+    await act(async () => { status.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "mouse" })); });
+    await settle();
+    await click($("[data-task-peek-menu=status] [data-task-peek-choice=prog]"));
     await settle();
     expect(writes).toContainEqual(expect.objectContaining({ id: b.id, body: expect.objectContaining({ statusId: "prog" }) }));
 
+    // The next step is folded: a press unfolds it into the field.
+    await click($("[data-task-peek] [data-task-peek-next-step]"));
     const next = $<HTMLTextAreaElement>("[data-task-peek] textarea[aria-label='Next step']")!;
     const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
     await act(async () => { setValue.call(next, "Ask Acme for the file"); next.dispatchEvent(new Event("input", { bubbles: true })); });
