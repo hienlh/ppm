@@ -26,10 +26,14 @@ async function openSnoozedSection(page) {
 
 /** 1440: Snooze from the task page → gone from the groups, in the folded section; Unsnooze → back. */
 async function snoozeDesktop(k, s) {
-  const page = k.page;
+  // A page of its own: in the full run the steps before leave other pages in front, and the 1440
+  // one with task windows and tabs open.
+  const page = await k.openDesktopAt(1440, 900);
   const title = s.t.review.title;
   await k.scene("z1", "Snooze a task until tomorrow", "It keeps its status and leaves the daily list; the folded “Snoozed” section at the bottom holds it.");
-  await k.page.goto(`${k.web}/project/alpha`);
+  // Earlier steps of the full run may have moved it (another status, a result): what matters is
+  // that the snooze leaves both as they were.
+  const before = await k.task(s.t.review.id);
   await k.selectTask(title);
   const button = k.detail().locator("[data-task-snooze-button]");
   await button.waitFor({ timeout: 15000 });
@@ -46,8 +50,8 @@ async function snoozeDesktop(k, s) {
   await until("the task is snoozed", async () => (await k.task(s.t.review.id)).snoozedUntil === dayFromNow(1));
   const t = await k.task(s.t.review.id);
   assert.equal(t.snoozed, true);
-  assert.equal(t.statusName, "To do", "the status stays what it was");
-  await until("the row left the groups", async () => (await whereIs(k.row(title)).catch(() => null)) !== "week");
+  assert.equal(t.statusName, before.statusName, "the status stays what it was");
+  await until("the row left the groups", async () => (await whereIs(k.row(title)).catch(() => null)) !== before.effectiveUrgency);
   const toggle = page.locator("[data-task-snoozed-toggle]:visible").first();
   await toggle.waitFor({ timeout: 15000 });
   assert.equal(await toggle.getAttribute("aria-expanded"), "false", "the section starts folded");
@@ -61,6 +65,7 @@ async function snoozeDesktop(k, s) {
   await row.waitFor({ timeout: 10000 });
   assert.match(await row.innerText(), /Until /, "the row says until when");
   assert.deepEqual(await heights(page, "[data-task-snoozed-rows] [data-task-unsnooze]:visible"), [28], "Unsnooze is 28 px");
+  await row.locator("[data-task-unsnooze]").scrollIntoViewIfNeeded();
   await k.beat(1200);
   await k.shot("z1-snoozed-open-1440");
   // The project's Telegram /tasks counts it too (the summary it reads).
@@ -68,7 +73,7 @@ async function snoozeDesktop(k, s) {
   assert.equal(summary.snoozed, 1, "the project counts one snoozed task");
   await row.locator("[data-task-unsnooze]").click();
   await until("the task is back", async () => !(await k.task(s.t.review.id)).snoozed);
-  await until("the row is back under This week", async () => (await whereIs(k.row(title)).catch(() => null)) === "week");
+  await until("the row is back in its group", async () => (await whereIs(k.row(title)).catch(() => null)) === before.effectiveUrgency);
   assert.equal(await page.locator("[data-task-snoozed-section]:visible").count(), 0, "with nothing snoozed the section is gone");
   const history = await k.history(s.t.review.id);
   const rows = history.history ?? history;
@@ -108,6 +113,7 @@ async function snoozeNarrowDesktop(k, s) {
   await openSnoozedSection(page);
   const snoozed = page.locator("[data-task-snoozed-rows] [data-task-row]", { hasText: title }).first();
   await snoozed.waitFor({ timeout: 10000 });
+  await snoozed.locator("[data-task-unsnooze]").scrollIntoViewIfNeeded();
   await k.beat(1000);
   await k.shot("z2-snoozed-800");
   await snoozed.locator("[data-task-unsnooze]").click();
@@ -144,6 +150,7 @@ async function snoozePhone(k, s) {
   const snoozed = page.locator("[data-task-snoozed-rows] [data-task-row]", { hasText: title }).first();
   await snoozed.waitFor({ timeout: 10000 });
   assert.deepEqual(await heights(page, "[data-task-snoozed-rows] [data-task-unsnooze]:visible"), [26], "Unsnooze is 26 px on a phone");
+  await snoozed.locator("[data-task-unsnooze]").scrollIntoViewIfNeeded();
   await k.beat(1200);
   await k.shot("z3-snoozed-390");
   // The phone page's own Snooze button, at the phone size.
