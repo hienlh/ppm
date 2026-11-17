@@ -52,7 +52,7 @@ export function TaskLinkStatePill({ link, state, href, onOpen, className }: Task
     "inline-flex h-[22px] max-w-full min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-soft bg-panel pl-1.5 pr-2 text-[11.5px] text-text-2",
     className,
   );
-  const clickable = cn(cls, "relative hover:border-border max-md:h-8 max-md:after:absolute max-md:after:inset-x-0 max-md:after:-inset-y-1.5 max-md:after:content-['']");
+  const clickable = cn(cls, "relative hover:border-border max-md:h-8 max-md:after:absolute max-md:after:inset-x-0 max-md:after:-inset-y-[7px] max-md:after:content-['']");
   if (href) {
     return (
       <a href={href} target="_blank" rel="noopener noreferrer" data-link-kind={link.kind} title={`Open ${href}`} className={clickable}>
