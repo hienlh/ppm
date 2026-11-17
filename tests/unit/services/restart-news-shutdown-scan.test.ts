@@ -14,7 +14,7 @@ import { closeTraceDb, getTraceDb } from "../../../src/services/session-trace/se
 import { appendBatch } from "../../../src/services/session-trace/session-trace-store.ts";
 import { cutOffTurn, findInterruptedChats } from "../../../src/services/restart-news/interrupted-chats.ts";
 import {
-  findBackgroundWorkChats, runningTasks, SHUTDOWN_KILL_WINDOW_MS, type BackgroundWorkDeps,
+  findBackgroundWorkChats, runningTasks, SHUTDOWN_KILL_WINDOW_MS, withKilledTasks, type BackgroundWorkDeps,
 } from "../../../src/services/restart-news/background-work-chats.ts";
 import { addRestartNews, pendingRestartNews, type RestartNewsStore } from "../../../src/services/restart-news/restart-news-source.ts";
 import { restartNewsEntry } from "../../../src/services/restart-news/restart-news-text.ts";
@@ -161,6 +161,22 @@ describe("a machine shutting down under PPM", () => {
     ]);
   });
 
+  it("names on each cut-off entry the background work the shutdown killed, and only that", () => {
+    seedReboot();
+    const cut = findInterruptedChats(deps(), { since: PREV_START, restartAt: RESTART });
+    const bg = findBackgroundWorkChats(deps(), { since: PREV_START, restartAt: RESTART }, new Set(cut.allIds));
+    expect(Object.keys(bg.killedInCutOff ?? {}).sort()).toEqual(["reset", "watcher"]);
+    const named = withKilledTasks(cut, bg);
+    const killedOf = (id: string) => named.chats.find((c) => c.sessionId === id)!.killedTasks?.map((t) => [t.taskId, t.description]);
+    expect(killedOf("watcher")).toEqual([["bxa5v5ube", "Keep waiting to merge the PRs when green and deploy"]]);
+    expect(killedOf("reset")).toEqual([["b0bucruza", "Wait for both integration runs to finish"]]);
+    // The background list itself is unchanged: cut-off chats are not listed there again.
+    expect(bg.chats.map((c) => c.sessionId)).toEqual(["quiet"]);
+    // A cut-off chat whose task was not killed in the window gets no line.
+    const clean = withKilledTasks(cut, { chats: [], more: 0 });
+    expect(clean.chats.every((c) => c.killedTasks === undefined)).toBe(true);
+  });
+
   it("goes by the stop a clean run wrote, when there is one", () => {
     seedReboot();
     // The run stopped cleanly well after the kill: the kill was not the shutdown's doing.
@@ -176,12 +192,14 @@ describe("a machine shutting down under PPM", () => {
     const bg = findBackgroundWorkChats(deps(), { since: PREV_START, restartAt: RESTART }, new Set(cut.allIds));
     let json: string | null = null;
     const store: RestartNewsStore = { load: () => json, save: (j) => { json = j; } };
-    addRestartNews(store, { at: RESTART, kind: "boot", toVersion: "0.26.5", cleanStop: false }, cut, bg);
+    addRestartNews(store, { at: RESTART, kind: "boot", toVersion: "0.26.5", cleanStop: false }, withKilledTasks(cut, bg), bg);
     const pending = pendingRestartNews(store)!;
     expect(parseRestartNews(pending)).toEqual(pending);
     const entry = restartNewsEntry([pending])!;
     expect(entry).toContain("Chats cut off mid-turn (2):");
     expect(entry).toContain("No message opened the cut-off turn: the chat had carried on by itself");
+    expect(entry).toContain('Its background work "Keep waiting to merge the PRs when green and deploy" was killed at shutdown; tell the chat so when asking it to carry on.');
+    expect(entry).toContain('Its background work "Wait for both integration runs to finish" was killed at shutdown');
     expect(entry).toContain("Chats whose background work was stopped (1)");
     expect(entry).not.toContain("No chat was cut off");
   });

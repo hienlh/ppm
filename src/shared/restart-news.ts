@@ -54,6 +54,8 @@ export interface InterruptedChat {
   pendingApproval?: string;
   /** No message opened the cut-off turn: the provider continued on its own (after background work ended, say). */
   continued?: boolean;
+  /** Background work of this chat the shutdown killed just before it cut the turn off. */
+  killedTasks?: BackgroundTask[];
   /** Open PPM Assistant cards about this chat. */
   openCards?: number;
   /** This chat is its project's manager chat. */
@@ -155,10 +157,18 @@ function parseChat(raw: unknown): InterruptedChat | null {
   if (raw.openCards !== undefined && (!Number.isInteger(raw.openCards) || (raw.openCards as number) < 0)) return null;
   if (raw.manager !== undefined && typeof raw.manager !== "boolean") return null;
   if (raw.continued !== undefined && typeof raw.continued !== "boolean") return null;
+  let killedTasks: BackgroundTask[] = [];
+  if (raw.killedTasks !== undefined) {
+    if (!Array.isArray(raw.killedTasks) || raw.killedTasks.length > MAX_TASKS) return null;
+    const parsed = raw.killedTasks.map(parseTask);
+    if (parsed.some((t) => !t)) return null;
+    killedTasks = parsed as BackgroundTask[];
+  }
   return {
     sessionId: raw.sessionId, providerId: raw.providerId, projectName: raw.projectName, title: raw.title,
     lastAt: raw.lastAt, restartAt: raw.restartAt,
     ...(raw.continued === true ? { continued: true } : {}),
+    ...(killedTasks.length ? { killedTasks } : {}),
     ...(typeof raw.prompt === "string" ? { prompt: raw.prompt } : {}),
     ...(typeof raw.activity === "string" ? { activity: raw.activity } : {}),
     ...(typeof raw.pendingApproval === "string" ? { pendingApproval: raw.pendingApproval } : {}),

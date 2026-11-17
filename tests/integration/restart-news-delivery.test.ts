@@ -15,7 +15,7 @@ import { createChatLifecycle } from "../../src/services/chat-control/chat-lifecy
 import type { ChatControl, SendUserMessageOpts } from "../../src/services/chat-control/chat-control.ts";
 import { AssistantWakeQueue, type WakeItem, type WakeSource } from "../../src/services/assistant-wake/assistant-wake-queue.ts";
 import { findInterruptedChats } from "../../src/services/restart-news/interrupted-chats.ts";
-import { findBackgroundWorkChats, type BackgroundWorkDeps } from "../../src/services/restart-news/background-work-chats.ts";
+import { findBackgroundWorkChats, withKilledTasks, type BackgroundWorkDeps } from "../../src/services/restart-news/background-work-chats.ts";
 import {
   addRestartNews, createRestartNewsSource, pendingRestartNews, restartTextCarried, type RestartNewsStore,
 } from "../../src/services/restart-news/restart-news-source.ts";
@@ -120,7 +120,8 @@ describe("restart news after a reboot, with the hour's wake turns spent", () => 
     addRestartNews(store, { at: first.restartAt, kind: "manual", toVersion: "0.26.5" }, findInterruptedChats(deps(), first), findBackgroundWorkChats(deps(), first));
     const second = { since: at("16:22:57"), restartAt: at("18:23:56") };
     const cut = findInterruptedChats(deps(), second);
-    addRestartNews(store, { at: second.restartAt, kind: "boot", toVersion: "0.26.5", cleanStop: false }, cut, findBackgroundWorkChats(deps(), second, new Set(cut.allIds)));
+    const bg = findBackgroundWorkChats(deps(), second, new Set(cut.allIds));
+    addRestartNews(store, { at: second.restartAt, kind: "boot", toVersion: "0.26.5", cleanStop: false }, withKilledTasks(cut, bg), bg);
 
     const pending = pendingRestartNews(store)!;
     expect(pending.restarts.map((r) => r.kind)).toEqual(["manual", "boot"]);
@@ -140,6 +141,8 @@ describe("restart news after a reboot, with the hour's wake turns spent", () => 
     const entry = restartNewsEntry([news[0]!.restart!])!;
     expect(entry).toContain("PPM restarted 2 times since you were last told:");
     expect(entry).toContain("Chats cut off mid-turn (3):");
+    expect(entry).toContain('Its background work "Keep waiting to merge the PRs when green and deploy" was killed at shutdown');
+    expect(entry).toContain('Its background work "Wait for both integration runs to finish" was killed at shutdown');
 
     // The Assistant's message to the project's manager quotes a title PPM wrote: not a secret.
     const quoted = restartTextCarried(h.queue, MAIN, "nx");

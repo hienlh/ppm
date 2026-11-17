@@ -1,7 +1,7 @@
 import type { BackgroundTask, BackgroundTaskState, BackgroundWorkChat } from "../../shared/restart-news.ts";
 import {
   chatTitleReader, firstLine, INTERRUPTED_LOOKBACK_MS, MAX_INTERRUPTED_LISTED, NEWEST_SQL, NOT_RESUMABLE_ORIGINS,
-  withoutSecrets, type InterruptedChatDeps,
+  withoutSecrets, type InterruptedChatDeps, type InterruptedScan,
 } from "./interrupted-chats.ts";
 import { scrubCommand } from "./background-command-text.ts";
 
@@ -99,6 +99,8 @@ interface RunningTask {
   toolUseId: string | null;
   origin: string;
   providerId: string | null;
+  /** It ended `failed`/`killed` inside the shutdown window: the shutdown killed it. */
+  killedAtShutdown?: boolean;
 }
 
 export interface BackgroundWorkDeps extends InterruptedChatDeps {
@@ -108,6 +110,11 @@ export interface BackgroundWorkDeps extends InterruptedChatDeps {
 
 export interface BackgroundScan {
   chats: BackgroundWorkChat[];
+  /**
+   * For chats in `skip` (listed as cut off), the background work the shutdown killed, by session id:
+   * the cut-off entry names it, so the chat is told when it is asked to carry on.
+   */
+  killedInCutOff?: Record<string, BackgroundTask[]>;
   /** Such chats past {@link MAX_BACKGROUND_LISTED}. */
   more: number;
 }
@@ -128,7 +135,9 @@ export function runningTasks(rows: readonly TaskRow[], killedFrom?: number): Run
     if (row.status && TERMINAL_STATUSES.has(row.status)) {
       const task = running.get(row.task_id);
       running.delete(row.task_id);
-      if (task && killedFrom !== undefined && row.ts >= killedFrom && KILLED_STATUSES.has(row.status)) killed.set(row.task_id, task);
+      if (task && killedFrom !== undefined && row.ts >= killedFrom && KILLED_STATUSES.has(row.status)) {
+        killed.set(row.task_id, { ...task, killedAtShutdown: true });
+      }
       continue;
     }
     // An agent woken again by SendMessage starts the same task id again: it runs from then on.
@@ -166,6 +175,7 @@ export function findBackgroundWorkChats(
   const toolQ = db.query(TOOL_SQL);
   const titleFor = chatTitleReader(deps);
   const found: BackgroundWorkChat[] = [];
+  const killedInCutOff: Record<string, BackgroundTask[]> = {};
   const seen = new Set<string>();
   for (const c of candidates) {
     const newest = newestQ.get(c.trace_id) as { ts: number } | null;
@@ -174,14 +184,7 @@ export function findBackgroundWorkChats(
       .filter((t) => !NOT_RESUMABLE_ORIGINS.has(t.origin));
     if (running.length === 0) continue;
     const sessionId = deps.sessionOf(c.trace_id);
-    if (seen.has(sessionId) || skip.has(sessionId)) continue;
-    seen.add(sessionId);
-    const projectPath = deps.projectPathOf(sessionId);
-    if (!projectPath) continue;
-    if (deps.isAssistant(sessionId, projectPath) || deps.isDesign(sessionId)) continue;
-    const projectName = deps.projectNameOf(projectPath);
-    if (!projectName) continue;
-    const tasks: BackgroundTask[] = running.sort((a, b) => b.startedAt - a.startedAt).map((t) => {
+    const describe = (list: RunningTask[]): BackgroundTask[] => list.sort((a, b) => b.startedAt - a.startedAt).map((t) => {
       const call = t.toolUseId
         ? toolQ.get(c.trace_id, since, t.startedAt, t.toolUseId) as { tool: string | null; description: string | null; command: string | null; recipient: string | null } | null
         : null;
@@ -196,6 +199,20 @@ export function findBackgroundWorkChats(
         ...(description ? { description } : {}), ...(command ? { command } : {}),
       };
     });
+    if (skip.has(sessionId)) {
+      // Listed as cut off: only what the shutdown killed is kept, for that entry to name.
+      const killed = running.filter((t) => t.killedAtShutdown);
+      if (killed.length && !killedInCutOff[sessionId]) killedInCutOff[sessionId] = describe(killed).slice(0, MAX_TASKS_LISTED);
+      continue;
+    }
+    if (seen.has(sessionId)) continue;
+    seen.add(sessionId);
+    const projectPath = deps.projectPathOf(sessionId);
+    if (!projectPath) continue;
+    if (deps.isAssistant(sessionId, projectPath) || deps.isDesign(sessionId)) continue;
+    const projectName = deps.projectNameOf(projectPath);
+    if (!projectName) continue;
+    const tasks = describe(running);
     const parent = deps.parentOf(sessionId);
     const cards = deps.openCardsOf(sessionId);
     found.push({
@@ -213,7 +230,17 @@ export function findBackgroundWorkChats(
     });
   }
   found.sort((a, b) => b.lastAt - a.lastAt);
-  return { chats: found.slice(0, MAX_BACKGROUND_LISTED), more: Math.max(0, found.length - MAX_BACKGROUND_LISTED) };
+  return {
+    chats: found.slice(0, MAX_BACKGROUND_LISTED), more: Math.max(0, found.length - MAX_BACKGROUND_LISTED),
+    ...(Object.keys(killedInCutOff).length ? { killedInCutOff } : {}),
+  };
+}
+
+/** The cut-off scan with each chat's background work the shutdown killed (from the background scan) named on it. */
+export function withKilledTasks(cutOff: InterruptedScan, background: BackgroundScan): InterruptedScan {
+  const killed = background.killedInCutOff ?? {};
+  if (Object.keys(killed).length === 0) return cutOff;
+  return { ...cutOff, chats: cutOff.chats.map((c) => (killed[c.sessionId] ? { ...c, killedTasks: killed[c.sessionId] } : c)) };
 }
 
 /**

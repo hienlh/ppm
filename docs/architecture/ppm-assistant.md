@@ -1338,7 +1338,11 @@ chat resume them. Code in `src/services/restart-news/`.
   with no `turn_id` are a turn nobody opened, listed with `continued` and no prompt; rows with one
   are a follow-up queued while the previous turn ran, whose message was written before that turn's
   end, listed with that message as its prompt. An approval request is not turn work here, since a
-  background agent asks for one between turns. Before this, a
+  background agent asks for one between turns. A cut-off chat whose background work the shutdown
+  killed (the window below) carries it as `killedTasks`, and the news names it in one line ("Its
+  background work … was killed at shutdown"), so the Assistant tells the chat when asking it to carry
+  on; the background scan finds these for chats it skips (`killedInCutOff`, attached by
+  `withKilledTasks`). Before this, a
   reboot that killed a chat's shell and then PPM, seconds apart, read as "no chat was cut off".
   Left out: chats the new run already
   wrote to, the Assistant's own and design sessions, API proxy streams, a turn started by the

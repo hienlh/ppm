@@ -1,7 +1,7 @@
 import { createLogger } from "../logger.ts";
 import { RESTART_NEWS_MAX_RESTARTS, RESTART_NEWS_URGENT_WHEN } from "../../shared/assistant-limits.ts";
 import {
-  parseRestartNews, type BackgroundWorkChat, type InterruptedChat, type RestartEntry, type RestartNewsPayload,
+  parseRestartNews, type BackgroundTask, type BackgroundWorkChat, type InterruptedChat, type RestartEntry, type RestartNewsPayload,
 } from "../../shared/restart-news.ts";
 import type { AssistantWakeQueue, WakeItem, WakeSource } from "../assistant-wake/assistant-wake-queue.ts";
 import type { InterruptedScan } from "./interrupted-chats.ts";
@@ -174,11 +174,12 @@ export function restartTextCarried(
   for (const item of queue.carriedItems(assistantSessionId, RESTART_SOURCE_NAME)) {
     const restart = item.news?.restart;
     if (!restart) continue;
-    for (const c of restart.chats) if (c.projectName === projectName) out.push(c.title, ...(c.prompt ? [c.prompt] : []));
+    const taskText = (tasks: readonly BackgroundTask[]) => tasks.flatMap((t) => [t.description, t.command].filter((x): x is string => !!x));
+    for (const c of restart.chats) {
+      if (c.projectName === projectName) out.push(c.title, ...(c.prompt ? [c.prompt] : []), ...taskText(c.killedTasks ?? []));
+    }
     for (const c of restart.backgroundChats ?? []) {
-      if (c.projectName !== projectName) continue;
-      out.push(c.title);
-      for (const t of c.tasks) out.push(...(t.description ? [t.description] : []), ...(t.command ? [t.command] : []));
+      if (c.projectName === projectName) out.push(c.title, ...taskText(c.tasks));
     }
   }
   return [...new Set(out)];
