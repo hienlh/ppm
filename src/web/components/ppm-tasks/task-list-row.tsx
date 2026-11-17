@@ -84,7 +84,7 @@ export function TaskListRow(p: TaskListRowProps) {
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-text-3">
             {(task.type === "decision" || task.type === "reply") && <TaskTypeBadge type={task.type} className="text-[11px]" />}
             {externalMeta(task, p.linkStates)}
-            {waiting ? <TaskWaitingLabel detail={waiting} className="text-[11.5px]" />
+            {waiting ? <TaskWaitingLabel detail={waiting} untilApart className="text-[11.5px]" />
               : task.dueDate ? <TaskDueLabel dueDate={task.dueDate} className="text-[11px]" /> : null}
             {p.progress && p.progress.total > 0 && <span className="font-mono text-[11px]">{p.progress.done}/{p.progress.total}</span>}
             <TaskWorkingSessionChip working={p.working ?? task.workingSession} check={task.check}

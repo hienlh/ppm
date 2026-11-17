@@ -115,6 +115,8 @@ async function checkLabels(page, rowSel, want, where) {
     assert(f.oneLine, `${where}: "${f.words}" on one line (${f.height}px)`);
     assert(f.codeOneLine, `${where}: the code of "${f.words}" on one line`);
     assert(f.inside, `${where}: "${f.words}" stays inside its row`);
+    // On whom is what the label is for: short of room the date gives way first, so a short name is never cut.
+    if (!f.words.includes(LONG_NAME)) assert(!f.cut, `${where}: "${f.words}" is not cut`);
   }
   return found;
 }

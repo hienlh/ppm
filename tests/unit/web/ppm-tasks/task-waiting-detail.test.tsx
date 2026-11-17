@@ -49,7 +49,11 @@ describe("the waiting label on a row", () => {
     view = await desktopRow(waiting({ waitingOnMemberId: "me", waitingStartedAt: Date.now() - 2 * DAY }));
     const label = $("[data-task-waiting]")!;
     expect(label.getAttribute("data-task-waiting")).toBe("me");
-    expect(label.textContent).toBe("Waiting on you·2d");
+    expect(label.textContent).toBe("Waiting on you");
+    // The age is an item of its own in the sidebar's wrapping meta line, marked by a clock.
+    const when = $("[data-task-waiting-when]")!;
+    expect(when.textContent).toBe("2d");
+    expect(when.querySelector("svg")).not.toBeNull();
     expect(label.className).toContain("text-primary");
     expect(label.querySelector("svg")).not.toBeNull();
     expect(label.getAttribute("title")).toBe("Waiting on you for 2d");
@@ -61,7 +65,7 @@ describe("the waiting label on a row", () => {
     expect(label.getAttribute("data-task-waiting")).toBe("member");
     expect(label.getAttribute("data-task-waiting-until")).toBe("due");
     expect($("[data-task-waiting-words]")!.textContent).toBe("Waiting on Việt");
-    expect(label.querySelector("[data-due]")).not.toBeNull();
+    expect($("[data-task-waiting-when] [data-due]")).not.toBeNull();
     expect(label.className).toContain("text-warning");
     // The due date is the label's: it is not drawn a second time beside it.
     expect(document.querySelectorAll("[data-due]").length).toBe(1);
@@ -73,12 +77,19 @@ describe("the waiting label on a row", () => {
     expect($("[data-task-waiting]")!.textContent).toBe("Waiting·5h");
   });
 
-  it("never wraps: the words give way with an ellipsis, the date or age does not", async () => {
+  it("keeps the date or age inside the label on a phone row, whose meta line does not wrap", async () => {
+    view = await phoneRow(waiting({ waitingOnMemberId: "me", dueDate: "2099-01-05" }));
+    expect($("[data-task-waiting] [data-due]")).not.toBeNull();
+    expect($("[data-task-waiting-when]")).toBeNull();
+  });
+
+  it("never wraps, and short of room the date or age gives way before on whom", async () => {
     view = await phoneRow(waiting({ waitingOnMemberId: "m1", waitingStartedAt: Date.now() - DAY }));
     const label = $("[data-task-waiting]")!;
     expect(label.className).toContain("whitespace-nowrap");
     expect($("[data-task-waiting-words]")!.className).toContain("truncate");
-    expect($("[data-task-waiting-age]")!.parentElement!.className).toContain("shrink-0");
+    expect($("[data-task-waiting-inline-when]")!.className).toContain("shrink-[10]");
+    expect($("[data-task-waiting-age]")!.parentElement!.className).toContain("truncate");
   });
 
   it("leaves a task that does not wait as it was", async () => {
