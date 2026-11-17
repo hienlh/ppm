@@ -70,6 +70,7 @@ export function historyRow(id: number): HistoryEntry | null {
 export function undoRefusal(entry: HistoryEntry, now: number): string | null {
   if (!entry.taskId) return "Project settings changes cannot be undone";
   if (entry.kind === "undo") return "An undo cannot itself be undone";
+  if (entry.kind === "close_proposed") return "A proposal to close changed nothing, so there is nothing to undo";
   if (!AI_ACTOR_KINDS.includes(entry.actor.kind)) return "Only changes made by AI can be undone";
   if (entry.undoneBy !== null) return "This change was already undone";
   if (now - entry.at > HISTORY_DETAIL_DAYS * DAY) return `Changes older than ${HISTORY_DETAIL_DAYS} days cannot be undone`;

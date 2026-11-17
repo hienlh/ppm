@@ -30,7 +30,12 @@ export type HistoryKind =
   | "created" | "updated" | "status" | "closed" | "reopened" | "reordered"
   | "decision" | "decided" | "result" | "deleted" | "undo" | "project"
   /** A snooze set, changed or cleared by someone; `resurfaced` is PPM bringing the task back. */
-  | "snoozed" | "resurfaced";
+  | "snoozed" | "resurfaced"
+  /**
+   * A chat working on the task asks for it to be closed (only a manager, the Assistant or the user
+   * closes): one change, `closeProposal`, whose `after` is `done` or `dropped`. Changes no field.
+   */
+  | "close_proposed";
 
 /** Kept past the detail window; everything else is compacted away after 90 days. */
 export const KEY_HISTORY_KINDS: readonly HistoryKind[] = ["created", "status", "closed", "reopened"];

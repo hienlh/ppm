@@ -13,18 +13,25 @@ import {
 } from "../../../shared/ppm-task-tools.ts";
 import { closeTask, createTask, reorderTask, updateTask, getTask } from "../ppm-tasks.service.ts";
 import { historyRow, taskHistory, undoChange } from "../ppm-tasks-history.ts";
-import { memberRows, statusRows } from "../ppm-tasks-db.ts";
+import { memberRows, statusById, statusRows } from "../ppm-tasks-db.ts";
 import { addMember, addStatus, deleteFieldDef, updateMember, updateStatus, upsertFieldDef } from "../ppm-tasks-project-config.ts";
 import { setCheckInterval } from "../ppm-tasks-projects.service.ts";
 import { managerSessionFor } from "../ppm-tasks-write.ts";
+import { proposeClose } from "../ppm-tasks-close-proposal.ts";
+import { resolveMigratedSession } from "../../db.service.ts";
 import type { DeliverOutcome } from "../ppm-tasks-deliver.ts";
 import type { UnattendedChange } from "../ppm-task-unattended-card.ts";
 import { resolveScope, resolveTaskId, TaskToolRefusal, writeContextFor, type TaskCaller, type TaskProjectRef } from "./ppm-task-tool-caller.ts";
 import { changeSummary, clean, projectLookup, refOf } from "./ppm-task-tool-format.ts";
+import {
+  chatCloseRefusal, chatCreateRefusal, chatProjectUpdateRefusal, chatReorderRefusal, chatUndoRefusal, chatUpdateRefusal,
+} from "./ppm-task-chat-scope.ts";
 
 export interface WriteToolsEnv {
   projects(): Array<{ name: string; path: string }>;
   wakeManager(projectKey: string, actor: { kind: "assistant"; sessionId: string; label: string }): Promise<DeliverOutcome>;
+  /** Tells the manager now that a chat proposes closing a task (a quiet, budgeted wake). */
+  tellManagerOfProposal(projectKey: string, actor: { kind: "chat"; sessionId: string; label: string }): Promise<DeliverOutcome>;
   noteUnattended(assistantSessionId: string, change: UnattendedChange): void;
 }
 
@@ -105,6 +112,12 @@ function linksAfter(task: TaskView, add: unknown, remove: unknown): Link[] | und
 
 interface Written { task: TaskView; kind: string }
 
+/** A chat that is neither the project's manager chat nor the PPM Assistant: limited to `ppm-task-chat-scope.ts`. */
+const limited = (caller: TaskCaller): boolean => caller.kind === "chat";
+const groupOf = (statusId: string) => statusById(statusId)?.baseGroup;
+const hasManager = (projectKey: string): boolean => managerSessionFor(projectKey) !== null;
+const refuseIf = (why: string | null): void => { if (why) refuse(why); };
+
 /** What the answer to a write says beyond the change: the user's card, the manager's news. */
 function afterWrite(env: WriteToolsEnv, caller: TaskCaller, w: Written): string {
   const lookup = projectLookup(w.task.projectKey);
@@ -132,13 +145,23 @@ function create(env: WriteToolsEnv, caller: TaskCaller, a: Args): Written {
   const project = scope[0]!;
   if (typeof a.title !== "string" || !a.title.trim()) refuse("A task needs a title.");
   const patch = patchFrom(a, project, scope, caller);
+  if (limited(caller)) refuseIf(chatCreateRefusal(patch, caller.sessionId, groupOf, hasManager(project.key)));
   const decision = a.decision && typeof a.decision === "object" ? a.decision as { question?: string | null; options: string[] } : undefined;
   const task = createTask({ ...patch, projectKey: project.key, title: a.title as string, ...(has(a, "links") ? { links: a.links as Link[] } : {}), ...(decision ? { decision } : {}) },
     writeContextFor(caller, optionalReason(a)));
   return { task, kind: "Created" };
 }
 
-function update(env: WriteToolsEnv, caller: TaskCaller, a: Args): Written {
+interface Updated extends Written { proposed?: ClosedAs }
+
+function proposalOf(a: Args, caller: TaskCaller): ClosedAs | undefined {
+  if (!has(a, "propose_close")) return undefined;
+  if (!limited(caller)) refuse(`propose_close is for a chat working on a task; you close it yourself with ${PPM_TASK_CLOSE_TOOL}.`);
+  const as = a.propose_close;
+  return as === "done" || as === "dropped" ? as : refuse("propose_close must be done or dropped.");
+}
+
+function update(env: WriteToolsEnv, caller: TaskCaller, a: Args): Updated {
   const scope = resolveScope(caller, a.project, env.projects(), caller.kind === "assistant");
   const { id, project } = resolveTaskId(a.task, scope, scope.length === 1 ? scope[0]! : null);
   const reason = requiredReason(a);
@@ -147,14 +170,36 @@ function update(env: WriteToolsEnv, caller: TaskCaller, a: Args): Written {
   const patch = patchFrom(a, project, scope, caller);
   const links = linksAfter(current, a.add_links, a.remove_links);
   if (links) patch.links = links;
-  if (Object.keys(patch).length === 0) refuse("Nothing to change: name at least one field.");
-  const task = updateTask(id, patch, revision, writeContextFor(caller, reason));
+  const proposed = proposalOf(a, caller);
+  if (Object.keys(patch).length === 0 && !proposed) refuse("Nothing to change: name at least one field.");
+  // Before anything is written: a refused proposal must not leave the fields beside it half-applied.
+  if (proposed && current.baseGroup === "closed") refuse(`${refOf(current, projectLookup(current.projectKey))} is already closed.`);
+  if (limited(caller)) refuseIf(chatUpdateRefusal(current, patch, refOf(current, projectLookup(current.projectKey)), groupOf, hasManager(project.key)));
+  const ctx = writeContextFor(caller, reason);
+  const task = Object.keys(patch).length > 0 ? updateTask(id, patch, revision, ctx) : current;
+  if (proposed) {
+    // On the task as this call left it: the fields above went in first, under the revision read.
+    const after = proposeClose(id, proposed, task === current ? revision : task.revision, ctx);
+    return { task: after.task, kind: "Proposed closing", proposed };
+  }
   return { task, kind: task.revision === current.revision ? "Unchanged" : "Updated" };
+}
+
+/** What a proposal's answer says: it stays open, and whether the manager heard now or at its next turn. */
+async function afterProposal(env: WriteToolsEnv, caller: TaskCaller, w: Updated): Promise<string> {
+  const lookup = projectLookup(w.task.projectKey);
+  const head = `Proposed closing ${refOf(w.task, lookup)} "${clean(w.task.title, 200)}" as ${w.proposed}. It stays open until the manager chat or the user closes it (revision ${w.task.revision}).`;
+  if (!hasManager(w.task.projectKey)) return `${head}\nThis project has no manager chat: tell the user, who closes it in PPM.`;
+  const outcome = await env.tellManagerOfProposal(w.task.projectKey, { kind: "chat", sessionId: caller.sessionId, label: caller.label });
+  return outcome.ok
+    ? `${head}\nThe ${lookup.name} manager chat was told now.`
+    : `${head}\nThe ${lookup.name} manager chat reads it at its next turn.`;
 }
 
 function close(env: WriteToolsEnv, caller: TaskCaller, a: Args): Written {
   const scope = resolveScope(caller, a.project, env.projects(), caller.kind === "assistant");
   const { id, project } = resolveTaskId(a.task, scope, scope.length === 1 ? scope[0]! : null);
+  if (limited(caller)) refuse(chatCloseRefusal(refOf(getTask(id)!, projectLookup(project.key)), hasManager(project.key)));
   const reason = requiredReason(a);
   const opts: { closedAs?: ClosedAs; statusId?: string } = has(a, "status") ? { statusId: statusIdFor(project.key, a.status) } : { closedAs: (a.as as ClosedAs | undefined) ?? "done" };
   const task = closeTask(id, opts, revisionOf(a), writeContextFor(caller, reason));
@@ -164,6 +209,7 @@ function close(env: WriteToolsEnv, caller: TaskCaller, a: Args): Written {
 function reorder(env: WriteToolsEnv, caller: TaskCaller, a: Args): Written {
   const scope = resolveScope(caller, a.project, env.projects(), caller.kind === "assistant");
   const { id, project } = resolveTaskId(a.task, scope, scope.length === 1 ? scope[0]! : null);
+  if (limited(caller)) refuse(chatReorderRefusal(hasManager(project.key)));
   const reason = requiredReason(a);
   if (has(a, "before") === has(a, "after")) refuse("Name exactly one of `before` or `after`.");
   const anchor = resolveTaskId(has(a, "before") ? a.before : a.after, [project], project).id;
@@ -177,6 +223,11 @@ function undo(env: WriteToolsEnv, caller: TaskCaller, a: Args): Written {
   if (typeof historyId !== "number" || !Number.isInteger(historyId) || historyId < 1) refuse("history_id must be the #id of a history row (ppm_task_get).");
   const entry = historyRow(historyId as number);
   if (!entry || !scope.some((s) => s.key === entry.projectKey)) refuse(`No history row #${historyId} in ${scope.length === 1 ? scope[0]!.name : "the projects you can reach"}.`);
+  if (limited(caller)) {
+    // Compared under the ids the chats answer to now: a provider rename is the same chat.
+    const by = entry!.actor.sessionId ? resolveMigratedSession(entry!.actor.sessionId) : undefined;
+    refuseIf(chatUndoRefusal({ ...entry!, actor: { ...entry!.actor, sessionId: by } }, resolveMigratedSession(caller.sessionId), hasManager(entry!.projectKey)));
+  }
   undoChange(historyId as number, writeContextFor(caller, optionalReason(a)));
   return { task: getTask(entry!.taskId!)!, kind: `Undid #${historyId} on` };
 }
@@ -184,6 +235,7 @@ function undo(env: WriteToolsEnv, caller: TaskCaller, a: Args): Written {
 /** Project set-up changes, applied in order; a refusal names what was already applied. */
 function projectUpdate(env: WriteToolsEnv, caller: TaskCaller, a: Args): string {
   const project = resolveScope(caller, a.project, env.projects(), false)[0]!;
+  if (limited(caller)) refuse(chatProjectUpdateRefusal(hasManager(project.key)));
   const ctx = writeContextFor(caller, optionalReason(a));
   const done: string[] = [];
   const list = (k: string): Args[] => (Array.isArray(a[k]) ? (a[k] as Args[]) : []);
@@ -261,6 +313,7 @@ export async function callWriteTool(env: WriteToolsEnv, caller: TaskCaller, name
     case PPM_TASK_CREATE_TOOL: return textResult(afterWrite(env, caller, create(env, caller, a)));
     case PPM_TASK_UPDATE_TOOL: {
       const w = update(env, caller, a);
+      if (w.proposed) return textResult(await afterProposal(env, caller, w));
       return textResult(w.kind === "Unchanged" ? `Nothing changed: ${refOf(w.task, projectLookup(w.task.projectKey))} already holds those values (revision ${w.task.revision}).` : afterWrite(env, caller, w));
     }
     case PPM_TASK_CLOSE_TOOL: return textResult(afterWrite(env, caller, close(env, caller, a)));
