@@ -114,11 +114,16 @@ async function desktop(k, s) {
   const rel = peekOf(page, release.id);
   const statuses = (await k.settings("alpha")).statuses;
   const target = statuses.find((x) => x.baseGroup === "active" && x.id !== release.statusId) ?? statuses.find((x) => x.baseGroup !== "closed" && x.id !== release.statusId);
-  await rel.locator("select[aria-label='Status']").selectOption(target.id);
+  // A chip opens a menu of its field's choices; the pick saves.
+  await rel.locator("[data-task-peek-chip=status]").click();
+  await page.locator(`[data-task-peek-menu=status] [data-task-peek-choice="${target.id}"]`).click();
   await until("the status is saved", async () => (await k.task(release.id)).statusId === target.id, 15000);
-  await until("the popover shows the saved status", async () => (await rel.locator("select[aria-label='Status']").inputValue()) === target.id, 10000);
-  await rel.locator("select[aria-label='Urgency']").selectOption("today");
+  await until("the popover shows the saved status", async () => (await rel.locator("[data-task-peek-chip=status]").getAttribute("title")) === `Status: ${target.name}`, 10000);
+  await rel.locator("[data-task-peek-chip=urgency]").click();
+  await page.locator("[data-task-peek-menu=urgency] [data-task-peek-choice=today]").click();
   await until("the urgency is saved", async () => (await k.task(release.id)).urgency === "today", 15000);
+  // The next step is folded: a press unfolds it into its field.
+  await rel.locator("[data-task-peek-next-step]").click();
   await rel.locator("textarea[aria-label='Next step']").fill("Ask QA for a staging slot");
   await k.beat(800);
   await k.shot("03-peek-editing-1440");
@@ -132,6 +137,7 @@ async function desktop(k, s) {
   // Escape with the cursor still in Next step: the field leaves the page without a blur, and what
   // it held is saved all the same.
   const loginPeek = peekOf(page, login.id);
+  await loginPeek.locator("[data-task-peek-next-step]").click();
   await loginPeek.locator("textarea[aria-label='Next step']").fill("Retry twice, then show an error");
   assert.equal(await loginPeek.locator("textarea[aria-label='Next step']").evaluate((el) => el === document.activeElement), true, "the cursor is in Next step");
   await page.keyboard.press("Escape");

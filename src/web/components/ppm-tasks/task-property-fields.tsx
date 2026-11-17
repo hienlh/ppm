@@ -1,8 +1,9 @@
 /**
- * The property fields a task's page edits in place, one component each, so the page's properties
- * panel and the chat's quick view (`TaskPeekFields`) draw and save them the same way: status (a
- * closed one closes the task), urgency (with why the due date raised it), importance, and a member
- * picker for assignee and waiting on. Each saves on change; the date and text fields save on blur.
+ * The property fields a task's page edits in place, one component each: status (a closed one
+ * closes the task), urgency (with why the due date raised it), importance, and a member picker for
+ * assignee and waiting on. Each saves on change; the date and text fields save on blur. Their
+ * choices (`statusChoices`…) are shared with the chat's quick view (`TaskPeekFields`), whose chips
+ * offer exactly the same.
  */
 import { cn } from "@/lib/utils";
 import { IMPORTANCE_LABEL, URGENCY_LABEL } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
@@ -23,13 +24,38 @@ export function TaskProp({ label, children, aside, className }: { label: string;
   );
 }
 
-type Member = { id: string; name: string };
+export type Member = { id: string; name: string };
 
 /** Who a member field offers: You, then the project's members (archived ones only while picked). */
 export function taskPeople(task: Pick<TaskDto, "assigneeMemberId" | "waitingOnMemberId">, members: TaskProjectSettings["members"] | undefined): Member[] {
   const live = (members ?? []).filter((m) => !m.archivedAt || m.id === task.assigneeMemberId || m.id === task.waitingOnMemberId);
   return [{ id: ME_MEMBER_ID, name: "You" }, ...live];
 }
+
+/** One option of a property's picker. */
+export interface TaskChoice { value: string; label: string }
+
+/**
+ * The choices of each property: the page's selects and the quick view's chip menus offer the same.
+ * A member field's are "Nobody" (`""`), then the people `taskPeople` answered.
+ */
+export function statusChoices(task: Pick<TaskDto, "statusId" | "statusName">, statuses: TaskProjectSettings["statuses"] | undefined): TaskChoice[] {
+  return (statuses ?? [{ id: task.statusId, name: task.statusName }]).map((s) => ({ value: s.id, label: s.name }));
+}
+
+export function urgencyChoices(task: Pick<TaskDto, "urgency" | "urgencyRaised" | "effectiveUrgency">): TaskChoice[] {
+  return URGENCIES.map((u) => ({ value: u, label: `${URGENCY_LABEL[u]}${u === task.urgency && task.urgencyRaised ? ` (shown as ${URGENCY_LABEL[task.effectiveUrgency]})` : ""}` }));
+}
+
+export function importanceChoices(): TaskChoice[] {
+  return IMPORTANCES.map((i) => ({ value: i, label: IMPORTANCE_LABEL[i] }));
+}
+
+export function memberChoices(people: readonly Member[]): TaskChoice[] {
+  return [{ value: "", label: "Nobody" }, ...people.map((m) => ({ value: m.id, label: m.name }))];
+}
+
+const options = (choices: readonly TaskChoice[]) => choices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>);
 
 export function TaskStatusField({ task, statuses, onStatus, className }: {
   task: TaskDto; statuses: TaskProjectSettings["statuses"] | undefined; onStatus(statusId: string): void; className?: string;
@@ -39,7 +65,7 @@ export function TaskStatusField({ task, statuses, onStatus, className }: {
       <label className="flex items-center gap-1.5">
         <TaskStatusGlyph baseGroup={task.baseGroup} closedAs={task.closedAs} />
         <select aria-label="Status" className={PROP_SELECT} value={task.statusId} onChange={(e) => onStatus(e.target.value)}>
-          {(statuses ?? [{ id: task.statusId, name: task.statusName }]).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          {options(statusChoices(task, statuses))}
         </select>
       </label>
     </TaskProp>
@@ -50,7 +76,7 @@ export function TaskUrgencyField({ task, onPatch, hint = true, className }: { ta
   return (
     <TaskProp label="Urgency" className={className} aside={task.urgencyRaised && <span className="rounded bg-accent-wash px-1.5 text-[10.5px] text-primary">auto</span>}>
       <select aria-label="Urgency" className={PROP_SELECT} value={task.urgency} onChange={(e) => onPatch({ urgency: e.target.value as TaskDto["urgency"] })}>
-        {URGENCIES.map((u) => <option key={u} value={u}>{URGENCY_LABEL[u]}{u === task.urgency && task.urgencyRaised ? ` (shown as ${URGENCY_LABEL[task.effectiveUrgency]})` : ""}</option>)}
+        {options(urgencyChoices(task))}
       </select>
       {hint && task.urgencyRaised && (
         <p className="text-xs text-text-3" data-urgency-hint="">
@@ -65,7 +91,7 @@ export function TaskImportanceField({ task, onPatch, className }: { task: TaskDt
   return (
     <TaskProp label="Importance" className={className}>
       <select aria-label="Importance" className={PROP_SELECT} value={task.importance} onChange={(e) => onPatch({ importance: e.target.value as TaskDto["importance"] })}>
-        {IMPORTANCES.map((i) => <option key={i} value={i}>{IMPORTANCE_LABEL[i]}</option>)}
+        {options(importanceChoices())}
       </select>
     </TaskProp>
   );
@@ -79,8 +105,7 @@ export function TaskMemberField({ label, value, people, onChange, children, clas
   return (
     <TaskProp label={label} className={className}>
       <select aria-label={label} className={PROP_SELECT} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
-        <option value="">Nobody</option>
-        {people.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        {options(memberChoices(people))}
       </select>
       {children}
     </TaskProp>
