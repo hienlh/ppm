@@ -40,7 +40,8 @@ export function ChatTaskStrip({ sessionId, projectName }: { sessionId: string; p
   // Anchored where it was opened from: the strip's task, or "+N" for a task picked from the list.
   const anchorRef = peek && peek.id !== t.id && view.extra > 0 ? moreRef : mainRef;
   return (
-    <div className="relative shrink-0 border-b border-border px-2 py-1 md:px-3" data-chat-task-strip={t.id} data-chat-task-strip-count={view.all.length}
+    // `max-md:pr-10`: on a phone the app's BETA ribbon sits in the top-right 40px square (app.tsx).
+    <div className="relative shrink-0 border-b border-border px-2 py-1 max-md:pr-10 md:px-3" data-chat-task-strip={t.id} data-chat-task-strip-count={view.all.length}
       role="region" aria-label={chatTaskStripLabel(view)}>
       <div className="flex min-w-0 items-center gap-1.5">
         <button ref={mainRef} type="button" onClick={() => setPeek((p) => (p?.id === t.id ? null : targetOf(t)))}

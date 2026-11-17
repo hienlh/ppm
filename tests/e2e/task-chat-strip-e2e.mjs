@@ -181,6 +181,9 @@ async function phoneFlow(k, s, width) {
   await st.waitFor({ timeout: 30000 });
   const m = await fits(page, width);
   const heights = { open: await heightOf(st.locator("[data-chat-task-strip-open]"), TEXT(true), "task button"), more: await heightOf(st.locator("[data-chat-task-strip-more]"), TEXT(true), "+N") };
+  // The BETA ribbon takes the top-right 40px square on a phone: "+N" must not sit under it.
+  const mb = await box(st.locator("[data-chat-task-strip-more]"));
+  assert(mb.right <= width - 40 || mb.top >= 40, `+N clear of the BETA ribbon at ${width}: ${JSON.stringify(mb)}`);
   if (width === 390) await k.shot("07-strip-390");
   else await k.shot(`07-strip-${width}`);
   await st.locator("[data-chat-task-strip-open]").tap();
