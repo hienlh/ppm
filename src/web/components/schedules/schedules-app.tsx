@@ -86,7 +86,7 @@ export function SchedulesApp({ mode }: { mode: "window" | "phone" }) {
       </p>
 
       <div className="flex min-h-0 flex-1 border-t border-border">
-        <div className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto", phone && "px-2.5 pt-1")} role={phone ? undefined : "grid"} aria-label="Schedules">
+        <div className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto", phone && "px-2.5 pt-1")} aria-label="Schedules">
           {!loaded && !error && <p className="p-6 text-center text-xs text-text-3">Loading…</p>}
           {error && <p className="p-6 text-center text-xs text-error-ink">{error}</p>}
           {empty && (
@@ -113,7 +113,7 @@ export function SchedulesApp({ mode }: { mode: "window" | "phone" }) {
                   <ScheduleOverviewRow {...detailProps(s)} selected={selected === s.id} onSelect={() => select(s)} />
                   {selected === s.id && (
                     <div className="border-b border-border-soft bg-accent-wash/40 px-3 py-3 @[900px]:hidden">
-                      <ScheduleOverviewDetail {...detailProps(s)} bare />
+                      <ScheduleOverviewDetail key={s.id} {...detailProps(s)} bare />
                     </div>
                   )}
                 </div>
@@ -123,14 +123,14 @@ export function SchedulesApp({ mode }: { mode: "window" | "phone" }) {
         </div>
         {!phone && current && (
           <aside className="hidden w-[340px] shrink-0 overflow-y-auto border-l border-border bg-bg p-3.5 @[900px]:block">
-            <ScheduleOverviewDetail {...detailProps(current)} />
+            <ScheduleOverviewDetail key={current.id} {...detailProps(current)} />
           </aside>
         )}
       </div>
 
       {phone && (
         <BottomSheet open={!!current} onClose={() => setSelected(null)} className="max-h-[85vh] overflow-y-auto">
-          {current && <div className="px-3 pb-4"><ScheduleOverviewDetail {...detailProps(current)} /></div>}
+          {current && <div className="px-3 pb-4"><ScheduleOverviewDetail key={current.id} {...detailProps(current)} /></div>}
         </BottomSheet>
       )}
       <SchedulePromptSheet schedule={promptSchedule} onClose={() => setPromptOf(null)}

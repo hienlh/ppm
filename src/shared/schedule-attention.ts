@@ -26,7 +26,7 @@ export type AttentionKind = "failed" | "stuck" | "paused" | "waiting";
 
 export interface ScheduleProblem {
   kind: AttentionKind;
-  /** Names this occurrence: `failed:<run id>`, `stuck:<run id>`, `paused:<reason>`, `waiting:<since>`. */
+  /** Names this occurrence: `failed:<run id>`, `stuck:<run id>`, `paused:<reason>@<updated>`, `waiting:<since>`. */
   key: string;
   /** One line for the row: "Last run failed", "Stuck: running 41 min". */
   text: string;
@@ -43,6 +43,8 @@ export interface AttentionInput {
   pending_since: string | null;
   attention_dismissed: string | null;
   last_run: ScheduleLastRun | null;
+  /** When the row last changed: a pause is set with it, so the same reason later is a new pause. */
+  updated_at?: string;
 }
 
 const minutes = (ms: number): string => {
@@ -54,7 +56,7 @@ const minutes = (ms: number): string => {
 export function scheduleProblem(s: AttentionInput, now: number = Date.now()): ScheduleProblem | null {
   if (!s.enabled) return null;
   if (s.paused_reason) {
-    return { kind: "paused", key: `paused:${s.paused_reason}`, text: "Paused", detail: s.paused_reason };
+    return { kind: "paused", key: `paused:${s.paused_reason}@${s.updated_at ?? ""}`, text: "Paused", detail: s.paused_reason };
   }
   if (s.pending_since) {
     const waited = now - parseStamp(s.pending_since);

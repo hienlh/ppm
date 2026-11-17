@@ -21,7 +21,8 @@ import { alwaysOnSupervisor, schedulerService } from "../../services/scheduler.s
 import { configService } from "../../services/config.service.ts";
 import { broadcastGlobalEvent } from "../ws/global.ts";
 import { newScheduleFrom, scheduleChangesFrom } from "../../services/scheduler-edit.ts";
-import { toScheduleOverviews } from "../../services/schedules-overview.ts";
+import { toScheduleOverviews as overviewsOf } from "../../services/schedules-overview.ts";
+import { chatTargetMode } from "../ws/chat.ts";
 import { scheduleProblem } from "../../shared/schedule-attention.ts";
 import { liveScript } from "../../services/schedule-script/instance-guard.ts";
 import { removeRunDir } from "../../services/schedule-script/script-files.ts";
@@ -29,6 +30,9 @@ import { dropLogRing } from "../../services/schedule-script/script-log.ts";
 import { editErrorResponse, scheduleScriptRoutes } from "./schedules-script.ts";
 
 export const schedulesRoutes = new Hono();
+
+/** Overviews whose chat reminders name the mode their chat would really run a message in now. */
+const toScheduleOverviews = (rows: Parameters<typeof overviewsOf>[0]) => overviewsOf(rows, (id, provider) => chatTargetMode(id, provider).mode);
 
 /** A task id as the task store mints them (`crypto.randomUUID()`). */
 const TASK_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

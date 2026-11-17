@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { Cron } from "croner";
-import type { Schedule, ScheduleRun } from "../../types/scheduler.ts";
+import type { Schedule, ScheduleOverview, ScheduleRun } from "../../types/scheduler.ts";
 import { configService } from "../config.service.ts";
 import { projectService } from "../project.service.ts";
 import { isInsideDir, realPathOrSelfSync } from "../fs-ops/fs-real-path.ts";
@@ -80,7 +80,8 @@ export function scheduleView(s: Schedule, project: AssistantProject | null, mach
     project: project?.name ?? null,
     folder: s.project_path,
     provider: s.provider_id,
-    permissionMode: s.permission_mode,
+    // The routes answer overviews: a chat reminder runs in its chat's mode, not the row's column.
+    permissionMode: (s as Partial<ScheduleOverview>).effective_permission_mode ?? s.permission_mode,
     enabled: s.enabled === 1,
     maxTurns: s.max_turns,
     timeoutMinutes: s.timeout_ms / 60_000,

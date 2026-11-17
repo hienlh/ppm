@@ -19,6 +19,7 @@ import { projectKey as keyOf } from "../../../src/services/project-name-for-path
 import { closeTask, createTask, softDeleteTask } from "../../../src/services/ppm-tasks/ppm-tasks.service.ts";
 import { enableOnManagerAssigned, setTasksEnabled } from "../../../src/services/ppm-tasks/ppm-tasks-projects.service.ts";
 import { getSchedule, insertSchedule, insertScheduleRun, listSchedulesForTask, updateScheduleRun } from "../../../src/services/scheduler-db.service.ts";
+import { nextFireAt } from "../../../src/services/scheduler-timing.ts";
 import { startTaskReminderCleanup } from "../../../src/services/task-reminders/task-reminder-cleanup.ts";
 import { createSessionSchedule } from "../../../src/services/session-schedules/session-schedule-save.ts";
 import { scheduleAttention } from "../../../src/shared/schedule-attention.ts";
@@ -105,7 +106,9 @@ describe("GET /api/schedules", () => {
     setSessionPermissionMode(chat, "acceptEdits");
     const task = createTask({ projectKey: key, title: "Review PR 412" }, USER);
     const reminder = createSessionSchedule({ target_session_id: chat, cron_expr: "30 18 17 11 *", prompt: "check", recurring: false, timezone: "Europe/London", task_id: task.id });
-    const promptId = insertSchedule({ name: "Nightly", cron_expr: "0 2 * * *", provider_id: "claude", project_path: root, prompt: "run tests" });
+    const promptId = insertSchedule({
+      name: "Nightly", cron_expr: "0 2 * * *", provider_id: "claude", project_path: root, prompt: "run tests", next_fire_at: nextFireAt("0 2 * * *"),
+    });
     const failed = insertScheduleRun(promptId, null, "error");
     updateScheduleRun(failed, { error: "timed out", ended_at: new Date().toISOString() });
     insertScheduleRun(promptId, null, "skipped");
@@ -123,6 +126,11 @@ describe("GET /api/schedules", () => {
     expect(remind.effective_permission_mode).toBe("acceptEdits");
     expect(remind.task).toMatchObject({ id: task.id, ref: "alpha/1", title: "Review PR 412", closed: false });
     expect(remind.last_run).toBeNull();
+    // The next fires come from the host: three for a repeating schedule, the one for a one-shot.
+    expect(nightly.next_fires).toHaveLength(3);
+    expect(nightly.next_fires[0]).toBe(nightly.next_fire_at!);
+    expect(Date.parse(nightly.next_fires[1]!) - Date.parse(nightly.next_fires[0]!)).toBe(86_400_000);
+    expect(remind.next_fires).toEqual([remind.next_fire_at!]);
 
     const forTask = await call<ScheduleOverview[]>("GET", `/api/schedules?task=${task.id}`);
     expect(forTask.json.data!.map((s) => s.id)).toEqual([reminder.id]);

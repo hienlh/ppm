@@ -51,7 +51,7 @@ export async function schedulesList(ctx: ToolContext, args: Record<string, unkno
       project: project?.name ?? null,
       folder: s.project_path,
       provider: s.provider_id,
-      permissionMode: s.permission_mode,
+      permissionMode: s.effective_permission_mode ?? s.permission_mode,
       enabled: s.enabled === 1,
       nextFireAt: s.next_fire_at,
       lastRunAt: s.last_run_at,

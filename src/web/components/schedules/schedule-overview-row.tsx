@@ -42,8 +42,7 @@ export function ScheduleOverviewRow({ schedule: s, now, selected, actions, onSel
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
-          role="row"
-          aria-selected={selected}
+          aria-current={selected || undefined}
           data-schedule-row={s.id}
           data-attention={attention?.kind}
           onClick={onSelect}

@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  localMomentText, localMomentToEpoch, parseLocalMoment, reminderChoices, reminderCron, reminderMomentOf, reminderName, reminderPrompt,
+  localMomentText, localMomentToEpoch, parseLocalMoment, reminderChoices, reminderCron, reminderName, reminderPrompt,
 } from "../../../src/shared/task-reminder.ts";
 
 describe("parseLocalMoment", () => {
@@ -17,12 +17,9 @@ describe("parseLocalMoment", () => {
   });
 });
 
-describe("reminderCron and reminderMomentOf", () => {
-  it("pins minute, hour, day and month, and reads them back", () => {
-    const at = parseLocalMoment("2026-03-05T07:05")!;
-    expect(reminderCron(at)).toBe("5 7 5 3 *");
-    expect(reminderMomentOf("5 7 5 3 *")).toEqual({ minute: 5, hour: 7, day: 5, month: 3 });
-    expect(reminderMomentOf("*/5 8-18 * * 1-5")).toBeNull();
+describe("reminderCron", () => {
+  it("pins minute, hour, day and month", () => {
+    expect(reminderCron(parseLocalMoment("2026-03-05T07:05")!)).toBe("5 7 5 3 *");
   });
 });
 
@@ -64,5 +61,12 @@ describe("reminderChoices", () => {
     expect(late.map((c) => c.id)).toEqual(["hour", "morning"]);
     // The same instant on a clock seven hours ahead is already evening there.
     expect(reminderChoices(new Date("2026-11-17T10:12:00Z"), "Asia/Saigon").map((c) => c.id)).toEqual(["hour", "morning"]);
+  });
+
+  it("means the next calendar day on a 25-hour and a 23-hour night", () => {
+    // 00:30 London on the day the clocks go back is a 25-hour day: +24 h would still be the 25th.
+    expect(reminderChoices(new Date("2026-10-25T00:30:00+01:00"), "Europe/London").find((c) => c.id === "morning")!.at).toBe("2026-10-26T09:00");
+    // 23:30 London the night before the clocks go forward: +24 h would skip to the 29th.
+    expect(reminderChoices(new Date("2027-03-27T23:30:00Z"), "Europe/London").find((c) => c.id === "morning")!.at).toBe("2027-03-28T09:00");
   });
 });

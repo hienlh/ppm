@@ -203,13 +203,16 @@ export function retargetSessionSchedules(oldId: string, newId: string): number {
 export function lastRunsFor(scheduleIds: number[]): Map<number, ScheduleLastRun> {
   const result = new Map<number, ScheduleLastRun>();
   if (scheduleIds.length === 0) return result;
-  const rows = getDb().query(
-    `SELECT r.schedule_id, r.id, r.status, r.started_at, r.ended_at, r.error, COALESCE(r.rotated_to_session_id, r.session_id) AS session_id
-     FROM schedule_runs r
-     JOIN (SELECT schedule_id, MAX(id) AS id FROM schedule_runs WHERE status != 'skipped' GROUP BY schedule_id) newest ON newest.id = r.id`,
-  ).all() as Array<ScheduleLastRun & { schedule_id: number }>;
-  const wanted = new Set(scheduleIds);
-  for (const { schedule_id, ...run } of rows) if (wanted.has(schedule_id)) result.set(schedule_id, run);
+  // One indexed lookup per schedule (`idx_schedule_runs_sched`): the list is polled, and a
+  // schedule ticking every minute keeps tens of thousands of runs that a GROUP BY would read whole.
+  const newest = getDb().query(
+    `SELECT id, status, started_at, ended_at, error, COALESCE(rotated_to_session_id, session_id) AS session_id
+     FROM schedule_runs WHERE schedule_id = ? AND status != 'skipped' ORDER BY started_at DESC, id DESC LIMIT 1`,
+  );
+  for (const id of new Set(scheduleIds)) {
+    const run = newest.get(id) as ScheduleLastRun | null;
+    if (run) result.set(id, run);
+  }
   return result;
 }
 

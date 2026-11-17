@@ -8,8 +8,7 @@ import { AlertTriangle, ClipboardCheck, FileText, MessageSquare, Pencil, Play, T
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { describeCron } from "../../../shared/cron-in-words";
-import { nextFires } from "../../../shared/schedule-cron";
-import { scheduleAttention } from "../../../shared/schedule-attention";
+import { parseStamp, scheduleAttention } from "../../../shared/schedule-attention";
 import { clockLabel, isBypass, KIND_LABELS, projectLabel, zoneCity } from "@/lib/schedules/schedules-view";
 import type { ScheduleOverview } from "../../../types/scheduler";
 import { ScheduleRecentRuns } from "./schedule-recent-runs";
@@ -38,9 +37,8 @@ export function ScheduleOverviewDetail({ schedule: s, now, actions, onEdit, onOp
   const problem = scheduleAttention(s, now);
   const bypass = isBypass(s);
   const zone = s.timezone;
-  const upcoming = useMemo(() => (s.mode === "tick" && s.enabled
-    ? nextFires(s.cron_expr, s.kind === "session" && !s.recurring ? 1 : 3, undefined, zone).map((d) => clockLabel(d.getTime(), zone, now))
-    : []), [s.cron_expr, s.mode, s.enabled, s.kind, s.recurring, zone, now]);
+  // Computed by the host, which reads the cron on its own clock: a browser elsewhere shows the same instants.
+  const upcoming = useMemo(() => s.next_fires.map((at) => clockLabel(parseStamp(at), zone, now)), [s.next_fires, zone, now]);
   const chat = actions.chatOf(s);
 
   return (
@@ -88,7 +86,7 @@ export function ScheduleOverviewDetail({ schedule: s, now, actions, onEdit, onOp
           <dl className="grid grid-cols-[76px_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
             <dt className="text-text-3">Cron</dt><dd className="font-mono">{s.cron_expr}</dd>
             <dt className="text-text-3">In words</dt><dd>{describeCron(s.cron_expr)}{s.kind === "session" && !s.recurring ? ", once" : ""}</dd>
-            <dt className="text-text-3">Zone</dt><dd>{zone ? zoneCity(zone) : "This machine's"}</dd>
+            <dt className="text-text-3">Zone</dt><dd>{zone ? zoneCity(zone) : "The PPM host's"}</dd>
             <dt className="text-text-3">Next</dt><dd>{upcoming.length ? upcoming.join(" · ") : "—"}</dd>
             {s.target_title !== undefined && s.kind === "session" && (<><dt className="text-text-3">Sends to</dt><dd className="truncate">{s.target_title ?? "its chat"}</dd></>)}
           </dl>

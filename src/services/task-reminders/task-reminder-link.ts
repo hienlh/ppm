@@ -3,18 +3,12 @@
  * (`ppm/12`, `#12`, `12` or a task id); it must name an open task of the project the schedule's
  * chat belongs to, so a chat cannot hang its schedule on another project's task.
  */
-import { basename } from "node:path";
 import { getDb } from "../db.service.ts";
 import { ScheduleEditError } from "../scheduler-edit.ts";
 import { getTask } from "../ppm-tasks/ppm-tasks-read.ts";
-import { getTaskProject } from "../ppm-tasks/ppm-tasks-projects.service.ts";
-import { projectKey, projectNameForPath } from "../project-name-for-path.ts";
+import { projectKey } from "../project-name-for-path.ts";
+import { taskProjectName } from "./task-project-name.ts";
 import { parseTaskRef } from "../../shared/ppm-tasks-refs.ts";
-
-const projectNameOfKey = (key: string): string => {
-  const path = getTaskProject(key)?.projectPath ?? key;
-  return projectNameForPath(path) ?? basename(path);
-};
 
 /**
  * The task the AI named for its schedule (`ppm/12`, `#12`, `12` or a task id), checked to belong
@@ -28,7 +22,7 @@ export function resolveLinkableTask(ref: unknown, targetProjectPath: string): st
   if (parsed) {
     const row = getDb().query("SELECT id FROM tasks WHERE project_key = ? AND number = ?").get(key, parsed.number) as { id: string } | null;
     id = row?.id ?? null;
-    if (id && parsed.project && projectNameOfKey(key).toLowerCase() !== parsed.project.toLowerCase()) id = null;
+    if (id && parsed.project && taskProjectName(key).toLowerCase() !== parsed.project.toLowerCase()) id = null;
   } else {
     id = ref.trim();
   }

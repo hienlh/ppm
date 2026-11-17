@@ -136,6 +136,8 @@ export interface ScheduleOverview extends ScheduleView {
    * (the stored column is unused for those), else the provider's default.
    */
   effective_permission_mode: string;
+  /** The next fires (ISO, UTC) as the host computes them; empty when it is off or always on. */
+  next_fires: string[];
   task: ScheduleTaskLink | null;
 }
 

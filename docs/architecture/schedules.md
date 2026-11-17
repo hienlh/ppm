@@ -219,15 +219,18 @@ floating window, or the `schedules` tab below `md`). The button carries two mark
 - **the red dot**: a schedule that needs a look — its newest run failed, a run is still `running`
   past its `timeout_ms` (stuck), or a session schedule is paused or has waited for its chat more
   than ten minutes. A problem has a key naming that one occurrence (`failed:<run id>`,
-  `stuck:<run id>`, `paused:<reason>`, `waiting:<since>`); Dismiss stores the key in
+  `stuck:<run id>`, `paused:<reason>@<updated_at>`, `waiting:<since>`); Dismiss stores the key in
   `attention_dismissed`, so the dot comes back only for a different problem, and a later run that
   succeeds clears it with no dismiss at all. Run rows stamp `started_at` in SQLite's zone-less
   `YYYY-MM-DD HH:MM:SS` (UTC); `parseStamp` reads it as UTC, where `Date.parse` would read it on
   the device's clock.
 
 `GET /api/schedules` answers overviews (`src/services/schedules-overview.ts`): each view plus its
-newest run that did something (a skipped tick is not one), its registered project's name, the
-task it belongs to, and `effective_permission_mode`. A session schedule's turn is an ordinary turn
+newest run that did something (a skipped tick is not one, and it is one indexed lookup per
+schedule, since the list is polled), its registered project's name, the task it belongs to, its
+next three fires as the host computes them (`next_fires`: a browser in another zone must show the
+instants the host fires at, not ones it works out on its own clock), and `effective_permission_mode`
+(the routes resolve it with the chat socket's own `chatTargetMode`). A session schedule's turn is an ordinary turn
 of its chat, so its mode is the chat's (`session_metadata.permission_mode`, else the provider's
 default) — the row's own `permission_mode` column is unused for those and reads `bypassPermissions`
 by default, which is why the window never shows that column for a reminder.

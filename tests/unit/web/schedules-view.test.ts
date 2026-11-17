@@ -20,7 +20,7 @@ const row = (over: Partial<ScheduleOverview> = {}): ScheduleOverview => ({
   next_fire_at: iso(8 * H), created_at: "", updated_at: "", kind: "prompt", mode: "tick", description: "", script: null,
   target_session_id: null, timezone: null, recurring: 1, pending_since: null, paused_reason: null, task_id: null, attention_dismissed: null,
   inputs: [], inputValues: {}, secretsSet: [], status: { state: "idle", pid: null, since: null, restartAt: null, restarts: 0, lastError: null },
-  last_run: null, project_name: "alpha", effective_permission_mode: "bypassPermissions", task: null,
+  last_run: null, project_name: "alpha", effective_permission_mode: "bypassPermissions", next_fires: [], task: null,
   ...over,
 } as ScheduleOverview);
 

@@ -38,8 +38,10 @@ describe("scheduleProblem", () => {
   });
 
   it("flags a paused reminder and one waiting for its chat too long, before any run", () => {
-    expect(scheduleProblem(base({ kind: "session", paused_reason: "The chat was deleted", last_run: run(1, "error") }), NOW))
-      .toMatchObject({ kind: "paused", key: "paused:The chat was deleted" });
+    const paused = base({ kind: "session", paused_reason: "The chat was deleted", last_run: run(1, "error"), updated_at: "2026-11-17 09:00:00" });
+    expect(scheduleProblem(paused, NOW)).toMatchObject({ kind: "paused", key: "paused:The chat was deleted@2026-11-17 09:00:00" });
+    // The same reason set again later is a new pause: a dismissed one does not hide it.
+    expect(scheduleAttention({ ...paused, updated_at: "2026-11-18 09:00:00", attention_dismissed: "paused:The chat was deleted@2026-11-17 09:00:00" }, NOW)?.kind).toBe("paused");
     expect(scheduleProblem(base({ kind: "session", pending_since: iso(-(WAITING_TOO_LONG_MS - 1000)) }), NOW)).toBeNull();
     const since = iso(-14 * 60_000);
     expect(scheduleProblem(base({ kind: "session", pending_since: since }), NOW)).toMatchObject({ kind: "waiting", key: `waiting:${since}`, text: "Waiting for its chat 14 min" });

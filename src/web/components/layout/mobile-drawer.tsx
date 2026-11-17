@@ -76,7 +76,8 @@ function FooterTile({ icon: Icon, label, badge, alert, alertLabel, count, dot, t
     <button
       onClick={onClick}
       data-drawer-tile={testId}
-      aria-label={alert ? `${label} · ${alert} ${alertLabel ?? ""}`.trimEnd() : count ? `${label} · ${count} in the next 24 h${dot ? " · needs attention" : ""}` : undefined}
+      aria-label={alert ? `${label} · ${alert} ${alertLabel ?? ""}`.trimEnd()
+        : count || dot ? [label, ...(count ? [`${count} in the next 24 h`] : []), ...(dot ? ["needs attention"] : [])].join(" · ") : undefined}
       className="group flex flex-col items-center justify-center gap-1 rounded-lg py-2.5 text-text-subtle hover:bg-surface-elevated hover:text-text-secondary transition-colors"
     >
       {/* The badge hangs off the icon, not the tile: a tile is a whole column wide, so a

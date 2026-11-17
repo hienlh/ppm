@@ -38,14 +38,6 @@ export function reminderCron(at: LocalMoment): string {
   return `${at.minute} ${at.hour} ${at.day} ${at.month} *`;
 }
 
-/** The moment a one-shot cron pins, without its year; null when the cron is not one. */
-export function reminderMomentOf(cron: string): Omit<LocalMoment, "year"> | null {
-  const m = /^(\d{1,2}) (\d{1,2}) (\d{1,2}) (\d{1,2}) \*$/.exec(cron.trim());
-  if (!m) return null;
-  const [minute, hour, day, month] = m.slice(1).map(Number) as [number, number, number, number];
-  return { minute, hour, day, month };
-}
-
 /** `2026-11-17T18:30` for `date` as the clock in `timeZone` reads it (the device's when absent). */
 export function localMomentText(date: Date, timeZone?: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -101,11 +93,12 @@ export interface ReminderChoice {
 export function reminderChoices(now: Date, zone: string): ReminderChoice[] {
   const inHour = new Date(Math.ceil((now.getTime() + 60 * 60_000) / 300_000) * 300_000);
   const today = localMomentText(now, zone);
-  const tomorrow = localMomentText(new Date(now.getTime() + 24 * 60 * 60_000), zone);
+  const [y, m, d] = today.slice(0, 10).split("-").map(Number) as [number, number, number];
+  const tomorrow = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
   const hourThere = Number(today.slice(11, 13));
   return [
     { id: "hour", label: "In 1 hour", at: localMomentText(inHour, zone) },
     ...(hourThere < 17 ? [{ id: "evening" as const, label: "This evening", at: `${today.slice(0, 10)}T18:00` }] : []),
-    { id: "morning", label: "Tomorrow morning", at: `${tomorrow.slice(0, 10)}T09:00` },
+    { id: "morning", label: "Tomorrow morning", at: `${tomorrow}T09:00` },
   ];
 }

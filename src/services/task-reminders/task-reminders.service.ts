@@ -5,14 +5,12 @@
  * an ordinary session schedule — the scheduler, its delivery into the chat and the Schedules window
  * need nothing else — and closing or deleting the task deletes it (`task-reminder-cleanup.ts`).
  */
-import { basename } from "node:path";
 import { ScheduleEditError } from "../scheduler-edit.ts";
 import { nextFireAt } from "../scheduler-timing.ts";
 import { createSessionSchedule } from "../session-schedules/session-schedule-save.ts";
 import { getTask } from "../ppm-tasks/ppm-tasks-read.ts";
-import { getTaskProject } from "../ppm-tasks/ppm-tasks-projects.service.ts";
 import { managerSessionFor } from "../ppm-tasks/ppm-tasks-write.ts";
-import { projectNameForPath } from "../project-name-for-path.ts";
+import { taskProjectName } from "./task-project-name.ts";
 import { timezoneProblem } from "../../shared/session-schedule-input.ts";
 import {
   localMomentText, localMomentToEpoch, parseLocalMoment, REMINDER_MAX_AHEAD_MS, REMINDER_NOTE_MAX, reminderCron, reminderName,
@@ -26,11 +24,6 @@ export interface TaskReminderInput {
   at: unknown;
   timezone: unknown;
   note?: unknown;
-}
-
-export function projectNameOf(task: Pick<TaskView, "projectKey">): string {
-  const path = getTaskProject(task.projectKey)?.projectPath ?? task.projectKey;
-  return projectNameForPath(path) ?? basename(path);
 }
 
 /** The task, open and not deleted, or why a reminder cannot be tied to it. */
@@ -78,7 +71,7 @@ export function createTaskReminder(taskId: string, input: TaskReminderInput, now
 
   const target = reminderChatFor(task);
   if (!target) throw new ScheduleEditError(["This project has no manager chat and nobody is working on the task, so there is no chat to remind"]);
-  const project = projectNameOf(task);
+  const project = taskProjectName(task.projectKey);
   const named = { number: task.number, project, title: task.title };
   return createSessionSchedule({
     target_session_id: target,

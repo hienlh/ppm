@@ -28,6 +28,10 @@ interface SchedulesOverviewState {
 }
 
 let inFlight: Promise<void> | null = null;
+/** A change arrived while a read was out: that read may predate it, so read again when it lands. */
+let dirty = false;
+/** Bumped by every local write: a read that started before one must not put old rows back. */
+let writes = 0;
 
 export const useSchedulesOverviewStore = create<SchedulesOverviewState>((set, get) => ({
   list: [],
@@ -35,16 +39,29 @@ export const useSchedulesOverviewStore = create<SchedulesOverviewState>((set, ge
   error: null,
   now: Date.now(),
   refetch: () => {
-    // Several events in a burst (a write and its broadcast) share one read.
-    if (inFlight) return inFlight;
+    // Several events in a burst (a write and its broadcast) share one read, then one more after it.
+    if (inFlight) { dirty = true; return inFlight; }
+    const startedAfter = writes;
     inFlight = api.get<ScheduleOverview[]>("/api/schedules")
-      .then((list) => set({ list, loaded: true, error: null, now: Date.now() }))
+      .then((list) => {
+        if (startedAfter !== writes) { dirty = true; return; }
+        set({ list, loaded: true, error: null, now: Date.now() });
+      })
       .catch((e) => { if (!get().loaded) set({ error: e instanceof Error ? e.message : "Could not read the schedules" }); })
-      .finally(() => { inFlight = null; });
+      .finally(() => {
+        inFlight = null;
+        if (dirty) { dirty = false; void get().refetch(); }
+      });
     return inFlight;
   },
-  put: (row) => set((s) => ({ list: s.list.some((x) => x.id === row.id) ? s.list.map((x) => (x.id === row.id ? row : x)) : [...s.list, row] })),
-  remove: (id) => set((s) => ({ list: s.list.filter((x) => x.id !== id) })),
+  put: (row) => {
+    writes += 1;
+    set((s) => ({ list: s.list.some((x) => x.id === row.id) ? s.list.map((x) => (x.id === row.id ? row : x)) : [...s.list, row] }));
+  },
+  remove: (id) => {
+    writes += 1;
+    set((s) => ({ list: s.list.filter((x) => x.id !== id) }));
+  },
 }));
 
 let users = 0;

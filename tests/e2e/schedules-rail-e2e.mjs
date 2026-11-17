@@ -73,8 +73,8 @@ const pageInit = () => {
 
 /** Every visible button under `root` that is a text or an icon button, with its height. */
 async function buttonHeights(page, root) {
-  return page.locator(root).first().evaluate((el) => [...el.querySelectorAll("button:not([role=switch]):not([role=row] > *):not([data-schedule-row])")]
-    .filter((b) => b.offsetParent !== null && !b.closest("[role=row]") && b.getBoundingClientRect().height > 0)
+  return page.locator(root).first().evaluate((el) => [...el.querySelectorAll("button:not([role=switch])")]
+    .filter((b) => b.offsetParent !== null && !b.closest("[data-schedule-row]") && b.getBoundingClientRect().height > 0)
     .map((b) => ({ label: (b.getAttribute("aria-label") ?? b.textContent ?? "").trim().slice(0, 30), h: Math.round(b.getBoundingClientRect().height),
       icon: !(b.textContent ?? "").trim() })));
 }
