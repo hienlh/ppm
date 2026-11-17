@@ -41,7 +41,7 @@ export function ScheduleRecentRuns({ scheduleId, now, onOpenChat }: {
         return (
           <li key={run.id} data-run={run.id} className="border-b border-border-soft last:border-b-0">
             <div className={cn("flex items-center gap-2", TEXT_CONTROL_HEIGHT)}>
-              <button type="button" disabled={!details} onClick={() => setOpen(open === run.id ? null : run.id)}
+              <button type="button" data-tap-area="" disabled={!details} onClick={() => setOpen(open === run.id ? null : run.id)}
                 className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-default">
                 <RunStatusLine tone={TONE[run.status]} text={WORD[run.status]} />
                 <span className="truncate text-[11px] text-text-3">

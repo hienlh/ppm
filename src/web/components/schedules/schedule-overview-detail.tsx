@@ -95,7 +95,7 @@ export function ScheduleOverviewDetail({ schedule: s, now, actions, onEdit, onOp
 
       {s.kind !== "script" && (
         <Card title="Prompt">
-          <button type="button" onClick={onOpenPrompt} title="Open the whole prompt"
+          <button type="button" data-tap-area="" onClick={onOpenPrompt} title="Open the whole prompt"
             className="block w-full max-h-24 overflow-hidden whitespace-pre-wrap break-words rounded-md bg-panel-2 p-2 text-left font-mono text-[11.5px] leading-relaxed text-text-2 hover:text-foreground">
             {s.prompt}
           </button>

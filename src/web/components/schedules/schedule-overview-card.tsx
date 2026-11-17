@@ -32,10 +32,10 @@ export function ScheduleOverviewCard({ schedule: s, now, actions, onSelect, onOp
           <div className="flex items-center gap-2">
             <KindIcon kind={s.kind} />
             {/* The tap target: a real button, which the adaptive menu leaves alone after a long press. */}
-            <button type="button" onClick={onSelect} className="min-w-0 flex-1 truncate text-left text-[14.5px] font-medium">{s.name}</button>
+            <button type="button" data-tap-area="" onClick={onSelect} className="min-w-0 flex-1 truncate text-left text-[14.5px] font-medium">{s.name}</button>
             <Switch aria-label={`${s.enabled ? "Turn off" : "Turn on"} ${s.name}`} checked={!!s.enabled} onCheckedChange={(v) => void actions.setEnabled(s, v)} />
           </div>
-          <button type="button" onClick={onSelect} className="mt-1.5 flex w-full flex-wrap items-center gap-1.5 text-left">
+          <button type="button" data-tap-area="" onClick={onSelect} className="mt-1.5 flex w-full flex-wrap items-center gap-1.5 text-left">
             <ProjectTag name={projectLabel(s)} />
             <PermissionPill mode={s.effective_permission_mode} />
             {s.task && (
@@ -46,7 +46,7 @@ export function ScheduleOverviewCard({ schedule: s, now, actions, onSelect, onOp
             {s.kind === "session" && <span className="truncate text-[11.5px] text-text-3">→ {s.target_title ?? "its chat"}</span>}
           </button>
           <div className="mt-2 flex items-center justify-between gap-2">
-            <button type="button" onClick={onSelect} className="min-w-0 flex-1 truncate text-left text-[13px]">
+            <button type="button" data-tap-area="" onClick={onSelect} className="min-w-0 flex-1 truncate text-left text-[13px]">
               <b className="font-medium">{next.main}</b>{next.sub && <span className="text-text-3"> · {next.sub}</span>}
             </button>
             <div className="flex gap-1">

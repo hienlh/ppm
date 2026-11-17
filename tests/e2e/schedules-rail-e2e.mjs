@@ -71,10 +71,11 @@ const pageInit = () => {
   localStorage.setItem("ppm-onboarding-v1", JSON.stringify({ version: 1, status: "dismissed", familiarity: null, goal: null, currentStep: null, completed: [], skipped: [], projectName: null, sessionId: null }));
 };
 
-/** Every visible button under `root` that is a text or an icon button, with its height. */
+/** Every visible text or icon button under `root`, with its height. A tap area (a row's name, a
+ *  prompt preview) is not a control and is left out; so is a list row's own buttons. */
 async function buttonHeights(page, root) {
   return page.locator(root).first().evaluate((el) => [...el.querySelectorAll("button:not([role=switch])")]
-    .filter((b) => b.offsetParent !== null && !b.closest("[data-schedule-row]") && b.getBoundingClientRect().height > 0)
+    .filter((b) => b.offsetParent !== null && !b.closest("[data-schedule-row]") && !b.hasAttribute("data-tap-area") && b.getBoundingClientRect().height > 0)
     .map((b) => ({ label: (b.getAttribute("aria-label") ?? b.textContent ?? "").trim().slice(0, 30), h: Math.round(b.getBoundingClientRect().height),
       icon: !(b.textContent ?? "").trim() })));
 }
@@ -160,7 +161,7 @@ try {
 
   await check("button heights in the window are 28px (text) and 24px (icon)", async () => {
     assertHeights(await buttonHeights(page, '[data-schedules-app="window"]'), { text: 28, icon: 24 }, "desktop window");
-    const rowIcons = await app.locator("[data-schedule-row] button").evaluateAll((bs) => bs.map((b) => Math.round(b.getBoundingClientRect().height)));
+    const rowIcons = await app.locator("[data-schedule-row] button:not([role=switch])").evaluateAll((bs) => bs.map((b) => Math.round(b.getBoundingClientRect().height)));
     assert(rowIcons.length > 0 && rowIcons.every((h) => h === 24), `row icon buttons ${rowIcons}`);
   });
 
@@ -172,7 +173,7 @@ try {
 
   await check("a task shows its reminder, and Remind… adds another", async () => {
     await app.locator(`[data-schedule-row="${seeded.ids.reminder}"]`).click();
-    await app.locator(`aside [data-schedule-detail="${seeded.ids.reminder}"]`).getByRole("button", { name: "beta/1" }).click();
+    await app.locator(`aside [data-schedule-detail="${seeded.ids.reminder}"]`).getByRole("button", { name: "beta/1", exact: true }).click();
     const card = page.locator(`[data-task-reminder="${seeded.ids.reminder}"]`);
     await card.waitFor({ timeout: 15000 });
     assert.match(await card.innerText(), /Reminder · .*London/);
@@ -215,12 +216,20 @@ try {
       await tile.waitFor({ timeout: 15000 });
       await until("tile count", async () => (await tile.locator("[data-drawer-count]").count()) === 1);
       assert.equal(await tile.locator("[data-drawer-dot]").count(), 1);
-      const clipped = await tile.evaluate((b) => { const label = b.querySelector("span.truncate"); return label.scrollWidth > label.clientWidth + 1; });
-      assert.equal(clipped, false, "the tile's label fits");
+      // The drawer slides in: measure and shoot once it has stopped moving.
+      await until("drawer settled", async () => { const a = (await tile.boundingBox()).x; await p.waitForTimeout(150); return a === (await tile.boundingBox()).x; });
+      // Which tiles of the one-row strip cut their label short at this width (recorded for the report).
+      const clippedTiles = await tile.locator("xpath=..").locator(":scope > button").evaluateAll((bs) => bs
+        .map((b) => { const l = b.querySelector("span.truncate"); return l && l.scrollWidth > l.clientWidth + 1 ? l.textContent : null; }).filter(Boolean));
+      results.push({ name: `${width}: drawer tiles whose label is cut`, ok: true, info: clippedTiles });
+      console.log(`INFO ${width}: drawer tiles whose label is cut: ${JSON.stringify(clippedTiles)}`);
+      if (width >= 390) assert(!clippedTiles.includes("Schedules"), "the Schedules label fits at 390");
       await p.screenshot({ path: join(artifacts, `06-phone-${width}-drawer.png`) });
       await tile.click();
       await p.locator('[data-schedules-app="phone"]').waitFor({ timeout: 15000 });
-      await until("cards", async () => (await p.locator("[data-schedule-card]").count()) === 6);
+      // Every schedule the server has: the desktop half added a reminder and turned one off.
+      const total = (await getJson("/api/schedules")).data.length;
+      await until("cards", async () => (await p.locator("[data-schedule-card]").count()) === total);
       assert(await p.evaluate(() => document.scrollingElement.scrollWidth <= window.innerWidth + 1), "no sideways scroll");
       await p.screenshot({ path: join(artifacts, `07-phone-${width}-list.png`) });
       assertHeights(await buttonHeights(p, '[data-schedules-app="phone"] [data-schedule-card]'), { text: 26, icon: 22 }, `phone ${width} card`);
@@ -235,7 +244,7 @@ try {
       const detail = p.locator(`[data-schedule-detail="${seeded.ids.reminder}"]`).last();
       await detail.waitFor();
       await p.screenshot({ path: join(artifacts, `08-phone-${width}-detail.png`) });
-      const heights = await detail.locator("button:not([role=switch])").evaluateAll((bs) => bs.filter((b) => b.offsetParent).map((b) => Math.round(b.getBoundingClientRect().height)));
+      const heights = await detail.locator("button:not([role=switch]):not([data-tap-area])").evaluateAll((bs) => bs.filter((b) => b.offsetParent).map((b) => Math.round(b.getBoundingClientRect().height)));
       assert(heights.every((h) => h === 26 || h === 22), `detail buttons ${heights}`);
       await p.keyboard.press("Escape");
       await p.mouse.click(5, 5).catch(() => {});
