@@ -7,6 +7,12 @@
  *   `create_session` / `send_to_session` calls;
  * - `/ws/global`'s live links and announced titles (`session-collab-store`).
  *
+ * Each also gets when the two sessions last interacted with each other — one created the other,
+ * one messaged the other, a reply or a finished turn came back — which is what the Sessions list is
+ * ordered by. The server's pair record (seeded with the links) knows interactions older than the
+ * loaded messages; the messages know the ones since the chat was opened. The latest of the two wins.
+ * What the other session does on its own, or with a third session, is never counted.
+ *
  * Pure, so it is tested without the stores.
  */
 import { decodeMessageBlocks } from "../../shared/chat-message-blocks";
@@ -19,6 +25,8 @@ export interface LinkedSession {
   title: string;
   providerId: string;
   relations: SessionLinkRelation[];
+  /** When the two last interacted with each other (epoch ms); absent when nothing says. */
+  lastInteractionAt?: number;
 }
 
 export type LinkedSessionStatus = "running" | "idle" | "needs_approval" | "new_message";
@@ -30,24 +38,34 @@ export interface LinkSources {
   /** Live links of this session, from `/ws/global`. */
   liveLinks?: Readonly<Record<string, readonly SessionLinkRelation[]>>;
   announced?: Readonly<Record<string, { title: string; providerId: string }>>;
+  /** Other session → when it last interacted with this one, as the server and live events said. */
+  interactedAt?: Readonly<Record<string, number>>;
+}
+
+/** An ISO time as epoch ms, or undefined when there is none to read. */
+function epoch(iso: string | null | undefined): number | undefined {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) && t > 0 ? t : undefined;
 }
 
 const RELATION_ORDER: Record<SessionLinkRelation, number> = { parent: 0, child: 1, messaged: 2 };
 
-export function collectLinkedSessions({ sessionId, list, messages, liveLinks, announced }: LinkSources): LinkedSession[] {
-  const found = new Map<string, { relations: Set<SessionLinkRelation>; title?: string; providerId?: string }>();
-  const add = (id: string | null | undefined, relation: SessionLinkRelation, title?: string, providerId?: string) => {
+export function collectLinkedSessions({ sessionId, list, messages, liveLinks, announced, interactedAt }: LinkSources): LinkedSession[] {
+  const found = new Map<string, { relations: Set<SessionLinkRelation>; title?: string; providerId?: string; at?: number }>();
+  const add = (id: string | null | undefined, relation: SessionLinkRelation, title?: string, providerId?: string, at?: number) => {
     if (!id || id === sessionId) return;
     const entry = found.get(id) ?? { relations: new Set() };
     entry.relations.add(relation);
     entry.title ??= title;
     entry.providerId ??= providerId;
+    if (at !== undefined && at > (entry.at ?? 0)) entry.at = at;
     found.set(id, entry);
   };
 
+  // A session's creation is its creator's first interaction with it.
   const self = list.find((s) => s.id === sessionId);
-  add(self?.spawnedBy, "parent", self?.parentTitle ?? undefined);
-  for (const s of list) if (s.spawnedBy === sessionId) add(s.id, "child", s.title, s.providerId);
+  add(self?.spawnedBy, "parent", self?.parentTitle ?? undefined, undefined, epoch(self?.createdAt));
+  for (const s of list) if (s.spawnedBy === sessionId) add(s.id, "child", s.title, s.providerId, epoch(s.createdAt));
 
   const results = new Map<string, string>();
   for (const m of messages) {
@@ -59,7 +77,7 @@ export function collectLinkedSessions({ sessionId, list, messages, liveLinks, an
     if (m.role === "user") {
       const from = decodeMessageBlocks(m.content).fromSession;
       // The PPM Assistant belongs to no project, so this bar could not open it; its bubble does.
-      if (from && from.kind !== "assistant") add(from.sessionId, "messaged", from.title, from.providerId);
+      if (from && from.kind !== "assistant") add(from.sessionId, "messaged", from.title, from.providerId, epoch(from.sentAt) ?? epoch(m.timestamp));
       continue;
     }
     for (const e of m.events ?? []) {
@@ -68,9 +86,11 @@ export function collectLinkedSessions({ sessionId, list, messages, liveLinks, an
       if (!call || call.tool === "session_status") continue;
       const output = e.toolUseId ? results.get(e.toolUseId) : undefined;
       const result = output === undefined ? null : sessionCollabToolResult(output);
-      if (call.tool === "create_session") add(result?.sessionId, "child", result?.title ?? call.title, result?.providerId);
+      // A reply that came back is later than the call that waited for it.
+      const at = (result?.reply?.replied ? epoch(result.reply.sentAt) : undefined) ?? epoch(m.timestamp);
+      if (call.tool === "create_session") add(result?.sessionId, "child", result?.title ?? call.title, result?.providerId, at);
       // Only a send the server took: a refused one names whatever id the AI wrote.
-      else if (result) add(result.sessionId ?? call.sessionId, "messaged", result.title, result.providerId);
+      else if (result) add(result.sessionId ?? call.sessionId, "messaged", result.title, result.providerId, at);
     }
   }
 
@@ -85,11 +105,13 @@ export function collectLinkedSessions({ sessionId, list, messages, liveLinks, an
     const kept = relations.some((r) => r !== "messaged") ? relations.filter((r) => r !== "messaged") : relations;
     kept.sort((a, b) => RELATION_ORDER[a] - RELATION_ORDER[b]);
     const known = byId.get(id);
+    const at = Math.max(entry.at ?? 0, interactedAt?.[id] ?? 0);
     out.push({
       sessionId: id,
       title: known?.title || announced?.[id]?.title || entry.title || "Untitled session",
       providerId: known?.providerId || announced?.[id]?.providerId || entry.providerId || "",
       relations: kept,
+      ...(at > 0 ? { lastInteractionAt: at } : {}),
     });
   }
   return out.sort((a, b) => RELATION_ORDER[a.relations[0]!] - RELATION_ORDER[b.relations[0]!]);
@@ -115,14 +137,29 @@ export function linkedSessionStatus(sessionId: string, { streaming, notification
   return "idle";
 }
 
-const ATTENTION_RANK: Record<LinkedSessionStatus, number> = { needs_approval: 0, running: 1, new_message: 2, idle: 3 };
-
 /**
- * A list's order for the person reading it: the sessions waiting on them first, then the ones
- * running, then unread answers, then the idle and done. Stable, so equals keep their order.
+ * Newest interaction with this session first; sessions with no known time go last. Stable, so
+ * equals keep their order. Status plays no part: the person looks for the session they were just
+ * dealing with, and a status has its own dot and word on the row.
  */
-export function byAttention<T extends { status: LinkedSessionStatus }>(sessions: readonly T[]): T[] {
-  return [...sessions].sort((a, b) => ATTENTION_RANK[a.status] - ATTENTION_RANK[b.status]);
+export function byRecentInteraction<T extends { lastInteractionAt?: number }>(sessions: readonly T[]): T[] {
+  return [...sessions].sort((a, b) => (b.lastInteractionAt ?? 0) - (a.lastInteractionAt ?? 0));
+}
+
+/** Rows above which the Sessions list offers a filter by name. */
+export const LINKED_FILTER_MIN_ROWS = 8;
+
+/** Lower case with accents gone, so "tu dong" finds "tự động". */
+function fold(text: string): string {
+  return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/[đĐ]/g, "d").toLowerCase();
+}
+
+/** Whether a title holds every word of the query, in any order, ignoring case and accents. */
+export function matchesLinkedFilter(title: string, query: string): boolean {
+  const words = fold(query).split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const haystack = fold(title);
+  return words.every((w) => haystack.includes(w));
 }
 
 export const LINKED_STATUS_TEXT: Record<LinkedSessionStatus, string> = {

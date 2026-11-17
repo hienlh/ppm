@@ -21,6 +21,11 @@ export interface AnnouncedSession {
 interface SessionCollabState {
   /** sessionId → other sessionId → how they are linked. Symmetric: both sides are recorded. */
   links: Record<string, Record<string, SessionLinkRelation[]>>;
+  /**
+   * sessionId → other sessionId → when the two last interacted (epoch ms), as the server's links
+   * and the live create and link events said. Symmetric; only ever moves forward.
+   */
+  interactedAt: Record<string, Record<string, number>>;
   announced: Record<string, AnnouncedSession>;
   /** sessionId → the request id of the card it shows. */
   pendingApprovals: Record<string, string>;
@@ -48,8 +53,18 @@ function addLink(
   return put(b, a, MIRROR[relation], put(a, b, relation, links));
 }
 
+function stampInteraction(
+  times: SessionCollabState["interactedAt"], a: string, b: string, at: number,
+): SessionCollabState["interactedAt"] {
+  if (a === b || !(at > 0)) return times;
+  const put = (from: string, to: string, acc: SessionCollabState["interactedAt"]) =>
+    (acc[from]?.[to] ?? 0) >= at ? acc : { ...acc, [from]: { ...acc[from], [to]: at } };
+  return put(b, a, put(a, b, times));
+}
+
 export const useSessionCollabStore = create<SessionCollabState>((set) => ({
   links: {},
+  interactedAt: {},
   announced: {},
   pendingApprovals: {},
   sessionCreated: (event) => set((state) => ({
@@ -63,13 +78,24 @@ export const useSessionCollabStore = create<SessionCollabState>((set) => ({
     },
     // The parent sees the new session as its child, and the child its parent.
     links: event.spawnedBy ? addLink(state.links, event.spawnedBy, event.sessionId, "child") : state.links,
+    interactedAt: event.spawnedBy
+      ? stampInteraction(state.interactedAt, event.spawnedBy, event.sessionId, Date.parse(event.createdAt) || Date.now())
+      : state.interactedAt,
   })),
   linkChanged: (event) => set((state) => {
-    // The sessions named together are the ones whose link to each other changed.
+    // The sessions named together are the ones whose link to each other changed: they just talked.
     let links = state.links;
+    let interactedAt = state.interactedAt;
+    const now = Date.now();
     const ids = event.sessionIds.filter((id) => typeof id === "string" && id);
-    for (const a of ids) for (const b of ids) if (a < b && !links[a]?.[b]) links = addLink(links, a, b, "messaged");
-    return links === state.links ? state : { links };
+    for (const a of ids) {
+      for (const b of ids) {
+        if (a >= b) continue;
+        if (!links[a]?.[b]) links = addLink(links, a, b, "messaged");
+        interactedAt = stampInteraction(interactedAt, a, b, now);
+      }
+    }
+    return links === state.links && interactedAt === state.interactedAt ? state : { links, interactedAt };
   }),
   approvalChanged: (event) => set((state) => {
     const next = { ...state.pendingApprovals };
@@ -80,7 +106,11 @@ export const useSessionCollabStore = create<SessionCollabState>((set) => ({
   }),
   seedLinks: (sessionId, seeded) => set((state) => {
     let links = state.links;
-    for (const link of seeded) for (const relation of link.relations) links = addLink(links, sessionId, link.sessionId, relation);
-    return links === state.links ? state : { links };
+    let interactedAt = state.interactedAt;
+    for (const link of seeded) {
+      for (const relation of link.relations) links = addLink(links, sessionId, link.sessionId, relation);
+      if (link.lastInteractionAt) interactedAt = stampInteraction(interactedAt, sessionId, link.sessionId, link.lastInteractionAt);
+    }
+    return links === state.links && interactedAt === state.interactedAt ? state : { links, interactedAt };
   }),
 }));

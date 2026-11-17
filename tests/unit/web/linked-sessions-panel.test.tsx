@@ -175,13 +175,14 @@ describe("LinkedSessionsPanel (the activity chip's Sessions tab)", () => {
     expect(row.textContent).toContain("Running");
   });
 
-  it("lists what needs the person first, then what runs, then unread answers, then the idle", async () => {
-    const kid = (n: number, status: LinkedSessionView["status"]) => ({
+  it("orders by the latest interaction, not by what each is doing", async () => {
+    const kid = (n: number, status: LinkedSessionView["status"], lastInteractionAt?: number) => ({
       sessionId: `cccccccc-0000-4000-8000-00000000000${n}`, title: `Kid ${n}`, providerId: "claude", relations: ["child" as const], status,
+      ...(lastInteractionAt ? { lastInteractionAt } : {}),
     });
-    view = await mount(<Harness initial={[kid(1, "idle"), kid(2, "new_message"), kid(3, "running"), kid(4, "idle"), kid(5, "needs_approval")]} />);
+    view = await mount(<Harness initial={[kid(1, "idle", 50), kid(2, "new_message"), kid(3, "running", 10), kid(4, "idle", 90), kid(5, "needs_approval", 20)]} />);
     const order = [...view.container.querySelectorAll("[data-linked-session]")].map((r) => r.textContent?.match(/Kid \d/)?.[0]);
-    expect(order).toEqual(["Kid 5", "Kid 3", "Kid 2", "Kid 1", "Kid 4"]);
+    expect(order).toEqual(["Kid 4", "Kid 1", "Kid 5", "Kid 3", "Kid 2"]);
   });
 
   it("stops the children only after the user confirms", async () => {

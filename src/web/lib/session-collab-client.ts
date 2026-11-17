@@ -25,10 +25,11 @@ export function parseSessionLinks(body: unknown): SessionLink[] {
   const out: SessionLink[] = [];
   for (const item of body) {
     if (!item || typeof item !== "object") continue;
-    const { sessionId, relations } = item as { sessionId?: unknown; relations?: unknown };
+    const { sessionId, relations, lastInteractionAt: at } = item as { sessionId?: unknown; relations?: unknown; lastInteractionAt?: unknown };
     if (typeof sessionId !== "string" || !sessionId || !Array.isArray(relations)) continue;
     const known = relations.filter((r): r is SessionLinkRelation => typeof r === "string" && RELATIONS.has(r));
-    if (known.length) out.push({ sessionId, relations: [...new Set(known)] });
+    const time = typeof at === "number" && Number.isFinite(at) && at > 0 ? { lastInteractionAt: at } : {};
+    if (known.length) out.push({ sessionId, relations: [...new Set(known)], ...time });
   }
   return out;
 }
