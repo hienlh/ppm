@@ -9,7 +9,8 @@
  *   goes to…" line) does the same for that one message, with nothing to arm.
  *
  * The words go through `forwardUserWordsAboutTask` (`forward-verbatim.ts`): word for word, with a
- * user-words block and the task's block the server renders from the task store. No PPM screen typed
+ * user-words block, plus the task's block the server renders from the task store when they go to
+ * the manager chat (a handed-off chat works on that one task, so it gets no block). No PPM screen typed
  * them, so the chat keeps no "chatting device". What the bot shows back only says what happened;
  * every title in it is redacted and escaped, and a project whose details stay off the phone shows
  * the task's ref and title, never its chat's title.
@@ -277,7 +278,7 @@ export class AssistantTelegramTaskMessages {
       const ref = await resolveTaskRef(task.id, { anyProject: true });
       if (!ref.ok) return { ok: false, html: notSentHtml(chat, ref.error) };
       const result = await (this.deps.forward ?? realForward)({
-        text: m.text, target: chat.target, taskRef: ref.ref,
+        text: m.text, target: chat.target, taskRef: ref.ref, chatKind: chat.kind,
         actor: { channel: "telegram", telegramChatId: chatId, telegramMessageId: m.messageId },
         // The chat's answer comes back here, under the user's own message.
         followUp: {

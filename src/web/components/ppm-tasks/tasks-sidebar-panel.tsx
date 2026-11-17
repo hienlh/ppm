@@ -93,7 +93,8 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
     openTask(task, { keep });
   }, []);
   const onOpenChat = useCallback((task: TaskDto, sessionId: string) => {
-    openTaskChat(task.project, sessionId, workingProvider(live[task.id] ? { workingSession: live[task.id]!.workingSession } : task), task);
+    const now = { ...task, workingSession: live[task.id]?.workingSession ?? task.workingSession };
+    openTaskChat(task.project, sessionId, workingProvider(now), now);
     onNavigate?.();
   }, [live, onNavigate]);
   const onStartChat = useCallback((task: TaskDto) => void write.startChat(task), [write]);

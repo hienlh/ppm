@@ -150,7 +150,7 @@ describe("what Telegram is told", () => {
 
   it("names the chat and the task, escapes before formatting, and links the chat", () => {
     const out = formatTaskFollowup({ ...base, kind: "answer", context: context(), text: "Use <b>retry</b> & **backoff**", overflow: false }, url);
-    expect(out.html).toStartWith("💬 <b>The alpha manager chat</b> answered, about <b>alpha/12 · Fix the login timeout</b>:");
+    expect(out.html).toStartWith("💬 <b>The alpha manager chat</b> answered, about <code>alpha/12</code> · <b>Fix the login timeout</b>:");
     expect(out.html).toContain("&lt;b&gt;retry&lt;/b&gt; &amp;");
     expect(out.html).toContain("<b>backoff</b>");
     expect(JSON.stringify(out)).toContain(url);
@@ -176,13 +176,13 @@ describe("what Telegram is told", () => {
 
   it("says when there is no written answer, or the answer could not be told apart", () => {
     expect(formatTaskFollowup({ ...base, kind: "answer", context: context(), text: "", overflow: false }, url).html)
-      .toContain("finished its turn about <b>alpha/12 · Fix the login timeout</b> without a written answer");
+      .toContain("finished its turn about <code>alpha/12</code> · <b>Fix the login timeout</b> without a written answer");
     expect(formatTaskFollowup({ ...base, kind: "unclear", context: context() }, url).html).toContain("its answer is in the chat");
   });
 
   it("says the chat waits on a card, was stopped, or failed", () => {
     expect(formatTaskFollowup({ ...base, kind: "waiting", waitingFor: "approval", context: context() }, url).html)
-      .toStartWith("⏳ The <b>alpha</b> manager chat is waiting for your approval before it can answer about <b>alpha/12");
+      .toStartWith("⏳ The <b>alpha</b> manager chat is waiting for your approval before it can answer about <code>alpha/12</code> · <b>Fix the login timeout</b>.");
     expect(formatTaskFollowup({ ...base, kind: "waiting", waitingFor: "question", context: context() }, url).html).toContain("your answer to a question");
     expect(formatTaskFollowup({ ...base, kind: "stopped", context: context() }, url).html).toContain("was stopped before it answered");
     const failed = formatTaskFollowup({ ...base, kind: "failed", context: context(), error: "API Error: <529> overloaded\nat line 2" }, url).html;

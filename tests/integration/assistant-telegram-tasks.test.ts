@@ -498,7 +498,7 @@ describe("writing to the chat working on a task", () => {
     expect(providerCalls.at(-1)).not.toContain("<ppm-taskref-v1>");
   });
 
-  it("a handed-off task's words go to its own chat, named only where the project shows details", async () => {
+  it("a handed-off task's words go to its own chat with no task block, named only where the project shows details", async () => {
     const task = getTask(ids.psr)!;
     updateTask(ids.psr, { workingSessionId: "child-1" }, task.revision, USER);
     try {
@@ -507,9 +507,24 @@ describe("writing to the chat working on a task", () => {
       await press(deck, "💬 Message about this task");
       const prompt = await fake.waitFor(() => fake.sent(PHONE).slice(before).find((m) => m.text.includes("Your next message goes to")));
       expect(prompt.text).toContain("the chat “child-1” working on it, about nxsys/1");
-      expect(await typeWords("child, check the period-13 filter")).toContain(taskBlock(ids.psr));
+      // That chat works on this task alone: the words go as they are, with no task block.
+      const call = await typeWords("child, check the period-13 filter");
+      expect(call).toContain("<ppm-user-words-v1>");
+      expect(call).not.toContain("<ppm-taskref-v1>");
+      expect(call).not.toContain(taskBlock(ids.psr));
       const said = await fake.waitFor(() => fake.sent(PHONE).find((m) => m.message_id === prompt.message_id && m.text.startsWith("✅")));
-      expect(said.text).toContain("Sent to the chat “child-1” working on it");
+      expect(said.text).toBe("✅ Sent to the chat “child-1” working on it, about nxsys/1 · PSR Ireland bỏ sót payslip.");
+
+      // A reply to the task's card goes there the same way.
+      const card = await psrCard();
+      const shown = fake.sent(PHONE).length;
+      fake.pushText(PHONE, PHONE, "child, reply about this one", "private", {
+        reply_to_message: { message_id: card.message_id, chat: { id: PHONE, type: "private" }, date: Math.floor(Date.now() / 1000), text: card.text },
+      });
+      const replied = await lastCallWith("child, reply about this one");
+      expect(replied).not.toContain("<ppm-taskref-v1>");
+      const sentBack = await fake.waitFor(() => fake.sent(PHONE).slice(shown).find((m) => m.text.startsWith("✅ Sent to")));
+      expect(sentBack.text).toBe("✅ Sent to the chat “child-1” working on it, about nxsys/1 · PSR Ireland bỏ sót payslip.");
     } finally {
       const t = getTask(ids.psr)!;
       updateTask(ids.psr, { workingSessionId: null }, t.revision, USER);

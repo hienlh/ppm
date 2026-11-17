@@ -6,6 +6,7 @@
 import { tabSessionId } from "@/lib/tab-session-id";
 import { MAX_TASK_REFS, TASK_ID_RE, type TaskReference } from "../../../shared/chat-task-ref";
 import { taskCode } from "../../../shared/ppm-tasks-refs";
+import type { TaskWorkingSession } from "../../../shared/ppm-tasks-api";
 
 /** The least of a tab this needs; the panel store's `Tab` fits it. */
 interface TabLike { id: string; type: string; metadata?: Record<string, unknown> }
@@ -53,6 +54,24 @@ export function taskChipsFromRefs(refs: readonly TaskReference[] | null | undefi
 export function taskChipLabel(chip: Pick<ComposerTaskChip, "number" | "title"> & { project?: string }, chatProject?: string | null): string {
   const code = chip.project === undefined ? `#${chip.number}` : taskCode({ number: chip.number, project: chip.project }, chatProject ?? null);
   return `Task ${code} · ${chip.title}`;
+}
+
+/**
+ * Whether opening `sessionId` from `task` puts the task in that chat's composer as a chip. Only the
+ * project's manager chat takes it: the manager works on many tasks, so the next message has to say
+ * which one. A chat the task was handed off to works on that task alone, and a chip there would only
+ * repeat it. The manager is read from the project's manager chat list, else from the task's own
+ * working session (`kind: "manager"`, the server's answer when no chat was handed the task); never
+ * from the chat's title.
+ */
+export function chipGoesToChat(
+  task: { project: string; workingSession: TaskWorkingSession },
+  sessionId: string,
+  managers: readonly { projectName: string; sessionId: string }[] | null,
+): boolean {
+  const w = task.workingSession;
+  if (w.kind === "manager" && w.session.sessionId === sessionId) return true;
+  return !!managers?.some((m) => m.projectName === task.project && m.sessionId === sessionId);
 }
 
 /** The chip list once `chip` is added: the newest task first, each task once, at most the cap. */

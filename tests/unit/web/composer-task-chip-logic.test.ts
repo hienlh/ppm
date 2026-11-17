@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import {
-  pickChatTabForSession, readTaskChips, TASK_CHIP_META_KEY, taskChipLabel, taskChipOf, taskChipsFromRefs, withTaskChip, type ComposerTaskChip,
+  chipGoesToChat, pickChatTabForSession, readTaskChips, TASK_CHIP_META_KEY, taskChipLabel, taskChipOf, taskChipsFromRefs, withTaskChip, type ComposerTaskChip,
 } from "../../../src/web/lib/ppm-tasks/composer-task-chip-logic.ts";
+import type { TaskWorkingSession } from "../../../src/shared/ppm-tasks-api.ts";
 
 const chip = (n: number): ComposerTaskChip => ({
   taskId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, number: n, ref: `alpha/${n}`, title: `Task ${n}`, project: "alpha",
@@ -44,5 +45,41 @@ describe("composer task chip", () => {
     expect(pickChatTabForSession(tabs, "s1")).toBe("b");
     expect(pickChatTabForSession([...tabs, { tab: tab("e", "s1", 1), selected: true, focused: false }], "s1")).toBe("e");
     expect(pickChatTabForSession(tabs, "missing")).toBeNull();
+  });
+});
+
+describe("which chat a task's chip goes to", () => {
+  const state = (sessionId: string) => ({ sessionId, state: "idle" as const, title: null, providerId: "claude" });
+  const task = (workingSession: TaskWorkingSession) => ({ project: "alpha", workingSession });
+  const managers = [{ projectName: "alpha", sessionId: "mgr-alpha" }, { projectName: "beta", sessionId: "mgr-beta" }];
+
+  it("the project's manager chat takes it: it works on many tasks", () => {
+    const viaManager = task({ kind: "manager", label: "Manager", session: state("mgr-alpha") });
+    expect(chipGoesToChat(viaManager, "mgr-alpha", managers)).toBe(true);
+    // Before the manager list has loaded, the task's own working session says so.
+    expect(chipGoesToChat(viaManager, "mgr-alpha", null)).toBe(true);
+    // A task handed to the manager chat itself is still the manager's.
+    expect(chipGoesToChat(task({ kind: "session", session: state("mgr-alpha") }), "mgr-alpha", managers)).toBe(true);
+  });
+
+  it("a chat the task was handed off to does not: it works on that task alone", () => {
+    const handedOff = task({ kind: "session", session: state("child-1") });
+    expect(chipGoesToChat(handedOff, "child-1", managers)).toBe(false);
+    expect(chipGoesToChat(handedOff, "child-1", null)).toBe(false);
+    // Another project's manager is not this task's manager.
+    expect(chipGoesToChat(task({ kind: "session", session: state("mgr-beta") }), "mgr-beta", managers)).toBe(false);
+  });
+
+  it("a task with no chat yet: only the manager chat it would open takes it", () => {
+    // No chat handed the task: the working session is the manager.
+    expect(chipGoesToChat(task({ kind: "manager", label: "Manager", session: state("mgr-alpha") }), "mgr-alpha", managers)).toBe(true);
+    // No manager either: the chat Start chat opens is the task's own.
+    expect(chipGoesToChat(task({ kind: "start_chat" }), "new-chat", [])).toBe(false);
+    expect(chipGoesToChat(task({ kind: "start_chat" }), "new-chat", null)).toBe(false);
+  });
+
+  it("goes by session id, never by the chat's title", () => {
+    const named = task({ kind: "session", session: { ...state("child-2"), title: "Manager" } });
+    expect(chipGoesToChat(named, "child-2", managers)).toBe(false);
   });
 });

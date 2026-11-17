@@ -11,7 +11,8 @@ import { toast } from "sonner";
 import { usePanelStore } from "@/stores/panel-store";
 import type { Tab } from "@/stores/tab-store";
 import { openSessionAnywhere } from "@/lib/open-session-anywhere";
-import { attachTaskChip, taskChipOf } from "./composer-task-chip";
+import { managerChatsNow } from "@/hooks/use-manager-chats";
+import { attachTaskChip, chipGoesToChat, taskChipOf } from "./composer-task-chip";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
 import { taskCode } from "../../../shared/ppm-tasks-refs";
 
@@ -64,17 +65,18 @@ export function syncTaskTabTitle(tabId: string | undefined, task: { number: numb
 }
 
 /**
- * Opens a chat of the task's project by id (the working chat, a linked chat). Given `task`, the
- * chat's composer also shows it as a chip, so the next message says which task it is about: the
- * working chat is often the manager chat, which works on many tasks at once.
+ * Opens a chat of the task's project by id (the working chat, a linked chat). Given `task`, and
+ * when the chat is the project's manager chat, its composer also shows the task as a chip, so the
+ * next message says which task it is about: the manager works on many tasks at once. A chat the
+ * task was handed off to opens with no chip (`chipGoesToChat`).
  */
 export function openTaskChat(
   project: string, sessionId: string, providerId?: string | null,
-  task?: Pick<TaskDto, "id" | "number" | "ref" | "title" | "project">,
+  task?: Pick<TaskDto, "id" | "number" | "ref" | "title" | "project" | "workingSession">,
 ): void {
-  void openSessionAnywhere(project, sessionId, providerId || "claude").then((ok) => {
+  void openSessionAnywhere(project, sessionId, providerId || "claude").then(async (ok) => {
     if (!ok) toast.error(`${project} is not a project in this PPM any more.`);
-    else if (task) void attachTaskChip(sessionId, taskChipOf(task));
+    else if (task && chipGoesToChat(task, sessionId, await managerChatsNow())) void attachTaskChip(sessionId, taskChipOf(task));
   });
 }
 

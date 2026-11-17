@@ -54,7 +54,7 @@ export function TaskDetailMobile({ detail, settings, sheet: inSheet }: TaskDetai
   // In the sheet, a chat the page opens shows behind it: the sheet (and the drawer) go first.
   const leave = inSheet?.onLeave;
   const openChat = useCallback((sid: string) => { leave?.(); openTaskChat(task.project, sid, workingProvider(task)); }, [task, leave]);
-  // The working chat is often the manager chat, busy with many tasks: it opens with this one as a chip.
+  // The working chat is often the manager chat, busy with many tasks: that one opens with this task as a chip.
   const openWorkingChat = useCallback((sid: string) => { leave?.(); openTaskChat(task.project, sid, workingProvider(task), task); }, [task, leave]);
   // Start chat may ask first (the page's own dialog), so the sheet goes only once a chat opened.
   const startChat = useCallback(() => void write.startChat(task).then((sid) => { if (sid) leave?.(); }), [task, write, leave]);

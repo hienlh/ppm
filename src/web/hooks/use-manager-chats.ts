@@ -86,6 +86,19 @@ export function useManagerChats(): ManagerChatSummary[] | null {
 }
 
 /**
+ * The manager chat list outside a component, loading it once if nothing asked yet. Null when the
+ * server could not answer.
+ */
+export async function managerChatsNow(): Promise<ManagerChatSummary[] | null> {
+  startListening();
+  if (state.managers === null) {
+    requested = true;
+    await refreshManagerChats();
+  }
+  return state.managers;
+}
+
+/**
  * Whether the session is its project's manager: from the shared list once it has loaded, else
  * from the flag the session list carried.
  */
