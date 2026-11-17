@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  localMomentText, localMomentToEpoch, parseLocalMoment, reminderCron, reminderMomentOf, reminderName, reminderPrompt,
+  localMomentText, localMomentToEpoch, parseLocalMoment, reminderChoices, reminderCron, reminderMomentOf, reminderName, reminderPrompt,
 } from "../../../src/shared/task-reminder.ts";
 
 describe("parseLocalMoment", () => {
@@ -49,5 +49,20 @@ describe("reminderName and reminderPrompt", () => {
     expect(prompt).toContain('task ppm/19 "Review PR 412"');
     expect(prompt).toContain("Note: ask Minh");
     expect(reminderPrompt(task, null)).not.toContain("Note:");
+  });
+});
+
+describe("reminderChoices", () => {
+  it("offers an hour from now, this evening before 17:00 there, and tomorrow at 09:00", () => {
+    const morning = reminderChoices(new Date("2026-11-17T10:12:00Z"), "Europe/London");
+    expect(morning).toEqual([
+      { id: "hour", label: "In 1 hour", at: "2026-11-17T11:15" },
+      { id: "evening", label: "This evening", at: "2026-11-17T18:00" },
+      { id: "morning", label: "Tomorrow morning", at: "2026-11-18T09:00" },
+    ]);
+    const late = reminderChoices(new Date("2026-11-17T17:30:00Z"), "Europe/London");
+    expect(late.map((c) => c.id)).toEqual(["hour", "morning"]);
+    // The same instant on a clock seven hours ahead is already evening there.
+    expect(reminderChoices(new Date("2026-11-17T10:12:00Z"), "Asia/Saigon").map((c) => c.id)).toEqual(["hour", "morning"]);
   });
 });

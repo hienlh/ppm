@@ -54,7 +54,7 @@ export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-moni
  * context-menu item that offers it. Split across two files, adding a window kind meant
  * remembering both, and one of them was always the one that got forgotten.
  */
-export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings", "problems", "logs"]);
+export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings", "problems", "logs", "schedules"]);
 
 /**
  * Tab types that may float in a window but never move into picture-in-picture.
@@ -272,6 +272,9 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     // One set of logs: on a phone a second open focuses the first, as the desktop window does.
     case "logs":
       return "logs";
+    // One list of every schedule: on a phone a second open focuses the first.
+    case "schedules":
+      return "schedules";
     // One Assistant: it switches between its sessions inside the tab rather than opening more.
     case "assistant":
       return "assistant";

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
-import { Settings, Cloud, FolderTree, MonitorSmartphone, ScrollText, Smartphone } from "@/lib/icons";
+import { Settings, Cloud, FolderTree, MonitorSmartphone, ScrollText, Smartphone, CalendarClock } from "@/lib/icons";
 import { AssistantBotIcon } from "@/components/assistant/assistant-bot-icon";
 import { toggleAssistant } from "@/components/assistant/open-assistant";
 import { useAssistantWindowShown } from "@/components/assistant/use-assistant-window-shown";
@@ -30,6 +30,8 @@ import { useWindowStore } from "@/components/floating-window/window-store";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
 import { usePpmTasksRailCount } from "@/hooks/use-ppm-tasks-rail-count";
+import { openSchedules } from "@/components/schedules/open-schedules";
+import { useSchedulesRailSummary } from "@/stores/schedules-overview-store";
 
 /**
  * The rail's own hover label, standing in for a tooltip on an icon-only button.
@@ -86,10 +88,15 @@ function NavItem({ icon: Icon, label, active, badge, featureBadge, onClick, drag
 }
 
 // Footer utility item: 32×32, 16px icon.
-function FooterUtil({ icon: Icon, label, onClick, active, featureBadge, alert }: {
+function FooterUtil({ icon: Icon, label, onClick, active, featureBadge, alert, count, dot, testId }: {
   icon: React.ElementType; label: string; onClick?: () => void; active?: boolean; featureBadge?: FeatureBadgeId;
   /** A count that wants attention, drawn red in the corner. */
   alert?: number;
+  /** A plain count, drawn in the accent colour in the corner (Schedules: runs in the next 24 h). */
+  count?: number;
+  /** A red dot in the opposite corner: something needs a look (Schedules: a failed or stuck run). */
+  dot?: boolean;
+  testId?: string;
 }) {
   return (
     <button
@@ -97,6 +104,7 @@ function FooterUtil({ icon: Icon, label, onClick, active, featureBadge, alert }:
       aria-label={label}
       title={label}
       onClick={onClick}
+      data-rail-util={testId}
       className={cn(
         "group relative flex items-center justify-center size-8 rounded-[7px] transition-colors shrink-0",
         active ? "text-primary bg-accent-wash" : "text-text-subtle hover:bg-surface-elevated hover:text-foreground",
@@ -109,6 +117,12 @@ function FooterUtil({ icon: Icon, label, onClick, active, featureBadge, alert }:
           {alert > 9 ? "9+" : alert}
         </span>
       )}
+      {!!count && (
+        <span aria-hidden data-rail-count="" className="absolute right-0 top-0 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-[3px] text-[9px] font-semibold leading-none text-primary-foreground shadow-[0_0_0_1.5px_var(--rail)]">
+          {count > 99 ? "99+" : count}
+        </span>
+      )}
+      {dot && <span aria-hidden data-rail-dot="" className="absolute bottom-0.5 right-0.5 size-2 rounded-full bg-error shadow-[0_0_0_1.5px_var(--rail)]" />}
       <span className={HOVER_LABEL_CLASS}>
         {label}
       </span>
@@ -187,6 +201,8 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
   const logsOpen = useWindowStore((s) => Object.values(s.windows).some((w) => w.kind === "logs" && w.state !== "minimized"));
   const assistantWaiting = useAssistantWaitingTotal(!minimalMode);
   const assistantShown = useAssistantWindowShown();
+  const schedules = useSchedulesRailSummary(!minimalMode);
+  const schedulesOpen = useWindowStore((s) => Object.values(s.windows).some((w) => w.kind === "schedules" && w.state !== "minimized"));
 
   // Rail tab click: collapsed → open on any tab; open → clicking the active tab closes it.
   const handleTabClick = (tabId: SidebarActiveTab) => {
@@ -265,6 +281,16 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
           featureBadge="assistant"
           active={assistantShown}
           onClick={toggleAssistant}
+        />
+        {/* Every schedule of every project; the count is what runs in the next 24 h, the dot a failed or stuck run. */}
+        <FooterUtil
+          icon={CalendarClock}
+          testId="schedules"
+          label={`Schedules · ${schedules.upcoming} in the next 24 h${schedules.attention ? ` · ${schedules.attention} need${schedules.attention === 1 ? "s" : ""} attention` : ""}`}
+          count={schedules.upcoming}
+          dot={schedules.attention > 0}
+          active={schedulesOpen}
+          onClick={() => openSchedules()}
         />
         {/* Replaces Report Bug: a report is now made from the lines it is about. */}
         <FooterUtil

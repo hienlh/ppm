@@ -14,6 +14,14 @@ export const WAITING_TOO_LONG_MS = 10 * 60_000;
 /** The window the rail's count covers. */
 export const UPCOMING_WINDOW_MS = 24 * 60 * 60_000;
 
+/**
+ * A stored timestamp as epoch ms. Run rows default to SQLite's own `YYYY-MM-DD HH:MM:SS`, which is
+ * UTC but carries no zone, so `Date.parse` would read it on the device's clock; ISO strings pass.
+ */
+export function parseStamp(ts: string): number {
+  return Date.parse(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(ts) ? `${ts.replace(" ", "T")}Z` : ts);
+}
+
 export type AttentionKind = "failed" | "stuck" | "paused" | "waiting";
 
 export interface ScheduleProblem {
@@ -49,7 +57,7 @@ export function scheduleProblem(s: AttentionInput, now: number = Date.now()): Sc
     return { kind: "paused", key: `paused:${s.paused_reason}`, text: "Paused", detail: s.paused_reason };
   }
   if (s.pending_since) {
-    const waited = now - Date.parse(s.pending_since);
+    const waited = now - parseStamp(s.pending_since);
     if (waited >= WAITING_TOO_LONG_MS) {
       return { kind: "waiting", key: `waiting:${s.pending_since}`, text: `Waiting for its chat ${minutes(waited)}`, detail: null };
     }
@@ -58,7 +66,7 @@ export function scheduleProblem(s: AttentionInput, now: number = Date.now()): Sc
   if (!run) return null;
   // An always-on script's run row is its process, which is meant to run for good.
   if (run.status === "running" && s.mode === "tick") {
-    const ran = now - Date.parse(run.started_at);
+    const ran = now - parseStamp(run.started_at);
     if (ran > s.timeout_ms) {
       return { kind: "stuck", key: `stuck:${run.id}`, text: `Stuck: running ${minutes(ran)}`, detail: `Its time limit is ${minutes(s.timeout_ms)}.` };
     }
@@ -90,7 +98,7 @@ export function firesWithin(s: UpcomingInput, now: number = Date.now(), windowMs
   if (!s.enabled || s.paused_reason || s.mode !== "tick") return false;
   if (s.pending_since) return true;
   if (!s.next_fire_at) return false;
-  const at = Date.parse(s.next_fire_at);
+  const at = parseStamp(s.next_fire_at);
   return Number.isFinite(at) && at <= now + windowMs;
 }
 

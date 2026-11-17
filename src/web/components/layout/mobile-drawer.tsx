@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from "react";
-import { X, Cloud, FolderTree, MonitorSmartphone, ScrollText, Settings, Smartphone } from "@/lib/icons";
+import { X, Cloud, FolderTree, MonitorSmartphone, ScrollText, Settings, Smartphone, CalendarClock } from "@/lib/icons";
 import { AssistantBotIcon } from "@/components/assistant/assistant-bot-icon";
 import { openAssistant } from "@/components/assistant/open-assistant";
 import { useAssistantWaitingTotal } from "@/stores/assistant-waiting-store";
@@ -21,6 +21,8 @@ import { getAvailableTabs, isMinimalSidebarTab } from "@/lib/sidebar-tabs/tab-re
 import { resolveTabOrder } from "@/lib/sidebar-tabs/resolve-tab-order";
 import { MobileDrawerTabBar } from "@/components/layout/mobile-drawer-tab-bar";
 import { openLogs } from "@/components/logs/open-logs";
+import { openSchedules } from "@/components/schedules/open-schedules";
+import { useSchedulesRailSummary } from "@/stores/schedules-overview-store";
 import { useLogsBadgeCount } from "@/components/logs/use-logs-badge";
 import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { CloudSharePopover } from "@/components/layout/cloud-share-popover";
@@ -58,17 +60,23 @@ interface FooterTileDef {
   alert?: number;
   /** What that count is of, read out after the label ("likely bugs"). */
   alertLabel?: string;
+  /** A plain count in the accent colour (Schedules: runs in the next 24 h). */
+  count?: number;
+  /** A red dot: something needs a look (Schedules: a failed or stuck run). */
+  dot?: boolean;
+  testId?: string;
   onClick: () => void;
 }
 
 /** One utility tile in the drawer footer row — icon over a short single-line label, with an
  *  optional feature badge. Uniform size, and short labels ("Cloud", not "Cloud & Share") so
  *  every tile stays on one line at the narrowest phone width. */
-function FooterTile({ icon: Icon, label, badge, alert, alertLabel, onClick }: FooterTileDef) {
+function FooterTile({ icon: Icon, label, badge, alert, alertLabel, count, dot, testId, onClick }: FooterTileDef) {
   return (
     <button
       onClick={onClick}
-      aria-label={alert ? `${label} · ${alert} ${alertLabel ?? ""}`.trimEnd() : undefined}
+      data-drawer-tile={testId}
+      aria-label={alert ? `${label} · ${alert} ${alertLabel ?? ""}`.trimEnd() : count ? `${label} · ${count} in the next 24 h${dot ? " · needs attention" : ""}` : undefined}
       className="group flex flex-col items-center justify-center gap-1 rounded-lg py-2.5 text-text-subtle hover:bg-surface-elevated hover:text-text-secondary transition-colors"
     >
       {/* The badge hangs off the icon, not the tile: a tile is a whole column wide, so a
@@ -81,8 +89,14 @@ function FooterTile({ icon: Icon, label, badge, alert, alertLabel, onClick }: Fo
             {alert > 9 ? "9+" : alert}
           </span>
         )}
+        {!!count && (
+          <span aria-hidden data-drawer-count="" className="absolute -right-2.5 -top-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-[3px] text-[9px] font-semibold leading-none text-primary-foreground">
+            {count > 99 ? "99+" : count}
+          </span>
+        )}
+        {dot && <span aria-hidden data-drawer-dot="" className="absolute -bottom-0.5 -right-1 size-2 rounded-full bg-error shadow-[0_0_0_1.5px_var(--bg-solid)]" />}
       </span>
-      <span className="text-[10px] leading-none">{label}</span>
+      <span className="max-w-full truncate px-0.5 text-[10px] leading-none">{label}</span>
     </button>
   );
 }
@@ -146,6 +160,8 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
 
   const likelyBugs = useLogsBadgeCount();
   const assistantWaiting = useAssistantWaitingTotal();
+  // Read only while the drawer is open: the feed polls, and a closed drawer shows nothing.
+  const schedules = useSchedulesRailSummary(isOpen && !minimalMode);
 
   // Built as a list so the row's column count can follow the tile count. With a fixed column
   // count an optional tile (Remote, only on a capable host) pushes the last tile onto a second
@@ -164,6 +180,8 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
     { icon: Settings, label: "Settings", onClick: () => { onClose(); openSettings(); } },
     // The Assistant as a full-screen tab; the red count is what waits on the user.
     { icon: AssistantBotIcon, label: "Assistant", badge: "assistant", alert: assistantWaiting, alertLabel: "waiting", onClick: () => { onClose(); openAssistant(); } },
+    // Every schedule of every project, as a full-screen tab.
+    { icon: CalendarClock, label: "Schedules", testId: "schedules", count: schedules.upcoming, dot: schedules.attention > 0, onClick: () => { onClose(); openSchedules(); } },
     // Replaces Report Bug: a report is now made from the lines it is about.
     { icon: ScrollText, label: "Logs", alert: likelyBugs, alertLabel: likelyBugs === 1 ? "likely bug" : "likely bugs", onClick: () => { onClose(); openLogs(); } },
   ];

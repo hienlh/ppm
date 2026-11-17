@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
-  firesWithin, railSummary, scheduleAttention, scheduleProblem, WAITING_TOO_LONG_MS, type AttentionInput, type UpcomingInput,
+  firesWithin, parseStamp, railSummary, scheduleAttention, scheduleProblem, WAITING_TOO_LONG_MS, type AttentionInput, type UpcomingInput,
 } from "../../../src/shared/schedule-attention.ts";
 
 const NOW = Date.parse("2026-11-17T10:20:00Z");
@@ -47,6 +47,19 @@ describe("scheduleProblem", () => {
 
   it("is nothing for a schedule the user turned off", () => {
     expect(scheduleProblem(base({ enabled: 0, last_run: run(3, "error") }), NOW)).toBeNull();
+  });
+});
+
+describe("parseStamp", () => {
+  it("reads SQLite's zone-less stamp as UTC, as the run rows mean it", () => {
+    expect(parseStamp("2026-11-17 10:00:00")).toBe(Date.parse("2026-11-17T10:00:00Z"));
+    expect(parseStamp("2026-11-17T10:00:00.000Z")).toBe(Date.parse("2026-11-17T10:00:00Z"));
+  });
+
+  it("measures a stuck run from a SQLite stamp in UTC whatever the device's zone", () => {
+    const startedUtc = new Date(NOW - 41 * 60_000).toISOString().slice(0, 19).replace("T", " ");
+    const r = { id: 8, status: "running" as const, started_at: startedUtc, ended_at: null, error: null, session_id: null };
+    expect(scheduleProblem(base({ last_run: r }), NOW)?.kind).toBe("stuck");
   });
 });
 

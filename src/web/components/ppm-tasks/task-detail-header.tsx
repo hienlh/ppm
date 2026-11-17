@@ -19,6 +19,7 @@ import { TaskTypeBadge } from "./kit/task-type-badge";
 import { TaskCode } from "./kit/task-code";
 import { TaskSnoozeBadge } from "./kit/task-snooze-badge";
 import { TaskSnoozeButton } from "./task-snooze-menu";
+import { TaskRemindButton } from "./task-reminder-button";
 import type { SnoozePatch } from "./task-snooze-options";
 import type { TaskMember } from "../../../shared/ppm-tasks";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
@@ -60,6 +61,7 @@ export function TaskDetailHeader({ task, members, preview, hasManager, onRename,
         <span className="flex-1" />
         <Button size="sm" variant="ghost" onClick={() => void copyTaskLink(task)}><Link className="size-3.5" />Copy link</Button>
         <TaskSnoozeButton task={task} onSnooze={onSnooze} />
+        <TaskRemindButton task={task} />
         {hasManager && <Button size="sm" variant="outline" onClick={onAskManager}><MessageSquare className="size-3.5" />Ask manager</Button>}
         {closed
           ? <Button size="sm" variant="outline" onClick={onReopen}><RotateCcw className="size-3.5" />Reopen</Button>

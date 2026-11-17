@@ -30,6 +30,7 @@ export type TabType =
   | "android"
   | "web-preview"
   | "logs"
+  | "schedules"
   | "assistant"
   | "task";
 

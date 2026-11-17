@@ -86,3 +86,26 @@ export function reminderPrompt(task: { number: number; project: string; title: s
   ];
   return lines.join("\n");
 }
+
+export interface ReminderChoice {
+  id: "hour" | "evening" | "morning";
+  label: string;
+  /** `2026-11-17T18:30` on the chosen zone's clock. */
+  at: string;
+}
+
+/**
+ * The quick choices of the task page's Remind… menu, on the clock of `zone`: in an hour (rounded
+ * up to five minutes), this evening at 18:00 while it is before 17:00 there, and tomorrow at 09:00.
+ */
+export function reminderChoices(now: Date, zone: string): ReminderChoice[] {
+  const inHour = new Date(Math.ceil((now.getTime() + 60 * 60_000) / 300_000) * 300_000);
+  const today = localMomentText(now, zone);
+  const tomorrow = localMomentText(new Date(now.getTime() + 24 * 60 * 60_000), zone);
+  const hourThere = Number(today.slice(11, 13));
+  return [
+    { id: "hour", label: "In 1 hour", at: localMomentText(inHour, zone) },
+    ...(hourThere < 17 ? [{ id: "evening" as const, label: "This evening", at: `${today.slice(0, 10)}T18:00` }] : []),
+    { id: "morning", label: "Tomorrow morning", at: `${tomorrow.slice(0, 10)}T09:00` },
+  ];
+}
