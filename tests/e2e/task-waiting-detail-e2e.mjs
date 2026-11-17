@@ -232,7 +232,7 @@ async function telegram(k) {
   }
   const texts = waits.map((m) => m.text);
   assert(texts.some((t) => t.includes("✋ Waiting on you · Due")), `a card says ✋ Waiting on you · Due…: ${texts.join("\n---\n")}`);
-  assert(texts.some((t) => t.includes("⏳ Blocked on Việt · for")), "a card names its Blocked status and Việt with how long");
+  assert(texts.some((t) => t.includes("⏳ Blocked on Việt · for")), `a card names its Blocked status and Việt with how long: ${texts.join("\n---\n")}`);
   assert(texts.some((t) => /⏳ Waiting · for/.test(t)), "a card with nobody named says Waiting with how long");
   const page = await k.openFrame(telegramFrame([{ text: "/tasks alpha", from_user: true }, ...waits.map((m) => ({ ...m, reply_markup: undefined }))], "PPM Assistant"));
   await page.setViewportSize({ width: 460, height: 900 });

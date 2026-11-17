@@ -67,7 +67,7 @@ const clean = (text: string, counter: { hidden: number }, max = LINE_MAX): strin
  * "⏳ Waiting · for 5 hours". A wait on the user is bold and marked with a raised hand.
  */
 export function waitingLineHtml(w: WaitingDetail, ctx: Pick<CardContext, "today" | "now">, counter: { hidden: number }): string {
-  const words = w.name ? `Waiting on ${clean(w.name, counter, 80)}` : "Waiting";
+  const words = clean(w.label, counter, 120);
   const head = w.mine ? `✋ <b>${words}</b>` : `⏳ ${words}`;
   const until = waitingUntilText(w.until, ctx.today, ctx.now);
   return until ? `${head} · ${until}` : head;

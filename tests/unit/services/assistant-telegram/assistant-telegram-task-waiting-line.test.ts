@@ -46,6 +46,11 @@ describe("the waiting line on a /tasks card", () => {
     expect(shown(deckCardHtml(facts({ waiting: { label: "Waiting", name: null, mine: false, until: null } }), POS, CTX)).split("\n").at(-1)).toBe("⏳ Waiting");
   });
 
+  it("says the label it is given, so a Blocked status reads Blocked, not Waiting", () => {
+    const html = deckCardHtml(facts({ statusName: "Blocked", waiting: { label: "Blocked on Việt", name: "Việt", mine: false, until: null } }), POS, CTX);
+    expect(shown(html).split("\n").at(-1)).toBe("⏳ Blocked on Việt");
+  });
+
   it("escapes a member's name before it is formatted", () => {
     const html = deckCardHtml(facts({ waiting: { label: "Waiting on <Ops & co>", name: "<Ops & co>", mine: false, until: null } }), POS, CTX);
     expect(shown(html)).toContain("⏳ Waiting on <Ops & co>");
