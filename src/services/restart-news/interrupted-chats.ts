@@ -8,7 +8,8 @@ import { redactLogText } from "../../shared/log-redact.ts";
  *
  * A chat counts when, among its rows written during the previous run (`since` to `before`, the new
  * run's start), the last top-level turn has no row that ends it — no `done`, `run_failed`,
- * `error`, `turn_aborted` or `run_closed`. A chat already written to again by the new run is left
+ * `error`, `turn_aborted` or `run_closed`. That includes a turn no message opened: the provider's
+ * own continuation after a background task ended, seen as turn work after the last turn's end. A chat already written to again by the new run is left
  * out (someone or something has taken it up), and so is anything that is not a person's chat: the
  * PPM Assistant's own sessions, design sessions, and the API proxy's streams.
  *
@@ -20,6 +21,14 @@ import { redactLogText } from "../../shared/log-redact.ts";
 
 /** Rows of one trace that close a turn. `run_closed` is a stream that ended mid-turn on its own: not the restart's doing. */
 const TURN_END_TYPES = new Set(["done", "run_failed", "error", "turn_aborted", "run_closed"]);
+/**
+ * Rows only a running turn writes. Found after the last turn's end, they are a turn a restart cut
+ * off: a follow-up queued while that turn ran (its message was written before the end, and its rows
+ * carry its turn id), or a turn the provider started by itself — the Claude CLI does that when a
+ * background task it ran ends — whose rows carry no turn id. An approval request is not among them:
+ * a background agent asks for one between turns.
+ */
+const TURN_WORK_TYPES = new Set(["tool_use", "text", "thinking"]);
 /**
  * Origins of a cut-off turn that no manager may be told to resume. `proxy` and `browser` are not
  * chats at all. A `cli` turn belongs to a `ppm chat` process, which outlives the server: it is
@@ -52,7 +61,7 @@ export const NEWEST_SQL = `
  * always follows a `tool_use`, and it is the one row that can weigh a megabyte.
  */
 const TURN_ROWS_SQL = `
-  SELECT ts, type, origin, provider_id,
+  SELECT ts, type, origin, provider_id, turn_id,
     CASE WHEN type = 'user_message' THEN substr(json_extract(payload_json, '$.text'), 1, 600) END AS text,
     CASE WHEN type IN ('tool_use', 'approval_request') THEN json_extract(payload_json, '$.tool') END AS tool,
     CASE WHEN type IN ('approval_request', 'approval_resolved') THEN json_extract(payload_json, '$.requestId') END AS request_id
@@ -79,6 +88,8 @@ interface TurnRow {
   type: string;
   origin: string;
   provider_id: string | null;
+  /** The turn the row belongs to; null between turns. */
+  turn_id?: string | null;
   text: string | null;
   tool: string | null;
   request_id: string | null;
@@ -135,22 +146,42 @@ function activityOf(row: TurnRow): string {
     case "thinking": return "thinking";
     case "user_message": return "starting the turn";
     case "context_added": return "starting the turn";
+    case "system": return "between steps";
     default: return row.type.replaceAll("_", " ");
   }
 }
 
 /**
  * What the last turn was doing when the rows stop, or null when that turn ended (or there is none).
- * Rows newest first.
+ * Rows newest first. A turn the provider continued on its own, with no message opening it, is
+ * reported with `continued` and no prompt.
  */
-export function cutOffTurn(rows: readonly TurnRow[]): { prompt?: string; activity: string; lastAt: number; pendingApproval?: string; origin: string; providerId: string | null } | null {
+export function cutOffTurn(rows: readonly TurnRow[]): { prompt?: string; activity: string; lastAt: number; pendingApproval?: string; origin: string; providerId: string | null; continued?: boolean } | null {
   if (rows.length === 0) return null;
   const resolved = new Set<string>();
   let pendingApproval: string | undefined;
-  for (const row of rows) {
+  let worked = false;
+  let workTurn: string | null = null;
+  for (const [i, row] of rows.entries()) {
     // An error the model went on past did not end the turn; one with nothing after it did.
     if (row.type === "error" && row !== rows[0]) continue;
-    if (TURN_END_TYPES.has(row.type)) return null;
+    if (TURN_END_TYPES.has(row.type)) {
+      if (!worked) return null;
+      const newest = rows[0]!;
+      const common = { activity: activityOf(newest), lastAt: newest.ts, ...(pendingApproval ? { pendingApproval } : {}) };
+      if (workTurn) {
+        // A follow-up queued while the previous turn ran: its message sits before that turn's end.
+        const opener = rows.slice(i + 1).find((r) => r.type === "user_message" && r.turn_id === workTurn);
+        const prompt = opener ? firstLine(withoutSecrets(opener.text), 160) : undefined;
+        return { ...(prompt ? { prompt } : {}), ...common, origin: opener?.origin ?? newest.origin, providerId: opener?.provider_id ?? newest.provider_id };
+      }
+      // The previous turn ended, and a turn nobody opened ran after it without ending.
+      return { ...common, origin: newest.origin, providerId: newest.provider_id, continued: true };
+    }
+    if (TURN_WORK_TYPES.has(row.type)) {
+      if (!worked) workTurn = row.turn_id ?? null;
+      worked = true;
+    }
     if (row.type === "approval_resolved" && row.request_id) resolved.add(row.request_id);
     if (row.type === "approval_request" && !pendingApproval && (!row.request_id || !resolved.has(row.request_id))) {
       pendingApproval = row.tool ?? "a tool";
@@ -232,6 +263,7 @@ export function findInterruptedChats(deps: InterruptedChatDeps, window: { since:
       activity: turn.activity,
       lastAt: turn.lastAt,
       ...(turn.pendingApproval ? { pendingApproval: turn.pendingApproval } : {}),
+      ...(turn.continued ? { continued: true } : {}),
       ...(cards > 0 ? { openCards: cards } : {}),
       ...(projectPath && deps.managerOf(projectPath) === sessionId ? { manager: true } : {}),
       ...(parent ? { parentSessionId: parent } : {}),

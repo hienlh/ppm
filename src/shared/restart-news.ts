@@ -52,6 +52,8 @@ export interface InterruptedChat {
   lastAt: number;
   /** An approval or question the chat was waiting on when the server went away. */
   pendingApproval?: string;
+  /** No message opened the cut-off turn: the provider continued on its own (after background work ended, say). */
+  continued?: boolean;
   /** Open PPM Assistant cards about this chat. */
   openCards?: number;
   /** This chat is its project's manager chat. */
@@ -152,9 +154,11 @@ function parseChat(raw: unknown): InterruptedChat | null {
   if (!optStr(raw.prompt, 400) || !optStr(raw.activity, 200) || !optStr(raw.pendingApproval, 200) || !optStr(raw.parentSessionId, 200)) return null;
   if (raw.openCards !== undefined && (!Number.isInteger(raw.openCards) || (raw.openCards as number) < 0)) return null;
   if (raw.manager !== undefined && typeof raw.manager !== "boolean") return null;
+  if (raw.continued !== undefined && typeof raw.continued !== "boolean") return null;
   return {
     sessionId: raw.sessionId, providerId: raw.providerId, projectName: raw.projectName, title: raw.title,
     lastAt: raw.lastAt, restartAt: raw.restartAt,
+    ...(raw.continued === true ? { continued: true } : {}),
     ...(typeof raw.prompt === "string" ? { prompt: raw.prompt } : {}),
     ...(typeof raw.activity === "string" ? { activity: raw.activity } : {}),
     ...(typeof raw.pendingApproval === "string" ? { pendingApproval: raw.pendingApproval } : {}),

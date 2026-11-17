@@ -18,9 +18,17 @@ import { scrubCommand } from "./background-command-text.ts";
  * or `turn_aborted` after it (each of those means the CLI that ran it was closed). Chats the restart
  * cut off mid-turn are the other list's; the same filters apply otherwise (this database's projects
  * only, no Assistant, design or extension chats, nothing the new run already took up).
+ *
+ * A task that ended `failed` or `killed` in the last {@link SHUTDOWN_KILL_WINDOW_MS} of the previous
+ * run, with no turn ending after it, counts too: a machine shutting down kills the shells before it
+ * kills PPM, so the CLI reports them failed seconds before the trace stops, and nothing reacted.
  */
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "stopped", "killed"]);
+/** Terminal statuses a process killed from outside leaves (`stopped` is the chat's own TaskStop). */
+const KILLED_STATUSES = new Set(["failed", "killed"]);
+/** How long before the previous run's end a killed task is taken as killed by the shutdown. */
+export const SHUTDOWN_KILL_WINDOW_MS = 60_000;
 /** Rows that mean the CLI holding the session's tasks was closed. */
 const CLI_CLOSED_TYPES = new Set(["run_closed", "run_failed", "turn_aborted"]);
 /** Tools whose task runs inside the chat's Claude process, which ends with the server. */
@@ -50,7 +58,7 @@ const TASK_ROWS_SQL = `
     json_extract(payload_json, '$.taskToolUseId') AS tool_use_id
   FROM session_events
   WHERE trace_id = ? AND ts >= ? AND ts < ? AND source <> 'browser'
-    AND (type IN ('run_closed', 'run_failed', 'turn_aborted')
+    AND (type IN ('run_closed', 'run_failed', 'turn_aborted', 'done')
       OR (type = 'system' AND json_extract(payload_json, '$.subtype') IN ('task_started', 'task_updated', 'task_notification')))
   ORDER BY seq ASC`;
 
@@ -65,6 +73,14 @@ const TOOL_SQL = `
     AND json_extract(payload_json, '$.toolUseId') = ?
   ORDER BY seq DESC
   LIMIT 1`;
+
+/**
+ * The previous run's last sign of life in the trace, for a run that wrote no stop. A `ppm chat`
+ * process outlives the server and keeps writing, so its rows are left out. Another instance on the
+ * same trace file (a dev server) can still move this later, which only misses kills, never adds one.
+ */
+const RUN_END_SQL = `
+  SELECT MAX(ts) AS ts FROM session_events WHERE ts >= ? AND ts < ? AND source <> 'browser' AND origin <> 'cli'`;
 
 interface TaskRow {
   ts: number;
@@ -98,21 +114,31 @@ export interface BackgroundScan {
 
 /**
  * The tasks a trace's rows leave running, oldest first: started, and neither ended by a terminal
- * status nor by the CLI being closed. Rows oldest first.
+ * status nor by the CLI being closed. Rows oldest first. With `killedFrom`, a task that ended
+ * `failed`/`killed` at or after it counts as still running (the shutdown killed it) unless a turn
+ * ended after that, which means the chat already took the failure in.
  */
-export function runningTasks(rows: readonly TaskRow[]): RunningTask[] {
+export function runningTasks(rows: readonly TaskRow[], killedFrom?: number): RunningTask[] {
   const running = new Map<string, RunningTask>();
+  const killed = new Map<string, RunningTask>();
   for (const row of rows) {
-    if (CLI_CLOSED_TYPES.has(row.type)) { running.clear(); continue; }
+    if (CLI_CLOSED_TYPES.has(row.type)) { running.clear(); killed.clear(); continue; }
+    if (row.type === "done") { killed.clear(); continue; }
     if (!row.task_id || !TASK_ID_RE.test(row.task_id)) continue;
-    if (row.status && TERMINAL_STATUSES.has(row.status)) { running.delete(row.task_id); continue; }
+    if (row.status && TERMINAL_STATUSES.has(row.status)) {
+      const task = running.get(row.task_id);
+      running.delete(row.task_id);
+      if (task && killedFrom !== undefined && row.ts >= killedFrom && KILLED_STATUSES.has(row.status)) killed.set(row.task_id, task);
+      continue;
+    }
     // An agent woken again by SendMessage starts the same task id again: it runs from then on.
     if (row.subtype === "task_started") {
       running.delete(row.task_id);
+      killed.delete(row.task_id);
       running.set(row.task_id, { taskId: row.task_id, startedAt: row.ts, toolUseId: row.tool_use_id, origin: row.origin, providerId: row.provider_id });
     }
   }
-  return [...running.values()];
+  return [...running.values(), ...killed.values()].sort((a, b) => a.startedAt - b.startedAt);
 }
 
 /** What a task's state is after the restart, by the evidence there is. */
@@ -123,13 +149,17 @@ export function taskState(tool: string, outputWritten: boolean): BackgroundTaskS
 
 /**
  * Every chat that was between turns with background work running when the previous run ended,
- * newest first. `skip` holds the chats listed as cut off mid-turn. Throws when the trace cannot be read.
+ * newest first. `skip` holds the chats listed as cut off mid-turn. `runEnd` is when the previous run
+ * stopped, when it wrote its stop; otherwise its last row in the trace stands in. Throws when the
+ * trace cannot be read.
  */
 export function findBackgroundWorkChats(
-  deps: BackgroundWorkDeps, window: { since: number; restartAt: number }, skip: ReadonlySet<string> = new Set(),
+  deps: BackgroundWorkDeps, window: { since: number; restartAt: number; runEnd?: number }, skip: ReadonlySet<string> = new Set(),
 ): BackgroundScan {
   const since = Math.max(window.since, window.restartAt - INTERRUPTED_LOOKBACK_MS);
   const db = deps.traceDb;
+  const runEnd = window.runEnd ?? (db.query(RUN_END_SQL).get(since, window.restartAt) as { ts: number | null } | null)?.ts ?? null;
+  const killedFrom = runEnd === null ? undefined : runEnd - SHUTDOWN_KILL_WINDOW_MS;
   const candidates = db.query(CANDIDATES_SQL).all(since, window.restartAt) as Array<{ trace_id: string }>;
   const newestQ = db.query(NEWEST_SQL);
   const taskQ = db.query(TASK_ROWS_SQL);
@@ -140,7 +170,7 @@ export function findBackgroundWorkChats(
   for (const c of candidates) {
     const newest = newestQ.get(c.trace_id) as { ts: number } | null;
     if (!newest || newest.ts >= window.restartAt) continue; // the new run has taken it up
-    const running = runningTasks(taskQ.all(c.trace_id, since, window.restartAt) as TaskRow[])
+    const running = runningTasks(taskQ.all(c.trace_id, since, window.restartAt) as TaskRow[], killedFrom)
       .filter((t) => !NOT_RESUMABLE_ORIGINS.has(t.origin));
     if (running.length === 0) continue;
     const sessionId = deps.sessionOf(c.trace_id);

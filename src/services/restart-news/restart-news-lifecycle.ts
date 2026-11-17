@@ -90,7 +90,11 @@ function scanLive(start: ServerStart): RestartScans {
   let background: BackgroundScan = { chats: [], more: 0 };
   try {
     // Every cut-off chat, the unlisted ones too: a chat past the list's cap was still mid-turn.
-    background = findBackgroundWorkChats(deps, window, new Set(cutOff.allIds ?? cutOff.chats.map((c) => c.sessionId)));
+    // A run that wrote its stop says when it ended; otherwise the scan takes its last trace row.
+    const runEnd = start.previous?.stoppedAt;
+    background = findBackgroundWorkChats(
+      deps, { ...window, ...(runEnd !== undefined ? { runEnd } : {}) }, new Set(cutOff.allIds ?? cutOff.chats.map((c) => c.sessionId)),
+    );
   } catch (e) {
     log.warn(`could not read which chats' background work the restart stopped: ${(e as Error).message}`);
   }

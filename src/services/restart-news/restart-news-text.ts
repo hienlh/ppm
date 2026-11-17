@@ -70,6 +70,7 @@ function chatLine(c: InterruptedChat, indent: string, role: string): string {
   const lines = [`${head}: was ${cleanEventText(c.activity, 80) || "working"} when its rows stop at ${iso(c.lastAt)}.`];
   const prompt = cleanEventText(c.prompt, 160);
   if (prompt) lines.push(`${indent}  The cut-off turn began with: ${quote(prompt)}`);
+  else if (c.continued) lines.push(`${indent}  No message opened the cut-off turn: the chat had carried on by itself (as it does when background work it ran ends).`);
   if (c.pendingApproval) {
     lines.push(`${indent}  It was waiting on an approval or question (${cleanEventText(c.pendingApproval, 60)}); that request is gone and must be asked again.`);
   }
