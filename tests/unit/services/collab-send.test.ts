@@ -194,5 +194,16 @@ describe("send_to_session", () => {
     const body = JSON.parse(textOf(await pending));
     expect(body.reply).toEqual({ replied: false, reason: "turn_ended_without_reply" });
     expect(body.status.sessionId).toBe(B);
+    // The target reporting back by ending its turn is an interaction of the pair.
+    expect(w.touched).toHaveLength(1);
+  });
+
+  it("does not mark an interaction when a wait ends on a timeout or a card", async () => {
+    const w = world({ live: { phase: "thinking" } }, { delivered: "inserted" });
+    const pending = sendToSessionTool(w.env, w.caller, { session_id: B, message: "check", wait: true }, signal());
+    await new Promise((r) => setTimeout(r, 5));
+    w.env.waits.targetWaitingForUser(B, { kind: "approval" as const, title: "Bash" });
+    await pending;
+    expect(w.touched).toEqual([]);
   });
 });

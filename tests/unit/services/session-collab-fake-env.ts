@@ -56,6 +56,8 @@ export function fakeEnv(opts: {
   const createdEvents: Array<Omit<SessionCreatedEvent, "type">> = [];
   const pairs = new Map<string, { auto: number; extra: number }>();
   const allowCreate = new Set<string>();
+  /** Pairs `touch` was called for, in order. */
+  const touched: string[] = [];
   const allowEscalation = new Map<string, number>();
   const unread = createCollabUnread({ canonical: (id) => id });
   const starting = new Set<string>();
@@ -120,6 +122,7 @@ export function fakeEnv(opts: {
         const p = pairs.get(pairKey(a, b));
         if (p && p.auto > 0) p.auto--;
       },
+      touch: (a, b) => { touched.push(pairKey(a, b)); },
       grant: (a, b, n) => {
         const p = pairs.get(pairKey(a, b)) ?? { auto: 0, extra: 0 };
         p.extra += n;
@@ -181,7 +184,7 @@ export function fakeEnv(opts: {
     announceLinks: (_project, ids) => { announced.push(`links:${ids.join(",")}`); },
     unread,
   };
-  return { env, asked, deliveries, created, announced, createdEvents, starting, waits, unread, reservedSlots: () => reserved };
+  return { env, asked, deliveries, created, announced, createdEvents, starting, waits, unread, touched, reservedSlots: () => reserved };
 }
 
 /** The text of a tool result. */

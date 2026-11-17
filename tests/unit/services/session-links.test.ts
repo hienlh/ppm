@@ -74,13 +74,35 @@ describe("session links", () => {
     recordSpawn(id(3), id(1));
     pairCounter.record(id(1), id(2));
     pairCounter.record(id(1), id(5));
-    const links = linkedSessions(id(1)).sort((a, b) => a.sessionId.localeCompare(b.sessionId));
+    const shape = (sid: string) => linkedSessions(sid).map(({ sessionId, relations }) => ({ sessionId, relations }));
+    const links = shape(id(1)).sort((a, b) => a.sessionId.localeCompare(b.sessionId));
     expect(links).toEqual([
       { sessionId: id(2), relations: ["child", "messaged"] },
       { sessionId: id(3), relations: ["child"] },
       { sessionId: id(5), relations: ["messaged"] },
     ]);
-    expect(linkedSessions(id(2))).toEqual([{ sessionId: id(1), relations: ["parent", "messaged"] }]);
+    expect(shape(id(2))).toEqual([{ sessionId: id(1), relations: ["parent", "messaged"] }]);
+  });
+
+  it("says when each linked session last interacted with this one, and only for that pair", () => {
+    const realNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    try {
+      recordSpawn(id(2), id(1));
+      recordSpawn(id(3), id(1));
+      pairCounter.record(id(1), id(2));
+      now = 2_000_000;
+      pairCounter.record(id(1), id(5));
+      now = 3_000_000;
+      // The child's own talk with another session is not an interaction with its parent.
+      pairCounter.record(id(2), id(9));
+      const at = Object.fromEntries(linkedSessions(id(1)).map((l) => [l.sessionId, l.lastInteractionAt]));
+      expect(at).toEqual({ [id(2)]: 1_000_000, [id(3)]: undefined, [id(5)]: 2_000_000 });
+      expect("lastInteractionAt" in linkedSessions(id(1)).find((l) => l.sessionId === id(3))!).toBe(false);
+    } finally {
+      Date.now = realNow;
+    }
   });
 });
 
@@ -114,6 +136,41 @@ describe("pair counter", () => {
     expect(pairCounter.escalationAllowed(id(1), id(2), "bypassPermissions")).toBe(false);
     // Over for good: going back to the mode it had does not bring it back.
     expect(pairCounter.escalationAllowed(id(1), id(2), "acceptEdits")).toBe(false);
+  });
+
+  it("moves a pair's last interaction on a touch without counting a message", () => {
+    const realNow = Date.now;
+    let now = 5_000;
+    Date.now = () => now;
+    try {
+      expect(pairCounter.lastInteraction(id(1), id(2))).toBeUndefined();
+      pairCounter.record(id(1), id(2));
+      expect(pairCounter.lastInteraction(id(2), id(1))).toBe(5_000);
+      now = 9_000;
+      pairCounter.touch(id(2), id(1));
+      expect(pairCounter.lastInteraction(id(1), id(2))).toBe(9_000);
+      expect(pairCounter.count(id(1), id(2))).toBe(1);
+      // A resend after a person wrote resets the count, never the time.
+      pairCounter.resetForSession(id(1));
+      expect(pairCounter.lastInteraction(id(1), id(2))).toBe(9_000);
+      pairCounter.touch(id(1), id(1));
+      // A pair never recorded, or forgotten with a deleted session, is not brought back.
+      pairCounter.touch(id(1), id(7));
+      expect(pairCounter.messagedWith(id(1))).toEqual([id(2)]);
+      pairCounter.flush();
+      pairCounter.reloadForTests();
+      expect(pairCounter.lastInteraction(id(1), id(2))).toBe(9_000);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it("does not bring back a session deleted while the other waited on it", () => {
+    pairCounter.record(id(1), id(2));
+    pairCounter.forgetSession(id(2));
+    pairCounter.touch(id(1), id(2));
+    expect(pairCounter.messagedWith(id(1))).toEqual([]);
+    expect(pairCounter.lastInteraction(id(1), id(2))).toBeUndefined();
   });
 
   it("takes back a counted message that was never delivered", () => {

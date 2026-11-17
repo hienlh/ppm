@@ -33,7 +33,10 @@ const WRITE_DEBOUNCE_MS = 500;
 interface PairState {
   auto: number;
   extra: number;
-  /** Epoch ms of the last automatic message. */
+  /**
+   * Epoch ms of the pair's last interaction: an automatic message (one later refused included), a
+   * grant at the limit, or a wait on the other that ended (`touch`).
+   */
   lastAt: number;
 }
 
@@ -80,6 +83,33 @@ class PairCounter {
     this.trim();
     this.schedule();
     return p.auto;
+  }
+
+  /**
+   * The two exchanged something without a message being counted: a wait on the other ended
+   * because its turn ended. The pair's last-interaction time moves; no count does. Only a pair
+   * already recorded: the wait began with a counted message, and a pair forgotten since (its
+   * session was deleted mid-wait) must not come back as a link.
+   */
+  touch(a: string, b: string): void {
+    const key = this.key(a, b);
+    const p = key ? this.pairs.get(key) : undefined;
+    if (!key || !p) return;
+    p.lastAt = Date.now();
+    this.pairs.delete(key);
+    this.pairs.set(key, p);
+    this.trim();
+    this.schedule();
+  }
+
+  /**
+   * When the two last interacted (epoch ms): a create, a message either way, a wait on the other
+   * ending. Undefined for a pair with nothing recorded. A message refused at a card still moved it:
+   * the card about the two was the interaction.
+   */
+  lastInteraction(a: string, b: string): number | undefined {
+    const at = this.pair(a, b)?.lastAt;
+    return at ? at : undefined;
   }
 
   /** Takes back one message `record` counted that was then refused or never delivered. */

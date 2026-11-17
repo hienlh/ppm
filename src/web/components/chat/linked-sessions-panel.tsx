@@ -1,7 +1,9 @@
 /**
  * The Sessions tab of the footer's activity chip: the sessions linked to this one — its creator,
  * the sessions it created, the sessions it messaged — grouped by how they are linked, each one tap
- * from being opened.
+ * from being opened. Inside each group what waits on the person comes first, then the session this
+ * one last interacted with, and every row says how long ago that was. A long list (more than `LINKED_FILTER_MIN_ROWS`) gets a
+ * filter by name, which also reaches the unlinked ones.
  *
  * Every row ends in an unlink button, always visible (no hover-only control on a phone). Unlinking
  * only hides a session from this chat's list; it never stops or deletes it, which is why a session
@@ -14,10 +16,13 @@
  */
 import { Fragment, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ChevronDown, Link, Link2Off, RotateCcw, Square } from "@/lib/icons";
+import { ChevronDown, Link, Link2Off, RotateCcw, Search, Square } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { LinkedSessionGroups, LinkedSessionView } from "@/hooks/use-linked-sessions";
-import { byAttention, LINKED_STATUS_TEXT, RELATION_TEXT } from "@/lib/linked-sessions";
+import {
+  byRecentInteraction, LINKED_FILTER_MIN_ROWS, LINKED_STATUS_TEXT, matchesLinkedFilter, RELATION_TEXT,
+} from "@/lib/linked-sessions";
+import { formatRelativeDate } from "@/lib/format-date";
 import { openLinkedSession, stopChildSessions } from "@/lib/session-collab-client";
 import { canUnlink } from "../../../shared/linked-session-unlinks";
 import type { SessionLinkRelation } from "../../../shared/session-collab";
@@ -52,7 +57,11 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
   const [leaving, setLeaving] = useState<ReadonlySet<string>>(new Set());
   const [arriving, setArriving] = useState<ReadonlySet<string>>(new Set());
   const [undo, setUndo] = useState<{ ids: string[]; text: string } | null>(null);
-  const [unlinkedOpen, setUnlinkedOpen] = useState(false);
+  /** Null until the person opens or closes Unlinked; until then a search opens it for its matches. */
+  const [unlinkedOpen, setUnlinkedOpen] = useState<boolean | null>(null);
+  const [query, setQuery] = useState("");
+  /** Once used, the filter stays, so clearing it never takes away the box being typed in. */
+  const [filterUsed, setFilterUsed] = useState(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   /** Rows still sliding out: closing the popover mid-slide must not lose their unlink. */
   const pending = useRef<string[]>([]);
@@ -64,8 +73,11 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
   }, []);
   const later = (fn: () => void, ms: number) => { timers.current.push(setTimeout(fn, ms)); };
 
+  const searched = query.trim() !== "";
+  const shown = searched ? visible.filter((l) => matchesLinkedFilter(l.title, query)) : visible;
   const runningChildren = visible.filter(isRunningChild);
-  const finished = visible.filter((l) => canUnlink(l.status));
+  // During a search, the bulk unlink reaches only the rows on screen.
+  const finished = shown.filter((l) => canUnlink(l.status));
 
   const open = (l: LinkedSessionView) => {
     onOpened();
@@ -109,16 +121,41 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
     }
   };
 
-  // A heading with nothing under it goes too. Inside each, what needs the person or runs comes first.
+  // Unlinked rows count: the filter reaches them too.
+  const filtering = visible.length + hidden.length > LINKED_FILTER_MIN_ROWS || filterUsed;
+  const shownHidden = byRecentInteraction(searched ? hidden.filter((l) => matchesLinkedFilter(l.title, query)) : hidden);
+  // A search opens Unlinked, so a match hidden there is not missed, unless the person closed it.
+  const unlinkedShown = unlinkedOpen ?? (searched && shownHidden.length > 0);
+
+  // A heading with nothing under it goes too. Inside each, what waits on the person, then the latest interaction.
   const grouped = GROUP_ORDER
-    .map((relation) => ({ relation, sessions: byAttention(visible.filter((l) => (l.relations[0] ?? "messaged") === relation)) }))
+    .map((relation) => ({ relation, sessions: byRecentInteraction(shown.filter((l) => (l.relations[0] ?? "messaged") === relation)) }))
     .filter((g) => g.sessions.length > 0);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-linked-sessions-panel="">
-      <div className="max-h-64 min-h-0 overflow-y-auto overscroll-contain p-1 max-md:max-h-none max-md:flex-1">
+      {filtering && (
+        <label className="mx-2 mt-2 flex h-8 shrink-0 items-center gap-2 rounded-lg border border-border bg-panel px-2.5 text-text-3 focus-within:border-accent-wash-border max-md:h-11">
+          <Search className="size-3.5 shrink-0" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setFilterUsed(true); }}
+            placeholder="Find a session"
+            aria-label="Find a session"
+            data-linked-filter=""
+            className="min-w-0 flex-1 border-0 bg-transparent text-xs text-text outline-none placeholder:text-text-3 max-md:text-base"
+          />
+        </label>
+      )}
+      {/* Only the list scrolls and gives way when the popover runs out of room; the filter and the foot stay put. */}
+      <div data-linked-list="" className="max-h-[min(60vh,30rem)] min-h-0 overflow-y-auto overscroll-contain p-1 max-md:max-h-none max-md:flex-1">
         {grouped.length === 0 && (
-          <p className="px-2 py-3 text-center text-xs text-text-3">No linked sessions shown. Unlinked ones are below.</p>
+          <p className="px-2 py-3 text-center text-xs text-text-3">
+            {searched
+              ? shownHidden.length > 0 ? "Only unlinked sessions match. They are below." : `No linked session matches “${query.trim()}”.`
+              : "No linked sessions shown. Unlinked ones are below."}
+          </p>
         )}
         {grouped.map((g) => (
           <Fragment key={g.relation}>
@@ -165,7 +202,7 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
       )}
 
       {undo && (
-        <div role="status" data-undo-bar="" className="footer-pop-in mx-2 mb-2 mt-1 flex items-center gap-2 rounded-lg bg-surface-hover py-1 pl-2.5 pr-1 text-xs text-text max-md:text-sm">
+        <div role="status" data-undo-bar="" className="footer-pop-in mx-2 mb-2 mt-1 flex shrink-0 items-center gap-2 rounded-lg bg-surface-hover py-1 pl-2.5 pr-1 text-xs text-text max-md:text-sm">
           <span className="min-w-0 flex-1 truncate">{undo.text}</span>
           <FooterButton onClick={() => doRelink(undo.ids)} className="font-medium !text-primary">
             <RotateCcw />
@@ -174,25 +211,25 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
         </div>
       )}
 
-      {hidden.length > 0 && (
+      {shownHidden.length > 0 && (
         <div className="shrink-0 border-t border-border-soft p-1">
           <button
             type="button"
-            onClick={() => setUnlinkedOpen(!unlinkedOpen)}
-            aria-expanded={unlinkedOpen}
+            onClick={() => setUnlinkedOpen(!unlinkedShown)}
+            aria-expanded={unlinkedShown}
             data-unlinked-toggle=""
             className="flex min-h-[34px] w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] text-text can-hover:hover:bg-surface-hover max-md:min-h-11 max-md:text-sm"
           >
             <Link2Off className="size-4 text-text-3" />
             Unlinked
             <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] tabular-nums text-text-3">
-              {hidden.length}
-              <ChevronDown className={cn("size-3 transition-transform duration-150 motion-reduce:transition-none", unlinkedOpen && "rotate-180")} />
+              {shownHidden.length}
+              <ChevronDown className={cn("size-3 transition-transform duration-150 motion-reduce:transition-none", unlinkedShown && "rotate-180")} />
             </span>
           </button>
-          <FoldGroup open={unlinkedOpen}>
+          <FoldGroup open={unlinkedShown}>
             <div className="max-h-40 overflow-y-auto overscroll-contain max-md:max-h-none">
-              {hidden.map((l) => (
+              {shownHidden.map((l) => (
                 <SessionRow key={l.sessionId} session={l} dim onOpen={() => open(l)} action={{ kind: "relink", onClick: () => doRelink([l.sessionId]) }} />
               ))}
             </div>
@@ -239,6 +276,7 @@ function SessionRow({ session: l, action, onOpen, leaving, arriving, dim }: {
         <span className={cn("shrink-0 text-[11px]", l.status === "needs_approval" && !dim ? "text-error" : "text-text-3")}>
           {LINKED_STATUS_TEXT[l.status]}
         </span>
+        <InteractionTime at={l.lastInteractionAt} />
       </button>
       <button
         type="button"
@@ -254,5 +292,21 @@ function SessionRow({ session: l, action, onOpen, leaving, arriving, dim }: {
         {action.kind === "relink" ? <Link className="size-3.5" /> : <Link2Off className="size-3.5" />}
       </button>
     </div>
+  );
+}
+
+/** How long ago the two sessions last interacted, in the app's usual relative form; the date on hover. */
+function InteractionTime({ at }: { at: number | undefined }) {
+  if (!at) return <span className="min-w-12 shrink-0" aria-hidden="true" />;
+  const iso = new Date(at).toISOString();
+  return (
+    <time
+      dateTime={iso}
+      title={`Last interaction ${new Date(at).toLocaleString()}`}
+      data-linked-interaction=""
+      className="min-w-12 shrink-0 whitespace-nowrap text-right text-[11px] tabular-nums text-text-3"
+    >
+      {formatRelativeDate(iso)}
+    </time>
   );
 }

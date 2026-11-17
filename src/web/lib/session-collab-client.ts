@@ -14,6 +14,7 @@ import { openTurnRef } from "./open-turn-ref";
 import { isAssistantProject } from "../../shared/assistant-project";
 import type { SessionCollabAnswer, SessionLink, SessionLinkRelation } from "../../shared/session-collab";
 
+const MAX_DATE_MS = 8.64e15;
 const RELATIONS: ReadonlySet<string> = new Set<SessionLinkRelation>(["parent", "child", "messaged"]);
 
 /**
@@ -25,10 +26,12 @@ export function parseSessionLinks(body: unknown): SessionLink[] {
   const out: SessionLink[] = [];
   for (const item of body) {
     if (!item || typeof item !== "object") continue;
-    const { sessionId, relations } = item as { sessionId?: unknown; relations?: unknown };
+    const { sessionId, relations, lastInteractionAt: at } = item as { sessionId?: unknown; relations?: unknown; lastInteractionAt?: unknown };
     if (typeof sessionId !== "string" || !sessionId || !Array.isArray(relations)) continue;
     const known = relations.filter((r): r is SessionLinkRelation => typeof r === "string" && RELATIONS.has(r));
-    if (known.length) out.push({ sessionId, relations: [...new Set(known)] });
+    // Within what a Date can hold, so a corrupt record cannot throw when the row formats it.
+    const time = typeof at === "number" && Number.isFinite(at) && at > 0 && at < MAX_DATE_MS ? { lastInteractionAt: at } : {};
+    if (known.length) out.push({ sessionId, relations: [...new Set(known)], ...time });
   }
   return out;
 }

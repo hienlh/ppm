@@ -301,8 +301,16 @@ one runs, else Sessions; the Agents tab exists only while an agent runs. Agents
 team poll) lists the running agents, then the finished ones launched beside them; a tap opens that
 agent's own session. Sessions (`linked-sessions-panel.tsx`) groups the linked sessions by how they
 are linked (its creator, the sessions it created, the sessions it messaged), each group ordered
-by `byAttention` (`src/web/lib/linked-sessions.ts`): waiting on the person, then running, then an
-unread answer, then idle. `use-linked-sessions.ts` seeds
+by `byRecentInteraction` (`src/web/lib/linked-sessions.ts`): the sessions waiting on the person
+first, then the session this one last interacted with, with how long ago on every row (a running
+one is not pinned). An interaction is between the two
+sessions only — one created the other, one messaged the other, a reply or a finished turn came
+back; what a linked session does with a third one never counts. The time is the latest of the
+server's (`lastInteractionAt` on each link, the pair's `lastAt` in `pair-counter.ts`) and what the
+loaded messages say (a from-session block's `sentAt`, the message holding a `create_session` /
+`send_to_session` call, a reply's `sentAt`), because the messages are windowed and the server's
+record is read once when the chat opens. Past eight rows (unlinked ones included) a filter by name appears (any word order,
+accents ignored); it reaches the unlinked ones too, and while it is on "Unlink idle & done" acts on the matches only. `use-linked-sessions.ts` seeds
 the links from `GET …/sessions/:id/links` when the chat opens (so a link from before a restart, or
 older than the loaded messages, is there at once), then merges the session list's `spawnedBy`, the
 chat's own messages and `/ws/global`'s `session:created`, `session:link_changed` and

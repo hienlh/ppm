@@ -26,6 +26,7 @@ export interface LinkedSessionView extends LinkedSession {
 }
 
 const NO_LINKS: Record<string, SessionLinkRelation[]> = {};
+const NO_TIMES: Record<string, number> = {};
 
 /**
  * What one session is doing now, by the same rule as the bar; null with no id. Each store is read
@@ -86,6 +87,7 @@ export function useLinkedSessions(projectName: string, sessionId: string | null,
   const list = useSessionListStore((s) => (id ? s.byProject[id]?.sessions : undefined) ?? EMPTY_SESSIONS);
   const liveLinks = useSessionCollabStore((s) => (sessionId ? s.links[sessionId] : undefined) ?? NO_LINKS);
   const announced = useSessionCollabStore((s) => s.announced);
+  const interactedAt = useSessionCollabStore((s) => (sessionId ? s.interactedAt[sessionId] : undefined) ?? NO_TIMES);
   const pendingApprovals = useSessionCollabStore((s) => s.pendingApprovals);
   const streaming = useStreamingStore((s) => s.sessions);
   const notifications = useNotificationStore((s) => s.notifications);
@@ -105,8 +107,8 @@ export function useLinkedSessions(projectName: string, sessionId: string | null,
   }, [projectName, sessionId, linkable]);
 
   const linked = useMemo(
-    () => (sessionId && linkable ? collectLinkedSessions({ sessionId, list, messages, liveLinks, announced }) : []),
-    [sessionId, linkable, list, messages, liveLinks, announced],
+    () => (sessionId && linkable ? collectLinkedSessions({ sessionId, list, messages, liveLinks, announced, interactedAt }) : []),
+    [sessionId, linkable, list, messages, liveLinks, announced, interactedAt],
   );
   return useMemo(
     () => linked.map((l) => ({ ...l, status: linkedSessionStatus(l.sessionId, { streaming, notifications, pendingApprovals }) })),

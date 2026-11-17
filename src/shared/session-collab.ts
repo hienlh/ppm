@@ -292,6 +292,11 @@ export type SessionLinkRelation = "parent" | "child" | "messaged";
 export interface SessionLink {
   sessionId: string;
   relations: SessionLinkRelation[];
+  /**
+   * When the two sessions last interacted with each other (epoch ms): one created the other, one
+   * messaged the other, or a wait on the other ended. Absent when PPM never recorded one.
+   */
+  lastInteractionAt?: number;
 }
 
 // ── Global events (`/ws/global`) ──────────────────────────────────────────
