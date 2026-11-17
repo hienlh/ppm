@@ -25,6 +25,7 @@ function databaseAt74(): Database {
   db.exec("PRAGMA foreign_keys = OFF");
   db.exec("DROP INDEX IF EXISTS idx_tasks_snoozed");
   for (const c of SNOOZE_COLUMNS) db.exec(`ALTER TABLE tasks DROP COLUMN ${c}`);
+  db.exec("ALTER TABLE task_link_state DROP COLUMN snooze_changed_at");
   db.exec("PRAGMA foreign_keys = ON");
   db.query("INSERT INTO tasks (id, project_key, number, title, status_id, urgency, importance, created_at, updated_at) VALUES ('t1', 'p', 1, 'old task', 's', 'now', 'must', 1, 1)").run();
   db.exec("PRAGMA user_version = 74");
@@ -38,6 +39,7 @@ describe("migration 75: task snooze", () => {
     expect(version(db)).toBe(75);
     const cols = columns(db);
     for (const c of SNOOZE_COLUMNS) expect(cols.map((x) => x.name)).toContain(c);
+    expect((db.query("PRAGMA table_info(task_link_state)").all() as Array<{ name: string }>).map((c) => c.name)).toContain("snooze_changed_at");
     const flag = cols.find((c) => c.name === "snooze_until_change")!;
     expect(flag.notnull).toBe(1);
     expect(flag.dflt_value).toBe("0");
@@ -51,6 +53,7 @@ describe("migration 75: task snooze", () => {
     expect(db.query("SELECT title, snoozed_until, snooze_until_change, snoozed_at, resurfaced_at FROM tasks WHERE id = 't1'").get()).toEqual({
       title: "old task", snoozed_until: null, snooze_until_change: 0, snoozed_at: null, resurfaced_at: null,
     });
+    expect((db.query("PRAGMA table_info(task_link_state)").all() as Array<{ name: string }>).map((c) => c.name)).toContain("snooze_changed_at");
     const index = db.query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_tasks_snoozed'").get();
     expect(index).toBeTruthy();
   });

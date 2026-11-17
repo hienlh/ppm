@@ -53,7 +53,8 @@ export function applySnoozeRules(
 /** Why a task came back, for its history row and the manager's news. */
 export function resurfaceReasonText(reason: ResurfaceReason, link: Pick<LinkChange, "kind" | "ref"> | undefined): string {
   if (reason === "date") return "Snooze ended: its day came";
-  return link ? `Snooze ended: ${link.kind === "jira" ? "Jira" : "PR"} ${link.ref} changed` : "Snooze ended: a link changed";
+  if (!link) return "Snooze ended: a link changed";
+  return link.kind === "jira" ? `Snooze ended: Jira ${link.ref} changed status` : `Snooze ended: PR ${link.ref} changed`;
 }
 
 /**

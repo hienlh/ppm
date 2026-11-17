@@ -35,12 +35,12 @@ beforeEach(() => {
 const task = (title = "Merge to staging", extra: Partial<TaskCreateInput> = {}) =>
   createTask({ projectKey: f.projectKey, title, urgency: "now", importance: "must", ...extra }, USER, now);
 
-/** A Jira link's cached state, changed at `at`. */
-function linkChanged(ref: string, at: number): void {
+/** A Jira link's cached state, changed at `at`; `status: false` is a change of something else (its assignee). */
+function linkChanged(ref: string, at: number, status = true): void {
   getDb().query(
-    `INSERT INTO task_link_state (kind, ref, project_key, state_json, checked_at, changed_at) VALUES ('jira', ?, ?, '{"status":"Done"}', ?, ?)
-     ON CONFLICT (kind, ref, project_key) DO UPDATE SET changed_at = excluded.changed_at`,
-  ).run(ref, f.projectKey, at, at);
+    `INSERT INTO task_link_state (kind, ref, project_key, state_json, checked_at, changed_at, snooze_changed_at) VALUES ('jira', ?, ?, '{"status":"Done"}', ?, ?, ?)
+     ON CONFLICT (kind, ref, project_key) DO UPDATE SET changed_at = excluded.changed_at, snooze_changed_at = COALESCE(excluded.snooze_changed_at, snooze_changed_at)`,
+  ).run(ref, f.projectKey, at, at, status ? at : null);
 }
 
 describe("the rules a snooze keeps (shared)", () => {
@@ -155,17 +155,21 @@ describe("coming back", () => {
     expect(listResurfacedOn(laterDay).map((x) => x.id)).toEqual([t.id]);
   });
 
-  it("when a watched link changes after the snooze was set, and not for a change before it", () => {
+  it("when a watched link's status changes after the snooze was set; not for a change before it or of another field", () => {
     const t = task("Wait for QA", { links: [{ kind: "jira", ref: "NX-7" }] });
     linkChanged("NX-7", now - 60_000);
     const s = updateTask(t.id, { snoozeUntilChange: true }, t.revision, USER, now);
     expect(s.snoozed).toBe(true);
     expect(resurfaceDueTasks(now + 1_000)).toBe(0);
+    // Its assignee changed: news for the manager, but not the status the snooze waits for.
+    linkChanged("NX-7", now + 2_000, false);
+    expect(resurfaceDueTasks(now + 3_000)).toBe(0);
+    expect(getTask(t.id)!.snoozed).toBe(true);
     linkChanged("NX-7", now + 5_000);
     expect(listTasks({ projectKeys: [f.projectKey] }).find((x) => x.id === t.id)).toMatchObject({ snoozed: false, resurfacedToday: true });
     expect(resurfaceDueTasks(now + 6_000, [f.projectKey])).toBe(1);
     expect(getTask(t.id)).toMatchObject({ snoozeUntilChange: false, resurfacedAt: now + 6_000 });
-    expect(taskHistory(t.id)[0]!.reason).toBe("Snooze ended: Jira NX-7 changed");
+    expect(taskHistory(t.id)[0]!.reason).toBe("Snooze ended: Jira NX-7 changed status");
   });
 
   it("is news for the manager", () => {

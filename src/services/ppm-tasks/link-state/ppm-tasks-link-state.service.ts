@@ -65,7 +65,27 @@ export function comparable(kind: LinkKind, stateJson: string | null): string | n
   }
 }
 
-interface CacheRow { kind: LinkKind; ref: string; project_key: string; state_json: string | null; error: string | null; checked_at: number | null; changed_at: number | null }
+/**
+ * The part of a state whose change wakes a task snoozed until a link changes: a Jira issue's
+ * status (not its assignee or summary), a PR's state (open, draft, merged, closed) or review
+ * decision (not its title or CI). Null when there is no state.
+ */
+export function snoozeComparable(kind: LinkKind, stateJson: string | null): string | null {
+  if (!stateJson) return null;
+  try {
+    const s = JSON.parse(stateJson) as Record<string, unknown>;
+    return kind === "jira" ? stableJson({ status: s.status ?? null })
+      : kind === "pr" ? stableJson({ state: s.state ?? null, reviewDecision: s.reviewDecision ?? null })
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+interface CacheRow {
+  kind: LinkKind; ref: string; project_key: string; state_json: string | null; error: string | null; checked_at: number | null; changed_at: number | null;
+  snooze_changed_at?: number | null;
+}
 
 function parseState(json: string | null): Record<string, unknown> | null {
   if (!json) return null;
@@ -104,11 +124,14 @@ export function createLinkStateService(env: LinkStateEnv = liveLinkStateEnv) {
     // not about links it just added.
     const changed = !!before?.state_json && !!result.state && comparable(kind, before.state_json) !== comparable(kind, stateJson);
     const changedAt = changed ? at : before?.changed_at ?? null;
+    // Narrower than news: only what wakes a snoozed task (`snoozeComparable`).
+    const wakes = changed && snoozeComparable(kind, before!.state_json) !== snoozeComparable(kind, stateJson);
+    const snoozeChangedAt = wakes ? at : before?.snooze_changed_at ?? null;
     db.query(
-      `INSERT INTO task_link_state (kind, ref, project_key, state_json, error, checked_at, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO task_link_state (kind, ref, project_key, state_json, error, checked_at, changed_at, snooze_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (kind, ref, project_key) DO UPDATE SET state_json = excluded.state_json, error = excluded.error,
-         checked_at = excluded.checked_at, changed_at = excluded.changed_at`,
-    ).run(kind, ref, projectKey, stateJson, result.error, at, changedAt);
+         checked_at = excluded.checked_at, changed_at = excluded.changed_at, snooze_changed_at = excluded.snooze_changed_at`,
+    ).run(kind, ref, projectKey, stateJson, result.error, at, changedAt, snoozeChangedAt);
     return !before || before.state_json !== stateJson || before.error !== result.error;
   }
 
