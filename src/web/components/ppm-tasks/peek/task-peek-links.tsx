@@ -14,7 +14,7 @@ import { TaskLinkPill } from "../task-links-card";
 /** "+N" and "Show fewer": drawn like a link pill, 32px on a phone with a 44px target. */
 const MORE = cn(
   "relative inline-flex h-[22px] min-h-0! items-center whitespace-nowrap rounded-md border border-dashed border-border-soft px-2 text-[11.5px] text-text-2",
-  "can-hover:hover:border-border can-hover:hover:text-text max-md:h-8 max-md:after:absolute max-md:after:inset-x-0 max-md:after:-inset-y-1.5 max-md:after:content-['']",
+  "can-hover:hover:border-border can-hover:hover:text-text max-md:h-8 max-md:after:absolute max-md:after:inset-x-0 max-md:after:-inset-y-[7px] max-md:after:content-['']",
 );
 
 export function TaskPeekLinks({ task, linkStates, jiraSite, onOpenChat }: {
@@ -26,7 +26,7 @@ export function TaskPeekLinks({ task, linkStates, jiraSite, onOpenChat }: {
   return (
     <section aria-label="Links" data-task-peek-links="" data-task-peek-links-expanded={expanded || undefined}>
       <div className="mb-1 text-[11.5px] font-medium text-text-3">Links <span className="font-normal">{task.links.length}</span></div>
-      <div className="flex flex-wrap gap-1.5 max-md:gap-x-2 max-md:gap-y-3">
+      <div className="flex flex-wrap gap-1.5 max-md:gap-x-2 max-md:gap-y-3.5">
         {shown.map((l) => (
           <TaskLinkPill key={`${l.kind}:${l.ref}`} link={l} linkStates={linkStates} jiraSite={jiraSite} onOpenChat={onOpenChat} className="min-w-0 max-w-full" />
         ))}

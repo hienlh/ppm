@@ -13,7 +13,7 @@
  * quick view leaves a press or an Escape inside a Radix menu to the menu (`task-peek-popover.tsx`).
  *
  * On a phone a chip is drawn 32px and takes presses 6px above and below it, a 44px target, with
- * the rows 12px apart so neighbouring targets do not overlap; a menu row is 44px
+ * the rows 14px apart so neighbouring targets do not overlap; a menu row is 44px
  * (docs/design-guidelines.md, rule 3).
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -40,8 +40,11 @@ const CHIP = cn(
 );
 const SET = "border-border-soft bg-surface text-text";
 const EMPTY = "border-dashed border-border-soft text-text-3";
-/** On a phone a chip button takes presses 6px above and below it: a 44px target. */
-const PHONE_REACH = "max-md:after:absolute max-md:after:inset-x-0 max-md:after:-inset-y-1.5 max-md:after:content-['']";
+/**
+ * On a phone a chip button takes presses 6px above and below it: a 44px target. The press area is
+ * 7px past the padding box, which the absolute `::after` is placed from, inside the 1px border.
+ */
+const PHONE_REACH = "max-md:after:absolute max-md:after:inset-x-0 max-md:after:-inset-y-[7px] max-md:after:content-['']";
 /**
  * Due's date input over its chip: invisible, the chip's whole size and on a phone 6px more above
  * and below. 16px text, or iOS zooms the page when it takes focus.
@@ -68,7 +71,7 @@ function MenuChip({ field, label, value, title, empty, choices, renderChoice, on
           {children}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" aria-label={label} data-task-peek-menu={field} className="max-h-72 min-w-[11rem]">
+      <DropdownMenuContent align="start" aria-label={label} data-task-peek-menu={field} className="max-h-72 min-w-[11rem] outline-none">
         <DropdownMenuRadioGroup value={value} onValueChange={(v) => { if (v !== value) onChange(v); }}>
           {choices.map((c) => (
             <DropdownMenuRadioItem key={c.value} value={c.value} className={MENU_ROW} data-task-peek-choice={c.value}>
@@ -182,7 +185,7 @@ export function TaskPeekFields({ task, settings, onPatch, onStatus, className }:
     : <span className="text-text-3">Nobody</span>);
   return (
     <div className={cn("space-y-2.5 text-[13px] max-md:space-y-3 max-md:[&_textarea]:text-[15px]", className)} data-task-peek-fields="">
-      <div className="flex flex-wrap gap-1.5 max-md:gap-x-2 max-md:gap-y-3" data-task-peek-chips="">
+      <div className="flex flex-wrap gap-1.5 max-md:gap-x-2 max-md:gap-y-3.5" data-task-peek-chips="">
         <MenuChip field="status" label="Status" value={task.statusId} title={peekChipTitle("Status", task.statusName)}
           choices={statusChoices(task, settings?.statuses)} onChange={onStatus}
           renderChoice={(c) => {
@@ -213,7 +216,8 @@ export function TaskPeekFields({ task, settings, onPatch, onStatus, className }:
         <MenuChip field="waiting" label="Waiting on" value={task.waitingOnMemberId ?? ""} title={peekChipTitle("Waiting on", waiting)} empty={!waiting}
           choices={memberChoices(people)} onChange={(v) => onPatch({ waitingOnMemberId: v || null })} renderChoice={member}>
           <Hand className="size-3.5 shrink-0 text-warning" aria-hidden />
-          {waiting ? <span className="min-w-0 max-w-[10rem] truncate">{waiting}</span> : "Waiting on"}
+          {/* Named, unlike Assignee: "You" twice in a row would not say which is which. */}
+          {waiting ? <span className="min-w-0 max-w-[12rem] truncate"><span className="text-text-3">Waiting on </span>{waiting}</span> : "Waiting on"}
         </MenuChip>
         <DueChip value={task.dueDate} onSave={(dueDate) => onPatch({ dueDate })} />
       </div>
