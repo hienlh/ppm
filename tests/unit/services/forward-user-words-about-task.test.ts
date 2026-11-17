@@ -31,10 +31,10 @@ function envWith(result: { ok: true } | { ok: false; error: string }) {
 }
 
 describe("the user's words about a task", () => {
-  it("go to the task's chat word for word, with a user-words block naming no card and the task's block", async () => {
+  it("go to the manager chat word for word, with a user-words block naming no card and the task's block", async () => {
     const { env, sent, notes, traced, wrote } = envWith({ ok: true });
     const r = await forwardUserWordsAboutTask({
-      text: "fix it now", target, taskRef, actor: { channel: "telegram", telegramChatId: "42", telegramMessageId: 7 },
+      text: "fix it now", target, taskRef, chatKind: "manager", actor: { channel: "telegram", telegramChatId: "42", telegramMessageId: 7 },
     }, env);
     expect(r).toEqual({ ok: true, sessionId: "mgr-alpha", delivered: "started" });
     expect(sent).toHaveLength(1);
@@ -50,9 +50,24 @@ describe("the user's words about a task", () => {
     expect(notes[0]).not.toContain("fix it now");
   });
 
+  it("go to a handed-off chat with no task block: that chat works on this task alone", async () => {
+    const { env, sent, notes, traced } = envWith({ ok: true });
+    const child = { ...target, sessionId: "child-1" };
+    const r = await forwardUserWordsAboutTask({
+      text: "check the period-13 filter", target: child, taskRef, chatKind: "child", actor: { channel: "telegram", telegramChatId: "42", telegramMessageId: 8 },
+    }, env);
+    expect(r).toEqual({ ok: true, sessionId: "child-1", delivered: "started" });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.taskRefs).toBeUndefined();
+    expect(sent[0]).toMatchObject({ targetSessionId: "child-1", text: "check the period-13 filter", userWords: { channel: "telegram" } });
+    // The trace and the Assistant's note still say which task the words were about.
+    expect(traced).toEqual([{ taskId: taskRef.taskId, channel: "telegram", telegramChatId: "42" }]);
+    expect(notes[0]).toContain("task alpha/12");
+  });
+
   it("a refused delivery says why and tells nobody", async () => {
     const { env, notes, wrote } = envWith({ ok: false, error: "A design chat does not take forwarded words" });
-    const r = await forwardUserWordsAboutTask({ text: "x", target, taskRef, actor: { channel: "telegram" } }, env);
+    const r = await forwardUserWordsAboutTask({ text: "x", target, taskRef, chatKind: "manager", actor: { channel: "telegram" } }, env);
     expect(r).toEqual({ ok: false, error: "A design chat does not take forwarded words" });
     expect(notes).toEqual([]);
     expect(wrote).toEqual([]);

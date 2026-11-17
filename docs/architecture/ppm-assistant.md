@@ -1871,8 +1871,10 @@ commands still go to the Assistant. A reply to a task card (or to that "next mes
 does the same for one message with nothing to arm. Before this, a reply to a `/tasks` card reached
 the Assistant as an ordinary message with the card quoted (`reply_to_message` → `quoteOf`), never
 the task's chat. The words go through `forwardUserWordsAboutTask` (`forward-verbatim.ts`): word for
-word, with a user-words block that names no card and the task block the server renders from the
-store, behind any request the chat has open rather than answering it, and with no chatting device
+word, with a user-words block that names no card and — only when they go to the manager chat — the
+task block the server renders from the store (a handed-off chat works on that one task, so its words
+carry no task block; the bot's "✅ Sent to …" and the answer it brings back still name the task),
+behind any request the chat has open rather than answering it, and with no chatting device
 left behind. A forwarded message is refused (someone else's words), a photo is not sent, and a
 title-only project shows the task's ref and title but never its chat's title.
 

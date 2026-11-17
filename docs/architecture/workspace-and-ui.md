@@ -426,7 +426,11 @@ chip in its composer and sends nothing.
 **The task travels with Open chat.** A manager chat works on many tasks, so a message typed there
 says nothing about which one is meant. Open chat on a task (the working-session block, a row's
 session chip, the manager chat's Tasks chip, a handed-off task on an Assistant card) therefore leaves
-a removable chip "#N title" (`ppm/N` in a chat of another project) in the opened chat's composer, kept in the tab's metadata
+a removable chip "#N title" (`ppm/N` in a chat of another project) in the opened chat's composer **when
+that chat is the project's manager chat**. A chat the task was handed off to works on that task alone
+and opens with no chip. Which is which is `chipGoesToChat`: the session id against the project's
+manager chat list (`managerChatsNow`), else the task's own `workingSession.kind === "manager"`, never
+the chat's title. The chip is kept in the tab's metadata
 (`pendingTaskRefs`, `src/web/lib/ppm-tasks/composer-task-chip.ts`) until the next message takes it.
 That message carries the task's **id only** (`taskRefs` on the chat socket); the server reads the
 task from the store, refuses a deleted one, one whose project has Tasks off, and one of another

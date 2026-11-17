@@ -123,7 +123,11 @@ export function ManagerTasksPopoverList({ project, total, onClose }: { project: 
                 {g.tasks.map((t) => (
                   <ChipRow key={t.id} task={t} working={live[t.id]?.workingSession ?? t.workingSession} selected={!mobile && peek.taskId === t.id}
                     onOpen={(row) => showTask(t, row)}
-                    onOpenChat={(sid) => { onClose(); openTaskChat(t.project, sid, workingProvider(live[t.id] ? { workingSession: live[t.id]!.workingSession } : t), t); }} />
+                    onOpenChat={(sid) => {
+                      onClose();
+                      const now = { ...t, workingSession: live[t.id]?.workingSession ?? t.workingSession };
+                      openTaskChat(t.project, sid, workingProvider(now), now);
+                    }} />
                 ))}
               </ul>
             </section>

@@ -188,8 +188,13 @@ export interface TaskWordsInput {
   text: string;
   /** The chat working on the task: its handed-off chat, else the project's manager chat. */
   target: ForwardTarget;
-  /** The task, as the store has it now (`resolveTaskRef`); written as the message's task block. */
+  /** The task, as the store has it now (`resolveTaskRef`). */
   taskRef: TaskReference;
+  /**
+   * Which chat `target` is. Only the manager chat gets the task's block: it works on many tasks, so
+   * the words must say which one. A chat the task was handed off to works on that task alone.
+   */
+  chatKind: "manager" | "child";
   actor: CardActor;
   /** Where the chat's answer goes back once the turn that reads the words ends (Telegram). */
   followUp?: TaskFollowupContext;
@@ -201,8 +206,9 @@ export type TaskWordsResult =
 
 /**
  * Forwards what the user typed about a task, word for word, to the chat working on it. Like a card
- * reply it carries a user-words block (no card is named, the channel and time are), and after it
- * the task's block, so the chat knows which of its tasks the words are about. The words wait behind
+ * reply it carries a user-words block (no card is named, the channel and time are), and for the
+ * manager chat the task's block after it, so the manager knows which of its tasks the words are
+ * about (a handed-off chat gets none, see {@link TaskWordsInput.chatKind}). The words wait behind
  * any request the chat has open rather than answering it: the user wrote about the task, not to
  * that request.
  */
@@ -219,7 +225,8 @@ export async function forwardUserWordsAboutTask(input: TaskWordsInput, env: Forw
   try {
     delivered = await env.deliverUserWords({
       targetSessionId: target.sessionId, providerId: target.providerId, projectName: target.projectName,
-      projectPath: target.projectPath, text: input.text, userWords, taskRefs: [taskRef], supersede: false, clientMessageId,
+      projectPath: target.projectPath, text: input.text, userWords, supersede: false, clientMessageId,
+      ...(input.chatKind === "manager" ? { taskRefs: [taskRef] } : {}),
     });
   } catch (e) {
     following?.abandon();

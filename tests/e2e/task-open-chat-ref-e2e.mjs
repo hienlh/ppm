@@ -1,5 +1,6 @@
-// "Open chat" from a task carries the task into the next message, on desktop, on a phone and on
-// Telegram. The production Vite bundle against the disposable server of tests/e2e/ppm-tasks-e2e.mjs
+// "Open chat" from a task carries the task into the next message when that chat is the project's
+// manager chat, on desktop, on a phone and on Telegram; a chat the task was handed off to opens with
+// no chip and its messages carry no task block. The production Vite bundle against the disposable server of tests/e2e/ppm-tasks-e2e.mjs
 // (scripted chats, a fake Telegram Bot API), with its neutral demo data (projects alpha and beta).
 //
 //   PPM_ASSISTANT_WEB_DIR=<web build with Monaco staged> PPM_TASKS_SHOTS=<dir> node tests/e2e/task-open-chat-ref-e2e.mjs
@@ -136,6 +137,64 @@ async function phoneFlow(k, s) {
   record("phone", "390 px: Open chat → 26 px chip (22 px remove) → sent with the task's block in a 26 px chip");
 }
 
+/** A chat of `project`, named at creation, that the task is handed off to. */
+async function handOff(k, project, task, title) {
+  const chat = (await k.fx.post(`/api/project/${project}/chat/sessions`, { providerId: "claude", title })).data.id;
+  const t = await k.task(task.id);
+  const r = await k.patch(t.id, { revision: t.revision, workingSessionId: chat });
+  assert.equal(r.ok, true, JSON.stringify(r.body));
+  return chat;
+}
+
+/** The chip would land within a moment of the chat opening: give it that moment, then say none came. */
+async function assertNoChip(page, what) {
+  await page.locator(COMPOSER).first().waitFor({ timeout: 30000 });
+  await page.waitForTimeout(3000);
+  assert.equal(await page.locator("[data-composer-task-refs] [data-task-chip]:visible").count(), 0, `${what}: no task chip in the composer`);
+}
+
+async function desktopChild(k, s) {
+  const page = k.use(k.desktop);
+  const chat = await handOff(k, "alpha", s.t.copy, "Onboarding copy worker");
+  await page.goto(`${k.web}/project/alpha`);
+  await k.selectTask(s.t.copy.title);
+  const block = k.detail().locator("[data-working-session]");
+  await block.getByText("Handed to this chat").first().waitFor({ timeout: 20000 });
+  await block.getByRole("button", { name: "Open chat" }).click();
+  await assertNoChip(page, "desktop, handed-off chat");
+  await k.shot("08-desktop-1440-child-chat-no-chip");
+
+  const typed = "Use the shorter welcome line";
+  await page.locator(COMPOSER).first().fill(typed);
+  await page.locator(COMPOSER).first().press("Enter");
+  await page.locator("[data-user-message]").getByText(typed).first().waitFor({ timeout: 30000 });
+  assert.equal(await page.locator("[data-user-message] [data-task-ref]:visible").count(), 0, "the sent message shows no task chip");
+  const msg = await entered(k, chat, typed);
+  assert.doesNotMatch(msg.text, /<ppm-taskref-v1>/, "a handed-off chat's message carries no task block");
+  await k.shot("09-desktop-1440-child-chat-sent-no-chip");
+  record("desktop-child", "1440: Open chat on a handed-off task → its own chat, no chip, sent without a task block");
+}
+
+async function phoneChild(k, s) {
+  const page = k.page;
+  await handOff(k, "alpha", s.t.reply, "Export delay reply");
+  await page.goto(`${k.web}/project/alpha`);
+  await page.waitForLoadState("domcontentloaded");
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("ppm:open-navigation", { detail: { tab: "tasks" } })));
+  await page.locator("[data-task-list-mobile]:visible").waitFor({ timeout: 30000 });
+  await page.locator("[data-task-row]").getByText(s.t.reply.title).first().tap();
+  const detail = page.locator("[data-task-detail-mobile]:visible");
+  await detail.waitFor({ timeout: 15000 });
+  const working = detail.locator("[data-working-session]");
+  await working.getByText("Handed to this chat").first().waitFor({ timeout: 15000 });
+  const open = working.getByRole("button", { name: "Open chat" });
+  await open.scrollIntoViewIfNeeded();
+  await open.tap();
+  await assertNoChip(page, "phone, handed-off chat");
+  await k.shot("10-phone-390-child-chat-no-chip");
+  record("phone-child", "390 px: Open chat on a handed-off task → its own chat, no chip");
+}
+
 async function telegram(k, s) {
   const { tg, owner } = k;
   const start = (await tg.sent(owner)).length;
@@ -208,7 +267,7 @@ try {
   kit = tasksKit({ web, fx, tg: phone(fakeInfo.control), browser, shotsDir, videoDir: null, owner: OWNER, record });
   const s = await seedDemo(kit, dirs);
   await kit.openDesktop();
-  for (const [id, run] of [["desktop", desktop], ["phone", phoneFlow], ["telegram", telegram]]) {
+  for (const [id, run] of [["desktop", desktop], ["phone", phoneFlow], ["phone-child", phoneChild], ["telegram", telegram], ["desktop-child", desktopChild]]) {
     try {
       await run(kit, s);
     } catch (error) {

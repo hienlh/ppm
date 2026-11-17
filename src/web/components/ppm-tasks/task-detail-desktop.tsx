@@ -66,7 +66,7 @@ export function TaskDetailDesktop({ detail, settings, preview }: TaskDetailViewP
   }, [actions, patch, run, settings, task]);
   // A chat the page opens shows in the grid: a task window would cover it, so it goes to the dock.
   const openChat = useCallback((sid: string) => { minimizeTaskWindow(task.id); openTaskChat(task.project, sid, workingProvider(task)); }, [task]);
-  // The working chat is often the manager chat, busy with many tasks: it opens with this one as a chip.
+  // The working chat is often the manager chat, busy with many tasks: that one opens with this task as a chip.
   const openWorkingChat = useCallback((sid: string) => { minimizeTaskWindow(task.id); openTaskChat(task.project, sid, workingProvider(task), task); }, [task]);
   // Start chat may ask first (in this page), so the window goes only once a chat opened.
   const startChat = useCallback(() => void write.startChat(task).then((sid) => { if (sid) minimizeTaskWindow(task.id); }), [task, write]);

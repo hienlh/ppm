@@ -13,7 +13,8 @@ import { Check, ExternalLink, Undo2 } from "@/lib/icons";
 import { ppmTasksClient } from "@/lib/ppm-tasks/ppm-tasks-client";
 import { offerTaskManagerPrompt } from "@/components/ppm-tasks/task-manager-prompt-toast";
 import type { AssistantCardPayload } from "../../../../shared/assistant-cards";
-import { attachTaskChip, type ComposerTaskChip } from "@/lib/ppm-tasks/composer-task-chip";
+import { attachTaskChip, chipGoesToChat, taskChipOf, type ComposerTaskChip } from "@/lib/ppm-tasks/composer-task-chip";
+import { managerChatsNow } from "@/hooks/use-manager-chats";
 import { openManagerChat } from "../open-manager-chat";
 import { cn } from "@/lib/utils";
 import { TASK_CODE_CLASS, TaskCode } from "@/components/ppm-tasks/kit/task-code";
@@ -33,8 +34,9 @@ type HandedOff = NonNullable<AssistantCardPayload["tasks"]>[number];
 type Change = NonNullable<AssistantCardPayload["taskChanges"]>[number];
 
 /**
- * Opens the chat a handed-off task works in, under that chat's provider, with the task as a chip
- * in its composer so the next message says which task it is about.
+ * Opens the chat a handed-off task works in, under that chat's provider. When that chat is the
+ * project's manager, the task goes in its composer as a chip so the next message says which task it
+ * is about; a chat of the task's own needs none.
  */
 export async function openHandedOffChat(projectName: string, item: HandedOff): Promise<void> {
   let providerId = "claude";
@@ -47,7 +49,7 @@ export async function openHandedOffChat(projectName: string, item: HandedOff): P
       providerId = w.session.providerId ?? providerId;
       title = w.session.title?.trim() || title;
     }
-    chip = { taskId: task.id, number: task.number, ref: task.ref, title: task.title, project: task.project };
+    if (chipGoesToChat(task, item.sessionId, await managerChatsNow())) chip = taskChipOf(task);
   } catch { /* the task is gone or off: the chat still opens, as Claude, with no chip */ }
   await openManagerChat({ projectName, sessionId: item.sessionId, chat: { title, providerId } });
   if (chip) void attachTaskChip(item.sessionId, chip);
