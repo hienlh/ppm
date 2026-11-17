@@ -6,9 +6,9 @@
  * In progress and Waiting groups, and that is all. Closing is the manager's: the chat proposes it
  * (`propose_close` on `ppm_task_update`).
  *
- * One ceiling for every ordinary chat, whether or not it works on the task: a chat that could do
- * more on a task it does not work on, or on the project's settings (the check interval), could do
- * by a side door what it may not do on its own task.
+ * A task some other chat works on (or the manager does) is read-only to it, and so are the order
+ * and the project's settings (the check interval): otherwise they would be a side door to what it
+ * may not do on its own task. It may still create tasks.
  *
  * Pure decisions: each answers why a call is refused, or null. The write tools apply them.
  */
@@ -19,6 +19,12 @@ export const CHAT_EDITABLE_FIELDS: ReadonlyArray<keyof TaskPatch> = ["result", "
 
 /** The status groups an ordinary chat may move a task between: In progress and Waiting. */
 export const CHAT_STATUS_GROUPS: readonly BaseGroup[] = ["active", "waiting"];
+
+/** Whether a chat may move its task from group `from` to group `to`: only within the two. */
+export function chatMayMove(from: BaseGroup, to: BaseGroup | undefined): boolean {
+  if (!to) return false;
+  return CHAT_STATUS_GROUPS.includes(from) && CHAT_STATUS_GROUPS.includes(to);
+}
 
 /** A patch field as the tool's caller named it. */
 const ARG_NAME: Record<keyof TaskPatch, string> = {
@@ -50,7 +56,17 @@ export function askWhom(hasManager: boolean): string {
     : "This project has no manager chat: tell the user, who can do it in PPM.";
 }
 
-const RULE = "A chat other than the project's manager chat may change only result, next_step, notes, links and waiting_on, and move the status between the In progress and Waiting groups.";
+const RULE = "A chat other than the project's manager chat may change only result, next_step, notes, links and waiting_on of a task it works on, and move it between the In progress and Waiting groups.";
+
+/**
+ * Why an ordinary chat may not write to `task` at all, or null when the task is handed to it
+ * (`selfId`, the id the chat answers to now). Every other task is read-only to it.
+ */
+export function chatNotWorkingRefusal(task: Pick<TaskView, "workingSessionId">, selfId: string, ref: string, hasManager: boolean): string | null {
+  if (task.workingSessionId === selfId) return null;
+  const who = task.workingSessionId ? "another chat works on it" : "the manager chat does it";
+  return `This chat may only read ${ref}: ${who}, not this chat. A chat changes only the tasks handed to it (it may still create new ones). ${askWhom(hasManager)}`;
+}
 
 /** Why an ordinary chat may not apply `patch` to `task` (ref `ref`), or null when it may. */
 export function chatUpdateRefusal(
@@ -62,7 +78,7 @@ export function chatUpdateRefusal(
   if (blocked.length) return `This chat may not change ${blocked.join(", ")} of ${ref}. ${RULE} ${askWhom(hasManager)}`;
   if (patch.statusId !== undefined && patch.statusId !== task.statusId) {
     const to = groupOf(patch.statusId);
-    if (!CHAT_STATUS_GROUPS.includes(task.baseGroup) || !to || !CHAT_STATUS_GROUPS.includes(to)) {
+    if (!chatMayMove(task.baseGroup, to)) {
       const closing = to === "closed";
       return `This chat may not move ${ref} ${closing ? "to a closed status" : `from the ${GROUP_WORDS[task.baseGroup]} group to the ${to ? GROUP_WORDS[to] : "unknown"} group`}. ${RULE} `
         + (closing ? closeHint(hasManager) : askWhom(hasManager));

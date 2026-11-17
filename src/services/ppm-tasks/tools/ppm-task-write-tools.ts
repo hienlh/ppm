@@ -24,7 +24,8 @@ import type { UnattendedChange } from "../ppm-task-unattended-card.ts";
 import { resolveScope, resolveTaskId, TaskToolRefusal, writeContextFor, type TaskCaller, type TaskProjectRef } from "./ppm-task-tool-caller.ts";
 import { changeSummary, clean, projectLookup, refOf } from "./ppm-task-tool-format.ts";
 import {
-  chatCloseRefusal, chatCreateRefusal, chatProjectUpdateRefusal, chatReorderRefusal, chatUndoRefusal, chatUpdateRefusal,
+  chatCloseRefusal, chatCreateRefusal, chatNotWorkingRefusal, chatProjectUpdateRefusal, chatReorderRefusal, chatUndoRefusal,
+  chatUpdateRefusal,
 } from "./ppm-task-chat-scope.ts";
 
 export interface WriteToolsEnv {
@@ -117,6 +118,10 @@ const limited = (caller: TaskCaller): boolean => caller.kind === "chat";
 const groupOf = (statusId: string) => statusById(statusId)?.baseGroup;
 const hasManager = (projectKey: string): boolean => managerSessionFor(projectKey) !== null;
 const refuseIf = (why: string | null): void => { if (why) refuse(why); };
+/** An ordinary chat writes only to the tasks handed to it: refused otherwise, before anything else is checked. */
+const requireWorking = (caller: TaskCaller, task: TaskView): void => {
+  if (limited(caller)) refuseIf(chatNotWorkingRefusal(task, resolveMigratedSession(caller.sessionId), refOf(task, projectLookup(task.projectKey)), hasManager(task.projectKey)));
+};
 
 /** What the answer to a write says beyond the change: the user's card, the manager's news. */
 function afterWrite(env: WriteToolsEnv, caller: TaskCaller, w: Written): string {
@@ -164,9 +169,10 @@ function proposalOf(a: Args, caller: TaskCaller): ClosedAs | undefined {
 function update(env: WriteToolsEnv, caller: TaskCaller, a: Args): Updated {
   const scope = resolveScope(caller, a.project, env.projects(), caller.kind === "assistant");
   const { id, project } = resolveTaskId(a.task, scope, scope.length === 1 ? scope[0]! : null);
+  const current = getTask(id)!;
+  requireWorking(caller, current);
   const reason = requiredReason(a);
   const revision = revisionOf(a);
-  const current = getTask(id)!;
   const patch = patchFrom(a, project, scope, caller);
   const links = linksAfter(current, a.add_links, a.remove_links);
   if (links) patch.links = links;
@@ -199,7 +205,10 @@ async function afterProposal(env: WriteToolsEnv, caller: TaskCaller, w: Updated)
 function close(env: WriteToolsEnv, caller: TaskCaller, a: Args): Written {
   const scope = resolveScope(caller, a.project, env.projects(), caller.kind === "assistant");
   const { id, project } = resolveTaskId(a.task, scope, scope.length === 1 ? scope[0]! : null);
-  if (limited(caller)) refuse(chatCloseRefusal(refOf(getTask(id)!, projectLookup(project.key)), hasManager(project.key)));
+  if (limited(caller)) {
+    requireWorking(caller, getTask(id)!);
+    refuse(chatCloseRefusal(refOf(getTask(id)!, projectLookup(project.key)), hasManager(project.key)));
+  }
   const reason = requiredReason(a);
   const opts: { closedAs?: ClosedAs; statusId?: string } = has(a, "status") ? { statusId: statusIdFor(project.key, a.status) } : { closedAs: (a.as as ClosedAs | undefined) ?? "done" };
   const task = closeTask(id, opts, revisionOf(a), writeContextFor(caller, reason));
@@ -224,6 +233,9 @@ function undo(env: WriteToolsEnv, caller: TaskCaller, a: Args): Written {
   const entry = historyRow(historyId as number);
   if (!entry || !scope.some((s) => s.key === entry.projectKey)) refuse(`No history row #${historyId} in ${scope.length === 1 ? scope[0]!.name : "the projects you can reach"}.`);
   if (limited(caller)) {
+    // A project-settings row has no task; undoRefusal refuses those for everyone.
+    const target = entry!.taskId ? getTask(entry!.taskId) : null;
+    if (target) requireWorking(caller, target);
     // Compared under the ids the chats answer to now: a provider rename is the same chat.
     const by = entry!.actor.sessionId ? resolveMigratedSession(entry!.actor.sessionId) : undefined;
     refuseIf(chatUndoRefusal({ ...entry!, actor: { ...entry!.actor, sessionId: by } }, resolveMigratedSession(caller.sessionId), hasManager(entry!.projectKey)));

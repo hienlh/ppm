@@ -242,12 +242,33 @@ describe("proposing to close", () => {
 });
 
 describe("other callers", () => {
-  it("a chat that does not work on the task has the same ceiling", async () => {
+  it("a chat that does not work on the task may only read it, and may still create tasks", async () => {
     addManager();
     const t = handedTask();
-    expect((await call(UNRELATED, "ppm_task_close", { task: "#1", revision: rev(t.id), reason: "done" })).isError).toBe(true);
-    expect(text(await call(UNRELATED, "ppm_task_update", { task: "#1", revision: rev(t.id), reason: "x", due_date: null }))).toContain("may not change due_date");
-    expect((await call(UNRELATED, "ppm_task_update", { task: "#1", revision: rev(t.id), reason: "seen in logs", notes: "Also on staging" })).isError).toBeFalsy();
+    const managers = createTask({ projectKey: f.projectKey, title: "The manager's own" }, MANAGER);
+    for (const [name, args] of [
+      ["ppm_task_update", { task: "#1", revision: rev(t.id), reason: "seen in logs", notes: "Also on staging" }],
+      ["ppm_task_update", { task: "#1", revision: rev(t.id), reason: "done", propose_close: "done" }],
+      ["ppm_task_update", { task: "#2", revision: managers.revision, reason: "note", notes: "x" }],
+      ["ppm_task_close", { task: "#1", revision: rev(t.id), reason: "done" }],
+    ] as const) {
+      const r = await call(UNRELATED, name, args);
+      expect(r.isError).toBe(true);
+      expect(text(r)).toContain("This chat may only read demo/");
+      expect(text(r)).toContain("Ask the project's manager chat");
+    }
+    expect(text(await call(UNRELATED, "ppm_task_update", { task: "#1", revision: rev(t.id), reason: "x", notes: "y" }))).toContain("another chat works on it");
+    expect(text(await call(UNRELATED, "ppm_task_update", { task: "#2", revision: managers.revision, reason: "x", notes: "y" }))).toContain("the manager chat does it");
+    // The child's own change is not the other chat's to undo either.
+    await call(CHILD, "ppm_task_update", { task: "#1", revision: rev(t.id), reason: "note", notes: "child note" });
+    const childRow = taskHistory(t.id)[0]!;
+    expect(text(await call(UNRELATED, "ppm_task_undo", { history_id: childRow.id }))).toContain("may only read");
+    expect(getTask(t.id)!.notes).toBe("child note");
+    expect(taskHistory(t.id).filter((h) => h.actor.sessionId === "other-1")).toHaveLength(0);
+    // Reading and creating still work.
+    expect((await call(UNRELATED, "ppm_task_get", { task: "#1" })).isError).toBeFalsy();
+    expect((await call(UNRELATED, "ppm_task_list")).isError).toBeFalsy();
+    expect((await call(UNRELATED, "ppm_task_create", { title: "Found while reading logs" })).isError).toBeFalsy();
   });
 
   it("the manager chat and the Assistant are not limited", async () => {

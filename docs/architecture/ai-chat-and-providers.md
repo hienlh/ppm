@@ -1037,15 +1037,16 @@ or "back from snooze today".
 - **a manager chat** acts on its own project only, signed "Manager <project>";
 - **an ordinary chat** acts on its own project only, signed with its title, and is limited
   (`src/services/ppm-tasks/tools/ppm-task-chat-scope.ts`). The manager checks the chats it hands
-  tasks to by their status, due date and urgency, so a chat may not switch those checks off: on any
-  task it may change only `result`, `next_step`, `notes`, links and `waiting_on`, and move the status
+  tasks to by their status, due date and urgency, so a chat may not switch those checks off: on a
+  task handed to it (its working session) it may change only `result`, `next_step`, `notes`, links and `waiting_on`, and move the status
   between the In progress and Waiting groups. Closing (also by moving into a closed status),
   urgency, importance, due date, assignee, snooze, working session, title and the other fields,
   reordering, the project's set-up (`ppm_task_project_update`, the check interval included) and
   undoing anyone's change but its own are refused, the answer saying to ask the manager chat (or the
   user, in a project with none). A field sent back unchanged is not refused. It may create tasks, but
-  not hand one to another chat nor create one already closed. The ceiling is the same whether or not
-  the chat works on the task, so another task or the project's settings are no side door. To have its
+  not hand one to another chat nor create one already closed. Every task some other chat works on, or
+  the manager does, is read-only to it (`chatNotWorkingRefusal`), so another task or the project's
+  settings are no side door. To have its
   task closed, a chat passes `propose_close` (`done` or `dropped`) to `ppm_task_update`, with its
   reason and usually its `result` in the same call: `proposeClose`
   (`src/services/ppm-tasks/ppm-tasks-close-proposal.ts`) writes a `close_proposed` history row that
