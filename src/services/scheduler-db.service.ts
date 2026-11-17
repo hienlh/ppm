@@ -1,6 +1,6 @@
 /** DB helpers for scheduled agents (`schedules` + `schedule_runs` tables). */
 import { getDb } from "./db.service.ts";
-import type { Schedule, ScheduleRun, NewSchedule, RunStatus } from "../types/scheduler.ts";
+import type { Schedule, ScheduleLastRun, ScheduleRun, NewSchedule, RunStatus } from "../types/scheduler.ts";
 
 export function getSchedules(enabledOnly = false): Schedule[] {
   const sql = enabledOnly
@@ -34,8 +34,8 @@ export function getEarliestFireAt(): string | null {
 export function insertSchedule(s: NewSchedule): number {
   const res = getDb().query(
     `INSERT INTO schedules (name, cron_expr, provider_id, project_path, prompt, permission_mode, max_turns, timeout_ms, enabled, next_fire_at,
-       kind, mode, description, script, inputs_json, input_values_json, secrets_enc, target_session_id, timezone, recurring)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       kind, mode, description, script, inputs_json, input_values_json, secrets_enc, target_session_id, timezone, recurring, task_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     s.name, s.cron_expr, s.provider_id, s.project_path, s.prompt,
     s.permission_mode ?? "bypassPermissions",
@@ -53,6 +53,7 @@ export function insertSchedule(s: NewSchedule): number {
     s.target_session_id ?? null,
     s.timezone ?? null,
     s.recurring === false ? 0 : 1,
+    s.task_id ?? null,
   );
   return Number(res.lastInsertRowid);
 }
@@ -193,4 +194,38 @@ export function retargetSessionSchedules(oldId: string, newId: string): number {
   return getDb().query(
     "UPDATE schedules SET target_session_id = ?, updated_at = datetime('now') WHERE kind = 'session' AND target_session_id = ?",
   ).run(newId, oldId).changes;
+}
+
+/**
+ * Each schedule's newest run that did something, keyed by schedule id. A skipped tick (its
+ * previous run still going) is not one: it would hide the run that is actually going on.
+ */
+export function lastRunsFor(scheduleIds: number[]): Map<number, ScheduleLastRun> {
+  const result = new Map<number, ScheduleLastRun>();
+  if (scheduleIds.length === 0) return result;
+  const rows = getDb().query(
+    `SELECT r.schedule_id, r.id, r.status, r.started_at, r.ended_at, r.error, COALESCE(r.rotated_to_session_id, r.session_id) AS session_id
+     FROM schedule_runs r
+     JOIN (SELECT schedule_id, MAX(id) AS id FROM schedule_runs WHERE status != 'skipped' GROUP BY schedule_id) newest ON newest.id = r.id`,
+  ).all() as Array<ScheduleLastRun & { schedule_id: number }>;
+  const wanted = new Set(scheduleIds);
+  for (const { schedule_id, ...run } of rows) if (wanted.has(schedule_id)) result.set(schedule_id, run);
+  return result;
+}
+
+/** The reminders a task owns, oldest first. */
+export function listSchedulesForTask(taskId: string): Schedule[] {
+  return getDb().query("SELECT * FROM schedules WHERE task_id = ? ORDER BY id").all(taskId) as Schedule[];
+}
+
+/** Delete every schedule these tasks own; answers the deleted rows. */
+export function deleteSchedulesForTasks(taskIds: string[]): Schedule[] {
+  if (taskIds.length === 0) return [];
+  const marks = taskIds.map(() => "?").join(", ");
+  return getDb().query(`DELETE FROM schedules WHERE task_id IN (${marks}) RETURNING *`).all(...taskIds) as Schedule[];
+}
+
+/** Remember which problem the user dismissed; null clears it. */
+export function setAttentionDismissed(id: number, key: string | null): void {
+  getDb().query("UPDATE schedules SET attention_dismissed = ? WHERE id = ?").run(key, id);
 }

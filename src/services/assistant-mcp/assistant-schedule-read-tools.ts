@@ -1,10 +1,10 @@
 import type { Json } from "../mcp-http-endpoint.ts";
-import type { Schedule, ScheduleRun } from "../../types/scheduler.ts";
+import type { ScheduleOverview, ScheduleRun } from "../../types/scheduler.ts";
 import { resolveAssistantProject, type AssistantProject } from "./assistant-project-scope.ts";
 import { clip, errorResult, intArg, jsonResult } from "./assistant-tool-output.ts";
 import type { ToolContext } from "./assistant-tool-family.ts";
 import {
-  idArg, projectOfFolder, readRuns, readSchedule, registeredProjects, scheduleView, timeZoneOf, type ScheduleDeps,
+  idArg, projectOfFolder, readRuns, readSchedule, registeredProjects, scheduleView, scheduleZone, timeZoneOf, type ScheduleDeps,
 } from "./assistant-schedule-shape.ts";
 
 /**
@@ -29,18 +29,25 @@ export async function schedulesList(ctx: ToolContext, args: Record<string, unkno
     if (!project.ok) return errorResult(project.error);
     only = project.value;
   }
-  const res = await ctx.callRoute<Schedule[]>("GET", "/api/schedules");
+  // Each row carries its newest run, so the list is one request however many schedules there are.
+  const res = await ctx.callRoute<ScheduleOverview[]>("GET", "/api/schedules");
   if (!res.ok || !Array.isArray(res.data)) return errorResult(`Could not read the schedules: ${res.error ?? `the route answered ${res.status}`}`);
 
+  const machineZone = timeZoneOf(deps);
   const schedules = [];
   for (const s of res.data) {
     const project = projectOfFolder(s.project_path, projects);
     if (only && project?.name !== only.name) continue;
-    const last = (await readRuns(ctx, s.id, 1))?.[0];
+    const last = s.last_run;
     schedules.push({
       id: s.id,
       name: s.name,
+      kind: s.kind,
       cron: s.cron_expr,
+      timeZone: scheduleZone(s, machineZone),
+      ...(s.timezone === null && { timeZoneIsMachineLocal: true }),
+      recurring: s.recurring === 1,
+      ...(s.task_id && { taskId: s.task_id }),
       project: project?.name ?? null,
       folder: s.project_path,
       provider: s.provider_id,
@@ -55,10 +62,11 @@ export async function schedulesList(ctx: ToolContext, args: Record<string, unkno
   }
   return jsonResult({
     schedules,
-    timeZone: timeZoneOf(deps),
-    note: "Cron expressions fire in the server's time zone. `project` is null when the schedule's folder is not a "
-      + "registered project: such a schedule can be read here but changed only from Settings → Schedules. "
-      + "schedule_get gives the whole prompt and the recent runs.",
+    machineTimeZone: machineZone,
+    note: "Each schedule's cron is read in its own `timeZone`: a chat reminder keeps the zone it was saved with, every "
+      + "other schedule (and a reminder saved with none, marked `timeZoneIsMachineLocal`) uses the machine's. "
+      + "`nextFireAt` is UTC. `project` is null when the schedule's folder is not a registered project: such a schedule "
+      + "can be read here but changed only from Settings → Schedules. schedule_get gives the whole prompt and the recent runs.",
   }, { key: "schedules", list: schedules });
 }
 
@@ -85,8 +93,8 @@ export async function scheduleGet(ctx: ToolContext, args: Record<string, unknown
   if (runs === null) return errorResult(`Could not read the runs of schedule ${id}.`);
   const list = runs.map(runView);
   return jsonResult({
-    schedule: scheduleView(read.schedule, projectOfFolder(read.schedule.project_path, registeredProjects(deps))),
-    timeZone: timeZoneOf(deps),
+    schedule: scheduleView(read.schedule, projectOfFolder(read.schedule.project_path, registeredProjects(deps)), timeZoneOf(deps)),
+    machineTimeZone: timeZoneOf(deps),
     runs: list,
     note: RUN_OUTPUT_NOTE,
   }, { key: "runs", list });

@@ -1,9 +1,8 @@
-/** REST API for scheduled agents — CRUD + run-now + run history. Every schedule goes out as a view. */
+/** REST API for scheduled agents — CRUD + run-now + run history. Every schedule goes out as an overview (a view plus its newest run, project, mode and task). */
 import { Hono, type Context } from "hono";
 import { ok, err } from "../../types/api.ts";
-import type { ScheduleView } from "../../types/scheduler.ts";
 import { SESSION_ID_RE } from "../../shared/session-turn-ids.ts";
-import { getSessionTitles } from "../../services/db.service.ts";
+
 import { createSessionSchedule, patchSessionSchedule, sessionSchedulesOf } from "../../services/session-schedules/session-schedule-save.ts";
 import {
   getSchedules,
@@ -12,6 +11,9 @@ import {
   updateSchedule,
   deleteSchedule,
   listScheduleRuns,
+  listSchedulesForTask,
+  lastRunsFor,
+  setAttentionDismissed,
 } from "../../services/scheduler-db.service.ts";
 import { ScheduleBusyError } from "../../services/scheduler-core.ts";
 import { SessionScheduleRetryWaitError } from "../../services/session-schedules/session-schedule-due.ts";
@@ -19,7 +21,8 @@ import { alwaysOnSupervisor, schedulerService } from "../../services/scheduler.s
 import { configService } from "../../services/config.service.ts";
 import { broadcastGlobalEvent } from "../ws/global.ts";
 import { newScheduleFrom, scheduleChangesFrom } from "../../services/scheduler-edit.ts";
-import { toScheduleView } from "../../services/scheduler-view.ts";
+import { toScheduleOverviews } from "../../services/schedules-overview.ts";
+import { scheduleProblem } from "../../shared/schedule-attention.ts";
 import { liveScript } from "../../services/schedule-script/instance-guard.ts";
 import { removeRunDir } from "../../services/schedule-script/script-files.ts";
 import { dropLogRing } from "../../services/schedule-script/script-log.ts";
@@ -27,18 +30,13 @@ import { editErrorResponse, scheduleScriptRoutes } from "./schedules-script.ts";
 
 export const schedulesRoutes = new Hono();
 
+/** A task id as the task store mints them (`crypto.randomUUID()`). */
+const TASK_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** The JSON object a write sent, or null for anything else (a malformed body is a 400, not a 500). */
 async function readBody(c: Context): Promise<Record<string, unknown> | null> {
   const body = await c.req.json<unknown>().catch(() => null);
   return body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null;
-}
-
-/** Views with each session schedule's chat title, read in one query. */
-function withChatTitles(views: ScheduleView[]): ScheduleView[] {
-  const ids = [...new Set(views.flatMap((v) => (v.kind === "session" && v.target_session_id ? [v.target_session_id] : [])))];
-  if (ids.length === 0) return views;
-  const titles = getSessionTitles(ids);
-  return views.map((v) => (v.kind === "session" ? { ...v, target_title: titles[v.target_session_id ?? ""] ?? null } : v));
 }
 
 /**
@@ -56,19 +54,42 @@ schedulesRoutes.use("*", async (c, next) => {
 
 /**
  * Every schedule, or with `?session=<id>` the session schedules of that one chat under any id it
- * had (what a chat tab shows). A session schedule carries its chat's title.
+ * had (what a chat tab shows), or with `?task=<id>` the reminders that task owns. Each comes as an
+ * overview (`schedules-overview.ts`): the view plus its newest run, project, effective permission
+ * mode and task, which is everything the Schedules window and the rail's count read.
  */
 schedulesRoutes.get("/", (c) => {
   const session = c.req.query("session");
   if (session !== undefined && !SESSION_ID_RE.test(session)) return c.json(err("session must be a chat id"), 400);
+  const task = c.req.query("task");
+  if (task !== undefined && !TASK_ID_RE.test(task)) return c.json(err("task must be a task id"), 400);
   const enabledOnly = c.req.query("enabledOnly") === "true";
-  const rows = session !== undefined ? sessionSchedulesOf(session).filter((s) => !enabledOnly || s.enabled) : getSchedules(enabledOnly);
-  return c.json(ok(withChatTitles(rows.map(toScheduleView))));
+  const rows = session !== undefined ? sessionSchedulesOf(session) : task !== undefined ? listSchedulesForTask(task) : getSchedules();
+  return c.json(ok(toScheduleOverviews(rows.filter((s) => !enabledOnly || s.enabled))));
 });
 
 schedulesRoutes.get("/:id{[0-9]+}", (c) => {
   const schedule = getSchedule(Number(c.req.param("id")));
-  return schedule ? c.json(ok(withChatTitles([toScheduleView(schedule)])[0])) : c.json(err("Schedule not found"), 404);
+  return schedule ? c.json(ok(toScheduleOverviews([schedule])[0])) : c.json(err("Schedule not found"), 404);
+});
+
+/**
+ * Dismiss the problem the red dot is for. The body names the problem's key as the window showed
+ * it, so a dismiss sent after the problem changed (another run failed meanwhile) is refused rather
+ * than silencing something the user never saw. `{ key: null }` brings the dot back.
+ */
+schedulesRoutes.post("/:id{[0-9]+}/dismiss", async (c) => {
+  const id = Number(c.req.param("id"));
+  const schedule = getSchedule(id);
+  if (!schedule) return c.json(err("Schedule not found"), 404);
+  const body = await readBody(c);
+  if (!body || (body.key !== null && typeof body.key !== "string")) return c.json(err("key must be the problem's key or null"), 400);
+  if (body.key !== null) {
+    const problem = scheduleProblem({ ...schedule, last_run: lastRunsFor([id]).get(id) ?? null });
+    if (!problem || problem.key !== body.key) return c.json(err("That problem is no longer the schedule's current one"), 409);
+  }
+  setAttentionDismissed(id, body.key as string | null);
+  return c.json(ok(toScheduleOverviews([getSchedule(id)!])[0]));
 });
 
 schedulesRoutes.post("/", async (c) => {
@@ -79,12 +100,12 @@ schedulesRoutes.post("/", async (c) => {
     if (body.kind === "session") {
       const created = createSessionSchedule(body);
       schedulerService.rearm();
-      return c.json(ok(withChatTitles([toScheduleView(created)])[0]), 201);
+      return c.json(ok(toScheduleOverviews([created])[0]), 201);
     }
     // Snapshot the default provider so resume keeps working if default changes later
     const id = insertSchedule(newScheduleFrom(body, configService.get("ai").default_provider));
     schedulerService.rearm();
-    return c.json(ok(toScheduleView(getSchedule(id)!)), 201);
+    return c.json(ok(toScheduleOverviews([getSchedule(id)!])[0]), 201);
   } catch (e) {
     return editErrorResponse(c, e);
   }
@@ -100,7 +121,7 @@ schedulesRoutes.patch("/:id{[0-9]+}", async (c) => {
     try {
       const saved = patchSessionSchedule(current, body);
       schedulerService.rearm();
-      return c.json(ok(withChatTitles([toScheduleView(saved)])[0]));
+      return c.json(ok(toScheduleOverviews([saved])[0]));
     } catch (e) {
       return editErrorResponse(c, e);
     }
@@ -116,7 +137,7 @@ schedulesRoutes.patch("/:id{[0-9]+}", async (c) => {
     return editErrorResponse(c, e);
   }
   schedulerService.rearm();
-  return c.json(ok(toScheduleView(getSchedule(id)!)));
+  return c.json(ok(toScheduleOverviews([getSchedule(id)!])[0]));
 });
 
 schedulesRoutes.delete("/:id{[0-9]+}", async (c) => {

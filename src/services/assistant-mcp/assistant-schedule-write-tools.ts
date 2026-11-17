@@ -67,7 +67,9 @@ async function recheck(ctx: ToolContext, seen: Schedule, action: string): Promis
   return unchangedSince(seen, again.schedule) ? null : staleResult(action, `Schedule ${seen.id} was changed while the card waited.`);
 }
 
-const nextRunsFor = (cron: string, deps: ScheduleDeps) => ({ times: nextRunTimes(cron), timeZone: timeZoneOf(deps) });
+/** A schedule's next fires on the clock of the zone its cron is read in (its own, else the machine's). */
+const nextRunsFor = (cron: string, deps: ScheduleDeps, zone: string | null = null) =>
+  ({ times: nextRunTimes(cron, 3, zone), timeZone: zone ?? timeZoneOf(deps) });
 
 async function ask(ctx: ToolContext, tool: string, input: Record<string, unknown>, summary: ApprovalSummary): Promise<Json | null> {
   const verdict = await ctx.ask({ tool, input, summary });
@@ -107,7 +109,7 @@ async function createSchedule(ctx: ToolContext, given: GivenSchedule, deps: Sche
 
   const res = await ctx.callRoute<Schedule>("POST", "/api/schedules", body);
   if (!res.ok || !res.data) return errorResult(`Not created: ${res.error ?? `the route answered ${res.status}`}`);
-  return jsonResult({ created: true, schedule: scheduleView(res.data, project) });
+  return jsonResult({ created: true, schedule: scheduleView(res.data, project, timeZoneOf(deps)) });
 }
 
 async function editSchedule(ctx: ToolContext, id: number, given: GivenSchedule, projects: AssistantProject[], deps: ScheduleDeps): Promise<Json> {
@@ -121,7 +123,7 @@ async function editSchedule(ctx: ToolContext, id: number, given: GivenSchedule, 
 
   const body = routeBody(after, changed);
   const refused = await ask(ctx, SCHEDULE_SAVE_TOOL, { id, project: after.project, ...body }, editScheduleSummary({
-    id, before, after, changed, provider: current.schedule.provider_id, nextRuns: nextRunsFor(after.cron, deps),
+    id, before, after, changed, provider: current.schedule.provider_id, nextRuns: nextRunsFor(after.cron, deps, current.schedule.timezone),
   }));
   if (refused) return refused;
   const stale = await recheck(ctx, current.schedule, SCHEDULE_SAVE_TOOL);
@@ -131,8 +133,8 @@ async function editSchedule(ctx: ToolContext, id: number, given: GivenSchedule, 
   if (!res.ok || !res.data) return errorResult(`Not changed: ${res.error ?? `the route answered ${res.status}`}`);
   return jsonResult({
     updated: true, changed,
-    previous: scheduleView(current.schedule, current.project),
-    schedule: scheduleView(res.data, projectOfFolder(res.data.project_path, projects)),
+    previous: scheduleView(current.schedule, current.project, timeZoneOf(deps)),
+    schedule: scheduleView(res.data, projectOfFolder(res.data.project_path, projects), timeZoneOf(deps)),
   });
 }
 
@@ -156,7 +158,7 @@ export async function scheduleDelete(ctx: ToolContext, args: Record<string, unkn
   return jsonResult({
     deleted: true,
     runsDeleted: runs.length >= DELETE_RUNS_COUNTED ? `${DELETE_RUNS_COUNTED}+` : runs.length,
-    schedule: scheduleView(current.schedule, current.project),
+    schedule: scheduleView(current.schedule, current.project, timeZoneOf(deps)),
     note: "To recreate it, call schedule_save with these settings (it gets a new id; the run history is gone).",
   });
 }

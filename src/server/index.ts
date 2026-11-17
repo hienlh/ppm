@@ -388,8 +388,10 @@ app.route("/api/schedules", schedulesRoutes);
 import { ppmTasksProjectRoutes } from "./routes/ppm-tasks-projects.ts";
 import { ppmTasksActionRoutes } from "./routes/ppm-tasks-actions.ts";
 import { ppmTasksRoutes } from "./routes/ppm-tasks.ts";
+import { taskRemindersRoutes } from "./routes/task-reminders.ts";
 app.route("/api/tasks", ppmTasksProjectRoutes);
 app.route("/api/tasks", ppmTasksActionRoutes);
+app.route("/api/tasks", taskRemindersRoutes);
 app.route("/api/tasks", ppmTasksRoutes);
 
 // Session trace — browser logs in, a session's timeline out
@@ -1347,6 +1349,12 @@ if (process.argv.includes("__serve__")) {
       .then(({ startPpmTasks }) => startPpmTasks())
       .catch((e) => {
         console.error("[ppm-tasks] Startup error:", e);
+      });
+    // A closed or deleted task takes its reminders with it.
+    import("../services/task-reminders/task-reminder-cleanup.ts")
+      .then(({ startTaskReminderCleanup }) => startTaskReminderCleanup())
+      .catch((e) => {
+        console.error("[scheduler] Task reminder cleanup failed to start:", e);
       });
     // ...and its changes pushed to every open PPM over /ws/global
     import("./ws/ppm-tasks-broadcast.ts")

@@ -5,7 +5,8 @@
  * a schedule one door accepts is never one another would refuse.
  *
  * Bodies are spelled as the REST route spells them (`cron_expr`, `target_session_id`); the
- * project, provider and permission mode come from the chat, never from the body.
+ * project, provider and permission mode come from the chat, never from the body. `task_id` (or the
+ * AI's `task` reference) ties the schedule to a task of that chat's project, which then owns it.
  */
 import { DEFAULT_TIMEOUT_MS } from "../../shared/schedule-definition.ts";
 import { validateSessionScheduleInput } from "../../shared/session-schedule-input.ts";
@@ -16,6 +17,7 @@ import { nextFireAt } from "../scheduler-timing.ts";
 import { notifySessionScheduleDue } from "./session-schedule-due.ts";
 import { assertCanAddSessionSchedule, resumeSessionSchedule, sessionScheduleTargetIds } from "./session-schedule-lifecycle.ts";
 import { liveScheduleTargetDeps, type ScheduleTargetDeps } from "./session-schedule-target.ts";
+import { resolveLinkableTask } from "../task-reminders/task-reminder-link.ts";
 
 type Body = Record<string, unknown>;
 
@@ -35,6 +37,9 @@ export function createSessionSchedule(body: Body, { deps = liveScheduleTargetDep
   const input = check.value;
   // Checked last: a body with bad fields is answered with all of them before the chat is looked at.
   const target = assertCanAddSessionSchedule(input.targetSessionId, deps);
+  // The task it reminds about, which then owns it: an open task of the chat's own project only.
+  const taskRef = body.task_id ?? body.task;
+  const taskId = taskRef === undefined || taskRef === null ? null : resolveLinkableTask(taskRef, target.projectPath);
   const id = insertSchedule({
     kind: "session",
     name: input.name,
@@ -48,6 +53,7 @@ export function createSessionSchedule(body: Body, { deps = liveScheduleTargetDep
     timeout_ms: DEFAULT_TIMEOUT_MS.session,
     enabled: body.enabled !== false,
     next_fire_at: nextFireAt(input.cron, input.timezone, now),
+    task_id: taskId,
   });
   return getSchedule(id)!;
 }
