@@ -12,7 +12,7 @@
  *
  * A completed earlier turn (a different prompt) is left as it is.
  */
-import type { ChatMessage } from "../../types/chat";
+import type { ChatEvent, ChatMessage } from "../../types/chat";
 
 export function replayActiveTurn(
   prev: readonly ChatMessage[],
@@ -42,4 +42,54 @@ export function replayActiveTurn(
     timestamp: new Date(now()).toISOString(),
     ...(clientMessageId ? { clientId: clientMessageId } : {}),
   }];
+}
+
+/**
+ * The ids of the messages a replay will take off the list: the answer it is about to rebuild.
+ * While the replay is still being rebuilt those messages stay on screen, so nothing aimed at the
+ * transcript (a late child of an Agent card, a background agent's status) may land in them — it
+ * would be thrown away with them at the swap.
+ */
+export function replayReplacedIds(
+  prev: readonly ChatMessage[],
+  userMessage: string | null,
+  clientMessageId: string | undefined,
+): Set<string> {
+  const kept = new Set(replayActiveTurn(prev, userMessage, clientMessageId).map((m) => m.id));
+  return new Set(prev.filter((m) => !kept.has(m.id)).map((m) => m.id));
+}
+
+/** What a replay rebuilt: the running answer, plus errors that came while there was none yet. */
+export interface ReplayedTurn {
+  content: string;
+  events: ChatEvent[];
+  account: Pick<ChatMessage, "accountId" | "accountLabel"> | null;
+  /** Errors raised before the answer had anything in it: drawn on their own, as live. */
+  standaloneErrors: ChatMessage[];
+}
+
+/**
+ * The list once a replay has been rebuilt, in one step: the running answer the list showed is
+ * swapped for the rebuilt one. Taking the old answer off first and drawing the new one as it was
+ * rebuilt left the list ending on the reader's own message for as long as the rebuild took — at
+ * the bottom of the chat, a jump back to the previous message.
+ */
+export function commitReplayedTurn(
+  prev: readonly ChatMessage[],
+  userMessage: string | null,
+  clientMessageId: string | undefined,
+  rebuilt: ReplayedTurn,
+  now: () => number = Date.now,
+): ChatMessage[] {
+  const out = [...replayActiveTurn(prev, userMessage, clientMessageId, now), ...rebuilt.standaloneErrors];
+  if (!rebuilt.content && rebuilt.events.length === 0) return out;
+  out.push({
+    id: `streaming-${now()}`,
+    role: "assistant" as const,
+    content: rebuilt.content,
+    events: rebuilt.events,
+    timestamp: new Date(now()).toISOString(),
+    ...rebuilt.account,
+  });
+  return out;
 }
