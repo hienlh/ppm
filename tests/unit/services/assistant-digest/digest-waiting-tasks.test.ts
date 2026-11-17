@@ -29,7 +29,10 @@ const task = (over: Partial<TaskView> = {}): TaskView => {
     urgencyRaised: false, waitingStartedAt: null, ...over,
   };
 };
-const ctx = { ref: (t: TaskView) => `nxsys/${t.number}`, nameOf: (_t: TaskView, id: string) => (id === "m1" ? "Việt" : null), today: "2026-11-17", now: NOW };
+const ctx = {
+  ref: (t: TaskView) => `nxsys/${t.number}`, nameOf: (_t: TaskView, id: string) => (id === "m1" ? "Việt" : null),
+  statusName: (t: TaskView) => (t.statusId === "blocked" ? "Blocked" : "Waiting"), today: "2026-11-17", now: NOW,
+};
 
 describe("digestWaiting", () => {
   it("words each waiting task, the user's own first, and leaves out tasks that do not wait", () => {
@@ -46,6 +49,11 @@ describe("digestWaiting", () => {
     ]);
     expect(out.waitingMine).toBe(1);
     expect(out.waitingMore).toBeUndefined();
+  });
+
+  it("says a Waiting-group status by its own name", () => {
+    const out = digestWaiting([task({ statusId: "blocked", waitingOnMemberId: "m1" }), task({ statusId: "blocked" })], ctx);
+    expect(out.waiting!.map((w) => w.label)).toEqual(["Blocked on Việt", "Blocked"]);
   });
 
   it("caps the list and counts the rest, the user's own counted even past the cap", () => {
@@ -108,8 +116,7 @@ describe("the digest card", () => {
     expect(text).not.toContain("The rest is on the card in PPM.");
   });
 
-  it("asks the managers to say on whom and until when", () => {
-    expect(DIGEST_ASK_TEXT).toContain("say on whom");
-    expect(DIGEST_ASK_TEXT).toContain("until when");
+  it("leaves the waits to PPM's own list: the managers are not asked to word them", () => {
+    expect(DIGEST_ASK_TEXT).not.toContain("on whom");
   });
 });

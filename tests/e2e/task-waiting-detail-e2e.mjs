@@ -52,9 +52,10 @@ async function freePort() {
 
 /** The world this test needs on top of the demo: a member with a long name, and five ways of waiting. */
 async function seedWaits(k, s) {
-  await k.saveSettings("alpha", { members: { add: [{ name: "Việt" }, { name: LONG_NAME }] } });
+  await k.saveSettings("alpha", { members: { add: [{ name: "Việt" }, { name: LONG_NAME }] }, statuses: { add: [{ name: "Blocked", baseGroup: "waiting" }] } });
   const settings = await k.settings("alpha");
-  const waitingStatus = settings.statuses.find((x) => x.baseGroup === "waiting");
+  const waitingStatus = settings.statuses.find((x) => x.baseGroup === "waiting" && x.name === "Waiting");
+  const blocked = settings.statuses.find((x) => x.name === "Blocked");
   const viet = settings.members.find((m) => m.name === "Việt");
   const long = settings.members.find((m) => m.name === LONG_NAME);
   const patch = async (task, body) => {
@@ -65,8 +66,9 @@ async function seedWaits(k, s) {
   // The user's own: one in Waiting with a due date, one only named (its status not Waiting).
   await patch(s.t.release, { statusId: waitingStatus.id, waitingOnMemberId: "me" });
   await patch(s.t.copy, { waitingOnMemberId: "me" });
-  // Someone else's, no date: its age since the move into Waiting.
-  await patch(s.t.review, { statusId: waitingStatus.id, waitingOnMemberId: viet.id });
+  // Someone else's, no date: its age since the move into Waiting. Its status is a Waiting-group one
+  // with a name of its own, which the label says instead of "Waiting".
+  await patch(s.t.review, { statusId: blocked.id, waitingOnMemberId: viet.id });
   // Nobody named: "Waiting" and its age, where the row used to show nothing.
   await patch(s.t.logs, { statusId: waitingStatus.id });
   // A long name, which must give way with "…" on a narrow screen.
@@ -76,7 +78,7 @@ async function seedWaits(k, s) {
     expect: {
       [s.t.release.id]: { who: "me", words: "Waiting on you", until: "due" },
       [s.t.copy.id]: { who: "me", words: "Waiting on you", until: "due" },
-      [s.t.review.id]: { who: "member", words: "Waiting on Việt", until: "for" },
+      [s.t.review.id]: { who: "member", words: "Blocked on Việt", until: "for" },
       [s.t.logs.id]: { who: "unknown", words: "Waiting", until: "for" },
       [s.t.reply.id]: { who: "member", words: `Waiting on ${LONG_NAME}`, until: "for" },
     },
@@ -229,7 +231,7 @@ async function telegram(k) {
   }
   const texts = waits.map((m) => m.text);
   assert(texts.some((t) => t.includes("✋ Waiting on you · Due")), `a card says ✋ Waiting on you · Due…: ${texts.join("\n---\n")}`);
-  assert(texts.some((t) => t.includes("⏳ Waiting on Việt · for")), "a card names Việt with how long");
+  assert(texts.some((t) => t.includes("⏳ Blocked on Việt · for")), "a card names its Blocked status and Việt with how long");
   assert(texts.some((t) => /⏳ Waiting · for/.test(t)), "a card with nobody named says Waiting with how long");
   const page = await k.openFrame(telegramFrame([{ text: "/tasks alpha", from_user: true }, ...waits.map((m) => ({ ...m, reply_markup: undefined }))], "PPM Assistant"));
   await page.setViewportSize({ width: 460, height: 900 });

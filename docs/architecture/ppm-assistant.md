@@ -1829,7 +1829,7 @@ PPM asks every manager chat whose digest switch is on (`PATCH /api/assistant/man
   by PPM itself from the task store when the card is made (`digest-waiting-tasks.ts`), so this part
   is never a model's words: code, title, on whom and until when, the user's own first, at most
   `DIGEST_WAITING_MAX` (8) with the rest counted. On Telegram a `title`-level project gives only the
-  count. The ask also asks the managers to say on whom and until when for anything waiting.
+  count. The managers are not asked to word waits themselves, so nothing is listed twice.
 - **Restarts.** At startup a run past its deadline is put together at once; before the deadline,
   an ask no turn took (a `later` message dies with the CLI's input queue) is handed over once more,
   and never a second time. A digest whose time passed while PPM was off runs at startup when it is

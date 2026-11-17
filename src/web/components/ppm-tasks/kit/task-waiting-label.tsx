@@ -52,9 +52,10 @@ export function TaskWaitingLabel({ detail, today, now, short, untilApart, classN
           the factors add up to less than 1, flex leaves part of the overflow unshrunk.) */}
       <span data-task-waiting-words="" className="min-w-0 truncate">{words}</span>
       {until && !untilApart && (
-        <span data-task-waiting-inline-when="" className="inline-flex min-w-0 shrink-[1000] items-center gap-1">
-          <span aria-hidden className="shrink-0 text-text-3">·</span>
-          {until.kind === "due" ? <InlineDue dueDate={until.dueDate} today={today} /> : <span className="min-w-0 truncate">{when}</span>}
+        // One truncating run, separator included: cut down to nothing, it leaves no stray "·".
+        <span data-task-waiting-inline-when="" className="min-w-0 shrink-[1000] truncate">
+          <span aria-hidden className="text-text-3">· </span>
+          {until.kind === "due" ? <InlineDue dueDate={until.dueDate} today={today} /> : when}
         </span>
       )}
     </span>
@@ -78,6 +79,6 @@ function InlineDue({ dueDate, today }: { dueDate: string; today?: string }) {
   if (!view) return null;
   return (
     <span data-due={view.overdue ? "overdue" : view.soon ? "soon" : "later"} title={dueDate}
-      className={cn("min-w-0 truncate font-normal text-text-2", view.soon && "font-medium text-error")}>{view.label}</span>
+      className={cn("font-normal text-text-2", view.soon && "font-medium text-error")}>{view.label}</span>
   );
 }

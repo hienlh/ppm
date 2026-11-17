@@ -1,6 +1,7 @@
 /**
  * What a waiting task says about its wait: on whom ("Waiting on you", "Waiting on Việt", or only
- * "Waiting" when nobody is named) and until when (its due date, else how long it has waited). One
+ * "Waiting" when nobody is named; a Waiting-group status with a name of its own says that name,
+ * "Blocked on Việt") and until when (its due date, else how long it has waited). One
  * set of rules for the sidebar, the Tasks chip, Telegram `/tasks` and the morning digest, so the
  * four never word the same task differently.
  *
@@ -19,6 +20,8 @@ export interface WaitingFacts {
   /** When the status moved into the Waiting group (from history); absent from an older server. */
   waitingStartedAt?: number | null;
   dueDate: string | null;
+  /** The status's own name; a Waiting-group status not called "Waiting" is named instead of it. */
+  statusName?: string | null;
 }
 
 export type WaitingUntil =
@@ -26,7 +29,7 @@ export type WaitingUntil =
   | { kind: "for"; since: number };
 
 export interface WaitingDetail {
-  /** "Waiting on you", "Waiting on Việt", "Waiting". */
+  /** "Waiting on you", "Waiting on Việt", "Waiting", "Blocked on Việt". */
   label: string;
   /** The person waited on as the label names them ("you", "Việt"); null when nobody is named. */
   name: string | null;
@@ -64,7 +67,17 @@ export function waitingDetail(t: WaitingFacts, nameOf: (memberId: string) => str
   const name = !id ? null : mine ? "you" : (nameOf(id)?.trim() || id);
   const since = waitedSince(t);
   const until: WaitingUntil | null = t.dueDate ? { kind: "due", dueDate: t.dueDate } : since ? { kind: "for", since } : null;
-  return { label: name ? `Waiting on ${name}` : "Waiting", name, mine, until };
+  const word = waitingWord(t);
+  return { label: name ? `${word} on ${name}` : word, name, mine, until };
+}
+
+/**
+ * The word the label starts with: the status's own name for a Waiting-group status called anything
+ * but "Waiting" ("Blocked"), else "Waiting" (also for a task in another group that names someone).
+ */
+export function waitingWord(t: Pick<WaitingFacts, "baseGroup" | "statusName">): string {
+  const own = t.statusName?.replace(/\s+/g, " ").trim();
+  return t.baseGroup === "waiting" && own && own.toLowerCase() !== "waiting" ? own : "Waiting";
 }
 
 const MIN = 60_000;

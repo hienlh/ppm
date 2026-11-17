@@ -451,7 +451,8 @@ manager; *Next turn* or closing it leaves the news for its next turn
 
 **Waiting rows say on whom and until when** (`kit/task-waiting-label.tsx`, rules in
 `src/shared/ppm-tasks-waiting.ts`). A task in a Waiting-group status, or with someone in "waiting on",
-reads "Waiting on you", "Waiting on Việt" or just "Waiting", then its due date, else how long it has
+reads "Waiting on you", "Waiting on Việt" or just "Waiting" (a Waiting-group status with a name of
+its own says that name instead: "Blocked on Việt"), then its due date, else how long it has
 waited (since the status moved into Waiting, from history; else since someone was named). A wait on
 the user is marked with a raised hand in the accent colour. The label never wraps: the words give way
 with "…", the date or age does not. The sidebar, the phone list, the task header and the Tasks chip's

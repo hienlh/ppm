@@ -74,6 +74,13 @@ describe("what leaves the server", () => {
     expect(dtos.map((d) => d.waitingOnName)).toEqual(["Việt", null, null]);
   });
 
+  it("names a Waiting-group status by its own name on the Telegram card", () => {
+    addStatus(f.projectKey, { name: "Blocked", baseGroup: "waiting" }, USER, T0);
+    const blocked = listStatuses(f.projectKey).find((s) => s.name === "Blocked")!;
+    const t = createTask({ projectKey: f.projectKey, title: "Vendor", statusId: blocked.id, waitingOnMemberId: "me" }, USER, T0);
+    expect(taskFacts(getTask(t.id)!).waiting!.label).toBe("Blocked on you");
+  });
+
   it("gives the Telegram card the same wait the app shows", () => {
     const viet = addMember(f.projectKey, { name: "Việt" }, USER);
     const mine = createTask({ projectKey: f.projectKey, title: "Sign off", statusId: f.status("Waiting").id, waitingOnMemberId: "me", dueDate: "2026-11-18" }, USER, T0);

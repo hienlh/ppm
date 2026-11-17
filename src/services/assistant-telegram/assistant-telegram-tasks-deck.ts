@@ -130,7 +130,7 @@ export function taskFacts(task: TaskView): TaskCardFacts {
     importance: task.importance,
     dueDate: task.dueDate,
     assignee: memberName(task.projectKey, task.assigneeMemberId),
-    waiting: waitingDetail(task, (id) => memberName(task.projectKey, id)),
+    waiting: waitingDetail({ ...task, statusName: status?.name ?? null }, (id) => memberName(task.projectKey, id)),
     nextStep: task.nextStep,
     linkLines: linkLines(task),
   };

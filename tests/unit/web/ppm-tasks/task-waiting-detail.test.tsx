@@ -74,7 +74,7 @@ describe("the waiting label on a row", () => {
   it("says Waiting with how long when nobody is named, where it used to show nothing", async () => {
     view = await phoneRow(waiting({ waitingSince: null, waitingStartedAt: Date.now() - 5 * 3_600_000 }));
     expect($("[data-task-waiting]")!.getAttribute("data-task-waiting")).toBe("unknown");
-    expect($("[data-task-waiting]")!.textContent).toBe("Waiting·5h");
+    expect($("[data-task-waiting]")!.textContent).toBe("Waiting· 5h");
   });
 
   it("keeps the date or age inside the label on a phone row, whose meta line does not wrap", async () => {
@@ -89,13 +89,25 @@ describe("the waiting label on a row", () => {
     expect(label.className).toContain("whitespace-nowrap");
     expect($("[data-task-waiting-words]")!.className).toContain("truncate");
     expect($("[data-task-waiting-inline-when]")!.className).toContain("shrink-[1000]");
-    expect($("[data-task-waiting-age]")!.parentElement!.className).toContain("truncate");
+    // The separator is in the same truncating run as the age: cut to nothing, no "·" is left.
+    const run = $("[data-task-waiting-inline-when]")!;
+    expect(run.className).toContain("truncate");
+    expect(run.textContent).toBe("· 1d");
   });
 
   it("leaves a task that does not wait as it was", async () => {
     view = await desktopRow(taskDto({ dueDate: "2099-01-05" }));
     expect($("[data-task-waiting]")).toBeNull();
     expect($("[data-due]")).not.toBeNull();
+  });
+
+  it("names a Waiting-group status by its own name, and says Waiting only for one called Waiting", async () => {
+    view = await desktopRow(waiting({ statusName: "Blocked", waitingOnMemberId: "m1", waitingStartedAt: Date.now() - 2 * DAY }));
+    expect($("[data-task-waiting-words]")!.textContent).toBe("Blocked on Việt");
+    expect(taskWaiting(waiting({ statusName: "Blocked" }))!.label).toBe("Blocked");
+    expect(taskWaiting(waiting({ statusName: "waiting" }), members)!.label).toBe("Waiting");
+    // Outside the Waiting group, a named wait still says Waiting, not "In progress on you".
+    expect(taskWaiting(taskDto({ baseGroup: "active", statusName: "In progress", waitingOnMemberId: "me" }))!.label).toBe("Waiting on you");
   });
 
   it("takes the name the server sent when the view has no member list", () => {

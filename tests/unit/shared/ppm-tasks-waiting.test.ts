@@ -32,6 +32,13 @@ describe("on whom", () => {
     expect(waitingDetail(facts({ waitingOnMemberId: "gone-42" }), nameOf)!.label).toBe("Waiting on gone-42");
   });
 
+  it("says a Waiting-group status by its own name, Waiting only when it is called Waiting", () => {
+    expect(waitingDetail(facts({ statusName: "Blocked", waitingOnMemberId: "m1" }), nameOf)!.label).toBe("Blocked on Việt");
+    expect(waitingDetail(facts({ statusName: "Blocked" }), nameOf)!.label).toBe("Blocked");
+    expect(waitingDetail(facts({ statusName: " Waiting " , waitingOnMemberId: "me" }), nameOf)!.label).toBe("Waiting on you");
+    expect(waitingDetail(facts({ baseGroup: "active", statusName: "In progress", waitingOnMemberId: "m1" }), nameOf)!.label).toBe("Waiting on Việt");
+  });
+
   it("says only Waiting when nobody is named", () => {
     expect(waitingDetail(facts(), nameOf)).toMatchObject({ label: "Waiting", name: null, mine: false });
   });

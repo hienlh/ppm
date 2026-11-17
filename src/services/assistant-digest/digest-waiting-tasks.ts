@@ -13,6 +13,8 @@ export interface DigestWaitingContext {
   ref(task: TaskView): string;
   /** A member's name for an id other than the user's. */
   nameOf(task: TaskView, memberId: string): string | null;
+  /** The task's status name ("Blocked" is said instead of "Waiting"). */
+  statusName(task: TaskView): string | null;
   /** The user's date (`YYYY-MM-DD`). */
   today: string;
   now: number;
@@ -26,7 +28,7 @@ export function digestWaiting(tasks: readonly TaskView[], ctx: DigestWaitingCont
   const rows: DigestWaitingTask[] = [];
   for (const t of tasks) {
     if (t.deletedAt !== null || !isWaitingTask(t)) continue;
-    const w = waitingDetail(t, (id) => ctx.nameOf(t, id));
+    const w = waitingDetail({ ...t, statusName: ctx.statusName(t) }, (id) => ctx.nameOf(t, id));
     if (!w) continue;
     rows.push({ ref: ctx.ref(t), title: t.title, label: w.label, mine: w.mine, until: waitingUntilText(w.until, ctx.today, ctx.now) });
   }
