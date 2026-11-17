@@ -372,6 +372,18 @@ list. Task settings (`settings/task-project-settings-dialog.tsx`, a bottom sheet
 `md`) holds the switch, the check interval for handed-off work, statuses, members and custom
 fields; each change saves on its own and the server applies it all or nothing.
 
+**Snooze until…** (`task-snooze-menu.tsx`, `task-snooze-options.tsx`, choices in
+`src/web/lib/ppm-tasks/task-snooze-choices.ts`): Tomorrow, 1 week, Pick a date…, Until a link
+changes (off without a Jira or PR link) and Unsnooze while one is set — a popover on a desktop, a
+bottom sheet below `md`. It is on the task page (a Snooze button beside Copy link, "Snoozed · Fri 20
+Nov" while it holds; on a phone in the chips and under ···), in a desktop row's right-click menu
+(Pick a date… opens the popover beside the row) and in the phone row's long-press sheet. A snoozed
+task leaves the urgency groups for the last section of the list, **Snoozed (N)**
+(`task-snoozed-section.tsx`), folded by default and remembered per device; each of its rows says
+until when and has Unsnooze. A snooze from the list ends on a toast with Unsnooze. A task back from
+its snooze says **Back today** that day (`kit/task-snooze-badge.tsx`). The buttons follow the chip
+row's sizes (`src/web/lib/control-size.ts`): 28px, 26px on a phone.
+
 **A task's code sits beside its title, everywhere.** The chats name tasks by code, so every place
 that shows a title shows the code too (`kit/task-code.tsx`, `taskCode` in
 `src/shared/ppm-tasks-refs.ts`): `#12` in a view of the task's own project, `ppm/12` where the view

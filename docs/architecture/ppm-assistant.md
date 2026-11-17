@@ -422,7 +422,8 @@ manager chat, its wake budget is spent, or it stayed busy for 15 tries, one Assi
 project says the same instead ("N handed-off tasks need a look", `payload.detected` and
 `payload.tasks`, with an Open chat per task on Telegram); its phone copy waits out quiet hours like
 any card. Checks stop, and the stored check goes, once the task has a result, is closed or deleted,
-or is no longer handed off. The task shows the last finding on its working-session chip ("stalled 40
+or is no longer handed off. A snoozed task is not checked at all; the checks resume once it is back
+from its snooze (whose return is a news line for the manager like any change). The task shows the last finding on its working-session chip ("stalled 40
 min", "finished, no report").
 
 **Writes nobody watched.** An Assistant turn PPM started (a watch, a wake) may write tasks. Each such
@@ -1818,7 +1819,11 @@ PPM asks every manager chat whose digest switch is on (`PATCH /api/assistant/man
   chat that was not asked, or after the digest was put together, is refused with a hint to report
   it as `done` or `needs_decision` instead.
 - **The card** is made when every asked project answered or `DIGEST_ANSWER_WINDOW_MS` (60 min)
-  passed: kind `digest`, no project, payload `{date, projects: [{name, state, items, titleOnly?, waiting?, waitingMore?, waitingMine?}]}`,
+  passed: kind `digest`, no project, payload `{date, projects: [{name, state, items, titleOnly?, waiting?, waitingMore?, waitingMine?}],
+  resurfaced?}`, where `resurfaced` is PPM's own "Back from snooze today" section — the tasks of
+  any project with Tasks on that came back from a snooze that day (`digest-resurfaced-tasks.ts`, the
+  sweep run first), by code and title, listed first on the card and on Telegram; a snoozed task is
+  in no project's waiting list;
   title "Morning digest · N projects, M items", provenance "Put together by PPM; each item was
   written by that project's manager AI". A project with no answer shows "No answer yet (busy)";
   nothing is retried that day. The card goes out through the quiet-hours gate like any other
@@ -1847,9 +1852,10 @@ quiet switch with a button that flips it. `/status` is `chats_attention` in a me
 do first" order, one task per card, with no AI turn (`assistant-telegram-tasks-deck*.ts`,
 `assistant-telegram-task-actions.ts`, card wording in `assistant-telegram-task-card.ts`). A deck is
 a snapshot of task ids held in memory beside the button codes, gone after a restart like them; a
-task whose project was switched off or that was deleted drops out when it comes up. A waiting task's
-card carries the app's waiting line ("✋ **Waiting on you** · Due tomorrow", "⏳ Waiting on Việt · for
-2 days"), its due date moved onto that line. The status
+task whose project was switched off or that was deleted drops out when it comes up, and so does one
+snoozed since. Snoozed tasks are not in a deck; a line under each card ("💤 N snoozed") says how many
+were left out. A waiting task's card carries the app's waiting line ("✋ **Waiting on you** · Due
+tomorrow", "⏳ Waiting on Việt · for 2 days"), its due date moved onto that line. The status
 buttons are that project's own statuses. A press writes the task as the user (`via: telegram`)
 against the revision the card showed, so a change made elsewhere in between is never overwritten:
 the card is redrawn as "Changed elsewhere". After a status change in a project with a manager chat

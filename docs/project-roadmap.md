@@ -30,6 +30,9 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
   stalled or finished without reporting; it never messages the chat itself.
 - Telegram `/tasks` pages "what to do first" across projects with status buttons, without an AI
   turn; a plain message to the Assistant creates a task.
+- Snooze: a task done for now keeps its status and leaves the daily lists until a day or until one
+  of its Jira or PR links changes, then comes back marked "Back today", as news for the manager and
+  in the morning digest; snoozed tasks wait in a folded "Snoozed (N)" section at the end of the list.
 - See `docs/architecture/data-and-storage.md` → "PPM Tasks store" and
   `docs/architecture/ppm-assistant.md` → "Tasks". Verified by `tests/e2e/ppm-tasks-e2e.mjs`.
 

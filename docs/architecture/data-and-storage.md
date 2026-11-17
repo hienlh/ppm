@@ -191,7 +191,8 @@ Everything is named `ppm-tasks` / `ppm_task_*` because `TaskItem`, `use-tasks.ts
 own to-do list, which is something else.
 
 **Where things are.** Tables: migration 74, `src/services/ppm-tasks/ppm-tasks-schema.ts` (it only
-adds tables, so an older binary ignores them). Shapes: `src/shared/ppm-tasks.ts` (with
+adds tables, so an older binary ignores them); migration 75 adds the four snooze columns to `tasks`
+(`applyPpmTasksSnoozeSchema`, same file). Shapes: `src/shared/ppm-tasks.ts` (with
 `ppm-tasks-config.ts` and `ppm-tasks-history.ts`); REST shapes and `/ws/global` events:
 `src/shared/ppm-tasks-api.ts`. Service: `src/services/ppm-tasks/`. Routes: `/api/tasks`
 (`src/server/routes/ppm-tasks.ts` for lists and plain writes, `ppm-tasks-actions.ts` for decide,
@@ -229,6 +230,29 @@ history carries no "raised by date" noise. "What to do first" (`src/shared/ppm-t
 sorts by effective urgency, then importance, then a manual `rank` inside the cell (project + stored
 urgency + importance), set by drag or by the AI; changing urgency or importance moves the task to
 the end of its new cell.
+
+**Snooze: out of the daily lists until a day or a link change.** A task done for now that may need
+picking up again (a merge to staging, a fix that may come back) keeps its real status and is
+snoozed instead (`src/shared/ppm-tasks-snooze.ts`, `src/services/ppm-tasks/ppm-tasks-snooze.ts`):
+`snoozed_until` is the day it shows again (a date after today, at most two years away, in the
+user's zone like due dates) and `snooze_until_change` brings it back when one of its Jira or PR
+links changes, as the link-state cache records a change (`task_link_state.changed_at`, everything
+but a Jira issue's `updated`); with both, whichever comes first. `snoozed_at` is when the snooze was
+set (a link change counts only after it) and `resurfaced_at` when PPM last brought the task back.
+Whether a snooze still holds is worked out when tasks are read, like effective urgency, so a task is
+back on its day even before anything is written; `TaskView` carries `snoozed` and
+`resurfacedToday`. Lists leave snoozed tasks out unless asked (`TaskFilter.snoozed`: `exclude` by
+default, `include`, `only`): the "what to do first" list, the manager chat's Tasks chip and its
+counts, Telegram `/tasks` and the AI's `ppm_task_list`; a task's children and the task itself still
+show them. The **sweep** (`resurfaceDueTasks`, every minute from `ppm-tasks-startup.ts` and on every
+`link_states` event) records the return: it clears the snooze, stamps `resurfaced_at`, bumps the
+revision and writes a history row of kind `resurfaced` signed by PPM with the reason ("Snooze
+ended: its day came", "Snooze ended: Jira NX-7 changed"), which the manager chat reads as news at
+its next turn. Setting or clearing a snooze is a history row of kind `snoozed`, undoable when an AI
+made it. A closed task needs no snooze: asking for one is refused and closing a snoozed task clears
+it in the same change. "Until a link changes" needs a Jira or PR link; removing the last one stops
+that half of the snooze, which could otherwise never end. A snoozed handed-off task is not checked
+for being stalled (`listTasksNeedingCheck` skips it); the checks resume once it is back.
 
 **History and undo.** Each history row records the actor (`user` "You", `manager` "Manager
 <project>", `assistant`, `chat` with the chat's title, `ppm`), the channel (`ppm`, `telegram`,
