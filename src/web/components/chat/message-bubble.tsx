@@ -16,6 +16,7 @@ import { isRealPromptMessage } from "../../../shared/user-prompt-kind";
 import { TurnChangeRollup } from "./turn-change-rollup";
 import { TurnCostWarning } from "./turn-cost-warning";
 import { MarkdownContent } from "./message-markdown";
+import { CHAT_MESSAGE_TEXT } from "@/lib/chat-message-text";
 import { UserBubble } from "./message-user-bubble";
 import { InterleavedEvents } from "./message-events";
 
@@ -118,7 +119,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming,
       {message.events && message.events.length > 0
         ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} bashPartialOutput={bashPartialOutput} />
         : message.content && (
-            <div className="text-sm text-text-primary select-text">
+            <div className={`${CHAT_MESSAGE_TEXT} text-text-primary select-text`}>
               <MarkdownContent content={message.content} projectName={projectName} />
             </div>
           )}

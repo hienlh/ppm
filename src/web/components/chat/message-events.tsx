@@ -12,6 +12,7 @@ import type { SessionPhase } from "../../../types/api";
 import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
 import { MarkdownContent } from "./message-markdown";
+import { CHAT_MESSAGE_TEXT } from "@/lib/chat-message-text";
 import { approvalDrawsAsCard } from "@/lib/approval-request";
 import { AsyncQuestionCard } from "./async-question-card";
 import { ASYNC_QUESTION_TOOL, type ChatQuestion } from "../../../shared/chat-questions";
@@ -165,7 +166,7 @@ export function InterleavedEvents({ events, isStreaming, projectName, bashPartia
         if (group.kind === "text") {
           const isLast = isStreaming && i === groups.length - 1;
           return (
-            <div key={`text-${i}`} className="text-sm text-text-primary select-text">
+            <div key={`text-${i}`} className={`${CHAT_MESSAGE_TEXT} text-text-primary select-text`}>
               <StreamingText content={group.content} animate={isLast} projectName={projectName} />
             </div>
           );
