@@ -43,7 +43,7 @@ import {
   listAntigravitySessions,
   loadAntigravityHistory,
 } from "./antigravity-history.ts";
-import { fetchAntigravityModelsLive, resolveAntigravityModelId } from "./antigravity-models.ts";
+import { fetchAntigravityModelsLive, parseAgyModels, rememberAgyModels, resolveAntigravityModelId, storedAgyModels, type AgyModels } from "./antigravity-models.ts";
 import { antigravityUsageSource, fetchAntigravityUsageLive } from "./antigravity-usage.ts";
 import { AcpClient, ACP_CONTROL_TIMEOUT_MS, type AcpNotification, type AcpServerRequest } from "./acp-client.ts";
 import {
@@ -113,7 +113,7 @@ function createEventChannel(): EventChannel {
 
 interface AcpSessionResult {
   sessionId?: string;
-  models?: { currentModelId?: string };
+  models?: { currentModelId?: string; availableModels?: unknown };
   modes?: { currentModeId?: string };
 }
 
@@ -144,6 +144,8 @@ interface LiveSession {
   pendingPermissions: Map<string, { rpcId: number | string; options: AcpPermissionOption[] }>;
   permissionMode?: string;
   modelId?: string;
+  /** agy's models as it opened this chat: what "Auto" and an effort resolve against. */
+  agyModels?: AgyModels | null;
   modeId?: string;
   usage?: TurnUsage;
   /** `session/load` replays the whole chat as updates, none of which is news. */
@@ -519,6 +521,9 @@ export class AntigravityProvider implements AIProvider {
         else this.bindSession(sessionId, meta, cwd, account);
       }
       live.modelId = opened?.models?.currentModelId;
+      live.agyModels = parseAgyModels(opened?.models);
+      // A new chat starts on the model agy picks; a reopened one names its own, not agy's pick.
+      if (!existing) rememberAgyModels(opened?.models);
       live.modeId = opened?.modes?.currentModeId;
       if (live.closed) return;
       live.channel.push({ type: "system", subtype: "init" });
@@ -583,7 +588,11 @@ export class AntigravityProvider implements AIProvider {
       const cfg = this.providerConfig();
       live.permissionMode = opts?.permissionMode ?? live.permissionMode ?? cfg?.permission_mode;
       if (live.inFlight === 0) {
-        await this.applySettings(live, resolveAntigravityModelId(opts?.model || cfg?.model, opts?.effort || cfg?.effort));
+        const agy = live.agyModels ?? storedAgyModels();
+        await this.applySettings(live, resolveAntigravityModelId(opts?.model || cfg?.model, opts?.effort || cfg?.effort, {
+          available: agy?.available.map((m) => m.modelId),
+          current: live.agyModels?.current ?? agy?.current,
+        }));
         if (live.closed) return;
         live.tools = newToolState();
         live.usage = undefined;
@@ -602,8 +611,8 @@ export class AntigravityProvider implements AIProvider {
   }
 
   /** Model, effort and mode are per chat in agy, so they are set before a turn whenever they differ. */
-  private async applySettings(live: LiveSession, modelId: string): Promise<void> {
-    if (modelId !== live.modelId) {
+  private async applySettings(live: LiveSession, modelId: string | null): Promise<void> {
+    if (modelId && modelId !== live.modelId) {
       try {
         await live.client.request("session/set_model", { sessionId: live.acpSessionId, modelId }, ACP_CONTROL_TIMEOUT_MS);
         live.modelId = modelId;

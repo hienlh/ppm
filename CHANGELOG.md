@@ -6,6 +6,10 @@
 
 - **Switching the public tunnel on or off restarted PPM's server and cut every running chat.** The switch is applied by reloading the tunnel, but that reload then went on to restart the server as well. It now only starts or stops the tunnel; `ppm restart` still restarts.
 
+### Changed
+
+- **Antigravity and Codex models are no longer written into PPM, so a new model shows up and becomes the default by itself.** Gemini 4 Carbon and GPT-6.1 Sol came out and PPM still started new chats on the older models it had been told about. Now: "Auto" (no model chosen) is the model the CLI itself picks, and the picker and Settings say which one ("Auto (Gemini 4 Carbon)"). With the Antigravity app closed, the list is the one agy reported when it last opened a chat, where PPM used to show a fixed list. A model you chose stays as it is.
+
 ## [0.26.11] - 2026-11-18
 
 ### Fixed
