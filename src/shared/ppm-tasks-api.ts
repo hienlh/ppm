@@ -45,6 +45,11 @@ export interface TaskDto extends TaskView {
   /** `ppm/12`. */
   ref: string;
   statusName: string;
+  /**
+   * The name of the member the task waits on, for views that hold no member list (the Tasks chip);
+   * null when nobody is named, it is the user, or the id names no member. Absent from an older server.
+   */
+  waitingOnName?: string | null;
   workingSession: TaskWorkingSession;
   /** The working chat's last check, lifted out of `workingSession` for rows that only show a chip. */
   check: TaskCheckSummary | null;

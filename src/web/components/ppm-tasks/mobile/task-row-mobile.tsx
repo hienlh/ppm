@@ -1,19 +1,20 @@
 /**
  * One task in the phone list (variant-3 screen 03): a 62px row with a 44px status cell (a tap there
  * opens the same sheet as a long-press), the task's code and title on one line (the title gives
- * way, never the code; in the all-projects scope the code names the project), a meta line (Decision/Reply badge, Jira key or PR/CI dot, who it waits on and for how
- * long, child progress, the working-session chip) and a chevron. The meta line never wraps or
+ * way, never the code; in the all-projects scope the code names the project), a meta line (Decision/Reply badge, Jira key or PR/CI dot, who it waits on and until
+ * when, child progress, the working-session chip) and a chevron. The meta line never wraps or
  * widens the row: the working-session chip gives way first, then the waiting text.
  */
 import { ChevronRight } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import { ageShort, memberName } from "@/lib/ppm-tasks/task-format";
+import { taskWaiting } from "@/lib/ppm-tasks/task-format";
 import type { LinkState, TaskMember } from "../../../../shared/ppm-tasks";
 import type { TaskDto, TaskWorkingSession } from "../../../../shared/ppm-tasks-api";
 import { TaskStatusGlyph } from "../kit/task-status-glyph";
 import { TaskTypeBadge } from "../kit/task-type-badge";
 import { TaskWorkingSessionChip } from "../kit/task-working-session-chip";
 import { TaskCode } from "../kit/task-code";
+import { TaskWaitingLabel } from "../kit/task-waiting-label";
 import { externalMeta } from "../task-list-row";
 import { useTaskRowLongPress } from "./use-task-row-long-press";
 
@@ -35,7 +36,7 @@ export interface TaskRowMobileProps {
 export function TaskRowMobile(p: TaskRowMobileProps) {
   const { task } = p;
   const press = useTaskRowLongPress(() => p.onActions(task));
-  const waiting = memberName(task.waitingOnMemberId, p.members);
+  const waiting = taskWaiting(task, p.members);
   const closed = task.baseGroup === "closed";
   return (
     <div role="button" tabIndex={0} aria-current={p.selected || undefined} data-task-row={task.id} data-depth={p.depth}
@@ -65,7 +66,7 @@ export function TaskRowMobile(p: TaskRowMobileProps) {
           <div className="mt-1 flex min-w-0 flex-nowrap items-center gap-2 whitespace-nowrap text-xs text-text-3">
             {(task.type === "decision" || task.type === "reply") && <TaskTypeBadge type={task.type} className="text-[11px]" />}
             {externalMeta(task, p.linkStates)}
-            {waiting && task.waitingSince ? <span className="min-w-0 shrink-[2] truncate text-warning">{waiting} {ageShort(task.waitingSince)}</span> : null}
+            {waiting ? <TaskWaitingLabel detail={waiting} className="shrink-[2]" /> : null}
             {p.progress && p.progress.total > 0 && <span className="font-mono text-[11px]">{p.progress.done}/{p.progress.total}</span>}
             <TaskWorkingSessionChip working={p.working ?? task.workingSession} check={task.check} className="shrink-[3]"
               onOpen={(sid) => p.onOpenChat(task, sid)} onStartChat={() => p.onStartChat(task)} />

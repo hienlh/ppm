@@ -155,6 +155,11 @@ export interface TaskView extends Task {
   effectiveUrgency: Urgency;
   /** True when the due date raised the urgency above the stored one. */
   urgencyRaised: boolean;
+  /**
+   * When the status last moved into the Waiting group, read from history; null when the task is
+   * not in that group or history holds no such move. Absent from answers of an older server.
+   */
+  waitingStartedAt?: number | null;
 }
 
 export interface TaskFilter {

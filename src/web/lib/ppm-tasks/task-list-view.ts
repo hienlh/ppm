@@ -1,12 +1,13 @@
 /**
  * The Tasks sidebar list as pure functions: which query the filters ask the server for, what the
- * server cannot filter (a declared field, hidden projects), the Now / Today / This week / Later
+ * server cannot filter (a declared field, hidden projects, "Waiting on you"), the Now / Today / This week / Later
  * groups, children nested under their parent, the row order arrow keys walk, and what a drag
  * means once dropped. The components only draw what these return.
  */
 import { cellKey } from "../../../shared/ppm-tasks-order";
 import { URGENCIES, type Urgency } from "../../../shared/ppm-tasks";
 import { matchesTaskCode, parseTaskCodeQuery } from "../../../shared/ppm-tasks-refs";
+import { isWaitingOnMe } from "../../../shared/ppm-tasks-waiting";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
 import type { TaskListQuery } from "./ppm-tasks-client";
 import { orderTasks } from "./ppm-tasks-list-logic";
@@ -42,8 +43,8 @@ export function countingQueryFor(scope: TaskScope, project: string | null): Task
 }
 
 /**
- * What the list shows: the server's answer less closed tasks (unless asked), hidden projects and a
- * field filter. A search that is a task code shows the task it names and nothing else, closed or
+ * What the list shows: the server's answer less closed tasks (unless asked), hidden projects, a
+ * field filter and, with "Waiting on you" on, every task not waiting on the user. A search that is a task code shows the task it names and nothing else, closed or
  * not: the code was typed to find that one task.
  */
 export function visibleTasks(tasks: readonly TaskDto[], f: TaskViewFilters, hiddenProjects: readonly string[], scope: TaskScope, q = ""): TaskDto[] {
@@ -53,12 +54,18 @@ export function visibleTasks(tasks: readonly TaskDto[], f: TaskViewFilters, hidd
   return tasks.filter((t) => {
     if (t.baseGroup === "closed" && !closedAsked) return false;
     if (scope === "all" && hiddenProjects.includes(t.project)) return false;
+    if (f.waitingOnMe && !isWaitingOnMe(t)) return false;
     if (f.field) {
       const v = t.fields[f.field.key];
       if (v === null || v === undefined || String(v) !== f.field.value) return false;
     }
     return true;
   });
+}
+
+/** How many open tasks wait on the user in the scope's every task, hidden projects left out. */
+export function waitingOnMeCount(tasks: readonly TaskDto[], hiddenProjects: readonly string[], scope: TaskScope): number {
+  return tasks.filter((t) => t.deletedAt === null && isWaitingOnMe(t) && !(scope === "all" && hiddenProjects.includes(t.project))).length;
 }
 
 /** Closed / all children per parent id, over every task the server sent (closed ones included). */

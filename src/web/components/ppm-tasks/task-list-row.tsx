@@ -1,20 +1,22 @@
 /**
  * One task in the Tasks sidebar list (variant-3 screen 01): status glyph, the task's code (`#12`, or
  * `ppm/12` in the all-projects scope, where the code names the project) and title on up to two
- * lines, a meta line (Jira key or PR/CI dot, who it waits on and for how long, a Decision/Reply
+ * lines, a meta line (Jira key or PR/CI dot, who it waits on and until when — its due date, else
+ * how long — with a wait on the user standing out, a Decision/Reply
  * badge, child progress, the working-session chip) and importance
  * bars with the assignee on the right. A click previews the task, a double-click keeps its tab.
  */
 import type { DragEvent, PointerEvent } from "react";
 import { cn } from "@/lib/utils";
 import { linkStateView } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
-import { ageShort, memberName } from "@/lib/ppm-tasks/task-format";
+import { memberName, taskWaiting } from "@/lib/ppm-tasks/task-format";
 import { TaskStatusGlyph } from "./kit/task-status-glyph";
 import { TaskTypeBadge } from "./kit/task-type-badge";
 import { TaskImportanceBars } from "./kit/task-importance-bars";
 import { TaskMemberAvatar } from "./kit/task-member-avatar";
 import { TaskWorkingSessionChip } from "./kit/task-working-session-chip";
 import { TaskDueLabel } from "./kit/task-due-label";
+import { TaskWaitingLabel } from "./kit/task-waiting-label";
 import { TaskCode } from "./kit/task-code";
 import type { LinkState, TaskMember } from "../../../shared/ppm-tasks";
 import type { TaskDto, TaskWorkingSession } from "../../../shared/ppm-tasks-api";
@@ -59,7 +61,7 @@ export function externalMeta(task: TaskDto, states: readonly LinkState[] | undef
 
 export function TaskListRow(p: TaskListRowProps) {
   const { task } = p;
-  const waiting = memberName(task.waitingOnMemberId, p.members);
+  const waiting = taskWaiting(task, p.members);
   const assignee = memberName(task.assigneeMemberId, p.members);
   const closed = task.baseGroup === "closed";
   return (
@@ -82,8 +84,8 @@ export function TaskListRow(p: TaskListRowProps) {
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-text-3">
             {(task.type === "decision" || task.type === "reply") && <TaskTypeBadge type={task.type} className="text-[11px]" />}
             {externalMeta(task, p.linkStates)}
-            {waiting && task.waitingSince ? <span className="truncate text-warning">{waiting} · {ageShort(task.waitingSince)}</span> : null}
-            {!waiting && task.dueDate ? <TaskDueLabel dueDate={task.dueDate} className="text-[11px]" /> : null}
+            {waiting ? <TaskWaitingLabel detail={waiting} className="text-[11.5px]" />
+              : task.dueDate ? <TaskDueLabel dueDate={task.dueDate} className="text-[11px]" /> : null}
             {p.progress && p.progress.total > 0 && <span className="font-mono text-[11px]">{p.progress.done}/{p.progress.total}</span>}
             <TaskWorkingSessionChip working={p.working ?? task.workingSession} check={task.check}
               onOpen={(sid) => p.onOpenChat(task, sid)} onStartChat={() => p.onStartChat(task)} />

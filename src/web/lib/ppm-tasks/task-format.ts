@@ -3,20 +3,11 @@
  * row happened ("Today 09:02"), and a member's name from a project's member list.
  */
 import { ME_MEMBER_ID, type TaskMember } from "../../../shared/ppm-tasks";
+import { ageShort, waitingDetail, type WaitingDetail, type WaitingFacts } from "../../../shared/ppm-tasks-waiting";
 
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
+const DAY = 86_400_000;
 
-/** "now", "5m", "3h", "2d", "3w". */
-export function ageShort(since: number, now: number = Date.now()): string {
-  const d = Math.max(0, now - since);
-  if (d < MIN) return "now";
-  if (d < HOUR) return `${Math.floor(d / MIN)}m`;
-  if (d < DAY) return `${Math.floor(d / HOUR)}h`;
-  if (d < 14 * DAY) return `${Math.floor(d / DAY)}d`;
-  return `${Math.floor(d / (7 * DAY))}w`;
-}
+export { ageShort };
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -41,3 +32,12 @@ export function memberName(id: string | null, members: readonly TaskMember[] | u
 
 /** "PSR Ireland export…": a short label for menus and toasts. */
 export const clip = (s: string, n = 48): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+/**
+ * The wait of a task as its rows word it ("Waiting on you", "Waiting on Việt", "Waiting"), with
+ * its due date or how long it has waited; null when it does not wait. A member list names people
+ * where the view has one; the Tasks chip has none and takes the name the server sent.
+ */
+export function taskWaiting(task: WaitingFacts & { waitingOnName?: string | null }, members?: readonly TaskMember[]): WaitingDetail | null {
+  return waitingDetail(task, (id) => members?.find((m) => m.id === id)?.name ?? task.waitingOnName);
+}

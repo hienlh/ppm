@@ -1,12 +1,13 @@
 /**
  * The Tasks list's tools under the header: the `<project> | All projects` switch, the project
  * chips with their counts (all-projects scope; a chip off leaves that project out), and the filter
- * chips Type, status group (default "Open"), Person, Tag, plus a declared field filter when one is
+ * chips "Waiting on you", Type, status group (default "Open"), Person, Tag, plus a declared field filter when one is
  * set from ··· "Filter by field". Filter state lives in `ppm-tasks-view-store` (per device).
  */
 import type { ReactNode } from "react";
 import { ChevronDown, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 import {
   DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem,
   DropdownMenuSeparator, DropdownMenuTrigger,
@@ -15,6 +16,7 @@ import { typeLabel } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
 import { useTaskViewStore, type TaskScope } from "@/stores/ppm-tasks-view-store";
 import { ME_MEMBER_ID, TASK_TYPES, type BaseGroup, type TaskMember } from "../../../shared/ppm-tasks";
 import type { TaskProjectSummary } from "../../../shared/ppm-tasks-api";
+import { TaskWaitingOnMeToggle } from "./kit/task-waiting-on-me-toggle";
 
 const GROUP_LABEL: Record<BaseGroup, string> = { not_started: "Not started", active: "Active", waiting: "Waiting", closed: "Closed" };
 
@@ -26,13 +28,13 @@ export function groupFilterLabel(groups: readonly BaseGroup[]): string {
 
 function Chip({ on, children, onClear }: { on: boolean; children: ReactNode; onClear?: () => void }) {
   return (
-    <span className={cn("inline-flex h-7 max-md:h-[46px] max-w-full items-center rounded-full border text-xs",
+    <span className={cn("inline-flex max-w-full items-center rounded-full border text-xs", TEXT_CONTROL_HEIGHT,
       on ? "border-accent-wash-border bg-accent-wash text-primary" : "border-border-soft text-text-2")}>
       <DropdownMenuTrigger className="inline-flex h-full min-w-0 items-center gap-1 rounded-full pl-2.5 pr-2 outline-none hover:text-text">
         {children}<ChevronDown aria-hidden className="size-3 shrink-0" />
       </DropdownMenuTrigger>
       {onClear && on && (
-        <button type="button" aria-label="Clear filter" onClick={onClear} className="-ml-1 mr-1 grid size-5 max-md:size-11 place-items-center rounded-full hover:bg-surface-hover">
+        <button type="button" aria-label="Clear filter" onClick={onClear} className="-ml-1 mr-1 grid size-5 max-md:size-[22px] place-items-center rounded-full hover:bg-surface-hover">
           <X className="size-3" />
         </button>
       )}
@@ -46,9 +48,11 @@ export interface TaskListFiltersProps {
   /** Members of the shown projects, deduped by id ("You" is added here). */
   members: readonly TaskMember[];
   tags: readonly string[];
+  /** Open tasks waiting on the user in the scope, for the "Waiting on you" chip. */
+  waitingOnMe: number;
 }
 
-export function TaskListFilters({ project, projects, members, tags }: TaskListFiltersProps) {
+export function TaskListFilters({ project, projects, members, tags, waitingOnMe }: TaskListFiltersProps) {
   const { scope, filters: f, hiddenProjects, setScope, setFilters, toggleProject } = useTaskViewStore();
   const scopeBtn = (s: TaskScope, label: ReactNode) => (
     <button type="button" role="tab" aria-selected={scope === s} onClick={() => setScope(s)}
@@ -69,7 +73,7 @@ export function TaskListFilters({ project, projects, members, tags }: TaskListFi
             const on = !hiddenProjects.includes(p.name);
             return (
               <button key={p.name} type="button" aria-pressed={on} onClick={() => toggleProject(p.name)}
-                className={cn("inline-flex h-7 max-md:h-11 max-w-full items-center gap-1 rounded-full border px-2.5 text-xs",
+                className={cn(TEXT_CONTROL_HEIGHT, "inline-flex max-w-full items-center gap-1 rounded-full border px-2.5 text-xs",
                   on ? "border-accent-wash-border bg-accent-wash text-primary" : "border-border-soft text-text-3 line-through")}>
                 <span className="truncate">{p.name}</span><span className="font-mono text-[10.5px] opacity-80">{p.open}</span>
               </button>
@@ -78,6 +82,7 @@ export function TaskListFilters({ project, projects, members, tags }: TaskListFi
         </div>
       )}
       <div className="flex flex-wrap gap-1.5">
+        <TaskWaitingOnMeToggle on={!!f.waitingOnMe} count={waitingOnMe} onToggle={() => setFilters({ waitingOnMe: !f.waitingOnMe })} />
         <DropdownMenu>
           <Chip on={f.types.length > 0} onClear={() => setFilters({ types: [] })}>{f.types.length ? f.types.map(typeLabel).join(", ") : "Type"}</Chip>
           <DropdownMenuContent align="start">
@@ -120,9 +125,9 @@ export function TaskListFilters({ project, projects, members, tags }: TaskListFi
           </DropdownMenuContent>
         </DropdownMenu>
         {f.field && (
-          <span className="inline-flex h-7 max-md:h-11 max-w-full items-center gap-1 rounded-full border border-accent-wash-border bg-accent-wash pl-2.5 pr-1 text-xs text-primary">
+          <span className={cn(TEXT_CONTROL_HEIGHT, "inline-flex max-w-full items-center gap-1 rounded-full border border-accent-wash-border bg-accent-wash pl-2.5 pr-1 text-xs text-primary")}>
             <span className="truncate">{f.field.key}: {f.field.value}</span>
-            <button type="button" aria-label="Clear field filter" onClick={() => setFilters({ field: null })} className="grid size-5 max-md:size-11 place-items-center rounded-full hover:bg-surface-hover"><X className="size-3" /></button>
+            <button type="button" aria-label="Clear field filter" onClick={() => setFilters({ field: null })} className="grid size-5 max-md:size-[22px] place-items-center rounded-full hover:bg-surface-hover"><X className="size-3" /></button>
           </span>
         )}
       </div>
