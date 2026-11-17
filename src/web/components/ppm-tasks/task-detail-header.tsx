@@ -9,7 +9,8 @@ import { Check, Link, MessageSquare, RotateCcw } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { copyTaskLink } from "@/lib/ppm-tasks/open-task-tab";
-import { ageShort, memberName } from "@/lib/ppm-tasks/task-format";
+import { taskWaiting } from "@/lib/ppm-tasks/task-format";
+import { TaskWaitingLabel } from "./kit/task-waiting-label";
 import { TaskStatusGlyph } from "./kit/task-status-glyph";
 import { TaskUrgencyPill } from "./kit/task-urgency-pill";
 import { TaskImportanceBars } from "./kit/task-importance-bars";
@@ -42,7 +43,7 @@ export function TaskDetailHeader({ task, members, preview, hasManager, onRename,
     if (t && t !== task.title) onRename(t);
   };
   const closed = task.baseGroup === "closed";
-  const waiting = memberName(task.waitingOnMemberId, members);
+  const waiting = taskWaiting(task, members);
   return (
     <header className="space-y-2.5">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[13px] text-text-2">
@@ -76,7 +77,8 @@ export function TaskDetailHeader({ task, members, preview, hasManager, onRename,
         <TaskUrgencyPill urgency={task.effectiveUrgency} raised={task.urgencyRaised} />
         <TaskImportanceBars importance={task.importance} />
         <TaskDueLabel dueDate={task.dueDate} />
-        {waiting && <span className="text-xs text-warning">Waiting on {waiting}{task.waitingSince ? ` · ${ageShort(task.waitingSince)}` : ""}</span>}
+        {/* The header shows the due date beside it already: the label keeps only an age. */}
+        {waiting && <TaskWaitingLabel detail={waiting.until?.kind === "due" ? { ...waiting, until: null } : waiting} className="text-xs" />}
       </div>
     </header>
   );

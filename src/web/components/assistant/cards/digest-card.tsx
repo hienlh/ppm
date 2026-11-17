@@ -1,11 +1,13 @@
 /**
  * The morning digest PPM put together: one section per project that was asked, its manager's items
- * numbered, or why there are none. Every item is a manager AI's words and is drawn as plain text.
+ * numbered, or why there are none, then the project's waiting tasks as PPM read them from its task
+ * store (on whom, until when; the user's own first and marked). Every item is a manager AI's words
+ * and is drawn as plain text.
  */
-import { Coffee } from "@/lib/icons";
+import { Coffee, Hand } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
-import { DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, type DigestProject } from "../../../../shared/assistant-digest";
+import { DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, digestWaitingSummary, type DigestProject } from "../../../../shared/assistant-digest";
 import { CardShell } from "./card-shell";
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -28,7 +30,33 @@ function ProjectSection({ project }: { project: DigestProject }) {
           {project.items.map((item, i) => <li key={`${i}:${item}`} className="break-words">{item}</li>)}
         </ol>
       )}
+      {!!project.waiting?.length && <WaitingTasks project={project} />}
     </section>
+  );
+}
+
+/** The project's waiting tasks, PPM's own list: code, title, on whom and until when. */
+function WaitingTasks({ project }: { project: DigestProject }) {
+  const more = project.waitingMore ?? 0;
+  return (
+    <div className="mt-1.5" data-digest-waiting="">
+      <p className="text-[12px] font-medium text-text-secondary">{digestWaitingSummary(project)}<span className="font-normal text-text-subtle"> · from Tasks</span></p>
+      <ul className="mt-0.5 space-y-0.5 text-[12.5px]">
+        {project.waiting!.map((w) => (
+          <li key={w.ref} className="flex min-w-0 items-center gap-1.5" data-digest-waiting-task={w.ref} data-digest-waiting-mine={w.mine ? "" : undefined}>
+            <span className="shrink-0 font-mono text-[11.5px] text-text-subtle">{w.ref}</span>
+            <span className="min-w-0 flex-1 truncate" title={w.title}>{w.title}</span>
+            <span className={cn("inline-flex min-w-0 max-w-[60%] shrink-0 items-center gap-1 whitespace-nowrap", w.mine ? "font-medium text-primary" : "text-warning")}
+              title={w.until ? `${w.label} · ${w.until}` : w.label}>
+              {w.mine && <Hand aria-hidden className="size-3 shrink-0" />}
+              <span className="min-w-0 truncate">{w.label}</span>
+              {w.until && <span className="shrink-0 text-text-subtle">· {w.until}</span>}
+            </span>
+          </li>
+        ))}
+        {more > 0 && <li className="text-text-subtle">and {more} more in Tasks</li>}
+      </ul>
+    </div>
   );
 }
 

@@ -17,7 +17,7 @@
  * "Approve change" meets the same bar on the rules diff. None ever stands for text the user did not see.
  */
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
-import { DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, type DigestProject } from "../../shared/assistant-digest.ts";
+import { DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, digestWaitingSummary, type DigestProject } from "../../shared/assistant-digest.ts";
 import { escapeHiddenCharacters } from "../../shared/reveal-hidden-characters.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
 import { markdownToTelegramHtml, redactSecretsForTelegram, splitTelegramHtml } from "../telegram/telegram-html-format.ts";
@@ -90,6 +90,25 @@ function preview(text: string): string {
 const DIGEST_TELEGRAM_MAX = 3200;
 
 /**
+ * A digest section's waiting tasks, PPM's own list: "⏳ 3 tasks waiting, 1 on you", then one line
+ * each ("✋ <code>ppm/12</code> Title — <b>Waiting on you</b> · Due today"). A project whose details
+ * stay off the phone shows the count line only.
+ */
+function digestWaitingLines(p: DigestProject, counter: { hidden: number }, countOnly = false): string[] {
+  if (!p.waiting?.length) return [];
+  if (countOnly && !p.titleOnly) return [`<i>⏳ ${digestWaitingSummary(p)}; the list is on the card in PPM.</i>`];
+  const head = `<i>⏳ ${digestWaitingSummary(p)}${p.titleOnly ? "; the details stay in PPM." : ":"}</i>`;
+  if (p.titleOnly) return [head];
+  const lines = p.waiting.map((w) => {
+    const label = w.mine ? `<b>${clean(oneLine(w.label), counter)}</b>` : clean(oneLine(w.label), counter);
+    const until = w.until ? ` · ${clean(oneLine(w.until), counter)}` : "";
+    return `${w.mine ? "✋" : "•"} <code>${clean(oneLine(w.ref), counter)}</code> ${clean(truncateText(oneLine(w.title), 80), counter)} — ${label}${until}`;
+  });
+  if (p.waitingMore) lines.push(`<i>…and ${p.waitingMore} more in PPM.</i>`);
+  return [head, ...lines];
+}
+
+/**
  * The digest's sections: a project's numbered items, or why there are none. A project whose
  * details stay off the phone shows only how many items it has. Past the room left, the rest is
  * said to be in PPM rather than cut mid-item.
@@ -103,13 +122,17 @@ function digestLines(projects: readonly DigestProject[], counter: { hidden: numb
     else if (p.items.length === 0) section.push(`<i>${DIGEST_NOTHING_NEW}</i>`);
     else if (p.titleOnly) section.push(`<i>${p.items.length} item${p.items.length === 1 ? "" : "s"}; the details stay in PPM for this project.</i>`);
     else p.items.slice(0, 12).forEach((item, i) => section.push(`${i + 1}. ${clean(oneLine(item), counter)}`));
-    const size = section.reduce((n, l) => n + l.length + 1, 0);
+    const sizeOf = (lines: string[]) => lines.reduce((n, l) => n + l.length + 1, 0);
+    // The waiting list is what a section gives up when it would not fit; its count stays.
+    let lines = [...section, ...digestWaitingLines(p, counter)];
+    if (used + sizeOf(lines) > DIGEST_TELEGRAM_MAX) lines = [...section, ...digestWaitingLines(p, { hidden: 0 }, true)];
+    const size = sizeOf(lines);
     if (used + size > DIGEST_TELEGRAM_MAX) {
       out.push("\n<i>The rest is on the card in PPM.</i>");
       break;
     }
     used += size;
-    out.push(...section);
+    out.push(...lines);
   }
   return out;
 }

@@ -22,6 +22,7 @@ import { getTask, listTasks, taskChildren } from "../ppm-tasks/ppm-tasks.service
 import { todayYmd, userTimeZone } from "../ppm-tasks/ppm-tasks-today.ts";
 import type { CardDetail } from "./assistant-telegram-card-kinds.ts";
 import type { ChildLine, TaskCardFacts, TaskCardLinkLine } from "./assistant-telegram-task-card.ts";
+import { waitingDetail } from "../../shared/ppm-tasks-waiting.ts";
 
 /** Most decks held at once; the oldest goes first. */
 export const MAX_DECKS = 100;
@@ -129,8 +130,7 @@ export function taskFacts(task: TaskView): TaskCardFacts {
     importance: task.importance,
     dueDate: task.dueDate,
     assignee: memberName(task.projectKey, task.assigneeMemberId),
-    waitingOn: memberName(task.projectKey, task.waitingOnMemberId),
-    waitingSince: task.waitingSince,
+    waiting: waitingDetail({ ...task, statusName: status?.name ?? null }, (id) => memberName(task.projectKey, id)),
     nextStep: task.nextStep,
     linkLines: linkLines(task),
   };

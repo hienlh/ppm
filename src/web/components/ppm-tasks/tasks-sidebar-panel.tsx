@@ -19,7 +19,7 @@ import { ppmTasksStore, usePpmTasksStore } from "@/stores/ppm-tasks-store";
 import { usePpmTaskLinkStates, usePpmTaskList } from "@/hooks/use-ppm-tasks";
 import { usePpmTaskProjects } from "@/hooks/use-ppm-task-projects";
 import { ppmTasksClient } from "@/lib/ppm-tasks/ppm-tasks-client";
-import { childProgress, countingQueryFor, groupTasks, listQueryFor, visibleTasks } from "@/lib/ppm-tasks/task-list-view";
+import { childProgress, countingQueryFor, groupTasks, listQueryFor, visibleTasks, waitingOnMeCount } from "@/lib/ppm-tasks/task-list-view";
 import { openTaskChat, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
 import { openTask } from "@/lib/ppm-tasks/open-task";
 import { taskIdOfTab } from "@/lib/ppm-tasks/task-tab-preview";
@@ -64,7 +64,8 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
   // through (a status filter would otherwise turn 1/3 into 0/2). Same request when no filter is on.
   const counting = usePpmTaskList(showList ? countingQueryFor(scope, activeProject) : null);
   const everyTask = counting.loading || counting.error ? tasks : counting.tasks;
-  const filtersOn = !!(filters.groups.length || filters.types.length || filters.person || filters.tag || filters.field || query.trim());
+  const filtersOn = !!(filters.groups.length || filters.types.length || filters.person || filters.tag || filters.field || filters.waitingOnMe || query.trim());
+  const waitingOnMe = useMemo(() => waitingOnMeCount(everyTask, hiddenProjects, scope), [everyTask, hiddenProjects, scope]);
   const shown = useMemo(() => visibleTasks(tasks, filters, hiddenProjects, scope, codeQuery), [tasks, filters, hiddenProjects, scope, codeQuery]);
 
   const activeTaskId = useTabStore((s) => { const t = s.tabs.find((x) => x.id === s.activeTabId); return t ? taskIdOfTab(t) : null; });
@@ -167,7 +168,7 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex min-h-full flex-col" data-tasks-panel="">
       <TasksSidebarHeader project={settingsProject} enabled={showList} filterFields={filterFields} onSubmitSearch={() => void onSubmitSearch()}
         onNewTask={() => setNewOpen(true)} onSettings={() => setSettingsOpen(true)} onTurnOff={() => void turnOff()} />
-      <TaskListFilters project={activeProject} projects={enabledProjects} members={members} tags={tags} />
+      <TaskListFilters project={activeProject} projects={enabledProjects} members={members} tags={tags} waitingOnMe={waitingOnMe} />
       {!activeProject && scope === "project" ? (
         <p className="px-4 py-8 text-center text-xs text-text-3">Select a project to see its tasks</p>
       ) : scope === "project" && own && !own.enabled ? (

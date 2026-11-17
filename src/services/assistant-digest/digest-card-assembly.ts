@@ -2,19 +2,26 @@ import { digestTitle, type DigestProject } from "../../shared/assistant-digest.t
 import type { NewCard } from "../assistant-cards/assistant-cards.service.ts";
 import type { DigestRun } from "./digest-state.ts";
 
+/** A project's waiting tasks as the digest lists them, read by PPM from its task store. */
+export type DigestWaitingOf = (projectKey: string) => Pick<DigestProject, "waiting" | "waitingMore" | "waitingMine">;
+
 /**
  * The morning digest card, built by PPM from a run: one section per project that was asked, in
  * the order they were asked, answered or not. Items arrive already cleaned and capped by the
- * report tool. Pure, so assembly from partial answers is tested without a store.
+ * report tool; each section also lists the project's waiting tasks (`waitingOf`), which PPM reads
+ * itself. Pure, so assembly from partial answers is tested without a store.
  */
-export function buildDigestCard(run: DigestRun, titleOnly: (projectKey: string) => boolean): NewCard {
+export function buildDigestCard(run: DigestRun, titleOnly: (projectKey: string) => boolean, waitingOf?: DigestWaitingOf): NewCard {
   const projects: DigestProject[] = Object.keys(run.asked).map((key) => {
     const items = run.answers[key];
+    let waiting: ReturnType<DigestWaitingOf> = {};
+    try { waiting = waitingOf?.(key) ?? {}; } catch { /* the task store unreadable: the section keeps the manager's items */ }
     return {
       name: run.names[key] ?? "project",
       state: items ? "answered" : "no_answer",
       items: items ?? [],
       ...(titleOnly(key) ? { titleOnly: true } : {}),
+      ...waiting,
     };
   });
   return {

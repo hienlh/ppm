@@ -18,9 +18,11 @@ export interface TaskViewFilters {
   tag: string | null;
   /** A declared select/date field to filter on (`key` = value). */
   field: { key: string; value: string } | null;
+  /** Only the open tasks waiting on the user (the "Waiting on you" chip). */
+  waitingOnMe?: boolean;
 }
 
-export const EMPTY_FILTERS: TaskViewFilters = { groups: [], types: [], person: null, tag: null, field: null };
+export const EMPTY_FILTERS: TaskViewFilters = { groups: [], types: [], person: null, tag: null, field: null, waitingOnMe: false };
 
 interface TaskViewState {
   scope: TaskScope;
@@ -55,6 +57,7 @@ function read(): Partial<Pick<TaskViewState, "scope" | "filters" | "hiddenProjec
         person: typeof f.person === "string" ? f.person : null,
         tag: typeof f.tag === "string" ? f.tag : null,
         field: f.field && typeof f.field.key === "string" && typeof f.field.value === "string" ? { key: f.field.key, value: f.field.value } : null,
+        waitingOnMe: f.waitingOnMe === true,
       },
       hiddenProjects: strings(v.hiddenProjects),
     };

@@ -7,6 +7,7 @@ import { getDb, resolveMigratedSession } from "../db.service.ts";
 import type { BaseGroup, Task, TaskChildCheck, TaskFilter, TaskStatusDef, TaskView } from "../../shared/ppm-tasks.ts";
 import { compareTasks } from "../../shared/ppm-tasks-order.ts";
 import { effectiveUrgency } from "../../shared/ppm-tasks-urgency.ts";
+import { waitingStartedAtFromHistory, type StatusHistoryEntry } from "../../shared/ppm-tasks-waiting.ts";
 import { linksFor, loadTask, rowToTask, statusRows, type TaskRow } from "./ppm-tasks-db.ts";
 import { todayYmd } from "./ppm-tasks-today.ts";
 import { isHandedOff } from "./ppm-tasks-write.ts";
@@ -17,13 +18,65 @@ const statusesOf = (projectKeys: string[]): Map<string, TaskStatusDef> => {
   return out;
 };
 
-/** Decorates tasks with their status group and effective urgency. */
+/**
+ * When each listed task's stay in the Waiting group began, from the status moves in its history
+ * (kept past compaction, so the answer does not fade after 90 days). One query for the lot.
+ */
+function waitingStarts(tasks: Task[], statuses: Map<string, TaskStatusDef>): Map<string, number> {
+  const out = new Map<string, number>();
+  if (tasks.length === 0) return out;
+  const taskIds = tasks.map((t) => t.id);
+  const rows = getDb().query(
+    `SELECT id, task_id, at, changes_json FROM task_history
+     WHERE task_id IN (${taskIds.map(() => "?").join(",")}) AND changes_json LIKE '%"statusId"%'`,
+  ).all(...taskIds) as Array<{ id: number; task_id: string; at: number; changes_json: string }>;
+  const deleted = deletedStatusGroups([...new Set(tasks.map((t) => t.projectKey))]);
+  const byTask = new Map<string, StatusHistoryEntry[]>();
+  for (const r of rows) {
+    let changes: StatusHistoryEntry["changes"];
+    try { changes = JSON.parse(r.changes_json); } catch { continue; }
+    if (!Array.isArray(changes)) continue;
+    const list = byTask.get(r.task_id) ?? [];
+    list.push({ id: r.id, at: r.at, changes });
+    byTask.set(r.task_id, list);
+  }
+  const groupOf = (id: string) => statuses.get(id)?.baseGroup ?? deleted.get(id);
+  for (const [id, entries] of byTask) {
+    const at = waitingStartedAtFromHistory(entries, groupOf);
+    if (at !== null) out.set(id, at);
+  }
+  return out;
+}
+
+/** The groups of the projects' deleted statuses, from the config history that recorded each deletion. */
+function deletedStatusGroups(projectKeys: string[]): Map<string, BaseGroup> {
+  const out = new Map<string, BaseGroup>();
+  const rows = getDb().query(
+    `SELECT changes_json FROM task_history
+     WHERE task_id IS NULL AND project_key IN (${projectKeys.map(() => "?").join(",")}) AND changes_json LIKE '%"status.delete"%'`,
+  ).all(...projectKeys) as Array<{ changes_json: string }>;
+  for (const r of rows) {
+    try {
+      for (const c of JSON.parse(r.changes_json) as Array<{ field?: string; before?: { id?: unknown; baseGroup?: unknown } }>) {
+        if (c.field === "status.delete" && typeof c.before?.id === "string" && typeof c.before.baseGroup === "string") out.set(c.before.id, c.before.baseGroup as BaseGroup);
+      }
+    } catch { /* an unreadable row names no status */ }
+  }
+  return out;
+}
+
+/** Decorates tasks with their status group, effective urgency and when their wait began. */
 export function toViews(tasks: Task[], today: string = todayYmd()): TaskView[] {
   const statuses = statusesOf(tasks.map((t) => t.projectKey));
+  const waiting = tasks.filter((t) => statuses.get(t.statusId)?.baseGroup === "waiting");
+  const starts = waitingStarts(waiting, statuses);
   return tasks.map((t) => {
     const status = statuses.get(t.statusId);
     const eff = effectiveUrgency(t.urgency, t.dueDate, today);
-    return { ...t, baseGroup: status?.baseGroup ?? "not_started", closedAs: status?.closedAs ?? null, effectiveUrgency: eff, urgencyRaised: eff !== t.urgency };
+    return {
+      ...t, baseGroup: status?.baseGroup ?? "not_started", closedAs: status?.closedAs ?? null, effectiveUrgency: eff, urgencyRaised: eff !== t.urgency,
+      waitingStartedAt: starts.get(t.id) ?? null,
+    };
   });
 }
 

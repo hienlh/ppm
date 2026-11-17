@@ -5,13 +5,13 @@
  */
 import { basename } from "node:path";
 import { projectNameForPath } from "../../services/project-name-for-path.ts";
-import { statusRows } from "../../services/ppm-tasks/ppm-tasks-db.ts";
+import { memberRows, statusRows } from "../../services/ppm-tasks/ppm-tasks-db.ts";
 import { getTaskProject, listTaskProjects } from "../../services/ppm-tasks/ppm-tasks-projects.service.ts";
 import { listTasks } from "../../services/ppm-tasks/ppm-tasks.service.ts";
 import { managerSessionFor } from "../../services/ppm-tasks/ppm-tasks-write.ts";
 import { workingSessionFor } from "../../services/ppm-tasks/link-state/session-link-state-reader.ts";
 import { formatTaskRef } from "../../shared/ppm-tasks-refs.ts";
-import type { TaskStatusDef, TaskView } from "../../shared/ppm-tasks.ts";
+import { ME_MEMBER_ID, type TaskStatusDef, type TaskView } from "../../shared/ppm-tasks.ts";
 import type { TaskDto, TaskProjectSummary, TaskWorkingSession } from "../../shared/ppm-tasks-api.ts";
 
 /** The PPM name of a task project: the registered project at its folder, else the folder's name. */
@@ -27,21 +27,28 @@ function workingOf(task: TaskView): { workingSession: TaskWorkingSession; check:
   return { workingSession, check };
 }
 
-/** Decorates tasks for the wire. Status and project names are read once per project. */
+/** Decorates tasks for the wire. Status, member and project names are read once per project. */
 export function toTaskDtos(views: TaskView[]): TaskDto[] {
   const names = new Map<string, string>();
   const statuses = new Map<string, Map<string, TaskStatusDef>>();
+  const members = new Map<string, Map<string, string>>();
   return views.map((t) => {
     if (!names.has(t.projectKey)) {
       names.set(t.projectKey, projectNameOfKey(t.projectKey));
       statuses.set(t.projectKey, new Map(statusRows(t.projectKey).map((s) => [s.id, s])));
     }
     const project = names.get(t.projectKey)!;
+    let waitingOnName: string | null = null;
+    if (t.waitingOnMemberId && t.waitingOnMemberId !== ME_MEMBER_ID) {
+      if (!members.has(t.projectKey)) members.set(t.projectKey, new Map(memberRows(t.projectKey).map((m) => [m.id, m.name])));
+      waitingOnName = members.get(t.projectKey)!.get(t.waitingOnMemberId) ?? null;
+    }
     return {
       ...t,
       project,
       ref: formatTaskRef(t.number, project),
       statusName: statuses.get(t.projectKey)!.get(t.statusId)?.name ?? "",
+      waitingOnName,
       ...workingOf(t),
     };
   });

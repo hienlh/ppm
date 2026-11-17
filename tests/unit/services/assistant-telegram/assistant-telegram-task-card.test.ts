@@ -13,7 +13,7 @@ import { parseTelegramHtml } from "../../../helpers/fake-telegram-bot-api.ts";
 
 const facts = (over: Partial<TaskCardFacts> = {}): TaskCardFacts => ({
   ref: "nxsys/12", projectName: "nxsys", title: "PSR Ireland bỏ sót payslip", type: "task", statusName: "In progress", closed: false,
-  urgency: "now", urgencyRaised: false, importance: "must", dueDate: "2026-11-17", assignee: "Minh Anh", waitingOn: null, waitingSince: null,
+  urgency: "now", urgencyRaised: false, importance: "must", dueDate: "2026-11-17", assignee: "Minh Anh", waiting: null,
   nextStep: "fix period-13 filter, get #2231 green.", linkLines: ["NX-6318 In Progress", "PR #2231 open · CI failing"], ...over,
 });
 const CTX = { detail: "full" as const, today: "2026-11-16", now: Date.UTC(2026, 10, 16, 7) };

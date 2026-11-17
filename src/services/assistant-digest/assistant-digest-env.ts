@@ -17,6 +17,14 @@ import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import type { AssistantProvenance } from "../../shared/assistant-provenance.ts";
 import { createAssistantDigest, type DigestDeps } from "./assistant-digest.service.ts";
 import { digestStateRow } from "./digest-state.ts";
+import { digestWaiting } from "./digest-waiting-tasks.ts";
+import { listTasks } from "../ppm-tasks/ppm-tasks.service.ts";
+import { memberRows, statusRows } from "../ppm-tasks/ppm-tasks-db.ts";
+import { todayYmd } from "../ppm-tasks/ppm-tasks-today.ts";
+import { getTaskProject } from "../ppm-tasks/ppm-tasks-projects.service.ts";
+import { projectNameForPath } from "../project-name-for-path.ts";
+import { basename } from "node:path";
+import { formatTaskRef } from "../../shared/ppm-tasks-refs.ts";
 
 const log = createLogger("assistant-digest");
 
@@ -67,6 +75,17 @@ export const digestDeps: DigestDeps = {
   existingCard: (date) => findOpenCardsBy("digest", "date", date)[0]?.id ?? null,
   createCard: (card) => assistantCards.create(card),
   canonical: resolveMigratedSession,
+  waitingTasks: (projectKey) => {
+    const path = getTaskProject(projectKey)?.projectPath ?? projectKey;
+    const name = projectNameForPath(path) ?? basename(path);
+    const members = new Map(memberRows(projectKey).map((m) => [m.id, m.name]));
+    const statuses = new Map(statusRows(projectKey).map((s) => [s.id, s.name]));
+    const now = assistantClock.now();
+    const today = todayYmd(now);
+    return digestWaiting(listTasks({ projectKeys: [projectKey] }, today), {
+      ref: (t) => formatTaskRef(t.number, name), nameOf: (_t, id) => members.get(id) ?? null, statusName: (t) => statuses.get(t.statusId) ?? null, today, now,
+    });
+  },
 };
 
 /** The process-wide digest. */
