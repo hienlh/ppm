@@ -220,7 +220,8 @@ async function telegram(k) {
   const total = Number(/of (\d+)/.exec(card.text)[1]);
   const waits = [];
   for (let i = 0; i < total; i++) {
-    if (/Waiting/.test(card.text.split("\n").slice(3).join("\n"))) waits.push(card);
+    // The waiting line starts with ✋ or ⏳ (a Blocked status says "Blocked on …", not "Waiting").
+    if (/^(✋|⏳) /m.test(card.text)) waits.push(card);
     if (i === total - 1) break;
     const before = card.text;
     await tg.pressLabel(owner, card, "›");
