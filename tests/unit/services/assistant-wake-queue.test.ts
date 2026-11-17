@@ -202,4 +202,57 @@ describe("the wake queue", () => {
     await h.settle();
     expect(cards.log).toContain("ended");
   });
+
+  it("starts a turn past the hourly cap for news exempt from it, carrying only that news, and counts it", async () => {
+    const h = harness();
+    const cards = fakeSource("cards");
+    const restarts = fakeSource("restart");
+    h.queue.addSource(cards.source);
+    h.queue.addSource(restarts.source);
+    for (let i = 0; i < WAKE_TURNS_PER_HOUR; i++) {
+      cards.add();
+      h.queue.schedule(MAIN);
+      await h.settle();
+      h.endTurn();
+      await h.settle();
+    }
+    expect(h.sent).toHaveLength(WAKE_TURNS_PER_HOUR);
+    // The cap is full: a card waits, and restart news (not urgent: quiet hours are not the point) still goes, alone.
+    cards.add();
+    restarts.add();
+    restarts.items[0]!.capExempt = true;
+    h.queue.schedule(MAIN);
+    await h.settle();
+    expect(h.sent).toHaveLength(WAKE_TURNS_PER_HOUR + 1);
+    expect(h.sent.at(-1)!.opts.wakeNews?.map((n) => n.key)).toEqual(["restart-1"]);
+    expect(h.queue.carrying(MAIN)).toEqual(["restart"]);
+    h.endTurn();
+    await h.settle();
+    expect(restarts.log).toEqual(["delivered:restart-1"]);
+    expect(cards.items).toHaveLength(1);
+    // The exempt turn counted: the card still waits for the hour, and only then goes.
+    h.queue.tick();
+    await h.settle();
+    expect(h.sent).toHaveLength(WAKE_TURNS_PER_HOUR + 1);
+    h.advance(60 * 60_000 + 1);
+    h.queue.tick();
+    await h.settle();
+    expect(h.sent).toHaveLength(WAKE_TURNS_PER_HOUR + 2);
+    expect(h.sent.at(-1)!.opts.wakeNews?.map((n) => n.key)).toEqual(["cards-7"]);
+  });
+
+  it("still keeps exempt news out of quiet hours unless it is urgent", async () => {
+    const h = harness(true);
+    const restarts = fakeSource("restart");
+    h.queue.addSource(restarts.source);
+    restarts.add();
+    restarts.items[0]!.capExempt = true;
+    h.queue.schedule(MAIN);
+    await h.settle();
+    expect(h.sent).toHaveLength(0);
+    restarts.items[0]!.urgent = true;
+    h.queue.tick();
+    await h.settle();
+    expect(h.sent).toHaveLength(1);
+  });
 });
