@@ -516,13 +516,13 @@ fields a glance ends in changing — status, urgency, importance, assignee, wait
 wrapping row of chips, then the next step folded to two lines — the task's links with their live
 state, and **Open chat** (the working chat, with the task as a chip) plus the task's full page. A chip
 edits its field where it is: the five pickers open a small non-modal menu of the task page's own
-choices (`statusChoices`… in `task-property-fields.tsx`), Due opens the browser's date picker, and an
+choices (`statusChoices`… in `task-property-fields.tsx`), Due's menu offers Today, Tomorrow, In a week, the browser's date picker and No due date, and an
 empty field keeps a faint dashed chip to set it; a press on the folded next step unfolds it into its
 field (`peek/task-peek-fields.tsx`). Links are drawn by the Links card's own `TaskLinkPill` and open
 as on the task page (a chat inside PPM); past four the rest fold into "+N" (`peek/task-peek-links.tsx`,
 `peekLinks` in `src/web/lib/ppm-tasks/task-peek-compact.ts`). Every write goes through
-`useTaskWrite`; a pick saves at once, the due date and the next step when left, and also when the
-view closes or moves to another task with something unsaved in them (browsers send no blur to a
+`useTaskWrite`; a pick (a due date too) saves at once, the next step when left (its draft survives folding and a failed save), and also when the
+view closes or moves to another task with something unsaved in it (browsers send no blur to a
 removed field). On a phone a chip is drawn 32px with a 44px press area (its `::after` reaches 7px
 past the padding box, inside the 1px border) and the chip rows are 14px apart. On a desktop it is a popover portalled to the opener's document
 (`task-peek-popover.tsx`), placed by the pure `placeTaskPeek` (`src/web/lib/ppm-tasks/task-peek-placement.ts`):
