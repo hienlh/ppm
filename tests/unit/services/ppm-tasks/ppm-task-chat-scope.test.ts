@@ -73,6 +73,7 @@ const rev = (id: string) => getTask(id)!.revision;
 beforeEach(() => {
   f = freshProject();
   chatOf("other-1");
+  chatOf("child-1");
   managers = new Set();
   sent = [];
   setPpmTasksDeliverEnv({ chat: fakeChat, reserveWake: () => ({ ok: true, release: () => {} }) });
