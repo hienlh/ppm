@@ -153,4 +153,31 @@ describe("looksLikeSecret", () => {
     expect(looksLikeSecret("Server=db;Pwd=hunter2;")).toBe(true);
     expect(looksLikeSecret("What is the status of NX-1234?")).toBe(false);
   });
+
+  const title = "Reset password: BE builds the link, drop the redirect";
+
+  it("lets through words PPM itself wrote that only look like a field (a chat title), whole or cut short", () => {
+    const message = `PPM restarted. Please resume "${title}" (session 23e04eb9).`;
+    expect(looksLikeSecret(message)).toBe(true);
+    expect(looksLikeSecret(message, [title])).toBe(false);
+    expect(looksLikeSecret('Resume "Reset password: BE builds…" please', [title])).toBe(false);
+    expect(looksLikeSecret("Note: token=abc in the env", [title])).toBe(true);
+  });
+
+  it("still refuses a secret the sender added beside the quote", () => {
+    expect(looksLikeSecret(`Resume "${title}"; its password: hunter2`, [title])).toBe(true);
+    // A hidden control character must not split the quoted part from a real value behind it.
+    expect(looksLikeSecret(`Resume password: BE${String.fromCharCode(1)}hunter2Secret!`, [title])).toBe(true);
+    expect(looksLikeSecret(`Resume password: BE${String.fromCharCode(3)}hunter2Secret!`, [title])).toBe(true);
+    expect(looksLikeSecret(`Resume "${title}" with ghp_${"a".repeat(36)}`, [title])).toBe(true);
+  });
+
+  it("never lets a key known by its shape through, even inside the quoted title", () => {
+    const key = `sk-ant-${"x".repeat(30)}`;
+    const leaky = `Deploy with ${key}`;
+    expect(looksLikeSecret(`Resume "${leaky}"`, [leaky])).toBe(true);
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc";
+    expect(looksLikeSecret(`Resume "token: ${jwt}"`, [`token: ${jwt}`])).toBe(true);
+    expect(looksLikeSecret("Resume AKIAABCDEFGHIJKLMNOP", ["AKIAABCDEFGHIJKLMNOP"])).toBe(true);
+  });
 });

@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import {
   DUPLICATE_SEND_WINDOW_MS, UNATTENDED_SENDS_PER_DAY, UNATTENDED_SENDS_PER_HOUR,
 } from "../../shared/assistant-limits.ts";
-import { redactSecretsForTelegram } from "../telegram/telegram-html-format.ts";
+import { redactSecretsForTelegram, secretMatches } from "../telegram/telegram-html-format.ts";
 
 const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
@@ -50,9 +50,26 @@ const BUDGET_TEXT: Record<BudgetHit, string> = {
   pair: "the limit of messages to one manager chat",
 };
 
-/** Whether `text` holds something PPM would hide from Telegram as a secret. */
-export function looksLikeSecret(text: string): boolean {
-  return redactSecretsForTelegram(text).hidden > 0;
+/**
+ * Whether `text` holds something PPM would hide from Telegram as a secret. `ppmWrote` is text PPM
+ * itself put in front of the sender (the chat titles and task descriptions of its restart news): a
+ * match that a rule found only by a name in front of it (`password: BE`) and that sits word for word
+ * in that text is PPM quoting itself, not a secret the sender came up with. A match a rule knows by
+ * its shape (`sk-…`, `ghp_…`, a JWT, a PEM key) counts wherever it sits, quoted or not.
+ */
+export function looksLikeSecret(raw: string, ppmWrote: readonly string[] = []): boolean {
+  // The redactor drops these before matching, and a value stops at them: matching the raw text
+  // would let `password: BE` + U+0001 + `hunter2` pass as the quoted `password: BE`.
+  const text = raw.replace(/[\u0001-\u0003]/g, "");
+  if (redactSecretsForTelegram(text).hidden === 0) return false;
+  const quoted = ppmWrote.filter((q) => q.length > 0);
+  if (quoted.length === 0) return true;
+  const matches = secretMatches(text);
+  if (matches.length === 0 || matches.some((m) => !m.named || !quoted.some((q) => q.includes(m.text)))) return true;
+  // Every match is PPM's own words: with them taken out, anything the rules still find is the sender's.
+  let rest = text;
+  for (const m of matches) rest = rest.split(m.text).join(" ");
+  return redactSecretsForTelegram(rest).hidden > 0;
 }
 
 const pairKey = (assistant: string, manager: string) => `${assistant} ${manager}`;

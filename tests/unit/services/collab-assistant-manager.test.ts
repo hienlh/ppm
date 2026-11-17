@@ -140,6 +140,24 @@ describe("the checks that replace the card", () => {
     expect(w.deliveries).toHaveLength(0);
   });
 
+  it("sends a restart message quoting a chat title PPM put in its news, though it reads like a password field", async () => {
+    const w = world({ unattended: true });
+    const title = "Reset password: BE builds the link";
+    const message = `PPM restarted. Please resume "${title}" (session ${OTHER}).`;
+    expect(textOf(await send(w, MANAGER, message))).toBe(SECRET_REFUSAL);
+    Object.assign(w.env, { restartNewsText: (assistant: string, project: string) => (assistant === ASSISTANT && project === "other" ? [title] : []) });
+    expect((await send(w, MANAGER, message)).isError).toBeUndefined();
+    expect(w.deliveries).toHaveLength(1);
+  });
+
+  it("still refuses a real key in a restart message, even one sitting in the quoted title", async () => {
+    const w = world({ unattended: true });
+    const title = `Deploy with sk-ant-${"k".repeat(30)}`;
+    Object.assign(w.env, { restartNewsText: () => [title] });
+    expect(textOf(await send(w, MANAGER, `Please resume "${title}".`))).toBe(SECRET_REFUSAL);
+    expect(w.deliveries).toHaveLength(0);
+  });
+
   it("drops the same body to the same manager within the hour", async () => {
     const w = world();
     await send(w, MANAGER, "Status?");

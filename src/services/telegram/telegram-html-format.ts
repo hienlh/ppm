@@ -10,7 +10,7 @@
  * `text (url)` so the person sees where it goes before tapping it.
  */
 import { escapeTelegramHtml } from "../notification-format.ts";
-import { redactLogText } from "../../shared/log-redact.ts";
+import { redactLogText, SECRET_RULES } from "../../shared/log-redact.ts";
 
 export const TELEGRAM_MESSAGE_MAX = 4096;
 
@@ -235,14 +235,17 @@ export function stripTelegramHtml(html: string): string {
  * whole PEM private key, AWS access key ids, Stripe and Slack tokens, Google API keys, and the
  * `Pwd=` of an ADO-style connection string. Each keeps its first group and hides the rest.
  */
-const TELEGRAM_SECRETS: readonly RegExp[] = [
+const TELEGRAM_SHAPED_SECRETS: readonly RegExp[] = [
   pemPrivateKey(),
   /()\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
   /()\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}/g,
   /()\bxox[abprs]-[A-Za-z0-9-]{10,}/g,
   /()\bAIza[0-9A-Za-z_-]{35}/g,
+];
+const TELEGRAM_NAMED_SECRETS: readonly RegExp[] = [
   /(\bpwd\s*=\s*)[^;\s"'\u0001]+/gi,
 ];
+const TELEGRAM_SECRETS: readonly RegExp[] = [...TELEGRAM_SHAPED_SECRETS, ...TELEGRAM_NAMED_SECRETS];
 
 /**
  * A PEM private key: its BEGIN line kept, everything that is key material hidden. Only key
@@ -286,6 +289,30 @@ export function redactSecretsForTelegram(text: string): { text: string; hidden: 
   let hidden = 0;
   out = out.replace(MARKED, (_m, inner: string) => { hidden++; return inner; });
   return { text: out.replace(HELD, (_m, n: string) => held[Number(n)] ?? ""), hidden };
+}
+
+/** One stretch of text a secret rule matched; `named` when the rule knew it only by a name in front of it. */
+export interface SecretMatch {
+  text: string;
+  named: boolean;
+}
+
+/**
+ * Every stretch of `text` that one of {@link redactSecretsForTelegram}'s rules matches, each rule
+ * run on its own over the whole text (so a match one rule's replacement would have hidden still
+ * shows). Only `pwd=` and the Logs window's named rules are `named`; every rule that knows a key by
+ * its shape (a PEM key, `AKIA…`, `sk-…`, a JWT, a bot token, a URL's password) is not.
+ */
+export function secretMatches(text: string): SecretMatch[] {
+  const out: SecretMatch[] = [];
+  const scan = (rules: readonly RegExp[], named: boolean) => {
+    for (const re of rules) for (const m of text.matchAll(re)) if (m[0]) out.push({ text: m[0], named });
+  };
+  scan(TELEGRAM_SHAPED_SECRETS, false);
+  scan(TELEGRAM_NAMED_SECRETS, true);
+  scan(SECRET_RULES.shaped, false);
+  scan(SECRET_RULES.named, true);
+  return out;
 }
 
 export function redactForTelegram(text: string): string {

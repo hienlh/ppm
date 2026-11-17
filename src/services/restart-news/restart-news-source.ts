@@ -161,6 +161,29 @@ export function restartChatsCarried(
   return [...new Set(ids)];
 }
 
+/**
+ * The text PPM wrote into the restart news that the Assistant session's running wake turn carries,
+ * for chats of `projectName`: titles, cut-off prompts, and background task descriptions and
+ * commands. A message from that turn to that project's manager quoting it is PPM quoting itself.
+ * Empty for any other project, and outside such a turn.
+ */
+export function restartTextCarried(
+  queue: Pick<AssistantWakeQueue, "carriedItems">, assistantSessionId: string, projectName: string,
+): string[] {
+  const out: string[] = [];
+  for (const item of queue.carriedItems(assistantSessionId, RESTART_SOURCE_NAME)) {
+    const restart = item.news?.restart;
+    if (!restart) continue;
+    for (const c of restart.chats) if (c.projectName === projectName) out.push(c.title, ...(c.prompt ? [c.prompt] : []));
+    for (const c of restart.backgroundChats ?? []) {
+      if (c.projectName !== projectName) continue;
+      out.push(c.title);
+      for (const t of c.tasks) out.push(...(t.description ? [t.description] : []), ...(t.command ? [t.command] : []));
+    }
+  }
+  return [...new Set(out)];
+}
+
 /** What is pending, for tests and the log. */
 export function pendingRestartNews(store: RestartNewsStore): RestartNewsPayload | null {
   const news = read(store);
