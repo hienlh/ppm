@@ -1,7 +1,7 @@
 import { createLogger } from "../logger.ts";
 import { RESTART_NEWS_MAX_RESTARTS, RESTART_NEWS_URGENT_WHEN } from "../../shared/assistant-limits.ts";
 import {
-  parseRestartNews, type BackgroundWorkChat, type InterruptedChat, type RestartEntry, type RestartNewsPayload,
+  parseRestartNews, type BackgroundTask, type BackgroundWorkChat, type InterruptedChat, type RestartEntry, type RestartNewsPayload,
 } from "../../shared/restart-news.ts";
 import type { AssistantWakeQueue, WakeItem, WakeSource } from "../assistant-wake/assistant-wake-queue.ts";
 import type { InterruptedScan } from "./interrupted-chats.ts";
@@ -92,9 +92,32 @@ function mergeChats<T extends { sessionId: string; lastAt: number }>(older: read
   return [...byId.values()].sort((a, b) => b.lastAt - a.lastAt);
 }
 
+/** Background tasks a chat shows at most; the rest are counted (the payload accepts twice as many). */
+const MAX_TASKS_KEPT = 5;
+
+/**
+ * Like {@link mergeChats}, but a chat whose background work two restarts stopped keeps the tasks of
+ * both, each once (the newer restart's word on a task wins), so none of the stopped work goes untold.
+ */
+function mergeBackgroundChats(older: readonly BackgroundWorkChat[], newer: readonly BackgroundWorkChat[]): BackgroundWorkChat[] {
+  const olderById = new Map(older.map((c) => [c.sessionId, c]));
+  const merged = newer.map((c) => {
+    const before = olderById.get(c.sessionId);
+    if (!before) return c;
+    const byTask = new Map(before.tasks.map((t) => [t.taskId, t]));
+    for (const t of c.tasks) byTask.set(t.taskId, t);
+    const tasks = [...byTask.values()].sort((a, b) => b.startedAt - a.startedAt);
+    const more = (before.moreTasks ?? 0) + (c.moreTasks ?? 0) + Math.max(0, tasks.length - MAX_TASKS_KEPT);
+    const { moreTasks: _drop, ...rest } = c;
+    return { ...rest, tasks: tasks.slice(0, MAX_TASKS_KEPT), ...(more > 0 ? { moreTasks: more } : {}) };
+  });
+  return mergeChats(older, merged);
+}
+
 /**
  * Adds one server start to the pending news. A start already recorded (the hub started twice in
- * one process) changes nothing. A chat cut off again replaces its older entry.
+ * one process) changes nothing. A chat cut off again replaces its older entry; a chat whose
+ * background work was stopped again keeps the stopped tasks of both.
  */
 export function addRestartNews(store: RestartNewsStore, restart: RestartEntry, scan: InterruptedScan, background: BackgroundScan = { chats: [], more: 0 }): void {
   const news = read(store);
@@ -108,7 +131,7 @@ export function addRestartNews(store: RestartNewsStore, restart: RestartEntry, s
   // A chat in both lists (found by two restarts, say cut off at one and between turns at the next)
   // is told once, as the later restart found it; one restart never puts a chat in both.
   const cutAll = mergeChats(news.chats, scan.chats);
-  const bgAll = mergeChats(news.background, background.chats);
+  const bgAll = mergeBackgroundChats(news.background, background.chats);
   const cutAt = new Map(cutAll.map((c) => [c.sessionId, c.restartAt]));
   const bgAt = new Map(bgAll.map((c) => [c.sessionId, c.restartAt]));
   const cut = cutAll.filter((c) => !((bgAt.get(c.sessionId) ?? -Infinity) > c.restartAt));
@@ -136,6 +159,30 @@ export function restartChatsCarried(
     ...items.flatMap((i) => i.news?.restart?.backgroundChats ?? []),
   ].filter((c) => c.projectName === projectName).map((c) => c.sessionId);
   return [...new Set(ids)];
+}
+
+/**
+ * The text PPM wrote into the restart news that the Assistant session's running wake turn carries,
+ * for chats of `projectName`: titles, cut-off prompts, and background task descriptions and
+ * commands. A message from that turn to that project's manager quoting it is PPM quoting itself.
+ * Empty for any other project, and outside such a turn.
+ */
+export function restartTextCarried(
+  queue: Pick<AssistantWakeQueue, "carriedItems">, assistantSessionId: string, projectName: string,
+): string[] {
+  const out: string[] = [];
+  for (const item of queue.carriedItems(assistantSessionId, RESTART_SOURCE_NAME)) {
+    const restart = item.news?.restart;
+    if (!restart) continue;
+    const taskText = (tasks: readonly BackgroundTask[]) => tasks.flatMap((t) => [t.description, t.command].filter((x): x is string => !!x));
+    for (const c of restart.chats) {
+      if (c.projectName === projectName) out.push(c.title, ...(c.prompt ? [c.prompt] : []), ...taskText(c.killedTasks ?? []));
+    }
+    for (const c of restart.backgroundChats ?? []) {
+      if (c.projectName === projectName) out.push(c.title, ...taskText(c.tasks));
+    }
+  }
+  return [...new Set(out)];
 }
 
 /** What is pending, for tests and the log. */
@@ -277,8 +324,10 @@ export function createRestartNewsSource(deps: RestartSourceDeps): WakeSource {
       }
       const restart: RestartNewsPayload = { ...payloadOf(news), ...(managers.length ? { managers } : {}) };
       const key = `restart:${at}`;
+      // Never held by the hourly cap: every restart not yet told is merged into this one item, so a
+      // run of restarts still makes one turn, and waiting would leave cut-off chats stopped longer.
       return [{
-        key, at, urgent: restartNewsUrgent(news.chats, news.moreChats, news.background.length + news.moreBackground),
+        key, at, urgent: restartNewsUrgent(news.chats, news.moreChats, news.background.length + news.moreBackground), capExempt: true,
         news: { kind: "restart", key, project: "", sessionId: "", at, restart },
       }];
     },

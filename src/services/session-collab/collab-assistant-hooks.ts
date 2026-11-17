@@ -16,6 +16,13 @@ export interface AssistantCollabHooks {
    * `recipient`'s project (which decides whether PPM's restart news lets it ask for a resume).
    */
   turnProvenance?(sessionId: string, recipient?: { projectName: string }): AssistantProvenance;
+  /**
+   * Text PPM itself put into the restart news the Assistant session's running wake turn carries,
+   * for chats of `projectName` (titles, prompts, background task descriptions and commands): what a
+   * message from that turn to that project's manager may quote without reading as a secret. Empty
+   * outside such a turn.
+   */
+  restartNewsText?(assistantSessionId: string, projectName: string): string[];
   /** Another AI's words reached the Assistant session's running turn (a status, a reply). */
   markUntrusted?(sessionId: string, reason: "read"): void;
   /** Budgets, duplicates and quiet hours for the Assistant's messages to manager chats. */

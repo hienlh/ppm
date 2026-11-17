@@ -9,7 +9,8 @@ import { assistantSendCheck } from "./collab-send-assistant.ts";
  * the Assistant sends without a card. What replaces the card, in order:
  *
  * - a text that looks like it holds a secret shows the ordinary message card in a turn the user
- *   started, and is refused in one PPM started;
+ *   started, and is refused in one PPM started (words quoted from PPM's own restart news for that
+ *   project do not count, unless a rule knows them as a key by their shape);
  * - the same text to the same manager within the hour is dropped;
  * - in a turn PPM started, quiet hours, the hourly and daily budgets and the pair limit apply, and
  *   a budget running out pauses the Assistant until the user writes;
@@ -55,7 +56,9 @@ export async function managerSendCheck(
   // Without the guards nothing could hold an unattended message back: none goes.
   if (caller.unattended && !guards) return refuse("no_guards", UNATTENDED_MANAGERS_ONLY);
 
-  const secret = looksLikeSecret(message);
+  // Chat titles PPM's own restart news put in front of the Assistant may quote words that only look
+  // like a secret ("Reset password: BE …"); a key known by its shape still counts.
+  const secret = looksLikeSecret(message, env.restartNewsText?.(caller.sessionId, target.projectName) ?? []);
   if (secret && caller.unattended) return refuse("secret", SECRET_REFUSAL);
   // Claimed before any card, so text the user allowed is never then dropped as already sent.
   const releaseBody = guards ? guards.claimBody(caller.sessionId, target.sessionId, message) : () => {};

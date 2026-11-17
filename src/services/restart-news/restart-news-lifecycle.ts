@@ -14,7 +14,7 @@ import { listOpenCardRows } from "../assistant-cards/assistant-cards-db.ts";
 import { parentOf } from "../session-collab/session-links.service.ts";
 import { resolveTraceId } from "../session-trace/session-trace-store.ts";
 import { findInterruptedChats, tracesWrittenSince, type InterruptedScan } from "./interrupted-chats.ts";
-import { findBackgroundWorkChats, type BackgroundScan, type BackgroundWorkDeps } from "./background-work-chats.ts";
+import { findBackgroundWorkChats, withKilledTasks, type BackgroundScan, type BackgroundWorkDeps } from "./background-work-chats.ts";
 import { taskOutputProbe } from "./task-output-file.ts";
 import type { ServerStart } from "./server-run-log.ts";
 import { currentServerStart } from "./restart-news-run.ts";
@@ -90,11 +90,15 @@ function scanLive(start: ServerStart): RestartScans {
   let background: BackgroundScan = { chats: [], more: 0 };
   try {
     // Every cut-off chat, the unlisted ones too: a chat past the list's cap was still mid-turn.
-    background = findBackgroundWorkChats(deps, window, new Set(cutOff.allIds ?? cutOff.chats.map((c) => c.sessionId)));
+    // A run that wrote its stop says when it ended; otherwise the scan takes its last trace row.
+    const runEnd = start.previous?.stoppedAt;
+    background = findBackgroundWorkChats(
+      deps, { ...window, ...(runEnd !== undefined ? { runEnd } : {}) }, new Set(cutOff.allIds ?? cutOff.chats.map((c) => c.sessionId)),
+    );
   } catch (e) {
     log.warn(`could not read which chats' background work the restart stopped: ${(e as Error).message}`);
   }
-  return { cutOff, background };
+  return { cutOff: withKilledTasks(cutOff, background), background };
 }
 
 export interface RestartNewsStartDeps {

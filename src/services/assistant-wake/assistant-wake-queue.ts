@@ -20,6 +20,11 @@ import { quietNow } from "./wake-quiet-hours.ts";
  * shows a card, never during quiet hours unless something urgent waits, and after a failed turn only
  * once the retry delay is over. News held back goes into the next turn together.
  *
+ * News marked `capExempt` (restart news) is not held by the hourly cap: once the cap is reached, a
+ * turn may still start carrying only such news, and it counts toward the cap like any other, so the
+ * rest still waits its turn. What keeps such news from flooding the session is its source merging
+ * everything not yet told into one item.
+ *
  * A turn counts its news delivered only when it ends with an answer. A turn that fails is reported
  * to each source, which counts attempts and gives up its own way; one the user stopped closes the
  * news without a retry.
@@ -31,6 +36,8 @@ export interface WakeItem {
   at: number;
   /** Starts a turn during quiet hours. */
   urgent?: boolean;
+  /** Starts a turn past the hourly cap; such a turn carries only news marked so. */
+  capExempt?: boolean;
   watch?: WatchEventNotice;
   news?: WakeNewsNotice;
 }
@@ -196,13 +203,17 @@ export class AssistantWakeQueue {
   async pump(sessionId: string): Promise<void> {
     const id = resolveMigratedSession(sessionId);
     if (!this.running || this.turns.has(id)) return;
-    const batch = [...this.sources.values()].map((source) => ({ source, items: source.pending(id) })).filter((b) => b.items.length > 0);
+    let batch = [...this.sources.values()].map((source) => ({ source, items: source.pending(id) })).filter((b) => b.items.length > 0);
     if (batch.length === 0) return;
     const now = this.now();
     if ((this.retryAt.get(id) ?? 0) > now) return;
     const recent = (this.times().get(id) ?? []).filter((t) => t > now - HOUR_MS);
     this.times().set(id, recent);
-    if (recent.length >= WAKE_TURNS_PER_HOUR) return;
+    if (recent.length >= WAKE_TURNS_PER_HOUR) {
+      // Past the cap only news exempt from it goes, alone: the rest keeps waiting for the hour to pass.
+      batch = batch.map((b) => ({ source: b.source, items: b.items.filter((i) => i.capExempt) })).filter((b) => b.items.length > 0);
+      if (batch.length === 0) return;
+    }
     const items = batch.flatMap((b) => b.items);
     if (!items.some((i) => i.urgent) && this.safeQuiet()) return;
     const control = this.control();

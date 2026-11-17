@@ -1267,7 +1267,9 @@ the morning digest; for the main session), late manager replies (`manager-wake-s
 restart news (below). It starts
 at most `WAKE_TURNS_PER_HOUR` per Assistant session, never while that session runs a turn or shows
 a card, and during quiet hours only when something urgent waits; news held back goes into the next
-turn together. The turn opens with a fixed sentence and carries the news in the shared-context
+turn together. An item marked `capExempt` (only restart news is) is not held by the hourly cap: once
+the cap is reached a turn may still start, carrying only such items, and it counts toward the cap,
+so the other news still waits for the hour to pass. Quiet hours still hold it unless it is urgent. The turn opens with a fixed sentence and carries the news in the shared-context
 entry ("Manager news", `wake-news-text.ts`): quoted data, capped at `NEWS_QUOTE_MAX` per field. A
 card that only waits for an answer wakes nothing.
 
@@ -1330,7 +1332,19 @@ chat resume them. Code in `src/services/restart-news/`.
   again, the supervisor deletes its note, so a later real crash of that server is not excused.
 - **Cut-off chats** come from the session trace (`interrupted-chats.ts`): among rows written during
   the previous run (at most 24 h back), a chat whose last top-level turn has no `done`,
-  `run_failed`, `turn_aborted`, `run_closed` or final `error`. Left out: chats the new run already
+  `run_failed`, `turn_aborted`, `run_closed` or final `error`. That includes a turn no message
+  opened: the Claude CLI carries on by itself when a background task it ran ends, so turn work
+  (`tool_use`, `text`, `thinking`) written after the last turn's end is a turn cut off too. Rows
+  with no `turn_id` are a turn nobody opened, listed with `continued` and no prompt; rows with one
+  are a follow-up queued while the previous turn ran, whose message was written before that turn's
+  end, listed with that message as its prompt. An approval request is not turn work here, since a
+  background agent asks for one between turns. A cut-off chat whose background work the shutdown
+  killed (the window below) carries it as `killedTasks`, and the news names it in one line ("Its
+  background work … was killed at shutdown"), so the Assistant tells the chat when asking it to carry
+  on; the background scan finds these for chats it skips (`killedInCutOff`, attached by
+  `withKilledTasks`). Before this, a
+  reboot that killed a chat's shell and then PPM, seconds apart, read as "no chat was cut off".
+  Left out: chats the new run already
   wrote to, the Assistant's own and design sessions, API proxy streams, a turn started by the
   `ppm chat` CLI (its process outlives the server and usually still drives the session) or by an
   extension (its AI budget is the extension's to spend) — browser, Telegram, schedule, scheduler,
@@ -1346,8 +1360,14 @@ chat resume them. Code in `src/services/restart-news/`.
   `SendMessage` running in its CLI. PPM tracks that only in memory (`hasBackgroundWork`), and on
   Windows nothing runs on the way down, so it is read back from the trace: a `task_started` in the
   previous run with no terminal `task_updated`/`task_notification` and no `run_closed`, `run_failed`
-  or `turn_aborted` after it (each closes the CLI). Same filters and cap as the cut-off list, and a
-  chat already listed there is not listed again (across two restarts, the later one's entry wins).
+  or `turn_aborted` after it (each closes the CLI). A task that ended `failed` or `killed` in the
+  last minute of the previous run (`SHUTDOWN_KILL_WINDOW_MS`) counts as still running when no
+  `done` came after it: a shutting-down machine kills the shells before PPM, and the CLI reports
+  them failed before the trace stops. The run's end is its recorded `stoppedAt`, or for a run that
+  wrote none its last trace row other than a `ppm chat` process's (another instance writing to the
+  same trace file can still move it later, which only misses kills). Same filters and cap as the cut-off list, and a
+  chat already listed there is not listed again (across two restarts, the later one's entry wins;
+  a chat whose background work two restarts stopped keeps the tasks of both, each once).
   Each chat carries up to 5 tasks with the tool, what it was for — or, only when nothing says, its
   command's first line with credentials taken out (`background-command-text.ts`: `-p…`, `user:pass`,
   `--password`, `*_TOKEN=`, `Authorization:` on top of the log redaction) — and when it started,
@@ -1358,9 +1378,13 @@ chat resume them. Code in `src/services/restart-news/`.
 - **Delivery.** `startRestartNews()` runs in the hub startup before the cards start the wake queue
   and adds this start to the `restart` wake source (`restart-news-source.ts`, config row
   `assistant_restart_news`, so a crash before delivery keeps it). The first run a database ever
-  records (a new install) has no previous run and queues nothing. One item per start; restarts before
-  delivery merge into it; a delivered or stopped turn clears only what it carried; three failed turns
-  drop it. Each listed chat is checked again when the news goes out (it can wait hours: a busy
+  records (a new install) has no previous run and queues nothing. Everything not yet told is one
+  item: a restart before delivery (waiting in the queue, or carried by a turn that never ended with
+  an answer) merges its restarts, cut-off chats and stopped background work into it, each chat once;
+  a delivered or stopped turn clears only what it carried; three failed turns drop it. The item is
+  never held by the wake queue's hourly cap (`capExempt`): the 15/11 16:47 restart waited 8 minutes
+  behind it while two chats stayed cut off. The merge is what keeps a restart loop to one turn at a
+  time, and the turn still counts toward the cap for every other kind of news. Each listed chat is checked again when the news goes out (it can wait hours: a busy
   Assistant, the hourly cap, no main session yet): one deleted since, or with a trace row after the
   restart that found it, is dropped, and urgency is worked out from what is left. A restart pending
   for more than 24 h is dropped with a log line (`RESTART_NEWS_MAX_AGE_MS`). It is urgent — passes quiet hours — only when a chat was cut off
@@ -1385,6 +1409,18 @@ chat resume them. Code in `src/services/restart-news/`.
   (`manager-context-entry.ts`), with the same three rules for background work. Messages to those same managers pass quiet hours in the urgent turn
   (`assistantQuietNow` in `assistant-send-guards-live.ts`); every other message still waits, and the
   hourly and daily budgets and the pair limit still apply.
+- **Quoting a title is not a secret.** A message to a manager that looks like it holds a secret is
+  refused in a turn PPM started (`looksLikeSecret` in `assistant-send-guards.ts`). Chat titles go
+  into the news as written, so a title like "Reset password: BE …" matched the named-field rule
+  (`password: …`) and the Assistant's messages quoting it were refused twice on 16/11. The check now
+  leaves out a match that sits word for word in text PPM itself put into the restart news that wake
+  turn carries for that same project (titles, prompts, task descriptions and commands:
+  `restartTextCarried`, wired as `restartNewsText` in `collab-env.ts`; control characters are taken
+  out of the message first, as the redactor does), and only a match of a rule
+  that knows a secret by the name in front of it (`SECRET_RULES.named` in `log-redact.ts`, and
+  `pwd=`). A key known by its shape (`sk-`, `ghp_`, a JWT, a PEM key, `AKIA…`, a bot token, a URL
+  password) refuses wherever it sits, the quoted title included. The rules themselves are unchanged,
+  because the same rules hide secrets in logs and reports.
 - **e2e.** `tests/e2e/assistant-restart-news-e2e.mjs` restarts the Assistant fixture on one PPM
   folder (SIGKILL for a crash, SIGTERM for a clean stop, `PPM_START_REASON` as the supervisor sets
   it) and checks crash, upgrade, watchdog and manual news, the switch, quiet hours and the merge,

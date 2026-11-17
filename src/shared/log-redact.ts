@@ -28,14 +28,23 @@ const TUNNEL_HOST = /\b[a-z0-9]+(?:-[a-z0-9]+)+\.trycloudflare\.com\b/gi;
  * Each keeps its first group (the name, the user, the bot id) and replaces the rest. A value
  * never starts at \u0001, so a marked replacement is not taken twice, and the `[REDACTED]` the
  * write-time redactor leaves stays one `[REDACTED]`.
+ *
+ * These rules know a secret by its own shape (a key's prefix, a bot token, a URL's password): what
+ * they find is a secret wherever it sits.
  */
-const SECRETS: readonly RegExp[] = [
+const SHAPED_SECRETS: readonly RegExp[] = [
   // By their own prefix: Anthropic and OpenAI `sk-…`, GitHub `ghp_…`/`github_pat_…`, a JWT.
   /()\b(?:sk-[\w-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{30,}|eyJ[\w-]{8,}\.eyJ[\w-]{8,}\.[\w-]*)/g,
   // A Telegram bot token, in the path of every Bot API URL: keep the bot id.
   /(\d{6,}:)[\w-]{30,}/g,
   // URL userinfo `postgres://user:pass@host`: keep the user.
   /(:\/\/[^/\s:@]*:)[^@\s/\u0001]+(?=@)/g,
+];
+/**
+ * Rules that know a secret only by the name in front of it (`password: …`, `?token=…`, `Bearer …`):
+ * ordinary words can match them too, as in a chat titled "Reset password: BE builds the link".
+ */
+const NAMED_SECRETS: readonly RegExp[] = [
   // A credential in a query or a fragment: `?token=`, `&code=`, `#access_token=`.
   /([?&#][\w.-]*(?:token|key|secret|passw|auth|code|state|ticket|sig|credential)[\w.-]*=)[^&#\s"'<>[\]\u0001]+/gi,
   // A header or a field named for what it holds: `Authorization: Basic …` (scheme and all),
@@ -45,6 +54,12 @@ const SECRETS: readonly RegExp[] = [
   /(\bbearer\s+)[^\s"',;[\]\u0001]+/gi,
   /((?:token|secret|passw(?:or)?d|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*["']?)[^\s"'&,;)}[\]\u0001]+/gi,
 ];
+const SECRETS: readonly RegExp[] = [...SHAPED_SECRETS, ...NAMED_SECRETS];
+
+/** The secret rules by kind, for a check that tells a key from a word that only looks like one. */
+export const SECRET_RULES: { readonly shaped: readonly RegExp[]; readonly named: readonly RegExp[] } = {
+  shaped: SHAPED_SECRETS, named: NAMED_SECRETS,
+};
 // `/home/dev`, `/Users/dev`, `C:\Users\dev` — the last also as `JSON.stringify` writes it
 // (`C:\\Users\\dev`) and with forward slashes.
 const HOME = /(?:\/home\/|\/Users\/)[^/\s"'`]+|[A-Za-z]:(?:\\{1,2}|\/)Users(?:\\{1,2}|\/)[^\\/\s"'`]+/gi;
