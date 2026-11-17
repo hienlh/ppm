@@ -14,7 +14,13 @@ import { useLayoutEffect, useState, type RefObject } from "react";
 import { activePipHost, type PipHandle } from "./pip/pip-host";
 import { publishWindowSlot, useWindowPip, windowPip } from "./window-pip-registry";
 
-const BODY_CLASS = "relative flex-1 min-h-0 overflow-hidden rounded-b-[8px] bg-panel";
+/**
+ * `isolate` keeps every z-index the content uses inside the body. Without it a layer in the
+ * content (Settings stacks its panes at `z-10`) competes with the frame's resize strips
+ * (`z-index: 1`) and covers their inner half, so a press or double-click there landed on the
+ * content instead of resizing the window.
+ */
+const BODY_CLASS ="relative isolate flex-1 min-h-0 overflow-hidden rounded-b-[8px] bg-panel";
 
 export interface WindowBodyElement {
   /** Portal target for the window's content. */
