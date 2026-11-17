@@ -22,7 +22,8 @@ import { useWindowBodyElement } from "./use-window-body-element";
 import { WindowPipPlaceholder } from "./window-pip-placeholder";
 import { isPipOnlyWindow } from "./window-pip-registry";
 import { WindowSkinChrome } from "./window-skin-chrome";
-import { displayedRect, windowZIndex, type Bounds, type Rect } from "./window-geometry";
+import { displayedRect, windowZIndex, type Bounds, type Rect, type ResizeHandle } from "./window-geometry";
+import { expandToEdge } from "./window-edge-expand";
 import { useWindowStore, type WindowRuntimeState } from "./window-store";
 import { useWindowDrag } from "./use-window-drag";
 import { useWindowKeyboard } from "./use-window-keyboard";
@@ -134,6 +135,10 @@ export function FloatingWindow({
     onSnap: () => useWindowStore.getState().setState(win.id, "snapped"),
   });
   const bindResize = useWindowResize({ ...shared, onChange: commitResize, disabled: !floating });
+  // Stretched rects are committed like the end of a resize drag: the store clamps and persists.
+  const expandEdge = useCallback((handle: ResizeHandle, bothSides: boolean) => {
+    commitResize(expandToEdge(rectRef.current, handle, boundsRef.current, bothSides), true);
+  }, [commitResize]);
 
   const close = useCallback(() => closeWindow(win.id), [win.id]);
   const toggleMaximize = useCallback(() => {
@@ -212,7 +217,10 @@ export function FloatingWindow({
       {pip && !hiddenHost && <WindowPipPlaceholder pip={pip} minimized={minimized} />}
 
       {floating && (
-        <WindowResizeHandles bind={(handle) => bindResize(handle) as Record<string, unknown>} />
+        <WindowResizeHandles
+          bind={(handle) => bindResize(handle) as Record<string, unknown>}
+          onExpand={expandEdge}
+        />
       )}
 
       {/* Where the body is appended: last among the frame's React children, so anything React

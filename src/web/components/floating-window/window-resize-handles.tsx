@@ -5,6 +5,9 @@
  * A window at this size can be reached with a finger — a tablet past the `md` breakpoint gets
  * the desktop layer — and a 6 px strip is far below any touch target, so the grab areas grow
  * on coarse pointers. They are transparent, so nothing about the window's look changes.
+ *
+ * Double-clicking a strip stretches the window to the layer's edge on that side, as macOS
+ * does (see `window-edge-expand.ts`).
  */
 
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -61,7 +64,14 @@ function styleFor(handle: ResizeHandle, sizes: HandleSizes): React.CSSProperties
   return s;
 }
 
-export function WindowResizeHandles({ bind }: { bind: HandleBinder }) {
+export function WindowResizeHandles({ bind, onExpand }: {
+  bind: HandleBinder;
+  /**
+   * Double-click on a strip: stretch that edge (or both edges of a corner) to the layer's
+   * edge. `bothSides` is true while Alt/Option is held, which stretches the opposite edge too.
+   */
+  onExpand?: (handle: ResizeHandle, bothSides: boolean) => void;
+}) {
   const coarsePointer = useMediaQuery("(pointer: coarse)");
   const sizes = coarsePointer ? TOUCH_SIZES : MOUSE_SIZES;
   return (
@@ -70,6 +80,13 @@ export function WindowResizeHandles({ bind }: { bind: HandleBinder }) {
         <div
           key={handle}
           {...bind(handle)}
+          // A double-click is two taps; the drag recogniser ends each one without moving the
+          // window, so the browser's own dblclick is what reports it.
+          onDoubleClick={onExpand ? (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onExpand(handle, e.altKey);
+          } : undefined}
           data-resize-handle={handle}
           aria-hidden
           className={CURSORS[handle]}
