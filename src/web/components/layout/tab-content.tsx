@@ -139,6 +139,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.LogsTab,
     })),
   ),
+  schedules: lazy(() =>
+    import("@/components/schedules/schedules-tab").then((m) => ({
+      default: m.SchedulesTab,
+    })),
+  ),
   assistant: lazy(() =>
     import("@/components/assistant/assistant-tab").then((m) => ({
       default: m.AssistantTab,

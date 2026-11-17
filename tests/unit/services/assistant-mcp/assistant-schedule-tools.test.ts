@@ -36,8 +36,9 @@ const sched = (over: Partial<Schedule> = {}): Schedule => ({
   id: 1, name: "Nightly", cron_expr: "0 7 * * *", provider_id: "claude", project_path: WEB, prompt: PROMPT,
   permission_mode: "bypassPermissions", max_turns: null, timeout_ms: 1_800_000, enabled: 1, session_id: "sess-1",
   last_run_at: null, next_fire_at: "2026-10-12T00:00:00.000Z", created_at: "2026-10-11 10:00:00", updated_at: "2026-10-11 10:00:00",
+  kind: "prompt", mode: "tick", timezone: null, recurring: 1, target_session_id: null, task_id: null,
   ...over,
-});
+} as Schedule);
 const run = (over: Partial<ScheduleRun> = {}): ScheduleRun => ({
   id: 1, schedule_id: 1, session_id: "sess-1", rotated_to_session_id: null, status: "done", output_truncated: "ok",
   context_window_pct: null, cost_usd: 0.01, error: null, started_at: "2026-10-11 10:00:00", ended_at: "2026-10-11 10:01:00", ...over,
@@ -57,7 +58,8 @@ function fakeRoutes(initial: Schedule[], runs: Record<number, ScheduleRun[]> = {
     const id = m[1] ? Number(m[1]) : null;
     const s = id === null ? null : store.get(id);
     if (id !== null && !s) return missing;
-    if (method === "GET" && id === null) return ok([...store.values()]);
+    // The real route answers overviews, each with its newest run.
+    if (method === "GET" && id === null) return ok([...store.values()].map((x) => ({ ...x, last_run: (runs[x.id] ?? [])[0] ?? null })));
     if (method === "GET" && m[2] === "runs") return ok((runs[id!] ?? []).slice(0, Number(url.searchParams.get("limit") ?? 20)));
     if (method === "GET") return ok(s);
     if (method === "POST" && id === null) {
@@ -101,12 +103,29 @@ describe("reading schedules", () => {
     expect(out.schedules[0]).toMatchObject({ cron: "0 7 * * *", enabled: true, lastRun: { status: "running", endedAt: null }, promptChars: PROMPT.length });
     expect(out.schedules[1].prompt.startsWith("p".repeat(200))).toBe(true);
     expect(out.schedules[1].promptChars).toBe(500);
-    expect(out.timeZone).toBe("Asia/Saigon");
+    expect(out.machineTimeZone).toBe("Asia/Saigon");
+    expect(out.schedules[0]).toMatchObject({ kind: "prompt", timeZone: "Asia/Saigon", timeZoneIsMachineLocal: true });
+    expect(out.note).not.toContain("server's time zone");
     expect(routes.writes()).toEqual([]);
+    // One request for the list: the runs come with it.
+    expect(routes.calls.filter((c) => c.path.includes("/runs"))).toEqual([]);
 
     const onlyWeb = parse(await schedulesList(ctxOf(routes.callRoute, neverAsk), { project: "web" }, deps));
     expect(onlyWeb.schedules.map((s: { id: number }) => s.id)).toEqual([1]);
     expect(isError(await schedulesList(ctxOf(routes.callRoute, neverAsk), { project: "nope" }, deps))).toBe(true);
+  });
+
+  it("names a chat reminder's own zone, not the machine's: its UTC next fire reads right only against it", async () => {
+    const reminder = sched({
+      id: 3, kind: "session", cron_expr: "55 16 17 11 *", timezone: "Europe/London", recurring: 0,
+      target_session_id: "11111111-1111-4111-8111-111111111111", next_fire_at: "2026-11-17T16:55:00.000Z",
+    });
+    const routes = fakeRoutes([reminder]);
+    const out = parse(await schedulesList(ctxOf(routes.callRoute, neverAsk), {}, deps));
+    expect(out.schedules[0]).toMatchObject({ kind: "session", timeZone: "Europe/London", recurring: false, nextFireAt: "2026-11-17T16:55:00.000Z" });
+    expect(out.schedules[0].timeZoneIsMachineLocal).toBeUndefined();
+    const one = parse(await scheduleGet(ctxOf(routes.callRoute, neverAsk), { id: 3, runs: 0 }, deps));
+    expect(one.schedule).toMatchObject({ timeZone: "Europe/London", recurring: false, targetSessionId: reminder.target_session_id });
   });
 
   it("reads one schedule in full with its runs as data, without asking", async () => {

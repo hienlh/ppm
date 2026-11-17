@@ -134,6 +134,7 @@ const EXPECTED: Record<string, { rows: Row[]; chips: string[] }> = {
       { label: "Settings", shortcut: "Ctrl+," },
       { label: "Open File Explorer" },
       { label: "System Monitor" },
+      { label: "Schedules" },
       { label: "Logs" },
       { label: "Report a Bug" },
       { label: "Export database" },
@@ -161,6 +162,7 @@ const EXPECTED: Record<string, { rows: Row[]; chips: string[] }> = {
       { label: "Settings", shortcut: "Ctrl+," },
       { label: "Open File Explorer" },
       { label: "System Monitor" },
+      { label: "Schedules" },
       { label: "Logs" },
       { label: "Report a Bug" },
       { label: "New Design…" },
@@ -174,7 +176,7 @@ const EXPECTED: Record<string, { rows: Row[]; chips: string[] }> = {
       { label: "View Git Graph", hint: "Git Graph", shortcut: "Ctrl+Shift+G" },
       { label: "Add Note" },
     ],
-    chips: ["Actions(30)","Files(0)"],
+    chips: ["Actions(31)","Files(0)"],
   },
   "a phone": {
     rows: [
@@ -196,6 +198,7 @@ const EXPECTED: Record<string, { rows: Row[]; chips: string[] }> = {
       { label: "Settings", shortcut: "Ctrl+," },
       { label: "Open File Explorer" },
       { label: "System Monitor" },
+      { label: "Schedules" },
       { label: "Logs" },
       { label: "Report a Bug" },
       { label: "New Design…" },
@@ -204,7 +207,7 @@ const EXPECTED: Record<string, { rows: Row[]; chips: string[] }> = {
       { label: "View Git Graph", hint: "Git Graph", shortcut: "Ctrl+Shift+G" },
       { label: "Add Note" },
     ],
-    chips: ["Actions(25)","Files(0)"],
+    chips: ["Actions(26)","Files(0)"],
   },
   "a touch-only tablet": {
     rows: [
@@ -225,6 +228,7 @@ const EXPECTED: Record<string, { rows: Row[]; chips: string[] }> = {
       { label: "Settings", shortcut: "Ctrl+," },
       { label: "Open File Explorer" },
       { label: "System Monitor" },
+      { label: "Schedules" },
       { label: "Logs" },
       { label: "Report a Bug" },
       { label: "New Design…" },
@@ -238,6 +242,6 @@ const EXPECTED: Record<string, { rows: Row[]; chips: string[] }> = {
       { label: "View Git Graph", hint: "Git Graph", shortcut: "Ctrl+Shift+G" },
       { label: "Add Note" },
     ],
-    chips: ["Actions(29)","Files(0)"],
+    chips: ["Actions(30)","Files(0)"],
   },
 };

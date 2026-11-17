@@ -106,6 +106,7 @@ function describe(s: Schedule, env: SessionScheduleToolEnv): Json {
         : "It came due and is delivered once this chat is idle.",
     }),
     ...(s.paused_reason && { pausedReason: s.paused_reason }),
+    ...(s.task_id && { taskId: s.task_id, taskNote: "It belongs to that task and is deleted when the task is closed." }),
   };
 }
 
@@ -152,7 +153,7 @@ export function sessionScheduleToolCall(env: SessionScheduleToolEnv, tokenSessio
     try {
       created = createSessionSchedule({
         target_session_id: sessionId, cron_expr: args.cron, prompt: args.prompt, recurring: args.recurring,
-        timezone: args.timezone, name: args.name,
+        timezone: args.timezone, name: args.name, ...(args.task !== undefined && { task: args.task }),
       }, { deps: env.target, now: env.now() });
     } catch (e) {
       return fail(refusalText(e));

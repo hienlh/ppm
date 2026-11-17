@@ -62,6 +62,10 @@ export interface Schedule {
   pending_since: string | null;
   /** Why a session schedule stopped firing (its chat is gone, say); null while it can fire. */
   paused_reason: string | null;
+  /** The task a session schedule reminds about; the task owns it and deletes it when closed. */
+  task_id: string | null;
+  /** Key of the problem the user dismissed in the Schedules window (`shared/schedule-attention.ts`). */
+  attention_dismissed: string | null;
 }
 
 /**
@@ -99,6 +103,44 @@ export interface ScheduleView extends Omit<Schedule, "secrets_enc" | "state_json
   held_after_stop?: boolean;
 }
 
+/** The newest run of a schedule that did something (a skipped tick is not one). */
+export interface ScheduleLastRun {
+  id: number;
+  status: RunStatus;
+  started_at: string;
+  ended_at: string | null;
+  error: string | null;
+  session_id: string | null;
+}
+
+/** The task a reminder belongs to, as the Schedules window names it. */
+export interface ScheduleTaskLink {
+  id: string;
+  /** `ppm/12`. */
+  ref: string;
+  title: string;
+  project: string;
+  closed: boolean;
+}
+
+/**
+ * A schedule as the Schedules window lists it: the view plus what the window shows beside it,
+ * read in one request so the window and the rail's count need nothing else.
+ */
+export interface ScheduleOverview extends ScheduleView {
+  last_run: ScheduleLastRun | null;
+  /** The registered project whose folder the schedule runs in; null when none is. */
+  project_name: string | null;
+  /**
+   * The mode its turns really run in. A prompt schedule's own; a session schedule's is its chat's
+   * (the stored column is unused for those), else the provider's default.
+   */
+  effective_permission_mode: string;
+  /** The next fires (ISO, UTC) as the host computes them; empty when it is off or always on. */
+  next_fires: string[];
+  task: ScheduleTaskLink | null;
+}
+
 export interface ScheduleRun {
   id: number;
   schedule_id: number;
@@ -134,6 +176,7 @@ export interface NewSchedule {
   target_session_id?: string | null;
   timezone?: string | null;
   recurring?: boolean;
+  task_id?: string | null;
 }
 
 /** Result of one schedule execution (returned by scheduler-runner). */

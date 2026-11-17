@@ -57,6 +57,7 @@ export const TAB_COMPONENTS: Record<TabType, PreloadableComponent<{ metadata?: R
   design: lazyWithPreload(() => import("@/components/design/design-tab").then((m) => ({ default: m.DesignTab }))),
   "web-preview": lazyWithPreload(() => import("@/components/web-preview/web-preview-tab").then((m) => ({ default: m.WebPreviewTab }))),
   logs: lazyWithPreload(() => import("@/components/logs/logs-tab").then((m) => ({ default: m.LogsTab }))),
+  schedules: lazyWithPreload(() => import("@/components/schedules/schedules-tab").then((m) => ({ default: m.SchedulesTab }))),
   assistant: lazyWithPreload(() => import("@/components/assistant/assistant-tab").then((m) => ({ default: m.AssistantTab }))),
   task: lazyWithPreload(() => import("@/components/ppm-tasks/task-tab").then((m) => ({ default: m.TaskTab }))),
 };

@@ -6,7 +6,7 @@
  */
 import {
   AppWindow, BotMessageSquare, Bug, CircleX, Cloud, Columns2, Cpu, Database, FilePlus, GitCommitHorizontal, Globe,
-  MessageSquare, Mic, MonitorSmartphone, ScrollText, Settings, Terminal, WrapText, Zap,
+  MessageSquare, Mic, MonitorSmartphone, ScrollText, CalendarClock, Settings, Terminal, WrapText, Zap,
 } from "@/lib/icons";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { openSettings } from "@/components/settings/open-settings";
@@ -15,6 +15,7 @@ import { openRemoteAccess } from "@/components/settings/remote-access/remote-acc
 import { openPortForwarding } from "@/components/tunnels/open-port-forwarding";
 import { openSystemMonitor } from "@/components/system/use-open-system-monitor";
 import { openLogs } from "@/components/logs/open-logs";
+import { openSchedules } from "@/components/schedules/open-schedules";
 import { openConnectionForm } from "@/components/database/open-connection-form";
 import { openNewQuery } from "@/components/database/explorer/open-new-query";
 import { useTabStore, type TabType } from "@/stores/tab-store";
@@ -165,6 +166,11 @@ export function builtInCommands(ctx: CommandContext): AppCommand[] {
       id: "system-monitor", label: "System Monitor", icon: Cpu, changesData: false,
       keywords: "task manager activity monitor cpu memory ram disk network gpu processes services apps performance resources",
       run: (c) => openSystemMonitor(c.isMobile),
+    },
+    {
+      id: "schedules", label: "Schedules", icon: CalendarClock, changesData: false,
+      keywords: "schedules cron reminders timers scheduled prompts runs bypass next run",
+      run: () => openSchedules(),
     },
     {
       id: "logs", label: "Logs", icon: ScrollText, changesData: false,

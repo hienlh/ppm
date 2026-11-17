@@ -45,6 +45,12 @@ export function sessionScheduleToolDefinitions() {
           },
           timezone: { type: "string", description: "IANA time zone the cron is read in, e.g. \"Europe/London\". Leave out for the machine's own." },
           name: { type: "string", description: `A short name shown in PPM's schedule list (at most ${SCHEDULE_LIMITS.name} characters); the prompt's first line by default.` },
+          task: {
+            type: "string",
+            description: "The PPM task this reminds about (\"ppm/12\", \"#12\"), an open task of this chat's project. The "
+              + "reminder then shows on the task's page, and closing or deleting the task deletes it. Give it for every "
+              + "reminder about a task.",
+          },
         },
         required: ["cron", "prompt"],
         additionalProperties: false,

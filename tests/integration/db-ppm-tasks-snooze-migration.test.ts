@@ -35,8 +35,8 @@ function databaseAt74(): Database {
 describe("migration 75: task snooze", () => {
   it("brings a fresh database to the current version with the snooze columns", () => {
     const db = fresh();
-    expect(CURRENT_SCHEMA_VERSION).toBe(75);
-    expect(version(db)).toBe(75);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(75);
+    expect(version(db)).toBe(CURRENT_SCHEMA_VERSION);
     const cols = columns(db);
     for (const c of SNOOZE_COLUMNS) expect(cols.map((x) => x.name)).toContain(c);
     expect((db.query("PRAGMA table_info(task_link_state)").all() as Array<{ name: string }>).map((c) => c.name)).toContain("snooze_changed_at");
@@ -49,7 +49,7 @@ describe("migration 75: task snooze", () => {
     const db = databaseAt74();
     expect(columns(db).map((c) => c.name)).not.toContain("snoozed_until");
     runMigrations(db);
-    expect(version(db)).toBe(75);
+    expect(version(db)).toBe(CURRENT_SCHEMA_VERSION);
     expect(db.query("SELECT title, snoozed_until, snooze_until_change, snoozed_at, resurfaced_at FROM tasks WHERE id = 't1'").get()).toEqual({
       title: "old task", snoozed_until: null, snooze_until_change: 0, snoozed_at: null, resurfaced_at: null,
     });

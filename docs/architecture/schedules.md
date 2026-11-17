@@ -206,11 +206,62 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
   which Codex finds anywhere in the message, so there the block stays in front as for any prompt,
   and any other `/…` (PPM's own `/compact` included) reaches Codex as plain text.
 
+## The Schedules window
+
+Every schedule of every project in one place, from the rail's footer (between the Assistant and
+Logs) on a desktop and from a tile in the drawer's tool row on a phone (`open-schedules.ts`: a
+floating window, or the `schedules` tab below `md`). The button carries two marks, both computed by
+`src/shared/schedule-attention.ts` so the server and every view agree:
+
+- **the count**: schedules that go out within 24 hours (on, not paused, a tick schedule whose next
+  fire falls inside the window or that is due and waiting). A schedule firing every five minutes
+  counts once; an always-on script never does.
+- **the red dot**: a schedule that needs a look — its newest run failed, a run is still `running`
+  past its `timeout_ms` (stuck), or a session schedule is paused or has waited for its chat more
+  than ten minutes. A problem has a key naming that one occurrence (`failed:<run id>`,
+  `stuck:<run id>`, `paused:<reason>@<updated_at>`, `waiting:<since>`); Dismiss stores the key in
+  `attention_dismissed`, so the dot comes back only for a different problem, and a later run that
+  succeeds clears it with no dismiss at all. Run rows stamp `started_at` in SQLite's zone-less
+  `YYYY-MM-DD HH:MM:SS` (UTC); `parseStamp` reads it as UTC, where `Date.parse` would read it on
+  the device's clock.
+
+`GET /api/schedules` answers overviews (`src/services/schedules-overview.ts`): each view plus its
+newest run that did something (a skipped tick is not one, and it is one indexed lookup per
+schedule, since the list is polled), its registered project's name, the task it belongs to, its
+next three fires as the host computes them (`next_fires`: a browser in another zone must show the
+instants the host fires at, not ones it works out on its own clock), and `effective_permission_mode`
+(the routes resolve it with the chat socket's own `chatTargetMode`). A session schedule's turn is an ordinary turn
+of its chat, so its mode is the chat's (`session_metadata.permission_mode`, else the provider's
+default) — the row's own `permission_mode` column is unused for those and reads `bypassPermissions`
+by default, which is why the window never shows that column for a reminder.
+
+The browser keeps one shared list (`src/web/stores/schedules-overview-store.ts`) that the rail,
+the drawer, the window and a task's page all read: one read on mount, again on every
+`schedules:changed`, a 30 s poll while the page is visible, and `now` moved on every 30 s so the
+count and "in 8h 10m" stay true between reads. The pure rules of the window (filters, groups,
+the words for next and last runs) are `src/web/lib/schedules/schedules-view.ts`. Times are shown
+on the clock of the zone the cron is read in: a reminder kept in UK time reads "18:30 London".
+
+## Task reminders
+
+A reminder is a session schedule a task owns (`schedules.task_id`, migration 76). The task page's
+Remind… (`task-reminder-button.tsx`) offers an hour from now, this evening, tomorrow morning or a
+time of your own on a clock you pick, and posts `POST /api/tasks/:id/reminders`
+(`task-reminders.service.ts`): a one-shot cron pinning minute, hour, day and month in that zone,
+delivered into the project's manager chat (else the chat working on the task), refused for a time
+already passed, more than a year ahead (the cron has no year) or one a DST change skips. The AI's
+`session_schedule_create` links one with its `task` argument (`ppm/12`, `#12` or an id), which
+must name an open task of the chat's own project (`task-reminder-link.ts`). Closing or deleting the
+task deletes its reminders (`task-reminder-cleanup.ts`, on every task store change and once at
+start). The task page shows them as cards (`task-reminders-card.tsx`) read from the same shared
+list; the Schedules window shows each with its task's reference and opens the task from it.
+
 ## Surfaces
 
-- REST: `src/server/routes/schedules.ts` (CRUD, `run-now`, `runs`; `?session=<id>` lists one
-  chat's session schedules, each with `target_title`) and `schedules-script.ts` (`logs`, `state`,
-  `export`, `import`).
+- REST: `src/server/routes/schedules.ts` (CRUD, `run-now`, `runs`, `dismiss`; every answer is an
+  overview; `?session=<id>` lists one chat's session schedules, each with `target_title`, and
+  `?task=<id>` a task's reminders), `task-reminders.ts` (`POST /api/tasks/:id/reminders`) and
+  `schedules-script.ts` (`logs`, `state`, `export`, `import`).
 - CLI: `ppm schedule add|list|rm|enable|disable|run-now|runs|export|import|state|set-state`;
   `add --session <id> --prompt … --cron … [--tz <zone>] [--once]` makes a session schedule;
   `edit` on one names the flags it does not use (`--project`, `--permission-mode`, `--max-turns`,
@@ -219,8 +270,13 @@ else: it never creates a chat. Code in `src/services/session-schedules/`.
 - UI: Settings → Schedules (`src/web/components/settings/schedules/`): the form with its script
   editor and input declarations, the import sheet, the live log, and a status chip per row. A
   session schedule's row names its chat in the Session column; the form's kind *Chat* picks one.
+  The Schedules window is `src/web/components/schedules/` (it reuses that form for New and Edit).
+- PPM Assistant: `schedules_list` and `schedule_get` give each schedule's own `timeZone` (marked
+  `timeZoneIsMachineLocal` when it has none), `kind` and `recurring`, plus `machineTimeZone`;
+  `nextFireAt` is UTC and reads right only against that zone.
 - DB: migration 58 adds `kind`, `mode`, `description`, `script`, `inputs_json`,
   `input_values_json`, `secrets_enc`, `state_json` to `schedules`, plus `schedule_runtime`
   (one process per schedule), `schedule_chats` (key → chat) and `schedule_ai_turns`.
   Migration 72 adds `target_session_id`, `timezone`, `recurring`, `pending_since` and
-  `paused_reason`, and rebuilds the `kind` CHECK to accept `session`.
+  `paused_reason`, and rebuilds the `kind` CHECK to accept `session`. Migration 76 adds `task_id`
+  (indexed) and `attention_dismissed`.

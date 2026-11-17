@@ -1,0 +1,72 @@
+/**
+ * A task reminder's moment: a local date and time read on a named zone's clock, turned into a
+ * one-shot cron and back, and into the instant it names — across a DST change too.
+ */
+import { describe, expect, it } from "bun:test";
+import {
+  localMomentText, localMomentToEpoch, parseLocalMoment, reminderChoices, reminderCron, reminderName, reminderPrompt,
+} from "../../../src/shared/task-reminder.ts";
+
+describe("parseLocalMoment", () => {
+  it("reads a datetime-local value and refuses dates that do not exist", () => {
+    expect(parseLocalMoment("2026-11-17T18:30")).toEqual({ year: 2026, month: 11, day: 17, hour: 18, minute: 30 });
+    expect(parseLocalMoment("2026-02-30T10:00")).toBeNull();
+    expect(parseLocalMoment("2026-11-17T24:00")).toBeNull();
+    expect(parseLocalMoment("2026-11-17 18:30")).toBeNull();
+    expect(parseLocalMoment(42)).toBeNull();
+  });
+});
+
+describe("reminderCron", () => {
+  it("pins minute, hour, day and month", () => {
+    expect(reminderCron(parseLocalMoment("2026-03-05T07:05")!)).toBe("5 7 5 3 *");
+  });
+});
+
+describe("localMomentToEpoch", () => {
+  it("names the instant on the zone's clock, winter and summer", () => {
+    expect(new Date(localMomentToEpoch(parseLocalMoment("2026-11-17T18:30")!, "Europe/London")).toISOString()).toBe("2026-11-17T18:30:00.000Z");
+    expect(new Date(localMomentToEpoch(parseLocalMoment("2026-07-01T18:30")!, "Europe/London")).toISOString()).toBe("2026-07-01T17:30:00.000Z");
+    expect(new Date(localMomentToEpoch(parseLocalMoment("2026-11-17T18:30")!, "Asia/Saigon")).toISOString()).toBe("2026-11-17T11:30:00.000Z");
+  });
+
+  it("round-trips through localMomentText on the same clock", () => {
+    const at = "2026-03-29T09:15";
+    expect(localMomentText(new Date(localMomentToEpoch(parseLocalMoment(at)!, "Europe/London")), "Europe/London")).toBe(at);
+  });
+});
+
+describe("reminderName and reminderPrompt", () => {
+  const task = { number: 19, project: "ppm", title: "Review PR 412" };
+
+  it("names the task by its reference and stands on its own", () => {
+    expect(reminderName(task)).toBe("Remind: ppm/19 Review PR 412");
+    expect(reminderName({ ...task, title: "x".repeat(200) }).length).toBe(100);
+    const prompt = reminderPrompt(task, "ask Minh");
+    expect(prompt).toContain('task ppm/19 "Review PR 412"');
+    expect(prompt).toContain("Note: ask Minh");
+    expect(reminderPrompt(task, null)).not.toContain("Note:");
+  });
+});
+
+describe("reminderChoices", () => {
+  it("offers an hour from now, this evening before 17:00 there, and tomorrow at 09:00", () => {
+    const morning = reminderChoices(new Date("2026-11-17T10:12:00Z"), "Europe/London");
+    expect(morning).toEqual([
+      { id: "hour", label: "In 1 hour", at: "2026-11-17T11:15" },
+      { id: "evening", label: "This evening", at: "2026-11-17T18:00" },
+      { id: "morning", label: "Tomorrow morning", at: "2026-11-18T09:00" },
+    ]);
+    const late = reminderChoices(new Date("2026-11-17T17:30:00Z"), "Europe/London");
+    expect(late.map((c) => c.id)).toEqual(["hour", "morning"]);
+    // The same instant on a clock seven hours ahead is already evening there.
+    expect(reminderChoices(new Date("2026-11-17T10:12:00Z"), "Asia/Saigon").map((c) => c.id)).toEqual(["hour", "morning"]);
+  });
+
+  it("means the next calendar day on a 25-hour and a 23-hour night", () => {
+    // 00:30 London on the day the clocks go back is a 25-hour day: +24 h would still be the 25th.
+    expect(reminderChoices(new Date("2026-10-25T00:30:00+01:00"), "Europe/London").find((c) => c.id === "morning")!.at).toBe("2026-10-26T09:00");
+    // 23:30 London the night before the clocks go forward: +24 h would skip to the 29th.
+    expect(reminderChoices(new Date("2027-03-27T23:30:00Z"), "Europe/London").find((c) => c.id === "morning")!.at).toBe("2027-03-28T09:00");
+  });
+});

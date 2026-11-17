@@ -13,6 +13,7 @@ import type { TaskPatch } from "../../../shared/ppm-tasks";
 import type { TaskDetailResponse, TaskProjectSettings } from "../../../shared/ppm-tasks-api";
 import { TaskDetailHeader } from "./task-detail-header";
 import { TaskResultCard } from "./task-result-card";
+import { TaskRemindersCard } from "./task-reminders-card";
 import { TaskNotesCard } from "./task-notes-card";
 import { TaskDecisionCard } from "./task-decision-card";
 import { TaskLinksCard } from "./task-links-card";
@@ -92,6 +93,7 @@ export function TaskDetailDesktop({ detail, settings, preview }: TaskDetailViewP
               onChoose={(optionId) => { setDeciding(true); void write.decide(task, optionId).finally(() => setDeciding(false)); }}
               onEditOptions={(decision) => patch({ decision })} />
           )}
+          <TaskRemindersCard taskId={task.id} />
           <TaskResultCard task={task} onSave={(result) => patch({ result })} />
           <TaskNotesCard task={task} onSave={patch} />
           <TaskLinksCard task={task} linkStates={linkStates} jiraSite={detail.jiraSite} onOpenChat={openChat}

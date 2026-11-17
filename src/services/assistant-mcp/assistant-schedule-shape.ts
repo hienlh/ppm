@@ -1,12 +1,13 @@
 import { resolve } from "node:path";
 import { Cron } from "croner";
-import type { Schedule, ScheduleRun } from "../../types/scheduler.ts";
+import type { Schedule, ScheduleOverview, ScheduleRun } from "../../types/scheduler.ts";
 import { configService } from "../config.service.ts";
 import { projectService } from "../project.service.ts";
 import { isInsideDir, realPathOrSelfSync } from "../fs-ops/fs-real-path.ts";
 import { isAssistantProject } from "../../shared/assistant-project.ts";
 import type { AssistantProject } from "./assistant-project-scope.ts";
 import { withQuery } from "./assistant-route-rules.ts";
+import { localMomentText } from "../../shared/task-reminder.ts";
 import type { ToolContext } from "./assistant-tool-family.ts";
 
 /**
@@ -20,7 +21,10 @@ export interface ScheduleDeps {
   projects?: () => AssistantProject[];
   /** The provider a new schedule is snapshotted to, read the way the route reads it. */
   defaultProvider?: () => string;
-  /** The zone cron expressions are read in: croner uses the server's local time. */
+  /**
+   * The machine's own zone: a prompt or script schedule's cron is read in it, and so is a session
+   * schedule saved with no zone of its own. A session schedule with one is read in that one.
+   */
   timeZone?: () => string;
 }
 
@@ -54,16 +58,30 @@ export function idArg(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
-/** The schedule as the tools describe it: camelCase, the project by name, the folder kept. */
-export function scheduleView(s: Schedule, project: AssistantProject | null) {
+/** The zone `s`'s cron is read in: its own, else the machine's. */
+export const scheduleZone = (s: Pick<Schedule, "timezone">, machineZone: string): string => s.timezone ?? machineZone;
+
+/**
+ * The schedule as the tools describe it: camelCase, the project by name, the folder kept, and the
+ * zone its cron is read in. A session schedule's own zone (a reminder kept in UK time) can differ
+ * from the machine's, and `nextFireAt` (UTC) only reads right against the zone it was computed in.
+ */
+export function scheduleView(s: Schedule, project: AssistantProject | null, machineZone: string) {
   return {
     id: s.id,
     name: s.name,
+    kind: s.kind,
     cron: s.cron_expr,
+    timeZone: scheduleZone(s, machineZone),
+    ...(s.timezone === null && { timeZoneIsMachineLocal: true }),
+    recurring: s.recurring === 1,
+    ...(s.kind === "session" && { targetSessionId: s.target_session_id }),
+    ...(s.task_id && { taskId: s.task_id }),
     project: project?.name ?? null,
     folder: s.project_path,
     provider: s.provider_id,
-    permissionMode: s.permission_mode,
+    // The routes answer overviews: a chat reminder runs in its chat's mode, not the row's column.
+    permissionMode: (s as Partial<ScheduleOverview>).effective_permission_mode ?? s.permission_mode,
     enabled: s.enabled === 1,
     maxTurns: s.max_turns,
     timeoutMinutes: s.timeout_ms / 60_000,
@@ -110,9 +128,11 @@ export async function readRuns(ctx: ToolContext, id: number, limit: number): Pro
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 
-/** `2026-10-12 07:00`, in the server's local time — the time croner fires in. */
-export const localTime = (d: Date): string =>
-  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+/** `2026-10-12 07:00` on the clock of `timeZone`, the machine's when absent. */
+export function localTime(d: Date, timeZone?: string | null): string {
+  if (!timeZone) return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return localMomentText(d, timeZone).replace("T", " ");
+}
 
 /** Why `expr` is not a cron expression the route will take, or null. */
 export function cronProblem(expr: string): string | null {
@@ -124,10 +144,13 @@ export function cronProblem(expr: string): string | null {
   }
 }
 
-/** The next `count` times `expr` fires, as local times; empty when it never fires again. */
-export function nextRunTimes(expr: string, count = 3): string[] {
+/**
+ * The next `count` times `expr` fires read in `timeZone` (the machine's when null), printed on that
+ * same clock; empty when it never fires again.
+ */
+export function nextRunTimes(expr: string, count = 3, timeZone: string | null = null): string[] {
   try {
-    return new Cron(expr).nextRuns(count).map(localTime);
+    return new Cron(expr, timeZone ? { timezone: timeZone } : {}).nextRuns(count).map((d) => localTime(d, timeZone));
   } catch {
     return [];
   }

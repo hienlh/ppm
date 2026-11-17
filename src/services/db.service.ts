@@ -16,7 +16,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 75;
+export const CURRENT_SCHEMA_VERSION = 76;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1624,6 +1624,19 @@ export function runMigrations(database: Database): void {
     // or until a link changes, with its real status kept. Only adds columns to `tasks`.
     applyPpmTasksSnoozeSchema(database);
     database.exec(`PRAGMA user_version = 75;`);
+  }
+
+  if (current < 76) {
+    // The Schedules window. `task_id` is the task a session schedule reminds about: the task owns
+    // it, so closing or deleting the task deletes it. `attention_dismissed` is the key of the
+    // problem the user dismissed (`src/shared/schedule-attention.ts`): the red dot comes back
+    // only for a different problem. Only adds columns; every schedule reads as linked to no task.
+    addColumnIfMissing(database, "schedules", "task_id", "TEXT");
+    addColumnIfMissing(database, "schedules", "attention_dismissed", "TEXT");
+    if (database.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schedules'").get()) {
+      database.exec("CREATE INDEX IF NOT EXISTS idx_schedules_task ON schedules(task_id)");
+    }
+    database.exec(`PRAGMA user_version = 76;`);
   }
 }
 
