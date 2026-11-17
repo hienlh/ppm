@@ -497,7 +497,20 @@ sidebar" at its foot touches the sidebar (`reveal-task-in-sidebar.ts`). In a man
 the activity chip gives up its place to this one when the chat is narrow, except while a linked
 session needs the user.
 
-**The task quick view** (`peek/`). A row of that list, and a task chip in the composer or on a sent
+**The task strip of a working chat** (`chat-strip/`, mounted by `chat-tab.tsx` above the messages).
+A chat that some open task names as its working session shows one line at its top: the status glyph,
+`#N` and the title, then the status — or, for a waiting task, on whom it waits and until when
+(`TaskWaitingLabel`) — the due date and the snooze (`TaskSnoozeBadge`). It reads
+`/api/tasks?project=all&session=<id>&snoozed=1` (`chatTasksQuery`), which the server answers under
+the id the chat answers to now, and follows `tasks:changed` like any list. With several tasks the
+first in "what to do first" order leads (snoozed ones last; `chat-task-strip-logic.ts`) and "+N" lists
+them all (a popover under the strip on a desktop, a bottom sheet on a phone); a press on the strip or
+on a row opens that task's quick view (`TaskChipPeek`, below). The status words give way below 420px
+of the chat's own width and the due date and snooze below 340px; the title truncates first. Its
+buttons are the standard text-control height (`TEXT_CONTROL_HEIGHT`). The Assistant's chat never
+shows it. Checked by `tests/e2e/task-chat-strip-e2e.mjs` at 1440, 800, 390 and 320.
+
+**The task quick view** (`peek/`). A row of that list, the task strip above, and a task chip in the composer or on a sent
 message (`chat/task-ref-chip.tsx`), show the task without leaving the chat: its code and title, the
 fields a glance ends in changing — status, urgency, importance, assignee, waiting on, due, next step —
 and **Open chat** (the working chat, with the task as a chip) plus the task's full page. The fields

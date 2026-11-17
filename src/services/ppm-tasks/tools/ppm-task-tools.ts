@@ -152,6 +152,8 @@ export function livePpmTaskToolsEnv(): PpmTaskToolsEnv {
       }
     },
     wakeManager: (projectKey, actor) => wakeManager(projectKey, actor),
+    // Quiet: a watch turn, only into an idle manager, charged to the wake budget.
+    tellManagerOfProposal: (projectKey, actor) => wakeManager(projectKey, actor, [], { unattended: true }),
     noteUnattended: noteUnattendedChange,
   };
 }

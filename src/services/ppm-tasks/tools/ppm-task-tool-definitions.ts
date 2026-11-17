@@ -21,6 +21,9 @@ const nullableStr = (description: string, maxLength?: number): Json => ({ type: 
 const PROJECT = str("The project's name in PPM. A manager or ordinary chat may only name its own project (or leave it out); the PPM Assistant must name it.");
 const TASK = str("The task: `project/123`, `#123` or `123` within the project, or the task's id.");
 const REVISION: Json = { type: "integer", minimum: 0, description: "The task's revision as you last read it (ppm_task_get or ppm_task_list). A stale revision is refused and nothing is written." };
+/** What every write tool tells an ordinary chat about its limits. */
+const CHAT_LIMITS = "A chat that is not the project's manager chat (nor the PPM Assistant) may only change result, next_step, notes, links and waiting_on of a task handed to it (its working session), start it (To do to In progress) and move it between the In progress and Waiting groups; every other task it only reads, and anything else is the manager's to do.";
+
 const REASON = str("Why you make this change, in a few words. Shown to the user in the task's history.", L.reason);
 const LINK: Json = {
   type: "object",
@@ -112,7 +115,7 @@ export const PPM_TASK_TOOL_DEFINITIONS: readonly Json[] = [
   },
   {
     name: PPM_TASK_UPDATE_TOOL,
-    description: `Change a task of ${STORE} Name only what changes. \`result\` records what came of the task (it stops the checks of a handed-off task); any chat working on the task may record its own result.`,
+    description: `Change a task of ${STORE} Name only what changes. \`result\` records what came of the task (it stops the checks of a handed-off task); any chat working on the task may record its own result. ${CHAT_LIMITS} Such a chat asks for its task to be closed with \`propose_close\`: the manager chat is told, checks the work and closes it.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -124,6 +127,10 @@ export const PPM_TASK_TOOL_DEFINITIONS: readonly Json[] = [
         add_links: { type: "array", items: LINK, maxItems: L.links },
         remove_links: { type: "array", items: str("A link's ref (as ppm_task_get shows it)."), maxItems: L.links },
         result: nullableStr("What came of the task, or null to clear it.", L.result),
+        propose_close: {
+          type: "string", enum: [...CLOSED_AS],
+          description: "For a chat that is not the manager chat: ask for the task to be closed as done or dropped, saying why in `reason`. The task stays open; the manager chat closes it after checking. Record the `result` first (in the same call is fine).",
+        },
       },
       required: ["task", "revision", "reason"],
       additionalProperties: false,
@@ -131,7 +138,7 @@ export const PPM_TASK_TOOL_DEFINITIONS: readonly Json[] = [
   },
   {
     name: PPM_TASK_CLOSE_TOOL,
-    description: `Close a task of ${STORE} as done or dropped (or into a named closed status).`,
+    description: `Close a task of ${STORE} as done or dropped (or into a named closed status). Only the project's manager chat, the PPM Assistant or the user closes a task; any other chat proposes it with ppm_task_update's \`propose_close\`.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -145,7 +152,7 @@ export const PPM_TASK_TOOL_DEFINITIONS: readonly Json[] = [
   },
   {
     name: PPM_TASK_REORDER_TOOL,
-    description: `Move a task of ${STORE} just before or just after another task with the same urgency and importance.`,
+    description: `Move a task of ${STORE} just before or just after another task with the same urgency and importance. The manager chat's and the Assistant's to do, not another chat's.`,
     inputSchema: {
       type: "object",
       properties: { project: PROJECT, task: TASK, revision: REVISION, reason: REASON, before: TASK, after: TASK },
@@ -155,7 +162,7 @@ export const PPM_TASK_TOOL_DEFINITIONS: readonly Json[] = [
   },
   {
     name: PPM_TASK_UNDO_TOOL,
-    description: `Undo one AI change in ${STORE} by its history id (from ppm_task_get), within 90 days, while nothing changed the same fields since.`,
+    description: `Undo one AI change in ${STORE} by its history id (from ppm_task_get), within 90 days, while nothing changed the same fields since. A chat that is not the manager chat may undo only its own changes.`,
     inputSchema: {
       type: "object",
       properties: { project: PROJECT, history_id: { type: "integer", minimum: 1 }, reason: REASON },
@@ -165,7 +172,7 @@ export const PPM_TASK_TOOL_DEFINITIONS: readonly Json[] = [
   },
   {
     name: PPM_TASK_PROJECT_UPDATE_TOOL,
-    description: `Change a project's set-up in ${STORE}: members, statuses, custom fields, the check interval. Use it to move a hand-built board in (team roster → members, priority groups → a select field or tags). Recorded in the project's history.`,
+    description: `Change a project's set-up in ${STORE}: members, statuses, custom fields, the check interval. Use it to move a hand-built board in (team roster → members, priority groups → a select field or tags). Recorded in the project's history. The manager chat's and the Assistant's to do, not another chat's.`,
     inputSchema: {
       type: "object",
       properties: {

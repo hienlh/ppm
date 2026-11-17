@@ -89,6 +89,11 @@ export function entryText(e: HistoryEntry, names: HistoryNames): string {
     case "snoozed": return snoozeEntryText(e);
     // The reason ("Snooze ended: its day came") is drawn under the row like every reason.
     case "resurfaced": return "brought it back from its snooze";
+    // A working chat may not close its task; it asks, and the manager closes it.
+    case "close_proposed": {
+      const as = e.changes.find((c) => c.field === "closeProposal")?.after;
+      return `proposed closing it as ${as === "dropped" ? "Dropped" : "Done"}`;
+    }
     default: return e.changes.map((c) => changeText(c, names)).join("; ") || "changed it";
   }
 }

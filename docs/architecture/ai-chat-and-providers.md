@@ -1037,14 +1037,33 @@ or "back from snooze today".
   signed "Assistant", via `telegram` while its turn came from Telegram, and marked `unattended` in a
   turn PPM started ([PPM Assistant → Tasks](ppm-assistant.md#tasks));
 - **a manager chat** acts on its own project only, signed "Manager <project>";
-- **an ordinary chat** acts on its own project only, signed with its title.
+- **an ordinary chat** acts on its own project only, signed with its title, and is limited
+  (`src/services/ppm-tasks/tools/ppm-task-chat-scope.ts`). The manager checks the chats it hands
+  tasks to by their status, due date and urgency, so a chat may not switch those checks off: on a
+  task handed to it (its working session) it may change only `result`, `next_step`, `notes`, links and `waiting_on`, start it (To do to In
+  progress) and move it between the In progress and Waiting groups. Closing (also by moving into a closed status),
+  urgency, importance, due date, assignee, snooze, working session, title and the other fields,
+  reordering, the project's set-up (`ppm_task_project_update`, the check interval included) and
+  undoing anyone's change but its own are refused, the answer saying to ask the manager chat (or the
+  user, in a project with none). A field sent back unchanged is not refused. It may create tasks, but
+  not hand one to another chat nor create one already closed. Every task some other chat works on, or
+  the manager does, is read-only to it (`chatNotWorkingRefusal`), so another task or the project's
+  settings are no side door. To have its
+  task closed, a chat passes `propose_close` (`done` or `dropped`) to `ppm_task_update`, with its
+  reason and usually its `result` in the same call: `proposeClose`
+  (`src/services/ppm-tasks/ppm-tasks-close-proposal.ts`) writes a `close_proposed` history row that
+  changes no field and no revision, and PPM wakes the manager quietly (an unattended, budgeted
+  `watch` turn, only into an idle manager) with it as a news line — else the manager reads it at its
+  next turn. The manager checks the work and closes the task with `ppm_task_close`. A proposal cannot
+  be undone (it changed nothing); every other change of the chat stays undoable as before.
 
 A design chat or a chat an extension bound never gets them. A task outside the caller's scope reads
 exactly like one that does not exist. Update, close and reorder name the task's `revision` as last
 read (a stale one is refused, naming the current revision, and nothing is written) and a `reason`,
 shown to the user in the task's history; undo takes a history id and is refused when the change can
 no longer be undone. Writes are limited to 60 a minute per
-chat. `working_session: "self"` hands the task to the calling chat (never an Assistant session);
+chat. `working_session: "self"` hands the task to the calling chat (never an Assistant session; an
+ordinary chat may do so only when creating a task);
 `result` records what came of the task, which any chat working on it may do, and stops the checks
 of a handed-off task. After an Assistant write in a project with a manager chat, the answer tells it
 to ask the user "Tell the <project> manager now?" and call `ppm_task_notify_manager` only on a yes;

@@ -11,7 +11,7 @@ import type { TaskListQuery } from "./ppm-tasks-client";
 /** One stable key per distinct list query (field order and list order do not matter). */
 export function listKey(q: TaskListQuery): string {
   const sorted = (xs?: string[]) => (xs?.length ? [...xs].sort().join(",") : "");
-  return [q.project, sorted(q.groups), sorted(q.types), q.person ?? "", q.tag ?? "", q.q?.trim().toLowerCase() ?? "", q.closed ? "1" : "0", q.snoozed ? "z" : ""].join("|");
+  return [q.project, sorted(q.groups), sorted(q.types), q.person ?? "", q.tag ?? "", q.q?.trim().toLowerCase() ?? "", q.closed ? "1" : "0", q.snoozed ? "z" : "", q.session ?? ""].join("|");
 }
 
 /** "What to do first": effective urgency, importance, manual order. Returns a new array. */
@@ -28,6 +28,7 @@ export function matchesQuery(t: TaskDto, q: TaskListQuery): boolean {
   if (q.types?.length && !q.types.includes(t.type)) return false;
   if (q.person && t.assigneeMemberId !== q.person && t.waitingOnMemberId !== q.person) return false;
   if (q.tag && !t.tags.includes(q.tag)) return false;
+  if (q.session && t.workingSessionId !== q.session) return false;
   const text = q.q?.trim().toLowerCase();
   if (text && ![t.title, t.why, t.nextStep, t.notes].some((s) => s?.toLowerCase().includes(text))) return false;
   return true;

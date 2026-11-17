@@ -42,6 +42,10 @@ function whatChanged(h: HistoryEntry): string {
     case "project": return `${h.changes.map((c) => c.field).join(", ")} changed`;
     case "snoozed": return snoozedText(h);
     case "resurfaced": return "back from snooze: it is in the daily list again";
+    case "close_proposed": {
+      const as = h.changes.find((c) => c.field === "closeProposal")?.after;
+      return `closing it as ${as === "dropped" ? "dropped" : "done"} proposed (not closed: you decide)`;
+    }
     default: {
       const fields = h.changes.map((c) => c.field).filter((f) => f !== "rank");
       return fields.length ? `${fields.slice(0, 6).join(", ")} changed` : "changed";

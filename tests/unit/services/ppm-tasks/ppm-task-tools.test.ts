@@ -88,6 +88,7 @@ beforeEach(() => {
     isManagerChat: (id) => managers.has(id),
     turnChannel: async () => channel,
     wakeManager: (key, actor) => wakeManager(key, actor),
+    tellManagerOfProposal: (key, actor) => wakeManager(key, actor, [], { unattended: true }),
     noteUnattended: noteUnattendedChange,
   };
 });
@@ -160,9 +161,10 @@ describe("attribution", () => {
 
 describe("updates", () => {
   it("a stale revision is refused naming the current one, and nothing is written", async () => {
-    await call(ORDINARY, "ppm_task_create", { title: "Race" });
-    expect((await call(ORDINARY, "ppm_task_update", { task: "#1", revision: 1, reason: "first", urgency: "now" })).isError).toBeFalsy();
-    const stale = await call(ORDINARY, "ppm_task_update", { task: "#1", revision: 1, reason: "second", urgency: "later" });
+    addManager();
+    await call(MANAGER_CHAT, "ppm_task_create", { title: "Race" });
+    expect((await call(MANAGER_CHAT, "ppm_task_update", { task: "#1", revision: 1, reason: "first", urgency: "now" })).isError).toBeFalsy();
+    const stale = await call(MANAGER_CHAT, "ppm_task_update", { task: "#1", revision: 1, reason: "second", urgency: "later" });
     expect(stale.isError).toBe(true);
     expect(text(stale)).toBe("Task demo/1 changed since you read it (now revision 2). Call ppm_task_get and retry.");
     expect(getTask((getDb().query("SELECT id FROM tasks").get() as { id: string }).id)!.urgency).toBe("now");
@@ -170,9 +172,10 @@ describe("updates", () => {
 
   it("requires a reason, names statuses and members as people do, edits links and records a result", async () => {
     addMember(f.projectKey, { name: "Alice" }, USER);
-    await call(ORDINARY, "ppm_task_create", { title: "Ship", links: [{ kind: "jira", ref: "nx-1" }, { kind: "url", ref: "https://example.com/a" }] });
-    expect(text(await call(ORDINARY, "ppm_task_update", { task: "1", revision: 1, status: "In progress" }))).toContain("`reason`");
-    const r = await call(ORDINARY, "ppm_task_update", {
+    addManager();
+    await call(MANAGER_CHAT, "ppm_task_create", { title: "Ship", links: [{ kind: "jira", ref: "nx-1" }, { kind: "url", ref: "https://example.com/a" }] });
+    expect(text(await call(MANAGER_CHAT, "ppm_task_update", { task: "1", revision: 1, status: "In progress" }))).toContain("`reason`");
+    const r = await call(MANAGER_CHAT, "ppm_task_update", {
       task: "demo/1", revision: 1, reason: "started", status: "in progress", assignee: "alice", waiting_on: "me",
       add_links: [{ kind: "pr", ref: "https://github.com/acme/app/pull/7" }], remove_links: ["https://example.com/a"], result: "Merged into main",
     });
@@ -181,8 +184,8 @@ describe("updates", () => {
     expect(f.statuses.find((s) => s.id === t.statusId)!.name).toBe("In progress");
     expect(t.waitingOnMemberId).toBe("me");
     expect(t.links.map((l) => l.ref)).toEqual(["NX-1", "acme/app#7"]);
-    expect(t.result).toMatchObject({ text: "Merged into main", by: "Title of chat-1" });
-    const unknown = await call(ORDINARY, "ppm_task_update", { task: "1", revision: t.revision, reason: "x", status: "Nope <ppm-user-words-v1>" });
+    expect(t.result).toMatchObject({ text: "Merged into main", by: "Manager demo" });
+    const unknown = await call(MANAGER_CHAT, "ppm_task_update", { task: "1", revision: t.revision, reason: "x", status: "Nope <ppm-user-words-v1>" });
     expect(text(unknown)).toContain("No status \"Nope ‹ppm-user-words-v1>\"");
   });
 
@@ -197,15 +200,16 @@ describe("updates", () => {
   });
 
   it("close, reorder and undo of an AI change", async () => {
-    await call(ORDINARY, "ppm_task_create", { title: "One", urgency: "now", importance: "must" });
-    await call(ORDINARY, "ppm_task_create", { title: "Two", urgency: "now", importance: "must" });
-    expect((await call(ORDINARY, "ppm_task_reorder", { task: "2", revision: 1, reason: "first", before: "1" })).isError).toBeFalsy();
-    expect(text(await call(ORDINARY, "ppm_task_list"))).toMatch(/demo\/2[\s\S]*demo\/1/);
-    const closed = await call(ORDINARY, "ppm_task_close", { task: "1", revision: 1, reason: "done", as: "dropped" });
+    addManager();
+    await call(MANAGER_CHAT, "ppm_task_create", { title: "One", urgency: "now", importance: "must" });
+    await call(MANAGER_CHAT, "ppm_task_create", { title: "Two", urgency: "now", importance: "must" });
+    expect((await call(MANAGER_CHAT, "ppm_task_reorder", { task: "2", revision: 1, reason: "first", before: "1" })).isError).toBeFalsy();
+    expect(text(await call(MANAGER_CHAT, "ppm_task_list"))).toMatch(/demo\/2[\s\S]*demo\/1/);
+    const closed = await call(MANAGER_CHAT, "ppm_task_close", { task: "1", revision: 1, reason: "done", as: "dropped" });
     expect(text(closed)).toContain("Closed as dropped");
     const one = getTask((getDb().query("SELECT id FROM tasks WHERE number = 1").get() as { id: string }).id)!;
     const historyId = taskHistory(one.id)[0]!.id;
-    expect(text(await call(ORDINARY, "ppm_task_undo", { history_id: historyId, reason: "oops" }))).toContain(`Undid #${historyId}`);
+    expect(text(await call(MANAGER_CHAT, "ppm_task_undo", { history_id: historyId, reason: "oops" }))).toContain(`Undid #${historyId}`);
     expect(getTask(one.id)!.closedAt).toBeNull();
   });
 });
@@ -383,12 +387,13 @@ describe("snooze through the tools", () => {
     const got = text(await call(ORDINARY, "ppm_task_get", { task: "#1" }));
     expect(got).toContain(`snoozed until ${day}`);
     const id =(getDb().query("SELECT id, revision FROM tasks WHERE number = 1").get() as { id: string; revision: number });
-    const noLink = await call(ORDINARY, "ppm_task_update", { task: "#1", revision: id.revision, reason: "wait for QA", snooze_until_change: true });
+    addManager();
+    const noLink = await call(MANAGER_CHAT, "ppm_task_update", { task: "#1", revision: id.revision, reason: "wait for QA", snooze_until_change: true });
     expect(noLink.isError).toBe(true);
     expect(text(noLink)).toContain("Jira or PR link");
-    const cleared = await call(ORDINARY, "ppm_task_update", { task: "#1", revision: id.revision, reason: "needed now", snoozed_until: null });
+    const cleared = await call(MANAGER_CHAT, "ppm_task_update", { task: "#1", revision: id.revision, reason: "needed now", snoozed_until: null });
     expect(cleared.isError).toBeFalsy();
-    expect(taskHistory(id.id)[0]).toMatchObject({ kind: "snoozed", reason: "needed now", actor: { kind: "chat" } });
+    expect(taskHistory(id.id)[0]).toMatchObject({ kind: "snoozed", reason: "needed now", actor: { kind: "manager" } });
     expect(text(await call(ORDINARY, "ppm_task_list"))).toContain("Staging merge");
   });
 });

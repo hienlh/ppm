@@ -126,6 +126,7 @@ export function listTasks(filter: TaskFilter = {}, today?: string): TaskView[] {
     if (filter.parentId === null) where.push("t.parent_id IS NULL");
     else { where.push("t.parent_id = ?"); args.push(filter.parentId); }
   }
+  if (filter.workingSessionId !== undefined) where.push("t.working_session_id IS NOT NULL");
   if (filter.text?.trim()) {
     const like = `%${filter.text.trim().toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
     where.push("(LOWER(t.title) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(t.why,'')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(t.next_step,'')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(t.notes,'')) LIKE ? ESCAPE '\\')");
@@ -137,7 +138,11 @@ export function listTasks(filter: TaskFilter = {}, today?: string): TaskView[] {
   ).all(...args) as TaskRow[];
   const links = linksFor(rows.map((r) => r.id));
   const snoozed = filter.snoozed ?? "exclude";
+  // A provider may have renamed the chat since it was named the working session: `rowToTask`
+  // reads the stored id under the name it answers to now, so the asked id is read the same way.
+  const working = filter.workingSessionId !== undefined ? resolveMigratedSession(filter.workingSessionId) : null;
   const views = toViews(rows.map((r) => rowToTask(r, links.get(r.id) ?? [])), today)
+    .filter((t) => working === null || t.workingSessionId === working)
     .filter((t) => (snoozed === "include" ? true : snoozed === "only" ? t.snoozed : !t.snoozed))
     .sort(compareTasks);
   return filter.limit && filter.limit > 0 ? views.slice(0, filter.limit) : views;
