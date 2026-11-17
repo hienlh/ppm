@@ -362,8 +362,12 @@ project's whole past ([Data & Storage → PPM Tasks store](data-and-storage.md#p
 the store is on and the chat has the task tools, the manager block in its shared-context entry
 (`MANAGER_TASKS_BLOCK` in `manager-context-entry.ts`) tells it the list lives in PPM, that it decides
 itself what to create, close or re-prioritise (always with `reason` and the `revision` it read), to
-set `working_session` when it hands a task to a chat and record the `result`, and what to do when PPM
-reports trouble with handed-off work. The PPM Assistant writes tasks of any project with Tasks on
+set `working_session` when it hands a task to a chat and record the `result`, what the chats it hands
+tasks to may and may not change (they cannot close a task or touch its urgency, importance, due date,
+assignee, snooze or working chat, and propose closing instead — a news line "closing it as done
+proposed", on which the manager checks the work and closes it itself; [AI chat → PPM task
+tools](ai-chat-and-providers.md#ppm-task-tools)), and what to do when PPM reports trouble with
+handed-off work. The PPM Assistant writes tasks of any project with Tasks on
 directly, even one with a manager; the manager is told.
 
 **Being told.** At the start of each manager turn, `ppmTaskNewsEntry`

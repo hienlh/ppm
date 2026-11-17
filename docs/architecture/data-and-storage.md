@@ -262,7 +262,9 @@ for being stalled (`listTasksNeedingCheck` skips it); the checks resume once it 
 `tool`, `api`), the changes field by field, an optional reason, and `unattended` for a write made in
 a PPM Assistant turn nobody was watching ([PPM Assistant → Tasks](ppm-assistant.md#tasks)). A row
 with no task is a project-settings event (statuses, members, fields, the switch) and is never
-undoable. Undo (`ppm-tasks-history.ts`) takes only AI changes (manager, Assistant, chat), within 90
+undoable. A `close_proposed` row (a chat asking for its task to be closed, one change
+`closeProposal` = `done`/`dropped`) changes no field and no revision and is never undoable either.
+Undo (`ppm-tasks-history.ts`) takes only AI changes (manager, Assistant, chat), within 90
 days, and only while every field the change touched still holds what it wrote — a field changed
 since means someone acted on it, and undo would silently discard that. Undoing an AI creation
 soft-deletes the task, only while nothing else has changed it. References an undo would put back
