@@ -512,12 +512,19 @@ shows it. Checked by `tests/e2e/task-chat-strip-e2e.mjs` at 1440, 800, 390 and 3
 
 **The task quick view** (`peek/`). A row of that list, the task strip above, and a task chip in the composer or on a sent
 message (`chat/task-ref-chip.tsx`), show the task without leaving the chat: its code and title, the
-fields a glance ends in changing — status, urgency, importance, assignee, waiting on, due, next step —
-and **Open chat** (the working chat, with the task as a chip) plus the task's full page. The fields
-are the task page's own (`task-property-fields.tsx`, shared with the properties panel) and every
-write goes through `useTaskWrite`; selects save on change, the due date and the next step when left,
-and also when the view closes or moves to another task with something unsaved in them (browsers send
-no blur to a removed field). On a desktop it is a popover portalled to the opener's document
+fields a glance ends in changing — status, urgency, importance, assignee, waiting on and due as one
+wrapping row of chips, then the next step folded to two lines — the task's links with their live
+state, and **Open chat** (the working chat, with the task as a chip) plus the task's full page. A chip
+edits its field where it is: the five pickers open a small non-modal menu of the task page's own
+choices (`statusChoices`… in `task-property-fields.tsx`), Due opens the browser's date picker, and an
+empty field keeps a faint dashed chip to set it; a press on the folded next step unfolds it into its
+field (`peek/task-peek-fields.tsx`). Links are drawn by the Links card's own `TaskLinkPill` and open
+as on the task page (a chat inside PPM); past four the rest fold into "+N" (`peek/task-peek-links.tsx`,
+`peekLinks` in `src/web/lib/ppm-tasks/task-peek-compact.ts`). Every write goes through
+`useTaskWrite`; a pick saves at once, the due date and the next step when left, and also when the
+view closes or moves to another task with something unsaved in them (browsers send no blur to a
+removed field). On a phone a chip is drawn 32px with a 44px press area (its `::after` reaches 7px
+past the padding box, inside the 1px border) and the chip rows are 14px apart. On a desktop it is a popover portalled to the opener's document
 (`task-peek-popover.tsx`), placed by the pure `placeTaskPeek` (`src/web/lib/ppm-tasks/task-peek-placement.ts`):
 beside the list (right, else left, else below or above; a chip tries above first), smaller on a side
 with some room before it would cover the list, and never off screen. The list stays open: another row
@@ -527,7 +534,8 @@ Escape alone while a `role=dialog` with `data-state=open` is on the page), and a
 closes both. Open in window calls `openTask` and nothing else. Below `md` no second sheet is stacked:
 the list's own sheet turns into the task's page, with a back button to the list and **Full screen**
 (`openTaskFullScreen`); a chip there opens the same page in a bottom sheet. The buttons follow the
-chip row's sizes (28 / 26 px with text, 24 / 22 px icon). Checked by `tests/e2e/task-peek-e2e.mjs`.
+chip row's sizes (28 / 26 px with text, 24 / 22 px icon). Checked by `tests/e2e/task-peek-e2e.mjs`
+and, for the chips and links at 1440, 800 and 390, `tests/e2e/task-peek-compact-e2e.mjs`.
 
 **`?openTask=<id>`** on a project address (Telegram's *Open in PPM* on a task card) opens that
 task's tab once the project is open, then removes the parameter so a reload does not open it again
