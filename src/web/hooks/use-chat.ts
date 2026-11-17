@@ -36,7 +36,7 @@ import { useSessionTitleChanges } from "@/lib/session-title-live";
 import { applyChildToParent, slimHistoryEvents } from "@/lib/agent-step-summary";
 import { getChatClientId } from "@/lib/chat-client-id";
 import { CHAT_CLIENT_ID_PARAM } from "../../shared/chat-client-id";
-import { replayActiveTurn } from "@/lib/replay-active-turn";
+import { commitReplayedTurn, replayReplacedIds, type ReplayedTurn } from "@/lib/replay-active-turn";
 import { VAULT_CARD_APPROVAL, VAULT_NOTIFICATION_BODY } from "../../shared/vault";
 
 /** The toast a session-collaboration card raises while its chat is not on screen. */
@@ -348,8 +348,16 @@ export function useChat(
   /** The bounded server replay omitted an old prefix; idle history reload repairs it. */
   const replayTruncatedRef = useRef(false);
   const handleMessageRef = useRef<((event: MessageEvent) => void) | null>(null);
-  /** True while replaying turn_events — suppresses setPendingApproval */
+  /** True while replaying turn_events — suppresses setPendingApproval, and keeps the answer being
+   *  rebuilt off screen until the replay is done (see the `turn_events` case). */
   const isReplayingRef = useRef(false);
+  /** The running answer as the list showed it when the replay began: kept when a truncated
+   *  replay rebuilds less of the turn than it already has. */
+  const replayShownRef = useRef<Omit<ReplayedTurn, "standaloneErrors"> | null>(null);
+  /** Messages the replay will swap out; nothing streamed meanwhile may land in them. */
+  const replayReplacedIdsRef = useRef<Set<string>>(new Set());
+  /** Errors the replay raised before its answer had anything in it. */
+  const replayErrorsRef = useRef<ChatMessage[]>([]);
   /** toolUseIds of AskUserQuestion tool_use events. The approval_request event
    *  already renders the question card, so the SDK's real tool_use/tool_result
    *  for AskUserQuestion are suppressed to avoid a duplicate card. */
@@ -482,10 +490,14 @@ export function useChat(
   const routeToFinalizedParent = useCallback((childEvent: ChatEvent, parentToolUseId: string): boolean => {
     const isParent = (e: ChatEvent) =>
       e.type === "tool_use" && (e.tool === "Agent" || e.tool === "Task") && (e as any).toolUseId === parentToolUseId;
+    // While a replay is rebuilt, the answer it replaces is still on screen; a child nested there
+    // would be thrown away at the swap. The rebuilt answer is reached through `routeToParent`.
+    const replaced = replayReplacedIdsRef.current;
+    const holds = (m: ChatMessage) => !replaced.has(m.id) && !!m.events?.some(isParent);
     const msgs = messagesRef.current;
     let msgIdx = -1;
     for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i]!.events?.some(isParent)) { msgIdx = i; break; }
+      if (holds(msgs[i]!)) { msgIdx = i; break; }
     }
     if (msgIdx === -1) return false;
 
@@ -493,7 +505,7 @@ export function useChat(
       // Re-locate in prev — state may have shifted since the ref snapshot
       let idx = -1;
       for (let i = prev.length - 1; i >= 0; i--) {
-        if (prev[i]!.events?.some(isParent)) { idx = i; break; }
+        if (holds(prev[i]!)) { idx = i; break; }
       }
       if (idx === -1) return prev;
       const msg = prev[idx]!;
@@ -506,6 +518,8 @@ export function useChat(
   /** Flush refs into React state (called from throttled timer or directly) */
   const flushMessages = useCallback(() => {
     syncRafRef.current = 0;
+    // A replay being rebuilt is drawn once, whole, when it ends (see the `turn_events` case).
+    if (isReplayingRef.current) return;
     const content = streamingContentRef.current;
     const events = [...streamingEventsRef.current];
     const account = streamingAccountRef.current;
@@ -534,6 +548,7 @@ export function useChat(
    *  frequent ReactMarkdown re-parses, causing lag during text selection/copy.
    *  100ms (10fps) keeps streaming smooth while leaving idle time for interactions. */
   const syncMessages = useCallback(() => {
+    if (isReplayingRef.current) return;
     if (!syncRafRef.current) {
       syncRafRef.current = window.setTimeout(flushMessages, 100) as unknown as number;
     }
@@ -558,10 +573,12 @@ export function useChat(
       return;
     }
 
+    // Not in an answer a replay is about to swap out: the rebuilt one was checked above.
+    const replaced = replayReplacedIdsRef.current;
     setMessages((prev) => {
       let mi = -1;
       for (let i = prev.length - 1; i >= 0; i--) {
-        if (prev[i]!.events?.some(isTarget)) { mi = i; break; }
+        if (!replaced.has(prev[i]!.id) && prev[i]!.events?.some(isTarget)) { mi = i; break; }
       }
       if (mi === -1) return prev;
       const msg = prev[mi]!;
@@ -823,6 +840,19 @@ export function useChat(
           break;
         }
         if (!isReplayingRef.current) attemptRef.current?.fail();
+        if (isReplayingRef.current) {
+          // The answer on screen is about to be swapped out: the error goes into the one being
+          // rebuilt, or — when that has nothing yet — is drawn on its own at the swap, as live.
+          const evs = streamingEventsRef.current;
+          const lastErr = evs[evs.length - 1];
+          if (lastErr?.type === "error" && (lastErr as { message?: string }).message === ev.message) break;
+          if (streamingContentRef.current || evs.length > 0) { streamingEventsRef.current = [...evs, ev as ChatEvent]; break; }
+          const errors = replayErrorsRef.current;
+          if (errors[errors.length - 1]?.content !== ev.message) {
+            errors.push({ id: `error-${Date.now()}-${errors.length}`, role: "system", content: ev.message, events: [ev as ChatEvent], timestamp: new Date().toISOString() });
+          }
+          break;
+        }
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
@@ -1326,9 +1356,18 @@ export function useChat(
       // duplicate copy (see session-change effect).
       replayTurnUserMsgRef.current = userMessage;
 
-      // Rebuild the active turn from scratch: see `replayActiveTurn`.
+      // Rebuild the active turn from scratch (see `replayActiveTurn`), off screen: the answer the
+      // list shows stays there until the rebuilt one replaces it in one update. Taking it off first
+      // left the list ending on the reader's own message for as long as the rebuild took.
       const clientMessageId = typeof (data as any).clientMessageId === "string" ? (data as any).clientMessageId as string : undefined;
-      setMessages(prev => replayActiveTurn(prev, userMessage, clientMessageId));
+      // A flush still waiting would draw the half-rebuilt answer.
+      if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
+      // What the list shows, kept from the first of overlapping replays rather than a half rebuild.
+      if (!isReplayingRef.current) {
+        replayShownRef.current = { content: streamingContentRef.current, events: streamingEventsRef.current, account: streamingAccountRef.current };
+      }
+      replayReplacedIdsRef.current = replayReplacedIds(messagesRef.current, userMessage, clientMessageId);
+      replayErrorsRef.current = [];
 
       // Reset streaming refs
       streamingContentRef.current = "";
@@ -1352,6 +1391,28 @@ export function useChat(
           isReplayingRef.current = false;
           const snapshotSeq = (data as any).streamSeq;
           const truncated = (data as any).truncated === true;
+          const shown = replayShownRef.current;
+          replayShownRef.current = null;
+          replayReplacedIdsRef.current = new Set();
+          if (truncated && shown && shown.events.length >= streamingEventsRef.current.length) {
+            // A truncated replay holds only the turn's first events (the server buffers at most
+            // 10,000), so it rebuilds less than this tab already shows: keep what is shown and let
+            // the live frames carry on from it. The idle history reload fills what was missed.
+            streamingContentRef.current = shown.content;
+            streamingEventsRef.current = shown.events;
+            streamingAccountRef.current = shown.account as { accountId: string; accountLabel: string } | null;
+          } else {
+            const rebuilt: ReplayedTurn = {
+              content: streamingContentRef.current,
+              events: [...streamingEventsRef.current],
+              account: streamingAccountRef.current,
+              standaloneErrors: replayErrorsRef.current,
+            };
+            // Urgent, not a transition like a streaming flush: the swap must not wait behind the
+            // live flushes that follow it.
+            setMessages((prev) => commitReplayedTurn(prev, userMessage, clientMessageId, rebuilt));
+          }
+          replayErrorsRef.current = [];
           replayTruncatedRef.current = truncated;
           if (!truncated && typeof snapshotSeq === "number") {
             streamSeqRef.current = snapshotSeq;
@@ -1570,6 +1631,9 @@ export function useChat(
       replayRafRef.current = 0;
       isReplayingRef.current = false;
       queuedReplayMessagesRef.current = [];
+      replayShownRef.current = null;
+      replayReplacedIdsRef.current = new Set();
+      replayErrorsRef.current = [];
     };
   }, [sessionId, providerId, projectName, updateTeamActivity, loadTeamDetail]);
 
