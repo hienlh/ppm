@@ -9,7 +9,9 @@
  * off the phone (`telegram_detail: title`) shows its title, project and urgency only.
  */
 import type { Importance, Urgency } from "../../shared/ppm-tasks.ts";
-import { daysBetween } from "../../shared/ppm-tasks-urgency.ts";
+import { dueText, waitingUntilText, type WaitingDetail } from "../../shared/ppm-tasks-waiting.ts";
+
+export { dueText };
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
 import { isPublicHttpsUrl } from "./assistant-telegram-links.ts";
 import { cleanTelegramText, telegramVisibleLength, TELEGRAM_CARD_ROOM, type CardDetail } from "./assistant-telegram-card-kinds.ts";
@@ -43,8 +45,8 @@ export interface TaskCardFacts {
   /** `YYYY-MM-DD`. */
   dueDate: string | null;
   assignee: string | null;
-  waitingOn: string | null;
-  waitingSince: number | null;
+  /** On whom the task waits and until when; null when it does not wait. */
+  waiting: WaitingDetail | null;
   nextStep: string | null;
   /** Live states of its Jira and PR links, already worded ("NX-6318 In Progress"). */
   linkLines: TaskCardLinkLine[];
@@ -60,22 +62,15 @@ export interface CardContext {
 const clean = (text: string, counter: { hidden: number }, max = LINE_MAX): string =>
   cleanTelegramText(truncateText(text.replace(/\s+/g, " ").trim(), max), counter);
 
-/** "Overdue (2026-11-14)", "Due today", "Due tomorrow", "Due in 3 days", "Due 2026-12-01". */
-export function dueText(dueDate: string, today: string): string {
-  const days = daysBetween(today, dueDate);
-  if (days === null) return `Due ${dueDate}`;
-  if (days < 0) return `Overdue (${dueDate})`;
-  if (days === 0) return "Due today";
-  if (days === 1) return "Due tomorrow";
-  if (days < 7) return `Due in ${days} days`;
-  return `Due ${dueDate}`;
-}
-
-function waitedFor(since: number, now: number): string {
-  const days = Math.floor((now - since) / 86_400_000);
-  if (days >= 1) return `${days} day${days === 1 ? "" : "s"}`;
-  const hours = Math.max(1, Math.floor((now - since) / 3_600_000));
-  return `${hours} hour${hours === 1 ? "" : "s"}`;
+/**
+ * The waiting line: "✋ <b>Waiting on you</b> · Due today", "⏳ Waiting on Việt · for 2 days",
+ * "⏳ Waiting · for 5 hours". A wait on the user is bold and marked with a raised hand.
+ */
+export function waitingLineHtml(w: WaitingDetail, ctx: Pick<CardContext, "today" | "now">, counter: { hidden: number }): string {
+  const words = w.name ? `Waiting on ${clean(w.name, counter, 80)}` : "Waiting";
+  const head = w.mine ? `✋ <b>${words}</b>` : `⏳ ${words}`;
+  const until = waitingUntilText(w.until, ctx.today, ctx.now);
+  return until ? `${head} · ${until}` : head;
 }
 
 /** The line a hidden-secret count adds, when redaction took anything out. */
@@ -118,12 +113,11 @@ function factLines(f: TaskCardFacts, ctx: CardContext, counter: { hidden: number
   }
   const head = [f.type !== "task" ? typeLabel(f.type) : null, project, urgency, IMPORTANCE_LABEL[f.importance], opts.withStatus ? clean(f.statusName, counter, 60) : null];
   lines.push(head.filter(Boolean).join(" · "));
-  const when = [f.dueDate ? dueText(f.dueDate, ctx.today) : null, f.assignee ? clean(f.assignee, counter, 80) : null].filter(Boolean);
+  // A waiting task's due date is on its waiting line, as its "until when".
+  const dueShown = f.waiting?.until?.kind === "due";
+  const when = [f.dueDate && !dueShown ? dueText(f.dueDate, ctx.today) : null, f.assignee ? clean(f.assignee, counter, 80) : null].filter(Boolean);
   if (when.length) lines.push(when.join(" · "));
-  if (f.waitingOn) {
-    const since = f.waitingSince ? ` for ${waitedFor(f.waitingSince, ctx.now)}` : "";
-    lines.push(`Waiting on ${clean(f.waitingOn, counter, 80)}${since}`);
-  }
+  if (f.waiting) lines.push(waitingLineHtml(f.waiting, ctx, counter));
   for (const link of f.linkLines.slice(0, LINKS_SHOWN)) lines.push(linkLineHtml(link, counter));
   if (f.nextStep) lines.push(`<i>Next: ${clean(f.nextStep, counter)}</i>`);
   return lines;

@@ -13,6 +13,25 @@ export interface DigestSettings {
 
 export const DEFAULT_DIGEST: DigestSettings = { enabled: true, time: "08:00" };
 
+/**
+ * A task of the project that waits, as PPM read it from the task store when it put the digest
+ * together (not the manager's words): on whom, and until when, worded at that moment.
+ */
+export interface DigestWaitingTask {
+  /** `ppm/12`. */
+  ref: string;
+  title: string;
+  /** "Waiting on you", "Waiting on Việt", "Waiting". */
+  label: string;
+  /** The wait is on the user. */
+  mine: boolean;
+  /** "Due today", "Overdue (2026-11-14)", "for 2 days"; null when neither is known. */
+  until: string | null;
+}
+
+/** Most waiting tasks a digest section lists; the rest are counted. */
+export const DIGEST_WAITING_MAX = 8;
+
 /** One project's section of the digest card. */
 export interface DigestProject {
   name: string;
@@ -22,6 +41,20 @@ export interface DigestProject {
   items: string[];
   /** The project keeps its details off the phone: Telegram shows only how many items there are. */
   titleOnly?: boolean;
+  /** The project's waiting tasks, the user's own first (absent on digests from before this list). */
+  waiting?: DigestWaitingTask[];
+  /** Waiting tasks left out past `DIGEST_WAITING_MAX`. */
+  waitingMore?: number;
+  /** How many of all the waiting tasks, listed or not, wait on the user. */
+  waitingMine?: number;
+}
+
+/** "3 tasks waiting, 1 on you". */
+export function digestWaitingSummary(p: Pick<DigestProject, "waiting" | "waitingMore" | "waitingMine">): string {
+  const list = p.waiting ?? [];
+  const total = list.length + (p.waitingMore ?? 0);
+  const mine = p.waitingMine ?? list.filter((w) => w.mine).length;
+  return `${plural(total, "task")} waiting${mine ? `, ${mine} on you` : ""}`;
 }
 
 /** What a project that did not answer shows on the card. */

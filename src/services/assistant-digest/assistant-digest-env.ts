@@ -17,12 +17,21 @@ import { ASSISTANT_PROJECT_NAME } from "../../shared/assistant-project.ts";
 import type { AssistantProvenance } from "../../shared/assistant-provenance.ts";
 import { createAssistantDigest, type DigestDeps } from "./assistant-digest.service.ts";
 import { digestStateRow } from "./digest-state.ts";
+import { digestWaiting } from "./digest-waiting-tasks.ts";
+import { listTasks } from "../ppm-tasks/ppm-tasks.service.ts";
+import { memberRows } from "../ppm-tasks/ppm-tasks-db.ts";
+import { todayYmd } from "../ppm-tasks/ppm-tasks-today.ts";
+import { getTaskProject } from "../ppm-tasks/ppm-tasks-projects.service.ts";
+import { projectNameForPath } from "../project-name-for-path.ts";
+import { basename } from "node:path";
+import { formatTaskRef } from "../../shared/ppm-tasks-refs.ts";
 
 const log = createLogger("assistant-digest");
 
 /** What every manager chat is asked: fixed PPM text, never anything a model wrote. */
 export const DIGEST_ASK_TEXT = "Morning digest. When you are free, call `report_to_assistant` with kind `digest` and at most 12 short "
-  + "items: what is waiting on the user, what is running, what finished since the last digest. Do not start other work for this.";
+  + "items: what is waiting on the user, what is running, what finished since the last digest. For anything waiting, say on whom "
+  + "(the user or someone else) and until when (its due date, else since when). Do not start other work for this.";
 
 /** PPM asked on its own, and nothing anyone else wrote is in the ask. */
 const ASK_PROVENANCE: AssistantProvenance = { startedBy: "ppm", untrusted: false, reason: "morning_digest" };
@@ -67,6 +76,15 @@ export const digestDeps: DigestDeps = {
   existingCard: (date) => findOpenCardsBy("digest", "date", date)[0]?.id ?? null,
   createCard: (card) => assistantCards.create(card),
   canonical: resolveMigratedSession,
+  waitingTasks: (projectKey) => {
+    const path = getTaskProject(projectKey)?.projectPath ?? projectKey;
+    const name = projectNameForPath(path) ?? basename(path);
+    const members = new Map(memberRows(projectKey).map((m) => [m.id, m.name]));
+    const now = assistantClock.now();
+    return digestWaiting(listTasks({ projectKeys: [projectKey] }), {
+      ref: (t) => formatTaskRef(t.number, name), nameOf: (_t, id) => members.get(id) ?? null, today: todayYmd(now), now,
+    });
+  },
 };
 
 /** The process-wide digest. */
