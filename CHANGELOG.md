@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Clicking a chat in Chat History could do nothing after PPM had been open a while.** Closing a tab in another project, or switching to a tab whose name another project also had open, could leave PPM opening new tabs in a panel that was not on screen, so every chat picked from the history seemed to do nothing until all tabs were closed. A chat picked now always opens in view, a tab found in a hidden panel is brought into view, and the layout no longer keeps a panel that is gone.
+
 ## [0.26.12] - 2026-11-18
 
 ### Added
