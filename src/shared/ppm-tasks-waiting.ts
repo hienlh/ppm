@@ -108,6 +108,8 @@ export function waitingUntilText(until: WaitingUntil | null, today: string, now:
 
 /** One history entry, as far as the waiting start needs it. */
 export interface StatusHistoryEntry {
+  /** The row id: what orders two entries written in the same millisecond. */
+  id?: number;
   at: number;
   changes: ReadonlyArray<{ field: string; before: unknown; after: unknown }>;
 }
@@ -116,20 +118,25 @@ export interface StatusHistoryEntry {
  * When the task's current stay in the Waiting group began, from its history entries (any order):
  * the oldest status move of the latest unbroken run of moves into or within the group. A task
  * created in a Waiting status counts from its creation. Null when the history holds no such move
- * (a task moved before history was kept, or history compacted away).
+ * (a task moved before history was kept, or history compacted away). A move *out of* a status
+ * `groupOf` cannot place (deleted, its group no longer on record) is not read as arriving from
+ * another group, since deleting a Waiting status hands its tasks to another and that is no new
+ * wait; the run cannot be followed further back through it, so it starts at that hand-over.
  */
 export function waitingStartedAtFromHistory(entries: readonly StatusHistoryEntry[], groupOf: (statusId: string) => BaseGroup | undefined): number | null {
   const moves = entries
     .flatMap((e) => {
       const c = e.changes.find((x) => x.field === "statusId");
-      return c && typeof c.after === "string" ? [{ at: e.at, before: typeof c.before === "string" ? c.before : null, after: c.after }] : [];
+      return c && typeof c.after === "string" ? [{ id: e.id ?? 0, at: e.at, before: typeof c.before === "string" ? c.before : null, after: c.after }] : [];
     })
-    .sort((a, b) => b.at - a.at);
+    .sort((a, b) => b.at - a.at || b.id - a.id);
   let start: number | null = null;
   for (const m of moves) {
     if (groupOf(m.after) !== "waiting") break;
     start = m.at;
-    if (!m.before || groupOf(m.before) !== "waiting") break;
+    if (!m.before) break;
+    const before = groupOf(m.before);
+    if (before !== undefined && before !== "waiting") break;
   }
   return start;
 }

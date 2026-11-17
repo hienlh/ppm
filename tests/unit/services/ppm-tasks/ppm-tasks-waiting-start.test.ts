@@ -7,7 +7,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import "../../../test-setup.ts";
 import { createTask, getTask, listTasks, updateTask } from "../../../../src/services/ppm-tasks/ppm-tasks.service.ts";
-import { addMember } from "../../../../src/services/ppm-tasks/ppm-tasks-project-config.ts";
+import { addMember, addStatus, deleteStatus, listStatuses } from "../../../../src/services/ppm-tasks/ppm-tasks-project-config.ts";
 import { toTaskDtos } from "../../../../src/server/routes/ppm-tasks-dto.ts";
 import { taskFacts } from "../../../../src/services/assistant-telegram/assistant-telegram-tasks-deck.ts";
 import { freshProject, USER, type Fixture } from "./ppm-tasks-fixture.ts";
@@ -37,6 +37,25 @@ describe("waitingStartedAt", () => {
     expect(getTask(t.id)!.waitingStartedAt).toBeNull();
     updateTask(t.id, { statusId: f.status("Waiting").id }, 2, USER, T0 + 2 * DAY);
     expect(getTask(t.id)!.waitingStartedAt).toBe(T0 + 2 * DAY);
+  });
+
+  it("keeps the start when the Waiting status it sat in is deleted and its tasks move to another", () => {
+    addStatus(f.projectKey, { name: "Blocked", baseGroup: "waiting" }, USER, T0);
+    const blocked = listStatuses(f.projectKey).find((s) => s.name === "Blocked")!;
+    const t = createTask({ projectKey: f.projectKey, title: "Blocked on vendor" }, USER, T0);
+    updateTask(t.id, { statusId: blocked.id }, 1, USER, T0 + DAY);
+    deleteStatus(blocked.id, f.status("Waiting").id, USER, T0 + 5 * DAY);
+    expect(getTask(t.id)!.statusId).toBe(f.status("Waiting").id);
+    expect(getTask(t.id)!.waitingStartedAt).toBe(T0 + DAY);
+  });
+
+  it("starts the wait at the move when a deleted status of another group hands its tasks to Waiting", () => {
+    addStatus(f.projectKey, { name: "Review", baseGroup: "active" }, USER, T0);
+    const review = listStatuses(f.projectKey).find((s) => s.name === "Review")!;
+    const t = createTask({ projectKey: f.projectKey, title: "Review it" }, USER, T0);
+    updateTask(t.id, { statusId: review.id }, 1, USER, T0 + DAY);
+    deleteStatus(review.id, f.status("Waiting").id, USER, T0 + 5 * DAY);
+    expect(getTask(t.id)!.waitingStartedAt).toBe(T0 + 5 * DAY);
   });
 
   it("is null for a task that does not wait", () => {

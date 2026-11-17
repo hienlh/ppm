@@ -94,8 +94,9 @@ const DIGEST_TELEGRAM_MAX = 3200;
  * each ("✋ <code>ppm/12</code> Title — <b>Waiting on you</b> · Due today"). A project whose details
  * stay off the phone shows the count line only.
  */
-function digestWaitingLines(p: DigestProject, counter: { hidden: number }): string[] {
+function digestWaitingLines(p: DigestProject, counter: { hidden: number }, countOnly = false): string[] {
   if (!p.waiting?.length) return [];
+  if (countOnly && !p.titleOnly) return [`<i>⏳ ${digestWaitingSummary(p)}; the list is on the card in PPM.</i>`];
   const head = `<i>⏳ ${digestWaitingSummary(p)}${p.titleOnly ? "; the details stay in PPM." : ":"}</i>`;
   if (p.titleOnly) return [head];
   const lines = p.waiting.map((w) => {
@@ -121,14 +122,17 @@ function digestLines(projects: readonly DigestProject[], counter: { hidden: numb
     else if (p.items.length === 0) section.push(`<i>${DIGEST_NOTHING_NEW}</i>`);
     else if (p.titleOnly) section.push(`<i>${p.items.length} item${p.items.length === 1 ? "" : "s"}; the details stay in PPM for this project.</i>`);
     else p.items.slice(0, 12).forEach((item, i) => section.push(`${i + 1}. ${clean(oneLine(item), counter)}`));
-    section.push(...digestWaitingLines(p, counter));
-    const size = section.reduce((n, l) => n + l.length + 1, 0);
+    const sizeOf = (lines: string[]) => lines.reduce((n, l) => n + l.length + 1, 0);
+    // The waiting list is what a section gives up when it would not fit; its count stays.
+    let lines = [...section, ...digestWaitingLines(p, counter)];
+    if (used + sizeOf(lines) > DIGEST_TELEGRAM_MAX) lines = [...section, ...digestWaitingLines(p, { hidden: 0 }, true)];
+    const size = sizeOf(lines);
     if (used + size > DIGEST_TELEGRAM_MAX) {
       out.push("\n<i>The rest is on the card in PPM.</i>");
       break;
     }
     used += size;
-    out.push(...section);
+    out.push(...lines);
   }
   return out;
 }

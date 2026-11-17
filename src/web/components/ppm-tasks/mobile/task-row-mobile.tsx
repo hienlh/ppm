@@ -66,9 +66,9 @@ export function TaskRowMobile(p: TaskRowMobileProps) {
           <div className="mt-1 flex min-w-0 flex-nowrap items-center gap-2 whitespace-nowrap text-xs text-text-3">
             {(task.type === "decision" || task.type === "reply") && <TaskTypeBadge type={task.type} className="text-[11px]" />}
             {externalMeta(task, p.linkStates)}
-            {waiting ? <TaskWaitingLabel detail={waiting} className="shrink-[2]" /> : null}
+            {waiting ? <TaskWaitingLabel detail={waiting} className="shrink" /> : null}
             {p.progress && p.progress.total > 0 && <span className="font-mono text-[11px]">{p.progress.done}/{p.progress.total}</span>}
-            <TaskWorkingSessionChip working={p.working ?? task.workingSession} check={task.check} className="shrink-[3]"
+            <TaskWorkingSessionChip working={p.working ?? task.workingSession} check={task.check} className={waiting ? "shrink-[8]" : "shrink-[3]"}
               onOpen={(sid) => p.onOpenChat(task, sid)} onStartChat={() => p.onStartChat(task)} />
           </div>
         )}

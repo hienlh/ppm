@@ -77,7 +77,8 @@ export function TaskDetailHeader({ task, members, preview, hasManager, onRename,
         <TaskUrgencyPill urgency={task.effectiveUrgency} raised={task.urgencyRaised} />
         <TaskImportanceBars importance={task.importance} />
         <TaskDueLabel dueDate={task.dueDate} />
-        {waiting && <TaskWaitingLabel detail={waiting} className="text-xs" />}
+        {/* The header shows the due date beside it already: the label keeps only an age. */}
+        {waiting && <TaskWaitingLabel detail={waiting.until?.kind === "due" ? { ...waiting, until: null } : waiting} className="text-xs" />}
       </div>
     </header>
   );

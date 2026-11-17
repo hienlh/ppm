@@ -81,8 +81,9 @@ export const digestDeps: DigestDeps = {
     const name = projectNameForPath(path) ?? basename(path);
     const members = new Map(memberRows(projectKey).map((m) => [m.id, m.name]));
     const now = assistantClock.now();
-    return digestWaiting(listTasks({ projectKeys: [projectKey] }), {
-      ref: (t) => formatTaskRef(t.number, name), nameOf: (_t, id) => members.get(id) ?? null, today: todayYmd(now), now,
+    const today = todayYmd(now);
+    return digestWaiting(listTasks({ projectKeys: [projectKey] }, today), {
+      ref: (t) => formatTaskRef(t.number, name), nameOf: (_t, id) => members.get(id) ?? null, today, now,
     });
   },
 };

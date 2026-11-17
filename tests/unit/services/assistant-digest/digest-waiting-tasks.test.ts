@@ -100,6 +100,14 @@ describe("the digest card", () => {
     expect(hidden).not.toContain("4471");
   });
 
+  it("keeps a full section on Telegram by giving up its waiting list, never the section", () => {
+    const waiting = Array.from({ length: 8 }, (_, i) => ({ ref: `nxsys/${i}`, title: "t".repeat(80), label: "Waiting on Nguyễn Hoàng Minh Khôi", mine: false, until: "for 12 days" }));
+    const text = telegram([{ name: "nxsys", state: "answered", items: Array(12).fill("x".repeat(200)), waiting, waitingMore: 4 }]);
+    expect(text).toContain("12. ");
+    expect(text).toContain("12 tasks waiting; the list is on the card in PPM.");
+    expect(text).not.toContain("The rest is on the card in PPM.");
+  });
+
   it("asks the managers to say on whom and until when", () => {
     expect(DIGEST_ASK_TEXT).toContain("say on whom");
     expect(DIGEST_ASK_TEXT).toContain("until when");

@@ -109,6 +109,22 @@ describe("waitingStartedAtFromHistory", () => {
     expect(waitingStartedAtFromHistory(entries, groupOf)).toBe(2);
   });
 
+  it("follows a deleted status whose group is on record, and stops at the hand-over when it is not", () => {
+    // "gone" was a Waiting status, deleted at 30; its tasks moved to "wait".
+    const entries = [move(4, "doing", "gone"), move(30, "gone", "wait")];
+    expect(waitingStartedAtFromHistory(entries, (id) => (id === "gone" ? "waiting" : groupOf(id)))).toBe(4);
+    // Its group no longer on record: the move out of it is not read as leaving another group.
+    expect(waitingStartedAtFromHistory(entries, groupOf)).toBe(30);
+    expect(waitingStartedAtFromHistory([move(30, "gone", "wait")], groupOf)).toBe(30);
+  });
+
+  it("orders two moves of the same millisecond by their row id", () => {
+    const created = { id: 1, at: 50, changes: [{ field: "statusId", before: null, after: "todo" }] };
+    const moved = { id: 2, at: 50, changes: [{ field: "statusId", before: "todo", after: "wait" }] };
+    expect(waitingStartedAtFromHistory([created, moved], groupOf)).toBe(50);
+    expect(waitingStartedAtFromHistory([moved, created], groupOf)).toBe(50);
+  });
+
   it("is null when the latest move is out of Waiting or there is no move at all", () => {
     expect(waitingStartedAtFromHistory([move(3, "todo", "wait"), move(5, "wait", "doing")], groupOf)).toBeNull();
     expect(waitingStartedAtFromHistory([], groupOf)).toBeNull();
