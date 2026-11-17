@@ -17,6 +17,39 @@ const heights = (page, sel) => page.locator(sel).evaluateAll((els) => els
 /** The urgency group a row sits in, or "snoozed" when it is in the Snoozed section, or null. */
 const whereIs = (row) => row.evaluate((el) => (el.closest("[data-task-snoozed-section]") ? "snoozed" : el.closest("[data-task-group]")?.getAttribute("data-task-group") ?? null));
 
+/** Makes the task wait on the user, due in a few days, so its row draws the waiting label. */
+async function waitOnMe(k, id) {
+  const t = await k.task(id);
+  const waiting = (await k.settings(t.project)).statuses.find((x) => x.baseGroup === "waiting");
+  const r = await k.patch(id, { revision: t.revision, statusId: waiting.id, waitingOnMemberId: "me", dueDate: dayFromNow(3) });
+  assert.equal(r.ok, true, `made ${t.ref} wait on the user`);
+}
+
+/**
+ * In a row both waiting and snoozed, the snooze label sits right after the waiting label and the
+ * two never overlap: drawn side by side on one line, or the snooze label on the next line.
+ */
+async function waitAndSnoozeApart(row) {
+  const box = await row.evaluate((el) => {
+    const r = (sel) => { const e = el.querySelector(sel); if (!e) return null; const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height }; };
+    const wait = el.querySelector("[data-task-waiting]");
+    const snooze = el.querySelector("[data-task-snooze]");
+    // The two are siblings in the meta line, the snooze label after the wait (its date, on a desktop).
+    const order = wait && snooze ? !!(wait.compareDocumentPosition(snooze) & Node.DOCUMENT_POSITION_FOLLOWING) : false;
+    // Text cut to "Wa…": a truncating span narrower than what it holds.
+    const cut = [...el.querySelectorAll("[data-task-waiting-words], [data-task-snooze] .truncate")]
+      .filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => e.textContent);
+    return { wait: r("[data-task-waiting]"), snooze: r("[data-task-snooze]"), row: r(":scope > *"), order, cut };
+  });
+  assert(box.wait && box.wait.w > 0, "the waiting label is drawn");
+  assert(box.snooze && box.snooze.w > 0, "the snooze label is drawn");
+  assert(box.order, "the snooze label comes after the waiting label");
+  const overlap = box.wait.l < box.snooze.r - 0.5 && box.snooze.l < box.wait.r - 0.5 && box.wait.t < box.snooze.b - 0.5 && box.snooze.t < box.wait.b - 0.5;
+  assert(!overlap, `waiting ${JSON.stringify(box.wait)} and snooze ${JSON.stringify(box.snooze)} overlap`);
+  assert.deepEqual(box.cut, [], "the wait and the snooze are drawn whole");
+  return box;
+}
+
 async function openSnoozedSection(page) {
   const toggle = page.locator("[data-task-snoozed-toggle]:visible").first();
   await toggle.waitFor({ timeout: 15000 });
@@ -33,6 +66,7 @@ async function snoozeDesktop(k, s) {
   await k.scene("z1", "Snooze a task until tomorrow", "It keeps its status and leaves the daily list; the folded “Snoozed” section at the bottom holds it.");
   // Earlier steps of the full run may have moved it (another status, a result): what matters is
   // that the snooze leaves both as they were.
+  await waitOnMe(k, s.t.review.id);
   const before = await k.task(s.t.review.id);
   await k.selectTask(title);
   const button = k.detail().locator("[data-task-snooze-button]");
@@ -68,6 +102,7 @@ async function snoozeDesktop(k, s) {
   await row.locator("[data-task-unsnooze]").scrollIntoViewIfNeeded();
   await k.beat(1200);
   await k.shot("z1-snoozed-open-1440");
+  await waitAndSnoozeApart(row);
   // The project's Telegram /tasks counts it too (the summary it reads).
   const summary = (await k.fx.api("/api/tasks/projects")).data.find((p) => p.name === "alpha");
   assert.equal(summary.snoozed, 1, "the project counts one snoozed task");
@@ -81,7 +116,7 @@ async function snoozeDesktop(k, s) {
   await k.beat(1200);
   await k.shot("z1-unsnoozed-1440");
   await k.endScene();
-  k.record("z1", "1440: Snooze → Tomorrow from the task page; row leaves the groups for a folded Snoozed (1); Unsnooze brings it back; buttons 28 px");
+  k.record("z1", "1440: Snooze → Tomorrow from the task page; row leaves the groups for a folded Snoozed (1); Unsnooze brings it back; buttons 28 px; beside a wait, never over it");
 }
 
 /** 800: the row's right-click menu → Pick a date… → the day; then Unsnooze from the row. */
@@ -126,6 +161,7 @@ async function snoozeNarrowDesktop(k, s) {
 async function snoozePhone(k, s) {
   const page = await k.openPhone();
   const title = s.t.reply.title;
+  await waitOnMe(k, s.t.reply.id);
   await openDrawerTasks(page);
   const list = page.locator("[data-task-list-mobile]:visible");
   await list.waitFor({ timeout: 30000 });
@@ -153,6 +189,7 @@ async function snoozePhone(k, s) {
   await snoozed.locator("[data-task-unsnooze]").scrollIntoViewIfNeeded();
   await k.beat(1200);
   await k.shot("z3-snoozed-390");
+  await waitAndSnoozeApart(snoozed);
   // The phone page's own Snooze button, at the phone size.
   await snoozed.getByText(title).first().tap();
   const detail = page.locator("[data-task-open-sheet] [data-task-detail-mobile]:visible");
@@ -168,7 +205,7 @@ async function snoozePhone(k, s) {
   await phoneSheet.locator('[data-snooze-choice="clear"]').tap();
   await until("back from the phone", async () => !(await k.task(s.t.reply.id)).snoozed);
   await k.endScene();
-  k.record("z3", "390: long-press → Snooze until… → Tomorrow, in the drawer's Snoozed section; Unsnooze 26 px; the page's Snooze sheet unsnoozes");
+  k.record("z3", "390: long-press → Snooze until… → Tomorrow, in the drawer's Snoozed section; Unsnooze 26 px; the page's Snooze sheet unsnoozes; beside a wait, never over it");
 }
 
 export const SNOOZE_STEPS = [

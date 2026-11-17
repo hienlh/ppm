@@ -65,14 +65,21 @@ describe("the morning digest", () => {
   const back = [{ project: "demo", ref: "demo/4", title: "Merge to staging" }];
 
   it("puts the tasks back from snooze on the card, apart from the managers' items", () => {
-    const card = buildDigestCard(run, () => false, back);
+    const card = buildDigestCard(run, () => false, undefined, back);
     expect(card.payload.resurfaced).toEqual(back);
     expect(card.payload.projects).toEqual([{ name: "demo", state: "answered", items: ["PR merged"] }]);
     expect(buildDigestCard(run, () => false).payload.resurfaced).toBeUndefined();
   });
 
+  it("keeps each project's waiting tasks beside it", () => {
+    const waiting = { waiting: [{ ref: "demo/2", title: "Ask legal", label: "Waiting on you", mine: true, until: null }], waitingMine: 1 };
+    const card = buildDigestCard(run, () => false, () => waiting as never, back);
+    expect(card.payload.resurfaced).toEqual(back);
+    expect(card.payload.projects![0]).toMatchObject({ name: "demo", items: ["PR merged"], waitingMine: 1 });
+  });
+
   it("lists them first on Telegram", () => {
-    const card = buildDigestCard(run, () => false, back);
+    const card = buildDigestCard(run, () => false, undefined, back);
     const out = formatManagerCard({ ...card, provenance: null, body: null, okOffered: false } as never, "full");
     expect(out.html).toContain("Back from snooze today");
     expect(out.html).toContain("demo/4");

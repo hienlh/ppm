@@ -176,3 +176,59 @@ describe("components", () => {
     expect([...document.querySelectorAll("[data-task-action-sheet] button")].some((b) => b.textContent?.includes("Snooze"))).toBe(false);
   });
 });
+
+describe("beside the wait", () => {
+  const waitingAndBack = () => taskDto({
+    baseGroup: "waiting", statusName: "Waiting", waitingOnMemberId: "me", dueDate: "2026-11-20", resurfacedToday: true,
+  });
+  const order = () => {
+    const wait = document.querySelector("[data-task-waiting]");
+    const snooze = document.querySelector("[data-task-snooze]");
+    expect(wait).not.toBeNull();
+    expect(snooze).not.toBeNull();
+    // The snooze label follows the wait in the same meta line, never inside it.
+    expect(wait!.parentElement).toBe(snooze!.parentElement);
+    expect(wait!.compareDocumentPosition(snooze!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(wait!.contains(snooze!)).toBe(false);
+    return snooze!;
+  };
+
+  it("on a phone row, Back today sits right after the waiting label", async () => {
+    const { TaskRowMobile } = await import("../../../../src/web/components/ppm-tasks/mobile/task-row-mobile");
+    view = await mount(
+      <TaskRowMobile task={waitingAndBack()} depth={0} selected={false} showProject={false}
+        onOpen={() => {}} onActions={() => {}} onOpenChat={() => {}} onStartChat={() => {}} />,
+    );
+    const snooze = order();
+    expect(snooze.textContent).toContain("Back today");
+    expect(snooze.className).toContain("min-w-0");
+  });
+
+  it("a snoozed phone row says on whom and the day only, and leaves its chat chip to the task page", async () => {
+    const { TaskRowMobile } = await import("../../../../src/web/components/ppm-tasks/mobile/task-row-mobile");
+    const task = snoozedTask({ baseGroup: "waiting", statusName: "Waiting", waitingOnMemberId: "me", snoozedUntil: "2026-11-25",
+      workingSession: { kind: "manager", sessionId: "m", title: "Manager" } as never });
+    view = await mount(
+      <TaskRowMobile task={task} depth={0} selected={false} showProject={false}
+        onOpen={() => {}} onActions={() => {}} onOpenChat={() => {}} onStartChat={() => {}} onUnsnooze={() => {}} />,
+    );
+    const snooze = order();
+    expect(document.querySelector("[data-task-waiting-words]")!.textContent).toBe("you");
+    expect(snooze.textContent).toBe("Wed 25 Nov");
+    expect(snooze.getAttribute("title")).toBe("Until Wed 25 Nov");
+    expect(document.querySelector("[data-session-tone]")).toBeNull();
+    expect(document.querySelector("[data-task-unsnooze]")).not.toBeNull();
+  });
+
+  it("on a desktop row, a snoozed task's date sits after the wait and its date", async () => {
+    const { TaskListRow } = await import("../../../../src/web/components/ppm-tasks/task-list-row");
+    view = await mount(
+      <TaskListRow task={snoozedTask({ baseGroup: "waiting", statusName: "Waiting", waitingOnMemberId: "me", dueDate: "2026-11-25" })} depth={0} selected={false}
+        showProject={false} onSelect={() => {}} onOpenChat={() => {}} onStartChat={() => {}} onSnooze={() => {}} />,
+    );
+    const snooze = order();
+    expect(snooze.textContent).toContain("Until");
+    const when = document.querySelector("[data-task-waiting-when]");
+    if (when) expect(when.compareDocumentPosition(snooze) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
