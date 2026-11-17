@@ -149,6 +149,30 @@ describe("Supervisor State Machine", () => {
     expect(newStatus!.state).toBe("running");
   }, TEST_TIMEOUT);
 
+  // Switching the public tunnel on or off sends `retunnel`. It used to fall through to the
+  // plain-SIGUSR2 restart, so the switch restarted the server and cut every running chat.
+  test("a retunnel command reloads the tunnel without restarting the server", async () => {
+    // The switch turned off, as the user did: also keeps this test from opening a public tunnel.
+    const set = Bun.spawnSync([process.execPath, resolve(import.meta.dir, "../../src/index.ts"), "config", "set", "tunnel.enabled", "false"], {
+      env: { ...process.env, PPM_HOME: PPM_DIR }, stdout: "ignore", stderr: "pipe",
+    });
+    expect(set.exitCode).toBe(0);
+    const supPid = await spawnTestSupervisor();
+    expect(await waitForServerReady()).toBe(true);
+    const serverPid = readStatus()!.pid as number;
+    const logBefore = readFileSync(LOG_FILE, "utf-8").length;
+
+    writeFileSync(resolve(PPM_DIR, ".supervisor-cmd"), JSON.stringify({ action: "retunnel" }));
+    process.kill(supPid, "SIGUSR2");
+
+    const handled = await waitFor(() => readFileSync(LOG_FILE, "utf-8").slice(logBefore).includes("retunnel command received"), 10_000);
+    expect(handled).toBe(true);
+    await Bun.sleep(3000);
+    expect(readFileSync(LOG_FILE, "utf-8").slice(logBefore)).not.toContain("restarting server only");
+    expect(readStatus()!.pid).toBe(serverPid);
+    expect(isAlive(serverPid)).toBe(true);
+  }, TEST_TIMEOUT);
+
   test("SIGTERM stops supervisor cleanly regardless of state", async () => {
     const supPid = await spawnTestSupervisor();
     const ready = await waitForServerReady();

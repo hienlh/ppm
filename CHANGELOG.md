@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Switching the public tunnel on or off restarted PPM's server and cut every running chat.** The switch is applied by reloading the tunnel, but that reload then went on to restart the server as well. It now only starts or stops the tunnel; `ppm restart` still restarts.
+
 ## [0.26.11] - 2026-11-18
 
 ### Fixed
