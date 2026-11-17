@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.26.10] - 2026-11-18
+
+### Added
+
+- **Compact task quick view**: status, urgency, importance, assignee, waiting-on and due date are chips you edit in place (Due opens Today / Tomorrow / In a week / Pick a date / No due date), and the next step folds to two lines.
+- **Links in the task quick view**: a task's links show with their live state (PR, Jira, chat), folded past four.
+- **Double-click a window edge or corner** to stretch the floating window out to the edge of the screen; with Alt/Option it fills that whole direction.
+
+### Fixed
+
+- **A next step whose save failed is kept** and saved again when you next leave the field.
+- **Task link pills and chip rows** get a full 44px press area on a phone, apart from each other.
+- **Window content no longer covers the resize strips** at a floating window's edges.
+
 ## [0.26.9] - 2026-11-17
 
 ### Added
