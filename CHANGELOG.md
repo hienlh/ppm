@@ -1,10 +1,20 @@
 # Changelog
 
-## [Unreleased]
+## [0.26.8] - 2026-11-17
 
 ### Added
 
-- **Use Claude's free limit resets from PPM, as on claude.ai**: a Claude account holding resets shows them on its card in Settings → Accounts, each kind with how many are left, when they expire and what one refills; PPM asks before spending one and checks with Anthropic again right before it does. Free resets (Claude and Codex) are listed with their expiry on every card and in the chat's Switch account.
+- **Snooze a task**: hide a task until a day, or until its Jira status or PR changes; it leaves the daily list, the Tasks chip, Telegram `/tasks` and the morning digest, sits under a folded "Snoozed" row, and comes back marked "Back today" with the manager told.
+- **Waiting tasks say on whom and until when**: "Waiting on you · Tomorrow", "Waiting on Việt · 2d", with a "Waiting on you" filter, on Telegram `/tasks` and in the morning digest too.
+- **Spend Claude's free limit resets**: the account card lists every free reset with its expiry and uses one with a click (thanks @thangho98).
+
+### Changed
+
+- **Task chip only in the manager chat**: opening a task's own chat no longer attaches the task to your message; the manager chat still does.
+
+### Fixed
+
+- **Restart news reaches the Assistant every time**: no hourly cap holds it back, it names every chat a shutdown cut off and the background work it killed, and a chat title is no longer mistaken for a secret.
 
 ## [0.26.7] - 2026-11-17
 
