@@ -68,7 +68,8 @@ function SnoozeRowMenu({ task, onSnooze, children }: { task: TaskDto; onSnooze(t
           <ContextMenuLabel className="text-[11px] uppercase tracking-wide text-text-3">Snooze until…</ContextMenuLabel>
           {choices.filter((c) => c.id !== "clear").map((c) => (
             <ContextMenuItem key={c.id} disabled={c.disabled} data-snooze-choice={c.id}
-              onSelect={() => (c.patch ? onSnooze(task, c.patch) : setPicking(true))}>
+              // The picker opens once the menu has closed and handed focus back, or that would dismiss it.
+              onSelect={() => (c.patch ? onSnooze(task, c.patch) : setTimeout(() => setPicking(true), 60))}>
               <span className="flex-1">{c.label}</span>
               {c.detail && <span className="ml-3 text-[11px] text-text-3">{c.detail}</span>}
             </ContextMenuItem>
@@ -81,7 +82,7 @@ function SnoozeRowMenu({ task, onSnooze, children }: { task: TaskDto; onSnooze(t
           )}
         </ContextMenuContent>
       </ContextMenu>
-      <TaskSnoozePicker task={task} open={picking} onOpenChange={setPicking} anchorRef={anchor} onSnooze={(patch) => onSnooze(task, patch)} />
+      <TaskSnoozePicker task={task} open={picking} onOpenChange={setPicking} anchorRef={anchor} pickingDate onSnooze={(patch) => onSnooze(task, patch)} />
     </div>
   );
 }

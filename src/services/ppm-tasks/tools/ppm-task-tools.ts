@@ -70,7 +70,7 @@ function list(env: PpmTaskToolsEnv, caller: TaskCaller, a: Args): string {
   const lookups = new Map(scope.map((s) => [s.key, projectLookup(s.key)]));
   const lines = shown.map((t) => taskLine(t, lookups.get(t.projectKey) ?? projectLookup(t.projectKey), childCheckFor(t), now));
   const more = tasks.length > shown.length ? ` (${tasks.length - shown.length} more: narrow the filter or raise limit)` : "";
-  return `${shown.length} of ${tasks.length} task${tasks.length === 1 ? "" : "s"}, what to do first at the top${more}. Use ppm_task_get for one task's details.\n${fenced(lines)}`;
+  return `${shown.length} of ${tasks.length} task${tasks.length === 1 ? "" : "s"}, what to do first at the top${more}. Use ppm_task_get for one task's details.${snoozedNote}\n${fenced(lines)}`;
 }
 
 function get(env: PpmTaskToolsEnv, caller: TaskCaller, a: Args): string {

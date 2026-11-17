@@ -26,13 +26,15 @@ export interface TaskSnoozePickerProps {
   anchorRef?: RefObject<HTMLElement | null>;
   /** The desktop trigger; absent, the popover anchors to `anchorRef`. */
   children?: ReactNode;
+  /** Opens on the date field. */
+  pickingDate?: boolean;
 }
 
 function Heading() {
   return <p className="px-2 pb-1 pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-text-3 max-md:px-0 max-md:pb-2 max-md:text-[15px] max-md:normal-case max-md:tracking-normal max-md:text-text">Snooze until…</p>;
 }
 
-export function TaskSnoozePicker({ task, open, onOpenChange, onSnooze, anchorRef, children }: TaskSnoozePickerProps) {
+export function TaskSnoozePicker({ task, open, onOpenChange, onSnooze, anchorRef, children, pickingDate }: TaskSnoozePickerProps) {
   const isMobile = useIsMobile();
   const pick = (patch: SnoozePatch) => { onOpenChange(false); onSnooze(patch); };
   if (isMobile) {
@@ -43,7 +45,7 @@ export function TaskSnoozePicker({ task, open, onOpenChange, onSnooze, anchorRef
           {open && (
             <div role="dialog" aria-label="Snooze until" data-task-snooze-sheet="" className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-3">
               <Heading />
-              <TaskSnoozeOptions task={task} onPick={pick} />
+              <TaskSnoozeOptions task={task} onPick={pick} pickingDate={pickingDate} />
             </div>
           )}
         </BottomSheet>
@@ -59,7 +61,7 @@ export function TaskSnoozePicker({ task, open, onOpenChange, onSnooze, anchorRef
           onPointerDownOutside={(e) => { if (anchorRef?.current?.contains(e.target as Node)) e.preventDefault(); }}
           className="z-50 w-[260px] max-w-[calc(100vw-24px)] rounded-xl border border-border bg-panel-2 p-1.5 font-sans shadow-lg">
           <Heading />
-          <TaskSnoozeOptions task={task} onPick={pick} />
+          <TaskSnoozeOptions task={task} onPick={pick} pickingDate={pickingDate} />
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

@@ -20,6 +20,8 @@ export interface TaskSnoozeOptionsProps {
   onPick(patch: SnoozePatch): void;
   /** The user's today; the local date by default. */
   today?: string;
+  /** Opens on the date field (the row menu's "Pick a date…" was the choice already). */
+  pickingDate?: boolean;
 }
 
 const ICONS: Record<SnoozeChoiceId, typeof Moon> = { tomorrow: Sun, week: Moon, date: CalendarClock, link: Link, clear: Check };
@@ -27,8 +29,8 @@ const ICONS: Record<SnoozeChoiceId, typeof Moon> = { tomorrow: Sun, week: Moon, 
 // Rows sized by their content, with the chip row's height as their floor (design-guidelines rule 3).
 const ROW = "flex min-h-7 max-md:min-h-[26px] w-full items-center gap-2.5 rounded-md px-2 py-1 text-left text-[13px] text-text hover:bg-surface-hover active:bg-surface-hover disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent max-md:text-[15px]";
 
-export function TaskSnoozeOptions({ task, onPick, today = localYmd() }: TaskSnoozeOptionsProps) {
-  const [picking, setPicking] = useState(false);
+export function TaskSnoozeOptions({ task, onPick, today = localYmd(), pickingDate = false }: TaskSnoozeOptionsProps) {
+  const [picking, setPicking] = useState(pickingDate);
   const [day, setDay] = useState(() => addDaysYmd(today, 3));
   const choices = snoozeChoices(task, today);
   const dayOk = isSnoozeDay(day, today);
