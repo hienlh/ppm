@@ -308,8 +308,8 @@ back; what a linked session does with a third one never counts. The time is the 
 server's (`lastInteractionAt` on each link, the pair's `lastAt` in `pair-counter.ts`) and what the
 loaded messages say (a from-session block's `sentAt`, the message holding a `create_session` /
 `send_to_session` call, a reply's `sentAt`), because the messages are windowed and the server's
-record is read once when the chat opens. Past eight rows a filter by name appears (any word order,
-accents ignored), and it reaches the unlinked ones too. `use-linked-sessions.ts` seeds
+record is read once when the chat opens. Past eight rows (unlinked ones included) a filter by name appears (any word order,
+accents ignored); it reaches the unlinked ones too, and while it is on "Unlink idle & done" acts on the matches only. `use-linked-sessions.ts` seeds
 the links from `GET …/sessions/:id/links` when the chat opens (so a link from before a restart, or
 older than the loaded messages, is there at once), then merges the session list's `spawnedBy`, the
 chat's own messages and `/ws/global`'s `session:created`, `session:link_changed` and

@@ -154,6 +154,8 @@ describe("pair counter", () => {
       pairCounter.resetForSession(id(1));
       expect(pairCounter.lastInteraction(id(1), id(2))).toBe(9_000);
       pairCounter.touch(id(1), id(1));
+      // A pair never recorded, or forgotten with a deleted session, is not brought back.
+      pairCounter.touch(id(1), id(7));
       expect(pairCounter.messagedWith(id(1))).toEqual([id(2)]);
       pairCounter.flush();
       pairCounter.reloadForTests();
@@ -161,6 +163,14 @@ describe("pair counter", () => {
     } finally {
       Date.now = realNow;
     }
+  });
+
+  it("does not bring back a session deleted while the other waited on it", () => {
+    pairCounter.record(id(1), id(2));
+    pairCounter.forgetSession(id(2));
+    pairCounter.touch(id(1), id(2));
+    expect(pairCounter.messagedWith(id(1))).toEqual([]);
+    expect(pairCounter.lastInteraction(id(1), id(2))).toBeUndefined();
   });
 
   it("takes back a counted message that was never delivered", () => {

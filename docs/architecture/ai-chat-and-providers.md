@@ -945,7 +945,7 @@ no "Chat completed" (a turn stopped by an error still does). `POST /chat/session
 stops a session's running direct children, and `GET /chat/sessions/:id/links` lists its creator,
 children and the sessions it messaged, each with `lastInteractionAt` when the pair has one: the
 pair's `lastAt`, moved by a create, a message either way (a refused one included, since its card was
-about the two) and a wait that ended because the target finished its turn (`pairs.touch`).
+about the two) and a wait that ended because the target finished its turn or a Design chat answered (`pairs.touch`, which never re-creates a pair forgotten with a deleted session).
 
 **The from-session block** (`src/shared/chat-from-session.ts`). A delivered message carries
 `<ppm-from-session-v1>` after the body (then turn refs, then any reply block): the sender's

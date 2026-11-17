@@ -33,7 +33,10 @@ const WRITE_DEBOUNCE_MS = 500;
 interface PairState {
   auto: number;
   extra: number;
-  /** Epoch ms of the last automatic message. */
+  /**
+   * Epoch ms of the pair's last interaction: an automatic message (one later refused included), a
+   * grant at the limit, or a wait on the other that ended (`touch`).
+   */
   lastAt: number;
 }
 
@@ -84,12 +87,14 @@ class PairCounter {
 
   /**
    * The two exchanged something without a message being counted: a wait on the other ended
-   * because its turn ended. The pair's last-interaction time moves; no count does.
+   * because its turn ended. The pair's last-interaction time moves; no count does. Only a pair
+   * already recorded: the wait began with a counted message, and a pair forgotten since (its
+   * session was deleted mid-wait) must not come back as a link.
    */
   touch(a: string, b: string): void {
     const key = this.key(a, b);
-    if (!key) return;
-    const p = this.pairs.get(key) ?? { auto: 0, extra: 0, lastAt: 0 };
+    const p = key ? this.pairs.get(key) : undefined;
+    if (!key || !p) return;
     p.lastAt = Date.now();
     this.pairs.delete(key);
     this.pairs.set(key, p);

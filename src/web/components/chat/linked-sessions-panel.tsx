@@ -57,8 +57,11 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
   const [leaving, setLeaving] = useState<ReadonlySet<string>>(new Set());
   const [arriving, setArriving] = useState<ReadonlySet<string>>(new Set());
   const [undo, setUndo] = useState<{ ids: string[]; text: string } | null>(null);
-  const [unlinkedOpen, setUnlinkedOpen] = useState(false);
+  /** Null until the person opens or closes Unlinked; until then a search opens it for its matches. */
+  const [unlinkedOpen, setUnlinkedOpen] = useState<boolean | null>(null);
   const [query, setQuery] = useState("");
+  /** Once used, the filter stays, so clearing it never takes away the box being typed in. */
+  const [filterUsed, setFilterUsed] = useState(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   /** Rows still sliding out: closing the popover mid-slide must not lose their unlink. */
   const pending = useRef<string[]>([]);
@@ -70,8 +73,11 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
   }, []);
   const later = (fn: () => void, ms: number) => { timers.current.push(setTimeout(fn, ms)); };
 
+  const searched = query.trim() !== "";
+  const shown = searched ? visible.filter((l) => matchesLinkedFilter(l.title, query)) : visible;
   const runningChildren = visible.filter(isRunningChild);
-  const finished = visible.filter((l) => canUnlink(l.status));
+  // During a search, the bulk unlink reaches only the rows on screen.
+  const finished = shown.filter((l) => canUnlink(l.status));
 
   const open = (l: LinkedSessionView) => {
     onOpened();
@@ -115,13 +121,11 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
     }
   };
 
-  // Once typed into, the filter stays even if unlinking brings the list back under the threshold.
-  const filtering = visible.length > LINKED_FILTER_MIN_ROWS || query !== "";
-  const searched = query.trim() !== "";
-  const shown = searched ? visible.filter((l) => matchesLinkedFilter(l.title, query)) : visible;
+  // Unlinked rows count: the filter reaches them too.
+  const filtering = visible.length + hidden.length > LINKED_FILTER_MIN_ROWS || filterUsed;
   const shownHidden = byRecentInteraction(searched ? hidden.filter((l) => matchesLinkedFilter(l.title, query)) : hidden);
-  // A search opens Unlinked, so a match hidden there is not missed.
-  const unlinkedShown = unlinkedOpen || (searched && shownHidden.length > 0);
+  // A search opens Unlinked, so a match hidden there is not missed, unless the person closed it.
+  const unlinkedShown = unlinkedOpen ?? (searched && shownHidden.length > 0);
 
   // A heading with nothing under it goes too. Inside each, the latest interaction comes first.
   const grouped = GROUP_ORDER
@@ -136,7 +140,7 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
           <input
             type="search"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => { setQuery(e.target.value); setFilterUsed(true); }}
             placeholder="Find a session"
             aria-label="Find a session"
             data-linked-filter=""
@@ -292,14 +296,14 @@ function SessionRow({ session: l, action, onOpen, leaving, arriving, dim }: {
 
 /** How long ago the two sessions last interacted, in the app's usual relative form; the date on hover. */
 function InteractionTime({ at }: { at: number | undefined }) {
-  if (!at) return <span className="w-12 shrink-0" aria-hidden="true" />;
+  if (!at) return <span className="min-w-12 shrink-0" aria-hidden="true" />;
   const iso = new Date(at).toISOString();
   return (
     <time
       dateTime={iso}
       title={`Last interaction ${new Date(at).toLocaleString()}`}
       data-linked-interaction=""
-      className="w-12 shrink-0 text-right text-[11px] tabular-nums text-text-3"
+      className="min-w-12 shrink-0 whitespace-nowrap text-right text-[11px] tabular-nums text-text-3"
     >
       {formatRelativeDate(iso)}
     </time>

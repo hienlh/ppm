@@ -214,8 +214,29 @@ describe("the Sessions list", () => {
     await type("nx");
     expect(titles()).toEqual(["NX-6587 Employment Allowance", "NX-6687 debug: Conaty"]);
     expect(view.container.querySelector("[data-unlinked-toggle]")!.getAttribute("aria-expanded")).toBe("true");
+    // The person can still close Unlinked while the search matches in it.
+    await act(async () => { view!.container.querySelector<HTMLButtonElement>("[data-unlinked-toggle]")!.click(); });
+    expect(view.container.querySelector("[data-unlinked-toggle]")!.getAttribute("aria-expanded")).toBe("false");
     await type("payroll zzz");
     expect(view.container.textContent).toContain("No linked session matches “payroll zzz”.");
     expect(view.container.querySelector("[data-unlinked-toggle]")).toBeNull();
+  });
+
+  it("counts unlinked rows toward the threshold, and keeps the box once used", async () => {
+    const five = Array.from({ length: 5 }, (_, i) => kid(i + 1, `Session ${i + 1}`, i));
+    const four = Array.from({ length: 4 }, (_, i) => kid(i + 40, `Old ${i + 1}`, 30 + i));
+    view = await mount(panel(five, four));
+    expect(view.container.querySelector("[data-linked-filter]")).not.toBeNull();
+    await type("session 2");
+    await type("");
+    expect(view.container.querySelector("[data-linked-filter]")).not.toBeNull();
+  });
+
+  it("unlinks only the matching finished rows while a search is on", async () => {
+    const rows = [...Array.from({ length: 8 }, (_, i) => kid(i + 1, `Session ${i + 1}`, i)), kid(20, "NX-1 a", 1), kid(21, "NX-2 b", 2)];
+    view = await mount(panel(rows));
+    expect(view.container.querySelector("[data-unlink-finished]")!.textContent).toContain("(10)");
+    await type("nx");
+    expect(view.container.querySelector("[data-unlink-finished]")!.textContent).toContain("(2)");
   });
 });
