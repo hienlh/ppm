@@ -50,9 +50,9 @@ const csv = (value: string | undefined): string[] | undefined => {
 };
 
 /**
- * `?project=<name>|all&group=&type=&person=&tag=&q=&closed=0|1&snoozed=0|1`. `group` and `type`
- * take a comma list; `closed=1` includes closed tasks, `snoozed=1` snoozed ones (each carries
- * `snoozed: true`, so the list can draw them apart).
+ * `?project=<name>|all&group=&type=&person=&tag=&q=&closed=0|1&snoozed=0|1&session=`. `group` and
+ * `type` take a comma list; `closed=1` includes closed tasks, `snoozed=1` snoozed ones (each carries
+ * `snoozed: true`, so the list can draw them apart); `session` only the tasks that chat works on.
  */
 ppmTasksRoutes.get("/", (c) => {
   const q = c.req.query();
@@ -78,6 +78,7 @@ ppmTasksRoutes.get("/", (c) => {
     text: q.q?.slice(0, 200) || undefined,
     includeClosed: q.closed === "1",
     snoozed: q.snoozed === "1" ? "include" : "exclude",
+    workingSessionId: q.session?.trim() ? q.session.trim().slice(0, 200) : undefined,
   };
   return c.json(ok<TaskListResponse>({ tasks: toTaskDtos(listTasks(filter)), projects }));
 });

@@ -37,6 +37,7 @@ import { McpSignInBar } from "@/components/mcp-auth/mcp-sign-in-bar";
 import { ManagerChatWaitingCards } from "@/components/assistant/manager-chat-waiting-cards";
 import { SessionChangesChip } from "./session-changes-chip";
 import { ManagerTasksChip } from "@/components/ppm-tasks/chip/manager-tasks-chip";
+import { ChatTaskStrip } from "@/components/ppm-tasks/chat-strip/chat-task-strip";
 import { useManagerTasksSummary } from "@/components/ppm-tasks/chip/use-manager-tasks-summary";
 import { SessionSchedulesChip } from "./session-schedules-chip";
 import { CONTINUE_AFTER_STOP, TurnStopBar } from "./turn-stop-bar";
@@ -1411,6 +1412,9 @@ function ChatTabContent({ metadata, tabId, onNewSession, onFork, onBranchSwitch,
 
       {/* A manager chat a phone opened from the Assistant: the way back to it. */}
       {tabId && <AssistantBackBar tabId={tabId} metadata={metadata} />}
+
+      {/* The task(s) this chat works on, and their quick view. */}
+      {!assistant && sessionId && <ChatTaskStrip sessionId={sessionId} projectName={projectName || null} />}
 
       {/* Background commands running for this session */}
       <BackgroundCommandBar shells={backgroundShells} onKill={killBackgroundShell} />

@@ -190,6 +190,8 @@ export interface TaskFilter {
   text?: string;
   /** Snoozed tasks are left out unless asked for (`include`), or asked for alone (`only`). */
   snoozed?: "exclude" | "include" | "only";
+  /** Only tasks this chat is working on (compared under the id the chat answers to now). */
+  workingSessionId?: string;
   limit?: number;
 }
 

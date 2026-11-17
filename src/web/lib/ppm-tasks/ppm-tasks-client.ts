@@ -76,6 +76,8 @@ export interface TaskListQuery {
   closed?: boolean;
   /** Snoozed tasks too (each says `snoozed`); left out otherwise. */
   snoozed?: boolean;
+  /** Only the tasks this chat works on (its `workingSessionId`). */
+  session?: string;
 }
 
 export function taskListPath(query: TaskListQuery): string {
@@ -87,6 +89,7 @@ export function taskListPath(query: TaskListQuery): string {
   if (query.q?.trim()) p.set("q", query.q.trim());
   if (query.closed) p.set("closed", "1");
   if (query.snoozed) p.set("snoozed", "1");
+  if (query.session) p.set("session", query.session);
   return `${BASE}?${p.toString()}`;
 }
 
