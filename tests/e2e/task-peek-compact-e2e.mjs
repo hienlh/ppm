@@ -190,7 +190,14 @@ async function phoneAt(k, s, width) {
   assert(rowH >= 44, `a menu row is 44 px on a phone (${rowH})`);
   await page.waitForTimeout(250);
   await shot(page, `${width}-sheet-chip-menu`);
-  record(`phone-${width}`, `six chips in ${layout.rows} rows, 32 px chip with a 44 px target, ${rowH} px menu rows, nothing sideways; +3 shows six`, { ...layout, chip: sb.height, rowH });
+  // A tap on a choice saves it, and the sheet stays on the task (the menu sits outside the sheet's
+  // panel in the page, inside it in React, so the tap does not reach the sheet's backdrop).
+  const todo = (await k.settings("alpha")).statuses.find((x) => x.baseGroup === "not_started");
+  await menu.locator(`[data-task-peek-choice="${todo.id}"]`).tap();
+  await until("the status picked on the phone is saved", async () => (await k.task(s.full.id)).statusId === todo.id, 15000);
+  await until("the menu closed", async () => (await menu.count()) === 0, 5000);
+  assert.equal(await sheet.count(), 1, "the sheet still shows the task");
+  record(`phone-${width}`, `six chips in ${layout.rows} rows, 32 px chip with a 44 px target, ${rowH} px menu rows, nothing sideways; +3 shows six; a tapped choice saves`, { ...layout, chip: sb.height, rowH });
 }
 
 try {
