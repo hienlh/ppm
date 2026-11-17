@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.26.9] - 2026-11-17
+
+### Added
+
+- **Schedules window**: a Schedules button on the rail (a tile in the phone drawer) lists every project's schedules as Needs attention, Next 24 hours, Later and Off, with next and last run, on/off, Open prompt and Run now; the button counts the next 24 hours and shows a red dot for a failed, stuck or paused schedule.
+- **Task reminders**: Remind... on a task page sets a reminder that belongs to the task and is deleted when the task closes; the Schedules window opens the task it reminds about.
+- **Task strip at the top of a chat**: a chat working on a task shows its code, title, status, due date and snooze in one line; a press opens the task, and +N lists the others.
+- **Linked sessions by latest interaction**: the Sessions popover says when each linked chat last talked with this one, lists the newest first with the ones waiting on you at the top, and gets a name filter past eight rows.
+
+### Changed
+
+- **A working chat changes only its own task**: an ordinary chat can edit the result, next step, notes, links and waiting-on of the task handed to it, start it and move it between In progress and Waiting, and asks the manager to close it (`propose_close`); every other task and setting is read-only to it.
+- **The Assistant's schedule tools give each schedule's own time zone** instead of the server's.
+
+### Fixed
+
+- **Assistant card text at chat size**: a card drawn in the set of decisions no longer shows its text larger than the chat.
+- **Schedule limit message names the chat**: a task reminder that hits the 20-schedule limit says which chat is full.
+- **Sessions filter and Unlinked fold stay as you left them**, and the bulk unlink acts only on the matching rows.
+- **Chat task strip** no longer sits under the phone's BETA ribbon.
+
 ## [0.26.8] - 2026-11-17
 
 ### Added
