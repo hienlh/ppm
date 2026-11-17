@@ -17,9 +17,11 @@ import { ppmTasksEvents } from "./ppm-tasks-events.ts";
 import { getTask } from "./ppm-tasks-read.ts";
 import { endOfCellRank, rankForMove } from "./ppm-tasks-rank.ts";
 import { checkContext, normalizePatch } from "./ppm-tasks-validate.ts";
+import { applySnoozeRules } from "./ppm-tasks-snooze.ts";
 import { applyChanges, diffValues, kindForChanges } from "./ppm-tasks-write.ts";
 
-export { getTask, listTasks, taskChildren, listTasksNeedingCheck, childCheckFor, toViews } from "./ppm-tasks-read.ts";
+export { getTask, listTasks, taskChildren, listTasksNeedingCheck, childCheckFor, toViews, countSnoozed } from "./ppm-tasks-read.ts";
+export { resurfaceDueTasks } from "./ppm-tasks-snooze.ts";
 
 function requireEnabled(projectKey: string): void {
   const project = getTaskProject(projectKey);
@@ -65,6 +67,7 @@ function patchChanges(task: Task, patch: TaskPatch, ctx: WriteContext, now: numb
   const urgency = (values.get("urgency") as Task["urgency"] | undefined) ?? task.urgency;
   const importance = (values.get("importance") as Task["importance"] | undefined) ?? task.importance;
   if (urgency !== task.urgency || importance !== task.importance) values.set("rank", endOfCellRank(task.projectKey, urgency, importance, task.id));
+  applySnoozeRules(task, values, (values.get("statusId") as string | undefined) ?? task.statusId);
   return diffValues(task, values);
 }
 
@@ -91,6 +94,7 @@ export function createTask(input: TaskCreateInput, ctx: WriteContext, now: numbe
     const statuses = listStatuses(projectKey);
     const statusId = (values.get("statusId") as string | undefined) ?? statuses.find((s) => s.baseGroup === "not_started")?.id;
     if (!statusId) throw invalid("The project has no not-started status");
+    applySnoozeRules(null, values, statusId);
     const urgency = (values.get("urgency") as Task["urgency"] | undefined) ?? "later";
     const importance = (values.get("importance") as Task["importance"] | undefined) ?? "should";
     const dec = decision ? decisionFrom(decision) : null;

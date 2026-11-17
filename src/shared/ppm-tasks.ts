@@ -22,6 +22,7 @@ export const IMPORTANCES: readonly Importance[] = ["must", "should", "nice"];
 
 export * from "./ppm-tasks-history.ts";
 export * from "./ppm-tasks-config.ts";
+export * from "./ppm-tasks-snooze.ts";
 
 /** Known task types. The column takes any string so the list can grow; writes are checked against this. */
 export const TASK_TYPES = ["task", "decision", "reply"] as const;
@@ -126,6 +127,14 @@ export interface Task {
   result: TaskResult | null;
   /** Set while the working session is a chat other than the project's manager. */
   handedOffAt: number | null;
+  /** Snooze: hidden from the daily lists until this day (`YYYY-MM-DD`). */
+  snoozedUntil: string | null;
+  /** Snooze: hidden until one of its Jira or PR links changes. */
+  snoozeUntilChange: boolean;
+  /** When the current snooze was set; null when none is. */
+  snoozedAt: number | null;
+  /** When PPM last brought the task back from a snooze. */
+  resurfacedAt: number | null;
   revision: number;
   createdAt: number;
   updatedAt: number;
@@ -160,6 +169,10 @@ export interface TaskView extends Task {
    * not in that group or history holds no such move. Absent from answers of an older server.
    */
   waitingStartedAt?: number | null;
+  /** Out of the daily lists now: a snooze is set and has not run out. */
+  snoozed: boolean;
+  /** Came back from a snooze today (or its snooze ran out and PPM has not swept it yet). */
+  resurfacedToday: boolean;
 }
 
 export interface TaskFilter {
@@ -175,6 +188,8 @@ export interface TaskFilter {
   includeClosed?: boolean;
   /** Matches title, why, next step and notes, case-insensitively. */
   text?: string;
+  /** Snoozed tasks are left out unless asked for (`include`), or asked for alone (`only`). */
+  snoozed?: "exclude" | "include" | "only";
   limit?: number;
 }
 
@@ -198,6 +213,10 @@ export interface TaskPatch {
   links?: Array<{ kind: LinkKind; ref: string; label?: string | null }>;
   /** Records (or clears) the task's result; `at` and `by` come from the write. */
   result?: { text: string } | null;
+  /** Hide the task until this day (after today), or null to stop. */
+  snoozedUntil?: string | null;
+  /** Hide the task until one of its Jira or PR links changes. */
+  snoozeUntilChange?: boolean;
 }
 
 export interface TaskCreateInput extends TaskPatch {

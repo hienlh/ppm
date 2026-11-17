@@ -155,3 +155,25 @@ export function applyPpmTasksSchema(database: Database, now: number = Date.now()
      SELECT project_key, project_path, 1, ?, 'migration' FROM manager_chats`,
   ).run(now);
 }
+
+/**
+ * Snoozing a task (migration 75): the day it shows again, whether a link change brings it back,
+ * when the snooze was set (a link change is compared with it) and when PPM last brought the task
+ * back. Only adds columns; an older PPM reads tasks without them. Safe to run again.
+ */
+export function applyPpmTasksSnoozeSchema(database: Database): void {
+  const hasTasks = database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tasks'").get();
+  if (!hasTasks) return;
+  const have = new Set((database.query("PRAGMA table_info(tasks)").all() as Array<{ name: string }>).map((c) => c.name));
+  const add = (column: string, definition: string) => {
+    if (!have.has(column)) database.exec(`ALTER TABLE tasks ADD COLUMN ${column} ${definition}`);
+  };
+  add("snoozed_until", "TEXT");
+  add("snooze_until_change", "INTEGER NOT NULL DEFAULT 0");
+  add("snoozed_at", "INTEGER");
+  add("resurfaced_at", "INTEGER");
+  // The sweep reads only snoozed tasks; most have none.
+  database.exec(
+    "CREATE INDEX IF NOT EXISTS idx_tasks_snoozed ON tasks(project_key) WHERE snoozed_until IS NOT NULL OR snooze_until_change = 1",
+  );
+}

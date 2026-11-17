@@ -17,6 +17,11 @@ import { ppmTasksEvents } from "./ppm-tasks-events.ts";
 import { statusById } from "./ppm-tasks-db.ts";
 import { invalid } from "./ppm-tasks-errors.ts";
 import { workingSessionRefusal } from "./ppm-tasks-session-check.ts";
+import { todayYmd } from "./ppm-tasks-today.ts";
+import { daysBetween } from "../../shared/ppm-tasks-urgency.ts";
+
+/** The furthest a snooze may reach: past that, closing or dropping the task says it better. */
+export const MAX_SNOOZE_DAYS = 366 * 2;
 
 export const FIELD_KEY_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 /** Keys that would name an object's prototype rather than a field. */
@@ -51,6 +56,19 @@ function validDate(value: unknown): string | null {
   if (typeof value !== "string" || !YMD_RE.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
     throw invalid("dueDate must be a date as YYYY-MM-DD");
   }
+  return value;
+}
+
+/** A snooze day: a real date after today (in the user's zone) and within two years; null clears it. */
+function snoozeDate(value: unknown, now: number): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string" || !YMD_RE.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
+    throw invalid("snoozedUntil must be a date as YYYY-MM-DD, or null");
+  }
+  const today = todayYmd(now);
+  const days = daysBetween(today, value);
+  if (days === null || days <= 0) throw invalid(`snoozedUntil must be after today (${today}): it is the day the task shows again`);
+  if (days > MAX_SNOOZE_DAYS) throw invalid("snoozedUntil may be at most two years away");
   return value;
 }
 
@@ -115,6 +133,11 @@ export function normalizePatch(
   if (patch.nextStep !== undefined) out.set("nextStep", text("nextStep", patch.nextStep, L.nextStep, true));
   if (patch.notes !== undefined) out.set("notes", text("notes", patch.notes, L.notes, true));
   if (patch.dueDate !== undefined) out.set("dueDate", validDate(patch.dueDate));
+  if (patch.snoozedUntil !== undefined) out.set("snoozedUntil", snoozeDate(patch.snoozedUntil, now));
+  if (patch.snoozeUntilChange !== undefined) {
+    if (typeof patch.snoozeUntilChange !== "boolean") throw invalid("snoozeUntilChange must be true or false");
+    out.set("snoozeUntilChange", patch.snoozeUntilChange);
+  }
   if (patch.statusId !== undefined) {
     const status = typeof patch.statusId === "string" ? statusById(patch.statusId) : null;
     if (!status || status.projectKey !== projectKey) throw invalid(`No status ${String(patch.statusId)} in this project`);

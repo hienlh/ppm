@@ -40,11 +40,25 @@ function whatChanged(h: HistoryEntry): string {
     case "deleted": return "deleted";
     case "undo": return `undid change #${h.undoOf ?? "?"}`;
     case "project": return `${h.changes.map((c) => c.field).join(", ")} changed`;
+    case "snoozed": return snoozedText(h);
+    case "resurfaced": return "back from snooze: it is in the daily list again";
     default: {
       const fields = h.changes.map((c) => c.field).filter((f) => f !== "rank");
       return fields.length ? `${fields.slice(0, 6).join(", ")} changed` : "changed";
     }
   }
+}
+
+/** "snoozed until 2026-11-20", "snoozed until a link changes", "snooze cleared". */
+export function snoozedText(h: Pick<HistoryEntry, "changes">): string {
+  const until = h.changes.find((c) => c.field === "snoozedUntil");
+  const change = h.changes.find((c) => c.field === "snoozeUntilChange");
+  const parts = [
+    until?.after ? String(until.after) : null,
+    change?.after === true ? "a link changes" : null,
+  ].filter(Boolean);
+  if (parts.length) return `snoozed until ${parts.join(" or ")} (hidden from the daily list; no stalled checks meanwhile)`;
+  return "snooze cleared: back in the daily list";
 }
 
 function historyNewsLine(h: HistoryEntry, projectName: string): string {

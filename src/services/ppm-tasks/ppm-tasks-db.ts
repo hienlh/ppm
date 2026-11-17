@@ -17,6 +17,8 @@ export interface TaskRow {
   waiting_since: number | null; parent_id: string | null; working_session_id: string | null;
   decision_json: string | null; fields_json: string | null;
   result_text: string | null; result_at: number | null; result_by: string | null; handed_off_at: number | null;
+  /** Absent on a database a test built before migration 75. */
+  snoozed_until?: string | null; snooze_until_change?: number | null; snoozed_at?: number | null; resurfaced_at?: number | null;
   revision: number; created_at: number; updated_at: number; closed_at: number | null; deleted_at: number | null;
 }
 
@@ -52,6 +54,8 @@ export function rowToTask(r: TaskRow, links: TaskLink[]): Task {
     links,
     result: r.result_text !== null ? { text: r.result_text, at: r.result_at ?? r.updated_at, by: r.result_by ?? "" } : null,
     handedOffAt: r.handed_off_at,
+    snoozedUntil: r.snoozed_until ?? null, snoozeUntilChange: r.snooze_until_change === 1,
+    snoozedAt: r.snoozed_at ?? null, resurfacedAt: r.resurfaced_at ?? null,
     revision: r.revision, createdAt: r.created_at, updatedAt: r.updated_at, closedAt: r.closed_at, deletedAt: r.deleted_at,
   };
 }
@@ -144,4 +148,27 @@ const rowToLinkState = (r: LinkStateRow): LinkState => ({
 export function listLinkStateChangesSince(projectKey: string, atMs: number): LinkState[] {
   return (getDb().query("SELECT * FROM task_link_state WHERE project_key = ? AND changed_at > ? ORDER BY changed_at")
     .all(projectKey, atMs) as LinkStateRow[]).map(rowToLinkState);
+}
+
+export interface LinkChange { at: number; kind: LinkKind; ref: string }
+
+/** The newest change of any Jira or PR link of each task, with the link that changed; tasks with none are absent. */
+export function lastLinkChanges(tasks: ReadonlyArray<Pick<Task, "id">>): Map<string, LinkChange> {
+  const out = new Map<string, LinkChange>();
+  const ids = tasks.map((t) => t.id);
+  const db = getDb();
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    const rows = db.query(
+      `SELECT l.task_id AS task_id, l.kind AS kind, l.ref AS ref, s.changed_at AS changed_at FROM task_links l
+       JOIN tasks t ON t.id = l.task_id
+       JOIN task_link_state s ON s.kind = l.kind AND s.ref = l.ref AND s.project_key = t.project_key
+       WHERE l.task_id IN (${chunk.map(() => "?").join(",")}) AND l.kind IN ('jira', 'pr') AND s.changed_at IS NOT NULL`,
+    ).all(...chunk) as Array<{ task_id: string; kind: LinkKind; ref: string; changed_at: number }>;
+    for (const r of rows) {
+      const seen = out.get(r.task_id);
+      if (!seen || r.changed_at > seen.at) out.set(r.task_id, { at: r.changed_at, kind: r.kind, ref: r.ref });
+    }
+  }
+  return out;
 }

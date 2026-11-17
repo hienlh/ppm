@@ -28,7 +28,9 @@ export interface WriteContext {
 
 export type HistoryKind =
   | "created" | "updated" | "status" | "closed" | "reopened" | "reordered"
-  | "decision" | "decided" | "result" | "deleted" | "undo" | "project";
+  | "decision" | "decided" | "result" | "deleted" | "undo" | "project"
+  /** A snooze set, changed or cleared by someone; `resurfaced` is PPM bringing the task back. */
+  | "snoozed" | "resurfaced";
 
 /** Kept past the detail window; everything else is compacted away after 90 days. */
 export const KEY_HISTORY_KINDS: readonly HistoryKind[] = ["created", "status", "closed", "reopened"];
