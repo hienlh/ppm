@@ -66,10 +66,10 @@ describe("search by code in the task list", () => {
 
   it("asks the server for the whole scope, filters and text left out", () => {
     const filters = { ...EMPTY_FILTERS, groups: ["active" as const], tag: "billing" };
-    expect(listQueryFor("project", "alpha", filters, "#82")).toEqual({ project: "alpha", closed: true });
-    expect(listQueryFor("all", null, filters, "beta/82")).toEqual({ project: "all", closed: true });
+    expect(listQueryFor("project", "alpha", filters, "#82")).toEqual({ project: "alpha", closed: true, snoozed: true });
+    expect(listQueryFor("all", null, filters, "beta/82")).toEqual({ project: "all", closed: true, snoozed: true });
     // Not a code: still a title search with the filters on.
-    expect(listQueryFor("project", "alpha", EMPTY_FILTERS, "82")).toEqual({ project: "alpha", q: "82", closed: true });
+    expect(listQueryFor("project", "alpha", EMPTY_FILTERS, "82")).toEqual({ project: "alpha", q: "82", closed: true, snoozed: true });
   });
 
   it("shows only the task the code names, closed or not, whatever the filters say", () => {

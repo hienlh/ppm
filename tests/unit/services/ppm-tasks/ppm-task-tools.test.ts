@@ -366,3 +366,29 @@ describe("the sessions MCP endpoint", () => {
     expect(created.content![0]!.text).toContain('Created: demo/1 "Through MCP"');
   });
 });
+
+describe("snooze through the tools", () => {
+  it("create and update take a snooze, list leaves snoozed tasks out and says so, get shows the snooze", async () => {
+    const day = new Date(Date.now() + 4 * 86_400_000).toISOString().slice(0, 10);
+    const made = await call(ORDINARY, "ppm_task_create", { title: "Staging merge", snoozed_until: day });
+    expect(made.isError).toBeFalsy();
+    await call(ORDINARY, "ppm_task_create", { title: "Open one" });
+    const list = text(await call(ORDINARY, "ppm_task_list"));
+    expect(list).toContain('"Open one"');
+    expect(list).not.toContain("Staging merge");
+    expect(list).toContain("1 snoozed task is left out");
+    const all = text(await call(ORDINARY, "ppm_task_list", { include_snoozed: true }));
+    expect(all).toContain("Staging merge");
+    expect(all).toContain(`snoozed until ${day}`);
+    const got = text(await call(ORDINARY, "ppm_task_get", { task: "#1" }));
+    expect(got).toContain(`snoozed until ${day}`);
+    const id =(getDb().query("SELECT id, revision FROM tasks WHERE number = 1").get() as { id: string; revision: number });
+    const noLink = await call(ORDINARY, "ppm_task_update", { task: "#1", revision: id.revision, reason: "wait for QA", snooze_until_change: true });
+    expect(noLink.isError).toBe(true);
+    expect(text(noLink)).toContain("Jira or PR link");
+    const cleared = await call(ORDINARY, "ppm_task_update", { task: "#1", revision: id.revision, reason: "needed now", snoozed_until: null });
+    expect(cleared.isError).toBeFalsy();
+    expect(taskHistory(id.id)[0]).toMatchObject({ kind: "snoozed", reason: "needed now", actor: { kind: "chat" } });
+    expect(text(await call(ORDINARY, "ppm_task_list"))).toContain("Staging merge");
+  });
+});

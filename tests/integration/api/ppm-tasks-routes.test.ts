@@ -103,7 +103,7 @@ describe("list and detail", () => {
     expect(json.data!.tasks[0]!.ref).toBe("demo/3");
     expect(json.data!.tasks[0]!.statusName).toBe("To do");
     expect(json.data!.tasks[0]!.workingSession).toEqual({ kind: "start_chat" });
-    expect(json.data!.projects).toEqual([{ name: "demo", projectKey: key, enabled: true, hasManager: false, open: 3, now: 2 }]);
+    expect(json.data!.projects).toEqual([{ name: "demo", projectKey: key, enabled: true, hasManager: false, open: 3, now: 2, snoozed: 0 }]);
   });
 
   it("covers every switched-on registered project for all, and filters by type and text", async () => {
@@ -348,5 +348,24 @@ describe("decide, start chat, notify manager", () => {
     await until(() => provider.queries.some((q) => q.sessionId === manager), "the wake turn");
     expect(provider.queries.find((q) => q.sessionId === manager)!.message).toContain("News for the manager");
     provider.abortQuery(manager);
+  });
+});
+
+describe("snooze", () => {
+  it("PATCH snoozes a task, the list leaves it out unless snoozed=1, and the summary counts it", async () => {
+    const t = createTask({ projectKey: key, title: "Merge staging later", urgency: "now", importance: "must" }, USER);
+    const day = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+    const w = await call<TaskWriteResponse>("PATCH", `/${t.id}`, { revision: t.revision, snoozedUntil: day });
+    expect(w.status).toBe(200);
+    expect(w.json.data!.task).toMatchObject({ snoozedUntil: day, snoozed: true, statusName: "To do" });
+    const plain = await call<TaskListResponse>("GET", "/?project=demo");
+    expect(plain.json.data!.tasks.map((x) => x.id)).not.toContain(t.id);
+    expect(plain.json.data!.projects[0]).toMatchObject({ open: 0, snoozed: 1 });
+    const withSnoozed = await call<TaskListResponse>("GET", "/?project=demo&snoozed=1");
+    expect(withSnoozed.json.data!.tasks.find((x) => x.id === t.id)).toMatchObject({ snoozed: true });
+    const past = await call<TaskWriteResponse>("PATCH", `/${t.id}`, { revision: w.json.data!.task.revision, snoozedUntil: "2020-01-01" });
+    expect(past.status).toBe(400);
+    const back = await call<TaskWriteResponse>("PATCH", `/${t.id}`, { revision: w.json.data!.task.revision, snoozedUntil: null, snoozeUntilChange: false });
+    expect(back.json.data!.task).toMatchObject({ snoozed: false, snoozedUntil: null });
   });
 });
