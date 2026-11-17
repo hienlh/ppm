@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 import { URGENCY_LABEL } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
 import type { Urgency } from "../../../../shared/ppm-tasks";
 
-const TONE: Record<Urgency, string> = {
+/** Each urgency's colour, shared with the quick view's urgency chip. */
+export const URGENCY_TONE: Record<Urgency, string> = {
   now: "var(--error)",
   today: "color-mix(in srgb, var(--warning) 72%, var(--text))",
   week: "var(--accent)",
@@ -23,7 +24,7 @@ export interface TaskUrgencyPillProps {
 }
 
 export function TaskUrgencyPill({ urgency, raised = false, className }: TaskUrgencyPillProps) {
-  const tone = TONE[urgency];
+  const tone = URGENCY_TONE[urgency];
   const style: CSSProperties = {
     color: tone,
     background: urgency === "later" ? "color-mix(in srgb, var(--text) 7%, transparent)" : `color-mix(in srgb, ${tone} 13%, transparent)`,

@@ -29,6 +29,20 @@ export interface TaskLinksCardProps {
   onOpenChat(sessionId: string): void;
 }
 
+/**
+ * One link as the task page shows it: its live state from `linkStates`, a web link opening in a
+ * browser tab (a Jira key on the project's site, a PR on GitHub, a URL as it is) and a chat
+ * opening in PPM. The page's Links card and the chat's quick view both draw links with this.
+ */
+export function TaskLinkPill({ link, linkStates, jiraSite, onOpenChat, className }: {
+  link: TaskLink; linkStates: readonly LinkState[]; jiraSite?: string | null; onOpenChat(sessionId: string): void; className?: string;
+}) {
+  return (
+    <TaskLinkStatePill link={link} state={linkStates.find((s) => s.kind === link.kind && s.ref === link.ref)} href={taskLinkWebHref(link, { jiraSite })}
+      onOpen={link.kind === "session" ? (l) => onOpenChat(l.ref) : undefined} className={className} />
+  );
+}
+
 export function TaskLinksCard({ task, linkStates, jiraSite, onAdd, onRemove, onOpenChat }: TaskLinksCardProps) {
   const [adding, setAdding] = useState(false);
   const [kind, setKind] = useState<LinkKind>("jira");
@@ -50,8 +64,7 @@ export function TaskLinksCard({ task, linkStates, jiraSite, onAdd, onRemove, onO
           const href = taskLinkWebHref(l, { jiraSite });
           return (
             <li key={`${l.kind}:${l.ref}`} className="group flex min-w-0 items-center gap-2">
-              <TaskLinkStatePill link={l} state={linkStates.find((s) => s.kind === l.kind && s.ref === l.ref)} href={href}
-                onOpen={l.kind === "session" ? (link) => onOpenChat(link.ref) : undefined} className="min-w-0 max-w-full" />
+              <TaskLinkPill link={l} linkStates={linkStates} jiraSite={jiraSite} onOpenChat={onOpenChat} className="min-w-0 max-w-full" />
               {l.label && l.kind !== "session" && <span className="min-w-0 truncate text-xs text-text-3">{l.label}</span>}
               {l.kind === "jira" && !href && <span data-link-hint className="shrink-0 text-xs text-text-3">no Jira site</span>}
               <span className="flex-1" />
