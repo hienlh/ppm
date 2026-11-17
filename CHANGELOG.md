@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.11] - 2026-11-18
+
+### Fixed
+
+- **The chat no longer jumps back when its connection drops mid-answer**: the answer stays on screen while the turn is replayed, then is swapped for the replayed one at once.
+
 ## [0.26.10] - 2026-11-18
 
 ### Added
