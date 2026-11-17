@@ -301,8 +301,9 @@ one runs, else Sessions; the Agents tab exists only while an agent runs. Agents
 team poll) lists the running agents, then the finished ones launched beside them; a tap opens that
 agent's own session. Sessions (`linked-sessions-panel.tsx`) groups the linked sessions by how they
 are linked (its creator, the sessions it created, the sessions it messaged), each group ordered
-by `byRecentInteraction` (`src/web/lib/linked-sessions.ts`): the session this one last interacted
-with first, whatever it is doing, with how long ago on the row. An interaction is between the two
+by `byRecentInteraction` (`src/web/lib/linked-sessions.ts`): the sessions waiting on the person
+first, then the session this one last interacted with, with how long ago on every row (a running
+one is not pinned). An interaction is between the two
 sessions only — one created the other, one messaged the other, a reply or a finished turn came
 back; what a linked session does with a third one never counts. The time is the latest of the
 server's (`lastInteractionAt` on each link, the pair's `lastAt` in `pair-counter.ts`) and what the

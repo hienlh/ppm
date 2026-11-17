@@ -109,6 +109,18 @@ describe("byRecentInteraction", () => {
     ];
     expect(byRecentInteraction(rows).map((r) => r.id)).toEqual(["c", "b", "e", "a", "d"]);
   });
+
+  it("pins what waits on the person above everything, newest first among them, and not what runs", () => {
+    const rows = [
+      { id: "new-idle", status: "idle" as const, lastInteractionAt: 90 },
+      { id: "old-needs", status: "needs_approval" as const, lastInteractionAt: 10 },
+      { id: "running", status: "running" as const, lastInteractionAt: 50 },
+      { id: "untimed-needs", status: "needs_approval" as const },
+      { id: "mid-needs", status: "needs_approval" as const, lastInteractionAt: 40 },
+      { id: "unread", status: "new_message" as const, lastInteractionAt: 70 },
+    ];
+    expect(byRecentInteraction(rows).map((r) => r.id)).toEqual(["mid-needs", "old-needs", "untimed-needs", "new-idle", "unread", "running"]);
+  });
 });
 
 describe("matchesLinkedFilter", () => {
@@ -185,12 +197,12 @@ describe("the Sessions list", () => {
     });
   };
 
-  it("lists the latest interaction first whatever each is doing, and says how long ago", async () => {
+  it("lists what waits on the person, then the latest interaction, and says how long ago", async () => {
     view = await mount(panel([
       kid(1, "Old idle", 50), kid(2, "Waiting on you", 30, "needs_approval"), kid(3, "Never timed", null, "running"),
       kid(4, "Just talked", 0.1), kid(5, "Running", 3, "running"),
     ]));
-    expect(titles()).toEqual(["Just talked", "Running", "Waiting on you", "Old idle", "Never timed"]);
+    expect(titles()).toEqual(["Waiting on you", "Just talked", "Running", "Old idle", "Never timed"]);
     const row = (title: string) => [...view!.container.querySelectorAll("[data-linked-session]")]
       .find((r) => r.querySelector("button")?.getAttribute("title") === title)!;
     const time = (title: string) => row(title).querySelector("[data-linked-interaction]")?.textContent ?? null;

@@ -1,8 +1,8 @@
 /**
  * The Sessions tab of the footer's activity chip: the sessions linked to this one — its creator,
  * the sessions it created, the sessions it messaged — grouped by how they are linked, each one tap
- * from being opened. Inside each group the session this one last interacted with comes first, and
- * every row says how long ago that was. A long list (more than `LINKED_FILTER_MIN_ROWS`) gets a
+ * from being opened. Inside each group what waits on the person comes first, then the session this
+ * one last interacted with, and every row says how long ago that was. A long list (more than `LINKED_FILTER_MIN_ROWS`) gets a
  * filter by name, which also reaches the unlinked ones.
  *
  * Every row ends in an unlink button, always visible (no hover-only control on a phone). Unlinking
@@ -127,7 +127,7 @@ export function LinkedSessionsPanel({ projectName, sessionId, groups, onOpened }
   // A search opens Unlinked, so a match hidden there is not missed, unless the person closed it.
   const unlinkedShown = unlinkedOpen ?? (searched && shownHidden.length > 0);
 
-  // A heading with nothing under it goes too. Inside each, the latest interaction comes first.
+  // A heading with nothing under it goes too. Inside each, what waits on the person, then the latest interaction.
   const grouped = GROUP_ORDER
     .map((relation) => ({ relation, sessions: byRecentInteraction(shown.filter((l) => (l.relations[0] ?? "messaged") === relation)) }))
     .filter((g) => g.sessions.length > 0);

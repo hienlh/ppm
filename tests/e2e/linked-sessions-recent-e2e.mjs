@@ -34,7 +34,8 @@ const LINKED = [
   [id(11), "QL Review PR", "child", 3 * DAY, 40 * MIN, "running"],
   [id(12), "NX-6587 Employment Allowance", "child", 2 * DAY, 2 * HOUR, "new_message"],
   [id(13), "Brainstorm: GI Group Ireland", "child", 5 * DAY, null, "idle"],
-  [id(14), "QL Release staging", "child", 20 * HOUR, 1 * MIN, "needs_approval"],
+  // Waits on the person, with an older interaction than most: pinned to the top of its group anyway.
+  [id(14), "QL Release staging", "child", 20 * HOUR, 6 * HOUR, "needs_approval"],
   [id(15), "Reset password: BE tự động gửi mail", "child", 9 * DAY, null, "idle"],
   [id(16), "NX-6687 debug: Conaty không xuất được P60", "child", 7 * HOUR, 7 * HOUR, "new_message"],
   [id(17), "Deploy staging NX-6690", "child", 12 * DAY, 30 * MIN, "idle"],
@@ -177,10 +178,13 @@ const rows = (page) => page.evaluate(() => {
   }
   return out;
 });
-/** A group's titles, newest interaction first: a child's creation counts, a messaged one has only the server's time. */
+/**
+ * A group's titles: what waits on the person first, then newest interaction first (a child's
+ * creation counts, a messaged one has only the server's time).
+ */
 const titlesOf = (relation) => LINKED.filter(([sid, , r]) => r === relation && (state.many || FEW.has(sid)))
-  .map(([, title, r, created, ago]) => ({ title, ago: Math.min(r === "child" ? created : Infinity, ago ?? Infinity) }))
-  .sort((a, b) => a.ago - b.ago).map((g) => g.title);
+  .map(([, title, r, created, ago, status]) => ({ title, pin: status === "needs_approval" ? 0 : 1, ago: Math.min(r === "child" ? created : Infinity, ago ?? Infinity) }))
+  .sort((a, b) => a.pin - b.pin || a.ago - b.ago).map((g) => g.title);
 
 // ---------------------------------------------------------------- run
 try {
@@ -197,7 +201,10 @@ try {
       const expected = ["QL Nxsys", ...titlesOf("child"), ...titlesOf("messaged")];
       check(JSON.stringify(shown.map((r) => r.title)) === JSON.stringify(expected), `${tag}: each group lists the latest interaction first`, shown.map((r) => r.title).join(" | "));
       const time = (t) => shown.find((r) => r.title === t)?.time;
-      check(time("QL Release staging") === "1m ago", `${tag}: a row says how long ago`, time("QL Release staging"));
+      check(time("PSR correction Ireland: tự động hoá báo cáo") === "4m ago", `${tag}: a row says how long ago`, time("PSR correction Ireland: tự động hoá báo cáo"));
+      const children = shown.map((r) => r.title).slice(1, 1 + titlesOf("child").length);
+      check(children[0] === "QL Release staging" && time("QL Release staging") === "6h ago",
+        `${tag}: "Needs you" heads its group though its interaction is older`, `${children[0]}, ${time("QL Release staging")}`);
       check(time("Brainstorm: GI Group Ireland") === "5d ago", `${tag}: a child with no later interaction shows its creation`, time("Brainstorm: GI Group Ireland"));
       check(time("NX-6612 pension auto-enrolment") === "3h ago", `${tag}: a messaged session shows the server's time`, time("NX-6612 pension auto-enrolment"));
       check(await page.locator("[data-linked-filter]:visible").count() === 1, `${tag}: a filter past eight rows`);

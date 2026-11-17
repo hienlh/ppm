@@ -138,12 +138,14 @@ export function linkedSessionStatus(sessionId: string, { streaming, notification
 }
 
 /**
- * Newest interaction with this session first; sessions with no known time go last. Stable, so
- * equals keep their order. Status plays no part: the person looks for the session they were just
- * dealing with, and a status has its own dot and word on the row.
+ * The sessions waiting on the person first — work only they can unblock, which a long-quiet child
+ * would otherwise sink to the bottom — then the newest interaction with this session; sessions with
+ * no known time go last. Running is not pinned: it needs nothing from the person. Stable, so equals
+ * keep their order.
  */
-export function byRecentInteraction<T extends { lastInteractionAt?: number }>(sessions: readonly T[]): T[] {
-  return [...sessions].sort((a, b) => (b.lastInteractionAt ?? 0) - (a.lastInteractionAt ?? 0));
+export function byRecentInteraction<T extends { lastInteractionAt?: number; status?: LinkedSessionStatus }>(sessions: readonly T[]): T[] {
+  const pinned = (l: T) => (l.status === "needs_approval" ? 0 : 1);
+  return [...sessions].sort((a, b) => pinned(a) - pinned(b) || (b.lastInteractionAt ?? 0) - (a.lastInteractionAt ?? 0));
 }
 
 /** Rows above which the Sessions list offers a filter by name. */
