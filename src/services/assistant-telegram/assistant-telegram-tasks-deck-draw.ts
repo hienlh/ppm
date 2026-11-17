@@ -16,7 +16,7 @@ import {
   childrenHtml, deckCardHtml, deckEmptyHtml, inRows, statusChoices, statusResultHtml,
 } from "./assistant-telegram-task-card.ts";
 import {
-  enabledTaskProjects, openChildren, showableTask, taskDetail, taskFacts, taskProjectName, todayYmd, type Deck,
+  deckSnoozedCount, enabledTaskProjects, openChildren, showableTask, taskDetail, taskFacts, taskProjectName, todayYmd, type Deck,
 } from "./assistant-telegram-tasks-deck.ts";
 import { buttonText } from "./assistant-telegram-task-common.ts";
 import { formatTaskRef } from "../../shared/ppm-tasks-refs.ts";
@@ -35,7 +35,8 @@ export function cardAt(deck: Deck, note?: string): Deck["view"] {
   if (deck.index >= deck.taskIds.length) deck.index = 0;
   while (deck.index < deck.taskIds.length) {
     const task = showableTask(deck.taskIds[deck.index]!);
-    if (task) return { kind: "card", taskId: task.id, revision: task.revision, ...(note ? { note } : {}) };
+    // Snoozed since the deck was made: out of the daily list, so out of the deck too.
+    if (task && !task.snoozed) return { kind: "card", taskId: task.id, revision: task.revision, ...(note ? { note } : {}) };
     deck.taskIds.splice(deck.index, 1);
     if (deck.index >= deck.taskIds.length) deck.index = 0;
   }
@@ -57,7 +58,7 @@ export function drawDeck(deck: Deck, key: KeyMaker, now: number): { html: string
     const task = showableTask(view.taskId)!;
     // The buttons stand for what is drawn: a press is checked against this revision.
     deck.view = { ...view, revision: task.revision };
-    const html = deckCardHtml(taskFacts(task), pos, ctxOf(task.projectKey), view.note);
+    const html = deckCardHtml(taskFacts(task), pos, ctxOf(task.projectKey), view.note, deckSnoozedCount(deck.projectKey));
     const statuses = statusChoices(listStatuses(task.projectKey), task.statusId)
       .map((s) => key(buttonText(s.name, 24), { op: "status", taskId: task.id, statusId: s.id }));
     const paging = total > 1 ? [[key("‹", { op: "prev" }), key(`${pos.index + 1} / ${total}`, { op: "position" }), key("›", { op: "next_page" })]] : [];
@@ -79,7 +80,7 @@ export function drawDeck(deck: Deck, key: KeyMaker, now: number): { html: string
     return { html: childrenHtml(parent, openChildren(view.taskId)), rows: [[key("‹ Back", { op: "back" })]] };
   }
   const name = deck.projectKey ? taskProjectName(deck.projectKey) : null;
-  return { html: deckEmptyHtml(name, view.finished), rows: [...undoRow, ...filterRows(deck, key)] };
+  return { html: deckEmptyHtml(name, view.finished, deckSnoozedCount(deck.projectKey)), rows: [...undoRow, ...filterRows(deck, key)] };
 }
 
 /** "All" and each project with Tasks on, the current one marked; none when there is only one. */

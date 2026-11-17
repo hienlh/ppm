@@ -61,10 +61,12 @@ export interface TaskProjectSummary {
   projectKey: string;
   enabled: boolean;
   hasManager: boolean;
-  /** Open tasks (not closed). */
+  /** Open tasks (not closed), snoozed ones left out. */
   open: number;
   /** Open tasks whose effective urgency is Now. */
   now: number;
+  /** Open tasks snoozed right now (out of the daily list). */
+  snoozed: number;
 }
 
 export interface TaskListResponse {

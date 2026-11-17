@@ -3,7 +3,7 @@
  * what PPM saw in that chat, and stored so every surface (the Assistant window, Telegram, the
  * morning digest) shows the same thing. Shared by the server and the browser.
  */
-import type { DigestProject } from "./assistant-digest.ts";
+import type { DigestProject, DigestResurfacedTask } from "./assistant-digest.ts";
 
 export const ASSISTANT_CARD_KINDS = [
   "needs_decision", "urgent", "approval", "question", "done", "failed", "digest", "rules_note", "rules_change", "budget",
@@ -124,6 +124,8 @@ export interface AssistantCardPayload {
   date?: string;
   /** Digest cards: one section per project that was asked, in the order they were asked. */
   projects?: DigestProject[];
+  /** Digest cards: tasks back from a snooze that day (PPM's own section, not a manager's words). */
+  resurfaced?: DigestResurfacedTask[];
   /**
    * Report cards: design screenshots the manager attached (`design_screenshot` ids), shown on the
    * card and sent to Telegram with it as pictures.

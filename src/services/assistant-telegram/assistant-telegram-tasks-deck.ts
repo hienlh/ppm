@@ -18,7 +18,7 @@ import { taskLinkStateSource } from "../ppm-tasks/ppm-tasks-link-state-source.ts
 import { jiraSiteFor } from "../ppm-tasks/link-state/ppm-tasks-jira-site.ts";
 import { listStatuses } from "../ppm-tasks/ppm-tasks-project-config.ts";
 import { getTaskProject, listTaskProjects } from "../ppm-tasks/ppm-tasks-projects.service.ts";
-import { getTask, listTasks, taskChildren } from "../ppm-tasks/ppm-tasks.service.ts";
+import { countSnoozed, getTask, listTasks, taskChildren } from "../ppm-tasks/ppm-tasks.service.ts";
 import { todayYmd, userTimeZone } from "../ppm-tasks/ppm-tasks-today.ts";
 import type { CardDetail } from "./assistant-telegram-card-kinds.ts";
 import type { ChildLine, TaskCardFacts, TaskCardLinkLine } from "./assistant-telegram-task-card.ts";
@@ -55,6 +55,15 @@ export function findTaskProject(asked: string, projects: readonly TaskProjectCho
 /** The open tasks of the filter's project (or of every project with Tasks on), in order. */
 export function deckTaskIds(projectKey: string | null): string[] {
   return listTasks({ ...(projectKey ? { projectKeys: [projectKey] } : {}), limit: DECK_MAX_TASKS }).map((t) => t.id);
+}
+
+/** How many open tasks of the filter's project (or of every project with Tasks on) are snoozed now. */
+export function deckSnoozedCount(projectKey: string | null): number {
+  try {
+    return countSnoozed(projectKey ? [projectKey] : listTaskProjects({ enabledOnly: true }).map((p) => p.projectKey));
+  } catch {
+    return 0;
+  }
 }
 
 /**

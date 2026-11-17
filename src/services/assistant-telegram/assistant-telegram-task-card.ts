@@ -124,15 +124,21 @@ function factLines(f: TaskCardFacts, ctx: CardContext, counter: { hidden: number
 }
 
 /** The `/tasks` card: "1 of 14 · What to do first", then the task. `note` goes above it (PPM's own words). */
-export function deckCardHtml(f: TaskCardFacts, pos: { index: number; total: number }, ctx: CardContext, note?: string): string {
+export function deckCardHtml(f: TaskCardFacts, pos: { index: number; total: number }, ctx: CardContext, note?: string, snoozed = 0): string {
   const counter = { hidden: 0 };
   const lines = [
     ...(note ? [`⚠️ <i>${clean(note, counter)}</i>`] : []),
     `<i>${pos.index + 1} of ${pos.total} · What to do first</i>`,
     ...factLines(f, ctx, counter, { withStatus: true }),
     ...hiddenLine(counter),
+    ...snoozedLine(snoozed),
   ];
   return fit(lines);
+}
+
+/** "💤 2 snoozed": tasks left out of the deck until their day or a link change; none, no line. */
+export function snoozedLine(snoozed: number): string[] {
+  return snoozed > 0 ? [`💤 <i>${snoozed} snoozed — hidden until their day or a link change; see them in PPM.</i>`] : [];
 }
 
 export interface StatusChange {
@@ -164,11 +170,12 @@ export function statusResultHtml(f: TaskCardFacts, pos: { index: number; total: 
 }
 
 /** The deck once it has nothing more to show. */
-export function deckEmptyHtml(projectName: string | null, finished: boolean): string {
+export function deckEmptyHtml(projectName: string | null, finished: boolean, snoozed = 0): string {
   const where = projectName ? ` in ${cleanTelegramText(projectName, { hidden: 0 })}` : "";
-  return finished
+  const text = finished
     ? `✅ <b>That was the last one.</b>\nNo more open tasks${where} in this list. Send /tasks for a fresh one.`
     : `No open tasks${where}.`;
+  return [text, ...snoozedLine(snoozed)].join("\n");
 }
 
 export interface ChildLine {

@@ -96,9 +96,20 @@ export function taskLine(t: TaskView, lookup: ProjectLookup, check: TaskChildChe
     parts.push(`working chat ${t.workingSessionId}${state ? ` (${state})` : ""}`);
   }
   if (t.decision && !t.decision.chosen) parts.push("decision waiting on the user");
+  const snooze = snoozeLine(t);
+  if (snooze) parts.push(snooze);
   if (t.result) parts.push(`result: ${clean(t.result.text, 300)}`);
   if (t.tags.length) parts.push(`tags ${t.tags.map((x) => clean(x, 64)).join(", ")}`);
   return parts.join(" · ");
+}
+
+/** "snoozed until 2026-11-20 or a link changes", "back from snooze today"; null otherwise. */
+export function snoozeLine(t: TaskView): string | null {
+  if (t.snoozed) {
+    const parts = [t.snoozedUntil, t.snoozeUntilChange ? "a link changes" : null].filter(Boolean);
+    return `snoozed until ${parts.join(" or ")} (hidden from the daily list)`;
+  }
+  return t.resurfacedToday ? "back from snooze today" : null;
 }
 
 const historyLine = (h: HistoryEntry): string => {

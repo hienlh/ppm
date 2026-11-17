@@ -27,6 +27,7 @@ export const ppmTasksRoutes = new Hono();
 const PATCH_KEYS = [
   "title", "type", "statusId", "urgency", "importance", "why", "nextStep", "notes", "dueDate", "tags",
   "assigneeMemberId", "waitingOnMemberId", "parentId", "workingSessionId", "fields", "links", "result",
+  "snoozedUntil", "snoozeUntilChange",
 ] as const satisfies ReadonlyArray<keyof TaskPatch>;
 
 function pickPatch(body: Record<string, unknown>): TaskPatch {
@@ -49,8 +50,9 @@ const csv = (value: string | undefined): string[] | undefined => {
 };
 
 /**
- * `?project=<name>|all&group=&type=&person=&tag=&q=&closed=0|1`. `group` and `type` take a comma
- * list; `closed=1` includes closed tasks.
+ * `?project=<name>|all&group=&type=&person=&tag=&q=&closed=0|1&snoozed=0|1`. `group` and `type`
+ * take a comma list; `closed=1` includes closed tasks, `snoozed=1` snoozed ones (each carries
+ * `snoozed: true`, so the list can draw them apart).
  */
 ppmTasksRoutes.get("/", (c) => {
   const q = c.req.query();
@@ -75,6 +77,7 @@ ppmTasksRoutes.get("/", (c) => {
     tag: q.tag || undefined,
     text: q.q?.slice(0, 200) || undefined,
     includeClosed: q.closed === "1",
+    snoozed: q.snoozed === "1" ? "include" : "exclude",
   };
   return c.json(ok<TaskListResponse>({ tasks: toTaskDtos(listTasks(filter)), projects }));
 });
