@@ -1,6 +1,7 @@
 /**
  * A task's quick view: its code and title, the fields a glance usually ends in changing (status,
- * urgency, importance, assignee, waiting on, due, next step), and two ways on — Open chat (the
+ * urgency, importance, assignee, waiting on and due as chips, then the next step), the task's
+ * links with their live state, opening as the task page opens them, and two ways on — Open chat (the
  * chat working on the task, with the task as a chip, like the list row's own chip) and the task's
  * full page (a window on a desktop, a tab on a phone).
  *
@@ -23,6 +24,7 @@ import { TaskCode } from "../kit/task-code";
 import { changeTaskStatus } from "../mobile/task-status-change";
 import { useTaskWrite } from "../use-task-write";
 import { TaskPeekFields } from "./task-peek-fields";
+import { TaskPeekLinks } from "./task-peek-links";
 
 /** A button with text: 28px, 26px on a phone (docs/design-guidelines.md rule 3). */
 const TEXT_BUTTON = cn("inline-flex min-h-0! shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-xs transition-colors disabled:opacity-50 max-md:px-2 [&_svg]:size-3.5 [&_svg]:shrink-0", TEXT_CONTROL_HEIGHT);
@@ -75,6 +77,12 @@ export function TaskPeekBody({ target, layout, onLeave, onOpenPage, onBack, onCl
     onLeave();
     openTaskChat(task.project, chat.sessionId, workingProvider(task), task);
   };
+  // A chat link opens as the task page opens one: the chat itself, without the task as a chip.
+  const openLinkedChat = (sessionId: string) => {
+    if (!task) return;
+    onLeave();
+    openTaskChat(task.project, sessionId, workingProvider(task));
+  };
   const sheet = layout === "sheet";
   const number = task?.number ?? target.number;
 
@@ -101,7 +109,10 @@ export function TaskPeekBody({ target, layout, onLeave, onOpenPage, onBack, onCl
       <div data-task-peek-scroll="" className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain", sheet ? "px-4 py-3" : "px-3 py-2.5")}>
         <div data-task-peek-content="">
           {task ? (
-            <TaskPeekFields key={task.id} task={task} settings={settings} onPatch={patch} onStatus={setStatus} />
+            <div className="space-y-3">
+              <TaskPeekFields key={task.id} task={task} settings={settings} onPatch={patch} onStatus={setStatus} />
+              <TaskPeekLinks key={`links:${task.id}`} task={task} linkStates={detail?.linkStates ?? []} jiraSite={detail?.jiraSite} onOpenChat={openLinkedChat} />
+            </div>
           ) : (
             <div className="flex min-h-24 items-center justify-center text-sm text-text-3">
               {loading ? <Loader2 className="size-4 animate-spin" /> : <p>{error ?? "This task could not be read."}</p>}
