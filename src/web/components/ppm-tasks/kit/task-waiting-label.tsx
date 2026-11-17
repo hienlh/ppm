@@ -1,8 +1,8 @@
 /**
  * A waiting task's wait as a row shows it: "Waiting on you · Today", "Waiting on Việt · 2d",
  * "Waiting · 5d". A wait on the user stands out (raised hand, accent colour); anyone else's is in
- * the warning colour. Nothing wraps. Short of room, the date or age gives way first (it shrinks ten
- * times as fast) and on whom last, since on whom is what the row is there to say. In a row whose meta line wraps (`untilApart`), the date or age is an item of its own, so in a
+ * the warning colour. Nothing wraps. Short of room, the date or age gives way first and on whom
+ * last, since on whom is what the row is there to say. In a row whose meta line wraps (`untilApart`), the date or age is an item of its own, so in a
  * narrow column it moves to the next line instead of cutting on whom the task waits.
  */
 import type { ReactNode } from "react";
@@ -47,7 +47,9 @@ export function TaskWaitingLabel({ detail, today, now, short, untilApart, classN
       className={cn("inline-flex min-w-0 max-w-full items-center gap-1 whitespace-nowrap",
         detail.mine ? "font-medium text-primary" : "text-warning", className)}>
       {detail.mine && <Hand aria-hidden className="size-3 shrink-0" />}
-      <span data-task-waiting-words="" className="min-w-0 truncate">{words}</span>
+      {/* Flex shrinks in proportion to size, so a plain 1:10 would still clip the words a little:
+          at 0.01 the date takes the whole cut until it is gone, then the words give way. */}
+      <span data-task-waiting-words="" className="min-w-0 shrink-[0.01] truncate">{words}</span>
       {until && !untilApart && (
         <span data-task-waiting-inline-when="" className="inline-flex min-w-0 shrink-[10] items-center gap-1">
           <span aria-hidden className="shrink-0 text-text-3">·</span>

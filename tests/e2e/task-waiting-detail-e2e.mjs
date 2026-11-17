@@ -100,6 +100,7 @@ async function checkLabels(page, rowSel, want, where) {
     return {
       id, who: label.getAttribute("data-task-waiting"), until: label.getAttribute("data-task-waiting-until"),
       words: words?.textContent ?? "", cut: words ? words.scrollWidth > words.clientWidth + 1 : false,
+      widths: words ? `words ${words.scrollWidth}/${words.clientWidth}, label ${Math.round(label.getBoundingClientRect().width)}, meta ${Math.round(label.parentElement.getBoundingClientRect().width)}, siblings ${[...label.parentElement.children].map((c) => `${(c.getAttribute("data-task-waiting") ? "label" : c.textContent.trim().slice(0, 12))}:${Math.round(c.getBoundingClientRect().width)}`).join(" ")}` : "",
       oneLine: r.height <= lh(label) + 4, height: Math.round(r.height),
       codeOneLine: code ? code.getClientRects().length === 1 && code.getBoundingClientRect().height <= lh(code) + 4 : true,
       inside: r.right <= row.getBoundingClientRect().right + 1,
@@ -116,7 +117,7 @@ async function checkLabels(page, rowSel, want, where) {
     assert(f.codeOneLine, `${where}: the code of "${f.words}" on one line`);
     assert(f.inside, `${where}: "${f.words}" stays inside its row`);
     // On whom is what the label is for: short of room the date gives way first, so a short name is never cut.
-    if (!f.words.includes(LONG_NAME)) assert(!f.cut, `${where}: "${f.words}" is not cut`);
+    if (!f.words.includes(LONG_NAME)) assert(!f.cut, `${where}: "${f.words}" (row ${f.id}) is not cut — ${f.widths}`);
   }
   return found;
 }
