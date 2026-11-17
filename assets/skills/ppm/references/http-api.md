@@ -48,6 +48,7 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `GET    /api/accounts/usage`
 - `GET    /api/accounts/:id/usage`
 - `GET    /api/accounts/:id/usage-history`
+- `POST   /api/accounts/:id/limit-reset`
 - `POST   /api/accounts/:id/verify`
 - `POST   /api/accounts/test-export`
 - `POST   /api/accounts/test-raw-token`
@@ -885,4 +886,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.7 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.8 -->
