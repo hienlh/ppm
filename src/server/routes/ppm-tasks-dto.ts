@@ -56,10 +56,11 @@ export function toTaskDtos(views: TaskView[]): TaskDto[] {
 
 export const toTaskDto = (view: TaskView): TaskDto => toTaskDtos([view])[0]!;
 
-/** A project with its open and Now counts. */
+/** A project with its open, Now and snoozed counts. */
 export function projectSummary(projectKey: string, name: string = projectNameOfKey(projectKey)): TaskProjectSummary {
   const project = getTaskProject(projectKey);
-  const open = project?.enabled ? listTasks({ projectKeys: [projectKey] }) : [];
+  const all = project?.enabled ? listTasks({ projectKeys: [projectKey], snoozed: "include" }) : [];
+  const open = all.filter((t) => !t.snoozed);
   return {
     name,
     projectKey,
@@ -67,6 +68,7 @@ export function projectSummary(projectKey: string, name: string = projectNameOfK
     hasManager: managerSessionFor(projectKey) !== null,
     open: open.length,
     now: open.filter((t) => t.effectiveUrgency === "now").length,
+    snoozed: all.length - open.length,
   };
 }
 

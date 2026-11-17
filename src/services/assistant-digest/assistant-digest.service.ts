@@ -2,7 +2,7 @@ import { createLogger } from "../logger.ts";
 import type { AssistantClock, Cancel } from "../assistant-wake/assistant-clock.ts";
 import type { NewCard } from "../assistant-cards/assistant-cards.service.ts";
 import { DIGEST_CLOSED, DIGEST_NOT_ASKED } from "../assistant-cards/manager-report-tool.ts";
-import type { DigestSettings } from "../../shared/assistant-digest.ts";
+import type { DigestResurfacedTask, DigestSettings } from "../../shared/assistant-digest.ts";
 import { buildDigestCard, type DigestWaitingOf } from "./digest-card-assembly.ts";
 import { digestZone, lastDigestFire, nextDigestFire } from "./digest-next-fire.ts";
 import type { DigestRun, DigestStateStore } from "./digest-state.ts";
@@ -54,6 +54,8 @@ export interface DigestDeps {
   canonical(sessionId: string): string;
   /** A project's waiting tasks for its digest section; absent, sections list none. */
   waitingTasks?: DigestWaitingOf;
+  /** Tasks back from a snooze on this date, in projects with Tasks on; absent, none are listed. */
+  resurfaced?(date: string): DigestResurfacedTask[];
 }
 
 export type DigestAnswer = { ok: true } | { ok: false; message: string };
@@ -89,7 +91,12 @@ export function createAssistantDigest(deps: DigestDeps) {
     deadlineTimer?.();
     deadlineTimer = null;
     const detail = new Map(deps.managers().map((m) => [m.projectKey, m.titleOnly]));
-    const id = deps.existingCard(run.date) ?? deps.createCard(buildDigestCard(run, (key) => detail.get(key) ?? false, deps.waitingTasks)).id;
+    const existing = deps.existingCard(run.date);
+    let resurfaced: DigestResurfacedTask[] = [];
+    if (!existing) {
+      try { resurfaced = deps.resurfaced?.(run.date) ?? []; } catch (e) { log.warn(`morning digest: snoozed tasks unreadable: ${(e as Error).message}`); }
+    }
+    const id = existing ?? deps.createCard(buildDigestCard(run, (key) => detail.get(key) ?? false, deps.waitingTasks, resurfaced)).id;
     update((r) => { r.cardId = id; });
     for (const key of Object.keys(run.delivered)) pending.delete(run.delivered[key]!.clientMessageId);
     log.info(`morning digest ${run.date}: card ${id}, ${Object.keys(run.answers).length} of ${Object.keys(run.asked).length} answered`);

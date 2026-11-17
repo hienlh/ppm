@@ -57,6 +57,20 @@ export function digestWaitingSummary(p: Pick<DigestProject, "waiting" | "waiting
   return `${plural(total, "task")} waiting${mine ? `, ${mine} on you` : ""}`;
 }
 
+/** A task that came back from a snooze on the digest's day; PPM writes these, not a manager. */
+export interface DigestResurfacedTask {
+  project: string;
+  /** The task's code, `ppm/12`. */
+  ref: string;
+  title: string;
+}
+
+/** The heading of the digest's own section for tasks back from a snooze. */
+export const DIGEST_RESURFACED_HEADING = "Back from snooze today";
+
+/** Most tasks the section lists; the rest are counted. */
+export const DIGEST_RESURFACED_MAX = 20;
+
 /** What a project that did not answer shows on the card. */
 export const DIGEST_NO_ANSWER = "No answer yet (busy)";
 

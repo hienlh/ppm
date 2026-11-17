@@ -1,11 +1,12 @@
 /**
  * The bottom sheets a phone task page opens from its rows and buttons: the project's statuses (the
  * bottom bar's status button), every property (assignee, waiting on, urgency, due, fields…), the
- * result, the child tasks, and ··· (Copy link, Ask manager, Start a new chat). The property editor
+ * result, the child tasks, "Snooze until…", and ··· (Copy link, Snooze until…, Ask manager, Start
+ * a new chat). The property editor
  * is the desktop's own panel with its fields grown to 44px, so both stay one implementation.
  */
 import type { ReactNode } from "react";
-import { Link, MessageSquare, Plus } from "@/lib/icons";
+import { Link, MessageSquare, Moon, Plus } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { PPM_TASK_LIMITS, type TaskPatch } from "../../../../shared/ppm-tasks";
 import type { TaskDto, TaskProjectSettings } from "../../../../shared/ppm-tasks-api";
@@ -14,8 +15,9 @@ import { PlainTextEditor } from "../task-card";
 import { TaskPropertiesPanel } from "../task-properties-panel";
 import { TaskChildrenCard } from "../task-children-card";
 import { TaskStatusGrid } from "./task-status-grid";
+import { TaskSnoozeOptions } from "../task-snooze-options";
 
-export type TaskSheetKind = "status" | "properties" | "result" | "children" | "more";
+export type TaskSheetKind = "status" | "properties" | "result" | "children" | "more" | "snooze";
 
 export interface TaskFieldEditorSheetProps {
   kind: TaskSheetKind | null;
@@ -31,10 +33,12 @@ export interface TaskFieldEditorSheetProps {
   onManageFields(): void;
   onAskManager(): void;
   onStartChat(): void;
+  /** Opens another of these sheets (··· → Snooze until…). */
+  onOpenSheet?(kind: TaskSheetKind): void;
 }
 
 const TITLES: Record<TaskSheetKind, string> = {
-  status: "Status", properties: "Properties", result: "Result", children: "Child tasks", more: "Task actions",
+  status: "Status", properties: "Properties", result: "Result", children: "Child tasks", more: "Task actions", snooze: "Snooze until…",
 };
 
 const ACTION = "flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-[15px] text-text active:bg-surface-hover [&_svg]:size-[18px] [&_svg]:text-text-3";
@@ -65,10 +69,15 @@ function Body({ kind, p, close }: { kind: TaskSheetKind; p: TaskFieldEditorSheet
     case "children":
       return <div className="[&_li_button]:min-h-11"><TaskChildrenCard children={p.childTasks} members={p.settings?.members}
         onOpen={(c) => close(() => p.onOpenTask(c))} onAdd={() => close(p.onAddChild)} /></div>;
+    case "snooze":
+      return <TaskSnoozeOptions task={task} onPick={(patch) => close(() => p.onPatch(patch))} />;
     case "more":
       return (
         <div className="-mx-1">
           <button type="button" className={ACTION} onClick={() => close(() => void copyTaskLink(task))}><Link />Copy link</button>
+          {p.onOpenSheet && task.baseGroup !== "closed" && (
+            <button type="button" className={ACTION} data-task-more-snooze="" onClick={() => p.onOpenSheet!("snooze")}><Moon />Snooze until…</button>
+          )}
           {p.hasManager && <button type="button" className={ACTION} onClick={() => close(p.onAskManager)}><MessageSquare />Ask manager about this</button>}
           <button type="button" className={ACTION} onClick={() => close(p.onStartChat)}><Plus />Start a new chat for this task</button>
         </div>

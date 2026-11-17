@@ -26,6 +26,7 @@ import { CHECK_STEPS } from "./ppm-tasks/steps-checks.mjs";
 import { PHONE_STEPS } from "./ppm-tasks/steps-phone-telegram.mjs";
 import { CODE_STEPS } from "./ppm-tasks/steps-task-codes.mjs";
 import { WINDOW_STEPS } from "./ppm-tasks/steps-task-window.mjs";
+import { SNOOZE_STEPS } from "./ppm-tasks/steps-snooze.mjs";
 import { cutVideo } from "./ppm-tasks/video-cut.mjs";
 
 const sandbox = await mkdtemp(join(tmpdir(), "ppm-tasks-e2e-"));
@@ -87,10 +88,11 @@ try {
   const s = await seedDemo(kit, dirs);
   await kit.openDesktop();
 
-  // PPM_TASKS_ONLY=codes (or =window) runs the task-code (or task-window) steps alone, on the
-  // seeded data (a quick re-check).
+  // PPM_TASKS_ONLY=codes (or =window, =snooze) runs the task-code (or task-window, snooze) steps
+  // alone, on the seeded data (a quick re-check).
   const only = process.env.PPM_TASKS_ONLY;
-  const steps = only === "codes" ? CODE_STEPS : only === "window" ? WINDOW_STEPS : [...DESKTOP_STEPS, ...CHECK_STEPS, ...PHONE_STEPS, ...CODE_STEPS, ...WINDOW_STEPS];
+  const steps = only === "codes" ? CODE_STEPS : only === "window" ? WINDOW_STEPS : only === "snooze" ? SNOOZE_STEPS
+    : [...DESKTOP_STEPS, ...CHECK_STEPS, ...PHONE_STEPS, ...CODE_STEPS, ...WINDOW_STEPS, ...SNOOZE_STEPS];
   for (const step of steps) {
     try {
       await step.run(kit, s);

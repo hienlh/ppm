@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import "../../../../test-setup.ts";
+import { getDb } from "../../../../../src/services/db.service.ts";
 import { createTask, updateTask } from "../../../../../src/services/ppm-tasks/ppm-tasks.service.ts";
 import { setTasksEnabled } from "../../../../../src/services/ppm-tasks/ppm-tasks-projects.service.ts";
 import { listLinkStateChangesSince } from "../../../../../src/services/ppm-tasks/ppm-tasks-db.ts";
 import {
-  comparable, createLinkStateService, LINK_READ_CONCURRENCY, LINK_STATE_TTL_MS, stableJson, type LinkStateEnv,
+  comparable, createLinkStateService, LINK_READ_CONCURRENCY, LINK_STATE_TTL_MS, snoozeComparable, stableJson, type LinkStateEnv,
 } from "../../../../../src/services/ppm-tasks/link-state/ppm-tasks-link-state.service.ts";
 import type { ReadResult } from "../../../../../src/services/ppm-tasks/link-state/github-pr-link-state-reader.ts";
 import { freshProject, PROJECT_PATH, USER, type Fixture } from "../ppm-tasks-fixture.ts";
@@ -89,6 +90,42 @@ describe("states", () => {
     const changeAt = clock;
     expect(svc.source.states(f.projectKey, links)[0]).toMatchObject({ state: { status: "Done" }, changedAt: changeAt });
     expect(listLinkStateChangesSince(f.projectKey, 0).map((l) => l.ref)).toEqual(["NX-1"]);
+  });
+
+  it("marks a change that wakes a snooze only for a Jira status, or a PR's state or review", async () => {
+    const jira = { status: "To Do", assignee: "Ann", summary: "S" };
+    const pr = { state: "open", reviewDecision: null as string | null, title: "T", checks: { total: 1, failing: 0, pending: 0 } };
+    const svc = createLinkStateService(env({
+      readJira: async (_p, refs) => new Map<string, ReadResult>(refs.map((r) => [r, { state: { ...jira, updated: String(clock) }, error: null }])),
+      readPrs: async (refs) => new Map<string, ReadResult>(refs.map((r) => [r, { state: { ...pr, checks: { ...pr.checks } }, error: null }])),
+    }));
+    const links = [{ kind: "jira" as const, ref: "NX-9" }, { kind: "pr" as const, ref: "acme/app#7" }];
+    const read = async () => { clock += LINK_STATE_TTL_MS; svc.source.states(f.projectKey, links); await svc.idle(); };
+    const snoozeAt = (ref: string) => (getDb().query("SELECT snooze_changed_at AS at FROM task_link_state WHERE ref = ?").get(ref) as { at: number | null }).at;
+    const changedAt = (ref: string) => (getDb().query("SELECT changed_at AS at FROM task_link_state WHERE ref = ?").get(ref) as { at: number | null }).at;
+    await read();
+    // An assignee, a PR title and its CI: news for the manager, not a wake.
+    jira.assignee = "Bob";
+    pr.title = "T2";
+    pr.checks.failing = 1;
+    await read();
+    expect(changedAt("NX-9")).toBe(clock);
+    expect(changedAt("acme/app#7")).toBe(clock);
+    expect(snoozeAt("NX-9")).toBeNull();
+    expect(snoozeAt("acme/app#7")).toBeNull();
+    jira.status = "In Review";
+    pr.reviewDecision = "APPROVED";
+    await read();
+    const reviewAt = clock;
+    expect(snoozeAt("NX-9")).toBe(reviewAt);
+    expect(snoozeAt("acme/app#7")).toBe(reviewAt);
+    // A draft is a PR state of its own.
+    pr.state = "draft";
+    await read();
+    expect(snoozeAt("acme/app#7")).toBe(clock);
+    expect(snoozeAt("NX-9")).toBe(reviewAt);
+    expect(snoozeComparable("jira", stableJson({ status: "A", assignee: "x" }))).toBe(snoozeComparable("jira", stableJson({ status: "A", assignee: "y" })));
+    expect(snoozeComparable("pr", null)).toBeNull();
   });
 
   it("keeps the last good state when a read fails", async () => {

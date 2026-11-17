@@ -12,7 +12,11 @@ const COLUMNS: Record<string, string> = {
   title: "title", type: "type", statusId: "status_id", urgency: "urgency", importance: "importance",
   why: "why", nextStep: "next_step", notes: "notes", dueDate: "due_date", assigneeMemberId: "assignee_member_id",
   waitingOnMemberId: "waiting_on_member_id", parentId: "parent_id", workingSessionId: "working_session_id",
+  snoozedUntil: "snoozed_until",
 };
+
+/** Change fields that set or clear a snooze. */
+export const SNOOZE_FIELDS: readonly string[] = ["snoozedUntil", "snoozeUntilChange"];
 
 /** The value a change field has on the task now. */
 export function currentValue(task: Task, field: string): unknown {
@@ -70,6 +74,8 @@ export function applyChanges(task: Task, changes: HistoryChange[], now: number):
     } else if (field === "links") writeLinks(task.id, after as TaskLink[], now);
     else if (field === "deletedAt") set("deleted_at", after as number | null);
     else if (field === "rank") set("rank", after as number);
+    else if (field === "snoozeUntilChange") set("snooze_until_change", after ? 1 : 0);
+    else if (field === "resurfacedAt") set("resurfaced_at", after as number | null);
   }
   if (fields) set("fields_json", Object.keys(fields).length ? JSON.stringify(fields) : null);
   const changed = (f: string) => changes.find((c) => c.field === f);
@@ -82,6 +88,14 @@ export function applyChanges(task: Task, changes: HistoryChange[], now: number):
   if (waiting) set("waiting_since", waiting.after ? now : null);
   const working = changed("workingSessionId");
   if (working) set("handed_off_at", isHandedOff(task.projectKey, working.after as string | null) ? now : null);
+  // A new snooze starts its clock (a link change is compared with it) and forgets the last return.
+  const until = changed("snoozedUntil");
+  const onChange = changed("snoozeUntilChange");
+  if (until || onChange) {
+    const snoozedAfter = (until ? until.after !== null : task.snoozedUntil !== null) || (onChange ? onChange.after === true : task.snoozeUntilChange);
+    set("snoozed_at", snoozedAfter ? now : null);
+    if (snoozedAfter && !changed("resurfacedAt")) set("resurfaced_at", null);
+  }
   set("updated_at", now);
   args.push(task.id);
   db.query(`UPDATE tasks SET ${sets.join(", ")}, revision = revision + 1 WHERE id = ?`).run(...args);
@@ -108,5 +122,6 @@ export function kindForChanges(changes: HistoryChange[]): HistoryKind {
   if (changes.every((c) => c.field === "result")) return "result";
   if (changes.every((c) => c.field === "decision")) return (changes[0]!.after as TaskDecision | null)?.chosen ? "decided" : "decision";
   if (changes.every((c) => c.field === "rank")) return "reordered";
+  if (changes.every((c) => SNOOZE_FIELDS.includes(c.field))) return "snoozed";
   return "updated";
 }

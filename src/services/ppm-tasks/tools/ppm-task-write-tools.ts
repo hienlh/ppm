@@ -83,6 +83,8 @@ function patchFrom(a: Args, project: TaskProjectRef, scope: TaskProjectRef[], ca
     if (w === "self" && caller.kind === "assistant") refuse("A PPM Assistant session cannot be a task's working session.");
     p.workingSessionId = w === "self" ? caller.sessionId : (w as string | null);
   }
+  if (has(a, "snoozed_until")) p.snoozedUntil = a.snoozed_until as string | null;
+  if (has(a, "snooze_until_change")) p.snoozeUntilChange = a.snooze_until_change as boolean;
   if (has(a, "result")) {
     if (a.result !== null && typeof a.result !== "string") refuse("result must be text, or null to clear it.");
     p.result = a.result === null ? null : { text: a.result as string };

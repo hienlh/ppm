@@ -7,7 +7,10 @@
 import { Coffee, Hand } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { AssistantCard } from "../../../../shared/assistant-cards";
-import { DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, digestWaitingSummary, type DigestProject } from "../../../../shared/assistant-digest";
+import {
+  DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, DIGEST_RESURFACED_HEADING, digestWaitingSummary, type DigestProject,
+  type DigestResurfacedTask,
+} from "../../../../shared/assistant-digest";
 import { CardShell } from "./card-shell";
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -60,6 +63,26 @@ function WaitingTasks({ project }: { project: DigestProject }) {
   );
 }
 
+/** PPM's own section: the tasks back from a snooze that day, by code and title. */
+function ResurfacedSection({ tasks }: { tasks: readonly DigestResurfacedTask[] }) {
+  return (
+    <section className="border-b border-border pb-2" data-digest-resurfaced="">
+      <h4 className="mb-1 flex items-center gap-1.5 text-[13px] font-semibold">
+        <span aria-hidden className="size-2 shrink-0 rounded-full bg-warning" />
+        {DIGEST_RESURFACED_HEADING}
+      </h4>
+      <ul className="space-y-0.5 text-[13px] leading-relaxed">
+        {tasks.map((t) => (
+          <li key={t.ref} className="flex min-w-0 gap-1.5">
+            <span className="shrink-0 font-mono text-[12px] text-text-secondary">{t.ref}</span>
+            <span className="min-w-0 break-words">{t.title}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** A digest's sections; one from before PPM put them together was one manager's list. */
 export function digestProjects(card: AssistantCard): DigestProject[] {
   return card.payload.projects
@@ -81,6 +104,7 @@ export function DigestCard({ card }: { card: AssistantCard }) {
       meta={digestSummary(projects)}
     >
       <div className="space-y-2">
+        {!!card.payload.resurfaced?.length && <ResurfacedSection tasks={card.payload.resurfaced} />}
         {projects.map((p, i) => <ProjectSection key={`${i}:${p.name}`} project={p} />)}
       </div>
     </CardShell>

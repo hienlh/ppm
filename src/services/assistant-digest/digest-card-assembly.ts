@@ -1,4 +1,4 @@
-import { digestTitle, type DigestProject } from "../../shared/assistant-digest.ts";
+import { DIGEST_RESURFACED_MAX, digestTitle, type DigestProject, type DigestResurfacedTask } from "../../shared/assistant-digest.ts";
 import type { NewCard } from "../assistant-cards/assistant-cards.service.ts";
 import type { DigestRun } from "./digest-state.ts";
 
@@ -7,11 +7,15 @@ export type DigestWaitingOf = (projectKey: string) => Pick<DigestProject, "waiti
 
 /**
  * The morning digest card, built by PPM from a run: one section per project that was asked, in
- * the order they were asked, answered or not. Items arrive already cleaned and capped by the
- * report tool; each section also lists the project's waiting tasks (`waitingOf`), which PPM reads
- * itself. Pure, so assembly from partial answers is tested without a store.
+ * the order they were asked, answered or not, and PPM's own list of tasks back from a snooze
+ * that day. Items arrive already cleaned and capped by the report tool; each section also lists
+ * the project's waiting tasks (`waitingOf`), which PPM reads itself. Pure, so assembly from
+ * partial answers is tested without a store.
  */
-export function buildDigestCard(run: DigestRun, titleOnly: (projectKey: string) => boolean, waitingOf?: DigestWaitingOf): NewCard {
+export function buildDigestCard(
+  run: DigestRun, titleOnly: (projectKey: string) => boolean, waitingOf?: DigestWaitingOf,
+  resurfaced: readonly DigestResurfacedTask[] = [],
+): NewCard {
   const projects: DigestProject[] = Object.keys(run.asked).map((key) => {
     const items = run.answers[key];
     let waiting: ReturnType<DigestWaitingOf> = {};
@@ -30,7 +34,7 @@ export function buildDigestCard(run: DigestRun, titleOnly: (projectKey: string) 
     projectPath: null,
     sessionId: null,
     title: digestTitle(projects),
-    payload: { date: run.date, projects },
+    payload: { date: run.date, projects, ...(resurfaced.length ? { resurfaced: resurfaced.slice(0, DIGEST_RESURFACED_MAX) } : {}) },
     // The main Assistant session hears of it once, as news.
     wake: true,
   };

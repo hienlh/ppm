@@ -50,12 +50,14 @@ const TASK_FIELDS: Record<string, Json> = {
   parent: nullableStr("The parent task (`project/123`, `#123` or id), or null."),
   working_session: nullableStr("The chat doing the task: `self` (this chat), a PPM chat id of the same project, or null (the manager does it)."),
   fields: { type: "object", additionalProperties: { type: ["string", "number", "null"] }, description: "Custom field values by key; null removes a key. Keys the project has not declared are kept as they are." },
+  snoozed_until: nullableStr("Snooze: hide the task from the daily lists (and from stalled checks of its chat) until this day, YYYY-MM-DD after today; it keeps its status and comes back by itself on that day. null brings it back now. Not for closed tasks."),
+  snooze_until_change: { type: "boolean", description: "Snooze until one of the task's Jira or PR links changes (Jira status, PR state or review). Needs such a link. With snoozed_until too, whichever comes first brings it back. false stops it." },
 };
 
 export const PPM_TASK_TOOL_DEFINITIONS: readonly Json[] = [
   {
     name: PPM_TASK_LIST_TOOL,
-    description: `List tasks of ${STORE} In "what to do first" order (effective urgency, then importance, then rank). Closed tasks are left out unless asked for.`,
+    description: `List tasks of ${STORE} In "what to do first" order (effective urgency, then importance, then rank). Closed and snoozed tasks are left out unless asked for.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -67,6 +69,7 @@ export const PPM_TASK_TOOL_DEFINITIONS: readonly Json[] = [
         urgency: { type: "string", enum: [...URGENCIES], description: "Only tasks at this effective urgency." },
         query: str("Text to find in title, why, next step and notes.", 200),
         include_closed: { type: "boolean" },
+        include_snoozed: { type: "boolean", description: "Also list tasks the user snoozed (hidden until a day or a link change)." },
         limit: { type: "integer", minimum: 1, maximum: MAX_LIST_LIMIT, description: `At most this many (default ${DEFAULT_LIST_LIMIT}).` },
       },
       additionalProperties: false,
@@ -74,7 +77,7 @@ export const PPM_TASK_TOOL_DEFINITIONS: readonly Json[] = [
   },
   {
     name: PPM_TASK_GET_TOOL,
-    description: `One task of ${STORE} Every field, its links with their last known state, its children, its last 20 history rows (with ids ppm_task_undo takes), the check of the chat it was handed to, and the revision your next write must name.`,
+    description: `One task of ${STORE} Every field (its snooze too), its links with their last known state, its children, its last 20 history rows (with ids ppm_task_undo takes), the check of the chat it was handed to, and the revision your next write must name.`,
     inputSchema: { type: "object", properties: { project: PROJECT, task: TASK }, required: ["task"], additionalProperties: false },
   },
   {

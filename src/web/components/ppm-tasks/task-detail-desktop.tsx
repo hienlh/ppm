@@ -85,6 +85,7 @@ export function TaskDetailDesktop({ detail, settings, preview }: TaskDetailViewP
           <TaskDetailHeader task={task} members={settings?.members} preview={preview} hasManager={!!managerOf(task.project, managers)}
             onRename={(title) => patch({ title })} onAskManager={askManager}
             onMarkDone={() => void run(task.id, () => actions.close(task, { closedAs: "done" }))}
+            onSnooze={(snooze) => void patch(snooze)}
             onReopen={() => void run(task.id, () => actions.reopen(task))} />
           {(task.type === "decision" || task.decision) && (
             <TaskDecisionCard task={task} busy={deciding}

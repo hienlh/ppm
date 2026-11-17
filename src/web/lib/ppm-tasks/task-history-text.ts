@@ -3,7 +3,7 @@
  * "Assistant created this". Values are named the way the task page names them (status names,
  * members, urgency labels), so a row reads the same as the field it changed.
  */
-import { AI_ACTOR_KINDS, type HistoryChange, type HistoryEntry, type TaskMember, type TaskStatusDef } from "../../../shared/ppm-tasks";
+import { AI_ACTOR_KINDS, shortDay, type HistoryChange, type HistoryEntry, type TaskMember, type TaskStatusDef } from "../../../shared/ppm-tasks";
 import { IMPORTANCE_LABEL, URGENCY_LABEL, typeLabel } from "./ppm-tasks-kit-logic";
 import { memberName } from "./task-format";
 
@@ -16,6 +16,7 @@ const FIELD_LABEL: Record<string, string> = {
   title: "title", type: "type", statusId: "status", urgency: "urgency", importance: "importance", why: "why", nextStep: "next step",
   notes: "notes", dueDate: "due date", tags: "tags", assigneeMemberId: "assignee", waitingOnMemberId: "waiting on", parentId: "parent",
   workingSessionId: "working chat", links: "links", result: "result", decision: "decision", rank: "order", deletedAt: "deleted",
+  snoozedUntil: "snooze", snoozeUntilChange: "snooze until a link changes", resurfacedAt: "back from snooze",
 };
 
 export const isAiEntry = (e: Pick<HistoryEntry, "actor">): boolean => AI_ACTOR_KINDS.includes(e.actor.kind);
@@ -85,8 +86,19 @@ export function entryText(e: HistoryEntry, names: HistoryNames): string {
     }
     case "deleted": return "deleted it";
     case "undo": return "undid a change";
+    case "snoozed": return snoozeEntryText(e);
+    // The reason ("Snooze ended: its day came") is drawn under the row like every reason.
+    case "resurfaced": return "brought it back from its snooze";
     default: return e.changes.map((c) => changeText(c, names)).join("; ") || "changed it";
   }
+}
+
+/** "snoozed it until Thu 20 Nov", "snoozed it until a link changes", "unsnoozed it". */
+export function snoozeEntryText(e: Pick<HistoryEntry, "changes">): string {
+  const until = e.changes.find((c) => c.field === "snoozedUntil");
+  const change = e.changes.find((c) => c.field === "snoozeUntilChange");
+  const parts = [until?.after ? shortDay(String(until.after)) : null, change?.after === true ? "a link changes" : null].filter(Boolean);
+  return parts.length ? `snoozed it until ${parts.join(" or ")}` : "unsnoozed it";
 }
 
 /** "from Telegram", "with a tool"; null for PPM itself. */

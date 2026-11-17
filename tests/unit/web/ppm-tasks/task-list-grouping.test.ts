@@ -40,8 +40,8 @@ describe("groupTasks", () => {
 
 describe("filters", () => {
   it("asks the server for closed tasks too, for child progress", () => {
-    expect(listQueryFor("project", "demo", EMPTY_FILTERS, " pay ")).toEqual({ project: "demo", q: "pay", closed: true });
-    expect(listQueryFor("all", null, { ...EMPTY_FILTERS, types: ["decision"] }, "")).toEqual({ project: "all", types: ["decision"], closed: true });
+    expect(listQueryFor("project", "demo", EMPTY_FILTERS, " pay ")).toEqual({ project: "demo", q: "pay", closed: true, snoozed: true });
+    expect(listQueryFor("all", null, { ...EMPTY_FILTERS, types: ["decision"] }, "")).toEqual({ project: "all", types: ["decision"], closed: true, snoozed: true });
     expect(listQueryFor("project", null, EMPTY_FILTERS, "")).toBeNull();
   });
 
@@ -62,7 +62,7 @@ describe("filters", () => {
 
   it("counts children and tags over the whole scope, whatever the filters and search", () => {
     const filtered = listQueryFor("project", "demo", { ...EMPTY_FILTERS, groups: ["active"], tag: "billing", person: "me" }, "pay");
-    expect(countingQueryFor("project", "demo")).toEqual({ project: "demo", closed: true });
+    expect(countingQueryFor("project", "demo")).toEqual({ project: "demo", closed: true, snoozed: true });
     expect(countingQueryFor("project", "demo")).not.toEqual(filtered);
     // With no filter on it is the list's own query, so the store fetches it once.
     expect(countingQueryFor("all", null)).toEqual(listQueryFor("all", null, EMPTY_FILTERS, ""));

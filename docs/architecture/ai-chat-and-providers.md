@@ -1023,7 +1023,10 @@ to-do list. Names in `src/shared/ppm-task-tools.ts`, definitions and handlers in
 the check of the chat it was handed to, the revision) and `ppm_task_project` (statuses, members,
 fields, the check interval); writes `ppm_task_create`, `ppm_task_update`, `ppm_task_close`,
 `ppm_task_reorder`, `ppm_task_undo`, `ppm_task_project_update` and, for the PPM Assistant only,
-`ppm_task_notify_manager`.
+`ppm_task_notify_manager`. A snooze is two fields of create and update, `snoozed_until`
+(`YYYY-MM-DD` after today, or null) and `snooze_until_change`; `ppm_task_list` leaves snoozed tasks
+out unless `include_snoozed` and says how many it left out, and a task's line says "snoozed until …"
+or "back from snooze today".
 
 **Who is calling** comes from the token's chat, never from anything the model says about itself
 (`ppm-task-tool-caller.ts`):

@@ -11,6 +11,8 @@ import { TaskListGroup } from "./task-list-group";
 import { useTaskListKeyboard } from "./use-task-list-keyboard";
 import { useTaskRowDrag, type DropTarget } from "./use-task-row-drag";
 import type { TaskListViewProps } from "./task-list-view-props";
+import { TaskListRow } from "./task-list-row";
+import { TaskSnoozedSection } from "./task-snoozed-section";
 
 export function TaskListDesktop(p: TaskListViewProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -48,8 +50,12 @@ export function TaskListDesktop(p: TaskListViewProps) {
       {p.groups.map((g) => (
         <TaskListGroup key={g.urgency} group={g} selectedId={p.selectedId} draggingId={drag.dragging?.id ?? null} dropTarget={drag.target}
           rowExtras={extras}
-          row={{ showProject: p.showProject, onSelect: select, onOpenChat: p.onOpenChat, onStartChat: p.onStartChat, onPointerDown: drag.onPointerDown }} />
+          row={{ showProject: p.showProject, onSelect: select, onOpenChat: p.onOpenChat, onStartChat: p.onStartChat, onPointerDown: drag.onPointerDown, onSnooze: p.onSnooze }} />
       ))}
+      <TaskSnoozedSection tasks={p.snoozed} row={(task) => (
+        <TaskListRow {...extras(task)} task={task} depth={0} selected={task.id === p.selectedId} showProject={p.showProject}
+          onSelect={select} onOpenChat={p.onOpenChat} onStartChat={p.onStartChat} onSnooze={p.onSnooze} />
+      )} />
     </div>
   );
 }

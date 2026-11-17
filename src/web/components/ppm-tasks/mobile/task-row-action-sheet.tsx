@@ -1,11 +1,12 @@
 /**
  * The sheet a long-press on a phone task row opens (variant-3 screen 03): the project's statuses
  * as a grid of big buttons, then Urgency (its four values open in place), Reorder… (Move up /
- * Move down inside the task's cell), Ask manager about this and Copy link. Swiping the sheet away
+ * Move down inside the task's cell), Snooze until… (its choices open in place), Ask manager about
+ * this and Copy link. Swiping the sheet away
  * or tapping the backdrop cancels; every action closes it.
  */
 import { useEffect, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Link, MessageSquare, Zap } from "@/lib/icons";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Link, MessageSquare, Moon, Zap } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { cn } from "@/lib/utils";
 import { URGENCY_LABEL } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
@@ -14,6 +15,8 @@ import { URGENCIES, type Urgency } from "../../../../shared/ppm-tasks";
 import type { TaskDto, TaskProjectSettings } from "../../../../shared/ppm-tasks-api";
 import { TaskStatusGrid } from "./task-status-grid";
 import { TaskCode } from "../kit/task-code";
+import { TaskSnoozeOptions, type SnoozePatch } from "../task-snooze-options";
+import { snoozeBadgeText } from "../kit/task-snooze-badge";
 
 export interface TaskRowActionSheetProps {
   /** The pressed task; null keeps the sheet closed. */
@@ -29,6 +32,8 @@ export interface TaskRowActionSheetProps {
   onUrgency(task: TaskDto, urgency: Urgency): void;
   onReorder(task: TaskDto, to: { beforeId: string } | { afterId: string }): void;
   onAskManager(task: TaskDto): void;
+  /** Snooze or unsnooze; absent, the sheet offers no Snooze. */
+  onSnooze?(task: TaskDto, patch: SnoozePatch): void;
 }
 
 const ITEM = "flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-[15px] text-text active:bg-surface-hover disabled:opacity-40";
@@ -47,7 +52,7 @@ function Item({ icon, children, aside, onClick, disabled, expanded }: {
 
 export function TaskRowActionSheet(p: TaskRowActionSheetProps) {
   const { task } = p;
-  const [open, setOpen] = useState<"urgency" | "reorder" | null>(null);
+  const [open, setOpen] = useState<"urgency" | "reorder" | "snooze" | null>(null);
   useEffect(() => { setOpen(null); }, [task?.id]);
   const act = (fn: (t: TaskDto) => void) => { if (task) { p.onClose(); fn(task); } };
   return (
@@ -82,6 +87,17 @@ export function TaskRowActionSheet(p: TaskRowActionSheetProps) {
               <Item icon={<ArrowDown />} disabled={!p.neighbours.down} onClick={() => act((t) => p.onReorder(t, { afterId: p.neighbours.down!.id }))}>Move down</Item>
               {!p.neighbours.up && !p.neighbours.down && <p className="px-3 pb-2 text-xs text-text-3">Order changes only among tasks of the same urgency, importance and project.</p>}
             </div>
+          )}
+          {p.onSnooze && task.baseGroup !== "closed" && (
+            <>
+              <Item icon={<Moon />} expanded={open === "snooze"} onClick={() => setOpen(open === "snooze" ? null : "snooze")}
+                aside={<span className="min-w-0 truncate text-sm text-text-3">{task.snoozed ? snoozeBadgeText(task) : ""}</span>}>Snooze until…</Item>
+              {open === "snooze" && (
+                <div className="pb-2 pl-8 pr-1" data-task-action-snooze="">
+                  <TaskSnoozeOptions task={task} onPick={(patch) => act((t) => p.onSnooze!(t, patch))} />
+                </div>
+              )}
+            </>
           )}
           {p.hasManager && <Item icon={<MessageSquare />} onClick={() => act(p.onAskManager)}>Ask manager about this</Item>}
           <Item icon={<Link />} onClick={() => act((t) => void copyTaskLink(t))}>Copy link</Item>

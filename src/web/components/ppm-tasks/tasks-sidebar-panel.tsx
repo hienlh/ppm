@@ -19,7 +19,8 @@ import { ppmTasksStore, usePpmTasksStore } from "@/stores/ppm-tasks-store";
 import { usePpmTaskLinkStates, usePpmTaskList } from "@/hooks/use-ppm-tasks";
 import { usePpmTaskProjects } from "@/hooks/use-ppm-task-projects";
 import { ppmTasksClient } from "@/lib/ppm-tasks/ppm-tasks-client";
-import { childProgress, countingQueryFor, groupTasks, listQueryFor, visibleTasks, waitingOnMeCount } from "@/lib/ppm-tasks/task-list-view";
+import { childProgress, countingQueryFor, groupTasks, listQueryFor, snoozedTasks, visibleTasks, waitingOnMeCount } from "@/lib/ppm-tasks/task-list-view";
+import { snoozeToast } from "./task-snooze-toast";
 import { openTaskChat, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
 import { openTask } from "@/lib/ppm-tasks/open-task";
 import { taskIdOfTab } from "@/lib/ppm-tasks/task-tab-preview";
@@ -67,6 +68,7 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
   const filtersOn = !!(filters.groups.length || filters.types.length || filters.person || filters.tag || filters.field || filters.waitingOnMe || query.trim());
   const waitingOnMe = useMemo(() => waitingOnMeCount(everyTask, hiddenProjects, scope), [everyTask, hiddenProjects, scope]);
   const shown = useMemo(() => visibleTasks(tasks, filters, hiddenProjects, scope, codeQuery), [tasks, filters, hiddenProjects, scope, codeQuery]);
+  const snoozed = useMemo(() => snoozedTasks(tasks, filters, hiddenProjects, scope, codeQuery), [tasks, filters, hiddenProjects, scope, codeQuery]);
 
   const activeTaskId = useTabStore((s) => { const t = s.tabs.find((x) => x.id === s.activeTabId); return t ? taskIdOfTab(t) : null; });
   const storeSelected = usePpmTasksStore((s) => s.selectedId);
@@ -99,6 +101,11 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
     onNavigate?.();
   }, [live, onNavigate]);
   const onStartChat = useCallback((task: TaskDto) => void write.startChat(task), [write]);
+  const onSnooze = useCallback<TaskListViewProps["onSnooze"]>((task, patch) => {
+    void write.run(null, () => write.actions.update(task, patch)).then((r) => {
+      if (r) snoozeToast(r.task, (undo) => void write.run(null, () => write.actions.update(r.task, undo)));
+    });
+  }, [write]);
 
   // A code that names one task in the list previews it at once on a desktop (the search field keeps
   // the focus); Enter keeps its tab. A phone waits for Enter: opening the task closes the drawer.
@@ -181,13 +188,19 @@ export function TasksSidebarPanel({ onNavigate }: { onNavigate?: () => void }) {
       ) : loading ? (
         <p className="px-4 py-6 text-center text-xs text-text-3">Loading tasks…</p>
       ) : shown.length === 0 ? (
+        <>
         <div className="px-4 py-8 text-center text-xs text-text-3">
-          {codeQuery ? (codeNamesElsewhere ? `${codeQuery.trim()} is not in this list. Press Enter to open it.` : `No task ${codeQuery.trim()} here.`) : tasks.length || filtersOn ? "No task matches these filters" : "No tasks yet. Add one with +, or ask a chat to."}
+          {codeQuery ? (codeNamesElsewhere ? `${codeQuery.trim()} is not in this list. Press Enter to open it.` : `No task ${codeQuery.trim()} here.`) : filtersOn ? "No task matches these filters" : snoozed.length ? "Nothing to do now: every open task is snoozed" : tasks.length ? "No task matches these filters" : "No tasks yet. Add one with +, or ask a chat to."}
           {filtersOn && <button type="button" onClick={() => { useTaskViewStore.getState().clearFilters(); useTaskViewStore.getState().setQuery(""); }} className="mt-2 block w-full text-primary hover:underline">Clear filters</button>}
         </div>
+        {snoozed.length > 0 && (
+          <ListView groups={groups} progress={progress} showProject={scope === "all"} selectedId={selectedId} settings={settings} live={live}
+            onSelect={onSelect} onOpenChat={onOpenChat} onStartChat={onStartChat} onMove={onMove} snoozed={snoozed} onSnooze={onSnooze} />
+        )}
+        </>
       ) : (
         <ListView groups={groups} progress={progress} showProject={scope === "all"} selectedId={selectedId} settings={settings} live={live}
-          onSelect={onSelect} onOpenChat={onOpenChat} onStartChat={onStartChat} onMove={onMove} />
+          onSelect={onSelect} onOpenChat={onOpenChat} onStartChat={onStartChat} onMove={onMove} snoozed={snoozed} onSnooze={onSnooze} />
       )}
       <TaskNewDialog open={newOpen} onOpenChange={setNewOpen} scope={scope} project={activeProject} projects={enabledProjects}
         onCreated={(task) => onSelect(task, true)} />

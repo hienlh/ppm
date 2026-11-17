@@ -34,7 +34,7 @@ function databaseAt73(): Database {
 describe("migration 74: PPM Tasks", () => {
   it("brings a fresh database to the current version with every task table", () => {
     const db = fresh();
-    expect(CURRENT_SCHEMA_VERSION).toBe(74);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(74);
     expect(version(db)).toBe(CURRENT_SCHEMA_VERSION);
     for (const t of TASK_TABLES) expect(tables(db)).toContain(t);
     const cols = (db.query("PRAGMA table_info(tasks)").all() as Array<{ name: string }>).map((c) => c.name);
@@ -47,7 +47,7 @@ describe("migration 74: PPM Tasks", () => {
     const db = databaseAt73();
     db.query("INSERT INTO manager_chats (project_key, project_path, session_id, provider_id, assigned_by, assigned_at) VALUES ('/w/nxsys', '/w/nxsys', 's-1', 'claude', 'user', 1)").run();
     runMigrations(db);
-    expect(version(db)).toBe(74);
+    expect(version(db)).toBe(CURRENT_SCHEMA_VERSION);
     expect(db.query("SELECT project_key, enabled, enabled_by FROM task_projects").all()).toEqual([
       { project_key: "/w/nxsys", enabled: 1, enabled_by: "migration" },
     ]);

@@ -10,13 +10,13 @@ import type { DbType } from "../shared/db-types.ts";
 import type { StoredConnectionConfig } from "../shared/db-connection-config.ts";
 import { createLogger } from "./logger.ts";
 import { widenCheckConstraint } from "./db-widen-check-constraint.ts";
-import { applyPpmTasksSchema } from "./ppm-tasks/ppm-tasks-schema.ts";
+import { applyPpmTasksSchema, applyPpmTasksSnoozeSchema } from "./ppm-tasks/ppm-tasks-schema.ts";
 
 const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 74;
+export const CURRENT_SCHEMA_VERSION = 75;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1617,6 +1617,13 @@ export function runMigrations(database: Database): void {
     // tables; projects that already have a manager chat get the store switched on.
     applyPpmTasksSchema(database);
     database.exec(`PRAGMA user_version = 74;`);
+  }
+
+  if (current < 75) {
+    // Snoozing a task (`src/shared/ppm-tasks-snooze.ts`): hidden from the daily lists until a day
+    // or until a link changes, with its real status kept. Only adds columns to `tasks`.
+    applyPpmTasksSnoozeSchema(database);
+    database.exec(`PRAGMA user_version = 75;`);
   }
 }
 

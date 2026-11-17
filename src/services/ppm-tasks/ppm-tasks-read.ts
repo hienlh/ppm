@@ -8,8 +8,9 @@ import type { BaseGroup, Task, TaskChildCheck, TaskFilter, TaskStatusDef, TaskVi
 import { compareTasks } from "../../shared/ppm-tasks-order.ts";
 import { effectiveUrgency } from "../../shared/ppm-tasks-urgency.ts";
 import { waitingStartedAtFromHistory, type StatusHistoryEntry } from "../../shared/ppm-tasks-waiting.ts";
-import { linksFor, loadTask, rowToTask, statusRows, type TaskRow } from "./ppm-tasks-db.ts";
-import { todayYmd } from "./ppm-tasks-today.ts";
+import { hasSnooze, snoozeWakeReason } from "../../shared/ppm-tasks-snooze.ts";
+import { lastLinkChanges, linksFor, loadTask, rowToTask, statusRows, type TaskRow } from "./ppm-tasks-db.ts";
+import { todayYmd, userTimeZone, ymdInZone } from "./ppm-tasks-today.ts";
 import { isHandedOff } from "./ppm-tasks-write.ts";
 
 const statusesOf = (projectKeys: string[]): Map<string, TaskStatusDef> => {
@@ -65,17 +66,27 @@ function deletedStatusGroups(projectKeys: string[]): Map<string, BaseGroup> {
   return out;
 }
 
-/** Decorates tasks with their status group, effective urgency and when their wait began. */
+/**
+ * Decorates tasks with their status group, effective urgency, when their wait began and their
+ * snooze state. A snooze whose day came or whose link changed reads as over at once, before the
+ * sweep records it.
+ */
 export function toViews(tasks: Task[], today: string = todayYmd()): TaskView[] {
   const statuses = statusesOf(tasks.map((t) => t.projectKey));
   const waiting = tasks.filter((t) => statuses.get(t.statusId)?.baseGroup === "waiting");
   const starts = waitingStarts(waiting, statuses);
+  const linkChanges = lastLinkChanges(tasks.filter((t) => t.snoozeUntilChange));
+  const zone = tasks.some((t) => t.resurfacedAt !== null) ? userTimeZone() : undefined;
   return tasks.map((t) => {
     const status = statuses.get(t.statusId);
     const eff = effectiveUrgency(t.urgency, t.dueDate, today);
+    const woke = hasSnooze(t) && snoozeWakeReason(t, today, linkChanges.get(t.id)?.at ?? null) !== null;
+    const closed = status?.baseGroup === "closed";
     return {
       ...t, baseGroup: status?.baseGroup ?? "not_started", closedAs: status?.closedAs ?? null, effectiveUrgency: eff, urgencyRaised: eff !== t.urgency,
       waitingStartedAt: starts.get(t.id) ?? null,
+      snoozed: !closed && hasSnooze(t) && !woke,
+      resurfacedToday: !closed && (woke || (t.resurfacedAt !== null && ymdInZone(t.resurfacedAt, zone) === today)),
     };
   });
 }
@@ -125,15 +136,38 @@ export function listTasks(filter: TaskFilter = {}, today?: string): TaskView[] {
      LEFT JOIN task_statuses s ON s.id = t.status_id WHERE ${where.join(" AND ")}`,
   ).all(...args) as TaskRow[];
   const links = linksFor(rows.map((r) => r.id));
-  const views = toViews(rows.map((r) => rowToTask(r, links.get(r.id) ?? [])), today).sort(compareTasks);
+  const snoozed = filter.snoozed ?? "exclude";
+  const views = toViews(rows.map((r) => rowToTask(r, links.get(r.id) ?? [])), today)
+    .filter((t) => (snoozed === "include" ? true : snoozed === "only" ? t.snoozed : !t.snoozed))
+    .sort(compareTasks);
   return filter.limit && filter.limit > 0 ? views.slice(0, filter.limit) : views;
+}
+
+/**
+ * Open tasks that came back from a snooze on `day` (the user's `YYYY-MM-DD`), from switched-on
+ * projects, in "what to do first" order. Only what PPM recorded counts: run the sweep first.
+ */
+export function listResurfacedOn(day: string): TaskView[] {
+  const rows = getDb().query(
+    `SELECT t.* FROM tasks t JOIN task_projects p ON p.project_key = t.project_key AND p.enabled = 1
+     WHERE t.deleted_at IS NULL AND t.resurfaced_at IS NOT NULL`,
+  ).all() as TaskRow[];
+  const links = linksFor(rows.map((r) => r.id));
+  return toViews(rows.map((r) => rowToTask(r, links.get(r.id) ?? [])), day)
+    .filter((t) => t.resurfacedToday && !t.snoozed && t.baseGroup !== "closed")
+    .sort(compareTasks);
+}
+
+/** How many open tasks of these projects are snoozed right now. */
+export function countSnoozed(projectKeys: string[], today?: string): number {
+  return projectKeys.length ? listTasks({ projectKeys, snoozed: "only" }, today).length : 0;
 }
 
 /** A task's children, in order, closed ones included. */
 export function taskChildren(parentId: string, today?: string): TaskView[] {
   const parent = loadTask(parentId);
   if (!parent) return [];
-  return listTasks({ projectKeys: [parent.projectKey], parentId, includeClosed: true }, today);
+  return listTasks({ projectKeys: [parent.projectKey], parentId, includeClosed: true, snoozed: "include" }, today);
 }
 
 interface CheckRow {
@@ -156,7 +190,8 @@ export function childCheckFor(task: Pick<Task, "id" | "workingSessionId">): Task
 
 /**
  * Tasks that need checking: open, handed off to a chat that is not the manager, with no result
- * yet, in a switched-on project. Each comes with its last check (null when never checked, or
+ * yet, not snoozed (the user put it out of mind; the check resumes once it is back), in a
+ * switched-on project. Each comes with its last check (null when never checked, or
  * checked while handed to another chat) and the project's check interval.
  */
 export function listTasksNeedingCheck(projectKey?: string, today?: string): Array<{ task: TaskView; check: TaskChildCheck | null; intervalMin: number }> {
@@ -172,6 +207,6 @@ export function listTasksNeedingCheck(projectKey?: string, today?: string): Arra
   const links = linksFor(rows.map((r) => r.id));
   const views = toViews(rows.map((r) => rowToTask(r, links.get(r.id) ?? [])), today);
   // Asked again: the chat may have become the project's manager since it was handed the task.
-  return views.flatMap((task, i) => (isHandedOff(task.projectKey, task.workingSessionId)
+  return views.flatMap((task, i) => (!task.snoozed && isHandedOff(task.projectKey, task.workingSessionId)
     ? [{ task, check: childCheckFor(task), intervalMin: rows[i]!.interval_min }] : []));
 }

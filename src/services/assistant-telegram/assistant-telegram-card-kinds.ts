@@ -17,7 +17,10 @@
  * "Approve change" meets the same bar on the rules diff. None ever stands for text the user did not see.
  */
 import type { AssistantCard } from "../../shared/assistant-cards.ts";
-import { DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, digestWaitingSummary, type DigestProject } from "../../shared/assistant-digest.ts";
+import {
+  DIGEST_NO_ANSWER, DIGEST_NOTHING_NEW, DIGEST_RESURFACED_HEADING, digestWaitingSummary, type DigestProject,
+  type DigestResurfacedTask,
+} from "../../shared/assistant-digest.ts";
 import { escapeHiddenCharacters } from "../../shared/reveal-hidden-characters.ts";
 import { escapeTelegramHtml, truncateText } from "../notification-format.ts";
 import { markdownToTelegramHtml, redactSecretsForTelegram, splitTelegramHtml } from "../telegram/telegram-html-format.ts";
@@ -113,9 +116,18 @@ function digestWaitingLines(p: DigestProject, counter: { hidden: number }, count
  * details stay off the phone shows only how many items it has. Past the room left, the rest is
  * said to be in PPM rather than cut mid-item.
  */
-function digestLines(projects: readonly DigestProject[], counter: { hidden: number }): string[] {
+function digestLines(projects: readonly DigestProject[], counter: { hidden: number }, resurfaced: readonly DigestResurfacedTask[] = []): string[] {
   const out: string[] = [];
   let used = 0;
+  // PPM's own section first: short, and what the user put out of mind until today.
+  if (resurfaced.length) {
+    const section = [`
+<b>💤 ${DIGEST_RESURFACED_HEADING}</b>`];
+    for (const t of resurfaced.slice(0, 12)) section.push(`• <code>${clean(oneLine(t.ref), counter)}</code> ${clean(oneLine(t.title).slice(0, 120), counter)}`);
+    if (resurfaced.length > 12) section.push(`<i>…and ${resurfaced.length - 12} more in PPM.</i>`);
+    out.push(...section);
+    used += section.reduce((n, l) => n + l.length + 1, 0);
+  }
   for (const p of projects) {
     const section = [`\n<b>${clean(oneLine(p.name), counter)}</b>`];
     if (p.state === "no_answer") section.push(`<i>${DIGEST_NO_ANSWER}</i>`);
@@ -200,7 +212,7 @@ function renderCard(card: CardForTelegram, detail: CardDetail, offerWhole: boole
     if (full && card.okOffered && !options.length) buttons.push({ text: draft ? "OK, send" : "OK", op: "ok" });
     if (full) lines.push(`<i>${REPLY_HINT}</i>`);
   } else if (card.kind === "digest" && full) {
-    if (card.payload.projects) lines.push(...digestLines(card.payload.projects, counter));
+    if (card.payload.projects) lines.push(...digestLines(card.payload.projects, counter, card.payload.resurfaced));
     else for (const item of (card.payload.items ?? []).slice(0, 12)) lines.push(`• ${clean(oneLine(item), counter)}`);
   } else if (card.kind === "rules_note" && full) {
     const added = card.payload.added ?? [];

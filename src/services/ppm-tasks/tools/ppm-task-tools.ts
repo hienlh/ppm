@@ -12,7 +12,7 @@ import {
   isPpmTaskWriteTool, PPM_TASK_GET_TOOL, PPM_TASK_LIST_TOOL, PPM_TASK_PROJECT_TOOL,
 } from "../../../shared/ppm-task-tools.ts";
 import type { CollabCaller } from "../../session-collab/collab-context.ts";
-import { childCheckFor, getTask, listTasks, taskChildren } from "../ppm-tasks.service.ts";
+import { childCheckFor, countSnoozed, getTask, listTasks, taskChildren } from "../ppm-tasks.service.ts";
 import { taskHistory } from "../ppm-tasks-history.ts";
 import { fieldDefRows, memberRows } from "../ppm-tasks-db.ts";
 import { listStatuses } from "../ppm-tasks-project-config.ts";
@@ -45,7 +45,9 @@ const nameMatches = (a: string, b: string): boolean => a.trim().toLowerCase() ==
 function list(env: PpmTaskToolsEnv, caller: TaskCaller, a: Args): string {
   const scope = resolveScope(caller, a.project, env.projects(), true);
   if (scope.length === 0) return "No project has Tasks switched on in PPM.";
-  const filter: TaskFilter = { projectKeys: scope.map((s) => s.key), includeClosed: a.include_closed === true };
+  const filter: TaskFilter = {
+    projectKeys: scope.map((s) => s.key), includeClosed: a.include_closed === true, snoozed: a.include_snoozed === true ? "include" : "exclude",
+  };
   if (typeof a.status_group === "string") filter.baseGroups = [a.status_group as BaseGroup];
   if (typeof a.type === "string" && a.type.trim()) filter.types = [a.type.trim()];
   if (typeof a.tag === "string" && a.tag.trim()) filter.tag = a.tag.trim();
@@ -61,12 +63,14 @@ function list(env: PpmTaskToolsEnv, caller: TaskCaller, a: Args): string {
   if (typeof a.urgency === "string") tasks = tasks.filter((t) => t.effectiveUrgency === (a.urgency as Urgency));
   const limit = typeof a.limit === "number" && Number.isInteger(a.limit) ? Math.min(Math.max(a.limit, 1), MAX_LIST_LIMIT) : DEFAULT_LIST_LIMIT;
   const shown = tasks.slice(0, limit);
-  if (shown.length === 0) return `No tasks match in ${scope.map((s) => s.name).join(", ")}.`;
+  const snoozedOut = a.include_snoozed === true ? 0 : countSnoozed(scope.map((s) => s.key));
+  const snoozedNote = snoozedOut ? ` ${snoozedOut} snoozed task${snoozedOut === 1 ? " is" : "s are"} left out (hidden until a day or a link change; include_snoozed: true lists ${snoozedOut === 1 ? "it" : "them"}).` : "";
+  if (shown.length === 0) return `No tasks match in ${scope.map((s) => s.name).join(", ")}.${snoozedNote}`;
   const now = env.now();
   const lookups = new Map(scope.map((s) => [s.key, projectLookup(s.key)]));
   const lines = shown.map((t) => taskLine(t, lookups.get(t.projectKey) ?? projectLookup(t.projectKey), childCheckFor(t), now));
   const more = tasks.length > shown.length ? ` (${tasks.length - shown.length} more: narrow the filter or raise limit)` : "";
-  return `${shown.length} of ${tasks.length} task${tasks.length === 1 ? "" : "s"}, what to do first at the top${more}. Use ppm_task_get for one task's details.\n${fenced(lines)}`;
+  return `${shown.length} of ${tasks.length} task${tasks.length === 1 ? "" : "s"}, what to do first at the top${more}. Use ppm_task_get for one task's details.${snoozedNote}\n${fenced(lines)}`;
 }
 
 function get(env: PpmTaskToolsEnv, caller: TaskCaller, a: Args): string {

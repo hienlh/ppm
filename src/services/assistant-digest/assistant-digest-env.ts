@@ -25,6 +25,7 @@ import { getTaskProject } from "../ppm-tasks/ppm-tasks-projects.service.ts";
 import { projectNameForPath } from "../project-name-for-path.ts";
 import { basename } from "node:path";
 import { formatTaskRef } from "../../shared/ppm-tasks-refs.ts";
+import { digestResurfacedTasks } from "./digest-resurfaced-tasks.ts";
 
 const log = createLogger("assistant-digest");
 
@@ -86,6 +87,7 @@ export const digestDeps: DigestDeps = {
       ref: (t) => formatTaskRef(t.number, name), nameOf: (_t, id) => members.get(id) ?? null, statusName: (t) => statuses.get(t.statusId) ?? null, today, now,
     });
   },
+  resurfaced: digestResurfacedTasks,
 };
 
 /** The process-wide digest. */

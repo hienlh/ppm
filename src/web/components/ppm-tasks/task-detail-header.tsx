@@ -1,8 +1,8 @@
 /**
  * The top of a task's page (variant-3 screen 02): `<project> / #<number>`, the preview hint, Copy
- * link, Ask manager and Mark done (Reopen once closed); the code and title, the title edited in
- * place (a click on the code copies it instead); and the chips
- * (status, urgency with its "auto" mark, importance, due, who it waits on).
+ * link, Snooze, Ask manager and Mark done (Reopen once closed); the code and title, the title
+ * edited in place (a click on the code copies it instead); and the chips
+ * (status, urgency with its "auto" mark, importance, due, who it waits on, the snooze).
  */
 import { useEffect, useRef, useState } from "react";
 import { Check, Link, MessageSquare, RotateCcw } from "@/lib/icons";
@@ -17,6 +17,9 @@ import { TaskImportanceBars } from "./kit/task-importance-bars";
 import { TaskDueLabel } from "./kit/task-due-label";
 import { TaskTypeBadge } from "./kit/task-type-badge";
 import { TaskCode } from "./kit/task-code";
+import { TaskSnoozeBadge } from "./kit/task-snooze-badge";
+import { TaskSnoozeButton } from "./task-snooze-menu";
+import type { SnoozePatch } from "./task-snooze-options";
 import type { TaskMember } from "../../../shared/ppm-tasks";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
 
@@ -29,9 +32,10 @@ export interface TaskDetailHeaderProps {
   onAskManager(): void;
   onMarkDone(): void;
   onReopen(): void;
+  onSnooze(patch: SnoozePatch): void;
 }
 
-export function TaskDetailHeader({ task, members, preview, hasManager, onRename, onAskManager, onMarkDone, onReopen }: TaskDetailHeaderProps) {
+export function TaskDetailHeader({ task, members, preview, hasManager, onRename, onAskManager, onMarkDone, onReopen, onSnooze }: TaskDetailHeaderProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(task.title);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -55,6 +59,7 @@ export function TaskDetailHeader({ task, members, preview, hasManager, onRename,
         {preview && <span className="text-xs text-text-3">Preview · edit to keep the tab</span>}
         <span className="flex-1" />
         <Button size="sm" variant="ghost" onClick={() => void copyTaskLink(task)}><Link className="size-3.5" />Copy link</Button>
+        <TaskSnoozeButton task={task} onSnooze={onSnooze} />
         {hasManager && <Button size="sm" variant="outline" onClick={onAskManager}><MessageSquare className="size-3.5" />Ask manager</Button>}
         {closed
           ? <Button size="sm" variant="outline" onClick={onReopen}><RotateCcw className="size-3.5" />Reopen</Button>
@@ -79,6 +84,7 @@ export function TaskDetailHeader({ task, members, preview, hasManager, onRename,
         <TaskDueLabel dueDate={task.dueDate} />
         {/* The header shows the due date beside it already: the label keeps only an age. */}
         {waiting && <TaskWaitingLabel detail={waiting.until?.kind === "due" ? { ...waiting, until: null } : waiting} className="text-xs" />}
+        <TaskSnoozeBadge task={task} className="text-xs" />
       </div>
     </header>
   );
