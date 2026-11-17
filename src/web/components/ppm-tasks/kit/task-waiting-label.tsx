@@ -47,11 +47,12 @@ export function TaskWaitingLabel({ detail, today, now, short, untilApart, classN
       className={cn("inline-flex min-w-0 max-w-full items-center gap-1 whitespace-nowrap",
         detail.mine ? "font-medium text-primary" : "text-warning", className)}>
       {detail.mine && <Hand aria-hidden className="size-3 shrink-0" />}
-      {/* Flex shrinks in proportion to size, so a plain 1:10 would still clip the words a little:
-          at 0.01 the date takes the whole cut until it is gone, then the words give way. */}
-      <span data-task-waiting-words="" className="min-w-0 shrink-[0.01] truncate">{words}</span>
+      {/* Flex shrinks in proportion to size × factor, so 1:10 still clipped the words a little; at
+          1:1000 the date takes the whole cut until it is gone. (A factor under 1 would not do: when
+          the factors add up to less than 1, flex leaves part of the overflow unshrunk.) */}
+      <span data-task-waiting-words="" className="min-w-0 truncate">{words}</span>
       {until && !untilApart && (
-        <span data-task-waiting-inline-when="" className="inline-flex min-w-0 shrink-[10] items-center gap-1">
+        <span data-task-waiting-inline-when="" className="inline-flex min-w-0 shrink-[1000] items-center gap-1">
           <span aria-hidden className="shrink-0 text-text-3">·</span>
           {until.kind === "due" ? <InlineDue dueDate={until.dueDate} today={today} /> : <span className="min-w-0 truncate">{when}</span>}
         </span>

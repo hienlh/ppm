@@ -88,7 +88,7 @@ describe("the waiting label on a row", () => {
     const label = $("[data-task-waiting]")!;
     expect(label.className).toContain("whitespace-nowrap");
     expect($("[data-task-waiting-words]")!.className).toContain("truncate");
-    expect($("[data-task-waiting-inline-when]")!.className).toContain("shrink-[10]");
+    expect($("[data-task-waiting-inline-when]")!.className).toContain("shrink-[1000]");
     expect($("[data-task-waiting-age]")!.parentElement!.className).toContain("truncate");
   });
 
