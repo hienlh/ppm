@@ -381,7 +381,10 @@ Nov" while it holds; on a phone in the chips and under ···), in a desktop row
 task leaves the urgency groups for the last section of the list, **Snoozed (N)**
 (`task-snoozed-section.tsx`), folded by default and remembered per device; each of its rows says
 until when and has Unsnooze. A snooze from the list ends on a toast with Unsnooze. A task back from
-its snooze says **Back today** that day (`kit/task-snooze-badge.tsx`). The buttons follow the chip
+its snooze says **Back today** that day (`kit/task-snooze-badge.tsx`). In every row the snooze label
+sits right after the waiting label (on whom, until when) and never over it; a snoozed phone row,
+which also holds Unsnooze, shortens both — the wait to on whom ("you"), the snooze to its day — and
+leaves the working chat's chip to the task page. The buttons follow the chip
 row's sizes (`src/web/lib/control-size.ts`): 28px, 26px on a phone.
 
 **A task's code sits beside its title, everywhere.** The chats name tasks by code, so every place
