@@ -1,18 +1,21 @@
 # Changelog
 
-## [Unreleased]
-
-### Fixed
-
-- **Switching the public tunnel on or off restarted PPM's server and cut every running chat.** The switch is applied by reloading the tunnel, but that reload then went on to restart the server as well. It now only starts or stops the tunnel; `ppm restart` still restarts.
-
-### Changed
-
-- **Antigravity and Codex models are no longer written into PPM, so a new model shows up and becomes the default by itself.** Gemini 4 Carbon and GPT-6.1 Sol came out and PPM still started new chats on the older models it had been told about. Now: "Auto" (no model chosen) is the model the CLI itself picks, and the picker and Settings say which one ("Auto (Gemini 4 Carbon)"). With the Antigravity app closed, the list is the one agy reported when it last opened a chat, where PPM used to show a fixed list. A model you chose stays as it is.
+## [0.26.12] - 2026-11-18
 
 ### Added
 
-- **Review changes and the diff tab can show a diff side by side or inline, as in VS Code.** A new button in both toolbars switches between them, and the choice is shared by the two tabs and follows you to other devices; a phone stays inline. Side by side, Review changes now shows the whole file in VS Code's diff editor, the version in the last commit on the left and the file on disk on the right, with unchanged parts folded and changed words highlighted. Each block's Stage, Discard, Unstage or Undo sits right above its lines, and J/K/Y/N work as before, also with the cursor in the code. Picking single lines (Lines… or L) opens the block list until the pick is done, and files with no lines to compare (binary files, renames, submodules) are shown in the block list. Before, Review changes was inline only and the diff tab was side by side only.
+- **Review changes and the diff tab can show a diff side by side or inline, as in VS Code**: one button switches both tabs and the choice follows you to other devices (a phone stays inline). Side by side, each block's Stage, Discard, Unstage or Undo sits right above its lines.
+
+### Changed
+
+- **Antigravity and Codex models are no longer written into PPM**: "Auto" is the model the CLI itself picks, shown by name ("Auto (Gemini 4 Carbon)"), so a new model becomes the default by itself. A model you chose stays as it is.
+
+### Fixed
+
+- **Switching the public tunnel on or off no longer restarts PPM's server** and cuts every running chat; it only starts or stops the tunnel.
+- **Pages of one design can be clicked through** on the canvas and the review page, and a long design page scrolls with the mouse wheel again.
+- **A new chat's model chip shows the provider's default model and effort** instead of "Model" until the first turn.
+- **Garbled em dashes** in the changelog and the npm package description are repaired.
 
 ## [0.26.11] - 2026-11-18
 
