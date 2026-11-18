@@ -11,7 +11,8 @@
 // and shoots, so the same scene can be taken on a build from before the fix; with `after` (the
 // default) it also asserts: in every card header no two parts overlap, the result's who-and-when is
 // cut with "…" and its tooltip holds the full text, Edit keeps its width, nothing in the page is
-// wider than it, and on the phone a card's text button is a 44 px target that opens its editor.
+// wider than it, and on the phone who-and-when has a line of its own under "Result", whole and
+// inside the block, and a card's text button is a 44 px target that opens its editor.
 //
 // Runs on Node 20 in the ppm-e2e-chromium image (`--cpus=4 --memory=3g`).
 import { existsSync } from "node:fs";
@@ -101,9 +102,17 @@ function headerLayout(scope) {
     const meta = root.querySelector("[data-task-result] > header > span[title], [data-task-result] > header > span.truncate");
     const edit = root.querySelector("[data-task-card=result] [data-card-text-button], [data-task-card=result] button");
     const m = meta?.getBoundingClientRect(), e = edit?.getBoundingClientRect();
+    // "Result" is the header's first text part; who-and-when's own line starts below it.
+    const label = meta ? [...meta.parentElement.children].find((c) => c !== meta && c.textContent?.trim() === "Result") : null;
+    const hr = meta?.parentElement.getBoundingClientRect();
     return {
       headers: out,
-      meta: meta ? { text: meta.textContent, title: meta.getAttribute("title"), cut: meta.scrollWidth > meta.clientWidth + 1, width: Math.round(m.width) } : null,
+      meta: meta ? {
+        text: meta.textContent, title: meta.getAttribute("title"), cut: meta.scrollWidth > meta.clientWidth + 1, width: Math.round(m.width),
+        ownLine: !!label && m.top >= label.getBoundingClientRect().bottom - 0.5,
+        insideHeader: m.left >= hr.left - 0.5 && m.right <= hr.right + 0.5,
+        lines: Math.round(m.height / parseFloat(getComputedStyle(meta).lineHeight)),
+      } : null,
       metaUnderEdit: m && e ? Math.max(0, Math.round(Math.min(m.right, e.right) - Math.max(m.left, e.left))) * (Math.min(m.bottom, e.bottom) > Math.max(m.top, e.top) ? 1 : 0) : null,
       editWidth: e ? Math.round(e.width) : null,
       sideways: root.scrollWidth - root.clientWidth,
@@ -114,7 +123,7 @@ function headerLayout(scope) {
 function judge(where, layout, { phone: onPhone = false } = {}) {
   measured.push({ where, ...layout });
   const bad = layout.headers.filter((h) => h.overlaps.length || h.outside.length);
-  console.log(`${where}: result meta under Edit ${layout.metaUnderEdit ?? "-"} px; meta cut ${layout.meta?.cut}; headers with overlap ${bad.map((h) => `${h.card}(${h.overlaps.map((o) => `${o.a}×${o.b} ${o.px}px`).join(", ")}${h.outside.length ? ` outside: ${h.outside}` : ""})`).join("; ") || "none"}`);
+  console.log(`${where}: result meta under Edit ${layout.metaUnderEdit ?? "-"} px; meta cut ${layout.meta?.cut}, own line ${layout.meta?.ownLine}, ${layout.meta?.lines} line(s); headers with overlap ${bad.map((h) => `${h.card}(${h.overlaps.map((o) => `${o.a}×${o.b} ${o.px}px`).join(", ")}${h.outside.length ? ` outside: ${h.outside}` : ""})`).join("; ") || "none"}`);
   if (!CHECK) return;
   const cards = new Set(layout.headers.map((h) => h.card));
   for (const c of ["result", "notes", "links"]) assert(cards.has(c), `${where}: the ${c} card's header is on screen (${[...cards]})`);
@@ -125,6 +134,13 @@ function judge(where, layout, { phone: onPhone = false } = {}) {
   assert(layout.meta.title?.includes(RESULT_BY), `${where}: the tooltip holds the full who-and-when (${layout.meta.title})`);
   assert(layout.meta.text.includes(RESULT_BY.slice(0, 12)), `${where}: who-and-when shows the name`);
   if (!onPhone) assert(layout.editWidth >= 40, `${where}: Edit keeps its width (${layout.editWidth})`);
+  if (onPhone) {
+    // No hover on a phone: who-and-when sits on its own line under "Result", whole, wrapped if it must.
+    assert(layout.meta.ownLine, `${where}: who-and-when is on a line of its own under "Result"`);
+    assert(!layout.meta.cut, `${where}: who-and-when is not cut`);
+    assert.equal(layout.meta.text, layout.meta.title, `${where}: the whole who-and-when is on screen`);
+    assert(layout.meta.insideHeader, `${where}: who-and-when stays inside the block`);
+  }
   assert(layout.sideways <= 1, `${where}: nothing is wider than the page (${layout.sideways})`);
 }
 

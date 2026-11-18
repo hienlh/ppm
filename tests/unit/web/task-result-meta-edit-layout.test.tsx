@@ -43,6 +43,16 @@ describe("Result header: who-and-when beside Edit", () => {
     expect(meta.getAttribute("title")).toContain(BY);
   });
 
+  it("on a phone gives who-and-when a line of its own, wrapped rather than cut", async () => {
+    mounted = await mount(<TaskResultCard task={task()} onSave={() => {}} />);
+    const header = mounted.container.querySelector("[data-task-result] > header")!;
+    const meta = header.querySelector("[data-task-result-meta]")!;
+    expect(classes(header).has("max-md:flex-wrap")).toBe(true);
+    for (const c of ["max-md:order-last", "max-md:basis-full", "max-md:ml-0", "max-md:overflow-visible", "max-md:whitespace-normal", "max-md:break-words"]) {
+      expect(classes(meta).has(c)).toBe(true);
+    }
+  });
+
   it("keeps Edit at its width", async () => {
     mounted = await mount(<TaskResultCard task={task()} onSave={() => {}} />);
     const action = mounted.container.querySelector("[data-task-result-action]")!;
