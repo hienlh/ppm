@@ -4,25 +4,14 @@
  * the set, and a pick made in one must still be there in the other. Never stored on disk: a
  * reload starts with nothing picked, as a reload of the chat's own question card does.
  *
- * `done` keeps a tab for a card that stopped waiting while the set was open — sent from here, or
- * answered elsewhere — so the user sees what happened to it instead of a tab vanishing under
- * their finger. It is cleared once no decision waits any more.
+ * The set holds only cards that still wait. A card answered anywhere — here, on Telegram, in
+ * another window, dismissed, closed by its manager — leaves it at once; the one exception is a
+ * card whose answer is on its way from here, held in `sending` until the send says how it went.
  */
 import { create } from "zustand";
 import type { AssistantCard } from "../../shared/assistant-cards";
 import type { DecisionAnswer, DecisionPick } from "@/lib/decision-set/decision-set-model";
 import { cardVersion } from "@/lib/decision-set/decision-set-model";
-
-/** How many finished tabs the set keeps showing; older ones leave first. */
-const MAX_DONE = 6;
-
-export interface DoneTab {
-  card: AssistantCard;
-  how: "sent" | "elsewhere";
-  /** What happened, in a few words ("Chose “Ship tonight”", "Answered on Telegram at 21:16"). */
-  note: string;
-  at: number;
-}
 
 interface DecisionSetState {
   picks: Record<string, DecisionPick>;
@@ -30,14 +19,13 @@ interface DecisionSetState {
   notices: Record<string, string>;
   /** The server's "send anyway?" for one card, until answered. */
   confirms: Record<string, string>;
-  done: Record<string, DoneTab>;
-  /** The tabs' order, waiting and done ids together. */
+  /** The tabs' order: waiting ids, and those being sent from here. */
   order: string[];
-  /** Ids being sent right now. */
-  sending: Record<string, true>;
+  /** Cards being sent from here right now, as they were when sent. */
+  sending: Record<string, AssistantCard>;
 }
 
-const initial = (): DecisionSetState => ({ picks: {}, notices: {}, confirms: {}, done: {}, order: [], sending: {} });
+const initial = (): DecisionSetState => ({ picks: {}, notices: {}, confirms: {}, order: [], sending: {} });
 
 export const useDecisionSetStore = create<DecisionSetState>(() => initial());
 
@@ -78,23 +66,15 @@ export function setConfirm(id: string, question: string | null): void {
   useDecisionSetStore.setState((s) => ({ confirms: question ? { ...s.confirms, [id]: question } : without(s.confirms, id) }));
 }
 
-export function setSending(id: string, on: boolean): void {
-  useDecisionSetStore.setState((s) => ({ sending: on ? { ...s.sending, [id]: true } : without(s.sending, id) }));
+export function setSending(card: AssistantCard, on: boolean): void {
+  useDecisionSetStore.setState((s) => ({ sending: on ? { ...s.sending, [card.id]: card } : without(s.sending, card.id) }));
 }
 
-/** A card stopped waiting: its tab stays, marked, and its pick is gone. */
-export function markDone(tab: DoneTab): void {
+/** A card stopped waiting: what was picked or said about it goes with it. */
+export function forgetCard(id: string): void {
   useDecisionSetStore.setState((s) => {
-    if (s.done[tab.card.id]?.how === "sent") return s;
-    const done = { ...s.done, [tab.card.id]: tab };
-    const ids = Object.values(done).sort((a, b) => a.at - b.at).map((d) => d.card.id);
-    for (const old of ids.slice(0, Math.max(0, ids.length - MAX_DONE))) delete done[old];
-    return {
-      done,
-      picks: without(s.picks, tab.card.id),
-      confirms: without(s.confirms, tab.card.id),
-      notices: without(s.notices, tab.card.id),
-    };
+    if (!(id in s.picks) && !(id in s.confirms) && !(id in s.notices)) return s;
+    return { picks: without(s.picks, id), confirms: without(s.confirms, id), notices: without(s.notices, id) };
   });
 }
 
@@ -107,6 +87,6 @@ export function resetDecisionSet(): void {
   // Already clean: no new state, so nothing subscribed runs again for it.
   const s = useDecisionSetStore.getState();
   const empty = (r: Record<string, unknown>) => Object.keys(r).length === 0;
-  if (empty(s.picks) && empty(s.notices) && empty(s.confirms) && empty(s.done) && empty(s.sending) && s.order.length === 0) return;
+  if (empty(s.picks) && empty(s.notices) && empty(s.confirms) && empty(s.sending) && s.order.length === 0) return;
   useDecisionSetStore.setState(initial());
 }

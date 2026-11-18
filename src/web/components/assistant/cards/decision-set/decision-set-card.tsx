@@ -3,11 +3,9 @@
  * the task the card is about, time, Open chat, Dismiss), the manager's words whole (Markdown, pictures, draft, the tasks it handed off), then
  * the answers as the chat's question form draws them — a numbered tile per choice (or one OK), and
  * "Other" for the user's own words and pictures.
- *
- * A tab whose card no longer waits shows only how it ended, in one line.
  */
 import type { KeyboardEvent, RefObject } from "react";
-import { BellRing, Check, ExternalLink, Lock, TriangleAlert, X } from "@/lib/icons";
+import { BellRing, ExternalLink, Lock, TriangleAlert, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { QuestionOptionTile, type QuestionTone } from "@/components/chat/question-form-parts";
 import { decisionTiles, sameAnswer, type DecisionAnswer } from "@/lib/decision-set/decision-set-model";
@@ -18,7 +16,6 @@ import { CardDraft } from "../card-draft";
 import { CardHandedOffTasks, TaskCodeText } from "../card-task-items";
 import { DecisionReplyField, type ReplyValue } from "./decision-reply-field";
 import { SET_BUTTON, toneButtons } from "./decision-set-buttons";
-import type { SetTab } from "./use-decision-set";
 
 const EMPTY_REPLY: ReplyValue = { text: "", images: [] };
 
@@ -71,30 +68,6 @@ function Head({ card, onOpenChat, onDismiss, busy }: { card: AssistantCard; onOp
           <X /><span className="@max-[26rem]/set:hidden">Dismiss</span>
         </button>
       )}
-    </div>
-  );
-}
-
-export function DoneTabBody({ tab }: { tab: Extract<SetTab, { kind: "done" }> }) {
-  const sent = tab.done.how === "sent";
-  return (
-    <div className="space-y-2" data-decision-done={tab.done.how}>
-      <Head card={tab.card} busy />
-      <h4 className={cn("text-[15px] font-semibold leading-snug", sent ? "text-text-primary" : "text-text-secondary")}>{tab.card.title}</h4>
-      <div className={cn(
-        "flex items-start gap-2.5 rounded-lg border px-3 py-2",
-        sent ? "border-success/35 bg-success/5" : "border-border bg-surface",
-      )}>
-        <span className={cn("mt-px grid size-5 shrink-0 place-items-center rounded-full [&_svg]:size-3", sent ? "bg-success/15 text-success" : "bg-panel-2 text-text-secondary")}>
-          {sent ? <Check /> : <X />}
-        </span>
-        <div className="min-w-0 text-sm">
-          <p className="break-words font-medium text-text-primary" data-decision-done-note="">{tab.done.note}</p>
-          <p className="text-xs text-text-secondary">
-            {sent ? `Sent on its own · ${cardTime(tab.done.at)} · the other cards still wait.` : "Left out of “Send all”."}
-          </p>
-        </div>
-      </div>
     </div>
   );
 }

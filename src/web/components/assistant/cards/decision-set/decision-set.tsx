@@ -13,12 +13,12 @@
  * its "Waiting on you" bar.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { BellRing, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Send } from "@/lib/icons";
+import { BellRing, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Info, Send } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { revealInScrollList } from "@/lib/reveal-in-scroll-list";
 import { dismissAssistantCard } from "@/lib/assistant-cards-api";
 import { useWaitingJumpStore } from "@/stores/assistant-waiting-jump-store";
-import { markDone, pickAnswer, useDecisionSetStore } from "@/stores/decision-set-store";
+import { forgetCard, pickAnswer, useDecisionSetStore } from "@/stores/decision-set-store";
 import { QuestionTabStrip, questionFrameClass, questionTone } from "@/components/chat/question-form-parts";
 import { currentPick, decisionTiles, projectCounts, type DecisionAnswer } from "@/lib/decision-set/decision-set-model";
 import type { AssistantCard } from "../../../../../shared/assistant-cards";
@@ -26,17 +26,30 @@ import { openCardManagerChat } from "../use-card-action";
 import { applyAssistantCard } from "@/stores/assistant-cards-store";
 import { applyOpenCardResult } from "@/stores/assistant-open-cards-store";
 import { cardRefusal } from "@/lib/assistant-cards-api";
-import { DecisionSetCard, DoneTabBody, toneOf } from "./decision-set-card";
+import { DecisionSetCard, toneOf } from "./decision-set-card";
 import { DecisionSetReview } from "./decision-set-review";
 import { SET_BUTTON, SET_ICON_BUTTON, toneButtons } from "./decision-set-buttons";
-import { useDecisionSet, type SetTab } from "./use-decision-set";
+import { useDecisionSet, type SetFlash } from "./use-decision-set";
 
 const ALL = () => true;
 
-function tabMark(tab: SetTab, i: number, answered: boolean) {
-  if (tab.kind === "done") return tab.done.how === "sent" ? "✓" : "–";
-  if (tab.card.kind === "urgent") return "!";
+function tabMark(card: AssistantCard, i: number, answered: boolean) {
+  if (card.kind === "urgent") return "!";
   return answered ? "●" : i + 1;
+}
+
+/** One line about the last send from here, the card itself having left the set. */
+function FlashLine({ flash }: { flash: SetFlash }) {
+  const sent = flash.tone === "sent";
+  return (
+    <p
+      className={cn("flex min-w-0 items-start gap-1.5 text-xs [&_svg]:mt-px [&_svg]:size-3.5 [&_svg]:shrink-0", sent ? "text-success" : "text-text-secondary")}
+      role="status"
+      data-decision-flash={flash.tone}
+    >
+      {sent ? <Check /> : <Info />}<span className="min-w-0 break-words">{flash.text}</span>
+    </p>
+  );
 }
 
 export function DecisionSet({ scope = ALL, label = "decisions" }: {
@@ -56,9 +69,9 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
   const root = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
 
-  const { tabs, index, active, waiting, plan } = set;
-  const card = active?.card ?? null;
-  const pick = card && active?.kind === "waiting" ? currentPick(card, picks) : null;
+  const { tabs, index, active, waiting, plan, flash } = set;
+  const card = active;
+  const pick = card ? currentPick(card, picks) : null;
   const busy = !!card && !!sending[card.id];
   const anySending = Object.keys(sending).length > 0;
 
@@ -66,7 +79,7 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
   const request = useWaitingJumpStore((s) => s.request);
   const lit = useWaitingJumpStore((s) => s.lit);
   useEffect(() => {
-    if (request && tabs.some((t) => t.card.id === request.cardId)) { setFolded(false); setReviewing(false); }
+    if (request && tabs.some((c) => c.id === request.cardId)) { setFolded(false); setReviewing(false); }
     // Only a new request unfolds it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request]);
@@ -84,15 +97,16 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
   const answer = useCallback((target: AssistantCard, next: DecisionAnswer | null) => pickAnswer(target, next), []);
 
   const sendThis = useCallback(() => {
-    if (card && pick && active?.kind === "waiting") void set.sendOne(card, pick.answer);
-  }, [card, pick, active, set]);
+    if (card && pick) void set.sendOne(card, pick.answer);
+  }, [card, pick, set]);
 
   const dismiss = useCallback(async () => {
     if (!card) return;
     setDismissError(null);
     try {
       const res = await dismissAssistantCard(card.id);
-      markDone({ card: res.card, how: "elsewhere", note: "Dismissed", at: Date.now() });
+      // Dismissed is answered: the card leaves the set, and the next one waiting opens.
+      forgetCard(card.id);
       applyAssistantCard(res.card);
       applyOpenCardResult(res.card);
     } catch (e) {
@@ -100,7 +114,7 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
     }
   }, [card]);
 
-  const rows = card && active?.kind === "waiting" ? decisionTiles(card).length + 1 : 0;
+  const rows = card ? decisionTiles(card).length + 1 : 0;
   const pickRow = useCallback((row: number) => {
     if (!card) return;
     const tiles = decisionTiles(card);
@@ -148,31 +162,28 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
   }, [plan.length, set, rows, focusedRow, pickRow, busy]);
 
   const tabStrip = useMemo(() => tabs.map((tab, i) => {
-    const answered = tab.kind === "waiting" && !!currentPick(tab.card, picks);
+    const answered = !!currentPick(tab, picks);
     return {
-      key: tab.card.id,
-      answered: tab.kind === "done" ? tab.done.how === "sent" : answered,
-      // A finished tab keeps the set's tint; only its mark and colour say how it ended.
-      tone: tab.kind === "done" ? undefined : toneOf(tab.card),
+      key: tab.id,
+      answered,
+      tone: toneOf(tab),
       mark: tabMark(tab, i, answered),
-      title: `${tab.card.projectName ? `${tab.card.projectName} · ` : ""}${tab.card.title}`,
-      className: cn(
-        tab.kind === "done" && tab.done.how === "sent" && "text-success",
-        tab.kind === "done" && tab.done.how === "elsewhere" && i !== index && "line-through text-text-subtle",
-      ),
+      title: `${tab.projectName ? `${tab.projectName} · ` : ""}${tab.title}`,
       label: (
         <span className="flex min-w-0 items-center gap-1 @max-[26rem]/set:hidden">
-          {tab.card.projectName && <span className="shrink-0 opacity-70">{tab.card.projectName}</span>}
-          <span className="max-w-[12rem] truncate">{tab.card.title}</span>
+          {tab.projectName && <span className="shrink-0 opacity-70">{tab.projectName}</span>}
+          <span className="max-w-[12rem] truncate">{tab.title}</span>
         </span>
       ),
     };
-  }), [tabs, picks, index]);
+  }), [tabs, picks]);
 
-  if (waiting.length === 0) return null;
-  const ids = tabs.map((t) => t.card.id);
+  // Every tab is a card that still waits (or one on its way from here), so the heading, the
+  // strip and the "N/M" count the same cards the Waiting chip does.
+  if (tabs.length === 0) return null;
+  const ids = tabs.map((c) => c.id);
   const litHere = !!lit && ids.includes(lit);
-  const count = waiting.length;
+  const count = tabs.length;
   const heading = `${count} ${count === 1 ? label.replace(/s$/, "") : label} waiting`;
   // The frame takes the colour of the card open in it: red for an urgent card, amber otherwise.
   // Folded, and in the review, nothing is open: red while an urgent card still has no answer.
@@ -239,10 +250,10 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
       ) : (
         <>
           {tabs.length > 1 && (
-            <QuestionTabStrip tone="decision" tabs={tabStrip} active={index} onSelect={(i) => set.setActiveId(tabs[i]!.card.id)} className="scrollbar-none" />
+            <QuestionTabStrip tone="decision" tabs={tabStrip} active={index} onSelect={(i) => set.setActiveId(tabs[i]!.id)} className="scrollbar-none" />
           )}
-          {active?.kind === "done" && <DoneTabBody tab={active} />}
-          {active?.kind === "waiting" && card && (
+          {flash && <FlashLine flash={flash} />}
+          {card && (
             <DecisionSetCard
               card={card}
               answer={pick?.answer}
@@ -272,7 +283,7 @@ export function DecisionSet({ scope = ALL, label = "decisions" }: {
               type="button"
               className={cn(buttons.outline, "@max-[26rem]/set:flex-1")}
               onClick={sendThis}
-              disabled={!pick || busy || active?.kind !== "waiting"}
+              disabled={!pick || busy}
               data-decision-send-one=""
             >
               <Send />{busy ? "Sending…" : <><span className="@max-[26rem]/set:hidden">Send this one</span><span className="@[26rem]/set:hidden">Send this</span></>}

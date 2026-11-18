@@ -78,7 +78,22 @@ const all = (sel: string) => [...view!.container.querySelectorAll(sel)];
 const settle = () => act(async () => { openStore.resyncOpenCards(); await new Promise((r) => setTimeout(r, 0)); });
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 const tabTitles = () => all("[data-question-tab]").map((t) => t.getAttribute("title"));
-const shown = () => q("[data-decision-card] [data-card-title]")?.textContent ?? q("[data-decision-done]")?.querySelector("h4")?.textContent ?? null;
+const shown = () => q("[data-decision-card] [data-card-title]")?.textContent ?? null;
+/** What the set says about itself: its heading, its "N/M", and its tabs (none drawn for one card). */
+const counts = () => {
+  const head = q("[data-decision-set='open']")?.textContent ?? "";
+  return {
+    heading: /(\d+) decisions? waiting/.exec(head)?.[1] ?? null,
+    position: /(\d+)\/(\d+)/.exec(q("[data-decision-set='open'] .tabular-nums")?.textContent ?? "")?.slice(1, 3).join("/") ?? null,
+    tabs: all("[data-question-tab]").length,
+  };
+};
+/** The server announcing a card that stopped waiting, as `/ws/global` delivers it. */
+const answeredElsewhere = async (c: Card, status: Card["status"] = "answered", channel = "telegram") => {
+  openList = openList.filter((x) => x.id !== c.id);
+  await act(async () => { openStore.applyOpenCardResult({ ...c, status, answer: { by: "user", channel, at: Date.now() } as Card["answer"] }); });
+  await tick();
+};
 const key = async (el: Element, k: string, init: KeyboardEventInit = {}) => {
   await act(async () => { el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init })); });
 };
@@ -121,19 +136,24 @@ describe("the set", () => {
     expect(q("[data-decision-card] [data-decision-task-codes]")).toBeNull();
   });
 
-  it("send this one: the choice goes alone, its tab is marked sent and the next card shows", async () => {
+  it("send this one: the choice goes alone, its tab leaves, the next card shows with a word on the send", async () => {
     const a = card({ title: "Release window" }, { options: [{ id: "tonight", label: "Ship tonight" }, { id: "monday", label: "Monday" }] });
     const b = card({ title: "Second" });
-    await open([a, b]);
+    const c = card({ title: "Third" });
+    await open([a, b, c]);
     expect(shown()).toBe("Release window");
     await click(all("[data-question-option]")[1]!);
     await click(q("[data-decision-send-one]"));
     await tick();
     expect(posts).toEqual([{ url: `/api/assistant/cards/${a.id}/choose`, body: expect.objectContaining({ optionId: "monday" }) }]);
     expect(shown()).toBe("Second");
-    await click(all("[data-question-tab]")[0]!);
-    expect(q("[data-decision-done='sent'] [data-decision-done-note]")?.textContent).toBe("Chose “Monday”");
-    expect(q("[data-decision-send-all]")?.textContent).toContain("(0/1)");
+    expect(tabTitles()).toEqual(["alpha · Second", "alpha · Third"]);
+    expect(counts()).toEqual({ heading: "2", position: "1/2", tabs: 2 });
+    expect(q("[data-decision-flash='sent']")?.textContent).toBe("Sent “Release window”: Chose “Monday”");
+    expect(q("[data-decision-send-all]")?.textContent).toContain("(0/2)");
+    // Moving on is moving away from that send: the line goes.
+    await click(all("[data-question-tab]")[1]!);
+    expect(q("[data-decision-flash]")).toBeNull();
   });
 
   it("send all goes through the review: every answer listed, a card without one keeps waiting", async () => {
@@ -158,43 +178,103 @@ describe("the set", () => {
     expect(posts[1]!.body).toEqual(expect.objectContaining({ draftSha256: null }));
   });
 
-  it("a card answered on Telegram while the set is open keeps a struck tab and leaves Send all", async () => {
+  it("a card answered on Telegram while the set is open leaves it at once, and leaves Send all", async () => {
     const a = card({ title: "First" }, { options: [{ id: "x", label: "X" }, { id: "y", label: "Y" }] });
     const b = card({ title: "Second" });
-    await open([a, b]);
+    const c = card({ title: "Third" });
+    await open([a, b, c]);
     await click(all("[data-question-option]")[0]!);
-    expect(q("[data-decision-send-all]")?.textContent).toContain("(1/2)");
-    openList = [b];
-    await settle();
-    await tick();
-    expect(tabTitles()).toHaveLength(2);
-    await click(all("[data-question-tab]")[0]!);
-    expect(q("[data-decision-done='elsewhere']")).not.toBeNull();
-    expect(q("[data-decision-send-all]")?.textContent).toContain("(0/1)");
+    await click(all("[data-question-tab]")[1]!);
+    expect(q("[data-decision-send-all]")?.textContent).toContain("(1/3)");
+    await answeredElsewhere(a);
+    expect(tabTitles()).toEqual(["alpha · Second", "alpha · Third"]);
+    expect(counts()).toEqual({ heading: "2", position: "1/2", tabs: 2 });
+    // The card the user was on is still the one shown.
+    expect(shown()).toBe("Second");
+    expect(q("[data-decision-send-all]")?.textContent).toContain("(0/2)");
   });
 
-  it("a server refusal because someone answered first is said on the card's tab", async () => {
+  it("the card shown is answered elsewhere: the next one that waits opens, not the first", async () => {
+    const a = card({ title: "First" });
+    const b = card({ title: "Second" });
+    const c = card({ title: "Third" });
+    const d = card({ title: "Fourth" });
+    await open([a, b, c, d]);
+    await click(all("[data-question-tab]")[1]!);
+    expect(shown()).toBe("Second");
+    await answeredElsewhere(b);
+    expect(shown()).toBe("Third");
+    expect(counts()).toEqual({ heading: "3", position: "2/3", tabs: 3 });
+    // A card arriving or leaving behind it does not move the user off it.
+    await answeredElsewhere(a, "dismissed", "ppm");
+    expect(shown()).toBe("Third");
+    expect(counts()).toEqual({ heading: "2", position: "1/2", tabs: 2 });
+    // The last tab answered elsewhere: the one before it opens.
+    await click(all("[data-question-tab]")[1]!);
+    await answeredElsewhere(d, "resolved", "chat");
+    expect(shown()).toBe("Third");
+    expect(counts()).toEqual({ heading: "1", position: "1/1", tabs: 0 });
+  });
+
+  it("dismiss takes the card out of the set and opens the next one; the last one gone, the set goes", async () => {
+    const a = card({ title: "First" });
+    const b = card({ title: "Second" });
+    await open([a, b]);
+    await click(q("[data-decision-card] button[title='Dismiss this card']"));
+    await tick();
+    expect(posts.map((p) => p.url)).toEqual([`/api/assistant/cards/${a.id}/dismiss`]);
+    expect(shown()).toBe("Second");
+    expect(counts()).toEqual({ heading: "1", position: "1/1", tabs: 0 });
+    openList = [b];
+    await answeredElsewhere(b);
+    expect(q("[data-decision-set]")).toBeNull();
+  });
+
+  it("opens on the first card that waits, and never keeps a tab for one answered before it was shown", async () => {
+    const a = card({ title: "First" });
+    const b = card({ title: "Second" });
+    const c = card({ title: "Third" });
+    await open([a, b, c]);
+    await answeredElsewhere(a);
+    await answeredElsewhere(c);
+    await view!.unmount();
+    view = await mount(createElement(DecisionSet));
+    await tick();
+    expect(shown()).toBe("Second");
+    expect(counts()).toEqual({ heading: "1", position: "1/1", tabs: 0 });
+  });
+
+  it("a server refusal because someone answered first takes the card out and says so", async () => {
     const a = card({ title: "First" });
     await open([a, card({ title: "Second" })]);
     refuse[a.id] = { status: 409, error: "already_answered", question: "Already answered on Telegram at 21:16.", card: { ...a, status: "answered" } };
     await click(all("[data-question-option]")[0]!);
     await click(q("[data-decision-send-one]"));
     await tick();
-    expect(q("[data-decision-done-note]")?.textContent).toBe("Already answered on Telegram at 21:16.");
+    expect(shown()).toBe("Second");
+    expect(q("[data-decision-flash='elsewhere']")?.textContent).toBe("“First”: Already answered on Telegram at 21:16.");
+    expect(counts()).toEqual({ heading: "1", position: "1/1", tabs: 0 });
   });
 
-  it("a sent card keeps its ✓ tab when the server's card event arrives before its answer", async () => {
+  it("a card being sent keeps its tab while its answer is out, even once the server's event says answered", async () => {
     const a = card({ title: "First" }, { options: [{ id: "x", label: "X" }, { id: "y", label: "Y" }] });
     const b = card({ title: "Second" });
     await open([a, b]);
     await click(all("[data-question-option]")[0]!);
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
     // As the real server does: the card is marked answered (and announced) before the forward returns.
-    during[a.id] = async () => { openList = [b]; openStore.applyOpenCardResult({ ...a, status: "answered" }); };
+    during[a.id] = () => held;
     await click(q("[data-decision-send-one]"));
-    await tick();
+    await answeredElsewhere(a);
     expect(tabTitles()).toEqual(["alpha · First", "alpha · Second"]);
-    await click(all("[data-question-tab]")[0]!);
-    expect(q("[data-decision-done='sent'] [data-decision-done-note]")?.textContent).toBe("Chose “X”");
+    expect(shown()).toBe("First");
+    expect(q("[data-decision-send-one]")?.textContent).toContain("Sending");
+    await act(async () => { release(); await new Promise((r) => setTimeout(r, 0)); });
+    await tick();
+    expect(shown()).toBe("Second");
+    expect(counts()).toEqual({ heading: "1", position: "1/1", tabs: 0 });
+    expect(q("[data-decision-flash='sent']")?.textContent).toBe("Sent “First”: Chose “X”");
   });
 
   it("its own card leaving the list mid-send is not 'answered elsewhere'; a failed forward keeps the reply", async () => {
