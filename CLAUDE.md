@@ -321,6 +321,15 @@ When creating or modifying any UI component, you MUST read and follow `docs/desi
 - **Context menus**: Always use `@/components/ui/adaptive-context-menu` instead of `@/components/ui/context-menu`. It auto-detects mobile (< 768px) and renders a bottom sheet with long-press trigger instead of radix right-click menu. Same API — just swap the import path. Sub-menus are flattened inline on mobile.
 - **Mobile detection**: Use `useIsMobile()` from `@/hooks/use-is-mobile` for reactive mobile breakpoint checks.
 
+### Every PPM tool gets a card
+
+A new MCP tool on any of PPM's own servers (`ppm-sessions`, `ppm-tabs`, `ppm-db`, `ppm-design`, `ppm-assistant`) ships with its card in the same change. A chat must never show it as a raw `mcp__ppm-…__tool` or `ppm_…:tool`. The card has a readable name, one line read from the call's input and output (what it was about and what it answered), the running, done, failed and stopped states, and a button to open what the call named (a task, a chat) when it names one. It works under Claude's name and Codex's (`<server>:<tool>`, arguments wrapped as `{ server, tool, arguments }`), and an error or unexpected output falls back to a line from the input, never "undefined". Expanding the card still shows the full input and output.
+
+- **Where**: add a `case` to the reader in `src/web/lib/ppm-tool-summaries-tasks.ts` (task tools) or `src/web/lib/ppm-tool-summaries-sessions.ts` (the rest), dispatched by `ppmToolSummary` in `src/web/lib/ppm-tool-call.ts`. `ToolCard` in `src/web/components/chat/tool-cards.tsx` draws it through `ppm-tool-header.tsx`, which also holds the chips (`ppmToolIcon`) and the open buttons. A tool that needs a richer card than one line gets a card of its own, routed at the top of `ToolCard` (as `create_session`, the tab, device, database and vault tools are), with its reader in `src/web/lib/*-tool-call.ts`. A new PPM server also needs its Claude and Codex names in `SERVERS` in `ppm-tool-call.ts`.
+- **Exceptions**: the PPM Assistant's own tools (`ppm-assistant`) only need the readable name the server prefix gives them. Any other tool that is fine as a readable name alone goes into `PPM_TOOLS_NAMED_ONLY` in `ppm-tool-call.ts`, with the reason.
+- **Enforced by** `tests/unit/web/ppm-tool-card-coverage.test.ts`: it reads each endpoint's own `tools/list` (`session-server-tool-list.ts`, `tab-tools-mcp-tool-list.ts`, `dbToolDefinitions`, `DESIGN_MCP_TOOL_DEFINITIONS`, `ASSISTANT_TOOL_DEFINITIONS`), so a tool added to an endpoint without a card fails it, naming the tool and the file to change. A new endpoint's list must be added to that test.
+- **Prove it** with unit tests on the reader (real output, an error, odd output) and, for anything user-facing, the e2e `tests/e2e/ppm-tool-cards-e2e.mjs` (scripted calls through the real endpoints; desktop and a 390px phone).
+
 ## Roadmap & Context
 
 Before planning or implementing a new feature, read `docs/project-roadmap.md` to understand:

@@ -70,6 +70,23 @@ function genericSummary(ctx: PpmToolContext): PpmToolSummary {
   return { label: humanizeToolName(ctx.tool) };
 }
 
+/**
+ * PPM tools whose card is the ordinary one under a readable name, with no line of their own, and
+ * why. Every tool of the PPM Assistant's own server (`ppm-assistant`) is named only too. Any other new
+ * PPM tool needs a reading in `ppm-tool-summaries-*.ts` or a card of its own routed in
+ * `tool-cards.tsx`; `tests/unit/web/ppm-tool-card-coverage.test.ts` fails until it has one.
+ */
+export const PPM_TOOLS_NAMED_ONLY: Readonly<Record<string, string>> = {
+  design_screenshot: "its pictures are the card: the ordinary card previews them",
+  design_check: "a design chat's check of its own canvas; the report it returns is the output",
+};
+
+/** Whether a PPM tool has a line of its own read from its input and output. */
+export function ppmToolHasOwnLine(tool: string): boolean {
+  const ctx: PpmToolContext = { tool, args: {}, text: "", isError: false, ok: false };
+  return (taskToolSummary(ctx) ?? sessionToolSummary(ctx)) !== null;
+}
+
 /** Where the call stands. */
 export interface PpmToolState {
   /** The tool's raw output, once there is one. */

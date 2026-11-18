@@ -14,12 +14,11 @@ import { canonicalTabSession, deviceError, tabOpenBroker, type TabOpenOutcome } 
 import { resolveTabTarget, type TabTarget, type TabTargetOutcome, type TabToolsBinding } from "./tab-target.ts";
 import { tabToolsMcpTokens, type TabToolsTokenBinding } from "./tab-tools-mcp-tokens.ts";
 import {
-  OPEN_FILE_TOOL, OPEN_FILE_TOOL_DEFINITION, OPEN_FILE_WAIT_MS, OPEN_PREVIEW_TOOL, OPEN_PREVIEW_TOOL_DEFINITION,
-  OPEN_PREVIEW_WAIT_MS, OPEN_URL_TOOL, OPEN_URL_TOOL_DEFINITION, READ_TERMINAL_TOOL, READ_TERMINAL_TOOL_DEFINITION,
-  RUN_IN_TERMINAL_TOOL, RUN_IN_TERMINAL_TOOL_DEFINITION,
+  OPEN_FILE_TOOL, OPEN_FILE_WAIT_MS, OPEN_PREVIEW_TOOL, OPEN_PREVIEW_WAIT_MS, OPEN_URL_TOOL, READ_TERMINAL_TOOL,
+  RUN_IN_TERMINAL_TOOL,
 } from "./tab-tools-mcp-tool.ts";
+import { TAB_TOOLS_MCP_TOOL_DEFINITIONS } from "./tab-tools-mcp-tool-list.ts";
 import { createTerminalTools, type TerminalTools } from "./terminal-tools.ts";
-import { SESSION_HISTORY_TOOL_DEFINITIONS } from "./session-history-tool-definitions.ts";
 import { createSessionHistoryTools, type SessionHistoryTools } from "./session-history-tools.ts";
 import { isSessionHistoryTool } from "../../shared/session-history-tools.ts";
 
@@ -96,10 +95,7 @@ export function createTabToolsMcpHandler(deps: {
     serverName: "ppm-tabs",
     tokenRequired: "A chat session token is required",
     resolveToken: deps.resolveToken,
-    tools: [
-      OPEN_FILE_TOOL_DEFINITION, OPEN_PREVIEW_TOOL_DEFINITION, OPEN_URL_TOOL_DEFINITION,
-      READ_TERMINAL_TOOL_DEFINITION, RUN_IN_TERMINAL_TOOL_DEFINITION, ...SESSION_HISTORY_TOOL_DEFINITIONS,
-    ],
+    tools: TAB_TOOLS_MCP_TOOL_DEFINITIONS,
     unavailable: (name) => (deps.enabled(name) ? null : ppmToolOffMessage(name)),
     callTool: async ({ sessionId }, name, rawArgs) => {
       const binding: TabToolsBinding = { sessionId, ...(await deps.sessionProject(sessionId)) };

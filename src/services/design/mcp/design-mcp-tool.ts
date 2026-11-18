@@ -39,3 +39,6 @@ export const DESIGN_CHECK_TOOL_DEFINITION = {
   },
   annotations: { readOnlyHint: true, openWorldHint: false },
 };
+
+/** Every tool `/api/design-mcp` (`ppm-design`) lists; the chat's card coverage test reads it too. */
+export const DESIGN_MCP_TOOL_DEFINITIONS = [DESIGN_CHECK_TOOL_DEFINITION];
