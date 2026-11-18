@@ -122,9 +122,11 @@ import { sessionCollabToolCall } from "@/lib/session-collab-tool-call";
 import { VaultToolCard } from "./vault-tool-card";
 import { vaultToolCall } from "@/lib/vault-tool-call";
 import { DeviceToolDetails, DeviceToolSummary } from "./device-tool-card";
-import { deviceToolCall, deviceToolOf, tabToolCall } from "@/lib/tab-tool-call";
+import { deviceToolCall, deviceToolOf, tabToolCall, tabToolResultText } from "@/lib/tab-tool-call";
 import { DbToolSummary, DbToolDetails } from "./db-tool-card";
 import { dbToolCall, dbToolOf } from "@/lib/db-tool-call";
+import { dbRowsBadge, ppmToolIcon, ppmToolSummary } from "@/lib/ppm-tool-call";
+import { PpmToolLinks, PpmToolSummaryText, ppmToolChip } from "./ppm-tool-header";
 import { DB_EXECUTE_TOOL } from "../../../shared/db-ai-tools";
 import { OPEN_URL_TOOL } from "../../../shared/tab-open-protocol";
 import { AgentCardSummary, type AgentCardStatus } from "./agent-card-summary";
@@ -344,29 +346,40 @@ export function ToolCard({
     }
   }, [isError, toolName]);
 
-  const { Icon: ChipIcon, cls: chipCls } = toolChip(
+  // PPM's own tools (tasks, session history, schedules, reports, the Assistant's) get a readable
+  // line read from their input and output, and buttons that open the task or chat they named.
+  const rawOutput = hasResult ? String((result as any).output ?? "") : undefined;
+  const ppmSummary = tool.type === "tool_use" ? ppmToolSummary(toolName, input, { output: rawOutput, isError }) : null;
+  const ppmIcon = ppmSummary ? ppmToolIcon(toolName) : null;
+  // A turn that ended (or was stopped) before the tool answered: never a success.
+  const ppmStopped = !!ppmSummary && !!completed && !hasResult && !isError;
+  const ppmErrorLine = ppmSummary && isError && rawOutput ? firstErrorLine(rawOutput) : "";
+  const dbBadge = !isError && dbToolOf(toolName) === "db_query" ? dbRowsBadge(rawOutput) : null;
+
+  const { Icon: ChipIcon, cls: chipCls } = ppmIcon ? ppmToolChip(ppmIcon) : toolChip(
     toolName,
     isError,
     !!addressableAgentName(toolName, input),
   );
   const isInteractive = toolName === "AskUserQuestion" || toolName === "ExitPlanMode" || isSubagent;
 
-  return (
-    <div
-      data-tool-ref={toolUseId}
-      className={`rounded-[11px] border overflow-hidden text-xs bg-panel ${isInteractive ? "border-accent-wash-border" : "border-border"}`}
-    >
+  const headerButton = (
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2.5 px-2.5 py-2 w-full text-left hover:bg-panel-2/40 transition-colors min-w-0"
+        aria-expanded={ppmSummary ? expanded : undefined}
+        className={`flex items-center gap-2.5 px-2.5 py-2 text-left hover:bg-panel-2/40 transition-colors min-w-0 ${ppmSummary ? "flex-1" : "w-full"}`}
       >
         <span className={`inline-flex items-center justify-center size-6 rounded-[7px] shrink-0 ${chipCls}`}>
           <ChipIcon className="size-3.5" />
         </span>
         <span className="truncate text-text font-medium">
-          <ToolSummary name={toolName} input={input} />
+          {ppmSummary ? <PpmToolSummaryText summary={ppmSummary} /> : <ToolSummary name={toolName} input={input} />}
         </span>
         <span className="ml-auto flex items-center gap-2 shrink-0">
+          {(ppmSummary?.badge || dbBadge) && !ppmStopped && (
+            <span className="text-[10px] text-text-3" data-ppm-tool-badge="">{ppmSummary?.badge ?? dbBadge}</span>
+          )}
+          {ppmStopped && <span className="text-[10px] text-warning" data-ppm-tool-stopped="">stopped</span>}
           {isStreamingBash && (
             <span className="text-[10px] text-warning">{partial!.lineCount} line{partial!.lineCount !== 1 ? "s" : ""} streaming…</span>
           )}
@@ -383,12 +396,31 @@ export function ToolCard({
           )}
           {isError || bgFailed
             ? <XCircle className="size-3.5 text-error" />
-            : isDone
-              ? <CheckCircle2 className="size-3.5 text-success" />
-              : <Loader2 className="size-3.5 text-primary animate-spin" />}
+            : ppmStopped
+              ? <AlertCircle className="size-3.5 text-warning" />
+              : isDone
+                ? <CheckCircle2 className="size-3.5 text-success" />
+                : <Loader2 className="size-3.5 text-primary animate-spin" />}
           {expanded ? <ChevronDown className="size-3 text-text-3" /> : <ChevronRight className="size-3 text-text-3" />}
         </span>
       </button>
+  );
+
+  return (
+    <div
+      data-tool-ref={toolUseId}
+      {...(ppmSummary ? { "data-ppm-tool-card": toolName } : {})}
+      className={`rounded-[11px] border overflow-hidden text-xs bg-panel ${isInteractive ? "border-accent-wash-border" : "border-border"}`}
+    >
+      {ppmSummary ? (
+        <div className="flex items-center min-w-0">
+          {headerButton}
+          <PpmToolLinks summary={ppmSummary} projectName={projectName} />
+        </div>
+      ) : headerButton}
+      {ppmErrorLine && (
+        <p className="px-2.5 pb-2 text-error break-words line-clamp-2 select-text" data-ppm-tool-error="">{ppmErrorLine}</p>
+      )}
       {ranReadOnlyUnasked && (
         <p className="-mt-1 flex items-center gap-1 px-2.5 pb-1.5 text-[10px] text-text-3" data-testid="tool-ran-readonly">
           <ShieldCheck className="size-3 shrink-0" />{READONLY_UNASKED_NOTE}
@@ -1011,6 +1043,11 @@ function EditDiffPreview(props: { oldStr: string; newStr: string; filePath?: str
       <LazyEditDiffPreview {...props} />
     </Suspense>
   );
+}
+
+/** The first non-blank line of a failed tool's answer, for the line under a PPM tool card's header. */
+function firstErrorLine(output: string): string {
+  return tabToolResultText(output).split("\n").find((l) => l.trim())?.trim() ?? "";
 }
 
 function truncate(str?: string, max = 50): string {

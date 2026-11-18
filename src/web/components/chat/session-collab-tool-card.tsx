@@ -21,7 +21,7 @@ import { ProviderBadge } from "./provider-selector";
 import { useAgentSessionContext } from "./agent-session-context";
 
 /** A session's title and provider as the session list knows them, for a target named by id only. */
-function useKnownSession(sessionId: string | undefined): { title?: string; providerId?: string } {
+export function useKnownSession(sessionId: string | undefined): { title?: string; providerId?: string } {
   return useSessionListStore((s) => {
     if (!sessionId) return EMPTY;
     for (const entry of Object.values(s.byProject)) {
