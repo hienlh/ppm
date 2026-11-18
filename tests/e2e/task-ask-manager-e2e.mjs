@@ -82,9 +82,11 @@ async function footerFits(scope, what) {
   const fit = await footer.evaluate((el) => {
     const f = el.getBoundingClientRect();
     const out = [...el.querySelectorAll("button")].filter((b) => { const r = b.getBoundingClientRect(); return r.left < f.left - 0.5 || r.right > f.right + 0.5; });
-    return { overflow: el.scrollWidth > el.clientWidth + 1, out: out.map((b) => b.textContent) };
+    // A label cut to "Ask man…" fits too, and says nothing: every word must show whole.
+    const cut = [...el.querySelectorAll("button span")].filter((s) => s.scrollWidth > s.clientWidth + 0.5);
+    return { overflow: el.scrollWidth > el.clientWidth + 1, out: out.map((b) => b.textContent), cut: cut.map((s) => s.textContent) };
   });
-  assert(!fit.overflow && fit.out.length === 0, `${what}: the footer's buttons fit (${JSON.stringify(fit)})`);
+  assert(!fit.overflow && fit.out.length === 0 && fit.cut.length === 0, `${what}: the footer's buttons fit, their words whole (${JSON.stringify(fit)})`);
 }
 
 /** A chat of `project`, named at creation, that the task is handed off to. */

@@ -108,6 +108,10 @@ export function TaskPeekBody({ target, layout, onLeave, onOpenPage, onBack, onCl
   };
   const sheet = layout === "sheet";
   const number = task?.number ?? target.number;
+  // Both beside Open in window do not fit the 340px popover with their icons: below 350px of footer
+  // the two drop their icons and keep their whole words (the phone's sheet is wide enough for both).
+  const crowded = !!buttons?.openChat && !!buttons.askManager;
+  const quietIcon = crowded ? "@max-[350px]/peekfoot:hidden" : undefined;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-task-peek={target.id} data-task-peek-layout={layout}>
@@ -143,18 +147,18 @@ export function TaskPeekBody({ target, layout, onLeave, onOpenPage, onBack, onCl
           )}
         </div>
       </div>
-      <div data-task-peek-footer="" className={cn("flex min-w-0 shrink-0 items-center gap-1.5 border-t border-border-soft", sheet ? "px-3 py-2" : "p-2")}>
+      <div data-task-peek-footer="" className={cn("@container/peekfoot flex min-w-0 shrink-0 items-center gap-1.5 border-t border-border-soft", sheet ? "px-3 py-2" : "p-2")}>
         {buttons?.openChat && (
           <button type="button" onClick={openChat} disabled={chat?.tone === "gone"} title={chat?.title ?? "Open chat"} data-task-peek-chat=""
             className={QUIET_BUTTON}>
-            <MessageCircle /><span className="min-w-0 truncate">Open chat</span>
+            <MessageCircle className={quietIcon} /><span className="min-w-0 truncate">Open chat</span>
           </button>
         )}
         {buttons?.askManager && (
           <button type="button" onClick={askManager} title="Ask the project's manager chat about this task" data-task-peek-ask-manager=""
             disabled={!buttons.openChat && chat?.tone === "gone"}
             className={QUIET_BUTTON}>
-            <MessageSquare /><span className="min-w-0 truncate">Ask manager</span>
+            <MessageSquare className={quietIcon} /><span className="min-w-0 truncate">Ask manager</span>
           </button>
         )}
         <button type="button" onClick={() => onOpenPage(page)} data-task-peek-page={sheet ? "full-screen" : "window"}
