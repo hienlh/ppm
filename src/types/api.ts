@@ -31,7 +31,7 @@ export type ChatWsClientMessage =
   /** Turns of other sessions the message points at; the server validates them and grants their read. */
   turnRefs?: TurnReference[] | null;
   /** Ids of the PPM tasks the message is about; the server reads them and writes their block. */
-  taskRefs?: string[] | null; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>;
+  taskRefs?: string[] | null; permissionMode?: string; images?: Array<{ data: string; mediaType: string }>;
   /** Uploaded paths for the same images, for providers that take a file not a payload. */
   imagePaths?: string[]; model?: string; effort?: string; thinking?: boolean;
   /** An Assistant session's message: what the sending device shows, validated by the server. */

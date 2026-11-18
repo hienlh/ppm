@@ -43,6 +43,8 @@ export interface HeadlessTurnOpts extends ChatSendPayload {
   timeoutMs?: number;
   /** Send the "Chat completed" push when the turn ends. Default false. */
   notifyOnDone?: boolean;
+  /** `later` waits for a running turn to end; an extension's own choice, which a browser no longer has. */
+  priority?: "now" | "next" | "later";
 }
 
 /** `queued` when the message joined a live session instead of opening a turn of its own. */
