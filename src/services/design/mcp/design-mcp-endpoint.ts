@@ -2,7 +2,7 @@ import { formatCanvasCheck } from "../../../shared/design-canvas-check-format.ts
 import { createMcpHttpHandler, imageBlock, textResult, type Json } from "../../mcp-http-endpoint.ts";
 import { canvasCheckBroker, type CanvasCheckOutcome } from "../check/design-canvas-check-broker.ts";
 import { designMcpTokens, type DesignMcpBinding } from "./design-mcp-tokens.ts";
-import { DESIGN_CHECK_TOOL_DEFINITION } from "./design-mcp-tool.ts";
+import { DESIGN_MCP_TOOL_DEFINITIONS } from "./design-mcp-tool.ts";
 
 /**
  * `/api/design-mcp` — serves one tool, `design_check`, to one design session's own agent
@@ -45,7 +45,7 @@ export function createDesignMcpHandler(deps: {
     serverName: "ppm-design",
     tokenRequired: "A design session token is required",
     resolveToken: deps.resolveToken,
-    tools: [DESIGN_CHECK_TOOL_DEFINITION],
+    tools: DESIGN_MCP_TOOL_DEFINITIONS,
     callTool: (binding, _name, args) => callCheck(binding, args),
   });
 }

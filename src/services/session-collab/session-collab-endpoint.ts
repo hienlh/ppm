@@ -10,12 +10,11 @@ import {
 import { liveScheduleProposalToolEnv, scheduleProposalToolCall, type ScheduleProposalToolEnv } from "./collab-schedule-proposals.ts";
 import { configService } from "../config.service.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
-import { reportToolDefinition } from "../assistant-cards/manager-report-tool.ts";
 import { isReportingManager, NOT_A_MANAGER, reportToAssistantCall } from "../assistant-cards/manager-report-env.ts";
 import type { CallLimiter } from "../tab-tools-mcp/session-history-rate-limit.ts";
 import { collabToolPolicy } from "./collab-caller-policy.ts";
 import { isVaultTool } from "../../shared/vault.ts";
-import { boundToExtension, VAULT_TOOL_DEFINITIONS, vaultTools } from "../vault/vault-tools.ts";
+import { boundToExtension, vaultTools } from "../vault/vault-tools.ts";
 import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 import { resolveCaller, type CollabEnv } from "./collab-context.ts";
 import { createSessionTool } from "./collab-create.ts";
@@ -23,12 +22,10 @@ import { designShotTool } from "./collab-design-shot.ts";
 import { createCollabLimiter } from "./collab-rate-limit.ts";
 import { sendToSessionTool } from "./collab-send.ts";
 import { sessionStatusTool } from "./collab-status.ts";
-import { sessionScheduleToolDefinitions } from "./collab-schedule-tool-definitions.ts";
 import { liveSessionScheduleToolEnv, sessionScheduleToolCall, type SessionScheduleToolEnv } from "./collab-schedules.ts";
-import { sessionCollabToolDefinitions } from "./session-collab-tool.ts";
+import { sessionServerToolDefinitions } from "./session-server-tool-list.ts";
 import { sessionCollabMcpTokens, type SessionCollabTokenBinding } from "./session-collab-tokens.ts";
 import { isPpmTaskTool } from "../../shared/ppm-task-tools.ts";
-import { PPM_TASK_TOOL_DEFINITIONS } from "../ppm-tasks/tools/ppm-task-tool-definitions.ts";
 import { callPpmTaskTool, livePpmTaskToolsEnv, type PpmTaskToolsEnv } from "../ppm-tasks/tools/ppm-task-tools.ts";
 import { ppmTaskToolOffReason } from "../ppm-tasks/tools/ppm-task-tool-caller.ts";
 
@@ -67,7 +64,7 @@ export function createSessionCollabMcpHandler(deps: {
     serverName: "ppm-sessions",
     tokenRequired: "A chat session token is required",
     resolveToken: deps.resolveToken,
-    tools: [...sessionCollabToolDefinitions(), ...sessionScheduleToolDefinitions(), reportToolDefinition(), ...VAULT_TOOL_DEFINITIONS, ...PPM_TASK_TOOL_DEFINITIONS],
+    tools: sessionServerToolDefinitions(),
     unavailable: (name, { sessionId }) => {
       if (deps.enabled(name, sessionId)) return null;
       if (name === REPORT_TO_ASSISTANT_TOOL) return NOT_A_MANAGER;
