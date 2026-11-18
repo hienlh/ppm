@@ -45,6 +45,12 @@ interface Props {
   renderCard?: (card: Card) => ReactNode;
   entryKey?: (card: Card) => string;
   summary?: (card: Card) => string;
+  /**
+   * How many cards wait, for the badge: more than `cards.length` when an entry stands for several
+   * (the set of decisions is one entry however many decisions it holds). The pager still steps
+   * through entries.
+   */
+  total?: number;
 }
 
 const NAV = "grid size-11 shrink-0 place-items-center rounded-full text-text-secondary can-hover:hover:bg-surface-elevated can-hover:hover:text-text-primary md:size-7";
@@ -81,7 +87,7 @@ function Title({ label, count }: { label: string; count: number }) {
   );
 }
 
-export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeight = DEFAULT_SLOT_HEIGHT, renderCard, entryKey, summary }: Props) {
+export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeight = DEFAULT_SLOT_HEIGHT, renderCard, entryKey, summary, total }: Props) {
   // An entry is known by its key: the set of decisions stays the same entry while its first card
   // changes (one answered), instead of arriving anew each time.
   const keyOf = (card: Card) => entryKey?.(card) ?? card.id;
@@ -194,7 +200,7 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
         aria-label={label}
         className="shrink-0 border-b border-border bg-panel-2/60"
         data-waiting-cards=""
-        data-waiting-count={cards.length}
+        data-waiting-count={total ?? cards.length}
       >
         <button
           ref={row}
@@ -205,7 +211,7 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
           className="flex min-h-11 w-full min-w-0 items-center gap-2 pl-3 pr-1.5 text-left"
           data-waiting-toggle=""
         >
-          <Title label={label} count={cards.length} />
+          <Title label={label} count={total ?? cards.length} />
           <span className="min-w-0 flex-1 truncate text-xs text-text-secondary" data-waiting-summary="">
             {summary ? summary(current) : `${current.projectName ? `${current.projectName} · ` : ""}${current.title}`}
           </span>
@@ -226,7 +232,7 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
             onKeyDown={(e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } }}
           >
             <div className="flex shrink-0 items-center gap-1 border-b border-border pl-3 pr-1">
-              <span className="flex min-w-0 flex-1 items-center gap-2"><Title label={label} count={cards.length} /></span>
+              <span className="flex min-w-0 flex-1 items-center gap-2"><Title label={label} count={total ?? cards.length} /></span>
               <Pager index={index} count={cards.length} step={step} />
               <button ref={closeButton} type="button" onClick={() => setOpen(false)} aria-label="Close the waiting cards" className={NAV}>
                 <X className="size-5" />
@@ -248,7 +254,7 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
       aria-label={label}
       className="shrink-0 border-b border-border bg-panel-2/60"
       data-waiting-cards=""
-      data-waiting-count={cards.length}
+      data-waiting-count={total ?? cards.length}
     >
       <div className="flex items-center gap-1 pl-3 pr-1.5">
         <button
@@ -258,7 +264,7 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
           className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left md:min-h-10"
           data-waiting-toggle=""
         >
-          <Title label={label} count={cards.length} />
+          <Title label={label} count={total ?? cards.length} />
           {!open && (
             <span className="min-w-0 truncate text-xs text-text-secondary" data-waiting-summary="">
               {summary ? summary(current) : `${current.projectName ? `${current.projectName} · ` : ""}${current.title}`}

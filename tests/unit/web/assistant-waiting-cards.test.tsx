@@ -401,8 +401,10 @@ describe("in a manager chat", () => {
     await refreshManagerChats();
     view = await mount(createElement(ManagerChatWaitingCards, { sessionId: "mgr-ppm" }));
     await settle();
-    // One page: the set of this chat's two decisions.
-    expect(q("[data-manager-waiting-cards] [data-waiting-cards]")?.getAttribute("data-waiting-count")).toBe("1");
+    // One page, the set of this chat's two decisions; the badge counts the two, as the set does.
+    expect(q("[data-manager-waiting-cards] [data-waiting-cards]")?.getAttribute("data-waiting-count")).toBe("2");
+    expect(q("[data-manager-waiting-cards] [data-waiting-pager]")).toBeNull();
+    expect(q("[data-manager-waiting-cards] [data-decision-set]")?.textContent).toContain("2 decisions waiting");
     const tabs = [...view.container.querySelectorAll("[data-decision-set] [data-question-tab]")].map((t) => t.getAttribute("title"));
     expect(tabs).toEqual(["ppm · Staging down", "ppm · Release 0.25.6 now?"]);
     expect(view.container.textContent).not.toContain("Bash");

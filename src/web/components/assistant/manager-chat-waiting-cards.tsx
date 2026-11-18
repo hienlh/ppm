@@ -55,6 +55,8 @@ export function ManagerChatWaitingCards({ sessionId }: { sessionId: string | nul
         <div className="overflow-hidden rounded-xl border border-border shadow-sm">
           <WaitingCardsBar
             cards={entries}
+            // Counts cards, not entries: the set of decisions is one entry holding several.
+            total={mine.length}
             renderCard={(card) => (isDecisionCard(card) ? <DecisionSet scope={scope} /> : <CardView card={card} onCard={takeCard} />)}
             entryKey={(card) => (isDecisionCard(card) ? "decision-set" : card.id)}
             summary={(card) => (isDecisionCard(card)
