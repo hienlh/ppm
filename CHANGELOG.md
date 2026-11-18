@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.26.17] - 2026-11-19
+
+### Added
+
+- **Ask manager in a task's quick view and on Telegram task cards**: it opens the project's manager chat with the task as a chip; on Telegram your next message goes to the manager chat and its answer comes back under it.
+
+### Changed
+
+- **A task shows one button per chat**: Open chat only for a chat the task was handed to, Ask manager alone when the manager works on it, and no Ask manager in a project with no manager chat.
+
+### Fixed
+
+- **Open chat and Ask manager fit whole in the 340px quick view**, and Ask manager is disabled once the manager chat working on the task is deleted.
+
 ## [0.26.16] - 2026-11-19
 
 ### Changed
