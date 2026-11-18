@@ -42,6 +42,9 @@ function HeldChange({ rules, busy, onDecide }: { rules: ManagerRulesView; busy: 
   );
 }
 
+/** The rule as one paragraph, without its list marker. */
+const DELEGATE_RULE_PROSE = MANAGER_DELEGATE_RULE.replace(/^-\s*/, "").replace(/\s*\n\s*/g, " ");
+
 /**
  * A default rule PPM's template gained after this project's rules were seeded. PPM never writes
  * it into the user's file by itself; Add saves it as the user's own edit. Held back while the
@@ -52,7 +55,8 @@ function NewDefaultRule({ busy, dirty, onAdd }: { busy: boolean; dirty: boolean;
     <div className="space-y-2 rounded-md border border-border bg-panel-2 p-3" data-new-default-rule="">
       <p className="text-sm font-medium">PPM has a new default rule</p>
       <p className="text-xs text-text-secondary">New manager chats start with it. This project’s rules were written before it, so they do not have it yet.</p>
-      <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-panel px-3 py-2 font-mono text-xs text-text-secondary">{MANAGER_DELEGATE_RULE}</pre>
+      {/* As a paragraph: the file's own line breaks, wrapped again at this width, read as ragged fragments. */}
+      <p className="rounded border border-border bg-panel px-3 py-2 text-xs leading-relaxed text-text-secondary" data-new-default-rule-text="">{DELEGATE_RULE_PROSE}</p>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" className={`${DIALOG_BUTTON} gap-1`} disabled={busy || dirty} onClick={onAdd}><Plus className="size-3.5" />Add</Button>
         {dirty && <span className="text-xs text-text-subtle">Save or undo your edits first.</span>}

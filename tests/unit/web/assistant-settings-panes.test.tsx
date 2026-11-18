@@ -150,7 +150,9 @@ describe("the rules dialog", () => {
     await settle();
     const offer = () => document.body.querySelector("[data-new-default-rule]");
     expect(offer()?.textContent).toContain("PPM has a new default rule");
-    expect(offer()?.textContent).toContain(MANAGER_DELEGATE_RULE);
+    // Shown as one paragraph, the file's line breaks and list marker gone.
+    expect(document.body.querySelector("[data-new-default-rule-text]")?.textContent)
+      .toBe(MANAGER_DELEGATE_RULE.slice(2).replace(/\s*\n\s*/g, " "));
     const add = buttons("Add")[0]!;
     // A second press before the save answers is the same press: busy disables the button.
     await click(add);
