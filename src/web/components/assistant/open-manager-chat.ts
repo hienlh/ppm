@@ -1,11 +1,8 @@
 /**
  * Opening a project's manager chat from the Assistant (a chip, a card's "Open manager chat").
  *
- * Desktop: in a floating window of its own, without switching project. The chat is a new tab with
- * no project (`projectId: null`) placed straight into a new window panel, never through a grid:
- * `openTab` would focus a copy sitting in that project's hidden keep-alive grid, and popping that
- * out would take it out of the project's layout. The project's slash cache is hydrated here, since
- * only a project switch does that otherwise. A chat already in a window is raised instead.
+ * Desktop: in a floating window of its own, without switching project (`openChatInWindow`). A chat
+ * already in a window is raised instead.
  *
  * Phone: there are no windows, so the project switches and the chat opens as a tab that remembers
  * where the user came from; its "‹ Assistant" goes back there.
@@ -13,12 +10,10 @@
 import { toast } from "sonner";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
-import { isWindowPanelId, windowIdFromPanelId } from "@/stores/panel-utils";
-import { useWindowStore } from "@/components/floating-window/window-store";
 import { closeWindow } from "@/components/floating-window/close-window";
-import { cascadeSpawnRect } from "@/components/floating-window/window-geometry";
-import { hydrateProjectCache } from "@/lib/browser-cache/project-cache-hydration";
 import { showProjectTab } from "@/lib/open-ppm-tab";
+import { openChatInWindow } from "@/lib/open-chat-in-window";
+import { windowIdFromPanelId } from "@/stores/panel-utils";
 import { patchTabMetadata } from "@/lib/patch-tab-metadata";
 import { tabSessionId } from "@/lib/tab-session-id";
 import type { Tab } from "@/stores/tab-store";
@@ -40,8 +35,6 @@ export interface ManagerChatRef {
 const tabTitle = (target: ManagerChatRef): string => target.chat?.title ?? managerChatTitle(target.projectName);
 const providerOf = (target: ManagerChatRef): string => target.chat?.providerId ?? MANAGER_PROVIDER_ID;
 
-const MANAGER_WINDOW_SIZE = { w: 520, h: 640 };
-
 export function managerChatTitle(projectName: string): string {
   return `${projectName} · manager`;
 }
@@ -55,30 +48,9 @@ export function openManagerChat(target: ManagerChatRef): Promise<void> {
 }
 
 function openInWindow(target: ManagerChatRef): void {
-  const store = usePanelStore.getState();
-  for (const panel of Object.values(store.panels)) {
-    if (!isWindowPanelId(panel.id) || !panel.tabs.some((t) => tabSessionId(t) === target.sessionId)) continue;
-    const windowId = windowIdFromPanelId(panel.id);
-    if (windowId) useWindowStore.getState().focus(windowId);
-    return;
-  }
-  const projects = useProjectStore.getState();
-  const project = projects.projects.find((p) => p.name === target.projectName);
-  if (!project) { toast.error(`${target.projectName} is not a project in this PPM any more.`); return; }
-  // Hydrating names it the project to warm on the next load; the active one keeps that place.
-  void hydrateProjectCache(project);
-  if (projects.activeProject) void hydrateProjectCache(projects.activeProject);
-
-  const windows = useWindowStore.getState();
-  const rect = cascadeSpawnRect(Object.values(windows.windows).map((w) => w.rect), windows.bounds, MANAGER_WINDOW_SIZE);
-  const opened = store.openTabInNewWindow({
-    type: "chat",
-    title: tabTitle(target),
-    projectId: null,
-    closable: true,
-    metadata: { projectName: target.projectName, sessionId: target.sessionId, providerId: providerOf(target), managerWindow: true },
-  }, { rect });
-  if (!opened) toast.error("Too many windows are open. Close one to open the manager chat.");
+  const result = openChatInWindow({ projectName: target.projectName, sessionId: target.sessionId, providerId: providerOf(target), title: tabTitle(target) });
+  if (result === "no-project") toast.error(`${target.projectName} is not a project in this PPM any more.`);
+  else if (result === "refused") toast.error("Too many windows are open. Close one to open the manager chat.");
 }
 
 async function openOnPhone(target: ManagerChatRef): Promise<void> {
