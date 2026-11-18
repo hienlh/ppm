@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { matchesGlob } from "../file-glob";
 import { resolveProjectSearchTool, type ProjectSearchTool } from "../project-content-search.service";
+import { searchablePaths } from "./content-path-guard";
 import { createGrepMatcher } from "./grep-matches";
 import { preserveCase } from "./preserve-case";
 import { buildSearchMatch, parseRgJsonLine } from "./rg-json-parse";
@@ -78,6 +79,8 @@ export async function runSearch(projectPath: string, req: SearchRequest, signal?
   signal?.throwIfAborted();
 
   const collector = new MatchCollector(deps.maxMatches ?? MAX_MATCHES, req.preserveCase === true);
+  // What a replace would refuse is never listed, and does not count toward the limit.
+  const searchable = searchablePaths(projectPath);
   let stopped: "limit" | "timeout" | "abort" | null = null;
   let current: ReturnType<typeof spawnTool> | null = null;
   const stop = (why: "limit" | "timeout" | "abort") => {
@@ -100,6 +103,7 @@ export async function runSearch(projectPath: string, req: SearchRequest, signal?
       if (paths.length) {
         const result = await run([tool.path, ...ripgrepArgs(req, paths)], projectPath, rgLineReader((file, matches) => {
           if (filter.length && !matchesGlob(file, filter)) return;
+          if (!searchable(file)) return;
           if (!collector.add(file, matches)) stop("limit");
         }));
         if (!stopped) checkExit(tool, result, collector.total, RG_PATTERN_ERROR.test(result.stderr));
@@ -111,6 +115,7 @@ export async function runSearch(projectPath: string, req: SearchRequest, signal?
       for (const batch of plan.batches) {
         if (stopped) break;
         const result = await run([tool.path, ...plan.args, ...batch], projectPath, grepRecordReader((file, line, text) => {
+          if (!searchable(file)) return;
           const matches = matcher.matchLine(text).map((m) =>
             buildSearchMatch(text, line, m.column, m.column + m.length, m.replacement));
           if (!collector.add(file, matches)) stop("limit");
