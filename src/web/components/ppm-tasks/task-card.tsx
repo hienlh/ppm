@@ -25,10 +25,15 @@ export function TaskCard({ title, count, aside, children, className, tone, ...re
   );
 }
 
+/**
+ * A card's text action (Edit, + Add, Record result). It never shrinks: whatever shares its row (a
+ * card title, who-and-when) gives way instead. On a phone the task page makes it 44 × 44
+ * (`THUMB_CARDS` in mobile/task-detail-mobile-details.tsx).
+ */
 export function CardTextButton({ children, onClick, disabled }: { children: ReactNode; onClick(): void; disabled?: boolean }) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled}
-      className="inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-xs font-normal text-primary hover:bg-accent-wash disabled:opacity-40">
+    <button type="button" onClick={onClick} disabled={disabled} data-card-text-button=""
+      className="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-xs font-normal text-primary hover:bg-accent-wash disabled:opacity-40">
       {children}
     </button>
   );

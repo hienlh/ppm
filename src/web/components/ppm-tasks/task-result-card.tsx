@@ -19,9 +19,8 @@ export function TaskResultCard({ task, onSave }: { task: TaskDto; onSave(result:
   };
   if (task.result && !editing) {
     return (
-      <div className="relative" data-task-card="result">
-        <TaskResultBlock result={task.result} />
-        <div className="absolute right-2 top-2"><CardTextButton onClick={() => setEditing(true)}><Pencil className="size-3" />Edit</CardTextButton></div>
+      <div data-task-card="result">
+        <TaskResultBlock result={task.result} action={<CardTextButton onClick={() => setEditing(true)}><Pencil className="size-3" />Edit</CardTextButton>} />
       </div>
     );
   }
