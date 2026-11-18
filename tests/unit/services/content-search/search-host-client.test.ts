@@ -21,7 +21,9 @@ import {
 } from "../../../../src/services/content-search/search-host-client.ts";
 import { createHostDispatcher } from "../../../../src/services/content-search/search-host.ts";
 import { SearchRunError } from "../../../../src/services/content-search/search-run.ts";
-import type { ReplaceReport, SearchRequest, SearchResponse } from "../../../../src/services/content-search/search-options.ts";
+import {
+  MAX_REPLACE_FILES, MAX_REPLACE_MATCHES, type ReplaceReport, type SearchRequest, type SearchResponse,
+} from "../../../../src/services/content-search/search-options.ts";
 
 const ROOT = resolve(import.meta.dir, "../../../..");
 const FRAME_CODEC = resolve(ROOT, "src/services/content-search/frame-codec.ts");
@@ -175,6 +177,28 @@ describe("search host dispatcher", () => {
     const reply = body(h.sent[0]!);
     expect(reply[0]).toBe(0);
     expect(JSON.parse(dec.decode(reply.subarray(1)))).toEqual(report);
+  });
+
+  it("refuses a replace naming too many files, or carrying too many matches, with 413", async () => {
+    let ran = 0;
+    const h = harness(async () => empty, async () => { ran++; return { replaced: 0, files: 0, skipped: [], failed: [] }; });
+    const send = (id: number, files: unknown[]) => {
+      const parts = replacePayload("/proj", enc.encode(JSON.stringify({ files })));
+      h.frame("replace", id, new Uint8Array(Buffer.concat(parts.map((p) => Buffer.from(p)))));
+    };
+    const match = { line: 1, column: 0, text: "x", replacement: "y" };
+    send(1, Array.from({ length: MAX_REPLACE_FILES + 1 }, (_, i) => ({ file: `f${i}`, matches: [] })));
+    send(2, [{ file: "a", matches: Array.from({ length: MAX_REPLACE_MATCHES - 1 }, () => match) }, { file: "b", matches: [match, match] }]);
+    // Exactly at both limits is accepted.
+    send(3, [{ file: "a", matches: Array.from({ length: MAX_REPLACE_MATCHES }, () => match) }]);
+    expect(await waitFor(() => h.sent.length === 3, 2000)).toBe(true);
+    const byId = new Map(h.sent.map((f) => [f.id, f]));
+    expect(byId.get(1)!.kind).toBe("reply-error");
+    expect(JSON.parse(dec.decode(body(byId.get(1)!))).status).toBe(413);
+    expect(byId.get(2)!.kind).toBe("reply-error");
+    expect(JSON.parse(dec.decode(body(byId.get(2)!))).status).toBe(413);
+    expect(byId.get(3)!.kind).toBe("reply");
+    expect(ran).toBe(1);
   });
 
   it("replacePayload keeps the body as its own part, uncopied", () => {

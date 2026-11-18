@@ -3,7 +3,8 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   getSearchHost, replacePayload, REPLACE_DEADLINE_MS, SearchHostError, type SearchHost, type SearchHostReply,
 } from "../../services/content-search/search-host-client.ts";
-import type { SearchRequest } from "../../services/content-search/search-options.ts";
+import { MAX_REPLACE_BODY_BYTES, type SearchRequest } from "../../services/content-search/search-options.ts";
+import { readCappedBytes } from "../../services/read-capped-body.ts";
 import { resolve, isAbsolute, sep } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { fileService, SecurityError, NotFoundError, ValidationError } from "../../services/file.service.ts";
@@ -483,11 +484,15 @@ fileRoutes.get("/search", async (c) => {
 /**
  * POST /files/replace — body `{ files: ReplaceRequest["files"] }`, handed to the search host as raw
  * bytes behind the project path (`replacePayload`); the host checks, rewrites and writes each file.
+ * A body over `MAX_REPLACE_BODY_BYTES` is a 413 here; too many files or matches, a 413 from the host.
  */
 fileRoutes.post("/replace", async (c) => {
   allowSeconds(c, REPLACE_DEADLINE_MS / 1000 + 10);
+  const tooLarge = () => c.json(err(`Replace request is larger than ${MAX_REPLACE_BODY_BYTES / (1024 * 1024)} MB`), 413);
+  if (Number(c.req.header("content-length") ?? "0") > MAX_REPLACE_BODY_BYTES) return tooLarge();
   try {
-    const body = new Uint8Array(await c.req.arrayBuffer());
+    const body = await readCappedBytes(c.req.raw, MAX_REPLACE_BODY_BYTES);
+    if (body === null) return tooLarge();
     return hostReply(await searchHost().request("replace", replacePayload(c.get("projectPath"), body)));
   } catch (error) {
     return hostError(c, error);

@@ -15,7 +15,9 @@ import {
   type SearchHost,
   type SearchHostReply,
 } from "../../../src/services/content-search/search-host-client.ts";
-import type { SearchRequest, SearchResponse } from "../../../src/services/content-search/search-options.ts";
+import {
+  MAX_REPLACE_BODY_BYTES, type SearchRequest, type SearchResponse,
+} from "../../../src/services/content-search/search-options.ts";
 import * as legacySearch from "../../../src/services/project-content-search.service.ts";
 
 const PROJECT = "/tmp/fake-project";
@@ -198,6 +200,42 @@ describe("POST /files/replace", () => {
     const res = await app().request("/api/files/replace", { method: "POST", body: "{}" });
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ ok: false, error: "Replace request has no files" });
+  });
+
+  test("refuses a body over the limit with 413, without asking the host", async () => {
+    const fake = fakeHost();
+    setSearchHostForTests(fake.host);
+    const res = await app().request("/api/files/replace", { method: "POST", body: new Uint8Array(MAX_REPLACE_BODY_BYTES + 1) });
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toContain("larger than 32 MB");
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  test("counts a body sent with no Content-Length as it arrives", async () => {
+    const fake = fakeHost();
+    setSearchHostForTests(fake.host);
+    const chunk = new Uint8Array(1024 * 1024);
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent > MAX_REPLACE_BODY_BYTES) return controller.close();
+        sent += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    });
+    const req = new Request("http://x/api/files/replace", { method: "POST", body, duplex: "half" } as RequestInit);
+    expect(req.headers.get("content-length")).toBeNull();
+    const res = await app().request(req);
+    expect(res.status).toBe(413);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  test("a body at the limit reaches the host", async () => {
+    const fake = fakeHost();
+    setSearchHostForTests(fake.host);
+    const res = await app().request("/api/files/replace", { method: "POST", body: new Uint8Array(MAX_REPLACE_BODY_BYTES) });
+    expect(res.status).toBe(200);
+    expect(fake.calls).toHaveLength(1);
   });
 });
 
