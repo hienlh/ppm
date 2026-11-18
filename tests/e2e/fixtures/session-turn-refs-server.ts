@@ -46,10 +46,11 @@ configService.set("ai", {
   default_provider: "claude", new_chat_provider_mode: "default", share_provider_context: false,
   providers: { claude: { type: "agent-sdk", permission_mode: "bypassPermissions" }, codex: { type: "cli", permission_mode: "bypassPermissions" } },
 } as never);
-// The session tools are off until the tour's question is answered; these flows start from "Turn on".
+// Every new feature is off until the tour's question is answered, and an unanswered one covers the
+// screen; these flows start from "Turn on".
 const { answerFeatureIntro } = await import("../../../src/services/feature-intros.service");
 const { FEATURE_INTROS } = await import("../../../src/shared/feature-intros");
-answerFeatureIntro(FEATURE_INTROS[0]!.id, "on");
+for (const intro of FEATURE_INTROS) answerFeatureIntro(intro.id, "on");
 
 const { _setClaudeProjectsRoot } = await import("../../../src/services/agent-transcript/claude-projects-root");
 _setClaudeProjectsRoot(claudeProjects);
@@ -57,8 +58,13 @@ const { getUploadsDir } = await import("../../../src/services/chat-upload-storag
 const { seedSessions } = await import("./session-turn-refs-transcripts/seed-sessions");
 const seed = seedSessions({ claudeProjects, codexSessions, uploads: getUploadsDir(), alpha, beta });
 
+if (process.env.PPM_TURN_REFS_COLLAB_CARDS === "1") {
+  const { seedCollabCards } = await import("./session-turn-refs-transcripts/collab-cards");
+  seed.G = seedCollabCards({ claudeProjects, codexSessions, uploads: getUploadsDir(), alpha, beta }, { other: seed.D, same: seed.B });
+}
+
 const db = await import("../../../src/services/db.service");
-for (const s of [seed.A, seed.B, seed.F, seed.D, seed.C]) {
+for (const s of [seed.A, seed.B, seed.F, seed.D, seed.C, ...(seed.G ? [seed.G] : [])]) {
   db.setSessionMetadata(s.id, s.project, s.project === "alpha" ? alpha : beta);
   db.setSessionTitle(s.id, s.title);
 }
