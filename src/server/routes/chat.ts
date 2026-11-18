@@ -52,6 +52,21 @@ import { parseHistoryPageQuery } from "./chat-history-page.ts";
 import { ok, err } from "../../types/api.ts";
 import { VALID_PERMISSION_MODES } from "../../types/config.ts";
 import { THINKING_ADAPTIVE, VALID_EFFORT_VALUES } from "../../providers/claude-agent-sdk-query-options.ts";
+import { createSpec } from "../../services/specs/spec.service.ts";
+import { isSpecChecks, isSpecKind, isSpecWorkflow, type SpecChecks, type SpecKind, type SpecWorkflow } from "../../shared/spec-types.ts";
+
+/** The `spec` a new chat may ask for: which kind, where it starts, its checks and a title. */
+function parseSpecStart(v: unknown): { kind: SpecKind; workflow: SpecWorkflow; checks: SpecChecks; title: string } | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  if (!isSpecKind(o.kind)) return null;
+  return {
+    kind: o.kind,
+    workflow: isSpecWorkflow(o.workflow) ? o.workflow : "requirements-first",
+    checks: isSpecChecks(o.checks) ? o.checks : "standard",
+    title: typeof o.title === "string" ? o.title.trim().slice(0, 120) : "",
+  };
+}
 import { createLogger } from "../../services/logger.ts";
 import { copyBindingToFork } from "../../services/extension-session-binding.service.ts";
 
@@ -286,7 +301,7 @@ chatRoutes.post("/sessions", async (c) => {
   try {
     const projectName = c.get("projectName");
     const projectPath = c.get("projectPath");
-    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string; designSlug?: unknown; assistant?: unknown }>();
+    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string; accountId?: string; designSlug?: unknown; assistant?: unknown; spec?: unknown }>();
     // An Assistant session lives only in the Assistant's virtual project, and every session
     // there is one (`chatService.createSession` marks it); the flag only has to agree.
     const assistant = isAssistantProject(projectName);
@@ -320,7 +335,19 @@ chatRoutes.post("/sessions", async (c) => {
       ...(isValidDesignSlug(designSlug) ? { designSlug } : {}),
       ...(typeof body.accountId === "string" && body.accountId ? { accountId: body.accountId } : {}),
     });
-    return c.json(ok(session), 201);
+    // A chat started in Spec mode: its spec is created now, bound to it, so the first message
+    // already carries the spec's rules. A spec that cannot be created leaves an ordinary chat.
+    let spec: { slug: string } | undefined;
+    const specStart = parseSpecStart(body.spec);
+    if (specStart && !isValidDesignSlug(designSlug) && !assistant) {
+      try {
+        const v = await createSpec(projectPath, { ...specStart, title: specStart.title || body.title || "Spec", sessionId: session.id });
+        spec = { slug: v.slug };
+      } catch (e) {
+        log.warn(`session=${session.id} spec could not be created: ${(e as Error).message}`);
+      }
+    }
+    return c.json(ok(spec ? { ...session, spec } : session), 201);
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }

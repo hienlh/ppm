@@ -1,0 +1,18 @@
+bun test v1.3.11 (af24e281)
+
+syntax.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+2 | it("x", () => { expect(1).toBe(1) ;
+                                       ^
+error: Unexpected end of file
+    at /work/syntax.test.ts:2:36
+-------------------------------
+
+
+ 0 pass
+ 1 fail
+ 1 error
+Ran 1 test across 1 file. [4.00ms]
+exit=1

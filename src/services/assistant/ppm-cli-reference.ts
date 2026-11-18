@@ -1440,6 +1440,44 @@ ppm schedule state <id>
 ppm schedule set-state <id> <file>
   Replace a script schedule's state with a JSON file; the schedule must be off
 \`\`\`
+## ppm spec — Spec mode: requirements → design → tasks, approved step by step
+\`\`\`
+ppm spec list
+  Specs of a project
+  --project <name> — Project name (default: the one holding the current directory)
+
+ppm spec status <slug>
+  Documents, tasks and waves of one spec
+  --project <name> — Project name
+
+ppm spec new <title>
+  Start a spec (its chat is the one you open on it in PPM)
+  --project <name> — Project name
+  --kind <kind> — feature | bugfix | quick [default: feature]
+  --checks <checks> — standard | thorough [default: standard]
+  --design-first — Write design.md before requirements.md
+
+ppm spec approve <slug> <phase>
+  Approve requirements, design, tasks or drawing
+  --project <name> — Project name
+  --quiet — Do not tell the spec's chat to go on
+
+ppm spec checks <slug> <level>
+  Switch between standard and thorough checks
+  --project <name> — Project name
+
+ppm spec run <slug>
+  Run every open task, wave by wave, each in a chat of its own
+  --project <name> — Project name
+  --provider <id> — Provider for the task chats (default: the spec chat's)
+
+ppm spec stop <slug>
+  Stop a run; running tasks go back to not started
+  --project <name> — Project name
+
+ppm spec call <tool> [json]
+  For an AI chat without MCP: call a spec tool (spec_status, spec_submit, task_start, task_done, task_red, task_green, suite_check)
+\`\`\`
 ## ppm export — Export PPM metadata for external tools (AI agents, editors)
 \`\`\`
 ppm export skill

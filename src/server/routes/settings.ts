@@ -146,6 +146,7 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   keepScreenAwake: (v) => typeof v === "boolean",
   sidebarWidth: (v) => typeof v === "number" && v >= 200 && v <= 600,
   gitStatusViewMode: (v) => v === "flat" || v === "tree",
+  chatHistoryViewMode: (v) => v === "flat" || v === "tree",
   editorTabStyle: (v) => v === "default" || v === "boxed" || v === "pill",
   sidebarActiveTab: (v) => typeof v === "string",
   sidebarTabOrder: (v) => Array.isArray(v) && v.length <= 50 && v.every((t) => typeof t === "string"),

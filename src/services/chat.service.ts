@@ -36,9 +36,13 @@ import { turnSecretScrubber } from "./vault/turn-secret-scrubber.ts";
 import { transcriptRedactor } from "./vault/transcript-redactor.ts";
 import { aiConnections } from "./db-ai-tools/db-ai-connections.ts";
 import { DB_TOOLS } from "../shared/db-ai-tools.ts";
-import { anyPpmToolOn, ppmToolOn, SESSION_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
+import { anyPpmToolOn, ppmToolOn, SESSION_TOOLS, SPEC_MODE_TOOLS, TAB_TOOLS } from "../shared/ppm-tools.ts";
 import { PPM_TASK_LIST_TOOL } from "../shared/ppm-task-tools.ts";
 import { VAULT_TOOLS } from "../shared/vault.ts";
+import { specMcpAccessFor, specMcpTokens } from "./specs/spec-mcp-tokens.ts";
+import { specForSession, unbindSpecSession } from "./specs/spec-store.ts";
+import { getSpec } from "./specs/spec.service.ts";
+import { buildSpecContext } from "./specs/spec-context.ts";
 import { sessionCollabMcpAccessFor, sessionCollabMcpTokens } from "./session-collab/session-collab-tokens.ts";
 import { collabApprovalBroker } from "./session-collab/collab-approval-broker.ts";
 import { collabWaits } from "./session-collab/collab-waits.ts";
@@ -312,6 +316,8 @@ class ChatService {
     turnSecretScrubber.release(sessionId);
     transcriptRedactor.forget(sessionId);
     sessionCollabMcpTokens.revoke(sessionId);
+    specMcpTokens.revoke(sessionId);
+    unbindSpecSession(sessionId);
     collabApprovalBroker.cancelSession(sessionId, "The chat was deleted, so nothing was done.");
     collabWaits.cancelWaiter(sessionId);
     this.turnEnds.delete(sessionId);
@@ -514,7 +520,7 @@ class ChatService {
     } = opts ?? {};
     // Like the design fields, the tab, database and session tools are only ever server-built. An
     // Assistant session is never also a design session: its policy replaces the design one outright.
-    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, sessionCollabMcp: _sessionTools, ...design } =
+    const { tabToolsMcp: _tabTools, dbToolsMcp: _dbTools, sessionCollabMcp: _sessionTools, specMcp: _specTools, ...design } =
       this.resolveAssistantOptions(providerId, sessionId, callerOpts)
       ?? await this.resolveDesignOptions(providerId, sessionId, callerOpts);
     // A mode stored for the session is what it runs under when the caller names none (the CLI,
@@ -646,11 +652,19 @@ class ChatService {
     // Cards the user answered themselves since the Assistant's last turn: news once, never compared.
     const cardNotes = design.assistantSession && !slash ? takeCardAnswerNotes(sessionId) : undefined;
     // Every entry is server-built: a caller's own `sharedContext` is dropped here.
-    const sharedContext = joinSharedContextEntries(managerEntry, taskNews?.text, shared, ui, channelEntry, managersEntry, notebookEntry, cardNotes);
+    // Spec mode: the tools for any project chat (a chat can start a spec mid-way, and a running
+    // CLI keeps the servers it started with), and the spec's rules and state in front of each
+    // message of a chat bound to one, sent every time since they change with every step. Cursor
+    // has no MCP: it gets the token as environment for `ppm spec call`.
+    const specMcp = ppmTools && anyPpmToolOn(ai, SPEC_MODE_TOOLS) ? specMcpAccessFor(sessionId) : null;
+    const specBlock = specMcp && !slash
+      ? await this.specContextFor(sessionId, providerId === "cursor" ? "cli" : "mcp") ?? undefined : undefined;
+    const sharedContext = joinSharedContextEntries(managerEntry, taskNews?.text, shared, ui, channelEntry, managersEntry, notebookEntry, cardNotes, specBlock);
     return {
       opts: {
         ...design, ...bound, ...(tabToolsMcp ? { tabToolsMcp } : {}), ...(dbToolsMcp ? { dbToolsMcp } : {}),
         ...(sessionCollabMcp ? { sessionCollabMcp } : {}), ...(extensionMcp ? { extensionMcp } : {}),
+        ...(specMcp ? { specMcp } : {}),
         // The `ppm <name>` commands enabled extensions contribute; an Assistant session has its own
         // instructions and nothing else.
         // A policy session cannot run a shell, so it is not told about commands it cannot run.
@@ -742,6 +756,23 @@ class ChatService {
       ...(servers.length > 0 ? { assistantMcpServers: servers } : {}),
       permissionMode: "default",
     };
+  }
+
+  /** The `<ppm_spec_state>` block of a chat bound to a spec, or null. Never fails a turn. */
+  private async specContextFor(sessionId: string, via: "mcp" | "cli"): Promise<string | null> {
+    let binding = specForSession(sessionId);
+    if (!binding) {
+      // A Codex chat is renamed during its first turn; a spec bound before that is under the old id.
+      const { sessionIdAliases } = await import("./db.service.ts");
+      binding = sessionIdAliases(sessionId).map((id) => specForSession(id)).find((b) => b !== null) ?? null;
+    }
+    if (!binding) return null;
+    try {
+      return buildSpecContext(await getSpec(binding.projectPath, binding.slug), { via, taskId: binding.taskId });
+    } catch (e) {
+      log.warn(`session=${sessionId} spec ${binding.slug} could not be read for the turn: ${(e as Error).message}`);
+      return null;
+    }
   }
 
   /**

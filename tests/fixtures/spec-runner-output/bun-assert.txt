@@ -1,0 +1,37 @@
+bun test v1.3.11 (af24e281)
+
+assert.test.ts:
+1 | import { describe, expect, it } from "bun:test";
+2 | describe("html export", () => {
+3 |   it("inlines images", () => { expect("https://x").not.toContain("https://"); });
+                                                           ^
+error: expect(received).not.toContain(expected)
+
+Expected to not contain: "https://"
+Received: "https://x"
+
+      at <anonymous> (/work/assert.test.ts:3:56)
+(fail) html export > inlines images
+1 | import { describe, expect, it } from "bun:test";
+2 | describe("html export", () => {
+3 |   it("inlines images", () => { expect("https://x").not.toContain("https://"); });
+4 |   it("lists unreadable images", () => { expect([1]).toEqual([]); });
+                                                        ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   1,
++ ]
+
+- Expected  - 1
++ Received  + 3
+
+      at <anonymous> (/work/assert.test.ts:4:53)
+(fail) html export > lists unreadable images
+
+ 1 pass
+ 2 fail
+ 3 expect() calls
+Ran 3 tests across 1 file. [21.00ms]
+exit=1

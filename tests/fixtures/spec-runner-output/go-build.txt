@@ -1,0 +1,5 @@
+# example.com/x [example.com/x.test]
+./x_test.go:3:33: undefined: Sub
+FAIL	example.com/x [build failed]
+FAIL
+exit=1

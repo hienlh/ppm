@@ -272,6 +272,13 @@ app.all(SESSION_COLLAB_MCP_PATH, sessionCollabMcpHandler);
 import { extensionMcpHandler } from "../services/extension-mcp/extension-mcp-endpoint.ts";
 import { EXTENSION_MCP_PATH } from "../services/extension-mcp/extension-mcp-tokens.ts";
 app.all(EXTENSION_MCP_PATH, extensionMcpHandler);
+// Spec mode's tools (`spec_submit`, `task_red`, …): the same, for any chat that is not a design
+// session; approvals stay behind auth at `/api/project/:name/specs`.
+import { specMcpHandler } from "../services/specs/spec-mcp-endpoint.ts";
+import { SPEC_MCP_PATH } from "../services/specs/spec-mcp-tokens.ts";
+app.all(SPEC_MCP_PATH, specMcpHandler);
+// Run all and the approvals' follow-up messages reach chats through the server's own doors.
+import "./ws/spec-run-env.ts";
 
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
