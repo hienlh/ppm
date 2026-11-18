@@ -50,6 +50,8 @@ export function fakeEnv(opts: {
 }) {
   const sessions = opts.sessions;
   const asked: SessionCollabApprovalInput[] = [];
+  /** How long each card was allowed to wait, in the order asked. */
+  const askedWaitMs: Array<number | undefined> = [];
   const deliveries: DeliverToSessionInput[] = [];
   const created: string[] = [];
   const announced: string[] = [];
@@ -140,8 +142,9 @@ export function fakeEnv(opts: {
     isUnattendedTurn: (id) => (opts.unattended ?? []).includes(id),
     projectByName: (name) => (name === "app" ? { name, path: PROJECT_PATH } : name === "other" ? { name, path: OTHER_PATH } : null),
     chatMode: (id) => ({ mode: opts.chatModes?.[id] ?? sessions[id]?.mode ?? "bypassPermissions", source: sessions[id]?.mode ? "stored" : "provider-default" }),
-    approve: async (_sessionId, input) => {
+    approve: async (_sessionId, input, _signal, waitMs) => {
       asked.push(input);
+      askedWaitMs.push(waitMs);
       opts.onApprove?.();
       const answer = answers.shift() ?? "deny";
       if (answer === "timeout") return { allowed: false, reason: "timeout", message: "The user did not answer." };
@@ -184,7 +187,7 @@ export function fakeEnv(opts: {
     announceLinks: (_project, ids) => { announced.push(`links:${ids.join(",")}`); },
     unread,
   };
-  return { env, asked, deliveries, created, announced, createdEvents, starting, waits, unread, touched, reservedSlots: () => reserved };
+  return { env, asked, askedWaitMs, deliveries, created, announced, createdEvents, starting, waits, unread, touched, reservedSlots: () => reserved };
 }
 
 /** The text of a tool result. */

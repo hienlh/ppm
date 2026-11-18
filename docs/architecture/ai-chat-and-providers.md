@@ -926,8 +926,9 @@ restarts a stopped session. The endpoint lifts Bun's 10 s idle timeout for the r
 the settings allow plus the card time (`SESSION_COLLAB_TOOLS_TIMEOUT_MS`, 72 min), because a
 running CLI keeps the timeout it started with. Antigravity is the exception: agy ends every MCP
 call after 3 minutes and ACP offers no way to lengthen it, so an Antigravity caller's wait ends
-165 s after its call began (`AGY_ANSWER_WITHIN_MS`), as a `timeout`; a card the user answers after
-agy gave up is cancelled with the call.
+165 s after its call began (`AGY_ANSWER_WITHIN_MS`), as a `timeout`. Its create, pair-limit and
+escalation cards wait no longer than that either (`askUser` in `collab-ask-user.ts`): one that runs
+out is withdrawn as expired, so a late answer creates nothing, and the AI is told it was agy's limit.
 
 **Limits** (`ai.session_collab`, `src/shared/session-collab-settings.ts`): depth 3 (a user-started
 session is depth 0), 20 automatic messages per session pair (reset when the user writes in either),

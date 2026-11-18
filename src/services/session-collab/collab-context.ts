@@ -97,7 +97,8 @@ export interface CollabEnv extends AssistantCollabHooks {
     /** Allowed, and the target runs no more permissively now than when it was allowed. */
     escalationAllowed(sender: string, target: string, targetMode: string | null): boolean;
   };
-  approve(sessionId: string, input: SessionCollabApprovalInput, signal?: AbortSignal): Promise<CollabApprovalOutcome>;
+  /** Shows a card in the session's chat and waits `waitMs` at most for the user's answer (`askUser`). */
+  approve(sessionId: string, input: SessionCollabApprovalInput, signal?: AbortSignal, waitMs?: number): Promise<CollabApprovalOutcome>;
   waits: CollabWaits;
   /** AI-created sessions of the project counted against the running limit. */
   runningSpawned(projectName: string): string[];

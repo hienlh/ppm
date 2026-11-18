@@ -3,6 +3,7 @@ import { isValidDesignSlug } from "../design/design-slug.ts";
 import type { CreateSessionResult, SessionCollabCreateApproval } from "../../shared/session-collab.ts";
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import { effectivePermissionMode, isCollabProvider, projectFor, sanitizeTitle, type CollabCaller, type CollabEnv, type CollabProviderId } from "./collab-context.ts";
+import { askUser } from "./collab-ask-user.ts";
 import { deliverAndWait } from "./collab-deliver.ts";
 import { createManagerSessionTool } from "./collab-create-manager.ts";
 import { jsonResult, noteAiTextRead, statusOf } from "./collab-status.ts";
@@ -148,7 +149,7 @@ async function createReserved(env: CollabEnv, caller: CollabCaller, plan: Create
       ...(assistant ? { askedBy: "assistant" as const, projectName: project.name, permissionMode, modeSource: "provider-default" as const } : {}),
       ...(design ? { design: { slug: design.slug, title: design.title }, ...(assistant ? {} : { permissionMode }) } : {}),
     };
-    const answer = await env.approve(caller.sessionId, card, signal);
+    const answer = await askUser(env, caller, card, signal);
     if (!answer.allowed) return textResult(`The session was not created. ${answer.message}`, true);
     if (answer.answer === "allow_session" && !assistant) env.pairs.setAllowCreate(caller.sessionId);
     // Time passed while the user read the card; this create's own slot is still held.

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { createSessionTool } from "../../../src/services/session-collab/collab-create.ts";
-import { resolveCaller } from "../../../src/services/session-collab/collab-context.ts";
+import { AGY_ANSWER_WITHIN_MS, resolveCaller } from "../../../src/services/session-collab/collab-context.ts";
+import { createCollabApprovalBroker } from "../../../src/services/session-collab/collab-approval-broker.ts";
+import { CALLER_DEADLINE_CARD_EXPIRED } from "../../../src/services/session-collab/collab-ask-user.ts";
+import { COLLAB_APPROVAL_WAIT_MS } from "../../../src/services/session-collab/session-collab-tool.ts";
+import type { SessionCollabApprovalRequest } from "../../../src/shared/session-collab.ts";
 import { fakeEnv, PROJECT_PATH, textOf, type FakeSession } from "./session-collab-fake-env.ts";
 
 const PARENT = "parent-session";
@@ -149,6 +153,53 @@ describe("create_session", () => {
     expect(w.env.waits.claimReply("child-session-1", PARENT, { text: "all done", sentAt: new Date(0).toISOString() })).toBe(true);
     const body = JSON.parse(textOf(await pending));
     expect(body.reply).toMatchObject({ replied: true, text: "all done" });
+  });
+
+  it("gives the card the full wait for a caller with no deadline, and only what agy leaves for an Antigravity caller", async () => {
+    const w = world({}, { answers: ["allow_once"] });
+    await createSessionTool(w.env, w.caller, { title: "One", task: "a" }, signal());
+    expect(w.askedWaitMs).toEqual([COLLAB_APPROVAL_WAIT_MS]);
+
+    const agy = world({ providerId: "antigravity" }, { answers: ["allow_once"] });
+    await createSessionTool(agy.env, agy.caller, { title: "One", task: "a" }, signal());
+    expect(agy.askedWaitMs[0]).toBeGreaterThan(0);
+    expect(agy.askedWaitMs[0]).toBeLessThanOrEqual(AGY_ANSWER_WITHIN_MS);
+    expect(agy.created).toHaveLength(1);
+  });
+
+  it("withdraws an Antigravity caller's card at agy's deadline, says why, creates nothing, and refuses a late answer", async () => {
+    const w = world({ providerId: "antigravity" });
+    const announced: SessionCollabApprovalRequest[] = [];
+    const resolved: Array<{ requestId: string; end?: string }> = [];
+    const broker = createCollabApprovalBroker({
+      chat: () => ({
+        announce: (_s, event) => { announced.push(event); return true; },
+        resolved: (_s, requestId, _answer, end) => { resolved.push({ requestId, end }); },
+      }),
+    });
+    w.env.approve = (sessionId, input, sig, waitMs) => broker.request(sessionId, input, sig, waitMs);
+    const started = Date.now();
+    const result = await createSessionTool(w.env, { ...w.caller, answerBy: started + 40 }, { title: "One", task: "a" }, signal());
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe("The session was not created. " + CALLER_DEADLINE_CARD_EXPIRED);
+    expect(textOf(result)).toContain("Antigravity");
+    const requestId = announced[0]!.requestId;
+    // The card is taken off the chat as expired, so nobody can approve it after the tool answered.
+    expect(resolved).toEqual([{ requestId, end: "expired" }]);
+    expect(broker.answer(requestId, { answer: "allow_once" })).toMatchObject({ ok: false, status: 404 });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(w.created).toHaveLength(0);
+    expect(w.deliveries).toHaveLength(0);
+    expect(w.reservedSlots()).toBe(0);
+  });
+
+  it("shows no card at all when an Antigravity caller has no time left", async () => {
+    const w = world({ providerId: "antigravity" }, { answers: ["allow_once"] });
+    const result = await createSessionTool(w.env, { ...w.caller, answerBy: Date.now() - 1 }, { title: "One", task: "a" }, signal());
+    expect(textOf(result)).toBe("The session was not created. " + CALLER_DEADLINE_CARD_EXPIRED);
+    expect(w.asked).toHaveLength(0);
+    expect(w.created).toHaveLength(0);
   });
 
   it("is not available to a design session", () => {

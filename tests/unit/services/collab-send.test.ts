@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { sendToSessionTool } from "../../../src/services/session-collab/collab-send.ts";
 import { AGY_ANSWER_WITHIN_MS, resolveCaller } from "../../../src/services/session-collab/collab-context.ts";
+import { CALLER_DEADLINE_CARD_EXPIRED } from "../../../src/services/session-collab/collab-ask-user.ts";
 import { fakeEnv, OTHER_PATH, PROJECT_PATH, textOf, type FakeSession } from "./session-collab-fake-env.ts";
 
 const A = "session-aaaa";
@@ -94,6 +95,29 @@ describe("send_to_session", () => {
     expect(denied.isError).toBe(true);
     expect(w.asked).toHaveLength(2);
     expect(w.deliveries).toHaveLength(4);
+  });
+
+  it("bounds an Antigravity caller's pair-limit and escalation cards by agy's deadline, and says so when they expire", async () => {
+    const limited = world({}, { settings: { maxAutoMessagesPerPair: 0 }, answers: ["timeout"] }, { providerId: "antigravity" });
+    const atLimit = await sendToSessionTool(limited.env, limited.caller, { session_id: B, message: "x" }, signal());
+    expect(atLimit.isError).toBe(true);
+    expect(textOf(atLimit)).toContain(CALLER_DEADLINE_CARD_EXPIRED);
+    expect(limited.asked.map((a) => a.kind)).toEqual(["pair_limit"]);
+    expect(limited.askedWaitMs[0]).toBeLessThanOrEqual(AGY_ANSWER_WITHIN_MS);
+    expect(limited.deliveries).toHaveLength(0);
+
+    const escalation = world({ mode: "bypassPermissions" }, { answers: ["timeout"] }, { providerId: "antigravity", mode: "default" });
+    const higher = await sendToSessionTool(escalation.env, escalation.caller, { session_id: B, message: "x" }, signal());
+    expect(textOf(higher)).toContain(CALLER_DEADLINE_CARD_EXPIRED);
+    expect(escalation.asked.map((a) => a.kind)).toEqual(["escalation"]);
+    expect(escalation.askedWaitMs[0]).toBeLessThanOrEqual(AGY_ANSWER_WITHIN_MS);
+    expect(escalation.deliveries).toHaveLength(0);
+    expect(escalation.env.pairs.count(A, B)).toBe(0);
+
+    // A caller with no deadline keeps the ordinary timeout message.
+    const claude = world({ mode: "bypassPermissions" }, { answers: ["timeout"] }, { mode: "default" });
+    const plain = await sendToSessionTool(claude.env, claude.caller, { session_id: B, message: "x" }, signal());
+    expect(textOf(plain)).not.toContain("Antigravity");
   });
 
   it("asks before reaching a more permissive session, showing the whole message, and remembers Allow for this session", async () => {
