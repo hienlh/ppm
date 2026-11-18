@@ -179,7 +179,8 @@ async function windowOpensChat(k, s) {
   const win = windowOf(page, login.id);
   await win.waitFor({ timeout: 20000 });
   await k.beat();
-  await win.locator("[data-working-session]").getByRole("button", { name: "Open chat" }).click();
+  // The manager works on this task: its page opens that chat with Ask manager (no Open chat beside it).
+  await win.getByRole("button", { name: "Ask manager" }).first().click();
   // The chat is in front, the window is not: hidden from the layer, kept as a minimized chip.
   await page.locator("[data-composer-task-refs] [data-task-chip]:visible").first().waitFor({ timeout: 20000 });
   await until("the task window went to the dock", async () => !(await win.isVisible()), 10000);

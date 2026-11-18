@@ -96,7 +96,7 @@ async function desktop(k, s) {
   assert(pb.left >= lb.right, `the popover does not cover the list (${pb.left} < ${lb.right})`);
   assert.match(await peek.locator("[data-task-peek-title]").innerText(), new RegExp(`#${login.number}\\s*${login.title}`));
   const heights = {
-    openChat: await heightOf(peek.locator("[data-task-peek-chat]"), TEXT(false), "Open chat"),
+    askManager: await heightOf(peek.locator("[data-task-peek-ask-manager]"), TEXT(false), "Ask manager"),
     openWindow: await heightOf(peek.locator("[data-task-peek-page]"), TEXT(false), "Open in window"),
     close: await heightOf(peek.locator("[data-task-peek-close]"), ICON(false), "×"),
   };
@@ -160,13 +160,15 @@ async function desktop(k, s) {
   await until("the due date typed before the outside press is saved", async () => (await k.task(release.id)).dueDate === "2026-12-24", 15000);
   await k.endScene();
 
-  // Open chat from the quick view puts the task on the composer; that chip opens it too.
+  // Ask manager from the quick view puts the task on the composer; that chip opens it too.
   await k.scene("p4", "The task chip opens the same view", "In the composer and on a sent message, a task chip shows the task above it.");
   await openList(page);
   await rowOpen(page, login.id).click();
-  const chatBtn = peekOf(page, login.id).locator("[data-task-peek-chat]");
-  // The demo project has a manager chat, which works on the task until it is handed off.
-  assert(await chatBtn.isEnabled(), "Open chat is offered for a task the manager works on");
+  const chatBtn = peekOf(page, login.id).locator("[data-task-peek-ask-manager]");
+  // The demo project has a manager chat, which works on the task until it is handed off: Ask
+  // manager is the one way to it, with no Open chat beside it opening the same chat.
+  assert(await chatBtn.isEnabled(), "Ask manager is offered for a task the manager works on");
+  assert.equal(await peekOf(page, login.id).locator("[data-task-peek-chat]").count(), 0, "no Open chat beside it");
   await chatBtn.click();
   await until("the list closed for the chat", async () => (await list(page).count()) === 0, 5000);
   const composerChip = page.locator(`[data-composer-task-refs] [data-task-chip="${login.id}"]:visible`);
@@ -244,7 +246,7 @@ async function phoneFlow(k, s, width) {
   assert.equal(await page.locator("[data-task-peek-popover]").count(), 0, "no second sheet or popover");
   const heights = {
     back: await heightOf(pagePeek.locator("[data-task-peek-back]"), ICON(true), "‹ back"),
-    openChat: await heightOf(pagePeek.locator("[data-task-peek-chat]"), TEXT(true), "Open chat"),
+    askManager: await heightOf(pagePeek.locator("[data-task-peek-ask-manager]"), TEXT(true), "Ask manager"),
     fullScreen: await heightOf(pagePeek.locator("[data-task-peek-page]"), TEXT(true), "Full screen"),
   };
   const fit = await pagePeek.evaluate((el) => el.scrollWidth <= el.clientWidth + 1);

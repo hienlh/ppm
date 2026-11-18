@@ -251,9 +251,9 @@ async function managerChatCodes(k, s) {
   await k.shot("c07-manager-chip-1440");
   await page.keyboard.press("Escape");
 
-  // "Open chat" on the task's page puts the task on the manager composer as a chip.
+  // "Ask manager" on the task's page puts the task on the manager composer as a chip.
   await k.selectTask(login.title);
-  await k.detail().locator("[data-working-session]").getByRole("button", { name: /Open chat/ }).click();
+  await k.detail().getByRole("button", { name: "Ask manager" }).first().click();
   const taskChip = page.locator("[data-task-chip]:visible").first();
   await taskChip.waitFor({ timeout: 20000 });
   await page.locator("[data-composer-task-refs] [data-task-code]", { hasText: `#${login.number}` }).first().waitFor({ timeout: 20000 });
@@ -373,9 +373,9 @@ async function phoneCodes(k, s) {
     await assertCodesFit(page, "[data-task-detail-mobile]", `phone ${width} detail`);
   }
   await page.setViewportSize({ width: 390, height: 844 });
-  // Open chat from the task page: the manager composer takes the task as a chip.
+  // Ask manager from the task page: the manager composer takes the task as a chip.
   await detail.locator("[data-working-session]").scrollIntoViewIfNeeded();
-  await detail.locator("[data-working-session]").getByRole("button", { name: /Open chat/ }).tap();
+  await detail.locator("[data-working-session]").getByRole("button", { name: "Ask manager" }).tap();
   const phoneChip = page.locator("[data-composer-task-refs] [data-task-chip]:visible").first();
   await phoneChip.waitFor({ timeout: 20000 });
   await page.locator("[data-composer-task-refs] [data-task-code]", { hasText: `#${login.number}` }).first().waitFor({ timeout: 20000 });

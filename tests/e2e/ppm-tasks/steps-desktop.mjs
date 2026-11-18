@@ -129,8 +129,8 @@ async function decision(k, s) {
   assert((hist.history ?? hist).some((h) => h.kind === "decided"), "history has the decision");
   await page.getByText(/Choice sent to the manager chat/).first().waitFor({ timeout: 10000 });
   await k.beat(1000);
-  // Show where it went: the manager chat, from the working-session block.
-  await k.detail().getByRole("button", { name: "Open chat" }).first().click();
+  // Show where it went: the manager chat, from the page's Ask manager.
+  await k.detail().getByRole("button", { name: "Ask manager" }).first().click();
   // The chat's copy: the task's own (its decision card) is in a window that went to the dock.
   await page.getByText("One plan with a usage slider").and(page.locator("*:visible")).last().waitFor({ timeout: 20000 });
   await k.beat(2000);
@@ -182,7 +182,7 @@ async function managerChip(k, s) {
   await k.selectTask(s.t.release.title);
   await k.scene("s5", "The Tasks chip in the manager chat", "Above the composer: open tasks and how many are Now; it opens a short list, one tap away from each task.");
   const taskWindow = page.locator('[aria-roledescription="window"]', { has: page.locator(`[data-task-detail="${s.t.release.id}"]`) });
-  await k.detail().getByRole("button", { name: "Open chat" }).first().click();
+  await k.detail().getByRole("button", { name: "Ask manager" }).first().click();
   const chip = page.locator("[data-manager-tasks-chip]:visible").first();
   await chip.waitFor({ timeout: 20000 });
   // The task's window went to the dock, so nothing covers the chat it opened.

@@ -62,12 +62,12 @@ async function cardOf(tg, title) {
   return deck;
 }
 
-/** Presses "Message about this task" and types `typed`: the user's own message, as the bot sees it. */
+/** Presses "Ask manager" (the task is not handed off) and types `typed`: the user's own message, as the bot sees it. */
 async function writeAbout(k, title, typed) {
   const { tg } = k;
   const deck = await cardOf(tg, title);
   const shownDeck = { ...deck };
-  await tg.pressLabel(OWNER, deck, "💬 Message about this task");
+  await tg.pressLabel(OWNER, deck, "🤖 Ask manager");
   const prompt = await tg.waitFor(OWNER, "the prompt", (m) => m.text.includes("Your next message goes to"), 20000);
   const pushed = await tg.send(OWNER, typed);
   const userMessageId = pushed.message?.message_id ?? pushed.update?.message?.message_id;
@@ -88,7 +88,7 @@ async function answered(k, s) {
   const sent = await k.tg.message(OWNER, prompt.message_id);
   const page = await k.openFrame(telegramFrame([
     { ...shownDeck, caption: "The task's card" },
-    { text: "💬 Message about this task", from_user: true },
+    { text: "🤖 Ask manager", from_user: true },
     { ...prompt, caption: "The bot says where it goes" },
     { text: typed, from_user: true },
     { ...sent, caption: "Handed to the chat" },
@@ -113,7 +113,7 @@ async function waitingOnCard(k, s) {
   const sent = await k.tg.message(OWNER, prompt.message_id);
   const page = await k.openFrame(telegramFrame([
     { ...shownDeck, caption: "The task's card" },
-    { text: "💬 Message about this task", from_user: true },
+    { text: "🤖 Ask manager", from_user: true },
     { text: typed, from_user: true },
     { ...sent, caption: "Handed to the chat" },
     { ...waiting, caption: "The chat stopped on a question: said under the user's message" },
