@@ -464,13 +464,13 @@ try {
   await set().locator("[data-decision-send-one]").click();
   await until("choices answered", async () => (await fx.api("/api/assistant/cards/open")).data.cards.every((c) => c.id !== choices.id), 15000);
   await page.waitForTimeout(400);
-  const choicesTab = set().locator(`[data-question-tab="${choices.id}"]`);
-  assert.match(await choicesTab.innerText(), /✓/, "the sent card's tab is marked ✓");
+  assert.equal(await set().locator(`[data-question-tab="${choices.id}"]`).count(), 0, "the sent card's tab leaves the set");
+  assert.match(await set().locator("[data-decision-flash='sent']").innerText(), /Sent/, "a line says the card was sent");
   assert.match(await set().locator("[data-decision-send-all]").innerText(), /\(0\/3\)/, "the rest still wait, none picked");
   await page.screenshot({ path: join(shotsDir, "b-1440-sent-one-rest-waiting.png") });
   const choicesNow = (await fx.api("/api/assistant/cards?limit=50")).data.cards.find((c) => c.id === choices.id);
   assert.equal(choicesNow.answer?.choice?.id, "morning", "the server took the choice pressed");
-  ok("1440: Send this one answers that card alone (choice morning); its tab says ✓; the other three still wait");
+  ok("1440: Send this one answers that card alone (choice morning); its tab leaves; the other three still wait");
 
   // OK on the long card; words and a picture on the screenshots card; the urgent one left unanswered.
   await jumpTo(desk1440, long);

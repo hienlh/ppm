@@ -140,6 +140,17 @@ export async function setupManagerLoop(opts: { port: number }): Promise<ManagerL
         await say({ project: b.project, sessionId: b.sessionId, text: b.text, ...(typeof b.permissionMode === "string" ? { permissionMode: b.permissionMode } : {}) });
         return json({ ok: true });
       }
+      if (route === "close-card" && req.method === "POST") {
+        // A card the server closes on its own (`resolved`, as the manager side does for its
+        // requests), through the cards service's real `transition`, so every screen hears of it.
+        const b = await req.json() as { id?: unknown; note?: unknown };
+        if (typeof b.id !== "string") return json({ error: "id is required" }, 400);
+        const { assistantCards } = await import("../../../src/services/assistant-cards/assistant-cards.service");
+        const moved = assistantCards.transition(b.id, "resolved", {
+          by: "ppm", channel: "chat", at: clock.now(), note: typeof b.note === "string" ? b.note : "Closed by the manager chat",
+        });
+        return json(moved, moved.ok ? 200 : 409);
+      }
       return null;
     },
   };

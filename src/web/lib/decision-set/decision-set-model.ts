@@ -147,8 +147,8 @@ export function projectCounts(cards: readonly AssistantCard[]): string {
 
 /**
  * The order the set's tabs keep: the order it had, with cards that arrived since added at the end
- * (a new card never moves the tab the user is on), and ids that are neither waiting nor kept as
- * done dropped.
+ * (a new card never moves the tab the user is on), and ids that are neither waiting nor kept (a
+ * card being sent from here) dropped.
  */
 export function nextTabOrder(previous: readonly string[], waitingInOrder: readonly string[], keep: ReadonlySet<string>): string[] {
   const waiting = new Set(waitingInOrder);
@@ -156,4 +156,44 @@ export function nextTabOrder(previous: readonly string[], waitingInOrder: readon
   const known = new Set(kept);
   for (const id of waitingInOrder) if (!known.has(id)) kept.push(id);
   return kept;
+}
+
+/**
+ * The set's tabs: every card that still waits, plus a card whose answer is on its way from here.
+ * That one leaves the waiting list the moment the server marks it answered, before the answer
+ * comes back, and keeps its tab until the send says how it went (a failed forward puts it back).
+ * A card answered anywhere else — Telegram, another window, dismissed, closed by its manager — is
+ * simply gone: what happened to it is told where the conversation is, never in the set.
+ */
+export function decisionTabs(
+  order: readonly string[],
+  waiting: readonly AssistantCard[],
+  inFlight: Readonly<Record<string, AssistantCard>>,
+  scope: (card: AssistantCard) => boolean,
+): AssistantCard[] {
+  const byId = new Map(waiting.map((c) => [c.id, c]));
+  const tabs: AssistantCard[] = [];
+  const placed = new Set<string>();
+  for (const id of order) {
+    const card = byId.get(id) ?? inFlight[id];
+    if (card && !placed.has(id) && scope(card)) tabs.push(card);
+    placed.add(id);
+  }
+  // The order catches up an effect later; a card shown before that still gets its tab.
+  for (const card of waiting) if (!placed.has(card.id) && scope(card)) { tabs.push(card); placed.add(card.id); }
+  return tabs;
+}
+
+/**
+ * Which tab is open. The card the user chose while it is still there; else the tab now standing
+ * where the open one stood — the next waiting card, or the last one when it was at the end —
+ * so a card answered elsewhere under the user's eyes moves them on rather than back to the start;
+ * else (a set just shown) the first.
+ */
+export function activeTabIndex(tabIds: readonly string[], activeId: string | null, lastIndex: number): number {
+  if (tabIds.length === 0) return -1;
+  const at = activeId ? tabIds.indexOf(activeId) : -1;
+  if (at >= 0) return at;
+  if (activeId === null) return 0;
+  return Math.min(Math.max(0, lastIndex), tabIds.length - 1);
 }
