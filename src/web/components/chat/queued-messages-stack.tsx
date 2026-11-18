@@ -3,7 +3,7 @@
  * (Claude Code's queue). The list is the server's (`queue_state`), so every device shows the same
  * stack. Send now has the AI read the queue at once; Edit puts a message back into the composer;
  * Remove drops it. A message the AI has already started on cannot be taken back, and the server
- * says so. Attached images show as the same thumbnails the sent bubble draws, from the paths in
+ * says so. After a Stop the messages stay, held: they go only on Send now or through Edit. Attached images show as the same thumbnails the sent bubble draws, from the paths in
  * the message's attachment markers, never as the markers' text.
  */
 import { memo } from "react";
@@ -29,13 +29,21 @@ const ROW_BUTTON =
 
 const imagesLabel = (n: number) => (n === 1 ? "1 image" : `${n} images`);
 
+/** What the header says: a Stop leaves messages that wait for the person, not for the AI. */
+function queueSummary(messages: QueuedMessage[]): string {
+  const held = messages.filter((m) => m.paused).length;
+  if (held === 0) return `${messages.length} queued · sent when the AI is ready`;
+  if (held === messages.length) return `${held} held after Stop · sent only when you send them`;
+  return `${messages.length} queued · ${held} held after Stop`;
+}
+
 export const QueuedMessagesStack = memo(function QueuedMessagesStack({ messages, projectName, onSendNow, onEdit, onRemove }: QueuedMessagesStackProps) {
   if (messages.length === 0) return null;
   return (
     <div className="mx-2 mb-1.5 overflow-hidden rounded-xl border border-border-soft bg-panel-2" data-testid="queued-messages">
       <div className="flex items-center gap-2 px-3 py-1 text-[11.5px] text-text-3">
         <Clock className="size-3.5 shrink-0" />
-        <span className="min-w-0 flex-1">{messages.length} queued · sent when the AI is ready</span>
+        <span className="min-w-0 flex-1">{queueSummary(messages)}</span>
         <button
           type="button"
           onClick={onSendNow}

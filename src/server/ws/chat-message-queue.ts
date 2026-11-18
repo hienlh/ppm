@@ -8,7 +8,7 @@
  * it. For every other provider PPM holds the entry and sends what it holds as one message when the
  * turn ends. Either way a message enters the conversation (`user_message` to every device, the
  * sender's included) only when the AI starts on it, which is when Claude Code stops showing it as
- * queued.
+ * queued. Stop keeps every entry, paused: none goes out by itself after that, only on Send now.
  */
 import type { AIProvider } from "../../types/chat.ts";
 import { joinQueuedContent, type QueuedMessage, type QueueLifecycleState } from "../../shared/chat-queue.ts";
@@ -42,8 +42,8 @@ export interface EnqueueInput {
 }
 
 export function queueState(holder: QueueHolder): QueuedMessage[] {
-  return (holder.queue ?? []).map(({ id, content, imageCount, clientMessageId, queuedAt }) => ({
-    id, content, imageCount, queuedAt, ...(clientMessageId ? { clientMessageId } : {}),
+  return (holder.queue ?? []).map(({ id, content, imageCount, clientMessageId, queuedAt, paused }) => ({
+    id, content, imageCount, queuedAt, ...(clientMessageId ? { clientMessageId } : {}), ...(paused ? { paused } : {}),
   }));
 }
 
@@ -113,6 +113,16 @@ export async function takeBackQueued(holder: QueueHolder, id: string, deps: Queu
 }
 
 /**
+ * Stop: what was queued stays queued, for the person to send or edit, and never goes out by
+ * itself. A provider's own queue goes with the stopped process, so PPM holds every entry from here.
+ */
+export function pauseQueue(holder: QueueHolder, deps: Pick<QueueDeps, "broadcast">): void {
+  if (!holder.queue?.length) return;
+  for (const e of holder.queue) { e.native = false; e.paused = true; }
+  announce(holder, deps);
+}
+
+/**
  * Send now. Native entries: the provider has the AI read them now. Held entries are pushed now as
  * one message (Codex steers it into the running turn); they enter the conversation at once, and
  * are returned for the caller to show.
@@ -133,13 +143,14 @@ export async function sendQueuedNow(holder: QueueHolder, deps: QueueDeps): Promi
 /**
  * Removes and returns what PPM must send itself, as one message: held entries when a turn ends, or
  * every entry (`all`) once the stream is gone, since a provider's own queue died with its process —
- * what is left is held from then on. Entries that cannot share a message stay queued for the next
+ * what is left is held from then on. Entries a Stop paused go only when the person asks (`paused`:
+ * Send now with no turn running). Entries that cannot share a message stay queued for the next
  * turn's end.
  */
-export function drainForDispatch(holder: QueueHolder, deps: Pick<QueueDeps, "broadcast">, all = false): QueuedEntry[] {
+export function drainForDispatch(holder: QueueHolder, deps: Pick<QueueDeps, "broadcast">, opts: { all?: boolean; paused?: boolean } = {}): QueuedEntry[] {
   const queue = holder.queue ?? [];
-  if (all) for (const e of queue) e.native = false;
-  const held = queue.filter((e) => !e.native);
+  if (opts.all) for (const e of queue) e.native = false;
+  const held = queue.filter((e) => !e.native && (opts.paused || !e.paused));
   const out = held.slice(0, mergeablePrefix(held));
   holder.queue = queue.filter((e) => !out.includes(e));
   if (out.length) announce(holder, deps);

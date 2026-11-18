@@ -405,6 +405,38 @@ describe("Chat WebSocket — New Protocol", () => {
     close();
   });
 
+  it("Stop keeps what was queued, sends none of it, and Send now sends it afterwards", async () => {
+    const session = await chatService.createSession("mock", {});
+    const { ws, messages, waitForType, waitForNthType, close } = await connectWs(session.id);
+    await waitForType("session_state");
+    const provider = providerRegistry.get("mock")! as any;
+    const originalPush = provider.pushMessage;
+    // A provider that takes a message mid-turn, with no queue of its own: PPM holds what is queued.
+    provider.pushMessage = async () => true;
+    try {
+      ws.send(JSON.stringify({ type: "message", content: "hello" }));
+      await waitForType("text");
+      ws.send(JSON.stringify({ type: "message", content: "queued while running", queued: true }));
+      expect((await waitForType("queue_state")).queue).toHaveLength(1);
+
+      ws.send(JSON.stringify({ type: "cancel" }));
+      // The stopped turn ends; nothing it held may open a turn of its own after it.
+      await waitForType("done");
+      await new Promise((r) => setTimeout(r, 500));
+      expect(messages.filter((m) => m.type === "user_message")).toEqual([]);
+      const kept = messages.filter((m) => m.type === "queue_state").at(-1)!.queue;
+      expect(kept).toHaveLength(1);
+      expect(kept[0]).toMatchObject({ content: "queued while running", paused: true });
+
+      // The person sends it themselves: it opens a turn, and the queue empties.
+      const donesBefore = messages.filter((m) => m.type === "done").length;
+      ws.send(JSON.stringify({ type: "queue_send_now" }));
+      expect((await waitForType("user_message")).content).toBe("queued while running");
+      expect(messages.filter((m) => m.type === "queue_state").at(-1)!.queue).toEqual([]);
+      await waitForNthType("done", donesBefore + 1);
+    } finally { if (originalPush) provider.pushMessage = originalPush; else delete provider.pushMessage; close(); }
+  });
+
   it("cancel with no active stream is a no-op", async () => {
     const session = await chatService.createSession("mock", {});
     const { ws, messages, waitForType, close } = await connectWs(session.id);
