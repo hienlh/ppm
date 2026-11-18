@@ -2578,10 +2578,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           }
 
           const result = msg as any;
-          // Send now stopped this turn so the CLI reads the queue next: an ordinary end, not an error.
-          const queueInterrupt = result.subtype === "error_during_execution" && this.takeQueueInterrupt(sessionId);
-          if (queueInterrupt) log.info(`session=${sessionId} turn interrupted by Send now; the queue goes next`);
-          const subtype = queueInterrupt ? "success" : result.subtype as string | undefined;
 
           // The SDK closes out background deliveries with a result of their own —
           // notably the orphaned-task notifications it replays on resume. Those carry
@@ -2599,6 +2595,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             log.info(`session=${sessionId} ignoring empty task-notification result (no turn ran)`);
             continue;
           }
+
+          // Send now stopped this turn so the CLI reads the queue next: an ordinary end, not an error.
+          // The flag is taken at every turn result, whatever it says: a Send now whose interrupt met
+          // a turn already ending in a result of its own must not leave it set for a later turn,
+          // whose real error it would turn into a successful end.
+          const interruptedForQueue = this.takeQueueInterrupt(sessionId);
+          const queueInterrupt = interruptedForQueue && result.subtype === "error_during_execution";
+          if (queueInterrupt) log.info(`session=${sessionId} turn interrupted by Send now; the queue goes next`);
+          const subtype = queueInterrupt ? "success" : result.subtype as string | undefined;
 
           // Write cost to shared usage cache
           if (result.total_cost_usd != null) {
