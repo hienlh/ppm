@@ -74,7 +74,8 @@ describe("gitIndexBaseService.read", () => {
     expect(await gitIndexBaseService.read(repo, "dir")).toEqual({ state: "none", reason: "untracked" });
   });
 
-  it("takes the path literally, so a name with glob characters is that one file", async () => {
+  // Windows refuses `*` in a file name, so the file this needs cannot exist there.
+  it.skipIf(process.platform === "win32")("takes the path literally, so a name with glob characters is that one file", async () => {
     writeFileSync(join(repo, "a*.txt"), "star\n");
     writeFileSync(join(repo, "ab.txt"), "other\n");
     await git(["add", "--", "a*.txt", "ab.txt"]);
