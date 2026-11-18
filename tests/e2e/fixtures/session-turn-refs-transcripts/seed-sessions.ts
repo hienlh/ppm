@@ -67,6 +67,8 @@ export interface SeededSession { id: string; title: string; project: string; tur
 export interface SeedResult {
   A: SeededSession; B: SeededSession; F: SeededSession; D: SeededSession;
   C: SeededSession & { rolledBack: string };
+  /** alpha / G, with tool cards opening other chats: seeded only on request (`collab-cards.ts`). */
+  G?: SeededSession;
   writes: { older: { path: string; call: string }; newer: { path: string; call: string } };
   transcriptOf: Record<string, string>;
 }
