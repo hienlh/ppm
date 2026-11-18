@@ -35,7 +35,7 @@ import {
 } from "./window-panel-actions";
 import { saveWindowPanels } from "./window-panel-persistence";
 import { type WindowHeldTab, rememberWindowHeldTabs, windowTabIds, withWindowHeldTabs } from "./window-held-tabs";
-import { isPanelOnScreen, projectOwningPanel, relocateTab } from "./singleton-tab-relocation";
+import { isPanelOnScreen, projectOwningPanel, relocateTab, withoutEmptiedOffGridPanel } from "./singleton-tab-relocation";
 import { isAssistantProject } from "../../shared/assistant-project";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { tabSessionId } from "@/lib/tab-session-id";
@@ -320,12 +320,55 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     persist();
   }
 
+  function onScreen(panelId: string): boolean {
+    return isPanelOnScreen(panelId, get().grid, get().isMobile());
+  }
+
+  /**
+   * Every panel, those on screen first. Another project's kept panel can hold a tab of the same
+   * id (a file both projects have open), and a tab looked up by id alone means the one in view.
+   */
+  function panelsOnScreenFirst(): Panel[] {
+    const all = Object.values(get().panels);
+    return [...all.filter((p) => onScreen(p.id)), ...all.filter((p) => !onScreen(p.id))];
+  }
+
+  /**
+   * A tab found already open in a panel nobody sees — another project's kept panel, one left on
+   * no grid — is brought to `toPanelId` instead of being activated where it is, which would do
+   * nothing the user can see. A window panel is left to the window reconcile, as for singletons.
+   * False when the tab is on screen already.
+   */
+  function bringHiddenTabOnScreen(tabId: string, fromPanelId: string, toPanelId: string): boolean {
+    if (isWindowPanelId(fromPanelId) || onScreen(fromPanelId) || fromPanelId === toPanelId) return false;
+    console.warn(`[panel-store] openTab: ${tabId} was in ${fromPanelId}, which is not on screen; moving it to ${toPanelId}`);
+    bringTabOnScreen(tabId, fromPanelId, toPanelId);
+    return true;
+  }
+
   function findPanel(tabId: string): Panel | undefined {
-    return Object.values(get().panels).find((p) => p.tabs.some((t) => t.id === tabId));
+    return panelsOnScreenFirst().find((p) => p.tabs.some((t) => t.id === tabId));
   }
 
   function resolvePanel(panelId?: string): string {
     return panelId ?? get().focusedPanelId;
+  }
+
+  /**
+   * Where a tab asked for in `asked` opens: there while it is on screen; else in a grid panel,
+   * which takes focus. A tab opened in a panel nobody sees (another project's kept panel, one
+   * that is gone) would never be seen, and neither would every tab opened after it.
+   * Null only when the grid has no panel at all.
+   */
+  function openTarget(asked: string): string | null {
+    const { panels, grid, focusedPanelId, currentProject } = get();
+    if (panels[asked] && onScreen(asked)) return asked;
+    const flat = grid.flat().filter((id) => panels[id]);
+    const fallback = flat.includes(focusedPanelId) ? focusedPanelId : flat[0];
+    if (!fallback) return null;
+    console.warn(`[panel-store] openTab: panel ${asked} is not on screen (project ${currentProject}, grid ${JSON.stringify(grid)}); opening in ${fallback}`);
+    if (focusedPanelId !== fallback) set({ focusedPanelId: fallback });
+    return fallback;
   }
 
   /**
@@ -338,10 +381,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
    * already in front of the user, nothing more is needed to "focus" it.
    *
    * Every caller here picks `pid` by scanning the whole `panels` map, which includes
-   * the off-grid window panels.
+   * the off-grid window panels — and other projects' kept panels, which are not on screen
+   * at all: focus moved there sends every later tab out of sight, so it stays put too.
    */
   function focusAfterActivate(pid: string): string {
-    return isWindowPanelId(pid) ? get().focusedPanelId : pid;
+    return isWindowPanelId(pid) || !onScreen(pid) ? get().focusedPanelId : pid;
   }
 
   /**
@@ -458,16 +502,30 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
 
       // Already in memory → restore from snapshot (no localStorage read)
       if (newProjectGrids[projectName]) {
-        const restoredGrid = newProjectGrids[projectName]!;
-        const restoredFocused = newProjectFocused[projectName] ?? restoredGrid[0]?.[0] ?? "";
+        // Never a grid naming a panel that went while the project was out of sight, nor focus
+        // on one: a tab asked for would open nowhere.
+        const kept = newProjectGrids[projectName]!;
+        let restoredGrid = kept.map((row) => row.filter((id) => panels[id])).filter((row) => row.length > 0);
+        let heldPanels = panels;
+        if (restoredGrid.length === 0) {
+          const p = createPanel();
+          heldPanels = { ...panels, [p.id]: p };
+          restoredGrid = [[p.id]];
+        }
+        if (restoredGrid.flat().length !== kept.flat().length) {
+          console.warn(`[panel-store] switchProject(${projectName}): its kept grid ${JSON.stringify(kept)} named panels that are gone; showing ${JSON.stringify(restoredGrid)}`);
+          newProjectGrids[projectName] = restoredGrid;
+        }
+        const remembered = newProjectFocused[projectName];
+        const restoredFocused = remembered && restoredGrid.flat().includes(remembered) ? remembered : restoredGrid[0]![0]!;
         // Restore dock state for target project; __dock__ panel stays in panels (keep-alive).
         // Point the shared dock panel's active tab at THIS project's tab so the slot
         // doesn't render another project's terminal after the switch.
         const restoredDock = restoreDockForProject(projectName, newProjectDock);
-        const existingDockPanel = panels[DOCK_PANEL_ID];
+        const existingDockPanel = heldPanels[DOCK_PANEL_ID];
         const nextPanels = existingDockPanel
-          ? { ...panels, [DOCK_PANEL_ID]: { ...existingDockPanel, activeTabId: pickDockActiveTab(existingDockPanel, projectName) } }
-          : panels;
+          ? { ...heldPanels, [DOCK_PANEL_ID]: { ...existingDockPanel, activeTabId: pickDockActiveTab(existingDockPanel, projectName) } }
+          : heldPanels;
         set({
           currentProject: projectName,
           panels: nextPanels,
@@ -579,7 +637,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     },
 
     reloadProject: (projectName) => {
-      const { projectGrids, projectFocused, projectDock, panels } = get();
+      const { projectGrids, projectFocused, projectDock, panels, currentProject, grid } = get();
       // Clear in-memory cache so switchProject re-reads from localStorage
       const newGrids = { ...projectGrids };
       const newFocused = { ...projectFocused };
@@ -593,8 +651,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       // IMPORTANT: __dock__ is a shared panel — never delete it on reload,
       // because terminals from OTHER projects would lose their xterm buffer.
       // Instead, filter out only this project's dock tabs by projectId.
-      const oldGrid = projectGrids[projectName];
-      const oldPanelIds = oldGrid ? new Set(oldGrid.flat()) : new Set<string>();
+      // The open project's grid is the live one: its entry in projectGrids is the snapshot
+      // taken when it was loaded, without the panels split off since. Left behind, those
+      // would stay in memory with their tabs on no grid, and a chat found in one would be
+      // "shown" there.
+      const oldPanelIds = new Set([
+        ...(projectGrids[projectName]?.flat() ?? []),
+        ...(currentProject === projectName ? grid.flat() : []),
+      ]);
       const cleanedPanels = { ...panels };
       for (const id of oldPanelIds) {
         // Never remove the shared dock panel during project reload
@@ -649,11 +713,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       }
       const mobile = get().isMobile();
       // On mobile, always open in first panel (tabs merged in mobile nav)
-      const pid = mobile
+      const asked = mobile
         ? (get().grid[0]?.[0] ?? resolvePanel(panelId))
         : resolvePanel(panelId);
-      const panel = get().panels[pid];
-      if (!panel) return "";
+      const pid = openTarget(asked);
+      if (!pid) {
+        console.warn(`[panel-store] openTab(${tabDef.type}): no panel to open in (asked ${asked}, project ${get().currentProject}, grid ${JSON.stringify(get().grid)})`);
+        return "";
+      }
 
       if (tabDef.type === "chat" && !tabDef.metadata?.sessionId && !tabDef.metadata?.providerId) {
         const project = tabDef.projectId ?? (tabDef.metadata?.projectName as string | undefined) ?? get().currentProject ?? undefined;
@@ -689,10 +756,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       // start a plain chat that has left design mode.
       if (tabDef.type === "chat" && tabDef.metadata?.sessionId) {
         const sid = tabDef.metadata.sessionId;
-        for (const p of Object.values(get().panels)) {
+        for (const p of panelsOnScreenFirst()) {
           const existing = p.tabs.find((t) => tabSessionId(t) === sid && (!useSettingsStore.getState().minimalMode || t.type === "chat"));
           if (existing) {
             rememberChatProvider(existing);
+            if (bringHiddenTabOnScreen(existing.id, p.id, pid)) return existing.id;
             set((s) => ({
               focusedPanelId: focusAfterActivate(p.id),
               panels: {
@@ -713,10 +781,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       if (tabDef.type === "design") {
         const slug = tabDef.metadata?.designSlug;
         const project = tabDef.projectId ?? tabDef.metadata?.projectName;
-        for (const p of Object.values(get().panels)) {
+        for (const p of panelsOnScreenFirst()) {
           const existing = p.tabs.find((t) => t.type === "design" && t.metadata?.designSlug === slug
             && (t.projectId ?? t.metadata?.projectName) === project);
           if (existing) {
+            if (bringHiddenTabOnScreen(existing.id, p.id, pid)) return existing.id;
             set((s) => ({
               focusedPanelId: focusAfterActivate(p.id),
               panels: {
@@ -892,6 +961,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           newActive = prevId && newTabs.some((t) => t.id === prevId)
             ? prevId
             : newTabs[newTabs.length - 1]?.id ?? null;
+        }
+
+        // A panel off the open grid (another project's kept one) leaves *its* grid, not this
+        // one, and that project's focus moves off it — see withoutEmptiedOffGridPanel.
+        const offGrid = !s.grid.some((row) => row.includes(pid)) && !isWindowPanelId(pid) && pid !== DOCK_PANEL_ID;
+        if (newTabs.length === 0 && offGrid) {
+          const emptied = { ...s.panels, [pid]: { ...p, tabs: newTabs, activeTabId: newActive, tabHistory: newHistory } };
+          return withoutEmptiedOffGridPanel({ ...s, panels: emptied }, pid) ?? { panels: emptied };
         }
 
         // Auto-close panel if empty and not the last one in current grid.

@@ -10,7 +10,7 @@
  * Pure functions only, so the decision can be tested without the store.
  */
 import type { Panel } from "./panel-utils";
-import { DOCK_PANEL_ID, isWindowPanelId } from "./panel-utils";
+import { DOCK_PANEL_ID, gridRemovePanel, isWindowPanelId } from "./panel-utils";
 
 /** Whether a panel is rendered right now: on the visible grid, the dock, or (desktop) a window. */
 export function isPanelOnScreen(panelId: string, grid: string[][], mobile: boolean): boolean {
@@ -61,5 +61,36 @@ export function relocateTab(
       tabHistory: [...to.tabHistory.filter((id) => id !== tabId), tabId],
       activeTabId: tabId,
     },
+  };
+}
+
+interface KeptLayouts {
+  panels: Record<string, Panel>;
+  projectGrids: Record<string, string[][]>;
+  projectFocused: Record<string, string>;
+  currentProject: string | null;
+}
+
+/**
+ * What to commit once `panelId`, a panel off the open grid (not the dock, not a window), has
+ * lost its last tab: off the kept grid of the project that owns it, and that project's focus
+ * moved off it — else switching back would focus a panel that is gone, and the next tab opened
+ * there would open nowhere. Null when it is that grid's last panel: it stays, empty. A panel no
+ * grid holds is simply dropped. The open project's own entry in `projectGrids` is skipped: it is
+ * the snapshot taken when it was loaded, not its grid.
+ */
+export function withoutEmptiedOffGridPanel(s: KeptLayouts, panelId: string): Partial<KeptLayouts> | null {
+  const { [panelId]: _gone, ...panels } = s.panels;
+  const owner = Object.keys(s.projectGrids).find((project) =>
+    project !== s.currentProject && s.projectGrids[project]!.some((row) => row.includes(panelId)));
+  if (!owner) return { panels };
+  const kept = s.projectGrids[owner]!;
+  if (kept.flat().length <= 1) return null;
+  const grid = gridRemovePanel(kept, panelId);
+  const focused = s.projectFocused[owner];
+  return {
+    panels,
+    projectGrids: { ...s.projectGrids, [owner]: grid },
+    projectFocused: { ...s.projectFocused, [owner]: focused && focused !== panelId ? focused : grid.flat()[0]! },
   };
 }
