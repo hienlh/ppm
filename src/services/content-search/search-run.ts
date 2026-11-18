@@ -17,9 +17,9 @@ import {
 } from "./search-args";
 import { MAX_MATCHES, TIME_LIMIT_MS, type SearchMatch, type SearchRequest, type SearchResponse } from "./search-options";
 
-/** A search that cannot answer: 400 the pattern, 503 no tool, 500 anything else. */
+/** A search that cannot answer: 400 the pattern, 503 no tool, 500 anything else (413: a replace over its limits). */
 export class SearchRunError extends Error {
-  constructor(message: string, public status: 400 | 500 | 503 = 500) {
+  constructor(message: string, public status: 400 | 413 | 500 | 503 = 500) {
     super(message);
   }
 }

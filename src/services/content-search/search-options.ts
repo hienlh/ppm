@@ -8,6 +8,12 @@
 export const MAX_MATCHES = 20_000;
 /** The host stops the search tool after this long and answers what it found (`incomplete: "timeout"`). */
 export const TIME_LIMIT_MS = 30_000;
+/** A Replace All body over this many bytes is refused with 413, before the host sees it. */
+export const MAX_REPLACE_BODY_BYTES = 32 * 1024 * 1024;
+/** A Replace All naming more files than this is refused with 413: no search lists more. */
+export const MAX_REPLACE_FILES = MAX_MATCHES;
+/** A Replace All carrying more matches than this is refused with 413: no search lists more. */
+export const MAX_REPLACE_MATCHES = MAX_MATCHES;
 /** At most this many characters of a match's line are kept before the match. */
 export const PREVIEW_BEFORE = 26;
 /** At most this many characters of a match's line are kept after the match. */

@@ -17,7 +17,9 @@
  * Its import graph reaches no database or config (`search-host-imports.test.ts`). The Windows spawn
  * guard is installed by `src/index.ts` before it routes here, for every mode.
  */
-import type { ReplaceReport, ReplaceRequest, SearchRequest, SearchResponse } from "./search-options.ts";
+import {
+  MAX_REPLACE_FILES, MAX_REPLACE_MATCHES, type ReplaceReport, type ReplaceRequest, type SearchRequest, type SearchResponse,
+} from "./search-options.ts";
 import { encodeFrame, type Frame, FrameDecoder, type FrameKind } from "./frame-codec.ts";
 import { runReplace as defaultRunReplace } from "./replace-run.ts";
 import { runSearch as defaultRunSearch, SearchRunError } from "./search-run.ts";
@@ -117,6 +119,13 @@ export function createHostDispatcher(deps: HostDispatcherDeps): { handle(frame: 
         const { projectPath, body } = decodeReplacePayload(payload);
         const parsed = JSON.parse(decoder.decode(body)) as { files?: ReplaceRequest["files"] };
         if (!Array.isArray(parsed?.files)) throw new SearchRunError("Replace request has no files", 400);
+        if (parsed.files.length > MAX_REPLACE_FILES) {
+          throw new SearchRunError(`Replace request names more than ${MAX_REPLACE_FILES} files`, 413);
+        }
+        const matches = parsed.files.reduce((n, f) => n + (Array.isArray(f?.matches) ? f.matches.length : 0), 0);
+        if (matches > MAX_REPLACE_MATCHES) {
+          throw new SearchRunError(`Replace request carries more than ${MAX_REPLACE_MATCHES} matches`, 413);
+        }
         const report = await runReplace(projectPath, { projectPath, files: parsed.files });
         reply(id, encoder.encode(JSON.stringify(report)), false);
       } catch (error) {

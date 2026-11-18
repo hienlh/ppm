@@ -4,7 +4,13 @@
  * end, and a lying `Content-Length` cannot get a larger body through.
  */
 export async function readCappedBody(req: Request, maxBytes: number): Promise<string | null> {
-  if (!req.body) return "";
+  const bytes = await readCappedBytes(req, maxBytes);
+  return bytes === null ? null : new TextDecoder().decode(bytes);
+}
+
+/** `readCappedBody`'s bytes, undecoded. */
+export async function readCappedBytes(req: Request, maxBytes: number): Promise<Uint8Array | null> {
+  if (!req.body) return new Uint8Array(0);
   const reader = req.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -18,5 +24,5 @@ export async function readCappedBody(req: Request, maxBytes: number): Promise<st
     }
     chunks.push(value);
   }
-  return new TextDecoder().decode(Buffer.concat(chunks));
+  return Buffer.concat(chunks);
 }
