@@ -39,6 +39,7 @@ import {
   Users,
   Database,
   DatabaseZap,
+  FileDiff,
 } from "@/lib/icons";
 import { ImagePlus, ShieldCheck } from "@/lib/icons";
 
@@ -73,9 +74,9 @@ function toolChip(
   }
   const deviceTool = deviceToolOf(name);
   if (deviceTool) {
-    return deviceTool === OPEN_URL_TOOL
-      ? { Icon: Globe, cls: "bg-info/15 text-info" }
-      : { Icon: Terminal, cls: "bg-panel-2 text-text-2" };
+    if (deviceTool === OPEN_URL_TOOL) return { Icon: Globe, cls: "bg-info/15 text-info" };
+    if (deviceTool === OPEN_BRANCH_REVIEW_TOOL) return { Icon: FileDiff, cls: "bg-info/15 text-info" };
+    return { Icon: Terminal, cls: "bg-panel-2 text-text-2" };
   }
   switch (name) {
     case "Read": case "Glob": case "LS":
@@ -128,7 +129,7 @@ import { dbToolCall, dbToolOf } from "@/lib/db-tool-call";
 import { dbRowsBadge, ppmToolErrorLine, ppmToolIcon, ppmToolSummary } from "@/lib/ppm-tool-call";
 import { PpmToolLinks, PpmToolSummaryText, ppmToolChip } from "./ppm-tool-header";
 import { DB_EXECUTE_TOOL } from "../../../shared/db-ai-tools";
-import { OPEN_URL_TOOL } from "../../../shared/tab-open-protocol";
+import { OPEN_BRANCH_REVIEW_TOOL, OPEN_URL_TOOL } from "../../../shared/tab-open-protocol";
 import { AgentCardSummary, type AgentCardStatus } from "./agent-card-summary";
 import { useOpenAgentSession } from "./use-open-agent-session";
 import { useAgentSessionContext, normalizeProviderId } from "./agent-session-context";
