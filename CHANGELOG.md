@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.26.13] - 2026-11-18
+
+### Added
+
+- **A chat or the PPM Assistant can propose a script schedule**: a card shows the whole script, folder, cron, time zone, next three runs and input values, and the schedule is created only once you allow it in PPM (Telegram offers Deny only). A `.ppm-schedule.json` may carry its own input values.
+- **A script schedule can run on its own time zone**, so a watch kept to UK working hours fires on the UK clock.
+- **A chat can pause its project's schedules at once, with no card**; turning one back on still asks on a card.
+
+### Fixed
+
+- **A task result's who-and-when no longer runs under the Edit button**: on a desktop it is cut with a tooltip, on a phone it wraps on its own line.
+- **A schedule card shows a Windows path exactly as the script receives it**, and a seconds cron's next runs include the seconds.
+
 ## [0.26.12] - 2026-11-18
 
 ### Added
