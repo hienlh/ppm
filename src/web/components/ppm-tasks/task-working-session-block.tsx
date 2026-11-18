@@ -3,8 +3,13 @@
  * state, what the handed-off work check last found ("stalled 40 min", "finished, no report", with
  * when progress was last seen), and Open chat. With no chat it offers Start chat; with one it also
  * offers a new chat, which the caller confirms before it replaces the current one.
+ *
+ * Open chat is for a chat the task was handed to. When the manager chat itself works on the task,
+ * opening it is Ask manager's job: the block shows Ask manager instead when the page gives it one
+ * (`onAskManager`, the phone, whose page has no other), and no button when the page has its own (the
+ * desktop header), so two buttons never open the same chat side by side.
  */
-import { Bot, ExternalLink, MessageCircle, Plus } from "@/lib/icons";
+import { Bot, ExternalLink, MessageCircle, MessageSquare, Plus } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { sessionChipView } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
@@ -28,6 +33,10 @@ export interface TaskWorkingSessionBlockProps {
   check: TaskCheckSummary | null;
   onOpen(sessionId: string): void;
   onStartChat(): void;
+  /** Ask manager, when this block is where the page offers it (the project has a manager chat). */
+  onAskManager?: () => void;
+  /** The project's manager chat: a task handed to it by id is worked on by the manager all the same. */
+  managerSessionId?: string | null;
 }
 
 /** "WORKING SESSION #82": the heading names the task, so a chat that says "#82" can be matched here. */
@@ -40,7 +49,7 @@ function Heading({ task }: { task: TaskWorkingSessionBlockProps["task"] }) {
   );
 }
 
-export function TaskWorkingSessionBlock({ task, working, check, onOpen, onStartChat }: TaskWorkingSessionBlockProps) {
+export function TaskWorkingSessionBlock({ task, working, check, onOpen, onStartChat, onAskManager, managerSessionId }: TaskWorkingSessionBlockProps) {
   const view = sessionChipView(working, check, Date.now());
   if (working.kind === "start_chat") {
     return (
@@ -52,7 +61,7 @@ export function TaskWorkingSessionBlock({ task, working, check, onOpen, onStartC
     );
   }
   const s = working.session;
-  const isManager = working.kind === "manager";
+  const isManager = working.kind === "manager" || (!!managerSessionId && s.sessionId === managerSessionId);
   const name = isManager ? "Manager" : s.title?.trim() || "Chat";
   // A check finding (stalled, finished without reporting) wins; otherwise the chat's own state.
   const live = view.tone === "stalled" || view.tone === "finished" || view.tone === "gone" ? STATE_LABEL[view.tone]!
@@ -74,9 +83,24 @@ export function TaskWorkingSessionBlock({ task, working, check, onOpen, onStartC
           <p className="mt-0.5 text-xs text-text-3">{isManager ? "The project's manager chat · not handed to a child chat" : "Handed to this chat"}</p>
         </div>
       </div>
-      <Button size="sm" className="mt-2.5 w-full" disabled={s.state === "gone"} onClick={() => onOpen(s.sessionId)}>
-        <ExternalLink className="size-3.5" />Open chat
-      </Button>
+      {isManager ? (
+        onAskManager && (
+          <Button size="sm" className="mt-2.5 w-full" onClick={onAskManager} data-working-ask-manager="">
+            <MessageSquare className="size-3.5" />Ask manager
+          </Button>
+        )
+      ) : (
+        <>
+          <Button size="sm" className="mt-2.5 w-full" disabled={s.state === "gone"} onClick={() => onOpen(s.sessionId)} data-working-open-chat="">
+            <ExternalLink className="size-3.5" />Open chat
+          </Button>
+          {onAskManager && (
+            <Button size="sm" variant="outline" className="mt-1.5 w-full" onClick={onAskManager} data-working-ask-manager="">
+              <MessageSquare className="size-3.5" />Ask manager
+            </Button>
+          )}
+        </>
+      )}
       <button type="button" onClick={onStartChat} className="mt-1.5 w-full rounded-md py-1 text-xs text-text-3 hover:bg-surface-hover hover:text-text">
         Start a new chat for this task
       </button>

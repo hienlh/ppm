@@ -6,7 +6,8 @@
  */
 import { useCallback, useState } from "react";
 import { useManagerChats } from "@/hooks/use-manager-chats";
-import { askManagerAboutTask, managerOf } from "@/lib/ppm-tasks/ask-manager-about-task";
+import { askManagerAboutTask } from "@/lib/ppm-tasks/ask-manager-about-task";
+import { taskManagerChat } from "@/lib/ppm-tasks/task-chat-buttons";
 import { keepTaskTab, openTaskChat, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
 import { minimizeTaskWindow, openTask } from "@/lib/ppm-tasks/open-task";
 import type { TaskPatch } from "../../../shared/ppm-tasks";
@@ -71,10 +72,12 @@ export function TaskDetailDesktop({ detail, settings, preview }: TaskDetailViewP
   const openWorkingChat = useCallback((sid: string) => { minimizeTaskWindow(task.id); openTaskChat(task.project, sid, workingProvider(task), task); }, [task]);
   // Start chat may ask first (in this page), so the window goes only once a chat opened.
   const startChat = useCallback(() => void write.startChat(task).then((sid) => { if (sid) minimizeTaskWindow(task.id); }), [task, write]);
-  // Without a manager chat nothing opens (a toast says so): the window stays.
+  // Ask manager sits in the header; the working-session block then offers Open chat only for a chat
+  // the task was handed to, so the two never open the same chat side by side.
+  const manager = taskManagerChat(task, managers);
   const askManager = useCallback(() => {
-    if (managerOf(task.project, managers)) minimizeTaskWindow(task.id);
-    void askManagerAboutTask(task, managers);
+    minimizeTaskWindow(task.id);
+    askManagerAboutTask(task, managers);
   }, [task, managers]);
 
   return (
@@ -83,7 +86,7 @@ export function TaskDetailDesktop({ detail, settings, preview }: TaskDetailViewP
       onFocusCapture={(e) => { if ((e.target as HTMLElement).matches("textarea, input")) keepTaskTab(task.id); }}>
       <div className="h-full overflow-y-auto @[760px]:grid @[760px]:grid-cols-[minmax(0,1fr)_300px] @[760px]:overflow-hidden">
         <main className="min-w-0 space-y-3 px-5 py-4 @[760px]:overflow-y-auto">
-          <TaskDetailHeader task={task} members={settings?.members} preview={preview} hasManager={!!managerOf(task.project, managers)}
+          <TaskDetailHeader task={task} members={settings?.members} preview={preview} hasManager={!!manager}
             onRename={(title) => patch({ title })} onAskManager={askManager}
             onMarkDone={() => void run(task.id, () => actions.close(task, { closedAs: "done" }))}
             onSnooze={(snooze) => void patch(snooze)}
@@ -104,7 +107,8 @@ export function TaskDetailDesktop({ detail, settings, preview }: TaskDetailViewP
             onUndo={async (e) => { await run(task.id, () => actions.undo(task.id, e.id)); }} />
         </main>
         <aside className="space-y-4 border-t border-border-soft bg-panel px-4 py-4 @[760px]:overflow-y-auto @[760px]:border-l @[760px]:border-t-0">
-          <TaskWorkingSessionBlock task={task} working={task.workingSession} check={task.check} onOpen={openWorkingChat} onStartChat={startChat} />
+          <TaskWorkingSessionBlock task={task} working={task.workingSession} check={task.check} onOpen={openWorkingChat} onStartChat={startChat}
+            managerSessionId={manager?.sessionId ?? null} />
           <TaskPropertiesPanel task={task} settings={settings} onPatch={patch} onStatus={setStatus}
             onOpenTask={(id) => openTask({ id, project: task.project, title: "Task" })} onManageFields={() => setFieldsOpen(true)} />
         </aside>

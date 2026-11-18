@@ -1,22 +1,27 @@
 /**
  * A task's quick view: its code and title, the fields a glance usually ends in changing (status,
  * urgency, importance, assignee, waiting on and due as chips, then the next step), the task's
- * links with their live state, opening as the task page opens them, and two ways on — Open chat (the
- * chat working on the task, with the task as a chip, like the list row's own chip) and the task's
- * full page (a window on a desktop, a tab on a phone).
+ * links with their live state, opening as the task page opens them, and the ways on — Open chat (the
+ * chat the task was handed to), Ask manager (the project's manager chat, with the task as a chip in
+ * its composer) and the task's full page (a window on a desktop, a tab on a phone). A task that was
+ * not handed off shows Ask manager alone, since its working chat is the manager chat
+ * (`taskChatButtons`); a project with no manager chat shows no Ask manager.
  *
  * One body for the desktop popover beside the chat's Tasks list (and beside a task chip) and for
  * the phone's page inside the list's own sheet; `layout` decides the header and the buttons.
  * Every write goes through `useTaskWrite`, the task page's own.
  */
 import { useCallback, useRef } from "react";
-import { AppWindow, ChevronLeft, Loader2, Maximize2, MessageCircle, X } from "@/lib/icons";
+import { AppWindow, ChevronLeft, Loader2, Maximize2, MessageCircle, MessageSquare, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { usePpmTask } from "@/hooks/use-ppm-tasks";
 import { usePpmTaskProjectSettings } from "@/hooks/use-ppm-task-projects";
+import { useManagerChats } from "@/hooks/use-manager-chats";
 import { ppmTasksStore } from "@/stores/ppm-tasks-store";
 import { sessionChipView } from "@/lib/ppm-tasks/ppm-tasks-kit-logic";
 import { openTaskChat, workingProvider, type TaskTabTarget } from "@/lib/ppm-tasks/open-task-tab";
+import { askManagerAboutTask } from "@/lib/ppm-tasks/ask-manager-about-task";
+import { taskChatButtons } from "@/lib/ppm-tasks/task-chat-buttons";
 import { PHONE_ICON_CONTROL_SIZE, TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 import type { TaskPatch } from "../../../../shared/ppm-tasks";
 import type { TaskDto } from "../../../../shared/ppm-tasks-api";
@@ -26,8 +31,18 @@ import { useTaskWrite } from "../use-task-write";
 import { TaskPeekFields } from "./task-peek-fields";
 import { TaskPeekLinks } from "./task-peek-links";
 
-/** A button with text: 28px, 26px on a phone (docs/design-guidelines.md rule 3). */
-const TEXT_BUTTON = cn("inline-flex min-h-0! shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-xs transition-colors disabled:opacity-50 max-md:px-2 [&_svg]:size-3.5 [&_svg]:shrink-0", TEXT_CONTROL_HEIGHT);
+/**
+ * A button with text: 28px, 26px on a phone (docs/design-guidelines.md rule 3). On a phone an
+ * invisible `::after` 9px above and below widens the press to 44px; sideways it stays on the button,
+ * so neighbours 6px apart never take each other's press.
+ */
+const TEXT_BUTTON = cn(
+  "relative inline-flex min-h-0! shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-xs transition-colors disabled:opacity-50 max-md:px-2 [&_svg]:size-3.5 [&_svg]:shrink-0",
+  "max-md:after:absolute max-md:after:inset-x-0 max-md:after:-inset-y-[9px] max-md:after:content-['']",
+  TEXT_CONTROL_HEIGHT,
+);
+/** Open chat and Ask manager: quiet, and the first to give way (their label ellipsized) when the footer is narrow. */
+const QUIET_BUTTON = cn(TEXT_BUTTON, "min-w-0 shrink text-text-2 can-hover:hover:bg-surface-hover can-hover:hover:text-text");
 /** An icon button: 24px, 22px on a phone. */
 const ICON_BUTTON = cn("inline-flex size-6 min-h-0! min-w-0! shrink-0 items-center justify-center rounded-md text-text-3 can-hover:hover:bg-surface-hover can-hover:hover:text-text [&_svg]:size-3.5", PHONE_ICON_CONTROL_SIZE);
 
@@ -50,6 +65,7 @@ export function TaskPeekBody({ target, layout, onLeave, onOpenPage, onBack, onCl
   const { detail, loading, error } = usePpmTask(target.id);
   const task = detail?.task ?? null;
   const { settings } = usePpmTaskProjectSettings(task?.project ?? target.project);
+  const managers = useManagerChats();
   const write = useTaskWrite();
   const { actions, run } = write;
   // One write at a time, each from the task as the store holds it once the one before has
@@ -72,10 +88,17 @@ export function TaskPeekBody({ target, layout, onLeave, onOpenPage, onBack, onCl
 
   const page: TaskTabTarget = task ? { id: task.id, project: task.project, title: task.title, number: task.number } : target;
   const chat = task ? sessionChipView(task.workingSession, task.check, Date.now()) : null;
+  const buttons = task ? taskChatButtons(task, managers) : null;
+  // Only a chat the task was handed to: the manager chat is Ask manager's.
   const openChat = () => {
-    if (!task || !chat?.sessionId) return;
+    if (!task || !buttons?.openChat) return;
     onLeave();
-    openTaskChat(task.project, chat.sessionId, workingProvider(task), task);
+    openTaskChat(task.project, buttons.openChat.sessionId, workingProvider(task), task);
+  };
+  const askManager = () => {
+    if (!task || !buttons?.askManager) return;
+    onLeave();
+    askManagerAboutTask(task, managers);
   };
   // A chat link opens as the task page opens one: the chat itself, without the task as a chip.
   const openLinkedChat = (sessionId: string) => {
@@ -120,11 +143,19 @@ export function TaskPeekBody({ target, layout, onLeave, onOpenPage, onBack, onCl
           )}
         </div>
       </div>
-      <div className={cn("flex shrink-0 items-center gap-1.5 border-t border-border-soft", sheet ? "px-3 py-2" : "p-2")}>
-        <button type="button" onClick={openChat} disabled={!chat?.sessionId || chat.tone === "gone"} title={chat?.title} data-task-peek-chat=""
-          className={cn(TEXT_BUTTON, "text-text-2 can-hover:hover:bg-surface-hover can-hover:hover:text-text")}>
-          <MessageCircle />Open chat
-        </button>
+      <div data-task-peek-footer="" className={cn("flex min-w-0 shrink-0 items-center gap-1.5 border-t border-border-soft", sheet ? "px-3 py-2" : "p-2")}>
+        {buttons?.openChat && (
+          <button type="button" onClick={openChat} disabled={chat?.tone === "gone"} title={chat?.title ?? "Open chat"} data-task-peek-chat=""
+            className={QUIET_BUTTON}>
+            <MessageCircle /><span className="min-w-0 truncate">Open chat</span>
+          </button>
+        )}
+        {buttons?.askManager && (
+          <button type="button" onClick={askManager} title="Ask the project's manager chat about this task" data-task-peek-ask-manager=""
+            className={QUIET_BUTTON}>
+            <MessageSquare /><span className="min-w-0 truncate">Ask manager</span>
+          </button>
+        )}
         <button type="button" onClick={() => onOpenPage(page)} data-task-peek-page={sheet ? "full-screen" : "window"}
           className={cn(TEXT_BUTTON, "ml-auto bg-primary font-medium text-primary-foreground can-hover:hover:bg-primary/90")}>
           {sheet ? <><Maximize2 />Full screen</> : <><AppWindow />Open in window</>}

@@ -1,41 +1,25 @@
 /**
- * "Ask manager": opens the project's manager chat and puts the task in its composer as a chip,
- * without sending anything — the user writes the question. The chip carries the task's reference,
- * title, link and next step, so the manager knows which task the question is about.
+ * "Ask manager": opens the project's manager chat with the task as a chip in its composer ("Task
+ * #12 · Fix login"), without sending anything — the user writes the question. It is the chip "Open
+ * chat" puts in the manager chat (`openTaskChat`, which opens the chat through `openChatSession`),
+ * so the next message carries the task's reference and the server writes the task's block from the
+ * task store.
  */
 import { toast } from "sonner";
-import { openChatSession } from "@/lib/open-chat-session";
-import { sendToChat } from "@/lib/send-to-chat";
-import { tabSessionId } from "@/lib/tab-session-id";
-import { usePanelStore } from "@/stores/panel-store";
 import type { ManagerChatSummary } from "../../../shared/assistant-managers";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
-import { taskLink } from "./open-task-tab";
-
-export function taskChipText(task: Pick<TaskDto, "id" | "project" | "ref" | "title" | "statusName" | "nextStep">): string {
-  return [
-    `Task ${task.ref}: "${task.title}" (${task.statusName})`,
-    task.nextStep ? `Next step: ${task.nextStep}` : null,
-    `Link: ${taskLink(task)}`,
-  ].filter(Boolean).join("\n");
-}
+import { openTaskChat } from "./open-task-tab";
+import { taskManagerChat } from "./task-chat-buttons";
 
 export function managerOf(project: string, managers: readonly ManagerChatSummary[] | null): ManagerChatSummary | null {
   return managers?.find((m) => m.projectName === project) ?? null;
 }
 
-export async function askManagerAboutTask(task: TaskDto, managers: readonly ManagerChatSummary[] | null): Promise<void> {
-  const manager = managerOf(task.project, managers);
+export function askManagerAboutTask(task: TaskDto, managers: readonly ManagerChatSummary[] | null): void {
+  const manager = taskManagerChat(task, managers);
   if (!manager) {
     toast.info(`${task.project} has no manager chat yet`);
     return;
   }
-  const opened = await openChatSession({ projectName: task.project, sessionId: manager.sessionId, providerId: manager.providerId });
-  if (!opened) {
-    toast.error(`${task.project} is not a project in this PPM any more.`);
-    return;
-  }
-  // The manager chat's own tab, wherever it opened: the "selected" chat may be another one.
-  const tab = Object.values(usePanelStore.getState().panels).flatMap((p) => p.tabs).find((t) => tabSessionId(t) === manager.sessionId);
-  sendToChat({ text: taskChipText(task), label: task.ref, projectName: task.project, asContext: true, targetTabId: tab?.id ?? null });
+  openTaskChat(task.project, manager.sessionId, manager.providerId, task);
 }
