@@ -41,7 +41,7 @@ export function timezoneProblem(zone: unknown): string | null {
 }
 
 /** The runtime's own spelling of a valid zone (`asia/saigon` → `Asia/Saigon`), or null for none. */
-function canonicalZone(zone: unknown): string | null {
+export function canonicalZone(zone: unknown): string | null {
   if (typeof zone !== "string" || !zone) return null;
   return new Intl.DateTimeFormat("en-GB", { timeZone: zone }).resolvedOptions().timeZone;
 }
