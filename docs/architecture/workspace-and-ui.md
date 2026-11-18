@@ -455,8 +455,11 @@ live state and the last check of handed-off work, with Open chat, and *Start cha
 titled after the task, made its working session; with one already set it asks first). The result
 card records what came of the task, which also stops the checks. History has tabs History / AI
 changes / Status only, marks AI changes and "while you were away", strikes undone rows and offers
-Undo where one is still possible. *Ask manager* opens the project's manager chat with the task as a
-chip in its composer and sends nothing.
+Undo where one is still possible. *Ask manager* (the page's header on a desktop, the working-session
+block on a phone, and the quick view's footer) opens the project's manager chat with the task as the
+same composer chip Open chat puts there, and sends nothing. It is shown only when the project has a
+manager chat. Open chat is for a chat the task was handed to: a task the manager itself works on
+shows Ask manager alone, never two buttons that open the same chat (`task-chat-buttons.ts`).
 
 **The task travels with Open chat.** A manager chat works on many tasks, so a message typed there
 says nothing about which one is meant. Open chat on a task (the working-session block, a row's
