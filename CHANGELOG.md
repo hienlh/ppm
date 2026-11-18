@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.16] - 2026-11-19
+
+### Changed
+
+- **Buttons on a phone are sized like the chip row above the chat composer instead of 44px**: the buttons under a message, the Waiting bar, the Assistant's filter, manager chips and card buttons, the task long-press sheet, and the task page's card and footer buttons.
+
 ## [0.26.15] - 2026-11-18
 
 ### Added
