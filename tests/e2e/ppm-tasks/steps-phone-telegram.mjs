@@ -13,8 +13,9 @@ import { buttonsOf } from "../assistant-telegram/harness.mjs";
 function smallTargets(page, sel, except = "") {
   return page.evaluate(({ s, except }) => [...document.querySelectorAll(`${s} button, ${s} [role=button]`)].filter((b) => {
     // The task sheet's ×, ··· and Full screen follow the chat footer's row (22 / 26 px, no 44 px
-    // minimum): steps-task-window.mjs measures them. So do the snooze controls: steps-snooze.mjs.
-    if (b.tabIndex < 0 || (except && b.matches(except)) || b.hasAttribute("data-task-code") || b.matches("[data-task-sheet-close], [data-task-sheet-full-screen], [data-task-open-sheet] [data-task-actions], [data-task-snooze-button], [data-task-unsnooze], [data-task-snoozed-toggle]")) return false;
+    // minimum): steps-task-window.mjs measures them. So do the snooze controls: steps-snooze.mjs,
+    // and "Remind…", a chip with text (TEXT_CONTROL_HEIGHT).
+    if (b.tabIndex < 0 || (except && b.matches(except)) || b.hasAttribute("data-task-code") || b.matches("[data-task-sheet-close], [data-task-sheet-full-screen], [data-task-open-sheet] [data-task-actions], [data-task-snooze-button], [data-task-unsnooze], [data-task-snoozed-toggle], [data-task-remind-button]")) return false;
     const r = b.getBoundingClientRect();
     if (!r.width || !r.height) return false;
     const after = getComputedStyle(b, "::after");
