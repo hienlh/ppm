@@ -6,8 +6,8 @@
 import { describe, expect, it } from "bun:test";
 import type { AssistantCard } from "../../../src/shared/assistant-cards";
 import {
-  answerIsReady, answerLabel, cardVersion, currentPick, decisionTiles, isStaleForReply, nextTabOrder,
-  outdatedPicks, projectCounts, sendPlan, type DecisionAnswer, type DecisionPick,
+  activeTabIndex, answerIsReady, answerLabel, cardVersion, currentPick, decisionTabs, decisionTiles, isStaleForReply,
+  nextTabOrder, outdatedPicks, projectCounts, sendPlan, type DecisionAnswer, type DecisionPick,
 } from "../../../src/web/lib/decision-set/decision-set-model";
 import { sendAllDecisions, sendDecision, type DecisionSendApi } from "../../../src/web/lib/decision-set/decision-set-send";
 
@@ -112,11 +112,36 @@ describe("send all", () => {
 });
 
 describe("tab order and counts", () => {
-  it("a new card goes to the end; a finished one keeps its place; a forgotten one leaves", () => {
+  it("a new card goes to the end; one being sent keeps its place; one that stopped waiting leaves", () => {
     expect(nextTabOrder(["a", "b", "c"], ["a", "c", "n"], new Set(["b"]))).toEqual(["a", "b", "c", "n"]);
     expect(nextTabOrder(["a", "b", "c"], ["a", "c"], new Set())).toEqual(["a", "c"]);
     // An urgent card arriving does not jump ahead of the tab the user is on.
     expect(nextTabOrder(["a"], ["u", "a"], new Set())).toEqual(["a", "u"]);
+  });
+
+  it("the tabs are the cards that wait, plus one on its way from here; nothing answered elsewhere stays", () => {
+    const [a, c, d] = ["a", "c", "d"].map((id) => card(id));
+    const all = () => true;
+    // b was answered on Telegram, d dismissed: neither keeps a tab, whatever the order still says.
+    expect(decisionTabs(["a", "b", "c", "d"], [a!, c!], {}, all).map((x) => x.id)).toEqual(["a", "c"]);
+    // c is being sent from here: the server took it off the waiting list, its tab stays until the send lands.
+    expect(decisionTabs(["a", "c"], [a!], { c: c! }, all).map((x) => x.id)).toEqual(["a", "c"]);
+    // A card the order has not caught up with yet still gets its tab, at the end.
+    expect(decisionTabs(["a"], [a!, d!], {}, all).map((x) => x.id)).toEqual(["a", "d"]);
+    // The surface's scope (a manager chat: its own cards) applies to the held card too.
+    const other = card("o", { sessionId: "elsewhere" });
+    expect(decisionTabs(["a", "o"], [a!], { o: other }, (x) => x.sessionId === "s-a").map((x) => x.id)).toEqual(["a"]);
+    expect(decisionTabs([], [], {}, all)).toEqual([]);
+  });
+
+  it("the tab shown: the one chosen; once it leaves, the one now in its place; at first, the first", () => {
+    expect(activeTabIndex(["a", "b", "c"], null, 0)).toBe(0);
+    expect(activeTabIndex(["a", "b", "c"], "c", 0)).toBe(2);
+    // b (index 1) was answered elsewhere: c now stands where it stood, and opens.
+    expect(activeTabIndex(["a", "c"], "b", 1)).toBe(1);
+    // The last tab left: the one before it opens, never the first by default.
+    expect(activeTabIndex(["a", "b"], "c", 2)).toBe(1);
+    expect(activeTabIndex([], "a", 0)).toBe(-1);
   });
 
   it("says where the waiting cards come from", () => {
