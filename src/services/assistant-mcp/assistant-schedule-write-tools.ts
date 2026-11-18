@@ -7,6 +7,7 @@ import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import type { AssistantProject } from "./assistant-project-scope.ts";
 import { errorResult, jsonResult, notApprovedResult } from "./assistant-tool-output.ts";
 import type { ToolContext } from "./assistant-tool-family.ts";
+import { SCRIPT_REVIEW_IN_PPM, SCRIPT_UNATTENDED_WARNING } from "../schedule-proposals/script-proposal-card.ts";
 import {
   createScheduleSummary, deleteScheduleSummary, editScheduleSummary, runNowScheduleSummary, type ScheduleSettings,
 } from "./assistant-approval-summary-schedule.ts";
@@ -78,6 +79,7 @@ async function ask(ctx: ToolContext, tool: string, input: Record<string, unknown
 
 export async function scheduleSave(ctx: ToolContext, args: Record<string, unknown>, deps: ScheduleDeps = {}): Promise<Json> {
   // A schedule delivered into one of the user's chats is that chat's to make, not the Assistant's.
+  if (args.kind === "script") return errorResult("schedule_save creates prompt schedules only. A script schedule is proposed with schedule_propose_script, behind a card showing the whole script.");
   if (args.kind !== undefined && args.kind !== "prompt") return errorResult(SESSION_SCHEDULES_NOT_HERE);
   const projects = registeredProjects(deps);
   const parsed = parseGivenSchedule(args, projects);
@@ -122,9 +124,20 @@ async function editSchedule(ctx: ToolContext, id: number, given: GivenSchedule, 
   if (changed.length === 0) return errorResult(`Nothing would change: schedule ${id} already has those settings.`);
 
   const body = routeBody(after, changed);
-  const refused = await ask(ctx, SCHEDULE_SAVE_TOOL, { id, project: after.project, ...body }, editScheduleSummary({
+  let summary = editScheduleSummary({
     id, before, after, changed, provider: current.schedule.provider_id, nextRuns: nextRunsFor(after.cron, deps, current.schedule.timezone),
-  }));
+  });
+  // Turning a script on starts code running unattended again: the card shows that code, and like
+  // a proposal's it is allowed only in PPM.
+  if (current.schedule.kind === "script" && changed.includes("enabled") && after.enabled) {
+    summary = {
+      ...summary,
+      body: { label: "Script (runs exactly as shown)", text: current.schedule.script ?? "", format: "code" },
+      warning: SCRIPT_UNATTENDED_WARNING,
+      reviewInPpm: SCRIPT_REVIEW_IN_PPM,
+    };
+  }
+  const refused = await ask(ctx, SCHEDULE_SAVE_TOOL, { id, project: after.project, ...body }, summary);
   if (refused) return refused;
   const stale = await recheck(ctx, current.schedule, SCHEDULE_SAVE_TOOL);
   if (stale) return stale;

@@ -23,9 +23,9 @@ const OPS_TOOLS = TOOLS_INSTEAD_OF_CLI.flatMap((g) => g.tools);
 const count = (text: string, needle: string): number => text.split(needle).length - 1;
 
 describe("the git, schedule, tunnel, project, chat and connection tool names", () => {
-  it("are the thirty-four tools of the seven groups, none twice", () => {
-    expect(OPS_TOOLS).toHaveLength(34);
-    expect(new Set(OPS_TOOLS).size).toBe(34);
+  it("are the thirty-five tools of the seven groups, none twice", () => {
+    expect(OPS_TOOLS).toHaveLength(35);
+    expect(new Set(OPS_TOOLS).size).toBe(35);
   });
 
   it("end with terminal_type, the one tool of its group", () => {

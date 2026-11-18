@@ -8,7 +8,9 @@ export const SCHEDULE_GET_TOOL = "schedule_get";
 export const SCHEDULE_SAVE_TOOL = "schedule_save";
 export const SCHEDULE_DELETE_TOOL = "schedule_delete";
 export const SCHEDULE_RUN_NOW_TOOL = "schedule_run_now";
+export const SCHEDULE_PROPOSE_SCRIPT_TOOL = "schedule_propose_script";
 
 export const SCHEDULE_TOOLS = [
   SCHEDULES_LIST_TOOL, SCHEDULE_GET_TOOL, SCHEDULE_SAVE_TOOL, SCHEDULE_DELETE_TOOL, SCHEDULE_RUN_NOW_TOOL,
+  SCHEDULE_PROPOSE_SCRIPT_TOOL,
 ] as const;

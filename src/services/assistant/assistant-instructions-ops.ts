@@ -66,7 +66,9 @@ update at once. Reading never asks; every change shows the user a card PPM build
   \`git_branch\` (create, switch, delete), \`git_stash\` and \`git_history\` (merge, cherry-pick,
   revert, tag, and abort or continue one that stopped on a conflict).
 - Schedules: read with \`schedules_list\`, \`schedule_get\`; change with \`schedule_save\` (create,
-  edit, pause), \`schedule_delete\`, \`schedule_run_now\`.
+  edit, pause), \`schedule_delete\`, \`schedule_run_now\`. A script schedule (code that runs on a cron
+  and wakes a chat only when something changed) is proposed with \`schedule_propose_script\`; its card
+  is allowed only in PPM, so tell the user to open PPM when you are on Telegram.
 - Tunnels: read with \`tunnels_status\`; change with \`port_forward_start\`, \`port_forward_stop\` and
   \`public_link_set\` (PPM's own public address).
 - Projects: read with \`projects_list\`; change with \`project_add\`, \`project_update\` (rename, move,

@@ -1,8 +1,9 @@
 import { allowRoute, type RouteRule } from "./assistant-route-rules.ts";
 import type { FamilyHandlers } from "./assistant-tool-family.ts";
 import {
-  SCHEDULE_DELETE_TOOL, SCHEDULE_GET_TOOL, SCHEDULE_RUN_NOW_TOOL, SCHEDULE_SAVE_TOOL, SCHEDULES_LIST_TOOL,
+  SCHEDULE_DELETE_TOOL, SCHEDULE_GET_TOOL, SCHEDULE_PROPOSE_SCRIPT_TOOL, SCHEDULE_RUN_NOW_TOOL, SCHEDULE_SAVE_TOOL, SCHEDULES_LIST_TOOL,
 } from "../../shared/assistant-schedule-tool-names.ts";
+import { scheduleProposeScript } from "./assistant-schedule-propose-tool.ts";
 import { scheduleGet, schedulesList } from "./assistant-schedule-read-tools.ts";
 import { scheduleDelete, scheduleRunNow, scheduleSave } from "./assistant-schedule-write-tools.ts";
 
@@ -28,4 +29,5 @@ export const SCHEDULE_TOOL_HANDLERS: FamilyHandlers = {
   [SCHEDULE_SAVE_TOOL]: (ctx, args) => scheduleSave(ctx, args),
   [SCHEDULE_DELETE_TOOL]: (ctx, args) => scheduleDelete(ctx, args),
   [SCHEDULE_RUN_NOW_TOOL]: (ctx, args) => scheduleRunNow(ctx, args),
+  [SCHEDULE_PROPOSE_SCRIPT_TOOL]: (ctx, args) => scheduleProposeScript(ctx, args),
 };
