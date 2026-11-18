@@ -7,7 +7,7 @@
 import { useMemo } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
-import { openSessionAnywhere } from "@/lib/open-session-anywhere";
+import { openChatSession } from "@/lib/open-chat-session";
 import { openTask } from "@/lib/ppm-tasks/open-task";
 import { useSchedulesOverviewStore } from "@/stores/schedules-overview-store";
 import { scheduleProblem } from "../../../shared/schedule-attention";
@@ -36,7 +36,7 @@ function chatOf(s: ScheduleOverview): string | null {
 }
 
 function openChatOf(s: ScheduleOverview, sessionId: string): void {
-  void openSessionAnywhere(projectLabel(s), sessionId, s.provider_id).then((ok) => {
+  void openChatSession({ projectName: projectLabel(s), sessionId, providerId: s.provider_id }).then((ok) => {
     if (!ok) toast.error(`${projectLabel(s)} is not a project in this PPM any more.`);
   });
 }

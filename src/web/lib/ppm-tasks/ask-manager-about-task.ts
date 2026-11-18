@@ -4,7 +4,7 @@
  * title, link and next step, so the manager knows which task the question is about.
  */
 import { toast } from "sonner";
-import { openSessionAnywhere } from "@/lib/open-session-anywhere";
+import { openChatSession } from "@/lib/open-chat-session";
 import { sendToChat } from "@/lib/send-to-chat";
 import { tabSessionId } from "@/lib/tab-session-id";
 import { usePanelStore } from "@/stores/panel-store";
@@ -30,7 +30,7 @@ export async function askManagerAboutTask(task: TaskDto, managers: readonly Mana
     toast.info(`${task.project} has no manager chat yet`);
     return;
   }
-  const opened = await openSessionAnywhere(task.project, manager.sessionId, manager.providerId);
+  const opened = await openChatSession({ projectName: task.project, sessionId: manager.sessionId, providerId: manager.providerId });
   if (!opened) {
     toast.error(`${task.project} is not a project in this PPM any more.`);
     return;

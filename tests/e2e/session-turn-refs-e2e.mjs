@@ -89,7 +89,9 @@ try {
       panels: { main: panel("main", [tab(ids.D)]) }, grid: [["main"]], focusedPanelId: "main",
     } }) });
     if (!page) return;
-    await page.evaluate(() => { localStorage.removeItem("ppm-panels-alpha"); localStorage.removeItem("ppm-panels-beta"); });
+    await page.evaluate(() => {
+      for (const key of ["ppm-panels-alpha", "ppm-panels-beta", "ppm-windows", "ppm-window-panels"]) localStorage.removeItem(key);
+    });
     await page.goto(`${web}/project/alpha`);
     await page.locator('textarea[placeholder="Ask anything..."]:visible').first().waitFor({ timeout: 30000 });
   };

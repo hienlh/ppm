@@ -51,14 +51,17 @@ export async function runCrossSteps(ctx) {
     });
 
     await clickBubbleChip(ctx, "alpha", B.id, "Billing export");
-    await kit.until("switched to beta", async () => page.url().includes("/project/beta"), 20000);
+    // A desktop opens another project's chat in a floating window; the screen stays on alpha.
+    const win = page.locator('[data-window-layer] [aria-roledescription="window"]').first();
+    await win.getByText("Billing export, question 1").first().waitFor({ timeout: 20000 });
+    assert.match(page.url(), /\/project\/alpha/, "the screen stays on alpha");
     // D is short: its whole history fits, so the turn is pinned only as far as the list can scroll.
     const at = await kit.until("D's turn 2 on screen", async () => {
       const o = await kit.offsetOf(page, D.turnIds[1]);
       return o && (Math.abs(o.offset - PIN_PX) <= 2 || (!o.canScroll && o.offset >= 0 && o.offset < o.height)) ? o : null;
     }, 20000, 50);
-    await kit.shot(page, "06-switched-to-beta");
-    kit.record("6: the chip names project beta, and clicking it switches project and pins D's turn 2", { offset: at.offset, url: page.url() });
+    await kit.shot(page, "06-beta-in-window");
+    kit.record("6: the chip names project beta, and clicking it opens D in a window over alpha and pins its turn 2", { offset: at.offset, url: page.url() });
     await ctx.resetLayout(page);
   });
 
