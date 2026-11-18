@@ -9,29 +9,21 @@
  * so the rewrite never shifts a later match.
  */
 import { readFile, realpath, writeFile } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
-import { isCredentialPath } from "../fs-credential-path-guard.ts";
+import { resolve } from "node:path";
+import { inside, refusedPathReason } from "./content-path-guard.ts";
 import type { ReplaceMatch, ReplaceReport, ReplaceRequest } from "./search-options.ts";
 
 /** Folders a replace never writes into, whatever the search listed. */
 const REFUSED_SEGMENTS = new Set([".git", "node_modules"]);
-
-/** The path of `child` inside `root`, or null when it is the root itself or outside it. */
-function inside(root: string, child: string): string | null {
-  const rel = relative(root, child);
-  if (rel === "" || rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || isAbsolute(rel)) return null;
-  return rel;
-}
 
 const hasRefusedSegment = (rel: string) => rel.split(/[\\/]/).some((s) => REFUSED_SEGMENTS.has(s));
 
 /** Resolves a listed file to the real path to write, or throws with the reason. */
 async function checkedPath(projectPath: string, realProject: string, file: string): Promise<string> {
   const resolved = resolve(projectPath, file);
-  const rel = inside(projectPath, resolved);
-  if (rel === null) throw new Error("outside the project");
-  if (hasRefusedSegment(rel)) throw new Error("inside .git or node_modules");
-  if (isCredentialPath(resolved)) throw new Error("access denied");
+  const refused = refusedPathReason(projectPath, resolved);
+  if (refused) throw new Error(refused);
+  if (hasRefusedSegment(inside(projectPath, resolved)!)) throw new Error("inside .git or node_modules");
 
   let real: string;
   try {
@@ -39,10 +31,9 @@ async function checkedPath(projectPath: string, realProject: string, file: strin
   } catch (e) {
     throw new Error((e as NodeJS.ErrnoException).code === "ENOENT" ? "file not found" : (e as Error).message);
   }
-  const realRel = inside(realProject, real);
-  if (realRel === null) throw new Error("outside the project");
-  if (hasRefusedSegment(realRel)) throw new Error("inside .git or node_modules");
-  if (isCredentialPath(real)) throw new Error("access denied");
+  const realRefused = refusedPathReason(realProject, real);
+  if (realRefused) throw new Error(realRefused);
+  if (hasRefusedSegment(inside(realProject, real)!)) throw new Error("inside .git or node_modules");
   return real;
 }
 

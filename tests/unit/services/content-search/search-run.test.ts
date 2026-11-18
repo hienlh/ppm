@@ -3,6 +3,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { runSearch, SearchRunError } from "../../../../src/services/content-search/search-run.ts";
+import { searchablePaths } from "../../../../src/services/content-search/content-path-guard.ts";
+import { _resetPpmDir } from "../../../../src/services/ppm-dir.ts";
 import { MAX_MATCHES, type SearchRequest, type SearchResponse } from "../../../../src/services/content-search/search-options.ts";
 
 const RG = Bun.which("rg");
@@ -390,5 +392,49 @@ describe.skipIf(!GREP)("runSearch with the grep fallback", () => {
     const res = await runSearch(project, req("x"), undefined, { resolveTool: grepTool, gitPath: null, maxMatches: 2 });
     expect(res.total).toBe(2);
     expect(res.limitHit).toBe(true);
+  });
+});
+
+describe("runSearch: a file a replace refuses is never listed", () => {
+  let savedHome: string | undefined;
+
+  beforeEach(() => {
+    // The PPM directory inside the project, as when a project is the home folder.
+    savedHome = process.env.PPM_HOME;
+    process.env.PPM_HOME = join(project, ".ppm-home");
+    _resetPpmDir();
+    put(".ppm-home/secret.txt", "needle in the config\n");
+    put("a.txt", "needle\n");
+  });
+
+  afterEach(() => {
+    process.env.PPM_HOME = savedHome;
+    _resetPpmDir();
+  });
+
+  test("searchablePaths refuses the PPM directory and anything outside the project", () => {
+    const searchable = searchablePaths(project);
+    expect(searchable("a.txt")).toBe(true);
+    expect(searchable("./a.txt")).toBe(true);
+    expect(searchable(".ppm-home/secret.txt")).toBe(false);
+    expect(searchable("../outside.txt")).toBe(false);
+  });
+
+  test.skipIf(!RG)("ripgrep, with ignore files on and off", async () => {
+    for (const useIgnore of [true, false]) {
+      const res = await runSearch(project, req("needle", { useIgnore }), undefined, { resolveTool: rgTool });
+      expect(files(res)).toEqual(["a.txt"]);
+      expect(res.total).toBe(1);
+      expect(JSON.stringify(res)).not.toContain("config");
+    }
+  });
+
+  test.skipIf(!GREP)("the grep fallback", async () => {
+    const res = await runSearch(project, req("needle", { useIgnore: false }), undefined, {
+      resolveTool: grepTool,
+      gitPath: null,
+    });
+    expect(files(res)).toEqual(["a.txt"]);
+    expect(JSON.stringify(res)).not.toContain("config");
   });
 });
