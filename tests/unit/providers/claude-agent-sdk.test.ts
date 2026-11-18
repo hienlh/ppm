@@ -167,6 +167,36 @@ describe("ClaudeAgentSdkProvider", () => {
       ]);
     });
 
+    it("a real error that ends the turn while a Send now interrupt is pending clears it, so a later turn's error stays an error", async () => {
+      const iter = Object.assign(createMockQueryIterator([
+        { type: "assistant", message: { content: [{ type: "text", text: "working" }] } },
+        // The interrupt met a turn already ending in an error of its own.
+        { type: "result", subtype: "error_max_turns", num_turns: 3 } as any,
+        { type: "assistant", message: { content: [{ type: "text", text: "next turn" }] } },
+        { type: "result", subtype: "error_during_execution", errors: ["API Error: 500 upstream failed"] } as any,
+      ]), {
+        interrupted: 0,
+        async backgroundTasks() { return false; },
+        async interrupt() { iter.interrupted++; },
+      });
+      mockQueryFn.mockReturnValue(iter);
+
+      const session = await provider.createSession({});
+      const events: ChatEvent[] = [];
+      let askedSendNow = false;
+      for await (const event of provider.sendMessage(session.id, "hi")) {
+        events.push(event);
+        if (!askedSendNow) { askedSendNow = true; await provider.sendQueuedNow(session.id); }
+      }
+
+      expect(iter.interrupted).toBe(1);
+      const errors = events.filter((e) => e.type === "error").map((e) => (e as { message: string }).message);
+      expect(errors.some((m) => m.includes("maximum turn limit"))).toBe(true);
+      expect(errors.some((m) => m.includes("error during execution"))).toBe(true);
+      const dones = events.filter((e) => e.type === "done") as Array<{ resultSubtype?: string }>;
+      expect(dones.map((d) => d.resultSubtype)).not.toContain("success");
+    });
+
     it("says why the API refused a turn, not just that the request was invalid", async () => {
       // A refusal comes back as a synthetic assistant message whose error is "invalid_request",
       // and only the CLI's own text says what to do about it.
