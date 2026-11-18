@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.26.15] - 2026-11-18
+
+### Added
+
+- **PPM's own tools get readable cards**: task, chat-history, schedule and report calls show a one-line summary, with buttons that open the task or the chat the call named.
+- **New manager chats start with a rule to hand hands-on work to child chats**; an older project's rules dialog offers the same rule with an Add button.
+
+### Changed
+
+- **Opening another project's chat from a card, chip, task or schedule shows it in a floating window** and keeps you in your project; a phone still switches project.
+
+### Fixed
+
+- **A tab still on a chat's old id no longer stops that chat's running turn.**
+- **A chat picked in Chat History always opens in view**, even after closing tabs in another project had left PPM opening tabs in a hidden panel.
+- **A checked option in a menu shows a filled dot** instead of an empty ring.
+- **A merge conflict's Accept bar sits on its own row** instead of over the code and over the next conflict's bar.
+- **Every floating window's tile in the titlebar and dock has its colour.**
+- **The chat list never shows PPM's shared-context block as a chat's title.**
+- **A design's toolbar in a narrow pane moves the buttons that do not fit into the ··· menu**, keeping Chat and Layout in the bar.
+- **Time and date pickers and select arrows follow the theme's dark or light mode**, so their clock is visible on dark themes.
+- **Removing a dev-linked extension deletes its link**, so one of the same name can be linked from another folder.
+- **A Postgres table lists each column once when another schema has a table of the same name**, and foreign keys into another schema show.
+- **Git Graph no longer says "Failed to look up projects" when PPM listens on a port other than its configured one.**
+
 ## [0.26.14] - 2026-11-18
 
 ### Fixed
