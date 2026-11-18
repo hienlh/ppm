@@ -53,4 +53,12 @@ describe("migration 77: notification feed", () => {
       kind: "schedule", project: "", session_id: null, schedule_id: "7", body: "", read_at: null,
     });
   });
+
+  it("stays at 76 when an index cannot be created, rather than claiming 77", () => {
+    const db = databaseAt76();
+    // A table holding the index's name makes that statement fail.
+    db.exec("CREATE TABLE notification_feed_created (x)");
+    expect(() => runMigrations(db)).toThrow("already a table named notification_feed_created");
+    expect(version(db)).toBe(76);
+  });
 });

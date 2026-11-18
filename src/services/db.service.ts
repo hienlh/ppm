@@ -1619,6 +1619,8 @@ export function runMigrations(database: Database): void {
 
   if (current < 77) {
     // Every notification PPM sends, with its kind and read state, for the notification feed.
+    // One statement per `exec`: bun:sqlite raises only the last statement's error from a
+    // multi-statement `exec`, which would bump the version over a database missing the table.
     database.exec(`
       CREATE TABLE IF NOT EXISTS notification_feed (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1630,11 +1632,11 @@ export function runMigrations(database: Database): void {
         body        TEXT NOT NULL DEFAULT '',
         created_at  INTEGER NOT NULL,
         read_at     INTEGER
-      );
-      CREATE INDEX IF NOT EXISTS notification_feed_created ON notification_feed(created_at DESC);
-      CREATE INDEX IF NOT EXISTS notification_feed_session ON notification_feed(session_id) WHERE session_id IS NOT NULL;
-      PRAGMA user_version = 77;
+      )
     `);
+    database.exec("CREATE INDEX IF NOT EXISTS notification_feed_created ON notification_feed(created_at DESC)");
+    database.exec("CREATE INDEX IF NOT EXISTS notification_feed_session ON notification_feed(session_id) WHERE session_id IS NOT NULL");
+    database.exec("PRAGMA user_version = 77");
   }
 }
 
