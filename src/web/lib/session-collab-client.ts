@@ -6,10 +6,9 @@
  * approved: the card leaves when `approval_resolved` reaches every device showing the chat.
  */
 import { api, projectUrl } from "@/lib/api-client";
-import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { canonicalSessionId } from "@/stores/chat-jump-store";
-import { openSessionAnywhere } from "./open-session-anywhere";
+import { openChatSession } from "./open-chat-session";
 import { openTurnRef } from "./open-turn-ref";
 import { isAssistantProject } from "../../shared/assistant-project";
 import type { SessionCollabAnswer, SessionLink, SessionLinkRelation } from "../../shared/session-collab";
@@ -69,8 +68,8 @@ export interface LinkedSessionTarget {
 }
 
 /**
- * Shows a linked session: at `turnId` when given, else just its tab. Another project's session is
- * opened through the project switch, like a notification click.
+ * Shows a linked session: at `turnId` when given, else just its tab. Another project's session
+ * opens in a floating window on a desktop (`openChatSession`).
  */
 export async function openLinkedSession(target: LinkedSessionTarget): Promise<void> {
   const { providerId } = target;
@@ -87,16 +86,15 @@ export async function openLinkedSession(target: LinkedSessionTarget): Promise<vo
     return;
   }
   const sessionId = canonicalSessionId(target.sessionId);
-  if (target.projectName !== useProjectStore.getState().activeProject?.name) {
-    await openSessionAnywhere(target.projectName, sessionId, target.providerId);
-    return;
-  }
-  useTabStore.getState().openTab({
-    type: "chat",
-    title: target.title || "Chat",
-    projectId: target.projectName,
-    closable: true,
-    metadata: { projectName: target.projectName, sessionId, providerId: target.providerId },
+  await openChatSession({ ...target, sessionId }, () => {
+    useTabStore.getState().openTab({
+      type: "chat",
+      title: target.title || "Chat",
+      projectId: target.projectName,
+      closable: true,
+      metadata: { projectName: target.projectName, sessionId, providerId: target.providerId },
+    });
+    return true;
   });
 }
 

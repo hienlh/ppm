@@ -10,7 +10,7 @@
 import { toast } from "sonner";
 import { usePanelStore } from "@/stores/panel-store";
 import type { Tab } from "@/stores/tab-store";
-import { openSessionAnywhere } from "@/lib/open-session-anywhere";
+import { openChatSession } from "@/lib/open-chat-session";
 import { managerChatsNow } from "@/hooks/use-manager-chats";
 import { attachTaskChip, chipGoesToChat, taskChipOf } from "./composer-task-chip";
 import type { TaskDto } from "../../../shared/ppm-tasks-api";
@@ -74,7 +74,7 @@ export function openTaskChat(
   project: string, sessionId: string, providerId?: string | null,
   task?: Pick<TaskDto, "id" | "number" | "ref" | "title" | "project" | "workingSession">,
 ): void {
-  void openSessionAnywhere(project, sessionId, providerId || "claude").then(async (ok) => {
+  void openChatSession({ projectName: project, sessionId, providerId: providerId || "claude" }).then(async (ok) => {
     if (!ok) toast.error(`${project} is not a project in this PPM any more.`);
     else if (task && chipGoesToChat(task, sessionId, await managerChatsNow())) void attachTaskChip(sessionId, taskChipOf(task));
   });
