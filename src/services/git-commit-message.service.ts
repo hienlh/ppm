@@ -1,8 +1,17 @@
 /**
  * Draft a commit message from what is staged (`git diff --cached --stat` + `git diff --cached`),
- * through `completeOnce` on the lightweight model (`haiku`). Never commits.
+ * through `completeOnce` of the provider Settings names as the default — Claude on its
+ * lightweight model (`haiku`), Codex on its configured model or its own default. Never commits.
+ *
+ * The provider is the one picked or none: a default that is not registered, or cannot answer a
+ * one-shot, is refused rather than handed to Claude, whose quota the person did not choose to
+ * spend. Secrets in the diff are redacted before it leaves the machine.
  */
 import { providerRegistry } from "../providers/registry.ts";
+import { redactLogText } from "../shared/log-redact.ts";
+import type { OneShotInput } from "../types/chat.ts";
+import { configService } from "./config.service.ts";
+import { pickOneShotAccount } from "./extension-ai/extension-ai-account.ts";
 import { runGit, toDisplay } from "./git-hunks/git-hunks.service.ts";
 
 export const MAX_STAGED_DIFF_BYTES = 60 * 1024;
@@ -16,6 +25,9 @@ const SYSTEM_PROMPT = [
   "Reply with the commit message only — no markdown code fences, no quotes, and no surrounding commentary.",
 ].join(" ");
 
+/** Secrets only: paths, emails and ids in a diff are the code itself. */
+const REDACT_SECRETS = { home: false, email: false, chats: false } as const;
+
 export class GitCommitMessageError extends Error {
   readonly status: 409 | 502;
   constructor(message: string, status: 409 | 502) {
@@ -25,28 +37,38 @@ export class GitCommitMessageError extends Error {
   }
 }
 
-type CompleteOnce = (input: {
-  prompt: string;
-  model: string;
-  systemPrompt?: string;
-  timeoutMs?: number;
-}) => Promise<{ text: string }>;
+type CompleteOnce = (input: OneShotInput) => Promise<{ text: string }>;
 
-function resolveCompleteOnce(): CompleteOnce {
-  let defaultProvider: { completeOnce?: CompleteOnce } | undefined;
+interface OneShotPick {
+  completeOnce: CompleteOnce;
+  model: string;
+  accountId?: string;
+}
+
+/** The default provider's one-shot, with the model and account it runs on. Never another provider. */
+async function resolveOneShot(): Promise<OneShotPick> {
+  const ai = configService.get("ai");
+  const id = ai.default_provider;
+  if (id !== "claude" && id !== "codex") {
+    const name = providerRegistry.get(id)?.name ?? id;
+    throw new GitCommitMessageError(
+      `${name} cannot draft a commit message. Make Claude or Codex the default provider in Settings.`, 409,
+    );
+  }
+  const provider = providerRegistry.get(id) as { completeOnce?: CompleteOnce } | undefined;
+  if (typeof provider?.completeOnce !== "function") {
+    throw new GitCommitMessageError(`${id === "codex" ? "Codex" : "Claude"} is not available right now`, 502);
+  }
+  // A Claude model id set for Codex is not one Codex can run; "" leaves the pick to Codex.
+  const codexModel = ai.providers.codex?.model;
+  const model = id === "claude" ? COMMIT_MESSAGE_MODEL : codexModel && !/^claude/i.test(codexModel) ? codexModel : "";
+  let accountId: string | undefined;
   try {
-    defaultProvider = providerRegistry.getDefault() as { completeOnce?: CompleteOnce };
-  } catch {
-    defaultProvider = undefined;
+    accountId = (await pickOneShotAccount(id)).accountId;
+  } catch (e) {
+    throw new GitCommitMessageError((e as Error).message, 502);
   }
-  if (typeof defaultProvider?.completeOnce === "function") {
-    return defaultProvider.completeOnce.bind(defaultProvider);
-  }
-  const claude = providerRegistry.get("claude") as { completeOnce?: CompleteOnce } | undefined;
-  if (typeof claude?.completeOnce === "function") {
-    return claude.completeOnce.bind(claude);
-  }
-  throw new GitCommitMessageError("The AI provider is not available", 502);
+  return { completeOnce: provider.completeOnce.bind(provider), model, ...(accountId ? { accountId } : {}) };
 }
 
 function cleanCommitMessage(raw: string): string {
@@ -69,9 +91,9 @@ export const gitCommitMessageService = {
       throw new Error(diffRes.stderr.trim() || `git diff --cached exited with ${diffRes.exitCode}`);
     }
 
-    const stat = toDisplay(statRes.stdout).trim();
-    const files = toDisplay(filesRes.stdout).trim();
-    const diff = toDisplay(diffRes.stdout);
+    const stat = redactLogText(toDisplay(statRes.stdout), REDACT_SECRETS).trim();
+    const files = redactLogText(toDisplay(filesRes.stdout), REDACT_SECRETS).trim();
+    const diff = redactLogText(toDisplay(diffRes.stdout), REDACT_SECRETS);
 
     if (!diff.trim() && !stat && !files) {
       throw new GitCommitMessageError("Nothing is staged", 409);
@@ -96,14 +118,15 @@ export const gitCommitMessageService = {
       diffBody,
     ].join("\n");
 
-    const completeOnce = resolveCompleteOnce();
+    const { completeOnce, model, accountId } = await resolveOneShot();
     let answer: { text: string };
     try {
       answer = await completeOnce({
         prompt,
-        model: COMMIT_MESSAGE_MODEL,
+        model,
         systemPrompt: SYSTEM_PROMPT,
         timeoutMs: COMMIT_MESSAGE_TIMEOUT_MS,
+        ...(accountId ? { accountId } : {}),
       });
     } catch (e) {
       if (e instanceof GitCommitMessageError) throw e;
