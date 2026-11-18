@@ -56,7 +56,9 @@ export async function buildSharedProviderContext(
   if (recipient !== "antigravity") {
     sources.push(
       { path: join(project, "GEMINI.md") },
-      { path: join(project, ".agents", "rules"), directory: true },
+      // Antigravity loads workspace rules from all four folders at once; `.agent/` is the
+      // Antigravity app's original location, so older projects keep their rules there.
+      ...[".agents", ".agent", "_agents", "_agent"].map((dir) => ({ path: join(project, dir, "rules"), directory: true })),
     );
   }
   const ids = new Set(["claude", "codex", "cursor", "antigravity", ...providers.map((p) => p.id)]);

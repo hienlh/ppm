@@ -266,7 +266,9 @@ for a clean context. The isolated HTTP API proxy is outside this project-chat fl
 Sources include project `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, provider
 `.{providerId}/rules/` and `.{providerId}/memory/` directories,
 user Claude rules, Codex account `AGENTS.md`, and Claude auto-memory for the exact
-project path. PPM does not import account credentials, runtime settings/hooks,
+project path. Antigravity's project `GEMINI.md` and its workspace rules are shared
+from every folder agy loads them from: `.agents/rules/`, `.agent/rules/` (the
+Antigravity app's original location), `_agents/rules/` and `_agent/rules/`. PPM does not import account credentials, runtime settings/hooks,
 conversation transcripts, or another project's auto-memory.
 
 PPM reads existing native memory directly, including knowledge created before
@@ -278,7 +280,8 @@ thread database; databases are opened read-only. New memory stays in the native
 provider's storage. Conversation transcripts are not treated as memory.
 
 Snapshots omit rules already loaded by the receiving provider (Codex AGENTS and
-rules, Claude instructions/rules/auto-memory, Cursor rules). Codex's native memory
+rules, Claude instructions/rules/auto-memory, Cursor rules, Antigravity's `GEMINI.md`,
+`AGENTS.md` and workspace rules). Codex's native memory
 is supplied only to other providers. Unknown providers retain conventional sources.
 Memory directories contribute their index and a directory reference, with topic
 files read on demand. A compact revision tracks file metadata changes, including
