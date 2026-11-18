@@ -133,7 +133,7 @@ export function sessionScheduleToolDefinitions() {
           timeoutMinutes: { type: "number", description: "For tick: how long one run may take before it is stopped (default 5)." },
           permissionMode: { type: "string", enum: ["default", "acceptEdits", "plan", "bypassPermissions"], description: "The mode the chat turns it starts with ctx.ai.chat run in (default bypassPermissions, as the Settings form)." },
           timezone: { type: "string", description: "IANA time zone the cron is read in, e.g. \"Europe/London\" (with `file` too). Leave out for the machine's own." },
-          inputValues: { type: "object", description: "Values for non-secret inputs, by key (with `file` too); an input left out runs on its default." },
+          inputValues: { type: "object", description: "Values for non-secret inputs, by key (with `file` too, where they override the file's own `values`); an input left out runs on its default." },
         },
         additionalProperties: false,
       },

@@ -6,6 +6,8 @@
 //      as shown, runs, and its ctx.ai.chat message reaches the named chat;
 //   b: the same card as the Telegram relay formats it: Deny only (no Allow), rendered for a screenshot;
 //   c: propose → Deny → no schedule;
+//   e: propose from a .ppm-schedule.json that carries `values` → the card shows them, the tool's own
+//      inputValues winning → Deny;
 //   d: pause the script through session_schedule_set_enabled → card → Allow → it is off.
 // No live credentials, no real PPM data: PPM_HOME, HOME and the projects folder are a fresh temp dir.
 //
@@ -17,7 +19,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -193,6 +195,28 @@ try {
     assert.equal((await kit.api("/api/schedules")).data.length, count, "no schedule was added");
     assert.equal((await kit.api("/api/schedules")).data.some((s) => s.name === "denied-watch"), false);
     ok("c denied: the call says nothing was created and no schedule exists");
+  });
+
+  await scenario("e: propose from a .ppm-schedule.json carrying `values`; the card shows them, the tool's own win", async () => {
+    await sk.idle(C.id);
+    const file = join(alpha, "plans", "review-queue-watch.ppm-schedule.json");
+    await mkdir(join(alpha, "plans"), { recursive: true });
+    await writeFile(file, await readFile("tests/fixtures/schedule-proposals/review-queue-watch.ppm-schedule.json"));
+    const count = (await kit.api("/api/schedules")).data.length;
+    await sk.plan(C.id, { steps: [{ call: "session_schedule_propose_script", args: { file, timezone: "Europe/London", inputValues: { days: "7" } } }] });
+    await sk.open(page, C);
+    await sk.send(page, "Set up the review-queue watch from the file in plans.");
+    await card(page).waitFor({ timeout: 30000 });
+    const text = await card(page).innerText();
+    for (const part of [file, "File SHA-256", "11111111-2222-4333-8444-555555555555", "find_review_queue.py", '"7"', "0 */5 * * * *"]) {
+      assert(text.includes(part), `the card shows ${part}`);
+    }
+    await card(page).screenshot({ path: join(artifacts, "card-from-file-values-1440.png") });
+    await card(page).locator("button").filter({ hasText: "Deny" }).click();
+    const call = await answered(C.id, "session_schedule_propose_script");
+    assert.equal(call.isError, true);
+    assert.equal((await kit.api("/api/schedules")).data.length, count);
+    ok("e a file with values is read as written; its values and the tool's override show on the card");
   });
 
   await scenario("d: pause the script through the chat's tool, behind a card", async () => {

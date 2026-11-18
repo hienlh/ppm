@@ -4,9 +4,14 @@
  * a card that names everything that will run and can be allowed only in PPM.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+
+/** Shaped like the Nxsys watch (6-field cron, inputs with defaults, `values`), its private parts replaced. */
+const FIXTURE = resolve(import.meta.dir, "../../../fixtures/schedule-proposals/review-queue-watch.ppm-schedule.json");
+/** The real file the feature was asked for; read only, and only on the machine that has it. */
+const NXSYS_SAMPLE = String.raw`D:\Projects\nxsys\plans\review-queue-watch\review-queue-watch.ppm-schedule.json`;
 import { openTestDb, setDb } from "../../../../src/services/db.service.ts";
 import { getSchedule, insertSchedule, updateSchedule } from "../../../../src/services/scheduler-db.service.ts";
 import { newScheduleFrom } from "../../../../src/services/scheduler-edit.ts";
@@ -120,10 +125,68 @@ describe("a proposal given as a file", () => {
     expect(proposalFileUnchanged(p.file!)).toBe(false);
   });
 
-  it("points at inputValues when the file carries `values`", () => {
+  it("takes the file's `values` as input values, with the tool's inputValues winning, and shows them on the card", () => {
     const file = join(project.path, "plans", "with-values.ppm-schedule.json");
-    writeFileSync(file, template({ values: { sessionId: CHAT } }));
-    expect(errorOf({ file })).toContain("`inputValues`");
+    const inputs = [
+      { key: "sessionId", label: "Chat", type: "text", required: true },
+      { key: "days", label: "Days", type: "text", default: "3" },
+      { key: "limit", label: "Limit", type: "number" },
+    ];
+    writeFileSync(file, template({ inputs, values: { sessionId: CHAT, days: "5", limit: 7 } }));
+    expect(ok({ file }).inputValues).toEqual({ sessionId: CHAT, days: "5", limit: 7 });
+    const p = ok({ file, inputValues: { days: "9" } });
+    expect(p.inputValues).toEqual({ sessionId: CHAT, days: "9", limit: 7 });
+    const facts = Object.fromEntries(scriptProposalSummary(p, "claude", cardDeps).facts.map((f) => [f.label, f.value]));
+    expect(facts["Input days"]).toBe('"9"');
+    expect(facts["Input limit"]).toBe("7");
+    expect(facts["Sends to chat"]).toBe(`QL Review PR (${CHAT})`);
+    const id = insertSchedule(newScheduleFrom(proposalRouteBody(p), "claude"));
+    expect(proposalMismatch(getSchedule(id)!, p, "claude")).toBeNull();
+  });
+
+  it("checks the file's `values` exactly as inputValues: declared, not secret, not null, the right type, no vault value", () => {
+    const file = join(project.path, "plans", "bad-values.ppm-schedule.json");
+    const inputs = [
+      { key: "sessionId", label: "Chat", type: "text", required: true },
+      { key: "token", label: "Token", type: "secret" },
+      { key: "limit", label: "Limit", type: "number" },
+    ];
+    const withValues = (values: unknown) => { writeFileSync(file, template({ inputs, values })); return errorOf({ file }); };
+    expect(withValues({ sessionId: CHAT, nope: 1 })).toContain("the file's values names \"nope\"");
+    expect(withValues({ sessionId: CHAT, token: "t" })).toContain("secret input");
+    expect(withValues({ sessionId: CHAT, limit: null })).toContain("null");
+    expect(withValues({ sessionId: CHAT, limit: "seven" })).toContain("limit");
+    expect(withValues(["not", "an", "object"])).toContain("must be an object");
+    const secret = "vault-value-in-values-77";
+    turnSecretScrubber.hold("another-chat", [{ name: "Values token", value: secret }]);
+    expect(withValues({ sessionId: secret })).toContain("Values token");
+    // A wrong value in the file is mended by the tool's own: the override passes the same checks.
+    writeFileSync(file, template({ inputs, values: { sessionId: CHAT, limit: "seven" } }));
+    expect(ok({ file, inputValues: { limit: 7 } }).inputValues).toEqual({ sessionId: CHAT, limit: 7 });
+  });
+
+  it("reads a review-queue watch template carrying `values` as written (fixture shaped like the Nxsys one)", () => {
+    const p = parseScriptProposal({ file: FIXTURE }, project, "claude", [dirname(FIXTURE)]);
+    if (!p.ok) throw new Error(p.error);
+    expect(p.proposal).toMatchObject({ name: "review-queue-watch", cron: "0 */5 * * * *", timeoutMs: 300_000, permissionMode: "bypassPermissions" });
+    expect(p.proposal.inputValues).toMatchObject({ sessionId: "11111111-2222-4333-8444-555555555555", days: "3", fromHour: "8", toHour: "19" });
+    expect(p.proposal.inputValues).not.toHaveProperty("queueJson");
+  });
+
+  it.skipIf(!existsSync(NXSYS_SAMPLE))("reads the Nxsys review-queue-watch file itself, as it is on this machine (read only)", () => {
+    const before = readFileSync(NXSYS_SAMPLE);
+    const nxsys = { name: "nxsys", path: dirname(dirname(dirname(NXSYS_SAMPLE))) };
+    const p = parseScriptProposal({ file: NXSYS_SAMPLE }, nxsys, "claude", [nxsys.path]);
+    if (!p.ok) throw new Error(p.error);
+    const raw = JSON.parse(before.toString("utf8"));
+    expect(p.proposal.script).toBe(raw.script);
+    expect(p.proposal.inputValues).toEqual(raw.values);
+    expect(p.proposal.cron).toBe(raw.cron);
+    const summary = scriptProposalSummary(p.proposal, "claude", cardDeps);
+    for (const [key, value] of Object.entries(raw.values)) {
+      expect(summary.facts.find((f) => f.label === `Input ${key}`)!.value).toBe(JSON.stringify(value));
+    }
+    expect(readFileSync(NXSYS_SAMPLE).equals(before)).toBe(true);
   });
 
   it("refuses a file outside the folder, a link out of it, another suffix, and fields given with it", () => {

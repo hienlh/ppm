@@ -97,7 +97,10 @@ allowed a card. Code in `src/services/schedule-proposals/`.
   way. A chat's schedule always runs in its own project's folder and its `file` must be inside
   that folder; the Assistant names a registered project and may read a file in any of them.
 - **Checked first, by the route's own rules** (`parseScriptProposal`): the template is parsed
-  strictly as on import (a `values` field is refused, with a pointer to `inputValues`), then
+  strictly as on import, except that a proposal file may carry `values` (this machine's input
+  values, which a shared template never holds and import still refuses); the tool's `inputValues`
+  override them and both pass the same checks (declared, not secret, not null, the right type, no
+  vault value) and show on the card alike. Then
   `newScheduleFrom` runs dry, so a card never shows a schedule the save would refuse. A secret's
   value never comes from an AI: a secret in `inputValues` is refused, and so is a script with a
   required secret input (the user imports that one in Settings → Schedules).

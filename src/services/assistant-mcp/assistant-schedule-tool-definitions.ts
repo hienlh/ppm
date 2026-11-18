@@ -101,7 +101,7 @@ export const SCHEDULE_TOOL_DEFINITIONS: readonly AssistantToolDefinition[] = [
       timeoutMinutes: { type: "number", description: "For tick: how long one run may take (default 5)." },
       permissionMode: { type: "string", enum: ["default", "acceptEdits", "plan", "bypassPermissions"], description: "The mode its ctx.ai.chat turns run in (default bypassPermissions)." },
       timezone: { type: "string", description: "IANA zone the cron is read in, e.g. \"Europe/London\" (with `file` too). Leave out for the server's own." },
-      inputValues: { type: "object", description: "Values for non-secret inputs by key (with `file` too); one left out runs on its default." },
+      inputValues: { type: "object", description: "Values for non-secret inputs by key (with `file` too, overriding the file's own `values`); one left out runs on its default." },
     }, ["project"]),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },

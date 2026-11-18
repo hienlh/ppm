@@ -8,8 +8,9 @@
  * checks the stored row against it once more after the save.
  *
  * Given either as fields or as a `.ppm-schedule.json` file (`file`), parsed strictly like an
- * import. Input values come apart from the file, as on import: a template carries defaults, never
- * this machine's values. A secret's value never comes from an AI.
+ * import, except that a proposal file may also carry `values`: this machine's input values, which
+ * a shared template never holds. The tool's `inputValues` override them, and both go through the
+ * same checks and onto the card alike. A secret's value never comes from an AI or a file.
  */
 import { definitionProblems, DEFAULT_TIMEOUT_MS, SCHEDULE_LIMITS } from "../../shared/schedule-definition.ts";
 import { parseScheduleTemplate } from "../../shared/schedule-template.ts";
@@ -69,19 +70,21 @@ export function parseScriptProposal(
 ): ProposalParse {
   let def: Record<string, unknown>;
   let file: ScriptScheduleProposal["file"] = null;
+  let fileValues: Record<string, unknown> = {};
   if (args.file !== undefined) {
     const given = FIELD_ARGS.filter((k) => args[k] !== undefined);
     if (given.length) return refused([`give either \`file\` or the fields, not both (${given.join(", ")} given with file)`]);
     const read = readProposalFile(args.file, fileRoots, where);
     if (!read.ok) return { ok: false, error: `Not proposed: ${read.error}` };
-    const parsed = parseScheduleTemplate(read.file.text);
-    if (!parsed.ok) {
-      const hint = parsed.errors.some((e) => e === 'Unknown field "values"')
-        ? " Input values do not go in the template: give them in this tool's `inputValues` argument instead (copy the file without `values`)."
-        : "";
-      return { ok: false, error: `Not proposed: the file is not a valid schedule template: ${parsed.errors.join("; ")}.${hint}` };
-    }
+    // A proposal file may carry this machine's input values beside the template (`values`), which
+    // a shared template never does: they are taken out here, and the rest is parsed as strictly as
+    // an import. They then go through every check `inputValues` does, below.
+    const split = splitFileValues(read.file.text);
+    if (!split.ok) return refused([split.error]);
+    const parsed = parseScheduleTemplate(split.template);
+    if (!parsed.ok) return { ok: false, error: `Not proposed: the file is not a valid schedule template: ${parsed.errors.join("; ")}.` };
     def = { ...parsed.template };
+    fileValues = split.values;
     file = { path: read.file.path, sha256: read.file.sha256 };
   } else {
     const minutes = args.timeoutMinutes;
@@ -113,13 +116,16 @@ export function parseScriptProposal(
   }
 
   const inputs = normalizeInputs((def.inputs ?? []) as ScheduleInputDecl[]);
-  const values = args.inputValues ?? {};
-  if (!isObj(values)) return refused(["inputValues must be an object of input key to value"]);
+  const given = args.inputValues ?? {};
+  if (!isObj(given)) return refused(["inputValues must be an object of input key to value"]);
+  // The tool's own values win over the file's; both pass the same checks, named by where they came from.
+  const values: Record<string, unknown> = { ...fileValues, ...given };
   for (const key of Object.keys(values)) {
+    const from = Object.hasOwn(given, key) ? "inputValues" : "the file's values";
     const decl = inputs.find((d) => d.key === key);
-    if (!decl) return refused([`inputValues names "${key}", which the script does not declare`]);
-    if (decl.type === "secret") return refused([`"${key}" is a secret input: its value is set by the user in Settings → Schedules, never by an AI`]);
-    if (values[key] === null) return refused([`inputValues.${key} is null; leave it out to run on the input's default`]);
+    if (!decl) return refused([`${from} names "${key}", which the script does not declare`]);
+    if (decl.type === "secret") return refused([`"${key}" is a secret input: its value is set by the user in Settings → Schedules, never by an AI or a file`]);
+    if (values[key] === null) return refused([`${from} gives "${key}" null; leave it out to run on the input's default`]);
   }
   const requiredSecret = inputs.find((d) => d.type === "secret" && d.required);
   if (requiredSecret) {
@@ -152,6 +158,23 @@ export function parseScriptProposal(
     return { ok: false, error: `Not proposed: ${(e as Error).message}` };
   }
   return { ok: true, proposal: Object.freeze(proposal) };
+}
+
+/**
+ * A proposal file's text split into the template and its `values`. Text that is not JSON goes on
+ * whole, so the template parser answers it (never quoting it: a file picked by mistake can hold a token).
+ */
+function splitFileValues(text: string): { ok: true; template: unknown; values: Record<string, unknown> } | { ok: false; error: string } {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: true, template: text, values: {} };
+  }
+  if (!isObj(data) || !("values" in data)) return { ok: true, template: data, values: {} };
+  const { values, ...template } = data;
+  if (!isObj(values)) return { ok: false, error: "the file's values must be an object of input key to value" };
+  return { ok: true, template, values };
 }
 
 /** The body `POST /api/schedules` saves `p` from: every value explicit, created on. */
