@@ -87,10 +87,11 @@ export function sessionScheduleToolDefinitions() {
       name: SESSION_SCHEDULE_SET_ENABLED_TOOL,
       title: "Pause or turn on a schedule",
       description: "Pause a schedule (enabled: false) or turn it back on (enabled: true) without deleting it, by the id "
-        + "session_schedule_list gives. This chat's own scheduled prompts change at once. A script or prompt schedule "
-        + "of this chat's project (listed under projectSchedules) changes only after the user allows a card in this "
-        + "chat; the call waits for the answer. Schedules of other chats or projects are out of reach. Use this "
-        + "instead of deleting and creating a schedule again.",
+        + "session_schedule_list gives. Pausing is done at once: this chat's own scheduled prompts and any script or "
+        + "prompt schedule of this chat's project (listed under projectSchedules); the answer names what was paused, "
+        + "so tell the user. Turning on is done at once for this chat's own prompts, and for the project's other "
+        + "schedules only after the user allows a card in this chat; the call waits for the answer. Schedules of "
+        + "other chats or projects are out of reach. Use this instead of deleting and creating a schedule again.",
       inputSchema: {
         type: "object",
         properties: {

@@ -999,7 +999,8 @@ to an Assistant session. Delivery, catch-up and pausing: [Schedules](schedules.m
 
 Two more wait on a card in the chat (`collab-schedule-proposals.ts`):
 `session_schedule_set_enabled { id, enabled }` pauses or turns on a schedule without deleting it
-(the chat's own reminders at once; a script or prompt schedule of its project behind a card), and
+(pausing at once with no card, the chat's own reminders and its project's script and prompt
+schedules alike; turning on the project's schedules behind a card), and
 `session_schedule_propose_script` proposes a script schedule for the chat's project, from fields or
 a `.ppm-schedule.json`, created only once the user allows the card, which shows the whole script
 and can be allowed only in PPM. `session_schedule_list` also lists the project's schedules

@@ -26,9 +26,11 @@ let root: string, projectPath: string, otherPath: string;
 let cards: SessionCollabApprovalRequest[];
 let provider: string;
 let changes: number;
+let unattendedNow = false;
 
 const broker = createCollabApprovalBroker({
   chat: () => ({ announce: (_s, event) => { cards.push(event); return true; }, resolved: () => {} }),
+  unattended: () => unattendedNow,
 });
 
 const target: ScheduleTargetDeps = {
@@ -50,6 +52,7 @@ const env: ScheduleProposalToolEnv = {
   create: createProposedSchedule,
   setEnabled: setScheduleEnabled,
   changed: () => { changes++; },
+  unattended: () => unattendedNow,
 };
 
 type Result = { content: Array<{ text: string }>; isError?: boolean };
@@ -80,6 +83,7 @@ beforeEach(() => {
   cards = [];
   provider = "claude";
   changes = 0;
+  unattendedNow = false;
 });
 
 describe("session_schedule_propose_script", () => {
@@ -157,17 +161,40 @@ describe("session_schedule_set_enabled", () => {
     expect(cards).toHaveLength(0);
   });
 
-  it("pauses a script of its project only after the card is allowed, and not when denied", async () => {
+  it("pauses a script or prompt schedule of its project at once, with no card, and says which", async () => {
     const id = script(projectPath);
-    const denied = toggle({ id, enabled: false });
-    await answer("deny");
-    expect((await denied).isError).toBe(true);
-    expect(getSchedule(id)!.enabled).toBe(1);
+    const res = await toggle({ id, enabled: false });
+    expect(res.isError).toBeFalsy();
+    expect(cards).toHaveLength(0);
+    expect(getSchedule(id)!.enabled).toBe(0);
+    const out = JSON.parse(text(res));
+    expect(out.paused).toEqual({ id, name: "Existing", kind: "script", project: "proj" });
+    expect(out.note).toContain(`Paused schedule #${id} "Existing" (script) in project "proj"`);
+    const prompt = insertSchedule({ name: "Nightly", cron_expr: "0 3 * * *", provider_id: "claude", project_path: projectPath, prompt: "go", kind: "prompt", enabled: true });
+    expect(JSON.parse(text(await toggle({ id: prompt, enabled: false }))).paused).toMatchObject({ id: prompt, kind: "prompt" });
+    expect(cards).toHaveLength(0);
+    expect(changes).toBe(2);
+  });
 
-    const allowed = toggle({ id, enabled: false });
-    const card = await answer("allow_once");
-    expect(card.input).toMatchObject({ kind: "schedule", action: "disable" });
-    expect((await allowed).isError).toBeFalsy();
+  it("pauses none of the project's schedules in a turn PPM started with nobody in it, but still the chat's own reminders", async () => {
+    const id = script(projectPath);
+    unattendedNow = true;
+    const res = await toggle({ id, enabled: false });
+    expect(res.isError).toBe(true);
+    expect(text(res)).toContain("unattended");
+    expect(cards).toHaveLength(0);
+    expect(getSchedule(id)!.enabled).toBe(1);
+    const own = reminder(CHAT, projectPath);
+    expect((await toggle({ id: own, enabled: false })).isError).toBeFalsy();
+    expect(getSchedule(own)!.enabled).toBe(0);
+  });
+
+  it("turns a script of its project back on only after the card is allowed, and not when denied", async () => {
+    const id = script(projectPath);
+    await toggle({ id, enabled: false });
+    const denied = toggle({ id, enabled: true });
+    expect((await answer("deny")).input).toMatchObject({ kind: "schedule", action: "enable" });
+    expect((await denied).isError).toBe(true);
     expect(getSchedule(id)!.enabled).toBe(0);
 
     // Turning a script back on shows the script and is allowed only in PPM.
@@ -188,14 +215,15 @@ describe("session_schedule_set_enabled", () => {
     expect(cards).toHaveLength(0);
   });
 
-  it("does nothing when the schedule changed while the card waited", async () => {
+  it("does not turn on a schedule that changed while the card waited", async () => {
     const id = script(projectPath);
-    const call = toggle({ id, enabled: false });
+    await toggle({ id, enabled: false });
+    const call = toggle({ id, enabled: true });
     for (let i = 0; i < 50 && cards.length === 0; i++) await Bun.sleep(5);
     const { updateSchedule } = await import("../../../src/services/scheduler-db.service.ts");
     updateSchedule(id, { script: `${SCRIPT}// edited` });
     await answer("allow_once");
     expect(text(await call)).toContain("stale");
-    expect(getSchedule(id)!.enabled).toBe(1);
+    expect(getSchedule(id)!.enabled).toBe(0);
   });
 });

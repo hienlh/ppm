@@ -96,7 +96,7 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
   },
   session_schedule_set_enabled: {
     label: "Pause and resume schedules",
-    note: "Pauses or turns on a prompt scheduled into its own chat at once, and a script or prompt schedule of its project only after you allow a card.",
+    note: "Pauses any schedule of its project at once, and says which. Turns a prompt scheduled into its own chat back on at once, and any other schedule of its project only after you allow a card.",
   },
   session_schedule_propose_script: {
     label: "Propose script schedules",

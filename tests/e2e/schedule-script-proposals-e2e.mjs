@@ -8,7 +8,8 @@
 //   c: propose → Deny → no schedule;
 //   e: propose from a .ppm-schedule.json that carries `values` → the card shows them, the tool's own
 //      inputValues winning → Deny;
-//   d: pause the script through session_schedule_set_enabled → card → Allow → it is off.
+//   d: pause the script through session_schedule_set_enabled → at once, no card, the answer names it;
+//      turning it on → card with the script → Deny → still off.
 // No live credentials, no real PPM data: PPM_HOME, HOME and the projects folder are a fresh temp dir.
 //
 // Run it in the capped e2e image (see tests/e2e/docker/):
@@ -219,20 +220,36 @@ try {
     ok("e a file with values is read as written; its values and the tool's override show on the card");
   });
 
-  await scenario("d: pause the script through the chat's tool, behind a card", async () => {
+  await scenario("d: pause the script at once with no card; turning it on asks", async () => {
     assert(scheduleId, "scenario a created a schedule");
     await sk.idle(A.id);
-    await sk.plan(A.id, { steps: [{ call: "session_schedule_set_enabled", args: { id: scheduleId, enabled: false } }] });
+    const from = (await sk.calls()).length;
+    await sk.plan(A.id, { steps: [{ call: "session_schedule_set_enabled", args: { id: scheduleId, enabled: false } }, { say: "Paused it." }] });
     await sk.open(page, A);
     await sk.send(page, "Pause the review-queue watch for now.");
-    await card(page).waitFor({ timeout: 30000 });
-    assert.match(await card(page).innerText(), /pause a schedule/i);
-    await card(page).screenshot({ path: join(artifacts, "pause-card-desktop-1440.png") });
-    await card(page).locator("button").filter({ hasText: "Allow once" }).click();
-    const call = await answered(A.id, "session_schedule_set_enabled");
+    const call = await answered(A.id, "session_schedule_set_enabled", from);
     assert.equal(call.isError, false, call.text);
+    const out = JSON.parse(call.text);
+    assert.deepEqual(out.paused, { id: scheduleId, name: "review-queue-watch", kind: "script", project: "alpha" });
+    assert.match(out.note, new RegExp(`Paused schedule #${scheduleId} "review-queue-watch" \\(script\\)`));
     assert.equal((await sk.stored(scheduleId)).enabled, 0);
-    ok("d paused: the schedule is off, not deleted");
+    assert.equal(await card(page).count(), 0, "no card was shown for a pause");
+    ok("d1 paused at once, no card, and the answer names the schedule");
+
+    await sk.idle(A.id);
+    const from2 = (await sk.calls()).length;
+    await sk.plan(A.id, { steps: [{ call: "session_schedule_set_enabled", args: { id: scheduleId, enabled: true } }] });
+    await sk.send(page, "Turn the watch back on.");
+    await card(page).waitFor({ timeout: 30000 });
+    const text = await card(page).innerText();
+    assert.match(text, /turn on a schedule/i);
+    assert(text.includes("Script (runs exactly as shown)"), "turning a script on shows the script");
+    await card(page).screenshot({ path: join(artifacts, "resume-card-desktop-1440.png") });
+    await card(page).locator("button").filter({ hasText: "Deny" }).click();
+    const again = await answered(A.id, "session_schedule_set_enabled", from2);
+    assert.equal(again.isError, true);
+    assert.equal((await sk.stored(scheduleId)).enabled, 0);
+    ok("d2 turning it on shows a card with the script; denied, it stays paused");
   });
 
   if (failures.length) process.exitCode = 1;

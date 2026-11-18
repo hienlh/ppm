@@ -48,6 +48,9 @@ const answering = (verdict: "approved" | "denied", during?: () => void): AskAppr
   return verdict === "approved" ? { verdict } : { verdict, reason: "The user said no." };
 };
 const ctx = (ask: AskApproval) => ({ sessionId: "assistant-propose-int", ask, callRoute });
+/** A turn the user started in PPM with nothing untrusted in it: what lets a pause skip its card. */
+const CLEAN = { startedBy: "user_ppm", untrusted: false };
+const clean = (ask: AskApproval) => ({ ...ctx(ask), provenanceAtCall: CLEAN }) as never;
 const parse = (r: unknown) => JSON.parse((r as { content: Array<{ text: string }> }).content[0]!.text);
 const textOf = (r: unknown) => (r as { content: Array<{ text: string }> }).content[0]!.text;
 const deps = {
@@ -130,8 +133,26 @@ describe("schedule_propose_script", () => {
     expect(lastAsk().reviewInPpm).toBeTruthy();
     await scheduleSave(ctx(answering("denied")), { id, name: "Renamed" });
     expect(lastAsk().reviewInPpm).toBeUndefined();
-    await scheduleSave(ctx(answering("denied")), { id, enabled: false });
-    expect(lastAsk().reviewInPpm).toBeUndefined();
+  });
+
+  it("pauses a schedule at once with no card in a turn the user started, and says which; turning it on again asks", async () => {
+    const created = parse(await scheduleProposeScript(ctx(answering("approved")), { project: "propose-int", name: "Watch", cron: "0 */10 * * * *", script: SCRIPT }, deps));
+    const id = created.schedule.id;
+    asks = [];
+    // A turn carrying anything untrusted (or one PPM started) still asks, and a declined card pauses nothing.
+    await scheduleSave({ ...ctx(answering("denied")), provenanceAtCall: { ...CLEAN, untrusted: true } } as never, { id, enabled: false });
+    expect(asks).toHaveLength(1);
+    expect(getSchedule(id)!.enabled).toBe(1);
+    asks = [];
+    const paused = parse(await scheduleSave(clean(answering("denied")), { id, enabled: false }));
+    expect(asks).toHaveLength(0);
+    expect(getSchedule(id)!.enabled).toBe(0);
+    expect(paused.paused).toEqual({ id, name: "Watch", kind: "script", project: "propose-int" });
+    expect(paused.note).toContain(`Paused script schedule #${id} "Watch" in "propose-int"`);
+    // Turning it on asks, even in a clean turn.
+    await scheduleSave(clean(answering("denied")), { id, enabled: true });
+    expect(asks).toHaveLength(1);
+    expect(getSchedule(id)!.enabled).toBe(0);
   });
 
   it("calls a card stale when the script's input values changed while it waited", async () => {
@@ -140,9 +161,10 @@ describe("schedule_propose_script", () => {
       inputs: [{ key: "target", label: "Target", type: "text" }], inputValues: { target: "a" },
     }, deps));
     const id = created.schedule.id;
+    await scheduleSave(clean(answering("approved")), { id, enabled: false });
     const { updateSchedule } = await import("../../src/services/scheduler-db.service.ts");
-    const res = await scheduleSave(ctx(answering("approved", () => updateSchedule(id, { input_values_json: JSON.stringify({ target: "b" }) }))), { id, enabled: false });
+    const res = await scheduleSave(ctx(answering("approved", () => updateSchedule(id, { input_values_json: JSON.stringify({ target: "b" }) }))), { id, enabled: true });
     expect(textOf(res)).toContain("stale");
-    expect(getSchedule(id)!.enabled).toBe(1);
+    expect(getSchedule(id)!.enabled).toBe(0);
   });
 });

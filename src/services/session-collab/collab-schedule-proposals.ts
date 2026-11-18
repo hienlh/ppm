@@ -4,12 +4,14 @@
  *
  * Reach, as for the other schedule tools: the chat is the one the token names. Its own reminders
  * (session schedules aimed at this chat) are paused and turned on unasked, as they are created and
- * deleted unasked. Anything else — a script or prompt schedule — must run in this chat's project
- * folder and goes through a card in this chat; a schedule elsewhere reads exactly like one that
- * does not exist. A script schedule is created only from a card the user allowed, from the very
+ * deleted unasked. A script or prompt schedule must run in this chat's project folder: pausing one
+ * is done at once (it only stops something), turning one on goes through a card in this chat. A
+ * schedule elsewhere reads exactly like one that does not exist. Every change is logged. A script schedule is created only from a card the user allowed, from the very
  * proposal the card was built from, and only in this chat's project folder.
  */
 import { textResult, type Json } from "../mcp-http-endpoint.ts";
+import { createLogger } from "../logger.ts";
+import { isUnattendedTurn } from "../chat-control/chat-control.ts";
 import type { SessionCollabScheduleApproval } from "../../shared/session-collab.ts";
 import type { Schedule } from "../../types/scheduler.ts";
 import { getSchedule } from "../scheduler-db.service.ts";
@@ -34,7 +36,12 @@ export interface ScheduleProposalToolEnv {
   setEnabled(current: Schedule, enabled: boolean): Schedule;
   /** A schedule changed: re-arm the scheduler and refresh open schedule lists. */
   changed(): void;
+  /** Whether PPM started the chat's running turn with nobody in it (`isUnattendedTurn`). */
+  unattended(sessionId: string): boolean;
 }
+
+/** Every schedule change a chat's AI makes goes into PPM's log (the Logs window), beside the session trace's record of the call. */
+const log = createLogger("scheduler");
 
 const json = (value: unknown, isError = false): Json => textResult(JSON.stringify(value, null, 1), isError);
 const fail = (message: string): Json => textResult(message, true);
@@ -74,6 +81,7 @@ export async function proposeScriptTool(env: ScheduleProposalToolEnv, chat: Sche
   const created = env.create(proposal, providerId);
   if (!created.ok) return fail(created.error);
   env.changed();
+  log.info(`chat ${chat.sessionId} created script schedule #${created.schedule.id} "${created.schedule.name}" in project "${chat.projectName}" after the user allowed its card`);
   return json({
     created: true, schedule: view(created.schedule),
     note: "The user allowed it. It runs at its next fire; its log is in Settings → Schedules. Pause it with "
@@ -102,7 +110,12 @@ export async function setEnabledTool(env: ScheduleProposalToolEnv, chat: Schedul
   const seen = found.schedule;
   if ((seen.enabled === 1) === enabled) return fail(`Schedule ${id} is already ${enabled ? "on" : "paused"}; nothing to do.`);
 
-  if (!found.ownReminder) {
+  // Pausing only stops something, so it needs no card; turning one of the project's schedules on
+  // starts it again and does. The chat's own reminders change unasked either way, as before. A turn
+  // PPM started with nobody in it (a script's message, a watch report) still changes none of the
+  // project's schedules unasked: it goes through the card, which such a turn cannot show.
+  const asked = !found.ownReminder && (enabled || env.unattended(chat.sessionId));
+  if (asked) {
     const card: SessionCollabScheduleApproval = {
       kind: "schedule", action: enabled ? "enable" : "disable",
       summary: scheduleToggleSummary(seen, enabled, chat.projectName, env.card()),
@@ -121,7 +134,17 @@ export async function setEnabledTool(env: ScheduleProposalToolEnv, chat: Schedul
     return fail(refusalText(e));
   }
   env.changed();
-  return json({ updated: true, schedule: view(saved), note: enabled ? "It runs again from its next fire." : "It will not run until it is turned on again." });
+  const what = `schedule #${saved.id} "${saved.name}" (${saved.kind}${saved.mode === "always-on" ? ", always on" : ""}) in project "${chat.projectName}"`;
+  log.info(`chat ${chat.sessionId} ${enabled ? "turned on" : "paused"} ${what}${asked ? " after the user allowed its card" : " (no card needed)"}`);
+  const resume = found.ownReminder ? "until it is turned on again" : "until it is turned on again, which the user approves on a card";
+  return json({
+    updated: true,
+    [enabled ? "turnedOn" : "paused"]: { id: saved.id, name: saved.name, kind: saved.kind, project: chat.projectName },
+    schedule: view(saved),
+    note: enabled
+      ? `Turned on ${what}. It runs again from its next fire.`
+      : `Paused ${what}${asked ? "" : " without asking: pausing needs no card"}. Tell the user. It will not run ${resume}.`,
+  });
 }
 
 /** The live environment: the session tools' card broker, the route's save functions. */
@@ -142,6 +165,7 @@ export async function liveScheduleProposalToolEnv(): Promise<ScheduleProposalToo
     create: create.createProposedSchedule,
     setEnabled: toggle.setScheduleEnabled,
     changed: announceSchedulesChanged,
+    unattended: isUnattendedTurn,
   };
 }
 

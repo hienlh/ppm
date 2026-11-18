@@ -42,7 +42,8 @@ export const SCHEDULE_TOOL_DEFINITIONS: readonly AssistantToolDefinition[] = [
     title: "Create or edit a scheduled agent",
     description: "Without `id`, create a prompt schedule (name, cron, project and prompt required; a script schedule is "
       + "schedule_propose_script). With `id`, change only "
-      + "the fields given — `enabled: false` pauses it, `true` turns it back on. The user sees the whole prompt, the "
+      + "the fields given — `enabled: false` alone pauses it at once with no card when the user started this turn (tell them what you paused); `true` "
+      + "turns it back on after a card. For any other change the user sees the whole prompt, the "
       + "next three run times and the mode, and it is saved only if they approve. Only schedules of registered "
       + "projects can be changed. Without `permissionMode` a new schedule runs in bypassPermissions, as from the "
       + "Settings form: every run executes every tool unasked with nobody watching — say so, and suggest a narrower "

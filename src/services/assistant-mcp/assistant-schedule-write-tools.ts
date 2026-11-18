@@ -8,6 +8,11 @@ import type { AssistantProject } from "./assistant-project-scope.ts";
 import { errorResult, jsonResult, notApprovedResult } from "./assistant-tool-output.ts";
 import type { ToolContext } from "./assistant-tool-family.ts";
 import { withStoredScript } from "../schedule-proposals/script-proposal-card.ts";
+import { createLogger } from "../logger.ts";
+import { isCleanTurn } from "./assistant-chat-organize-tool.ts";
+
+/** Every schedule change the Assistant makes goes into PPM's log, beside the session trace's record of the call. */
+const log = createLogger("scheduler");
 import {
   createScheduleSummary, deleteScheduleSummary, editScheduleSummary, runNowScheduleSummary, type ScheduleSettings,
 } from "./assistant-approval-summary-schedule.ts";
@@ -22,8 +27,10 @@ import {
 
 /**
  * `schedule_save`, `schedule_delete`, `schedule_run_now`: each asks first, with a card built from
- * the schedule as the route reads it, and has no path that runs without `ctx.ask` approving — so
- * a watch turn, which refuses every ask, changes nothing. Only a schedule whose folder is a
+ * the schedule as the route reads it, and has no other path that runs without `ctx.ask` approving
+ * — so a watch turn, which refuses every ask, changes nothing. The one change made without a card
+ * is a `schedule_save` that only pauses a schedule, in a clean turn the user started
+ * (`isCleanTurn`): it only stops something. It is logged like the rest. Only a schedule whose folder is a
  * registered project may be changed. A card can wait for hours, so after the approval the
  * schedule is read again and anything the card showed that changed meanwhile stops the call
  * (`stale`): the user approves exactly what they saw.
@@ -133,15 +140,27 @@ async function editSchedule(ctx: ToolContext, id: number, given: GivenSchedule, 
   if (current.schedule.kind === "script" && !changed.every((k) => k === "name" || (k === "enabled" && !after.enabled))) {
     summary = withStoredScript(summary, current.schedule);
   }
-  const refused = await ask(ctx, SCHEDULE_SAVE_TOOL, { id, project: after.project, ...body }, summary);
-  if (refused) return refused;
-  const stale = await recheck(ctx, current.schedule, SCHEDULE_SAVE_TOOL);
-  if (stale) return stale;
+  // Pausing alone only stops something: in a turn the user started, with nothing untrusted in it,
+  // it is done without a card. Any other turn asks, as every other change does — so a watch turn,
+  // which asks nobody, still pauses nothing.
+  const pauseOnly = changed.length === 1 && changed[0] === "enabled" && !after.enabled && isCleanTurn(ctx.provenanceAtCall);
+  if (!pauseOnly) {
+    const refused = await ask(ctx, SCHEDULE_SAVE_TOOL, { id, project: after.project, ...body }, summary);
+    if (refused) return refused;
+    const stale = await recheck(ctx, current.schedule, SCHEDULE_SAVE_TOOL);
+    if (stale) return stale;
+  }
 
   const res = await ctx.callRoute<Schedule>("PATCH", schedulePath(id), body);
   if (!res.ok || !res.data) return errorResult(`Not changed: ${res.error ?? `the route answered ${res.status}`}`);
+  log.info(`PPM Assistant ${ctx.sessionId} ${pauseOnly ? "paused (no card needed)" : `changed (${changed.join(", ")}) after the user allowed its card`} `
+    + `${current.schedule.kind} schedule #${id} "${current.schedule.name}" in project "${current.project.name}"`);
   return jsonResult({
     updated: true, changed,
+    ...(pauseOnly && {
+      paused: { id, name: current.schedule.name, kind: current.schedule.kind, project: current.project.name },
+      note: `Paused ${current.schedule.kind} schedule #${id} "${current.schedule.name}" in "${current.project.name}" without asking: pausing needs no card. Tell the user; turning it on again asks them.`,
+    }),
     previous: scheduleView(current.schedule, current.project, timeZoneOf(deps)),
     schedule: scheduleView(res.data, projectOfFolder(res.data.project_path, projects), timeZoneOf(deps)),
   });

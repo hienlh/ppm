@@ -127,10 +127,17 @@ allowed a card. Code in `src/services/schedule-proposals/`.
   stored row is compared with the proposal (`proposalMismatch`) and removed again if any field
   differs.
 - **Pause and resume.** `session_schedule_set_enabled` (chat) turns a schedule off or on without
-  deleting it: the chat's own reminders at once, as they are created and deleted, and a script or
-  prompt schedule of its project only after a card (`schedule-toggle.ts`), refused as `stale` if
-  the schedule changed while the card waited. Turning a script on shows the script and is allowed
-  only in PPM; so is any Assistant card that runs a script now (`schedule_run_now`) or changes one
+  deleting it. Pausing only stops something, so it is done at once with no card — the chat's own
+  reminders and any script or prompt schedule of its project — and the answer names the schedule
+  it paused. Turning on is done at once for the chat's own reminders (as they are created and
+  deleted) and only after a card for the project's other schedules (`schedule-toggle.ts`), refused
+  as `stale` if the schedule changed while the card waited. A turn PPM started with nobody in it
+  (`isUnattendedTurn`) still pauses none of the project's schedules unasked: it takes the card
+  path, which such a turn cannot show. The Assistant's `schedule_save` likewise pauses with no card
+  only in a clean turn the user started (`isCleanTurn`, as `chat_organize` decides), and asks in
+  any other. Every pause, resume and creation an AI makes is logged (`scheduler` in `ppm.log`, the
+  Logs window) beside the session trace's record of the call. Turning a script on shows the script
+  and is allowed only in PPM; so is any Assistant card that runs a script now (`schedule_run_now`) or changes one
   other than renaming or pausing it (`schedule_save`), which shows its code and input values
   (`withStoredScript`). A card is stale when inputs or secrets changed while it waited, read raw or
   through the routes' view. Anything else —
