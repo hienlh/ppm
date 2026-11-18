@@ -997,6 +997,14 @@ true by default, a one-shot deletes itself), and saving goes through the same
 `enabled_tools` (`SESSION_TOOLS`); the endpoint still lists only the ones switched on, and never
 to an Assistant session. Delivery, catch-up and pausing: [Schedules](schedules.md#session-schedules).
 
+Two more wait on a card in the chat (`collab-schedule-proposals.ts`):
+`session_schedule_set_enabled { id, enabled }` pauses or turns on a schedule without deleting it
+(the chat's own reminders at once; a script or prompt schedule of its project behind a card), and
+`session_schedule_propose_script` proposes a script schedule for the chat's project, from fields or
+a `.ppm-schedule.json`, created only once the user allows the card, which shows the whole script
+and can be allowed only in PPM. `session_schedule_list` also lists the project's schedules
+(`projectSchedules`). Rules and the card: [Schedules](schedules.md#script-schedules-an-ai-proposes).
+
 - **Claude's own cron tools are hidden** while `session_schedule_create` is on and
   `ai.hide_builtin_cron` is not false (Settings → Tools → Schedules): `hiddenBuiltinCronTools`
   (`src/providers/claude-builtin-cron.ts`) passes `CronCreate`, `CronList` and `CronDelete` as
@@ -1123,7 +1131,8 @@ Settings → Tools (`tools-settings-section.tsx`) turns each of PPM's own AI too
 `open_file`, `open_preview`, `open_url`, `read_terminal`, `run_in_terminal`, `search_sessions`,
 `list_session_turns`, `read_session_turns`, `db_query`, `open_query`, `db_execute`,
 `create_session`, `send_to_session`, `session_status`, `session_schedule_create`,
-`session_schedule_list`, `session_schedule_delete`, in the groups Tabs, Terminal, Session history,
+`session_schedule_list`, `session_schedule_delete`, `session_schedule_set_enabled`,
+`session_schedule_propose_script`, in the groups Tabs, Terminal, Session history,
 Database, Session collaboration (whose limits and "Ask before creating sessions" sit under its
 switches) and Schedules (with "Hide Claude's built-in cron tools" under it), plus the `ppm_task_*`
 tools in the group Tasks ([PPM task tools](#ppm-task-tools)) — for Claude and Codex alike. Claude's and Codex's built-in tools and MCP servers are not there. The switches are

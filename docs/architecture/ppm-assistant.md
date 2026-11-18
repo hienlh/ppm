@@ -912,7 +912,7 @@ writes the database directly, so an open PPM never heard of the change.
 | Family | Read, never ask | Ask first |
 |---|---|---|
 | Git | `git_status`, `git_log`, `git_diff`, `git_branches` | `git_stage`, `git_discard`, `git_undo`, `git_commit`, `git_sync`, `git_branch`, `git_stash`, `git_history` |
-| Schedules | `schedules_list`, `schedule_get` | `schedule_save`, `schedule_delete`, `schedule_run_now` |
+| Schedules | `schedules_list`, `schedule_get` | `schedule_save`, `schedule_delete`, `schedule_run_now`, `schedule_propose_script` (card allowed only in PPM) |
 | Tunnels | `tunnels_status` | `port_forward_start`, `port_forward_stop`, `public_link_set` |
 | Projects | (`projects_list`) | `project_update`, `project_remove` |
 | Chats | (`chat_list_sessions`, `chats_attention`), `chat_changes` | `chat_stop`, `chat_delete`; `chat_organize`, `chat_changes_answer` (see below) |
