@@ -59,6 +59,7 @@ async function notify(schedule: Schedule, n: Record<string, unknown>): Promise<v
   // Not awaited: the dispatcher may hold it for the notification delay.
   void notificationService.broadcast("schedule", {
     title, body: n.body.slice(0, NOTIFY_BODY_MAX), project, sessionId: (n.sessionId as string | undefined) ?? "",
+    scheduleId: String(schedule.id),
   });
 }
 
