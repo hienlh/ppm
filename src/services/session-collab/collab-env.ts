@@ -138,7 +138,7 @@ export const collabEnv: CollabEnv = {
   trace: (sessionId, type, payload) => traceServerEvent(sessionId, firstOf(sessionId, getSessionProvider) ?? "claude", type, payload),
   managerAsked: noteManagerAsked,
   pairs: pairCounter,
-  approve: (sessionId, input, signal) => collabApprovalBroker.request(sessionId, input, signal),
+  approve: (sessionId, input, signal, waitMs) => collabApprovalBroker.request(sessionId, input, signal, waitMs),
   waits: collabWaits,
   runningSpawned: (projectName) => [...new Set([
     ...listRunningSessions(projectName).map((s) => resolveMigratedSession(s.sessionId)).filter(isSpawned),

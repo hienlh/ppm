@@ -40,6 +40,14 @@ describe("awaitCanonicalSessionId", () => {
     expect(h.lifecycle.has("turn_ended")).toBe(false);
   });
 
+  it("waits for an Antigravity chat's rename too: agy answers session/new with an id of its own", async () => {
+    const h = harness();
+    const pending = awaitCanonicalSessionId(DRAFT, "antigravity", { lifecycle: h.lifecycle, resolve: h.resolve, timeoutMs: 60_000 });
+    h.renamed.set(DRAFT, THREAD);
+    h.lifecycle.emit("migrated", { oldSessionId: DRAFT, newSessionId: THREAD });
+    expect(await pending).toBe(THREAD);
+  });
+
   it("answers with the draft id when the turn ends unrenamed, or the wait runs out", async () => {
     const h = harness();
     const ended = awaitCanonicalSessionId(DRAFT, "codex", { lifecycle: h.lifecycle, resolve: h.resolve, timeoutMs: 60_000 });

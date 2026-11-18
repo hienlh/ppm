@@ -97,7 +97,8 @@ export interface CollabEnv extends AssistantCollabHooks {
     /** Allowed, and the target runs no more permissively now than when it was allowed. */
     escalationAllowed(sender: string, target: string, targetMode: string | null): boolean;
   };
-  approve(sessionId: string, input: SessionCollabApprovalInput, signal?: AbortSignal): Promise<CollabApprovalOutcome>;
+  /** Shows a card in the session's chat and waits `waitMs` at most for the user's answer (`askUser`). */
+  approve(sessionId: string, input: SessionCollabApprovalInput, signal?: AbortSignal, waitMs?: number): Promise<CollabApprovalOutcome>;
   waits: CollabWaits;
   /** AI-created sessions of the project counted against the running limit. */
   runningSpawned(projectName: string): string[];
@@ -125,12 +126,15 @@ export interface CollabEnv extends AssistantCollabHooks {
   unread: Pick<CollabUnread, "add" | "take" | "peek">;
 }
 
+/** The providers whose chats the session tools reach, as callers and as targets. */
+export type CollabProviderId = "claude" | "codex" | "antigravity";
+
 /** `assistant`: a PPM Assistant session, which reaches every registered project under its own policy. */
 export type CollabCallerKind = "session" | "assistant";
 
 export interface CollabCaller {
   sessionId: string;
-  providerId: "claude" | "codex";
+  providerId: CollabProviderId;
   /** The caller's own project; the Assistant's virtual one for an Assistant session. */
   projectName: string;
   projectPath: string;
@@ -138,12 +142,14 @@ export interface CollabCaller {
   kind: CollabCallerKind;
   /** The caller's turn was started by PPM and nobody has written in it since. */
   unattended: boolean;
+  /** Epoch ms by which the call must answer, when the caller's provider cuts tool calls off. */
+  answerBy?: number;
 }
 
 /** A session a tool acts on, with the project it belongs to: what delivery and links use. */
 export interface CollabTarget {
   sessionId: string;
-  providerId: "claude" | "codex";
+  providerId: CollabProviderId;
   title: string;
   projectName: string;
   projectPath: string;
@@ -156,11 +162,19 @@ export interface CollabTarget {
 
 export type Resolved<T> = { ok: true; value: T } | { ok: false; refusal: SessionCollabRefusal | "invalid"; message: string };
 
-const isProvider = (id: unknown): id is "claude" | "codex" => id === "claude" || id === "codex";
+export const isCollabProvider = (id: unknown): id is CollabProviderId => id === "claude" || id === "codex" || id === "antigravity";
 const samePath = (a: string, b: string): boolean => {
   const x = resolve(a), y = resolve(b);
   return process.platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
 };
+
+/**
+ * agy ends an MCP tool call after 3 minutes ("timed out after 3m0s", measured on agy 1.5 on
+ * 2026-11-15) and ACP gives a client no way to lengthen it, so a wait for an Antigravity caller
+ * ends a little before that: the AI hears the session is still working, not an error, and a later
+ * reply reaches it as a new message.
+ */
+export const AGY_ANSWER_WITHIN_MS = 165_000;
 
 export const titleOf = (env: CollabEnv, sessionId: string): string => env.title(sessionId) || `Session ${sessionId.slice(0, 8)}`;
 
@@ -175,7 +189,7 @@ export function resolveCaller(env: CollabEnv, tokenSessionId: string): Resolved<
   const projectPath = live?.projectPath ?? env.storedProjectPath(sessionId);
   const providerId = live?.providerId ?? env.storedProvider(sessionId);
   if (env.isAssistantSession?.(sessionId, projectPath)) {
-    if (!isProvider(providerId)) return { ok: false, refusal: "not_found", message: "This Assistant chat runs on a provider the session tools do not reach." };
+    if (!isCollabProvider(providerId)) return { ok: false, refusal: "not_found", message: "This Assistant chat runs on a provider the session tools do not reach." };
     return {
       ok: true,
       value: {
@@ -184,10 +198,16 @@ export function resolveCaller(env: CollabEnv, tokenSessionId: string): Resolved<
       },
     };
   }
-  if (!projectPath || !isProvider(providerId)) return { ok: false, refusal: "not_found", message: "This chat has no project, so it cannot open or message sessions." };
+  if (!projectPath || !isCollabProvider(providerId)) return { ok: false, refusal: "not_found", message: "This chat has no project, so it cannot open or message sessions." };
   const projectName = live?.projectName ?? env.projectNameOf(projectPath);
   if (!projectName) return { ok: false, refusal: "not_found", message: "This chat's project is not registered in PPM." };
-  return { ok: true, value: { sessionId, providerId, projectName, projectPath, title: titleOf(env, sessionId), kind: "session", unattended: false } };
+  return {
+    ok: true,
+    value: {
+      sessionId, providerId, projectName, projectPath, title: titleOf(env, sessionId), kind: "session", unattended: false,
+      ...(providerId === "antigravity" ? { answerBy: Date.now() + AGY_ANSWER_WITHIN_MS } : {}),
+    },
+  };
 }
 
 /**
@@ -227,7 +247,7 @@ export function resolveTarget(env: CollabEnv, caller: CollabCaller, rawId: unkno
   } else if (!samePath(projectPath, caller.projectPath)) {
     return { ok: false, refusal: "other_project", message: "That session belongs to another project; the session tools reach your own project only." };
   }
-  if (!isProvider(providerId)) return { ok: false, refusal: "not_found", message: "That session runs on a provider the session tools do not reach." };
+  if (!isCollabProvider(providerId)) return { ok: false, refusal: "not_found", message: "That session runs on a provider the session tools do not reach." };
   return {
     ok: true,
     value: { sessionId, providerId, title: titleOf(env, sessionId), projectName, projectPath: targetPath, ...(design ? { design: true } : {}) },
@@ -237,9 +257,10 @@ export function resolveTarget(env: CollabEnv, caller: CollabCaller, rawId: unkno
 /**
  * What a provider runs when neither the chat nor the config names a mode: `claude-agent-sdk.ts`
  * falls back to bypass, and so does `permissionModeToCodex`. A Claude chat never given a mode is
- * therefore a bypass chat, not one whose mode cannot be told.
+ * therefore a bypass chat, not one whose mode cannot be told. Antigravity asks for every tool unless
+ * told bypass (`handleServerRequest`), so its fallback is `default`.
  */
-const PROVIDER_FALLBACK_MODE: Record<string, string> = { claude: "bypassPermissions", codex: "bypassPermissions" };
+const PROVIDER_FALLBACK_MODE: Record<string, string> = { claude: "bypassPermissions", codex: "bypassPermissions", antigravity: "default" };
 
 /** The mode a session runs under: the one chosen for it, else its provider's configured default, else what the provider falls back to; null if none. */
 export function effectivePermissionMode(env: CollabEnv, sessionId: string, providerId: string): string | null {

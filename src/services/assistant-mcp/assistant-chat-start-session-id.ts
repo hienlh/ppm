@@ -9,8 +9,8 @@ import { chatLifecycle, type ChatLifecycle } from "../chat-control/chat-lifecycl
  * turn has started its thread — after the message was accepted, so after the create would have
  * answered. An Assistant told the draft id then hears every later report under the thread id, and
  * cannot tell they are the same chat (in a live trial it disowned the very report it had promised).
- * So for Codex the answer waits for the rename, bounded: a thread that never starts ends its turn,
- * and a slow one runs out the clock. The draft id stays valid either way — every tool resolves it
+ * Antigravity does the same with the id `session/new` answers. So for both the answer waits for
+ * the rename, bounded: a thread that never starts ends its turn, and a slow one runs out the clock. The draft id stays valid either way — every tool resolves it
  * through `resolveMigratedSession` — so a timeout only means the id is not the final one yet.
  */
 
@@ -24,8 +24,8 @@ export function awaitCanonicalSessionId(
 ): Promise<string> {
   const resolveId = opts.resolve ?? resolveMigratedSession;
   const now = resolveId(sessionId);
-  // Only Codex renames a chat it was just given; Claude keeps the id it was created with.
-  if (now !== sessionId || providerId !== "codex") return Promise.resolve(now);
+  // Codex and Antigravity rename a chat they were just given; Claude keeps the id it was created with.
+  if (now !== sessionId || (providerId !== "codex" && providerId !== "antigravity")) return Promise.resolve(now);
   const lifecycle = opts.lifecycle ?? chatLifecycle;
   return new Promise((resolve) => {
     let settled = false;

@@ -43,6 +43,14 @@ describe("sessionCollabToolCall", () => {
     expect(sessionCollabToolCall("mcp__ppm-sessions__session_status", {})).toEqual({ tool: "session_status", sessionIds: [] });
   });
 
+  it("reads Antigravity's name, which joins server and tool with one underscore", () => {
+    expect(sessionCollabToolCall("mcp_ppm-sessions_create_session", { title: "T", task: "do it", provider: "codex", toolSummary: "Open a session" }))
+      .toEqual({ tool: "create_session", title: "T", task: "do it", provider: "codex", wait: false });
+    expect(sessionCollabToolCall("mcp_ppm-sessions_send_to_session", { session_id: target, message: "hi" }))
+      .toEqual({ tool: "send_to_session", sessionId: target, message: "hi", wait: false });
+    expect(sessionCollabToolCall("mcp_ppm-tabs_open_file", { path: "a" })).toBeNull();
+  });
+
   it("refuses other tools and a send with no target", () => {
     expect(sessionCollabToolCall("mcp__ppm-tabs__open_file", { path: "a" })).toBeNull();
     expect(sessionCollabToolCall("mcp__ppm-sessions__send_to_session", { message: "hi" })).toBeNull();

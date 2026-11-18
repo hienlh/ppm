@@ -111,17 +111,19 @@ describe("AntigravityProvider over agy acp", () => {
     expect(p.hasStreamingSession(session.id)).toBe(false);
   });
 
-  it("hands agy PPM's tab and database tools as http MCP servers, the token in a header", async () => {
+  it("hands agy PPM's tab, database and session tools as http MCP servers, the token in a header", async () => {
     const p = provider();
     const session = await p.createSession({ projectPath: projectDir });
     const run = consume(p.sendMessage(session.id, "hello there", {
       tabToolsMcp: { url: "http://127.0.0.1:1/api/tab-tools-mcp", token: "tab-token" },
       dbToolsMcp: { url: "http://127.0.0.1:1/api/db-tools-mcp", token: "db-token" },
+      sessionCollabMcp: { url: "http://127.0.0.1:1/api/sessions-mcp", token: "sessions-token" },
     }));
     await run.until((evs) => dones(evs).length === 1);
     expect(calls("session/new")[0]!.params.mcpServers).toEqual([
       { type: "http", name: "ppm-tabs", url: "http://127.0.0.1:1/api/tab-tools-mcp", headers: [{ name: "Authorization", value: "Bearer tab-token" }] },
       { type: "http", name: "ppm-db", url: "http://127.0.0.1:1/api/db-tools-mcp", headers: [{ name: "Authorization", value: "Bearer db-token" }] },
+      { type: "http", name: "ppm-sessions", url: "http://127.0.0.1:1/api/sessions-mcp", headers: [{ name: "Authorization", value: "Bearer sessions-token" }] },
     ]);
     // Not on agy's command line, which any process on the machine can read.
     expect(JSON.stringify(received()[0])).not.toContain("tab-token");
@@ -205,16 +207,16 @@ describe("AntigravityProvider over agy acp", () => {
     await run.finished;
    }, 15_000);
 
-  it("gives a new chat the Additional Instructions and the shared context as its system prompt, not in the message", async () => {
+  it("gives a new chat the Additional Instructions, the extension CLI line and the shared context as its system prompt, not in the message", async () => {
     const previousAi = configService.get("ai");
     configService.set("ai", { ...previousAi, providers: { ...previousAi.providers,
       antigravity: { ...previousAi.providers.antigravity!, system_prompt: "Answer in English." } } });
     try {
       const p = provider();
-      const run = consume(p.sendMessage((await p.createSession({ projectPath: projectDir })).id, "hello there", { sharedContext: "Rule: be brief." }));
+      const run = consume(p.sendMessage((await p.createSession({ projectPath: projectDir })).id, "hello there", { sharedContext: "Rule: be brief.", extensionCliHint: "Run `ppm jira` for Jira." }));
       await run.until((evs) => dones(evs).length === 1);
       expect(calls("session/new")[0]!.params._meta).toEqual({ antigravity: { systemPrompt: {
-        append: "Answer in English.\n\n<ppm-shared-context>\nRule: be brief.\n</ppm-shared-context>",
+        append: "Answer in English.\n\nRun `ppm jira` for Jira.\n\n<ppm-shared-context>\nRule: be brief.\n</ppm-shared-context>",
       } } });
       expect(calls("session/prompt")[0]!.params.prompt).toEqual([{ type: "text", text: "hello there" }]);
 

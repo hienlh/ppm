@@ -508,7 +508,7 @@ export class AntigravityProvider implements AIProvider {
         }
         live.acpSessionId = sessionId;
       } else {
-        const append = acpSystemPromptAppend(this.providerConfig()?.system_prompt, opts?.sharedContext);
+        const append = acpSystemPromptAppend(this.providerConfig()?.system_prompt, opts?.sharedContext, opts?.extensionCliHint);
         opened = await live.client.request<AcpSessionResult>("session/new", {
           cwd,
           mcpServers,

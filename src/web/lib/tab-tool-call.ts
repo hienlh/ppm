@@ -19,9 +19,11 @@ export interface TabToolCall {
 /*
  * Claude names the tool `mcp__ppm-tabs__open_file`. Codex names it `ppm_tabs:open_file` and wraps
  * the arguments as `{ server, tool, arguments }`, live and in the history read back alike.
+ * Antigravity names it `mcp_ppm-tabs_open_file`.
  */
+const TOOL_PREFIX = `(?:mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__|${CODEX_TAB_TOOLS_MCP_SERVER}:|mcp_${CLAUDE_TAB_TOOLS_MCP_SERVER}_)`;
 const TOOL_NAME = new RegExp(
-  `^(?:mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__|${CODEX_TAB_TOOLS_MCP_SERVER}:)(${OPEN_FILE_TOOL}|${OPEN_PREVIEW_TOOL})$`,
+  `^${TOOL_PREFIX}(${OPEN_FILE_TOOL}|${OPEN_PREVIEW_TOOL})$`,
 );
 
 /** The tab server's other tools, which take no file: their calls show in the generic card. */
@@ -31,7 +33,7 @@ export type DeviceToolCall =
   | { tool: typeof RUN_IN_TERMINAL_TOOL; command: string; cwd?: string };
 
 const DEVICE_TOOL_NAME = new RegExp(
-  `^(?:mcp__${CLAUDE_TAB_TOOLS_MCP_SERVER}__|${CODEX_TAB_TOOLS_MCP_SERVER}:)(${OPEN_URL_TOOL}|${READ_TERMINAL_TOOL}|${RUN_IN_TERMINAL_TOOL})$`,
+  `^${TOOL_PREFIX}(${OPEN_URL_TOOL}|${READ_TERMINAL_TOOL}|${RUN_IN_TERMINAL_TOOL})$`,
 );
 
 /** How Codex's events label an image block of a result (`mcpResultText`). */

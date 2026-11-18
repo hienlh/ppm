@@ -3,6 +3,7 @@ import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import {
   effectivePermissionMode, resolveTarget, type CollabCaller, type CollabEnv, type CollabTarget,
 } from "./collab-context.ts";
+import { askUser } from "./collab-ask-user.ts";
 import { assistantSendCheck } from "./collab-send-assistant.ts";
 import { isManagerTarget, managerSendCheck, UNATTENDED_MANAGERS_ONLY, type ManagerSendPlan } from "./collab-send-manager.ts";
 import { deliverAndWait } from "./collab-deliver.ts";
@@ -27,7 +28,7 @@ import { collabTextTooLarge } from "./session-collab-tool.ts";
 export async function sendChecks(env: CollabEnv, caller: CollabCaller, target: CollabTarget, message: string, signal: AbortSignal): Promise<string | null> {
   const limit = env.settings().maxAutoMessagesPerPair;
   if (env.pairs.remaining(caller.sessionId, target.sessionId, limit) <= 0) {
-    const answer = await env.approve(caller.sessionId, {
+    const answer = await askUser(env, caller, {
       kind: "pair_limit", targetSessionId: target.sessionId, targetTitle: target.title,
       sent: env.pairs.count(caller.sessionId, target.sessionId), limit, grant: limit,
     }, signal);
@@ -41,7 +42,7 @@ export async function sendChecks(env: CollabEnv, caller: CollabCaller, target: C
   const senderMode = effectivePermissionMode(env, caller.sessionId, caller.providerId) ?? "bypassPermissions";
   const targetMode = effectivePermissionMode(env, target.sessionId, target.providerId);
   if (isPermissionEscalation(senderMode, targetMode) && !env.pairs.escalationAllowed(caller.sessionId, target.sessionId, targetMode)) {
-    const answer = await env.approve(caller.sessionId, {
+    const answer = await askUser(env, caller, {
       kind: "escalation", targetSessionId: target.sessionId, targetTitle: target.title,
       senderMode, targetMode: targetMode ?? "unknown", message,
     }, signal);
