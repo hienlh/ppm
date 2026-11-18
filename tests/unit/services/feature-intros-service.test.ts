@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
 import { configService } from "../../../src/services/config.service.ts";
-import { getDb, setSessionMetadata } from "../../../src/services/db.service.ts";
+import { getConfigValue, getDb, setConfigValue, setSessionMetadata } from "../../../src/services/db.service.ts";
 import {
   answerFeatureIntro, featureIntrosView, isExistingUser, markFeatureIntroSeenInSettings, readFeatureIntroStates,
   settleFeaturesDecidedInSettings, skipFeatureIntro,
@@ -15,6 +15,7 @@ const INTRO = FEATURE_INTROS[0]!;
 const otherIntrosAnswered = () =>
   Object.fromEntries(FEATURE_INTROS.slice(1).map((i) => [i.id, { answer: "off" as const, skips: 0, via: "tour" as const }]));
 const SIX = ["search_sessions", "list_session_turns", "read_session_turns", "create_session", "send_to_session", "session_status", "design_screenshot"];
+const GUTTER_ID = "editor-gutter-changes-2026-11";
 const ai = () => configService.get("ai");
 const onTools = () => PPM_TOOLS.filter((tool) => ppmToolOn(ai(), tool));
 let savedProjects: ProjectConfig[];
@@ -26,6 +27,7 @@ beforeEach(() => {
   const { ppm_tools: _drop, ...rest } = ai();
   configService.set("ai", { ...rest, session_collab: { askBeforeCreate: false } });
   getDb().run("DELETE FROM session_metadata");
+  setConfigValue("ui_prefs", "{}");
 });
 afterEach(() => {
   configService.set("projects", savedProjects);
@@ -135,14 +137,14 @@ describe("scheduled prompts in a chat", () => {
 
   it("is a question of its own: turning the session tools on leaves the schedule tools off and still asked", () => {
     configService.set("feature_intros", {});
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id, GUTTER_ID]);
     answerFeatureIntro(INTRO.id, "on");
     for (const tool of THREE) expect(onTools()).not.toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id, GUTTER_ID]);
 
     answerFeatureIntro(SCHEDULES.id, "on");
     for (const tool of THREE) expect(onTools()).toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id, GUTTER_ID]);
   });
 
   it("asks apart about script proposals: prompts turned on never agreed to code that runs on this machine", () => {
@@ -153,5 +155,36 @@ describe("scheduled prompts in a chat", () => {
     answerFeatureIntro(SCRIPTS.id, "on");
     expect(onTools()).toContain("session_schedule_propose_script");
     expect(featureIntrosView().pending.filter((i) => i.id === SCRIPTS.id)).toEqual([]);
+  });
+});
+
+describe("changed lines in the editor's gutter", () => {
+  const GUTTER = FEATURE_INTROS.find((i) => i.id === GUTTER_ID)!;
+  const uiPrefs = () => JSON.parse(getConfigValue("ui_prefs") ?? "{}") as Record<string, unknown>;
+  const onlyGutterAsked = () => configService.set("feature_intros",
+    Object.fromEntries(FEATURE_INTROS.filter((i) => i.id !== GUTTER_ID).map((i) => [i.id, { answer: "off" as const, skips: 0, via: "tour" as const }])));
+
+  it("is an editor setting, asked until answered, and the answer is its ui pref, not a tool switch", () => {
+    onlyGutterAsked();
+    setConfigValue("ui_prefs", JSON.stringify({ wordWrap: true }));
+    expect(GUTTER).toMatchObject({ tools: [], uiPref: "gutterChanges" });
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([GUTTER_ID]);
+    expect(uiPrefs().gutterChanges).toBeUndefined();
+
+    expect(answerFeatureIntro(GUTTER_ID, "on")).toMatchObject({ ok: true, changed: true, state: { answer: "on", via: "tour" } });
+    expect(uiPrefs()).toEqual({ wordWrap: true, gutterChanges: true });
+    expect(ai().ppm_tools).toBeUndefined();
+    expect(featureIntrosView().pending).toEqual([]);
+  });
+
+  it("counts the switch saved in Settings as the answer, off included", () => {
+    onlyGutterAsked();
+    setConfigValue("ui_prefs", JSON.stringify({ gutterChanges: false }));
+    expect(settleFeaturesDecidedInSettings()).toBe(true);
+    expect(readFeatureIntroStates()[GUTTER_ID]).toMatchObject({ answer: "off", via: "settings" });
+    expect(featureIntrosView().pending).toEqual([]);
+    // A late tour answer leaves the switch as it was saved.
+    expect(answerFeatureIntro(GUTTER_ID, "on")).toMatchObject({ changed: false, state: { answer: "off" } });
+    expect(uiPrefs()).toEqual({ gutterChanges: false });
   });
 });

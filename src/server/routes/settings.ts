@@ -29,7 +29,7 @@ import { providerRegistry, providerProbeStatuses, retryProviderProbe } from "../
 import { fetchAntigravityAccountStatus } from "../../providers/antigravity/antigravity-usage.ts";
 import { createLogger } from "../../services/logger.ts";
 import { settleFeaturesDecidedInSettings } from "../../services/feature-intros.service.ts";
-import { FEATURE_INTROS_CHANGED_EVENT } from "../../shared/feature-intros.ts";
+import { FEATURE_INTROS_CHANGED_EVENT, isFeatureUiPref } from "../../shared/feature-intros.ts";
 import { broadcastGlobalEvent } from "../ws/global.ts";
 import { isUnlinkMap } from "../../shared/linked-session-unlinks";
 
@@ -135,6 +135,8 @@ const UI_PREFS_KEY = "ui_prefs";
 const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   wordWrap: (v) => typeof v === "boolean",
   inlineBlame: (v) => typeof v === "boolean",
+  // Change bars in the editor's gutter; unset means off until the tour's question is answered
+  gutterChanges: (v) => typeof v === "boolean",
   diffSideBySide: (v) => typeof v === "boolean",
   designWindows: (v) => typeof v === "boolean",
   tabWrap: (v) => typeof v === "boolean",
@@ -185,6 +187,10 @@ settingsRoutes.put("/ui-prefs", async (c) => {
       current[key] = value;
     }
     setConfigValue(UI_PREFS_KEY, JSON.stringify(current));
+    // An introduced feature's setting saved here is the user's answer: no device asks again.
+    if (Object.keys(body).some(isFeatureUiPref) && settleFeaturesDecidedInSettings()) {
+      broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
+    }
     return c.json(ok(current));
   } catch (e) {
     return c.json(err((e as Error).message), 400);

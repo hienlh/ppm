@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { getAuthToken } from "@/lib/api-client";
 import { SETTINGS_CLIENT_ID } from "@/lib/settings-client-id";
 import { SETTINGS_CLIENT_HEADER } from "../../shared/settings-events";
+import type { FeatureUiPref } from "../../shared/feature-intros";
 import type { PpmTheme, PpmThemeMode, PpmThemeStyle } from "@/theme/types";
 import { parseQualityChoice, type QualityChoice } from "../../shared/remote-desktop-quality";
 import { isUnlinkMap, updateUnlinks, type UnlinkMap } from "../../shared/linked-session-unlinks";
@@ -50,6 +51,11 @@ interface SettingsState {
   gitStatusViewMode: GitStatusViewMode;
   /** GitLens-style annotation after the cursor's line in the code editor. */
   inlineBlame: boolean;
+  /**
+   * VS Code's change bars in the code editor's gutter. Off until the tour's "PPM has new
+   * features" question is answered, or this switch is saved in Settings → Appearance.
+   */
+  gutterChanges: boolean;
   /**
    * Diffs side by side (VS Code's default) rather than inline: the diff tab, and the Review
    * changes tab, whose side by side is the whole file. A phone is always inline.
@@ -193,6 +199,7 @@ interface SettingsState {
   setSidebarWidth: (width: number) => void;
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
   toggleInlineBlame: () => void;
+  setGutterChanges: (on: boolean) => void;
   toggleDiffSideBySide: () => void;
   setDesignWindows: (enabled: boolean) => void;
   toggleWordWrap: () => void;
@@ -237,6 +244,7 @@ interface PersistedSettings {
   sidebarWidth?: number;
   gitStatusViewMode?: GitStatusViewMode;
   inlineBlame?: boolean;
+  gutterChanges?: boolean;
   diffSideBySide?: boolean;
   designWindows?: boolean;
   wordWrap?: boolean;
@@ -411,6 +419,7 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   const patch: Partial<PersistedSettings> = {};
   if (typeof data.wordWrap === "boolean") patch.wordWrap = data.wordWrap;
   if (typeof data.inlineBlame === "boolean") patch.inlineBlame = data.inlineBlame;
+  if (typeof data.gutterChanges === "boolean") patch.gutterChanges = data.gutterChanges;
   if (typeof data.diffSideBySide === "boolean") patch.diffSideBySide = data.diffSideBySide;
   if (typeof data.designWindows === "boolean") patch.designWindows = data.designWindows;
   if (typeof data.tabWrap === "boolean") patch.tabWrap = data.tabWrap;
@@ -448,6 +457,15 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   useSettingsStore.setState(patch as Partial<SettingsState>);
 }
 
+/**
+ * An introduced feature's setting the server has already saved (the tour's answer, here or on
+ * another device): shown on this page at once, and not pushed back.
+ */
+export function applySavedFeatureUiPref(pref: FeatureUiPref, on: boolean): void {
+  persistSettings({ [pref]: on });
+  useSettingsStore.setState({ [pref]: on });
+}
+
 const _initial = loadPersistedSettings();
 const _initialTheme = initialTheme(_initial);
 
@@ -460,6 +478,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
   inlineBlame: _initial.inlineBlame ?? false,
+  gutterChanges: _initial.gutterChanges ?? false,
   diffSideBySide: _initial.diffSideBySide ?? true,
   minimalMode: false,
   designWindows: _initial.designWindows ?? true,
@@ -607,6 +626,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().inlineBlame;
     persistUiPref({ inlineBlame: next });
     set({ inlineBlame: next });
+  },
+
+  setGutterChanges: (on) => {
+    persistUiPref({ gutterChanges: on });
+    set({ gutterChanges: on });
   },
 
   toggleDiffSideBySide: () => {

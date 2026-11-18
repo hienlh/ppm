@@ -17,6 +17,9 @@
  *   `git ls-files` and returns no content;
  * - when the editor comes back into view, gets focus, or the page is shown again.
  * A tab parked off-screen (`tab-pool` keeps editors mounted) asks for nothing.
+ *
+ * Switched off in Settings → Appearance (`gutterChanges`, off until the tour's "PPM has new
+ * features" question is answered), no editor asks git anything at all.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type * as MonacoType from "monaco-editor";
@@ -24,6 +27,7 @@ import { api } from "@/lib/api-client";
 import { computeGutterChanges, splitBaseLines, type GutterChange, type GutterChangeKind } from "@/lib/gutter-changes";
 import { useGitRepo } from "@/hooks/use-git-repo";
 import { THEME_CHANGE_EVENT } from "@/theme/apply-theme";
+import { useSettingsStore } from "@/stores/settings-store";
 import type { IndexBase } from "../../shared/git-index-base";
 
 /** How often an on-screen editor checks whether the index moved under it. */
@@ -143,6 +147,7 @@ export interface UseGutterChangesOptions {
   projectName?: string;
   /** Project-relative, as the tab holds it. */
   filePath?: string;
+  /** Whether this editor can have bars at all; the user's switch is read here, on top of it. */
   enabled: boolean;
 }
 
@@ -153,7 +158,8 @@ interface HeldBase {
   lines: string[] | null;
 }
 
-export function useGutterChanges({ editor, monaco, projectName, filePath, enabled }: UseGutterChangesOptions): void {
+export function useGutterChanges({ editor, monaco, projectName, filePath, enabled: canHaveBars }: UseGutterChangesOptions): void {
+  const enabled = useSettingsStore((s) => s.gutterChanges) && canHaveBars;
   // The repository that holds this file, not the one Source Control has picked
   // — the same rule as the inline blame (see `use-inline-blame.ts`).
   const { fileScope, fileGitUrl } = useGitRepo(enabled ? projectName : undefined);
