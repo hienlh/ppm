@@ -313,7 +313,11 @@ PPM's fixed rules: the user may edit or drop it like any line of the file, which
 here and not in the manager block below. A template is read only when a project's rules are first
 seeded, so a change to it reaches managers set up afterwards; a project that already has a manager
 keeps the rules it has (PPM never rewrites the user's file), and so does an install whose Settings
-template is its own.
+template is its own. For those, the project's rules dialog shows "PPM has a new default rule" with
+the rule and an Add button whenever the rules in force lack its opening sentence
+(`src/shared/manager-default-rules.ts`, which the template is built from too). Add saves the rule
+as the user's own edit (`PUT …/rules`, no check, the usual `rules_edited` note), before the first
+rule of the opening section and never inside a later one; it waits while the text has unsaved edits.
 
 **How the rules reach the chat.** Never through the system prompt, which is fixed per Claude query:
 changing it would restart the stream, cold-read the manager's whole context and kill its background

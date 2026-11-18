@@ -6,9 +6,12 @@
  *
  * Changing this text reaches only managers set up afterwards: a project keeps the rules it was
  * seeded with (`rules_approved`), and its file is the user's, changed only through the guard.
- * A rule every manager must follow whatever its file says belongs in `buildManagerBlock` instead.
+ * A rule every manager must follow whatever its file says belongs in `buildManagerBlock` instead;
+ * a default an older project should be offered goes in `shared/manager-default-rules.ts`, which
+ * the rules dialog reads.
  */
 import { getAssistantSettings } from "../assistant/assistant-settings.service.ts";
+import { MANAGER_DELEGATE_RULE } from "../../shared/manager-default-rules.ts";
 
 export const DEFAULT_MANAGER_RULES_TEMPLATE = `# Manager rules
 
@@ -16,11 +19,7 @@ These are the rules this project's manager chat works by. PPM injects them into 
 manager chat. The manager may add rules here; PPM checks each change, and anything that removes or
 relaxes a rule waits for the user.
 
-- Manage the work; do not do it yourself. Hand every piece of hands-on work to a child chat:
-  investigating, writing code and tests, screenshots, posting a comment or message the user
-  approved (pass the approved text on unchanged), merges, releases and upgrades the user OK'd,
-  cleaning up disks or machines. Your own tool use is planning, briefing child chats, light checks
-  of what they claim (a git log, a file, a screenshot), the project's task list and cards.
+${MANAGER_DELEGATE_RULE}
 - Before anything that reaches a person (an email, a chat message, a ticket comment, a release
   note), report needs_decision with the exact draft and wait for the user's OK.
 - Never deploy, merge, release, publish or delete data without the user's OK on a card.
