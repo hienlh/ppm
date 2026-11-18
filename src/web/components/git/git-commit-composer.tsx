@@ -5,11 +5,18 @@
  * same text is in Source Control, the Review tab and the Git Graph inspector,
  * and survives a reload. The button commits what is staged — nothing is
  * staged implicitly — and its menu holds the variants: push after, amend,
- * sign off, and taking the last commit back.
+ * sign off, and taking the last commit back. The sparkle button in the box asks
+ * the default AI provider for a message from what is staged and puts it in
+ * the draft; it never commits.
  */
-import { ArrowUpFromLine, Check, ChevronDown, Loader2, Pencil, Undo2 } from "@/lib/icons";
+import { useState } from "react";
+import { toast } from "sonner";
+import { ArrowUpFromLine, Check, ChevronDown, Loader2, Pencil, Sparkles, Undo2 } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api-client";
 import { useCommitDraft } from "@/hooks/use-commit-draft";
+import { useGitRepo } from "@/hooks/use-git-repo";
+import { useCommitDraftStore } from "@/stores/commit-draft-store";
 import { canCommit, commitHint, commitLabel, type ChangeTotals } from "@/lib/git-changes-view";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,6 +50,8 @@ export function GitCommitComposer({ projectName, branch, totals, lastCommit, bus
   className?: string;
 }) {
   const draft = useCommitDraft(projectName);
+  const gitRepo = useGitRepo(projectName);
+  const [drafting, setDrafting] = useState(false);
   const ready = canCommit(totals, draft.message) && !busy;
   // Both rewrite the last commit, so neither is offered once it is on the remote.
   const rewritable = !!lastCommit && !lastCommit.pushed;
@@ -57,6 +66,26 @@ export function GitCommitComposer({ projectName, branch, totals, lastCommit, bus
     const message = draft.message.trim();
     if (await onCommit(message, options)) draft.consumed(message);
   };
+  const draftMessage = async () => {
+    if (drafting || totals.filesStaged === 0) return;
+    const draftUrl = gitRepo.gitUrl("/commit-draft");
+    const typed = () => useCommitDraftStore.getState().drafts[draftUrl]?.message ?? "";
+    const before = typed();
+    setDrafting(true);
+    try {
+      const { message } = await api.post<{ message: string }>(gitRepo.gitUrl("/commit-message"));
+      // Typed into while the AI worked: keep what was typed rather than overwrite it.
+      if (typed() !== before) {
+        toast("Message drafted, but not used", { description: "The box was edited while it was being written." });
+        return;
+      }
+      draft.setMessage(message);
+    } catch (e) {
+      toast.error("Could not draft a commit message", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setDrafting(false);
+    }
+  };
   const undo = async () => {
     await onUndoCommit();
     // The server put the undone commit's message back, if the box was empty.
@@ -65,20 +94,34 @@ export function GitCommitComposer({ projectName, branch, totals, lastCommit, bus
 
   return (
     <div className={cn("flex flex-col gap-2 p-2.5", className)}>
-      <textarea
-        rows={2}
-        value={draft.message}
-        onChange={(e) => draft.setMessage(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            void commit();
-          }
-        }}
-        placeholder={branch ? `Message (${COMMIT_KEYS} to commit on ${branch})` : `Message (${COMMIT_KEYS} to commit)`}
-        aria-label="Commit message"
-        className="block min-h-[52px] md:min-h-[58px] max-h-[140px] w-full resize-none rounded-[10px] border border-border bg-background px-2.5 py-2 text-base md:text-[13px] leading-[1.45] text-text outline-none [field-sizing:content] placeholder:text-text-3 focus:border-primary"
-      />
+      <div className="relative">
+        <textarea
+          rows={2}
+          value={draft.message}
+          onChange={(e) => draft.setMessage(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              void commit();
+            }
+          }}
+          placeholder={branch ? `Message (${COMMIT_KEYS} to commit on ${branch})` : `Message (${COMMIT_KEYS} to commit)`}
+          aria-label="Commit message"
+          readOnly={drafting}
+          className="block min-h-[52px] md:min-h-[58px] max-h-[140px] w-full resize-none rounded-[10px] border border-border bg-background py-2 pl-2.5 pr-11 md:pr-8 text-base md:text-[13px] leading-[1.45] text-text outline-none [field-sizing:content] placeholder:text-text-3 focus:border-primary"
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute right-1 top-1 size-10 md:size-7 text-text-3 hover:text-text"
+          disabled={drafting || !!busy || totals.filesStaged === 0}
+          onClick={() => void draftMessage()}
+          aria-label="Draft message with AI"
+          title={totals.filesStaged === 0 ? "Stage changes to draft a message with AI" : "Draft a message from the staged changes with AI"}
+        >
+          {drafting ? <Loader2 className="animate-spin" /> : <Sparkles />}
+        </Button>
+      </div>
       <div className="flex h-11 md:h-8">
         <Button
           className="h-full min-w-0 flex-1 rounded-r-none max-md:rounded-l-[10px] max-md:text-sm"

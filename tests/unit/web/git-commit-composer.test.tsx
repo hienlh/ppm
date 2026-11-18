@@ -94,3 +94,81 @@ describe("GitCommitComposer after a commit", () => {
     expect(box()?.value).toBe("Second");
   });
 });
+
+describe("GitCommitComposer's Draft message with AI", () => {
+  const draftButton = () => document.querySelector<HTMLButtonElement>('button[aria-label="Draft message with AI"]');
+
+  /** Every request the page made, and the answer `/git/commit-message` gives. */
+  function serve(answer: () => Promise<Response>, discovery: unknown) {
+    const calls: Array<{ url: string; method: string }> = [];
+    installGlobal("fetch", async (input: string, init?: RequestInit) => {
+      const u = String(input);
+      calls.push({ url: u, method: init?.method ?? "GET" });
+      if (u.includes("/git/repos")) return ok(discovery);
+      if (u.includes("/git/commit-message")) return answer();
+      if (u.includes("/git/commit-draft")) return ok({ message: "", updatedAt: null });
+      return ok(null);
+    });
+    return calls;
+  }
+
+  async function mountComposer(filesStaged: number): Promise<void> {
+    view = await mount(
+      <GitCommitComposer
+        projectName="demo"
+        branch="main"
+        totals={{ files: 1, filesStaged, blocks: 1, blocksStaged: filesStaged, conflicts: 0 }}
+        lastCommit={null}
+        busy={null}
+        onCommit={async () => true}
+        onUndoCommit={async () => {}}
+      />,
+    );
+  }
+
+  it("fills the repository's draft with the message the server drafted, scoped by ?repo=", async () => {
+    const repoPath = "/tmp/demo/app";
+    const calls = serve(
+      async () => ok({ message: "feat(app): add the thing" }),
+      { root: "/tmp/demo", rootIsRepo: false, repos: [{ path: repoPath, name: "app", relative: "app" }] },
+    );
+    await mountComposer(1);
+    const scopedDraft = "/api/project/demo/git/commit-draft?repo=" + encodeURIComponent(repoPath);
+    await until(() => useCommitDraftStore.getState().drafts[scopedDraft]?.loaded === true);
+
+    await click(draftButton());
+    await until(() => box()?.value === "feat(app): add the thing");
+
+    const post = calls.find((c) => c.url.includes("/git/commit-message"));
+    expect(post).toEqual({ url: "/api/project/demo/git/commit-message?repo=" + encodeURIComponent(repoPath), method: "POST" });
+    expect(useCommitDraftStore.getState().drafts[scopedDraft]?.message).toBe("feat(app): add the thing");
+    useCommitDraftStore.getState().consumed(scopedDraft, "feat(app): add the thing");
+  });
+
+  it("spins while the AI works and leaves the box alone when it fails", async () => {
+    let fail!: () => void;
+    serve(
+      () => new Promise<Response>((r) => {
+        fail = () => r(new Response(JSON.stringify({ ok: false, error: "Codex is not available right now" }), { status: 502 }));
+      }),
+      { root: "/tmp/demo", rootIsRepo: true, repos: [{ path: "/tmp/demo", name: "demo", relative: "." }] },
+    );
+    await mountComposer(1);
+    await until(() => useCommitDraftStore.getState().drafts[DRAFT_URL]?.loaded === true);
+
+    await click(draftButton());
+    await until(() => draftButton()?.disabled === true && !!draftButton()?.querySelector(".animate-spin"));
+    await act(async () => { fail(); });
+    await until(() => draftButton()?.disabled === false);
+    expect(box()?.value).toBe("");
+  });
+
+  it("is off until something is staged", async () => {
+    const calls = serve(async () => ok({ message: "x" }), { root: "/tmp/demo", rootIsRepo: true, repos: [{ path: "/tmp/demo", name: "demo", relative: "." }] });
+    await mountComposer(0);
+    await until(() => useCommitDraftStore.getState().drafts[DRAFT_URL]?.loaded === true);
+    expect(draftButton()?.disabled).toBe(true);
+    await click(draftButton());
+    expect(calls.some((c) => c.url.includes("/git/commit-message"))).toBe(false);
+  });
+});

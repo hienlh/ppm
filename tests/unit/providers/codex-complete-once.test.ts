@@ -127,6 +127,13 @@ describe("codexCompleteOnce", () => {
     });
   });
 
+  it("names no model when given none, so codex answers on its own default", async () => {
+    const server = new FakeAppServer(["answer"]);
+    await run(server, { model: "" });
+    expect("model" in server.requests[2]!.params).toBe(false);
+    expect("model" in server.requests[3]!.params).toBe(false);
+  });
+
   it("turns web search on for the thread, keeps the shell off, and counts the searches", async () => {
     const server = new FakeAppServer(["web"]);
     const result = await run(server, { webSearch: true });
