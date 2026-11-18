@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { runSearch, SearchRunError } from "../../../../src/services/content-search/search-run.ts";
@@ -49,15 +49,25 @@ const grepTool = async () => (GREP ? { kind: "grep" as const, path: GREP } : und
 
 const files = (res: SearchResponse) => res.results.map((r) => r.file);
 
-/** A stand-in search tool: a shell script that records its pid, prints `stdout`, then runs `tail`. */
-function fakeTool(name: string, stdout: string, tail: string): { path: string; pidFile: string } {
+const FAKE_TOOL = join(import.meta.dir, "../../../fixtures/fake-search-tool.ts");
+
+/**
+ * A stand-in ripgrep: a Bun script (so it runs on Windows too) that records its pid, prints
+ * `stdout`, writes `stderr`, then hangs or exits with `code`. Pass `deps` to `runSearch`.
+ */
+function fakeTool(name: string, stdout: string, tail: { stderr?: string; code?: number; hang?: boolean } = {}) {
   const pidFile = join(root, `${name}.pid`);
-  const out = join(root, `${name}.out`);
-  writeFileSync(out, stdout);
-  const path = join(root, name);
-  writeFileSync(path, `#!/bin/sh\necho $$ > '${pidFile}'\ncat '${out}'\n${tail}\n`);
-  chmodSync(path, 0o755);
-  return { path, pidFile };
+  const stdoutFile = join(root, `${name}.out`);
+  const configFile = join(root, `${name}.json`);
+  writeFileSync(stdoutFile, stdout);
+  writeFileSync(configFile, JSON.stringify({ pidFile, stdoutFile, ...tail }));
+  return {
+    pidFile,
+    deps: {
+      resolveTool: async () => ({ kind: "rg" as const, path: join(root, "rg") }),
+      toolCommand: [process.execPath, FAKE_TOOL, configFile],
+    },
+  };
 }
 
 function alive(pid: number): boolean {
@@ -229,12 +239,9 @@ describe.skipIf(!RG)("runSearch: the match limit", () => {
 
 describe("runSearch: time limit and cancel", () => {
   test("at the time limit, stops the tool and answers the matches found so far", async () => {
-    const fake = fakeTool("rg-slow", rgMatchLine("a.txt", 3, "found it", 0, 5), "exec sleep 30");
+    const fake = fakeTool("rg-slow", rgMatchLine("a.txt", 3, "found it", 0, 5), { hang: true });
     const started = Date.now();
-    const res = await runSearch(project, req("found"), undefined, {
-      resolveTool: async () => ({ kind: "rg", path: fake.path }),
-      timeLimitMs: 300,
-    });
+    const res = await runSearch(project, req("found"), undefined, { ...fake.deps, timeLimitMs: 1500 });
     expect(Date.now() - started).toBeLessThan(5000);
     expect(res.incomplete).toBe("timeout");
     expect(res.results).toEqual([
@@ -250,11 +257,9 @@ describe("runSearch: time limit and cancel", () => {
   });
 
   test("abort kills the tool and rejects with an AbortError", async () => {
-    const fake = fakeTool("rg-hang", "", "exec sleep 30");
+    const fake = fakeTool("rg-hang", "", { hang: true });
     const controller = new AbortController();
-    const run = runSearch(project, req("x"), controller.signal, {
-      resolveTool: async () => ({ kind: "rg", path: fake.path }),
-    });
+    const run = runSearch(project, req("x"), controller.signal, fake.deps);
     await waitFor(() => existsSync(fake.pidFile) && readFileSync(fake.pidFile, "utf8").trim() !== "");
     const pid = Number(readFileSync(fake.pidFile, "utf8"));
     controller.abort();
@@ -264,12 +269,10 @@ describe("runSearch: time limit and cancel", () => {
   });
 
   test("an already aborted signal runs no tool", async () => {
-    const fake = fakeTool("rg-never", "", "exit 0");
+    const fake = fakeTool("rg-never", "");
     const controller = new AbortController();
     controller.abort();
-    const err = await runSearch(project, req("x"), controller.signal, {
-      resolveTool: async () => ({ kind: "rg", path: fake.path }),
-    }).then(() => null, (e: unknown) => e as Error);
+    const err = await runSearch(project, req("x"), controller.signal, fake.deps).then(() => null, (e: unknown) => e as Error);
     expect(err?.name).toBe("AbortError");
     expect(existsSync(fake.pidFile)).toBe(false);
   });
@@ -318,24 +321,19 @@ describe("runSearch: engine errors", () => {
   });
 
   test("a failure that is not the pattern answers 500 with the tool's words", async () => {
-    const fake = fakeTool("rg-broken", "", "echo 'something broke' >&2\nexit 2");
-    const err = await runSearch(project, req("x"), undefined, {
-      resolveTool: async () => ({ kind: "rg", path: fake.path }),
-    }).then(() => null, (e: unknown) => e);
+    const fake = fakeTool("rg-broken", "", { stderr: "something broke\n", code: 2 });
+    const err = await runSearch(project, req("x"), undefined, fake.deps).then(() => null, (e: unknown) => e);
     expect(err).toBeInstanceOf(SearchRunError);
     expect((err as SearchRunError).status).toBe(500);
     expect((err as SearchRunError).message).toContain("something broke");
   });
 
   test("matches found beside an unreadable file are still answered", async () => {
-    const fake = fakeTool(
-      "rg-partial",
-      rgMatchLine("a.txt", 1, "needle", 0, 6),
-      "echo 'rg: ./secret: Permission denied (os error 13)' >&2\nexit 2",
-    );
-    const res = await runSearch(project, req("needle"), undefined, {
-      resolveTool: async () => ({ kind: "rg", path: fake.path }),
+    const fake = fakeTool("rg-partial", rgMatchLine("a.txt", 1, "needle", 0, 6), {
+      stderr: "rg: ./secret: Permission denied (os error 13)\n",
+      code: 2,
     });
+    const res = await runSearch(project, req("needle"), undefined, fake.deps);
     expect(files(res)).toEqual(["a.txt"]);
     expect(res.total).toBe(1);
   });
