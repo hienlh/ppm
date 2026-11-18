@@ -301,9 +301,19 @@ with no PPM running it stops and says so). `assign` and `unassign` are refused f
 
 A manager chat works by `<project>/.ppm/manager.md` (`src/services/assistant-managers/manager-rules-*.ts`).
 It is written from a template when the project gets a manager and has none — Settings' own
-`manager_template`, else PPM's, which carries the safety rules inline — and `.ppm/.gitignore` gets
-`/manager.md` and `/.gitignore` appended (never `*`: `.ppm/` is also a skill root), so git sees
-nothing new. Writes are atomic and retried on Windows' EPERM/EBUSY.
+`manager_template`, else PPM's (`manager-rules-default-template.ts`), which carries the safety rules
+inline — and `.ppm/.gitignore` gets `/manager.md` and `/.gitignore` appended (never `*`: `.ppm/` is
+also a skill root), so git sees nothing new. Writes are atomic and retried on Windows' EPERM/EBUSY.
+
+PPM's template opens with the manager's role: it manages the work and hands every piece of
+hands-on work (investigating, code and tests, screenshots, posting an approved comment, merges,
+releases, upgrades, disk or machine cleanup) to a child chat, keeping its own tool use to planning,
+briefing, light checks of a child's claims, the task list and cards. It is a default, not one of
+PPM's fixed rules: the user may edit or drop it like any line of the file, which is why it lives
+here and not in the manager block below. A template is read only when a project's rules are first
+seeded, so a change to it reaches managers set up afterwards; a project that already has a manager
+keeps the rules it has (PPM never rewrites the user's file), and so does an install whose Settings
+template is its own.
 
 **How the rules reach the chat.** Never through the system prompt, which is fixed per Claude query:
 changing it would restart the stream, cold-read the manager's whole context and kill its background
