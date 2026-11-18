@@ -625,11 +625,25 @@ function idleBetweenTurns(sessionId: string, entry: SessionEntry): boolean {
   return !!entry.socketless && entry.phase === "idle" && !entry.pendingApprovalEvent && !hasBackgroundWork(sessionId);
 }
 
+/**
+ * Whether `sessionId` is an id the session migrated away from while the session lives on under
+ * its current id. A tab that missed `session_migrated` reopens the old id and gets a fresh, idle
+ * entry, but that entry owns no subprocess: providers resolve the old id to the live one, so an
+ * abort by the old id lands on the current session — on 2026-11-10 a socket opened and closed
+ * under the old id cut a running spec turn with `cache_expired`. Nothing that frees a subprocess
+ * because *this* entry looks idle may act on such an id.
+ */
+function supersededByLiveEntry(sessionId: string): boolean {
+  const current = resolveMigratedSession(sessionId);
+  return current !== sessionId && activeSessions.has(current);
+}
+
 /** Sessions with no client attached, not mid-turn, still holding a live subprocess. */
 function listWarmIdleSessions(): { sessionId: string; entry: SessionEntry; idleSince?: number }[] {
   const out: { sessionId: string; entry: SessionEntry; idleSince?: number }[] = [];
   for (const [sessionId, entry] of activeSessions) {
     if (entry.clients.size > 0 || !idleBetweenTurns(sessionId, entry)) continue;
+    if (supersededByLiveEntry(sessionId)) continue;
     const provider = providerRegistry.get(entry.providerId);
     if (!provider?.hasStreamingSession?.(sessionId)) continue;
     out.push({ sessionId, entry, idleSince: entry.idleSince });
@@ -653,6 +667,7 @@ function releaseSubprocess(sessionId: string, reason: string, note: string): voi
     entry.cacheReleaseTimer = undefined;
   }
   if (entry.clients.size > 0 || !idleBetweenTurns(sessionId, entry)) return;
+  if (supersededByLiveEntry(sessionId)) return;
   const provider = providerRegistry.get(entry.providerId);
   if (!provider?.hasStreamingSession?.(sessionId)) return;
   chatService.abortQuery(entry.providerId, sessionId, reason, "ws");
@@ -676,6 +691,9 @@ function releaseSubprocess(sessionId: string, reason: string, note: string): voi
 export function dropIdleSubprocess(sessionId: string, reason: string, note: string): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
+  // An entry under an id the provider has migrated away from owns no subprocess: the provider
+  // resolves the old id to the live session, so aborting here would cut that session's turn.
+  if (supersededByLiveEntry(sessionId)) return;
   const provider = providerRegistry.get(entry.providerId);
   if (!provider?.hasStreamingSession?.(sessionId)) return;
   chatService.abortQuery(entry.providerId, sessionId, reason, "ws");
@@ -1468,7 +1486,7 @@ export function startCleanupTimer(sessionId: string): void {
     // timed off the last turn rather than off this disconnect. It bails when a turn was in
     // flight, so the session entry going away is the last chance to free the process.
     const provider = providerRegistry.get(entry.providerId);
-    if (provider?.hasStreamingSession?.(sessionId)) {
+    if (!supersededByLiveEntry(sessionId) && provider?.hasStreamingSession?.(sessionId)) {
       chatService.abortQuery(entry.providerId, sessionId, "idle_timeout", "ws");
     }
     if (entry.cacheReleaseTimer) {
