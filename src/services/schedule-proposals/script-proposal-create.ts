@@ -1,9 +1,9 @@
 /**
  * Creating an approved proposal, and what the card's facts are read from on a live server.
  *
- * Before the save, what the card could not freeze is checked again: the file it came from, the
- * project folder, the default provider the schedule snapshots. Anything that moved creates
- * nothing. After the save the stored row is compared with the proposal; a row that differs is
+ * Before the save, what the card could not freeze is checked again: the file it came from and the
+ * default provider the schedule snapshots. Anything that moved creates nothing. (The folder is the
+ * proposal's own, frozen with it; a project renamed meanwhile keeps the folder the card named.) After the save the stored row is compared with the proposal; a row that differs is
  * deleted again rather than left running something the user did not see.
  */
 import { getSessionProjectPath, getSessionTitle } from "../db.service.ts";

@@ -13,7 +13,7 @@
  * screen, never from Telegram or by the Assistant answering for the user.
  */
 import type { ApprovalFact, ApprovalSummary } from "../../shared/assistant-approval.ts";
-import type { ScheduleInputDecl } from "../../types/scheduler.ts";
+import type { ScheduleInputDecl, ScheduleInputValue } from "../../types/scheduler.ts";
 import { exactFact, fact, modeLabel } from "../assistant-mcp/assistant-approval-summary.ts";
 import { timeoutLabel } from "../assistant-mcp/assistant-approval-summary-schedule.ts";
 import type { ScriptScheduleProposal } from "./script-proposal.ts";
@@ -47,7 +47,7 @@ const providerName = (id: string): string => (id === "codex" ? "Codex" : id === 
 /** Every chat id the script and the input values name, each once, in the order they appear. */
 export function namedChatIds(p: Pick<ScriptScheduleProposal, "script" | "inputs" | "inputValues">): string[] {
   const texts = [
-    ...p.inputs.map((d) => String(p.inputValues[d.key] ?? d.default ?? "")),
+    ...p.inputs.map((d) => String((Object.hasOwn(p.inputValues, d.key) ? p.inputValues[d.key] : undefined) ?? d.default ?? "")),
     p.script,
   ];
   const ids: string[] = [];
@@ -58,9 +58,13 @@ export function namedChatIds(p: Pick<ScriptScheduleProposal, "script" | "inputs"
   return ids;
 }
 
+/**
+ * The chats the script names, found by the server. What the script may reach beyond them is said
+ * as a fact about every script, never guessed from its text: code can call `ctx.ai.chat` or
+ * `ctx.notify` under any spelling, and a chat it names can be in any project.
+ */
 function chatFacts(p: ScriptScheduleProposal, deps: ProposalCardDeps): ApprovalFact[] {
   const ids = namedChatIds(p);
-  const usesChat = /\bai\s*\.\s*chat\s*\(/.test(p.script);
   const facts: ApprovalFact[] = [];
   for (const id of ids.slice(0, MAX_CHATS_LISTED)) {
     const chat = deps.chat(id);
@@ -72,18 +76,16 @@ function chatFacts(p: ScriptScheduleProposal, deps: ProposalCardDeps): ApprovalF
     facts.push(exactFact("Sends to chat", `${chat.title ?? "Untitled chat"} (${id})${where}`, where ? "warning" : undefined));
   }
   if (ids.length > MAX_CHATS_LISTED) facts.push(fact("More chat ids", `${ids.length - MAX_CHATS_LISTED} more in the script and inputs`));
-  if (ids.length === 0) {
-    facts.push(fact("Sends to chat", usesChat
-      ? "No chat id is written in it; it opens chats of its own in this project with ctx.ai.chat"
-      : "None: it does not call ctx.ai.chat"));
-  }
-  if (/\bnotify\s*\(/.test(p.script)) facts.push(fact("Notifications", "It can send you notifications (ctx.notify)"));
+  if (ids.length === 0) facts.push(fact("Sends to chat", "No chat id is written in the script or its inputs"));
+  facts.push(fact("It can also reach",
+    "Any chat, by id, or a new one it opens (ctx.ai.chat); your notifications (ctx.notify); and whatever you can reach "
+    + "on this machine. Only the script below says which it does."));
   return facts;
 }
 
 function inputValueText(d: ScheduleInputDecl, values: ScriptScheduleProposal["inputValues"]): string {
   if (d.type === "secret") return "(secret — set by you in Settings → Schedules; none now)";
-  if (d.key in values) return JSON.stringify(values[d.key]);
+  if (Object.hasOwn(values, d.key)) return JSON.stringify(values[d.key]);
   if (d.default !== undefined) return `${JSON.stringify(d.default)} (its default)`;
   return "(empty)";
 }
@@ -100,6 +102,36 @@ function whenFacts(p: ScriptScheduleProposal, deps: ProposalCardDeps): ApprovalF
     fact("Next 3 runs", runs.length ? `${runs.join(", ")} (${zone})` : "Never: this expression does not fire again"),
     fact("Timeout", `${timeoutLabel(p.timeoutMs!)} per run, then it is stopped`),
   ];
+}
+
+/** A stored script schedule as a raw row (`inputs_json`) or as the routes' view (`inputs`). */
+type StoredScript = { script: string | null; inputs_json?: string; input_values_json?: string; inputs?: ScheduleInputDecl[]; inputValues?: Record<string, ScheduleInputValue> };
+
+function storedInputs(s: StoredScript): { inputs: ScheduleInputDecl[]; values: Record<string, ScheduleInputValue> } {
+  const parse = <T>(text: string | undefined, fallback: T): T => {
+    try { return text ? JSON.parse(text) as T : fallback; } catch { return fallback; }
+  };
+  return {
+    inputs: s.inputs ?? parse<ScheduleInputDecl[]>(s.inputs_json, []),
+    values: s.inputValues ?? parse<Record<string, ScheduleInputValue>>(s.input_values_json, {}),
+  };
+}
+
+/**
+ * `summary` with a stored script made the thing approved: its code as the body, every input's
+ * value as a fact, the unattended warning, and allowed only in PPM. For any card that starts,
+ * runs or changes what an existing script schedule does (turning it on, run now, a new project or
+ * mode); pausing one needs none of it.
+ */
+export function withStoredScript(summary: ApprovalSummary, s: StoredScript): ApprovalSummary {
+  const { inputs, values } = storedInputs(s);
+  return {
+    ...summary,
+    facts: [...summary.facts, ...inputs.map((d) => exactFact(`Input ${d.key}`, inputValueText(d, values)))],
+    body: { label: "Script (runs exactly as shown)", text: s.script ?? "", format: "code" },
+    warning: SCRIPT_UNATTENDED_WARNING,
+    reviewInPpm: SCRIPT_REVIEW_IN_PPM,
+  };
 }
 
 export function scriptProposalSummary(p: ScriptScheduleProposal, providerId: string, deps: ProposalCardDeps): ApprovalSummary {

@@ -15,7 +15,7 @@ import { SCHEDULE_BYPASS_WARNING } from "../assistant-mcp/assistant-approval-sum
 import { getSchedule, updateSchedule } from "../scheduler-db.service.ts";
 import { scheduleChangesFrom } from "../scheduler-edit.ts";
 import { patchSessionSchedule } from "../session-schedules/session-schedule-save.ts";
-import { SCRIPT_REVIEW_IN_PPM, SCRIPT_UNATTENDED_WARNING, type ProposalCardDeps } from "./script-proposal-card.ts";
+import { withStoredScript, type ProposalCardDeps } from "./script-proposal-card.ts";
 
 const KIND_WORDS: Record<Schedule["kind"], string> = { script: "script", prompt: "prompt", session: "chat reminder" };
 
@@ -35,11 +35,8 @@ export function scheduleToggleSummary(s: Schedule, enabled: boolean, project: st
   const kind = KIND_WORDS[s.kind];
   const startsScript = enabled && s.kind === "script";
   const bypass = s.permission_mode === "bypassPermissions";
-  const body = enabled
-    ? s.kind === "script" ? { label: "Script (runs exactly as shown)", text: s.script ?? "", format: "code" as const }
-      : { label: "Prompt", text: s.prompt, format: "text" as const }
-    : undefined;
-  return {
+  const body = enabled && s.kind !== "script" ? { label: "Prompt", text: s.prompt, format: "text" as const } : undefined;
+  const summary: ApprovalSummary = {
     headline: `${enabled ? "Turn on" : "Pause"} the ${kind} schedule "${s.name}" in "${project}"`,
     facts: [
       exactFact("Schedule", `${s.name} (#${s.id})`),
@@ -50,9 +47,10 @@ export function scheduleToggleSummary(s: Schedule, enabled: boolean, project: st
       ...(enabled && s.kind !== "session" ? [fact("Its AI turns run in", modeLabel(s.permission_mode), bypass ? "warning" : undefined)] : []),
     ],
     ...(body ? { body } : {}),
-    ...(startsScript ? { warning: SCRIPT_UNATTENDED_WARNING, reviewInPpm: SCRIPT_REVIEW_IN_PPM }
-      : enabled && bypass && s.kind === "prompt" ? { warning: SCHEDULE_BYPASS_WARNING } : {}),
+    ...(enabled && bypass && s.kind === "prompt" ? { warning: SCHEDULE_BYPASS_WARNING } : {}),
   };
+  // Turning a script on starts code running unattended again: its code and inputs are what is approved.
+  return startsScript ? withStoredScript(summary, s) : summary;
 }
 
 /** Turns `current` on or off as the PATCH route would, and answers it as stored. */

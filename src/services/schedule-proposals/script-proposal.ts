@@ -19,6 +19,7 @@ import { cronProblem } from "../../shared/schedule-cron.ts";
 import type { Schedule, ScheduleInputDecl, ScheduleInputValue, ScheduleMode } from "../../types/scheduler.ts";
 import { newScheduleFrom, ScheduleEditError } from "../scheduler-edit.ts";
 import { readProposalFile, type ProposalFile } from "./script-proposal-file.ts";
+import { turnSecretScrubber } from "../vault/turn-secret-scrubber.ts";
 
 /** What a new schedule's AI turns run in when the proposal names no mode: the Settings form's default. */
 export const DEFAULT_PROPOSAL_MODE = "bypassPermissions";
@@ -139,6 +140,10 @@ export function parseScriptProposal(
     project,
     file,
   };
+  // A value of the vault's locked tiers read in any chat never goes into a schedule, whether it
+  // came in the arguments or in a file (the endpoint only scans the arguments).
+  const leaked = turnSecretScrubber.findIn({ name: proposal.name, description: proposal.description, script: proposal.script, inputs: proposal.inputs, inputValues: proposal.inputValues });
+  if (leaked) return refused([`it contains the value of the vault item "${leaked}"; vault values never go into a schedule, so refer to the item by name or let the user set it in Settings → Schedules`]);
   // The route's own rules, run dry: value types, required inputs, the cron in its zone.
   try {
     newScheduleFrom(proposalRouteBody(proposal), providerId);

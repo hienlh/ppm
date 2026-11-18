@@ -4,7 +4,10 @@
  * it; declined or with its file changed meanwhile, nothing exists. `schedule_save` turning a script
  * back on shows the script and is allowed only in PPM.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, setDefaultTimeout } from "bun:test";
+
+// The first call loads the routes; alongside other files that can pass the 5 s default.
+setDefaultTimeout(20_000);
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,7 +32,7 @@ const { getSchedule, getSchedules } = await import("../../src/services/scheduler
 const { createRouteCaller } = await import("../../src/services/assistant-mcp/assistant-route-call.ts");
 const { SCHEDULE_ROUTES } = await import("../../src/services/assistant-mcp/assistant-schedule-tools.ts");
 const { scheduleProposeScript } = await import("../../src/services/assistant-mcp/assistant-schedule-propose-tool.ts");
-const { scheduleSave } = await import("../../src/services/assistant-mcp/assistant-schedule-write-tools.ts");
+const { scheduleRunNow, scheduleSave } = await import("../../src/services/assistant-mcp/assistant-schedule-write-tools.ts");
 const { decidingInput } = await import("../../src/services/chat-control/approval-deciding-input.ts");
 type AskApproval = import("../../src/services/assistant-mcp/assistant-approval-broker.ts").AskApproval;
 type ApprovalAsk = import("../../src/services/assistant-mcp/assistant-approval-broker.ts").ApprovalAsk;
@@ -110,5 +113,36 @@ describe("schedule_propose_script", () => {
     expect(asks[0]!.summary.body).toMatchObject({ text: SCRIPT });
     expect(asks[0]!.summary.reviewInPpm).toBeTruthy();
     expect(getSchedule(created.schedule.id)!.enabled).toBe(1);
+  });
+
+  it("shows the script and its inputs, allowed only in PPM, when running or retiming a script; not when renaming or pausing it", async () => {
+    const created = parse(await scheduleProposeScript(ctx(answering("approved")), {
+      project: "propose-int", name: "W", cron: "0 */10 * * * *", script: SCRIPT,
+      inputs: [{ key: "constructor", label: "Odd key", type: "text" }], inputValues: { constructor: "kept" },
+    }, deps));
+    const id = created.schedule.id;
+    const lastAsk = () => asks.at(-1)!.summary;
+    await scheduleRunNow(ctx(answering("denied")), { id });
+    expect(lastAsk().body).toMatchObject({ text: SCRIPT });
+    expect(lastAsk().reviewInPpm).toBeTruthy();
+    expect(lastAsk().facts.find((f) => f.label === "Input constructor")!.value).toBe('"kept"');
+    await scheduleSave(ctx(answering("denied")), { id, cron: "0 */20 * * * *" });
+    expect(lastAsk().reviewInPpm).toBeTruthy();
+    await scheduleSave(ctx(answering("denied")), { id, name: "Renamed" });
+    expect(lastAsk().reviewInPpm).toBeUndefined();
+    await scheduleSave(ctx(answering("denied")), { id, enabled: false });
+    expect(lastAsk().reviewInPpm).toBeUndefined();
+  });
+
+  it("calls a card stale when the script's input values changed while it waited", async () => {
+    const created = parse(await scheduleProposeScript(ctx(answering("approved")), {
+      project: "propose-int", name: "W", cron: "0 */10 * * * *", script: SCRIPT,
+      inputs: [{ key: "target", label: "Target", type: "text" }], inputValues: { target: "a" },
+    }, deps));
+    const id = created.schedule.id;
+    const { updateSchedule } = await import("../../src/services/scheduler-db.service.ts");
+    const res = await scheduleSave(ctx(answering("approved", () => updateSchedule(id, { input_values_json: JSON.stringify({ target: "b" }) }))), { id, enabled: false });
+    expect(textOf(res)).toContain("stale");
+    expect(getSchedule(id)!.enabled).toBe(1);
   });
 });

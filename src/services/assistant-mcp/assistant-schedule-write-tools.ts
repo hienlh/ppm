@@ -7,7 +7,7 @@ import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import type { AssistantProject } from "./assistant-project-scope.ts";
 import { errorResult, jsonResult, notApprovedResult } from "./assistant-tool-output.ts";
 import type { ToolContext } from "./assistant-tool-family.ts";
-import { SCRIPT_REVIEW_IN_PPM, SCRIPT_UNATTENDED_WARNING } from "../schedule-proposals/script-proposal-card.ts";
+import { withStoredScript } from "../schedule-proposals/script-proposal-card.ts";
 import {
   createScheduleSummary, deleteScheduleSummary, editScheduleSummary, runNowScheduleSummary, type ScheduleSettings,
 } from "./assistant-approval-summary-schedule.ts";
@@ -127,15 +127,11 @@ async function editSchedule(ctx: ToolContext, id: number, given: GivenSchedule, 
   let summary = editScheduleSummary({
     id, before, after, changed, provider: current.schedule.provider_id, nextRuns: nextRunsFor(after.cron, deps, current.schedule.timezone),
   });
-  // Turning a script on starts code running unattended again: the card shows that code, and like
-  // a proposal's it is allowed only in PPM.
-  if (current.schedule.kind === "script" && changed.includes("enabled") && after.enabled) {
-    summary = {
-      ...summary,
-      body: { label: "Script (runs exactly as shown)", text: current.schedule.script ?? "", format: "code" },
-      warning: SCRIPT_UNATTENDED_WARNING,
-      reviewInPpm: SCRIPT_REVIEW_IN_PPM,
-    };
+  // A script edited in any way but pausing or renaming it — turned on, moved to another folder, run
+  // in another mode, on another cron — is code that runs unattended on new terms: the card shows
+  // that code and its inputs, and like a proposal's it is allowed only in PPM.
+  if (current.schedule.kind === "script" && !changed.every((k) => k === "name" || (k === "enabled" && !after.enabled))) {
+    summary = withStoredScript(summary, current.schedule);
   }
   const refused = await ask(ctx, SCHEDULE_SAVE_TOOL, { id, project: after.project, ...body }, summary);
   if (refused) return refused;
@@ -185,9 +181,10 @@ export async function scheduleRunNow(ctx: ToolContext, args: Record<string, unkn
   if (current.schedule.kind === "session") return errorResult(SESSION_SCHEDULES_NOT_HERE);
   const running =(await readRuns(ctx, id, 1))?.[0]?.status === "running";
 
-  const refused = await ask(ctx, SCHEDULE_RUN_NOW_TOOL, { id, project: current.project.name }, runNowScheduleSummary({
-    id, settings: current.settings, provider: current.schedule.provider_id, running,
-  }));
+  const runNow = runNowScheduleSummary({ id, settings: current.settings, provider: current.schedule.provider_id, running });
+  // Running a script runs its code now, paused or not: that code is what the user approves.
+  const refused = await ask(ctx, SCHEDULE_RUN_NOW_TOOL, { id, project: current.project.name },
+    current.schedule.kind === "script" ? withStoredScript(runNow, current.schedule) : runNow);
   if (refused) return refused;
   // The card showed the prompt and mode that will run; an edit meanwhile would run something else.
   const stale = await recheck(ctx, current.schedule, SCHEDULE_RUN_NOW_TOOL);

