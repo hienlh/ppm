@@ -14,6 +14,7 @@ import {
   parseScriptProposal, proposalMismatch, proposalRouteBody, type ScriptScheduleProposal,
 } from "../../../../src/services/schedule-proposals/script-proposal.ts";
 import { proposalFileUnchanged } from "../../../../src/services/schedule-proposals/script-proposal-file.ts";
+import { nextRunsOnClock } from "../../../../src/services/schedule-proposals/script-proposal-create.ts";
 import {
   namedChatIds, SCRIPT_REVIEW_IN_PPM, scriptProposalSummary, type ProposalCardDeps,
 } from "../../../../src/services/schedule-proposals/script-proposal-card.ts";
@@ -170,6 +171,14 @@ describe("the card", () => {
     expect(s.facts.find((f) => f.label === "Time zone")!.value).toBe("Asia/Saigon (this machine's)");
     expect(s.facts.find((f) => f.label === "Sends to chat")).toMatchObject({ tone: "warning", value: expect.stringContaining("another project") });
     expect(namedChatIds({ script: `x ${CHAT.toUpperCase()} y`, inputs: [], inputValues: {} })).toEqual([CHAT]);
+  });
+
+  it("gives a seconds cron's next runs with their seconds, on the schedule's clock", () => {
+    const runs = nextRunsOnClock("*/5 * * * * *", "Europe/London", 3);
+    expect(runs).toHaveLength(3);
+    for (const r of runs) expect(r).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(new Set(runs).size).toBe(3);
+    expect(nextRunsOnClock("30 9 * * *", "Europe/London", 2).every((r) => /^\d{4}-\d{2}-\d{2} 09:30$/.test(r))).toBe(true);
   });
 
   it("can never be allowed away from PPM, however short: Telegram and the Assistant get Deny only", () => {

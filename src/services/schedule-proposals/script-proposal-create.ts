@@ -11,13 +11,27 @@ import { deleteSchedule, getSchedule, insertSchedule } from "../scheduler-db.ser
 import { newScheduleFrom } from "../scheduler-edit.ts";
 import { liveScheduleTargetDeps } from "../session-schedules/session-schedule-target.ts";
 import { nextRunTimes } from "../assistant-mcp/assistant-schedule-shape.ts";
+import { cronFieldCount, nextFires } from "../../shared/schedule-cron.ts";
 import type { Schedule } from "../../types/scheduler.ts";
 import type { ProposalCardDeps } from "./script-proposal-card.ts";
 import { proposalFileUnchanged } from "./script-proposal-file.ts";
 import { proposalMismatch, proposalRouteBody, type ScriptScheduleProposal } from "./script-proposal.ts";
 
+/**
+ * The next `n` fires on `zone`'s clock (the machine's when null). A 6-field cron fires within one
+ * minute several times, so its times carry seconds; a 5-field one keeps the minute form.
+ */
+export function nextRunsOnClock(cron: string, zone: string | null, n: number): string[] {
+  if (cronFieldCount(cron) !== 6) return nextRunTimes(cron, n, zone);
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone ?? undefined, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  });
+  return nextFires(cron, n, undefined, zone).map((d) => fmt.format(d).replace(", ", " "));
+}
+
 export const liveProposalCardDeps = (): ProposalCardDeps => ({
-  nextRuns: (cron, zone, n) => nextRunTimes(cron, n, zone),
+  nextRuns: nextRunsOnClock,
   machineZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "server local time",
   chat: (sessionId) => {
     const id = liveScheduleTargetDeps.canonical(sessionId);

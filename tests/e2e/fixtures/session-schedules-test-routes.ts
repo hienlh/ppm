@@ -47,6 +47,17 @@ export async function testRoute(req: Request, url: URL, ctx: Ctx): Promise<Respo
     schedulerService.rearm();
     return json({ ok: true });
   }
+  if (path === "/telegram-card") {
+    // The card a chat waits on, as the Telegram relay formats it (`formatApprovalCard`) and with the
+    // buttons it would attach: Allow only when the formatter allows it, Deny always.
+    const id = resolveMigratedSession(url.searchParams.get("sessionId") ?? "");
+    const { chatControl } = await import("../../../src/services/chat-control/chat-control");
+    const { formatApprovalCard } = await import("../../../src/services/assistant-telegram/assistant-telegram-card-format");
+    const card = chatControl()?.liveState(id)?.card;
+    if (!card) return json({ card: null });
+    const formatted = formatApprovalCard(card, "Manager chat in alpha is stopped, waiting for your decision");
+    return json({ card: { html: formatted.html, allow: formatted.allow, buttons: [...(formatted.allow ? ["Allow"] : []), "Deny", "Open in PPM"] } });
+  }
   if (path === "/live") {
     const id = url.searchParams.get("sessionId") ?? "";
     const canonical = resolveMigratedSession(id);
