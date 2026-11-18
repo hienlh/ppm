@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.14] - 2026-11-18
+
+### Fixed
+
+- **The decision set drops a card the moment it is answered, dismissed or closed**, wherever that happened (PPM, Telegram, the manager), and opens the card that takes its place; its tabs and N/M now count only cards still waiting.
+- **A manager chat's Waiting chip counts the decisions waiting on you**, instead of saying 1 however many there were.
+
 ## [0.26.13] - 2026-11-18
 
 ### Added
