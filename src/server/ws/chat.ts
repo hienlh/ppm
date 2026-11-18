@@ -3744,7 +3744,6 @@ export const chatWebSocket = {
         replyTo: parsed.replyTo ?? undefined,
         turnRefs: parsed.turnRefs ?? null,
         taskRefs,
-        priority: parsed.priority,
         uiSummary: (parsed as { uiSummary?: UiSummary }).uiSummary,
         receivedAt: messageReceivedAt,
         ...(clientMessageId ? { clientMessageId } : {}),

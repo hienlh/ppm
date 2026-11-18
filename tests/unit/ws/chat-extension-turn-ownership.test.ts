@@ -51,7 +51,7 @@ it("refuses an extension message when the next turn already belongs to the perso
   const phone = connect(session.id);
   await phone.say({ type: "message", content: "hold:one" });
   await until(() => getSessionTurnState(session.id).running, "the person's turn to run");
-  await phone.say({ type: "message", content: "after this one", priority: "later" });
+  await phone.say({ type: "message", content: "after this one" });
 
   await expect(startHeadlessTurn(session.id, { content: "two", providerId: provider.id })).rejects.toThrow("BUSY_QUEUED");
   expect(provider.pushes.some((p) => p.sessionId === session.id && p.content.includes("two"))).toBe(false);
@@ -72,6 +72,19 @@ it("a person joining an extension's turn takes it over, budget and all", async (
   await Bun.sleep(350);
   expect(getSessionTurnState(session.id).running).toBe(true);
   expect(phone.of("error")).toHaveLength(0);
+  provider.release(session.id);
+  await until(() => !getSessionTurnState(session.id).running, "the turn to end");
+});
+
+it("a browser message has no Later: a priority it names is ignored, and it still takes over the turn", async () => {
+  const session = await chatService.createSession(provider.id, {});
+  const phone = connect(session.id);
+  expect(await startHeadlessTurn(session.id, { content: "hold:one", providerId: provider.id, timeoutMs: 200 })).toEqual({ queued: false });
+  await until(() => getSessionTurnState(session.id).running, "the extension's turn to run");
+
+  // An older bundle or app may still send one; Queue and Send now are the only modes.
+  await phone.say({ type: "message", content: "let me take this", priority: "later" });
+  expect(getSessionTurnOrigin(session.id)).toBe("ws");
   provider.release(session.id);
   await until(() => !getSessionTurnState(session.id).running, "the turn to end");
 });
