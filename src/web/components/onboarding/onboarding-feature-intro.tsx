@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { openSettings } from "@/components/settings/open-settings";
 import { useAssistantSettingsTab } from "@/components/settings/assistant-settings-tab-store";
-import { featureIntroSteps, useFeatureIntrosStore } from "@/stores/feature-intros-store";
+import { featureIntroSteps, showDecidedUiPref, useFeatureIntrosStore } from "@/stores/feature-intros-store";
 import { featureIntroSettingsLink, featurePartAllowed } from "@/lib/onboarding/feature-intros-client";
 import type { OnboardingStatus } from "@/lib/onboarding/onboarding-types";
 import { FEATURE_INTROS_CHANGED_EVENT, type FeatureIntro, type FeatureIntrosChangedEvent } from "../../../shared/feature-intros";
@@ -28,6 +28,7 @@ export function useFeatureIntrosSync(enabled = true): void {
     const changed = (event: Event) => {
       const detail = (event as CustomEvent<Partial<FeatureIntrosChangedEvent> | undefined>).detail;
       if (detail?.change === "skip" && typeof detail.id === "string") store().skippedElsewhere(detail.id);
+      if (detail?.change === "answer" && typeof detail.id === "string") showDecidedUiPref(detail.id, detail.answer);
       void store().load();
     };
     void store().load();

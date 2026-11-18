@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
 import { configService } from "../../../src/services/config.service.ts";
-import { getDb, setSessionMetadata } from "../../../src/services/db.service.ts";
+import { getConfigValue, getDb, setConfigValue, setSessionMetadata } from "../../../src/services/db.service.ts";
 import {
   answerFeatureIntro, featureIntrosView, isExistingUser, markFeatureIntroSeenInSettings, readFeatureIntroStates,
   settleFeaturesDecidedInSettings, skipFeatureIntro,
@@ -15,8 +15,11 @@ const INTRO = FEATURE_INTROS[0]!;
 const otherIntrosAnswered = () =>
   Object.fromEntries(FEATURE_INTROS.slice(1).map((i) => [i.id, { answer: "off" as const, skips: 0, via: "tour" as const }]));
 const SIX = ["search_sessions", "list_session_turns", "read_session_turns", "create_session", "send_to_session", "session_status", "design_screenshot"];
+const GUTTER_ID = "editor-gutter-changes-2026-11";
 const ai = () => configService.get("ai");
 const onTools = () => PPM_TOOLS.filter((tool) => ppmToolOn(ai(), tool));
+/** The view narrowed to the intro under test: other features are introduced beside it. */
+const pendingOfIntro = () => featureIntrosView().pending.filter((i) => i.id === INTRO.id);
 let savedProjects: ProjectConfig[];
 
 beforeEach(() => {
@@ -28,6 +31,7 @@ beforeEach(() => {
   const { ppm_tools: _drop, ...rest } = ai();
   configService.set("ai", { ...rest, session_collab: { askBeforeCreate: false } });
   getDb().run("DELETE FROM session_metadata");
+  setConfigValue("ui_prefs", "{}");
 });
 afterEach(() => {
   configService.set("projects", savedProjects);
@@ -38,7 +42,7 @@ afterEach(() => {
 describe("feature introductions", () => {
   it("introduces the six session tools, and they are off on every server path until answered", () => {
     expect([...INTRO.tools]).toEqual(SIX);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id]);
+    expect(pendingOfIntro().map((i) => i.id)).toEqual([INTRO.id]);
     for (const tool of SIX) expect(onTools()).not.toContain(tool);
   });
 
@@ -48,7 +52,7 @@ describe("feature introductions", () => {
     expect(ai().ppm_tools).toEqual(Object.fromEntries(SIX.map((t) => [t, true])));
     expect(ai().session_collab).toEqual({ askBeforeCreate: false });
     for (const tool of SIX) expect(onTools()).toContain(tool);
-    expect(featureIntrosView().pending).toEqual([]);
+    expect(pendingOfIntro()).toEqual([]);
   });
 
   it("ignores a second answer: the first one, or a choice made in Settings since, stands", () => {
@@ -73,12 +77,12 @@ describe("feature introductions", () => {
     const day = (n: number) => new Date(Date.UTC(2026, 10, 1 + n, 9));
     for (let n = 1; n < MAX_FEATURE_INTRO_SKIPS; n++) {
       expect(skipFeatureIntro(INTRO.id, day(n))).toMatchObject({ ok: true, changed: true, state: { answer: null, skips: n } });
-      expect(featureIntrosView().pending).toHaveLength(1);
+      expect(pendingOfIntro()).toHaveLength(1);
     }
     expect(skipFeatureIntro(INTRO.id, day(MAX_FEATURE_INTRO_SKIPS)))
       .toMatchObject({ ok: true, state: { answer: "off", skips: MAX_FEATURE_INTRO_SKIPS, via: "skips" } });
     const view = featureIntrosView();
-    expect(view.pending).toEqual([]);
+    expect(view.pending.filter((i) => i.id === INTRO.id)).toEqual([]);
     expect(view.newInSettings).toEqual([INTRO.id]);
     for (const tool of SIX) expect(onTools()).not.toContain(tool);
     // A skip after the question ended changes nothing.
@@ -89,7 +93,7 @@ describe("feature introductions", () => {
 
   it("counts a switch already set in Settings as the answer, on if any set one is on", () => {
     configService.set("ai", { ...ai(), ppm_tools: { read_session_turns: false } });
-    expect(featureIntrosView().pending).toEqual([]);
+    expect(pendingOfIntro()).toEqual([]);
     expect(readFeatureIntroStates()[INTRO.id]).toMatchObject({ answer: "off", via: "settings" });
     for (const tool of SIX) expect(onTools()).not.toContain(tool);
 
@@ -137,14 +141,14 @@ describe("scheduled prompts in a chat", () => {
 
   it("is a question of its own: turning the session tools on leaves the schedule tools off and still asked", () => {
     configService.set("feature_intros", {});
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11", GUTTER_ID]);
     answerFeatureIntro(INTRO.id, "on");
     for (const tool of THREE) expect(onTools()).not.toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11", GUTTER_ID]);
 
     answerFeatureIntro(SCHEDULES.id, "on");
     for (const tool of THREE) expect(onTools()).toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11"]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id, "assistant-full-mode-2026-11", "voice-messages-2026-11", "assistant-settings-tools-2026-11", "remembered-approvals-2026-11", "web-browser-2026-11", GUTTER_ID]);
   });
 
   it("asks apart about script proposals: prompts turned on never agreed to code that runs on this machine", () => {
@@ -261,5 +265,36 @@ describe("Voice self-learning", () => {
     configService.set("voice_message", { enabled: true, self_learning: false, review_before_send: true, words: [], projects: {} });
     expect(settleFeaturesDecidedInSettings()).toBe(true);
     expect(readFeatureIntroStates()[LEARN.id]).toMatchObject({ answer: "off", via: "settings" });
+  });
+});
+
+describe("changed lines in the editor's gutter", () => {
+  const GUTTER = FEATURE_INTROS.find((i) => i.id === GUTTER_ID)!;
+  const uiPrefs = () => JSON.parse(getConfigValue("ui_prefs") ?? "{}") as Record<string, unknown>;
+  const onlyGutterAsked = () => configService.set("feature_intros",
+    Object.fromEntries(FEATURE_INTROS.filter((i) => i.id !== GUTTER_ID).map((i) => [i.id, { answer: "off" as const, skips: 0, via: "tour" as const }])));
+
+  it("is an editor setting, asked until answered, and the answer is its ui pref, not a tool switch", () => {
+    onlyGutterAsked();
+    setConfigValue("ui_prefs", JSON.stringify({ wordWrap: true }));
+    expect(GUTTER).toMatchObject({ tools: [], uiPref: "gutterChanges" });
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([GUTTER_ID]);
+    expect(uiPrefs().gutterChanges).toBeUndefined();
+
+    expect(answerFeatureIntro(GUTTER_ID, "on")).toMatchObject({ ok: true, changed: true, state: { answer: "on", via: "tour" } });
+    expect(uiPrefs()).toEqual({ wordWrap: true, gutterChanges: true });
+    expect(ai().ppm_tools).toBeUndefined();
+    expect(featureIntrosView().pending).toEqual([]);
+  });
+
+  it("counts the switch saved in Settings as the answer, off included", () => {
+    onlyGutterAsked();
+    setConfigValue("ui_prefs", JSON.stringify({ gutterChanges: false }));
+    expect(settleFeaturesDecidedInSettings()).toBe(true);
+    expect(readFeatureIntroStates()[GUTTER_ID]).toMatchObject({ answer: "off", via: "settings" });
+    expect(featureIntrosView().pending).toEqual([]);
+    // A late tour answer leaves the switch as it was saved.
+    expect(answerFeatureIntro(GUTTER_ID, "on")).toMatchObject({ changed: false, state: { answer: "off" } });
+    expect(uiPrefs()).toEqual({ gutterChanges: false });
   });
 });

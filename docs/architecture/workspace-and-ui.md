@@ -116,8 +116,12 @@ Settings → Tools. The first entry is the six session tools.
 set of `ai.ppm_tools` switches, nothing else is needed: `ppmToolOn` already keeps an introduced
 feature's tools off until the install answers, every server path reads it, and Settings → Tools
 shows the NEW marker. Do not reuse or rename an `id`, or every install is asked again. A feature
-that is not a tool switch needs its own rule for "off until answered" and its own `answerFromSwitches`
-equivalent.
+that is a boolean editor setting names it as `uiPref` (with `tools: []`) instead: the answer is
+written to that key of the `ui_prefs` row, unset means off, saving the key through
+`PUT /api/settings/ui-prefs` settles the question as `settings` (`answerFromUiPrefs`), and the
+browser applies a decided answer to its settings store at once (`showDecidedUiPref`). The key must
+be in `FEATURE_UI_PREFS` and in the route's `UI_PREF_VALIDATORS`. Anything else needs its own rule
+for "off until answered" and its own `answerFromSwitches` equivalent.
 
 Verification: `tests/e2e/feature-intros-e2e.mjs` (one fresh install per scenario, fixture
 `tests/e2e/fixtures/feature-intros-server.ts`), plus the unit tests named after the service, the
@@ -1016,7 +1020,9 @@ message being written.
   150 ms after typing stops. `src/web/hooks/use-gutter-changes.ts` asks for the base on open, on
   `git:changed`, on focus, on coming back into view and every 5 s while the editor is on screen —
   which is what catches a `git add` or commit made outside PPM. An editor parked by `tab-pool`
-  asks for nothing.
+  asks for nothing. The switch is Settings → Appearance → *Changed Lines in the Gutter* (UI pref
+  `gutterChanges`, install-wide like inline blame); off — which it is until the tour's "PPM has
+  new features" question `editor-gutter-changes-2026-11` is answered — no editor asks git anything.
 
 ---
 

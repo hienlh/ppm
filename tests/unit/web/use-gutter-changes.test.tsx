@@ -12,6 +12,7 @@ afterAll(uninstallDom);
 const { act } = await import("react");
 const { useGutterChanges } = await import("../../../src/web/hooks/use-gutter-changes");
 const { useGitRepoStore } = await import("../../../src/web/stores/git-repo-store");
+const { useSettingsStore } = await import("../../../src/web/stores/settings-store");
 const { api } = await import("../../../src/web/lib/api-client");
 
 // A project folder inside a repository: git runs unscoped, paths project-relative.
@@ -85,6 +86,7 @@ beforeEach(() => {
   urls = [];
   answers = [];
   useGitRepoStore.setState({ discovery: { p: DISCOVERY }, chosen: {} });
+  useSettingsStore.setState({ gutterChanges: true });
   spy = spyOn(api, "get").mockImplementation(((url: string) => {
     if (!url.includes("/index-base?")) return new Promise(() => {});
     urls.push(url);
@@ -98,6 +100,7 @@ afterEach(async () => {
   view = null;
   spy?.mockRestore();
   useGitRepoStore.setState({ discovery: {}, chosen: {} });
+  useSettingsStore.setState({ gutterChanges: false });
 });
 
 const wait = (ms: number) => act(() => new Promise<void>((r) => setTimeout(r, ms)));
@@ -198,5 +201,28 @@ describe("useGutterChanges", () => {
     await wait(350);
     expect(urls).toHaveLength(2);
     expect(ed.bars()).toHaveLength(1);
+  });
+
+  it("asks git nothing while the switch in Settings is off, and clears its bars when it is turned off", async () => {
+    useSettingsStore.setState({ gutterChanges: false });
+    const ed = fakeEditor(["one", "TWO", "three", ""]);
+    view = await mount(<Probe editor={ed.editor} />);
+    await wait(0);
+    await gitChanged("p");
+    await wait(350);
+    expect(urls).toEqual([]);
+    expect(ed.bars()).toEqual([]);
+
+    answers.push({ state: "ok", oid: "aaa", content: BASE });
+    await act(() => { useSettingsStore.setState({ gutterChanges: true }); });
+    await wait(0);
+    expect(urls).toHaveLength(1);
+    expect(ed.bars()).toHaveLength(1);
+
+    await act(() => { useSettingsStore.setState({ gutterChanges: false }); });
+    await gitChanged("p");
+    await wait(350);
+    expect(urls).toHaveLength(1);
+    expect(ed.bars()).toEqual([]);
   });
 });
