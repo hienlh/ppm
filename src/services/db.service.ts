@@ -15,7 +15,7 @@ const log = createLogger("db");
 const proxyLog = createLogger("proxy");
 // Must equal the last `PRAGMA user_version` below: the pre-migration snapshot is skipped for
 // any database already at this version, so a stale value silently drops that backup.
-export const CURRENT_SCHEMA_VERSION = 76;
+export const CURRENT_SCHEMA_VERSION = 77;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -1615,6 +1615,28 @@ export function runMigrations(database: Database): void {
       database.exec("CREATE INDEX IF NOT EXISTS idx_schedules_task ON schedules(task_id)");
     }
     database.exec(`PRAGMA user_version = 76;`);
+  }
+
+  if (current < 77) {
+    // Every notification PPM sends, with its kind and read state, for the notification feed.
+    // One statement per `exec`: bun:sqlite raises only the last statement's error from a
+    // multi-statement `exec`, which would bump the version over a database missing the table.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS notification_feed (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind        TEXT NOT NULL,
+        project     TEXT NOT NULL DEFAULT '',
+        session_id  TEXT,
+        schedule_id TEXT,
+        title       TEXT NOT NULL,
+        body        TEXT NOT NULL DEFAULT '',
+        created_at  INTEGER NOT NULL,
+        read_at     INTEGER
+      )
+    `);
+    database.exec("CREATE INDEX IF NOT EXISTS notification_feed_created ON notification_feed(created_at DESC)");
+    database.exec("CREATE INDEX IF NOT EXISTS notification_feed_session ON notification_feed(session_id) WHERE session_id IS NOT NULL");
+    database.exec("PRAGMA user_version = 77");
   }
 }
 

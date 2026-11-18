@@ -1,3 +1,7 @@
+import { isFeedKind, type FeedKind } from "./notification-feed.ts";
+
+export type WebPushKind = FeedKind;
+
 /** What one push carries from `web-push.service.ts` to the service worker (`src/web/sw.ts`). */
 export interface WebPushPayload {
   title: string;
@@ -12,6 +16,8 @@ export interface WebPushPayload {
   sessionId: string;
   /** The session's provider; "" when unknown. */
   providerId: string;
+  /** Event category for native notification channels; ignored by the web service worker. */
+  kind?: FeedKind;
 }
 
 /** Posted by the service worker to an open PPM window when one of its notifications is clicked. */
@@ -37,5 +43,6 @@ export function readWebPushPayload(raw: unknown): WebPushPayload {
     project: str(o.project),
     sessionId: str(o.sessionId),
     providerId: str(o.providerId),
+    ...(isFeedKind(o.kind) ? { kind: o.kind } : {}),
   };
 }

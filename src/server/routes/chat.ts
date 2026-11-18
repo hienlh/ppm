@@ -42,7 +42,8 @@ import { codexUsageSource } from "../../providers/codex-app-server/codex-usage-s
 import { antigravityUsageSource } from "../../providers/antigravity/antigravity-usage.ts";
 import { invalidateUsage, refreshUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
 import { findRolloutByThreadId } from "../../providers/codex-app-server/codex-history.ts";
-import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
+import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread, resolveMigratedSession } from "../../services/db.service.ts";
+import { markSessionRead } from "../../services/notification-feed.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
 import { listProjectSessions, searchProjectChats } from "../../services/chat-session-queries.service.ts";
@@ -519,6 +520,9 @@ chatRoutes.post("/sessions/:id/read", async (c) => {
   try {
     const id = c.req.param("id");
     clearSessionUnread(id);
+    markSessionRead(id);
+    const canonical = resolveMigratedSession(id);
+    if (canonical !== id) markSessionRead(canonical);
     // Broadcast to all WS clients so other tabs/devices sync
     const { broadcastGlobalEvent } = await import("../ws/chat.ts");
     broadcastGlobalEvent({ type: "session:unread_changed", sessionId: id, unreadCount: 0, unreadType: null, projectName: "" });
