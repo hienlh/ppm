@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { providerRegistry } from "../../../src/providers/registry.ts";
+import type { AIProvider } from "../../../src/providers/provider.interface.ts";
+import { configService } from "../../../src/services/config.service.ts";
 import { gitRoutes } from "../../../src/server/routes/git.ts";
 import { onGitEvent, type GitEvent } from "../../../src/services/git-changes/git-events.ts";
 import {
@@ -187,6 +189,118 @@ describe("gitCommitMessageService and POST /git/commit-message", () => {
     expect(await res.json()).toEqual({
       ok: true,
       data: { message: "feat(mobile): update nested readme" },
+    });
+  });
+
+  it("never shows the AI a secret from the staged diff", async () => {
+    const anthropicKey = "sk-ant-api03-Zq8vT2mLr5Xw9Kd3Hf7Jp1Nb6Yc4Ue0Gs";
+    const githubToken = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+    const dbPassword = "hunter2-very-secret";
+    writeFileSync(join(repo, "config.ts"), [
+      `export const ANTHROPIC_KEY = "${anthropicKey}";`,
+      `export const GH = "${githubToken}";`,
+      `export const DB = "postgres://app:${dbPassword}@db.internal/app";`,
+      "",
+    ].join("\n"));
+    git(repo, "add", "config.ts");
+
+    const spy = spyCompleteOnce(async () => ({ text: "chore: add config", costUsd: 0, inputTokens: 1, outputTokens: 1 }));
+    await gitCommitMessageService.generate(repo);
+
+    const prompt = spy.mock.calls[0]![0].prompt;
+    expect(prompt).toContain("config.ts");
+    expect(prompt).toContain("[REDACTED]");
+    for (const secret of [anthropicKey, githubToken, dbPassword]) expect(prompt).not.toContain(secret);
+  });
+
+  describe("the provider is the default one, never Claude in its place", () => {
+    const savedAi = structuredClone(configService.get("ai"));
+    const providers = (providerRegistry as unknown as { providers: Map<string, AIProvider> }).providers;
+
+    function useDefault(id: string, codexModel?: string): void {
+      const ai = configService.get("ai");
+      configService.set("ai", {
+        ...ai,
+        default_provider: id,
+        providers: {
+          ...ai.providers,
+          [id]: { ...ai.providers[id], type: "cli", ...(id === "codex" && codexModel ? { model: codexModel } : {}) },
+        },
+      });
+      restores.push(() => configService.set("ai", structuredClone(savedAi)));
+    }
+
+    function registerFake(id: string, name: string, completeOnce?: (input: { prompt: string; model: string }) => Promise<{ text: string }>) {
+      const before = providers.get(id);
+      const fake = { id, name, ...(completeOnce ? { completeOnce } : {}) } as unknown as AIProvider;
+      providers.set(id, fake);
+      restores.push(() => (before ? providers.set(id, before) : providers.delete(id)));
+    }
+
+    function stageReadme(): void {
+      writeFileSync(join(repo, "README.md"), "# Demo\n\nCodex default.\n");
+      git(repo, "add", "README.md");
+    }
+
+    it("drafts with Codex's completeOnce when Codex is the default, on its own default model", async () => {
+      useDefault("codex");
+      const claude = spyCompleteOnce(async () => ({ text: "chore: from claude", costUsd: 0, inputTokens: 0, outputTokens: 0 }));
+      const calls: Array<{ prompt: string; model: string }> = [];
+      registerFake("codex", "Codex", async (input) => {
+        calls.push(input);
+        return { text: "docs: from codex" };
+      });
+      stageReadme();
+
+      const res = await createApp(repo).request("/git/commit-message", { method: "POST" });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, data: { message: "docs: from codex" } });
+      expect(claude).not.toHaveBeenCalled();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.model).toBe("");
+      expect(calls[0]!.prompt).toContain("+Codex default.");
+    });
+
+    it("passes the Codex model set in Settings", async () => {
+      useDefault("codex", "gpt-6-mini");
+      spyCompleteOnce(async () => ({ text: "chore: from claude", costUsd: 0, inputTokens: 0, outputTokens: 0 }));
+      const calls: Array<{ model: string }> = [];
+      registerFake("codex", "Codex", async (input) => {
+        calls.push(input);
+        return { text: "docs: from codex" };
+      });
+      stageReadme();
+
+      await gitCommitMessageService.generate(repo);
+      expect(calls.map((c) => c.model)).toEqual(["gpt-6-mini"]);
+    });
+
+    it("answers 502 when Codex is the default but not available, without asking Claude", async () => {
+      useDefault("codex");
+      const before = providers.get("codex");
+      providers.delete("codex");
+      restores.push(() => { if (before) providers.set("codex", before); });
+      const claude = spyCompleteOnce(async () => ({ text: "chore: from claude", costUsd: 0, inputTokens: 0, outputTokens: 0 }));
+      stageReadme();
+
+      const res = await createApp(repo).request("/git/commit-message", { method: "POST" });
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ ok: false, error: "Codex is not available right now" });
+      expect(claude).not.toHaveBeenCalled();
+    });
+
+    it("answers 409 when the default provider cannot draft one, without asking Claude", async () => {
+      registerFake("antigravity", "Antigravity");
+      useDefault("antigravity");
+      const claude = spyCompleteOnce(async () => ({ text: "chore: from claude", costUsd: 0, inputTokens: 0, outputTokens: 0 }));
+      stageReadme();
+
+      const res = await createApp(repo).request("/git/commit-message", { method: "POST" });
+      expect(res.status).toBe(409);
+      const body = await res.json() as { ok: boolean; error: string };
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain("Antigravity cannot draft a commit message");
+      expect(claude).not.toHaveBeenCalled();
     });
   });
 });

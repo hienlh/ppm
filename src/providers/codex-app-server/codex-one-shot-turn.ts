@@ -41,7 +41,8 @@ export const CODEX_ONE_SHOT_FEATURES_OFF: Readonly<Record<string, false>> = {
 export function codexOneShotThreadParams(input: CodexOneShotParamsInput): Record<string, unknown> {
   return {
     cwd: input.cwd,
-    model: input.model,
+    // An empty model leaves the pick to codex: its own default, as a chat with no model set gets.
+    ...(input.model ? { model: input.model } : {}),
     sandbox: "read-only",
     approvalPolicy: "never",
     ephemeral: true,
@@ -62,7 +63,7 @@ export function codexOneShotTurnParams(
   return {
     threadId,
     input: [{ type: "text", text: input.prompt, text_elements: [] }],
-    model: input.model,
+    ...(input.model ? { model: input.model } : {}),
     ...(outputSchema ? { outputSchema } : {}),
   };
 }
