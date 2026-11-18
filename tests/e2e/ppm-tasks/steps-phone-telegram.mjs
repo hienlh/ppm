@@ -29,6 +29,8 @@ function smallTargets(page, sel, except = "") {
  */
 function offStandard(page, sel) {
   return page.evaluate((s) => [...document.querySelectorAll(s)].filter((b) => {
+    // A task's code (`#12`) is text in its title's line, measured by steps-task-codes.mjs.
+    if (b.hasAttribute("data-task-code")) return false;
     const r = b.getBoundingClientRect();
     return r.width && r.height && (r.height < 25.5 || r.height >= 43.5);
   }).map((b) => `${(b.getAttribute("aria-label") || b.textContent || "").trim().slice(0, 28)} ${Math.round(b.getBoundingClientRect().width)}x${Math.round(b.getBoundingClientRect().height)}`), sel);
