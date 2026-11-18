@@ -166,6 +166,19 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
     Object.values(v as Record<string, unknown>).every((t) => typeof t === "number"),
 };
 
+/**
+ * Each device sends its whole `recentOpen` map, read when it loaded; replacing the stored one with it
+ * erased every project another device opened since. Keep the newest time per project instead.
+ */
+export function mergeRecentOpen(stored: unknown, incoming: Record<string, number>): Record<string, number> {
+  const merged: Record<string, number> = {};
+  if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+    for (const [name, at] of Object.entries(stored as Record<string, unknown>)) if (typeof at === "number") merged[name] = at;
+  }
+  for (const [name, at] of Object.entries(incoming)) merged[name] = Math.max(merged[name] ?? 0, at);
+  return merged;
+}
+
 /** GET /settings/ui-prefs — return stored UI preferences */
 settingsRoutes.get("/ui-prefs", (c) => {
   const raw = getConfigValue(UI_PREFS_KEY);
@@ -183,7 +196,7 @@ settingsRoutes.put("/ui-prefs", async (c) => {
       const validate = UI_PREF_VALIDATORS[key];
       if (!validate) continue; // ignore unknown keys
       if (!validate(value)) return c.json(err(`Invalid value for "${key}"`), 400);
-      current[key] = value;
+      current[key] = key === "recentOpen" ? mergeRecentOpen(current[key], value as Record<string, number>) : value;
     }
     setConfigValue(UI_PREFS_KEY, JSON.stringify(current));
     return c.json(ok(current));

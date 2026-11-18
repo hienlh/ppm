@@ -75,13 +75,14 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
     projects, activeProject, setActiveProject, setProjectColor,
     setProjectImage, removeProjectImage,
     reorderProjects, renameProject, deleteProject, customOrder,
-    sortMode, setProjectSortMode,
+    sortMode, setProjectSortMode, recentVersion, refreshRecent,
   } = useProjectStore(useShallow((s) => ({
     projects: s.projects, activeProject: s.activeProject, setActiveProject: s.setActiveProject,
     setProjectColor: s.setProjectColor, setProjectImage: s.setProjectImage, removeProjectImage: s.removeProjectImage,
     reorderProjects: s.reorderProjects,
     renameProject: s.renameProject, deleteProject: s.deleteProject, customOrder: s.customOrder,
     sortMode: s.projectSortMode, setProjectSortMode: s.setProjectSortMode,
+    recentVersion: s.recentVersion, refreshRecent: s.refreshRecent,
   })));
 
   const ordered = resolveOrder(projects, customOrder);
@@ -111,13 +112,16 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
   const [highlightIdx, setHighlightIdx] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // Another device may have opened a project since this page loaded: read the Recent times again.
+  useEffect(() => { if (open) void refreshRecent(); }, [open, refreshRecent]);
+
   // Re-sort on open so "recent" picks up fresh localStorage order
   const sortedList = useMemo(
     () => applySort(projects, customOrder, sortMode),
-    [projects, customOrder, sortMode, open],
+    [projects, customOrder, sortMode, open, recentVersion],
   );
   // Last-opened timestamps (localStorage); refreshed each time the flyout opens
-  const recentTimes = useMemo(() => loadRecentTimes(), [open]);
+  const recentTimes = useMemo(() => loadRecentTimes(), [open, recentVersion]);
   const q = query.trim().toLowerCase();
   const filtered = q
     ? sortedList.filter((p) => p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q))

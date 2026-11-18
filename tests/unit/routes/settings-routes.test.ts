@@ -526,4 +526,11 @@ describe("PUT /settings/ui-prefs", () => {
     expect((await bad.json()).error).toBe('Invalid value for "dbLookupDescriptions"');
     expect(JSON.parse(getConfigValue("ui_prefs")!).dbLookupDescriptions).toEqual({ "1:shop:public:plans": "name" });
   });
+
+  // Each device sends the whole map it read when it loaded; a stale one must not erase what another device opened since.
+  it("keeps the newest open time of every project when two devices write their recent maps", async () => {
+    expect((await put({ recentOpen: { ppm: 200, nesku: 300, velox: 100 } })).status).toBe(200);
+    expect((await put({ recentOpen: { ppm: 150, velox: 400, "nxsys-workspace": 250 } })).status).toBe(200);
+    expect(JSON.parse(getConfigValue("ui_prefs")!).recentOpen).toEqual({ ppm: 200, nesku: 300, velox: 400, "nxsys-workspace": 250 });
+  });
 });

@@ -57,6 +57,15 @@ function saveRecentTimes(times: Record<string, number>) {
   } catch { /* ignore */ }
 }
 
+/** Takes in the server's open times (every device's), keeping the newer of each project's two times,
+ *  and rebuilds the Recent ORDER from them (newest first) so a fresh browser sorts too. */
+function mergeServerRecent(server: Record<string, number>) {
+  const times = loadRecentTimes();
+  for (const [name, at] of Object.entries(server)) times[name] = Math.max(times[name] ?? 0, at);
+  saveRecentTimes(times);
+  saveRecentOrder(Object.entries(times).sort((a, b) => b[1] - a[1]).map(([name]) => name));
+}
+
 /** Move project name to front of recent list + record last-opened timestamp.
  *  Writes localStorage (instant) + syncs to server (so other tunnels/devices see it). */
 function touchRecent(name: string) {
@@ -157,6 +166,10 @@ interface ProjectStore {
   error: string | null;
   fetchProjects: () => Promise<void>;
   hydrateUiPrefs: () => Promise<void>;
+  /** Bumped when the Recent order is read again from the server: the switchers re-sort on it. */
+  recentVersion: number;
+  /** Reads the Recent times again (another device may have opened a project); call when a switcher opens. */
+  refreshRecent: () => Promise<void>;
   setProjectSortMode: (mode: SortMode) => void;
   setActiveProject: (project: ProjectInfo) => void;
   addProject: (path: string, name?: string) => Promise<ProjectInfo>;
@@ -214,18 +227,22 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const prefs = await api.get<{ projectSortMode?: string; recentOpen?: Record<string, number> }>(
         "/api/settings/ui-prefs",
       );
-      if (prefs.recentOpen && Object.keys(prefs.recentOpen).length > 0) {
-        saveRecentTimes(prefs.recentOpen);
-        // Rebuild the recent ORDER list from server timestamps (newest first)
-        // so sortByRecent works on a fresh browser with no local order.
-        const order = Object.entries(prefs.recentOpen)
-          .sort((a, b) => b[1] - a[1])
-          .map(([name]) => name);
-        saveRecentOrder(order);
-      }
+      if (prefs.recentOpen && Object.keys(prefs.recentOpen).length > 0) mergeServerRecent(prefs.recentOpen);
       if (prefs.projectSortMode === "recent" || prefs.projectSortMode === "priority" || prefs.projectSortMode === "name") {
         try { localStorage.setItem(SORT_KEY, prefs.projectSortMode); } catch { /* ignore */ }
         set({ projectSortMode: prefs.projectSortMode });
+      }
+    } catch { /* server unreachable — keep local cache */ }
+  },
+
+  recentVersion: 0,
+
+  refreshRecent: async () => {
+    try {
+      const prefs = await api.get<{ recentOpen?: Record<string, number> }>("/api/settings/ui-prefs");
+      if (prefs.recentOpen && Object.keys(prefs.recentOpen).length > 0) {
+        mergeServerRecent(prefs.recentOpen);
+        set({ recentVersion: get().recentVersion + 1 });
       }
     } catch { /* server unreachable — keep local cache */ }
   },
