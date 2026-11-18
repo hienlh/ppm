@@ -4,7 +4,8 @@
  * The server holds the list per session and sends the whole of it as `queue_state` whenever it
  * changes and in every greeting, so every device shows the same stack. A message leaves the list
  * when the provider starts reading it (it then appears in the conversation), when it is taken
- * back, or when it is removed.
+ * back, or when it is removed. Stop sends none of it: what was queued stays, held, until the
+ * person sends or edits it.
  */
 
 export interface QueuedMessage {
@@ -15,6 +16,8 @@ export interface QueuedMessage {
   /** The sending browser's id for it, so that browser can tie the echo to its own send. */
   clientMessageId?: string;
   queuedAt: string;
+  /** Kept through a Stop: it goes out only when the person sends it (Send now) or edits it. */
+  paused?: true;
 }
 
 /** What a provider reports about one queued message: Claude's `command_lifecycle` states. */

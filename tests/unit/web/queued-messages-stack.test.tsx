@@ -41,4 +41,13 @@ describe("QueuedMessagesStack", () => {
     expect(text).not.toContain("Attached file");
     expect(view.container.querySelector('[title="2 images"]')).not.toBeNull();
   });
+
+  it("says messages kept through a Stop wait for the person, not for the AI", async () => {
+    view = await mount(<QueuedMessagesStack messages={[queued("one")]} onSendNow={noop} onEdit={noop} onRemove={noop} />);
+    expect(view.container.textContent).toContain("1 queued · sent when the AI is ready");
+    await view.rerender(<QueuedMessagesStack messages={[{ ...queued("one"), paused: true }]} onSendNow={noop} onEdit={noop} onRemove={noop} />);
+    expect(view.container.textContent).toContain("1 held after Stop · sent only when you send them");
+    await view.rerender(<QueuedMessagesStack messages={[{ ...queued("one"), paused: true }, queued("two")]} onSendNow={noop} onEdit={noop} onRemove={noop} />);
+    expect(view.container.textContent).toContain("2 queued · 1 held after Stop");
+  });
 });

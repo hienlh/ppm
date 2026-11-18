@@ -7,7 +7,7 @@
 // 2. Remove takes it out, and the model never sees it.
 // 3. Edit puts it back into the composer.
 // 4. Send now has the AI read it at once, long before the running command would have finished.
-// 5. Stop keeps what was queued and sends it next.
+// 5. Stop keeps what was queued, held, and sends none of it; Send now sends it afterwards.
 // 7. The list keeps following the reply when the composer shrinks, and scrolling up still stops it.
 //
 // Run with node (Playwright hangs under Bun):
@@ -176,10 +176,21 @@ try {
   await send("QUEUED AFTER STOP");
   await stack.getByText("QUEUED AFTER STOP").waitFor({ timeout: 10000 });
   await page.getByRole("button", { name: /stop/i }).first().click();
+  await idle();
+  await stack.getByText(/held after Stop/).waitFor({ timeout: 10000 });
+  // Stopped for good: a few seconds on, the message is still waiting and the AI never saw it.
+  await sleep(4000);
+  // The stack draws the same text: only a match outside it is a bubble in the conversation.
+  const bubbles = (await userBubble("QUEUED AFTER STOP").count()) - (await stack.getByText("QUEUED AFTER STOP", { exact: true }).count());
+  assert.equal(bubbles, 0, "Stop sent the queued message");
+  assert.equal(await page.getByText("Got: QUEUED AFTER STOP").count(), 0, "the AI read a message queued before Stop");
+  await stack.getByText("QUEUED AFTER STOP").waitFor();
+  await shot("5-after-stop");
+  await stack.getByRole("button", { name: /Send now/ }).click();
   await page.getByText("Got: QUEUED AFTER STOP").waitFor({ timeout: 60000 });
   await userBubble("QUEUED AFTER STOP").waitFor();
   assert.equal(await stack.count(), 0);
-  await shot("5-after-stop");
+  await shot("5-sent-after-stop");
   results.push({ step: "stop keeps the queue", passed: true });
 
   // ---- Reload: the history matches what was shown ----------------------------------------------

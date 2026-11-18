@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  applyQueueLifecycle, drainForDispatch, enqueueMessage, mergeablePrefix, mergeEntries, queueState, sendQueuedNow, takeBackQueued,
+  applyQueueLifecycle, drainForDispatch, enqueueMessage, mergeablePrefix, mergeEntries, pauseQueue, queueState, sendQueuedNow, takeBackQueued,
   type QueueDeps, type QueueHolder,
 } from "../../../src/server/ws/chat-message-queue.ts";
 import { decodeMessageBlocks, encodeMessageBlocks } from "../../../src/shared/chat-message-blocks.ts";
@@ -110,7 +110,38 @@ describe("chat message queue", () => {
     h.holder.queue!.push({ id: "held", content: "held", imageCount: 0, queuedAt: "", native: false });
     expect(drainForDispatch(h.holder, h.deps).map((e) => e.id)).toEqual(["held"]);
     expect(h.holder.queue!.map((e) => e.content)).toEqual(["native"]);
-    expect(drainForDispatch(h.holder, h.deps, true).map((e) => e.content)).toEqual(["native"]);
+    expect(drainForDispatch(h.holder, h.deps, { all: true }).map((e) => e.content)).toEqual(["native"]);
+    expect(h.holder.queue).toEqual([]);
+  });
+
+  test("Stop pauses the whole queue: no turn end or lost stream sends it, only Send now does", async () => {
+    const h = harness({ native: true });
+    await enqueueMessage(h.holder, { content: "native" }, h.deps);
+    h.holder.queue!.push({ id: "held", content: "held", imageCount: 0, queuedAt: "", native: false });
+    pauseQueue(h.holder, h.deps);
+    expect(queueState(h.holder).map((m) => m.paused)).toEqual([true, true]);
+    expect(h.events.at(-1)).toEqual({ type: "queue_state", queue: queueState(h.holder) });
+    // The provider's queue went with the stopped process: PPM holds both now.
+    expect(h.holder.queue!.every((e) => !e.native)).toBe(true);
+
+    expect(drainForDispatch(h.holder, h.deps)).toEqual([]);
+    expect(drainForDispatch(h.holder, h.deps, { all: true })).toEqual([]);
+    expect(h.holder.queue).toHaveLength(2);
+
+    // A message queued after the Stop goes at its turn's end as usual; the paused ones stay.
+    h.holder.queue!.push({ id: "later-msg", content: "after stop", imageCount: 0, queuedAt: "", native: false });
+    expect(drainForDispatch(h.holder, h.deps).map((e) => e.id)).toEqual(["later-msg"]);
+
+    expect(drainForDispatch(h.holder, h.deps, { paused: true }).map((e) => e.content)).toEqual(["native", "held"]);
+    expect(h.holder.queue).toEqual([]);
+  });
+
+  test("Send now during a turn pushes paused entries too", async () => {
+    const h = harness({ native: false });
+    await enqueueMessage(h.holder, { content: "kept" }, h.deps);
+    pauseQueue(h.holder, h.deps);
+    expect((await sendQueuedNow(h.holder, h.deps)).map((e) => e.content)).toEqual(["kept"]);
+    expect(h.pushes.map((p) => p.content)).toEqual(["kept"]);
     expect(h.holder.queue).toEqual([]);
   });
 

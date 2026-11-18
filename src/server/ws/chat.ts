@@ -118,7 +118,7 @@ import type { SessionDelivery } from "../../shared/session-collab.ts";
 import { pairCounter } from "../../services/session-collab/pair-counter.ts";
 import { decidingInput } from "../../services/chat-control/approval-deciding-input.ts";
 import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
-import { applyQueueLifecycle, drainForDispatch, enqueueMessage, mergeEntries, queueState, sendQueuedNow, takeBackQueued, type QueuedEntry, type QueueDeps } from "./chat-message-queue.ts";
+import { applyQueueLifecycle, drainForDispatch, enqueueMessage, mergeEntries, pauseQueue, queueState, sendQueuedNow, takeBackQueued, type QueuedEntry, type QueueDeps } from "./chat-message-queue.ts";
 
 const log = createLogger("chat");
 const bgShellLog = createLogger("bg-shell");
@@ -2327,7 +2327,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // Waits on this session are judged, and a created session stops counting as starting.
         collabTurnEnded(sessionId);
         // What PPM held for this turn goes out now; a provider's own queue starts by itself.
-        dispatchQueued(sessionId, entry, false);
+        dispatchQueued(sessionId, entry);
         // A renewal that landed while this turn ran left its subprocess holding a revoked
         // token; restart it now rather than let the next message open with a 401. Deferred so
         // the drop does not close the query from inside the loop that is reading it.
@@ -2410,8 +2410,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     if (provider && "closeStreamingSession" in provider) {
       (provider as any).closeStreamingSession(sessionId);
     }
-    // Whatever was still queued went with the process; it is sent now as a turn of its own.
-    dispatchQueued(sessionId, entry, true);
+    // Whatever was still queued went with the process (a crash); it is sent now as a turn of its
+    // own. A Stop paused the queue first, and that stays put for the person.
+    dispatchQueued(sessionId, entry, { all: true });
     if (entry.clients.size === 0) {
       startCleanupTimer(sessionId);
     }
@@ -2905,6 +2906,9 @@ function cancelTurnCore(sessionId: string, entry: SessionEntry, origin: ChatMess
   log.info(`session=${sessionId} ${origin === "ws" ? "WS" : origin} cancel received from ${who} (phase=${phase})`);
   // Only a running turn can be stopped; a cancel between turns must not mark the next one.
   if (entry.phase && entry.phase !== "idle") entry.cancelledBy = origin;
+  // Stop is for good: what the person queued stays queued, for them to send or edit, and is not
+  // sent as a new turn once this one has stopped.
+  pauseQueue(entry, { broadcast: (event) => broadcast(sessionId, event) });
   // PPM's own approvals are settled as not allowed. Stop covers this session only: its waits
   // end, the sessions it waits for run on.
   ppmApprovals.cancelSession(sessionId, "The user stopped the chat before approving, so nothing ran.");
@@ -3435,20 +3439,27 @@ function queuedMessageStarted(sessionId: string, entry: SessionEntry, started: P
   if (entry.phase === "idle") setPhase(sessionId, "thinking");
 }
 
-/** Send now: the AI reads the queue at once. Held entries go in as one message, shown now. */
+/**
+ * Send now: the AI reads the queue at once. Held entries go in as one message, shown now. With no
+ * turn running (a queue a Stop kept), what is held opens a turn of its own.
+ */
 async function sendQueueNow(sessionId: string, entry: SessionEntry): Promise<void> {
   if (!entry.queue?.length) return;
+  if (!entry.isStreamingActive || entry.phase === "idle") {
+    dispatchQueued(sessionId, entry, { paused: true });
+    return;
+  }
   const sent = await sendQueuedNow(entry, queueDeps(sessionId, entry));
   if (sent.length) queuedMessageStarted(sessionId, entry, { ...mergeEntries(sent), imageCount: sent.reduce((n, e) => n + e.imageCount, 0) });
 }
 
 /**
  * What PPM itself must send from the queue goes out as one message: the entries it holds when a
- * turn ends, or every entry once the stream is gone (Stop, a crash), since a provider's own queue
- * went with its process — Claude Code sends what was queued right after an interrupt, too.
+ * turn ends, or every entry once the stream is gone (`all`: a crash), since a provider's own queue
+ * went with its process. Entries a Stop paused go only on Send now (`paused`).
  */
-function dispatchQueued(sessionId: string, entry: SessionEntry, all: boolean): void {
-  const out = drainForDispatch(entry, { broadcast: (event) => broadcast(sessionId, event) }, all);
+function dispatchQueued(sessionId: string, entry: SessionEntry, opts: { all?: boolean; paused?: boolean } = {}): void {
+  const out = drainForDispatch(entry, { broadcast: (event) => broadcast(sessionId, event) }, opts);
   if (!out.length) return;
   const merged = mergeEntries(out);
   // Never from inside the consumer that is ending: the message may need a consumer of its own.
