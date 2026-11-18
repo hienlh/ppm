@@ -210,7 +210,7 @@ export class AssistantTelegramBridge {
     // The chat's answer to those words comes back under the user's message.
     const taskFollowups = new AssistantTelegramTaskFollowups({
       queue, chatLink: links.chatLink, silence,
-      remember: (chatId, messageId, taskId) => taskMessages.remember(chatId, messageId, taskId),
+      remember: (chatId, messageId, taskId, to) => taskMessages.remember(chatId, messageId, taskId, to),
       threadedIn: (cardId, chatId) => managerCards.threadedIn(cardId, chatId),
     });
     let poller: AssistantTelegramPoller | null = null;
@@ -225,12 +225,12 @@ export class AssistantTelegramBridge {
       pressTask: async (chatId, press, group, cq) => {
         if (press.op === "undo_history") return pressTaskCardUndo(chatId, press, group, cq, { codes, queue });
         // Not the card's own buttons: the card stays as it is, and its buttons keep working.
-        if (press.op === "about" || press.op === "about_cancel") return taskMessages.press(chatId, press, group);
+        if (press.op === "about" || press.op === "ask" || press.op === "about_cancel") return taskMessages.press(chatId, press, group);
         if (taskCreated.owns(press.ref)) return taskCreated.press(chatId, press, group);
         return tasks.press(chatId, press, group, cq);
       },
       showTasks: (chatId, args, reply) => tasks.showDeck(chatId, args, reply),
-      taskWords: { wants: (chatId, replyTo) => taskMessages.wants(chatId, replyTo), take: (chatId, m, taskId) => taskMessages.take(chatId, m, taskId) },
+      taskWords: { wants: (chatId, replyTo) => taskMessages.wants(chatId, replyTo), take: (chatId, m, aim) => taskMessages.take(chatId, m, aim) },
       replyToCard: (chatId, m) => cardReplies.reply(chatId, m),
       isCardMessage: (chatId, messageId) => cardReplies.isCardMessage(chatId, messageId),
       cardOf: (chatId, messageId) => {

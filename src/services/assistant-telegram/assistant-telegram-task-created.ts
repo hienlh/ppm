@@ -36,7 +36,7 @@ import { GONE_TOAST, editCard, telegramUserCtx } from "./assistant-telegram-task
 import { showableTask, taskDetail, taskFacts, taskProjectName, todayYmd } from "./assistant-telegram-tasks-deck.ts";
 import { getTask } from "../ppm-tasks/ppm-tasks.service.ts";
 import { createLogger } from "../logger.ts";
-import { MESSAGE_ABOUT_TASK_LABEL } from "./assistant-telegram-task-message.ts";
+import { taskWordsButtons } from "./assistant-telegram-task-message.ts";
 
 const log = createLogger("assistant-telegram");
 
@@ -237,7 +237,7 @@ export class AssistantTelegramTaskCreated {
       rows: [
         [key("Urgency", { op: "menu", field: "urgency" }), key("Importance", { op: "menu", field: "importance" }), key("Due", { op: "menu", field: "due" })],
         [key("↶ Undo", { op: "undo_created" }), ...linkRow],
-        [key(MESSAGE_ABOUT_TASK_LABEL, { op: "about", taskId: card.taskId })],
+        taskWordsButtons(key, task),
       ],
     };
   }

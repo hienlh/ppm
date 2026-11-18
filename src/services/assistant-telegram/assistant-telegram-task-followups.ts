@@ -93,8 +93,11 @@ export interface TaskFollowupsDeps {
   canSend?: (chatId: string) => boolean;
   quietEnd?: () => number | null;
   now?: () => number;
-  /** The message just sent is about this task: a reply to it goes to the same chat. */
-  remember?: (chatId: string, messageId: number, taskId: string) => void;
+  /**
+   * The message just sent is about this task: a reply to it goes to the same chat (`manager` when
+   * the manager chat answered, so a reply to its answer reaches it even once a child chat has the task).
+   */
+  remember?: (chatId: string, messageId: number, taskId: string, to: "working" | "manager") => void;
   /** The project's detail level now; unknown is the safe side, titles only. */
   detailOf?: (projectKey: string) => CardDetail;
   /** Whether this card went to this chat threaded under the user's message (the manager-card relay). */
@@ -137,7 +140,9 @@ export class AssistantTelegramTaskFollowups implements TaskFollowupSink {
     }, {
       label: "task chat answer",
       silent,
-      onSent: (sent) => { try { this.deps.remember?.(chatId, sent.message_id, d.context.taskRef.taskId); } catch { /* best effort */ } },
+      onSent: (sent) => {
+        try { this.deps.remember?.(chatId, sent.message_id, d.context.taskRef.taskId, d.context.chat.kind === "manager" ? "manager" : "working"); } catch { /* best effort */ }
+      },
     }));
     log.info(`task ${d.context.taskRef.ref}: ${d.kind} sent to Telegram chat ${chatId} under message ${messageId}`);
   }
