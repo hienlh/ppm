@@ -499,7 +499,7 @@ MessageInput.tsx calls useChat.sendMessage()
     ↓
 useChat opens WebSocket: WS /ws/project/:name/chat/:sessionId
     ↓
-Sends: { type: "message", content: "Debug...", priority?: "now"|"next"|"later" }
+Sends: { type: "message", content: "Debug...", queued?: true, sendNow?: true }
     ↓
 WS handler in chat.ts receives message
     ↓
@@ -558,8 +558,15 @@ shows the same stack: it goes out as `queue_state` and in the greeting's `sessio
 - **Every other provider** (Codex, Antigravity, …): PPM holds the entries and sends them as one
   message when the turn ends. Send now pushes them right away; Codex steers that push into the
   running turn.
-- **Stop or a crash** kills Claude's own queue together with its process, so whatever was queued is
-  sent once the stream ends.
+- **Stop** sends none of it. Every entry stays in the stack, paused (`pauseQueue`, shown as "held
+  after Stop"), and goes out only when the person presses Send now (with no turn running, it opens
+  a turn of its own) or takes it back with Edit. Claude's own queue dies with the stopped process,
+  so PPM holds the entries from then on.
+- **A crash** kills Claude's own queue together with its process too; what was queued, and not
+  paused, is sent once the stream ends.
+- **Queue and Send now are the only two modes.** A browser message carries no `priority`: the old
+  Interrupt / Queue / Later toggle is gone, and `later` remains only for PPM's own senders
+  (schedules, the Assistant, extensions).
 - **Merging into one message.** Queued messages are merged by decoding each message's blocks and
   encoding them once (a block decodes only at the end of a message). One message carries one reply
   and one set of turn references, so a second reply waits for the next turn (`mergeablePrefix`).
@@ -567,7 +574,9 @@ shows the same stack: it goes out as `queue_state` and in the greeting's `sessio
   only after the CLI has registered it as a task, about 3 s after it starts. Before that, the
   call still answers `true` and changes nothing. So the provider interrupts the turn unless the CLI
   starts reading the queue within 1.5 s (`SEND_NOW_GRACE_MS`). The interrupted turn's
-  `error_during_execution` result is an ordinary end, not an error.
+  `error_during_execution` result is an ordinary end, not an error. Every turn result takes and
+  clears that flag, so an interrupt that met a turn already ending cannot make a later turn's real
+  error look like a success.
 - **Mid-turn delivery format.** A queued message the CLI reads mid-turn reaches the API inside a
   `<system-reminder>`, in a trailing `role: "system"` message, beside the tool result.
 
