@@ -45,6 +45,7 @@ import { hydrateProjectCache } from "@/lib/browser-cache/project-cache-hydration
 import { projectCacheId } from "@/lib/browser-cache/cache-keys";
 import { readChatPreparationSettings, readChatProviders } from "@/lib/chat-preference-local-cache";
 import { resolveNewChatProvider } from "@/lib/new-chat-provider";
+import { pinnedFirst, withPinned } from "@/lib/tab-pins";
 import { useProjectStore } from "./project-store";
 import { projectRefForName } from "./session-list-sync-triggers";
 import {
@@ -221,6 +222,8 @@ export interface PanelStore {
   closeTab: (tabId: string, panelId?: string) => void;
   setActiveTab: (tabId: string, panelId?: string) => void;
   updateTab: (tabId: string, updates: Partial<Omit<Tab, "id">>) => void;
+  /** Pins or unpins a tab; pinned tabs stay at the start of their panel's bar. */
+  setTabPinned: (tabId: string, pinned: boolean) => void;
 
   // Panel operations
   reorderTab: (tabId: string, panelId: string, newIndex: number) => void;
@@ -1038,6 +1041,17 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       persist();
     },
 
+    setTabPinned: (tabId, pinned) => {
+      const panel = findPanel(tabId);
+      if (!panel) return;
+      const tabs = withPinned(panel.tabs, tabId, pinned);
+      if (tabs === panel.tabs) return;
+      set((s) => ({ panels: { ...s.panels, [panel.id]: { ...panel, tabs } } }));
+      // A floating window's panel is in no project's layout, so `persist` skips it (as in updateTab).
+      if (isWindowPanelId(panel.id)) saveWindowPanels(get().panels);
+      persist();
+    },
+
     reorderTab: (tabId, panelId, newIndex) => {
       const panel = get().panels[panelId];
       if (!panel) return;
@@ -1046,7 +1060,9 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       const newTabs = [...panel.tabs];
       const [moved] = newTabs.splice(oldIndex, 1);
       newTabs.splice(newIndex, 0, moved!);
-      set((s) => ({ panels: { ...s.panels, [panelId]: { ...panel, tabs: newTabs } } }));
+      // A drag cannot cross the pinned edge: pins stay first, so a tab dropped among them lands
+      // right after them, and a pinned one dropped among the others lands at the end of the pins.
+      set((s) => ({ panels: { ...s.panels, [panelId]: { ...panel, tabs: pinnedFirst(newTabs) } } }));
       persist();
     },
 
@@ -1065,9 +1081,10 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         ? (fromHistory[fromHistory.length - 1] ?? fromTabs[fromTabs.length - 1]?.id ?? null)
         : from.activeTabId;
 
-      const toTabs = [...to.tabs];
+      let toTabs = [...to.tabs];
       if (insertIndex !== undefined) toTabs.splice(insertIndex, 0, tab);
       else toTabs.push(tab);
+      toTabs = pinnedFirst(toTabs);
 
       set((s) => {
         const gridPanelCount = s.grid.flat().length;

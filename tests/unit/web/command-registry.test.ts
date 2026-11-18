@@ -77,7 +77,7 @@ describe("the command registry", () => {
   it("declares the commands that change data or settings, and only those, among its own", () => {
     const ctx = contexts()[0]!;
     const changing = composeCommands(ctx, {}).filter((c) => c.changesData && !c.id.startsWith("ext:")).map((c) => c.id);
-    expect(changing).toEqual(["voice-input", "word-wrap", "language-server"]);
+    expect(changing).toEqual(["voice-input", "toggle-pin-tab", "close-saved-tabs", "close-all-tabs", "word-wrap", "language-server"]);
   });
 
   it("counts the table editor's commands as changing data, though each only starts a draft, and the database's others not", async () => {
@@ -108,7 +108,7 @@ describe("the command registry", () => {
   it("binds commands only to keybinding actions that exist", () => {
     const known = new Set(KEY_ACTIONS.map((a) => a.id));
     const bound = composeCommands(contexts()[0]!, {}).filter((c) => c.binding);
-    expect(bound.map((c) => c.binding)).toEqual(["open-chat", "open-assistant", "new-file", "open-terminal", "voice-input", "open-git-status", "open-problems", "compare-files", "open-settings"]);
+    expect(bound.map((c) => c.binding)).toEqual(["open-chat", "open-assistant", "new-file", "open-terminal", "voice-input", "open-git-status", "toggle-pin-tab", "close-saved-tabs", "close-all-tabs", "open-problems", "compare-files", "open-settings"]);
     for (const cmd of bound) expect(known.has(cmd.binding!)).toBe(true);
   });
 
