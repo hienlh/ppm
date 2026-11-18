@@ -106,7 +106,13 @@ allowed a card. Code in `src/services/schedule-proposals/`.
   runs, the timeout, every input's value or default, the mode its `ctx.ai.chat` turns run in, the
   default provider it snapshots, the file and its SHA-256, and the chats it sends to — every chat
   id found in the script and the input values, by title, flagged when in another project. The
-  description is labelled as the AI's own words. A warning says nobody watches the runs.
+  description is labelled as the AI's own words. The card never guesses from the script's text what
+  it calls: it says that any script can reach any chat (`ctx.ai.chat`), notifications and whatever
+  the user can reach, and that only the script says which. A warning says nobody watches the runs.
+- **Off until asked.** The chat tool is its own question in the tour
+  (`script-schedule-proposals-2026-11` in `src/shared/feature-intros.ts`): an install that turned
+  scheduled prompts on did not agree to code. A vault value is refused in a proposal whichever way
+  it arrives, a file's contents included.
 - **Allowed only in PPM.** The card carries `reviewInPpm`, which `decidingInput` reads as
   incomplete: Telegram shows it with Deny only, the Assistant's mirror shows no Allow, and
   `chat_answer_approval` refuses to allow it — the existing "Allow only when the whole deciding
@@ -121,7 +127,10 @@ allowed a card. Code in `src/services/schedule-proposals/`.
   deleting it: the chat's own reminders at once, as they are created and deleted, and a script or
   prompt schedule of its project only after a card (`schedule-toggle.ts`), refused as `stale` if
   the schedule changed while the card waited. Turning a script on shows the script and is allowed
-  only in PPM; the Assistant's `schedule_save` turning a script on does the same. Anything else —
+  only in PPM; so is any Assistant card that runs a script now (`schedule_run_now`) or changes one
+  other than renaming or pausing it (`schedule_save`), which shows its code and input values
+  (`withStoredScript`). A card is stale when inputs or secrets changed while it waited, read raw or
+  through the routes' view. Anything else —
   another project's schedule, another chat's reminder — reads as missing.
   `session_schedule_list` lists the project's script and prompt schedules under `projectSchedules`.
 - **Cards in a chat** are a session-tool card of kind `schedule` (`SessionCollabScheduleApproval`)
