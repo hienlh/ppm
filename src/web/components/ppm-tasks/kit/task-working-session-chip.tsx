@@ -53,8 +53,10 @@ export function TaskWorkingSessionChip({ working, check, now, onOpen, onStartCha
       className={cn(
         "relative inline-flex min-w-0 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border-soft bg-panel align-middle text-text-2",
         "hover:border-border hover:text-text disabled:cursor-default disabled:hover:border-border-soft",
-        "after:absolute after:inset-x-0 after:-inset-y-2 after:content-['']",
-        large ? "h-7 max-w-[220px] px-2.5 text-[12.5px]" : "h-[22px] max-w-[170px] px-2 text-[11.5px] max-md:h-7 max-md:min-w-11 max-md:text-[12.5px]",
+        // The invisible press area is a decision still open (docs/design-guidelines.md rule 3):
+        // 9px on a phone keeps the 26px chip's press at the 44px it had when drawn at 28px.
+        "after:absolute after:inset-x-0 after:-inset-y-2 max-md:after:-inset-y-[9px] after:content-['']",
+        large ? "h-7 max-w-[220px] px-2.5 text-[12.5px]" : "h-[22px] max-w-[170px] px-2 text-[11.5px] max-md:h-[26px] max-md:min-w-11 max-md:text-[12.5px]",
         CHIP[view.tone], className,
       )}>
       {DOT[view.tone]

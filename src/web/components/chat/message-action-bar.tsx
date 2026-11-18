@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { formatRelativeDate } from "@/lib/format-date";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useRelativeTimeTick } from "@/hooks/use-relative-time-tick";
+import { PHONE_ICON_CONTROL_SIZE, PHONE_TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 
 // The fields `toLocaleString()` prints, in one formatter: a long chat draws hundreds of these.
 let fullDateFormat: Intl.DateTimeFormat | undefined;
@@ -32,7 +33,7 @@ function RelativeTime({ timestamp }: { timestamp: string }) {
 
 /**
  * Ghost-pill action button (icon + label) for the message action bar.
- * 44px min touch target on mobile; tighter on desktop. Always visible.
+ * The chip row's sizes on mobile (26px, 22px when icon-only); tighter on desktop. Always visible.
  * `iconOnlyBelowMd` keeps the label for screen readers only on a phone, where one more labelled
  * button wraps the row onto a second line under every message.
  */
@@ -41,14 +42,15 @@ export function ActionButton({
   label,
   title,
   onClick,
-  touchTarget,
+  standardSize,
   iconOnlyBelowMd,
 }: {
   icon: ReactNode;
   label: string;
   title: string;
   onClick: () => void;
-  touchTarget?: boolean;
+  /** Below `md`, size it like the chip row above the composer: 22px when it shows only its icon there, else 26px tall. */
+  standardSize?: boolean;
   iconOnlyBelowMd?: boolean;
 }) {
   return (
@@ -57,7 +59,7 @@ export function ActionButton({
       onClick={onClick}
       title={title}
       aria-label={label}
-      className={cn("inline-flex items-center justify-center gap-1 rounded-md px-1.5 py-1 text-text-subtle hover:text-text-primary hover:bg-surface transition-colors", touchTarget && "min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0")}
+      className={cn("inline-flex items-center justify-center gap-1 rounded-md px-1.5 py-1 text-text-subtle hover:text-text-primary hover:bg-surface transition-colors", standardSize && (iconOnlyBelowMd ? PHONE_ICON_CONTROL_SIZE : PHONE_TEXT_CONTROL_HEIGHT))}
     >
       {icon}
       <span className={cn(iconOnlyBelowMd && "sr-only md:not-sr-only")}>{label}</span>

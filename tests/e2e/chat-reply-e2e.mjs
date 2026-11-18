@@ -94,7 +94,7 @@ try {
     const scripts = await page.locator("script[src]").evaluateAll((nodes) => nodes.map((n) => n.getAttribute("src")));
     assert(scripts.some((src) => src.startsWith("/assets/index-"))); assert(!scripts.some((src) => src.includes("@vite/client")));
     if (device === "mobile") {
-      const bounds = await page.getByRole("button", { name: "Reply", exact: true }).first().boundingBox(); assert(bounds.height >= 44);
+      const bounds = await page.getByRole("button", { name: "Reply", exact: true }).first().boundingBox(); assert(Math.abs(bounds.height - 26) < 0.5, `Reply is the chip row's 26 px on a phone (${bounds.height})`);
     }
     assert.deepEqual(errors, []);
     results.push({ device, passed: true, providerReply: turn.message, providerUserReply: userTurn.message, scripts });

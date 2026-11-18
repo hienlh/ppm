@@ -87,7 +87,7 @@ export function CardButton({ children, onClick, variant = "default", disabled, s
       onClick={onClick}
       title={title}
       className={cn(
-        "inline-flex h-11 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors disabled:opacity-50 md:h-8 md:w-auto md:rounded-md md:text-xs",
+        "inline-flex h-[26px] w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-[13px] font-medium transition-colors disabled:opacity-50 md:h-8 md:w-auto md:rounded-md md:text-xs",
         secondary && "text-[13px] text-text-secondary md:px-2",
         variant === "primary" && "bg-primary text-primary-foreground shadow-sm can-hover:hover:bg-primary/90",
         variant === "default" && "border border-border bg-surface text-text-primary can-hover:hover:bg-surface-elevated",

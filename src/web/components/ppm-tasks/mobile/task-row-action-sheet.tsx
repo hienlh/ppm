@@ -36,7 +36,8 @@ export interface TaskRowActionSheetProps {
   onSnooze?(task: TaskDto, patch: SnoozePatch): void;
 }
 
-const ITEM = "flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-[15px] text-text active:bg-surface-hover disabled:opacity-40";
+// Rows at the chip row's 26px minimum (docs/design-guidelines.md rule 3), the user's pick over the 44px rule.
+const ITEM = "flex min-h-[26px] w-full items-center gap-3 rounded-lg px-3 py-1 text-left text-[15px] text-text active:bg-surface-hover disabled:opacity-40";
 
 function Item({ icon, children, aside, onClick, disabled, expanded }: {
   icon: ReactNode; children: ReactNode; aside?: ReactNode; onClick(): void; disabled?: boolean; expanded?: boolean;
@@ -72,7 +73,7 @@ export function TaskRowActionSheet(p: TaskRowActionSheetProps) {
             <div className="grid grid-cols-4 gap-2 px-1 pb-2" role="group" aria-label="Urgency">
               {URGENCIES.map((u) => (
                 <button key={u} type="button" aria-pressed={task.urgency === u} onClick={() => act((t) => p.onUrgency(t, u))}
-                  className={cn("min-h-11 rounded-xl border px-1 text-[13px]",
+                  className={cn("min-h-[26px] rounded-lg border px-1 text-[13px]",
                     task.urgency === u ? "border-accent-wash-border bg-accent-wash font-medium text-text" : "border-border-soft text-text-2")}>
                   {URGENCY_LABEL[u]}
                 </button>

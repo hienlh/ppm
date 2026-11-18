@@ -204,7 +204,7 @@ function OwnUserBubble({ content, parsed, prompt = true, turn, timestamp, projec
           {turn && projectName && sessionId && (providerId === "claude" || providerId === "codex") && (
             <CopyTurnLinkButton message={turn} projectName={projectName} sessionId={sessionId} providerId={providerId} />
           )}
-          {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} touchTarget />}
+          {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} standardSize />}
           {onEdit && (
             <ActionButton
               icon={<Pencil className="size-3.5" />}

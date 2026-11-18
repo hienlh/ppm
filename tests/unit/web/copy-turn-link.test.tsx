@@ -141,7 +141,9 @@ describe("Copy turn link", () => {
     const label = [...button().querySelectorAll("span")].find((span) => span.textContent === "Copy turn link")!;
     expect(label.className).toContain("sr-only");
     expect(label.className).toContain("md:not-sr-only");
-    expect(button().className).toContain("min-h-[44px]");
+    // Icon-only on a phone, so it takes the chip row's 22px icon-button size there.
+    expect(button().className).toContain("max-md:size-[22px]");
+    expect(button().className).not.toContain("44px");
   });
 });
 

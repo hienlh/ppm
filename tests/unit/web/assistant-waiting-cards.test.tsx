@@ -235,8 +235,8 @@ describe("in the Assistant", () => {
     await act(async () => { setAssistantCardFilter("nxsys"); });
     const count = q('[data-manager-chip="ppm"] [data-manager-chip-count]')!;
     expect(count.getAttribute("aria-label")).toBe("Show the 1 card from ppm waiting on you");
-    expect(count.className).toContain("h-11");
-    expect(count.className).toContain("min-w-11");
+    expect(count.className).toContain("h-[26px]");
+    expect(count.className).not.toContain("min-w-11");
     await click(count);
     await tick();
     expect(useAssistantCardsStore.getState().filter).toBe("ppm");

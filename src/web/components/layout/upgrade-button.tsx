@@ -6,6 +6,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { fetchRecentChangelog, newestSectionVersion, compareSemver, type ChangelogSection } from "@/lib/changelog";
 import { looksLikeServerRestart } from "@/lib/upgrade-restart";
 import { cn } from "@/lib/utils";
+import { PHONE_TEXT_CONTROL_HEIGHT } from "@/lib/control-size";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { ReleaseNotesEntry } from "@/components/release-notes/release-notes-entry";
@@ -276,8 +277,8 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
         onClick={() => current && setOpen((v) => !v)}
         title={hasUpdate ? `Update available: v${effectiveAvailable}` : `PPM v${current} — release notes`}
         className={cn(
-          // A phone shows it in the drawer's footer, where it is a 44px target.
-          "flex items-center gap-1 px-1 rounded-sm transition-colors max-md:min-h-11",
+          // A phone shows it in the drawer's footer, at the chip row's 26px.
+          "flex items-center gap-1 px-1 rounded-sm transition-colors", PHONE_TEXT_CONTROL_HEIGHT,
           hasUpdate ? "text-success hover:brightness-110" : "hover:text-text",
         )}
       >

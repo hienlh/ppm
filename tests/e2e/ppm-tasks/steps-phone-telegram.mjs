@@ -1,5 +1,5 @@
 // Phone and Telegram steps of tests/e2e/ppm-tasks-e2e.mjs: the list, long-press sheet and detail at
-// 390 × 844 (every control at least 44 px), the manager chat's Tasks chip at 390 and 320, and what
+// 390 × 844 (44 px controls, and the chip row's 26 px where the user picked it), the manager chat's Tasks chip at 390 and 320, and what
 // Telegram's `/tasks` sends, pressed through the fake Bot API and drawn as a phone screen.
 import assert from "node:assert/strict";
 import { until } from "./tasks-kit.mjs";
@@ -10,18 +10,35 @@ import { buttonsOf } from "../assistant-telegram/harness.mjs";
  * task's code (`#12` beside a title) is not held to 44 px: it is text in its title's line, and
  * steps-task-codes.mjs checks it at that size (one line tall, never padded) at 1440 and 390.
  */
-function smallTargets(page, sel) {
-  return page.evaluate((s) => [...document.querySelectorAll(`${s} button, ${s} [role=button]`)].filter((b) => {
+function smallTargets(page, sel, except = "") {
+  return page.evaluate(({ s, except }) => [...document.querySelectorAll(`${s} button, ${s} [role=button]`)].filter((b) => {
     // The task sheet's ×, ··· and Full screen follow the chat footer's row (22 / 26 px, no 44 px
     // minimum): steps-task-window.mjs measures them. So do the snooze controls: steps-snooze.mjs.
-    if (b.tabIndex < 0 || b.hasAttribute("data-task-code") || b.matches("[data-task-sheet-close], [data-task-sheet-full-screen], [data-task-open-sheet] [data-task-actions], [data-task-snooze-button], [data-task-unsnooze], [data-task-snoozed-toggle]")) return false;
+    if (b.tabIndex < 0 || (except && b.matches(except)) || b.hasAttribute("data-task-code") || b.matches("[data-task-sheet-close], [data-task-sheet-full-screen], [data-task-open-sheet] [data-task-actions], [data-task-snooze-button], [data-task-unsnooze], [data-task-snoozed-toggle]")) return false;
     const r = b.getBoundingClientRect();
     if (!r.width || !r.height) return false;
     const after = getComputedStyle(b, "::after");
     const extra = after.content !== "none" && after.position === "absolute" ? -2 * parseFloat(after.top || "0") : 0;
     return r.height + extra < 43.5 || r.width < 43.5;
+  }).map((b) => `${(b.getAttribute("aria-label") || b.textContent || "").trim().slice(0, 28)} ${Math.round(b.getBoundingClientRect().width)}x${Math.round(b.getBoundingClientRect().height)}`), { s: sel, except });
+}
+
+/**
+ * Controls matching `sel` drawn off the chip row's phone size (docs/design-guidelines.md rule 3):
+ * shorter than 26 px, or still at the old 44 px. Content-sized ones may be taller than 26.
+ */
+function offStandard(page, sel) {
+  return page.evaluate((s) => [...document.querySelectorAll(s)].filter((b) => {
+    const r = b.getBoundingClientRect();
+    return r.width && r.height && (r.height < 25.5 || r.height >= 43.5);
   }).map((b) => `${(b.getAttribute("aria-label") || b.textContent || "").trim().slice(0, 28)} ${Math.round(b.getBoundingClientRect().width)}x${Math.round(b.getBoundingClientRect().height)}`), sel);
 }
+
+/** The Tasks list's filter chips (the user's pick): their pills and the buttons inside them. */
+const FILTER_CHIPS = ".rounded-full.border:not([data-task-row] *) button, button.rounded-full.border:not([data-task-row] *)";
+const FILTER_PILLS = "[data-tasks-panel] span.rounded-full.border:not([data-task-row] *)";
+/** The detail's controls the user picked: the cards' buttons (not their list rows) and the footer's. */
+const DETAIL_PICKED = "[data-task-card] button:not([data-session-tone]), [data-working-session] button, [data-task-detail-mobile] footer button";
 
 /** The context row's chips cut by its clip, per visible row. */
 function rowFit(page) {
@@ -45,14 +62,15 @@ async function phoneViews(k, s) {
   const list = page.locator("[data-task-list-mobile]:visible");
   await list.waitFor({ timeout: 30000 });
   await k.scene("s8", "On a phone", "The same list in the drawer; long-press a task for its statuses in a bottom sheet; the detail has Details and Activity.");
-  assert.deepEqual(await smallTargets(page, "[data-tasks-panel]"), [], "every control in the list is at least 44 px");
+  assert.deepEqual(await smallTargets(page, "[data-tasks-panel]", FILTER_CHIPS), [], "every control in the list but the filter chips is at least 44 px");
+  assert.deepEqual(await offStandard(page, FILTER_PILLS), [], "the filter chips are the chip row's 26 px");
   await k.beat(1500);
   await k.shot("08-phone-list-390");
   const row = page.locator("[data-task-row]", { hasText: s.t.reply.title }).first();
   await row.dispatchEvent("contextmenu");
   const sheet = page.locator("[data-task-action-sheet]");
   await sheet.waitFor({ timeout: 10000 });
-  assert.deepEqual(await smallTargets(page, "[data-task-action-sheet]"), [], "every control in the sheet is at least 44 px");
+  assert.deepEqual(await offStandard(page, "[data-task-action-sheet] button"), [], "the sheet's statuses and rows are at least the chip row's 26 px, no longer 44-48");
   const names = await sheet.locator("[data-status-id]").allInnerTexts();
   for (const n of ["To do", "In progress", "Waiting", "Done"]) assert(names.some((x) => x.includes(n)), `the sheet lists ${n}: ${names}`);
   await k.beat(1500);
@@ -71,13 +89,14 @@ async function phoneViews(k, s) {
   // The task opens in a bottom sheet over the list.
   const detail = page.locator("[data-task-open-sheet] [data-task-detail-mobile]:visible");
   await detail.waitFor({ timeout: 15000 });
-  assert.deepEqual(await smallTargets(page, "[data-task-detail-mobile]"), [], "every control in the detail is at least 44 px");
+  assert.deepEqual(await smallTargets(page, "[data-task-detail-mobile]", DETAIL_PICKED), [], "every control in the detail but the cards' and footer's buttons is at least 44 px");
+  assert.deepEqual(await offStandard(page, DETAIL_PICKED.split(", ").map((x) => (x.startsWith("[data-task-detail-mobile]") ? x : `[data-task-detail-mobile] ${x}`)).join(", ")), [], "the cards' and footer's buttons are at least the chip row's 26 px, no longer 44");
   await k.beat(1500);
   await k.shot("08-phone-detail-390");
   await page.getByRole("tab", { name: /^Activity/ }).tap();
   await k.beat(1800);
   await k.endScene();
-  k.record("8", "phone list, long-press sheet with the project's statuses, status change, detail Details/Activity; nothing under 44 px");
+  k.record("8", "phone list, long-press sheet with the project's statuses, status change, detail Details/Activity; 44 px except the user's picks, which are the chip row's 26 px");
 }
 
 /** Scenario 9 phone: the manager chat's Tasks chip is whole at 390 and 320, and opens a bottom sheet. */

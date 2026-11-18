@@ -2,8 +2,8 @@
  * One project's manager chat in the Assistant's chip row: a dot (working, waiting on you, idle),
  * the project's name and how many of its cards wait. Pressing the name opens that manager chat —
  * in a window of its own on a desktop, as a tab in its project on a phone; pressing the red count
- * opens the "Waiting on you" bar on that project's first card. The pill is drawn 26–32 px tall
- * inside a 44 px hit area below `md`.
+ * opens the "Waiting on you" bar on that project's first card. The pill is 26 px tall, the chip
+ * row's phone height, and is its own press area.
  */
 import { cn } from "@/lib/utils";
 import { MANAGER_DOT_CLASS, MANAGER_DOT_LABEL, managerDotState } from "@/lib/assistant-manager-chip-state";
@@ -31,12 +31,12 @@ export function ManagerChip({ manager, waiting }: { manager: ManagerChatSummary;
   const label = `Open the ${manager.projectName} manager chat · ${MANAGER_DOT_LABEL[state]}${waiting ? ` · ${waiting} waiting` : ""}`;
   const showLabel = `Show the ${waiting} card${waiting === 1 ? "" : "s"} from ${manager.projectName} waiting on you`;
   // Two buttons in one drawn pill: the name opens the manager chat, the red count opens the
-  // "Waiting on you" bar on that project's first card. Each keeps a 44 px hit area below `md`.
+  // "Waiting on you" bar on that project's first card. Both are the pill's own 26px height.
   return (
-    <span className="group relative flex h-11 shrink-0 items-center md:h-auto" data-manager-chip={manager.projectName}>
+    <span className="group relative flex h-[26px] shrink-0 items-center" data-manager-chip={manager.projectName}>
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-1/2 h-8 -translate-y-1/2 rounded-full border border-border bg-panel-2 transition-colors group-hover:border-accent-wash-border md:h-[26px]"
+        className="pointer-events-none absolute inset-0 rounded-full border border-border bg-panel-2 transition-colors group-hover:border-accent-wash-border"
       />
       <button
         type="button"
@@ -44,7 +44,7 @@ export function ManagerChip({ manager, waiting }: { manager: ManagerChatSummary;
         aria-label={label}
         title={label}
         className={cn(
-          "relative flex h-11 items-center gap-1.5 whitespace-nowrap pl-2.5 text-xs text-text-secondary transition-colors hover:text-text-primary md:h-[26px]",
+          "relative flex h-[26px] items-center gap-1.5 whitespace-nowrap pl-2.5 text-xs text-text-secondary transition-colors hover:text-text-primary",
           waiting > 0 ? "pr-1" : "pr-2.5",
         )}
       >
@@ -57,7 +57,7 @@ export function ManagerChip({ manager, waiting }: { manager: ManagerChatSummary;
           onClick={() => focusWaitingCards(manager.projectName)}
           aria-label={showLabel}
           title={showLabel}
-          className="relative flex h-11 min-w-11 items-center justify-center pr-1 md:h-[26px] md:min-w-0 md:justify-start md:pr-1.5"
+          className="relative flex h-[26px] items-center pr-1.5"
           data-manager-chip-count=""
         >
           <WaitingBadge count={waiting} />

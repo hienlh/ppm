@@ -24,9 +24,9 @@ interface Props {
 
 function Pill({ filter, ...rest }: { filter: string | null } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
-    <button type="button" aria-label={`Filter: ${filter ?? "All"}`} data-assistant-filter="" className="flex h-11 shrink-0 items-center md:h-auto" {...rest}>
+    <button type="button" aria-label={`Filter: ${filter ?? "All"}`} data-assistant-filter="" className="flex shrink-0 items-center" {...rest}>
       <span className={cn(
-        "flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs md:h-[26px]",
+        "flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs",
         "border-accent-wash-border bg-accent-wash text-primary",
       )}>
         <Filter className="size-3" />

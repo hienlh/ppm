@@ -4,7 +4,7 @@
  * in a sheet), notes with the next step, links with their live state, the working session with
  * Open chat, and a card of rows — child tasks, assignee, waiting on, custom fields, all
  * properties — each opening its editor sheet. The desktop's cards are reused with their buttons
- * grown to 44px.
+ * at least the chip row's 26px.
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronRight, Hash, Layers, Moon, Users } from "@/lib/icons";
@@ -46,8 +46,8 @@ export interface TaskDetailMobileDetailsProps {
   onShowActivity(): void;
 }
 
-/** The desktop cards' small buttons and the working-session block's, grown to thumb size (the chip keeps its own). */
-const THUMB_CARDS = "[&_[data-task-card]_button:not([data-session-tone])]:min-h-11 [&_[data-task-card]_button:not([data-session-tone])]:min-w-11 [&_[data-working-session]_button]:min-h-11";
+/** The desktop cards' small buttons and the working-session block's, at least the chip row's phone height (the chip keeps its own). */
+const THUMB_CARDS = "[&_[data-task-card]_button:not([data-session-tone])]:min-h-[26px] [&_[data-task-card]_button:not([data-session-tone])]:min-w-[22px] [&_[data-working-session]_button]:min-h-[26px]";
 
 function Row({ icon, children, aside, onClick }: { icon: ReactNode; children: ReactNode; aside?: ReactNode; onClick(): void }) {
   return (

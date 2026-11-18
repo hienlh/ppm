@@ -2,7 +2,8 @@
  * PPM Assistant's cards in the browser: every kind draws its own buttons only while it waits, Allow
  * is absent when the card does not show the whole request, a manager's words carry the
  * server-written provenance line and render as text, a draft shows hidden characters, and an
- * answered card keeps its content with a status line instead of buttons. Phone targets are 44 px.
+ * answered card keeps its content with a status line instead of buttons. Phone buttons are the chip
+ * row's 26 px; question options keep 44 px.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { installDom, uninstallDom, mount, click, type Mounted } from "../../helpers/react-dom.tsx";
@@ -193,7 +194,7 @@ describe("assistant cards", () => {
     }
   });
 
-  it("draws every other kind with its own controls, 44 px tall on a phone", async () => {
+  it("draws every other kind with its own controls, 26 px tall on a phone like the chip row", async () => {
     for (const card of [
       base({ kind: "done" }), base({ kind: "failed", payload: { detected: true } }), base({ kind: "urgent" }),
       base({ kind: "budget", projectName: null, body: "Paused." }),
@@ -202,7 +203,7 @@ describe("assistant cards", () => {
       view = await mount(<AssistantCard card={card} />);
       const all = [...view.container.querySelectorAll("button")];
       expect(all.length).toBeGreaterThan(0);
-      for (const b of all) expect(b.className).toContain("h-11");
+      for (const b of all) expect(b.className).toContain("h-[26px]");
       await view.unmount();
       view = null;
     }

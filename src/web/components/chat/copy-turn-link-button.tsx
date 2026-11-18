@@ -86,5 +86,5 @@ export function CopyTurnLinkButton({ message, projectName, sessionId, providerId
     copied: { icon: <Check className="size-3.5" />, label: "Copied", title: "Turn link copied" },
   }[state.kind];
 
-  return <ActionButton {...view} onClick={onClick} touchTarget iconOnlyBelowMd />;
+  return <ActionButton {...view} onClick={onClick} standardSize iconOnlyBelowMd />;
 }

@@ -47,7 +47,7 @@ export function TurnChangeRollup({ timestamp, content, changes, turn, onJumpToEd
       content={content}
       className="-mt-1.5"
     >
-      {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} touchTarget />}
+      {onReply && <ActionButton icon={<RotateCcw className="size-3.5" />} label="Reply" title="Reply to this message" onClick={onReply} standardSize />}
       {changes && changes.length > 0 && (
         <TurnChangePill
           ref={pillRef}

@@ -1,7 +1,8 @@
 /**
  * The choices a manager offers on a decision card, one button each, stacked: a number (the same
  * one Telegram shows), the label and what choosing it does. A press answers the card at once with
- * that choice; there is no second step, as with OK. Every button is at least 44 px tall.
+ * that choice; there is no second step, as with OK. Every button is at least the chip row's
+ * height (28 px, 26 px on a phone), taller when its label and description need it.
  *
  * Once the card no longer waits the choices stay listed, the one the user picked marked, so the
  * card still says what was decided. A card whose choices cannot be pressed here (too long, or a
@@ -38,7 +39,7 @@ export function CardChoices({ options, pressable, chosenId, disabled, onChoose }
               onClick={() => onChoose(o.id)}
               aria-pressed={chosenId !== undefined ? chosen : undefined}
               className={cn(
-                "flex min-h-11 w-full items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-colors disabled:cursor-default",
+                "flex min-h-7 max-md:min-h-[26px] w-full items-start gap-2.5 rounded-lg border px-3 py-1.5 text-left transition-colors disabled:cursor-default",
                 chosen
                   ? "border-primary bg-accent-wash"
                   : "border-border bg-surface can-hover:enabled:hover:border-accent-wash-border can-hover:enabled:hover:bg-panel-2",

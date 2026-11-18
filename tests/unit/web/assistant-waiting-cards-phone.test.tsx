@@ -61,7 +61,7 @@ describe("on a phone", () => {
     expect(view.container.querySelector("[data-waiting-card]")).toBeNull();
     expect(sheet()).toBeNull();
     const row = view.container.querySelector("[data-waiting-toggle]")!;
-    expect(row.className).toContain("min-h-11");
+    expect(row.className).toContain("min-h-[26px]");
     expect(view.container.querySelector("[data-waiting-summary]")?.textContent).toBe("ppm · Release 0.25.6 tonight?");
 
     await click(row);
@@ -137,8 +137,8 @@ describe("a waiting card in the Assistant's stream", () => {
     expect(actions).not.toBeNull();
     expect(actions.hasAttribute("data-sticky")).toBe(false);
     expect([...actions.querySelectorAll("button")].map((b) => b.textContent?.trim())).toContain("OK");
-    // The phone hit area of each button.
-    for (const b of actions.querySelectorAll("button")) expect(b.className).toContain("h-11");
+    // Each button is the chip row's 26px on a phone.
+    for (const b of actions.querySelectorAll("button")) expect(b.className).toContain("h-[26px]");
     expect(box.hasAttribute("data-highlighted")).toBe(false);
     const { act } = await import("react");
     await act(async () => { lightWaitingCard(a.id); });

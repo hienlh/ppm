@@ -1,7 +1,7 @@
 /**
  * The project's own statuses as big buttons, three to a row (variant-3 screen 03, "Move to ·
  * <project> statuses"), the current one highlighted. Shared by the row's long-press sheet and the
- * detail's status sheet. Every button is at least 44px tall.
+ * detail's status sheet. Every button is at least the chip row's 26px, taller for a two-line name.
  */
 import { cn } from "@/lib/utils";
 import type { TaskProjectSettings } from "../../../../shared/ppm-tasks-api";
@@ -27,7 +27,7 @@ export function TaskStatusGrid({ project, statuses, currentId, onPick }: TaskSta
             return (
               <button key={s.id} type="button" aria-pressed={on} data-status-id={s.id} onClick={() => onPick(s.id)}
                 className={cn(
-                  "flex min-h-12 min-w-0 items-center gap-2 rounded-xl border px-2.5 py-1.5 text-left text-[13px] leading-tight active:scale-[0.98]",
+                  "flex min-h-[26px] min-w-0 items-center gap-2 rounded-lg border px-2.5 py-1 text-left text-[13px] leading-tight active:scale-[0.98]",
                   on ? "border-accent-wash-border bg-accent-wash font-medium text-text" : "border-border-soft bg-panel text-text-2",
                 )}>
                 <TaskStatusGlyph baseGroup={s.baseGroup} closedAs={s.closedAs} size="lg" />

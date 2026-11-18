@@ -121,20 +121,20 @@ export function TaskDetailMobile({ detail, settings, sheet: inSheet }: TaskDetai
       {/* In the sheet the sheet's own padding already clears the home indicator. */}
       <footer className={cn("flex shrink-0 gap-2 border-t border-border-soft bg-panel px-3 pt-2", inSheet ? "pb-1" : "pb-[max(0.5rem,env(safe-area-inset-bottom))]")}>
         <button type="button" onClick={() => setSheet("status")} aria-label={`Status: ${task.statusName}. Change`} data-task-status-button=""
-          className="flex h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-panel px-3 text-[15px] text-text active:bg-surface-hover">
+          className="flex h-[26px] min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full border border-border bg-panel px-3 text-[12.5px] text-text active:bg-surface-hover">
           <TaskStatusGlyph baseGroup={task.baseGroup} closedAs={task.closedAs} size="lg" />
           <span className="min-w-0 truncate">{task.statusName}</span>
-          <ChevronDown aria-hidden className="size-4 shrink-0 text-text-3" />
+          <ChevronDown aria-hidden className="size-3.5 shrink-0 text-text-3" />
         </button>
         {closed ? (
           <button type="button" onClick={() => void run(task.id, () => actions.reopen(task))}
-            className="flex h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-primary px-3 text-[15px] font-medium text-primary">
-            <RotateCcw className="size-4" />Reopen
+            className="flex h-[26px] min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full border border-primary px-3 text-[12.5px] font-medium text-primary">
+            <RotateCcw className="size-3.5" />Reopen
           </button>
         ) : (
           <button type="button" onClick={() => void run(task.id, () => actions.close(task, { closedAs: "done" }))} data-task-mark-done=""
-            className="flex h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-3 text-[15px] font-medium text-primary-foreground active:bg-primary/90">
-            <Check className="size-[18px]" />Done
+            className="flex h-[26px] min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full bg-primary px-3 text-[12.5px] font-medium text-primary-foreground active:bg-primary/90">
+            <Check className="size-3.5" />Done
           </button>
         )}
       </footer>

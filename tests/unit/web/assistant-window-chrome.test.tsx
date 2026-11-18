@@ -2,7 +2,7 @@
  * The Assistant's place in the window manager and its touch layout: the dock chip carries the
  * waiting count and the titlebar its own name, "Idle" and the settings gear; a manager chat opened
  * beside another project carries "Open in project" while an ordinary chat window carries nothing;
- * the chips, the filter and the filter sheet's rows keep 44 px (48 px) targets on a phone.
+ * on a phone the chips and the filter are the chip row's 26 px, and the filter sheet's rows 48 px.
  */
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { createElement, Fragment } from "react";
@@ -73,11 +73,12 @@ describe("the Assistant in the window manager", () => {
   });
 });
 
-describe("touch targets on a phone", () => {
-  it("keeps a chip's hit area 44 px tall around its drawn pill", async () => {
+describe("chip size on a phone", () => {
+  it("draws a manager chip at the chip row's 26 px, its press area the pill itself", async () => {
     view = await mount(createElement(ManagerChip, { manager: manager({ phase: "streaming" }), waiting: 2 }));
     const button = view.container.querySelector("button")!;
-    expect(button.className).toContain("h-11");
+    expect(button.className).toContain("h-[26px]");
+    expect(button.className).not.toContain("h-11");
     expect(button.getAttribute("aria-label")).toBe("Open the nxsys manager chat · working · 2 waiting");
     expect(view.container.querySelector("[data-dot]")?.getAttribute("data-dot")).toBe("running");
   });
