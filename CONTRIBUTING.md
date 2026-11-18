@@ -34,6 +34,7 @@ Requires: **Bun v1.3.6+**, **Git v2.0+**, **Claude Code** authenticated.
 - Follow YAGNI / KISS / DRY principles
 - No secrets or `.env` files in commits
 - Run `bun run typecheck` before submitting
+- Don't edit `CHANGELOG.md` in a PR. Whoever cuts the release writes it from the commits, so describe the user-facing change in your commit messages instead. Changelog lines in PRs conflict with every other open PR.
 
 ## Reporting Bugs
 
