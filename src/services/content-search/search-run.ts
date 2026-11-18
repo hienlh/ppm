@@ -30,6 +30,8 @@ export interface SearchRunDeps {
   maxMatches?: number;
   /** null: no git. The grep plan walks the project instead, and include folders are not trusted. */
   gitPath?: string | null;
+  /** The argv that starts the tool, in place of `tool.path` (tests: `bun <script>`, which runs on every OS). */
+  toolCommand?: string[];
 }
 
 const NO_TOOL = "Content search needs ripgrep or GNU grep. Install ripgrep or Git for Windows, or make grep available on PATH, then retry.";
@@ -78,6 +80,7 @@ export async function runSearch(projectPath: string, req: SearchRequest, signal?
   if (!tool) throw new SearchRunError(NO_TOOL, 503);
   signal?.throwIfAborted();
 
+  const toolCommand = deps.toolCommand ?? [tool.path];
   const collector = new MatchCollector(deps.maxMatches ?? MAX_MATCHES, req.preserveCase === true);
   // What a replace would refuse is never listed, and does not count toward the limit.
   const searchable = searchablePaths(projectPath);
@@ -101,7 +104,7 @@ export async function runSearch(projectPath: string, req: SearchRequest, signal?
         ? await walkablePaths(projectPath, includeSearchPaths(projectPath, req.include), req, deps.gitPath)
         : ["."];
       if (paths.length) {
-        const result = await run([tool.path, ...ripgrepArgs(req, paths)], projectPath, rgLineReader((file, matches) => {
+        const result = await run([...toolCommand, ...ripgrepArgs(req, paths)], projectPath, rgLineReader((file, matches) => {
           if (filter.length && !matchesGlob(file, filter)) return;
           if (!searchable(file)) return;
           if (!collector.add(file, matches)) stop("limit");
@@ -114,7 +117,7 @@ export async function runSearch(projectPath: string, req: SearchRequest, signal?
       replaceUnavailable = !matcher.replaceAvailable;
       for (const batch of plan.batches) {
         if (stopped) break;
-        const result = await run([tool.path, ...plan.args, ...batch], projectPath, grepRecordReader((file, line, text) => {
+        const result = await run([...toolCommand, ...plan.args, ...batch], projectPath, grepRecordReader((file, line, text) => {
           if (!searchable(file)) return;
           const matches = matcher.matchLine(text).map((m) =>
             buildSearchMatch(text, line, m.column, m.column + m.length, m.replacement));
