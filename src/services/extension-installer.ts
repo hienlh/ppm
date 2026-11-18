@@ -1,5 +1,5 @@
-import { resolve } from "node:path";
-import { existsSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
+import { relative, resolve, isAbsolute } from "node:path";
+import { existsSync, lstatSync, mkdirSync, writeFileSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import type { ExtensionManifest } from "../types/extension.ts";
 import { getExtensionById, insertExtension, updateExtension, deleteExtension, deleteExtensionStorage } from "./db.service.ts";
 import { readManifestAt } from "./extension-manifest.ts";
@@ -50,22 +50,49 @@ export async function installExtension(name: string, extensionsDir: string): Pro
   return manifest;
 }
 
+/**
+ * The dev-link of `id` under `node_modules`, or null when there is none. Only a path inside
+ * `node_modules` counts: the id comes from a request, and `../x` must not name a link elsewhere.
+ */
+function devLinkPath(id: string, extensionsDir: string): string | null {
+  const nodeModules = resolve(extensionsDir, "node_modules");
+  const path = resolve(nodeModules, id);
+  const rel = relative(nodeModules, path);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
+  try {
+    return lstatSync(path).isSymbolicLink() ? path : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Remove an extension from disk + DB */
 export async function removeExtension(id: string, extensionsDir: string): Promise<void> {
-  try {
-    const proc = Bun.spawn(["bun", "remove", id], {
-      cwd: extensionsDir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const exitCode = await proc.exited;
-    // The record goes regardless, so a failed removal leaves the package on disk unnoticed.
-    if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text().catch(() => "");
-      log.warn(`bun remove ${id} exited ${exitCode} (DB record still removed): ${stderr.replace(/\s+/g, " ").trim().slice(-300)}`);
+  // A dev-link is never in package.json, so `bun remove` fails on it and the link stayed:
+  // the next dev-link of this id from another folder then hit EEXIST.
+  const link = devLinkPath(id, extensionsDir);
+  if (link) {
+    try {
+      unlinkSync(link);
+    } catch (e) {
+      log.warn(`unlink of dev-link ${id} failed (DB record still removed):`, e);
     }
-  } catch (e) {
-    log.warn(`bun remove ${id} failed (DB record still removed):`, e);
+  } else {
+    try {
+      const proc = Bun.spawn(["bun", "remove", id], {
+        cwd: extensionsDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const exitCode = await proc.exited;
+      // The record goes regardless, so a failed removal leaves the package on disk unnoticed.
+      if (exitCode !== 0) {
+        const stderr = await new Response(proc.stderr).text().catch(() => "");
+        log.warn(`bun remove ${id} exited ${exitCode} (DB record still removed): ${stderr.replace(/\s+/g, " ").trim().slice(-300)}`);
+      }
+    } catch (e) {
+      log.warn(`bun remove ${id} failed (DB record still removed):`, e);
+    }
   }
 
   deleteExtensionStorage(id);
@@ -87,7 +114,9 @@ export function devLinkExtension(localPath: string, extensionsDir: string): Exte
   const parentDir = resolve(targetDir, "..");
   if (!existsSync(parentDir)) mkdirSync(parentDir, { recursive: true });
 
-  if (existsSync(targetDir)) rmSync(targetDir, { recursive: true, force: true });
+  // A link whose source folder is gone answers false to existsSync but still occupies the name.
+  if (devLinkPath(manifest.id, extensionsDir)) unlinkSync(targetDir);
+  else if (existsSync(targetDir)) rmSync(targetDir, { recursive: true, force: true });
   symlinkSync(absPath, targetDir, "dir");
 
   upsertExtensionInDb(manifest);

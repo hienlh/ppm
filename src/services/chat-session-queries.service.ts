@@ -7,6 +7,7 @@ import { sessionSpawnLinks } from "./session-collab/session-list-links.ts";
 import { compareSessionsByActivity } from "../types/chat.ts";
 import { managerChats } from "./assistant-managers/manager-chats.service.ts";
 import { MANAGER_PROVIDER_ID } from "../shared/assistant-managers.ts";
+import { sessionTitleWithoutContext } from "../shared/provider-context.ts";
 
 /**
  * A project's chat list and chat search, as `GET /chat/sessions` and `GET /chat/search` answer
@@ -57,7 +58,9 @@ export async function listProjectSessions(projectPath: string, opts: ListProject
   }
 
   // Merge and enrich with pin status
-  const merged = [...pinnedSessions, ...sessions];
+  // Whichever provider titled it, a title is never the shared-context block (Antigravity names
+  // a chat from the prompt it was sent, block and all); an empty one reads "Untitled".
+  const merged = [...pinnedSessions, ...sessions].map((s) => ({ ...s, title: sessionTitleWithoutContext(s.title) }));
   const seen = new Set<string>();
   const deduped = merged.filter((s) => { if (seen.has(s.id)) return false; seen.add(s.id); return true; });
   const tagMap = getSessionTags(deduped.map((s) => s.id));

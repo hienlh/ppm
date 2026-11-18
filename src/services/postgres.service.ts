@@ -378,13 +378,20 @@ class PostgresService {
       const cols = await sql`
         SELECT c.column_name as name, c.data_type as type,
                c.is_nullable = 'YES' as nullable, c.column_default as default_value,
-               COALESCE(tc.constraint_type = 'PRIMARY KEY', false) as pk,
+               EXISTS (
+                 -- A subquery, not a join: a column in several keys (a primary key and a
+                 -- unique or foreign key) would otherwise come back once per key, and a
+                 -- constraint name is unique only within its schema (two schemas with an
+                 -- items table both have an items_pkey).
+                 SELECT 1 FROM information_schema.key_column_usage kcu
+                 JOIN information_schema.table_constraints tc
+                   ON tc.constraint_schema = kcu.constraint_schema AND tc.constraint_name = kcu.constraint_name
+                 WHERE tc.constraint_type = 'PRIMARY KEY'
+                   AND kcu.table_schema = c.table_schema AND kcu.table_name = c.table_name
+                   AND kcu.column_name = c.column_name
+               ) as pk,
                c.is_identity = 'YES' OR COALESCE(c.column_default LIKE 'nextval(%', false) as auto_increment
         FROM information_schema.columns c
-        LEFT JOIN information_schema.key_column_usage kcu
-          ON c.table_schema = kcu.table_schema AND c.table_name = kcu.table_name AND c.column_name = kcu.column_name
-        LEFT JOIN information_schema.table_constraints tc
-          ON kcu.constraint_name = tc.constraint_name AND tc.constraint_type = 'PRIMARY KEY'
         WHERE c.table_schema = ${schema} AND c.table_name = ${table}
         ORDER BY c.ordinal_position
       `;
@@ -396,9 +403,10 @@ class PostgresService {
                ccu.column_name as ref_col
         FROM information_schema.table_constraints tc
         JOIN information_schema.key_column_usage kcu
-          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+          ON tc.constraint_name = kcu.constraint_name AND tc.constraint_schema = kcu.constraint_schema
         JOIN information_schema.constraint_column_usage ccu
-          ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
+          -- The constraint's own schema: ccu.table_schema is the referenced table's.
+          ON tc.constraint_name = ccu.constraint_name AND tc.constraint_schema = ccu.constraint_schema
         WHERE tc.constraint_type = 'FOREIGN KEY'
           AND tc.table_schema = ${schema} AND tc.table_name = ${table}
       `;

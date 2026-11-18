@@ -271,6 +271,13 @@ samp,
   transition: background 200ms ease-out;
 }
 
+/* The browser draws a control's own parts (the clock in a time input, a date
+   picker, a select's arrow) from color-scheme, not from the theme tokens.
+   Unset, a dark theme got them in light-page black: the time inputs in
+   Settings → PPM Assistant showed a clock that could not be seen. */
+html.dark { color-scheme: dark; }
+html.light { color-scheme: light; }
+
 /* Scrollbar styling — thin & unobtrusive */
 ::-webkit-scrollbar {
   width: 5px;

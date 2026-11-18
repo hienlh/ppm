@@ -160,9 +160,10 @@ export function DesignCanvasPane({ moreOpen = false, onMoreClose }: { moreOpen?:
       {tab.isMobile && tweaksPanel && <div className="h-[45%] shrink-0 border-t border-border">{tweaksPanel}</div>}
       <ExportWarningsSheet feature={exports} />
       <DesignShareDialog feature={share} />
+      {/* On a desktop too: Export moves into More when the pane is too narrow for its button. */}
+      <ExportSheet feature={exports} />
       {tab.isMobile && (
         <>
-          <ExportSheet feature={exports} />
           <BottomSheet open={moreOpen} onClose={() => onMoreClose?.()}>
             <DesignToolbarList ctx={toolbarCtx} onDone={() => onMoreClose?.()} />
           </BottomSheet>

@@ -18,6 +18,7 @@ import { invalidateExtensionCliHint } from "./extension-cli-hint.ts";
 import { lastClientTimeZone, type ClientTimeZoneReport } from "./client-timezone.ts";
 import { configService } from "./config.service.ts";
 import { getPpmDir } from "./ppm-dir.ts";
+import { localServerBaseUrl } from "./server-listen-address.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { createLogger } from "./logger.ts";
 
@@ -29,6 +30,16 @@ const extLog = createLogger("ext");
 // Lives with the manifest readers so the CLI can find bundled extensions without loading this
 // service and everything its RPC handlers reach.
 export { bundledExtensionsDir };
+
+/**
+ * Where an extension's `fetch()` reaches this server (`__PPM_BASE_URL__` in the host): the port
+ * it actually listens on. The configured one is another instance, or nothing, under the
+ * supervisor (port 0) and on a dev or scratch port — Git Graph then reported "Failed to look up
+ * projects". The configured port is only the fallback for a process that serves nothing.
+ */
+export function extensionHostBaseUrl(): string {
+  return localServerBaseUrl() ?? `http://localhost:${configService.get("port") ?? 8080}`;
+}
 
 /**
  * How to name the extension host worker so Bun will actually load it.
@@ -298,8 +309,7 @@ class ExtensionService {
 
     // Pass server base URL + auth token so extensions can make fetch() calls in the Worker
     const { configService: cfg } = await import("./config.service.ts");
-    const port = cfg.get("port") ?? 8080;
-    const baseUrl = `http://localhost:${port}`;
+    const baseUrl = extensionHostBaseUrl();
     const authConfig = cfg.get("auth");
     const authToken = authConfig?.enabled ? authConfig.token : undefined;
 
