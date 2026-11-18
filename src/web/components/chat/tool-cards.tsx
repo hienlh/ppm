@@ -122,10 +122,10 @@ import { sessionCollabToolCall } from "@/lib/session-collab-tool-call";
 import { VaultToolCard } from "./vault-tool-card";
 import { vaultToolCall } from "@/lib/vault-tool-call";
 import { DeviceToolDetails, DeviceToolSummary } from "./device-tool-card";
-import { deviceToolCall, deviceToolOf, tabToolCall, tabToolResultText } from "@/lib/tab-tool-call";
+import { deviceToolCall, deviceToolOf, tabToolCall } from "@/lib/tab-tool-call";
 import { DbToolSummary, DbToolDetails } from "./db-tool-card";
 import { dbToolCall, dbToolOf } from "@/lib/db-tool-call";
-import { dbRowsBadge, ppmToolIcon, ppmToolSummary } from "@/lib/ppm-tool-call";
+import { dbRowsBadge, ppmToolErrorLine, ppmToolIcon, ppmToolSummary } from "@/lib/ppm-tool-call";
 import { PpmToolLinks, PpmToolSummaryText, ppmToolChip } from "./ppm-tool-header";
 import { DB_EXECUTE_TOOL } from "../../../shared/db-ai-tools";
 import { OPEN_URL_TOOL } from "../../../shared/tab-open-protocol";
@@ -353,7 +353,7 @@ export function ToolCard({
   const ppmIcon = ppmSummary ? ppmToolIcon(toolName) : null;
   // A turn that ended (or was stopped) before the tool answered: never a success.
   const ppmStopped = !!ppmSummary && !!completed && !hasResult && !isError;
-  const ppmErrorLine = ppmSummary && isError && rawOutput ? firstErrorLine(rawOutput) : "";
+  const ppmErrorLine = ppmSummary && isError && rawOutput ? ppmToolErrorLine(rawOutput) : "";
   const dbBadge = !isError && dbToolOf(toolName) === "db_query" ? dbRowsBadge(rawOutput) : null;
 
   const { Icon: ChipIcon, cls: chipCls } = ppmIcon ? ppmToolChip(ppmIcon) : toolChip(
@@ -1043,11 +1043,6 @@ function EditDiffPreview(props: { oldStr: string; newStr: string; filePath?: str
       <LazyEditDiffPreview {...props} />
     </Suspense>
   );
-}
-
-/** The first non-blank line of a failed tool's answer, for the line under a PPM tool card's header. */
-function firstErrorLine(output: string): string {
-  return tabToolResultText(output).split("\n").find((l) => l.trim())?.trim() ?? "";
 }
 
 function truncate(str?: string, max = 50): string {

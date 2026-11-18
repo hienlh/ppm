@@ -75,8 +75,10 @@ function TaskCodeButton({ code, project }: { code: string; project: string }) {
     if (target) { setTarget(null); return; }
     setBusy(true);
     try {
+      // A bare `#12` is the chat's own project's task; with no project (the Assistant) it must name one task only.
       const context = isAssistantProject(project) ? null : project || null;
-      const found = (await lookupTasksByCode(code, context, { anywhere: true })) ?? [];
+      const found = (await lookupTasksByCode(code, context)) ?? [];
+      if (found.length > 1) { toast.error(`Several projects have a task ${code}`); return; }
       const task = found[0];
       if (!task) { toast.error(`No task ${code} found`); return; }
       setTarget({ id: task.id, project: task.project, title: task.title, number: task.number });

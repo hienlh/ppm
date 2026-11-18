@@ -8,21 +8,27 @@ import { parseTaskRef } from "../../shared/ppm-tasks-refs";
 import { joinParts, labelFor, oneLine, plural, posInt, str, type PpmToolContext, type PpmToolSummary } from "./ppm-tool-summary-types";
 
 /** The first line of a write's answer: `Created: ppm/151 "Fix login" — now revision 1.` */
-const WRITE_LINE = /^(Created|Updated|Unchanged|Closed(?: as ([a-z]+))?|Moved|Undid #(\d+) on): (\S+) "(.*)" — now revision \d+\.?$/;
+const WRITE_LINE = /^(Created|Updated|Closed(?: as ([a-z]+))?|Moved|Undid #(\d+) on): (\S+) "(.*)" — now revision \d+\.?$/;
 /** A proposal's answer: `Proposed closing ppm/151 "Fix login" as done. It stays open…` */
 const PROPOSAL_LINE = /^Proposed closing (\S+) "(.*)" as ([a-z]+)\./;
+/** An update that changed nothing: `Nothing changed: ppm/151 already holds those values (revision 3).` */
+const UNCHANGED_LINE = /^Nothing changed: (\S+) already holds\b/;
 /** A task's first line inside the fence: `ppm/151 · week/normal · In progress · rev 3 · "Fix login" · …` */
 const TASK_LINE = /^(\S+) · [^·]+ · (.+?) · rev \d+ · "(.*?)"(?: · |$)/;
 /** A list's head: `3 of 12 tasks, what to do first at the top…` */
 const LIST_HEAD = /^(\d+) of (\d+) tasks?\b/;
 
-/** A code the card can open, or undefined: `ppm/12`, `#12`, or a bare number read as `#12`. */
-function taskCode(v: unknown): string | undefined {
+/**
+ * A code the card can open, or undefined: `ppm/12`, `#12`, or a bare number read as `#12` — in
+ * the project the call named, when it named one and the code did not.
+ */
+function taskCode(v: unknown, project?: string): string | undefined {
   const s = str(v);
   if (!s) return undefined;
   const ref = parseTaskRef(s);
   if (!ref) return undefined;
-  return ref.project ? `${ref.project}/${ref.number}` : `#${ref.number}`;
+  const named = ref.project ?? (project && parseTaskRef(`${project}/${ref.number}`) ? project : null);
+  return named ? `${named}/${ref.number}` : `#${ref.number}`;
 }
 
 /** What `task` names, for the line: its code when it is one, else a short id. */
@@ -37,7 +43,9 @@ function writeAnswer(text: string): { kind: string; code: string; title: string;
   const m = WRITE_LINE.exec(first);
   if (m) return { kind: m[1]!.startsWith("Closed") ? "Closed" : m[1]!.startsWith("Undid") ? "Undid" : m[1]!, code: m[4]!, title: m[5]!, ...(m[2] ? { closedAs: m[2] } : {}) };
   const p = PROPOSAL_LINE.exec(first);
-  return p ? { kind: "Proposed", code: p[1]!, title: p[2]!, closedAs: p[3]! } : null;
+  if (p) return { kind: "Proposed", code: p[1]!, title: p[2]!, closedAs: p[3]! };
+  const u = UNCHANGED_LINE.exec(first);
+  return u ? { kind: "Unchanged", code: u[1]!, title: "" } : null;
 }
 
 /** The task line inside a `ppm_task_get` answer. */
@@ -85,7 +93,7 @@ export function taskToolSummary(ctx: PpmToolContext): PpmToolSummary | null {
   const { tool, args } = ctx;
   if (!tool.startsWith("ppm_task_")) return null;
   const write = ctx.ok ? writeAnswer(ctx.text) : null;
-  const inputCode = taskCode(args.task);
+  const inputCode = taskCode(args.task, str(args.project));
 
   switch (tool) {
     case "ppm_task_create": {

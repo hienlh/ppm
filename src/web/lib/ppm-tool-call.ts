@@ -13,7 +13,7 @@
 import { taskToolSummary } from "./ppm-tool-summaries-tasks";
 import { sessionToolSummary } from "./ppm-tool-summaries-sessions";
 import { tabToolResultText } from "./tab-tool-call";
-import { isObj, oneLine, str, type Args, type PpmToolContext, type PpmToolSummary } from "./ppm-tool-summary-types";
+import { isObj, jsonAnswer, oneLine, str, type Args, type PpmToolContext, type PpmToolSummary } from "./ppm-tool-summary-types";
 
 export type { PpmToolSummary, PpmToolSessionLink } from "./ppm-tool-summary-types";
 
@@ -111,6 +111,20 @@ export function ppmToolIcon(toolName: string): PpmToolIcon | null {
   if (name.server === "design" || t.startsWith("design_")) return "design";
   if (name.server === "assistant") return "assistant";
   return "tool";
+}
+
+/**
+ * The line under a failed PPM tool's header: the first line of its answer, or — for an answer that
+ * is a JSON object, as the schedule tools' refusals are — its note, message or outcome.
+ */
+export function ppmToolErrorLine(output: string): string {
+  const text = tabToolResultText(output);
+  const answer = jsonAnswer(text);
+  if (answer) {
+    const said = str(answer.note) ?? str(answer.message) ?? str(answer.error) ?? str(answer.outcome);
+    if (said) return oneLine(said, 300);
+  }
+  return text.split("\n").find((l) => l.trim())?.trim() ?? "";
 }
 
 /** How many rows a `db_query` answer says its statements returned, or null when it says none or cannot be read. */

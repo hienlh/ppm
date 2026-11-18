@@ -12,7 +12,17 @@ import {
 const SEARCH_HIT = /^- \S+ · \S+ · /;
 /** `Session <id> · <provider> · <project> · <n> turns` (list) or `… · Turn <n> · …` (a read turn). */
 const LIST_HEAD = /^Session (\S+) · (\S+) · .*? · (\d+) turns?\b/;
-const TURN_HEAD = /^Session (\S+) · (\S+) · .*? · Turn (\d+) · /;
+const TURN_HEAD = /^Session (\S+) · (\S+) · (.*?) · Turn (\d+) · /;
+
+/**
+ * The project a read turn's header names (`turnProjectLabel`): undefined for the chat's own
+ * ("this project (demo)"), the name for another one ("project web, not this chat's project").
+ */
+function otherProjectOf(label: string | undefined): string | undefined {
+  if (!label || label.startsWith("this project")) return undefined;
+  const m = /^project (.+?)(?:, not this chat's project)?$/.exec(label);
+  return m ? str(m[1]) : undefined;
+}
 
 const REPORT_KINDS: Record<string, string> = {
   done: "Done", failed: "Failed", needs_decision: "Needs decision", urgent: "Urgent", digest: "Digest",
@@ -51,12 +61,14 @@ function readTurns(ctx: PpmToolContext): PpmToolSummary {
   const read = ctx.ok
     ? ctx.text.split("\n").map((line) => TURN_HEAD.exec(line.trim())).filter((m): m is RegExpExecArray => !!m)
     : [];
-  const numbers = [...new Set(read.map((m) => Number(m[3])))];
-  const turns = numbers.length
-    ? `${numbers.length === 1 ? "turn" : "turns"} ${numbers.slice(0, 4).join(", ")}${numbers.length > 4 ? "…" : ""}`
-    : from && to ? (from === to ? `turn ${from}` : `turns ${from}–${to}`)
-    : ids.length ? plural(ids.length, "turn") : undefined;
-  const project = str(args.project);
+  const numbers = [...new Set(read.map((m) => Number(m[4])))];
+  // "Read turns 490, 491", "Read turns 3–5", "Read 2 turns" (before the answer names them).
+  const [label, turns] = numbers.length
+    ? [numbers.length === 1 ? "Read turn" : "Read turns", `${numbers.slice(0, 4).join(", ")}${numbers.length > 4 ? "…" : ""}`]
+    : from && to ? [from === to ? "Read turn" : "Read turns", from === to ? String(from) : `${from}–${to}`]
+    : [ids.length === 1 ? "Read turn" : ids.length > 1 ? `Read ${ids.length} turns` : "Read turns", undefined];
+  // A turn the user linked from another project is read without `project`: its header says where it is.
+  const project = str(args.project) ?? otherProjectOf(read[0]?.[3]);
   const providerId = provider(read[0]?.[2]);
   const session = sessionId ? {
     sessionId,
@@ -64,7 +76,7 @@ function readTurns(ctx: PpmToolContext): PpmToolSummary {
     ...(ids.length === 1 ? { turnId: ids[0] } : {}),
     ...(project ? { project } : {}),
   } : undefined;
-  return { label: labelFor(ctx, "Read turns", "Read turns"), detail: joinParts(turns, project && `in ${oneLine(project, 30)}`), ...(session ? { session } : {}) };
+  return { label, detail: joinParts(turns, project && `in ${oneLine(project, 30)}`), ...(session ? { session } : {}) };
 }
 
 function report(ctx: PpmToolContext): PpmToolSummary {
@@ -85,7 +97,8 @@ function scheduleOf(v: unknown): { id?: number; name?: string; next?: string } {
 
 function schedule(ctx: PpmToolContext): PpmToolSummary | null {
   const { tool, args } = ctx;
-  const answer = ctx.ok ? jsonAnswer(ctx.text) : null;
+  // Read on an error too: a declined or stale card answers `{ done: false, outcome }` as an error.
+  const answer = jsonAnswer(ctx.text);
   const named = (s: { id?: number; name?: string }) => joinParts(s.id ? `#${s.id}` : undefined, s.name && `“${oneLine(s.name, 50)}”`);
   switch (tool) {
     case "session_schedule_create": {
@@ -95,7 +108,7 @@ function schedule(ctx: PpmToolContext): PpmToolSummary | null {
       return { label: "Schedule prompt", detail: joinParts(inputName && `“${inputName}”`, str(args.cron)) };
     }
     case "session_schedule_list": {
-      if (!answer) return { label: "List schedules" };
+      if (!ctx.ok || !answer) return { label: "List schedules" };
       const own = Array.isArray(answer.schedules) ? answer.schedules.length : undefined;
       const project = Array.isArray(answer.projectSchedules) ? answer.projectSchedules.length : 0;
       return { label: "Listed schedules", badge: own === undefined ? undefined : plural(own, "schedule"), detail: project ? `${project} more in the project` : undefined };
@@ -110,7 +123,8 @@ function schedule(ctx: PpmToolContext): PpmToolSummary | null {
       const id = posInt(args.id);
       const changed = answer?.updated === true ? scheduleOf(answer[on ? "turnedOn" : "paused"]) : null;
       if (changed) return { label: on ? "Turned on schedule" : "Paused schedule", detail: named(changed) };
-      return { label: args.enabled === false ? "Pause schedule" : "Turn on schedule", detail: id ? `#${id}` : undefined };
+      const stale = answer?.done === false ? str(answer.outcome) : undefined;
+      return { label: args.enabled === false ? "Pause schedule" : "Turn on schedule", detail: id ? `#${id}` : undefined, badge: stale && oneLine(stale.replace(/_/g, " "), 20) };
     }
     case "session_schedule_propose_script": {
       const s = scheduleOf(answer?.schedule);

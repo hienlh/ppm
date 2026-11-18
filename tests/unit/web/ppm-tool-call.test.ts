@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { dbRowsBadge, humanizeToolName, ppmToolIcon, ppmToolName, ppmToolSummary } from "../../../src/web/lib/ppm-tool-call";
+import { dbRowsBadge, humanizeToolName, ppmToolErrorLine, ppmToolIcon, ppmToolName, ppmToolSummary } from "../../../src/web/lib/ppm-tool-call";
 import { renderTurns } from "../../../src/services/session-turns/turn-render";
 import { sessionCollabToolCall } from "../../../src/web/lib/session-collab-tool-call";
 import { deviceToolCall, tabToolCall } from "../../../src/web/lib/tab-tool-call";
@@ -56,12 +56,10 @@ describe("task tools", () => {
       .toBe("ppm/48: status → Done, urgency → now, assignee → none +2");
   });
 
-  it("reads a proposal and an unchanged task", () => {
+  it("reads a proposal", () => {
     const proposal = 'Proposed closing ppm/7 "Fix it" as done. It stays open until the manager chat or the user closes it (revision 2).';
     expect(ppmToolSummary("mcp__ppm-sessions__ppm_task_update", { task: "#7", propose_close: "done" }, ok(proposal)))
       .toEqual({ label: "Proposed closing task", detail: "ppm/7 · as done · Fix it", task: "ppm/7" });
-    expect(ppmToolSummary("mcp__ppm-sessions__ppm_task_update", { task: "#7", notes: "n" }, ok('Unchanged: ppm/7 "Fix it" — now revision 2.'))?.label)
-      .toBe("Task unchanged");
   });
 
   it("reads close, get, list, move and undo", () => {
@@ -135,11 +133,13 @@ describe("session history tools", () => {
     const turn = (n: number) => ({ turn: { n, turnId: `t${n}`, startedAt: "2026-11-18T14:00:00Z", status: "done" }, messages: [] }) as never;
     const rendered = renderTurns({ sessionId: "s1", providerId: "claude", projectName: "ppm", readerProject: "ppm" }, [turn(490), turn(491)]);
     expect(ppmToolSummary("mcp__ppm-tabs__read_session_turns", { session_id: "s1", turn_ids: ["t490", "t491"] }, ok(blocks(rendered))))
-      .toEqual({ label: "Read turns", detail: "turns 490, 491", session: { sessionId: "s1", providerId: "claude" } });
+      .toEqual({ label: "Read turns", detail: "490, 491", session: { sessionId: "s1", providerId: "claude" } });
     expect(ppmToolSummary("mcp__ppm-tabs__read_session_turns", { session_id: "s1", turn_ids: ["t490"], project: "other" }, running))
-      .toEqual({ label: "Read turns", detail: "1 turn · in other", session: { sessionId: "s1", turnId: "t490", project: "other" } });
+      .toEqual({ label: "Read turn", detail: "in other", session: { sessionId: "s1", turnId: "t490", project: "other" } });
+    expect(ppmToolSummary("mcp__ppm-tabs__read_session_turns", { session_id: "s1", turn_ids: ["a", "b"] }, running))
+      .toEqual({ label: "Read 2 turns", session: { sessionId: "s1" } });
     expect(ppmToolSummary("mcp__ppm-tabs__read_session_turns", { session_id: "s1", from_turn: 3, to_turn: 5 }, failed("not_permitted: nope")))
-      .toEqual({ label: "Read turns", detail: "turns 3–5", session: { sessionId: "s1" } });
+      .toEqual({ label: "Read turns", detail: "3–5", session: { sessionId: "s1" } });
   });
 
   it("reads a turn list's count and provider", () => {
@@ -188,6 +188,35 @@ describe("other PPM tools", () => {
     expect(ppmToolSummary("mcp__ppm-sessions__design_screenshot", { slug: "home" }, running)).toEqual({ label: "Design screenshot" });
     expect(ppmToolIcon("mcp__ppm-assistant__git_status")).toBe("assistant");
     expect(ppmToolIcon("mcp__ppm-design__design_check")).toBe("design");
+  });
+});
+
+describe("fixes from review", () => {
+  it("reads an update that changed nothing, and links the project a call named", () => {
+    expect(ppmToolSummary("mcp__ppm-sessions__ppm_task_update", { task: "#7", notes: "n" }, ok("Nothing changed: ppm/7 already holds those values (revision 2).")))
+      .toEqual({ label: "Task unchanged", detail: "ppm/7: notes", task: "ppm/7" });
+    expect(ppmToolSummary("mcp__ppm-assistant__ppm_task_update", { task: "#12", project: "web", status: "Done" }, running))
+      .toEqual({ label: "Update task", detail: "#12: status → Done", task: "web/12" });
+    // A project name a code cannot carry is not glued onto it.
+    expect(ppmToolSummary("mcp__ppm-sessions__ppm_task_get", { task: "12", project: "My App" }, running)?.task).toBe("#12");
+  });
+
+  it("opens a turn read from another project in that project", () => {
+    const turn = { turn: { n: 3, turnId: "t3", startedAt: "2026-11-18T14:00:00Z", status: "done" }, messages: [] } as never;
+    const rendered = renderTurns({ sessionId: "s9", providerId: "codex", projectName: "web", readerProject: "ppm" }, [turn]);
+    expect(ppmToolSummary("mcp__ppm-tabs__read_session_turns", { session_id: "s9", turn_ids: ["t3"] }, ok(rendered)))
+      .toEqual({ label: "Read turn", detail: "3 · in web", session: { sessionId: "s9", providerId: "codex", turnId: "t3", project: "web" } });
+  });
+
+  it("reads a declined or stale schedule card, which answers JSON as an error", () => {
+    const declined = JSON.stringify({ done: false, outcome: "declined", note: "The user declined. Nothing was created." }, null, 1);
+    expect(ppmToolSummary("mcp__ppm-sessions__session_schedule_propose_script", { name: "Backup" }, failed(declined)))
+      .toEqual({ label: "Propose script schedule", detail: "“Backup”", badge: "declined" });
+    expect(ppmToolSummary("mcp__ppm-sessions__session_schedule_set_enabled", { id: 4, enabled: true }, failed(JSON.stringify({ done: false, outcome: "stale", note: "x" }, null, 1))))
+      .toEqual({ label: "Turn on schedule", detail: "#4", badge: "stale" });
+    expect(ppmToolErrorLine(declined)).toBe("The user declined. Nothing was created.");
+    expect(ppmToolErrorLine(blocks("Not saved: bad cron.\nmore"))).toBe("Not saved: bad cron.");
+    expect(ppmToolErrorLine("")).toBe("");
   });
 });
 
