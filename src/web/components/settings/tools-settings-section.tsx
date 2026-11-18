@@ -13,6 +13,7 @@ import { useNewFeatureTools } from "./use-new-feature-tools";
 import { SESSION_HISTORY_TOOLS } from "../../../shared/session-history-tools";
 import { SESSION_COLLAB_TOOLS } from "../../../shared/session-collab";
 import { SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_TOOLS } from "../../../shared/session-schedule-tools";
+import { MEMORY_TOOLS } from "../../../shared/memory-tools";
 import type { SessionCollabSettings } from "../../../shared/session-collab-settings";
 import { VAULT_TOOLS } from "../../../shared/vault";
 import { PPM_TASK_TOOLS } from "../../../shared/ppm-task-tools";
@@ -146,6 +147,22 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Tell the manager now",
     note: "The PPM Assistant only: wakes a project's manager chat about task changes, after you said yes.",
   },
+  memory_search: {
+    label: "Search memory",
+    note: "Finds memories by words and meaning; answers names and one-line descriptions only.",
+  },
+  memory_read: {
+    label: "Read memory",
+    note: "Reads one memory in full.",
+  },
+  memory_write: {
+    label: "Save memory",
+    note: "Creates or updates a PPM memory. A memory copied from a provider cannot be changed here.",
+  },
+  memory_forget: {
+    label: "Forget memory",
+    note: "Archives a PPM memory. The file is kept.",
+  },
 };
 
 const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }> = [
@@ -181,6 +198,7 @@ const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }>
     intro: "Your secret vault (Settings → Vault), for ordinary chats. Off until you turn them on here; the PPM Assistant always has them.",
     tools: VAULT_TOOLS,
   },
+  { title: "Memory", intro: "PPM's memory store, shared by Claude, Codex and Antigravity.", tools: MEMORY_TOOLS },
 ];
 
 export function ToolsSettingsSection() {

@@ -19,6 +19,7 @@ export const SECRET_CONFIG_KEYS: readonly string[] = [
   "assistant.mcp_servers",
   // A provider's API key, whichever provider: `*` stands for one key segment.
   "ai.providers.*.api_key",
+  "ai.memory.embedding.api_key",
 ];
 
 /** Marker shown in place of a redacted secret value. Never the empty string, so a caller can tell "masked" apart from "absent". */

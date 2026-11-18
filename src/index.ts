@@ -169,11 +169,12 @@ export async function buildProgram(): Promise<Command> {
  */
 export function resolveEntryMode(
   argv: string[],
-): "supervise" | "serve" | "edge" | "share-host" | "cli" {
+): "supervise" | "serve" | "edge" | "share-host" | "memory" | "cli" {
   if (argv.includes("__supervise__")) return "supervise";
   if (argv.includes("__serve__")) return "serve";
   if (argv.includes("__edge__")) return "edge";
   if (argv.includes("__share_host__")) return "share-host";
+  if (argv.includes("__memory__")) return "memory";
   return "cli";
 }
 
@@ -193,6 +194,10 @@ if (import.meta.main) {
       break;
     case "share-host":
       await import("./services/share-host/share-host-worker.ts");
+      break;
+    case "memory":
+      // The server's memory host: stdout carries its JSON lines, so nothing may print there.
+      await (await import("./services/memory/memory-host.ts")).main();
       break;
     default: {
       // A command's stdout is its output (`--json`, a pipe): log lines go to stderr.

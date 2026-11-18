@@ -28,6 +28,7 @@ import {
   Sparkles,
   Wrench,
   Lock,
+  Brain,
 } from "@/lib/icons";
 
 /**
@@ -44,6 +45,7 @@ export type SettingsCategoryId =
   | "database-drivers"
   | "ai-provider"
   | "tools"
+  | "memory"
   | "accounts"
   | "assistant"
   | "vault"
@@ -96,6 +98,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
 
   { id: "ai-provider", group: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { id: "tools", group: "ai", label: "Tools", subtitle: "PPM tools the AI can use", icon: Wrench },
+  { id: "memory", group: "ai", label: "Memory", subtitle: "One memory store for every provider, synced", icon: Brain },
   { id: "accounts", group: "ai", label: "Accounts", subtitle: "Claude, Codex and Antigravity sign-ins, rotation", icon: KeyRound },
   { id: "assistant", group: "ai", label: "PPM Assistant", subtitle: "Its own model, instructions, MCP servers, Telegram", icon: Sparkles },
   { id: "vault", group: "ai", label: "Vault", subtitle: "Personal details the AI may read, behind passwords", icon: Lock },
