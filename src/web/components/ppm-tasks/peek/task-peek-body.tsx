@@ -152,6 +152,7 @@ export function TaskPeekBody({ target, layout, onLeave, onOpenPage, onBack, onCl
         )}
         {buttons?.askManager && (
           <button type="button" onClick={askManager} title="Ask the project's manager chat about this task" data-task-peek-ask-manager=""
+            disabled={!buttons.openChat && chat?.tone === "gone"}
             className={QUIET_BUTTON}>
             <MessageSquare /><span className="min-w-0 truncate">Ask manager</span>
           </button>

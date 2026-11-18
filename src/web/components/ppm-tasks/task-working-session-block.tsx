@@ -85,7 +85,7 @@ export function TaskWorkingSessionBlock({ task, working, check, onOpen, onStartC
       </div>
       {isManager ? (
         onAskManager && (
-          <Button size="sm" className="mt-2.5 w-full" onClick={onAskManager} data-working-ask-manager="">
+          <Button size="sm" className="mt-2.5 w-full" disabled={s.state === "gone"} onClick={onAskManager} data-working-ask-manager="">
             <MessageSquare className="size-3.5" />Ask manager
           </Button>
         )
