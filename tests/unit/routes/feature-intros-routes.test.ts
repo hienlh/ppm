@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import "../../test-setup.ts";
 import { Hono } from "hono";
 import { configService } from "../../../src/services/config.service.ts";
-import { getDb } from "../../../src/services/db.service.ts";
+import { getDb, setConfigValue } from "../../../src/services/db.service.ts";
 import { createFeatureIntroRoutes } from "../../../src/server/routes/feature-intros.ts";
 import { settingsRoutes } from "../../../src/server/routes/settings.ts";
 import {
@@ -108,6 +108,20 @@ describe("/api/feature-intros", () => {
     });
     expect((await view()).pending).toEqual([]);
     expect(record()).toMatchObject({ answer: "on", via: "settings" });
+  });
+
+  it("settles an editor-setting feature when its switch is saved through the UI prefs", async () => {
+    const gutter = FEATURE_INTROS.find((i) => i.uiPref === "gutterChanges")!;
+    configService.set("feature_intros", Object.fromEntries(FEATURE_INTROS.filter((i) => i.id !== gutter.id)
+      .map((i) => [i.id, { answer: "off" as const, skips: 0, via: "tour" as const }])));
+    setConfigValue("ui_prefs", "{}");
+    expect(((await view()).pending as Array<{ id: string }>).map((i) => i.id)).toEqual([gutter.id]);
+    const res = await app().request("/api/settings/ui-prefs", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ gutterChanges: true }),
+    });
+    expect(res.status).toBe(200);
+    expect((configService.get("feature_intros") as FeatureIntroStates)[gutter.id]).toMatchObject({ answer: "on", via: "settings" });
+    expect((await view()).pending).toEqual([]);
   });
 
   it("records a switch saved outside the settings route on the next read and tells every device once", async () => {

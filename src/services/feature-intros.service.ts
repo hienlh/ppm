@@ -1,15 +1,17 @@
 /**
  * The install-wide record of which new features the tour has asked about (config key
  * `feature_intros`, see `src/shared/feature-intros.ts`). Answered on one device, no other device
- * asks. The answer itself lives in `ai.ppm_tools` as explicit switches; this record only says
- * whether, how and when the question ended, and how many times it was put off.
+ * asks. The answer itself lives in `ai.ppm_tools` as explicit switches (or, for a feature that is
+ * an editor setting, in its `ui_prefs` boolean); this record only says whether, how and when the
+ * question ended, and how many times it was put off.
  */
 import { configService } from "./config.service.ts";
-import { getDb } from "./db.service.ts";
+import { getConfigValue, getDb, setConfigValue } from "./db.service.ts";
 import { createLogger } from "./logger.ts";
+import type { PpmConfig } from "../types/config.ts";
 import {
-  answerFromSwitches, FEATURE_INTRO_SKIP_WINDOW_MS, FEATURE_INTROS, featureIntroById, MAX_FEATURE_INTRO_SKIPS, switchesForAnswer,
-  type FeatureIntroAnswer, type FeatureIntroState, type FeatureIntroStates, type FeatureIntrosView,
+  answerFromSwitches, answerFromUiPrefs, FEATURE_INTRO_SKIP_WINDOW_MS, FEATURE_INTROS, featureIntroById, MAX_FEATURE_INTRO_SKIPS, switchesForAnswer,
+  type FeatureIntro, type FeatureIntroAnswer, type FeatureIntroState, type FeatureIntroStates, type FeatureIntrosView,
 } from "../shared/feature-intros.ts";
 
 const log = createLogger("feature-intros");
@@ -42,6 +44,20 @@ export function readFeatureIntroStates(): FeatureIntroStates {
   return states;
 }
 
+/** The `ui_prefs` row the browser writes through `PUT /api/settings/ui-prefs`; {} when unset or unreadable. */
+function readUiPrefs(): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(getConfigValue("ui_prefs") ?? "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+/** What is already saved for `intro`: its `ui_prefs` boolean, or else its tool switches. */
+const answerFromSettings = (intro: FeatureIntro, ai: PpmConfig["ai"], prefs: Record<string, unknown>) =>
+  intro.uiPref ? answerFromUiPrefs(prefs, intro) : answerFromSwitches(ai.ppm_tools, intro);
+
 const stateOf = (states: FeatureIntroStates, id: string): FeatureIntroState => states[id] ?? { answer: null, skips: 0 };
 
 /**
@@ -50,11 +66,12 @@ const stateOf = (states: FeatureIntroStates, id: string): FeatureIntroState => s
  */
 export function settleFeaturesDecidedInSettings(now = new Date()): boolean {
   const states = readFeatureIntroStates();
-  const switches = configService.get("ai").ppm_tools;
+  const ai = configService.get("ai");
+  const prefs = readUiPrefs();
   let changed = false;
   for (const intro of FEATURE_INTROS) {
     const state = stateOf(states, intro.id);
-    const fromSwitches = answerFromSwitches(switches, intro);
+    const fromSwitches = answerFromSettings(intro, ai, prefs);
     if (state.answer || !fromSwitches) continue;
     states[intro.id] = { ...state, answer: fromSwitches, answeredAt: now.toISOString(), via: "settings" };
     changed = true;
@@ -117,8 +134,12 @@ export function answerFeatureIntro(id: string, answer: FeatureIntroAnswer, now =
     log.info(`Feature "${id}" already ${current.answer} (via ${current.via ?? "unknown"}); ignoring a late "${answer}"`);
     return { ok: true, state: current, changed: false };
   }
-  const ai = configService.get("ai");
-  configService.set("ai", { ...ai, ppm_tools: { ...ai.ppm_tools, ...switchesForAnswer(intro, answer) } });
+  if (intro.uiPref) {
+    setConfigValue("ui_prefs", JSON.stringify({ ...readUiPrefs(), [intro.uiPref]: answer === "on" }));
+  } else {
+    const ai = configService.get("ai");
+    configService.set("ai", { ...ai, ppm_tools: { ...ai.ppm_tools, ...switchesForAnswer(intro, answer) } });
+  }
   const state: FeatureIntroState = { ...current, answer, answeredAt: now.toISOString(), via: "tour" };
   delete state.seenInSettings;
   configService.set("feature_intros", { ...states, [id]: state });

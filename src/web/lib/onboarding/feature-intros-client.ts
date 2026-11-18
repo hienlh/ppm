@@ -4,7 +4,7 @@
  */
 import { api } from "@/lib/api-client";
 import { isPpmTool } from "../../../shared/ppm-tools";
-import type { FeatureIntro, FeatureIntroAnswer, FeatureIntrosView } from "../../../shared/feature-intros";
+import { isFeatureUiPref, type FeatureIntro, type FeatureIntroAnswer, type FeatureIntrosView } from "../../../shared/feature-intros";
 import type { OnboardingStatus } from "./onboarding-types";
 
 const base = (id: string) => `/api/feature-intros/${encodeURIComponent(id)}`;
@@ -14,7 +14,9 @@ function parseIntro(raw: unknown): FeatureIntro | null {
   const value = raw as Record<string, unknown>;
   if (typeof value.id !== "string" || typeof value.title !== "string" || typeof value.body !== "string") return null;
   if (!Array.isArray(value.tools) || !value.tools.every(isPpmTool)) return null;
-  return { id: value.id, title: value.title, body: value.body, tools: value.tools, since: typeof value.since === "string" ? value.since : "" };
+  const intro: FeatureIntro = { id: value.id, title: value.title, body: value.body, tools: value.tools, since: typeof value.since === "string" ? value.since : "" };
+  if (isFeatureUiPref(value.uiPref)) intro.uiPref = value.uiPref;
+  return intro;
 }
 
 /** The server's answer, or null when it is not one: an unexpected shape shows nothing. */
