@@ -246,7 +246,7 @@ export async function forwardUserWordsAboutTask(input: TaskWordsInput, env: Forw
   const main = env.mainSession();
   if (main) {
     env.note(main, `The user wrote about task ${taskRef.ref} (${taskRef.taskId}) ${where(actor.channel)}; `
-      + `PPM forwarded it word for word to the chat working on it in ${target.projectName}.`);
+      + `PPM forwarded it word for word to ${input.chatKind === "manager" ? `the ${target.projectName} manager chat` : `the chat working on it in ${target.projectName}`}.`);
   }
   return { ok: true, sessionId: delivered.sessionId, delivered: delivered.delivered };
 }

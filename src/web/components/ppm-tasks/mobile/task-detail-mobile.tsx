@@ -11,7 +11,8 @@ import { ArrowLeft, Check, ChevronDown, Maximize2, MoreHorizontal, RotateCcw, X 
 import { cn } from "@/lib/utils";
 import { useManagerChats } from "@/hooks/use-manager-chats";
 import { usePpmTaskHistory } from "@/hooks/use-ppm-tasks";
-import { askManagerAboutTask, managerOf } from "@/lib/ppm-tasks/ask-manager-about-task";
+import { askManagerAboutTask } from "@/lib/ppm-tasks/ask-manager-about-task";
+import { taskManagerChat } from "@/lib/ppm-tasks/task-chat-buttons";
 import { openTaskChat, workingProvider } from "@/lib/ppm-tasks/open-task-tab";
 import { openTask } from "@/lib/ppm-tasks/open-task";
 import { revealTaskInSidebar } from "@/lib/ppm-tasks/reveal-task-in-sidebar";
@@ -58,8 +59,9 @@ export function TaskDetailMobile({ detail, settings, sheet: inSheet }: TaskDetai
   const openWorkingChat = useCallback((sid: string) => { leave?.(); openTaskChat(task.project, sid, workingProvider(task), task); }, [task, leave]);
   // Start chat may ask first (the page's own dialog), so the sheet goes only once a chat opened.
   const startChat = useCallback(() => void write.startChat(task).then((sid) => { if (sid) leave?.(); }), [task, write, leave]);
-  // Without a manager chat nothing opens (a toast says so): the sheet stays.
-  const askManager = useCallback(() => { if (managerOf(task.project, managers)) leave?.(); void askManagerAboutTask(task, managers); }, [task, managers, leave]);
+  // Offered only when the project has a manager chat (the working-session block and ···).
+  const manager = taskManagerChat(task, managers);
+  const askManager = useCallback(() => { leave?.(); askManagerAboutTask(task, managers); }, [task, managers, leave]);
 
   return (
     <div className="flex h-full flex-col bg-background" data-task-detail={task.id} data-task-detail-mobile="">
@@ -108,6 +110,7 @@ export function TaskDetailMobile({ detail, settings, sheet: inSheet }: TaskDetai
         {tab === "details" ? (
           <TaskDetailMobileDetails detail={detail} settings={settings} deciding={deciding} awayChanges={away}
             onPatch={patch} onOpenChat={openChat} onOpenWorkingChat={openWorkingChat} onStartChat={startChat} onSheet={setSheet} onShowActivity={() => setTab("activity")}
+            {...(manager ? { onAskManager: askManager, managerSessionId: manager.sessionId } : {})}
             onDecide={(optionId) => { setDeciding(true); void write.decide(task, optionId).finally(() => setDeciding(false)); }}
             onAddLink={async (link) => !!(await run(task.id, () => actions.addLink(task, link)))}
             onRemoveLink={(link) => void run(task.id, () => actions.removeLink(task, link))} />
@@ -138,7 +141,7 @@ export function TaskDetailMobile({ detail, settings, sheet: inSheet }: TaskDetai
           </button>
         )}
       </footer>
-      <TaskFieldEditorSheet kind={sheet} task={task} childTasks={children} settings={settings} hasManager={!!managerOf(task.project, managers)}
+      <TaskFieldEditorSheet kind={sheet} task={task} childTasks={children} settings={settings} hasManager={!!manager}
         onClose={() => setSheet(null)} onPatch={patch} onStatus={(id) => changeTaskStatus(write, task, id, settings?.statuses)}
         onOpenTask={(t) => openTask(t, { keep: true })} onAddChild={() => setChildOpen(true)} onManageFields={() => setFieldsOpen(true)}
         onAskManager={askManager} onStartChat={startChat} onOpenSheet={setSheet} />

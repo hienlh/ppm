@@ -1899,7 +1899,11 @@ card, only for changes whose line the Telegram copy actually shows.
 (`assistant-telegram-task-message.ts`). It arms the chat: the user's next message goes to the chat
 working on that task — its handed-off chat, else the project's manager chat — instead of to the
 Assistant. The bot names the task and the chat, offers Cancel, and stops waiting after ten minutes;
-commands still go to the Assistant. A reply to a task card (or to that "next message goes to…" line)
+commands still go to the Assistant. "🤖 Ask manager" beside it arms the chat the same way for the
+project's manager chat, whichever chat the task was handed to; a reply to its "next message goes
+to…" line, or to the manager's answer, goes to the manager again. A task not handed off shows Ask
+manager alone (both would reach the manager chat), and a project with no manager chat keeps Message
+about this task alone (`taskWordsButtons`). A reply to a task card (or to that "next message goes to…" line)
 does the same for one message with nothing to arm. Before this, a reply to a `/tasks` card reached
 the Assistant as an ordinary message with the card quoted (`reply_to_message` → `quoteOf`), never
 the task's chat. The words go through `forwardUserWordsAboutTask` (`forward-verbatim.ts`): word for

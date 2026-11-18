@@ -70,7 +70,9 @@ async function desktop(k, s) {
   await k.selectTask(s.t.login.title);
   const block = k.detail().locator("[data-working-session]");
   await block.waitFor({ timeout: 20000 });
-  await block.getByRole("button", { name: "Open chat" }).click();
+  // The manager works on this task: the page offers Ask manager, and the block no Open chat beside it.
+  assert.equal(await block.getByRole("button", { name: "Open chat" }).count(), 0, "no Open chat for a task the manager works on");
+  await k.detail().getByRole("button", { name: "Ask manager" }).first().click();
   const chip = page.locator("[data-composer-task-refs] [data-task-chip]:visible").first();
   await chip.waitFor({ timeout: 30000 });
   assert.match(await chip.innerText(), new RegExp(`#${s.t.login.number}\\s*${s.t.login.title}`));
@@ -104,7 +106,7 @@ async function desktop(k, s) {
   await k.shot("03-ai-view-of-the-block");
   await frame.close();
   k.use(k.desktop);
-  record("desktop", "Open chat → chip → sent with the task's block → chip gone and not back after reload");
+  record("desktop", "Ask manager → chip → sent with the task's block → chip gone and not back after reload");
 }
 
 async function phoneFlow(k, s) {
@@ -114,7 +116,7 @@ async function phoneFlow(k, s) {
   await page.locator("[data-task-row]").getByText(s.t.release.title).first().tap();
   const detail = page.locator("[data-task-detail-mobile]:visible");
   await detail.waitFor({ timeout: 15000 });
-  const open = detail.locator("[data-working-session]").getByRole("button", { name: "Open chat" });
+  const open = detail.locator("[data-working-session]").getByRole("button", { name: "Ask manager" });
   await open.scrollIntoViewIfNeeded();
   await open.tap();
   const chip = page.locator("[data-composer-task-refs] [data-task-chip]:visible").first();
@@ -134,7 +136,7 @@ async function phoneFlow(k, s) {
   assert(msg.text.includes(`task_id ${s.t.release.id}`));
   await assertHeights(page, "[data-user-message] [data-task-ref]", TEXT_HEIGHT(true), "phone sent chip");
   await k.shot("05-phone-390-sent-with-task-chip");
-  record("phone", "390 px: Open chat → 26 px chip (22 px remove) → sent with the task's block in a 26 px chip");
+  record("phone", "390 px: Ask manager → 26 px chip (22 px remove) → sent with the task's block in a 26 px chip");
 }
 
 /** A chat of `project`, named at creation, that the task is handed off to. */
@@ -209,7 +211,8 @@ async function telegram(k, s) {
   }
   assert(deck.text.includes(s.t.review.title), "the deck reached the review task");
   const shownDeck = { ...deck };
-  await tg.pressLabel(owner, deck, "💬 Message about this task");
+  // Not handed off: the card's one button for its chat is Ask manager.
+  await tg.pressLabel(owner, deck, "🤖 Ask manager");
   const prompt = await tg.waitFor(owner, "the prompt", (m) => m.text.includes("Your next message goes to"), 20000);
   assert(prompt.text.includes("the alpha manager chat"));
   assert.deepEqual(buttonsOf(prompt).map((b) => b.text), ["Cancel"]);
@@ -224,7 +227,7 @@ async function telegram(k, s) {
   const page = await k.openFrame(telegramFrame([
     { text: "/tasks alpha", from_user: true },
     { ...shownDeck, caption: "The task's card" },
-    { text: "💬 Message about this task", from_user: true },
+    { text: "🤖 Ask manager", from_user: true },
     { ...shownPrompt, caption: "What the bot says next" },
     { text: typed, from_user: true },
     { ...done, caption: "Once it went" },
@@ -233,7 +236,7 @@ async function telegram(k, s) {
   await k.shot("06-telegram-message-about-task");
   await page.setContent(aiViewFrame(msg.text, "What the alpha manager's AI received from Telegram"));
   await k.shot("07-telegram-ai-view");
-  record("telegram", "Message about this task → prompt with Cancel → next words to the manager chat with user-words and task blocks", { sentBefore: start });
+  record("telegram", "Ask manager → prompt with Cancel → next words to the manager chat with user-words and task blocks", { sentBefore: start });
 }
 
 try {
