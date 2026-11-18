@@ -83,10 +83,16 @@ function chatFacts(p: ScriptScheduleProposal, deps: ProposalCardDeps): ApprovalF
   return facts;
 }
 
+/**
+ * A value as the script receives it: text verbatim between quotes (JSON would double every
+ * backslash of a Windows path, which is not the value that runs), a number or a boolean bare.
+ */
+export const inputValueShown = (v: ScheduleInputValue): string => (typeof v === "string" ? `"${v}"` : String(v));
+
 function inputValueText(d: ScheduleInputDecl, values: ScriptScheduleProposal["inputValues"]): string {
   if (d.type === "secret") return "(secret — set by you in Settings → Schedules; none now)";
-  if (Object.hasOwn(values, d.key)) return JSON.stringify(values[d.key]);
-  if (d.default !== undefined) return `${JSON.stringify(d.default)} (its default)`;
+  if (Object.hasOwn(values, d.key)) return inputValueShown(values[d.key]!);
+  if (d.default !== undefined) return `${inputValueShown(d.default)} (its default)`;
   return "(empty)";
 }
 

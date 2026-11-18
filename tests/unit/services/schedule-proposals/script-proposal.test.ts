@@ -144,6 +144,14 @@ describe("a proposal given as a file", () => {
     expect(proposalMismatch(getSchedule(id)!, p, "claude")).toBeNull();
   });
 
+  it("shows a Windows path in an input value exactly as the script gets it, backslashes single", () => {
+    const path = String.raw`C:\tools\py\python.exe`;
+    const p = ok(fields({ inputs: [...fields().inputs, { key: "py", label: "Python", type: "text" }], inputValues: { sessionId: CHAT, py: path } }));
+    const shown = scriptProposalSummary(p, "claude", cardDeps).facts.find((f) => f.label === "Input py")!.value;
+    expect(shown).toBe(`"${path}"`);
+    expect(shown.split("\\").length - 1).toBe(3);
+  });
+
   it("checks the file's `values` exactly as inputValues: declared, not secret, not null, the right type, no vault value", () => {
     const file = join(project.path, "plans", "bad-values.ppm-schedule.json");
     const inputs = [
@@ -184,7 +192,7 @@ describe("a proposal given as a file", () => {
     expect(p.proposal.cron).toBe(raw.cron);
     const summary = scriptProposalSummary(p.proposal, "claude", cardDeps);
     for (const [key, value] of Object.entries(raw.values)) {
-      expect(summary.facts.find((f) => f.label === `Input ${key}`)!.value).toBe(JSON.stringify(value));
+      expect(summary.facts.find((f) => f.label === `Input ${key}`)!.value).toBe(`"${value}"`);
     }
     expect(readFileSync(NXSYS_SAMPLE).equals(before)).toBe(true);
   });
@@ -233,7 +241,7 @@ describe("the card", () => {
     expect(facts["Next 3 runs"]).toBe("2026-11-18 19:00 Europe/London, 2026-11-18 19:05 Europe/London, 2026-11-18 19:10 Europe/London (Europe/London)");
     expect(facts.Timeout).toBe("5 minutes per run, then it is stopped");
     expect(facts["Sends to chat"]).toBe(`QL Review PR (${CHAT})`);
-    expect(facts["Input sessionId"]).toBe(JSON.stringify(CHAT));
+    expect(facts["Input sessionId"]).toBe(`"${CHAT}"`);
     expect(s.warning).toContain("Nobody watches this");
     expect(s.reviewInPpm).toBe(SCRIPT_REVIEW_IN_PPM);
   });
