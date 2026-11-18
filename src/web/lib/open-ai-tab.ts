@@ -1,5 +1,4 @@
 import { usePanelStore } from "@/stores/panel-store";
-import { useGitRepoStore } from "@/stores/git-repo-store";
 import { useProjectStore } from "@/stores/project-store";
 import { absoluteProjectPath, relativeProjectPath } from "@/stores/file-store";
 import { fsApi } from "@/lib/fs-api";
@@ -223,16 +222,16 @@ const isAssistantTerminal = (req: TabOpenRequest): boolean => req.tool === RUN_I
  * Opens Branch Review beside the chat on the refs `open_branch_review` checked, or points the one
  * already open there: a project has one Branch Review tab, and the tab takes `base`/`head` from its
  * metadata whenever `aiOpenAt` moves. In a project folder holding several repositories the server
- * named one, and it becomes this device's choice, as picking it in Source Control would.
+ * named one; it goes in the tab's metadata as `repo`, which scopes that tab alone and leaves the
+ * repository the user has chosen for Source Control as it was.
  */
 export function openAiBranchReviewTab(
   req: Pick<TabOpenBranchReviewRequest, "projectName" | "repo" | "base" | "head">,
   chat: AiTabChat,
 ): string {
-  if (req.repo) useGitRepoStore.getState().choose(req.projectName, req.repo);
   const placement = placeBesideChat(chat, (tab) => tab.type === "branch-review" && tab.metadata?.projectName === req.projectName);
   const store = usePanelStore.getState();
-  const view = { base: req.base, head: req.head, aiOpenAt: Date.now() };
+  const view = { base: req.base, head: req.head, repo: req.repo ?? undefined, aiOpenAt: Date.now() };
   if (placement.kind === "open") {
     const tabId = store.openTab(
       { type: "branch-review", title: "Branch Review", projectId: req.projectName, closable: true, metadata: { projectName: req.projectName, ...view } },

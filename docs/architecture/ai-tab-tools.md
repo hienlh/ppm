@@ -186,7 +186,10 @@ review leaves out — the usual reason a review comes up short. The browser
 (`openAiBranchReviewTab`) reuses the project's one Branch Review tab or opens it beside the chat,
 with `base`, `head` and `aiOpenAt` in its metadata; the tab sets its pickers from them whenever
 `aiOpenAt` moves, so a second call moves a tab already open. In a container folder the repository
-the server named becomes the device's choice, as picking it in Source Control would.
+the server named goes in the tab's metadata as `repo` too, and scopes that tab alone
+(`useGitRepo(project, pinned)`): the repository the user has chosen for Source Control and the other
+git panels stays chosen. Picking a repository in the tab itself is the user's own choice, so it goes
+to the device's choice as every picker's does, and the tab drops `repo` and follows it.
 
 The card for all four is `device-tool-card.tsx` (read by `deviceToolCall`): the address, the
 pair reviewed, the command in full, or the terminal read.

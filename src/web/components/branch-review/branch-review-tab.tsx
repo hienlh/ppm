@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 import { useGitRepo } from "@/hooks/use-git-repo";
 import { useIsMobile } from "@/hooks/use-is-mobile";
+import { usePanelStore } from "@/stores/panel-store";
 import { DiffViewer } from "@/components/editor/diff-viewer";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -53,11 +54,31 @@ function defaultBase(branches: GitBranch[], current: string | undefined): string
 
 interface BranchReviewTabProps {
   metadata?: Record<string, unknown>;
+  tabId?: string;
 }
 
-export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
+export function BranchReviewTab({ metadata, tabId }: BranchReviewTabProps) {
   const projectName = metadata?.projectName as string | undefined;
-  const gitRepo = useGitRepo(projectName);
+  // The repository the AI's `open_branch_review` named, for this tab alone: the device's choice
+  // (Source Control's) is left where the user put it.
+  const pinnedRepo = typeof metadata?.repo === "string" ? metadata.repo : undefined;
+  const gitRepo = useGitRepo(projectName, pinnedRepo);
+  // Picking here is the user's own choice, so it goes where every picker's does, and the tab
+  // stops holding the AI's repository so that it follows that choice.
+  const chooseRepo = useCallback(
+    (path: string) => {
+      if (pinnedRepo && tabId) {
+        const store = usePanelStore.getState();
+        const tab = Object.values(store.panels).flatMap((p) => p.tabs).find((t) => t.id === tabId);
+        if (tab) {
+          const { repo: _pin, ...rest } = tab.metadata ?? {};
+          store.updateTab(tabId, { metadata: rest });
+        }
+      }
+      gitRepo.choose(path);
+    },
+    [pinnedRepo, tabId, gitRepo],
+  );
   const isMobile = useIsMobile();
 
   const [branches, setBranches] = useState<GitBranch[]>([]);
@@ -212,7 +233,7 @@ export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
   }, [reviewed, files, selectedPath]);
 
   if (gitRepo.noRepo) return <GitNoRepo onReload={gitRepo.reload} />;
-  if (gitRepo.needsPick) return <GitRepoChoice repos={gitRepo.repos} onChoose={gitRepo.choose} />;
+  if (gitRepo.needsPick) return <GitRepoChoice repos={gitRepo.repos} onChoose={chooseRepo} />;
 
   const fileList = (
     <ScrollArea className="h-full">
@@ -255,7 +276,7 @@ export function BranchReviewTab({ metadata }: BranchReviewTabProps) {
   return (
     <div className="flex flex-col h-full overflow-hidden bg-bg">
       {gitRepo.isNested && gitRepo.repo && (
-        <GitRepoBar repo={gitRepo.repo} repos={gitRepo.repos} onChoose={gitRepo.choose} />
+        <GitRepoBar repo={gitRepo.repo} repos={gitRepo.repos} onChoose={chooseRepo} />
       )}
 
       {/*
