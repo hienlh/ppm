@@ -36,6 +36,15 @@ function modeFacts(mode: string | undefined, source: SessionCollabModeSource | u
 }
 
 export function collabDecidingParts(input: SessionCollabApprovalInput): CollabDecidingParts {
+  if (input.kind === "schedule") {
+    const s = input.summary;
+    return {
+      title: s.headline,
+      facts: [...s.facts.map((f) => ({ label: f.label, value: f.value })), ...(s.warning ? [{ label: "Warning", value: s.warning }] : [])],
+      text: s.body?.text ?? "",
+      ...(s.body?.text ? { label: s.body.label } : {}),
+    };
+  }
   if (input.kind === "message") {
     return {
       title: `Send a message to a ${providerLabel(input.providerId)} chat in "${input.projectName}"; it runs there as if you sent it`,

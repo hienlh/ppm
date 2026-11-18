@@ -6,8 +6,13 @@
 export const SESSION_SCHEDULE_CREATE_TOOL = "session_schedule_create";
 export const SESSION_SCHEDULE_LIST_TOOL = "session_schedule_list";
 export const SESSION_SCHEDULE_DELETE_TOOL = "session_schedule_delete";
+/** Pause or turn on a schedule: the chat's own prompts unasked, its project's others behind a card. */
+export const SESSION_SCHEDULE_SET_ENABLED_TOOL = "session_schedule_set_enabled";
+/** Propose a script schedule in the chat's project; created only once the user allows the card. */
+export const SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL = "session_schedule_propose_script";
 export const SESSION_SCHEDULE_TOOLS = [
   SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_LIST_TOOL, SESSION_SCHEDULE_DELETE_TOOL,
+  SESSION_SCHEDULE_SET_ENABLED_TOOL, SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL,
 ] as const;
 export type SessionScheduleTool = (typeof SESSION_SCHEDULE_TOOLS)[number];
 

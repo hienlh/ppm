@@ -40,11 +40,14 @@ describe("PPM tool switches", () => {
   it("keeps the schedule tools off until their own question is answered, whatever the session tools' answer", () => {
     const sessionToolsOn = Object.fromEntries([...SESSION_HISTORY_TOOLS, ...SESSION_COLLAB_TOOLS].map((tool) => [tool, true]));
     expect(onOf({ ppm_tools: sessionToolsOn }).filter((t) => SESSION_SCHEDULE_TOOLS.includes(t as never))).toEqual([]);
-    // "Turn on" for the schedule feature writes all three; one set later turns the unset siblings with it.
+    // "Turn on" for the schedule feature writes all five; one set later turns the unset siblings with it.
     expect(onOf({ ppm_tools: { session_schedule_list: true } }).filter((t) => SESSION_SCHEDULE_TOOLS.includes(t as never)))
       .toEqual([...SESSION_SCHEDULE_TOOLS]);
     expect(patchPpmToolSwitches(undefined, { session_schedule_create: true }))
-      .toEqual({ session_schedule_create: true, session_schedule_list: false, session_schedule_delete: false });
+      .toEqual({
+        session_schedule_create: true, session_schedule_list: false, session_schedule_delete: false,
+        session_schedule_set_enabled: false, session_schedule_propose_script: false,
+      });
     // A schedule tool alone is reason enough to attach the session tools' server.
     expect(anyPpmToolOn({ ppm_tools: { session_schedule_create: true } }, SESSION_TOOLS)).toBe(true);
   });

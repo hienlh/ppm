@@ -15,6 +15,7 @@ import {
   sessionCollabAnswersFor, type SessionCollabAnswer, type SessionCollabApprovalInput,
 } from "../../../shared/session-collab";
 import { ProviderBadge } from "./provider-selector";
+import { SummaryBody } from "./approval-card";
 
 const MODE_LABELS: Record<string, string> = {
   plan: "Plan",
@@ -45,6 +46,10 @@ function heading(input: SessionCollabApprovalInput): string {
   if (input.kind === "create" && input.design) return `The ${input.askedBy === "assistant" ? "Assistant" : "AI"} wants to open a Design chat for ${input.design.title}`;
   if (input.kind === "create") return input.projectName ? `The Assistant wants to open a chat in ${input.projectName}` : "The AI wants to create a session";
   if (input.kind === "pair_limit") return "These sessions reached their message limit";
+  if (input.kind === "schedule") {
+    return input.action === "create_script" ? "The AI proposes a script schedule"
+      : input.action === "enable" ? "The AI wants to turn on a schedule" : "The AI wants to pause a schedule";
+  }
   if (input.kind === "message") return `The Assistant wants to message a chat in ${input.projectName}`;
   return "The AI wants to message a session with more rights";
 }
@@ -112,6 +117,8 @@ export function CollabApprovalCard({ requestId, input }: { requestId: string; in
 }
 
 function CollabApprovalBody({ input }: { input: SessionCollabApprovalInput }) {
+  // The server's own summary of the schedule, as the Assistant's schedule cards show it.
+  if (input.kind === "schedule") return <SummaryBody summary={input.summary} />;
   if (input.kind === "create") {
     return (
       <>

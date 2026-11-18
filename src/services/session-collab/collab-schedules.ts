@@ -9,10 +9,11 @@ import { textResult, type Json } from "../mcp-http-endpoint.ts";
 import type { BroadcastOutcome, NotificationPayload } from "../notification.service.ts";
 import { MAX_SCHEDULES_PER_SESSION } from "../../shared/session-schedule-input.ts";
 import {
-  SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_LIST_TOOL, type SessionScheduleTool,
+  SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_DELETE_TOOL, SESSION_SCHEDULE_LIST_TOOL, type SessionScheduleTool,
 } from "../../shared/session-schedule-tools.ts";
 import type { Schedule } from "../../types/scheduler.ts";
-import { deleteSchedule, getSchedule } from "../scheduler-db.service.ts";
+import { deleteSchedule, getSchedule, getSchedules } from "../scheduler-db.service.ts";
+import { projectOfFolder } from "../assistant-mcp/assistant-schedule-shape.ts";
 import { ScheduleEditError } from "../scheduler-edit.ts";
 import { SessionScheduleRefusal, sessionScheduleTargetIds } from "../session-schedules/session-schedule-lifecycle.ts";
 import { createSessionSchedule, sessionSchedulesOf } from "../session-schedules/session-schedule-save.ts";
@@ -111,6 +112,24 @@ function describe(s: Schedule, env: SessionScheduleToolEnv): Json {
 }
 
 /**
+ * A script or prompt schedule of the chat's project, as the list gives it: enough to pause or turn
+ * it on by id, not its script or prompt (Settings → Schedules shows those).
+ */
+function describeProjectSchedule(s: Schedule, env: SessionScheduleToolEnv): Json {
+  const zone = s.timezone ?? env.localZone();
+  return {
+    id: s.id,
+    name: s.name,
+    kind: s.kind,
+    mode: s.mode,
+    ...(s.mode === "tick" ? { cron: s.cron_expr, timeZone: zone } : {}),
+    enabled: s.enabled === 1,
+    nextFire: s.enabled && s.next_fire_at ? { at: s.next_fire_at, local: wallClock(s.next_fire_at, zone) } : null,
+    ...(s.description && { description: s.description.slice(0, 300) }),
+  };
+}
+
+/**
  * The notice for a schedule the AI just created, within the chat's cap. It is sent only if the
  * schedule still exists when the notification delay ends, so a schedule created and deleted again
  * (or a one-shot that already ran) is not announced.
@@ -175,9 +194,15 @@ export function sessionScheduleToolCall(env: SessionScheduleToolEnv, tokenSessio
 
   if (name === SESSION_SCHEDULE_LIST_TOOL) {
     const schedules = sessionSchedulesOf(sessionId, env.target);
-    return json({ schedules: schedules.map((s) => describe(s, env)), count: schedules.length, max: MAX_SCHEDULES_PER_SESSION });
+    const project = [{ name: chat.target.projectName, path: chat.target.projectPath }];
+    const projectSchedules = getSchedules()
+      .filter((s) => s.kind !== "session" && projectOfFolder(s.project_path, project))
+      .map((s) => describeProjectSchedule(s, env));
+    return json({ schedules: schedules.map((s) => describe(s, env)), count: schedules.length, max: MAX_SCHEDULES_PER_SESSION, projectSchedules });
   }
 
+  // The other schedule tools wait on a card and are served by `collab-schedule-proposals.ts`.
+  if (name !== SESSION_SCHEDULE_DELETE_TOOL) return fail(`${name} is not served here.`);
   const id = typeof args.id === "number" ? args.id : typeof args.id === "string" && /^\d+$/.test(args.id) ? Number(args.id) : NaN;
   if (!Number.isSafeInteger(id) || id < 1) return fail("`id` must be a schedule id from session_schedule_list.");
   const schedule = getSchedule(id);

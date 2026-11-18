@@ -8,6 +8,7 @@
  * already have as an MCP server of their own.
  */
 import type { SessionPhase } from "../types/api.ts";
+import type { ApprovalSummary } from "./assistant-approval.ts";
 import { SESSION_SCHEDULE_TOOLS } from "./session-schedule-tools.ts";
 import { VAULT_TOOLS } from "./vault.ts";
 import { PPM_TASK_TOOLS } from "./ppm-task-tools.ts";
@@ -42,7 +43,7 @@ export const CODEX_SESSION_COLLAB_MCP_SERVER = "ppm_sessions";
  */
 export const SESSION_COLLAB_APPROVAL = "ppm:session_collab";
 
-export type SessionCollabApprovalKind = "create" | "pair_limit" | "escalation" | "message";
+export type SessionCollabApprovalKind = "create" | "pair_limit" | "escalation" | "message" | "schedule";
 
 /** Where the mode a message or a new chat runs in came from, as a card states it. */
 export type SessionCollabModeSource = "running" | "stored" | "live" | "provider-default";
@@ -148,11 +149,23 @@ export interface SessionCollabMessageApproval {
   message: string;
 }
 
+/**
+ * A chat's AI asks to create a script schedule, or to pause or turn on one of its project's
+ * schedules; shown in the asking chat. The card is the same summary the PPM Assistant's schedule
+ * cards carry, built by the server from what it checked. Answered once or not at all.
+ */
+export interface SessionCollabScheduleApproval {
+  kind: "schedule";
+  action: "create_script" | "enable" | "disable";
+  summary: ApprovalSummary;
+}
+
 export type SessionCollabApprovalInput =
   | SessionCollabCreateApproval
   | SessionCollabPairLimitApproval
   | SessionCollabEscalationApproval
-  | SessionCollabMessageApproval;
+  | SessionCollabMessageApproval
+  | SessionCollabScheduleApproval;
 
 /** The approval event held in the asking session's one approval slot. */
 export interface SessionCollabApprovalRequest {
@@ -178,6 +191,11 @@ export const isSessionCollabAnswer = (value: unknown): value is SessionCollabAns
 export function sessionCollabApprovalInput(tool: string, input: unknown): SessionCollabApprovalInput | null {
   if (tool !== SESSION_COLLAB_APPROVAL || !input || typeof input !== "object") return null;
   const kind = (input as { kind?: unknown }).kind;
+  if (kind === "schedule") {
+    const summary = (input as { summary?: unknown }).summary;
+    return summary && typeof summary === "object" && typeof (summary as { headline?: unknown }).headline === "string"
+      ? input as SessionCollabApprovalInput : null;
+  }
   return kind === "create" || kind === "pair_limit" || kind === "escalation" || kind === "message"
     ? input as SessionCollabApprovalInput : null;
 }
@@ -190,8 +208,8 @@ const ONCE_OR_DENY: readonly SessionCollabAnswer[] = ["allow_once", "deny"];
  * write into chats unasked from then on.
  */
 export function sessionCollabAnswersFor(card: SessionCollabApprovalKind | SessionCollabApprovalInput): readonly SessionCollabAnswer[] {
-  if (typeof card === "string") return card === "pair_limit" || card === "message" ? ONCE_OR_DENY : SESSION_COLLAB_ANSWERS;
-  if (card.kind === "pair_limit" || card.kind === "message") return ONCE_OR_DENY;
+  if (typeof card === "string") return card === "pair_limit" || card === "message" || card === "schedule" ? ONCE_OR_DENY : SESSION_COLLAB_ANSWERS;
+  if (card.kind === "pair_limit" || card.kind === "message" || card.kind === "schedule") return ONCE_OR_DENY;
   return card.kind === "create" && card.askedBy === "assistant" ? ONCE_OR_DENY : SESSION_COLLAB_ANSWERS;
 }
 

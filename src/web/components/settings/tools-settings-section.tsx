@@ -94,6 +94,14 @@ const TOOL_COPY: Record<PpmTool, { label: string; note: string }> = {
     label: "Delete schedules",
     note: "Deletes a prompt scheduled into its own chat. Another chat's schedules are out of its reach.",
   },
+  session_schedule_set_enabled: {
+    label: "Pause and resume schedules",
+    note: "Pauses or turns on a prompt scheduled into its own chat at once, and a script or prompt schedule of its project only after you allow a card.",
+  },
+  session_schedule_propose_script: {
+    label: "Propose script schedules",
+    note: "Proposes a script schedule for its project. Nothing is created until you allow a card in PPM showing the whole script, where it runs, when, and which chats it messages.",
+  },
   vault_list: {
     label: "List vault items",
     note: "Lists the names, kinds and tiers of your vault's items, never a value.",
@@ -168,7 +176,7 @@ const GROUPS: Array<{ title: string; intro: string; tools: readonly PpmTool[] }>
   },
   {
     title: "Schedules",
-    intro: "Prompts a chat schedules into itself. Each one is listed in Settings → Schedules, where you can turn it off or delete it.",
+    intro: "Prompts a chat schedules into itself, and script schedules it proposes for its project behind a card. Each one is listed in Settings → Schedules, where you can turn it off or delete it.",
     tools: SESSION_SCHEDULE_TOOLS,
   },
   {

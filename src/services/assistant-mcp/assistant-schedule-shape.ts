@@ -97,6 +97,8 @@ export function scheduleView(s: Schedule, project: AssistantProject | null, mach
 /** Fields a person decides; a card shows these, so an approval covers exactly these values. */
 const DECIDED: ReadonlyArray<keyof Schedule> = [
   "name", "cron_expr", "project_path", "prompt", "permission_mode", "max_turns", "timeout_ms", "enabled", "provider_id",
+  // What a script schedule runs, and when: a card turning one on shows the script.
+  "kind", "mode", "script", "inputs_json", "input_values_json", "timezone",
 ];
 
 /**

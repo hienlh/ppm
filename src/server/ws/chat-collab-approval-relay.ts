@@ -1,6 +1,7 @@
 import { collabApprovalBroker } from "../../services/session-collab/collab-approval-broker.ts";
 import type { ChatMessageOrigin, LiveApprovalCard } from "../../services/chat-control/chat-control.ts";
 import { SESSION_COLLAB_APPROVAL, sessionCollabApprovalInput } from "../../shared/session-collab.ts";
+import { decidingInput } from "../../services/chat-control/approval-deciding-input.ts";
 
 /**
  * The session tools' cards (a message into a chat, a chat to open) beyond the browser: told to the
@@ -43,7 +44,11 @@ const PRESSES: ReadonlySet<ChatMessageOrigin> = new Set<ChatMessageOrigin>(["tel
 export function settleCollabApprovalFromServer(
   sessionId: string, requestId: string, approved: boolean, origin: ChatMessageOrigin,
 ): "answered" | "stale" {
-  if (!PRESSES.has(origin) || collabApprovalBroker.pendingEvent(sessionId)?.requestId !== requestId) return "stale";
+  const pending = collabApprovalBroker.pendingEvent(sessionId);
+  if (!PRESSES.has(origin) || pending?.requestId !== requestId) return "stale";
+  // A card that may be allowed only in PPM (a script schedule) is never allowed from here, whatever
+  // button a surface drew: only its Deny is taken.
+  if (approved && !decidingInput({ tool: pending.tool, input: pending.input }).complete) return "stale";
   const result = collabApprovalBroker.answer(requestId, { answer: approved ? "allow_once" : "deny" });
   return result.ok ? "answered" : "stale";
 }

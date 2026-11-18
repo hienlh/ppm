@@ -21,11 +21,18 @@ export interface ApprovalSummary {
   headline: string;
   facts: ApprovalFact[];
   /** The exact text that will run or be sent, shown in full and wrapped. */
-  body?: { label: string; text: string; format: "sql" | "text" };
+  body?: { label: string; text: string; format: "sql" | "text" | "code" };
   /** How many SQL statements `body` holds. */
   statementCount?: number;
   /** A line shown highlighted above the buttons. */
   warning?: string;
+  /**
+   * Set when the card may be allowed only in PPM, where all of it is on screen: away from PPM
+   * (Telegram, the Assistant answering another chat's card, its mirror) it offers Deny only, with
+   * this as the reason. A script schedule runs code unattended, so its card is one of these
+   * whatever its length.
+   */
+  reviewInPpm?: string;
 }
 
 /** An endpoint card on the wire, as `approval_request` and as `session_state.pendingApproval`. */
