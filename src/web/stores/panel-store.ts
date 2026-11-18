@@ -1047,6 +1047,8 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       const tabs = withPinned(panel.tabs, tabId, pinned);
       if (tabs === panel.tabs) return;
       set((s) => ({ panels: { ...s.panels, [panel.id]: { ...panel, tabs } } }));
+      // A floating window's panel is in no project's layout, so `persist` skips it (as in updateTab).
+      if (isWindowPanelId(panel.id)) saveWindowPanels(get().panels);
       persist();
     },
 

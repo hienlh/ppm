@@ -9,6 +9,8 @@ import { bulkCloseIds, pinnedFirst, withPinned } from "../../../src/web/lib/tab-
 installDom();
 afterAll(uninstallDom);
 const { usePanelStore } = await import("../../../src/web/stores/panel-store");
+const { loadWindowPanels } = await import("../../../src/web/stores/window-panel-persistence");
+const { closeTabsAsked } = await import("../../../src/web/stores/tab-close-confirm-store");
 
 type T = { id: string; closable: boolean; pinned?: boolean };
 const t = (id: string, extra: Partial<T> = {}): T => ({ id, closable: true, ...extra });
@@ -79,5 +81,37 @@ describe("panel store keeps pins first", () => {
     usePanelStore.getState().setTabPinned("c", true);
     usePanelStore.getState().moveTab("c", "left", "right", 2);
     expect(ids(usePanelStore.getState().panels.right!.tabs)).toEqual(["y", "c", "x"]);
+  });
+});
+
+describe("pins in a floating window survive a reload", () => {
+  const WIN = "__win__:win-1";
+  const ed = (id: string) => ({ id, type: "editor" as const, title: id, projectId: "p", closable: true, metadata: { filePath: id } });
+  beforeEach(() => {
+    localStorage.clear();
+    usePanelStore.setState({
+      currentProject: "p", focusedPanelId: "main", grid: [["main"]], lastFocusedChatProviders: {},
+      panels: {
+        main: { id: "main", activeTabId: "m", tabHistory: ["m"], tabs: [ed("m")] },
+        [WIN]: { id: WIN, activeTabId: "a", tabHistory: ["a"], tabs: [ed("a"), ed("b"), ed("c")] },
+      },
+    } as never);
+  });
+  const saved = () => loadWindowPanels()[WIN]?.tabs ?? [];
+
+  it("pinning a window's tab is written with the window panels", () => {
+    usePanelStore.getState().setTabPinned("c", true);
+    expect(ids(saved())).toEqual(["c", "a", "b"]);
+    expect(saved()[0]!.pinned).toBe(true);
+    usePanelStore.getState().setTabPinned("c", false);
+    expect(saved().find((x) => x.id === "c")).not.toHaveProperty("pinned");
+  });
+
+  it("Close All in a window leaves the pinned tab, and the saved window says so", async () => {
+    usePanelStore.getState().setTabPinned("b", true);
+    const tabs = usePanelStore.getState().panels[WIN]!.tabs;
+    await closeTabsAsked(bulkCloseIds(tabs, "a", "all", none), WIN);
+    expect(ids(saved())).toEqual(["b"]);
+    expect(saved()[0]!.pinned).toBe(true);
   });
 });
