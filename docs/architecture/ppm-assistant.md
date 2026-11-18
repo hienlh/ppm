@@ -195,9 +195,10 @@ never sends; Ctrl+Enter (⌘+Enter) opens the review. Picks live in memory only
 one message per card.
 
 A chip or "Open manager chat" opens that chat in a window of its
-own without switching project (`open-manager-chat.ts`: a `projectId: null` tab placed straight
-into a new window panel by `openTabInNewWindow`, never through a grid, and the project's slash
-cache hydrated); on a phone it switches project and opens the chat as a tab whose "‹ Assistant"
+own without switching project (`open-manager-chat.ts` over `lib/open-chat-in-window.ts`, which
+every button opening another project's chat shares: a `projectId: null` tab placed straight into a
+new window panel by `openTabInNewWindow`, never through a grid, and the project's slash cache
+hydrated); on a phone it switches project and opens the chat as a tab whose "‹ Assistant"
 goes back. A session other than the main one (a notification, Settings) shows "One-off session
 · Back to main". The session list lives in Settings → PPM Assistant.
 

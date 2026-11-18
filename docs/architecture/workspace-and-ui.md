@@ -187,8 +187,9 @@ chips from the message block, with no request; they come back as chips on a draf
 rejected send, an edit, a fork and an arrow-key recall. A mouse gets a tooltip (prompt line and
 time); a phone gets a 400 ms long press opening a preview sheet, disarmed on `touchcancel`.
 
-**The jump.** A chip calls `openTurnRef`: switch project if needed, open or focus the session's
-tab, and post a request to `chat-jump-store.ts` (which follows Codex renames). `use-chat-turn-jump.ts`
+**The jump.** A chip calls `openTurnRef`: open or focus the session's tab (another project's
+chat opens in a floating window on a desktop, see *Opening another project's chat* below), and
+post a request to `chat-jump-store.ts` (which follows Codex renames). `use-chat-turn-jump.ts`
 takes it up once the chat is on screen with its history in. A turn already drawn in the live list
 is pinned there; one that is not loaded opens the **history window** around it.
 
@@ -272,11 +273,22 @@ grid rows, meters and the ring animate their value, chips press to 0.97 — all 
 
 The browser half of [session collaboration](ai-chat-and-providers.md#session-collaboration).
 
+**Opening another project's chat.** Every button on screen that opens a chat — a tool card's Open
+session, the Sessions popover, a linked-chat chip, a turn chip, a task's Open chat and Ask manager,
+a schedule's Open chat — goes through `openChatSession`
+(`lib/open-chat-session.ts`, rules in the pure `lib/chat-open-plan.ts`). A chat of the project on
+screen opens as a tab. On a desktop a chat of another project opens in a floating window
+(`lib/open-chat-in-window.ts`: a `projectId: null` tab put straight into a new window panel by
+`openTabInNewWindow`, the window raised if one already shows that chat; the Assistant's manager
+chips use the same window) and the screen stays where it was; its titlebar's "Open in project" closes the window and switches project. A phone has no
+windows and switches project; so does a desktop at the window cap or with no project on screen.
+Notification clicks and links still switch project (`openSessionAnywhere`): they are not a button
+in the screen the user is working in.
+
 **The incoming bubble** (`from-session-bubble.tsx`). A message another session's AI sent is drawn
 apart from the user's own: on the left, in the `info` colours, headed "From: <title> · <provider>".
 The header is a button (44 px on touch) that opens the sender at the turn the message was sent from
-(`openTurnRef`; the session alone when no turn is known; another project through
-`openSessionAnywhere`). The body is markdown with raw HTML off, the turn-ref chips sit under the
+(`openTurnRef`; the session alone when no turn is known; another project's in a window). The body is markdown with raw HTML off, the turn-ref chips sit under the
 header, and the actions are Copy and Copy turn link only — there is nothing of the user's to edit
 or fork. `UserBubble` parses once and routes a message with `fromSession` here; no request.
 
