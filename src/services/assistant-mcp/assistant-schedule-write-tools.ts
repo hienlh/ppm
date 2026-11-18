@@ -7,6 +7,12 @@ import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 import type { AssistantProject } from "./assistant-project-scope.ts";
 import { errorResult, jsonResult, notApprovedResult } from "./assistant-tool-output.ts";
 import type { ToolContext } from "./assistant-tool-family.ts";
+import { withStoredScript } from "../schedule-proposals/script-proposal-card.ts";
+import { createLogger } from "../logger.ts";
+import { isCleanTurn } from "./assistant-chat-organize-tool.ts";
+
+/** Every schedule change the Assistant makes goes into PPM's log, beside the session trace's record of the call. */
+const log = createLogger("scheduler");
 import {
   createScheduleSummary, deleteScheduleSummary, editScheduleSummary, runNowScheduleSummary, type ScheduleSettings,
 } from "./assistant-approval-summary-schedule.ts";
@@ -21,8 +27,10 @@ import {
 
 /**
  * `schedule_save`, `schedule_delete`, `schedule_run_now`: each asks first, with a card built from
- * the schedule as the route reads it, and has no path that runs without `ctx.ask` approving — so
- * a watch turn, which refuses every ask, changes nothing. Only a schedule whose folder is a
+ * the schedule as the route reads it, and has no other path that runs without `ctx.ask` approving
+ * — so a watch turn, which refuses every ask, changes nothing. The one change made without a card
+ * is a `schedule_save` that only pauses a schedule, in a clean turn the user started
+ * (`isCleanTurn`): it only stops something. It is logged like the rest. Only a schedule whose folder is a
  * registered project may be changed. A card can wait for hours, so after the approval the
  * schedule is read again and anything the card showed that changed meanwhile stops the call
  * (`stale`): the user approves exactly what they saw.
@@ -78,6 +86,7 @@ async function ask(ctx: ToolContext, tool: string, input: Record<string, unknown
 
 export async function scheduleSave(ctx: ToolContext, args: Record<string, unknown>, deps: ScheduleDeps = {}): Promise<Json> {
   // A schedule delivered into one of the user's chats is that chat's to make, not the Assistant's.
+  if (args.kind === "script") return errorResult("schedule_save creates prompt schedules only. A script schedule is proposed with schedule_propose_script, behind a card showing the whole script.");
   if (args.kind !== undefined && args.kind !== "prompt") return errorResult(SESSION_SCHEDULES_NOT_HERE);
   const projects = registeredProjects(deps);
   const parsed = parseGivenSchedule(args, projects);
@@ -122,17 +131,36 @@ async function editSchedule(ctx: ToolContext, id: number, given: GivenSchedule, 
   if (changed.length === 0) return errorResult(`Nothing would change: schedule ${id} already has those settings.`);
 
   const body = routeBody(after, changed);
-  const refused = await ask(ctx, SCHEDULE_SAVE_TOOL, { id, project: after.project, ...body }, editScheduleSummary({
+  let summary = editScheduleSummary({
     id, before, after, changed, provider: current.schedule.provider_id, nextRuns: nextRunsFor(after.cron, deps, current.schedule.timezone),
-  }));
-  if (refused) return refused;
-  const stale = await recheck(ctx, current.schedule, SCHEDULE_SAVE_TOOL);
-  if (stale) return stale;
+  });
+  // A script edited in any way but pausing or renaming it — turned on, moved to another folder, run
+  // in another mode, on another cron — is code that runs unattended on new terms: the card shows
+  // that code and its inputs, and like a proposal's it is allowed only in PPM.
+  if (current.schedule.kind === "script" && !changed.every((k) => k === "name" || (k === "enabled" && !after.enabled))) {
+    summary = withStoredScript(summary, current.schedule);
+  }
+  // Pausing alone only stops something: in a turn the user started, with nothing untrusted in it,
+  // it is done without a card. Any other turn asks, as every other change does — so a watch turn,
+  // which asks nobody, still pauses nothing.
+  const pauseOnly = changed.length === 1 && changed[0] === "enabled" && !after.enabled && isCleanTurn(ctx.provenanceAtCall);
+  if (!pauseOnly) {
+    const refused = await ask(ctx, SCHEDULE_SAVE_TOOL, { id, project: after.project, ...body }, summary);
+    if (refused) return refused;
+    const stale = await recheck(ctx, current.schedule, SCHEDULE_SAVE_TOOL);
+    if (stale) return stale;
+  }
 
   const res = await ctx.callRoute<Schedule>("PATCH", schedulePath(id), body);
   if (!res.ok || !res.data) return errorResult(`Not changed: ${res.error ?? `the route answered ${res.status}`}`);
+  log.info(`PPM Assistant ${ctx.sessionId} ${pauseOnly ? "paused (no card needed)" : `changed (${changed.join(", ")}) after the user allowed its card`} `
+    + `${current.schedule.kind} schedule #${id} "${current.schedule.name}" in project "${current.project.name}"`);
   return jsonResult({
     updated: true, changed,
+    ...(pauseOnly && {
+      paused: { id, name: current.schedule.name, kind: current.schedule.kind, project: current.project.name },
+      note: `Paused ${current.schedule.kind} schedule #${id} "${current.schedule.name}" in "${current.project.name}" without asking: pausing needs no card. Tell the user; turning it on again asks them.`,
+    }),
     previous: scheduleView(current.schedule, current.project, timeZoneOf(deps)),
     schedule: scheduleView(res.data, projectOfFolder(res.data.project_path, projects), timeZoneOf(deps)),
   });
@@ -172,9 +200,10 @@ export async function scheduleRunNow(ctx: ToolContext, args: Record<string, unkn
   if (current.schedule.kind === "session") return errorResult(SESSION_SCHEDULES_NOT_HERE);
   const running =(await readRuns(ctx, id, 1))?.[0]?.status === "running";
 
-  const refused = await ask(ctx, SCHEDULE_RUN_NOW_TOOL, { id, project: current.project.name }, runNowScheduleSummary({
-    id, settings: current.settings, provider: current.schedule.provider_id, running,
-  }));
+  const runNow = runNowScheduleSummary({ id, settings: current.settings, provider: current.schedule.provider_id, running });
+  // Running a script runs its code now, paused or not: that code is what the user approves.
+  const refused = await ask(ctx, SCHEDULE_RUN_NOW_TOOL, { id, project: current.project.name },
+    current.schedule.kind === "script" ? withStoredScript(runNow, current.schedule) : runNow);
   if (refused) return refused;
   // The card showed the prompt and mode that will run; an edit meanwhile would run something else.
   const stale = await recheck(ctx, current.schedule, SCHEDULE_RUN_NOW_TOOL);

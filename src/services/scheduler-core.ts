@@ -70,7 +70,7 @@ export class SchedulerService {
       if (s.kind === "session") { catchUpSessionSchedule(s); continue; }
       if (s.mode !== "tick") continue;
       try {
-        updateSchedule(s.id, { next_fire_at: nextFireAt(s.cron_expr) });
+        updateSchedule(s.id, { next_fire_at: nextFireAt(s.cron_expr, s.timezone) });
       } catch (e) {
         log.warn(`invalid cron for schedule ${s.id} (${s.name}): ${(e as Error).message}`);
       }
@@ -168,7 +168,7 @@ export class SchedulerService {
   private advance(schedule: Schedule): void {
     let next: string | null = null;
     try {
-      if (schedule.mode === "tick") next = nextFireAt(schedule.cron_expr);
+      if (schedule.mode === "tick") next = nextFireAt(schedule.cron_expr, schedule.timezone);
     } catch (e) {
       log.warn(`invalid cron for schedule ${schedule.id} (${schedule.name}): ${(e as Error).message}`);
     }
@@ -234,7 +234,7 @@ export class SchedulerService {
       if (current) {
         let next: string | null | undefined;
         if (current.mode === "tick" && current.enabled) {
-          try { next = nextFireAt(current.cron_expr); } catch { next = null; }
+          try { next = nextFireAt(current.cron_expr, current.timezone); } catch { next = null; }
         }
         updateSchedule(schedule.id, { last_run_at: new Date().toISOString(), ...(next !== undefined && { next_fire_at: next }) });
       }

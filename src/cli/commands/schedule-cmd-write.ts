@@ -23,8 +23,9 @@ type Deps = { configService: typeof import("../../services/config.service.ts").c
 export function refuseScheduleWriteInAiChat(command: string): void {
   if (!inAiChat()) return;
   fail(`ppm schedule ${command} is refused here from an AI chat: a schedule runs prompts or scripts in turns nobody started. `
-    + "Use the Assistant's schedule_save tool (it shows the user a card), session_schedule_create to schedule a prompt "
-    + "into your own chat, or give the user the command.");
+    + "Use the Assistant's schedule_save or schedule_propose_script tool (they show the user a card), session_schedule_create to schedule a prompt "
+    + "into your own chat, session_schedule_propose_script to propose a script behind a card, session_schedule_set_enabled to pause or "
+    + "resume one, or give the user the command.");
 }
 
 /** The route's write, or `direct` after the notice when no PPM holds the database. Any other failure ends the command. */

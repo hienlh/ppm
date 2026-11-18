@@ -53,7 +53,7 @@ export function missingRequiredInputs(
 ): string[] {
   return decls
     .filter((d) => d.required)
-    .filter((d) => (d.type === "secret" ? !secretsSet.includes(d.key) : values[d.key] === undefined && d.default === undefined))
+    .filter((d) => (d.type === "secret" ? !secretsSet.includes(d.key) : !Object.hasOwn(values, d.key) && d.default === undefined))
     .map((d) => d.key);
 }
 
@@ -80,6 +80,8 @@ export function resolveInputValues(
   secrets: Record<string, string>,
 ): Record<string, ScheduleInputValue | undefined> {
   const out: Record<string, ScheduleInputValue | undefined> = {};
-  for (const d of decls) out[d.key] = d.type === "secret" ? secrets[d.key] : (values[d.key] ?? d.default);
+  // Own keys only: an input named `constructor` or `toString` must not read Object's prototype.
+  const own = <T>(r: Record<string, T>, k: string): T | undefined => (Object.hasOwn(r, k) ? r[k] : undefined);
+  for (const d of decls) out[d.key] = d.type === "secret" ? own(secrets, d.key) : (own(values, d.key) ?? d.default);
   return out;
 }

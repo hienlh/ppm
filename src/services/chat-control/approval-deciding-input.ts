@@ -133,13 +133,17 @@ export function decidingInput(card: DecidingCard): DecidingInput {
       text: summary.body?.text ?? "",
       ...(summary.body?.text && summary.body.label ? { label: summary.body.label } : {}),
       lang: summary.body?.format === "sql" ? "sql" : "text",
-      // The summary is the server's own; its fields are never capped on the way here.
-      complete: true,
+      // The summary is the server's own; its fields are never capped on the way here. One that
+      // may be allowed only in PPM counts as incomplete everywhere else, which takes Allow away.
+      complete: !summary.reviewInPpm,
+      ...(summary.reviewInPpm ? { incompleteReason: summary.reviewInPpm } : {}),
     }, null);
   }
 
   // A session tool's card: built by the server from input it checked, never capped on the way.
   const collab = sessionCollabApprovalInput(tool, input);
+  // A schedule card a chat's tool asks carries the same summary the Assistant's would.
+  if (collab?.kind === "schedule") return decidingInput({ tool, input: null, summary: collab.summary });
   if (collab) return finish({ kind: "endpoint", ...collabDecidingParts(collab), lang: "text", complete: true }, null);
 
   if (tool === "AskUserQuestion") {

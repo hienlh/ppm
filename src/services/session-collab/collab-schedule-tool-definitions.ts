@@ -8,6 +8,7 @@ import { SCHEDULE_LIMITS } from "../../shared/schedule-definition.ts";
 import { MAX_SCHEDULES_PER_SESSION } from "../../shared/session-schedule-input.ts";
 import {
   SESSION_SCHEDULE_CREATE_TOOL, SESSION_SCHEDULE_DELETE_TOOL, SESSION_SCHEDULE_LIST_TOOL,
+  SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL, SESSION_SCHEDULE_SET_ENABLED_TOOL,
 } from "../../shared/session-schedule-tools.ts";
 
 export function sessionScheduleToolDefinitions() {
@@ -63,7 +64,9 @@ export function sessionScheduleToolDefinitions() {
       description:
         "List the prompts scheduled into this chat: id, name, cron, time zone, whether it repeats, its next fire, whether a "
         + "fire is waiting for the chat to be idle (or held after the user pressed Stop, until the chat's next turn ends or "
-        + "the next fire), and why one is paused. Only this chat's schedules.",
+        + "the next fire), and why one is paused. Only this chat's scheduled prompts are under `schedules`; "
+        + "`projectSchedules` lists this project's script and prompt schedules (id, name, kind, cron, on or paused), "
+        + "which session_schedule_set_enabled can pause or turn on behind a card.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -79,6 +82,63 @@ export function sessionScheduleToolDefinitions() {
         additionalProperties: false,
       },
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    {
+      name: SESSION_SCHEDULE_SET_ENABLED_TOOL,
+      title: "Pause or turn on a schedule",
+      description: "Pause a schedule (enabled: false) or turn it back on (enabled: true) without deleting it, by the id "
+        + "session_schedule_list gives. Pausing is done at once: this chat's own scheduled prompts and any script or "
+        + "prompt schedule of this chat's project (listed under projectSchedules); the answer names what was paused, "
+        + "so tell the user. Turning on is done at once for this chat's own prompts, and for the project's other "
+        + "schedules only after the user allows a card in this chat; the call waits for the answer. Schedules of "
+        + "other chats or projects are out of reach. Use this instead of deleting and creating a schedule again.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "integer", minimum: 1, description: "The schedule's id." },
+          enabled: { type: "boolean", description: "false pauses it, true turns it on again." },
+        },
+        required: ["id", "enabled"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    {
+      name: SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL,
+      title: "Propose a script schedule",
+      description:
+        "Propose a script schedule for this chat's project: JavaScript that PPM runs in a child process on a cron, "
+        + "with no AI turn unless the script asks for one (ctx.ai.chat to message a chat, ctx.notify to notify the "
+        + "user). Use it for a watch that should only wake a chat when something changed. Nothing is created until "
+        + "the user allows a card in this chat showing the whole script, the folder it runs in (this project's), the "
+        + "cron with its time zone and next three runs, the timeout, every input value and the chats it names; the "
+        + "call waits for that answer, and the card can only be allowed in PPM. Give either `file`, the absolute path "
+        + "of a .ppm-schedule.json template inside this project (read as is; if it changes before the user answers, "
+        + "nothing is created), or the fields. A script is an ES module: `export default async function main(ctx)` "
+        + "with ctx.inputs, ctx.state (kept between runs), ctx.log, ctx.notify, ctx.ai.chat(key, prompt, { sessionId, "
+        + "wait }), ctx.signal. Secret inputs cannot be given here; the user sets them in Settings → Schedules.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          file: { type: "string", description: "Absolute path of a .ppm-schedule.json template in this project. Give this or the fields below, not both." },
+          name: { type: "string", description: `A short name (at most ${SCHEDULE_LIMITS.name} characters).` },
+          description: { type: "string", description: "What it does and when it messages a chat, in a few sentences." },
+          mode: { type: "string", enum: ["tick", "always-on"], description: "tick (default): one run per cron fire. always-on: one long-lived process." },
+          cron: { type: "string", description: "For tick: 5 fields, or 6 with seconds first (\"0 */5 * * * *\" = every 5 minutes); at most every 5 seconds." },
+          script: { type: "string", description: "The whole script, exactly as it will run." },
+          inputs: {
+            type: "array",
+            description: "Inputs the script reads as ctx.inputs: { key, label, type: text|number|boolean|secret, required?, default?, description? }.",
+            items: { type: "object" },
+          },
+          timeoutMinutes: { type: "number", description: "For tick: how long one run may take before it is stopped (default 5)." },
+          permissionMode: { type: "string", enum: ["default", "acceptEdits", "plan", "bypassPermissions"], description: "The mode the chat turns it starts with ctx.ai.chat run in (default bypassPermissions, as the Settings form)." },
+          timezone: { type: "string", description: "IANA time zone the cron is read in, e.g. \"Europe/London\" (with `file` too). Leave out for the machine's own." },
+          inputValues: { type: "object", description: "Values for non-secret inputs, by key (with `file` too, where they override the file's own `values`); an input left out runs on its default." },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
   ];
 }

@@ -16,7 +16,7 @@
 import type { PpmTool, PpmToolSwitches } from "./ppm-tools.ts";
 import { SESSION_HISTORY_TOOLS } from "./session-history-tools.ts";
 import { SESSION_COLLAB_TOOLS } from "./session-collab.ts";
-import { SESSION_SCHEDULE_TOOLS } from "./session-schedule-tools.ts";
+import { SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL, SESSION_SCHEDULE_TOOLS } from "./session-schedule-tools.ts";
 
 export interface FeatureIntro {
   /** Stable for the life of the install: the answer is stored under it. */
@@ -47,7 +47,17 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
     body: "The AI can schedule a prompt into its own chat — every morning, or once at a set time — and list or delete "
       + "those schedules. They survive restarts and are delivered once the chat is idle; Settings → Schedules lists "
       + "them. It stays off until you choose.",
-    tools: [...SESSION_SCHEDULE_TOOLS],
+    tools: SESSION_SCHEDULE_TOOLS.filter((t) => t !== SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL),
+    since: "2026-11",
+  },
+  {
+    // A question of its own: turning prompts on never agreed to code that runs on this machine.
+    id: "script-schedule-proposals-2026-11",
+    title: "Script schedules the AI proposes",
+    body: "The AI can propose a script schedule for its project: code PPM runs on this machine on a cron, which "
+      + "messages a chat only when something changed. Nothing is created until you allow a card in PPM that shows the "
+      + "whole script, where and when it runs, and which chats it messages. It stays off until you choose.",
+    tools: [SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL],
     since: "2026-11",
   },
 ];

@@ -106,6 +106,8 @@ import { setTurnRunningProbe } from "../../services/session-turns/session-turn-i
 import type { SubprocessCredential } from "../../providers/claude-agent-sdk.ts";
 import type { SessionDelivery } from "../../shared/session-collab.ts";
 import { pairCounter } from "../../services/session-collab/pair-counter.ts";
+import { decidingInput } from "../../services/chat-control/approval-deciding-input.ts";
+import type { ApprovalSummary } from "../../shared/assistant-approval.ts";
 
 const log = createLogger("chat");
 const bgShellLog = createLogger("bg-shell");
@@ -2815,6 +2817,16 @@ setChatControl({
     const sessionId = resolveMigratedSession(asked);
     const entry = activeSessions.get(sessionId);
     if (!entry || typeof requestId !== "string" || !requestId) return "stale";
+    // Away from PPM's own chat (Telegram, a mirror, the Assistant) a card that is not whole there —
+    // one marked to be allowed only in PPM, a request cut short — can be denied, never allowed,
+    // whatever button a surface drew.
+    if (answer.approved === true) {
+      const card = [entry.pendingApprovalEvent, ...(entry.approvalQueue ?? [])].find((e) => e?.requestId === requestId) as
+        { tool?: unknown; input?: unknown; summary?: ApprovalSummary; questions?: unknown } | undefined;
+      if (card && !card.questions && typeof card.tool === "string" && !decidingInput({ tool: card.tool, input: card.input, summary: card.summary }).complete) {
+        return "stale";
+      }
+    }
     return answerApprovalCore(sessionId, entry, requestId, answer, origin);
   },
   cancelTurn(asked, origin) {

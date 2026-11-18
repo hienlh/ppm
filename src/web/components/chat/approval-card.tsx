@@ -49,15 +49,17 @@ function WarningLine({ children }: { children: string }) {
   );
 }
 
-function SummaryBody({ summary }: { summary: ApprovalSummary }) {
+/** A server-built summary: the headline, its facts, the body in full and its warnings. Shared with the session tools' schedule card. */
+export function SummaryBody({ summary }: { summary: ApprovalSummary }) {
   const hidden = [summary.body?.text ?? "", ...summary.facts.map((f) => f.value)].some(hasHiddenCharacters);
   return (
     <>
       <p className="text-sm text-text-primary">{summary.headline}</p>
       {summary.facts.length > 0 && (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
-          {summary.facts.map((f) => (
-            <div key={f.label} className="contents">
+          {summary.facts.map((f, i) => (
+            // A label can repeat (one "Sends to chat" per chat), so the position keys it.
+            <div key={`${i}-${f.label}`} className="contents">
               <dt className="text-text-secondary">{f.label}</dt>
               <dd className={f.tone === "warning" ? "font-medium text-warning break-words" : "text-text-primary break-words"}><RevealedText text={f.value} /></dd>
             </div>
@@ -70,7 +72,7 @@ function SummaryBody({ summary }: { summary: ApprovalSummary }) {
             {summary.body.label}
             {summary.statementCount != null && ` · ${summary.statementCount} statement${summary.statementCount === 1 ? "" : "s"}`}
           </div>
-          <pre className={`${WRAPPED_BLOCK} ${summary.body.format === "sql" ? "text-text-primary" : "font-sans text-text-primary"}`}>
+          <pre className={`${WRAPPED_BLOCK} ${summary.body.format === "text" ? "font-sans text-text-primary" : "text-text-primary"}`}>
             <RevealedText text={summary.body.text} />
           </pre>
         </div>

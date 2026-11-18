@@ -14,6 +14,7 @@ export function collabApprovalTitle(input: SessionCollabApprovalInput): string {
   if (input.kind === "create") return `AI wants to open a session: ${input.title}`;
   if (input.kind === "pair_limit") return `Sessions reached their message limit (${input.sent}/${input.limit})`;
   if (input.kind === "message") return `Assistant wants to message a chat in ${input.projectName}: ${input.targetTitle}`;
+  if (input.kind === "schedule") return `AI asks: ${input.summary.headline}`;
   return `AI wants to message a session with more permissions: ${input.targetTitle}`;
 }
 
@@ -86,8 +87,10 @@ export function describeApprovalInput(tool: string, input: unknown): Pick<Notifi
 
   const collab = sessionCollabApprovalInput(tool, input);
   if (collab) {
+    // A schedule card's body is a whole script: the notification names the schedule and nothing of its code.
     const detail = collab.kind === "create" ? collab.task
-      : collab.kind === "escalation" || collab.kind === "message" ? collab.message : `To: ${collab.targetTitle}`;
+      : collab.kind === "escalation" || collab.kind === "message" ? collab.message
+        : collab.kind === "schedule" ? "Open the chat in PPM to read it and answer." : `To: ${collab.targetTitle}`;
     return { detail, detailStyle: "quote" };
   }
 

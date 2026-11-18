@@ -130,17 +130,28 @@ describe("feature introductions", () => {
 
 describe("scheduled prompts in a chat", () => {
   const SCHEDULES = FEATURE_INTROS.find((i) => i.id === "session-schedules-2026-11")!;
+  const SCRIPTS = FEATURE_INTROS.find((i) => i.id === "script-schedule-proposals-2026-11")!;
   const THREE = ["session_schedule_create", "session_schedule_list", "session_schedule_delete"];
 
   it("is a question of its own: turning the session tools on leaves the schedule tools off and still asked", () => {
     configService.set("feature_intros", {});
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id]);
     answerFeatureIntro(INTRO.id, "on");
     for (const tool of THREE) expect(onTools()).not.toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id]);
 
     answerFeatureIntro(SCHEDULES.id, "on");
     for (const tool of THREE) expect(onTools()).toContain(tool);
-    expect(featureIntrosView().pending).toEqual([]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id]);
+  });
+
+  it("asks apart about script proposals: prompts turned on never agreed to code that runs on this machine", () => {
+    configService.set("feature_intros", {});
+    answerFeatureIntro(SCHEDULES.id, "on");
+    expect(onTools()).toContain("session_schedule_set_enabled");
+    expect(onTools()).not.toContain("session_schedule_propose_script");
+    answerFeatureIntro(SCRIPTS.id, "on");
+    expect(onTools()).toContain("session_schedule_propose_script");
+    expect(featureIntrosView().pending.filter((i) => i.id === SCRIPTS.id)).toEqual([]);
   });
 });

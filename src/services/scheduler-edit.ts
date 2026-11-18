@@ -10,6 +10,8 @@ import { inputValueProblems, missingRequiredInputs, normalizeInputs, type InputV
 import type { NewSchedule, Schedule, ScheduleInputDecl, ScheduleInputValue, ScheduleKind, ScheduleMode } from "../types/scheduler.ts";
 import { encryptSecrets, readSecrets } from "./schedule-script/schedule-secrets.ts";
 import { nextFireAt } from "./scheduler-timing.ts";
+import { cronProblem } from "../shared/schedule-cron.ts";
+import { canonicalZone, timezoneProblem } from "../shared/session-schedule-input.ts";
 
 /** A body the route refuses: 400 when it is malformed, 409 when it would turn on a script that cannot run. */
 export class ScheduleEditError extends Error {
@@ -40,7 +42,17 @@ export function newScheduleFrom(body: Body, providerId: string): NewSchedule {
     permission_mode: body.permission_mode,
   };
   problems.push(...definitionProblems(templateSpelling(def)));
+  // A script may read its cron in a zone of its own (a watch kept to UK working hours); a prompt
+  // schedule keeps the machine's, as the Settings form shows it.
+  const zoneProblem = timezoneProblem(body.timezone);
+  if (zoneProblem) problems.push(zoneProblem);
+  else if (body.timezone && kind !== "script") problems.push("Only a script or session schedule has a time zone");
+  else if (body.timezone && mode === "tick" && typeof def.cron_expr === "string" && def.cron_expr.trim()) {
+    const zoned = cronProblem(def.cron_expr, kind, body.timezone as string);
+    if (zoned) problems.push(zoned);
+  }
   if (problems.length) throw new ScheduleEditError(problems);
+  const timezone = mode === "tick" ? canonicalZone(body.timezone) : null;
 
   const decls = normalizeInputs(def.inputs as ScheduleInputDecl[]);
   const values = inputs(decls, {}, {}, body);
@@ -59,7 +71,8 @@ export function newScheduleFrom(body: Body, providerId: string): NewSchedule {
     max_turns: (def.max_turns as number | undefined) ?? null,
     timeout_ms: (def.timeout_ms as number | undefined) ?? DEFAULT_TIMEOUT_MS[kind],
     enabled,
-    next_fire_at: mode === "tick" ? nextFireAt(def.cron_expr) : null,
+    next_fire_at: mode === "tick" ? nextFireAt(def.cron_expr, timezone) : null,
+    timezone,
     inputs_json: JSON.stringify(decls),
     input_values_json: JSON.stringify(values.values),
     secrets_enc: encryptSecrets(values.secrets),
@@ -99,7 +112,7 @@ export function scheduleChangesFrom(current: Schedule, body: Body): Partial<Sche
   const enabling = !!body.enabled && !current.enabled;
   if (body.enabled !== undefined) changes.enabled = body.enabled ? 1 : 0;
   if (mode === "always-on") changes.next_fire_at = null;
-  else if (body.cron_expr !== undefined || body.mode !== undefined || enabling) changes.next_fire_at = nextFireAt(def.cron_expr);
+  else if (body.cron_expr !== undefined || body.mode !== undefined || enabling) changes.next_fire_at = nextFireAt(def.cron_expr, current.timezone);
 
   if (current.kind !== "script") return changes;
   const decls = normalizeInputs(def.inputs as ScheduleInputDecl[]);

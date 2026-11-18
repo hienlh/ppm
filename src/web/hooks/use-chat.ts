@@ -45,6 +45,7 @@ function collabApprovalToast(input: SessionCollabApprovalInput): string {
   if (input.kind === "create") return `AI wants to create "${input.title}"`;
   if (input.kind === "pair_limit") return `Message limit reached with "${input.targetTitle}"`;
   if (input.kind === "message") return `Assistant wants to message "${input.targetTitle}"`;
+  if (input.kind === "schedule") return input.action === "create_script" ? "AI proposes a script schedule" : "AI asks to change a schedule";
   return `AI wants to message "${input.targetTitle}"`;
 }
 

@@ -46,7 +46,7 @@ export const TOOLS_INSTEAD_OF_CLI: readonly { area: string; tools: readonly stri
   },
   {
     area: "Schedules (instead of `ppm schedule`)",
-    tools: ["schedules_list", "schedule_get", "schedule_save", "schedule_delete", "schedule_run_now"],
+    tools: ["schedules_list", "schedule_get", "schedule_save", "schedule_delete", "schedule_run_now", "schedule_propose_script"],
   },
   {
     area: "Port forwards and PPM's own public link (instead of `ppm forward`)",
@@ -132,7 +132,7 @@ export function ppmCliReferenceHeader(instance: PpmInstance, opts: ReferenceOpti
     "the database directly and say so.",
     `- ${list(commandPathsWithRouting("server"))}`,
     "- schedule run-now: prefer the schedule_run_now tool",
-    "- schedule add/edit/enable: refused from an AI chat; use schedule_save (the user sees a card). rm and disable: prefer schedule_delete and schedule_save",
+    "- schedule add/edit/enable: refused from an AI chat; use schedule_save, or schedule_propose_script for a script (the user sees a card). rm and disable: prefer schedule_delete and schedule_save",
     "- design delete only says what would go unless given --yes; design export saves a file with -o",
     "- logs report draft prints a draft; posting it on GitHub stays with the user",
     "- projects add/rename/move/remove: prefer project_add, project_update and project_remove",

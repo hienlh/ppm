@@ -4,7 +4,10 @@ import { isPpmTool, ppmToolOffMessage, ppmToolOn } from "../../shared/ppm-tools.
 import {
   CREATE_SESSION_TOOL, DESIGN_SCREENSHOT_TOOL, REPORT_TO_ASSISTANT_TOOL, SEND_TO_SESSION_TOOL, SESSION_STATUS_TOOL,
 } from "../../shared/session-collab.ts";
-import { isSessionScheduleTool } from "../../shared/session-schedule-tools.ts";
+import {
+  isSessionScheduleTool, SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL, SESSION_SCHEDULE_SET_ENABLED_TOOL,
+} from "../../shared/session-schedule-tools.ts";
+import { liveScheduleProposalToolEnv, scheduleProposalToolCall, type ScheduleProposalToolEnv } from "./collab-schedule-proposals.ts";
 import { configService } from "../config.service.ts";
 import { isAssistantSession } from "../assistant/assistant-session.ts";
 import { reportToolDefinition } from "../assistant-cards/manager-report-tool.ts";
@@ -49,6 +52,8 @@ export function createSessionCollabMcpHandler(deps: {
   report?: (sessionId: string, args: unknown) => Json;
   /** What the schedule tools save through (the live database by default). */
   schedules?: SessionScheduleToolEnv;
+  /** What the script-proposal and pause tools ask and save through (the live ones by default). */
+  scheduleProposals?: () => ScheduleProposalToolEnv;
   /** What the task tools act through (the live task store by default). */
   tasks?: PpmTaskToolsEnv;
   /** Why a task tool is off for the chat; Settings → Tools' message by default. */
@@ -78,6 +83,11 @@ export function createSessionCollabMcpHandler(deps: {
       }
       // The caller's own chat only, delivering nothing to anyone: the send policy, its rate limit
       // and the session registry have no say here.
+      // Proposing a script and pausing or turning on a schedule wait on a card in this chat.
+      if (name === SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL || name === SESSION_SCHEDULE_SET_ENABLED_TOOL) {
+        const env = deps.scheduleProposals ? deps.scheduleProposals() : await liveScheduleProposalToolEnv();
+        return scheduleProposalToolCall(env, sessionId, name === SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL ? "propose" : "set_enabled", rawArgs, signal);
+      }
       if (isSessionScheduleTool(name)) return sessionScheduleToolCall(schedules, sessionId, name, rawArgs);
       const env = deps.env();
       const caller = resolveCaller(env, sessionId);

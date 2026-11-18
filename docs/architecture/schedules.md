@@ -79,6 +79,74 @@ value, ids, a session, state or a path of this machine.
 
 Example templates ship in `templates/schedules/` and are tested as PPM runs them.
 
+A script schedule may read its cron in a zone of its own (`timezone`, IANA, as a session schedule
+does), so a watch kept to UK working hours fires on the UK clock; POST takes it for script kinds
+only, and a row without one (every schedule saved before) reads the machine's zone. The Settings
+form keeps a stored zone but does not edit it.
+
+## Script schedules an AI proposes
+
+A chat's AI and the PPM Assistant can propose a script schedule; it exists only once the user has
+allowed a card. Code in `src/services/schedule-proposals/`.
+
+- **Tools.** A chat (an ordinary or a manager chat) has `session_schedule_propose_script` on the
+  `ppm-sessions` server (`collab-schedule-proposals.ts`); the Assistant has
+  `schedule_propose_script` (`assistant-schedule-propose-tool.ts`). Both take the template's fields
+  (`name`, `description`, `mode`, `cron`, `script`, `inputs`, `timeoutMinutes`, `permissionMode`) or
+  `file`, the absolute path of a `.ppm-schedule.json`, plus `timezone` and `inputValues` either
+  way. A chat's schedule always runs in its own project's folder and its `file` must be inside
+  that folder; the Assistant names a registered project and may read a file in any of them.
+- **Checked first, by the route's own rules** (`parseScriptProposal`): the template is parsed
+  strictly as on import, except that a proposal file may carry `values` (this machine's input
+  values, which a shared template never holds and import still refuses); the tool's `inputValues`
+  override them and both pass the same checks (declared, not secret, not null, the right type, no
+  vault value) and show on the card alike. Then
+  `newScheduleFrom` runs dry, so a card never shows a schedule the save would refuse. A secret's
+  value never comes from an AI: a secret in `inputValues` is refused, and so is a script with a
+  required secret input (the user imports that one in Settings → Schedules).
+- **The card** (`scriptProposalSummary`) is the server's reading of the checked proposal: the whole
+  script as the body, the folder it runs in, cron, zone (or "this machine's") and the next three
+  runs, the timeout, every input's value or default, the mode its `ctx.ai.chat` turns run in, the
+  default provider it snapshots, the file and its SHA-256, and the chats it sends to — every chat
+  id found in the script and the input values, by title, flagged when in another project. The
+  description is labelled as the AI's own words. The card never guesses from the script's text what
+  it calls: it says that any script can reach any chat (`ctx.ai.chat`), notifications and whatever
+  the user can reach, and that only the script says which. A warning says nobody watches the runs.
+- **Off until asked.** The chat tool is its own question in the tour
+  (`script-schedule-proposals-2026-11` in `src/shared/feature-intros.ts`): an install that turned
+  scheduled prompts on did not agree to code. A vault value is refused in a proposal whichever way
+  it arrives, a file's contents included.
+- **Allowed only in PPM.** The card carries `reviewInPpm`, which `decidingInput` reads as
+  incomplete: Telegram shows it with Deny only, the Assistant's mirror shows no Allow, and
+  `chat_answer_approval` refuses to allow it — the existing "Allow only when the whole deciding
+  input fits" rule, applied whatever the script's length. `settleCollabApprovalFromServer` also
+  refuses an Allow press for such a card, whatever a surface drew.
+- **What is created is what was shown.** The schedule is saved from the same frozen proposal the
+  card was built from (`proposalRouteBody`, created on). After the answer, a `file` hashing
+  differently, or a default provider that changed, creates nothing (`stale`); after the save the
+  stored row is compared with the proposal (`proposalMismatch`) and removed again if any field
+  differs.
+- **Pause and resume.** `session_schedule_set_enabled` (chat) turns a schedule off or on without
+  deleting it. Pausing only stops something, so it is done at once with no card — the chat's own
+  reminders and any script or prompt schedule of its project — and the answer names the schedule
+  it paused. Turning on is done at once for the chat's own reminders (as they are created and
+  deleted) and only after a card for the project's other schedules (`schedule-toggle.ts`), refused
+  as `stale` if the schedule changed while the card waited. A turn PPM started with nobody in it
+  (`isUnattendedTurn`) still pauses none of the project's schedules unasked: it takes the card
+  path, which such a turn cannot show. The Assistant's `schedule_save` likewise pauses with no card
+  only in a clean turn the user started (`isCleanTurn`, as `chat_organize` decides), and asks in
+  any other. Every pause, resume and creation an AI makes is logged (`scheduler` in `ppm.log`, the
+  Logs window) beside the session trace's record of the call. Turning a script on shows the script
+  and is allowed only in PPM; so is any Assistant card that runs a script now (`schedule_run_now`) or changes one
+  other than renaming or pausing it (`schedule_save`), which shows its code and input values
+  (`withStoredScript`). A card is stale when inputs or secrets changed while it waited, read raw or
+  through the routes' view. Anything else —
+  another project's schedule, another chat's reminder — reads as missing.
+  `session_schedule_list` lists the project's script and prompt schedules under `projectSchedules`.
+- **Cards in a chat** are a session-tool card of kind `schedule` (`SessionCollabScheduleApproval`)
+  carrying the same `ApprovalSummary` the Assistant's cards carry, answered once or not at all
+  over `POST /api/sessions-collab/approvals/:id`; an unattended turn cannot ask one.
+
 ## Session schedules
 
 A session schedule sends its prompt into the chat it names (`target_session_id`) and nowhere
@@ -271,6 +339,8 @@ list; the Schedules window shows each with its task's reference and opens the ta
   editor and input declarations, the import sheet, the live log, and a status chip per row. A
   session schedule's row names its chat in the Session column; the form's kind *Chat* picks one.
   The Schedules window is `src/web/components/schedules/` (it reuses that form for New and Edit).
+- AI tools: a chat's `session_schedule_create|list|delete|set_enabled|propose_script` and the
+  Assistant's `schedule_propose_script` (see [Script schedules an AI proposes](#script-schedules-an-ai-proposes)).
 - PPM Assistant: `schedules_list` and `schedule_get` give each schedule's own `timeZone` (marked
   `timeZoneIsMachineLocal` when it has none), `kind` and `recurring`, plus `machineTimeZone`;
   `nextFireAt` is UTC and reads right only against that zone.

@@ -1,0 +1,69 @@
+{
+  "ppmScheduleTemplate": 1,
+  "name": "review-queue-watch",
+  "description": "Runs a queue script every 5 minutes on weekdays during UK working hours, without any AI, and wakes the review chat only when something new needs a reviewer.",
+  "kind": "script",
+  "mode": "tick",
+  "cron": "0 */5 * * * *",
+  "script": "// Watches a review queue and wakes the review chat only when something new needs a reviewer.\nimport { execFile } from \"node:child_process\";\nimport { mkdtempSync, readFileSync, rmSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join } from \"node:path\";\n\nconst run = (cmd, args, signal) => new Promise((resolve, reject) => {\n  execFile(cmd, args, { signal, timeout: 240000, windowsHide: true },\n    (err, stdout, stderr) => (err ? reject(new Error(`${cmd} failed: ${err.message}\n${String(stderr).slice(-1500)}`)) : resolve(stdout)));\n});\n\nfunction inUkWorkingTime(from, to) {\n  const parts = Object.fromEntries(new Intl.DateTimeFormat(\"en-GB\", {\n    timeZone: \"Europe/London\", weekday: \"short\", hour: \"2-digit\", hour12: false,\n  }).formatToParts(new Date()).map((p) => [p.type, p.value]));\n  const hour = Number(parts.hour) % 24;\n  return ![\"Sat\", \"Sun\"].includes(parts.weekday) && hour >= from && hour < to;\n}\n\nexport default async function main(ctx) {\n  const { python, scriptPath, days, sessionId, fromHour, toHour, queueJson } = ctx.inputs;\n  if (!queueJson && !inUkWorkingTime(Number(fromHour || 8), Number(toHour || 19))) return;\n  let data;\n  if (queueJson) data = JSON.parse(readFileSync(queueJson, \"utf8\"));\n  else {\n    const dir = mkdtempSync(join(tmpdir(), \"review-queue-\"));\n    try {\n      const out = join(dir, \"queue.json\");\n      await run(python || \"python\", [scriptPath, \"--days\", String(days || 3), \"--json\", out], ctx.signal);\n      data = JSON.parse(readFileSync(out, \"utf8\"));\n    } finally {\n      rmSync(dir, { recursive: true, force: true });\n    }\n  }\n  const seen = new Set(ctx.state.seen ?? []);\n  const fresh = (data.queue ?? []).filter((p) => !seen.has(`${p.repo}#${p.pr}@${p.head}`));\n  ctx.state = { seen: (data.queue ?? []).map((p) => `${p.repo}#${p.pr}@${p.head}`) };\n  if (!fresh.length) return ctx.log(\"no change\");\n  const res = await ctx.ai.chat(\"review-queue\", `Review-queue watch: ${fresh.length} item(s) new.`, { sessionId, wait: false });\n  if (!res.ok && !res.busy) throw new Error(`could not reach the review chat: ${res.error ?? \"unknown error\"}`);\n}\n",
+  "inputs": [
+    {
+      "key": "sessionId",
+      "label": "Review chat (session id)",
+      "type": "text",
+      "required": true,
+      "description": "The chat that handles review asks.",
+      "default": "11111111-2222-4333-8444-555555555555"
+    },
+    {
+      "key": "scriptPath",
+      "label": "find_review_queue.py",
+      "type": "text",
+      "required": true,
+      "description": "Full path to the script.",
+      "default": "C:\\tools\\review-queue\\find_review_queue.py"
+    },
+    {
+      "key": "python",
+      "label": "Python",
+      "type": "text",
+      "description": "The Python to run it with. Empty uses python on PATH.",
+      "default": "C:\\tools\\python312\\python.exe"
+    },
+    {
+      "key": "days",
+      "label": "Slack days to scan",
+      "type": "text",
+      "description": "Passed as --days. Default 3.",
+      "default": "3"
+    },
+    {
+      "key": "fromHour",
+      "label": "From (UK hour)",
+      "type": "text",
+      "default": "8"
+    },
+    {
+      "key": "toHour",
+      "label": "Until (UK hour)",
+      "type": "text",
+      "default": "19"
+    },
+    {
+      "key": "queueJson",
+      "label": "Saved queue JSON (dry runs only)",
+      "type": "text",
+      "description": "Leave empty."
+    }
+  ],
+  "timeoutMs": 300000,
+  "permissionMode": "bypassPermissions",
+  "values": {
+    "sessionId": "11111111-2222-4333-8444-555555555555",
+    "scriptPath": "C:\\tools\\review-queue\\find_review_queue.py",
+    "python": "C:\\tools\\python312\\python.exe",
+    "days": "3",
+    "fromHour": "8",
+    "toHour": "19"
+  }
+}

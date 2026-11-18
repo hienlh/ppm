@@ -1,6 +1,6 @@
 import type { AssistantToolDefinition } from "./assistant-tool-family.ts";
 import {
-  SCHEDULE_DELETE_TOOL, SCHEDULE_GET_TOOL, SCHEDULE_RUN_NOW_TOOL, SCHEDULE_SAVE_TOOL, SCHEDULES_LIST_TOOL,
+  SCHEDULE_DELETE_TOOL, SCHEDULE_GET_TOOL, SCHEDULE_PROPOSE_SCRIPT_TOOL, SCHEDULE_RUN_NOW_TOOL, SCHEDULE_SAVE_TOOL, SCHEDULES_LIST_TOOL,
 } from "../../shared/assistant-schedule-tool-names.ts";
 
 /**
@@ -40,8 +40,10 @@ export const SCHEDULE_TOOL_DEFINITIONS: readonly AssistantToolDefinition[] = [
   {
     name: SCHEDULE_SAVE_TOOL,
     title: "Create or edit a scheduled agent",
-    description: "Without `id`, create a schedule (name, cron, project and prompt required). With `id`, change only "
-      + "the fields given — `enabled: false` pauses it, `true` turns it back on. The user sees the whole prompt, the "
+    description: "Without `id`, create a prompt schedule (name, cron, project and prompt required; a script schedule is "
+      + "schedule_propose_script). With `id`, change only "
+      + "the fields given — `enabled: false` alone pauses it at once with no card when the user started this turn (tell them what you paused); `true` "
+      + "turns it back on after a card. For any other change the user sees the whole prompt, the "
       + "next three run times and the mode, and it is saved only if they approve. Only schedules of registered "
       + "projects can be changed. Without `permissionMode` a new schedule runs in bypassPermissions, as from the "
       + "Settings form: every run executes every tool unasked with nobody watching — say so, and suggest a narrower "
@@ -76,6 +78,32 @@ export const SCHEDULE_TOOL_DEFINITIONS: readonly AssistantToolDefinition[] = [
       + "run, in the schedule's own mode. A run already in progress keeps going, and this starts a second one. "
       + "Read the result with schedule_get.",
     inputSchema: object({ id: ID }, ["id"]),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: SCHEDULE_PROPOSE_SCRIPT_TOOL,
+    title: "Propose a script schedule",
+    description: "Propose a script schedule in a registered project: JavaScript PPM runs in a child process on a cron (or "
+      + "always on), with no AI turn unless the script asks for one (ctx.ai.chat to message a chat, ctx.notify). It is "
+      + "created, on, only if the user allows a card showing the whole script, the folder, the cron with its time zone "
+      + "and next three runs, the timeout, every input value and the chats it names; that card can be allowed only in "
+      + "PPM, never from Telegram. Give `project` and either `file` (absolute path of a .ppm-schedule.json inside a "
+      + "registered project; if it changes before the user answers, nothing is created) or the fields. Secret inputs "
+      + "cannot be given; the user sets them in Settings → Schedules. Pause one later with schedule_save (enabled: false).",
+    inputSchema: object({
+      project: PROJECT,
+      file: { type: "string", description: "Absolute path of a .ppm-schedule.json template. Give this or the fields below, not both." },
+      name: { type: "string", minLength: 1, maxLength: 100, description: "A short name." },
+      description: { type: "string", description: "What it does and when it messages a chat." },
+      mode: { type: "string", enum: ["tick", "always-on"], description: "tick (default): one run per cron fire; always-on: one long-lived process." },
+      cron: { type: "string", description: "For tick: 5 fields, or 6 with seconds first (\"0 */5 * * * *\" = every 5 minutes)." },
+      script: { type: "string", description: "The whole script (an ES module exporting `default async function main(ctx)`), exactly as it will run." },
+      inputs: { type: "array", items: { type: "object" }, description: "Inputs: { key, label, type: text|number|boolean|secret, required?, default?, description? }." },
+      timeoutMinutes: { type: "number", description: "For tick: how long one run may take (default 5)." },
+      permissionMode: { type: "string", enum: ["default", "acceptEdits", "plan", "bypassPermissions"], description: "The mode its ctx.ai.chat turns run in (default bypassPermissions)." },
+      timezone: { type: "string", description: "IANA zone the cron is read in, e.g. \"Europe/London\" (with `file` too). Leave out for the server's own." },
+      inputValues: { type: "object", description: "Values for non-secret inputs by key (with `file` too, overriding the file's own `values`); one left out runs on its default." },
+    }, ["project"]),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
 ];
