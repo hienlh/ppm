@@ -19,6 +19,7 @@ const { ManagerRulesDialog } = await import("../../../src/web/components/setting
 const { AssistantNotebookSection } = await import("../../../src/web/components/settings/assistant/assistant-notebook-section");
 const { AssistantDigestQuietSection } = await import("../../../src/web/components/settings/assistant/assistant-digest-quiet-section");
 const { useProjectStore } = await import("../../../src/web/stores/project-store");
+const { MANAGER_DELEGATE_RULE, withManagerDelegateRule } = await import("../../../src/shared/manager-default-rules");
 
 interface Answer { status?: number; body: unknown }
 type Req = { method: string; url: string; body: unknown };
@@ -134,6 +135,58 @@ describe("the rules dialog", () => {
     await click(buttons("Save")[0]!);
     await settle();
     expect(sent("PUT", "/api/assistant/managers/nxsys/rules")).toEqual([{ text: "- a\n- b\n- c\n" }]);
+  });
+
+  it("offers PPM's new default rule only to rules without it, and Add saves it into the file once", async () => {
+    const old = "# Manager rules\n\n- a\n";
+    answers.unshift(
+      on("GET", "/api/assistant/managers/nxsys/rules", () => ok({ rules: { ...RULES, approved: old, accepted: old, addedSince: [] } })),
+      on("PUT", "/api/assistant/managers/nxsys/rules", (req) => {
+        const saved = (req.body as { text: string }).text;
+        return ok({ rules: { ...RULES, approved: saved, accepted: saved, addedSince: [] } });
+      }),
+    );
+    view = await mount(<ManagerRulesDialog projectName="nxsys" onClose={() => {}} />);
+    await settle();
+    const offer = () => document.body.querySelector("[data-new-default-rule]");
+    expect(offer()?.textContent).toContain("PPM has a new default rule");
+    // Shown as one paragraph, the file's line breaks and list marker gone.
+    expect(document.body.querySelector("[data-new-default-rule-text]")?.textContent)
+      .toBe(MANAGER_DELEGATE_RULE.slice(2).replace(/\s*\n\s*/g, " "));
+    const add = buttons("Add")[0]!;
+    // A second press before the save answers is the same press: busy disables the button.
+    await click(add);
+    await click(add);
+    await settle();
+    expect(sent("PUT", "/api/assistant/managers/nxsys/rules")).toEqual([{ text: `# Manager rules\n\n${MANAGER_DELEGATE_RULE}\n- a\n` }]);
+    // The rules now hold it: the offer is gone and the textarea shows the saved file.
+    expect(offer()).toBeNull();
+    expect(buttons("Add")).toHaveLength(0);
+    expect(document.body.querySelector("textarea")!.value).toBe(`# Manager rules\n\n${MANAGER_DELEGATE_RULE}\n- a\n`);
+  });
+
+  it("does not offer the rule to rules that have it, and holds Add back while the text has unsaved edits", async () => {
+    let rules = { ...RULES, accepted: withManagerDelegateRule(RULES.accepted) };
+    answers.unshift(on("GET", "/api/assistant/managers/nxsys/rules", () => ok({ rules })));
+    view = await mount(<ManagerRulesDialog projectName="nxsys" onClose={() => {}} />);
+    await settle();
+    expect(document.body.querySelector("[data-new-default-rule]")).toBeNull();
+    await view.unmount();
+
+    rules = RULES;
+    view = await mount(<ManagerRulesDialog projectName="nxsys" onClose={() => {}} />);
+    await settle();
+    expect(buttons("Add")[0]!.disabled).toBe(false);
+    const area = document.body.querySelector("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(area), "value")!.set!.call(area, "- a\n- b\n- c\n");
+      area.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(buttons("Add")[0]!.disabled).toBe(true);
+    expect(text()).toContain("Save or undo your edits first.");
+    await click(buttons("Add")[0]!);
+    await settle();
+    expect(sent("PUT", "/api/assistant/managers/nxsys/rules")).toEqual([]);
   });
 
   it("shows a held change with Approve change and Revert, named by its hash", async () => {

@@ -9,13 +9,14 @@
  */
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Check, Loader2, Undo2 } from "@/lib/icons";
+import { Check, Loader2, Plus, Undo2 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import {
   decideManagerRules, getManagerRules, putManagerRules, utf8Bytes, type ManagerRulesView,
 } from "@/lib/assistant-settings-client";
 import { RULES_GUARD_HINT } from "@/lib/assistant-manager-table";
 import { RULES_FILE_MAX_BYTES } from "../../../../shared/assistant-limits";
+import { hasManagerDelegateRule, MANAGER_DELEGATE_RULE, withManagerDelegateRule } from "../../../../shared/manager-default-rules";
 import { AssistantSettingsDialog, DIALOG_BUTTON, DialogActions } from "./assistant-settings-dialog";
 import { SizeCounter, RulesTextarea } from "./rules-text-fields";
 
@@ -36,6 +37,29 @@ function HeldChange({ rules, busy, onDecide }: { rules: ManagerRulesView; busy: 
       <div className="flex flex-wrap gap-2">
         <Button size="sm" className={`${DIALOG_BUTTON} gap-1`} disabled={busy} onClick={() => onDecide("approve")}><Check className="size-3.5" />Approve change</Button>
         <Button size="sm" variant="outline" className={`${DIALOG_BUTTON} gap-1 text-error`} disabled={busy} onClick={() => onDecide("revert")}><Undo2 className="size-3.5" />Revert</Button>
+      </div>
+    </div>
+  );
+}
+
+/** The rule as one paragraph, without its list marker. */
+const DELEGATE_RULE_PROSE = MANAGER_DELEGATE_RULE.replace(/^-\s*/, "").replace(/\s*\n\s*/g, " ");
+
+/**
+ * A default rule PPM's template gained after this project's rules were seeded. PPM never writes
+ * it into the user's file by itself; Add saves it as the user's own edit. Held back while the
+ * text has unsaved edits, which Add would otherwise either save unseen or throw away.
+ */
+function NewDefaultRule({ busy, dirty, onAdd }: { busy: boolean; dirty: boolean; onAdd: () => void }) {
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-panel-2 p-3" data-new-default-rule="">
+      <p className="text-sm font-medium">PPM has a new default rule</p>
+      <p className="text-xs text-text-secondary">New manager chats start with it. This project’s rules were written before it, so they do not have it yet.</p>
+      {/* As a paragraph: the file's own line breaks, wrapped again at this width, read as ragged fragments. */}
+      <p className="rounded border border-border bg-panel px-3 py-2 text-xs leading-relaxed text-text-secondary" data-new-default-rule-text="">{DELEGATE_RULE_PROSE}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" className={`${DIALOG_BUTTON} gap-1`} disabled={busy || dirty} onClick={onAdd}><Plus className="size-3.5" />Add</Button>
+        {dirty && <span className="text-xs text-text-subtle">Save or undo your edits first.</span>}
       </div>
     </div>
   );
@@ -83,6 +107,10 @@ export function ManagerRulesDialog({ projectName, onClose }: { projectName: stri
           {rules.pendingHash && rules.proposed !== null && (
             <HeldChange rules={rules} busy={busy}
               onDecide={(action) => void run(() => decideManagerRules(projectName, action, rules.pendingHash!), action === "approve" ? "Change approved" : "Change reverted", false)} />
+          )}
+          {!hasManagerDelegateRule(original) && (
+            <NewDefaultRule busy={busy} dirty={text !== original}
+              onAdd={() => void run(() => putManagerRules(projectName, withManagerDelegateRule(original)), "Rule added", false)} />
           )}
           <RulesTextarea label=".ppm/manager.md" value={text} disabled={busy} onChange={setText} />
           <SizeCounter bytes={bytes} />

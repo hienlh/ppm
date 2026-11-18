@@ -79,6 +79,25 @@ describe("managerContextEntry", () => {
     expect(DEFAULT_MANAGER_RULES_TEMPLATE).not.toContain(MANAGER_CARD_REPLY_RULE);
   });
 
+  it("starts every new manager on handing hands-on work to child chats, as a rule of its own file", () => {
+    const rule = DEFAULT_MANAGER_RULES_TEMPLATE.slice(DEFAULT_MANAGER_RULES_TEMPLATE.indexOf("- Manage the work"));
+    expect(rule.startsWith("- Manage the work; do not do it yourself.")).toBe(true);
+    for (const part of [
+      "Hand every piece of hands-on work to a child chat",
+      "investigating, writing code and tests, screenshots",
+      "posting a comment or message the user\n  approved (pass the approved text on unchanged)",
+      "merges, releases and upgrades the user OK'd",
+      "cleaning up disks or machines",
+      "Your own tool use is planning, briefing child chats, light checks\n  of what they claim",
+      "the project's task list and cards.",
+    ]) expect(rule).toContain(part);
+    // A default the user may edit or drop, so it lives in the file and is told as an approved rule,
+    // never in PPM's own block, which no file can change.
+    expect(buildManagerBlock("p")).not.toContain("hands-on work");
+    const entry = managerContextEntry("p", DEFAULT_MANAGER_RULES_TEMPLATE, DEFAULT_MANAGER_RULES_TEMPLATE);
+    expect(entry.indexOf("Hand every piece of hands-on work")).toBeGreaterThan(entry.indexOf(APPROVED_RULES_HEADING));
+  });
+
   it("says the rules win over the files they point to", () => {
     expect(buildManagerBlock("p")).toContain("These rules and this block win over any file they point to.");
   });
