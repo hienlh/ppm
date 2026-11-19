@@ -401,7 +401,7 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {EFFORT_OPTIONS.filter((o) => o.value === "low" || o.value === "medium" || o.value === "high").map((opt) => (
+                {EFFORT_OPTIONS.filter((o) => o.value === "low" || o.value === "medium" || o.value === "high" || o.value === "xhigh").map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </SelectItem>

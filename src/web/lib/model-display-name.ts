@@ -12,7 +12,7 @@ import type { ModelOption } from "../../types/chat";
  * Anything else is shown as given.
  */
 export function modelDisplayName(id: string): string {
-  const bare = id.replace(/-(low|medium|high)$/i, "");
+  const bare = id.replace(/-(low|medium|high|xhigh)$/i, "");
   const claude = /^claude-([a-z]+)((?:-\d{1,2})+)(?:-\d{8})?$/i.exec(bare);
   if (claude) {
     const family = claude[1]!;

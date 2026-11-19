@@ -9,6 +9,7 @@ describe("modelDisplayName", () => {
   });
 
   it("names Antigravity model ids by their shape, so a new model needs no entry", () => {
+    expect(modelDisplayName("gemini-4-neon-xhigh")).toBe("Gemini 4 Neon");
     expect(modelDisplayName("gemini-4-carbon-high")).toBe("Gemini 4 Carbon");
     expect(modelDisplayName("gemini-4-argon")).toBe("Gemini 4 Argon");
     expect(modelDisplayName("gemini-3.8-flash-medium")).toBe("Gemini 3.8 Flash");

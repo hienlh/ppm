@@ -91,20 +91,21 @@ export interface GetCascadeModelConfigDataRaw {
   }>;
 }
 
-/** Strip trailing `-(low|medium|high)` from an Antigravity model ID. */
+/** Strip trailing `-(low|medium|high|xhigh)` from an Antigravity model ID. */
 export function toAntigravityBaseModelId(id: string): string {
-  return id.replace(/-(low|medium|high)$/i, "");
+  return id.replace(/-(low|medium|high|xhigh)$/i, "");
 }
 
-/** Strip trailing ` (Low|Medium|High)` from an Antigravity model display label. */
+/** Strip trailing ` (Low|Medium|High|XHigh)` from an Antigravity model display label. */
 export function toAntigravityBaseModelLabel(label: string): string {
-  return label.replace(/\s*\((low|medium|high)\)\s*$/i, "").trim();
+  return label.replace(/\s*\((low|medium|high|xhigh)\)\s*$/i, "").trim();
 }
 
 /**
  * Resolve `(model, effort)` into the concrete Antigravity `modelId` sent with `session/set_model`,
- * against agy's own list: `("gemini-4-carbon", "high")` -> `"gemini-4-carbon-high"`, and a model
- * with fewer efforts gets the one it has (`gpt-oss-120b` -> `gpt-oss-120b-medium`).
+ * against agy's own list: `("gemini-4-neon", "xhigh")` -> `"gemini-4-neon-xhigh"`, and a model
+ * with fewer efforts gets the closest one it has (`gemini-4-carbon` at `xhigh` -> `gemini-4-carbon-high`,
+ * `gpt-oss-120b` -> `gpt-oss-120b-medium`).
  * No model chosen ("Auto") means agy's: `current`, at the chosen effort. Null when there is
  * nothing to ask for, i.e. no choice and agy named no model: the chat keeps agy's.
  */
@@ -119,11 +120,17 @@ export function resolveAntigravityModelId(
   if (!from) return null;
 
   const base = toAntigravityBaseModelId(from);
-  const suffix = /-(low|medium|high)$/i.exec(chosen ?? "")?.[1];
+  const suffix = /-(low|medium|high|xhigh)$/i.exec(chosen ?? "")?.[1];
   const rawEffort = (effort || suffix || ANTIGRAVITY_DEFAULT_EFFORT).toLowerCase();
-  const wanted = `${base}-${rawEffort === "low" || rawEffort === "medium" ? rawEffort : "high"}`;
+  const normEffort = rawEffort === "low" || rawEffort === "medium" || rawEffort === "xhigh"
+    ? rawEffort
+    : rawEffort === "max"
+      ? "xhigh"
+      : "high";
+  const wanted = `${base}-${normEffort}`;
   const available = agy?.available ?? [];
   if (available.length === 0 || available.includes(wanted)) return wanted;
+  if (normEffort === "xhigh" && available.includes(`${base}-high`)) return `${base}-high`;
   if (available.includes(base)) return base;
   return available.find((id) => toAntigravityBaseModelId(id) === base) ?? wanted;
 }

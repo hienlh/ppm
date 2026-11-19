@@ -118,7 +118,7 @@ export function ModelThinkingSelector({
 
   const isAntigravity = providerId === "antigravity";
   // No model chosen ("Auto") is the provider's own pick, which its list marks.
-  const chosenModel = isAntigravity && model ? (model === "pro" ? undefined : model.replace(/-(low|medium|high)$/i, "")) : model;
+  const chosenModel = isAntigravity && model ? (model === "pro" ? undefined : model.replace(/-(low|medium|high|xhigh)$/i, "")) : model;
   const effectiveModel = chosenModel || models.find((m) => m.isDefault)?.value;
   const current = models.find((m) => m.value === effectiveModel);
   const modelDisplay = current
@@ -126,11 +126,11 @@ export function ModelThinkingSelector({
     : effectiveModel
       ? modelDisplayName(effectiveModel)
       : "Model";
-  const suffixEffort = isAntigravity && model ? /-(low|medium|high)$/i.exec(model)?.[1]?.toLowerCase() : undefined;
+  const suffixEffort = isAntigravity && model ? /-(low|medium|high|xhigh)$/i.exec(model)?.[1]?.toLowerCase() : undefined;
   const shown = shownEffort(effort ?? suffixEffort, effortStatus);
   const notice = effortNotice(shown, effortStatus, modelDisplay);
   const effortOptions = isAntigravity
-    ? EFFORT_OPTIONS.filter((o) => o.value === "low" || o.value === "medium" || o.value === "high")
+    ? EFFORT_OPTIONS.filter((o) => o.value === "low" || o.value === "medium" || o.value === "high" || o.value === "xhigh")
     : EFFORT_OPTIONS;
   const showModelList = models.length > 0 || Boolean(modelStatus);
   // The effort the turns run at, which an override outside PPM can make differ from the pick.

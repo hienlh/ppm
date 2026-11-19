@@ -338,6 +338,8 @@ describe("AntigravityProvider & ecosystem integration", () => {
     const parsed = parseAntigravityModels({
       clientModelConfigs: [
         { label: "Claude Opus 5.5 (High)", modelId: "claude-opus-5-5-high" },
+        { label: "Gemini 4 Neon (High)", modelId: "gemini-4-neon-high" },
+        { label: "Gemini 4 Neon (XHigh)", modelId: "gemini-4-neon-xhigh" },
         { label: "Gemini 4 Argon (Medium)", modelId: "gemini-4-argon-medium" },
         { label: "Gemini 4 Argon (High)", modelId: "gemini-4-argon-high" },
         { label: "GPT-OSS 120B (Medium)", modelId: "gpt-oss-120b-medium" },
@@ -345,11 +347,12 @@ describe("AntigravityProvider & ecosystem integration", () => {
       clientModelSorts: [
         {
           name: "Recommended",
-          groups: [{ modelLabels: ["Gemini 4 Argon (Medium)", "Gemini 4 Argon (High)", "Claude Opus 5.5 (High)", "GPT-OSS 120B (Medium)"] }],
+          groups: [{ modelLabels: ["Gemini 4 Neon (High)", "Gemini 4 Neon (XHigh)", "Gemini 4 Argon (Medium)", "Gemini 4 Argon (High)", "Claude Opus 5.5 (High)", "GPT-OSS 120B (Medium)"] }],
         },
       ],
     });
     expect(parsed).toEqual([
+      { value: "gemini-4-neon", label: "Gemini 4 Neon" },
       { value: "gemini-4-argon", label: "Gemini 4 Argon" },
       { value: "claude-opus-5-5", label: "Claude Opus 5.5" },
       { value: "gpt-oss-120b", label: "GPT-OSS 120B" },
@@ -357,11 +360,14 @@ describe("AntigravityProvider & ecosystem integration", () => {
     expect(resolveAntigravityModelId("gemini-4-argon", "low")).toBe("gemini-4-argon-low");
     expect(resolveAntigravityModelId("gemini-4-argon", "medium")).toBe("gemini-4-argon-medium");
     expect(resolveAntigravityModelId("gemini-4-argon", "high")).toBe("gemini-4-argon-high");
+    expect(resolveAntigravityModelId("gemini-4-neon", "xhigh")).toBe("gemini-4-neon-xhigh");
 
     // agy's own list (session/new's `models`) is what Auto and a missing effort resolve against.
     const agy = parseAgyModels({
       currentModelId: "gemini-4-carbon-medium",
       availableModels: [
+        { modelId: "gemini-4-neon-high", name: "Gemini 4 Neon (High)" },
+        { modelId: "gemini-4-neon-xhigh", name: "Gemini 4 Neon (XHigh)" },
         { modelId: "gemini-4-carbon-medium", name: "Gemini 4 Carbon (Medium)" },
         { modelId: "gemini-4-carbon-high", name: "Gemini 4 Carbon (High)" },
         { modelId: "gemini-4-argon-low", name: "Gemini 4 Argon (Low)" },
@@ -369,6 +375,7 @@ describe("AntigravityProvider & ecosystem integration", () => {
       ],
     })!;
     expect(agyModelOptions(agy)).toEqual([
+      { value: "gemini-4-neon", label: "Gemini 4 Neon" },
       { value: "gemini-4-carbon", label: "Gemini 4 Carbon", isDefault: true },
       { value: "gemini-4-argon", label: "Gemini 4 Argon" },
       { value: "gpt-oss-120b", label: "GPT-OSS 120B" },
@@ -376,6 +383,9 @@ describe("AntigravityProvider & ecosystem integration", () => {
     const known = { available: agy.available.map((m) => m.modelId), current: agy.current };
     expect(resolveAntigravityModelId(undefined, undefined, known)).toBe("gemini-4-carbon-high");
     expect(resolveAntigravityModelId("__default__", "medium", known)).toBe("gemini-4-carbon-medium");
+    expect(resolveAntigravityModelId("gemini-4-neon", "xhigh", known)).toBe("gemini-4-neon-xhigh");
+    // A model without xhigh falls back to high rather than its first listed entry (medium).
+    expect(resolveAntigravityModelId("gemini-4-carbon", "xhigh", known)).toBe("gemini-4-carbon-high");
     expect(resolveAntigravityModelId("gpt-oss-120b", "high", known)).toBe("gpt-oss-120b-medium");
     expect(resolveAntigravityModelId("gemini-4-argon", "high", known)).toBe("gemini-4-argon-low");
     // Nothing chosen and agy named nothing: no model is asked for, the chat keeps agy's.
