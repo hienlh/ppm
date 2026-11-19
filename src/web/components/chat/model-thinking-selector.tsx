@@ -5,15 +5,9 @@ import { useIsMobile } from "@/hooks/use-is-mobile";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { modelDisplayName } from "@/lib/model-display-name";
 import type { EffortStatus } from "../../../shared/effort-status";
-import { EFFORT_OPTIONS, chipLabel, effortLabel, effortNotice, noticeText, shownEffort, type EffortNotice } from "./model-thinking-selector-helpers";
+import type { ModelOption } from "../../../types/chat";
+import { antigravityModelSupportsXhigh, chipLabel, effortLabel, effortNotice, effortOptionsForModel, noticeText, shownEffort, type EffortNotice } from "./model-thinking-selector-helpers";
 import { ProviderChoiceRow, ProviderIcon } from "./provider-selector";
-
-interface ModelOption {
-  value: string;
-  label: string;
-  /** The provider's own pick, what "Auto" (no model chosen) runs on. */
-  isDefault?: boolean;
-}
 
 // Shared by chat tabs; keep successful lists visible while refreshing an old entry.
 const modelCache = new Map<string, { models: ModelOption[]; expiry: number }>();
@@ -127,11 +121,16 @@ export function ModelThinkingSelector({
       ? modelDisplayName(effectiveModel)
       : "Model";
   const suffixEffort = isAntigravity && model ? /-(low|medium|high|xhigh)$/i.exec(model)?.[1]?.toLowerCase() : undefined;
-  const shown = shownEffort(effort ?? suffixEffort, effortStatus);
+  const rawEffort = effort ?? suffixEffort;
+  const antigravitySupportsXhigh = antigravityModelSupportsXhigh(current);
+  const modelDisallowsXhigh = Boolean(current?.supportedEfforts && !current.supportedEfforts.includes("xhigh"));
+  const effectiveEffort = (isAntigravity && current && !antigravitySupportsXhigh && (rawEffort === "xhigh" || rawEffort === "max"))
+    || (!isAntigravity && modelDisallowsXhigh && rawEffort === "xhigh")
+    ? "high"
+    : rawEffort;
+  const shown = shownEffort(effectiveEffort, effortStatus);
   const notice = effortNotice(shown, effortStatus, modelDisplay);
-  const effortOptions = isAntigravity
-    ? EFFORT_OPTIONS.filter((o) => o.value === "low" || o.value === "medium" || o.value === "high" || o.value === "xhigh")
-    : EFFORT_OPTIONS;
+  const effortOptions = effortOptionsForModel(providerId, current, { keepLevels: [shown.level] });
   const showModelList = models.length > 0 || Boolean(modelStatus);
   // The effort the turns run at, which an override outside PPM can make differ from the pick.
   const chipText = chipLabel(modelDisplay, shown.level);
@@ -153,7 +152,14 @@ export function ModelThinkingSelector({
           <SectionLabel>Model</SectionLabel>
           {modelStatus && <div role="status" className="px-3 py-2 text-xs text-text-secondary">{modelStatus}</div>}
           {models.map((m) => (
-            <OptionRow key={m.value} active={m.value === effectiveModel} onClick={() => pick(() => onModelChange(m.value))}>
+            <OptionRow key={m.value} active={m.value === effectiveModel} onClick={() => pick(() => {
+              onModelChange(m.value);
+              if (isAntigravity && (rawEffort === "xhigh" || rawEffort === "max") && !antigravityModelSupportsXhigh(m)) {
+                onEffortChange("high");
+              } else if (!isAntigravity && rawEffort === "xhigh" && m.supportedEfforts && !m.supportedEfforts.includes("xhigh")) {
+                onEffortChange("high");
+              }
+            })}>
               <span className="flex-1 truncate">{shortLabel(m.label, providerId)}</span>
               {m.value === effectiveModel && <Check className="size-4 shrink-0 text-primary" />}
             </OptionRow>

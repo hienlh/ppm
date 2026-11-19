@@ -3,6 +3,7 @@ import { api } from "@/lib/api-client";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ASSISTANT_EFFORTS, type AssistantEffort, type AssistantProviderDefaults } from "../../../shared/assistant-settings";
+import { antigravityModelSupportsXhigh } from "@/components/chat/model-thinking-selector-helpers";
 import type { ModelOption } from "../../../types/chat";
 
 /** Select value standing for "nothing set here": the chat default applies. */
@@ -34,8 +35,26 @@ export function AssistantProviderDefaultsRow({ provider, value, disabled, onChan
   const options = value.model && !models.some((m) => m.value === value.model)
     ? [...models, { value: value.model, label: value.model }]
     : models;
+  const isAntigravity = provider.id === "antigravity";
+  const effectiveAntigravityModel = isAntigravity
+    ? models.find((m) => m.value === (value.model || models.find((x) => x.isDefault)?.value))
+    : undefined;
+  const allowAntigravityXhigh = effectiveAntigravityModel
+    ? antigravityModelSupportsXhigh(effectiveAntigravityModel)
+    : value.effort === "xhigh";
+  const effortChoices = isAntigravity
+    ? ASSISTANT_EFFORTS.filter((e) => e === "low" || e === "medium" || e === "high" || (e === "xhigh" && allowAntigravityXhigh))
+    : ASSISTANT_EFFORTS;
+  const effortValue = isAntigravity && effectiveAntigravityModel && !allowAntigravityXhigh
+    && (value.effort === "xhigh" || value.effort === "max")
+    ? "high"
+    : (value.effort ?? CHAT_DEFAULT);
   const set = (patch: AssistantProviderDefaults) => {
     const next = { ...value, ...patch };
+    if (isAntigravity && "model" in patch && (next.effort === "xhigh" || next.effort === "max")) {
+      const target = models.find((m) => m.value === (next.model || models.find((x) => x.isDefault)?.value));
+      if (target && !antigravityModelSupportsXhigh(target)) next.effort = "high";
+    }
     onChange({ ...(next.model ? { model: next.model } : {}), ...(next.effort ? { effort: next.effort } : {}) });
   };
 
@@ -55,12 +74,12 @@ export function AssistantProviderDefaultsRow({ provider, value, disabled, onChan
         </div>
         <div className="space-y-1">
           <Label htmlFor={`asst-effort-${provider.id}`} className="text-xs text-text-subtle">Effort</Label>
-          <Select value={value.effort ?? CHAT_DEFAULT} disabled={disabled}
+          <Select value={effortValue} disabled={disabled}
             onValueChange={(v) => set({ effort: v === CHAT_DEFAULT ? undefined : (v as AssistantEffort) })}>
             <SelectTrigger id={`asst-effort-${provider.id}`} className="h-11 w-full md:h-8"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value={CHAT_DEFAULT}>Same as chats</SelectItem>
-              {ASSISTANT_EFFORTS.map((e) => <SelectItem key={e} value={e}>{EFFORT_LABELS[e]}</SelectItem>)}
+              {effortChoices.map((e) => <SelectItem key={e} value={e}>{EFFORT_LABELS[e]}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>

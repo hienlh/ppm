@@ -1,7 +1,10 @@
 import { describe, it, expect } from "bun:test";
 import {
   EFFORT_OPTIONS,
+  antigravityEffortOptions,
+  antigravityModelSupportsXhigh,
   effortLabel,
+  effortOptionsForModel,
   chipLabel,
   effortNotice,
   noticeText,
@@ -21,6 +24,28 @@ describe("effort options", () => {
 
   it("marks High as the default", () => {
     expect(EFFORT_OPTIONS.find((o) => o.default)?.value).toBe("high");
+  });
+
+  it("shows Antigravity xhigh only when the model lists xhigh", () => {
+    const neon = { supportedEfforts: ["low", "medium", "high", "xhigh"] };
+    const carbon = { supportedEfforts: ["low", "medium", "high"] };
+    expect(antigravityModelSupportsXhigh(neon)).toBe(true);
+    expect(antigravityModelSupportsXhigh(carbon)).toBe(false);
+    expect(antigravityEffortOptions(neon).map((o) => o.value)).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(antigravityEffortOptions(carbon).map((o) => o.value)).toEqual(["low", "medium", "high"]);
+    expect(antigravityEffortOptions(undefined).map((o) => o.value)).toEqual(["low", "medium", "high"]);
+    expect(antigravityEffortOptions(undefined, true).map((o) => o.value)).toEqual(["low", "medium", "high", "xhigh"]);
+  });
+
+  it("hides unsupported effort levels for Claude models while keeping active overrides visible", () => {
+    const opus55 = { supportedEfforts: ["low", "medium", "high", "xhigh", "max"] };
+    const sonnet46 = { supportedEfforts: ["low", "medium", "high", "max"] };
+    const haiku45 = { supportedEfforts: [] };
+    expect(effortOptionsForModel("claude", opus55).map((o) => o.value)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(effortOptionsForModel("claude", sonnet46).map((o) => o.value)).toEqual(["low", "medium", "high", "max"]);
+    expect(effortOptionsForModel("claude", haiku45).map((o) => o.value)).toEqual(["low", "medium", "high"]);
+    expect(effortOptionsForModel("claude", haiku45, { keepLevels: ["max"] }).map((o) => o.value)).toEqual(["low", "medium", "high", "max"]);
+    expect(effortOptionsForModel("claude", undefined).map((o) => o.value)).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 });
 

@@ -10,6 +10,8 @@
  * for accounts without access.
  */
 
+import type { EffortLevel } from "../shared/effort-status.ts";
+
 export interface ClaudeModelOption {
   /** Model ID sent to the Claude API / Agent SDK. */
   value: string;
@@ -17,21 +19,29 @@ export interface ClaudeModelOption {
   label: string;
   /** Capability hint shown next to the label in the `ppm init` prompt. */
   hint: string;
+  /** Effort levels supported by this model in Claude Code (`[]` = model ignores effort). */
+  supportedEfforts?: readonly EffortLevel[];
 }
+
+const ALL_CLAUDE_EFFORTS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+const NO_XHIGH_CLAUDE_EFFORTS: readonly EffortLevel[] = ["low", "medium", "high", "max"];
+const NO_CLAUDE_EFFORTS: readonly EffortLevel[] = [];
 
 /** Ordered newest/most-capable first; the first entry is not automatically the default. */
 export const CLAUDE_MODELS: readonly ClaudeModelOption[] = [
-  { value: "claude-opus-5-5", label: "Claude Opus 5.5", hint: "balanced, recommended" },
-  { value: "claude-fable-5-2", label: "Claude Fable 5.2", hint: "flagship" },
-  { value: "claude-fable-5-1", label: "Claude Fable 5.1", hint: "flagship" },
-  { value: "claude-opus-5", label: "Claude Opus 5", hint: "most powerful" },
-  { value: "claude-fable-5", label: "Claude Fable 5", hint: "flagship" },
-  { value: "claude-opus-4-8", label: "Claude Opus 4.8", hint: "powerful" },
-  { value: "claude-opus-4-7", label: "Claude Opus 4.7", hint: "powerful" },
-  { value: "claude-opus-4-6", label: "Claude Opus 4.6", hint: "powerful" },
-  { value: "claude-sonnet-5", label: "Claude Sonnet 5", hint: "fast" },
-  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "fast" },
-  { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "cheap" },
+  { value: "claude-opus-5-5", label: "Claude Opus 5.5", hint: "balanced, recommended", supportedEfforts: ALL_CLAUDE_EFFORTS },
+  { value: "claude-fable-5-2", label: "Claude Fable 5.2", hint: "flagship", supportedEfforts: ALL_CLAUDE_EFFORTS },
+  { value: "claude-fable-5-1", label: "Claude Fable 5.1", hint: "flagship", supportedEfforts: ALL_CLAUDE_EFFORTS },
+  { value: "claude-opus-5", label: "Claude Opus 5", hint: "most powerful", supportedEfforts: ALL_CLAUDE_EFFORTS },
+  { value: "claude-fable-5", label: "Claude Fable 5", hint: "flagship", supportedEfforts: ALL_CLAUDE_EFFORTS },
+  { value: "claude-opus-4-8", label: "Claude Opus 4.8", hint: "powerful", supportedEfforts: ALL_CLAUDE_EFFORTS },
+  { value: "claude-opus-4-7", label: "Claude Opus 4.7", hint: "powerful", supportedEfforts: ALL_CLAUDE_EFFORTS },
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6", hint: "powerful", supportedEfforts: NO_XHIGH_CLAUDE_EFFORTS },
+  { value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", hint: "fast", supportedEfforts: ALL_CLAUDE_EFFORTS },
+  { value: "claude-sonnet-5", label: "Claude Sonnet 5", hint: "fast", supportedEfforts: ALL_CLAUDE_EFFORTS },
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "fast", supportedEfforts: NO_XHIGH_CLAUDE_EFFORTS },
+  { value: "claude-haiku-5-5", label: "Claude Haiku 5.5", hint: "fast, cheap", supportedEfforts: ALL_CLAUDE_EFFORTS },
+  { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "cheap", supportedEfforts: NO_CLAUDE_EFFORTS },
 ];
 
 /** Model IDs accepted by config validation. */

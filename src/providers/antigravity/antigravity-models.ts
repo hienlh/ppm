@@ -56,17 +56,44 @@ export function storedAgyModels(): AgyModels | null {
   }
 }
 
+const ANTIGRAVITY_EFFORT_ORDER = ["low", "medium", "high", "xhigh"] as const;
+type AntigravityEffort = (typeof ANTIGRAVITY_EFFORT_ORDER)[number];
+
+/** Extract the trailing effort level from an Antigravity model ID or display label. */
+function extractAntigravityEffort(id: string, label?: string): AntigravityEffort | null {
+  const match = /-(low|medium|high|xhigh)$/i.exec(id)?.[1]
+    ?? (label ? /\((low|medium|high|xhigh)\)\s*$/i.exec(label)?.[1] : undefined);
+  return match ? (match.toLowerCase() as AntigravityEffort) : null;
+}
+
+function sortedAntigravityEfforts(set: Set<AntigravityEffort>): AntigravityEffort[] {
+  return ANTIGRAVITY_EFFORT_ORDER.filter((e) => set.has(e));
+}
+
 /** agy's models as picker options, one per model (effort is picked separately), agy's own first pick marked. */
 export function agyModelOptions(models: AgyModels | null): ModelOption[] {
   if (!models) return [];
   const defaultBase = models.current ? toAntigravityBaseModelId(models.current) : undefined;
-  const seen = new Set<string>();
+  const byValue = new Map<string, { option: ModelOption; efforts: Set<AntigravityEffort> }>();
   const out: ModelOption[] = [];
   for (const m of models.available) {
     const value = toAntigravityBaseModelId(m.modelId);
-    if (seen.has(value)) continue;
-    seen.add(value);
-    out.push({ value, label: toAntigravityBaseModelLabel(m.name), ...(value === defaultBase ? { isDefault: true } : {}) });
+    let entry = byValue.get(value);
+    if (!entry) {
+      const option: ModelOption = {
+        value,
+        label: toAntigravityBaseModelLabel(m.name),
+        ...(value === defaultBase ? { isDefault: true } : {}),
+      };
+      entry = { option, efforts: new Set() };
+      byValue.set(value, entry);
+      out.push(option);
+    }
+    const effort = extractAntigravityEffort(m.modelId, m.name);
+    if (effort) entry.efforts.add(effort);
+  }
+  for (const { option, efforts } of byValue.values()) {
+    if (efforts.size > 0) option.supportedEfforts = sortedAntigravityEfforts(efforts);
   }
   return out;
 }
@@ -145,8 +172,8 @@ export function parseAntigravityModels(raw: GetCascadeModelConfigDataRaw | null 
   if (configs.length === 0) return [];
 
   const byRawLabel = new Map<string, ModelOption>();
+  const byBase = new Map<string, { option: ModelOption; efforts: Set<AntigravityEffort> }>();
   const allBaseOptions: ModelOption[] = [];
-  const seenBase = new Set<string>();
 
   for (const cfg of configs) {
     const rawLabel = cfg.label?.trim();
@@ -154,12 +181,20 @@ export function parseAntigravityModels(raw: GetCascadeModelConfigDataRaw | null 
     if (!rawLabel || !rawValue) continue;
     const value = toAntigravityBaseModelId(rawValue);
     const label = toAntigravityBaseModelLabel(rawLabel);
-    const option: ModelOption = { value, label };
-    byRawLabel.set(rawLabel, option);
-    if (!seenBase.has(value)) {
-      seenBase.add(value);
+    let entry = byBase.get(value);
+    if (!entry) {
+      const option: ModelOption = { value, label };
+      entry = { option, efforts: new Set() };
+      byBase.set(value, entry);
       allBaseOptions.push(option);
     }
+    const effort = extractAntigravityEffort(rawValue, rawLabel);
+    if (effort) entry.efforts.add(effort);
+    byRawLabel.set(rawLabel, entry.option);
+  }
+
+  for (const { option, efforts } of byBase.values()) {
+    if (efforts.size > 0) option.supportedEfforts = sortedAntigravityEfforts(efforts);
   }
 
   if (allBaseOptions.length === 0) return [];
@@ -195,8 +230,16 @@ export async function fetchAntigravityModelsLive(customHome?: string): Promise<M
   const fromAgy = agyModelOptions(stored);
   const fromApp = await fetchLanguageServerModels(customHome);
   if (fromApp.length === 0) return fromAgy;
+  const agyByValue = new Map(fromAgy.map((m) => [m.value, m]));
   const defaultBase = stored?.current ? toAntigravityBaseModelId(stored.current) : undefined;
-  return fromApp.map((m) => (m.value === defaultBase ? { ...m, isDefault: true } : m));
+  return fromApp.map((m) => {
+    const supportedEfforts = m.supportedEfforts ?? agyByValue.get(m.value)?.supportedEfforts;
+    return {
+      ...m,
+      ...(supportedEfforts ? { supportedEfforts } : {}),
+      ...(m.value === defaultBase ? { isDefault: true } : {}),
+    };
+  });
 }
 
 async function fetchLanguageServerModels(customHome?: string): Promise<ModelOption[]> {

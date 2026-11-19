@@ -239,6 +239,8 @@ export interface ModelOption {
   label: string;
   /** The model the provider itself picks when the user has not chosen one ("Auto"). */
   isDefault?: boolean;
+  /** Effort levels this model supports when known per model (e.g. Antigravity's effort-suffixed models). */
+  supportedEfforts?: ("low" | "medium" | "high" | "xhigh" | "max")[];
 }
 
 export interface Session {

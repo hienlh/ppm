@@ -857,7 +857,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
   async listModels(): Promise<ModelOption[]> {
-    return CLAUDE_MODELS.map(({ value, label }) => ({ value, label }));
+    return CLAUDE_MODELS.map(({ value, label, supportedEfforts }) => ({
+      value,
+      label,
+      ...(supportedEfforts ? { supportedEfforts: [...supportedEfforts] } : {}),
+    }));
   }
 
   /**

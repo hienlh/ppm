@@ -352,10 +352,10 @@ describe("AntigravityProvider & ecosystem integration", () => {
       ],
     });
     expect(parsed).toEqual([
-      { value: "gemini-4-neon", label: "Gemini 4 Neon" },
-      { value: "gemini-4-argon", label: "Gemini 4 Argon" },
-      { value: "claude-opus-5-5", label: "Claude Opus 5.5" },
-      { value: "gpt-oss-120b", label: "GPT-OSS 120B" },
+      { value: "gemini-4-neon", label: "Gemini 4 Neon", supportedEfforts: ["high", "xhigh"] },
+      { value: "gemini-4-argon", label: "Gemini 4 Argon", supportedEfforts: ["medium", "high"] },
+      { value: "claude-opus-5-5", label: "Claude Opus 5.5", supportedEfforts: ["high"] },
+      { value: "gpt-oss-120b", label: "GPT-OSS 120B", supportedEfforts: ["medium"] },
     ]);
     expect(resolveAntigravityModelId("gemini-4-argon", "low")).toBe("gemini-4-argon-low");
     expect(resolveAntigravityModelId("gemini-4-argon", "medium")).toBe("gemini-4-argon-medium");
@@ -372,13 +372,15 @@ describe("AntigravityProvider & ecosystem integration", () => {
         { modelId: "gemini-4-carbon-high", name: "Gemini 4 Carbon (High)" },
         { modelId: "gemini-4-argon-low", name: "Gemini 4 Argon (Low)" },
         { modelId: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" },
+        { modelId: "gemini-pro-orchestrator-neon", name: "Orchestrator (Neon)" },
       ],
     })!;
     expect(agyModelOptions(agy)).toEqual([
-      { value: "gemini-4-neon", label: "Gemini 4 Neon" },
-      { value: "gemini-4-carbon", label: "Gemini 4 Carbon", isDefault: true },
-      { value: "gemini-4-argon", label: "Gemini 4 Argon" },
-      { value: "gpt-oss-120b", label: "GPT-OSS 120B" },
+      { value: "gemini-4-neon", label: "Gemini 4 Neon", supportedEfforts: ["high", "xhigh"] },
+      { value: "gemini-4-carbon", label: "Gemini 4 Carbon", isDefault: true, supportedEfforts: ["medium", "high"] },
+      { value: "gemini-4-argon", label: "Gemini 4 Argon", supportedEfforts: ["low"] },
+      { value: "gpt-oss-120b", label: "GPT-OSS 120B", supportedEfforts: ["medium"] },
+      { value: "gemini-pro-orchestrator-neon", label: "Orchestrator (Neon)" },
     ]);
     const known = { available: agy.available.map((m) => m.modelId), current: agy.current };
     expect(resolveAntigravityModelId(undefined, undefined, known)).toBe("gemini-4-carbon-high");
