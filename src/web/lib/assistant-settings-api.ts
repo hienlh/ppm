@@ -20,7 +20,7 @@ export interface AssistantSettingsResponse {
  */
 export const KEYS_SAVED_ELSEWHERE = [
   "digest", "quiet_hours", "timezone", "manager_default_mode", "manager_template", "restart_news",
-  "auto_readonly_commands", "act_on_own",
+  "auto_readonly_commands", "act_on_own", "permission_mode", "db_write_connections",
 ] as const;
 type KeySavedElsewhere = (typeof KEYS_SAVED_ELSEWHERE)[number];
 

@@ -10,6 +10,9 @@ import { assistantManagerRoutes } from "./assistant-managers.ts";
 import { assistantCardRoutes } from "./assistant-cards.ts";
 import { assistantNotesRoutes } from "./assistant-notes.ts";
 import { ok, err } from "../../types/api.ts";
+import { settleFeaturesDecidedInSettings } from "../../services/feature-intros.service.ts";
+import { FEATURE_INTROS_CHANGED_EVENT } from "../../shared/feature-intros.ts";
+import { broadcastGlobalEvent } from "../ws/global.ts";
 
 /** Counts and names only: a server's settings carry secrets. */
 const log = createLogger("assistant-settings");
@@ -68,6 +71,12 @@ assistantSettingsRoutes.put("/settings", async (c) => {
     const result = saveAssistantSettings(body, (id) => supported.has(id));
     if (!result.ok) return c.json(err(result.errors.join("; ")), 400);
     log.info(`Saved: ${result.settings.mcp_servers.length} MCP server(s): ${result.settings.mcp_servers.map((s) => s.name).join(", ") || "none"}`);
+    // Choosing Full or Ask here answers the "PPM has new features" question for it on every device.
+    const named = typeof body === "object" && body !== null && "permission_mode" in body;
+    if (named) {
+      log.info(`Permission mode: ${result.settings.permission_mode ?? "not chosen"}`);
+      if (settleFeaturesDecidedInSettings()) broadcastGlobalEvent({ type: FEATURE_INTROS_CHANGED_EVENT, change: "settings" });
+    }
     return c.json(ok(payload()));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

@@ -164,3 +164,48 @@ describe("Permissions", () => {
     expect(stored.instructions).toBe("Be briefer.");
   });
 });
+
+describe("Permission mode", () => {
+  const option = (mode: string) => document.body.querySelector<HTMLButtonElement>(`[data-mode-option="${mode}"]`)!;
+
+  it("shows neither chosen until the user picks, and says the Assistant asks meanwhile", async () => {
+    await render();
+    expect(option("full").getAttribute("aria-checked")).toBe("false");
+    expect(option("ask").getAttribute("aria-checked")).toBe("false");
+    expect(text()).toContain("Not chosen yet");
+  });
+
+  it("asks before Full, saves only the mode, then includes acting on its own and lists writable connections", async () => {
+    await render();
+    await click(option("full"));
+    await settle();
+    expect(puts()).toEqual([]);
+    expect(text()).toContain("Switch the Assistant to Full mode?");
+    await click(button("Use Full"));
+    await settle();
+    expect(puts()[0]!.permission_mode).toBe("full");
+    expect("act_on_own" in puts()[0]! && puts()[0]!.act_on_own !== SETTINGS.act_on_own).toBe(false);
+    expect(option("full").getAttribute("aria-checked")).toBe("true");
+    expect(toggle(ACT_ON_OWN_LABEL).getAttribute("aria-checked")).toBe("true");
+    expect(toggle(ACT_ON_OWN_LABEL).disabled).toBe(true);
+    expect(document.body.querySelector('[data-testid="assistant-db-write"]')).not.toBeNull();
+  });
+
+  it("goes back to Ask at once, with no confirmation", async () => {
+    stored = { ...SETTINGS, permission_mode: "full" };
+    await render();
+    await click(option("ask"));
+    await settle();
+    expect(puts()[0]!.permission_mode).toBe("ask");
+    expect(document.body.querySelector('[data-testid="assistant-db-write"]')).toBeNull();
+  });
+
+  it("is kept by a General Save from an older draft", async () => {
+    stored = { ...SETTINGS, permission_mode: "full", db_write_connections: [2] };
+    await render();
+    await saveGeneralAssistantSettings({ ...SETTINGS, permission_mode: "ask", db_write_connections: [] } as never);
+    const general = puts().at(-1)!;
+    expect("permission_mode" in general).toBe(false);
+    expect("db_write_connections" in general).toBe(false);
+  });
+});
