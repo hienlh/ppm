@@ -31,6 +31,8 @@ export interface SpecTaskView {
   screen: string | null;
   children: { id: string; title: string; done: boolean }[];
   run: SpecTaskState | null;
+  /** A red or green run of this task's tests in flight now (PPM is running them). */
+  testing: { kind: "red" | "green"; startedAt: string } | null;
 }
 
 export interface SpecView {

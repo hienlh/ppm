@@ -37,6 +37,9 @@ const spawnTest = (command: string, cwd: string) =>
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
+    // A group of its own, so a stop reaches every process the runner started (a test that drives
+    // a VM can be three shells deep), not only the shell's direct children.
+    detached: !isWindows,
     windowsHide: true,
     windowsVerbatimArguments: isWindows,
     // CI=1 makes most runners print plainly (no watch mode, no colour, no spinner).
@@ -57,25 +60,34 @@ async function pump(stream: ReadableStream<Uint8Array>, buf: BoundedBuffer): Pro
   }
 }
 
-/** Stops what the shell started (the test runner and its workers), then the shell itself. */
+/** Stops the whole run: the shell's process group (the runner and everything under it). */
 function killTree(pid: number): void {
   if (process.platform === "win32") {
     try { Bun.spawn(["taskkill", "/pid", String(pid), "/t", "/f"], { stdout: "ignore", stderr: "ignore", windowsHide: true }); } catch { /* best effort */ }
     return;
   }
-  try { Bun.spawn(["pkill", "-TERM", "-P", String(pid)], { stdout: "ignore", stderr: "ignore" }); } catch { /* no pkill */ }
+  try { process.kill(-pid, "SIGTERM"); } catch { /* already gone */ }
+  // A runner that traps TERM (or a VM helper that ignores it) is ended for good a moment later.
+  setTimeout(() => { try { process.kill(-pid, "SIGKILL"); } catch { /* gone */ } }, 3_000).unref?.();
 }
 
 export interface TestRun {
   record: SpecRunRecord;
   verdict: Verdict;
+  /** The caller gave up on the run (the chat stopped the call) and it was killed: judge nothing. */
+  aborted?: boolean;
 }
 
-export async function runTestCommand(command: string, cwd: string, timeoutMs: number): Promise<TestRun> {
+/**
+ * `signal` is the tool call that asked for the run: when it aborts (the user stopped the turn,
+ * the provider gave up) the run is killed at once instead of going on unseen for minutes.
+ */
+export async function runTestCommand(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<TestRun> {
   const started = Date.now();
   const buf = new BoundedBuffer();
   let code: number | null = null;
   let timedOut = false;
+  let aborted = false;
   let proc: ReturnType<typeof spawnTest> | null = null;
   try {
     proc = spawnTest(command, cwd);
@@ -86,24 +98,29 @@ export async function runTestCommand(command: string, cwd: string, timeoutMs: nu
     const p = proc;
     let giveUp!: () => void;
     const abandoned = new Promise<void>((r) => { giveUp = r; });
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const stop = () => {
       killTree(p.pid);
       try { p.kill(); } catch { /* already gone */ }
       giveUp();
-    }, timeoutMs);
+    };
+    const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
+    const onAbort = () => { aborted = true; stop(); };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
     // A runner's own children can keep the pipes open after the shell is killed, so the reads
     // are abandoned at the time limit rather than awaited to their end.
     await Promise.race([Promise.all([pump(p.stdout, buf), pump(p.stderr, buf)]).catch(() => {}), abandoned]);
     code = await Promise.race([p.exited, abandoned.then(() => null)]);
     clearTimeout(timer);
-    if (timedOut) code = null;
+    signal?.removeEventListener("abort", onAbort);
+    if (timedOut || aborted) code = null;
   }
   // eslint-disable-next-line no-control-regex
   const output = buf.toString().replace(/\x1b\[[0-9;]*m/g, "");
   const verdict = judgeRun({ command, output, code, timedOut });
   return {
     verdict,
+    ...(aborted ? { aborted } : {}),
     record: {
       at: new Date().toISOString(),
       command,

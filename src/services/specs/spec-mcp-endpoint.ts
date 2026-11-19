@@ -44,7 +44,7 @@ function gateText(r: GateResult): Json {
 }
 
 /** Runs one spec tool for a chat; shared by MCP and `ppm spec call` (which posts to the same endpoint). */
-export async function callSpecTool(deps: Pick<SpecToolDeps, "canonical" | "aliases" | "projectPathOf">, sessionId: string, name: string, rawArgs: unknown): Promise<Json> {
+export async function callSpecTool(deps: Pick<SpecToolDeps, "canonical" | "aliases" | "projectPathOf">, sessionId: string, name: string, rawArgs: unknown, signal?: AbortSignal): Promise<Json> {
   const args = argsOf(rawArgs);
   const binding: SpecSessionBinding | null = specForSession(sessionId)
     ?? deps.aliases(sessionId).map((id) => specForSession(id)).find((b) => b !== null) ?? null;
@@ -127,15 +127,15 @@ export async function callSpecTool(deps: Pick<SpecToolDeps, "canonical" | "alias
     case TASK_RED_TOOL: {
       const id = ownTask();
       if (typeof id !== "string") return id;
-      return gateText(await taskRed(projectPath, slug, id));
+      return gateText(await taskRed(projectPath, slug, id, signal));
     }
     case TASK_GREEN_TOOL: {
       const id = ownTask();
       if (typeof id !== "string") return id;
-      return gateText(await taskGreen(projectPath, slug, id));
+      return gateText(await taskGreen(projectPath, slug, id, signal));
     }
     case SUITE_CHECK_TOOL: {
-      const r = await checkSuite(projectPath, slug);
+      const r = await checkSuite(projectPath, slug, signal);
       return textResult(r.message, !r.ok);
     }
     default:
@@ -150,9 +150,9 @@ export function createSpecMcpHandler(deps: SpecToolDeps) {
     resolveToken: deps.resolveToken,
     tools: SPEC_TOOL_DEFINITIONS as unknown as Json[],
     unavailable: (name) => (deps.isOn(name) ? null : ppmToolOffMessage(name)),
-    callTool: async (binding, name, args) => {
+    callTool: async (binding, name, args, signal) => {
       try {
-        return await callSpecTool(deps, binding.sessionId, name, args);
+        return await callSpecTool(deps, binding.sessionId, name, args, signal);
       } catch (e) {
         if (e instanceof SpecError) return textResult(e.message, true);
         throw e;

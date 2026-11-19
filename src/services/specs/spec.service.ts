@@ -88,6 +88,8 @@ export async function loadSpec(projectPath: string, slug: string): Promise<SpecC
 
 const baselineRuns = new Set<string>();
 const suiteRuns = new Set<string>();
+/** Task test runs in flight, by spec then task id: the panel shows them, and a second call waits its turn. */
+const taskTestRuns = new Map<string, Map<string, { kind: "red" | "green"; startedAt: string }>>();
 const runKey = (projectPath: string, slug: string) => `${projectPath}\0${slug}`;
 
 export function toView(ctx: SpecContext): SpecView {
@@ -108,6 +110,7 @@ export function toView(ctx: SpecContext): SpecView {
       deps: t.deps, files: t.allFiles, tests: t.allTests, noTest: t.noTest ?? null, screen: t.screen ?? null,
       children: t.children.map((c) => ({ id: c.id, title: c.title, done: c.done })),
       run: st ?? null,
+      testing: taskTestRuns.get(runKey(ctx.projectPath, state.slug))?.get(t.id) ?? null,
     };
   });
   const phases = {} as SpecView["phases"];
@@ -359,7 +362,7 @@ export async function baselineSettled(projectPath: string, slug: string): Promis
  * the suite is meaningful only once none is mid-edit, so callers run it when the last running
  * task of a wave has finished (the scheduler) or right after a lone task's green.
  */
-export async function checkSuite(projectPath: string, slug: string): Promise<{ ok: boolean; message: string; view: SpecView }> {
+export async function checkSuite(projectPath: string, slug: string, signal?: AbortSignal): Promise<{ ok: boolean; message: string; view: SpecView }> {
   await baselineSettled(projectPath, slug);
   const key = runKey(projectPath, slug);
   const ctx0 = await loadSpec(projectPath, slug);
@@ -369,9 +372,13 @@ export async function checkSuite(projectPath: string, slug: string): Promise<{ o
   emitSpecEvent({ type: "spec:changed", projectPath, slug });
   let run: TestRun;
   try {
-    run = await runTestCommand(command, projectPath, DEFAULT_SUITE_TIMEOUT_MS);
+    run = await runTestCommand(command, projectPath, DEFAULT_SUITE_TIMEOUT_MS, signal);
   } finally {
     suiteRuns.delete(key);
+    emitSpecEvent({ type: "spec:changed", projectPath, slug });
+  }
+  if (run.aborted) {
+    return { ok: false, view: await getSpec(projectPath, slug), message: "Whole suite: stopped, the call was cancelled. Nothing was recorded; run suite_check when ready." };
   }
   return withSpecLock(projectPath, slug, async () => {
     const ctx = await loadSpec(projectPath, slug);
@@ -455,7 +462,27 @@ function runSummary(run: TestRun): string {
   return `${v.outcome}${counts} — ${v.reason}${names}\n--- last lines ---\n${tail}`;
 }
 
-export async function taskRed(projectPath: string, slug: string, id: string): Promise<GateResult> {
+const STOPPED_MESSAGE = "Stopped: the call was cancelled, so PPM stopped its test run. Nothing was recorded; call it again when ready.";
+
+/** Runs a task's tests with the run shown in the panel; refuses while another run of that task is in flight. */
+async function runTaskTests(projectPath: string, slug: string, id: string, kind: "red" | "green", command: string, signal?: AbortSignal): Promise<TestRun | string> {
+  const key = runKey(projectPath, slug);
+  let runs = taskTestRuns.get(key);
+  const busy = runs?.get(id);
+  if (busy) return `Task ${id}'s tests are already running (${busy.kind}, started ${busy.startedAt}); wait for that call to answer.`;
+  if (!runs) taskTestRuns.set(key, (runs = new Map()));
+  runs.set(id, { kind, startedAt: new Date().toISOString() });
+  emitSpecEvent({ type: "spec:changed", projectPath, slug });
+  try {
+    return await runTestCommand(command, projectPath, DEFAULT_TASK_TIMEOUT_MS, signal);
+  } finally {
+    runs.delete(id);
+    if (runs.size === 0) taskTestRuns.delete(key);
+    emitSpecEvent({ type: "spec:changed", projectPath, slug });
+  }
+}
+
+export async function taskRed(projectPath: string, slug: string, id: string, signal?: AbortSignal): Promise<GateResult> {
   const pre = await loadSpec(projectPath, slug);
   if (pre.evaluation.nextStep(id) !== "red") {
     return { ok: false, view: toView(pre), message: pre.state.checks !== "thorough" ? "This spec is Standard: there is no red step; call task_done." : `Task ${id} is not waiting for its red check.` };
@@ -469,7 +496,9 @@ export async function taskRed(projectPath: string, slug: string, id: string): Pr
     return { ok: false, view: toView(pre), message: `None of ${t.allTests.join(", ")} changed since the task started: write the new tests for this task first.` };
   }
   const command = expandTestCommand(pre.evaluation.design!.testCommand!.task, t.allTests);
-  const run = await runTestCommand(command, projectPath, DEFAULT_TASK_TIMEOUT_MS);
+  const run = await runTaskTests(projectPath, slug, id, "red", command, signal);
+  if (typeof run === "string") return { ok: false, view: toView(pre), message: run };
+  if (run.aborted) return { ok: false, view: await getSpec(projectPath, slug), message: STOPPED_MESSAGE };
   return withSpecLock(projectPath, slug, async () => {
     const ctx = await loadSpec(projectPath, slug);
     const st = ctx.state.tasks[id];
@@ -489,7 +518,7 @@ export async function taskRed(projectPath: string, slug: string, id: string): Pr
   });
 }
 
-export async function taskGreen(projectPath: string, slug: string, id: string): Promise<GateResult & { suite?: string }> {
+export async function taskGreen(projectPath: string, slug: string, id: string, signal?: AbortSignal): Promise<GateResult & { suite?: string }> {
   const pre = await loadSpec(projectPath, slug);
   if (pre.evaluation.nextStep(id) !== "green") {
     return { ok: false, view: toView(pre), message: pre.state.tasks[id]?.status === "running" ? "Call task_red first: the tests must fail before the code is written." : `Task ${id} is not waiting for its green check.` };
@@ -502,7 +531,9 @@ export async function taskGreen(projectPath: string, slug: string, id: string): 
     return { ok: false, view: toView(pre), message: `Refused: ${edited.join(", ")} changed after the red check. Put the test back as it was (the code must change, not the test), or ask the user to restart the task.` };
   }
   const command = expandTestCommand(pre.evaluation.design!.testCommand!.task, t.allTests);
-  const run = await runTestCommand(command, projectPath, DEFAULT_TASK_TIMEOUT_MS);
+  const run = await runTaskTests(projectPath, slug, id, "green", command, signal);
+  if (typeof run === "string") return { ok: false, view: toView(pre), message: run };
+  if (run.aborted) return { ok: false, view: await getSpec(projectPath, slug), message: STOPPED_MESSAGE };
   const result = await withSpecLock(projectPath, slug, async () => {
     const ctx = await loadSpec(projectPath, slug);
     const st = ctx.state.tasks[id];
@@ -523,7 +554,7 @@ export async function taskGreen(projectPath: string, slug: string, id: string): 
   if ("deferSuite" in result && result.deferSuite) {
     return { ok: true, view: result.view, message: `${result.message} The whole suite is checked when the tasks running beside it finish.` };
   }
-  const suite = await checkSuite(projectPath, slug);
+  const suite = await checkSuite(projectPath, slug, signal);
   return { ok: true, view: suite.view, message: `${result.message} ${suite.message}`, suite: suite.message };
 }
 

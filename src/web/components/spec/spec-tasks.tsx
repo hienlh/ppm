@@ -2,7 +2,7 @@
  * The approved tasks, by wave: what runs side by side and why a task was held back, each task's
  * state (red / green in Thorough) and its chat, with Run all / Stop and Start for one task.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   Check, CircleX, Clock, ExternalLink, FlaskConical, Loader2, Lock, Play, ShieldCheck, Square, X,
@@ -168,7 +168,8 @@ function TaskRow({ spec, task: t, why, busy, projectName, onStart, onReset }: {
         {!t.done && t.next === "blocked" && t.blockedReason && !active && <div className="mt-0.5 text-[11px] text-text-3">{t.blockedReason}</div>}
       </div>
       <div className="flex flex-col items-end gap-1.5">
-        {t.done ? <Pill tone="green">{t.run?.green ? `Green · ${t.run.green.passed ?? 0} pass` : "Done"}</Pill>
+        {t.testing ? <TestingPill kind={t.testing.kind} since={t.testing.startedAt} />
+          : t.done ? <Pill tone="green">{t.run?.green ? `Green · ${t.run.green.passed ?? 0} pass` : "Done"}</Pill>
           : t.status === "red" ? <Pill tone="red">Red · writing code</Pill>
           : t.status === "running" ? <Pill tone="accent">{spec.checks === "thorough" && !t.noTest ? "Writing tests" : "Running"}</Pill>
           : t.status === "failed" ? <Pill tone="red">Failed</Pill>
@@ -201,6 +202,22 @@ function StateDot({ task: t, thorough }: { task: SpecTaskView; thorough: boolean
   if (t.status === "failed") return <span className={`${base} bg-error/15 text-error`}><CircleX className="size-3" /></span>;
   if (t.next === "blocked") return <span className={`${base} bg-panel-2 text-text-3`}><Clock className="size-3" /></span>;
   return <span className={`${base} border border-border`} title={thorough ? "Not started" : undefined} />;
+}
+
+/** PPM is running this task's tests now: which check, and for how long (a VM test can take minutes). */
+function TestingPill({ kind, since }: { kind: "red" | "green"; since: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const s = Math.max(0, Math.floor((now - Date.parse(since)) / 1000));
+  const elapsed = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+  return (
+    <span data-task-testing={kind} title="PPM is running this task's tests">
+      <Pill tone="accent"><Loader2 className="size-3 animate-spin" />Testing {kind === "red" ? "red" : "green"} · {elapsed}</Pill>
+    </span>
+  );
 }
 
 function Pill({ tone, children }: { tone: "green" | "red" | "accent" | "mute"; children: React.ReactNode }) {
