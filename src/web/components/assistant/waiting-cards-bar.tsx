@@ -8,7 +8,7 @@
  * moves the bar to itself, outlined for a moment so the eye finds it.
  *
  * A desktop opens the card under the header, in a box that scrolls. A phone has no room for that:
- * half a screen of card over half a screen of chat read as broken. There the bar is one 26 px row
+ * half a screen of card over half a screen of chat read as broken. There the bar is one 44 px row
  * naming the card, and opening it shows the card full screen in a sheet with the pager and a
  * close button, the chat hidden behind it. A new card does not take the phone's screen by itself.
  */
@@ -208,14 +208,14 @@ export function WaitingCardsBar({ cards, label, onCard, children, note, slotHeig
           onClick={() => setOpen(true)}
           aria-haspopup="dialog"
           aria-expanded={open}
-          className="flex min-h-[26px] w-full min-w-0 items-center gap-2 pl-3 pr-1.5 text-left"
+          className="flex min-h-11 w-full min-w-0 items-center gap-2 pl-3 pr-1.5 text-left"
           data-waiting-toggle=""
         >
           <Title label={label} count={total ?? cards.length} />
           <span className="min-w-0 flex-1 truncate text-xs text-text-secondary" data-waiting-summary="">
             {summary ? summary(current) : `${current.projectName ? `${current.projectName} · ` : ""}${current.title}`}
           </span>
-          <span aria-hidden className="grid size-[22px] shrink-0 place-items-center text-text-secondary">
+          <span aria-hidden className="grid size-11 shrink-0 place-items-center text-text-secondary">
             <ChevronUp className="size-4" />
           </span>
         </button>
