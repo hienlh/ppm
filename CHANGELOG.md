@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.18] - 2026-11-19
+
+### Fixed
+
+- **The Waiting on you bar is 44px tall on a phone again**, as it was before 0.26.16; desktop is unchanged.
+
 ## [0.26.17] - 2026-11-19
 
 ### Added
