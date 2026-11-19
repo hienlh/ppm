@@ -61,7 +61,7 @@ describe("on a phone", () => {
     expect(view.container.querySelector("[data-waiting-card]")).toBeNull();
     expect(sheet()).toBeNull();
     const row = view.container.querySelector("[data-waiting-toggle]")!;
-    expect(row.className).toContain("min-h-[26px]");
+    expect(row.className).toContain("min-h-11");
     expect(view.container.querySelector("[data-waiting-summary]")?.textContent).toBe("ppm · Release 0.25.6 tonight?");
 
     await click(row);
