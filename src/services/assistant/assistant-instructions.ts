@@ -1,5 +1,5 @@
 import { ASSISTANT_CHATS_SUBSECTIONS } from "./assistant-instructions-chats.ts";
-import { ASSISTANT_ACT_ON_OWN_SECTION, ASSISTANT_DELEGATION_SECTION } from "./assistant-instructions-ops.ts";
+import { ASSISTANT_ACT_ON_OWN_SECTION, ASSISTANT_DELEGATION_SECTION, ASSISTANT_FULL_MODE_SECTION } from "./assistant-instructions-ops.ts";
 import { assistantPersonaSection } from "./assistant-instructions-persona.ts";
 import type { AssistantPersona } from "../../shared/assistant-persona.ts";
 
@@ -17,12 +17,14 @@ import type { AssistantPersona } from "../../shared/assistant-persona.ts";
  *
  * `actOnOwn` mirrors Settings → PPM Assistant → "Let the Assistant act on its own" when the
  * instructions are built; it adds the section saying what that lets the agent do, after the
- * tool sections whose "hand it off" rule it narrows.
+ * tool sections whose "hand it off" rule it narrows. `fullMode` (Settings → PPM Assistant →
+ * Permissions on Full) adds the Full-mode section instead, which includes acting on its own.
  */
 export function buildAssistantInstructions(
-  opts: { sections?: readonly string[]; persona?: AssistantPersona; userInstructions?: string; actOnOwn?: boolean } = {},
+  opts: { sections?: readonly string[]; persona?: AssistantPersona; userInstructions?: string; actOnOwn?: boolean; fullMode?: boolean } = {},
 ): string {
-  const extra = [...(opts.sections ?? []), ...(opts.actOnOwn ? [ASSISTANT_ACT_ON_OWN_SECTION] : [])]
+  const modeSection = opts.fullMode ? [ASSISTANT_FULL_MODE_SECTION] : opts.actOnOwn ? [ASSISTANT_ACT_ON_OWN_SECTION] : [];
+  const extra = [...(opts.sections ?? []), ...modeSection]
     .map((s) => s.trim()).filter(Boolean);
   const persona = opts.persona ? assistantPersonaSection(opts.persona) : null;
   const user = opts.userInstructions?.trim();
@@ -173,7 +175,8 @@ export const ASSISTANT_APPROVAL_SECTION = `## Changing things
   registered projects, \`ui_run_command\` for a command that changes data, and every change
   made through the git, schedule and tunnel tools. The card shows
   exactly what will run or be sent; you cannot add your own wording to it, so say in your reply
-  what you are about to do and why before you call.
+  what you are about to do and why before you call. In Full mode (a section below says so) most of
+  them run at once with no card; the answer is the same as an approved one.
 - A card waits until the user answers it; the call stays open meanwhile.
 - A call that comes back declined, unanswered, withdrawn or not run is final. Do not retry it,
   ask again, or reach the same result another way unless the user asks you to. Tell the user

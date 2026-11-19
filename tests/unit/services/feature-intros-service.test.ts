@@ -135,14 +135,14 @@ describe("scheduled prompts in a chat", () => {
 
   it("is a question of its own: turning the session tools on leaves the schedule tools off and still asked", () => {
     configService.set("feature_intros", {});
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([INTRO.id, SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11"]);
     answerFeatureIntro(INTRO.id, "on");
     for (const tool of THREE) expect(onTools()).not.toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCHEDULES.id, SCRIPTS.id, "assistant-full-mode-2026-11"]);
 
     answerFeatureIntro(SCHEDULES.id, "on");
     for (const tool of THREE) expect(onTools()).toContain(tool);
-    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id]);
+    expect(featureIntrosView().pending.map((i) => i.id)).toEqual([SCRIPTS.id, "assistant-full-mode-2026-11"]);
   });
 
   it("asks apart about script proposals: prompts turned on never agreed to code that runs on this machine", () => {
@@ -153,5 +153,40 @@ describe("scheduled prompts in a chat", () => {
     answerFeatureIntro(SCRIPTS.id, "on");
     expect(onTools()).toContain("session_schedule_propose_script");
     expect(featureIntrosView().pending.filter((i) => i.id === SCRIPTS.id)).toEqual([]);
+  });
+});
+
+describe("Full mode for the PPM Assistant", () => {
+  const FULL = FEATURE_INTROS.find((i) => i.id === "assistant-full-mode-2026-11")!;
+  let savedAssistant: unknown;
+  beforeEach(() => { savedAssistant = configService.get("assistant"); configService.set("feature_intros", {}); });
+  afterEach(() => { configService.set("assistant", savedAssistant as never); });
+  const mode = () => (configService.get("assistant") as { permission_mode?: string } | undefined)?.permission_mode;
+
+  it("is a setting, not tool switches: Turn on writes Full and touches no tool", () => {
+    expect(FULL.setting).toBe("assistant_permission_mode");
+    expect(FULL.tools).toEqual([]);
+    const before = JSON.stringify(ai().ppm_tools ?? {});
+    expect(answerFeatureIntro(FULL.id, "on")).toMatchObject({ ok: true, changed: true });
+    expect(mode()).toBe("full");
+    expect(JSON.stringify(ai().ppm_tools ?? {})).toBe(before);
+  });
+
+  it("Turn off writes Ask", () => {
+    answerFeatureIntro(FULL.id, "off");
+    expect(mode()).toBe("ask");
+  });
+
+  it("is settled by a mode already chosen in Settings, and a late answer does not change it", () => {
+    configService.set("assistant", { ...(configService.get("assistant") ?? {}), permission_mode: "ask" } as never);
+    expect(featureIntrosView().pending.map((i) => i.id)).not.toContain(FULL.id);
+    expect(answerFeatureIntro(FULL.id, "on")).toMatchObject({ ok: true, changed: false });
+    expect(mode()).toBe("ask");
+  });
+
+  it("stays asked while no mode is chosen", () => {
+    const { permission_mode: _drop, ...rest } = (configService.get("assistant") ?? {}) as Record<string, unknown>;
+    configService.set("assistant", rest as never);
+    expect(featureIntrosView().pending.map((i) => i.id)).toContain(FULL.id);
   });
 });

@@ -38,6 +38,7 @@ import { collabUnread } from "./collab-unread.ts";
 import { markChildStarting, reserveChildSlot, reservedChildSlots, startingChildren } from "./collab-turn-events.ts";
 import { pairCounter } from "./pair-counter.ts";
 import { childrenOf, depthOf, isSpawned, linkedSessions, parentOf, recordSpawn } from "./session-links.service.ts";
+import { CREATE_SESSION_TOOL, SEND_TO_SESSION_TOOL, type SessionCollabApprovalInput } from "../../shared/session-collab.ts";
 
 /**
  * The session tools' {@link CollabEnv} as the running server provides it. Lookups that may meet an
@@ -50,6 +51,25 @@ const log = createLogger("session-collab");
 /** How long a created session's provider name waits for its first turn to have a transcript. */
 const NAME_WAIT_MS = 2 * 60_000;
 const PROMPT_CHARS = 300;
+
+/**
+ * Whether Full mode lets an Assistant session's create or message go without its card
+ * (`assistant-full-mode.ts`). Only those two cards: a pair-limit or escalation card, and every
+ * card of an ordinary session, keeps asking. Any failure counts as no.
+ */
+async function assistantFullModeAllows(sessionId: string, input: SessionCollabApprovalInput): Promise<boolean> {
+  if (input.kind !== "create" && input.kind !== "message") return false;
+  if (!isAssistantSession(sessionId)) return false;
+  try {
+    const { assistantFullMode } = await import("../assistant/assistant-full-mode-live.ts");
+    const tool = input.kind === "create" ? CREATE_SESSION_TOOL : SEND_TO_SESSION_TOOL;
+    const { kind: _kind, ...rest } = input;
+    return (await assistantFullMode.verdict(resolveMigratedSession(sessionId), { tool, input: rest as Record<string, unknown> })).run;
+  } catch (err) {
+    log.warn(`Full mode could not decide, showing the card: ${(err as Error)?.message ?? String(err)}`);
+    return false;
+  }
+}
 
 const firstOf = <T>(sessionId: string, read: (id: string) => T | null): T | null => {
   for (const id of sessionIdAliases(sessionId)) {
@@ -138,7 +158,9 @@ export const collabEnv: CollabEnv = {
   trace: (sessionId, type, payload) => traceServerEvent(sessionId, firstOf(sessionId, getSessionProvider) ?? "claude", type, payload),
   managerAsked: noteManagerAsked,
   pairs: pairCounter,
-  approve: (sessionId, input, signal) => collabApprovalBroker.request(sessionId, input, signal),
+  approve: async (sessionId, input, signal) => (await assistantFullModeAllows(sessionId, input))
+    ? { allowed: true, answer: "allow_once" }
+    : collabApprovalBroker.request(sessionId, input, signal),
   waits: collabWaits,
   runningSpawned: (projectName) => [...new Set([
     ...listRunningSessions(projectName).map((s) => resolveMigratedSession(s.sessionId)).filter(isSpawned),

@@ -1,15 +1,17 @@
 /**
  * The install-wide record of which new features the tour has asked about (config key
  * `feature_intros`, see `src/shared/feature-intros.ts`). Answered on one device, no other device
- * asks. The answer itself lives in `ai.ppm_tools` as explicit switches; this record only says
- * whether, how and when the question ended, and how many times it was put off.
+ * asks. The answer itself lives in `ai.ppm_tools` as explicit switches, or for a feature that is
+ * one setting in that setting (the Assistant's permission mode); this record only says whether,
+ * how and when the question ended, and how many times it was put off.
  */
 import { configService } from "./config.service.ts";
 import { getDb } from "./db.service.ts";
 import { createLogger } from "./logger.ts";
+import { getAssistantSettings, writeAssistantPermissionMode } from "./assistant/assistant-settings.service.ts";
 import {
   answerFromSwitches, FEATURE_INTRO_SKIP_WINDOW_MS, FEATURE_INTROS, featureIntroById, MAX_FEATURE_INTRO_SKIPS, switchesForAnswer,
-  type FeatureIntroAnswer, type FeatureIntroState, type FeatureIntroStates, type FeatureIntrosView,
+  type FeatureIntroAnswer, type FeatureIntroSetting, type FeatureIntroState, type FeatureIntroStates, type FeatureIntrosView,
 } from "../shared/feature-intros.ts";
 
 const log = createLogger("feature-intros");
@@ -54,13 +56,32 @@ export function settleFeaturesDecidedInSettings(now = new Date()): boolean {
   let changed = false;
   for (const intro of FEATURE_INTROS) {
     const state = stateOf(states, intro.id);
-    const fromSwitches = answerFromSwitches(switches, intro);
+    const fromSwitches = intro.setting ? answerFromSetting(intro.setting) : answerFromSwitches(switches, intro);
     if (state.answer || !fromSwitches) continue;
     states[intro.id] = { ...state, answer: fromSwitches, answeredAt: now.toISOString(), via: "settings" };
     changed = true;
   }
   if (changed) configService.set("feature_intros", states);
   return changed;
+}
+
+/** What a setting already chosen says for its feature; null while it is not chosen. */
+function answerFromSetting(setting: FeatureIntroSetting): FeatureIntroAnswer | null {
+  switch (setting) {
+    case "assistant_permission_mode": {
+      const mode = getAssistantSettings().permission_mode;
+      return mode === "full" ? "on" : mode === "ask" ? "off" : null;
+    }
+  }
+}
+
+/** Writes a setting-backed feature's answer; nothing else in the setting's group moves. */
+function writeSettingAnswer(setting: FeatureIntroSetting, answer: FeatureIntroAnswer): void {
+  switch (setting) {
+    case "assistant_permission_mode":
+      writeAssistantPermissionMode(answer === "on" ? "full" : "ask");
+      return;
+  }
 }
 
 /**
@@ -117,8 +138,11 @@ export function answerFeatureIntro(id: string, answer: FeatureIntroAnswer, now =
     log.info(`Feature "${id}" already ${current.answer} (via ${current.via ?? "unknown"}); ignoring a late "${answer}"`);
     return { ok: true, state: current, changed: false };
   }
-  const ai = configService.get("ai");
-  configService.set("ai", { ...ai, ppm_tools: { ...ai.ppm_tools, ...switchesForAnswer(intro, answer) } });
+  if (intro.setting) writeSettingAnswer(intro.setting, answer);
+  else {
+    const ai = configService.get("ai");
+    configService.set("ai", { ...ai, ppm_tools: { ...ai.ppm_tools, ...switchesForAnswer(intro, answer) } });
+  }
   const state: FeatureIntroState = { ...current, answer, answeredAt: now.toISOString(), via: "tour" };
   delete state.seenInSettings;
   configService.set("feature_intros", { ...states, [id]: state });

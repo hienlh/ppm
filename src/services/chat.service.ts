@@ -736,6 +736,7 @@ class ChatService {
       ...(!rest.effort && defaults.effort ? { effort: defaults.effort } : {}),
       assistantInstructions: buildAssistantInstructions({
         sections, persona: settings.persona, userInstructions: settings.instructions, actOnOwn: settings.act_on_own === true,
+        fullMode: settings.permission_mode === "full",
       }),
       assistantSession: true,
       ...(assistantMcp ? { assistantMcp } : {}),

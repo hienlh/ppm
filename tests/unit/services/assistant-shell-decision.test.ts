@@ -131,7 +131,7 @@ describe("acting on its own", () => {
     for (const [tool, input] of [
       ["WebSearch", { query: "x" }], ["Bash", { command: "npm test" }], ["PowerShell", { command: "Remove-Item C:\\work\\tmp -Recurse" }],
       ["Edit", { file_path: join(fx.proj, "a.json") }], ["Write", { file_path: join(fx.proj, "new.ts") }],
-      ["Read", { file_path: join(fx.outside) }], ["mcp__github__create_issue", {}],
+      ["Read", { file_path: join(fx.outside) }], ["mcp__github__list_issues", {}],
     ] as const) {
       expect(await decide(tool, input)).toMatchObject({ decision: "allow", via: "act_on_own" });
     }
@@ -152,6 +152,24 @@ describe("acting on its own", () => {
       ["PowerShell", { command: "Get-Content $env:USERPROFILE\\.aws\\credentials" }],
     ] as const) {
       expect((await decide(tool, input)).decision).toBe("ask");
+    }
+  });
+
+  it("still asks for pushing, publishing and sending to other people", async () => {
+    switches = { autoReadonlyCommands: true, actOnOwn: true };
+    userStarted = true;
+    for (const [tool, input] of [
+      ["Bash", { command: `git -C ${q(fx.proj)} push origin main` }],
+      ["Bash", { command: "npm publish --access public" }],
+      ["Bash", { command: "gh pr comment 12 --body hi" }],
+      ["Bash", { command: "curl -X POST https://hooks.slack.com/x -d @msg.json" }],
+      ["PowerShell", { command: "Invoke-RestMethod https://example.com -Method Post -Body $b" }],
+      ["mcp__slack__post_message", { channel: "C1", text: "hi" }],
+      ["mcp__github__create_issue", {}],
+    ] as const) {
+      const d = await decide(tool, input);
+      expect(d.decision).toBe("ask");
+      expect(d.decision === "ask" && d.reason).toContain("still needs the user");
     }
   });
 });
@@ -205,11 +223,11 @@ describe("settings", () => {
     const saved = configService.get("assistant");
     try {
       expect(saveAssistantSettings({ act_on_own: true, auto_readonly_commands: false }, () => true).ok).toBe(true);
-      expect(assistantPolicySwitches()).toEqual({ autoReadonlyCommands: false, actOnOwn: true });
+      expect(assistantPolicySwitches()).toEqual({ autoReadonlyCommands: false, actOnOwn: true, fullMode: false });
       expect(saveAssistantSettings({ instructions: "hi" }, () => true).ok).toBe(true);
-      expect(assistantPolicySwitches()).toEqual({ autoReadonlyCommands: false, actOnOwn: true });
+      expect(assistantPolicySwitches()).toEqual({ autoReadonlyCommands: false, actOnOwn: true, fullMode: false });
       expect(saveAssistantSettings({ act_on_own: false }, () => true).ok).toBe(true);
-      expect(assistantPolicySwitches()).toEqual({ autoReadonlyCommands: false, actOnOwn: false });
+      expect(assistantPolicySwitches()).toEqual({ autoReadonlyCommands: false, actOnOwn: false, fullMode: false });
     } finally {
       configService.set("assistant", saved as never);
     }

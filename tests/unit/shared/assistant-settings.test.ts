@@ -74,3 +74,31 @@ describe("maskAssistantSettings", () => {
     expect(value.mcp_servers[0]).toMatchObject({ env: { TOKEN: "s1" } });
   });
 });
+
+describe("permission mode and writable connections", () => {
+  it("leaves the mode absent until chosen, and reads full or ask", () => {
+    expect(readAssistantSettings({}).value.permission_mode).toBeUndefined();
+    expect(readAssistantSettings({ permission_mode: null }).value.permission_mode).toBeUndefined();
+    expect(readAssistantSettings({ permission_mode: "full" }).value.permission_mode).toBe("full");
+    expect(readAssistantSettings({ permission_mode: "ask" }).value.permission_mode).toBe("ask");
+    const bad = readAssistantSettings({ permission_mode: "bypass" });
+    expect(bad.value.permission_mode).toBeUndefined();
+    expect(bad.errors.join()).toContain("permission_mode");
+  });
+
+  it("keeps positive whole connection ids, each once", () => {
+    expect(readAssistantSettings({}).value.db_write_connections).toEqual([]);
+    expect(readAssistantSettings({ db_write_connections: [3, 3, 9] }).value.db_write_connections).toEqual([3, 9]);
+    const bad = readAssistantSettings({ db_write_connections: [1, -2, "x", 1.5] });
+    expect(bad.value.db_write_connections).toEqual([1]);
+    expect(bad.errors.join()).toContain("db_write_connections");
+    expect(readAssistantSettings({ db_write_connections: "1" }).errors.join()).toContain("must be a list");
+  });
+
+  it("masking copies the list", () => {
+    const s = readAssistantSettings({ db_write_connections: [4] }).value;
+    const masked = maskAssistantSettings(s);
+    masked.db_write_connections.push(5);
+    expect(s.db_write_connections).toEqual([4]);
+  });
+});

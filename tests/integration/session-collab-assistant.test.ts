@@ -5,7 +5,7 @@
  * on a card (answered from the web route or from a Telegram press), lands in the target's own
  * project, never answers a card the target is waiting on, and nothing is asked in a watch turn.
  */
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import "../test-setup.ts";
 import { Hono } from "hono";
 import { mkdirSync } from "node:fs";
@@ -26,6 +26,8 @@ import { decodeMessageBlocks } from "../../src/shared/chat-message-blocks.ts";
 import { stripSharedContext } from "../../src/shared/provider-context.ts";
 import { ASSISTANT_PROJECT_NAME } from "../../src/shared/assistant-project.ts";
 import { configService } from "../../src/services/config.service.ts";
+import { assistantTurnProvenance } from "../../src/services/assistant/assistant-turn-provenance.ts";
+import { assistantFullMode } from "../../src/services/assistant/assistant-full-mode-live.ts";
 import { FEATURE_INTROS, switchesForAnswer } from "../../src/shared/feature-intros.ts";
 import type { AIProvider } from "../../src/providers/provider.interface.ts";
 import type { ChatEvent, Session, SessionConfig } from "../../src/types/chat.ts";
@@ -275,5 +277,74 @@ describe("the PPM Assistant on the session tools", () => {
     expect(tab.messages.some((m) => m.type === "approval_resolved")).toBe(false);
     expect(decodeMessageBlocks(claude.pushes.at(-1)!.message).fromSession?.kind).toBe("assistant");
     claude.release();
+  });
+});
+
+describe("the PPM Assistant in Full mode", () => {
+  let savedAssistant: unknown;
+  beforeEach(() => {
+    savedAssistant = configService.get("assistant");
+    configService.set("assistant", { ...(configService.get("assistant") ?? {}), permission_mode: "full" } as never);
+    assistantFullMode.reset();
+  });
+  afterEach(() => { configService.set("assistant", savedAssistant as never); });
+
+  it("messages a chat with no card in a turn the user started in PPM", async () => {
+    const assistant = await assistantSession();
+    const target = await chatOfB("Video London");
+    assistantTurnProvenance.noteMessage({ sessionId: assistant, text: "tell it to go on", origin: "ws" });
+    try {
+      const sent = await call(assistant, "send_to_session", { session_id: target, message: "go on" });
+      expect(sent.isError).toBe(false);
+      expect(sent.json.delivered).toBe("started");
+      expect(collabApprovalBroker.pendingEvent(assistant)).toBeNull();
+      await until(() => claude.sends.some((s) => s.sessionId === target), "the target's turn");
+    } finally {
+      assistantTurnProvenance.turnEnded(assistant);
+    }
+  });
+
+  it("creates a chat with no card in a turn the user started on Telegram", async () => {
+    const assistant = await assistantSession();
+    assistantTurnProvenance.noteMessage({ sessionId: assistant, text: "open a chat for the audit", origin: "telegram" });
+    try {
+      const created = await call(assistant, "create_session", { title: "Audit", task: "audit the API", project: "proj-b" });
+      expect(created.isError).toBe(false);
+      expect(collabApprovalBroker.pendingEvent(assistant)).toBeNull();
+      await until(() => claude.cwd.get(created.json.sessionId) === pathB, "the new chat's turn in project B");
+    } finally {
+      assistantTurnProvenance.turnEnded(assistant);
+    }
+  });
+
+  it("still shows the card in a turn PPM started, even after the user typed into it", async () => {
+    const assistant = await assistantSession();
+    const target = await chatOfB("Report");
+    assistantTurnProvenance.noteMessage({ sessionId: assistant, text: "news", origin: "watch" });
+    assistantTurnProvenance.noteMessage({ sessionId: assistant, text: "ok send it", origin: "ws" });
+    try {
+      const sending = call(assistant, "send_to_session", { session_id: target, message: "do it" });
+      const card = await pendingCard(assistant);
+      expect(card.input).toMatchObject({ kind: "message", targetSessionId: target });
+      expect((await answerOnWeb(card.requestId, "deny")).status).toBe(200);
+      expect((await sending).isError).toBe(true);
+    } finally {
+      assistantTurnProvenance.turnEnded(assistant);
+    }
+  });
+
+  it("still shows the card in Ask mode", async () => {
+    configService.set("assistant", { ...(configService.get("assistant") ?? {}), permission_mode: "ask" } as never);
+    const assistant = await assistantSession();
+    const target = await chatOfB("Ask");
+    assistantTurnProvenance.noteMessage({ sessionId: assistant, text: "send", origin: "ws" });
+    try {
+      const sending = call(assistant, "send_to_session", { session_id: target, message: "x" });
+      const card = await pendingCard(assistant);
+      expect((await answerOnWeb(card.requestId, "deny")).status).toBe(200);
+      await sending;
+    } finally {
+      assistantTurnProvenance.turnEnded(assistant);
+    }
   });
 });

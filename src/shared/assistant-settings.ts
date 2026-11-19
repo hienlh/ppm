@@ -110,7 +110,26 @@ export interface AssistantSettings {
    * ask, and turns PPM started (watch news, wake-ups, schedules) behave as if it were off.
    */
   act_on_own: boolean;
+  /**
+   * How much the Assistant does without a card in a turn the user started (in PPM or on Telegram).
+   * `full` is like a chat in bypass mode: everything runs, except the hard limits in
+   * `assistant-full-mode.ts` (turns PPM started, the vault, anything sent out of the machine or
+   * to other people, database writes on connections not listed below, a per-turn and per-hour
+   * cap). `ask` is the card-per-change behaviour, with `act_on_own` as its middle ground. Absent
+   * means the user has not chosen yet, which behaves as `ask` until the "PPM has new features"
+   * question or a Settings switch decides.
+   */
+  permission_mode?: AssistantPermissionMode;
+  /** Ids of saved database connections the Assistant may write to without a card in Full mode. */
+  db_write_connections: number[];
 }
+
+/** See {@link AssistantSettings.permission_mode}. */
+export const ASSISTANT_PERMISSION_MODES = ["full", "ask"] as const;
+export type AssistantPermissionMode = (typeof ASSISTANT_PERMISSION_MODES)[number];
+
+/** At most this many connections may be listed as writable without a card. */
+export const ASSISTANT_DB_WRITE_CONNECTIONS_MAX = 50;
 
 /**
  * What a browser is sent: every env and header value blanked. The keys stay, so the pane can
@@ -131,6 +150,7 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   restart_news: true,
   auto_readonly_commands: true,
   act_on_own: false,
+  db_write_connections: [],
 };
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -298,6 +318,8 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
   const actOnOwn = readSwitch(raw, "act_on_own", errors);
 
   const timezone = readTimeZone(raw.timezone, errors);
+  const permissionMode = readPermissionMode(raw.permission_mode, errors);
+  const dbWriteConnections = readConnectionIds(raw.db_write_connections, errors);
   return {
     value: {
       default_provider: defaultProvider, providers: readProviders(raw.providers, errors), instructions,
@@ -312,9 +334,30 @@ export function readAssistantSettings(raw: unknown): { value: AssistantSettings;
       restart_news: restartNews,
       auto_readonly_commands: autoReadonlyCommands,
       act_on_own: actOnOwn,
+      ...(permissionMode ? { permission_mode: permissionMode } : {}),
+      db_write_connections: dbWriteConnections,
     },
     errors,
   };
+}
+
+/** `full` or `ask`; absent or null means not chosen yet. */
+function readPermissionMode(value: unknown, errors: string[]): AssistantPermissionMode | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (ASSISTANT_PERMISSION_MODES.includes(value as AssistantPermissionMode)) return value as AssistantPermissionMode;
+  errors.push(`permission_mode must be one of ${ASSISTANT_PERMISSION_MODES.join(", ")}`);
+  return undefined;
+}
+
+/** Positive whole connection ids, each once, at most {@link ASSISTANT_DB_WRITE_CONNECTIONS_MAX}. */
+function readConnectionIds(value: unknown, errors: string[]): number[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) { errors.push("db_write_connections must be a list"); return []; }
+  const ids = value.filter((id): id is number => Number.isSafeInteger(id) && (id as number) > 0);
+  if (ids.length !== value.length) errors.push("db_write_connections must hold connection ids");
+  const unique = [...new Set(ids)];
+  if (unique.length > ASSISTANT_DB_WRITE_CONNECTIONS_MAX) errors.push(`at most ${ASSISTANT_DB_WRITE_CONNECTIONS_MAX} writable connections`);
+  return unique.slice(0, ASSISTANT_DB_WRITE_CONNECTIONS_MAX);
 }
 
 type SwitchKey = "restart_news" | "auto_readonly_commands" | "act_on_own";
@@ -344,6 +387,7 @@ export function maskAssistantSettings(settings: AssistantSettings): AssistantSet
     persona: structuredClone(settings.persona),
     quiet_hours: { ...settings.quiet_hours },
     digest: { ...settings.digest },
+    db_write_connections: [...settings.db_write_connections],
     mcp_servers: settings.mcp_servers.map((s) => s.transport === "stdio"
       ? { ...s, args: [...s.args], env: blank(s.env) }
       : { ...s, headers: blank(s.headers) }),

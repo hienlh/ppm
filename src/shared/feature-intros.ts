@@ -24,11 +24,19 @@ export interface FeatureIntro {
   title: string;
   /** Two to four short sentences. */
   body: string;
-  /** The Settings → Tools switches the answer sets. */
+  /** The Settings → Tools switches the answer sets; empty for a feature that is a {@link setting}. */
   tools: readonly PpmTool[];
+  /**
+   * A feature that is one setting rather than tool switches: Turn on / Turn off writes it, and a
+   * value already chosen in Settings settles the question (`feature-intros.service.ts`).
+   */
+  setting?: FeatureIntroSetting;
   /** When the feature arrived, for the record. */
   since: string;
 }
+
+/** Settings a feature introduction can stand for. `assistant_permission_mode`: on = Full, off = Ask. */
+export type FeatureIntroSetting = "assistant_permission_mode";
 
 export const FEATURE_INTROS: readonly FeatureIntro[] = [
   {
@@ -58,6 +66,17 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
       + "messages a chat only when something changed. Nothing is created until you allow a card in PPM that shows the "
       + "whole script, where and when it runs, and which chats it messages. It stays off until you choose.",
     tools: [SESSION_SCHEDULE_PROPOSE_SCRIPT_TOOL],
+    since: "2026-11",
+  },
+  {
+    id: "assistant-full-mode-2026-11",
+    title: "PPM Assistant does what you ask without cards",
+    body: "In a turn you start, in PPM or on Telegram, the Assistant does what you ask without an approval card, "
+      + "like a chat in bypass mode. Pushing, publishing, sending to other people, database writes and the vault still "
+      + "ask, and turns PPM starts on its own never act. Switch back any time in Settings → PPM Assistant or from the "
+      + "Assistant window. It keeps asking until you choose.",
+    tools: [],
+    setting: "assistant_permission_mode",
     since: "2026-11",
   },
 ];

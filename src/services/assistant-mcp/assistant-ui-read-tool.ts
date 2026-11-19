@@ -42,6 +42,7 @@ export async function uiReadTab(
       tool: UI_READ_TAB_TOOL,
       input: { tabId, ...outcome.details },
       summary: readOutsideSummary({ kind: outcome.subject, location, privateStore: outcome.why === "private" }),
+      ...(outcome.why === "private" ? { touchesPrivate: true } : {}),
     });
     if (verdict.verdict !== "approved") return notApprovedResult("read_tab", verdict, { tabId, ...outcome.details });
     outcome = await readDescribedTab(desc, offset, deps, { approved: true });
