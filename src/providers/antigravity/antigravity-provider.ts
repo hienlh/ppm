@@ -123,6 +123,13 @@ interface AcpPromptResult {
 }
 
 /** One chat on its own `agy acp` process, alive from its first message until it is stopped or released. */
+/** How long agy must keep streaming with no prompt open before the chat is asked for a turn. */
+const OUT_OF_TURN_SETTLE_MS = 1_000;
+/** Held updates past this many are dropped: the transcript on disk still has them. */
+const OUT_OF_TURN_MAX_EVENTS = 5_000;
+/** The turn that shows a reply agy streamed after its prompt was answered. */
+export const OUT_OF_TURN_CONTINUE_PROMPT = "Continue from where you left off.";
+
 interface LiveSession {
   /** The id the chat was opened under, before agy named a new one. */
   callerId: string;
@@ -156,6 +163,14 @@ interface LiveSession {
   openedAt: number;
   /** Between turns, waits for a background task to report back so the chat can carry on. */
   taskWatch: TaskWatch | null;
+  /**
+   * What agy streamed while no prompt of PPM's was open: held back and handed to the next turn,
+   * because a reply shown outside a turn has no answer to end it and the chat sat on "responding".
+   */
+  outOfTurn: ChatEvent[];
+  /** A continuation is already asked for (or about to be): one per stretch of out-of-turn updates. */
+  continueAsked: boolean;
+  outOfTurnTimer: ReturnType<typeof setTimeout> | null;
   closed: boolean;
 }
 
@@ -446,6 +461,9 @@ export class AntigravityProvider implements AIProvider {
       contextInSystemPrompt: false,
       openedAt: Date.now(),
       taskWatch: null,
+      outOfTurn: [],
+      continueAsked: false,
+      outOfTurnTimer: null,
       closed: false,
     };
     this.live.set(sessionId, live);
@@ -602,6 +620,10 @@ export class AntigravityProvider implements AIProvider {
       const compacting = isCompactCommand(message);
       if (compacting) live.channel.push({ type: "system", subtype: "compacting" });
       live.inFlight++;
+      // What agy said since the last turn ended belongs to this one: shown now, ended by its answer.
+      this.clearOutOfTurnTimer(live);
+      live.continueAsked = false;
+      for (const ev of live.outOfTurn.splice(0)) live.channel.push(ev);
       live.client.request<AcpPromptResult>("session/prompt", { sessionId: live.acpSessionId, prompt: acpPromptBlocks(message, { ...opts, sharedContext }) })
         .then((res) => {
           if (compacting && res?.stopReason === "end_turn" && !live.closed) live.channel.push({ type: "system", subtype: "compact_done" });
@@ -659,11 +681,36 @@ export class AntigravityProvider implements AIProvider {
       since: live.openedAt,
       onReport: () => {
         live.taskWatch = null;
-        if (live.closed || live.inFlight > 0) return;
+        if (live.closed || live.inFlight > 0 || live.continueAsked) return;
+        live.continueAsked = true;
         log.info(`session=${conversationId} a background task reported back after the turn ended: continuing`);
         live.channel.push({ type: "provider_continue", content: AUTO_CONTINUE_PROMPT });
       },
     });
+  }
+
+  /**
+   * agy streamed while no prompt is open: it carries on by itself after a background task reports,
+   * and after a reload it can answer a prompt at once and stream the reply afterwards. The updates
+   * are held, and once agy has kept going for a moment the chat is asked for a turn, which shows
+   * them and ends when agy answers. Without that turn the chat drew the reply with nothing to end
+   * it and stayed on "responding" after the AI had finished.
+   */
+  private holdOutOfTurn(live: LiveSession, events: ChatEvent[]): void {
+    if (live.outOfTurn.length < OUT_OF_TURN_MAX_EVENTS) live.outOfTurn.push(...events);
+    if (live.continueAsked || live.outOfTurnTimer) return;
+    live.outOfTurnTimer = setTimeout(() => {
+      live.outOfTurnTimer = null;
+      if (live.closed || live.inFlight > 0 || live.continueAsked || live.outOfTurn.length === 0) return;
+      live.continueAsked = true;
+      log.info(`session=${live.acpSessionId} agy kept streaming after its turn ended: asking for a turn to show it`);
+      live.channel.push({ type: "provider_continue", content: OUT_OF_TURN_CONTINUE_PROMPT });
+    }, OUT_OF_TURN_SETTLE_MS);
+  }
+
+  private clearOutOfTurnTimer(live: LiveSession): void {
+    if (live.outOfTurnTimer) clearTimeout(live.outOfTurnTimer);
+    live.outOfTurnTimer = null;
   }
 
   private stopTaskWatch(live: LiveSession): void {
@@ -700,7 +747,13 @@ export class AntigravityProvider implements AIProvider {
       if (title && live.meta) live.meta.title = title.slice(0, 80);
       return;
     }
-    for (const ev of mapAcpUpdate(update, live.tools)) live.channel.push(ev);
+    const events = mapAcpUpdate(update, live.tools);
+    if (events.length === 0) return;
+    if (live.inFlight === 0) {
+      this.holdOutOfTurn(live, events);
+      return;
+    }
+    for (const ev of events) live.channel.push(ev);
   }
 
   private handleServerRequest(live: LiveSession, req: AcpServerRequest): void {
@@ -739,6 +792,7 @@ export class AntigravityProvider implements AIProvider {
     if (live.closed) return;
     live.closed = true;
     this.stopTaskWatch(live);
+    this.clearOutOfTurnTimer(live);
     for (const [id, entry] of this.live) if (entry === live) this.live.delete(id);
     for (const pending of live.pendingPermissions.values()) {
       live.client.respond(pending.rpcId, { outcome: { outcome: "cancelled" } });

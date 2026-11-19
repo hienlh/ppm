@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { AntigravityProvider } from "../../../src/providers/antigravity/antigravity-provider.ts";
+import { AntigravityProvider, OUT_OF_TURN_CONTINUE_PROMPT } from "../../../src/providers/antigravity/antigravity-provider.ts";
 import { agyStoreArgs } from "../../../src/providers/antigravity/acp-launch.ts";
 import { AUTO_CONTINUE_PROMPT } from "../../../src/providers/antigravity/background-task-watch.ts";
 import { mapAcpUpdate, newToolState } from "../../../src/providers/antigravity/acp-event-mapper.ts";
@@ -204,6 +204,40 @@ describe("AntigravityProvider over agy acp", () => {
     p.abortQuery(existingId);
     await run.finished;
    }, 15_000);
+
+  it("holds what agy streams after its prompt was answered and asks for a turn that shows it and ends", async () => {
+    const p = provider();
+    const session = await p.createSession({ projectPath: projectDir });
+    const run = consume(p.sendMessage(session.id, "afterwards please"));
+    await run.until((evs) => dones(evs).length === 1);
+    const texts = () => run.events.filter((e) => e.type === "text").map((e) => (e as { content: string }).content);
+    expect(texts()).toEqual(["first"]);
+
+    // agy goes on with no prompt open: nothing reaches the chat as a turn of its own…
+    await run.until((evs) => evs.some((e) => e.type === "provider_continue"));
+    expect(texts()).toEqual(["first"]);
+    expect(run.events.filter((e) => e.type === "provider_continue")).toEqual([{ type: "provider_continue", content: OUT_OF_TURN_CONTINUE_PROMPT }]);
+
+    // …until the chat sends the turn it asked for, which shows the held reply and ends.
+    p.pushMessage(NEW_ID, OUT_OF_TURN_CONTINUE_PROMPT);
+    await run.until((evs) => dones(evs).length === 2);
+    expect(texts()).toEqual(["first", "late0 ", "late1 ", "late2 ", "late3 ", "ok"]);
+    const second = run.events.slice(run.events.indexOf(dones(run.events)[0]!) + 1);
+    expect(second.filter((e) => e.type === "text").map((e) => (e as { content: string }).content).slice(0, 4)).toEqual(["late0 ", "late1 ", "late2 ", "late3 "]);
+    p.abortQuery(NEW_ID);
+    await run.finished;
+  }, 15_000);
+
+  it("asks for no extra turn after an ordinary reply", async () => {
+    const p = provider();
+    const session = await p.createSession({ projectPath: projectDir });
+    const run = consume(p.sendMessage(session.id, "hello there"));
+    await run.until((evs) => dones(evs).length === 1);
+    await Bun.sleep(1_500);
+    expect(run.events.some((e) => e.type === "provider_continue")).toBe(false);
+    p.abortQuery(NEW_ID);
+    await run.finished;
+  }, 10_000);
 
   it("gives a new chat the Additional Instructions and the shared context as its system prompt, not in the message", async () => {
     const previousAi = configService.get("ai");

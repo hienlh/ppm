@@ -13,6 +13,7 @@
 //   crash       exits with code 3 halfway through the turn
 //   refusal / max_tokens   answers with that stop reason
 //   /compact    sends nothing at all and answers end_turn, as agy does while it compacts
+//   afterwards  answers end_turn at once, then streams four more chunks with no prompt open
 //
 // Like agy, it names its slash commands (`available_commands_update`) twice after session/new,
 // and once while session/load replays the chat.
@@ -132,6 +133,17 @@ async function play(turn: Turn): Promise<void> {
       say(`${said.includes("second") ? "B" : "A"}${i} `);
       await sleep(40);
     }
+  } else if (said.includes("afterwards")) {
+    // Answers at once, then keeps streaming the reply with no prompt open, as agy did after a
+    // reload (2026-11-20): the chat must not show this as a turn nobody can end.
+    say("first");
+    answer(turn, { stopReason: "end_turn", usage });
+    await sleep(50);
+    for (let i = 0; i < 4; i++) {
+      say(`late${i} `);
+      await sleep(60);
+    }
+    return;
   } else if (said.includes("image")) {
     say(turn.prompt.map((b) => b.type === "image" ? `image:${b.mimeType}` : b.type).join(","));
   } else if (said.includes("env")) {
