@@ -93,13 +93,48 @@ PPM Assistant → General → Permissions; both switches are read on every tool 
   root, `ppm*.db` or a `..` step (`commandMentionsPrivateRoot` — a tripwire, not a boundary: a
   glob or a variable can spell a private path; the read-only shortcut is the one that resolves
   paths). PPM's own endpoint cards (database writes, git, messages to chats that are not
-  managers, `chat_answer_approval`) keep asking. Codex turns carry their own `approvalPolicy` and
+  managers, `chat_answer_approval`) keep asking, unless Full mode (below) answers them. Codex turns carry their own `approvalPolicy` and
   `sandboxPolicy` on every `turn/start`: `untrusted` + `readOnly`, or under this switch in a
   user-started turn `on-request` + `workspaceWrite` with the registered projects as writable roots
   (`assistantWritableRoots`: canonical paths, minus any that is, sits in or holds a private root)
   and no network. Codex also keeps its own cwd (the Assistant's empty folder in the PPM dir) and
   the temp folder writable, which is why the Assistant's thread sets `project_doc_max_bytes = 0`:
   an `AGENTS.md` one steered turn left there is never read as instructions.
+- Acting on its own (and Full mode below) still asks before a provider tool call that sends
+  something off the machine or to other people (`assistant-outbound-action.ts`): a command whose
+  text pushes, publishes, posts to GitHub, uploads over HTTP, logs in remotely or sends mail, and a
+  tool of the user's own MCP server whose name does not start with a read verb (`list_`, `get-`,
+  `search…`). A denylist over text, so a guard against the model's own mistakes, not a boundary.
+
+**Full mode** (`permission_mode`, Settings → PPM Assistant → General → Permissions, and the
+Full/Ask chip in the Assistant's head and window titlebar, `assistant-mode-button.tsx`). The user
+asked for it as "like a chat in bypass mode, except that pushing, publishing and sending to others
+still needs me" (ppm/42). `full` includes acting on its own (`assistantPolicySwitches` answers
+`actOnOwn` for it, so Edit/Write, Codex's writable roots and the provider-tool rules follow), and
+also lets PPM answer its **own** cards: in a turn the user opened in PPM or on Telegram, the
+endpoint's asker (`approvalAskerFor`) and the session tools' create/message cards
+(`collab-env.ts`) are approved without being shown when `assistant-full-mode.ts` says so. It does
+not look at whether the turn has read outside text: the user chose to trust their own turns, and
+the line against injected text is that a turn PPM started never acts. Still asked in Full mode:
+- `git_sync` push, `public_link_set` on, `port_forward_start` over Cloudflare, and
+  `chat_answer_approval` (another chat's request, which the user has not seen);
+- `db_query` writes, except on a connection listed in `db_write_connections` (ticked in the same
+  pane; a read-only connection is never written through either way);
+- a tab or file in a private folder (`touchesPrivate` on the ask), and the vault's locked tiers,
+  whose cards take a password and never pass through the asker;
+- more than 10 cards in one turn or 30 in an hour across Assistant sessions: the next one is
+  shown. A pair-limit or escalation card keeps asking too.
+A turn PPM started (watch, wake, digest, restart news, a schedule) and a turn whose start the
+tracker never saw are refused or asked exactly as in Ask mode. Every card Full mode answers is a
+`assistant_auto_approved` row in the session trace (tool and input), beside the approvals the
+user gave. The instructions gain a *Full mode* section (`ASSISTANT_FULL_MODE_SECTION`, fixed at the
+session's start like the act-on-its-own one), and *Hand project work to project chats* now frames
+the Assistant as a director's assistant who hands project work down even when it could do it
+unasked. Absent `permission_mode` means not chosen and behaves as Ask: the choice is the "PPM has
+new features" question `assistant-full-mode-2026-11`, the first feature intro that is a setting
+rather than tool switches (`FeatureIntro.setting`); choosing in Settings or with the chip settles
+it. Codex in Full mode is its act-on-its-own profile: no network, so a push asks there by
+construction, and a sandbox escalation is still a Codex approval card.
 
 **The UI.** One tab type, `assistant` (`src/web/components/assistant/`): on a desktop it opens
 inside a `tab-host` floating window — portrait, top right, about 470×620, then wherever the user
@@ -2035,6 +2070,25 @@ the database directly. That risk is accepted, and nothing here claims more. The 
 every rules write through a route posts a `rules_note` with its diff, and the reply, OK and rules
 routes record the device and `Sec-Fetch-Site` in the session trace.
 
+**Full mode trades the injected-text guard inside the user's own turns for fewer cards.** In Ask
+mode a card is where the user can catch an action that text from a web page, a Slack message, a
+file or another chat talked the Assistant into. In Full mode, inside a turn the user started, no
+such card comes: a message the Assistant sends to a chat — and a chat running in bypass mode runs
+whatever the message says — goes straight through, and so does a new chat with a task, a schedule
+or a commit. The user chose this knowingly (ppm/42), and the confirm on switching says it. What is
+left between injected text and harm:
+- *Turns PPM started never act* (watch reports, the digest, restart news, wake-ups, schedules),
+  in Full mode as in Ask; those are the turns that carry other chats' words with nobody watching.
+- *Leaving the machine still needs the user*: a push, the public link, a public port forward, a
+  post or upload or mail from a command or a user MCP tool. The command part is a denylist over
+  text (`assistant-outbound-action.ts`) and a spelled-around command gets past it; PPM's own push
+  and tunnel tools are hard limits.
+- *Secrets*: the vault's locked tiers keep their password cards, private folders keep asking.
+- *Volume*: 10 actions a turn, 30 an hour, then cards again — a runaway loop stalls on a card.
+- *Afterwards*: every action Full mode let through is an `assistant_auto_approved` trace row, and
+  the Assistant reports what it changed; most changes undo the usual way (session review, the
+  discard journal, task undo).
+
 **Commands that run without a card.** The classifier, not the model, decides; what it has to
 withstand is a model talked into a command that looks like a read:
 - *Parser differential* — PPM reading a command differently from the shell that runs it. PowerShell
@@ -2191,7 +2245,12 @@ and runs in bypass mode:
   Windows event log; they say so instead.
 - **"Act on its own" reaches Claude at the next CLI start.** Edit/Write are offered or not when the
   CLI starts; a session started before the switch was turned on keeps asking for edits, one
-  started while it was on asks again once it is off.
+  started while it was on asks again once it is off. Full mode is the same for edits and for its
+  instructions section; its own-card answers and the hard limits are read on every call, so a
+  switch to Ask stops them at the next action.
+- **Full mode's outbound list reads command text.** A push or upload spelled through a variable,
+  an alias or a script file is not recognised (`assistant-outbound-action.ts`), and a user MCP
+  tool is judged by its name's first word.
 - **Codex follow-ups queued behind a turn do not act on their own.** The turn they start was not
   opened by a message the tracker saw, so it gets the read-only policy.
 - **Recursive walkers and links were checked on one Windows host.** PowerShell 5.1 `-Recurse`,
