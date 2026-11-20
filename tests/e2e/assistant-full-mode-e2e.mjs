@@ -57,6 +57,9 @@ execFileSync("git", ["-C", alpha, "init", "-q", "-b", "main"]);
 execFileSync("git", ["-C", alpha, "add", "."]);
 execFileSync("git", ["-C", alpha, "-c", "user.email=e2e@ppm.test", "-c", "user.name=e2e", "commit", "-q", "-m", "first"]);
 execFileSync("git", ["-C", alpha, "remote", "add", "origin", remote]);
+// A SQLite database with one row, for the database hard limits (FM7). Written by bun:sqlite, as the Node image has none.
+const dbFile = join(sandbox, "fm7.sqlite");
+execFileSync("bun", ["-e", `const { Database } = require("bun:sqlite"); const db = new Database(${JSON.stringify(dbFile)}); db.run("CREATE TABLE t (x)"); db.run("INSERT INTO t VALUES (1)"); db.close();`]);
 
 const results = [];
 const pass = (id, detail = "") => { results.push({ id, passed: true }); console.log(`PASS ${id}${detail ? ` — ${detail}` : ""}`); };
@@ -186,6 +189,52 @@ async function shot(dev, name, locator) {
 }
 /** The Telegram chat's own Assistant session, set by FM2 and read by FM4. */
 let telegramOwnerSession = null;
+
+/** Closes the floating Settings window by its titlebar × (the desktop way out of it). */
+async function closeSettingsWindow(dev) {
+  // A reload can restore more than one Settings window; close them one after another.
+  for (let i = 0; i < 4; i++) {
+    const close = dev.page.locator('[aria-roledescription="window"][aria-label="Settings"]:visible button[aria-label="Close window"]').first();
+    if ((await close.count()) === 0) return;
+    await close.dispatchEvent("click");
+    await sleep(400);
+  }
+}
+
+const CHIP_CONFIRM = "Switch the Assistant to Full mode?";
+/**
+ * The head chip from Ask: the first press asks; Cancel leaves Ask with nothing saved; the next
+ * press and "Use Full" saves Full; from Full the chip flips back to Ask with no dialog.
+ */
+async function chipFromAsk(dev, sid, label, width) {
+  await setPermission("ask");
+  await openAssistant(dev, sid);
+  const chip = () => dev.page.locator("[data-assistant-mode]:visible").first();
+  // The window has a head chip and a titlebar chip, each with its own dialog: only a shown one counts.
+  const dialog = () => dev.page.getByText(CHIP_CONFIRM, { exact: true }).filter({ visible: true });
+  await chip().waitFor({ timeout: 15000 });
+  assert.equal(await chip().getAttribute("data-assistant-mode"), "ask", "chip did not start on Ask");
+  await chip().click();
+  await dialog().first().waitFor({ timeout: 10000 });
+  await shot(dev, `after-chip-confirm-${label}-${width}.png`);
+  await dev.page.getByRole("button", { name: "Cancel", exact: true }).filter({ visible: true }).click();
+  await until("chip confirm closed", async () => (await dialog().count()) === 0, 10000);
+  await sleep(500);
+  assert.equal((await settingsBody()).permission_mode, "ask", "Cancel on the chip saved Full");
+  assert.equal(await chip().getAttribute("data-assistant-mode"), "ask", "Cancel on the chip left Ask with another reading");
+  await chip().click();
+  await dialog().first().waitFor({ timeout: 10000 });
+  await dev.page.getByRole("button", { name: "Use Full", exact: true }).filter({ visible: true }).click();
+  await until("chip Full saved", async () => (await settingsBody()).permission_mode === "full", 10000);
+  await chip().waitFor({ timeout: 10000 });
+  await until("chip reads Full", async () => (await chip().getAttribute("data-assistant-mode")) === "full", 10000);
+  await chip().click();
+  await until("chip one press back to Ask", async () => (await settingsBody()).permission_mode === "ask", 10000);
+  await sleep(600);
+  assert.equal(await dialog().count(), 0, "the Full → Ask press opened a dialog");
+  await until("chip reads Ask", async () => (await chip().getAttribute("data-assistant-mode")) === "ask", 10000);
+  pass(`FM6-chip-${label}`, `chip from Ask: dialog, Cancel saves nothing, Use Full saves, Full → Ask is one press (${width})`);
+}
 
 // ------------------------------------------------------------------ BEFORE (origin/main)
 async function beforeShots() {
@@ -349,13 +398,17 @@ async function fullModeScenarios() {
   await until("Full saved", async () => (await settingsBody()).permission_mode === "full", 10000);
   await block.scrollIntoViewIfNeeded();
   await shot(desk, "after-settings-full-1440.png", block);
-  await desk.page.keyboard.press("Escape");
+  // Settings is a floating window: close it by its titlebar ×, then reopen the page so the head is whole.
+  await closeSettingsWindow(desk);
+  await openAssistant(desk, sid);
   await desk.page.locator('[data-assistant-mode="full"]:visible').first().waitFor({ timeout: 10000 });
-  await shot(desk, "after-head-full-1440.png", desk.page.locator("[data-assistant-body]:visible").first());
+  await sleep(500);
+  await shot(desk, "after-head-full-1440.png");
   await desk.page.locator('[data-assistant-mode="full"]:visible').first().click();
   await until("chip flipped to Ask", async () => (await settingsBody()).permission_mode === "ask", 10000);
   await desk.page.locator('[data-assistant-mode="ask"]:visible').first().waitFor({ timeout: 10000 });
   pass("FM6-desktop", "Full via Settings asked to confirm; the chip read Full; the chip flipped to Ask");
+  await chipFromAsk(desk, sid, "desktop", "1440");
 
   // Phone: the same switch from the Assistant's own head, and the Settings confirm as a bottom sheet.
   const phoneDev = await device("phone-ui", "phone");
@@ -379,18 +432,89 @@ async function fullModeScenarios() {
   await phoneDev.page.locator('[data-assistant-mode="ask"]:visible').first().waitFor({ timeout: 10000 });
   await phoneDev.context.close();
   pass("FM6-phone", "phone: confirm sheet, then the head chip reads Full");
+  const chipPhone = await device("phone-chip", "phone");
+  await chipFromAsk(chipPhone, sid, "phone", "390");
+  await chipPhone.context.close();
+
+  await fullModeHardLimitScenarios(desk, sid);
 
   // Settings in Ask, for the report.
   await setPermission("ask");
   await openAssistant(desk, sid);
+  await closeSettingsWindow(desk);
   await desk.page.locator('button[aria-label="PPM Assistant settings"]:visible').first().click();
-  await desk.page.locator('[data-testid="assistant-settings-tab-general"]:visible').first().click();
+  // The gear opens Settings already on the Assistant's General tab (aria-selected), so no tab click.
   const askBlock = desk.page.locator('[data-testid="assistant-permissions"]:visible').first();
   await askBlock.waitFor({ timeout: 15000 });
   await askBlock.scrollIntoViewIfNeeded();
   await shot(desk, "after-settings-ask-1440.png", askBlock);
   await desk.page.keyboard.press("Escape");
   await desk.context.close();
+}
+
+/**
+ * FM7 (database), FM8 (extension command). Full mode with one SQLite connection, writable in PPM and
+ * ticked in db_write_connections: a write on it runs with no card, but editing the connection
+ * (db_connection_save) still asks. The extension probe needs an extension's command on the device.
+ */
+async function fullModeHardLimitScenarios(desk, sid) {
+  const created = await fx.api("/api/db/connections", {
+    method: "POST",
+    body: JSON.stringify({ type: "sqlite", name: "fm7 writes", connectionConfig: { path: dbFile }, readonly: false, aiAccess: true }),
+  });
+  const connId = created.data?.id;
+  assert(Number.isInteger(connId), `connection not created: ${JSON.stringify(created).slice(0, 300)}`);
+  const s = await settingsBody();
+  await fx.api("/api/assistant/settings", { method: "PUT", body: JSON.stringify({ ...s, permission_mode: "full", db_write_connections: [connId] }) });
+  await until("connection listed as writable", async () => (await settingsBody()).db_write_connections?.includes(connId), 10000);
+  const rowCount = async () => JSON.stringify(await fx.api(`/api/db/connections/${connId}/query`, { method: "POST", body: JSON.stringify({ sql: "SELECT count(*) AS n FROM t" }) }));
+
+  // FM7a: a write on the listed connection runs with no card.
+  desk.maxCards = 0;
+  await fx.script("fm7a", [{ mcp: "db_query", args: { connectionId: connId, sql: "INSERT INTO t (x) VALUES (2)" } }, { text: "FM7a done." }], { match: "FM7a insert" });
+  await openAssistant(desk, sid);
+  await send(desk, "FM7a insert a row");
+  await waitCounting(desk, "FM7a reply", () => desk.page.getByText("FM7a done.").first().isVisible().catch(() => false), 120000);
+  const insert = await recordOf("fm7a");
+  assert.equal(insert.isError, false, `FM7a refused: ${JSON.stringify(insert)}`);
+  assert.equal(desk.maxCards, 0, "FM7a: a card showed for a write on a listed connection");
+  // The query answers rows as arrays: [[2]] is the count of two rows.
+  assert(/"rows":\[\[2\]\]/.test(await rowCount()), `FM7a: the write did not land: ${await rowCount()}`);
+  pass("FM7a", "db_query write on a connection listed in db_write_connections: no card, row inserted");
+
+  // FM7b: db_connection_save editing that same connection asks; Deny leaves the name alone.
+  desk.maxCards = 0;
+  await fx.script("fm7b", [{ mcp: "db_connection_save", args: { id: connId, name: "fm7 renamed" } }, { text: "FM7b done." }], { match: "FM7b rename" });
+  await openAssistant(desk, sid);
+  await send(desk, "FM7b rename the connection");
+  await waitCounting(desk, "FM7b card", async () => (await cardCount(desk)) > 0, 120000);
+  await desk.page.locator(CARD).last().getByRole("button", { name: "Deny", exact: true }).click();
+  await recordOf("fm7b");
+  assert(!JSON.stringify(await fx.api("/api/db/connections")).includes("fm7 renamed"), "FM7b: a denied edit renamed the connection");
+  pass("FM7b", "db_connection_save on a listed connection raised a card; Deny left it unchanged");
+
+  // FM8: ui_run_command with an ext: id. The card needs an extension command the device lists; the
+  // fixture installs no extension, so the device offers none and PPM refuses before any card.
+  desk.maxCards = 0;
+  await fx.script("fm8", [{ mcp: "ui_run_command", args: { id: "ext:fm-probe.noop" } }, { text: "FM8 done." }], { match: "FM8 ext" });
+  await openAssistant(desk, sid);
+  await send(desk, "FM8 ext: run the extension command");
+  const ext = await recordOf("fm8").catch(async (error) => {
+    await shot(desk, "debug-fm8-no-answer.png");
+    console.error(`FM8 records: ${JSON.stringify(await fx.recordsOf("fm8"))}`);
+    console.error(`FM8 page text: ${(await desk.page.locator("[data-assistant-body]:visible").first().innerText().catch(() => "")).slice(-1200)}`);
+    throw error;
+  });
+  const listed = !/is offered on the user's device/.test(String(ext.text ?? ""));
+  if (listed) {
+    await waitCounting(desk, "FM8 card", async () => (await cardCount(desk)) > 0, 60000);
+    await desk.page.locator(CARD).last().getByRole("button", { name: "Deny", exact: true }).click();
+    pass("FM8", "ui_run_command ext: raised a card in Full mode; Deny answered it");
+  } else {
+    console.log(`BLOCKED FM8: no extension command is listed on the device (the fixture installs no extension), so no card could be shown. PPM answered: ${JSON.stringify(ext.text).slice(0, 160)}`);
+    results.push({ id: "FM8", passed: false, blocked: true });
+  }
+  await setPermission("ask");
 }
 
 try {
@@ -408,7 +532,8 @@ try {
       assert.deepEqual(unexpected, [], `page errors on ${dev.name}`);
     }
     await transcript(ARTIFACTS, "full-mode", tg, [TG_CHAT], Date.now());
-    console.log(`${results.length} checks passed`);
+    const blocked = results.filter((r) => r.blocked).map((r) => r.id);
+    console.log(`${results.filter((r) => r.passed).length} checks passed${blocked.length ? `; BLOCKED (not counted as passed): ${blocked.join(", ")}` : ""}`);
   }
 } catch (error) {
   console.error(`FAIL ${error.stack ?? error}`);
