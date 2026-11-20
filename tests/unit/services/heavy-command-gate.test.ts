@@ -11,13 +11,18 @@ describe("what counts as heavy", () => {
       "$env:NODE_OPTIONS='--max-old-space-size=8192'; node node_modules/jest/bin/jest.js --forceExit --maxWorkers=2 $specs",
       "npx tsc --noEmit", "bun test tests/unit", "pnpm run test", "npm test", "yarn build", "vite build",
       "npx playwright test", "docker run --rm ppm-e2e-chromium", "docker compose up -d", "cargo test", "pytest -q",
+      // Script names, workspace runners and wrappers.
+      "npm run test:unit", "bun run test:e2e", "pnpm -r test", "yarn workspace web test", "npm --prefix web test",
+      "pnpm --filter web build", "timeout 600 npx jest", "sudo docker build .",
+      // jest's -w is --maxWorkers: the very run of 20/11.
+      "npx jest -w 2",
     ]) expect([c, isHeavyCommand(c)]).toEqual([c, true]);
     for (const c of [
       "git status", "ls node_modules", "cat tsconfig.json", "npx -y @playwright/mcp@latest", "docker ps -a", "bun run dev:server",
       // A word in an argument is not the program.
       'git commit -m "fix jest config; run tsc later"', "grep -rn tsc src", "rg jest", "mvn -v", "echo vitest",
       // Watchers and dev servers run for hours: they are not a job to queue behind.
-      "npx tsc --watch", "npx vitest --watch", "npx webpack serve", "npm run dev", "vite",
+      "npx tsc --watch", "npx tsc -w", "npx vitest --watch", "npx webpack serve", "npm run dev", "vite", "bun test --watch",
     ]) {
       expect([c, isHeavyCommand(c)]).toEqual([c, false]);
     }
@@ -40,6 +45,10 @@ describe("what counts as heavy", () => {
     expect(isHeavyProcess("bun run src/server/index.ts __serve__ 0")).toBe(false);
     // Not by a word in an argument, a folder named jest-something, or a dev server.
     expect(isHeavyProcess('git commit -m "fix jest config"')).toBe(false);
+    expect(isHeavyProcess('git commit -m "pytest flakes"')).toBe(false);
+    expect(isHeavyProcess("node /r/node_modules/jest/bin/jest.js -w 4")).toBe(true);
+    expect(isHeavyProcess("node /r/node_modules/typescript/bin/tsc -w")).toBe(false);
+    expect(isHeavyProcess("python -m pytest -q")).toBe(true);
     expect(isHeavyProcess("node /repo/node_modules/jest-environment-node/x.js")).toBe(false);
     expect(isHeavyProcess("node /r/node_modules/webpack-dev-server/bin/webpack-dev-server.js")).toBe(false);
     expect(isHeavyProcess("node /r/node_modules/webpack/bin/webpack.js serve")).toBe(false);

@@ -52,12 +52,21 @@ export function commandSegments(command: string): string[][] {
 const programName = (w: string) => w.toLowerCase().replace(/^.*[\\/]/, "").replace(/\.(exe|cmd|bat|ps1|c?m?js)$/, "");
 
 /** Words that only wrap the real command in front of it. */
-const WRAPPERS = new Set(["npx", "pnpx", "bunx", "time", "nice", "env", "command", "exec", "&", "call", "start"]);
+const WRAPPERS = new Set(["npx", "pnpx", "bunx", "time", "nice", "env", "command", "exec", "&", "call", "start", "sudo", "doas"]);
+/** Wrappers whose first argument is a value, not the command (`timeout 600 npx jest`). */
+const WRAPPERS_WITH_VALUE = new Set(["timeout", "gtimeout"]);
 const RUNNERS_WITH_EXEC = new Set(["pnpm", "yarn", "npm"]);
 /** Tools that are a heavy job whatever follows (unless watching). */
 const HEAVY_TOOLS = new Set(["jest", "vitest", "tsc", "vue-tsc", "pytest", "mocha", "ava"]);
 const SCRIPT_GOALS = new Set(["test", "build", "typecheck", "type-check", "tsc", "e2e", "lint", "jest", "vitest"]);
-const WATCHING = /^(--watch|-w|--watchAll|watch|serve|dev|--serve|dev-server)$/i;
+/** A package script that is a heavy goal: `test`, `test:unit`, `build:web`, `e2e-ci`… */
+const isScriptGoal = (goal: string) => SCRIPT_GOALS.has(goal.split(/[:\-]/)[0]!) || SCRIPT_GOALS.has(goal);
+/** Watch flags. `-w` only for `tsc`: for jest it is `--maxWorkers`, exactly the flag of a heavy run. */
+const WATCHING = /^(--watch|--watchAll|watch|serve|dev|--serve|dev-server)$/i;
+const watchingFor = (prog: string, rest: readonly string[]) =>
+  rest.some((w) => WATCHING.test(w) || ((prog === "tsc" || prog === "vue-tsc") && w === "-w"));
+/** Flags of npm/pnpm/yarn/bun that take a value, skipped to reach the script name. */
+const RUNNER_FLAGS_WITH_VALUE = new Set(["--prefix", "--filter", "-F", "--cwd", "-C", "--dir", "--workspace", "-w"]);
 
 /** Whether one simple command starts a heavy job. Exported for tests. */
 export function isHeavySegment(words: readonly string[]): boolean {
@@ -72,12 +81,20 @@ export function isHeavySegment(words: readonly string[]): boolean {
   }
   let prog = programName(words[i]!);
   let rest = words.slice(i + 1);
-  while (WRAPPERS.has(prog) && rest.length) { prog = programName(rest[0]!); rest = rest.slice(1); }
+  for (;;) {
+    if (WRAPPERS.has(prog) && rest.length) {
+      while (rest.length > 1 && rest[0]!.startsWith("-")) rest = rest.slice(1);
+      prog = programName(rest[0]!); rest = rest.slice(1);
+    } else if (WRAPPERS_WITH_VALUE.has(prog) && rest.length > 1) {
+      while (rest.length > 2 && rest[0]!.startsWith("-")) rest = rest.slice(1);
+      prog = programName(rest[1]!); rest = rest.slice(2);
+    } else break;
+  }
   if (RUNNERS_WITH_EXEC.has(prog) && (rest[0] === "exec" || rest[0] === "dlx") && rest.length > 1) {
     prog = programName(rest[1]!);
     rest = rest.slice(2);
   }
-  const watching = rest.some((w) => WATCHING.test(w));
+  const watching = watchingFor(prog, rest);
   if (prog === "node" || prog === "bun" && rest[0] && /[\\/]/.test(rest[0])) {
     // `node node_modules/jest/bin/jest.js …`: the script names the tool.
     const script = (rest[0] ?? "").toLowerCase().replace(/\\/g, "/");
@@ -93,10 +110,20 @@ export function isHeavySegment(words: readonly string[]): boolean {
   if (prog === "cypress") return rest[0] === "run";
   if (prog === "nx") return ["run-many", "affected", "test", "build", "e2e"].includes(rest[0] ?? "");
   if (prog === "npm" || prog === "pnpm" || prog === "yarn" || prog === "bun") {
-    const args = rest[0] === "run" || rest[0] === "run-script" ? rest.slice(1) : rest;
+    // Past the runner's own flags (`-r`, `--filter web`, `--prefix web`) and `yarn workspace <name>`.
+    let args = rest;
+    for (;;) {
+      const a = args[0];
+      if (a === undefined) break;
+      if (RUNNER_FLAGS_WITH_VALUE.has(a)) { args = args.slice(2); continue; }
+      if (a.startsWith("-")) { args = args.slice(1); continue; }
+      if (prog === "yarn" && a === "workspace") { args = args.slice(2); continue; }
+      if (a === "run" || a === "run-script") { args = args.slice(1); continue; }
+      break;
+    }
     const goal = (args[0] ?? "").toLowerCase();
-    if (prog === "bun" && goal === "test") return true;
-    if (SCRIPT_GOALS.has(goal) || HEAVY_TOOLS.has(goal)) return !watching;
+    if (prog === "bun" && goal === "test") return !watching;
+    if (isScriptGoal(goal) || HEAVY_TOOLS.has(goal)) return !watching;
     return false;
   }
   if (prog === "docker" || prog === "docker-compose" || prog === "podman") {
@@ -125,9 +152,10 @@ const HEAVY_PROCESS = new RegExp([
   String.raw`[\\/]vite[\\/]bin[\\/]vite\.js["\s]+build\b`, String.raw`[\\/]next[\\/]dist[\\/]bin[\\/]next["\s]+build\b`,
   String.raw`[\\/]webpack(-cli)?[\\/]bin[\\/]`,
   String.raw`playwright[\\/]cli\.js["\s]+test\b`, String.raw`[\\/]\.bin[\\/]playwright(\.cmd)?["\s]+test\b`,
-  String.raw`\bbun(\.exe)?"?\s+test\b`, String.raw`\bpytest\b`, String.raw`\bcypress\b.*\brun\b`,
+  String.raw`\bbun(\.exe)?"?\s+test\b`, String.raw`[\\/]pytest(\.exe)?\b`, String.raw`^"?pytest\b`,
+  String.raw`python[0-9.]*(\.exe)?"?\s+-m\s+pytest\b`, String.raw`[\\/]cypress(\.cmd)?"?\s+run\b`,
 ].join("|"), "i");
-const NOT_HEAVY_PROCESS = /@playwright[\\/]mcp|playwright-mcp|(^|\s)(--watch|-w|--watchAll|watch|serve|dev|--serve)(\s|$)|webpack-dev-server/i;
+const NOT_HEAVY_PROCESS = /@playwright[\\/]mcp|playwright-mcp|(^|\s)(--watch|--watchAll|watch|serve|dev|--serve)(\s|$)|webpack-dev-server|[\\/](typescript[\\/]bin[\\/]tsc|\.bin[\\/]tsc)\S*.*\s-w(\s|$)/i;
 
 export const isHeavyProcess = (cmdline: string): boolean => HEAVY_PROCESS.test(cmdline) && !NOT_HEAVY_PROCESS.test(cmdline);
 

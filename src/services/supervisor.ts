@@ -991,7 +991,8 @@ export async function spawnServer(
   const delay = backoffDelay(serverRestarts);
   log("ERROR", `Server crashed (exit ${exitCode}, signal ${exitSignal}, up ${Math.round((Date.now() - startedAt) / 1000)}s) — restart #${serverRestarts}/${MAX_RESTARTS}, restarting in ${delay}ms`);
   serverBackoffPending = true;
-  try { await Bun.sleep(delay); } finally { serverBackoffPending = false; }
+  memoryWaitSkipped = false;
+  try { await sleepUnlessSkipped(delay); } finally { serverBackoffPending = false; }
 
   if (!shuttingDown) return spawnServer(serverArgs, logFd, crashReason);
 }
@@ -1032,7 +1033,7 @@ async function waitForFreeMemory(): Promise<number> {
 function skipMemoryWaitForRestart(): boolean {
   if (!serverBackoffPending || serverChild) return false;
   memoryWaitSkipped = true;
-  log("INFO", "Restart asked for during the wait for memory — starting the server now");
+  log("INFO", "Restart asked for while the server waits to be restarted — starting it now");
   return true;
 }
 

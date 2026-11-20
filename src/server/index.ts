@@ -546,6 +546,12 @@ export async function startServer(options: {
         if (supervisorPid) {
           try {
             process.kill(supervisorPid, 0); // throws if dead
+            // A pid the OS gave to another program since (status.json outlives its run, a reboot
+            // with Fast Startup included) is a dead supervisor, not a running PPM.
+            const { recordedProcesses, writtenAt } = await import("../services/supervisor-watchdog/recorded-pid.ts");
+            if (!(await recordedProcesses([supervisorPid], writtenAt(statusFile))).has(supervisorPid)) {
+              throw new Error(`PID ${supervisorPid} is no longer the recorded supervisor`);
+            }
             if (!!status.minimalMode !== !!options.minimal) {
               console.error(`  PPM is already running in ${status.minimalMode ? "minimal" : "full"} mode.`);
               console.error(`  To change mode, run: ppm down && ppm start${options.minimal ? " --minimal" : ""}`);
@@ -631,10 +637,16 @@ export async function startServer(options: {
     // The tunnel and the edge are not on that list: detached, they outlive a dead supervisor still
     // serving the public URL and port, and the new supervisor adopts them (leftover-recovery.ts).
     let prevRun: Record<string, unknown> = {};
-    const isAlive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    // "Alive" means still the process the record names: a pid reused since is someone else's.
+    let recorded = new Set<number>();
+    const isAlive = (pid: number) => recorded.has(pid);
     if (existsSync(statusFile)) {
       try {
         prevRun = JSON.parse(readFileSync(statusFile, "utf-8"));
+        const { recordedProcesses, writtenAt } = await import("../services/supervisor-watchdog/recorded-pid.ts");
+        const recordedPids = (["supervisorPid", "pid", "tunnelPid", "edgePid"] as const)
+          .map((k) => prevRun[k]).filter((p): p is number => typeof p === "number" && p > 0);
+        recorded = await recordedProcesses(recordedPids, writtenAt(statusFile));
         const { killProcessTree } = await import("../services/windows-process-tree.ts");
         const { leftoverPidsToKill } = await import("../services/supervisor-watchdog/leftover-recovery.ts");
         const { statSync } = await import("node:fs");

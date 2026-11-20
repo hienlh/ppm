@@ -36,8 +36,12 @@ function logLine(dir: string, level: "INFO" | "WARN" | "ERROR", msg: string): vo
   try { appendFileSync(resolve(dir, "ppm.log"), `[${new Date().toISOString()}] [${level}] [watchdog] ${msg}\n`); } catch { /* no log */ }
 }
 
-/** Whether `pid` is alive and runs under a supervisor's image. False when unreadable. */
-async function supervisorRuns(pid: unknown): Promise<boolean> {
+/**
+ * Whether `pid` is alive, runs under a supervisor's image and is the process the status recorded
+ * (`recorded-pid.ts`: it started before the file was last written, so a pid reused since does not
+ * pass for PPM). False when it is not; true when the process list is unreadable.
+ */
+async function supervisorRuns(pid: unknown, statusWrittenAt: number | null): Promise<boolean> {
   if (typeof pid !== "number" || pid <= 0) return false;
   try { process.kill(pid, 0); } catch { return false; }
   const { readProcessList } = await import("../process-tree-memory.ts");
@@ -45,7 +49,9 @@ async function supervisorRuns(pid: unknown): Promise<boolean> {
   // Unreadable list: trust liveness rather than start a second supervisor on top of a live one.
   if (!list) return true;
   const p = list.find((x) => x.pid === pid);
-  return !!p && SUPERVISOR_IMAGES.has(p.name);
+  if (!p || !SUPERVISOR_IMAGES.has(p.name)) return false;
+  const { isRecordedProcess } = await import("./recorded-pid.ts");
+  return isRecordedProcess(true, process.platform === "win32" ? p.startedAt : undefined, statusWrittenAt);
 }
 
 export async function runEnsureSupervisor(): Promise<EnsureAction> {
@@ -59,7 +65,7 @@ export async function runEnsureSupervisor(): Promise<EnsureAction> {
   const now = Date.now();
   let bootAt: number | null = null;
   try { bootAt = now - osUptime() * 1000; } catch { /* unknown */ }
-  const supervisorAlive = await supervisorRuns(status?.supervisorPid);
+  const supervisorAlive = await supervisorRuns(status?.supervisorPid, statusAgeMs === null ? null : now - statusAgeMs);
 
   // The common run, PPM up: no memory read, no config, no database.
   let commit: SystemCommit | null = null;

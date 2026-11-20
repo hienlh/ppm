@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync, renameSync } from "node:fs";
 import { getPpmDir, isIsolatedPpmHome } from "../../services/ppm-dir.ts";
 import { reapTrackedDescendants } from "../../services/windows-process-tree.ts";
 import { writeOrderedStop } from "../../services/restart-news/ordered-stop-note.ts";
@@ -294,7 +294,9 @@ async function hardStop() {
 function markStopping(): void {
   try {
     const data = JSON.parse(readFileSync(statusFile(), "utf-8"));
-    writeFileSync(statusFile(), JSON.stringify({ ...data, state: "stopping" }));
+    const tmp = `${statusFile()}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ ...data, state: "stopping" }));
+    renameSync(tmp, statusFile());
   } catch { /* no status: nothing for the watchdog to misread */ }
 }
 
