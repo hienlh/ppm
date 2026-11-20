@@ -184,7 +184,7 @@ export function QuestionMirrorCard({ card, onCard }: Props) {
             </p>
           )}
           <p className="font-medium leading-relaxed text-text-primary">{escapeHiddenCharacters(q.question)}</p>
-          {(q.options.length > 0 || (onCardAnswerable && q.allowsFreeText === true)) && (
+          {(q.options.length > 0 || (open && onCardAnswerable && q.allowsFreeText === true)) && (
             <QuestionOptions
               label={q.header || q.question}
               options={q.options}

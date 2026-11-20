@@ -85,6 +85,8 @@ export interface BridgeCards extends MirrorCardSink {
   press(chatId: string, press: CardPress, group: string, cq: TelegramCallbackQuery): string;
   /** Words that may answer a question card in the user's own words: what to reply, or null when not for a card. */
   typed?(chatId: string, m: TypedAnswerMessage): string | null;
+  /** The chat's next message is meant for something else now: it stops waiting for a typed answer. */
+  stopTyped?(chatId: string): void;
   forgetChat(chatId: string): void;
 }
 
@@ -229,6 +231,8 @@ export class AssistantTelegramBridge {
       pressTask: async (chatId, press, group, cq) => {
         if (press.op === "undo_history") return pressTaskCardUndo(chatId, press, group, cq, { codes, queue });
         // Not the card's own buttons: the card stays as it is, and its buttons keep working.
+        // The newest "your next message goes to…" wins: a task's chat takes it from a question card's Other.
+        if (press.op === "about" || press.op === "ask") cards.stopTyped?.(chatId);
         if (press.op === "about" || press.op === "ask" || press.op === "about_cancel") return taskMessages.press(chatId, press, group);
         if (taskCreated.owns(press.ref)) return taskCreated.press(chatId, press, group);
         return tasks.press(chatId, press, group, cq);

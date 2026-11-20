@@ -219,12 +219,10 @@ export function questionListHtml(questions: readonly NormalizedQuestion[], headl
  * question as it is, and the summary with every choice of every question picked.
  */
 export function wizardWorstCaseSteps(questions: readonly NormalizedQuestion[], headline: string): string[] {
-  // A typed answer is shown cut to SUMMARY_ANSWER_MAX, so it can be longer than every choice joined.
-  const longest = (q: NormalizedQuestion): string[] => {
-    const picked = q.options.map((o) => o.label);
-    const typed = "x".repeat(SUMMARY_ANSWER_MAX + 1);
-    return q.allowsFreeText && typed.length > picked.join(", ").length ? [typed] : picked;
-  };
-  const all: Selection = new Map(questions.map((q) => [q.id, longest(q)]));
-  return Array.from({ length: questions.length + 1 }, (_, step) => wizardStepHtml(questions, step, all, headline));
+  // A typed answer is shown cut to SUMMARY_ANSWER_MAX, under its own step and in the summary, so
+  // both shapes are measured: every choice picked, and a typed answer wherever one may be given.
+  const picked: Selection = new Map(questions.map((q) => [q.id, q.options.map((o) => o.label)]));
+  const typed: Selection = new Map(questions.map((q) => [q.id, q.allowsFreeText ? ["x".repeat(SUMMARY_ANSWER_MAX + 1)] : q.options.map((o) => o.label)]));
+  const steps = (sel: Selection) => Array.from({ length: questions.length + 1 }, (_, step) => wizardStepHtml(questions, step, sel, headline));
+  return [...steps(picked), ...steps(typed)];
 }

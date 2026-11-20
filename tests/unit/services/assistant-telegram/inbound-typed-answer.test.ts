@@ -34,7 +34,7 @@ describe("a typed answer to a question card, in the router", () => {
     r.dispatch(fake.pushText(chat, chat, "mine", "private", { reply_to_message: { message_id: 77, chat: { id: chat, type: "private" }, date: Math.floor(Date.now() / 1000) } }));
     await r.settle();
     await queue.whenIdle();
-    expect(seen).toEqual([{ text: "mine", replyToMessageId: 77, notTheUsers: false }]);
+    expect(seen).toEqual([{ text: "mine", replyToMessageId: 77, notTheUsers: false, hasPhoto: false }]);
     expect(toCards).toEqual([]);
     expect(fake.lastText(chat)).toBe("✅ Answer sent: mine");
   });

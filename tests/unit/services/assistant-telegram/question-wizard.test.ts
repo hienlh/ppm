@@ -206,6 +206,8 @@ describe("a question card asked one question at a time", () => {
     expect(m.text).toContain("API token?");
     expect(m.text).toContain("give it in PPM");
     expect(m.text).not.toContain("Question 1/2");
+    // No buttons, so no hint about ✏️ Other either.
+    expect(m.text).not.toContain("✏️");
     expect(t.buttons(id)).toEqual([]);
   });
 

@@ -106,11 +106,11 @@ export const otherButtonLabel = (q: NormalizedQuestion): string => (q.options.le
 export const redactedHtml = (s: string): string => esc(redactSecretsForTelegram(s).text);
 
 /** One question as a card shows it: the question, then every choice with its description. */
-export function questionBlock(q: NormalizedQuestion): string[] {
+export function questionBlock(q: NormalizedQuestion, takesWords = true): string[] {
   const lines = [`${q.header ? `<b>${redactedHtml(q.header)}</b> — ` : ""}${redactedHtml(q.question)}${q.multiSelect ? " <i>(choose any)</i>" : ""}`];
   for (const o of q.options) lines.push(`• ${redactedHtml(o.label)}${o.description ? ` — <i>${redactedHtml(o.description)}</i>` : ""}`);
   if (needsPpm(q)) lines.push(`<i>${q.secret ? "This answer is private: give it in PPM." : "This needs a typed answer: give it in PPM."}</i>`);
-  else if (q.allowsFreeText) {
+  else if (q.allowsFreeText && takesWords) {
     lines.push(q.options.length
       ? "<i>Or answer in your own words: press ✏️ Other, or reply to this card.</i>"
       : "<i>Reply to this card with your answer, or press ✏️ Type your answer.</i>");
@@ -118,9 +118,10 @@ export function questionBlock(q: NormalizedQuestion): string[] {
   return lines;
 }
 
-export function formatQuestionCard(questions: readonly NormalizedQuestion[], headline: string): string {
+/** `takesWords`: the card carries buttons, so the hint about answering in words is true of it. */
+export function formatQuestionCard(questions: readonly NormalizedQuestion[], headline: string, takesWords = false): string {
   const lines = [`❓ <b>${esc(headline)}</b>`];
-  for (const q of questions) lines.push("", ...questionBlock(q));
+  for (const q of questions) lines.push("", ...questionBlock(q, takesWords));
   return lines.join("\n");
 }
 

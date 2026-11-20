@@ -242,6 +242,7 @@ export class AssistantTelegramInbound {
         text: message.text ?? message.caption ?? "",
         ...(repliedTo !== undefined ? { replyToMessageId: repliedTo } : {}),
         notTheUsers: !!from || !!message.via_bot,
+        hasPhoto: !!message.photo?.length,
       });
       if (said !== null) {
         await this.flush(chatId);
