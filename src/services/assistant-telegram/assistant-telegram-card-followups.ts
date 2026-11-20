@@ -19,6 +19,7 @@
  *
  * Every send goes through the bridge's lane for that chat and its access check, like a card.
  */
+import { primeTelegramPathLinks } from "../telegram/telegram-path-links.ts";
 import { getSessionProvider } from "../db.service.ts";
 import { projectTelegramDetail } from "../assistant-managers/manager-chats-db.ts";
 import { getCardRow, type TelegramCardRef } from "../assistant-cards/assistant-cards-db.ts";
@@ -141,6 +142,7 @@ export class AssistantTelegramCardFollowups implements CardFollowupSink {
       : null;
     let detail: CardDetail = "title";
     try { detail = (this.deps.detailOf ?? realDetail)(d.card); } catch { /* unknown: the safe side */ }
+    await primeTelegramPathLinks(d.text);
     const answer = formatCardFollowup({
       text: d.text, overflow: d.overflow, detail, projectName: project, url, ...(d.stopped ? { stopped: true } : {}),
     });

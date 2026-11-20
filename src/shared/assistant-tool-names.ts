@@ -28,6 +28,8 @@ export const UI_CLOSE_TAB_TOOL = "ui_close_tab";
 export const UI_MOVE_TAB_TOOL = "ui_move_tab";
 /** Shows a folder or file in the project's own file tree (the Explorer), not the OS file manager. */
 export const UI_REVEAL_PATH_TOOL = "ui_reveal_path";
+/** Opens the OS file browser (the File Explorer window, a phone's full-screen sheet) at any folder or file. */
+export const UI_OPEN_FILE_BROWSER_TOOL = "ui_open_file_browser";
 export const UI_READ_TAB_TOOL = "ui_read_tab";
 export const UI_LIST_COMMANDS_TOOL = "ui_list_commands";
 export const UI_RUN_COMMAND_TOOL = "ui_run_command";
@@ -53,7 +55,7 @@ export const ASSISTANT_TOOLS = [
   PROJECTS_LIST_TOOL, PROJECT_ADD_TOOL, CHAT_LIST_SESSIONS_TOOL, CHAT_SEARCH_TOOL, CHAT_READ_MESSAGES_TOOL,
   DB_LIST_CONNECTIONS_TOOL, DB_QUERY_TOOL, UI_GET_STATE_TOOL,
   UI_OPEN_TAB_TOOL, UI_FOCUS_TAB_TOOL, UI_SWITCH_PROJECT_TOOL, UI_CLOSE_TAB_TOOL, UI_MOVE_TAB_TOOL, UI_REVEAL_PATH_TOOL,
-  UI_READ_TAB_TOOL, UI_LIST_COMMANDS_TOOL, UI_RUN_COMMAND_TOOL,
+  UI_OPEN_FILE_BROWSER_TOOL, UI_READ_TAB_TOOL, UI_LIST_COMMANDS_TOOL, UI_RUN_COMMAND_TOOL,
   CHATS_ATTENTION_TOOL, CHAT_ANSWER_APPROVAL_TOOL, PPM_CLI_REFERENCE_TOOL,
   CHAT_WATCH_TOOL, CHAT_UNWATCH_TOOL, CHAT_LIST_WATCHES_TOOL,
   NOTEBOOK_ADD_TOOL, NOTEBOOK_EDIT_TOOL, NOTEBOOK_DELETE_TOOL,

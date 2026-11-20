@@ -23,6 +23,7 @@ import { useExplorerStore, type ExplorerSlice, type ViewMode } from "./explorer-
 import { toolbarButtonClass as buttonClass } from "./toolbar-icon-button";
 import { usePrefersCoarsePointer } from "./use-coarse-long-press";
 import type { ExplorerNavigation } from "./use-explorer-navigation";
+import { useTypedPath } from "./use-typed-path";
 import { AVAILABLE_VIEW_MODES } from "./views/explorer-view-registry";
 
 const VIEW_ICON: Record<ViewMode, typeof List> = { list: List, icons: LayoutGrid, columns: Columns3 };
@@ -43,10 +44,14 @@ export function ExplorerToolbar({ windowId, slice, nav, actions }: ExplorerToolb
 
   const [editingPath, setEditingPath] = useState(false);
   const [draftPath, setDraftPath] = useState(slice.path);
+  const [pathError, setPathError] = useState<string | null>(null);
   useEffect(() => setDraftPath(slice.path), [slice.path]);
+  const typed = useTypedPath(windowId, nav);
+  const closePathField = () => { setEditingPath(false); setPathError(null); };
   const coarse = usePrefersCoarsePointer();
 
   return (
+    <>
     <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-[var(--x-toolbar-bg,var(--panel-2))] px-1.5 py-1">
       <button type="button" aria-label="Back" title="Back" disabled={!nav.canGoBack} onClick={nav.back} className={buttonClass(coarse)}>
         <ArrowLeft className="size-4" />
@@ -67,13 +72,15 @@ export function ExplorerToolbar({ windowId, slice, nav, actions }: ExplorerToolb
             autoFocus
             aria-label="Path"
             value={draftPath}
-            onChange={(e) => setDraftPath(e.target.value)}
-            onBlur={() => setEditingPath(false)}
+            onChange={(e) => { setDraftPath(e.target.value); setPathError(null); }}
+            onBlur={() => { if (!typed.pending) closePathField(); }}
             onKeyDown={(e) => {
               e.stopPropagation();
-              if (e.key === "Enter") { nav.go(draftPath.trim()); setEditingPath(false); }
-              else if (e.key === "Escape") { setDraftPath(slice.path); setEditingPath(false); }
+              if (e.key === "Enter") {
+                void typed.submit(draftPath).then((error) => (error ? setPathError(error) : closePathField()));
+              } else if (e.key === "Escape") { setDraftPath(slice.path); closePathField(); }
             }}
+            aria-invalid={pathError ? true : undefined}
             className="min-w-0 flex-1 bg-transparent py-1 font-mono text-xs text-text outline-none"
           />
         ) : (
@@ -83,7 +90,7 @@ export function ExplorerToolbar({ windowId, slice, nav, actions }: ExplorerToolb
           type="button"
           aria-label={editingPath ? "Show breadcrumb" : "Edit path"}
           title={editingPath ? "Show breadcrumb" : "Edit path"}
-          onClick={() => setEditingPath((v) => !v)}
+          onClick={() => (editingPath ? closePathField() : setEditingPath(true))}
           className={buttonClass(coarse)}
         >
           <PencilLine className="size-3.5" />
@@ -165,5 +172,9 @@ export function ExplorerToolbar({ windowId, slice, nav, actions }: ExplorerToolb
         {showHidden ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
       </button>
     </div>
+    {editingPath && pathError && (
+      <p role="alert" className="shrink-0 border-b border-border bg-error/10 px-2 py-1 text-xs text-error">{pathError}</p>
+    )}
+    </>
   );
 }

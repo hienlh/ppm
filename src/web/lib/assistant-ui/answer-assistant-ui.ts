@@ -7,6 +7,7 @@ import { buildUiSummary } from "./ui-summary";
 import { closeAssistantTab, focusAssistantTab, openAssistantTab, switchAssistantProject } from "./assistant-ui-actions";
 import { moveAssistantTab } from "./assistant-move-tab";
 import { revealAssistantPath } from "./assistant-reveal-path";
+import { openAssistantFileBrowser } from "./assistant-open-file-browser";
 import { describeTab } from "./describe-tab";
 import { listAssistantCommands, runAssistantCommand } from "./assistant-commands";
 
@@ -62,6 +63,7 @@ const HANDLERS: Partial<Record<AssistantUiOp, Handler>> = {
   close_tab: (args) => closeAssistantTab(args),
   move_tab: (args) => moveAssistantTab(args),
   reveal_path: (args) => revealAssistantPath(args),
+  open_file_browser: (args) => openAssistantFileBrowser(args),
   describe_tab: (args) => describeTab(args),
   list_commands: (args) => listAssistantCommands(args),
   run_command: (args) => runAssistantCommand(args),

@@ -129,6 +129,12 @@ export const ASSISTANT_UI_SECTION = `## The user's screen
   row selected. Use it when the user wants to see where something is or to "go into" a folder;
   the path must be inside the project. It opens no file (that is \`ui_open_tab\` kind "file"),
   and it is not the OS File Explorer window. Navigation only, so no confirmation.
+- \`ui_open_file_browser\` opens PPM's file browser (the File Explorer window on a desktop, the
+  full-screen file browser on a phone) at any folder on this machine, in a project or not; a
+  file opens its folder with the file selected. Use it when the user asks to open or "go into"
+  a folder outside a project's tree, or to show where a file is on disk. The path is absolute
+  (\`~\` for the home folder). Places PPM keeps private (its own folder, \`~/.ssh\`, \`~/.aws\`…)
+  are refused: ask the user to open those themselves. Navigation only, so no confirmation.
 - \`ui_move_tab\` works on a desktop only; a phone has no split panels or windows and refuses.
   Its answer says where the tab was (\`previous\`): to undo, move it back there.
 - Opening or focusing a tab of another project switches the screen to that project first.

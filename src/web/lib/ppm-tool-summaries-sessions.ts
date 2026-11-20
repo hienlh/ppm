@@ -2,7 +2,8 @@
  * The header line of the session-history tools (`search_sessions`, `list_session_turns`,
  * `read_session_turns`), `report_to_assistant` and the `session_schedule_*` tools, read from the
  * call's arguments and from what they answer (`session-history-tools.ts`, `turn-render.ts`,
- * `manager-report-env.ts`, `collab-schedules.ts`, `collab-schedule-proposals.ts`).
+ * `manager-report-env.ts`, `collab-schedules.ts`, `collab-schedule-proposals.ts`), and the
+ * Assistant's `ui_open_file_browser`.
  */
 import {
   isObj, joinParts, jsonAnswer, labelFor, oneLine, plural, posInt, str, type PpmToolContext, type PpmToolSummary,
@@ -137,8 +138,19 @@ function schedule(ctx: PpmToolContext): PpmToolSummary | null {
   }
 }
 
+/**
+ * The Assistant's `ui_open_file_browser`: the file it selected, or the folder it opened
+ * (`assistant-open-file-browser.ts`); the path asked for while it runs or when it was refused.
+ */
+function openFileBrowser(ctx: PpmToolContext): PpmToolSummary {
+  const answer = ctx.ok ? jsonAnswer(ctx.text) : null;
+  const shown = str(answer?.select) ?? str(answer?.dir) ?? str(ctx.args.path);
+  return { label: labelFor(ctx, "Open file browser", "Opened file browser"), detail: shown && oneLine(shown, 80) };
+}
+
 export function sessionToolSummary(ctx: PpmToolContext): PpmToolSummary | null {
   switch (ctx.tool) {
+    case "ui_open_file_browser": return openFileBrowser(ctx);
     case "search_sessions": return searchSessions(ctx);
     case "list_session_turns": return listTurns(ctx);
     case "read_session_turns": return readTurns(ctx);

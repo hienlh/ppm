@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { CheckCircle2, ChevronDown, ChevronRight, Eye, FileCode, Loader2, XCircle } from "@/lib/icons";
 import { basename } from "@/lib/utils";
 import { openAiTab, resolveToolCallTarget } from "@/lib/open-ai-tab";
+import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { previewProblemCount, tabToolResultText, type TabToolCall } from "@/lib/tab-tool-call";
 import { useAgentSessionContext } from "./agent-session-context";
 
@@ -33,7 +34,8 @@ export function TabToolCard({ call, toolUseId, output, isError, done, projectNam
     const chatProject = session?.projectName || projectName;
     try {
       const target = await resolveToolCallTarget(call, chatProject);
-      openAiTab(target, { sessionId: session?.sessionId ?? "", projectName: chatProject });
+      if ("folder" in target) await openExplorer(target.folder);
+      else openAiTab(target, { sessionId: session?.sessionId ?? "", projectName: chatProject });
     } catch (e) {
       toast.error(`Could not open ${name}`, { description: e instanceof Error ? e.message : String(e) });
     }

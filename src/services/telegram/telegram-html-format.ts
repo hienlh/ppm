@@ -11,6 +11,8 @@
  */
 import { escapeTelegramHtml } from "../notification-format.ts";
 import { redactLogText, SECRET_RULES } from "../../shared/log-redact.ts";
+import { findPathsInText, inlineCodePath } from "../../web/lib/local-path-detect.ts";
+import { telegramPathLink } from "./telegram-path-link-cache.ts";
 
 export const TELEGRAM_MESSAGE_MAX = 4096;
 
@@ -132,12 +134,18 @@ function formatInline(line: string): string {
   const slots: string[] = [];
   const hold = (html: string) => `\u0000${slots.push(html) - 1}\u0000`;
 
-  let s = line.replace(/`([^`\n]+)`/g, (_m, code: string) => hold(`<code>${escape(code)}</code>`));
+  let s = line.replace(/`([^`\n]+)`/g, (_m, code: string) => {
+    // A checked path in a code span is a link instead: Telegram keeps no other entity inside code.
+    const quoted = inlineCodePath(code);
+    const link = quoted ? telegramPathLink(quoted.path) : null;
+    return hold(link ? `<a href="${escape(link)}">${escape(code)}</a>` : `<code>${escape(code)}</code>`);
+  });
   s = s.replace(/!?\[([^\]\n]+)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g, (_m, label: string, url: string) => {
     const text = label.replace(/\*\*|__|~~/g, "").trim();
     return hold(text === url || !text ? escape(url) : `${escape(text)} (${escape(url)})`);
   });
   s = s.replace(/\bhttps?:\/\/[^\s<>()\u0000]*[^\s<>().,;:!?'"\u0000]/g, (url) => hold(escape(url)));
+  s = linkCheckedPaths(s, hold);
 
   s = escape(s);
   s = wrap(s, /\*\*(?=\S)([^\n]*?\S)\*\*/g, "b");
@@ -146,6 +154,19 @@ function formatInline(line: string): string {
   s = wrap(s, /(?<![*\w])\*(?=[^\s*])([^\n*]*?[^\s*])\*(?![*\w])/g, "i");
   s = wrap(s, /(?<!\w)_(?=[^\s_])([^\n_]*?[^\s_])_(?!\w)/g, "i");
   return s.replace(/\u0000(\d+)\u0000/g, (_m, n: string) => slots[Number(n)]!);
+}
+
+/** Checked paths in prose as links (a placeholder holds each), the rest left as it was. */
+function linkCheckedPaths(text: string, hold: (html: string) => string): string {
+  let out = "";
+  let at = 0;
+  for (const hit of findPathsInText(text)) {
+    const link = telegramPathLink(hit.path);
+    if (!link) continue;
+    out += text.slice(at, hit.start) + hold(`<a href="${escape(link)}">${escape(text.slice(hit.start, hit.end))}</a>`);
+    at = hit.end;
+  }
+  return out + text.slice(at);
 }
 
 interface OpenTag { name: string; open: string }

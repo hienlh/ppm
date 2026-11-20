@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveTabTarget } from "../../../src/services/tab-tools-mcp/tab-target.ts";
+import { assistantPrivateScope } from "../../../src/services/assistant/assistant-private-paths.ts";
 
 describe("tab tool targets", () => {
   let root: string, project: string, outside: string;
@@ -42,6 +43,17 @@ describe("tab tool targets", () => {
     const missing = await resolveTabTarget("site/nope.html", binding());
     expect(missing).toEqual({ ok: false, error: `There is no file at ${join(project, "site", "nope.html")}. Write the file first, then call again.` });
     expect(await resolveTabTarget("site", binding())).toMatchObject({ ok: false, error: expect.stringContaining("is a folder") });
+    // `open_file` takes a folder: named absolutely, shown relative to the project when inside it.
+    const noPrivate = { folder: true, privateScope: () => assistantPrivateScope({ projectRoots: [], roots: [] }) };
+    expect(await resolveTabTarget("site", binding(), noPrivate)).toEqual({
+      ok: true, target: { filePath: join(project, "site"), projectName: null, displayPath: "site", html: false, folder: true },
+    });
+    expect(await resolveTabTarget(outside, binding(), noPrivate)).toEqual({
+      ok: true, target: { filePath: outside, projectName: null, displayPath: outside, html: false, folder: true },
+    });
+    // A folder of logins or keys is not listed on screen, as the file browser's other doors refuse it.
+    const keys = { folder: true, privateScope: () => assistantPrivateScope({ projectRoots: [], roots: [outside] }) };
+    expect(await resolveTabTarget(outside, binding(), keys)).toMatchObject({ ok: false, error: expect.stringContaining("logins or keys") });
     expect(await resolveTabTarget("notes.md", { sessionId: "s1", projectPath: null, projectName: null }))
       .toMatchObject({ ok: false, error: expect.stringContaining("must be absolute") });
     for (const input of [undefined, 42, "", "   ", "a\0b", "x".repeat(5000)]) {

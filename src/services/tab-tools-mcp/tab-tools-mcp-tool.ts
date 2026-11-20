@@ -47,7 +47,8 @@ export const OPEN_FILE_TOOL_DEFINITION = {
   title: "Open a file in PPM",
   description:
     "Open a file in a PPM tab on the device the user is chatting from, the way the user would open it: code in "
-    + "the editor (at `line` when given), HTML, Markdown, images, PDF and CSV in PPM's viewers. Use it when the "
+    + "the editor (at `line` when given), HTML, Markdown, images, PDF and CSV in PPM's viewers. A folder opens in "
+    + "PPM's file browser (the File Explorer window, a phone's full-screen file browser). Use it when the "
     + "user asks to see a file, or to point them at a place in the code. Do not open files the user did not ask "
     + "about just to read them; use your own read tools for that.",
   inputSchema: {

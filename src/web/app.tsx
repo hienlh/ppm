@@ -25,7 +25,7 @@ import { hydrateProjectCache, peekLastProjectRef } from "@/lib/browser-cache/pro
 // Registers the slash-list hydrator before boot hydration runs; the chat tab that
 // otherwise loads this module sits in a lazy chunk.
 import "@/lib/slash-items-cache";
-import { useUrlSync, parseUrlState, autoOpenFromUrl, openAssistantFromAddress, requestTurnJumpFromUrl } from "@/hooks/use-url-sync";
+import { useUrlSync, parseUrlState, autoOpenFromUrl, openAssistantFromAddress, openFileBrowserFromAddress, requestTurnJumpFromUrl } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { useWakeLock } from "@/hooks/use-wake-lock";
@@ -248,6 +248,8 @@ export function App() {
       // when there is none.
       const openAssistantFromUrl = () => {
         if (urlState.assistant) openAssistantFromAddress(urlState.assistant);
+        // A `/files?path=` address opens the file browser the same way: over whatever is on screen.
+        if (urlState.filesPath) openFileBrowserFromAddress(urlState.filesPath);
       };
       if (projects.length === 0) {
         openAssistantFromUrl();

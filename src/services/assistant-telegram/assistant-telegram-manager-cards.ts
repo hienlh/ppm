@@ -7,6 +7,7 @@
  * A manager chat's approval or question goes out as the relay's own card (the same Allow rule,
  * answering the manager chat directly), and that card ends itself when the request does.
  */
+import { primeTelegramPathLinks } from "../telegram/telegram-path-links.ts";
 import { chatControl, type LiveApprovalCard } from "../chat-control/chat-control.ts";
 import { getSessionProvider, getSessionTitle } from "../db.service.ts";
 import { projectTelegramDetail } from "../assistant-managers/manager-chats-db.ts";
@@ -161,6 +162,8 @@ export class AssistantTelegramManagerCards implements CardOutboundSink {
   private async sendAll(cards: AssistantCard[], chats: string[], threads: Array<Map<string, Thread>>, header?: string): Promise<void> {
     // Links first, so every chat's lane gets the header and the cards in order.
     const links = await Promise.all(cards.map((c) => this.linkFor(c).catch(() => null)));
+    // Folder and file paths in a card's text become links into PPM's file browser once checked.
+    await Promise.all(cards.map((c) => primeTelegramPathLinks(`${c.title}\n${c.body ?? ""}`)));
     // A task card's Open chat links and Undo buttons (PPM Tasks); null for every other card.
     const extras = await Promise.all(cards.map((c) => taskCardExtras(c, this.deps.chatLink).catch((e) => {
       log.warn(`card ${c.id}: its task buttons could not be made: ${(e as Error).message}`);

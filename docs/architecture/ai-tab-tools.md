@@ -5,7 +5,9 @@
 PPM's own answer to claude.ai's Artifact tool. The AI writes a file and calls a tool, and the
 file opens in a PPM tab on the device the user is chatting from: `open_file` (optional
 `line`) for any file the user asks to see, `open_preview` for a page, chart, report or mockup
-the AI made, which also returns how the page rendered. Because PPM serves the page, it works
+the AI made, which also returns how the page rendered. `open_file` on a folder opens PPM's file
+browser there instead of a tab (`tab_open` with `folder: true`), under the same private-store
+rule as the Assistant's `ui_open_file_browser`. Because PPM serves the page, it works
 wherever PPM is reached — LAN, tunnel, phone — and a script, stylesheet or font may come from
 the design CDNs. The same server carries three tools that take no file — `open_url` for a
 server running on the host, `read_terminal` and `run_in_terminal` for PPM's own terminals —

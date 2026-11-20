@@ -2,6 +2,10 @@ import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { isAllowedPath, resolvePath } from "../fs-path-guard.service.ts";
 import { assertReadPermitted } from "../fs-ops/fs-ops-read-write.service.ts";
+import { projectService } from "../project.service.ts";
+import {
+  assistantPrivateScope, isAssistantPrivatePath, type AssistantPrivateScope,
+} from "../assistant/assistant-private-paths.ts";
 
 /**
  * Turns the `path` an agent passed to `open_file` / `open_preview` into the file a PPM tab
@@ -26,6 +30,8 @@ export interface TabTarget {
   /** How the result names the file back to the agent. */
   displayPath: string;
   html: boolean;
+  /** The path is a folder, which `open_file` opens in the file browser; `filePath` is then absolute. */
+  folder?: true;
 }
 
 export type TabTargetOutcome = { ok: true; target: TabTarget } | { ok: false; error: string };
@@ -49,7 +55,17 @@ export function tabReadRefusal(absolute: string, real: string): string | null {
   }
 }
 
-export async function resolveTabTarget(input: unknown, binding: TabToolsBinding): Promise<TabTargetOutcome> {
+export interface TabTargetOptions {
+  /** A folder is a target too (`open_file` opens it in the file browser); otherwise it is refused. */
+  folder?: boolean;
+  /** The private-store rule a folder is held to (tests); built from the registered projects otherwise. */
+  privateScope?: () => AssistantPrivateScope;
+}
+
+const defaultPrivateScope = (): AssistantPrivateScope =>
+  assistantPrivateScope({ projectRoots: projectService.list().map((p) => p.path) });
+
+export async function resolveTabTarget(input: unknown, binding: TabToolsBinding, opts: TabTargetOptions = {}): Promise<TabTargetOutcome> {
   if (typeof input !== "string" || !input.trim()) return { ok: false, error: "`path` is required: the file to open." };
   if (input.length > MAX_PATH_CHARS || input.includes("\0")) return { ok: false, error: "`path` is not a valid file path." };
   const raw = input.trim();
@@ -71,13 +87,31 @@ export async function resolveTabTarget(input: unknown, binding: TabToolsBinding)
   } catch {
     return { ok: false, error: `There is no file at ${absolute}. Write the file first, then call again.` };
   }
+  let folder: boolean;
   try {
-    if (!(await stat(real)).isFile()) return { ok: false, error: `${absolute} is a folder, not a file.` };
+    const st = await stat(real);
+    folder = st.isDirectory();
+    if (!folder && !st.isFile()) return { ok: false, error: `${absolute} is not a file or a folder.` };
   } catch {
     return { ok: false, error: `${absolute} could not be read.` };
   }
+  if (folder && !opts.folder) return { ok: false, error: `${absolute} is a folder, not a file.` };
   const late = tabReadRefusal(absolute, real);
   if (late) return { ok: false, error: late };
+  if (folder) {
+    // A folder's listing is shown under the file browser's own rule, the same as the Assistant's
+    // `ui_open_file_browser` and a `/files` link: no store of logins or keys.
+    const scope = (opts.privateScope ?? defaultPrivateScope)();
+    if (isAssistantPrivatePath(absolute, scope) || isAssistantPrivatePath(real, scope)) {
+      return { ok: false, error: `${absolute} is where logins or keys are kept; PPM does not open it from here. Open it yourself if you need it.` };
+    }
+    // The file browser names folders absolutely, inside a project or not.
+    const root = binding.projectPath ? resolve(binding.projectPath) : null;
+    const displayPath = root && isInside(root, absolute) && absolute !== root
+      ? relative(root, absolute).split(sep).join("/")
+      : absolute;
+    return { ok: true, target: { filePath: absolute, projectName: null, displayPath, html: false, folder: true } };
+  }
   const html = /\.html?$/i.test(absolute);
   if (binding.projectPath && binding.projectName) {
     const root = resolve(binding.projectPath);
