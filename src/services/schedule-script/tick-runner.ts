@@ -1,12 +1,13 @@
 /**
  * One tick of a script schedule: its process runs to the end (or to the schedule's timeout),
  * then the state it left is kept — after a failed tick too, so a half-done batch is not done
- * twice. A tick keeps a run row only when it has something to show, a log line or an error: a
- * 15-second schedule that is quiet would otherwise bury its history under empty rows.
+ * twice. A tick keeps a run row only when it has something to show, a log line or an error, or
+ * when it is the first good tick after a failed one: a 15-second schedule that is quiet would
+ * otherwise bury its history under empty rows, and the failure would stay "last run" for good.
  */
 import type { Schedule } from "../../types/scheduler.ts";
 import { createLogger } from "../logger.ts";
-import { getSchedule, insertFinishedRun } from "../scheduler-db.service.ts";
+import { getSchedule, insertFinishedRun, listScheduleRuns } from "../scheduler-db.service.ts";
 import { saveState } from "./ctx-state.ts";
 import { launchScript, type Launch } from "./script-launch.ts";
 
@@ -38,7 +39,8 @@ export async function runScriptTick(schedule: Schedule, launch: Launch = launchS
   }
   const error = errors.length ? errors.join("\n") : null;
   if (error) log.warn(`Schedule ${schedule.id} (${schedule.name}) tick failed after ${Date.now() - startedAt} ms: ${error.split("\n")[0]}`);
-  if (!error && runLog.lines === 0) return;
+  // A quiet tick right after a failed one is kept: it is what tells the list the failure is over.
+  if (!error && runLog.lines === 0 && listScheduleRuns(schedule.id, 1)[0]?.status !== "error") return;
   insertFinishedRun(schedule.id, {
     status: error ? "error" : "done", startedAt, output: runLog.output.toString(), error,
     ...(launched.costUsd() > 0 && { costUsd: launched.costUsd() }),
