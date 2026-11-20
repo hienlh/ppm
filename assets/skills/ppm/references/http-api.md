@@ -856,6 +856,10 @@ JSON responses are wrapped: `{ "ok": true, "data": … }` or `{ "ok": false, "er
 - `POST   /api/vault/items/:id/delete`
 - `POST   /api/vault/items/:id/reveal`
 - `POST   /api/vault/items/:id/move`
+- `POST   /api/vault/items/:id/files`
+- `POST   /api/vault/files/:fileId/content`
+- `PATCH  /api/vault/files/:fileId`
+- `POST   /api/vault/files/:fileId/delete`
 - `POST   /api/vault/cards/:requestId`
 - `GET    /api/vault/cards/:requestId/prefill`
 
@@ -889,4 +893,4 @@ Authenticate with `?token=<token>` (see Authentication).
 - `/ws/android`
 - `/ws/project/<project>/<type>/<id>` — `<type>`: `terminal`, `chat`, `group`, `lsp` (for `chat`, `<id>` is the session id)
 
-<!-- Generated from src/server/routes/ for PPM v0.26.21 -->
+<!-- Generated from src/server/routes/ for PPM v0.26.22 -->
