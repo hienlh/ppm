@@ -46,45 +46,37 @@ describe("voice send gate", () => {
     expect(voiceGate(draft("error", "done"))).toBe("failed");
   });
 
-  it("with review on, holds the send while transcribing and sends once the text is there", () => {
-    const opts = { reviewBeforeSend: true, cleaned: true, queuedBeforeText: false };
-    expect(decideVoiceSend("transcribing", opts)).toBe("hold");
-    expect(decideVoiceSend("uploading", opts)).toBe("queue");
-    expect(decideVoiceSend("ready", opts)).toBe("send");
-    expect(decideVoiceSend("ready", { ...opts, cleaned: false })).toBe("send");
+  it("queues a press of Send made while transcribing, with review on or off", () => {
+    for (const reviewBeforeSend of [true, false]) {
+      expect(decideVoiceSend("transcribing", { reviewBeforeSend, cleaned: false })).toBe("queue");
+    }
   });
 
-  it("with review off, queues a press made while transcribing, but never sends a raw transcript unread", () => {
-    // The server's real answers once the transcript is ready: the setting as it is (off), and
-    // whether the clean-up ran. A failed clean-up is cleaned:false with the setting untouched.
-    const tidied = { reviewBeforeSend: false, cleaned: true };
-    const raw = { reviewBeforeSend: false, cleaned: false };
-    expect(decideVoiceSend("transcribing", { ...tidied, queuedBeforeText: false })).toBe("queue");
-    expect(decideVoiceSend("ready", { ...tidied, queuedBeforeText: true })).toBe("send");
-    expect(decideVoiceSend("ready", { ...raw, queuedBeforeText: true })).toBe("hold");
-    // Pressed again once the raw text is on screen: the user has read it.
-    expect(decideVoiceSend("ready", { ...raw, queuedBeforeText: false })).toBe("send");
+  it("sends the queued press once the text is there, even with review on and even when the tidy-up failed", () => {
+    // Pressing Send before reading is the user's choice: short messages are not worth the wait.
+    expect(decideVoiceSend("ready", { reviewBeforeSend: true, cleaned: true })).toBe("send");
+    expect(decideVoiceSend("ready", { reviewBeforeSend: true, cleaned: false })).toBe("send");
+    expect(decideVoiceSend("ready", { reviewBeforeSend: false, cleaned: false })).toBe("send");
   });
 
-  it("holds a send queued before the text when review was turned on meanwhile", () => {
-    expect(decideVoiceSend("ready", { reviewBeforeSend: true, cleaned: true, queuedBeforeText: true })).toBe("hold");
+  it("without a press, review on still waits: only the auto-send sends by itself, and only with review off", () => {
+    expect(shouldAutoSend("ready", { reviewBeforeSend: true, cleaned: true })).toBe(false);
+    expect(shouldAutoSend("ready", { reviewBeforeSend: false, cleaned: false })).toBe(false);
   });
 
-  it("sends a press queued after the text was shown, while only the upload was outstanding", () => {
-    const opts = { reviewBeforeSend: true, cleaned: false, queuedBeforeText: false };
-    expect(decideVoiceSend("uploading", opts)).toBe("queue");
-    expect(decideVoiceSend("ready", opts)).toBe("send");
+  it("queues a press while only the upload is outstanding", () => {
+    expect(decideVoiceSend("uploading", { reviewBeforeSend: true, cleaned: false })).toBe("queue");
   });
 
   it("never sends an emptied transcript as a voice part", () => {
-    const opts = { reviewBeforeSend: false, cleaned: true, queuedBeforeText: false, transcriptBlank: true };
+    const opts = { reviewBeforeSend: false, cleaned: true, transcriptBlank: true };
     expect(decideVoiceSend("ready", opts)).toBe("hold");
     expect(decideVoiceSend("uploading", opts)).toBe("hold");
   });
 
   it("never sends a failed voice, and leaves a message without one alone", () => {
-    expect(decideVoiceSend("failed", { reviewBeforeSend: false, cleaned: true, queuedBeforeText: true })).toBe("refuse");
-    expect(decideVoiceSend("none", { reviewBeforeSend: true, cleaned: false, queuedBeforeText: false })).toBe("send");
+    expect(decideVoiceSend("failed", { reviewBeforeSend: false, cleaned: true })).toBe("refuse");
+    expect(decideVoiceSend("none", { reviewBeforeSend: true, cleaned: false })).toBe("send");
   });
 
   it("sends by itself only with review off, a tidied transcript and the upload done", () => {

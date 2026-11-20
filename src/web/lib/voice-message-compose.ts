@@ -27,14 +27,8 @@ export function voiceGate(draft: VoiceDraftProgress | null): VoiceGate {
 export interface VoiceSendOptions {
   /** The setting "Read the transcript before it is sent", as the server last answered it. */
   reviewBeforeSend: boolean;
-  /** The clean-up ran; false means the box holds the raw transcript, which never goes out unread. */
+  /** The clean-up ran; false means the box holds the raw transcript (it waits unless Send was pressed). */
   cleaned: boolean;
-  /**
-   * Re-checking a send that was queued while the transcript was not in the box yet: nobody has
-   * read what is there now. A send queued after the text was shown (only the upload was
-   * outstanding) was pressed by someone looking at it, and is false here.
-   */
-  queuedBeforeText: boolean;
   /** The user emptied the transcript block: a voice part saying "transcribed below" over nothing. */
   transcriptBlank?: boolean;
 }
@@ -43,9 +37,7 @@ export interface VoiceSendOptions {
  * What pressing send (or re-checking a send already queued) does about the voice draft:
  * - `send`: go now;
  * - `queue`: remember the press and go once the draft is ready;
- * - `hold`: do nothing and wait for the user — review is on and the text is not there yet, a
- *   queued send met a transcript nobody has read (raw, or review turned on meanwhile), or the
- *   transcript was emptied;
+ * - `hold`: do nothing — the transcript was emptied, so there is nothing to send with the voice;
  * - `refuse`: the draft failed; a voice whose upload or transcript failed is never sent.
  */
 export function decideVoiceSend(gate: VoiceGate, opts: VoiceSendOptions): "send" | "queue" | "hold" | "refuse" {
@@ -58,12 +50,12 @@ export function decideVoiceSend(gate: VoiceGate, opts: VoiceSendOptions): "send"
       // The transcript is in the box already; only the file is still on its way.
       return opts.transcriptBlank ? "hold" : "queue";
     case "transcribing":
-      return opts.reviewBeforeSend ? "hold" : "queue";
+      // Pressing Send while it is still being transcribed is the user's choice to send without
+      // reading, even with review on and even if the tidy-up then fails: short messages are not
+      // worth the wait. Not pressing anything still waits for review.
+      return "queue";
     case "ready":
-      if (opts.transcriptBlank) return "hold";
-      // Pressed before any text was shown: only a tidied transcript with review off may go unread.
-      if (opts.queuedBeforeText && (opts.reviewBeforeSend || !opts.cleaned)) return "hold";
-      return "send";
+      return opts.transcriptBlank ? "hold" : "send";
   }
 }
 

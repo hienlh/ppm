@@ -50,9 +50,8 @@ export function useVoiceMessageComposer(options: VoiceComposerOptions) {
     await startRecording();
   }, [recording, stopRecording, startRecording, draft, view, refresh]);
 
-  /** `queuedBeforeText`: re-checking a send queued while the transcript was not in the box yet. */
   const decide = useCallback(
-    (queuedBeforeText: boolean) => decideVoiceSend(gate, { reviewBeforeSend, cleaned, queuedBeforeText, transcriptBlank }),
+    () => decideVoiceSend(gate, { reviewBeforeSend, cleaned, transcriptBlank }),
     [gate, reviewBeforeSend, cleaned, transcriptBlank],
   );
 

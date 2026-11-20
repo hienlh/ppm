@@ -273,7 +273,6 @@ export const MessageInput = memo(function MessageInput({
   const chipMode = permissionLocked ? null : boundAwareMode;
   const [pendingSend, setPendingSend] = useState(false);
   // Whether the queued send was pressed before the voice transcript was in the box (see decideVoiceSend).
-  const queuedBeforeTextRef = useRef(false);
   const [priority, setPriority] = useState<MessagePriority>('next');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mobileTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -888,12 +887,11 @@ export const MessageInput = memo(function MessageInput({
     if (turnChipsBlockedReason) return;
     // A recording in progress is finished with Stop (or dropped with Esc) before anything is sent.
     if (voiceMsg.recording) return;
-    const voiceDecision = voiceMsg.decide(false);
+    const voiceDecision = voiceMsg.decide();
     if (voiceDecision === "refuse") { toastVoiceNotSendable(); return; }
     if (voiceDecision === "hold") return;
     if (voiceDecision === "queue") {
-      // Pressed before the transcript was in the box: whatever arrives has not been read yet.
-      queuedBeforeTextRef.current = voiceMsg.gate === "transcribing";
+      // Sends as soon as the transcript is there; pressing the button again cancels.
       setPendingSend(true);
       return;
     }
@@ -902,24 +900,23 @@ export const MessageInput = memo(function MessageInput({
     if (attachments.some((a) => a.status === "uploading")) {
       const trimmed = valueRef.current.trim();
       if (trimmed || attachments.some((a) => a.status !== "error")) {
-        queuedBeforeTextRef.current = false;
         setPendingSend(true);
       }
       return;
     }
 
     executeSend();
-  }, [attachments, disabled, executeSend, turnChipsBlockedReason, voiceMsg.recording, voiceMsg.decide, voiceMsg.gate]);
+  }, [attachments, disabled, executeSend, turnChipsBlockedReason, voiceMsg.recording, voiceMsg.decide]);
 
   // Auto-send when queued and all uploads complete — and the voice message, if any, is ready.
   useEffect(() => {
     if (!pendingSend) return;
     if (attachments.some((a) => a.status === "uploading")) return;
     if (turnChipsBlockedReason) { setPendingSend(false); return; }
-    const voiceDecision = voiceMsg.decide(queuedBeforeTextRef.current);
+    const voiceDecision = voiceMsg.decide();
     if (voiceDecision === "queue") return;
     if (voiceDecision !== "send") {
-      // A transcript nobody has read waits to be read; a failed voice is never sent.
+      // An emptied transcript waits for the user; a failed voice is never sent.
       setPendingSend(false);
       if (voiceDecision === "refuse") toastVoiceNotSendable();
       return;
@@ -1116,7 +1113,7 @@ export const MessageInput = memo(function MessageInput({
 
   const hasContent = hasText || attachments.some((a) => a.status !== "error") || !!agentTag || !!voiceMsg.draft;
   // Review on and the transcript not there yet: nothing to read, so nothing to send.
-  const voiceHolds = voiceMsg.decide(false) === "hold";
+  const voiceHolds = voiceMsg.decide() === "hold";
   const showCancel = isStreaming && !hasContent;
   const placeholder = offline ? "Will send when reconnected..." : isStreaming ? "Follow-up or Stop..." : "Ask anything...";
 
@@ -1199,6 +1196,7 @@ export const MessageInput = memo(function MessageInput({
             onRemove={voiceMsg.remove}
             onSubmit={handleSend}
             disabled={disabled}
+            queued={pendingSend}
           />
         )}
 

@@ -21,9 +21,11 @@ interface VoiceTranscriptBlockProps {
   /** Enter in the transcript sends, as it does in the message box above. */
   onSubmit: () => void;
   disabled?: boolean;
+  /** Send was pressed while it is being transcribed: it goes as soon as the text is there. */
+  queued?: boolean;
 }
 
-export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, onRetry, onRemove, onSubmit, disabled }: VoiceTranscriptBlockProps) {
+export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, onRetry, onRemove, onSubmit, disabled, queued }: VoiceTranscriptBlockProps) {
   const { transcript, upload } = draft;
   // "Use the original" puts Whisper's text in the box: a new editor key re-seeds the uncontrolled box.
   const [seed, setSeed] = useState<{ n: number; text: string } | null>(null);
@@ -39,6 +41,11 @@ export function VoiceTranscriptBlock({ draft, reviewBeforeSend, onTextChange, on
         Voice
         {transcript.status === "processing" && <ProcessingLabel startedAt={transcript.startedAt} />}
       </div>
+      {transcript.status === "processing" && queued && (
+        <p data-voice-queued="" className="text-[11px] font-medium text-primary">
+          Sending when ready, without waiting to be read · press Send again to cancel
+        </p>
+      )}
 
       {transcript.status === "processing" && (
         <div className="flex flex-col gap-1.5 py-0.5" aria-hidden>

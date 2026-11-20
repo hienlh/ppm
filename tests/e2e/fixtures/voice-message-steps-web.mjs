@@ -140,28 +140,24 @@ export async function runWebScenarios(ctx) {
     await page.context().close();
   });
 
-  // F: review off, Send pressed while still transcribing, clean-up fails: the raw transcript must not go.
-  await kit.scenario("F review off, Send while transcribing, clean-up fails: raw transcript not sent", async () => {
-    await install.api("/api/speech/voice-settings", { method: "PUT", body: JSON.stringify({ reviewBeforeSend: false }) });
+  // F: review ON, Send pressed while still transcribing, clean-up fails: the user chose to send, so
+  // the raw transcript goes as soon as it is there, without waiting to be read.
+  await kit.scenario("F review on, Send while transcribing, clean-up fails: sent as soon as ready", async () => {
+    await install.api("/api/speech/voice-settings", { method: "PUT", body: JSON.stringify({ reviewBeforeSend: true }) });
     await install.test("/haiku", { mode: "throw" });
     const { page } = await openChat({ browser, web: install.web, install, title: "Send while transcribing" });
     const before = await turnsNow();
     await recordVoice(page, 2);
     await stopButton(page).click();
-    // Still transcribing: the status line is up. Press Send (disabled while a voice is in progress) and Enter in the composer.
     await page.getByRole("status").filter({ hasText: "Transcribing on this machine" }).first().waitFor({ timeout: 15000 });
-    await sendButton(page).click({ force: true, timeout: 2000 }).catch(() => {});
-    await composer(page).click().catch(() => {});
-    await page.keyboard.press("Enter");
-    // The clean-up has run and failed (the fixture's Haiku throws); only then is "not sent" a fact.
-    await until("the clean-up attempt failed", async () => (await install.haikuCalls()).some((c) => c.kind === "cleanup" && !c.ok), 60000);
-    await page.waitForTimeout(3000);
-    const sentTurns = (await install.turns()).slice(before);
-    assert.equal(sentTurns.length, 0, `the raw transcript was sent to the provider although review is on: ${JSON.stringify(sentTurns.map((t) => t.message.slice(-80)))}`);
-    // The raw transcript waits in the review box, with the notice, instead of going out.
-    await transcriptBox(page).waitFor({ timeout: 10000 });
-    assert.equal(await transcriptBox(page).inputValue(), RAW_TRANSCRIPT, "the raw transcript is in the review box");
-    kit.record("F: review off, Send pressed while transcribing, clean-up failed: nothing sent, raw transcript waits");
+    await sendButton(page).click({ timeout: 5000 });
+    await page.locator("[data-voice-queued]").waitFor({ timeout: 5000 });
+    await until("the voice went out once transcribed", async () => (await install.turns()).length > before, 60000);
+    const sent = (await install.turns()).slice(before);
+    assert.equal(sent.length, 1, "one message");
+    assert.match(sent[0].message, VOICE_MARKER);
+    assert.ok(sent[0].message.endsWith(RAW_TRANSCRIPT), `the raw transcript went, as the user chose: ${JSON.stringify(sent[0].message.slice(-120))}`);
+    kit.record("F: review on, Send pressed while transcribing, clean-up failed: sent as soon as the raw transcript was there");
     await install.test("/haiku", { mode: "ok" });
     await install.api("/api/speech/voice-settings", { method: "PUT", body: JSON.stringify({ reviewBeforeSend: true }) });
     await page.context().close();
